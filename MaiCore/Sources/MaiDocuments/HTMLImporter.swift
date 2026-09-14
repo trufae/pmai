@@ -37,6 +37,8 @@ public enum HTMLImporter {
       ?? String(data: data, encoding: .utf16)
       ?? String(decoding: data, as: UTF8.self))
       .replacingOccurrences(
+        of: #"<!doctype[^>]*>"#, with: "", options: [.regularExpression, .caseInsensitive])
+      .replacingOccurrences(
         of: unsafeElementPattern, with: "", options: [.regularExpression, .caseInsensitive])
       .replacingOccurrences(
         of: voidElementPattern, with: #"<$1$2/>"#,
