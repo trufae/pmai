@@ -24,8 +24,16 @@ class Server(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Connection", "close")
         if self.path == "/oversize":
-            self.send_header("Content-Length", "16000001")
+            size = 16_000_001
+            self.send_header("Content-Length", str(size))
             self.end_headers()
+            # Send a valid response: an immediate close with no body tests a
+            # broken connection on Darwin, rather than the download limit.
+            try:
+                for offset in range(0, size, 16_384):
+                    self.wfile.write(b"x" * min(16_384, size - offset))
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # The client cancels as soon as it rejects the headers.
             return
         self.server.fetches += 1
         self.send_header("Transfer-Encoding", "chunked")
