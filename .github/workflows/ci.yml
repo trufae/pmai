@@ -41,6 +41,9 @@ jobs:
           swift build --package-path MaiCore -c release --product pmai -Xswiftc -Osize
           strip -x MaiCore/.build/release/pmai
 
+      - name: Test paged web fetch over HTTP
+        run: python3 test/web-fetch-smoke.py MaiCore/.build/release/pmai
+
       - name: Test REPL queue choices
         if: matrix.name == 'Linux x64'
         run: python3 test/repl-queue-smoke.py MaiCore/.build/release/pmai
@@ -164,6 +167,9 @@ jobs:
           file pmai
           file pmai | grep -q 'statically linked'
           ./pmai --help
+
+      - name: Test paged web fetch over HTTP
+        run: python3 test/web-fetch-smoke.py ./pmai
 
       - name: Test REPL suspend and resume
         run: python3 test/repl-suspend-smoke.py ./pmai
@@ -312,6 +318,9 @@ jobs:
       - name: Verify the binary runs
         run: |
           ./MaiCore/.build/release/pmai.exe --help
+
+      - name: Test paged web fetch over HTTP
+        run: python test/web-fetch-smoke.py MaiCore/.build/release/pmai.exe
 
       - name: Upload CLI artifact
         uses: actions/upload-artifact@v7
