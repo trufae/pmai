@@ -32,9 +32,9 @@ jobs:
       - name: Show Swift version
         run: swift --version
 
-      - name: Test agent queues and tools
+      - name: Test MaiCore
         if: matrix.name == 'macOS'
-        run: swift test --package-path MaiCore --filter 'queued|Inbox|inbox|cancelledTool|enabledAgentGroup|agentToolGroup|toolDelegation|subagentsUseDefault|disabledAgents'
+        run: swift test --package-path MaiCore
 
       - name: Build release CLI
         run: |
