@@ -764,6 +764,34 @@ options are needed. `/mcp enable ID` and `/mcp disable ID` reconnect or
 disconnect the complete server tool set and persist the state. Run `/mcp` for
 the full option list. The legacy `/mcps` spelling remains a list alias.
 
+`web_fetch` preserves plain text/source code and cleans only HTML. Its default
+page is at most 16,000 UTF-8 bytes; `max_bytes` can request up to 256,000 or
+`0` for metadata only. Downloads are capped at 16 MB while receiving data,
+including chunked responses. Each successful fetch returns a `source_id`,
+`totalBytes`, `offset`, `nextOffset`, and `truncated`. Continue with
+`{"source_id":"…","offset":16000}` or search the whole remaining source with
+`{"source_id":"…","query":"symbol to find","max_bytes":4000}`. A search returns
+a page around the first literal, case-insensitive match at or after `offset`.
+Offsets always address the UTF-8 text (after HTML extraction when applicable).
+
+Sources are immutable in-memory snapshots shared by tools and child agents;
+the least recently used snapshots are evicted at 16 sources or 32 MB. A missing
+ID returns an explicit error; fetch its original URL again to obtain a new
+snapshot. URL calls deliberately fetch fresh content, while source ID calls
+never download. For large extraction tasks, fetch metadata only and pass the
+ID or a file path plus a focused question to `agent_start`. Ask for concise
+findings with locations so the raw source stays in the worker's transcript.
+Use file indexes/searches and targeted ranges for local data. Delegation still
+requires the enabled agents tool group and respects the existing child limits.
+
+`AgentRuntime` shares half of the remaining configured autocompaction budget
+across a reply's tool calls as a default page-size hint (1–32 KB). Web and file
+reads honor it when `max_bytes` is omitted; explicit sizes take precedence.
+This estimate does not discover a local model's context window: set
+`autocompact.tokens` to suit the model. In `size` context mode, web bodies from
+completed prompts can be pruned like file reads, retaining the source ID,
+URL and offset needed to recover them. The active prompt's data is retained.
+
 The `files` group can list files, find approximate names, grep bounded UTF-8
 content, convert DOCX/PDF/JSON documents, write or append text, create folders,
 rename entries, and delete them. Existing files are edited in place with

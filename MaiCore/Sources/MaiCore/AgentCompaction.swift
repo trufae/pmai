@@ -182,7 +182,7 @@ public enum AgentContextPruning {
     var candidates: [Int] = []
     for (index, message) in messages.enumerated()
     where index < currentPrompt && message.role == .tool {
-      if message.toolResults.contains(where: { hasPrunableFile($0) }) { candidates.append(index) }
+      if message.toolResults.contains(where: { hasPrunableContent($0) }) { candidates.append(index) }
     }
     guard !candidates.isEmpty else { return nil }
     var report = AgentTranscriptEditReport(
@@ -190,9 +190,17 @@ public enum AgentContextPruning {
     for index in candidates {
       var message = messages[index]
       message.content = message.content.map { part in
-        guard case .toolResult(var result) = part, hasPrunableFile(result) else { return part }
+        guard case .toolResult(var result) = part, hasPrunableContent(result) else { return part }
         let path = result.structuredContent?.objectValue?["path"]?.stringValue
+        let sourceID = result.structuredContent?.objectValue?["source_id"]?.stringValue
+        let offset = result.structuredContent?.objectValue?["offset"]?.intValue ?? 0
         result.content = result.content.map { inner in
+          if case .resource(let resource) = inner, let sourceID,
+            let text = resource.text, text.count >= minimumCharacters {
+            return .text(
+              "[Web source body read earlier and removed from context; call web_fetch with source_id \(sourceID) and offset \(offset), or query it. If evicted, fetch \(resource.uri) again.]"
+            )
+          }
           guard case .file(let file) = inner, let text = file.text,
             text.count >= minimumCharacters
           else { return inner }
@@ -211,9 +219,13 @@ public enum AgentContextPruning {
     return report
   }
 
-  private static func hasPrunableFile(_ result: ToolResult) -> Bool {
+  private static func hasPrunableContent(_ result: ToolResult) -> Bool {
     result.content.contains { part in
       if case .file(let file) = part { return (file.text?.count ?? 0) >= minimumCharacters }
+      if case .resource(let resource) = part,
+        result.structuredContent?.objectValue?["source_id"]?.stringValue != nil {
+        return (resource.text?.count ?? 0) >= minimumCharacters
+      }
       return false
     }
   }

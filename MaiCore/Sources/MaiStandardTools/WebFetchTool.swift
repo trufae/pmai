@@ -155,7 +155,11 @@ public struct MaiWebFetchTool: AgentTool {
   public init(service: MaiWebFetchService = .shared) { self.service = service }
 
   public func call(arguments: JSONValue, context: ToolExecutionContext) async throws -> ToolOutput {
-    try await service.fetch(arguments: arguments.objectValue ?? [:])
+    var values = arguments.objectValue ?? [:]
+    if values["max_bytes"] == nil, let limit = context.suggestedOutputBytes {
+      values["max_bytes"] = .integer(min(16_000, max(4, limit)))
+    }
+    return try await service.fetch(arguments: values)
   }
 }
 
@@ -302,7 +306,8 @@ public actor MaiWebFetchService {
     }
     let text = String(decoding: bytes[index..<last], as: UTF8.self)
     var header = "Web Fetch tool (url: \"\(source.url)\"):\nsource_id: \(sourceID)\nBytes \(start)-\(end) of \(source.bytes); nextOffset: \(end)."
-    if !source.content.title.isEmpty { header += "\nTitle: \(source.content.title)" }
+    let title = String(source.content.title.prefix(512))
+    if !title.isEmpty { header += "\nTitle: \(title)" }
     if limit == 0 {
       header += "\nMetadata only. Read this source_id with query or a positive max_bytes, or pass it to a child agent for extraction."
     } else if !query.isEmpty, matchOffset == nil {
@@ -311,7 +316,7 @@ public actor MaiWebFetchService {
       header += "\nMore content is available: call web_fetch with this source_id and offset \(end), or narrow it with query."
     }
     return ToolOutput(
-      content: [.text(header), .resource(ResourceContent(uri: source.url, name: source.content.title, mimeType: "text/plain", text: text))],
+      content: [.text(header), .resource(ResourceContent(uri: source.url, name: title, mimeType: "text/plain", text: text))],
       structuredContent: .object([
         "source_id": .string(sourceID), "url": .string(source.url),
         "totalBytes": .integer(source.bytes), "offset": .integer(start),

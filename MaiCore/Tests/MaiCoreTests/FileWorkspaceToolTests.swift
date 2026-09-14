@@ -672,3 +672,20 @@ func fileToolsAcceptGlobs() async throws {
   #expect(deepList.text.hasPrefix("Error: Invalid pattern: '**/*.c' spans folders"))
   #expect(deepList.text.contains("files_find"))
 }
+
+@Test("Files read uses the runtime page hint without overriding an explicit size")
+func fileWorkspaceReadContextBudget() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  try Data(String(repeating: "x", count: 30_000).utf8).write(to: root.appendingPathComponent("large.txt"))
+  let tool = MaiFileWorkspaceTool(operation: .read, configuration: MaiFileWorkspaceConfiguration(rootURL: root))
+  let context = ToolExecutionContext(
+    run: AgentEventContext(runID: UUID(), parentRunID: nil, agentID: "test", depth: 0),
+    modelTurn: 1, suggestedOutputBytes: 1024)
+  let small = try await tool.call(arguments: .object(["path": .string("large.txt")]), context: context)
+  #expect(small.text.utf8.count == 1024)
+  #expect(small.structuredContent?.objectValue?["nextOffset"] == .integer(1024))
+  let explicit = try await tool.call(arguments: .object(["path": .string("large.txt"), "max_bytes": .integer(20_000)]), context: context)
+  #expect(explicit.text.utf8.count == 20_000)
+}

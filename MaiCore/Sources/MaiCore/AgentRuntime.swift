@@ -837,6 +837,7 @@ public actor AgentRuntime {
       // the rest. The results join the transcript in call order once the
       // last of them is in.
       let modelTurn = localModelTurns
+      let usedTokens = AgentAutocompaction.estimatedTokens(of: transcript, lastUsage: lastUsage)
       var results = [ToolResult?](repeating: nil, count: calls.count)
       var definitionsByCall = [[ToolDefinition]](repeating: [], count: calls.count)
       try await withThrowingTaskGroup(of: (Int, ToolResult).self) { group in
@@ -848,6 +849,9 @@ public actor AgentRuntime {
           request = currentRequest(request, for: pid)
           await budget.update(limits: request.limits)
           let callRequest = request
+          let suggestedOutputBytes = ToolExecutionContext.suggestedOutputBytes(
+            contextTokens: callRequest.autocompact.tokens, usedTokens: usedTokens,
+            toolCalls: calls.count)
           let callDefinitions = try visibleDefinitions(for: callRequest, depth: depth)
           definitionsByCall[index] = callDefinitions
           if await budget.deadlinePassed {
@@ -908,6 +912,7 @@ public actor AgentRuntime {
                   request: callRequest,
                   context: context,
                   modelTurn: modelTurn,
+                  suggestedOutputBytes: suggestedOutputBytes,
                   depth: depth,
                   budget: budget,
                   launched: { gate.open() },
@@ -924,6 +929,7 @@ public actor AgentRuntime {
               request: callRequest,
               context: context,
               modelTurn: modelTurn,
+              suggestedOutputBytes: suggestedOutputBytes,
               depth: depth,
               budget: budget,
               emit: emit)
@@ -1212,6 +1218,7 @@ public actor AgentRuntime {
     request: AgentRequest,
     context: AgentEventContext,
     modelTurn: Int,
+    suggestedOutputBytes: Int?,
     depth: Int,
     budget: RunBudget,
     launched: @escaping @Sendable () -> Void = {},
@@ -1370,7 +1377,8 @@ public actor AgentRuntime {
     do {
       let output = try await tool.call(
         arguments: approvedCall.arguments,
-        context: ToolExecutionContext(run: context, modelTurn: modelTurn))
+        context: ToolExecutionContext(
+          run: context, modelTurn: modelTurn, suggestedOutputBytes: suggestedOutputBytes))
       let result = ToolResult(
         callID: approvedCall.id,
         content: output.content,
