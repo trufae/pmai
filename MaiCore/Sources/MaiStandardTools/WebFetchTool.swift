@@ -17,12 +17,14 @@ public struct WebFetchedContent: Equatable, Sendable {
 
 public enum WebFetchContentCleaner {
   public static func clean(_ content: String, contentType: String?) -> WebFetchedContent {
-    let looksLikeHTML =
-      contentType?.localizedCaseInsensitiveContains("html") == true
-      || content.range(of: "<html", options: [.caseInsensitive]) != nil
-      || content.range(of: "<body", options: [.caseInsensitive]) != nil
+    let mime = contentType?.split(separator: ";").first?
+      .trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    let prefix = content.trimmingCharacters(in: .whitespacesAndNewlines).prefix(256).lowercased()
+    // An explicit text/JSON/XML type is authoritative: source code can contain HTML literals.
+    let looksLikeHTML = mime == "text/html" || mime == "application/xhtml+xml"
+      || (mime.isEmpty && (prefix.hasPrefix("<!doctype html") || prefix.hasPrefix("<html")))
     return looksLikeHTML
-      ? cleanHTML(content) : WebFetchedContent(title: "", text: cleanText(content))
+      ? cleanHTML(content) : WebFetchedContent(title: "", text: content)
   }
 
   private static func cleanHTML(_ html: String) -> WebFetchedContent {

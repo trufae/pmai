@@ -88,3 +88,14 @@ func weatherMoonPhase() {
   #expect(phase.name == "New Moon")
   #expect(abs(phase.illumination) < 0.000_001)
 }
+
+@Test("Web fetch preserves raw source, whitespace, entities and repeated closing braces")
+func webFetchPreservesSource() {
+  let source = "func example() {\r\n  if true {\r\n    print(\"<html><body>&amp;</body></html>\")\r\n  }\r\n}\r\n}\r\n\r\n"
+  for mime in ["text/plain; charset=utf-8", "application/json", "text/x-swift", "application/xml", nil] {
+    #expect(WebFetchContentCleaner.clean(source, contentType: mime).text == source)
+  }
+  let text = "<html>an example in a plain text file</html>"
+  #expect(WebFetchContentCleaner.clean(text, contentType: "text/plain").text == text)
+  #expect(WebFetchContentCleaner.clean("<html><body>page</body></html>", contentType: nil).text == "page")
+}
