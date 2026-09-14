@@ -12,7 +12,11 @@ private let fetchContext = ToolExecutionContext(
 
 @Test("Web fetch pages reconstruct large UTF-8 sources without refetching or dropping braces")
 func webFetchPagesPreserveLargeSource() async throws {
-  let body = String(repeating: "  if enabled {\n    print(\"a🦊é\")\n  }\n}\n}\n\n", count: 800)
+  let sourceURL = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    .appendingPathComponent("Sources/MaiMCP/MCPStdioClient.swift")
+  let body = try String(contentsOf: sourceURL, encoding: .utf8)
+    + String(repeating: "  if enabled {\n    print(\"a🦊é\")\n  }\n}\n}\n\n", count: 800)
   let fixture = FetchFixture(body: body)
   defer { fixture.remove() }
   let tool = MaiWebFetchTool(service: fixture.service())
@@ -201,16 +205,18 @@ private final class FetchProtocol: URLProtocol, @unchecked Sendable {
 @Test("An extraction worker shares a snapshot while the parent receives only its answer")
 func webFetchWorkerKeepsParentSmall() async throws {
   let body = String(repeating: "worker-only-detail\n", count: 2000) + "needle-answer"
+    + String(repeating: "worker-only-detail\n", count: 2000)
   let fixture = FetchFixture(body: body)
   defer { fixture.remove() }
   let provider = FetchWorkerProvider(url: fixture.url)
-  let runtime = AgentRuntime()
+  let runtime = AgentRuntime(approvalHandler: AllowAllApprovals())
   try await runtime.register(provider)
-  try await runtime.register(MaiWebFetchTool(service: fixture.service()))
+  try await runtime.register(tool: MaiWebFetchTool(service: fixture.service()))
   let result = try await runtime.run(AgentRequest(
     provider: "fetch-worker", model: "fixture", messages: [.user("Document this large source")],
     toolNames: [MaiWebFetchTool.name], toolGroupNames: [AgentRuntime.agentToolGroup.id],
-    limits: AgentRunLimits(maxModelTurns: 5, maxToolCalls: 5, maxSubagentDepth: 1)))
+    limits: AgentRunLimits(maxModelTurns: 5, maxToolCalls: 5, maxSubagentDepth: 1),
+    autocompact: AgentAutocompact(tokens: 4000)))
   #expect(result.response.text == "Documented needle-answer")
   #expect(fixture.requests == 1)
   let requests = await provider.requests
@@ -220,6 +226,12 @@ func webFetchWorkerKeepsParentSmall() async throws {
   #expect(workers.count == 2)
   #expect(parents.allSatisfy { !$0.messages.map(\.text).joined().contains("worker-only-detail") })
   #expect(workers.last?.messages.flatMap(\.toolResults).contains { $0.text.contains("worker-only-detail") } == true)
+  let workerResult = try #require(workers.last?.messages.flatMap(\.toolResults).first)
+  let pageBytes = workerResult.content.compactMap { part -> Int? in
+    if case .resource(let value) = part { return value.text?.utf8.count }
+    return nil
+  }.reduce(0, +)
+  #expect(pageBytes > 1024 && pageBytes < 8000)
   #expect(result.transcript.flatMap(\.toolResults).map(\.text).joined().count < 1500)
 }
 
@@ -240,7 +252,7 @@ private actor FetchWorkerProvider: ChatProvider {
     if Self.isWorker(request) {
       if !results.isEmpty { return ProviderResponse(message: .assistant("needle-answer"), stopReason: .stop) }
       name = MaiWebFetchTool.name
-      arguments = ["source_id": sourceID, "query": .string("needle"), "max_bytes": .integer(256)]
+      arguments = ["source_id": sourceID, "query": .string("needle")]
     } else if results.isEmpty {
       name = MaiWebFetchTool.name
       arguments = ["url": .string(url), "max_bytes": .integer(0)]
@@ -286,7 +298,7 @@ func webFetchPrunesPreviousBodies() {
   func message(_ id: String) -> AgentMessage {
     AgentMessage(role: .tool, content: [.toolResult(ToolResult(
       callID: id, content: [.resource(ResourceContent(uri: "https://example.test/source", text: String(repeating: "x", count: 2000)))],
-      structuredContent: .object(["source_id": .string(id), "offset": .integer(16000)])))])
+      structuredContent: .object(["tool": .string("web_fetch"), "source_id": .string(id), "offset": .integer(16000)])))])
   }
   var messages: [AgentMessage] = [.user("first task"), message("first"), .assistant("done"), .user("next task"), message("current")]
   #expect(AgentContextPruning.prune(&messages)?.rewritten == 1)

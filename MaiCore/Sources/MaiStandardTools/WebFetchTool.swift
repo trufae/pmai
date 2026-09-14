@@ -187,8 +187,9 @@ public actor MaiWebFetchService {
     maximumCacheBytes: Int = 32_000_000,
     maximumCacheEntries: Int = 16
   ) {
-    self.configuration = configuration.copy() as! URLSessionConfiguration
-    self.configuration.timeoutIntervalForResource = 60
+    let sessionConfiguration = configuration.copy() as! URLSessionConfiguration
+    sessionConfiguration.timeoutIntervalForResource = 60
+    self.configuration = sessionConfiguration
     self.maximumDownloadedBytes = max(1, maximumDownloadedBytes)
     self.maximumCacheBytes = max(1, maximumCacheBytes)
     self.maximumCacheEntries = max(1, maximumCacheEntries)
@@ -318,7 +319,7 @@ public actor MaiWebFetchService {
     return ToolOutput(
       content: [.text(header), .resource(ResourceContent(uri: source.url, name: title, mimeType: "text/plain", text: text))],
       structuredContent: .object([
-        "source_id": .string(sourceID), "url": .string(source.url),
+        "tool": .string(MaiWebFetchTool.name), "source_id": .string(sourceID), "url": .string(source.url),
         "totalBytes": .integer(source.bytes), "offset": .integer(start),
         "nextOffset": .integer(end), "truncated": .bool(end < source.bytes),
         "matchOffset": matchOffset.map(JSONValue.integer) ?? .null,
