@@ -106,7 +106,7 @@ def main():
             result = subprocess.run([executable, "--config", str(config), "--home", str(root / "home"),
                                      "--no-stream", "--no-markdown", "-y", "extract the needle"],
                                     cwd=root, env=environment, stdin=subprocess.DEVNULL,
-                                    capture_output=True, text=True, timeout=60)
+                                    capture_output=True, text=True, encoding="utf-8", timeout=60)
             output = result.stdout + result.stderr
             assert result.returncode == 0 and "web fetch smoke passed" in output, output
             assert not server.errors, server.errors
