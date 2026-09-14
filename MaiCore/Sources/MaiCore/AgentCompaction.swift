@@ -223,6 +223,7 @@ public enum AgentContextPruning {
     result.content.contains { part in
       if case .file(let file) = part { return (file.text?.count ?? 0) >= minimumCharacters }
       if case .resource(let resource) = part,
+        result.structuredContent?.objectValue?["tool"]?.stringValue == "web_fetch",
         result.structuredContent?.objectValue?["source_id"]?.stringValue != nil {
         return (resource.text?.count ?? 0) >= minimumCharacters
       }
