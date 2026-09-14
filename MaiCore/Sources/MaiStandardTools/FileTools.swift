@@ -107,7 +107,14 @@ public struct MaiFileWorkspaceTool: AgentTool {
       case .grep:
         return try await workspace.grep(arguments)
       case .read:
-        return try workspace.read(arguments)
+        var output = try workspace.read(arguments)
+        if let page = output.structuredContent?.objectValue,
+          page["truncated"]?.boolValue == true, let next = page["nextOffset"]?.intValue {
+          let path = page["path"]?.compactJSONString ?? "the same path"
+          output.content.append(.text(
+            "[Partial file: more content is available. Continue with files_read path \(path), offset \(next), or use files_grep/files_read_range to narrow the read.]"))
+        }
+        return output
       case .readIndex:
         return try workspace.readIndex(arguments)
       case .getFunction:
@@ -1512,19 +1519,21 @@ private struct MaiFileWorkspace: Sendable {
     let limit = min(
       max(arguments["max_bytes"]?.intValue ?? Self.defaultReadLimit, 1),
       Self.maximumReadLimit)
-    var chunk = Data(data.dropFirst(requestedOffset).prefix(limit))
     var offset = requestedOffset
-    while let first = chunk.first, first & 0b1100_0000 == 0b1000_0000 {
-      chunk.removeFirst()
-      offset += 1
+    while offset < data.count, data[offset] & 0xC0 == 0x80 { offset += 1 }
+    var end = offset + min(limit, data.count - offset)
+    while end > offset, end < data.count, data[end] & 0xC0 == 0x80 { end -= 1 }
+    // A tiny page must still consume one complete scalar, or nextOffset stalls.
+    if end == offset, offset < data.count {
+      end += 1
+      while end < data.count, end - offset < 4, data[end] & 0xC0 == 0x80 { end += 1 }
     }
-    var text = String(data: chunk, encoding: .utf8)
-    while text == nil, !chunk.isEmpty {
-      chunk.removeLast()
-      text = String(data: chunk, encoding: .utf8)
+    // Decode once. Invalid bytes inside a page are an error, not a reason to
+    // repeatedly decode shorter prefixes and silently lose the rest of the file.
+    guard let text = String(data: data[offset..<end], encoding: .utf8) else {
+      throw MaiFileWorkspaceError.invalidUTF8(displayPath(path))
     }
-    guard let text else { throw MaiFileWorkspaceError.invalidUTF8(displayPath(path)) }
-    return (text, offset, offset + chunk.count)
+    return (text, offset, end)
   }
 
   private func fuzzyScore(_ candidate: String, query: String) -> Int? {

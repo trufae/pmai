@@ -684,8 +684,43 @@ func fileWorkspaceReadContextBudget() async throws {
     run: AgentEventContext(runID: UUID(), parentRunID: nil, agentID: "test", depth: 0),
     modelTurn: 1, suggestedOutputBytes: 1024)
   let small = try await tool.call(arguments: .object(["path": .string("large.txt")]), context: context)
-  #expect(small.text.utf8.count == 1024)
+  #expect(fileReadBody(small).utf8.count == 1024)
+  #expect(small.text.contains("offset 1024"))
   #expect(small.structuredContent?.objectValue?["nextOffset"] == .integer(1024))
   let explicit = try await tool.call(arguments: .object(["path": .string("large.txt"), "max_bytes": .integer(20_000)]), context: context)
-  #expect(explicit.text.utf8.count == 20_000)
+  #expect(fileReadBody(explicit).utf8.count == 20_000)
+}
+
+@Test("Tiny UTF-8 file pages advance and invalid bytes do not discard a page suffix")
+func fileWorkspacePagesAdvance() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let body = "🦊é\n}\n}\n"
+  let file = root.appendingPathComponent("utf8.txt")
+  try Data(body.utf8).write(to: file)
+  let tool = MaiFileWorkspaceTool(operation: .read, configuration: MaiFileWorkspaceConfiguration(rootURL: root))
+  var offset = 0
+  var reconstructed = ""
+  while offset < body.utf8.count {
+    let result = try await call(tool, ["path": .string("utf8.txt"), "offset": .integer(offset), "max_bytes": .integer(1)])
+    try #require(!result.isError)
+    let next = try #require(result.structuredContent?.objectValue?["nextOffset"]?.intValue)
+    try #require(next > offset)
+    if next < body.utf8.count { #expect(result.text.contains("offset \(next)")) }
+    reconstructed += fileReadBody(result)
+    offset = next
+  }
+  #expect(reconstructed == body)
+  try (Data("prefix".utf8) + Data([0xFF]) + Data(repeating: 0x78, count: 100_000)).write(to: file)
+  let invalid = try await call(tool, ["path": .string("utf8.txt")])
+  #expect(invalid.isError)
+  #expect(invalid.text.contains("UTF-8"))
+}
+
+private func fileReadBody(_ output: ToolOutput) -> String {
+  output.content.compactMap { part in
+    if case .file(let file) = part { return file.text }
+    return nil
+  }.joined()
 }
