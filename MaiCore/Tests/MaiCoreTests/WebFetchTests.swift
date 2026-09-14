@@ -57,7 +57,7 @@ func webFetchSearchesFullSnapshot() async throws {
     "source_id": id, "query": .string("needle"), "max_bytes": .integer(100),
   ]), context: fetchContext)
   #expect(fetchedBody(found).contains("target-NEEDLE-42"))
-  #expect(found.structuredContent?.objectValue?["matchOffset"]?.intValue ?? 0 > 2_000_000)
+  #expect((found.structuredContent?.objectValue?["matchOffset"]?.intValue ?? 0) > 2_000_000)
   let missing = try await tool.call(arguments: .object([
     "source_id": id, "query": .string("not present"),
   ]), context: fetchContext)
@@ -196,4 +196,103 @@ private final class FetchProtocol: URLProtocol, @unchecked Sendable {
     if !fixture.hangs { client?.urlProtocolDidFinishLoading(self) }
   }
   override func stopLoading() { fixture?.noteStop() }
+}
+
+@Test("An extraction worker shares a snapshot while the parent receives only its answer")
+func webFetchWorkerKeepsParentSmall() async throws {
+  let body = String(repeating: "worker-only-detail\n", count: 2000) + "needle-answer"
+  let fixture = FetchFixture(body: body)
+  defer { fixture.remove() }
+  let provider = FetchWorkerProvider(url: fixture.url)
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  try await runtime.register(MaiWebFetchTool(service: fixture.service()))
+  let result = try await runtime.run(AgentRequest(
+    provider: "fetch-worker", model: "fixture", messages: [.user("Document this large source")],
+    toolNames: [MaiWebFetchTool.name], toolGroupNames: [AgentRuntime.agentToolGroup.id],
+    limits: AgentRunLimits(maxModelTurns: 5, maxToolCalls: 5, maxSubagentDepth: 1)))
+  #expect(result.response.text == "Documented needle-answer")
+  #expect(fixture.requests == 1)
+  let requests = await provider.requests
+  let parents = requests.filter { !FetchWorkerProvider.isWorker($0) }
+  let workers = requests.filter { FetchWorkerProvider.isWorker($0) }
+  #expect(parents.count == 3)
+  #expect(workers.count == 2)
+  #expect(parents.allSatisfy { !$0.messages.map(\.text).joined().contains("worker-only-detail") })
+  #expect(workers.last?.messages.flatMap(\.toolResults).contains { $0.text.contains("worker-only-detail") } == true)
+  #expect(result.transcript.flatMap(\.toolResults).map(\.text).joined().count < 1500)
+}
+
+private actor FetchWorkerProvider: ChatProvider {
+  nonisolated let descriptor = ProviderDescriptor(id: "fetch-worker", displayName: "Fetch worker fixture", capabilities: [.nativeToolCalling])
+  let url: String
+  var sourceID: JSONValue = .null
+  private(set) var requests: [ProviderRequest] = []
+  init(url: String) { self.url = url }
+  nonisolated static func isWorker(_ request: ProviderRequest) -> Bool {
+    request.messages.contains { $0.role == .user && $0.text.contains("Extract needle") }
+  }
+  func complete(_ request: ProviderRequest, emit: @escaping ProviderEventHandler) async throws -> ProviderResponse {
+    requests.append(request)
+    let results = request.messages.flatMap(\.toolResults)
+    let name: String
+    let arguments: [String: JSONValue]
+    if Self.isWorker(request) {
+      if !results.isEmpty { return ProviderResponse(message: .assistant("needle-answer"), stopReason: .stop) }
+      name = MaiWebFetchTool.name
+      arguments = ["source_id": sourceID, "query": .string("needle"), "max_bytes": .integer(256)]
+    } else if results.isEmpty {
+      name = MaiWebFetchTool.name
+      arguments = ["url": .string(url), "max_bytes": .integer(0)]
+    } else if results.count == 1 {
+      sourceID = try #require(results[0].structuredContent?.objectValue?["source_id"])
+      name = AgentProcessTools.startToolName
+      arguments = [
+        "context": .string("source_id: \(sourceID.stringValue ?? "")"),
+        "task": .string("Extract needle from the cached source"),
+        "output": .string("The needle value only"), "tools": .array([.string(MaiWebFetchTool.name)]),
+      ]
+    } else {
+      return ProviderResponse(message: .assistant("Documented needle-answer"), stopReason: .stop)
+    }
+    return ProviderResponse(message: AgentMessage(role: .assistant, content: [
+      .toolCall(ToolCall(id: UUID().uuidString, name: name, arguments: .object(arguments))),
+    ]), stopReason: .toolCall)
+  }
+}
+
+@Test("Paged tool defaults shrink with context pressure while explicit sizes remain available")
+func webFetchHonorsContextBudget() async throws {
+  #expect(ToolExecutionContext.suggestedOutputBytes(contextTokens: 0, usedTokens: 0, toolCalls: 1) == nil)
+  #expect(ToolExecutionContext.suggestedOutputBytes(contextTokens: Int.max, usedTokens: 0, toolCalls: 1) == 32_000)
+  let one = try #require(ToolExecutionContext.suggestedOutputBytes(contextTokens: 8192, usedTokens: 4096, toolCalls: 1))
+  let two = try #require(ToolExecutionContext.suggestedOutputBytes(contextTokens: 8192, usedTokens: 4096, toolCalls: 2))
+  #expect(two == one / 2)
+  #expect(ToolExecutionContext.suggestedOutputBytes(contextTokens: 8192, usedTokens: 8192, toolCalls: 2) == 1024)
+  let fixture = FetchFixture(body: String(repeating: "x", count: 30_000))
+  defer { fixture.remove() }
+  let tool = MaiWebFetchTool(service: fixture.service())
+  var context = fetchContext
+  context.suggestedOutputBytes = two
+  let small = try await tool.call(arguments: .object(["url": .string(fixture.url)]), context: context)
+  #expect(fetchedBody(small).utf8.count == two)
+  let id = try #require(small.structuredContent?.objectValue?["source_id"])
+  let explicit = try await tool.call(arguments: .object(["source_id": id, "max_bytes": .integer(20_000)]), context: context)
+  #expect(fetchedBody(explicit).utf8.count == 20_000)
+}
+
+@Test("Size mode prunes previous web bodies but keeps a recoverable source reference")
+func webFetchPrunesPreviousBodies() {
+  func message(_ id: String) -> AgentMessage {
+    AgentMessage(role: .tool, content: [.toolResult(ToolResult(
+      callID: id, content: [.resource(ResourceContent(uri: "https://example.test/source", text: String(repeating: "x", count: 2000)))],
+      structuredContent: .object(["source_id": .string(id), "offset": .integer(16000)])))])
+  }
+  var messages: [AgentMessage] = [.user("first task"), message("first"), .assistant("done"), .user("next task"), message("current")]
+  #expect(AgentContextPruning.prune(&messages)?.rewritten == 1)
+  let reference = messages[1].toolResults[0].text
+  #expect(reference.contains("source_id first and offset 16000"))
+  #expect(reference.contains("https://example.test/source"))
+  #expect(messages[4].toolResults[0].text == String(repeating: "x", count: 2000))
+  #expect(AgentContextPruning.prune(&messages) == nil)
 }

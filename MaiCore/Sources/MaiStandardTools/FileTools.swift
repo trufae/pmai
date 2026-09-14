@@ -84,7 +84,10 @@ public struct MaiFileWorkspaceTool: AgentTool {
   }
 
   public func call(arguments: JSONValue, context: ToolExecutionContext) async throws -> ToolOutput {
-    let arguments = arguments.objectValue ?? [:]
+    var arguments = arguments.objectValue ?? [:]
+    if operation == .read, arguments["max_bytes"] == nil, let limit = context.suggestedOutputBytes {
+      arguments["max_bytes"] = .integer(max(4, limit))
+    }
     #if os(macOS) || os(iOS)
       let didStartAccess =
         configuration.isSecurityScoped
@@ -209,13 +212,13 @@ public struct MaiFileWorkspaceTool: AgentTool {
     case .read:
       return ToolDefinition(
         name: operation.rawValue,
-        description: "Read a text file. PDF and DOCX are converted to Markdown.",
+        description: "Read a text file. PDF and DOCX are converted to Markdown. For large files, first use files_grep or files_read_index, then read a range/function; delegate independent extraction tasks when agent_start is available.",
         parameters: [
           path,
           ToolParameterDef(
             name: "max_bytes",
             type: "integer",
-            description: "Maximum bytes to return, up to 500000. Default: 120000.",
+            description: "Maximum bytes to return, up to 500000. Default: up to 120000, reduced to fit the runtime's context budget.",
             required: false),
           ToolParameterDef(
             name: "offset",

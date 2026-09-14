@@ -119,6 +119,8 @@ public enum AgentProcessTools {
       : "Run one self-contained task in a child agent with a transcript of its own: it cannot see this conversation, and only its answer comes back. Agents: \(names.joined(separator: ", "))."
     startDescription +=
       " Independent tasks: start them all in the same reply, they run at once. A child may start children of its own."
+    startDescription +=
+      " For large files or web sources, pass paths, URLs or cached source_ids and a focused extraction question instead of copying raw data into the brief. Ask for a concise answer with relevant locations; narrow tools to the reads/searches needed."
     if planFirst {
       startDescription +=
         " For a request with several steps, write a short numbered plan in your reply before the first \(startToolName), saying which steps go to children and which of those run in parallel; a single question needs no plan."

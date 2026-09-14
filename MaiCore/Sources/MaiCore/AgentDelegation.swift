@@ -96,6 +96,10 @@ public enum AgentDelegationPrompt {
     exactly the expected output and nothing else. Do not ask questions and do \
     not report progress; if something needed is missing, do what you can and \
     say what was missing as part of the output.
+    Search or inspect an index before reading large sources. Read only relevant \
+    ranges and follow pagination when needed; a partial page is not the complete \
+    source. Keep raw data in this worker and return concise findings with source \
+    locations, unless the brief explicitly asks for the data itself.
     """
 
   public static func render(

@@ -162,10 +162,22 @@ public struct ToolDefinition: Codable, Equatable, Identifiable, Sendable {
 public struct ToolExecutionContext: Codable, Equatable, Sendable {
   public var run: AgentEventContext
   public var modelTurn: Int
+  /// Suggested default for paged tools. Explicit page sizes still take precedence.
+  public var suggestedOutputBytes: Int?
 
-  public init(run: AgentEventContext, modelTurn: Int) {
+  public init(run: AgentEventContext, modelTurn: Int, suggestedOutputBytes: Int? = nil) {
     self.run = run
     self.modelTurn = modelTurn
+    self.suggestedOutputBytes = suggestedOutputBytes
+  }
+
+  /// Share half the remaining compaction budget across this turn's tools.
+  /// This is a sizing hint, not a tokenizer or a provider context-window guarantee.
+  public static func suggestedOutputBytes(contextTokens: Int, usedTokens: Int, toolCalls: Int) -> Int? {
+    guard contextTokens > 0 else { return nil }
+    let remaining = max(0, contextTokens - max(0, usedTokens))
+    let share = remaining / max(1, toolCalls) / 2
+    return max(1024, min(8000, share) * 4)
   }
 }
 
