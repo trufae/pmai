@@ -170,7 +170,7 @@ public enum DocumentAttachmentImporter {
       destination = directory.appendingPathComponent(candidate)
       suffix += 1
     }
-    try data.write(to: destination, options: [.atomic, .withoutOverwriting])
+    try data.write(to: destination, options: [.withoutOverwriting])
     return destination
   }
 
