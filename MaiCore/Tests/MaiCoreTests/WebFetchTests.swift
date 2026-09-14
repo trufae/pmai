@@ -116,7 +116,10 @@ func webFetchCacheIsBounded(byCount: Bool) async throws {
   let service = fixture.service(cacheBytes: byCount ? 1000 : 100, cacheEntries: byCount ? 1 : 16)
   let first = try await service.fetch(arguments: ["url": .string(fixture.url)])
   let id = try #require(first.structuredContent?.objectValue?["source_id"])
-  _ = try await service.fetch(arguments: ["url": .string(fixture.url)])
+  let second = try await service.fetch(arguments: ["url": .string(fixture.url)])
+  try #require(!second.isError)
+  #expect(second.structuredContent?.objectValue?["source_id"] != id)
+  #expect(fixture.requests == 2)
   let expired = try await service.fetch(arguments: ["source_id": id])
   #expect(expired.isError)
   #expect(expired.text.contains("fetch the original URL again"))
@@ -181,6 +184,8 @@ private final class FetchFixture: @unchecked Sendable {
 }
 
 private final class FetchProtocol: URLProtocol, @unchecked Sendable {
+  private let stateLock = NSLock()
+  private var stopped = false
   static let lock = NSLock()
   nonisolated(unsafe) static var fixtures: [String: FetchFixture] = [:]
   private var fixture: FetchFixture? { Self.lock.withLock { Self.fixtures[request.url!.absoluteString] } }
@@ -194,12 +199,15 @@ private final class FetchProtocol: URLProtocol, @unchecked Sendable {
     let response = HTTPURLResponse(url: request.url!, statusCode: fixture.status, httpVersion: "HTTP/1.1", headerFields: headers)!
     client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
     for offset in stride(from: 0, to: fixture.body.count, by: 512) {
-      if fixture.stopped { return }
+      if stateLock.withLock({ stopped }) { return }
       client?.urlProtocol(self, didLoad: fixture.body.subdata(in: offset..<min(offset + 512, fixture.body.count)))
     }
     if !fixture.hangs { client?.urlProtocolDidFinishLoading(self) }
   }
-  override func stopLoading() { fixture?.noteStop() }
+  override func stopLoading() {
+    stateLock.withLock { stopped = true }
+    fixture?.noteStop()
+  }
 }
 
 @Test("An extraction worker shares a snapshot while the parent receives only its answer")
