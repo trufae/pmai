@@ -139,140 +139,199 @@ public struct MaiWebFetchTool: AgentTool {
   public static let name = "web_fetch"
   public static let toolDefinition = ToolDefinition(
     name: name,
-    description: "Fetch one HTTP or HTTPS URL and return cleaned page text.",
+    description: "Fetch a URL, or search/read a cached source_id without downloading it again. HTML becomes readable text; source code and other text stay intact. For large extraction tasks, fetch with max_bytes 0 and pass the source_id, question and expected summary to agent_start when available.",
     parameters: [
-      ToolParameterDef(
-        name: "url", type: "string",
-        description: "Full HTTP or HTTPS URL.",
-        required: true)
-    ])
+      ToolParameterDef(name: "url", type: "string", description: "HTTP or HTTPS URL to fetch. Supply either url or source_id.", required: false),
+      ToolParameterDef(name: "source_id", type: "string", description: "Cached source returned by an earlier fetch; shared with child agents. An expired source must be fetched again by URL.", required: false),
+      ToolParameterDef(name: "offset", type: "integer", description: "UTF-8 byte offset in the source, starting at 0. Use nextOffset to continue.", required: false),
+      ToolParameterDef(name: "max_bytes", type: "integer", description: "Page size: 4-256000 bytes, or 0 for metadata only. Default: up to 16000, reduced when context is tight.", required: false),
+      ToolParameterDef(name: "query", type: "string", description: "Find literal text, case-insensitively, at or after offset and return a page around the first match. Searches the entire remaining source.", required: false),
+    ],
+    annotations: ToolAnnotations(readOnly: true, idempotent: true, openWorld: true, approval: .confirm))
 
   public let definition = Self.toolDefinition
+  private let service: MaiWebFetchService
 
-  public init() {}
+  public init(service: MaiWebFetchService = .shared) { self.service = service }
 
   public func call(arguments: JSONValue, context: ToolExecutionContext) async throws -> ToolOutput {
-    let arguments = arguments.objectValue ?? [:]
-    let url =
-      arguments["url"]?.coercedStringValue
-      ?? arguments["uri"]?.coercedStringValue ?? ""
-    let result = await MaiWebFetchService.fetchContext(urlString: url)
-    return ToolOutput(text: result, isError: result.hasPrefix("Error:"))
+    try await service.fetch(arguments: arguments.objectValue ?? [:])
   }
 }
 
-public enum MaiWebFetchService {
-  private static let userAgent = "mai/1.0 (+https://github.com/trufae/mai)"
-  private static let requestTimeout: TimeInterval = 10
-  private static let maxDownloadedBytes = 2_000_000
-  private static let maxReturnedCharacters = 16_000
+/// The cache keeps complete sources out of transcripts. IDs name immutable snapshots,
+/// including across child agents; eviction is explicit rather than silently mixing pages.
+public actor MaiWebFetchService {
+  public static let shared = MaiWebFetchService()
+  private static let maximumPageBytes = 256_000
+  private let configuration: URLSessionConfiguration
+  private let maximumDownloadedBytes: Int
+  private let maximumCacheBytes: Int
+  private let maximumCacheEntries: Int
+  private struct Source {
+    let url: String
+    let content: WebFetchedContent
+    let bytes: Int
+  }
+  private var sources: [String: Source] = [:]
+  private var recent: [String] = []
+  private var cachedBytes = 0
 
+  public init(
+    configuration: URLSessionConfiguration = .ephemeral,
+    maximumDownloadedBytes: Int = 16_000_000,
+    maximumCacheBytes: Int = 32_000_000,
+    maximumCacheEntries: Int = 16
+  ) {
+    self.configuration = configuration.copy() as! URLSessionConfiguration
+    self.configuration.timeoutIntervalForResource = 60
+    self.maximumDownloadedBytes = max(1, maximumDownloadedBytes)
+    self.maximumCacheBytes = max(1, maximumCacheBytes)
+    self.maximumCacheEntries = max(1, maximumCacheEntries)
+  }
+
+  /// Compatibility entry point for hosts which only consume rendered text.
   public static func fetchContext(urlString: String) async -> String {
-    guard let url = normalizedURL(from: urlString) else {
-      return "Error: provide a valid HTTP or HTTPS URL."
-    }
-    guard !hasCredentials(url) else {
-      return "Error: URLs with embedded credentials are not supported."
-    }
-
-    var request = URLRequest(url: url)
-    request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-    request.setValue(
-      "text/html, text/plain;q=0.9, application/xhtml+xml;q=0.9, application/json;q=0.5, */*;q=0.1",
-      forHTTPHeaderField: "Accept")
-    request.timeoutInterval = requestTimeout
-
     do {
-      let (data, response) = try await URLSession.shared.data(for: request)
-      guard let http = response as? HTTPURLResponse else {
-        return "Error: fetch did not return an HTTP response."
-      }
-      guard (200..<300).contains(http.statusCode) else {
-        return "Error: fetch returned HTTP \(http.statusCode)."
-      }
-      guard data.count <= maxDownloadedBytes else {
-        return "Error: fetched content is too large (\(data.count) bytes)."
-      }
-
-      let contentType = http.value(forHTTPHeaderField: "Content-Type")
-      guard isTextLike(contentType) else {
-        return "Error: fetched content is not text or HTML."
-      }
-      guard
-        let raw = decodedString(from: data),
-        !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-      else {
-        return "Error: fetched content could not be decoded as text."
-      }
-
-      let cleaned = WebFetchContentCleaner.clean(raw, contentType: contentType)
-      guard !cleaned.text.isEmpty else {
-        return "Error: no readable text was found at \(displayURL(http.url ?? url))."
-      }
-
-      let visibleURL = displayURL(http.url ?? url)
-      let titleLine = cleaned.title.isEmpty ? nil : "Title: \(cleaned.title)"
-      let text = limited(cleaned.text)
-      return
-        (["Web Fetch tool (url: \"\(visibleURL)\"):"]
-        + [titleLine].compactMap { $0 } + ["", text])
-        .joined(separator: "\n")
+      return try await shared.fetch(arguments: ["url": .string(urlString)]).text
     } catch {
-      return "Error: fetch failed for \(displayURL(url)): \(error.localizedDescription)"
+      return "Error: fetch failed: \(error.localizedDescription)"
     }
+  }
+
+  public func fetch(arguments: [String: JSONValue]) async throws -> ToolOutput {
+    try Task.checkCancellation()
+    let offset = arguments["offset"]?.intValue ?? 0
+    let limit = arguments["max_bytes"]?.intValue ?? 16_000
+    guard offset >= 0, limit == 0 || (4...Self.maximumPageBytes).contains(limit) else {
+      return ToolOutput(text: "Error: offset must be non-negative; max_bytes must be 0 or 4-256000.", isError: true)
+    }
+    let query = arguments["query"]?.coercedStringValue ?? ""
+    let rawURL = arguments["url"]?.coercedStringValue ?? arguments["uri"]?.coercedStringValue
+    let sourceID: String
+    let source: Source
+    if let id = arguments["source_id"]?.stringValue {
+      guard rawURL == nil else {
+        return ToolOutput(text: "Error: supply either url or source_id, not both.", isError: true)
+      }
+      guard let cached = sources[id] else {
+        return ToolOutput(text: "Error: source_id has expired or is unknown; fetch the original URL again.", isError: true)
+      }
+      sourceID = id
+      source = cached
+    } else {
+      guard let url = Self.normalizedURL(from: rawURL ?? "") else {
+        return ToolOutput(text: "Error: provide a valid HTTP or HTTPS URL.", isError: true)
+      }
+      guard url.user == nil, url.password == nil else {
+        return ToolOutput(text: "Error: URLs with embedded credentials are not supported.", isError: true)
+      }
+      var request = URLRequest(url: url)
+      request.timeoutInterval = 30
+      request.setValue("pmai/1.0 (+https://github.com/trufae/pmai)", forHTTPHeaderField: "User-Agent")
+      request.setValue("text/html, text/plain;q=0.9, application/json;q=0.9, */*;q=0.1", forHTTPHeaderField: "Accept")
+      do {
+        let (data, http) = try await WebFetchDownload(limit: maximumDownloadedBytes)
+          .fetch(request, configuration: configuration)
+        guard (200..<300).contains(http.statusCode) else {
+          return ToolOutput(text: "Error: fetch returned HTTP \(http.statusCode).", isError: true)
+        }
+        let contentType = http.value(forHTTPHeaderField: "Content-Type")
+        guard Self.isTextLike(contentType), !data.contains(0),
+          let raw = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1)
+        else {
+          return ToolOutput(text: "Error: fetched content is not readable text or HTML.", isError: true)
+        }
+        let cleaned = WebFetchContentCleaner.clean(raw, contentType: contentType)
+        guard !cleaned.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+          return ToolOutput(text: "Error: no readable text was found at \(url.absoluteString).", isError: true)
+        }
+        source = Source(url: (http.url ?? url).absoluteString, content: cleaned, bytes: cleaned.text.utf8.count)
+        guard source.bytes <= maximumCacheBytes else {
+          return ToolOutput(text: "Error: decoded source exceeds the \(maximumCacheBytes)-byte cache limit.", isError: true)
+        }
+        try Task.checkCancellation()
+        while cachedBytes > maximumCacheBytes - source.bytes || sources.count >= maximumCacheEntries {
+          let oldest = recent.removeFirst()
+          cachedBytes -= sources.removeValue(forKey: oldest)!.bytes
+        }
+        sourceID = UUID().uuidString
+        sources[sourceID] = source
+        cachedBytes += source.bytes
+      } catch is CancellationError {
+        throw CancellationError()
+      } catch {
+        try Task.checkCancellation()
+        return ToolOutput(text: "Error: fetch failed: \(error.localizedDescription)", isError: true)
+      }
+    }
+    recent.removeAll { $0 == sourceID }
+    recent.append(sourceID)
+    guard offset <= source.bytes else {
+      return ToolOutput(text: "Error: offset \(offset) is past the source's \(source.bytes) bytes.", isError: true)
+    }
+    let bytes = source.content.text.utf8
+    var start = offset
+    var index = bytes.index(bytes.startIndex, offsetBy: start)
+    // Offsets may be supplied by hand. Never begin or end inside a UTF-8 scalar.
+    while index < bytes.endIndex, bytes[index] & 0xC0 == 0x80 {
+      bytes.formIndex(after: &index)
+      start += 1
+    }
+    var matchOffset: Int?
+    if !query.isEmpty, limit > 0 {
+      let from = index
+      if let match = source.content.text.range(of: query, options: .caseInsensitive, range: from..<source.content.text.endIndex) {
+        matchOffset = bytes.distance(from: bytes.startIndex, to: match.lowerBound)
+        start = max(start, matchOffset! - min(1000, limit / 4))
+        index = bytes.index(bytes.startIndex, offsetBy: start)
+        while index < bytes.endIndex, bytes[index] & 0xC0 == 0x80 {
+          bytes.formIndex(after: &index)
+          start += 1
+        }
+      } else {
+        start = source.bytes
+        index = bytes.endIndex
+      }
+    }
+    var end = min(source.bytes, start + min(limit, source.bytes - start))
+    var last = bytes.index(bytes.startIndex, offsetBy: end)
+    while last > index, last < bytes.endIndex, bytes[last] & 0xC0 == 0x80 {
+      bytes.formIndex(before: &last)
+      end -= 1
+    }
+    let text = String(decoding: bytes[index..<last], as: UTF8.self)
+    var header = "Web Fetch tool (url: \"\(source.url)\"):\nsource_id: \(sourceID)\nBytes \(start)-\(end) of \(source.bytes); nextOffset: \(end)."
+    if !source.content.title.isEmpty { header += "\nTitle: \(source.content.title)" }
+    if limit == 0 {
+      header += "\nMetadata only. Read this source_id with query or a positive max_bytes, or pass it to a child agent for extraction."
+    } else if !query.isEmpty, matchOffset == nil {
+      header += "\nNo matches at or after offset \(offset)."
+    } else if end < source.bytes {
+      header += "\nMore content is available: call web_fetch with this source_id and offset \(end), or narrow it with query."
+    }
+    return ToolOutput(
+      content: [.text(header), .resource(ResourceContent(uri: source.url, name: source.content.title, mimeType: "text/plain", text: text))],
+      structuredContent: .object([
+        "source_id": .string(sourceID), "url": .string(source.url),
+        "totalBytes": .integer(source.bytes), "offset": .integer(start),
+        "nextOffset": .integer(end), "truncated": .bool(end < source.bytes),
+        "matchOffset": matchOffset.map(JSONValue.integer) ?? .null,
+      ]))
   }
 
   private static func normalizedURL(from raw: String) -> URL? {
     let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
     let candidate = trimmed.contains("://") ? trimmed : "https://\(trimmed)"
-    guard
-      let components = URLComponents(string: candidate),
-      let scheme = components.scheme?.lowercased(),
-      scheme == "http" || scheme == "https",
-      components.host?.isEmpty == false,
-      let url = components.url
-    else {
-      return nil
-    }
+    guard let url = URL(string: candidate), let scheme = url.scheme?.lowercased(),
+      scheme == "http" || scheme == "https", url.host?.isEmpty == false else { return nil }
     return url
   }
 
-  private static func hasCredentials(_ url: URL) -> Bool {
-    guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-      return false
-    }
-    return components.user != nil || components.password != nil
-  }
-
   private static func isTextLike(_ contentType: String?) -> Bool {
-    guard let contentType = contentType?.lowercased(), !contentType.isEmpty else {
-      return true
-    }
-    return contentType.contains("text/")
-      || contentType.contains("html")
-      || contentType.contains("xml")
-      || contentType.contains("json")
-  }
-
-  private static func decodedString(from data: Data) -> String? {
-    String(data: data, encoding: .utf8)
-      ?? String(data: data, encoding: .isoLatin1)
-      ?? String(data: data, encoding: .ascii)
-  }
-
-  private static func limited(_ text: String) -> String {
-    guard text.count > maxReturnedCharacters else { return text }
-    return String(text.prefix(maxReturnedCharacters))
-      + "\n\n[Content truncated to \(maxReturnedCharacters) characters.]"
-  }
-
-  private static func displayURL(_ url: URL) -> String {
-    guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
-      return url.absoluteString
-    }
-    components.user = nil
-    components.password = nil
-    return components.string ?? url.absoluteString
+    let mime = contentType?.lowercased() ?? ""
+    return mime.isEmpty || mime.hasPrefix("text/") || mime.contains("html")
+      || mime.contains("xml") || mime.contains("json")
   }
 }
