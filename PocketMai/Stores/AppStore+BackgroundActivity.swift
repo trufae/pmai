@@ -21,6 +21,9 @@ extension AppStore {
     phase: AssistantActivityTask.Phase,
     detail: String = ""
   ) {
+    if phase == .runningTool {
+      responseBackgroundTasks[conversationID]?.recordProgress()
+    }
     guard settings.background.liveActivityEnabled else { return }
     assistantActivity.setPhase(id: conversationID, phase: phase, detail: detail)
   }
@@ -28,16 +31,16 @@ extension AppStore {
   /// Called per streamed chunk; the controller samples the text, so the only
   /// work here is mapping the message back to its conversation.
   func activityStreamingText(_ text: String, messageID: UUID) {
-    guard settings.background.liveActivityEnabled, !respondingConversationIDs.isEmpty else {
-      return
-    }
     for conversationID in respondingConversationIDs {
       guard let index = conversationIndex(for: conversationID),
         conversations[index].messages.last?.id == messageID
       else {
         continue
       }
-      assistantActivity.setStreamingText(id: conversationID, text: text)
+      responseBackgroundTasks[conversationID]?.recordProgress()
+      if settings.background.liveActivityEnabled {
+        assistantActivity.setStreamingText(id: conversationID, text: text)
+      }
       return
     }
   }
@@ -97,11 +100,17 @@ extension AppStore {
     switch phase {
     case .active:
       backgroundKeepAlive.stop()
+      for task in responseBackgroundTasks.values {
+        task.renewFiniteTask()
+      }
       assistantActivity.appDidBecomeActive()
       if let selectedConversationID {
         ResponseNotificationService.shared.clearNotifications(for: selectedConversationID)
       }
     case .background:
+      for request in longRunningOperationTimeoutRequests {
+        continueLongRunningOperation(id: request.id)
+      }
       refreshBackgroundKeepAlive(enteringBackground: true)
     case .inactive:
       break

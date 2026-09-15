@@ -10,21 +10,22 @@ final class BackgroundKeepAlive {
   private static let sampleRate: Double = 44100
   private static let watchdogInterval: Duration = .seconds(10)
 
-  private(set) var isActive = false
+  var isActive: Bool { isRequested && engine?.isRunning == true && player?.isPlaying == true }
+  private var isRequested = false
   private var engine: AVAudioEngine?
   private var player: AVAudioPlayerNode?
   private var watchdog: Task<Void, Never>?
 
   func start() {
-    guard !isActive else { return }
-    isActive = true
+    guard !isRequested else { return }
+    isRequested = true
     startEngine()
     // TTS and voice sessions reconfigure the shared audio session; if that
     // stops the engine, bring it back once they are done.
     watchdog = Task { [weak self] in
       while !Task.isCancelled {
         try? await Task.sleep(for: Self.watchdogInterval)
-        guard !Task.isCancelled, let self, self.isActive else { return }
+        guard !Task.isCancelled, let self, self.isRequested else { return }
         if self.engine?.isRunning != true {
           self.startEngine()
         }
@@ -33,8 +34,8 @@ final class BackgroundKeepAlive {
   }
 
   func stop() {
-    guard isActive else { return }
-    isActive = false
+    guard isRequested else { return }
+    isRequested = false
     watchdog?.cancel()
     watchdog = nil
     player?.stop()

@@ -60,6 +60,7 @@ enum InteractiveOperationTimeout {
   private enum Event<T: Sendable>: @unchecked Sendable {
     case result(Result<T, Error>)
     case timeout(UUID)
+    case decision(UUID, LongRunningOperationDecision)
   }
 
   static func run<T: Sendable>(
@@ -81,10 +82,12 @@ enum InteractiveOperationTimeout {
       seconds: seconds,
       generation: timerGeneration,
       continuation: continuation)
+    var decisionTask: Task<Void, Never>?
 
     defer {
       timerTask.cancel()
       operationTask.cancel()
+      decisionTask?.cancel()
       continuation.finish()
     }
 
@@ -94,8 +97,17 @@ enum InteractiveOperationTimeout {
       case .result(let result):
         return try result.get()
       case .timeout(let generation):
+        guard generation == timerGeneration, decisionTask == nil else { continue }
+        // Keep consuming results while the user considers the prompt (or is
+        // away). Completion/cancellation must not wait for a UI interaction.
+        decisionTask = Task { @MainActor in
+          let decision = await onTimeout(context)
+          continuation.yield(.decision(generation, decision))
+        }
+      case .decision(let generation, let decision):
         guard generation == timerGeneration else { continue }
-        switch await onTimeout(context) {
+        decisionTask = nil
+        switch decision {
         case .interrupt:
           throw CancellationError()
         case .skip:
