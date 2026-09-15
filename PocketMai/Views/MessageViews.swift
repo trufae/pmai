@@ -5607,40 +5607,35 @@ struct MarkdownTableView: View {
   private var wrappedTable: some View {
     let tableRows = [headers] + rows
     let rowCount = tableRows.count
+    // The message and its follow-up card need the full height, including
+    // wrapped rows outside the viewport; a lazy grid only estimates those.
     return styledTable(
-      LazyVGrid(columns: wrappedColumns, alignment: .leading, spacing: 0) {
+      VStack(alignment: .leading, spacing: 0) {
         ForEach(Array(tableRows.enumerated()), id: \.offset) { rowIndex, row in
-          ForEach(headers.indices, id: \.self) { columnIndex in
-            cellView(
-              columnIndex < row.count ? row[columnIndex] : "",
-              columnIndex: columnIndex,
-              isHeader: rowIndex == 0,
-              unwrapped: false
-            )
-            .background(
-              rowIndex == 0
-                ? Color.secondary.opacity(0.10)
-                : rowIndex.isMultiple(of: 2)
-                  ? Color.secondary.opacity(0.05)
-                  : Color.clear
-            )
-            .overlay(alignment: .bottom) {
-              if rowIndex < rowCount - 1 {
-                Divider().opacity(rowIndex == 0 ? 0.5 : 0.25)
-              }
+          HStack(spacing: 0) {
+            ForEach(headers.indices, id: \.self) { columnIndex in
+              cellView(
+                columnIndex < row.count ? row[columnIndex] : "",
+                columnIndex: columnIndex,
+                isHeader: rowIndex == 0,
+                unwrapped: false
+              )
+            }
+          }
+          .background(
+            rowIndex == 0
+              ? Color.secondary.opacity(0.10)
+              : rowIndex.isMultiple(of: 2)
+                ? Color.secondary.opacity(0.05)
+                : Color.clear
+          )
+          .overlay(alignment: .bottom) {
+            if rowIndex < rowCount - 1 {
+              Divider().opacity(rowIndex == 0 ? 0.5 : 0.25)
             }
           }
         }
       })
-  }
-
-  private var wrappedColumns: [GridItem] {
-    headers.indices.map { columnIndex in
-      GridItem(
-        .flexible(minimum: 1),
-        spacing: 0,
-        alignment: frameAlignment(textAlignment(for: columnIndex)))
-    }
   }
 
   private var unwrappedTable: some View {
@@ -5699,12 +5694,12 @@ struct MarkdownTableView: View {
       allowsPlatformTextView: false,
       italic: italic
     )
-    .fixedSize(horizontal: unwrapped, vertical: false)
+    .fixedSize(horizontal: unwrapped, vertical: !unwrapped)
     .padding(.horizontal, appearance.markdownMetric(10))
     .padding(.vertical, appearance.markdownMetric(8))
     .frame(
+      minWidth: unwrapped ? nil : 0,
       maxWidth: unwrapped ? nil : .infinity,
-      maxHeight: unwrapped ? nil : .infinity,
       alignment: frameAlignment(alignment))
   }
 
