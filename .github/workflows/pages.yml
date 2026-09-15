@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout website source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # Pages always reflects the default branch. A release completion
           # requests a fresh deployment without letting an older tag roll the
