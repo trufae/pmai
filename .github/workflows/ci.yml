@@ -269,7 +269,7 @@ jobs:
   build:
     name: Build (Xcode latest on macOS latest)
     runs-on: macos-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -318,7 +318,10 @@ jobs:
           # the inherited build setting, with Swift 6.4 first in the search order.
           swift_toolchain=$TOOLCHAINS
           unset TOOLCHAINS
-          make test XCODE_PACKAGE_FLAGS="-skipPackagePluginValidation COMPILER_INDEX_STORE_ENABLE=NO 'TOOLCHAINS=$swift_toolchain \$\$(inherited)'"
+          # Keep Xcode's SDK-integrated Clang for C/C++ dependencies. Coverage
+          # instrumentation is unused in CI and slows down their compilation.
+          xcode_clang=$(xcrun --toolchain XcodeDefault --find clang)
+          make test XCODE_PACKAGE_FLAGS="-skipPackagePluginValidation -enableCodeCoverage NO COMPILER_INDEX_STORE_ENABLE=NO 'CC=$xcode_clang' 'TOOLCHAINS=$swift_toolchain \$\$(inherited)'"
 
       - name: Upload iOS test results
         if: always()

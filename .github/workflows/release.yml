@@ -251,6 +251,7 @@ jobs:
           # Keep the SDK's Metal toolchain alongside the selected Swift compiler.
           swift_toolchain=$TOOLCHAINS
           unset TOOLCHAINS
+          xcode_clang=$(xcrun --toolchain XcodeDefault --find clang)
           xcodebuild \
             -project PocketMai.xcodeproj \
             -scheme PocketMai \
@@ -258,7 +259,7 @@ jobs:
             -destination 'generic/platform=iOS' \
             -derivedDataPath build/DerivedData \
             -skipPackagePluginValidation \
-            "TOOLCHAINS=$swift_toolchain \$(inherited)" \
+            "CC=$xcode_clang" "TOOLCHAINS=$swift_toolchain \$(inherited)" \
             CODE_SIGNING_ALLOWED=NO \
             build
 
