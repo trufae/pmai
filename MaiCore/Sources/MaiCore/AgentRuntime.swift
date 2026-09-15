@@ -1512,38 +1512,32 @@ public actor AgentRuntime {
     if let derived { derivedRuns[childPID] = derived }
     runBudgets[childPID] = childBudget
     let task = Task {
-      do {
-        let result = try await AgentProcessTools.run(
-          childPID,
-          supervisor: supervisor,
-          dynamicLimit: {
-            guard let parentPID = parent.pid else { return request.limits.maxSubagents }
-            return await self.subagentLimit(for: parentPID, fallback: request)
-          },
-          admitted: admitted,
-          background: !start.wait,
-          queueInterruption: {
-            await self.queuedInterruption(
-              for: childPID, fallback: childRequest, budget: childBudget)
-          },
-          onAdmitted: { await emit(.childStarted(parent, child: childContext)) }
-        ) {
-          try await self.runInternal(
-            childRequest,
-            runID: childRunID,
-            pid: childPID,
-            parentRunID: parent.runID,
-            depth: childDepth,
-            budget: childBudget,
-            derivedFrom: derived,
-            registeredAgent: start.agent != nil,
-            emit: emit)
-        }
-        await self.clearLiveRequest(for: childPID)
-        return result
-      } catch {
-        await self.clearLiveRequest(for: childPID)
-        throw error
+      defer { self.clearLiveRequest(for: childPID) }
+      return try await AgentProcessTools.run(
+        childPID,
+        supervisor: supervisor,
+        dynamicLimit: {
+          guard let parentPID = parent.pid else { return request.limits.maxSubagents }
+          return await self.subagentLimit(for: parentPID, fallback: request)
+        },
+        admitted: admitted,
+        background: !start.wait,
+        queueInterruption: {
+          await self.queuedInterruption(
+            for: childPID, fallback: childRequest, budget: childBudget)
+        },
+        onAdmitted: { await emit(.childStarted(parent, child: childContext)) }
+      ) {
+        try await self.runInternal(
+          childRequest,
+          runID: childRunID,
+          pid: childPID,
+          parentRunID: parent.runID,
+          depth: childDepth,
+          budget: childBudget,
+          derivedFrom: derived,
+          registeredAgent: start.agent != nil,
+          emit: emit)
       }
     }
     await supervisor.attach(task, to: childPID)
