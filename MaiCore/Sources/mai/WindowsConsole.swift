@@ -3,14 +3,22 @@
   import WinSDK
 
   // POSIX-shaped shims over the Win32 console, so the terminal code reads the
-  // same on every platform. The C runtime already offers isatty, read and
-  // dup2; this covers the rest the REPL uses: the console modes that stand in
+  // same on every platform. Use the C runtime's supported underscored names
+  // for descriptor operations; this also covers the console modes that stand in
   // for the termios flags the editor toggles, the window size, a
   // one-descriptor poll, Ctrl+C, and reopening the console as standard input.
 
   let STDIN_FILENO: Int32 = 0
   let STDOUT_FILENO: Int32 = 1
   let STDERR_FILENO: Int32 = 2
+
+  func isatty(_ descriptor: Int32) -> Int32 {
+    _isatty(descriptor)
+  }
+
+  func read(_ descriptor: Int32, _ buffer: UnsafeMutableRawPointer, _ count: UInt32) -> Int32 {
+    _read(descriptor, buffer, count)
+  }
 
   // MARK: - Terminal modes
 

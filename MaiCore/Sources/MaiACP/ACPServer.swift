@@ -127,7 +127,7 @@ public actor ACPServer {
       sessionID: id)
 
     let sessionID = id
-    let task = Task { [runtime] in
+    let task = Task { [weak self, runtime] in
       try await runtime.run(request) { [weak self] event in
         await self?.forward(event, session: sessionID)
       }

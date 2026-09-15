@@ -44,12 +44,12 @@ jobs:
 
       - name: Test MaiCore
         if: matrix.name == 'macOS'
-        run: swift test --package-path MaiCore
+        run: swift test --package-path MaiCore --disable-index-store
 
       # Reuse the debug objects built by swift test on macOS.
       - name: Build debug CLI
         run: |
-          swift build --package-path MaiCore --product pmai
+          swift build --package-path MaiCore --disable-index-store --product pmai
           cp "$(swift build --package-path MaiCore --show-bin-path)/pmai" pmai
 
       - name: Test paged web fetch over HTTP
@@ -108,8 +108,11 @@ jobs:
       # the fully static binary for Alpine and other musl distributions.
       - name: Build static debug CLI
         run: |
-          swift build --package-path MaiCore --product pmai --static-swift-stdlib
-          cp "$(swift build --package-path MaiCore --static-swift-stdlib --show-bin-path)/pmai" pmai
+          # Swift Build also needs static modules while compiling so Foundation
+          # emits its CoreFoundation, XML and networking autolink dependencies.
+          args=(--package-path MaiCore --static-swift-stdlib -Xswiftc -static-stdlib)
+          swift build "${args[@]}" --disable-index-store --product pmai
+          cp "$(swift build "${args[@]}" --show-bin-path)/pmai" pmai
 
       - name: Verify no Swift runtime dependencies
         run: |
@@ -160,7 +163,7 @@ jobs:
           PMAI_NO_VISUAL: "1"
         run: |
           args=(--package-path MaiCore --swift-sdk ${{ matrix.arch }}-swift-linux-musl ${{ matrix.build-args }})
-          swift build "${args[@]}" --product pmai
+          swift build "${args[@]}" --disable-index-store --product pmai
           cp "$(swift build "${args[@]}" --show-bin-path)/pmai" pmai
 
       - name: Verify the binary is static and runs
@@ -189,17 +192,18 @@ jobs:
   android-cli:
     name: CLI (Android arm64)
     runs-on: ubuntu-24.04
+    env:
+      PMAI_NO_VISUAL: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
       # The Android Swift SDK must exactly match the host Swift toolchain.
-      - name: Set up Swift and Android SDK
+      - name: Set up Swift
         uses: SwiftyLab/setup-swift@v1.14.0
         with:
           swift-version: swift-${{ env.SWIFT_VERSION }}-RELEASE
           check-latest: true
-          sdks: android
 
       # Swift Build reads ANDROID_NDK_HOME; 6.4 no longer needs a setup script.
       - name: Install Android NDK 30
@@ -209,9 +213,15 @@ jobs:
           unzip -q "$RUNNER_TEMP/android-ndk.zip" -d "$RUNNER_TEMP"
           echo "ANDROID_NDK_HOME=$RUNNER_TEMP/android-ndk-r30" >> "$GITHUB_ENV"
 
+      - name: Install Swift Android SDK
+        run: |
+          swift sdk install \
+            "https://download.swift.org/swift-${SWIFT_VERSION}-release/android-sdk/swift-${SWIFT_VERSION}-RELEASE/swift-${SWIFT_VERSION}-RELEASE_android.artifactbundle.tar.gz" \
+            --checksum 21fb555122a3d801ad943d48df7ebffdd8824de61c25c180bb792d3edaee0b43
+
       - name: Build Android arm64 debug CLI
         run: |
-          swift build --package-path MaiCore --product pmai \
+          swift build --package-path MaiCore --disable-index-store --product pmai \
             --swift-sdk swift-${SWIFT_VERSION}-RELEASE_android \
             --triple aarch64-unknown-linux-android28 --static-swift-stdlib
 
@@ -241,7 +251,7 @@ jobs:
 
       - name: Build debug CLI
         run: |
-          swift build --package-path MaiCore --product pmai
+          swift build --package-path MaiCore --disable-index-store --product pmai
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $bin = swift build --package-path MaiCore --show-bin-path
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -292,7 +302,7 @@ jobs:
         run: make aitest-build
 
       - name: Build and run all iOS tests (including conversation compatibility)
-        run: make test
+        run: make test XCODE_PACKAGE_FLAGS="-skipPackagePluginValidation COMPILER_INDEX_STORE_ENABLE=NO"
 
       - name: Upload iOS test results
         if: always()

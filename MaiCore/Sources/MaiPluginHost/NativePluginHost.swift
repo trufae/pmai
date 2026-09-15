@@ -173,14 +173,14 @@ private final class NativePluginLibrary: @unchecked Sendable {
     private static func symbol(
       _ name: String, in handle: UnsafeMutableRawPointer
     ) -> UnsafeMutableRawPointer? {
-      guard let address = GetProcAddress(unsafeBitCast(handle, to: HMODULE.self), name) else {
+      guard let address = GetProcAddress(handle.assumingMemoryBound(to: HINSTANCE__.self), name) else {
         return nil
       }
       return unsafeBitCast(address, to: UnsafeMutableRawPointer.self)
     }
 
     private static func close(_ handle: UnsafeMutableRawPointer) {
-      FreeLibrary(unsafeBitCast(handle, to: HMODULE.self))
+      FreeLibrary(handle.assumingMemoryBound(to: HINSTANCE__.self))
     }
 
     private static func dynamicLoaderError() -> String {
