@@ -173,7 +173,8 @@ private final class NativePluginLibrary: @unchecked Sendable {
     private static func symbol(
       _ name: String, in handle: UnsafeMutableRawPointer
     ) -> UnsafeMutableRawPointer? {
-      guard let address = GetProcAddress(handle.assumingMemoryBound(to: HINSTANCE__.self), name) else {
+      guard let address = GetProcAddress(handle.assumingMemoryBound(to: HINSTANCE__.self), name)
+      else {
         return nil
       }
       return unsafeBitCast(address, to: UnsafeMutableRawPointer.self)
