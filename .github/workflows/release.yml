@@ -64,11 +64,12 @@ jobs:
         run: |
           args=(--package-path MaiCore -c release --product pmai -Xswiftc -Osize)
           if [ "${{ runner.os }}" = "Linux" ]; then
-            args+=(--static-swift-stdlib)
+            # Select static Foundation modules during compilation as well as linking.
+            args+=(--static-swift-stdlib -Xswiftc -static-stdlib)
           fi
           swift build "${args[@]}"
           cp "$(swift build "${args[@]}" --show-bin-path)/pmai" pmai
-          strip -x pmai
+          strip ${{ runner.os == 'Linux' && '-s' || '-x' }} pmai
 
       - name: Exercise Linux release HTTP error handling
         if: runner.os == 'Linux'
@@ -155,16 +156,17 @@ jobs:
   android-cli:
     name: CLI (Android arm64)
     runs-on: ubuntu-24.04
+    env:
+      PMAI_NO_VISUAL: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Swift and Android SDK
+      - name: Set up Swift
         uses: SwiftyLab/setup-swift@v1.14.0
         with:
           swift-version: swift-${{ env.SWIFT_VERSION }}-RELEASE
           check-latest: true
-          sdks: android
 
       # Swift Build reads ANDROID_NDK_HOME; 6.4 no longer needs a setup script.
       - name: Install Android NDK 30
@@ -173,6 +175,12 @@ jobs:
             https://dl.google.com/android/repository/android-ndk-r30-linux.zip
           unzip -q "$RUNNER_TEMP/android-ndk.zip" -d "$RUNNER_TEMP"
           echo "ANDROID_NDK_HOME=$RUNNER_TEMP/android-ndk-r30" >> "$GITHUB_ENV"
+
+      - name: Install Swift Android SDK
+        run: |
+          swift sdk install \
+            "https://download.swift.org/swift-${SWIFT_VERSION}-release/android-sdk/swift-${SWIFT_VERSION}-RELEASE/swift-${SWIFT_VERSION}-RELEASE_android.artifactbundle.tar.gz" \
+            --checksum 21fb555122a3d801ad943d48df7ebffdd8824de61c25c180bb792d3edaee0b43
 
       - name: Build Android arm64 release CLI
         run: |

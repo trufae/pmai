@@ -2806,7 +2806,7 @@ struct MaiCLI {
     }
     guard waitStatus != -1 else {
       await terminal.line(
-        "error: Could not run '\(trimmed)': \(String(cString: strerror(errno)))",
+        "error: Could not run '\(trimmed)': \(NSError(domain: NSPOSIXErrorDomain, code: Int(errno)).localizedDescription)",
         to: .standardError)
       return
     }
@@ -4983,7 +4983,7 @@ struct MaiCLI {
     }
     guard waitStatus != -1 else {
       await terminal.line(
-        "error: Could not launch editor '\(command)': \(String(cString: strerror(errno)))",
+        "error: Could not launch editor '\(command)': \(NSError(domain: NSPOSIXErrorDomain, code: Int(errno)).localizedDescription)",
         to: .standardError)
       return false
     }
