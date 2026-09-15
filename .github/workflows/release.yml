@@ -168,12 +168,14 @@ jobs:
           swift-version: swift-${{ env.SWIFT_VERSION }}-RELEASE
           check-latest: true
 
-      # Swift Build reads ANDROID_NDK_HOME; 6.4 no longer needs a setup script.
+      # Swift Build uses the NDK directly; 6.4 no longer needs a setup script.
       - name: Install Android NDK 30
         run: |
           curl -fL -o "$RUNNER_TEMP/android-ndk.zip" \
             https://dl.google.com/android/repository/android-ndk-r30-linux.zip
           unzip -q "$RUNNER_TEMP/android-ndk.zip" -d "$RUNNER_TEMP"
+          # ROOT takes precedence over HOME, including the runner's preinstalled NDK.
+          echo "ANDROID_NDK_ROOT=$RUNNER_TEMP/android-ndk-r30" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$RUNNER_TEMP/android-ndk-r30" >> "$GITHUB_ENV"
 
       - name: Install Swift Android SDK
@@ -232,6 +234,15 @@ jobs:
         with:
           swift-version: swift-${{ env.SWIFT_VERSION }}-RELEASE
           check-latest: true
+
+      # Standalone toolchains omit ld, which Xcode needs to link manifests.
+      # https://github.com/swiftlang/swift/issues/89035
+      - name: Use Xcode's linker with the Swift toolchain
+        run: |
+          swift_bin="$(dirname "$(xcrun --find swiftc)")"
+          if [ ! -e "$swift_bin/ld" ]; then
+            sudo ln -s "$(xcrun --toolchain XcodeDefault --find ld)" "$swift_bin/ld"
+          fi
 
       # Keep releases independent of private signing credentials. The IPA can
       # be signed after download with the user's own Apple identity.
