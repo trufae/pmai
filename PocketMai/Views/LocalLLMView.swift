@@ -155,6 +155,7 @@ final class LocalLLMViewModel: ObservableObject {
 
       try await LocalMLXProvider.shared.load(
         modelID: modelId,
+        allowDownload: true,
         progressHandler: progressHandler)
       try Task.checkCancellation()
       guard isCurrentLoad(loadID: loadID) else {

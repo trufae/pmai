@@ -85,12 +85,18 @@ actor LocalMLXProvider {
 
   private var container: ModelContainer?
   private var loadedModelID: String?
+  private let downloader: any Downloader
+
+  init(downloader: any Downloader = LocalMLXImmediateCancelDownloader()) {
+    self.downloader = downloader
+  }
 
   // Minimum headroom reserved for output tokens within the KV window.
   private static let outputHeadroom = 512
 
   func load(
     modelID rawModelID: String,
+    allowDownload: Bool = false,
     progressHandler: @Sendable @escaping (Progress) -> Void = { _ in }
   ) async throws {
     let modelID = Self.normalizedModelID(rawModelID)
@@ -100,7 +106,9 @@ actor LocalMLXProvider {
     guard LocalMLXRepoIDValidator.isValid(modelID) else {
       throw LocalMLXError.invalidModelID(modelID)
     }
-    guard LocalMLXModelCache.containsRepository(modelID) else {
+    let wasCachedBeforeLoad = LocalMLXModelCache.containsRepository(modelID)
+    // Chat loads existing models; only an explicit Settings action may fetch a new one.
+    guard wasCachedBeforeLoad || allowDownload else {
       throw LocalMLXError.modelNotDownloaded(modelID)
     }
 
@@ -108,7 +116,6 @@ actor LocalMLXProvider {
       return
     }
 
-    let wasCachedBeforeLoad = LocalMLXModelCache.containsRepository(modelID)
     do {
       try Task.checkCancellation()
       let config = ModelConfiguration(id: modelID)
@@ -116,7 +123,7 @@ actor LocalMLXProvider {
         // Settings downloads into LocalMLXHub's app-owned cache. Using the
         // default HubClient here selected a different cache and could make a
         // supposedly downloaded model fetch its files again before chat.
-        from: LocalMLXImmediateCancelDownloader(),
+        from: downloader,
         using: TokenizersLoader(),
         configuration: config,
         progressHandler: progressHandler
