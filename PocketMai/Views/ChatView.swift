@@ -5677,6 +5677,10 @@ private struct ConversationModelSettingsView: View {
   @Environment(\.dismiss) private var dismiss
   @State private var didSaveDefaults = false
   @State private var modelFilter = ""
+  @State private var showingNewFolder = false
+  @State private var showingFolderManager = false
+  @State private var newFolderName = ""
+  @State private var folderErrorMessage: String?
 
   var body: some View {
     NavigationStack {
@@ -5684,6 +5688,8 @@ private struct ConversationModelSettingsView: View {
         if store.currentConversation == nil {
           ContentUnavailableView("No Chat Selected", systemImage: "bubble.left")
         } else {
+          folderSection
+
           Section {
             HStack {
               Button {
@@ -5813,6 +5819,71 @@ private struct ConversationModelSettingsView: View {
         }
       }
     }
+    .sheet(isPresented: $showingFolderManager) {
+      ConversationFolderManagementView()
+        .environmentObject(store)
+    }
+    .alert("New Folder", isPresented: $showingNewFolder) {
+      TextField("Folder name", text: $newFolderName)
+      Button("Cancel", role: .cancel) {}
+      Button("Create & Move") {
+        createFolderAndMoveConversation()
+      }
+      .disabled(ConversationFolder.normalizedCustomName(newFolderName).isEmpty)
+    } message: {
+      Text("Create a folder and move this chat into it.")
+    }
+  }
+
+  private var folderSection: some View {
+    Section("Folder") {
+      Picker("Folder", selection: folderSelectionBinding) {
+        ForEach(store.conversationFolders) { folder in
+          Label(folder.displayName, systemImage: folder.systemImage)
+            .tag(folder.id)
+            .disabled(!store.canUseConversationFolder(folder.id))
+        }
+      }
+      .pickerStyle(.menu)
+
+      Button {
+        newFolderName = ""
+        folderErrorMessage = nil
+        showingNewFolder = true
+      } label: {
+        Label("New Folder...", systemImage: "folder.badge.plus")
+      }
+      Button {
+        showingFolderManager = true
+      } label: {
+        Label("Manage Folders...", systemImage: "folder.badge.gearshape")
+      }
+      if let folderErrorMessage {
+        Text(folderErrorMessage)
+          .foregroundStyle(.red)
+      }
+    }
+  }
+
+  private var folderSelectionBinding: Binding<String> {
+    Binding {
+      store.currentConversation?.folderID ?? ConversationFolder.defaultID
+    } set: { folderID in
+      guard let conversationID = store.currentConversation?.id else { return }
+      folderErrorMessage = nil
+      Task { await store.moveConversation(id: conversationID, to: folderID) }
+    }
+  }
+
+  private func createFolderAndMoveConversation() {
+    guard let conversationID = store.currentConversation?.id else { return }
+    guard let folder = store.createConversationFolder(named: newFolderName) else {
+      folderErrorMessage = store.errorMessage
+      store.errorMessage = nil
+      return
+    }
+    folderErrorMessage = nil
+    Task { await store.moveConversation(id: conversationID, to: folder.id) }
   }
 
   private var provider: ProviderKind {
