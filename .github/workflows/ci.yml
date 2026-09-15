@@ -313,7 +313,12 @@ jobs:
         run: make aitest-build
 
       - name: Build and run all iOS tests (including conversation compatibility)
-        run: make test XCODE_PACKAGE_FLAGS="-skipPackagePluginValidation COMPILER_INDEX_STORE_ENABLE=NO"
+        run: |
+          # A global override hides the SDK's Metal toolchain. Preserve it via
+          # the inherited build setting, with Swift 6.4 first in the search order.
+          swift_toolchain=$TOOLCHAINS
+          unset TOOLCHAINS
+          make test XCODE_PACKAGE_FLAGS="-skipPackagePluginValidation COMPILER_INDEX_STORE_ENABLE=NO 'TOOLCHAINS=$swift_toolchain \$\$(inherited)'"
 
       - name: Upload iOS test results
         if: always()

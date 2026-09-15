@@ -248,6 +248,9 @@ jobs:
       # be signed after download with the user's own Apple identity.
       - name: Build unsigned device app
         run: |
+          # Keep the SDK's Metal toolchain alongside the selected Swift compiler.
+          swift_toolchain=$TOOLCHAINS
+          unset TOOLCHAINS
           xcodebuild \
             -project PocketMai.xcodeproj \
             -scheme PocketMai \
@@ -255,6 +258,7 @@ jobs:
             -destination 'generic/platform=iOS' \
             -derivedDataPath build/DerivedData \
             -skipPackagePluginValidation \
+            "TOOLCHAINS=$swift_toolchain \$(inherited)" \
             CODE_SIGNING_ALLOWED=NO \
             build
 
