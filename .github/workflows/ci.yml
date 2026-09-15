@@ -321,7 +321,11 @@ jobs:
           # Keep Xcode's SDK-integrated Clang for C/C++ dependencies. Coverage
           # instrumentation is unused in CI and slows down their compilation.
           xcode_clang=$(xcrun --toolchain XcodeDefault --find clang)
-          make test XCODE_PACKAGE_FLAGS="-skipPackagePluginValidation -enableCodeCoverage NO COMPILER_INDEX_STORE_ENABLE=NO 'CC=$xcode_clang' 'TOOLCHAINS=$swift_toolchain \$\$(inherited)'"
+          # Match Xcode's automatic SwiftUI/PhotosUI cross-imports.
+          # https://github.com/swiftlang/swift/issues/73048
+          make test XCODE_PACKAGE_FLAGS="-skipPackagePluginValidation -enableCodeCoverage NO COMPILER_INDEX_STORE_ENABLE=NO \
+            'CC=$xcode_clang' 'TOOLCHAINS=$swift_toolchain \$\$(inherited)' \
+            'OTHER_SWIFT_FLAGS=\$\$(inherited) -Xfrontend -enable-cross-import-overlays'"
 
       - name: Upload iOS test results
         if: always()

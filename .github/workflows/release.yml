@@ -260,6 +260,7 @@ jobs:
             -derivedDataPath build/DerivedData \
             -skipPackagePluginValidation \
             "CC=$xcode_clang" "TOOLCHAINS=$swift_toolchain \$(inherited)" \
+            'OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -enable-cross-import-overlays' \
             CODE_SIGNING_ALLOWED=NO \
             build
 
