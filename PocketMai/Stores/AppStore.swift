@@ -725,10 +725,13 @@ final class AppStore: ObservableObject {
     settings.selectedConversationFolderID = normalized
   }
 
-  func createConversationFolder(named rawName: String) {
-    guard let name = validatedConversationFolderName(rawName, excluding: nil) else { return }
-    settings.conversationFolders.append(ConversationFolder(name: name))
+  @discardableResult
+  func createConversationFolder(named rawName: String) -> ConversationFolder? {
+    guard let name = validatedConversationFolderName(rawName, excluding: nil) else { return nil }
+    let folder = ConversationFolder(name: name)
+    settings.conversationFolders.append(folder)
     saveSettings()
+    return folder
   }
 
   func renameConversationFolder(id: String, to rawName: String) {

@@ -1023,22 +1023,7 @@ struct ConversationSummaryActionsModifier: ViewModifier {
 
     Divider()
 
-    Menu {
-      ForEach(store.conversationFolders) { folder in
-        Button {
-          Task { await store.moveConversation(id: conversation.id, to: folder.id) }
-        } label: {
-          if folder.id == conversation.folderID {
-            Label(folder.displayName, systemImage: "checkmark")
-          } else {
-            Label(folder.displayName, systemImage: folder.systemImage)
-          }
-        }
-        .disabled(!store.canUseConversationFolder(folder.id) || folder.id == conversation.folderID)
-      }
-    } label: {
-      Label("Move to Folder", systemImage: "folder")
-    }
+    ConversationMoveMenu(store: store, conversation: conversation)
 
     ConversationExportMenu(conversationID: conversation.id, coordinator: exportCoordinator)
 
@@ -1086,7 +1071,33 @@ struct ConversationSummaryActionsModifier: ViewModifier {
   }
 }
 
-private struct ConversationFolderManagementView: View {
+private struct ConversationMoveMenu: View {
+  // Rows can stay unchanged when an empty folder is created or renamed.
+  // Observe the catalog in the menu without making the whole row observe it.
+  @ObservedObject var store: AppStore
+  let conversation: ConversationSummary
+
+  var body: some View {
+    Menu {
+      ForEach(store.conversationFolders) { folder in
+        Button {
+          Task { await store.moveConversation(id: conversation.id, to: folder.id) }
+        } label: {
+          if folder.id == conversation.folderID {
+            Label(folder.displayName, systemImage: "checkmark")
+          } else {
+            Label(folder.displayName, systemImage: folder.systemImage)
+          }
+        }
+        .disabled(!store.canUseConversationFolder(folder.id) || folder.id == conversation.folderID)
+      }
+    } label: {
+      Label("Move to Folder", systemImage: "folder")
+    }
+  }
+}
+
+struct ConversationFolderManagementView: View {
   @EnvironmentObject private var store: AppStore
   @Environment(\.dismiss) private var dismiss
   @State private var nameEdit: ConversationFolderNameEdit?
