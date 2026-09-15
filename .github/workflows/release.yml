@@ -5,6 +5,7 @@ on:
     tags: ["[0-9]*"]
 
 env:
+  # Pass the full release tag below so setup-swift does not drop the .0.
   SWIFT_VERSION: "6.4.0"
 
 permissions:
@@ -41,7 +42,7 @@ jobs:
       - name: Set up Swift
         uses: SwiftyLab/setup-swift@v1.14.0
         with:
-          swift-version: ${{ env.SWIFT_VERSION }}
+          swift-version: swift-${{ env.SWIFT_VERSION }}-RELEASE
           check-latest: true
 
       - name: Show Swift version and verify architecture
@@ -109,7 +110,7 @@ jobs:
       - name: Set up Swift and Static Linux SDK
         uses: SwiftyLab/setup-swift@v1.14.0
         with:
-          swift-version: ${{ env.SWIFT_VERSION }}
+          swift-version: swift-${{ env.SWIFT_VERSION }}-RELEASE
           check-latest: true
           sdks: static-linux
 
@@ -161,7 +162,7 @@ jobs:
       - name: Set up Swift and Android SDK
         uses: SwiftyLab/setup-swift@v1.14.0
         with:
-          swift-version: ${{ env.SWIFT_VERSION }}
+          swift-version: swift-${{ env.SWIFT_VERSION }}-RELEASE
           check-latest: true
           sdks: android
 
@@ -221,7 +222,7 @@ jobs:
       - name: Set up Swift
         uses: SwiftyLab/setup-swift@v1.14.0
         with:
-          swift-version: ${{ env.SWIFT_VERSION }}
+          swift-version: swift-${{ env.SWIFT_VERSION }}-RELEASE
           check-latest: true
 
       # Keep releases independent of private signing credentials. The IPA can
