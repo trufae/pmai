@@ -3,10 +3,16 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ["[0-9]*"]
   pull_request:
     branches: [main]
   workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  SWIFT_VERSION: "6.4.0"
 
 jobs:
   cli:
@@ -17,17 +23,20 @@ jobs:
         include:
           - os: ubuntu-24.04
             name: Linux x64
-            artifact: pmai-linux-x64
           - os: ubuntu-24.04-arm
             name: Linux arm64
-            artifact: pmai-linux-arm64
           - os: macos-latest
             name: macOS
-            artifact: pmai-macos
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Set up Swift
+        uses: SwiftyLab/setup-swift@v1.14.0
+        with:
+          swift-version: ${{ env.SWIFT_VERSION }}
+          check-latest: true
 
       - name: Show Swift version
         run: swift --version
@@ -36,31 +45,25 @@ jobs:
         if: matrix.name == 'macOS'
         run: swift test --package-path MaiCore
 
-      - name: Build release CLI
+      # Reuse the debug objects built by swift test on macOS.
+      - name: Build debug CLI
         run: |
-          swift build --package-path MaiCore -c release --product pmai -Xswiftc -Osize
-          strip -x MaiCore/.build/release/pmai
+          swift build --package-path MaiCore --product pmai
+          cp "$(swift build --package-path MaiCore --show-bin-path)/pmai" pmai
 
       - name: Test paged web fetch over HTTP
-        run: python3 test/web-fetch-smoke.py MaiCore/.build/release/pmai
+        run: python3 test/web-fetch-smoke.py ./pmai
 
       - name: Test REPL queue choices
         if: matrix.name == 'Linux x64'
-        run: python3 test/repl-queue-smoke.py MaiCore/.build/release/pmai
+        run: python3 test/repl-queue-smoke.py ./pmai
 
       - name: Test REPL suspend and resume
-        run: python3 test/repl-suspend-smoke.py MaiCore/.build/release/pmai
+        run: python3 test/repl-suspend-smoke.py ./pmai
 
-      - name: Upload CLI artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.artifact }}
-          path: MaiCore/.build/release/pmai
-          if-no-files-found: error
-
-      - name: Exercise release HTTP error handling
+      - name: Exercise HTTP error handling
         if: runner.os == 'Linux'
-        run: python3 test/linux-network-smoke.py MaiCore/.build/release/pmai
+        run: python3 test/linux-network-smoke.py ./pmai
 
   static-cli:
     name: CLI (Linux static ${{ matrix.name }})
@@ -70,14 +73,18 @@ jobs:
         include:
           - os: ubuntu-24.04
             name: x64
-            artifact: pmai-linux-x64-static
           - os: ubuntu-24.04-arm
             name: arm64
-            artifact: pmai-linux-arm64-static
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
+      - name: Set up Swift
+        uses: SwiftyLab/setup-swift@v1.14.0
+        with:
+          swift-version: ${{ env.SWIFT_VERSION }}
+          check-latest: true
 
       - name: Show Swift version
         run: swift --version
@@ -98,16 +105,15 @@ jobs:
       # result still depends on glibc, libstdc++, libcurl and libxml2, which
       # every mainstream glibc distro ships. The musl-cli job below produces
       # the fully static binary for Alpine and other musl distributions.
-      - name: Build static release CLI
+      - name: Build static debug CLI
         run: |
-          swift build --package-path MaiCore -c release --product pmai \
-            --static-swift-stdlib -Xswiftc -Osize
-          strip -s MaiCore/.build/release/pmai
+          swift build --package-path MaiCore --product pmai --static-swift-stdlib
+          cp "$(swift build --package-path MaiCore --static-swift-stdlib --show-bin-path)/pmai" pmai
 
       - name: Verify no Swift runtime dependencies
         run: |
           set -eu
-          bin=MaiCore/.build/release/pmai
+          bin=./pmai
           file "$bin"
           ldd "$bin"
           if ldd "$bin" | grep -Ei 'libswift|libFoundation|libdispatch|libBlocksRuntime|not found'; then
@@ -115,13 +121,6 @@ jobs:
             exit 1
           fi
           "$bin" --help
-
-      - name: Upload static CLI artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.artifact }}
-          path: MaiCore/.build/release/pmai
-          if-no-files-found: error
 
   musl-cli:
     name: CLI (Linux musl ${{ matrix.name }})
@@ -132,34 +131,36 @@ jobs:
           - os: ubuntu-24.04
             name: x64
             arch: x86_64
-            artifact: pmai-linux-x64-musl
+            build-args: -c release -Xswiftc -Osize
           - os: ubuntu-24.04-arm
             name: arm64
             arch: aarch64
-            artifact: pmai-linux-arm64-musl
+            build-args: ""
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
       # The Static Linux SDK must exactly match the host Swift toolchain.
-      - name: Set up Swift 6.3.3 and Static Linux SDK
+      - name: Set up Swift and Static Linux SDK
         uses: SwiftyLab/setup-swift@v1.14.0
         with:
-          swift-version: "6.3.3"
+          swift-version: ${{ env.SWIFT_VERSION }}
+          check-latest: true
           sdks: static-linux
 
       # Fully static: no glibc, libstdc++, libcurl or libxml2 dependency, so
       # the same binary runs on Alpine and on every glibc distribution.
       # swift-tui does not build against musl, so like the Android build this
       # one leaves out the /visual workspace (PMAI_NO_VISUAL).
-      - name: Build fully static release CLI
+      # Keep one optimized build to exercise the SDK/runtime without AVX.
+      - name: Build fully static CLI
+        env:
+          PMAI_NO_VISUAL: "1"
         run: |
-          PMAI_NO_VISUAL=1 swift build --package-path MaiCore -c release --product pmai \
-            --swift-sdk ${{ matrix.arch }}-swift-linux-musl -Xswiftc -Osize
-          bin=MaiCore/.build/${{ matrix.arch }}-swift-linux-musl/release/pmai
-          strip -s "$bin"
-          cp "$bin" pmai
+          args=(--package-path MaiCore --swift-sdk ${{ matrix.arch }}-swift-linux-musl ${{ matrix.build-args }})
+          swift build "${args[@]}" --product pmai
+          cp "$(swift build "${args[@]}" --show-bin-path)/pmai" pmai
 
       - name: Verify the binary is static and runs
         run: |
@@ -173,13 +174,6 @@ jobs:
 
       - name: Test REPL suspend and resume
         run: python3 test/repl-suspend-smoke.py ./pmai
-
-      - name: Upload static musl CLI artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.artifact }}
-          path: pmai
-          if-no-files-found: error
 
       # Nehalem has SSE4.2 but no AVX, like the N4120's relevant ISA ceiling.
       # Test the linked SDK/runtime too, not just instructions emitted by pmai.
@@ -199,93 +193,26 @@ jobs:
         uses: actions/checkout@v7
 
       # The Android Swift SDK must exactly match the host Swift toolchain.
-      - name: Set up Swift 6.3.3 and Android SDK
+      - name: Set up Swift and Android SDK
         uses: SwiftyLab/setup-swift@v1.14.0
         with:
-          swift-version: "6.3.3"
+          swift-version: ${{ env.SWIFT_VERSION }}
+          check-latest: true
           sdks: android
 
-      - name: Install Android NDK and configure Swift SDK
+      # Swift Build reads ANDROID_NDK_HOME; 6.4 no longer needs a setup script.
+      - name: Install Android NDK 30
         run: |
-          set -eu
-          ndk="$RUNNER_TEMP/android-ndk-r27d"
           curl -fL -o "$RUNNER_TEMP/android-ndk.zip" \
-            https://dl.google.com/android/repository/android-ndk-r27d-linux.zip
+            https://dl.google.com/android/repository/android-ndk-r30-linux.zip
           unzip -q "$RUNNER_TEMP/android-ndk.zip" -d "$RUNNER_TEMP"
-          test -d "$ndk"
+          echo "ANDROID_NDK_HOME=$RUNNER_TEMP/android-ndk-r30" >> "$GITHUB_ENV"
 
-          swift_sdk_root="${XDG_CONFIG_HOME:-$HOME/.config}/swiftpm/swift-sdks"
-          android_sdk="$swift_sdk_root/swift-6.3.3-RELEASE_android.artifactbundle/swift-android"
-          setup_script="$android_sdk/scripts/setup-android-sdk.sh"
-
-          echo "Android NDK: $ndk"
-          echo "Swift Android SDK: $android_sdk"
-          echo "Setup script: $setup_script"
-          echo "Swift SDKs installed:"
-          swift sdk list
-
-          if [ ! -d "$ndk" ]; then
-            echo "::error::Android NDK directory does not exist: $ndk"
-            exit 1
-          fi
-          if [ ! -f "$setup_script" ]; then
-            echo "::error::Android SDK setup script does not exist: $setup_script"
-            echo "Contents of the Swift SDK installation directory:"
-            find "$swift_sdk_root" -maxdepth 4 -print || true
-            exit 1
-          fi
-
-          echo "NDK and setup-script permissions:"
-          ls -ld "$ndk" "$setup_script"
-          echo "Starting setup-android-sdk.sh with ANDROID_NDK_HOME=$ndk"
-          set +e
-          ANDROID_NDK_HOME="$ndk" bash -x "$setup_script"
-          setup_status=$?
-          set -e
-          echo "setup-android-sdk.sh completed with exit code $setup_status"
-
-          if [ "$setup_status" -ne 0 ]; then
-            echo "::error::setup-android-sdk.sh failed with exit code $setup_status"
-            echo "Host and tool diagnostics:"
-            uname -a
-            bash --version
-            command -V swift curl unzip bash || true
-            echo "Relevant environment paths:"
-            echo "HOME=$HOME"
-            echo "RUNNER_TEMP=$RUNNER_TEMP"
-            echo "ANDROID_NDK_HOME=$ndk"
-            echo "Android NDK directory structure:"
-            find "$ndk" -maxdepth 3 -type d -print || true
-            echo "Swift Android SDK directory structure:"
-            find "$android_sdk" -maxdepth 3 -print || true
-            exit "$setup_status"
-          fi
-
-          echo "Android Swift SDK setup completed successfully"
-
-      - name: Build Android arm64 release CLI
+      - name: Build Android arm64 debug CLI
         run: |
-          swift build --package-path MaiCore -c release --product pmai \
-            --swift-sdk aarch64-unknown-linux-android28 --static-swift-stdlib \
-            -Xswiftc -Osize
-
-      - name: Stage Android CLI artifact
-        run: |
-          set -eu
-          output="$RUNNER_TEMP/pmai-android-arm64"
-          mkdir -p "$output"
-          cp MaiCore/.build/aarch64-unknown-linux-android28/release/pmai "$output/pmai"
-          cp "$RUNNER_TEMP/android-ndk-r27d/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$output/"
-          "$RUNNER_TEMP/android-ndk-r27d/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" -x "$output/pmai"
-          file "$output/pmai"
-          file "$output/libc++_shared.so"
-
-      - name: Upload Android CLI artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: pmai-android-arm64
-          path: ${{ runner.temp }}/pmai-android-arm64
-          if-no-files-found: error
+          swift build --package-path MaiCore --product pmai \
+            --swift-sdk swift-${SWIFT_VERSION}-RELEASE_android \
+            --triple aarch64-unknown-linux-android28 --static-swift-stdlib
 
   windows-cli:
     name: CLI (Windows x64)
@@ -302,32 +229,29 @@ jobs:
         uses: actions/checkout@v7
 
       # Use the installer-based action that the Swift project runs on Windows.
-      - name: Set up Swift 6.3.3
+      - name: Set up Swift
         uses: compnerd/gha-setup-swift@v0.4.1
         with:
-          swift-version: swift-6.3.3-release
-          swift-build: 6.3.3-RELEASE
+          swift-version: swift-${{ env.SWIFT_VERSION }}-release
+          swift-build: ${{ env.SWIFT_VERSION }}-RELEASE
 
       - name: Show Swift version
         run: swift --version
 
-      - name: Build release CLI
+      - name: Build debug CLI
         run: |
-          swift build --package-path MaiCore -c release --product pmai -Xswiftc -Osize
+          swift build --package-path MaiCore --product pmai
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $bin = swift build --package-path MaiCore --show-bin-path
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item "$bin/pmai.exe" pmai.exe
 
       - name: Verify the binary runs
         run: |
-          ./MaiCore/.build/release/pmai.exe --help
+          ./pmai.exe --help
 
       - name: Test paged web fetch over HTTP
-        run: python test/web-fetch-smoke.py MaiCore/.build/release/pmai.exe
-
-      - name: Upload CLI artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: pmai-windows-x64
-          path: MaiCore/.build/release/pmai.exe
-          if-no-files-found: error
+        run: python test/web-fetch-smoke.py ./pmai.exe
 
   build:
     name: Build (Xcode latest on macOS latest)
@@ -346,6 +270,12 @@ jobs:
           fi
           echo "Selecting $latest"
           sudo xcode-select -s "$latest/Contents/Developer"
+
+      - name: Set up Swift
+        uses: SwiftyLab/setup-swift@v1.14.0
+        with:
+          swift-version: ${{ env.SWIFT_VERSION }}
+          check-latest: true
 
       - name: Show Xcode and macOS versions
         run: |

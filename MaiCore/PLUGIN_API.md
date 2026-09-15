@@ -52,7 +52,7 @@ Build and exercise the reference plugin:
 
 ```sh
 make plugin-fixture
-make repl ARGS='--config MaiCore/Tests/Fixtures/native-plugin.json --plugin MaiCore/.build/debug/libMaiFixturePlugin.dylib'
+make repl ARGS="--config MaiCore/Tests/Fixtures/native-plugin.json --plugin $(swift build --package-path MaiCore --show-bin-path)/libMaiFixturePlugin.dylib"
 ```
 
 Then use `/plugins`, `/models`, `/tools`, `/mcps`, and `/image ocr PATH` in the

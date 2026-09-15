@@ -36,7 +36,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CASES = ROOT / "test" / "cases"
 RESULTS = ROOT / "test" / "results"
-PMAI = Path(os.environ.get("PMAI_BIN", ROOT / "MaiCore" / ".build" / "debug" / "pmai"))
 PROXY = Path(__file__).resolve().parent / "proxy.py"
 
 DEFAULT_INSTRUCTIONS = "You are a helpful assistant. Use tools when needed."
@@ -178,7 +177,7 @@ def run_case(name, args, upstream, key):
 
     env = clean_env()
     env["PMAI_HOME"] = str(out_dir / "home")
-    cmd = [str(PMAI), "--config", str(config_path), "--state", str(out_dir / "state"),
+    cmd = [str(args.pmai), "--config", str(config_path), "--state", str(out_dir / "state"),
            "--agent", "coder", "--yolo", "--no-markdown", prompt]
     started = time.time()
     timed_out = False
@@ -256,14 +255,21 @@ def main():
                         choices=["automatic", "native", "text", "xml", "json"],
                         help="toolCallingStrategy of the agent")
     args = parser.parse_args()
+    if os.environ.get("PMAI_BIN"):
+        args.pmai = Path(os.environ["PMAI_BIN"]).resolve()
+    else:
+        bin_path = subprocess.check_output(
+            ["swift", "build", "--package-path", str(ROOT / "MaiCore"), "--show-bin-path"],
+            text=True).strip()
+        args.pmai = Path(bin_path) / "pmai"
 
     envfile = read_env_file()
     upstream = os.environ.get("UPSTREAM") or envfile.get("PMAI_BASE_URL", "https://ollama.com/v1")
     key = os.environ.get("UPSTREAM_KEY") or envfile.get("PMAI_API_KEY", "")
     args.model = args.model or envfile.get("PMAI_MODEL", "gemma4:31b")
     args.run_id = args.run_id or time.strftime("%Y%m%d-%H%M%S") + f"-{args.variant}-{args.strategy}-plan{args.plan}-{args.model.replace(':', '_').replace('/', '_')}"
-    if not PMAI.exists():
-        raise SystemExit(f"pmai binary not found at {PMAI}; build with swift build --product pmai")
+    if not args.pmai.exists():
+        raise SystemExit(f"pmai binary not found at {args.pmai}; build with swift build --package-path MaiCore --product pmai")
 
     names = args.cases or sorted(p.name for p in CASES.iterdir() if (p / "prompt.txt").exists())
     base_id = args.run_id

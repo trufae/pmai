@@ -29,7 +29,7 @@ without its backtrace.
 Run the release HTTP regressions (local mock server; no model credentials):
 
 ```sh
-python3 test/linux-network-smoke.py MaiCore/.build/release/pmai
+python3 test/linux-network-smoke.py "$(swift build --package-path MaiCore -c release --show-bin-path)/pmai"
 # Fully static musl binary, SSE4.2 CPU model without AVX:
 python3 test/linux-network-smoke.py qemu-x86_64 -cpu Nehalem ./pmai
 ```
