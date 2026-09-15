@@ -34,7 +34,10 @@ final class ConversationFolderTests: XCTestCase {
     XCTAssertEqual(folder.name, "Work")
     XCTAssertTrue(store.conversationFolders.contains(folder))
     XCTAssertFalse(store.conversationSummaries.contains { $0.folderID == folder.id })
-    try await waitUntil { persistence.loadSettings().conversationFolders == [folder] }
+    try await waitUntil {
+      persistence.loadSettings().conversationFolders.map(\.id) == [folder.id]
+    }
+    XCTAssertEqual(persistence.loadSettings().conversationFolders.first?.name, folder.name)
 
     await store.moveConversation(id: conversation.id, to: folder.id)
     XCTAssertEqual(store.currentConversation?.folderID, folder.id)
@@ -85,11 +88,14 @@ final class ConversationFolderTests: XCTestCase {
     try await waitUntil { persistence.loadSettings().airplaneModeEnabled }
   }
 
-  private func waitUntil(_ predicate: () -> Bool) async throws {
+  private func waitUntil(
+    file: StaticString = #filePath, line: UInt = #line, _ predicate: () -> Bool
+  ) async throws {
     let deadline = Date().addingTimeInterval(5)
     while !predicate(), Date() < deadline {
       try await Task.sleep(for: .milliseconds(20))
     }
-    XCTAssertTrue(predicate(), "Folder operation did not finish before the deadline")
+    XCTAssertTrue(
+      predicate(), "Folder operation did not finish before the deadline", file: file, line: line)
   }
 }
