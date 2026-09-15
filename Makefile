@@ -76,7 +76,7 @@ repl:
 
 repl-install:
 	swift build --package-path MaiCore -c release --product pmai
-	$(SUDO) cp -f MaiCore/.build/release/pmai $(BINDIR)/pmai
+	$(SUDO) cp -f "$$(swift build --package-path MaiCore -c release --show-bin-path)/pmai" $(BINDIR)/pmai
 	$(SUDO) $(STRIP) $(BINDIR)/pmai
 
 # Fully static Linux build that also runs on musl distributions such as

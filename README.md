@@ -28,6 +28,14 @@ such as Apple Foundation Models, Native iOS Live speech transcription, and
 Liquid Glass controls fall back or report unavailable at runtime on older OS
 versions.
 
+CI and release builds use Swift 6.4.0, including matching Static Linux and
+Android SDKs. The packages keep Swift 6 language mode. SwiftPM now defaults
+to Swift Build; use `swift build --package-path MaiCore --show-bin-path`
+(with the same configuration and SDK arguments as the build) to locate binaries.
+CI uses debug builds for tests, retaining one optimized musl x64 build for
+the networking and no-AVX regression checks. Release tags build the optimized
+distribution artifacts in the Release workflow.
+
 ```sh
 make build               # builds for the iOS Simulator without code signing
 make run                 # installs and launches Xcode's latest signed device build
