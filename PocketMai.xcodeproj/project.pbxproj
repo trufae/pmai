@@ -558,7 +558,7 @@
 				CODE_SIGN_ENTITLEMENTS = PocketMai/PocketMai.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PocketMai/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = PocketMai;
@@ -592,7 +592,7 @@
 				CODE_SIGN_ENTITLEMENTS = PocketMai/PocketMai.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PocketMai/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = PocketMai;
@@ -658,7 +658,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = PocketMaiWidgets/PocketMaiWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = J5PTVY8BHH;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PocketMaiWidgets/Info.plist;
@@ -685,7 +685,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = PocketMaiWidgets/PocketMaiWidgets.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = J5PTVY8BHH;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PocketMaiWidgets/Info.plist;
@@ -712,7 +712,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = PocketMaiShare/PocketMaiShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = J5PTVY8BHH;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PocketMaiShare/Info.plist;
@@ -739,7 +739,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = PocketMaiShare/PocketMaiShare.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 33;
+				CURRENT_PROJECT_VERSION = 34;
 				DEVELOPMENT_TEAM = J5PTVY8BHH;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = PocketMaiShare/Info.plist;
