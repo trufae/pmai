@@ -1574,6 +1574,16 @@ struct MaiCLI {
     /// True while the input thread waits for the loop before reading again.
     var readerParked = true
     var exiting = false
+
+    mutating func beginExit() {
+      exiting = true
+      activeTurn?.task.cancel()
+      // Cancellation alone cannot resume a task waiting for an approval reply.
+      for waiting in approvals { waiting.reply.fail(CancellationError()) }
+      approvals.removeAll()
+      editingApproval?.reply.fail(CancellationError())
+      editingApproval = nil
+    }
   }
 
   /// What a command may change under a running turn, taken before it runs
@@ -1682,7 +1692,10 @@ struct MaiCLI {
       await terminal.attach(screen: screen)
       await visual.approvalHandler.setPrompter { request in
         try await withCheckedThrowingContinuation { pending in
-          continuation.yield(.approval(request, REPLApprovalReply(pending)))
+          let reply = REPLApprovalReply(pending)
+          if case .terminated = continuation.yield(.approval(request, reply)) {
+            reply.fail(CancellationError())
+          }
         }
       }
     }
@@ -2360,11 +2373,8 @@ struct MaiCLI {
             continue
           }
           if name == "/exit" || name == "/quit" {
-            loop.exiting = true
-            if let turn = loop.activeTurn {
-              turn.task.cancel()
-              continue
-            }
+            loop.beginExit()
+            if loop.activeTurn != nil { continue }
             break events
           }
           if name == "/continue" {
@@ -2625,11 +2635,8 @@ struct MaiCLI {
 
       case .endOfFile:
         loop.readerParked = true
-        loop.exiting = true
-        if let turn = loop.activeTurn {
-          turn.task.cancel()
-          continue
-        }
+        loop.beginExit()
+        if loop.activeTurn != nil { continue }
         break events
 
       case .turnFinished(let outcome):
@@ -2741,7 +2748,9 @@ struct MaiCLI {
         await releaseIfIdle(workspace: workspace)
 
       case .approval(let request, let reply):
-        if await visual.approvalHandler.isYOLOEnabled() {
+        if loop.exiting {
+          reply.fail(CancellationError())
+        } else if await visual.approvalHandler.isYOLOEnabled() {
           reply.resume(with: .approve(arguments: request.call.arguments))
         } else {
           loop.approvals.append((request, reply))
@@ -2772,8 +2781,7 @@ struct MaiCLI {
       }
     }
 
-    for waiting in loop.approvals { waiting.reply.fail(CancellationError()) }
-    loop.editingApproval?.reply.fail(CancellationError())
+    loop.beginExit()
     reader.stop()
     supervisorFeed.cancel()
     activityPulse.cancel()
