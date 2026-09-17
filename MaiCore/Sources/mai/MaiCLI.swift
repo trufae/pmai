@@ -1691,12 +1691,17 @@ struct MaiCLI {
       editor.install(surface: screen)
       await terminal.attach(screen: screen)
       await visual.approvalHandler.setPrompter { request in
-        try await withCheckedThrowingContinuation { pending in
-          let reply = REPLApprovalReply(pending)
-          if case .terminated = continuation.yield(.approval(request, reply)) {
-            reply.fail(CancellationError())
-          }
+        // Stream iteration wakes when the waiting agent's task is cancelled.
+        let (decisions, pending) = AsyncThrowingStream<ApprovalDecision, any Error>.makeStream()
+        let reply = REPLApprovalReply(pending)
+        defer { continuation.yield(.approvalFinished(reply)) }
+        if case .terminated = continuation.yield(.approval(request, reply)) {
+          throw CancellationError()
         }
+        var iterator = decisions.makeAsyncIterator()
+        guard let decision = try await iterator.next() else { throw CancellationError() }
+        try Task.checkCancellation()
+        return decision
       }
     }
     let supervisorFeed = Task {
@@ -2756,6 +2761,11 @@ struct MaiCLI {
           loop.approvals.append((request, reply))
           await terminal.approvalRequest(request)
         }
+        await refreshStatus()
+
+      case .approvalFinished(let reply):
+        loop.approvals.removeAll { $0.reply === reply }
+        if loop.editingApproval?.reply === reply { loop.editingApproval = nil }
         await refreshStatus()
 
       case .supervisor(let change):

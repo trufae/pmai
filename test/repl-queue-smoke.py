@@ -35,7 +35,15 @@ class Provider(BaseHTTPRequestHandler):
         if texts == ['slow'] and not release.is_set():
             release.wait(30)
         message = {'role': 'assistant', 'content': 'answer'}
-        if texts == ['approval']:
+        if texts == ['subagent'] and not any(m['role'] == 'tool' for m in request['messages']):
+            message = {'role': 'assistant', 'content': None, 'tool_calls': [{
+                'id': 'start-1', 'type': 'function', 'function': {
+                    'name': 'agent_start',
+                    'arguments': json.dumps({'agent': 'worker', 'task': 'approval',
+                                             'output': 'answer', 'wait': True}),
+                },
+            }]}
+        elif texts == ['approval'] or request['model'] == 'worker':
             message = {'role': 'assistant', 'content': None, 'tool_calls': [{
                 'id': 'write-1', 'type': 'function', 'function': {
                     'name': 'files_write',
@@ -77,7 +85,8 @@ def main():
     try:
         for choice in ('continue', 'submit', 'ignore', 'clear', 'stop',
                        'approval-eof', 'edit-eof', 'approval-exit', 'edit-exit',
-                       'approval-quit', 'edit-quit'):
+                       'approval-quit', 'edit-quit', 'approval-interrupt', 'edit-interrupt',
+                       'child-interrupt', 'child-edit-interrupt', 'child-kill'):
             release.clear()
             with tempfile.TemporaryDirectory(prefix='pmai-queue-') as directory:
                 root = Path(directory)
@@ -90,6 +99,10 @@ def main():
                     'toolSources': [{'id': 'standard', 'kind': 'standard-tools',
                                      'options': {'tools': ['files_write']}}],
                     'agents': [{'id': 'smoke', 'provider': 'smoke', 'model': 'smoke',
+                                'toolNames': ['files_write'], 'toolGroupNames': [], 'enabled': True,
+                                'subagentNames': ['worker'],
+                                'retry': {'attempts': 0}},
+                               {'id': 'worker', 'provider': 'smoke', 'model': 'worker',
                                 'toolNames': ['files_write'], 'toolGroupNames': [], 'enabled': True,
                                 'retry': {'attempts': 0}}],
                     'approvals': {'confirm': 'ask', 'dangerous': 'ask', 'yolo': False},
@@ -133,15 +146,36 @@ def main():
 
                 try:
                     wait_for('pmai>')
-                    if choice.startswith(('approval-', 'edit-')):
-                        send('approval\n')
-                        assert user_texts() == ['approval']
-                        wait_for('[y/a/n/e/c] ')
-                        if choice.startswith('edit-'):
+                    if choice.startswith(('approval-', 'edit-', 'child-')):
+                        prompt = 'subagent' if choice.startswith('child-') else 'approval'
+                        send(prompt + '\n')
+                        assert user_texts() == [prompt]
+                        if prompt == 'subagent':
+                            wait_for("tool 'agent_start'")
+                            send('y\n')
+                            assert requests.get(timeout=20)['model'] == 'worker'
+                        approval = wait_for("tool 'files_write'")
+                        if 'edit-' in choice:
                             send('e\n')
                             wait_for('json> ')
-                        action = choice.split('-')[1]
-                        send('\x04' if action == 'eof' else f'/{action}\n')
+                        action = choice.rsplit('-', 1)[1]
+                        if action in ('interrupt', 'kill'):
+                            if action == 'kill':
+                                pid = re.search(r'agent#(\d+) wants', approval)[1]
+                                send(f'/agents kill {pid}\n')
+                                assert user_texts() == ['subagent']
+                                wait_for('✓ took')
+                            else:
+                                send('\x03')
+                                wait_for('✗ took')
+                            assert requests.empty(), 'Unexpected request after cancellation'
+                            # "yes" must reach the provider, not a stale approval prompt.
+                            send('yes\n')
+                            assert user_texts()[-1] == 'yes'
+                            wait_for('✓ took')
+                            send('/exit\n')
+                        else:
+                            send('\x04' if action == 'eof' else f'/{action}\n')
                         process.wait(timeout=10)
                         assert process.returncode == 0, process.returncode
                         assert not (root / 'unapproved.txt').exists(), 'Unapproved tool ran'
