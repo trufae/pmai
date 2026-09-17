@@ -287,7 +287,7 @@ public enum MaiContextTools {
           "Before your next turn: \(preview.summary). Tool calls and their results go together, so linked messages are included."
       )
     case rewriteName:
-      guard let number = arguments["message"]?.coercedNumberValue.map({ Int($0) }) else {
+      guard let number = arguments["message"]?.intValue else {
         return error("message is required.")
       }
       guard let text = arguments["text"]?.stringValue, !text.isEmpty else {

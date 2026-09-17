@@ -1015,14 +1015,18 @@ public enum AgentTooling {
     switch parameter.type.lowercased() {
     case "integer", "int":
       if case .integer = value { return value }
-      if let number = value.coercedNumberValue, number.rounded() == number {
-        return .integer(Int(number))
+      if let integer = value.stringValue.flatMap({
+        Int($0.trimmingCharacters(in: .whitespacesAndNewlines))
+      })
+        ?? value.coercedNumberValue.flatMap({ Int(exactly: $0) })
+      {
+        return .integer(integer)
       }
       return parameter.required ? value : nil
     case "number":
       if case .integer = value { return value }
-      if let number = value.coercedNumberValue {
-        return number.rounded() == number ? .integer(Int(number)) : .number(number)
+      if let number = value.coercedNumberValue, number.isFinite {
+        return Int(exactly: number).map(AgentToolArgumentValue.integer) ?? .number(number)
       }
       return parameter.required ? value : nil
     case "boolean", "bool":
