@@ -35,12 +35,12 @@ class Provider(BaseHTTPRequestHandler):
         if texts == ['slow'] and not release.is_set():
             release.wait(30)
         message = {'role': 'assistant', 'content': 'answer'}
-        if texts == ['subagent'] and not any(m['role'] == 'tool' for m in request['messages']):
+        if texts in (['subagent'], ['background']) and not any(m['role'] == 'tool' for m in request['messages']):
             message = {'role': 'assistant', 'content': None, 'tool_calls': [{
                 'id': 'start-1', 'type': 'function', 'function': {
                     'name': 'agent_start',
                     'arguments': json.dumps({'agent': 'worker', 'task': 'approval',
-                                             'output': 'answer', 'wait': True}),
+                                             'output': 'answer', 'wait': texts == ['subagent']}),
                 },
             }]}
         elif texts == ['approval'] or request['model'] == 'worker':
@@ -86,7 +86,8 @@ def main():
         for choice in ('continue', 'submit', 'ignore', 'clear', 'stop',
                        'approval-eof', 'edit-eof', 'approval-exit', 'edit-exit',
                        'approval-quit', 'edit-quit', 'approval-interrupt', 'edit-interrupt',
-                       'child-interrupt', 'child-edit-interrupt', 'child-kill'):
+                       'child-interrupt', 'child-edit-interrupt', 'child-kill',
+                       'background-interrupt', 'background-edit-interrupt'):
             release.clear()
             with tempfile.TemporaryDirectory(prefix='pmai-queue-') as directory:
                 root = Path(directory)
@@ -137,8 +138,9 @@ def main():
                                 output.extend(os.read(master, 65536))
                             except OSError as error:
                                 raise AssertionError((process.poll(), output.decode(errors='replace'))) from error
-                    captured = bytes(output).decode(errors='replace')
-                    output.clear()
+                    end = output.index(needle) + len(needle)
+                    captured = bytes(output[:end]).decode(errors='replace')
+                    del output[:end]
                     return captured
 
                 def user_texts():
@@ -147,16 +149,22 @@ def main():
 
                 try:
                     wait_for('pmai>')
-                    if choice.startswith(('approval-', 'edit-', 'child-')):
-                        prompt = 'subagent' if choice.startswith('child-') else 'approval'
+                    if choice.startswith(('approval-', 'edit-', 'child-', 'background-')):
+                        prompt = ('background' if choice.startswith('background-') else
+                                  'subagent' if choice.startswith('child-') else 'approval')
                         send(prompt + '\n')
                         assert user_texts() == [prompt]
-                        if prompt == 'subagent':
+                        if prompt != 'approval':
                             wait_for("wants to run confirm tool 'agent_start'")
                             send('y\n')
-                            child_request = requests.get(timeout=20)
-                            assert child_request['model'] == 'worker', child_request
+                            models = sorted(requests.get(timeout=20)['model']
+                                            for _ in range(2 if prompt == 'background' else 1))
+                            assert models == (['smoke', 'worker'] if prompt == 'background' else ['worker']), models
                         approval = wait_for("wants to run confirm tool 'files_write'")
+                        if prompt == 'background':
+                            pid = re.search(r'agent#(\d+) wants', approval)[1]
+                            send(f'/agents focus {pid}\n')
+                            wait_for(f'Messages go to agent#{pid}')
                         if 'edit-' in choice:
                             send('e\n')
                             wait_for('json> ')
@@ -170,6 +178,8 @@ def main():
                             else:
                                 send('\x03')
                                 wait_for('✗ took')
+                                if prompt == 'background':
+                                    wait_for(f'agent#{pid} has ended; messages go to this chat again.')
                             assert requests.empty(), 'Unexpected request after cancellation'
                             # "yes" must reach the provider, not a stale approval prompt.
                             send('yes\n')

@@ -1578,11 +1578,19 @@ struct MaiCLI {
     mutating func beginExit() {
       exiting = true
       activeTurn?.task.cancel()
-      // Cancellation alone cannot resume a task waiting for an approval reply.
-      for waiting in approvals { waiting.reply.fail(CancellationError()) }
-      approvals.removeAll()
-      editingApproval?.reply.fail(CancellationError())
-      editingApproval = nil
+      cancelApprovals { _ in true }
+    }
+
+    mutating func cancelApprovals(matching matches: (ApprovalRequest) -> Bool) {
+      approvals.removeAll { waiting in
+        guard matches(waiting.request) else { return false }
+        waiting.reply.fail(CancellationError())
+        return true
+      }
+      if let waiting = editingApproval, matches(waiting.request) {
+        waiting.reply.fail(CancellationError())
+        editingApproval = nil
+      }
     }
   }
 
@@ -2662,6 +2670,10 @@ struct MaiCLI {
         case .failure(let error):
           let cancelled = error is CancellationError || wasInterrupted
           if cancelled {
+            if let turn {
+              let stopped = Set(await runtime.supervisor.stop(turn.pid, reason: "Cancelled"))
+              loop.cancelApprovals { $0.run.pid.map(stopped.contains) ?? false }
+            }
             await terminal.recoverAfterCancellation()
           } else {
             await terminal.recoverAfterError(error.localizedDescription)
