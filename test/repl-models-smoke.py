@@ -151,6 +151,14 @@ def main():
                 output.clear()
                 os.write(master, text.replace('\n', '\r').encode())
 
+            def next_request(timeout=5):
+                end = time.monotonic() + timeout
+                while requests.empty():
+                    assert time.monotonic() < end, ('HTTP request timed out', output.decode(errors='replace'))
+                    assert process.poll() is None, (process.returncode, output)
+                    read_for(.05)
+                return requests.get_nowait()
+
             def sample(label, idle=False):
                 read_for(.5)
                 output.clear()
@@ -175,7 +183,7 @@ def main():
                 sample('idle large history', idle=True)
                 # /btw leaves the large saved history on screen without sending it.
                 send('/btw slow\n')
-                request = requests.get(timeout=10)
+                request = next_request(timeout=10)
                 assert request[0] == 'chat'
                 sample(f'waiting for provider ({request[1]} request bytes)')
                 release.set()
@@ -184,7 +192,7 @@ def main():
                 for provider, path in [('openai', '/models'), ('v1', '/v1/models'),
                                        ('completion', '/v1/models'), ('native', '/native/models')]:
                     send(f'/models {provider}\n')
-                    assert requests.get(timeout=5) == (path, 'application/json', None)
+                    assert next_request() == (path, 'application/json', None)
                     if provider == 'native':
                         wait_for('name-only.gguf')
                         wait_for('native.gguf (Native model)')
@@ -193,14 +201,14 @@ def main():
                     print(f'PASS model catalog {provider}', flush=True)
                 send('/models unavailable\n')
                 wait_for('Loading model')
-                assert requests.get(timeout=5)[0] == '/unavailable/models'
+                assert next_request()[0] == '/unavailable/models'
                 for provider, timeout in [('drip', 1), ('stalled', 15)]:
                     send(f'/models {provider}\n')
-                    assert requests.get(timeout=5)[0] == f'/{provider}/models'
+                    assert next_request()[0] == f'/{provider}/models'
                     wait_for(f'timed out after {timeout}s', timeout=timeout + 5)
                     print(f'PASS {provider} deadline', flush=True)
                 send('/models stalled\n')
-                assert requests.get(timeout=5)[0] == '/stalled/models'
+                assert next_request()[0] == '/stalled/models'
                 send('\x03')
                 wait_for('cancelled /models')
                 send('/model changed.gguf\n')
