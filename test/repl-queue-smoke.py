@@ -180,9 +180,13 @@ def main():
                                 wait_for('✗ took')
                                 if prompt == 'background':
                                     wait_for(f'agent#{pid} has ended; messages go to this chat again.')
+                                    wait_for('1 queued')
                             assert requests.empty(), 'Unexpected request after cancellation'
                             # "yes" must reach the provider, not a stale approval prompt.
                             send('yes\n')
+                            if prompt == 'background':
+                                wait_for('[submit/ignore/clear]')
+                                send('clear\n')
                             assert user_texts()[-1] == 'yes'
                             wait_for('✓ took')
                             send('/exit\n')
