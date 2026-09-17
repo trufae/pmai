@@ -759,7 +759,7 @@ public struct AgentRunLimits: Codable, Equatable, Sendable {
 
   public var maxModelTurns: Int
   public var maxToolCalls: Int
-  /// Children that may run at once. A child started past this number waits
+  /// Children that may run at once per parent process. Excess children wait
   /// in the `queued` state for a slot instead of being refused.
   public var maxSubagents: Int
   public var maxSubagentDepth: Int

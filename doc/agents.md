@@ -91,18 +91,26 @@ makes a tree, not a two-level parent/child split:
     └── #5  worker  approval?    waiting on write_file
 ```
 
-Depth is bounded by `limits.maxSubagentDepth`. The turn, tool, token, and time
-budgets belong to one agent, not to its whole tree: every child receives a
-fresh `RunBudget` from its own definition, so a parent that has handed out a
-hundred tool calls through its children can still start another child, and
+Depth is bounded by `limits.maxSubagentDepth` (default 5, with the main agent
+at depth 0). Unnamed workers inherit the ability to delegate unless their
+`tools` subset excludes the agent tools; named agents need their own `agents`
+tool group enabled. `/agents` and `/agents tree` show the full hierarchy.
+
+The turn, tool, token, and time budgets belong to one agent, not to its whole
+tree: every child receives a fresh `RunBudget` from its own definition, so a
+parent that has handed out a hundred tool calls through its children can still
+start another child, and
 that child can still call its tools. Budgets used to be summed across the
 tree, which is what left a late child with no tool calls at all. What bounds
 the tree as a whole is the parent's own allowance — each `agent_start` is one
 of its tool calls — together with the depth and the concurrency. Concurrency is
-bounded by `limits.maxSubagents` per parent agent, and a child started past it
-is **queued** rather than refused: the supervisor registers it in the `queued`
-state and admits it, oldest first, when a sibling ends. A queued child holds no
-slot and no budget; `agent_start` with `wait` false answers `Queued … as #N`
+bounded by `limits.maxSubagents` per parent process, including when multiple
+processes use the same named agent. Each parent keeps its own slots across
+chat turns, so a running child can start grandchildren even with a limit of
+one. A child started past the parent's limit is **queued** rather than refused:
+the supervisor registers it in the `queued` state and admits it, oldest first,
+when a sibling ends. A queued child holds no slot and no budget; `agent_start`
+with `wait` false answers `Queued … as #N`
 with status `queued`, a blocking start just waits, and `agent_stop` on a queued
 child ends the wait like any other cancellation.
 

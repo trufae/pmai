@@ -436,12 +436,15 @@ public actor AgentSupervisor {
   /// order and a stopped child simply stops asking.
   public func admit(_ pid: AgentPID, limit: Int) -> Bool {
     guard var entry = entries[pid], !entry.info.state.isTerminal else { return false }
-    guard let parent = entry.info.parent, let agentID = entries[parent]?.info.agentID else {
+    guard let parent = entry.info.parent else {
       return true
     }
-    let snapshot = tree()
-    let running = snapshot.liveChildren(ofAgent: agentID).filter { $0.pid != pid }.count
-    let olderWaiting = snapshot.queuedChildren(ofAgent: agentID).contains { $0.pid < pid }
+    // Recursive instances share a definition, but each parent has its own slots.
+    let siblings = entries.values.lazy.map(\.info).filter {
+      $0.parent == parent && $0.pid != pid && !$0.state.isTerminal
+    }
+    let running = siblings.filter { $0.state != .queued }.count
+    let olderWaiting = siblings.contains { $0.state == .queued && $0.pid < pid }
     if running < limit, !olderWaiting {
       guard entry.info.state == .queued else { return true }
       entry.info.state = .starting
