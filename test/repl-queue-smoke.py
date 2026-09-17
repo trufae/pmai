@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise queue choices and Ctrl+C in a real REPL PTY against a local provider."""
+"""Exercise queue choices, cancellation and approval shutdown in a real REPL PTY."""
 import fcntl
 import json
 import os
@@ -34,8 +34,16 @@ class Provider(BaseHTTPRequestHandler):
         texts = [m.get('content') for m in request['messages'] if m['role'] == 'user']
         if texts == ['slow'] and not release.is_set():
             release.wait(30)
-        body = json.dumps({'choices': [{'message': {'role': 'assistant', 'content': 'answer'},
-                                       'finish_reason': 'stop'}]}).encode()
+        message = {'role': 'assistant', 'content': 'answer'}
+        if texts == ['approval']:
+            message = {'role': 'assistant', 'content': None, 'tool_calls': [{
+                'id': 'write-1', 'type': 'function', 'function': {
+                    'name': 'files_write',
+                    'arguments': json.dumps({'path': 'unapproved.txt', 'content': 'must not run'}),
+                },
+            }]}
+        body = json.dumps({'choices': [{'message': message,
+                                       'finish_reason': 'tool_calls' if 'tool_calls' in message else 'stop'}]}).encode()
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(body)))
@@ -67,7 +75,9 @@ def main():
     server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        for choice in ('continue', 'submit', 'ignore', 'clear', 'stop'):
+        for choice in ('continue', 'submit', 'ignore', 'clear', 'stop',
+                       'approval-eof', 'edit-eof', 'approval-exit', 'edit-exit',
+                       'approval-quit', 'edit-quit'):
             release.clear()
             with tempfile.TemporaryDirectory(prefix='pmai-queue-') as directory:
                 root = Path(directory)
@@ -77,12 +87,16 @@ def main():
                     'providers': [{'id': 'smoke', 'kind': 'openAICompatible',
                                    'baseURL': f'http://127.0.0.1:{server.server_port}/v1',
                                    'apiKey': 'smoke', 'timeout': 60}],
+                    'toolSources': [{'id': 'standard', 'kind': 'standard-tools',
+                                     'options': {'tools': ['files_write']}}],
                     'agents': [{'id': 'smoke', 'provider': 'smoke', 'model': 'smoke',
-                                'toolGroupNames': [], 'enabled': True,
+                                'toolNames': ['files_write'], 'toolGroupNames': [], 'enabled': True,
                                 'retry': {'attempts': 0}}],
+                    'approvals': {'confirm': 'ask', 'dangerous': 'ask', 'yolo': False},
                     'memory': {'enabled': False, 'scope': 'project'}, 'use': {'plan': False},
                 }))
                 master, slave = pty.openpty()
+                cooked = termios.tcgetattr(slave)
                 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 200, 0, 0))
                 env = {k: v for k, v in os.environ.items()
                        if not k.startswith(('PMAI_', 'MAI_', 'OPENAI_'))
@@ -119,6 +133,22 @@ def main():
 
                 try:
                     wait_for('pmai>')
+                    if choice.startswith(('approval-', 'edit-')):
+                        send('approval\n')
+                        assert user_texts() == ['approval']
+                        wait_for('[y/a/n/e/c] ')
+                        if choice.startswith('edit-'):
+                            send('e\n')
+                            wait_for('json> ')
+                        action = choice.split('-')[1]
+                        send('\x04' if action == 'eof' else f'/{action}\n')
+                        process.wait(timeout=10)
+                        assert process.returncode == 0, process.returncode
+                        assert not (root / 'unapproved.txt').exists(), 'Unapproved tool ran'
+                        assert requests.empty(), 'Provider called again after shutdown'
+                        assert termios.tcgetattr(master) == cooked, 'Exit left the tty in raw mode'
+                        print(f'PASS {choice}')
+                        continue
                     if choice == 'continue':
                         send('/help\n')
                         help_text = wait_for('Input:')
