@@ -219,6 +219,41 @@ func queuedChildAndStop() async throws {
   #expect(refused.text.contains("is not available: done"))
 }
 
+@Test("Recursive instances have separate child slots and keep sibling queue order across turns")
+func recursiveAgentSlots() async throws {
+  let supervisor = AgentSupervisor()
+  let root = await supervisor.register(
+    runID: UUID(), parent: nil, agentID: "worker", depth: 0)
+  let child = await AgentProcessTools.register(
+    supervisor: supervisor, parent: root, agentID: "worker", task: "child",
+    depth: 1, limit: 1)
+  let sibling = await AgentProcessTools.register(
+    supervisor: supervisor, parent: root, agentID: "worker", task: "sibling",
+    depth: 1, limit: 1)
+  let grandchild = await AgentProcessTools.register(
+    supervisor: supervisor, parent: child.pid, agentID: "worker", task: "grandchild",
+    depth: 2, limit: 1)
+  #expect(child.admitted && !sibling.admitted)
+  #expect(grandchild.admitted)
+
+  // An older queued uncle must not block a child's own queue either.
+  let next = await AgentProcessTools.register(
+    supervisor: supervisor, parent: child.pid, agentID: "worker", task: "next",
+    depth: 2, limit: 1)
+  let last = await AgentProcessTools.register(
+    supervisor: supervisor, parent: child.pid, agentID: "worker", task: "last",
+    depth: 2, limit: 1)
+  #expect(!next.admitted && !last.admitted)
+  await supervisor.stop(grandchild.pid)
+  #expect(await supervisor.admit(last.pid, limit: 1) == false)
+  #expect(await supervisor.admit(next.pid, limit: 1))
+
+  #expect(await supervisor.reopen(root, runID: UUID(), task: "next turn"))
+  #expect(await supervisor.admit(sibling.pid, limit: 1) == false)
+  await supervisor.stop(child.pid)
+  #expect(await supervisor.admit(sibling.pid, limit: 1))
+}
+
 @Test("A queued child starts as soon as its dynamic limit is raised")
 func queuedChildStartsWhenDynamicLimitIsRaised() async throws {
   let supervisor = AgentSupervisor()

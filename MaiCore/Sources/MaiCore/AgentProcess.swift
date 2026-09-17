@@ -288,10 +288,8 @@ public struct AgentProcessTree: Equatable, Sendable {
     return collected
   }
 
-  /// Every running child started by any run of the named agent. Background
-  /// children outlive the turn that started them, so the concurrency limit is
-  /// counted per definition rather than per run. A queued child holds no
-  /// slot yet, so it is not counted here.
+  /// Every running child of any process using this definition, across chats
+  /// and nesting levels. A queued child holds no slot yet and is not counted.
   public func liveChildren(ofAgent agentID: String) -> [AgentProcessInfo] {
     processes.filter { process in
       guard !process.state.isTerminal, process.state != .queued, let parent = process.parent
