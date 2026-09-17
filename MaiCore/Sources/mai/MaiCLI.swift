@@ -823,7 +823,13 @@ private final class TerminalInterruptHandler: @unchecked Sendable {
 private actor TerminalApprovalHandler: ApprovalHandler {
   typealias Prompter = @Sendable (ApprovalRequest) async throws -> ApprovalDecision
 
+  private struct ProjectSettings: Codable {
+    var yolo: Bool?
+  }
+
   private let configuration: ConfiguredApprovals
+  private let projectSettingsURL: URL
+  private var projectSettings: ProjectSettings
   private var delegate: (any ApprovalHandler)?
   private var yoloEnabled: Bool
   /// Asks through the REPL's own prompt while the persistent screen owns the
@@ -831,9 +837,18 @@ private actor TerminalApprovalHandler: ApprovalHandler {
   /// for stdin.
   private var prompter: Prompter?
 
-  init(configuration: ConfiguredApprovals, yoloEnabled: Bool = false) {
+  init(
+    configuration: ConfiguredApprovals, projectSettingsURL: URL, yoloEnabled: Bool = false
+  ) throws {
     self.configuration = configuration
-    self.yoloEnabled = yoloEnabled
+    self.projectSettingsURL = projectSettingsURL
+    let projectSettings =
+      FileManager.default.fileExists(atPath: projectSettingsURL.path)
+      ? try MaiJSONCoding.default.makeDecoder().decode(
+        ProjectSettings.self, from: Data(contentsOf: projectSettingsURL))
+      : ProjectSettings()
+    self.projectSettings = projectSettings
+    self.yoloEnabled = yoloEnabled || (projectSettings.yolo ?? configuration.yolo)
   }
 
   /// Routes `ask` decisions elsewhere while another surface owns the terminal.
@@ -843,6 +858,13 @@ private actor TerminalApprovalHandler: ApprovalHandler {
 
   func setYOLOEnabled(_ enabled: Bool) {
     yoloEnabled = enabled
+  }
+
+  func saveYOLOEnabled(_ enabled: Bool) throws {
+    yoloEnabled = enabled
+    projectSettings.yolo = enabled
+    try MaiJSONCoding.default.makeEncoder().encode(projectSettings)
+      .write(to: projectSettingsURL, options: .atomic)
   }
 
   func isYOLOEnabled() -> Bool {
@@ -968,9 +990,15 @@ struct MaiCLI {
         if changed { try existing.save(to: URL(fileURLWithPath: configurationPath)) }
         configuration = existing
       }
-      let approvalHandler = TerminalApprovalHandler(
+      let home = resolvedHome(options: options, environment: environment)
+      let project = try home.openProject(
+        atWorkingDirectory: URL(
+          fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true))
+      let approvalHandler = try TerminalApprovalHandler(
         configuration: configuration?.approvals ?? .init(),
-        yoloEnabled: options.yolo || (configuration?.approvals.yolo ?? false))
+        projectSettingsURL: home.storageDirectory(for: project).appendingPathComponent(
+          "settings.json"),
+        yoloEnabled: options.yolo)
       let runtime = AgentRuntime(approvalHandler: approvalHandler)
       let plugins = PluginRegistry()
       try await plugins.install(MaiCoreBuiltinsPlugin(), origin: "built-in")
@@ -1049,12 +1077,8 @@ struct MaiCLI {
           options: options,
           environment: environment)
       }
-      let home = resolvedHome(options: options, environment: environment)
       let usageStats = ModelUsageStore(url: home.usageStatsURL)
       await runtime.configureUsageStats(usageStats)
-      let project = try home.openProject(
-        atWorkingDirectory: URL(
-          fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true))
       memoryState.adopt(project: project, settings: configuration?.memory ?? .init())
       todoState.focus(project: project)
       skillState.focus(project: project)
@@ -6996,8 +7020,6 @@ struct MaiCLI {
       await setYOLO(
         parts: parts,
         approvalHandler: approvalHandler,
-        configuration: &configuration,
-        configurationPath: configurationPath,
         terminal: terminal)
       return
     }
@@ -7155,12 +7177,10 @@ struct MaiCLI {
   }
 
   /// `/set yolo [on|off]`: permits every tool call without asking. The choice
-  /// is saved with the approval rules, so it applies to later runs too.
+  /// is saved in the opened project's .pmai/settings.json for later runs.
   private static func setYOLO(
     parts: [String],
     approvalHandler: TerminalApprovalHandler,
-    configuration: inout MaiConfiguration?,
-    configurationPath: String?,
     terminal: TerminalWriter
   ) async {
     guard parts.count > 1 else {
@@ -7172,23 +7192,16 @@ struct MaiCLI {
       await terminal.line("Usage: /set yolo <on|off>")
       return
     }
-    await approvalHandler.setYOLOEnabled(enabled)
     let effect =
       enabled
       ? "YOLO mode enabled; all tool calls are permitted"
       : "YOLO mode disabled; configured approval rules restored"
-    guard var draft = configuration, let configurationPath else {
-      await terminal.line("\(effect) for this session; no writable configuration is active.")
-      return
-    }
-    draft.approvals.yolo = enabled
     do {
-      try draft.save(to: URL(fileURLWithPath: configurationPath))
-      configuration = draft
-      await terminal.line("\(effect), and saved for later runs.")
+      try await approvalHandler.saveYOLOEnabled(enabled)
+      await terminal.line("\(effect), and saved for later runs in this project.")
     } catch {
       await terminal.line(
-        "\(effect) for this session; could not save the configuration: \(error.localizedDescription)",
+        "\(effect) for this session; could not save the project settings: \(error.localizedDescription)",
         to: .standardError)
     }
   }
@@ -10113,7 +10126,7 @@ struct MaiCLI {
     Settings commands:
       /set                         List current settings and their values
       /set effort [LEVEL] [TEXT]   Show or set reasoning effort and optional guidance
-      /set yolo BOOL               Permit all tool calls without asking (on/off); kept for later runs
+      /set yolo BOOL               Permit all tool calls without asking (on/off); saved for this project
       /set tool.                   List the tool calling settings
       /set tool.calling MODE       Use automatic/native tools, or text/XML/JSON emulation
       /set tool.proxy BOOL         Show models only the shared list-tools and call-tool pair (on/off)
@@ -10148,9 +10161,10 @@ struct MaiCLI {
       /set use.plan BOOL           Ask an agent that can start children to open a request of
                                    several steps with a numbered plan before delegating (on/off)
 
-    YOLO, agent, and UI settings are persisted in the active configuration; the -y
-    flag turns YOLO on for one run only. COLOR accepts a named ANSI color, rgb:RGB,
-    or none.
+    YOLO is saved in the opened project's .pmai/settings.json; -y enables it for
+    one run only. Projects without a saved choice use approvals.yolo from the
+    active configuration. Agent and UI settings use the active configuration.
+    COLOR accepts a named ANSI color, rgb:RGB, or none.
     """
 
   private static let chatHelp = """
@@ -10455,7 +10469,7 @@ struct MaiCLI {
         --system TEXT       override agent instructions
         -v, --version       print the pmai version
         -y, --yolo          permit all tool calls without prompting for this run
-                            (/set yolo on saves the choice for every run)
+                            (/set yolo on saves the choice for this project)
 
       Config discovery:
         --config, PMAI_CONFIG, ./pmai.json, ~/.config/pmai/config.json

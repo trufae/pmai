@@ -397,8 +397,8 @@ public enum ConfiguredApprovalMode: String, Codable, Sendable {
 public struct ConfiguredApprovals: Codable, Equatable, Sendable {
   public var confirm: ConfiguredApprovalMode
   public var dangerous: ConfiguredApprovalMode
-  /// Permits every tool call without asking, as `/set yolo on` does. Kept
-  /// here so the choice survives a restart.
+  /// Permits every tool call without asking. The CLI uses this default when
+  /// the opened project has no saved `/set yolo` choice.
   public var yolo: Bool
 
   public init(

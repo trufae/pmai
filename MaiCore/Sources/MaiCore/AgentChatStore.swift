@@ -140,6 +140,7 @@ extension ChatFileStore where Chat == AgentChat {
 ///     ~/.pmai/history.json               editable input history
 ///     ~/.pmai/stats.json                 tokens/s and time in use per provider:model
 ///     <workdir>/.pmai/project.json       the project's own id, name, and tint
+///     <workdir>/.pmai/settings.json      project-local CLI settings
 ///     <workdir>/.pmai/chats/<id>.json    one file per chat
 ///     <workdir>/.pmai/memory.md          the project's durable memory
 ///     <workdir>/.pmai/todo.md            the project's todo list
