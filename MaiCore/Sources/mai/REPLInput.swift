@@ -11,6 +11,7 @@ enum REPLEvent: Sendable {
   case endOfFile
   case turnFinished(Result<AgentResult, any Error>)
   case approval(ApprovalRequest, REPLApprovalReply)
+  case approvalFinished(REPLApprovalReply)
   case supervisor(AgentSupervisorEvent)
   /// One-second UI refresh while the input reader is blocked on the terminal.
   case activityPulse
@@ -21,28 +22,20 @@ struct REPLInterruptID: Equatable, Hashable, Sendable {
 }
 
 /// Answers one approval a tool call is waiting on, exactly once.
-final class REPLApprovalReply: @unchecked Sendable {
-  private let lock = NSLock()
-  private var continuation: CheckedContinuation<ApprovalDecision, any Error>?
+final class REPLApprovalReply: Sendable {
+  private let continuation: AsyncThrowingStream<ApprovalDecision, any Error>.Continuation
 
-  init(_ continuation: CheckedContinuation<ApprovalDecision, any Error>) {
+  init(_ continuation: AsyncThrowingStream<ApprovalDecision, any Error>.Continuation) {
     self.continuation = continuation
   }
 
   func resume(with decision: ApprovalDecision) {
-    take()?.resume(returning: decision)
+    continuation.yield(decision)
+    continuation.finish()
   }
 
   func fail(_ error: any Error) {
-    take()?.resume(throwing: error)
-  }
-
-  private func take() -> CheckedContinuation<ApprovalDecision, any Error>? {
-    lock.withLock {
-      let pending = continuation
-      continuation = nil
-      return pending
-    }
+    continuation.finish(throwing: error)
   }
 }
 

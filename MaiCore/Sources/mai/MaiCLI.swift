@@ -1574,6 +1574,24 @@ struct MaiCLI {
     /// True while the input thread waits for the loop before reading again.
     var readerParked = true
     var exiting = false
+
+    mutating func beginExit() {
+      exiting = true
+      activeTurn?.task.cancel()
+      cancelApprovals { _ in true }
+    }
+
+    mutating func cancelApprovals(matching matches: (ApprovalRequest) -> Bool) {
+      approvals.removeAll { waiting in
+        guard matches(waiting.request) else { return false }
+        waiting.reply.fail(CancellationError())
+        return true
+      }
+      if let waiting = editingApproval, matches(waiting.request) {
+        waiting.reply.fail(CancellationError())
+        editingApproval = nil
+      }
+    }
   }
 
   /// What a command may change under a running turn, taken before it runs
@@ -1681,9 +1699,17 @@ struct MaiCLI {
       editor.install(surface: screen)
       await terminal.attach(screen: screen)
       await visual.approvalHandler.setPrompter { request in
-        try await withCheckedThrowingContinuation { pending in
-          continuation.yield(.approval(request, REPLApprovalReply(pending)))
+        // Stream iteration wakes when the waiting agent's task is cancelled.
+        let (decisions, pending) = AsyncThrowingStream<ApprovalDecision, any Error>.makeStream()
+        let reply = REPLApprovalReply(pending)
+        defer { continuation.yield(.approvalFinished(reply)) }
+        if case .terminated = continuation.yield(.approval(request, reply)) {
+          throw CancellationError()
         }
+        var iterator = decisions.makeAsyncIterator()
+        guard let decision = try await iterator.next() else { throw CancellationError() }
+        try Task.checkCancellation()
+        return decision
       }
     }
     let supervisorFeed = Task {
@@ -2360,11 +2386,8 @@ struct MaiCLI {
             continue
           }
           if name == "/exit" || name == "/quit" {
-            loop.exiting = true
-            if let turn = loop.activeTurn {
-              turn.task.cancel()
-              continue
-            }
+            loop.beginExit()
+            if loop.activeTurn != nil { continue }
             break events
           }
           if name == "/continue" {
@@ -2625,11 +2648,8 @@ struct MaiCLI {
 
       case .endOfFile:
         loop.readerParked = true
-        loop.exiting = true
-        if let turn = loop.activeTurn {
-          turn.task.cancel()
-          continue
-        }
+        loop.beginExit()
+        if loop.activeTurn != nil { continue }
         break events
 
       case .turnFinished(let outcome):
@@ -2650,6 +2670,10 @@ struct MaiCLI {
         case .failure(let error):
           let cancelled = error is CancellationError || wasInterrupted
           if cancelled {
+            if let turn {
+              let stopped = Set(await runtime.supervisor.stop(turn.pid, reason: "Cancelled"))
+              loop.cancelApprovals { $0.run.pid.map(stopped.contains) ?? false }
+            }
             await terminal.recoverAfterCancellation()
           } else {
             await terminal.recoverAfterError(error.localizedDescription)
@@ -2741,12 +2765,19 @@ struct MaiCLI {
         await releaseIfIdle(workspace: workspace)
 
       case .approval(let request, let reply):
-        if await visual.approvalHandler.isYOLOEnabled() {
+        if loop.exiting {
+          reply.fail(CancellationError())
+        } else if await visual.approvalHandler.isYOLOEnabled() {
           reply.resume(with: .approve(arguments: request.call.arguments))
         } else {
           loop.approvals.append((request, reply))
           await terminal.approvalRequest(request)
         }
+        await refreshStatus()
+
+      case .approvalFinished(let reply):
+        loop.approvals.removeAll { $0.reply === reply }
+        if loop.editingApproval?.reply === reply { loop.editingApproval = nil }
         await refreshStatus()
 
       case .supervisor(let change):
@@ -2772,8 +2803,7 @@ struct MaiCLI {
       }
     }
 
-    for waiting in loop.approvals { waiting.reply.fail(CancellationError()) }
-    loop.editingApproval?.reply.fail(CancellationError())
+    loop.beginExit()
     reader.stop()
     supervisorFeed.cancel()
     activityPulse.cancel()

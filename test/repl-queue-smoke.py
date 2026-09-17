@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise queue choices and Ctrl+C in a real REPL PTY against a local provider."""
+"""Exercise queue choices, cancellation and approval shutdown in a real REPL PTY."""
 import fcntl
 import json
 import os
@@ -34,8 +34,24 @@ class Provider(BaseHTTPRequestHandler):
         texts = [m.get('content') for m in request['messages'] if m['role'] == 'user']
         if texts == ['slow'] and not release.is_set():
             release.wait(30)
-        body = json.dumps({'choices': [{'message': {'role': 'assistant', 'content': 'answer'},
-                                       'finish_reason': 'stop'}]}).encode()
+        message = {'role': 'assistant', 'content': 'answer'}
+        if texts in (['subagent'], ['background']) and not any(m['role'] == 'tool' for m in request['messages']):
+            message = {'role': 'assistant', 'content': None, 'tool_calls': [{
+                'id': 'start-1', 'type': 'function', 'function': {
+                    'name': 'agent_start',
+                    'arguments': json.dumps({'agent': 'worker', 'task': 'approval',
+                                             'output': 'answer', 'wait': texts == ['subagent']}),
+                },
+            }]}
+        elif texts == ['approval'] or request['model'] == 'worker':
+            message = {'role': 'assistant', 'content': None, 'tool_calls': [{
+                'id': 'write-1', 'type': 'function', 'function': {
+                    'name': 'files_write',
+                    'arguments': json.dumps({'path': 'unapproved.txt', 'content': 'must not run'}),
+                },
+            }]}
+        body = json.dumps({'choices': [{'message': message,
+                                       'finish_reason': 'tool_calls' if 'tool_calls' in message else 'stop'}]}).encode()
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(body)))
@@ -67,7 +83,11 @@ def main():
     server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        for choice in ('continue', 'submit', 'ignore', 'clear', 'stop'):
+        for choice in ('continue', 'submit', 'ignore', 'clear', 'stop',
+                       'approval-eof', 'edit-eof', 'approval-exit', 'edit-exit',
+                       'approval-quit', 'edit-quit', 'approval-interrupt', 'edit-interrupt',
+                       'child-interrupt', 'child-edit-interrupt', 'child-kill',
+                       'background-interrupt', 'background-edit-interrupt'):
             release.clear()
             with tempfile.TemporaryDirectory(prefix='pmai-queue-') as directory:
                 root = Path(directory)
@@ -77,12 +97,21 @@ def main():
                     'providers': [{'id': 'smoke', 'kind': 'openAICompatible',
                                    'baseURL': f'http://127.0.0.1:{server.server_port}/v1',
                                    'apiKey': 'smoke', 'timeout': 60}],
+                    'toolSources': [{'id': 'standard', 'kind': 'standard-tools',
+                                     'options': {'tools': ['files_write']}}],
                     'agents': [{'id': 'smoke', 'provider': 'smoke', 'model': 'smoke',
-                                'toolGroupNames': [], 'enabled': True,
+                                'toolNames': ['files_write'], 'toolGroupNames': ['agents'], 'enabled': True,
+                                'subagentNames': ['worker'],
+                                'retry': {'attempts': 0}},
+                               {'id': 'worker', 'provider': 'smoke', 'model': 'worker',
+                                'toolNames': ['files_write'], 'toolGroupNames': [], 'enabled': True,
+                                'stream': False,
                                 'retry': {'attempts': 0}}],
+                    'approvals': {'confirm': 'ask', 'dangerous': 'ask', 'yolo': False},
                     'memory': {'enabled': False, 'scope': 'project'}, 'use': {'plan': False},
                 }))
                 master, slave = pty.openpty()
+                cooked = termios.tcgetattr(slave)
                 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 200, 0, 0))
                 env = {k: v for k, v in os.environ.items()
                        if not k.startswith(('PMAI_', 'MAI_', 'OPENAI_'))
@@ -109,8 +138,9 @@ def main():
                                 output.extend(os.read(master, 65536))
                             except OSError as error:
                                 raise AssertionError((process.poll(), output.decode(errors='replace'))) from error
-                    captured = bytes(output).decode(errors='replace')
-                    output.clear()
+                    end = output.index(needle) + len(needle)
+                    captured = bytes(output[:end]).decode(errors='replace')
+                    del output[:end]
                     return captured
 
                 def user_texts():
@@ -119,6 +149,56 @@ def main():
 
                 try:
                     wait_for('pmai>')
+                    if choice.startswith(('approval-', 'edit-', 'child-', 'background-')):
+                        prompt = ('background' if choice.startswith('background-') else
+                                  'subagent' if choice.startswith('child-') else 'approval')
+                        send(prompt + '\n')
+                        assert user_texts() == [prompt]
+                        if prompt != 'approval':
+                            wait_for("wants to run confirm tool 'agent_start'")
+                            send('y\n')
+                            models = sorted(requests.get(timeout=20)['model']
+                                            for _ in range(2 if prompt == 'background' else 1))
+                            assert models == (['smoke', 'worker'] if prompt == 'background' else ['worker']), models
+                        approval = wait_for("wants to run confirm tool 'files_write'")
+                        if prompt == 'background':
+                            pid = re.search(r'agent#(\d+) wants', approval)[1]
+                            send(f'/agents focus {pid}\n')
+                            wait_for(f'Messages go to agent#{pid}')
+                        if 'edit-' in choice:
+                            send('e\n')
+                            wait_for('json> ')
+                        action = choice.rsplit('-', 1)[1]
+                        if action in ('interrupt', 'kill'):
+                            if action == 'kill':
+                                pid = re.search(r'agent#(\d+) wants', approval)[1]
+                                send(f'/agents kill {pid}\n')
+                                assert user_texts() == ['subagent']
+                                wait_for('✓ took')
+                            else:
+                                send('\x03')
+                                wait_for('✗ took')
+                                if prompt == 'background':
+                                    wait_for(f'agent#{pid} has ended; messages go to this chat again.')
+                                    wait_for('1 queued')
+                            assert requests.empty(), 'Unexpected request after cancellation'
+                            # "yes" must reach the provider, not a stale approval prompt.
+                            send('yes\n')
+                            if prompt == 'background':
+                                wait_for('[submit/ignore/clear]')
+                                send('clear\n')
+                            assert user_texts()[-1] == 'yes'
+                            wait_for('✓ took')
+                            send('/exit\n')
+                        else:
+                            send('\x04' if action == 'eof' else f'/{action}\n')
+                        process.wait(timeout=10)
+                        assert process.returncode == 0, process.returncode
+                        assert not (root / 'unapproved.txt').exists(), 'Unapproved tool ran'
+                        assert requests.empty(), 'Provider called again after shutdown'
+                        assert termios.tcgetattr(master) == cooked, 'Exit left the tty in raw mode'
+                        print(f'PASS {choice}')
+                        continue
                     if choice == 'continue':
                         send('/help\n')
                         help_text = wait_for('Input:')
