@@ -131,9 +131,12 @@ def main():
                 while time.monotonic() < end:
                     if select.select([master], [], [], max(0, end - time.monotonic()))[0]:
                         try:
-                            output.extend(os.read(master, 65536))
+                            chunk = os.read(master, 65536)
                         except OSError:
                             break
+                        if not chunk:
+                            break
+                        output.extend(chunk)
 
             def wait_for(text, timeout=8):
                 end = time.monotonic() + timeout
@@ -204,8 +207,12 @@ def main():
                 wait_for('· changed.gguf')
                 sample('idle after cancellation', idle=True)
                 send('/exit\n')
-                process.wait(timeout=10)
-                assert process.returncode == 0
+                # macOS terminal restoration waits for pending PTY output to drain.
+                deadline = time.monotonic() + 10
+                while process.poll() is None:
+                    assert time.monotonic() < deadline, ('/exit timed out', output.decode(errors='replace'))
+                    read_for(.05)
+                assert process.returncode == 0, (process.returncode, output.decode(errors='replace'))
             finally:
                 release.set()
                 if process.poll() is None:
