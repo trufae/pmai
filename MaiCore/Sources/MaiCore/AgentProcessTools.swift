@@ -723,7 +723,7 @@ public enum AgentProcessTools {
   private static func logCount(_ value: JSONValue?) -> Int? {
     guard let value else { return nil }
     if let number = value.coercedNumberValue, number >= 1 {
-      return min(Int(number), maximumLogMessages)
+      return Int(min(number, Double(maximumLogMessages)))
     }
     return value.coercedBoolValue == true ? defaultLogMessages : nil
   }

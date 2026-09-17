@@ -26,6 +26,21 @@ error. Token-count addition is also checked before constructing usage.
 This is a demonstrated code path, not a diagnosis of a particular crash
 without its backtrace.
 
+Tool arguments had separate unchecked conversions: the 1.7.8 musl release
+also exits with SIGILL when a text tool call supplies `1e100` or `inf` as
+`run_sh.timeout_seconds`, or `1e100` as `files_read_range.start_line`.
+Normalization now converts integers exactly and keeps large finite numbers
+as numbers. Invalid required integer arguments reach the usual tool validation;
+numeric timeouts still use the Run tool's existing bounds. Context message
+numbers retain their integer representation, and transcript log counts are
+capped before conversion.
+
+Shell completion had another trap: Linux Foundation closes a monitored file
+handle by synchronizing with its readability queue. Closing the handle from
+that same queue can trip libdispatch's deadlock check. Pipe cleanup now runs
+on a separate queue, outside the session lock, and stops further reads before
+closing the handles. This also prevents cleanup from racing an active read.
+
 Run the release HTTP regressions (local mock server; no model credentials):
 
 ```sh
@@ -34,9 +49,11 @@ python3 test/linux-network-smoke.py "$(swift build --package-path MaiCore -c rel
 python3 test/linux-network-smoke.py qemu-x86_64 -cpu Nehalem ./pmai
 ```
 
-CI checks success, HTTP 401, disconnects, malformed responses and invalid
-token usage with streaming enabled and disabled. The musl release also runs
-these paths under QEMU, exercising the linked Swift runtime and networking
+CI checks success, HTTP 401, disconnects, malformed responses, invalid token
+usage, and numeric tool arguments with streaming enabled and disabled.
+Tool calls cover text, XML, JSON and native protocols, including real shell
+subprocesses, delayed pipe EOF after shell exit, and context-message lookup.
+The musl release also runs these paths under QEMU, exercising the linked Swift runtime and networking
 libraries. This is an ISA compatibility check, not a complete emulation or
 hardware certification of the N4120.
 
@@ -50,3 +67,4 @@ Sources:
 - [Intel N4120 specifications](https://www.intel.com/content/www/us/en/products/sku/197309/intel-celeron-processor-n4120-4m-cache-up-to-2-60-ghz/specifications.html)
 - [Swift top-level error handling](https://github.com/swiftlang/swift/blob/main/stdlib/public/core/ErrorType.swift)
 - [Swift fixed-width integer conversion](https://github.com/swiftlang/swift/blob/main/stdlib/public/core/IntegerTypes.swift.gyb)
+- [Linux Foundation file handle cleanup](https://github.com/swiftlang/swift-corelibs-foundation/blob/swift-6.4.0-RELEASE/Sources/Foundation/FileHandle.swift)

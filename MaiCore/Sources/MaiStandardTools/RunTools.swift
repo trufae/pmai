@@ -428,6 +428,7 @@ enum MaiRunToolError: LocalizedError {
       private var stdoutClosed = false
       private var stderrClosed = false
       private var exited = false
+      private var finishing = false
       private var finished = false
       private var timedOut = false
       private var stopping = false
@@ -472,10 +473,10 @@ enum MaiRunToolError: LocalizedError {
 
       func start() throws {
         stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-          self?.receive(handle.availableData, isStderr: false)
+          self?.receive(handle, isStderr: false)
         }
         stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-          self?.receive(handle.availableData, isStderr: true)
+          self?.receive(handle, isStderr: true)
         }
         process.terminationHandler = { [weak self] _ in self?.markExited() }
         try process.run()
@@ -510,7 +511,7 @@ enum MaiRunToolError: LocalizedError {
       func stop(timedOut: Bool) {
         let shouldStop = lock.withLock {
           if timedOut { self.timedOut = true }
-          guard !stopping, !finished else { return false }
+          guard !stopping, !finishing else { return false }
           stopping = true
           return true
         }
@@ -526,8 +527,10 @@ enum MaiRunToolError: LocalizedError {
         }
       }
 
-      private func receive(_ data: Data, isStderr: Bool) {
+      private func receive(_ handle: FileHandle, isStderr: Bool) {
         lock.withLock {
+          guard !finishing else { return }
+          let data = handle.availableData
           if data.isEmpty {
             if isStderr {
               stderrClosed = true
@@ -596,7 +599,7 @@ enum MaiRunToolError: LocalizedError {
 
       private func finishIfComplete() {
         let action: (complete: Bool, scheduleDrain: Bool) = lock.withLock {
-          guard exited, !finished else { return (false, false) }
+          guard exited, !finishing else { return (false, false) }
           if stdoutClosed && stderrClosed { return (true, false) }
           guard !drainScheduled else { return (false, false) }
           drainScheduled = true
@@ -613,17 +616,25 @@ enum MaiRunToolError: LocalizedError {
       }
 
       private func finish() {
-        let continuation: CheckedContinuation<Void, Never>? = lock.withLock {
-          guard !finished else { return nil }
-          finished = true
+        let shouldFinish = lock.withLock {
+          guard !finishing else { return false }
+          finishing = true
+          return true
+        }
+        guard shouldFinish else { return }
+        // FileHandle.close() synchronizes with its readability queue on Linux.
+        DispatchQueue.global(qos: .utility).async { [self] in
           stdoutPipe.fileHandleForReading.readabilityHandler = nil
           stderrPipe.fileHandleForReading.readabilityHandler = nil
           try? stdoutPipe.fileHandleForReading.close()
           try? stderrPipe.fileHandleForReading.close()
-          defer { self.continuation = nil }
-          return self.continuation
+          let continuation = lock.withLock {
+            finished = true
+            defer { self.continuation = nil }
+            return self.continuation
+          }
+          continuation?.resume()
         }
-        continuation?.resume()
       }
     }
   }

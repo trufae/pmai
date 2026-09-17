@@ -161,10 +161,12 @@ func hostRunsChild() async throws {
   #expect(info.state == .completed)
   #expect(info.isCollected)
 
-  let log = await AgentProcessTools.status(
-    arguments: ["pid": .string("#\(launched.pid.rawValue)"), "log": .bool(true)],
-    callID: "c5", caller: parent, supervisor: supervisor)
-  #expect(log.text.contains("[2] assistant: Done reading"))
+  for count: JSONValue in [.bool(true), .integer(Int.max), .number(1e100)] {
+    let log = await AgentProcessTools.status(
+      arguments: ["pid": .string("#\(launched.pid.rawValue)"), "log": count],
+      callID: "c5", caller: parent, supervisor: supervisor)
+    #expect(log.text.contains("[2] assistant: Done reading"))
+  }
 }
 
 @Test("A child past the limit waits for a slot, and agent_stop ends a waiting child")
