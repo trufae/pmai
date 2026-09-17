@@ -69,6 +69,9 @@ jobs:
       - name: Test REPL suspend and resume
         run: python3 test/repl-suspend-smoke.py ./pmai
 
+      - name: Test model discovery and idle REPL
+        run: python3 test/repl-models-smoke.py ./pmai
+
       - name: Exercise HTTP error handling
         if: runner.os == 'Linux'
         run: python3 test/linux-network-smoke.py ./pmai
@@ -185,6 +188,9 @@ jobs:
 
       - name: Test REPL suspend and resume
         run: python3 test/repl-suspend-smoke.py ./pmai
+
+      - name: Test model discovery and idle REPL
+        run: python3 test/repl-models-smoke.py ./pmai
 
       # Nehalem has SSE4.2 but no AVX, like the N4120's relevant ISA ceiling.
       # Test the linked SDK/runtime too, not just instructions emitted by pmai.

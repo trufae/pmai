@@ -13,8 +13,6 @@ enum REPLEvent: Sendable {
   case approval(ApprovalRequest, REPLApprovalReply)
   case approvalFinished(REPLApprovalReply)
   case supervisor(AgentSupervisorEvent)
-  /// One-second UI refresh while the input reader is blocked on the terminal.
-  case activityPulse
 }
 
 struct REPLInterruptID: Equatable, Hashable, Sendable {

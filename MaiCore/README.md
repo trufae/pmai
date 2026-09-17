@@ -57,6 +57,12 @@ make repl ARGS='--config MaiCore/pmai.example.json'
 Inside the REPL, `/models` queries the current provider's model catalog and
 `/models PROVIDER` queries another registered provider without switching the
 session. Use `/model NAME` to select one of the returned model IDs.
+For llama.cpp or llamafile, use an OpenAI-compatible provider with a base URL
+such as `http://127.0.0.1:8080/v1`; omit the API key unless the server requires
+one. Model and voice discovery have a 15-second total deadline (or the
+provider's shorter configured timeout), independent of the longer inference
+timeout. Ctrl+C cancels `/models` and returns to the prompt. A server still
+loading its model may return HTTP 503; retry after it is ready.
 
 Use `/chat list` for a compact indexed history or `/chat log` for the complete
 structured transcript, including attachments, reasoning, tool calls, tool

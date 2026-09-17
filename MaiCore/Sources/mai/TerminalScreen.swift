@@ -51,6 +51,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var outputEndedLine = true
   private var active = false
   private var resizeSource: (any DispatchSourceProtocol)?
+  private var activitySource: DispatchSourceTimer?
+  private var animatingStatus = false
   /// Keystrokes that arrived while the terminal was asked for its cursor
   /// position, kept for the editor.
   private var typeahead: [UInt8] = []
@@ -127,6 +129,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     drawInputRows()
     placeCaret()
     watchResizes()
+    updateActivityTimer()
   }
 
   /// Gives the whole terminal back: the region is released, the reserved rows
@@ -150,6 +153,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     guard active else { return }
     resizeSource?.cancel()
     resizeSource = nil
+    activitySource?.cancel()
+    activitySource = nil
     write(Self.restoreCursor + (outputEndedLine ? "" : "\n"))
     // Resetting the region homes the cursor, so the last output row is looked
     // up first (the input thread is parked, so stdin is free to answer) and
@@ -185,8 +190,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   /// Replaces the status line above the input; an unchanged line is not redrawn.
-  func setStatus(_ text: String) {
+  func setStatus(_ text: String, animating: Bool = false) {
     lock.withLock {
+      animatingStatus = animating
+      updateActivityTimer()
       guard text != statusText else { return }
       statusText = text
       guard active else { return }
@@ -203,8 +210,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   /// A transient reasoning window above the status and editable prompt.
   func setThinking(_ lines: [String]) {
     lock.withLock {
+      let lines = Array(lines.suffix(min(3, rows / 4)))
+      guard lines != thinkingRows else { return }
       let oldCount = thinkingRows.count
-      thinkingRows = Array(lines.suffix(min(3, rows / 4)))
+      thinkingRows = lines
       guard active else { return }
       resizeRegion(
         inputRows: inputRows.count + oldCount,
@@ -358,6 +367,33 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       out += "\u{1B}[2m" + content + Self.reset
     }
     write(out)
+  }
+
+  private func updateActivityTimer() {
+    guard active, animatingStatus else {
+      activitySource?.cancel()
+      activitySource = nil
+      return
+    }
+    guard activitySource == nil else { return }
+    let source = DispatchSource.makeTimerSource(queue: .global())
+    source.schedule(deadline: .now() + .milliseconds(200), repeating: .milliseconds(200))
+    source.setEventHandler { [weak self] in self?.drawActivity() }
+    activitySource = source
+    source.resume()
+  }
+
+  // Animate one cell without rebuilding the status or traversing the transcript.
+  private func drawActivity() {
+    lock.withLock {
+      guard active, animatingStatus, columns > 2 else { return }
+      let marker = String(Unicode.Scalar(Int.random(in: 0x2800...0x28FF))!)
+      let style = TerminalLineEditor.backgroundColorCode(ui.backgroundLine) ?? "2"
+      write(
+        move(row: regionBottom + thinkingRows.count + 1, column: 2)
+          + "\u{1B}[\(style)m" + marker + Self.reset)
+      placeCaret()
+    }
   }
 
   private func drawInputRows() {

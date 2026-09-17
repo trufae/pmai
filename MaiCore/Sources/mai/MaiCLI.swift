@@ -1741,15 +1741,6 @@ struct MaiCLI {
         continuation.yield(.supervisor(change))
       }
     }
-    // The input reader deliberately blocks on its own thread, leaving this
-    // event loop free to animate the activity marker while a run is active.
-    let activityPulse = Task {
-      while !Task.isCancelled {
-        try? await Task.sleep(nanoseconds: 200_000_000)
-        guard !Task.isCancelled else { return }
-        continuation.yield(.activityPulse)
-      }
-    }
     var loop = REPLLoop()
     var activityWasInterrupted = false
 
@@ -1771,11 +1762,11 @@ struct MaiCLI {
       await runtime.configurePlanning(configuration?.use.plan ?? true)
     }
 
-    func statusLine() async -> String {
+    func statusLine() async -> (text: String, animating: Bool) {
       var facts: [String] = []
       let liveProcesses = await runtime.supervisor.liveProcesses()
-      let running = !activityWasInterrupted && !liveProcesses.isEmpty
-      let activityMarker = running ? randomBrailleString() : "○"
+      let running = loop.foregroundCommand != nil || (!activityWasInterrupted && !liveProcesses.isEmpty)
+      let activityMarker = running ? "●" : "○"
       if let turn = loop.activeTurn {
         let activity = await runtime.supervisor.info(turn.pid)?.activity ?? ""
         let prefix = turn.kind == .btw ? "btw " : ""
@@ -1784,7 +1775,7 @@ struct MaiCLI {
         )
       }
       if let command = loop.foregroundCommand { facts.append("running \(command)") }
-      let children = await runtime.supervisor.liveProcesses().filter { $0.depth > 0 }
+      let children = liveProcesses.filter { $0.depth > 0 }
       if !children.isEmpty {
         let paused = children.filter { $0.state == .paused }.count
         let queued = children.filter { $0.state == .queued }.count
@@ -1806,8 +1797,9 @@ struct MaiCLI {
       }
       let detail = facts.isEmpty ? "" : " · " + facts.joined(separator: " · ")
       // The chat title goes last so a narrow terminal truncates it, not the status.
-      return
-        "\(activityMarker) \(currentDirectoryName()) · \(project.displayName) \(promptIdentity(session))\(detail) · \(session.title)"
+      return (
+        "\(activityMarker) \(currentDirectoryName()) · \(project.displayName) \(promptIdentity(session))\(detail) · \(session.title)",
+        running)
     }
 
     func promptText() -> String {
@@ -1834,7 +1826,8 @@ struct MaiCLI {
 
     func refreshStatus() async {
       guard let screen else { return }
-      screen.setStatus(await statusLine())
+      let status = await statusLine()
+      screen.setStatus(status.text, animating: status.animating)
     }
 
     /// Lets the input thread read the next line. Settings that the editor
@@ -1849,7 +1842,7 @@ struct MaiCLI {
           runtime: runtime, announced: &announcedAttention, terminal: terminal)
       }
       let status = await statusLine()
-      screen?.setStatus(status)
+      screen?.setStatus(status.text, animating: status.animating)
       loop.readerParked = false
       reader.resume(
         with: REPLInputReader.Prompt(
@@ -1857,7 +1850,7 @@ struct MaiCLI {
           completions: completionCandidates(
             workspace: workspace, configuration: configuration,
             skills: visual.skills.catalog.skills),
-          separator: screen == nil ? status : nil))
+          separator: screen == nil ? status.text : nil))
     }
 
     /// On a plain terminal a turn owns the screen, so the next line waits for
@@ -2637,6 +2630,7 @@ struct MaiCLI {
           await saveWorkspace(&workspace, store: store, terminal: terminal)
           await restoreSavedSubagents()
           await noteTurnEffects(since: before)
+          await refreshStatus()
           // A cancellation has an ordered interrupt event waiting behind this
           // command; that event releases exactly one prompt. Signalling here as
           // well would leave an extra semaphore permit and start two readers.
@@ -2821,16 +2815,12 @@ struct MaiCLI {
           break
         }
         await refreshStatus()
-
-      case .activityPulse:
-        await refreshStatus()
       }
     }
 
     loop.beginExit()
     reader.stop()
     supervisorFeed.cancel()
-    activityPulse.cancel()
     continuation.finish()
     await visual.approvalHandler.setPrompter(nil)
     await recordSubagents()
@@ -3038,12 +3028,6 @@ struct MaiCLI {
   private static func visibleUITitle(_ title: String) -> String {
     String(title.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) })
       .trimmingCharacters(in: .whitespacesAndNewlines)
-  }
-
-  /// One Unicode Braille pattern makes a compact, lively activity marker.
-  private static func randomBrailleString() -> String {
-    let randomValue = Int.random(in: 0x2800...0x28FF)
-    return String(Character(Unicode.Scalar(randomValue)!))
   }
 
   /// How long a turn took, as `5s`, `1m4s`, or `2h3m4s`.
