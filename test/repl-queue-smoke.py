@@ -99,11 +99,12 @@ def main():
                     'toolSources': [{'id': 'standard', 'kind': 'standard-tools',
                                      'options': {'tools': ['files_write']}}],
                     'agents': [{'id': 'smoke', 'provider': 'smoke', 'model': 'smoke',
-                                'toolNames': ['files_write'], 'toolGroupNames': [], 'enabled': True,
+                                'toolNames': ['files_write'], 'toolGroupNames': ['agents'], 'enabled': True,
                                 'subagentNames': ['worker'],
                                 'retry': {'attempts': 0}},
                                {'id': 'worker', 'provider': 'smoke', 'model': 'worker',
                                 'toolNames': ['files_write'], 'toolGroupNames': [], 'enabled': True,
+                                'stream': False,
                                 'retry': {'attempts': 0}}],
                     'approvals': {'confirm': 'ask', 'dangerous': 'ask', 'yolo': False},
                     'memory': {'enabled': False, 'scope': 'project'}, 'use': {'plan': False},
@@ -151,10 +152,11 @@ def main():
                         send(prompt + '\n')
                         assert user_texts() == [prompt]
                         if prompt == 'subagent':
-                            wait_for("tool 'agent_start'")
+                            wait_for("wants to run confirm tool 'agent_start'")
                             send('y\n')
-                            assert requests.get(timeout=20)['model'] == 'worker'
-                        approval = wait_for("tool 'files_write'")
+                            child_request = requests.get(timeout=20)
+                            assert child_request['model'] == 'worker', child_request
+                        approval = wait_for("wants to run confirm tool 'files_write'")
                         if 'edit-' in choice:
                             send('e\n')
                             wait_for('json> ')
