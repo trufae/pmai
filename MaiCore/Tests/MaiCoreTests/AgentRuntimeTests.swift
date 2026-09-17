@@ -630,6 +630,8 @@ func openAIModelCatalog() async throws {
   let request = try #require(recorder.request)
   #expect(request.httpMethod == "GET")
   #expect(request.url?.absoluteString == "https://models.example.test/v1/models")
+  #expect(request.timeoutInterval == 15)
+  #expect(request.value(forHTTPHeaderField: "Accept") == "application/json")
   #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer secret")
   #expect(request.value(forHTTPHeaderField: "X-Workspace") == "test")
 }

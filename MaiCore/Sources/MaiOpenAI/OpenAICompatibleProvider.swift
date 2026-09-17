@@ -69,24 +69,15 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
   }
 
   public func availableModels() async throws -> [ModelDescriptor] {
-    var request = URLRequest(url: try endpointURL("models"))
-    request.httpMethod = "GET"
-    request.timeoutInterval = max(1, configuration.requestTimeout)
-    applyHeaders(to: &request)
-
-    let (data, response) = try await data(for: request)
-    try validate(response: response, data: data)
-    let root = try decodeRoot(data)
-    if let message = providerError(in: root) {
-      throw OpenAICompatibleProviderError.providerFailure(message)
-    }
-    guard let values = (root["data"] ?? root["models"])?.arrayValue else {
+    let root = try await catalog("models")
+    guard let values = root["data"]?.arrayValue ?? root["models"]?.arrayValue else {
       throw OpenAICompatibleProviderError.invalidResponse(
         "Expected a model catalog in the provider response.")
     }
     return values.compactMap { value in
       guard let object = value.objectValue,
-        let id = object["id"]?.stringValue,
+        let id = object["id"]?.stringValue ?? object["model"]?.stringValue
+          ?? object["name"]?.stringValue,
         !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
       else { return nil }
       var capabilities: ProviderCapabilities = []
@@ -126,17 +117,7 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
 
   /// Lists voices exposed by OpenAI-compatible `/voices` endpoints.
   public func availableVoices() async throws -> [String] {
-    var request = URLRequest(url: try endpointURL("voices"))
-    request.httpMethod = "GET"
-    request.timeoutInterval = max(1, configuration.requestTimeout)
-    applyHeaders(to: &request)
-
-    let (data, response) = try await data(for: request)
-    try validate(response: response, data: data)
-    let root = try decodeRoot(data)
-    if let message = providerError(in: root) {
-      throw OpenAICompatibleProviderError.providerFailure(message)
-    }
+    let root = try await catalog("voices")
     let voices = (root["data"]?.arrayValue ?? []).compactMap { value in
       value.stringValue
         ?? value.objectValue?["id"]?.stringValue
@@ -758,6 +739,40 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
   private func data(for request: URLRequest) async throws -> (Data, URLResponse) {
     let delegate = ProviderRedirectDelegate(originalRequest: request)
     return try await session.data(for: request, delegate: delegate)
+  }
+
+  private func catalog(_ endpoint: String) async throws -> [String: JSONValue] {
+    var request = URLRequest(url: try endpointURL(endpoint))
+    request.httpMethod = "GET"
+    request.timeoutInterval = min(15, max(1, configuration.requestTimeout))
+    applyHeaders(to: &request)
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+    do {
+      // Catalogs need a total deadline, independent of inference and HTTP idle timeouts.
+      let (data, response) = try await withThrowingTaskGroup(
+        of: (Data, URLResponse).self
+      ) { group in
+        group.addTask { [request] in try await self.data(for: request) }
+        group.addTask { [request] in
+          try await Task.sleep(for: .seconds(request.timeoutInterval))
+          throw URLError(.timedOut)
+        }
+        defer { group.cancelAll() }
+        guard let result = try await group.next() else { throw CancellationError() }
+        return result
+      }
+      try validate(response: response, data: data)
+      let root = try decodeRoot(data)
+      if let message = providerError(in: root) {
+        throw OpenAICompatibleProviderError.providerFailure(message)
+      }
+      return root
+    } catch let error as URLError where error.code == .timedOut {
+      throw OpenAICompatibleProviderError.providerFailure(
+        "Fetching /\(endpoint) timed out after \(Int(request.timeoutInterval))s. "
+          + "Check that the server is ready and the provider base URL is correct.")
+    }
   }
 
   private static func speechAcceptHeader(_ responseFormat: String) -> String {

@@ -63,6 +63,28 @@ alongside `_assertionFailure` or `swift_errorInMain` suggests a deliberate
 trap; an unsupported vector instruction suggests a CPU target or dependency
 problem. Do not ignore SIGILL or disable Swift safety checks to hide it.
 
+## CPU usage while waiting
+
+The REPL updates its status on state changes. Its active spinner redraws only
+one cell and stops when idle; it does not re-render the saved transcript on
+every animation tick. Unchanged thinking rows are also left alone.
+
+There is a separate Swift 6.4.0 FoundationNetworking issue while waiting for
+HTTP responses: a 1.2 MB POST reproduced high CPU even in a standalone
+`URLSession.shared.data(for:)` program without pmai. A small POST on a fresh
+connection also reproduced it. Its libcurl
+socket wrapper creates write-ready dispatch sources but does not remove them
+when interest changes to read-only. The pmai status fix does not repair that
+runtime behavior. See the upstream
+[`_SocketSources.createSources` implementation](https://github.com/swiftlang/swift-corelibs-foundation/blob/swift-6.4.0-RELEASE/Sources/FoundationNetworking/URLSession/libcurl/MultiHandle.swift).
+
+The local-server regression checks model catalogs, deadlines, cancellation,
+and terminal redraws without model credentials:
+
+```sh
+python3 test/repl-models-smoke.py ./pmai
+```
+
 Sources:
 - [Intel N4120 specifications](https://www.intel.com/content/www/us/en/products/sku/197309/intel-celeron-processor-n4120-4m-cache-up-to-2-60-ghz/specifications.html)
 - [Swift top-level error handling](https://github.com/swiftlang/swift/blob/main/stdlib/public/core/ErrorType.swift)
