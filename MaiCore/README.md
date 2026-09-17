@@ -95,9 +95,12 @@ guidance passed to `/chat compact FOCUS`; if omitted, the focus is appended.
 Clearing the compact template restores its built-in default.
 
 Start `pmai` with `-y` (or `--yolo`) to permit all tool calls without approval
-prompts for that process. `/set yolo on` does the same and saves the choice as
-`approvals.yolo` in the configuration, so later runs start in YOLO mode until
-`/set yolo off`.
+prompts for that process. `/set yolo on` saves the choice as `yolo` in the opened
+project's `.pmai/settings.json`, so later runs in that project honor it until
+`/set yolo off`. Both on and off override the configuration's `approvals.yolo`
+default; projects without a saved choice still use that default. Changing the
+project choice leaves the shared configuration unchanged. `-y` overrides the
+saved choice for one run without changing it.
 
 The REPL accepts heredoc-style multiline messages. Enter `<<WORD`, type the
 message verbatim, then put `WORD` alone on its own line. The delimiter can be
