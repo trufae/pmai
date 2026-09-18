@@ -53,7 +53,6 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
         ?? MaiRunConfiguration.defaultTimeout)
     let tools: [any AgentTool] =
       [
-        MaiEchoTool(),
         MaiCurrentTimeTool(),
         MaiCalculatorTool(),
         MaiWeatherTool(
@@ -97,12 +96,6 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
       ? [MaiWebSearchTool.name]
       : [MaiWebSearchTool.name, MaiWebFetchTool.name]
     return [
-      ToolGroupDefinition(
-        id: "echo",
-        displayName: "Echo",
-        description:
-          "A test tool: echo returns the text it is given, to check that tool calling works end to end.",
-        toolNames: [MaiEchoTool.name]),
       ToolGroupDefinition(
         id: "datetime",
         displayName: "Date & Time",
@@ -263,34 +256,6 @@ extension PluginFactoryContext {
   ) -> String {
     let environmentName = options[environmentOption]?.stringValue ?? defaultEnvironment
     return environment[environmentName] ?? options[option]?.stringValue ?? ""
-  }
-}
-
-public struct MaiEchoTool: AgentTool {
-  public static let name = "echo"
-  public static let toolDefinition = ToolDefinition(
-    name: name,
-    description: "Return the supplied text.",
-    inputSchema: objectSchema(
-      properties: [
-        "text": .object([
-          "type": .string("string"),
-          "description": .string("Text to return."),
-        ])
-      ],
-      required: ["text"]),
-    annotations: ToolAnnotations(
-      readOnly: true,
-      idempotent: true,
-      openWorld: false,
-      approval: .automatic))
-
-  public let definition = Self.toolDefinition
-
-  public init() {}
-
-  public func call(arguments: JSONValue, context: ToolExecutionContext) async throws -> ToolOutput {
-    ToolOutput(text: arguments.objectValue?["text"]?.stringValue ?? "")
   }
 }
 

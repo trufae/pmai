@@ -566,7 +566,6 @@ struct SessionProfile: Sendable {
     systemPrompt = nil
     toolNames = Set(
       [
-        MaiEchoTool.name,
         MaiCurrentTimeTool.name,
         MaiCalculatorTool.name,
         MaiWeatherTool.name,
@@ -576,7 +575,7 @@ struct SessionProfile: Sendable {
       ] + MaiFileWorkspaceTool.toolNames + MaiRunTool.toolNames + MaiGitHubTool.toolNames
         + MaiTodoTools.toolNames + MaiContextTools.toolNames)
     toolGroupNames = [
-      "echo", "datetime", "calc", "files", "run", "weather", "web", "mastodon", "github", "todo",
+      "datetime", "calc", "files", "run", "weather", "web", "mastodon", "github", "todo",
       "context", MaiSkillTools.groupID,
     ]
     subagentNames = []
@@ -9818,7 +9817,7 @@ struct MaiCLI {
     }) == true {
       groupNames.formUnion(
         [
-          "echo", "datetime", "calc", "files", "run", "weather", "web", "mastodon", "github",
+          "datetime", "calc", "files", "run", "weather", "web", "mastodon", "github",
           "todo", "context",
         ])
     }
@@ -9988,7 +9987,6 @@ struct MaiCLI {
             [
               MaiCalculatorTool.name,
               MaiCurrentTimeTool.name,
-              MaiEchoTool.name,
               MaiWeatherTool.name,
               MaiWebSearchTool.name,
               MaiWebFetchTool.name,
@@ -9996,7 +9994,7 @@ struct MaiCLI {
             ] + MaiFileWorkspaceTool.toolNames + MaiRunTool.toolNames + MaiGitHubTool.toolNames
               + MaiTodoTools.toolNames + MaiContextTools.toolNames),
           toolGroupNames: [
-            "echo", "datetime", "calc", "files", "run", "weather", "web", "mastodon",
+            "datetime", "calc", "files", "run", "weather", "web", "mastodon",
             "github", "todo", "context",
           ],
           subagentNames: ["researcher"],
