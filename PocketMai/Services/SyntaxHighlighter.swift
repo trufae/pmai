@@ -2,6 +2,16 @@ import SwiftUI
 
 enum SyntaxHighlighter {
   static func highlight(_ code: String, language: String) -> AttributedString {
+    let language =
+      language
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .lowercased()
+      .split(whereSeparator: \.isWhitespace)
+      .first
+      .map(String.init) ?? ""
+    if language == "diff" || language == "patch" {
+      return highlightDiff(code)
+    }
     if isMarkupLanguage(language) {
       return highlightMarkup(code)
     }
@@ -32,17 +42,31 @@ enum SyntaxHighlighter {
   }
 
   private static func isMarkupLanguage(_ language: String) -> Bool {
-    let identifier =
-      language
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-      .lowercased()
-      .split(whereSeparator: \.isWhitespace)
-      .first
-      .map(String.init) ?? ""
-    return [
+    [
       "application/xml", "atom", "html", "html5", "htm", "mathml", "rss", "svg",
       "text/html", "text/xml", "xhtml", "xml",
-    ].contains(identifier)
+    ].contains(language)
+  }
+
+  private static func highlightDiff(_ code: String) -> AttributedString {
+    var output = AttributedString()
+    code.enumerateSubstrings(in: code.startIndex..<code.endIndex, options: .byLines) {
+      _, range, enclosingRange, _ in
+      let line = code[range]
+      var part = AttributedString(String(code[enclosingRange]))
+      part.foregroundColor = .primary
+      if line.hasPrefix("--- ") || line.hasPrefix("+++ ") || line.hasPrefix("@@")
+        || line.hasPrefix("diff ") || line.hasPrefix("index ")
+      {
+        part.foregroundColor = .secondary
+      } else if line.hasPrefix("+") {
+        part.backgroundColor = Color.green.opacity(0.14)
+      } else if line.hasPrefix("-") {
+        part.backgroundColor = Color.red.opacity(0.14)
+      }
+      output.append(part)
+    }
+    return output
   }
 
   private static func highlightMarkup(_ code: String) -> AttributedString {
