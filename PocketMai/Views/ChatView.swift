@@ -22,6 +22,7 @@ private struct ConversationTimelineTimestamp: View {
 
 struct ChatView: View {
   struct RenderInvalidationKey: Equatable {
+    var isLandscape: Bool
     var selectedConversationID: UUID?
     var selectedConversationIsLoading: Bool
     var appearance: AppearanceSettings
@@ -662,7 +663,7 @@ struct ChatView: View {
             } else if !isPreviewingConversation && currentConversationIsEmpty
               && liveVoiceSession.previewMessage == nil
             {
-              emptyState(screenIsLandscape: screenIsLandscape(fallbackSize: scrollGeometry.size))
+              emptyState
                 .containerRelativeFrame(.vertical)
             } else {
               ForEach(renderedMessages) { message in
@@ -1760,10 +1761,10 @@ struct ChatView: View {
     .frame(maxWidth: .infinity)
   }
 
-  private func emptyState(screenIsLandscape: Bool) -> some View {
+  private var emptyState: some View {
     GeometryReader { proxy in
       let suggestions = store.previousConversationSuggestions
-      let showsLandscapeSuggestions = screenIsLandscape && !suggestions.isEmpty
+      let showsLandscapeSuggestions = renderInvalidationKey.isLandscape && !suggestions.isEmpty
 
       Group {
         if showsLandscapeSuggestions {
@@ -1825,18 +1826,6 @@ struct ChatView: View {
     guard hasSuggestions, keyboardOverlap > 0 else { return baseY }
     let lift = min(keyboardOverlap * 0.18, 64)
     return max(height * 0.48, baseY - lift)
-  }
-
-  private func screenIsLandscape(fallbackSize: CGSize) -> Bool {
-    let screenSize =
-      UIApplication.shared.connectedScenes
-      .compactMap { $0 as? UIWindowScene }
-      .first { $0.activationState == .foregroundActive }?
-      .screen
-      .bounds
-      .size
-      ?? fallbackSize
-    return screenSize.width > screenSize.height
   }
 
   private func updateKeyboardOverlap(from notification: Notification) {

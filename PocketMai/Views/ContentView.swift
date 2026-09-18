@@ -54,6 +54,7 @@ struct ContentView: View {
               storeObservation: chatStoreObservation,
               store: store,
               renderInvalidationKey: ChatView.RenderInvalidationKey(
+                isLandscape: proxy.size.width > proxy.size.height,
                 selectedConversationID: store.selectedConversationID,
                 selectedConversationIsLoading: store.selectedConversationIsLoading,
                 appearance: store.settings.appearance,
