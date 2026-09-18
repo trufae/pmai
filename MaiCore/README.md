@@ -306,7 +306,12 @@ moves a chat out of the active list (archiving the current chat starts a new
 one), `/chat unarchive` brings it back, and `new`, `rename`, and `close` manage
 chats, while `messages`, `log`, `edit`, `remove`, `undo`, `trim`, and `clear`
 operate on the active transcript. Tab completes commands, chat selectors,
-agents, and providers. `/agent add NAME MODEL GROUPS PROMPT [PROVIDER [BASE_URL]]`
+agents, and providers: one match is typed out, and several open a rotating
+menu on the status line above the prompt instead of printing into the chat.
+Each further Tab moves the highlighted option onto the input line; the menu
+lists only the part after the prefix the matches share, and the selected
+option carries a background of its own. Any other key closes it.
+`/agent add NAME MODEL GROUPS PROMPT [PROVIDER [BASE_URL]]`
 saves a reusable agent in one line from a model, comma-separated tool groups,
 and a named system prompt; `/agent tools|model|prompt|provider ID VALUE` change
 one saved agent, `/agent remove ID` drops one, and `/edit agent [ID]` opens one

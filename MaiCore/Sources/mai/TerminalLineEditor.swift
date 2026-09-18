@@ -11,6 +11,19 @@ import MaiCore
   import Darwin
 #endif
 
+/// The tab-completion options shown above the prompt while Tab rotates
+/// through them. `options` holds each match's text after the prefix the
+/// matches share, so a long common command prefix is not repeated on every
+/// entry; `selected` is the option highlighted, which the next Tab applies to
+/// the input line before highlighting the one after it.
+struct CompletionMenu: Equatable {
+  /// The prefix every option shares, printed once before the list.
+  var prefix: String
+  /// Each match's text after `prefix`.
+  var options: [String]
+  var selected: Int
+}
+
 /// Where a line editor draws. The classic surface owns the rows at the end of
 /// a scrolling terminal, the way a shell prompt does; `TerminalScreen` owns
 /// rows that stay below the output while agents print.
@@ -30,6 +43,9 @@ protocol LineEditorSurface: AnyObject {
   /// The line drawn above a fresh prompt, or nothing.
   func drawSeparator(styled: String?)
   func bell()
+  /// Shows the rotating tab-completion options above the prompt, replacing
+  /// the status line, or clears them when `menu` is nil.
+  func drawCompletionMenu(_ menu: CompletionMenu?)
   /// Hands the terminal back to the shell for Ctrl+Z and takes it again.
   func suspendProcess()
   /// Keystrokes the surface read from the terminal while it asked it
@@ -39,6 +55,8 @@ protocol LineEditorSurface: AnyObject {
 
 extension LineEditorSurface {
   func pendingInput() -> [UInt8] { [] }
+  /// Surfaces with no status row simply do not show the menu.
+  func drawCompletionMenu(_ menu: CompletionMenu?) {}
 }
 
 /// Terminal modes the editor turns on while it reads: bracketed paste, so a
@@ -61,6 +79,9 @@ private final class ClassicEditorSurface: LineEditorSurface {
   /// the area starts at the next draw.
   private var caretRow = 0
   private var drawnRows = 0
+  /// The completion options this surface printed last, so rotating the
+  /// highlight does not re-emit the whole list.
+  private var lastMenuKey: String?
 
   init(cooked: termios, raw: termios) {
     self.cooked = cooked
@@ -107,6 +128,24 @@ private final class ClassicEditorSurface: LineEditorSurface {
 
   func bell() {
     write("\u{7}")
+  }
+
+  /// The classic surface has no status row to take over; it shows the options
+  /// once, as a plain line, so a Tab that cannot rotate still says what fits.
+  /// Repeating a Tab only moves the highlight, which is not reprinted here.
+  func drawCompletionMenu(_ menu: CompletionMenu?) {
+    guard let menu else {
+      lastMenuKey = nil
+      return
+    }
+    let key = menu.prefix + "\u{0}" + menu.options.joined(separator: "\u{0}")
+    guard key != lastMenuKey else { return }
+    lastMenuKey = key
+    let options = menu.options.enumerated().map { index, option in
+      let text = option.isEmpty ? " " : option
+      return index == menu.selected ? "[" + text + "]" : text
+    }
+    emit(options.joined(separator: "  ") + "\n")
   }
 
   func suspendProcess() {
@@ -189,6 +228,10 @@ final class TerminalLineEditor {
   private var viewTop = 0
   /// Bytes read ahead of the editor, consumed before the terminal is read.
   private var typeahead: [UInt8] = []
+  /// The rotation Tab is walking, and the full matches it came from, kept
+  /// while the input still belongs to it.
+  private var completionMenu: CompletionMenu?
+  private var completionMatches: [String] = []
 
   init(historyURL: URL? = nil) {
     self.historyURL = historyURL
@@ -254,6 +297,8 @@ final class TerminalLineEditor {
     var historyIndex: Int?
     var draft: [UInt8] = []
     viewTop = 0
+    completionMenu = nil
+    completionMatches = []
     drawSeparator(separator)
     redraw(prompt: prompt, bytes: bytes, cursor: cursor)
 
@@ -291,6 +336,9 @@ final class TerminalLineEditor {
     }
 
     while let key = readKey() {
+      // Any key but Tab closes the rotating completion menu: the next edit
+      // starts a fresh completion, and the status row comes back.
+      if !isTabKey(key) { dismissCompletion() }
       switch key {
       case .byte(let byte):
         switch byte {
@@ -407,6 +455,7 @@ final class TerminalLineEditor {
         continue
       }
     }
+    dismissCompletion()
     surface?.acceptInput(styled: "")
     return nil
   }
@@ -725,31 +774,80 @@ final class TerminalLineEditor {
       cursor: selection.count)
   }
 
+  /// Tab completes the input. One match is typed out whole; several matches
+  /// extend the line to the prefix they share and open the rotating menu above
+  /// the prompt. Each further Tab applies the highlighted option to the line
+  /// and highlights the next, instead of printing the list into the chat. The
+  /// menu shows each match's text after the shared prefix, so the repeated
+  /// common part is listed once, and the highlighted option gets a background
+  /// of its own.
   private func complete(
     prompt: String,
     bytes: inout [UInt8],
     cursor: inout Int,
     candidates: [String]
   ) {
-    guard cursor == bytes.count, !bytes.contains(10) else { return }
+    guard cursor == bytes.count, !bytes.contains(10) else {
+      dismissCompletion()
+      return
+    }
+
+    // A Tab while the menu is open applies the highlighted option to the line
+    // and highlights the next one, so Tab walks the whole list round.
+    if let menu = completionMenu, !completionMatches.isEmpty {
+      let applied = menu.selected % completionMatches.count
+      bytes = Array(completionMatches[applied].utf8)
+      cursor = bytes.count
+      completionMenu = CompletionMenu(
+        prefix: menu.prefix,
+        options: menu.options,
+        selected: (applied + 1) % completionMatches.count)
+      surface?.drawCompletionMenu(completionMenu)
+      redraw(prompt: prompt, bytes: bytes, cursor: cursor)
+      return
+    }
+
     let line = String(decoding: bytes, as: UTF8.self)
     let matches = candidates.filter { $0.hasPrefix(line) }.sorted()
     guard !matches.isEmpty else {
       surface?.bell()
       return
     }
-    let replacement: String
     if matches.count == 1 {
-      replacement = matches[0] + (matches[0].hasSuffix(" ") ? "" : " ")
-    } else {
-      replacement = commonPrefix(matches)
-      if replacement == line {
-        surface?.emit(matches.joined(separator: "  ") + "\n")
-      }
+      let value = matches[0] + (matches[0].hasSuffix(" ") ? "" : " ")
+      bytes = Array(value.utf8)
+      cursor = bytes.count
+      redraw(prompt: prompt, bytes: bytes, cursor: cursor)
+      return
     }
-    bytes = Array(replacement.utf8)
+
+    // Extend the line to the shared prefix and open the menu with its first
+    // option highlighted: the next Tab is what puts that option on the line.
+    let prefix = commonPrefix(matches)
+    completionMatches = matches
+    completionMenu = CompletionMenu(
+      prefix: prefix,
+      options: matches.map { String($0.dropFirst(prefix.count)) },
+      selected: 0)
+    bytes = Array(prefix.utf8)
     cursor = bytes.count
+    surface?.drawCompletionMenu(completionMenu)
     redraw(prompt: prompt, bytes: bytes, cursor: cursor)
+  }
+
+  /// Closes the rotating menu, leaving what is on the line. The status row
+  /// returns to the REPL's own text.
+  private func dismissCompletion() {
+    guard completionMenu != nil || !completionMatches.isEmpty else { return }
+    completionMenu = nil
+    completionMatches = []
+    surface?.drawCompletionMenu(nil)
+  }
+
+  /// True for the Tab byte, the only key that keeps a menu open.
+  private func isTabKey(_ key: Key) -> Bool {
+    if case .byte(9) = key { return true }
+    return false
   }
 
   // MARK: - Drawing

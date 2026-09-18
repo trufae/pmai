@@ -43,6 +43,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var columns = 80
   private var ui = ConfiguredTerminalUI()
   private var statusText = ""
+  /// The rotating tab-completion options that take over the status row, or
+  /// nil when the row shows `statusText`.
+  private var completionMenu: CompletionMenu?
   private var thinkingRows: [String] = []
   /// The input as drawn, one styled string per row below the status line.
   private var inputRows = [""]
@@ -196,7 +199,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       updateActivityTimer()
       guard text != statusText else { return }
       statusText = text
-      guard active else { return }
+      // A tab-completion menu owns the row until it closes; the status is
+      // still kept so the row can be restored when it does.
+      guard active, completionMenu == nil else { return }
       drawStatusRow()
       placeCaret()
     }
@@ -285,6 +290,19 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     // The status row is the separator here, and the REPL keeps it current.
   }
 
+  /// Puts the rotating tab-completion options on the status row above the
+  /// prompt, with the selected option on a background of its own, or restores
+  /// the REPL's status when the menu closes.
+  func drawCompletionMenu(_ menu: CompletionMenu?) {
+    lock.withLock {
+      guard completionMenu != menu else { return }
+      completionMenu = menu
+      guard active else { return }
+      drawStatusRow()
+      placeCaret()
+    }
+  }
+
   func bell() {
     lock.withLock { write("\u{7}") }
   }
@@ -361,12 +379,49 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       out += Self.truncated(line, width: width) + Self.reset
     }
     out += move(row: regionBottom + thinkingRows.count + 1, column: 1) + Self.clearLine
-    if let background = TerminalLineEditor.backgroundColorCode(ui.backgroundLine) {
+    if let menu = completionMenu {
+      out += Self.completionMenuRow(menu, width: width, colors: colors)
+    } else if let background = TerminalLineEditor.backgroundColorCode(ui.backgroundLine) {
       out += "\u{1B}[\(background)m" + content + padding + Self.reset
     } else {
       out += "\u{1B}[2m" + content + Self.reset
     }
     write(out)
+  }
+
+  /// One row of completion options, joined by two spaces. Each option is shown
+  /// short — only the part after the shared prefix, which the input line
+  /// already carries — so the repeated common part is not listed once per
+  /// match. The selected option gets a background of its own, or plain reverse
+  /// video when colors are off.
+  private static func completionMenuRow(_ menu: CompletionMenu, width: Int, colors: Bool) -> String {
+    let separator = "  "
+    let marker = "\u{1B}[7m"  // reverse video, always available
+    let selectionBackground = colors ? TerminalLineEditor.backgroundColorCode("blue") : nil
+    var out = ""
+    var used = 0
+    for (index, option) in menu.options.enumerated() {
+      if index > 0 {
+        guard used + separator.count <= width else { break }
+        out += separator
+        used += separator.count
+      }
+      let room = max(0, width - used)
+      guard room > 0 else { break }
+      let label = option.isEmpty ? " " : option
+      let shown = displayWidth(label) > room
+        ? TerminalScreen.truncated(label, width: room) : label
+      guard !shown.isEmpty else { break }
+      // The highlighted option gets a background of its own — blue behind
+      // white text — or reverse video where colors are unavailable.
+      if index == menu.selected {
+        out += selectionBackground.map { "\u{1B}[\($0)m\u{1B}[97m" } ?? marker
+      }
+      out += shown + Self.reset
+      used += displayWidth(shown)
+    }
+    let pad = String(repeating: " ", count: max(0, width - used))
+    return out + pad
   }
 
   private func updateActivityTimer() {
@@ -386,7 +441,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   // Animate one cell without rebuilding the status or traversing the transcript.
   private func drawActivity() {
     lock.withLock {
-      guard active, animatingStatus, columns > 2 else { return }
+      // The completion menu owns the row; its first cell must not blink.
+      guard active, animatingStatus, completionMenu == nil, columns > 2 else { return }
       let marker = String(Unicode.Scalar(Int.random(in: 0x2800...0x28FF))!)
       let style = TerminalLineEditor.backgroundColorCode(ui.backgroundLine) ?? "2"
       write(
