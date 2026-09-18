@@ -43,7 +43,7 @@ public struct MaiRunTool: AgentTool {
 
   /// Spawning processes is unavailable on iOS, where the group is simply absent.
   public static var isSupported: Bool {
-    #if os(macOS) || os(Linux)
+    #if os(macOS) || os(Linux) || os(Android)
       true
     #else
       false
