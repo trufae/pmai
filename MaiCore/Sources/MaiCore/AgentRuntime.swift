@@ -1238,7 +1238,7 @@ public actor AgentRuntime {
       return result
     }
 
-    let resolvedCall: ToolCall
+    var resolvedCall: ToolCall
     if request.useToolProxy, call.name == ToolProxy.callName {
       let resolved = ToolProxy.resolveCall(
         arguments: call.arguments.objectValue ?? [:], definitions: definitions)
@@ -1286,6 +1286,8 @@ public actor AgentRuntime {
       await emit(.toolFinished(context, result))
       return result
     }
+    resolvedCall.arguments = ToolSchemaValidator.coerceBooleans(
+      resolvedCall.arguments, schema: definition.inputSchema)
     if definitionName == resolvedCall.name,
       let validationError = ToolSchemaValidator.validate(
         arguments: resolvedCall.arguments,

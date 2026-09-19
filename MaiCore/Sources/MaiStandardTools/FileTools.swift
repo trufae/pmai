@@ -191,27 +191,27 @@ public struct MaiFileWorkspaceTool: AgentTool {
       return ToolDefinition(
         name: operation.rawValue,
         description:
-          "Search text files for a string or regular expression (smart case, first 100 matching lines), skipping ignored, hidden, build, and dependency paths.",
+          "Search file contents. Returns up to 100 matching lines; skips ignored and hidden files. Case-insensitive unless query contains uppercase.",
         parameters: [
           ToolParameterDef(
             name: "query",
             type: "string",
-            description: "Text or regular expression to find.",
+            description: "Text to find. Put the pattern here when regex is true.",
             required: true),
           ToolParameterDef(
             name: "path",
             type: "string",
-            description: "File or folder to search; a pattern such as src/*.c searches matching files. Omit for the current directory.",
+            description: "File or folder. Default: current directory.",
             required: false),
           ToolParameterDef(
             name: "glob",
             type: "string",
-            description: "Only files matching this pattern, for example *.swift or src/**/*.c.",
+            description: "Optional file filter, e.g. *.swift.",
             required: false),
           ToolParameterDef(
             name: "regex",
             type: "boolean",
-            description: "Interpret query as a regular expression. Default: false.",
+            description: "true for regex, false for literal text (default). Never put the pattern here.",
             required: false),
         ],
         annotations: ToolAnnotations(
