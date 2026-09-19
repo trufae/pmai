@@ -40,6 +40,7 @@ def main():
                    if not k.startswith(('PMAI_', 'MAI_', 'OPENAI_'))}
             env.update(TERM='xterm-256color', PS1='SHELL_READY> ',
                        PROMPT_COMMAND='', LC_ALL='C')
+            env.pop('NO_COLOR', None)
             os.execvpe('bash', ['bash', '--noprofile', '--norc', '-i'], env)
 
         output = bytearray()
@@ -73,6 +74,22 @@ def main():
             wait_for(PROMPT)
             job_pid = os.tcgetpgrp(master)
             assert job_pid != pid, 'pmai must have its own foreground process group'
+
+            # Every Tab applies the highlighted item, including items which
+            # were offscreen. Enter must submit that item, and editing resets
+            # the menu instead of retaining the old completion candidates.
+            fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 32, 0, 0))
+            send(b'/set tool.calling ')
+            for option in ('automatic', 'json', 'native', 'text', 'xml', 'automatic', 'json'):
+                send(b'\t')
+                wait_for(re.compile(rb'\x1b\[44m\x1b\[97m' + option.encode() + rb'\x1b\[0m'))
+            send(b'\r')
+            wait_for('Set tool.calling = json')
+            send(b'/set tool.calling \t')
+            wait_for(re.compile(rb'\x1b\[44m\x1b\[97mautomatic\x1b\[0m'))
+            send(b'\x7f\t\r')
+            wait_for('Set tool.calling = automatic')
+            print('PASS: completion selection, wraparound, narrow rows and editing')
 
             for cycle in range(8):
                 # Keep an unfinished line across suspension and a shell command.

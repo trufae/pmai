@@ -308,9 +308,10 @@ chats, while `messages`, `log`, `edit`, `remove`, `undo`, `trim`, and `clear`
 operate on the active transcript. Tab completes commands, chat selectors,
 agents, and providers: one match is typed out, and several open a rotating
 menu on the status line above the prompt instead of printing into the chat.
-Each further Tab moves the highlighted option onto the input line; the menu
-lists only the part after the prefix the matches share, and the selected
-option carries a background of its own. Any other key closes it.
+The first match is inserted immediately; each further Tab selects the next.
+The highlight always matches the input and stays visible on narrow terminals.
+The menu shows only suffixes after the shared prefix (`↵` means no suffix).
+Any other key closes it and restores the status line.
 `/agent add NAME MODEL GROUPS PROMPT [PROVIDER [BASE_URL]]`
 saves a reusable agent in one line from a model, comma-separated tool groups,
 and a named system prompt; `/agent tools|model|prompt|provider ID VALUE` change
