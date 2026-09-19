@@ -140,28 +140,54 @@ func runToolsManageOutput() async throws {
   #expect(silent.text == "(no output; exit code 0)")
 }
 
-@Test("Run tools terminate the child when the task is cancelled")
-func runToolsPropagateCancellation() async throws {
+@Test("Cancellation and timeout kill children even after the shell exits", arguments: [false, true])
+func runToolsPropagateCancellation(timeout: Bool) async throws {
   let tools = MaiRunTool.makeTools(configuration: MaiRunConfiguration())
-  let marker = FileManager.default.temporaryDirectory
+  let directory = FileManager.default.temporaryDirectory
     .appendingPathComponent("mai-run-cancel-\(UUID().uuidString)")
-  defer { try? FileManager.default.removeItem(at: marker) }
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let marker = directory.appendingPathComponent("child.pid")
   let task = Task {
     try await call(
       shell(tools),
-      ["command": .string("sleep 30; touch '\(marker.path)'")])
+      ["command": .string("sh -c 'trap \"\" TERM; echo $$ > child.pid; exec sleep 30' >/dev/null 2>&1 & wait"),
+       "cwd": .string(directory.path), "timeout_seconds": .integer(timeout ? 1 : 30)])
   }
-  try await Task.sleep(for: .milliseconds(300))
+  defer { task.cancel() }
+  let deadline = Date().addingTimeInterval(5)
+  while !FileManager.default.fileExists(atPath: marker.path), Date() < deadline {
+    try await Task.sleep(for: .milliseconds(20))
+  }
+  let child = try String(contentsOf: marker, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+  defer {
+    let cleanup = Process()
+    cleanup.executableURL = URL(fileURLWithPath: "/bin/kill")
+    cleanup.arguments = ["-KILL", child]
+    cleanup.standardError = FileHandle.nullDevice
+    try? cleanup.run()
+    cleanup.waitUntilExit()
+  }
   let started = Date()
-  task.cancel()
+  if !timeout { task.cancel() }
   do {
-    _ = try await task.value
-    Issue.record("Expected run_sh to propagate cancellation")
+    let output = try await task.value
+    #expect(timeout)
+    #expect(output.structuredContent?.objectValue?["timedOut"] == .bool(true))
   } catch is CancellationError {
-    // Expected: the REPL regains control and the child is gone.
+    #expect(!timeout)
   }
   #expect(Date().timeIntervalSince(started) < 10)
-  #expect(!FileManager.default.fileExists(atPath: marker.path))
+  let probe = Process()
+  let pipe = Pipe()
+  probe.executableURL = URL(fileURLWithPath: "/bin/ps")
+  probe.arguments = ["-p", child, "-o", "stat="]
+  probe.standardOutput = pipe
+  try probe.run()
+  let status = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    .trimmingCharacters(in: .whitespacesAndNewlines)
+  probe.waitUntilExit()
+  #expect(status.isEmpty || status.hasPrefix("Z"), "Child \(child) still running: \(status)")
 }
 
 @Test("Standard tool factory exposes the Run group with its options")
