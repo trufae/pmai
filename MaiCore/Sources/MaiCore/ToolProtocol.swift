@@ -1030,8 +1030,7 @@ public enum AgentTooling {
       }
       return parameter.required ? value : nil
     case "boolean", "bool":
-      return value.coercedBoolValue.map(AgentToolArgumentValue.bool)
-        ?? (parameter.required ? value : nil)
+      return value.coercedBoolValue.map(AgentToolArgumentValue.bool) ?? value
     case "string":
       if case .string = value { return value }
       return parameter.required ? .string(value.coercedStringValue) : nil

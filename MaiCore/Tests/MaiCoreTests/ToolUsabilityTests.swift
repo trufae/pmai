@@ -169,6 +169,49 @@ func repeatedCallsAreCappedAndShown() async throws {
   #expect(started.count == 6)
 }
 
+@Test("Native boolean spellings are normalized before validation without hiding bad arguments")
+func nativeBooleanArguments() async throws {
+  let values: [JSONValue] = [.string("true"), .string("false"), .integer(1), .integer(0),
+                            .string("a.*b"), .array([]), .null]
+  let calls = values.enumerated().map { index, value in
+    ContentPart.toolCall(ToolCall(id: "bool-\(index)", name: "grep",
+      arguments: .object(["query": .string("a.*b"), "regex": value])))
+  }
+  let runtime = AgentRuntime()
+  try await runtime.register(UsabilityScriptedProvider(responses: [
+    ProviderResponse(message: AgentMessage(role: .assistant, content: calls), stopReason: .toolCall),
+    ProviderResponse(message: .assistant("done"), stopReason: .stop),
+  ]))
+  try await runtime.register(tool: ClosureTool(definition: ToolDefinition(
+    name: "grep", description: "Search",
+    parameters: [
+      ToolParameterDef(name: "query", type: "string", description: "Text", required: true),
+      ToolParameterDef(name: "regex", type: "boolean", description: "Use regex", required: false),
+    ], annotations: ToolAnnotations(approval: .automatic)
+  )) { arguments, _ in
+    ToolOutput(text: arguments.objectValue?["regex"]?.compactJSONString ?? "missing")
+  })
+  let result = try await runtime.run(AgentRequest(
+    provider: "usability-scripted", model: "fixture", messages: [.user("search")],
+    toolNames: ["grep"], limits: AgentRunLimits(maxModelTurns: 2, maxToolCalls: 10)))
+  let results = result.transcript.flatMap(\.toolResults)
+  #expect(results.prefix(4).map(\.text) == ["true", "false", "true", "false"])
+  #expect(results.dropFirst(4).count == 3)
+  #expect(results.dropFirst(4).allSatisfy { $0.isError && $0.text.contains("regex must be boolean") })
+
+  let definition = ToolDefinition(name: "nested", description: "Nested", inputSchema: .object([
+    "type": .string("object"), "additionalProperties": .bool(false),
+    "properties": .object(["flags": .object([
+      "type": .string("array"), "items": .object(["type": .string("boolean")]),
+    ])]),
+  ]))
+  let normalized = ToolSchemaValidator.coerceBooleans(
+    .object(["flags": .array([.string("true"), .string("false")]), "unknown": .integer(1)]),
+    schema: definition.inputSchema)
+  #expect(normalized.objectValue?["flags"] == .array([.bool(true), .bool(false)]))
+  #expect(ToolSchemaValidator.validate(arguments: normalized, definition: definition)?.contains("unknown field") == true)
+}
+
 // MARK: - Fixtures
 
 private func usabilityTool(

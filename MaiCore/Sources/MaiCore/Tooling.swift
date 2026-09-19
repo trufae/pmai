@@ -382,6 +382,25 @@ public enum AgentToolError: LocalizedError, Equatable, Sendable {
 }
 
 enum ToolSchemaValidator {
+  /// Coerce unambiguous boolean spellings without dropping invalid or unknown fields.
+  static func coerceBooleans(_ value: JSONValue, schema: JSONValue) -> JSONValue {
+    guard let schema = schema.objectValue else { return value }
+    if schema["type"]?.stringValue == "boolean", let bool = value.coercedBoolValue {
+      return .bool(bool)
+    }
+    if let object = value.objectValue, let properties = schema["properties"]?.objectValue {
+      return .object(object.reduce(into: [:]) { result, entry in
+        result[entry.key] = properties[entry.key].map {
+          coerceBooleans(entry.value, schema: $0)
+        } ?? entry.value
+      })
+    }
+    if let array = value.arrayValue, let items = schema["items"] {
+      return .array(array.map { coerceBooleans($0, schema: items) })
+    }
+    return value
+  }
+
   static func validate(arguments: JSONValue, definition: ToolDefinition) -> String? {
     guard arguments.objectValue != nil else { return "arguments must be a JSON object" }
     return validate(arguments, schema: definition.inputSchema, path: "arguments")

@@ -393,20 +393,21 @@ enum MaiRunToolError: LocalizedError {
         hasInput: stdin != nil,
         outputLimit: outputLimit,
         outputMode: outputMode)
-      try session.start()
-      if let stdin { session.send(stdin) }
-      let watchdog = Task {
-        try await Task.sleep(for: .seconds(timeout))
-        session.stop(timedOut: true)
-      }
-      defer { watchdog.cancel() }
-      await withTaskCancellationHandler {
+      return try await withTaskCancellationHandler {
+        try Task.checkCancellation()
+        try session.start()
+        if let stdin { session.send(stdin) }
+        let watchdog = Task {
+          try await Task.sleep(for: .seconds(timeout))
+          session.stop(timedOut: true)
+        }
+        defer { watchdog.cancel() }
         await session.wait()
+        try Task.checkCancellation()
+        return try session.outcome
       } onCancel: {
         session.stop(timedOut: false)
       }
-      try Task.checkCancellation()
-      return session.outcome
     }
 
     /// Owns the non-Sendable `Process` and pipes; every mutation goes through `lock`.
@@ -415,6 +416,11 @@ enum MaiRunToolError: LocalizedError {
       private let process = Process()
       private let stdoutPipe = Pipe()
       private let stderrPipe = Pipe()
+      private let readerQueue = DispatchQueue(label: "pmai.run.output", qos: .utility)
+      private let readersClosed = DispatchGroup()
+      private var stdoutSource: DispatchSourceRead?
+      private var stderrSource: DispatchSourceRead?
+      private var readError: NSError?
       private let stdinPipe: Pipe?
       private let outputLimit: Int
       private let outputMode: MaiRunTool.OutputMode
@@ -432,6 +438,7 @@ enum MaiRunToolError: LocalizedError {
       private var finished = false
       private var timedOut = false
       private var stopping = false
+      private var killSent = false
       private var drainScheduled = false
       private var continuation: CheckedContinuation<Void, Never>?
 
@@ -457,29 +464,54 @@ enum MaiRunToolError: LocalizedError {
       }
 
       var outcome: MaiHostProcessOutcome {
-        lock.withLock {
-          MaiHostProcessOutcome(
-            stdout: stdout,
-            stderr: stderr,
-            stdoutDropped: stdoutDropped,
-            stderrDropped: stderrDropped,
-            exitCode: exited ? process.terminationStatus : -1,
-            timedOut: timedOut,
-            duration: Date().timeIntervalSince(started),
-            stdoutFile: stdoutFile?.path,
-            stderrFile: stderrFile?.path)
+        get throws {
+          try lock.withLock {
+            if let readError { throw readError }
+            return MaiHostProcessOutcome(
+              stdout: stdout,
+              stderr: stderr,
+              stdoutDropped: stdoutDropped,
+              stderrDropped: stderrDropped,
+              exitCode: exited ? process.terminationStatus : -1,
+              timedOut: timedOut,
+              duration: Date().timeIntervalSince(started),
+              stdoutFile: stdoutFile?.path,
+              stderrFile: stderrFile?.path)
+          }
         }
       }
 
       func start() throws {
-        stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-          self?.receive(handle, isStderr: false)
+        do {
+          try lock.withLock {
+            guard !stopping else { throw CancellationError() }
+            stdoutSource = try monitor(stdoutPipe.fileHandleForReading, isStderr: false)
+            stderrSource = try monitor(stderrPipe.fileHandleForReading, isStderr: true)
+            process.terminationHandler = { [weak self] _ in self?.markExited() }
+            try process.run()
+          }
+        } catch {
+          lock.withLock { killSent = true }
+          finish()
+          throw error
         }
-        stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
-          self?.receive(handle, isStderr: true)
+      }
+
+      private func monitor(_ handle: FileHandle, isStderr: Bool) throws -> DispatchSourceRead {
+        let fd = handle.fileDescriptor
+        let flags = fcntl(fd, F_GETFL)
+        guard flags >= 0, fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 else {
+          throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
         }
-        process.terminationHandler = { [weak self] _ in self?.markExited() }
-        try process.run()
+        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: readerQueue)
+        source.setEventHandler { [weak self] in self?.receive(handle, isStderr: isStderr) }
+        readersClosed.enter()
+        source.setCancelHandler { [readersClosed] in
+          try? handle.close()
+          readersClosed.leave()
+        }
+        source.resume()
+        return source
       }
 
       func send(_ input: String) {
@@ -506,41 +538,53 @@ enum MaiRunToolError: LocalizedError {
         }
       }
 
-      /// Sends SIGTERM, escalates to SIGKILL, and finally stops waiting on pipes
-      /// that background grandchildren may still hold open.
+      /// Stop the shell's process group, including children that outlive the shell.
       func stop(timedOut: Bool) {
-        let shouldStop = lock.withLock {
-          if timedOut { self.timedOut = true }
-          guard !stopping, !finishing else { return false }
+        let pid: Int32 = lock.withLock {
+          guard !stopping, !finishing else { return 0 }
+          self.timedOut = timedOut
           stopping = true
-          return true
+          return process.processIdentifier
         }
-        guard shouldStop else { return }
-        if process.isRunning { process.terminate() }
+        guard pid > 0 else { return }
+        signalGroup(pid, SIGTERM)
         let grace = MaiHostProcess.terminationGrace
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + grace) { [weak self] in
-          guard let self else { return }
-          if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-          DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1) { [weak self] in
-            self?.finish()
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + grace) { [self] in
+          signalGroup(pid, SIGKILL)
+          lock.withLock { killSent = true }
+          finishIfComplete()
+          DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1) { [self] in
+            finish()
           }
         }
+      }
+
+      private func signalGroup(_ pid: Int32, _ signal: Int32) {
+        // Foundation spawns a new process group; never signal pmai's own group.
+        if pid != getpgrp(), kill(-pid, signal) == 0 { return }
+        if process.isRunning { kill(pid, signal) }
       }
 
       private func receive(_ handle: FileHandle, isStderr: Bool) {
         lock.withLock {
           guard !finishing else { return }
-          let data = handle.availableData
-          if data.isEmpty {
+          var data = Data(count: 64 * 1024)
+          let count = data.withUnsafeMutableBytes { read(handle.fileDescriptor, $0.baseAddress, $0.count) }
+          if count < 0 {
+            if errno == EINTR || errno == EAGAIN { return }
+            readError = NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+          }
+          if count <= 0 {
             if isStderr {
               stderrClosed = true
-              stderrPipe.fileHandleForReading.readabilityHandler = nil
+              stderrSource?.cancel()
             } else {
               stdoutClosed = true
-              stdoutPipe.fileHandleForReading.readabilityHandler = nil
+              stdoutSource?.cancel()
             }
             return
           }
+          data.count = count
           if isStderr { append(data, to: &stderr, dropped: &stderrDropped, file: &stderrFile, stream: "stderr") }
           else { append(data, to: &stdout, dropped: &stdoutDropped, file: &stdoutFile, stream: "stdout") }
         }
@@ -617,17 +661,15 @@ enum MaiRunToolError: LocalizedError {
 
       private func finish() {
         let shouldFinish = lock.withLock {
-          guard !finishing else { return false }
+          guard !finishing, !stopping || killSent else { return false }
           finishing = true
           return true
         }
         guard shouldFinish else { return }
-        // FileHandle.close() synchronizes with its readability queue on Linux.
-        DispatchQueue.global(qos: .utility).async { [self] in
-          stdoutPipe.fileHandleForReading.readabilityHandler = nil
-          stderrPipe.fileHandleForReading.readabilityHandler = nil
-          try? stdoutPipe.fileHandleForReading.close()
-          try? stderrPipe.fileHandleForReading.close()
+        // Close descriptors only after Dispatch has unregistered their sources.
+        stdoutSource?.cancel()
+        stderrSource?.cancel()
+        readersClosed.notify(queue: readerQueue) { [self] in
           let continuation = lock.withLock {
             finished = true
             defer { self.continuation = nil }
