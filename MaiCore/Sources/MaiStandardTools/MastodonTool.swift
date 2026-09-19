@@ -256,7 +256,7 @@ public struct MaiMastodonTool: AgentTool {
   }
 
   private static func limit(_ arguments: [String: AgentToolArgumentValue]) -> Int {
-    min(max(Int(arguments["limit"]?.numberValue ?? 10), 1), 40)
+    min(max(arguments["limit"]?.intValue ?? 10, 1), 40)
   }
 
   private static func normalizedBaseURL(_ value: String) -> URL? {

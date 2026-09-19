@@ -976,12 +976,13 @@ private struct MaiFileWorkspace: Sendable {
     }
     let lines = Self.documentLines(text)
     let start = arguments["start_line"]?.intValue ?? 1
-    let end = arguments["end_line"]?.intValue ?? start + 199
-    guard start >= 1, end >= start else { throw MaiFileWorkspaceError.invalidLineRange }
+    guard start >= 1 else { throw MaiFileWorkspaceError.invalidLineRange }
     guard start <= lines.count else {
       throw MaiFileWorkspaceError.lineOutOfRange(start, lines.count)
     }
-    let finalEnd = min(end, min(lines.count, start + 999))
+    let end = arguments["end_line"]?.intValue ?? start + min(199, lines.count - start)
+    guard end >= start else { throw MaiFileWorkspaceError.invalidLineRange }
+    let finalEnd = min(end, start + min(999, lines.count - start))
     let rendered = (start...finalEnd).map { "\($0): \(lines[$0 - 1])" }
     return ToolOutput(content: [
       .text(
