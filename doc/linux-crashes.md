@@ -43,9 +43,18 @@ which could round `Int.max` out of range before conversion back to Int.
 
 Shell completion had another trap: Linux Foundation closes a monitored file
 handle by synchronizing with its readability queue. Closing the handle from
-that same queue can trip libdispatch's deadlock check. Pipe cleanup now runs
-on a separate queue, outside the session lock, and stops further reads before
-closing the handles. This also prevents cleanup from racing an active read.
+that same queue can trip libdispatch's deadlock check. Concurrent process tests
+also exposed a `Source finalized twice` trap in libdispatch during cleanup.
+The runner now owns its read sources and closes each pipe in the source's
+cancellation handler, after Dispatch stops monitoring it. Completion waits
+for both readers to close. Bounded POSIX reads report errors instead of using
+the nonthrowing `FileHandle.availableData`, which traps on a read failure.
+
+Cancellation and timeout signal the shell's process group with SIGTERM, then
+SIGKILL after two seconds, even if the shell has already exited. This covers
+ordinary children and pipelines; a program that deliberately creates a new
+session or process group is outside that group. The runner waits for the
+escalation before reporting cancellation.
 
 Run the release HTTP regressions (local mock server; no model credentials):
 

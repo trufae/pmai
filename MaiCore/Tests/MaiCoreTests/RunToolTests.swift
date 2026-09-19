@@ -113,6 +113,23 @@ func runToolsTruncateOutput() async throws {
   #expect(output.structuredContent?.objectValue?["truncated"] == .bool(true))
 }
 
+@Test("Concurrent short shell calls safely retire their pipe readers")
+func runToolsConcurrentPipeCleanup() async throws {
+  let tool = MaiRunTool(configuration: MaiRunConfiguration())
+  try await withThrowingTaskGroup(of: Void.self) { group in
+    for _ in 0..<8 {
+      group.addTask {
+        for _ in 0..<8 {
+          let output = try await call(tool, ["script": .string("printf out; printf err >&2")])
+          #expect(!output.isError)
+          #expect(output.text == "out\n[stderr]\nerr")
+        }
+      }
+    }
+    try await group.waitForAll()
+  }
+}
+
 @Test("Run tools spill large output, suppress output, and strip ANSI escapes")
 func runToolsManageOutput() async throws {
   let tool = MaiRunTool(configuration: MaiRunConfiguration(outputLimit: 1_024))
