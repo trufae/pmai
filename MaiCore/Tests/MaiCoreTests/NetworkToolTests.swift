@@ -62,6 +62,13 @@ func networkToolsValidateInput() async throws {
     context: networkTestContext)
   #expect(mastodon.isError)
   #expect(mastodon.text.contains("disabled"))
+
+  for number: JSONValue in [.number(1e100), .number(.infinity), .number(.nan), .number(1.5)] {
+    let invalid = await MaiGitHubTool.execute(name: MaiGitHubTool.prName, arguments: [
+      "repo": .string("trufae/pmai"), "number": number,
+    ])
+    #expect(invalid == "Error: number is required.")
+  }
 }
 
 @Test("Shared GitHub tool accepts common repository forms")

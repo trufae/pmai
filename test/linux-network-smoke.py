@@ -18,6 +18,8 @@ from xml.sax.saxutils import escape
 
 def tool_message(request, mode):
     steps = [
+        ("files_read_range", {"path": "sample.txt", "start_line": 9223372036854775807},
+         "Error:"),
         ("files_read_range", {"path": "sample.txt", "start_line": 1e100, "end_line": 2},
          "must be integer" if mode == "native" else "lines 1-2"),
         ("context_rewrite", {"message": 1e100, "text": "replacement"}, "must be integer"),
@@ -28,6 +30,10 @@ def tool_message(request, mode):
          "9223372036854775807"),
         # The shell exits before its child closes the output pipe.
         ("run_sh", {"script": "(sleep 0.1; printf smoke-pipe) &"}, "smoke-pipe"),
+        ("files_grep", {"path": "sample.txt", "query": "o.e", "regex": "true"}, "one"),
+        ("files_grep", {"path": "sample.txt", "query": "o.e", "regex": "false"}, "No matching lines"),
+        ("files_grep", {"path": "sample.txt", "query": "one", "regex": "o.e"},
+         "regex must be boolean"),
     ]
     results = [message["content"] for message in request["messages"] if message["role"] == "tool"]
     for result, (_, _, expected) in zip(results, steps):
@@ -84,6 +90,13 @@ class Provider(BaseHTTPRequestHandler):
                 except AssertionError as error:
                     self.send_error(500, str(error))
                     return
+            elif case.startswith("arguments-"):
+                arguments = {"arguments-malformed": '{"script":',
+                             "arguments-array": '[]', "arguments-null": 'null'}[case]
+                message = {"role": "assistant", "tool_calls": [{
+                    "index": 0, "id": "bad-json", "type": "function",
+                    "function": {"name": "run_sh", "arguments": arguments},
+                }]}
             payload = {"choices": [{field: message,
                                      "finish_reason": "stop"}], "usage": usage}
         stream = request.get("stream") and status == 200
@@ -116,11 +129,12 @@ def main():
         for stream in (False, True):
             for case in ("ok", "unauthorized", "disconnect", "malformed", "range",
                          "overflow", "negative", "fraction", "tool-text", "tool-xml",
-                         "tool-json", "tool-native"):
+                         "tool-json", "tool-native", "arguments-malformed",
+                         "arguments-array", "arguments-null"):
                 with tempfile.TemporaryDirectory(prefix="pmai-network-") as directory:
                     root = Path(directory)
                     (root / "sample.txt").write_text("one\ntwo\n")
-                    tools = ["files_read_range", "run_sh", "context_rewrite"] if case.startswith("tool-") else []
+                    tools = ["files_read_range", "files_grep", "run_sh", "context_rewrite"] if case.startswith("tool-") else []
                     config = root / "config.json"
                     config.write_text(json.dumps({
                         "version": 1, "defaultAgent": "smoke",
@@ -152,6 +166,8 @@ def main():
                         assert "Token usage" in output, output
                     elif case == "unauthorized":
                         assert "smoke unauthorized" in output, output
+                    elif case.startswith("arguments-"):
+                        assert "invalid JSON arguments" in output, output
                     print(f"PASS {case} stream={stream}", flush=True)
     finally:
         server.shutdown()

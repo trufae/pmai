@@ -270,6 +270,18 @@ func fileWorkspaceToolsSupportAdvancedSourceNavigation() async throws {
     ["path": .string("example.swift"), "start_line": .integer(2), "end_line": .integer(2)])
   #expect(range.text.contains("2:   func hello() {}"))
 
+  for start in [Int.max, Int.min, 0] {
+    let invalid = try await call(tool(tools, .readRange), [
+      "path": .string("example.swift"), "start_line": .integer(start),
+    ])
+    #expect(invalid.isError)
+  }
+  let last = try await call(tool(tools, .readRange), [
+    "path": .string("example.swift"), "start_line": .integer(3), "end_line": .integer(Int.max),
+  ])
+  #expect(!last.isError)
+  #expect(last.text.contains("3: }"))
+
   let replaced = try await call(
     tool(tools, .replaceRange),
     [

@@ -280,15 +280,15 @@ public struct MaiGitHubTool: AgentTool {
   }
 
   private static func limitArgument(_ arguments: [String: AgentToolArgumentValue]) -> Int {
-    let limit = arguments["limit"]?.numberValue.map { Int($0) } ?? 10
+    let limit = arguments["limit"]?.intValue ?? 10
     return min(max(limit, 1), 30)
   }
 
   private static func numberArgument(
     _ arguments: [String: AgentToolArgumentValue], key: String
   ) -> Int? {
-    guard let number = arguments[key]?.numberValue, number > 0 else { return nil }
-    return Int(number)
+    guard let number = arguments[key]?.intValue, number > 0 else { return nil }
+    return number
   }
 }
 
@@ -835,7 +835,7 @@ enum GitHubService {
 
   private static func intValue(_ raw: Any?) -> Int? {
     if let int = raw as? Int { return int }
-    if let double = raw as? Double { return Int(double) }
+    if let double = raw as? Double { return Int(exactly: double) }
     if let number = raw as? NSNumber { return number.intValue }
     return nil
   }
