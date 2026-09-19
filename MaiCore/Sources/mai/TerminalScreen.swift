@@ -398,17 +398,29 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     let separator = "  "
     let marker = "\u{1B}[7m"  // reverse video, always available
     let selectionBackground = colors ? TerminalLineEditor.backgroundColorCode("blue") : nil
+    let labels = menu.options.map { option in
+      option.isEmpty ? "↵" : option.components(separatedBy: .controlCharacters).joined(separator: " ")
+    }
+    guard labels.indices.contains(menu.selected) else { return "" }
+    var first = menu.selected
+    var needed = min(width, displayWidth(labels[first]))
+    while first > 0 {
+      let extra = displayWidth(labels[first - 1]) + separator.count
+      guard needed + extra <= width else { break }
+      first -= 1
+      needed += extra
+    }
     var out = ""
     var used = 0
-    for (index, option) in menu.options.enumerated() {
-      if index > 0 {
+    for index in first..<labels.count {
+      if index > first {
         guard used + separator.count <= width else { break }
         out += separator
         used += separator.count
       }
       let room = max(0, width - used)
       guard room > 0 else { break }
-      let label = option.isEmpty ? " " : option
+      let label = labels[index]
       let shown = displayWidth(label) > room
         ? TerminalScreen.truncated(label, width: room) : label
       guard !shown.isEmpty else { break }
