@@ -8,6 +8,7 @@ import pty
 import queue
 import re
 import select
+import signal
 import struct
 import subprocess
 import sys
@@ -35,12 +36,21 @@ class Provider(BaseHTTPRequestHandler):
         if texts == ['slow'] and not release.is_set():
             release.wait(30)
         message = {'role': 'assistant', 'content': 'answer'}
-        if texts in (['subagent'], ['background']) and not any(m['role'] == 'tool' for m in request['messages']):
+        if texts in (['subagent'], ['background'], ['shell-child']) and not any(m['role'] == 'tool' for m in request['messages']):
             message = {'role': 'assistant', 'content': None, 'tool_calls': [{
                 'id': 'start-1', 'type': 'function', 'function': {
                     'name': 'agent_start',
-                    'arguments': json.dumps({'agent': 'worker', 'task': 'approval',
-                                             'output': 'answer', 'wait': texts == ['subagent']}),
+                    'arguments': json.dumps({'agent': 'worker',
+                                             'task': 'SHELL_PROCESS_TEST' if texts == ['shell-child'] else 'approval',
+                                             'output': 'answer', 'wait': texts != ['background']}),
+                },
+            }]}
+        elif texts == ['shell'] or any('SHELL_PROCESS_TEST' in (text or '') for text in texts):
+            message = {'role': 'assistant', 'content': None, 'tool_calls': [{
+                'id': 'shell-1', 'type': 'function', 'function': {
+                    'name': 'run_sh',
+                    'arguments': json.dumps({'script':
+                        'sh -c \'trap "" TERM; echo $$ > child.pid; exec sleep 30\' >/dev/null 2>&1 & wait'}),
                 },
             }]}
         elif texts == ['approval'] or request['model'] == 'worker':
@@ -83,11 +93,12 @@ def main():
     server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        for choice in ('continue', 'submit', 'ignore', 'clear', 'stop',
+        for choice in sys.argv[2:] or ('continue', 'submit', 'ignore', 'clear', 'stop',
                        'approval-eof', 'edit-eof', 'approval-exit', 'edit-exit',
                        'approval-quit', 'edit-quit', 'approval-interrupt', 'edit-interrupt',
                        'child-interrupt', 'child-edit-interrupt', 'child-kill',
-                       'background-interrupt', 'background-edit-interrupt'):
+                       'background-interrupt', 'background-edit-interrupt',
+                       'shell-interrupt', 'shell-child-interrupt'):
             release.clear()
             with tempfile.TemporaryDirectory(prefix='pmai-queue-') as directory:
                 root = Path(directory)
@@ -98,13 +109,13 @@ def main():
                                    'baseURL': f'http://127.0.0.1:{server.server_port}/v1',
                                    'apiKey': 'smoke', 'timeout': 60}],
                     'toolSources': [{'id': 'standard', 'kind': 'standard-tools',
-                                     'options': {'tools': ['files_write']}}],
+                                     'options': {'tools': ['files_write', 'run_sh']}}],
                     'agents': [{'id': 'smoke', 'provider': 'smoke', 'model': 'smoke',
-                                'toolNames': ['files_write'], 'toolGroupNames': ['agents'], 'enabled': True,
+                                'toolNames': ['files_write', 'run_sh'], 'toolGroupNames': ['agents'], 'enabled': True,
                                 'subagentNames': ['worker'],
                                 'retry': {'attempts': 0}},
                                {'id': 'worker', 'provider': 'smoke', 'model': 'worker',
-                                'toolNames': ['files_write'], 'toolGroupNames': [], 'enabled': True,
+                                'toolNames': ['files_write', 'run_sh'], 'toolGroupNames': [], 'enabled': True,
                                 'stream': False,
                                 'retry': {'attempts': 0}}],
                     'approvals': {'confirm': 'ask', 'dangerous': 'ask', 'yolo': False},
@@ -119,10 +130,11 @@ def main():
                 env.update(TERM='xterm-256color', NO_PROXY='127.0.0.1,localhost')
                 process = subprocess.Popen(
                     [binary, '--config', str(config), '--home', str(root / 'home'),
-                     '--no-stream', '--no-markdown'], cwd=root, env=env,
+                     '--no-stream', '--no-markdown'] + (['-y'] if choice.startswith('shell-') else []), cwd=root, env=env,
                     stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
                 os.close(slave)
                 output = bytearray()
+                child_pid = None
 
                 def send(text):
                     os.write(master, text.replace("\n", "\r").encode())
@@ -149,6 +161,34 @@ def main():
 
                 try:
                     wait_for('pmai>')
+                    if choice.startswith('shell-'):
+                        prompt = 'shell-child' if choice == 'shell-child-interrupt' else 'shell'
+                        send(prompt + '\n')
+                        assert user_texts() == [prompt]
+                        marker = root / 'child.pid'
+                        deadline = time.monotonic() + 15
+                        while not marker.exists() or not marker.read_text().strip():
+                            assert time.monotonic() < deadline, output.decode(errors='replace')
+                            assert process.poll() is None, process.returncode
+                            if select.select([master], [], [], .05)[0]:
+                                output.extend(os.read(master, 65536))
+                        child_pid = int(marker.read_text())
+                        if prompt == 'shell-child':
+                            assert requests.get(timeout=5)['model'] == 'worker'
+                        send('\x03')
+                        wait_for('✗ took')
+                        status = subprocess.run(['ps', '-p', str(child_pid), '-o', 'stat='],
+                                                capture_output=True, text=True).stdout.strip()
+                        assert not status or status.startswith('Z'), (choice, child_pid, status)
+                        assert requests.empty(), 'Provider called after cancellation'
+                        send('yes\n')
+                        assert user_texts()[-1] == 'yes'
+                        wait_for('✓ took')
+                        send('/exit\n')
+                        process.wait(timeout=10)
+                        assert process.returncode == 0, process.returncode
+                        print(f'PASS {choice}', flush=True)
+                        continue
                     if choice.startswith(('approval-', 'edit-', 'child-', 'background-')):
                         prompt = ('background' if choice.startswith('background-') else
                                   'subagent' if choice.startswith('child-') else 'approval')
@@ -250,6 +290,11 @@ def main():
                     print(f'PASS queue {choice}')
                 finally:
                     release.set()
+                    if child_pid is not None:
+                        try:
+                            os.kill(child_pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
                     if process.poll() is None:
                         process.kill()
                         process.wait()
