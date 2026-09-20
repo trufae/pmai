@@ -1794,7 +1794,11 @@ struct MaiCLI {
       }
       let queued = await runtime.supervisor.queuedMessages().count
       if queued > 0 { facts.append("\(queued) queued") }
-      if case .agent(let pid) = loop.focus { facts.append("→ agent#\(pid.rawValue)") }
+      if configuration?.ui.broadcast == true {
+        facts.append("→ all active")
+      } else if case .agent(let pid) = loop.focus {
+        facts.append("→ agent#\(pid.rawValue)")
+      }
       if let editing = loop.editingApproval {
         facts.append("json for \(editing.request.tool.name)?")
       } else if let waiting = loop.approvals.first {
@@ -1817,6 +1821,8 @@ struct MaiCLI {
       } else if let waiting = loop.approvals.first {
         let who = waiting.request.run.pid.map { "#\($0.rawValue) " } ?? ""
         prompt = "approve \(who)\(waiting.request.tool.name)? [y/a/n/e/c] "
+      } else if configuration?.ui.broadcast == true {
+        prompt = "pmai@*> "
       } else if case .agent(let pid) = loop.focus {
         // The prompt names the process a line goes to: a focused child, or the
         // chat's own once it has run, so its pid is at hand for /agents commands.
@@ -2072,6 +2078,7 @@ struct MaiCLI {
     /// event loop only after the command ends.
     func runForeground<Value: Sendable>(
       _ name: String,
+      resumeInput: Bool = true,
       operation: @escaping @Sendable () async -> Value
     ) async -> (value: Value, interrupted: Bool) {
       let turn = loop.activeTurn
@@ -2079,7 +2086,7 @@ struct MaiCLI {
       let task = Task { await operation() }
       let interrupt = interruptHandler.activate { task.cancel() }
       loop.foregroundCommand = name
-      if screen != nil { await releaseReader(workspace: workspace) }
+      if screen != nil && resumeInput { await releaseReader(workspace: workspace) }
       let value = await task.value
       let interrupted = interruptHandler.deactivate(interrupt)
       loop.foregroundCommand = nil
@@ -2186,6 +2193,22 @@ struct MaiCLI {
       await refreshStatus()
     }
 
+    func deliver(_ text: String, to addresses: [REPLMessageAddress]) async {
+      do {
+        let main = await mainProcess()
+        let recipients = try await messageRecipients(
+          addresses, main: main, supervisor: runtime.supervisor)
+        for info in recipients where info.pid != main {
+          await deliver(text, to: .agent(info.pid))
+        }
+        if recipients.contains(where: { $0.pid == main }) {
+          await deliver(text, to: .main)
+        }
+      } catch {
+        await terminal.note(error.localizedDescription)
+      }
+    }
+
     /// Treats a typed line as the answer to the approval at the head of the
     /// queue when it reads as one; anything else stays an ordinary line and
     /// the question keeps waiting.
@@ -2259,6 +2282,11 @@ struct MaiCLI {
     func handleFocus(_ argument: String) async {
       let trimmed = argument.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !trimmed.isEmpty else {
+        if configuration?.ui.broadcast == true {
+          await terminal.line(
+            "Messages go to every active agent. /set ui.broadcast off restores the focus.")
+          return
+        }
         switch loop.focus {
         case .main:
           await terminal.line(
@@ -2276,7 +2304,10 @@ struct MaiCLI {
       switch target {
       case .main:
         loop.focus = .main
-        await terminal.line("Messages go to this chat again.")
+        await terminal.line(
+          configuration?.ui.broadcast == true
+            ? "Focus saved: main. Broadcast is on; @main TEXT addresses this chat."
+            : "Messages go to this chat again.")
       case .agent(let pid):
         guard let info = await runtime.supervisor.info(pid) else {
           await terminal.line("No agent #\(pid.rawValue). /agents tree lists the running ones.")
@@ -2292,7 +2323,9 @@ struct MaiCLI {
         }
         loop.focus = .agent(pid)
         await terminal.line(
-          "Messages go to agent#\(pid.rawValue) (\(info.agentID)) until /agents focus main; @main TEXT still reaches the chat."
+          configuration?.ui.broadcast == true
+            ? "Focus saved: agent#\(pid.rawValue). Broadcast is on; @\(pid.rawValue) TEXT addresses this agent."
+            : "Messages go to agent#\(pid.rawValue) (\(info.agentID)) until /agents focus main; @main TEXT still reaches the chat."
         )
       }
     }
@@ -2347,15 +2380,7 @@ struct MaiCLI {
         if !heredoc {
           do {
             if let addressed = try addressedMessage(text) {
-              let main = await mainProcess()
-              let recipients = try await messageRecipients(
-                addressed.targets, main: main, supervisor: runtime.supervisor)
-              for info in recipients where info.pid != main {
-                await deliver(addressed.body, to: .agent(info.pid))
-              }
-              if recipients.contains(where: { $0.pid == main }) {
-                await deliver(addressed.body, to: .main)
-              }
+              await deliver(addressed.body, to: addressed.targets)
               await releaseIfIdle(workspace: workspace)
               continue
             }
@@ -2384,7 +2409,9 @@ struct MaiCLI {
           if name == "/queue" {
             let main = await mainProcess()
             await handleQueueCommand(
-              argument, focus: loop.focus, main: main, runtime: runtime, terminal: terminal)
+              argument,
+              defaultAddress: configuration?.ui.broadcast == true ? .active : .target(loop.focus),
+              main: main, runtime: runtime, terminal: terminal)
             await refreshStatus()
             await releaseIfIdle(workspace: workspace)
             continue
@@ -2612,7 +2639,9 @@ struct MaiCLI {
             let commandConfiguration = configuration
             let commandCatalogs = catalogs
             let commandChatProcess = chatProcessIDs[session.id]
-            let command = await runForeground(name) {
+            let changesRouting = name == "/set"
+              && argument.split(whereSeparator: \.isWhitespace).first?.lowercased() == "ui.broadcast"
+            let command = await runForeground(name, resumeInput: !changesRouting) {
               await runCommand(
                 text,
                 session: commandSession,
@@ -2659,7 +2688,11 @@ struct MaiCLI {
           if !commandWasInterrupted { await releaseIfIdle(workspace: workspace) }
           continue
         }
-        await deliver(text, to: loop.focus)
+        if configuration?.ui.broadcast == true {
+          await deliver(text, to: [.active])
+        } else {
+          await deliver(text, to: loop.focus)
+        }
         await releaseIfIdle(workspace: workspace)
 
       case .interrupt(let cancelledOperation, let endedInput):
@@ -7034,7 +7067,7 @@ struct MaiCLI {
       "ui.bgline", "ui.fgcolor", "ui.bgcolor", "ui.fgprompt", "ui.bgprompt",
       "ui.fgtoolresult",
     ]
-    let booleanKeys = ["ui.bold", "ui.markdown"]
+    let booleanKeys = ["ui.bold", "ui.markdown", "ui.broadcast"]
     let countKeys = ["ui.toolresultlines"]
     let levelKeys = ["ui.subagents", "ui.thinking"]
     let textKeys = ["ui.title", "ui.editor"]
@@ -7043,7 +7076,7 @@ struct MaiCLI {
         || levelKeys.contains(key) || textKeys.contains(key)
     else {
       await terminal.line(
-        "Unknown setting '\(parts[0])'. Available settings: effort, yolo, delegation, tool.calling, tool.proxy, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.strategy, ui.title, ui.editor, ui.bgline, ui.fgcolor, ui.bgcolor, ui.fgprompt, ui.bgprompt, ui.fgtoolresult, ui.bold, ui.markdown, ui.toolResultLines, ui.subagents, use.agentsmd, use.plan"
+        "Unknown setting '\(parts[0])'. Available settings: effort, yolo, delegation, tool.calling, tool.proxy, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.strategy, ui.title, ui.editor, ui.bgline, ui.fgcolor, ui.bgcolor, ui.fgprompt, ui.bgprompt, ui.fgtoolresult, ui.bold, ui.markdown, ui.toolResultLines, ui.subagents, ui.broadcast, use.agentsmd, use.plan"
       )
       return
     }
@@ -7101,6 +7134,8 @@ struct MaiCLI {
       }
       if key == "ui.bold" {
         ui.bold = enabled
+      } else if key == "ui.broadcast" {
+        ui.broadcast = enabled
       } else {
         ui.markdown = enabled
         await terminal.configureMarkdown(
@@ -7762,6 +7797,7 @@ struct MaiCLI {
       "ui.title", "ui.editor", "ui.bgline", "ui.fgcolor", "ui.bgcolor", "ui.fgprompt",
       "ui.bgprompt", "ui.bold",
       "ui.fgtoolresult", "ui.markdown", "ui.toolResultLines", "ui.subagents", "ui.thinking",
+      "ui.broadcast",
     ] {
       await terminal.line("\(key) = \(uiSetting(key, in: ui))")
     }
@@ -7786,6 +7822,7 @@ struct MaiCLI {
     case "ui.toolresultlines": return ui.toolResultLines < 0 ? "all" : String(ui.toolResultLines)
     case "ui.thinking": return ui.thinking.rawValue
     case "ui.subagents": return ui.subagentOutput.rawValue
+    case "ui.broadcast": return ui.broadcast ? "on" : "off"
     default: return "-"
     }
     return value.isEmpty ? "none" : value
@@ -9748,6 +9785,7 @@ struct MaiCLI {
       "/set ui.fgtoolresult yellow", "/set use.", "/set use.agentsmd on", "/set use.agentsmd off",
       "/set use.plan on", "/set use.plan off",
       "/set ui.bold on", "/set ui.bold off", "/set ui.markdown on", "/set ui.markdown off",
+      "/set ui.broadcast on", "/set ui.broadcast off",
       "/set ui.toolResultLines all", "/set ui.toolResultLines ",
       "/cwd", "/pwd", "/cd ", "/plugins",
       "/providers", "/models ", "/provider ", "/baseurl ", "/model ", "/prompts", "/prompt",
@@ -10106,6 +10144,7 @@ struct MaiCLI {
            Ctrl+W delete word · Ctrl+C or /stop interrupt the run · Ctrl+Z suspend
            The prompt stays open while a turn runs: a message typed then is queued and
            joins the conversation at the next model turn. @2,3 TEXT or @2 @3 TEXT reaches several agents.
+           @* TEXT reaches every active agent, including the main chat when it is running.
            Commands run right away too; a setting changed then reaches the next turn.
            Child agents print in blocks prefixed agent#PID; /set ui.subagents picks how much.
     """
@@ -10161,6 +10200,7 @@ struct MaiCLI {
       /set ui.toolResultLines <all|N>  Show all or the first N result lines (0 hides them)
       /set ui.thinking MODE        Thinking display: status, line, three, five, or full
       /set ui.subagents LEVEL      What child agents print: all, tools, stats, or none
+      /set ui.broadcast BOOL       Default unaddressed messages to @* (on/off; default off)
       /set use.agentsmd BOOL       Put the working tree's AGENTS.md files — this directory up to
                                    the repository root — into every run's system prompt (on/off)
       /set use.plan BOOL           Ask an agent that can start children to open a request of
@@ -10413,8 +10453,11 @@ struct MaiCLI {
 
     While agents run, what you type is queued for them and read at their next
     model turn: /queue lists it, @PID TEXT addresses one agent once, and
-    @2,3 TEXT or @2 @3 TEXT sends the same message to several. Their
-    output prints in blocks prefixed agent#PID; /set ui.subagents picks how much.
+    @2,3 TEXT or @2 @3 TEXT sends the same message to several; @* TEXT reaches
+    every active process, including the running main chat and paused agents.
+    Idle chats and finished agents are skipped. /set ui.broadcast on makes
+    unaddressed messages use @*; off restores the focus. Agent output prints
+    in blocks prefixed agent#PID; /set ui.subagents picks how much.
 
     An agent always has the tools its definition allows, at any depth of the
     tree. /set delegation subagent also lets it hand bulky work to a child with

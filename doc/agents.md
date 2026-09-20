@@ -397,6 +397,8 @@ several agents at once without changing focus:
 @2,3,4 Check the error path before continuing.
 @2 @3 @4 Check the error path before continuing.
 /queue push @2,3,4 Keep the patch small.
+@* Check the error path before continuing.
+/queue push @* Keep the patch small.
 ```
 
 Each selected process receives its own copy at its next model turn. These
@@ -407,6 +409,21 @@ the current chat. Repeated IDs or aliases receive only one copy. The CLI
 checks the whole recipient list first: an unknown PID, a finished child, a
 malformed comma list, or a missing message reports an error without sending.
 Only leading addresses are consumed; later mentions remain part of the message.
+
+`@*` selects every active process in this CLI session when the message is
+submitted, including the running main chat, paused agents, and children waiting
+for a slot. Idle chats and finished agents are skipped. If none are active,
+the CLI reports that and sends nothing. You can combine `@*` with explicit
+addresses; `@* @2 TEXT` still gives agent 2 only one copy. Agents started later
+do not receive earlier broadcasts.
+
+`/set ui.broadcast on` makes messages without a leading address use `@*`,
+including `/queue push TEXT`. The prompt shows `pmai@*>` and the status says
+`all active`. Explicit addresses override this default. `/set ui.broadcast off`
+restores delivery to the focused agent; `off` is the default for older or new
+configurations. This choice is saved in the active configuration and survives
+restarts. With broadcast enabled and no active agents, use `@main TEXT` to
+start a chat turn, or turn broadcast off.
 
 `/queue push` only queues: it never starts an idle chat. Direct `@main TEXT`
 starts a turn if the chat is idle (asking what to do with any existing queue),
@@ -444,8 +461,11 @@ forwards only depth-0 events to the editor.
 /agents focus PID|main        send what you type to one process, or back to the chat
 @PID TEXT                     one message to one process, focus unchanged
 @2,3 TEXT or @2 @3 TEXT       one copy of the same message to each process
+@* TEXT                       one copy to every active process in this session
 /queue                        what is waiting for each process's next turn
 /queue push [@PID[,PID...]] TEXT   queue without starting a turn; also accepts @2 @3
+/queue push @* TEXT           queue for every active process
+/set ui.broadcast on|off      default unaddressed messages to @*; saved, default off
 /queue pop [PID]              drop the newest queued message
 /queue drop [PID]             drop them all
 /set ui.subagents LEVEL       all | tools | stats | none

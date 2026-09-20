@@ -126,8 +126,20 @@ def main():
                     displayed = [(pid, ' '.join(text.split())) for pid, text in expected]
                     assert sorted(copies) == sorted(displayed), (mode, copies, displayed, listing)
 
+                def set_broadcast(enabled):
+                    value = 'on' if enabled else 'off'
+                    send(f'/set ui.broadcast {value}')
+                    wait_for(f'Set ui.broadcast = {value}.')
+                    assert json.loads(config.read_text())['ui']['broadcast'] is enabled
+
                 try:
                     wait_for('pmai>')
+                    send('/set ui.broadcast')
+                    wait_for('ui.broadcast = off')
+                    for prefix in ('', '/queue push '):
+                        send(prefix + '@* nobody is active')
+                        wait_for('No active agents.')
+                    assert not requests, requests
                     send('level 0')
                     assert leaf_started.wait(15), f'{mode}: recursive leaf never started'
                     send('/agents')
@@ -145,6 +157,8 @@ def main():
                     check_queue(expected)
                     for prefix in ('', '/queue push '):
                         send(f'{prefix}@{first},99999 must not arrive')
+                        wait_for('No agent #99999')
+                        send(f'{prefix}@*,99999 must not arrive')
                         wait_for('No agent #99999')
                         send(f'{prefix}@{first},bad must not arrive')
                         wait_for('Invalid recipients:')
@@ -168,6 +182,33 @@ def main():
                         send(f'/queue pop {pid}')
                         wait_for(f'Dropped from agent#{pid}: discard me')
                     check_queue(expected)
+                    send(f'@*,{first} @* @agent#{leaf} broadcast note')
+                    wait_for(f'queued for agent#{leaf}')
+                    expected += [(pid, 'broadcast note') for pid in pids]
+                    send('/queue push @* wildcard queued note')
+                    wait_for(f'Queued for agent#{leaf}')
+                    expected += [(pid, 'wildcard queued note') for pid in pids]
+                    set_broadcast(True)
+                    wait_for('pmai@*>')
+                    send('/agents focus')
+                    wait_for('Messages go to every active agent.')
+                    send('default broadcast note')
+                    wait_for(f'queued for agent#{leaf}')
+                    expected += [(pid, 'default broadcast note') for pid in pids]
+                    send('/queue push default queued note')
+                    wait_for(f'Queued for agent#{leaf}')
+                    expected += [(pid, 'default queued note') for pid in pids]
+                    send(f'@{second} explicit override')
+                    wait_for(f'queued for agent#{second}')
+                    expected.append((second, 'explicit override'))
+                    send(f'/queue push @{second} explicit queue override')
+                    wait_for(f'Queued for agent#{second}')
+                    expected.append((second, 'explicit queue override'))
+                    set_broadcast(False)
+                    send('restored focus note')
+                    wait_for(f'queued for agent#{second}')
+                    expected.append((second, 'restored focus note'))
+                    set_broadcast(True)
                     if mode.endswith('background'):
                         send(f'/agents continue {first}')
                         wait_for('Continued ')
@@ -194,10 +235,28 @@ def main():
                         wait_for('has finished;')
                     send('/queue')
                     wait_for('Nothing is queued')
+                    count = len(requests)
+                    for prefix in ('', '/queue push '):
+                        send(prefix + '@* nobody is active')
+                        wait_for('No active agents.')
+                        send(prefix + 'default with no active agents')
+                        wait_for('No active agents.')
+                    assert len(requests) == count, requests
+                    send('@main start idle chat')
+                    wait_for('✓ took')
+                    assert requests[-1][0] == 0, requests[-1]
+                    users = [m['content'] for m in requests[-1][1]['messages'] if m['role'] == 'user']
+                    assert users[-1] == 'start idle chat', users
                     send('/exit')
                     process.wait(timeout=10)
                     assert process.returncode == 0, process.returncode
-                    print(f'PASS {mode}: depth {max_depth}, trees and multi-agent message queues')
+                    reloaded = subprocess.run(
+                        [binary, '--config', str(config), '--home', str(root / 'home'),
+                         '--no-stream', '--no-markdown'], cwd=root, env=env,
+                        input='/set ui.broadcast\n/exit\n', capture_output=True, text=True, timeout=15)
+                    assert reloaded.returncode == 0, reloaded.stderr
+                    assert 'ui.broadcast = on' in reloaded.stdout, reloaded.stdout
+                    print(f'PASS {mode}: addressed queues, broadcasts and saved default routing')
                 finally:
                     release_leaf.set()
                     if process.poll() is None:
