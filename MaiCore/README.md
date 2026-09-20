@@ -358,8 +358,16 @@ focus; `/agents tree` lists their process IDs. Each receives one copy at its
 next model turn, including paused agents after they resume. Repeated IDs are
 deduplicated, and an unknown or finished child recipient rejects the list.
 `/queue push @2,3,4 TEXT` uses the same addresses without starting a turn;
-`@main` includes the chat. `/agents focus PID` sends everything typed to one
-agent until `/agents focus main`. When a tool asks for
+`@main` includes the chat. `@* TEXT` or `/queue push @* TEXT` reaches every
+active process in this CLI session, including the running main chat, paused
+agents, and children waiting for a slot. Idle chats and finished agents are
+skipped; if no agents are active, the CLI reports it without sending anything.
+`/set ui.broadcast on` makes unaddressed messages and `/queue push TEXT`
+broadcast by default; explicit `@` addresses override it. The prompt shows
+`pmai@*>` while enabled. The setting survives restarts; `/set ui.broadcast off`
+(the default) restores delivery to the focused agent. When no agents are
+active, `@main TEXT` still starts a chat turn.
+`/agents focus PID` chooses one agent until `/agents focus main`. When a tool asks for
 approval the question is printed above the prompt and answered with `y`, `a`,
 `n`, `e`, or `c` at the same prompt; any other line stays an ordinary message
 and the question keeps waiting. Piped input keeps the one-line-at-a-time REPL,
@@ -403,7 +411,7 @@ easy to find in terminal scrollback. Long input scrolls horizontally and is
 printed in full when submitted. `/set ui.` lists the persisted terminal styling
 options; `ui.bgline` colors the status line (or the separator), `ui.fgprompt`,
 `ui.bgprompt`, `ui.fgcolor`, `ui.bgcolor`, and `ui.fgtoolresult` accept named
-ANSI colors, `rgb:RGB`, or `none`, while `ui.bold` and `ui.markdown` accept `on`
+ANSI colors, `rgb:RGB`, or `none`, while `ui.bold`, `ui.markdown`, and `ui.broadcast` accept `on`
 or `off`. `ui.toolResultLines` accepts `all` or a line count (the default is
 `all`; `0` restores the compact status-only display).
 `/set ui.title TEXT` adds `[TEXT]` to the prompt and sets the terminal/tab title

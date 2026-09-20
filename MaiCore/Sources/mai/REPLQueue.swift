@@ -9,27 +9,33 @@ enum REPLMessageTarget: Equatable {
   case agent(AgentPID)
 }
 
+enum REPLMessageAddress {
+  case target(REPLMessageTarget)
+  case active
+}
+
 struct REPLMessageError: LocalizedError {
   let message: String
   var errorDescription: String? { message }
 }
 
 extension MaiCLI {
-  /// Leading addresses accept `@3,4 text` and `@3 @4 text`; other @words stay in the body.
+  /// Leading addresses accept `@3,4`, `@3 @4`, and `@*`; other @words stay in the body.
   static func addressedMessage(_ text: String) throws -> (
-    targets: [REPLMessageTarget], body: String
+    targets: [REPLMessageAddress], body: String
   )? {
     var body = text[...]
-    var targets: [REPLMessageTarget] = []
+    var targets: [REPLMessageAddress] = []
     while body.hasPrefix("@") {
       let parts = body.split(maxSplits: 1, whereSeparator: \.isWhitespace)
       let addresses = parts[0].dropFirst().split(separator: ",", omittingEmptySubsequences: false)
-      let parsed: [REPLMessageTarget] = addresses.compactMap { address in
+      let parsed: [REPLMessageAddress] = addresses.compactMap { address in
         var value = address.lowercased()
         if value.hasPrefix("@") { value.removeFirst() }
-        if ["main", "0", "chat"].contains(value) { return .main }
+        if value == "*" { return .active }
+        if ["main", "0", "chat"].contains(value) { return .target(.main) }
         if value.hasPrefix("agent") { value = String(value.dropFirst(5)) }
-        return AgentPID(text: value).map { .agent($0) }
+        return AgentPID(text: value).map { .target(.agent($0)) }
       }
       guard parsed.count == addresses.count else {
         if addresses.count > 1 {
@@ -52,13 +58,25 @@ extension MaiCLI {
 
   /// Validate the whole list and collapse aliases for the same pid before sending anything.
   static func messageRecipients(
-    _ targets: [REPLMessageTarget], main: AgentPID, supervisor: AgentSupervisor
+    _ targets: [REPLMessageAddress], main: AgentPID, supervisor: AgentSupervisor
   ) async throws -> [AgentProcessInfo] {
-    let processes = Dictionary(
-      uniqueKeysWithValues: await supervisor.processes().map { ($0.pid, $0) })
+    let snapshot = await supervisor.processes()
+    let processes = Dictionary(uniqueKeysWithValues: snapshot.map { ($0.pid, $0) })
+    let pids = targets.flatMap { address -> [AgentPID] in
+      switch address {
+      case .target(let target): return [target.pid(main: main)]
+      case .active:
+        // Idle chats have a starting PID before their first run.
+        return snapshot.filter {
+          !$0.state.isTerminal && ($0.depth > 0 || $0.state != .starting)
+        }.map(\.pid)
+      }
+    }
+    guard !pids.isEmpty else {
+      throw REPLMessageError(message: "No active agents. /agents tree lists the processes.")
+    }
     var seen: Set<AgentPID> = []
-    return try targets.compactMap { target in
-      let pid = target.pid(main: main)
+    return try pids.compactMap { pid in
       guard seen.insert(pid).inserted else { return nil }
       guard let info = processes[pid] else {
         throw REPLMessageError(
@@ -67,7 +85,8 @@ extension MaiCLI {
       guard info.depth == 0 || !info.state.isTerminal else {
         throw REPLMessageError(
           message:
-            "agent#\(pid.rawValue) (\(info.agentID)) has finished; /agents log \(pid.rawValue) shows what it did.")
+            "agent#\(pid.rawValue) (\(info.agentID)) has finished; /agents log \(pid.rawValue) shows what it did."
+        )
       }
       return info
     }
@@ -88,7 +107,7 @@ extension MaiCLI {
   /// `drop` drops them all. A pid narrows `pop` and `drop` to one agent.
   static func handleQueueCommand(
     _ argument: String,
-    focus: REPLMessageTarget,
+    defaultAddress: REPLMessageAddress,
     main: AgentPID,
     runtime: AgentRuntime,
     terminal: TerminalWriter
@@ -121,11 +140,11 @@ extension MaiCLI {
 
     case "push", "add":
       guard !rest.isEmpty else {
-        await terminal.line("Usage: /queue push [@PID[,PID...]] TEXT")
+        await terminal.line("Usage: /queue push [@PID[,PID...]|@*] TEXT")
         return
       }
       do {
-        let (targets, body) = try addressedMessage(rest) ?? ([focus], rest)
+        let (targets, body) = try addressedMessage(rest) ?? ([defaultAddress], rest)
         let recipients = try await messageRecipients(targets, main: main, supervisor: supervisor)
         for info in recipients {
           await supervisor.post(.user(body), to: info.pid)
@@ -181,9 +200,10 @@ extension MaiCLI {
     loop — instead of waiting for the turn to end.
 
       /queue                 List every queued message and the agent it is for
-      /queue push TEXT       Queue TEXT for the focused agent without sending it
+      /queue push TEXT       Queue TEXT using the current focus or broadcast default
       /queue push @PID TEXT  Queue TEXT for one agent
       /queue push @2,3 TEXT  Queue the same TEXT for several agents (also @2 @3)
+      /queue push @* TEXT    Queue TEXT for every active agent
       /queue pop [PID]       Drop the newest queued message (of one agent)
       /queue drop [PID]      Drop every queued message (of one agent)
 
@@ -195,7 +215,13 @@ extension MaiCLI {
     sends one copy to each recipient without changing focus; @main includes
     the chat. /agents tree lists PIDs. Unknown or finished child recipients
     reject the list; repeated PIDs receive only one copy.
-    /agents focus PID targets everything you type until /agents focus main.
+    @* TEXT reaches every active process in this session, including the running
+    main chat, paused agents, and children waiting for a slot. It skips idle
+    chats and finished agents, and reports when no agents are active.
+    /set ui.broadcast on makes unaddressed messages (also /queue push TEXT)
+    use @* by default; off restores the current focus. Explicit @addresses
+    override this saved setting. Use @main TEXT to start an idle chat.
+    /agents focus PID selects the target used when ui.broadcast is off.
     """
 }
 
