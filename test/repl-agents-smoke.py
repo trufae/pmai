@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check recursive agents and /agents trees against a deterministic local provider."""
+"""Check recursive agents, trees and addressed queues against a local provider."""
 import fcntl
 import json
 import os
@@ -36,7 +36,7 @@ class Provider(BaseHTTPRequestHandler):
         message = {'role': 'assistant', 'content': f'level {depth} done'}
         if depth == max_depth:
             leaf_started.set()
-            release_leaf.wait(30)
+            release_leaf.wait(60)
         elif not results:
             arguments = {'task': f'level {depth + 1}', 'output': 'One line.',
                          'wait': request['model'].endswith('blocking')}
@@ -109,7 +109,7 @@ def main():
                     end = output.index(needle) + len(needle)
                     captured = bytes(output[:end]).decode(errors='replace')
                     del output[:end]
-                    return re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', captured).replace('\r', '')
+                    return re.sub(r'\x1b(?:\[[0-?]*[ -/]*[@-~]|[78])', '', captured).replace('\r', '')
 
                 def check_tree(state):
                     tree = wait_for('Total:')
@@ -117,13 +117,60 @@ def main():
                         name = 'worker' if mode.startswith('named') else 'worker' + '.worker' * depth
                         prefix = '    ' * (depth - 1) + '└── '
                         assert re.search(rf'(?m)^{prefix}#\d+ {re.escape(name)}\s+\[{state}\]', tree), tree
+                    return re.findall(r'#(\d+) \S+\s+\[', tree)
+
+                def check_queue(expected):
+                    send('/queue')
+                    listing = wait_for('Each is delivered')
+                    copies = re.findall(r'(?m)^  \d+\. agent#(\d+) \S+  (.+)$', listing)
+                    displayed = [(pid, ' '.join(text.split())) for pid, text in expected]
+                    assert sorted(copies) == sorted(displayed), (mode, copies, displayed, listing)
 
                 try:
                     wait_for('pmai>')
                     send('level 0')
                     assert leaf_started.wait(15), f'{mode}: recursive leaf never started'
                     send('/agents')
-                    check_tree('run')
+                    pids = check_tree('run')
+                    assert len(pids) == max_depth + 1, pids
+                    main_pid, first, second, leaf = pids
+                    if mode.endswith('background'):
+                        send(f'/agents stop {first}')
+                        wait_for('then waits.')
+                    recipients = pids if mode.endswith('blocking') else pids[1:]
+                    aliases = 'main,chat,0,' if mode.endswith('blocking') else ''
+                    expected = [(pid, 'queued note') for pid in recipients]
+                    send('/queue push @' + aliases + ','.join(recipients) + ' queued note')
+                    wait_for(f'Queued for agent#{leaf}')
+                    check_queue(expected)
+                    for prefix in ('', '/queue push '):
+                        send(f'{prefix}@{first},99999 must not arrive')
+                        wait_for('No agent #99999')
+                        send(f'{prefix}@{first},bad must not arrive')
+                        wait_for('Invalid recipients:')
+                        send(f'{prefix}@{first} @{second}')
+                        wait_for('A message is required')
+                    check_queue(expected)
+                    send(f'/agents focus {second}')
+                    wait_for(f'Messages go to agent#{second}')
+                    send(f'@{first} @#{second} @agent#{leaf} @{first} direct note')
+                    wait_for(f'queued for agent#{leaf}')
+                    expected += [(pid, 'direct note') for pid in pids[1:]]
+                    send('focused note')
+                    wait_for(f'queued for agent#{second}')
+                    expected.append((second, 'focused note'))
+                    send(f'@{first},{leaf} @README.md keep  spacing')
+                    wait_for(f'queued for agent#{leaf}')
+                    expected += [(pid, '@README.md keep  spacing') for pid in (first, leaf)]
+                    send(f'/queue push @{first} @{leaf} discard me')
+                    wait_for(f'Queued for agent#{leaf}')
+                    for pid in (first, leaf):
+                        send(f'/queue pop {pid}')
+                        wait_for(f'Dropped from agent#{pid}: discard me')
+                    check_queue(expected)
+                    if mode.endswith('background'):
+                        send(f'/agents continue {first}')
+                        wait_for('Continued ')
                     release_leaf.set()
                     wait_for('✓ took')
                     send('/agents tree')
@@ -132,15 +179,25 @@ def main():
                     for depth, request in requests:
                         tools = {t['function']['name'] for t in request.get('tools', [])}
                         assert ('agent_start' in tools) == (depth < max_depth), (depth, tools)
+                    all_notes = {text for _, text in expected}
                     for depth, request in dict(requests).items():
+                        users = [m['content'] for m in request['messages'] if m['role'] == 'user']
+                        notes = [text for pid, text in expected if pid == pids[depth]]
+                        assert [text for text in users if text in all_notes] == notes, (depth, users, notes)
+                        assert not any(text in ('discard me', 'must not arrive') for text in users), users
                         if depth < max_depth:
                             role = 'tool' if mode.endswith('blocking') else 'user'
                             assert any(f'level {depth + 1} done' in m['content']
                                        for m in request['messages'] if m['role'] == role), request
+                    for prefix in ('', '/queue push '):
+                        send(f'{prefix}@main,{leaf} must not arrive')
+                        wait_for('has finished;')
+                    send('/queue')
+                    wait_for('Nothing is queued')
                     send('/exit')
                     process.wait(timeout=10)
                     assert process.returncode == 0, process.returncode
-                    print(f'PASS {mode}: depth {max_depth}, one child slot, live and completed trees')
+                    print(f'PASS {mode}: depth {max_depth}, trees and multi-agent message queues')
                 finally:
                     release_leaf.set()
                     if process.poll() is None:

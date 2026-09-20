@@ -9,21 +9,68 @@ enum REPLMessageTarget: Equatable {
   case agent(AgentPID)
 }
 
+struct REPLMessageError: LocalizedError {
+  let message: String
+  var errorDescription: String? { message }
+}
+
 extension MaiCLI {
-  /// `@3 text` (or `@#3`, `@agent#3`) sends one message to a running agent
-  /// without changing the focus; `@main text` reaches the chat even while a
-  /// child is focused. Anything else is an ordinary message.
-  static func addressedMessage(_ text: String) -> (target: REPLMessageTarget, body: String)? {
-    guard text.hasPrefix("@") else { return nil }
-    let parts = text.dropFirst().split(maxSplits: 1, whereSeparator: \.isWhitespace)
-    guard parts.count == 2 else { return nil }
-    let body = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !body.isEmpty else { return nil }
-    var address = parts[0].lowercased()
-    if ["main", "0", "chat"].contains(address) { return (.main, body) }
-    if address.hasPrefix("agent") { address = String(address.dropFirst(5)) }
-    guard let pid = AgentPID(text: address) else { return nil }
-    return (.agent(pid), body)
+  /// Leading addresses accept `@3,4 text` and `@3 @4 text`; other @words stay in the body.
+  static func addressedMessage(_ text: String) throws -> (
+    targets: [REPLMessageTarget], body: String
+  )? {
+    var body = text[...]
+    var targets: [REPLMessageTarget] = []
+    while body.hasPrefix("@") {
+      let parts = body.split(maxSplits: 1, whereSeparator: \.isWhitespace)
+      let addresses = parts[0].dropFirst().split(separator: ",", omittingEmptySubsequences: false)
+      let parsed: [REPLMessageTarget] = addresses.compactMap { address in
+        var value = address.lowercased()
+        if value.hasPrefix("@") { value.removeFirst() }
+        if ["main", "0", "chat"].contains(value) { return .main }
+        if value.hasPrefix("agent") { value = String(value.dropFirst(5)) }
+        return AgentPID(text: value).map { .agent($0) }
+      }
+      guard parsed.count == addresses.count else {
+        if addresses.count > 1 {
+          throw REPLMessageError(
+            message: "Invalid recipients: \(parts[0]). Use @2,3 TEXT or @2 @3 TEXT.")
+        }
+        break
+      }
+      targets.append(contentsOf: parsed)
+      body = parts.count > 1 ? parts[1] : ""
+    }
+    guard !targets.isEmpty else { return nil }
+    let message = body.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !message.isEmpty else {
+      throw REPLMessageError(
+        message: "A message is required after the recipients. Use @2,3 TEXT or @2 @3 TEXT.")
+    }
+    return (targets, message)
+  }
+
+  /// Validate the whole list and collapse aliases for the same pid before sending anything.
+  static func messageRecipients(
+    _ targets: [REPLMessageTarget], main: AgentPID, supervisor: AgentSupervisor
+  ) async throws -> [AgentProcessInfo] {
+    let processes = Dictionary(
+      uniqueKeysWithValues: await supervisor.processes().map { ($0.pid, $0) })
+    var seen: Set<AgentPID> = []
+    return try targets.compactMap { target in
+      let pid = target.pid(main: main)
+      guard seen.insert(pid).inserted else { return nil }
+      guard let info = processes[pid] else {
+        throw REPLMessageError(
+          message: "No agent #\(pid.rawValue). /agents tree lists the running ones.")
+      }
+      guard info.depth == 0 || !info.state.isTerminal else {
+        throw REPLMessageError(
+          message:
+            "agent#\(pid.rawValue) (\(info.agentID)) has finished; /agents log \(pid.rawValue) shows what it did.")
+      }
+      return info
+    }
   }
 
   /// A pid typed after a command: `3`, `#3`, `agent#3`, or `main`.
@@ -74,29 +121,22 @@ extension MaiCLI {
 
     case "push", "add":
       guard !rest.isEmpty else {
-        await terminal.line("Usage: /queue push [@PID] TEXT")
+        await terminal.line("Usage: /queue push [@PID[,PID...]] TEXT")
         return
       }
-      let (target, body) = addressedMessage(rest) ?? (focus, rest)
-      let pid: AgentPID
-      switch target {
-      case .main: pid = main
-      case .agent(let requested): pid = requested
+      do {
+        let (targets, body) = try addressedMessage(rest) ?? ([focus], rest)
+        let recipients = try await messageRecipients(targets, main: main, supervisor: supervisor)
+        for info in recipients {
+          await supervisor.post(.user(body), to: info.pid)
+          let count = await supervisor.queuedMessages(for: info.pid).count
+          await terminal.line(
+            "Queued for \(describe(info.pid, main: main, info: info)) (\(count) waiting). It goes out at the agent's next model turn; /continue submits the chat queue; a new message asks what to do."
+          )
+        }
+      } catch {
+        await terminal.line(error.localizedDescription)
       }
-      guard let info = await supervisor.info(pid) else {
-        await terminal.line("No agent #\(pid.rawValue).")
-        return
-      }
-      guard pid == main || !info.state.isTerminal else {
-        await terminal.line(
-          "agent#\(pid.rawValue) has finished; /agents log \(pid.rawValue) shows what it said.")
-        return
-      }
-      await supervisor.post(.user(body), to: pid)
-      let count = await supervisor.queuedMessages(for: pid).count
-      await terminal.line(
-        "Queued for \(describe(pid, main: main, info: info)) (\(count) waiting). It goes out at the agent's next model turn; /continue submits the chat queue; a new message asks what to do."
-      )
 
     case "pop":
       let pid = rest.isEmpty ? nil : focusTarget(rest).map { $0.pid(main: main) }
@@ -143,6 +183,7 @@ extension MaiCLI {
       /queue                 List every queued message and the agent it is for
       /queue push TEXT       Queue TEXT for the focused agent without sending it
       /queue push @PID TEXT  Queue TEXT for one agent
+      /queue push @2,3 TEXT  Queue the same TEXT for several agents (also @2 @3)
       /queue pop [PID]       Drop the newest queued message (of one agent)
       /queue drop [PID]      Drop every queued message (of one agent)
 
@@ -150,8 +191,11 @@ extension MaiCLI {
     If you type a new message with a nonempty queue, choose submit (queue
     first), ignore (keep it for a later turn), or clear (discard it).
 
-    @PID TEXT sends one message to a running agent; /agents focus PID makes it
-    the target of everything you type until /agents focus main.
+    @PID TEXT sends one message to a running agent. @2,3 TEXT or @2 @3 TEXT
+    sends one copy to each recipient without changing focus; @main includes
+    the chat. /agents tree lists PIDs. Unknown or finished child recipients
+    reject the list; repeated PIDs receive only one copy.
+    /agents focus PID targets everything you type until /agents focus main.
     """
 }
 
