@@ -390,6 +390,29 @@ editable until they are read: `discardLastQueuedMessage`, `discardQueuedMessage(
 and `clearQueuedMessages` back `/queue pop` and `/queue drop`, and
 `AgentProcessInfo.queuedMessages` shows the count in a listing.
 
+In the interactive CLI, use the process IDs from `/agents tree` to steer
+several agents at once without changing focus:
+
+```text
+@2,3,4 Check the error path before continuing.
+@2 @3 @4 Check the error path before continuing.
+/queue push @2,3,4 Keep the patch small.
+```
+
+Each selected process receives its own copy at its next model turn. These
+addresses work at any depth in the agent tree, including paused agents (which
+read their queue after `/agents continue PID`) and children waiting for a slot.
+`@#2` and `@agent#2` are aliases for `@2`; `@main`, `@chat`, and `@0` address
+the current chat. Repeated IDs or aliases receive only one copy. The CLI
+checks the whole recipient list first: an unknown PID, a finished child, a
+malformed comma list, or a missing message reports an error without sending.
+Only leading addresses are consumed; later mentions remain part of the message.
+
+`/queue push` only queues: it never starts an idle chat. Direct `@main TEXT`
+starts a turn if the chat is idle (asking what to do with any existing queue),
+or joins its inbox while it is running. `/queue` lists pending copies; use
+`/queue pop PID` or `/queue drop PID` to remove a copy from one recipient.
+
 Children report through the same event handler as their parent, background or
 not, with their own pid in the context. pmai turns that into blocks prefixed
 `agent#N` — a child's text is held until a tool call, the next turn, or the end
@@ -420,8 +443,9 @@ forwards only depth-0 events to the editor.
                               this chat; the tree keeps only running ones
 /agents focus PID|main        send what you type to one process, or back to the chat
 @PID TEXT                     one message to one process, focus unchanged
+@2,3 TEXT or @2 @3 TEXT       one copy of the same message to each process
 /queue                        what is waiting for each process's next turn
-/queue push [@PID] TEXT       queue without sending
+/queue push [@PID[,PID...]] TEXT   queue without starting a turn; also accepts @2 @3
 /queue pop [PID]              drop the newest queued message
 /queue drop [PID]             drop them all
 /set ui.subagents LEVEL       all | tools | stats | none

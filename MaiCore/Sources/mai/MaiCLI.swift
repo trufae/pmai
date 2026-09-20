@@ -2344,10 +2344,26 @@ struct MaiCLI {
           await releaseIfIdle(workspace: workspace)
           continue
         }
-        if !heredoc, let addressed = addressedMessage(text) {
-          await deliver(addressed.body, to: addressed.target)
-          await releaseIfIdle(workspace: workspace)
-          continue
+        if !heredoc {
+          do {
+            if let addressed = try addressedMessage(text) {
+              let main = await mainProcess()
+              let recipients = try await messageRecipients(
+                addressed.targets, main: main, supervisor: runtime.supervisor)
+              for info in recipients where info.pid != main {
+                await deliver(addressed.body, to: .agent(info.pid))
+              }
+              if recipients.contains(where: { $0.pid == main }) {
+                await deliver(addressed.body, to: .main)
+              }
+              await releaseIfIdle(workspace: workspace)
+              continue
+            }
+          } catch {
+            await terminal.note(error.localizedDescription)
+            await releaseIfIdle(workspace: workspace)
+            continue
+          }
         }
         if !heredoc, text.hasPrefix("!") {
           if loop.activeTurn != nil {
@@ -10089,7 +10105,7 @@ struct MaiCLI {
            Ctrl+B/F move left/right like the arrow keys
            Ctrl+W delete word · Ctrl+C or /stop interrupt the run · Ctrl+Z suspend
            The prompt stays open while a turn runs: a message typed then is queued and
-           joins the conversation at the next model turn. @PID TEXT reaches one agent.
+           joins the conversation at the next model turn. @2,3 TEXT or @2 @3 TEXT reaches several agents.
            Commands run right away too; a setting changed then reaches the next turn.
            Child agents print in blocks prefixed agent#PID; /set ui.subagents picks how much.
     """
@@ -10396,7 +10412,8 @@ struct MaiCLI {
       /agents focus PID|main     Send what you type to one running agent, or back to the chat
 
     While agents run, what you type is queued for them and read at their next
-    model turn: /queue lists it, @PID TEXT addresses one agent once. Their
+    model turn: /queue lists it, @PID TEXT addresses one agent once, and
+    @2,3 TEXT or @2 @3 TEXT sends the same message to several. Their
     output prints in blocks prefixed agent#PID; /set ui.subagents picks how much.
 
     An agent always has the tools its definition allows, at any depth of the

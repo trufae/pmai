@@ -352,8 +352,14 @@ current chat together with every nested subagent chat and transcript.
 chats without overwriting an existing chat. The same archive is understood by
 PocketMai; its existing conversation packs and older pmai JSON chat exports
 also remain importable.
-`@PID TEXT` sends one message to a running child agent, and `/agents focus PID`
-sends everything typed to it until `/agents focus main`. When a tool asks for
+`@PID TEXT` sends one message to a running child agent. `@2,3,4 TEXT` or
+`@2 @3 @4 TEXT` sends the same message to several agents without changing
+focus; `/agents tree` lists their process IDs. Each receives one copy at its
+next model turn, including paused agents after they resume. Repeated IDs are
+deduplicated, and an unknown or finished child recipient rejects the list.
+`/queue push @2,3,4 TEXT` uses the same addresses without starting a turn;
+`@main` includes the chat. `/agents focus PID` sends everything typed to one
+agent until `/agents focus main`. When a tool asks for
 approval the question is printed above the prompt and answered with `y`, `a`,
 `n`, `e`, or `c` at the same prompt; any other line stays an ordinary message
 and the question keeps waiting. Piped input keeps the one-line-at-a-time REPL,
