@@ -929,7 +929,7 @@ private actor TerminalApprovalHandler: ApprovalHandler {
 
 @main
 struct MaiCLI {
-  private static let version = "1.7.9"
+  private static let version = "1.7.10"
 
   static func main() async {
     let environment = ProcessInfo.processInfo.environment
