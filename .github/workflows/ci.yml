@@ -52,6 +52,9 @@ jobs:
           swift build --package-path MaiCore --disable-index-store --product pmai
           cp "$(swift build --package-path MaiCore --show-bin-path)/pmai" pmai
 
+      - name: Test CLI updates and installer
+        run: python3 test/update-smoke.py ./pmai
+
       - name: Test paged web fetch over HTTP
         run: python3 test/web-fetch-smoke.py ./pmai
 

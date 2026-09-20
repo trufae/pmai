@@ -81,6 +81,7 @@ private struct CLIOptions {
   var pluginPaths: [String] = []
   var initialPrompt: String?
   var printConfig = false
+  var update = false
   /// List every known project and exit.
   var listProjects = false
   /// List this project's saved chats and exit.
@@ -151,6 +152,8 @@ private struct CLIOptions {
         markdown = false
       case "--print-config":
         printConfig = true
+      case "-U", "--update":
+        update = true
       case "--acp":
         serve = .acp
       case "--mcp":
@@ -947,6 +950,10 @@ struct MaiCLI {
       let options = try CLIOptions(
         arguments: Array(commandLineArguments.dropFirst()),
         environment: environment)
+      if options.update {
+        try updateCLI(executable: commandLineArguments[0], environment: environment)
+        return
+      }
       if options.printConfig {
         FileHandle.standardOutput.write(try sampleConfiguration().encoded())
         FileHandle.standardOutput.write(Data("\n".utf8))
@@ -10413,6 +10420,35 @@ struct MaiCLI {
       /tools set mastodon mastodonWriteEnabled on
     """
 
+  private static func updateCLI(executable: String, environment: [String: String]) throws {
+    #if os(Windows)
+      throw NSError(
+        domain: "pmai", code: 1,
+        userInfo: [
+          NSLocalizedDescriptionKey: "Automatic updates support macOS, Linux, and Android."
+        ])
+    #else
+      let candidates =
+        executable.contains("/")
+        ? [executable]
+        : (environment["PATH"] ?? "").components(separatedBy: ":").map {
+          URL(fileURLWithPath: $0.isEmpty ? "." : $0).appendingPathComponent(executable).path
+        }
+      guard let path = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) })
+      else { throw CocoaError(.fileNoSuchFile) }
+      let directory =
+        environment["PMAI_INSTALL_DIR"].flatMap { $0.isEmpty ? nil : $0 }
+        ?? URL(fileURLWithPath: path).resolvingSymlinksInPath().deletingLastPathComponent().path
+      let command = """
+        installer=$(curl -fsSL https://raw.githubusercontent.com/trufae/pmai/main/www/install.sh) &&
+        PMAI_INSTALL_DIR=\(shellQuote(directory)) sh -c "$installer"
+        """
+      let status = command.withCString(posixSystem)
+      guard status != -1 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+      exit(status & 0x7f == 0 ? (status >> 8) & 0xff : 128 + (status & 0x7f))
+    #endif
+  }
+
   private static func printUsage() {
     print(
       """
@@ -10449,6 +10485,7 @@ struct MaiCLI {
         --state DIR         keep this project's chats in DIR, not ./.pmai/chats (or PMAI_STATE)
         --stdin             attach standard input as a text file (git diff | pmai --stdin "review it")
         --system TEXT       override agent instructions
+        -U, --update        check for updates and install the latest release
         -v, --version       print the pmai version
         -y, --yolo          permit all tool calls without prompting for this run
                             (/set yolo on saves the choice for this project)

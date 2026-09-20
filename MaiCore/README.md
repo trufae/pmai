@@ -42,6 +42,13 @@ musl; `PMAI_NO_VISUAL=1` in the environment of `swift build` selects that
 configuration. Native `--plugin` libraries cannot be loaded by the static build
 either, because static musl executables cannot `dlopen`.
 
+Run `pmai -U` or `pmai --update` to update using the website installer. It
+updates the running executable's directory, or `PMAI_INSTALL_DIR` when set,
+and reports "No updates available" without downloading the archive when the
+installed version matches the release. `PMAI_VERSION` can select a specific
+release instead of the latest. Automatic updates support macOS, Linux, and
+Android and require `curl` and write access to the installation directory.
+
 Print a complete configuration template:
 
 ```sh
