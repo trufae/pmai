@@ -31,10 +31,12 @@ versions.
 CI and release builds use Swift 6.4.0, including matching Static Linux and
 Android SDKs. The packages keep Swift 6 language mode. SwiftPM now defaults
 to Swift Build; use `swift build --package-path MaiCore --show-bin-path`
-(with the same configuration and SDK arguments as the build) to locate binaries.
-CI uses debug builds for tests, retaining one optimized musl x64 build for
-the networking and no-AVX regression checks. Release tags build the optimized
-distribution artifacts in the Release workflow.
+(with the same build system, configuration and SDK arguments) to locate binaries.
+Android uses `--build-system native` and the SDK's `setup-android-sdk.sh` to
+avoid a Swift Build 6.4 planner crash on Linux. CI exercises the optimized
+Android release build and musl x64 networking/no-AVX checks; other CI builds
+use debug configurations. Release tags build the optimized distribution
+artifacts in the Release workflow.
 
 ```sh
 make build               # builds for the iOS Simulator without code signing

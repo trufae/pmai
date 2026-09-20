@@ -218,7 +218,6 @@ jobs:
           swift-version: swift-${{ env.SWIFT_VERSION }}-RELEASE
           check-latest: true
 
-      # Swift Build uses the NDK directly; 6.4 no longer needs a setup script.
       - name: Install Android NDK 30
         run: |
           curl -fL -o "$RUNNER_TEMP/android-ndk.zip" \
@@ -228,17 +227,20 @@ jobs:
           echo "ANDROID_NDK_ROOT=$RUNNER_TEMP/android-ndk-r30" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=$RUNNER_TEMP/android-ndk-r30" >> "$GITHUB_ENV"
 
-      - name: Install Swift Android SDK
+      - name: Install and configure Swift Android SDK
         run: |
           swift sdk install \
             "https://download.swift.org/swift-${SWIFT_VERSION}-release/android-sdk/swift-${SWIFT_VERSION}-RELEASE/swift-${SWIFT_VERSION}-RELEASE_android.artifactbundle.tar.gz" \
             --checksum 21fb555122a3d801ad943d48df7ebffdd8824de61c25c180bb792d3edaee0b43
+          swiftpm_root="${XDG_CONFIG_HOME:+$XDG_CONFIG_HOME/swiftpm}"
+          bash "${swiftpm_root:-$HOME/.swiftpm}/swift-sdks/swift-${SWIFT_VERSION}-RELEASE_android.artifactbundle/swift-android/scripts/setup-android-sdk.sh"
 
-      - name: Build Android arm64 debug CLI
+      # Avoid Swift Build 6.4's Linux planner crash and exercise the release flags.
+      - name: Build Android arm64 release CLI
         run: |
-          swift build --package-path MaiCore --disable-index-store --product pmai \
+          swift build --build-system native --package-path MaiCore -c release --disable-index-store --product pmai \
             --swift-sdk swift-${SWIFT_VERSION}-RELEASE_android \
-            --triple aarch64-unknown-linux-android28 --static-swift-stdlib
+            --triple aarch64-unknown-linux-android28 --static-swift-stdlib -Xswiftc -Osize
 
   windows-cli:
     name: CLI (Windows x64)
