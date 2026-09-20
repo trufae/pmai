@@ -3,7 +3,7 @@
 
 set -eu
 
-repository="trufae/pocketmai"
+repository="trufae/pmai"
 version="${PMAI_VERSION:-latest}"
 install_dir="${PMAI_INSTALL_DIR:-}"
 
@@ -75,21 +75,23 @@ detect_platform() {
 
 choose_install_dir() {
   if [ -n "$install_dir" ]; then
-    mkdir -p "$install_dir" || die "cannot create PMAI_INSTALL_DIR: $install_dir"
-    [ -w "$install_dir" ] || die "PMAI_INSTALL_DIR is not writable: $install_dir"
+    return
+  fi
+
+  existing=$(command -v pmai || true)
+  if [ -n "$existing" ] && [ -f "$existing" ]; then
+    install_dir=$(CDPATH= cd "$(dirname "$existing")" && pwd)
     return
   fi
 
   preferred="${HOME:?HOME is not set}/.local/bin"
   if path_contains "$preferred"; then
-    mkdir -p "$preferred" || die "cannot create $preferred"
     install_dir=$preferred
     return
   fi
 
   home_bin="$HOME/bin"
   if path_contains "$home_bin"; then
-    mkdir -p "$home_bin" || die "cannot create $home_bin"
     install_dir=$home_bin
     return
   fi
@@ -111,7 +113,6 @@ choose_install_dir() {
   IFS=$old_ifs
 
   install_dir=$preferred
-  mkdir -p "$install_dir" || die "cannot create $install_dir"
 }
 
 sha256_file() {
@@ -145,12 +146,29 @@ detect_platform
 choose_install_dir
 has curl || die "curl is required"
 
+if [ "$version" = latest ]; then
+  release_url=$(curl -fsSLI --retry 2 --connect-timeout 15 -o /dev/null -w '%{url_effective}' \
+    "https://github.com/$repository/releases/latest") || die "could not check the latest release"
+  case "$release_url" in
+    "https://github.com/$repository/releases/tag/"*) version=${release_url##*/} ;;
+    *) die "could not determine the latest release version" ;;
+  esac
+fi
+
 case "$version" in
-  latest) release_base="https://github.com/$repository/releases/latest/download" ;;
-  *[!A-Za-z0-9._-]*) die "PMAI_VERSION contains unsupported characters" ;;
+  ""|*[!A-Za-z0-9._-]*) die "PMAI_VERSION contains unsupported characters" ;;
   *) release_base="https://github.com/$repository/releases/download/$version" ;;
 esac
 release_base="${PMAI_RELEASE_BASE:-$release_base}"
+
+target="$install_dir/pmai"
+current_version=$("$target" --version 2>/dev/null || true)
+if [ -n "$current_version" ] && [ "${current_version#v}" = "${version#v}" ]; then
+  say "No updates available (pmai $current_version)."
+  exit 0
+fi
+mkdir -p "$install_dir" || die "cannot create install directory: $install_dir"
+[ -w "$install_dir" ] || die "install directory is not writable: $install_dir"
 
 asset="pmai-$platform-$architecture${libc:+-$libc}.zip"
 if [ "$platform" = macos ]; then
@@ -195,7 +213,6 @@ extract_archive "$archive" "$payload" || die "could not unpack $asset"
 binary=$(find "$payload" -type f -name pmai -print | head -n 1)
 [ -n "$binary" ] || die "the release archive does not contain pmai"
 
-target="$install_dir/pmai"
 if [ "$platform" = android ]; then
   runtime=$(find "$payload" -type f -name 'libc++_shared.so' -print | head -n 1)
   [ -n "$runtime" ] || die "the Android release is missing libc++_shared.so"
