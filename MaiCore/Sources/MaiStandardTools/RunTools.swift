@@ -1,7 +1,9 @@
 import Foundation
 import MaiCore
 
-#if canImport(Musl)
+#if canImport(Android)
+  import Android
+#elseif canImport(Musl)
   import Musl
 #elseif canImport(Glibc)
   import Glibc
@@ -11,7 +13,11 @@ import MaiCore
 /// with the privileges of the pmai process. The shell is a name looked up in
 /// `PATH` or an absolute path, optionally followed by leading arguments.
 public struct MaiRunConfiguration: Equatable, Sendable {
-  public static let defaultShell = "/bin/sh"
+  #if os(Android)
+    public static let defaultShell = "/system/bin/sh"
+  #else
+    public static let defaultShell = "/bin/sh"
+  #endif
   public static let defaultTimeout: TimeInterval = 60
   public static let maximumTimeout: TimeInterval = 600
   /// Bytes of stdout and of stderr kept per call. Everything kept enters the
@@ -63,7 +69,7 @@ public struct MaiRunTool: AgentTool {
   }
 
   public func call(arguments: JSONValue, context: ToolExecutionContext) async throws -> ToolOutput {
-    #if os(macOS) || os(Linux)
+    #if os(macOS) || os(Linux) || os(Android)
       let arguments = arguments.objectValue ?? [:]
       do {
         try Task.checkCancellation()
@@ -78,7 +84,7 @@ public struct MaiRunTool: AgentTool {
     #endif
   }
 
-  #if os(macOS) || os(Linux)
+  #if os(macOS) || os(Linux) || os(Android)
     enum OutputMode: String {
       /// Return output up to the configured limit; spill any excess to a file.
       case automatic = "auto"
@@ -331,7 +337,7 @@ enum MaiRunToolError: LocalizedError {
   }
 }
 
-#if os(macOS) || os(Linux)
+#if os(macOS) || os(Linux) || os(Android)
   struct MaiHostProcessOutcome: Sendable {
     var stdout: Data
     var stderr: Data

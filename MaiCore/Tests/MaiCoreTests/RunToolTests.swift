@@ -4,9 +4,10 @@ import Testing
 @testable import MaiCore
 @testable import MaiStandardTools
 
-@Test("Run tools execute shell command lines and report output and exit codes")
-func runSystemCapturesOutput() async throws {
-  let tools = MaiRunTool.makeTools(configuration: MaiRunConfiguration())
+@Test("Run tools execute shell command lines and report output and exit codes",
+  arguments: ["", MaiRunConfiguration.defaultShell, "sh"])
+func runSystemCapturesOutput(shellCommand: String) async throws {
+  let tools = MaiRunTool.makeTools(configuration: MaiRunConfiguration(shell: shellCommand))
   #expect(Set(tools.map(\.definition.name)) == Set(MaiRunTool.toolNames))
   #expect(tools.allSatisfy { $0.definition.annotations.approval == .dangerous })
   #expect(tools.allSatisfy { $0.definition.annotations.destructive })
@@ -209,15 +210,20 @@ func runToolsPropagateCancellation(timeout: Bool) async throws {
 
 @Test("Standard tool factory exposes the Run group with its options")
 func standardFactoryExposesRunGroup() async throws {
+  let command = "\(MaiRunConfiguration.defaultShell) -e"
   let context = PluginFactoryContext(
     id: "standard",
-    options: ["runShell": .string("/bin/sh -e"), "runTimeoutSeconds": .integer(5)])
+    options: ["runShell": .string(command), "runTimeoutSeconds": .integer(5)])
   let factory = MaiStandardToolFactory()
   let tools = try await factory.makeTools(context: context)
   let run = try #require(tools.first { $0.definition.name == MaiRunTool.name } as? MaiRunTool)
-  #expect(run.configuration.shell == "/bin/sh -e")
+  #expect(run.configuration.shell == command)
   #expect(run.configuration.defaultTimeout == 5)
-  #expect(run.definition.description.contains("/bin/sh -e"))
+  #expect(run.definition.description.contains(command))
+  let failed = try await call(run, ["script": .string("false; printf should-not-run")])
+  #expect(failed.isError)
+  #expect(failed.structuredContent?.objectValue?["exitCode"] == .integer(1))
+  #expect(!failed.text.contains("should-not-run"))
 
   let group = try #require(try await factory.toolGroups(context: context).first { $0.id == "run" })
   #expect(group.toolNames == Set(MaiRunTool.toolNames))
