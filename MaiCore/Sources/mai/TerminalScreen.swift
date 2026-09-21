@@ -282,6 +282,17 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     acceptInput(styled: "^C")
   }
 
+  func clearScreen() {
+    lock.withLock {
+      guard active else { return }
+      write("\u{1B}[2J" + move(row: 1, column: 1) + Self.saveCursor)
+      outputEndedLine = true
+      drawStatusRow()
+      drawInputRows()
+      placeCaret()
+    }
+  }
+
   func emit(_ text: String) {
     write(text, to: .standardOutput)
   }

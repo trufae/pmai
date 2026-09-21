@@ -31,6 +31,8 @@ protocol LineEditorSurface: AnyObject {
   func acceptInput(styled: String)
   /// Ctrl+C threw the input away.
   func cancelInput()
+  /// Clears the display while keeping the input and terminal layout.
+  func clearScreen()
   /// Text that belongs with the output, such as completion candidates.
   func emit(_ text: String)
   /// The line drawn above a fresh prompt, or nothing.
@@ -105,6 +107,12 @@ private final class ClassicEditorSurface: LineEditorSurface {
 
   func cancelInput() {
     acceptInput(styled: "^C")
+  }
+
+  func clearScreen() {
+    write("\u{1B}[2J\u{1B}[H")
+    caretRow = 0
+    drawnRows = 0
   }
 
   func emit(_ text: String) {
@@ -358,6 +366,10 @@ final class TerminalLineEditor {
             candidates: completions)
         case 10:  // Ctrl+J: a line break, for terminals that send Enter for Shift+Enter
           insert([10])
+        case 12:  // Ctrl+L
+          surface?.clearScreen()
+          drawSeparator(separator)
+          redraw(prompt: prompt, bytes: bytes, cursor: cursor)
         case 14:  // Ctrl+N
           moveToNextLine()
         case 16:  // Ctrl+P
@@ -693,6 +705,8 @@ final class TerminalLineEditor {
             line: selection,
             historyIndex: state.matchIndex,
             cursor: selection.count)
+        case 12:  // Ctrl+L keeps the current search.
+          surface?.clearScreen()
         case 13:
           return .submitted(selection)
         case 18:  // Ctrl+R repeats the search before the current match.

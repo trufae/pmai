@@ -457,6 +457,8 @@ match, Return to submit it, or `Ctrl+G` to restore the original input. `Ctrl+A`
 and `Ctrl+E` move to the beginning and end, `Ctrl+B` and `Ctrl+F` move one
 character left and right like the arrow keys, `Ctrl+W` deletes the previous word,
 and `Ctrl+C` cancels the active model or tool run without leaving the REPL.
+`Ctrl+L` clears the screen and redraws the prompt, keeping the current input,
+cursor position and history search. It does not clear the conversation.
 `Ctrl+Z` suspends pmai with the terminal restored; run `fg` in the shell to
 resume the same input or active run.
 
