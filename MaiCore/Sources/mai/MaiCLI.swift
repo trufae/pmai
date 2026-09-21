@@ -10087,6 +10087,7 @@ struct MaiCLI {
            Up/Down or Ctrl+P/N move between lines, then history · Ctrl+R reverse search
            Ctrl+A/E or Home/End beginning/end of the line
            Ctrl+B/F move left/right like the arrow keys
+           Ctrl+L clear the screen, keeping the input
            Ctrl+W delete word · Ctrl+C or /stop interrupt the run · Ctrl+Z suspend
            The prompt stays open while a turn runs: a message typed then is queued and
            joins the conversation at the next model turn. @PID TEXT reaches one agent.
