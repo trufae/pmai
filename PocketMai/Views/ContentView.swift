@@ -398,6 +398,7 @@ private struct HistoryPanelPanBridge: UIViewRepresentable {
       switch recognizer.state {
       case .began:
         startedOpen = isOpen
+        dismissContextMenus(in: view)
         onChanged(0)
       case .changed:
         onChanged(directionalTranslation)
@@ -413,6 +414,15 @@ private struct HistoryPanelPanBridge: UIViewRepresentable {
         onEnded(startedOpen)
       default:
         break
+      }
+    }
+
+    private func dismissContextMenus(in view: UIView) {
+      for case let interaction as UIContextMenuInteraction in view.interactions {
+        interaction.dismissMenu()
+      }
+      for subview in view.subviews {
+        dismissContextMenus(in: subview)
       }
     }
 
