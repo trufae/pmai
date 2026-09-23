@@ -115,3 +115,19 @@ import Testing
   #expect(input.prompt == "Latest")
 }
 
+@Test func appleUsageChoosesNativeCountsOrEstimatedFallback() {
+  for usage in [
+    nil, TokenUsage(inputTokens: 200, outputTokens: 30, cachedTokens: 50, reasoningTokens: 10),
+  ] {
+    let stats = ModelCallStats.measured(
+      providerLabel: "Apple Intelligence", modelID: "on-device", usage: usage,
+      estimatedInputTokens: 123, outputCharacterCount: 40,
+      timing: StreamTimingObservation(), userInputTokens: 5)
+    #expect(stats.tokensEstimated == (usage == nil))
+    #expect(stats.inputTokens == (usage == nil ? 123 : 200))
+    #expect(stats.outputTokens == (usage == nil ? 10 : 30))
+    #expect(stats.userInputTokens == 5)
+    #expect(stats.cachedTokens == (usage == nil ? 0 : 50))
+    #expect(stats.reasoningTokens == usage?.reasoningTokens)
+  }
+}

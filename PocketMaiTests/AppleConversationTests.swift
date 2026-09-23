@@ -116,4 +116,18 @@ final class AppleConversationTests: XCTestCase {
     XCTAssertEqual(texts, ["Rules", "One", "Two"])
   }
 
+  #if compiler(>=6.4)
+    func testApplePerResponseUsageMapping() throws {
+      guard #available(iOS 27.0, *) else { throw XCTSkip("Native usage requires iOS 27") }
+      let usage = AppleFoundationProvider.tokenUsage(
+        .init(
+          input: .init(totalTokenCount: 200, cachedTokenCount: 50),
+          output: .init(totalTokenCount: 30, reasoningTokenCount: 10), metadata: [:]))
+      XCTAssertEqual(usage.inputTokens, 200)
+      XCTAssertEqual(usage.outputTokens, 30)
+      XCTAssertEqual(usage.cachedTokens, 50)
+      XCTAssertEqual(usage.reasoningTokens, 10)
+      XCTAssertFalse(usage.isEstimated)
+    }
+  #endif
 }

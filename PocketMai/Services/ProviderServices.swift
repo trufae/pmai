@@ -1034,22 +1034,20 @@ enum AppleFoundationProvider {
           schema: optionsSchema)
       ])
     let schema = try GenerationSchema(root: rootSchema, dependencies: [])
+    let instructions =
+      "Generate only the requested follow-up suggestions. Keep them concise and distinct."
     let session = LanguageModelSession(
-      model: systemModel(deviceOnly: deviceOnly),
-      instructions:
-        "Generate only the requested follow-up suggestions. Keep them concise and distinct."
-    )
-    let requestStart = Date()
+      model: systemModel(deviceOnly: deviceOnly), instructions: instructions)
+    let timing = StreamTimingObservation()
     let response = try await session.respond(
       to: prompt,
       schema: schema,
       options: GenerationOptions(maximumResponseTokens: 240))
     let content = response.content.jsonString
-    await recordEstimatedUsage(
-      request: request,
-      promptCharacterCount: prompt.count,
-      outputCharacterCount: content.count,
-      requestStart: requestStart)
+    await recordUsage(
+      request: request, response: response,
+      promptCharacterCount: instructions.count + prompt.count,
+      outputCharacterCount: content.count, timing: timing)
     return content
   }
 
@@ -1115,44 +1113,37 @@ enum AppleFoundationProvider {
       model: model, transcript: transcript(for: input))
     let prompt = input.prompt
     let options = GenerationOptions(maximumResponseTokens: maximumResponseTokens)
-    let requestStart = Date()
-
+    var timing = StreamTimingObservation()
+    let response: LanguageModelSession.Response<String>
     if request.conversation.usesStreaming {
       var latest = ""
       var lastEmit = Date(timeIntervalSince1970: 0)
-      var firstPartialAt: Date?
       let throttleInterval: TimeInterval = 0.04
       let stream = session.streamResponse(to: prompt, options: options)
       for try await partial in stream {
-        latest = partial.content
         let now = Date()
-        if firstPartialAt == nil { firstPartialAt = now }
+        if partial.content != latest, !partial.content.isEmpty { timing.noteTokenChunk(at: now) }
+        latest = partial.content
         if now.timeIntervalSince(lastEmit) >= throttleInterval {
           lastEmit = now
-          await MainActor.run { onUpdate(latest) }
+          await onUpdate(latest)
         }
       }
-      // Time from the first partial so model warm-up never counts as generation.
-      await recordEstimatedUsage(
-        request: request, promptCharacterCount: input.characterCount,
-        outputCharacterCount: latest.count, requestStart: firstPartialAt ?? requestStart,
-        firstTokenSeconds: firstPartialAt.map { max(0, $0.timeIntervalSince(requestStart)) })
-      await MainActor.run { onUpdate(latest) }
-      return latest
+      response = try await stream.collect()
+    } else {
+      response = try await session.respond(to: prompt, options: options)
     }
-
-    let response = try await session.respond(to: prompt, options: options)
-    let content = response.content
-    await recordEstimatedUsage(
-      request: request, promptCharacterCount: input.characterCount,
-      outputCharacterCount: content.count, requestStart: requestStart)
-    await MainActor.run { onUpdate(content) }
-    return content
+    await recordUsage(
+      request: request, response: response, promptCharacterCount: input.characterCount,
+      outputCharacterCount: response.content.count, timing: timing)
+    await onUpdate(response.content)
+    return response.content
   }
 
   @available(iOS 26.0, *)
   static func transcript(for input: AppleConversationInput) -> Transcript {
-    let entries = input.messages.dropLast(input.prompt.isEmpty ? 0 : 1).map { message -> Transcript.Entry in
+    let entries = input.messages.dropLast(input.prompt.isEmpty ? 0 : 1).map {
+      message -> Transcript.Entry in
       let segments: [Transcript.Segment] = [.text(.init(content: message.text))]
       switch message.role {
       case .system, .developer:
@@ -1166,29 +1157,36 @@ enum AppleFoundationProvider {
     return Transcript(entries: entries)
   }
 
-  /// Foundation Models expose no token counts, so both sides are estimated
-  /// from character length and flagged as such.
-  private static func recordEstimatedUsage(
+  @available(iOS 26.0, *)
+  private static func recordUsage<Content: Generable>(
     request: ChatCompletionRequest,
+    response: LanguageModelSession.Response<Content>,
     promptCharacterCount: Int,
     outputCharacterCount: Int,
-    requestStart: Date,
-    firstTokenSeconds: TimeInterval? = nil
+    timing: StreamTimingObservation
   ) async {
-    let stats = GenerationStats(
-      providerLabel: "Apple Intelligence",
-      modelID: "on-device",
-      inputTokens: GenerationStats.estimatedTokenCount(forCharacterCount: promptCharacterCount),
-      userInputTokens: request.userInputTokens,
-      outputTokens: GenerationStats.estimatedTokenCount(forCharacterCount: outputCharacterCount),
-      receivedTextTokens: GenerationStats.estimatedTokenCount(
-        forCharacterCount: outputCharacterCount),
-      promptSeconds: 0,
-      generationSeconds: max(0, Date().timeIntervalSince(requestStart)),
-      firstTokenSeconds: firstTokenSeconds,
-      tokensEstimated: true)
+    var usage: TokenUsage?
+    #if compiler(>=6.4)
+      if #available(iOS 27.0, *) { usage = tokenUsage(response.usage) }
+    #endif
+    let stats = GenerationStats.measured(
+      providerLabel: "Apple Intelligence", modelID: "on-device", usage: usage,
+      estimatedInputTokens: GenerationStats.estimatedTokenCount(
+        forCharacterCount: promptCharacterCount),
+      outputCharacterCount: outputCharacterCount, timing: timing,
+      userInputTokens: request.userInputTokens)
     await UsageStatsStore.record(stats, assistantMessageID: request.assistantMessageID)
   }
+
+  #if compiler(>=6.4)
+    @available(iOS 27.0, *)
+    static func tokenUsage(_ usage: LanguageModelSession.Usage) -> TokenUsage {
+      TokenUsage(
+        inputTokens: usage.input.totalTokenCount, outputTokens: usage.output.totalTokenCount,
+        cachedTokens: usage.input.cachedTokenCount,
+        reasoningTokens: usage.output.reasoningTokenCount)
+    }
+  #endif
 
   @available(iOS 26.0, *)
   private static func systemModel(deviceOnly: Bool) -> SystemLanguageModel {
