@@ -63,10 +63,14 @@ public struct AppleConversationInput: Sendable {
   }
 
   @discardableResult
-  public mutating func trimOldestTurn() -> Bool {
-    guard !history.isEmpty else { return false }
-    history.removeFirst()
-    return true
+  public mutating func trimToFit(
+    contextSize: Int, reservingTokens: Int,
+    tokenCount: (AppleConversationInput) async throws -> Int
+  ) async throws -> Int {
+    while true {
+      let available = max(0, contextSize - (try await tokenCount(self)))
+      if available >= reservingTokens || !trimForRetry() { return available }
+    }
   }
 
   @discardableResult

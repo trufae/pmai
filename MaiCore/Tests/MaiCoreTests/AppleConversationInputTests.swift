@@ -95,3 +95,23 @@ import Testing
   #expect(input.history.flatMap { $0 }.map(\.text) == ["One", "Two"])
   #expect(input.prompt == "Continue from the last response.")
 }
+
+@Test func appleBudgetUsesTokenCountsAndKeepsWholeTurns() async throws {
+  var input = AppleConversationInput(
+    instructions: "Rules",
+    messages: [
+      .user("One"), .assistant("Two"), .user("Three"), .assistant("Four"), .user("Latest"),
+    ])
+  let available = try await input.trimToFit(contextSize: 100, reservingTokens: 20) { input in
+    50 + input.history.count * 25
+  }
+  #expect(available == 25)
+  #expect(input.history.flatMap { $0 }.map(\.text) == ["Three", "Four"])
+  #expect(input.prompt == "Latest")
+  let exhausted = try await input.trimToFit(contextSize: 10, reservingTokens: 20) { _ in 50 }
+  #expect(exhausted == 0)
+  #expect(input.history.isEmpty)
+  #expect(input.instructions == "Rules")
+  #expect(input.prompt == "Latest")
+}
+
