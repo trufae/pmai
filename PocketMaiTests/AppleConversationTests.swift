@@ -116,7 +116,7 @@ final class AppleConversationTests: XCTestCase {
     XCTAssertEqual(texts, ["Rules", "One", "Two"])
   }
 
-  #if compiler(>=6.4)
+  #if PMAI_FOUNDATION_MODELS_27
     func testApplePerResponseUsageMapping() throws {
       guard #available(iOS 27.0, *) else { throw XCTSkip("Native usage requires iOS 27") }
       let usage = AppleFoundationProvider.tokenUsage(
