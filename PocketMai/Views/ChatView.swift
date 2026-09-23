@@ -1340,9 +1340,6 @@ struct ChatView: View {
       if let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
         _ = await store.send(prompt: text)
       } else {
-        if store.currentConversation == nil {
-          store.newConversation()
-        }
         store.requestComposerFocus()
       }
     case .voice:

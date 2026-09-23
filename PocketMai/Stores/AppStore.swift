@@ -922,6 +922,7 @@ final class AppStore: ObservableObject {
   }
 
   func newConversation() {
+    conversationSelectionGeneration += 1
     let inheritedLanguageOverride = currentConversation?.effectiveLanguageOverrideIdentifier
     if let current = currentConversation,
       current.messages.isEmpty
@@ -1104,7 +1105,8 @@ final class AppStore: ObservableObject {
   private func loadStartupConversationIfNeeded() async {
     let placeholderID = launchPlaceholderConversationID
     launchPlaceholderConversationID = nil
-    guard settings.startupBehavior == .lastConversation,
+    guard conversationSelectionGeneration == 0,
+      settings.startupBehavior == .lastConversation,
       selectedConversationID == placeholderID,
       startupPlaceholderIsStillDisposable(placeholderID),
       let id = startupConversationID(excluding: placeholderID)
@@ -1112,7 +1114,7 @@ final class AppStore: ObservableObject {
       return
     }
     await ensureConversationLoaded(id)
-    guard conversation(withID: id) != nil else { return }
+    guard conversationSelectionGeneration == 0, conversation(withID: id) != nil else { return }
     setSelectedConversationID(id)
     selectedConversationIDs.removeAll()
     _ = discardDisposableConversation(id: placeholderID)
@@ -4767,6 +4769,9 @@ final class AppStore: ObservableObject {
   /// Applies a launch request that arrived via a deep link (widget) or an App
   /// Intent (Action Button / Siri). The chat UI observes `pendingLaunchAction`.
   func handleLaunchCommand(_ command: LaunchCommand) {
+    if case .newPrompt = command {
+      newConversation()
+    }
     pendingLaunchAction = command
   }
 
@@ -4774,7 +4779,7 @@ final class AppStore: ObservableObject {
   /// the app was backgrounded or not running.
   func drainPendingSharedLaunchCommand() {
     if let command = SharedAppState.takePendingLaunchCommand() {
-      pendingLaunchAction = command
+      handleLaunchCommand(command)
     }
     drainSharedInbox()
   }
