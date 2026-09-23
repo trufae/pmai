@@ -525,7 +525,7 @@ enum PromptComposer {
           case .assistant: entry.displayName == "Host tool results" ? .tool : .assistant
           case .error: .assistant
           }
-        return AgentMessage(role: role, content: entry.content)
+        return AgentMessage(id: message.id.uuidString, role: role, content: entry.content)
       }
     }
     var instructions = [systemPrompt(settings: settings, conversation: request.conversation)]

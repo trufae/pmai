@@ -51,6 +51,18 @@ import Testing
   #expect(active.prompt == "Look up\n\nHost tool results:\n\(tool.text)")
 }
 
+@Test func appleMessageLimitsCountStoredMessagesBeforeToolExpansion() {
+  let input = AppleConversationInput(
+    instructions: "Rules", messages: [
+      .user("Old"),
+      AgentMessage(id: "same-message", role: .tool, content: "lookup tool ({}): Found"),
+      AgentMessage(id: "same-message", role: .assistant, content: "Answer"),
+      .user("New"),
+    ], messageLimit: 3)
+  #expect(input.history.count == 1)
+  #expect(input.history[0].count == 3)
+}
+
 @Test func appleRetriesStrictlyReduceHistory() {
   var input = AppleConversationInput(
     instructions: "Rules",
@@ -93,6 +105,17 @@ import Testing
   let input = AppleConversationInput(
     instructions: "Rules", messages: [.user("One"), .assistant("Two")])
   #expect(input.history.flatMap { $0 }.map(\.text) == ["One", "Two"])
+  #expect(input.prompt == "Continue from the last response.")
+}
+
+@Test func appleContinuationKeepsItsLastTurnWhenTrimming() {
+  var input = AppleConversationInput(
+    instructions: "Rules",
+    messages: [.user("Old"), .assistant("Answer"), .user("Latest"), .assistant("Partial")],
+    messageLimit: 0)
+  #expect(input.history.flatMap { $0 }.map(\.text) == ["Latest", "Partial"])
+  let trimmed = input.trimForRetry()
+  #expect(!trimmed)
   #expect(input.prompt == "Continue from the last response.")
 }
 
