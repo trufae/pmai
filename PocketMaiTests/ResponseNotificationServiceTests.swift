@@ -110,6 +110,5 @@ private final class NotificationCoder: NSCoder {
   override var allowsKeyedCoding: Bool { true }
   override func containsValue(forKey key: String) -> Bool { values[key] != nil }
   override func decodeObject(forKey key: String) -> Any? { values[key] }
-  override func decodeObject(of classes: [AnyClass]?, forKey key: String) -> Any? { values[key] }
   override func decodeInt64(forKey key: String) -> Int64 { 0 }
 }
