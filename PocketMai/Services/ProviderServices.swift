@@ -258,7 +258,9 @@ enum ChatProviderRouter {
       } catch {
         attempts += 1
         if case .followUpSuggestions = current.oneShotResponseFormat { throw error }
-        guard attempts <= 3, isContextOverflowError(error) else { throw error }
+        guard current.conversation.provider != .apple,
+          attempts <= 3, isContextOverflowError(error)
+        else { throw error }
         let messageCount = current.conversation.messages.count
         let baseLimit =
           current.messageLimitOverride
@@ -302,9 +304,6 @@ enum ChatProviderRouter {
   }
 
   private static func isContextOverflowError(_ error: Error) -> Bool {
-    if #available(iOS 26.0, *), AppleFoundationProvider.isContextOverflowError(error) {
-      return true
-    }
     let candidates: [String] = {
       if let chatError = error as? ChatProviderError {
         switch chatError {
@@ -1064,12 +1063,58 @@ enum AppleFoundationProvider {
       throw ChatProviderError.appleModelUnavailable(unavailableMessage)
     }
 
-    let input = PromptComposer.appleInput(request: request)
+    var input = PromptComposer.appleInput(request: request)
     guard !input.prompt.isEmpty else { throw ChatProviderError.emptyResponse }
+    let model = systemModel(deviceOnly: deviceOnly)
+    var maximumResponseTokens = 1_200
+    #if compiler(>=6.3)
+      if #available(iOS 26.4, *) {
+        // Counting can fail independently of generation; typed overflow recovery remains available.
+        let available = try? await input.trimToFit(
+          contextSize: model.contextSize, reservingTokens: maximumResponseTokens
+        ) { input in
+          let entries =
+            Array(transcript(for: input)) + [
+              Transcript.Entry.prompt(.init(segments: [.text(.init(content: input.prompt))]))
+            ]
+          return try await model.tokenCount(for: entries)
+        }
+        if let available {
+          guard available > 0 else {
+            throw ChatProviderError.providerRequestFailed(
+              "Apple Intelligence context is full even without older history. Shorten the current request, context, or tool results.")
+          }
+          maximumResponseTokens = min(maximumResponseTokens, available)
+        }
+      }
+    #endif
+    var attempts = 0
+    while true {
+      try Task.checkCancellation()
+      do {
+        return try await respond(
+          request: request, input: input, model: model,
+          maximumResponseTokens: maximumResponseTokens, onUpdate: onUpdate)
+      } catch {
+        guard attempts < 3, isContextOverflowError(error),
+          input.trimForRetry(lastAttempt: attempts == 2)
+        else { throw error }
+        attempts += 1
+        await onUpdate("")
+      }
+    }
+  }
+
+  @available(iOS 26.0, *)
+  private static func respond(
+    request: ChatCompletionRequest, input: AppleConversationInput, model: SystemLanguageModel,
+    maximumResponseTokens: Int,
+    onUpdate: @escaping @MainActor (String) -> Void
+  ) async throws -> String {
     let session = LanguageModelSession(
-      model: systemModel(deviceOnly: deviceOnly), transcript: transcript(for: input))
+      model: model, transcript: transcript(for: input))
     let prompt = input.prompt
-    let options = GenerationOptions(maximumResponseTokens: 1_200)
+    let options = GenerationOptions(maximumResponseTokens: maximumResponseTokens)
     let requestStart = Date()
 
     if request.conversation.usesStreaming {
@@ -1200,6 +1245,13 @@ enum AppleFoundationProvider {
 
   @available(iOS 26.0, *)
   static func isContextOverflowError(_ error: Error) -> Bool {
+    #if compiler(>=6.4)
+      if #available(iOS 27.0, *), let modelError = error as? LanguageModelError,
+        case .contextSizeExceeded = modelError
+      {
+        return true
+      }
+    #endif
     guard let generation = error as? LanguageModelSession.GenerationError else {
       return false
     }
