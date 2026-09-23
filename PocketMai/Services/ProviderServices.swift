@@ -495,50 +495,51 @@ enum PromptComposer {
     return parts.joined(separator: "\n\n")
   }
 
-  static func applePrompt(
-    conversation: Conversation,
-    settings: AppSettings,
-    context: String,
-    hasTools: Bool = false,
-    toolPrompt: String = "",
-    toolPromptInContext: Bool = false,
-    messageLimitOverride: Int? = nil
-  ) -> String {
-    var sections: [String] = []
-    if !context.isEmpty {
-      sections.append(
-        """
-        Context:
-        \(context)
-        """
-      )
+  static func appleInput(request: ChatCompletionRequest) -> AppleConversationInput {
+    var settings = request.settings
+    // Foreign reasoning is not a FoundationModels reasoning entry.
+    settings.includeReasoningContentInContext = false
+    let end =
+      request.conversation.messages.firstIndex { $0.id == request.assistantMessageID }
+      .map { $0 + 1 } ?? request.conversation.messages.count
+    let messages = request.conversation.messages.prefix(end).flatMap { message -> [AgentMessage] in
+      if message.role == .error { return [.assistant("")] }
+      var message = message
+      if message.role == .assistant {
+        message.text = message.text.replacingOccurrences(
+          of: #"(?:^|\n\n)\[(?:stopped|operation failed: [\s\S]*|model response skipped by user after timeout)\]\s*$"#,
+          with: "", options: .regularExpression)
+      }
+      var historySettings = settings
+      if message.id == request.assistantMessageID {
+        historySettings.includeAssistantResponsesInContext = false
+      }
+      let entries = contextTranscriptEntries(from: message, settings: historySettings)
+      // Keep turn boundaries even when assistant history is disabled.
+      if message.role == .assistant, entries.isEmpty { return [.assistant("")] }
+      return entries.map { entry in
+        let role: AgentRole =
+          switch message.role {
+          case .system: .system
+          case .user: .user
+          case .tool: .tool
+          case .assistant: entry.displayName == "Host tool results" ? .tool : .assistant
+          case .error: .assistant
+          }
+        return AgentMessage(role: role, content: entry.content)
+      }
     }
-    let limit = messageLimitOverride ?? settings.contextWindowMode.messageLimit
-    let transcript = promptTranscript(from: conversation, settings: settings, limit: limit)
-    let instruction: String
-    if !hasTools {
-      instruction = "Reply to the latest user message. Plain text only; no XML tags."
-    } else {
-      let hasToolResults = transcript.range(of: "<tool_run", options: [.caseInsensitive]) != nil
-      instruction = settings.toolCallingMode.textProtocolFallback.appleInstruction(
-        hasToolResults: hasToolResults)
+    var instructions = [systemPrompt(settings: settings, conversation: request.conversation)]
+    if request.hasToolCalling {
+      if !request.toolPromptInContext { instructions.append(request.toolPrompt) }
+      instructions.append(
+        settings.toolCallingMode.textProtocolFallback.appleInstruction(
+          hasToolResults: messages.last?.role == .tool))
     }
-    let reminder =
-      toolCallingReminder(
-        toolPrompt: hasTools ? toolPrompt : "",
-        includeToolPrompt: !toolPromptInContext) ?? ""
-    sections.append(
-      """
-      Conversation so far:
-
-      \(transcript)
-
-      \(reminder)
-
-      \(instruction)
-      """
-    )
-    return sections.joined(separator: "\n\n")
+    return AppleConversationInput(
+      instructions: instructions.filter { !$0.isEmpty }.joined(separator: "\n\n"),
+      messages: messages, context: request.context,
+      messageLimit: request.messageLimitOverride ?? settings.contextWindowMode.messageLimit)
   }
 
   static func openAIMessages(
@@ -811,24 +812,6 @@ enum PromptComposer {
     return "<tool_run>\n\(trimmed)\n</tool_run>"
   }
 
-  private static func promptTranscript(
-    from conversation: Conversation,
-    settings: AppSettings,
-    limit: Int? = nil
-  )
-    -> String
-  {
-    let limited = contextMessages(from: conversation, settings: settings, limit: limit)
-    let transcript = limited.flatMap { message -> [String] in
-      contextTranscriptEntries(from: message, settings: settings).map { entry in
-        "\(entry.displayName):\n\(entry.content)"
-      }
-    }
-    .joined(separator: "\n\n")
-
-    return transcript.isEmpty ? "No prior messages." : transcript
-  }
-
   struct TranscriptEntry {
     var displayName: String
     var content: String
@@ -1081,20 +1064,11 @@ enum AppleFoundationProvider {
       throw ChatProviderError.appleModelUnavailable(unavailableMessage)
     }
 
+    let input = PromptComposer.appleInput(request: request)
+    guard !input.prompt.isEmpty else { throw ChatProviderError.emptyResponse }
     let session = LanguageModelSession(
-      model: systemModel(deviceOnly: deviceOnly),
-      instructions: PromptComposer.systemPrompt(
-        settings: request.settings, conversation: request.conversation)
-    )
-    let prompt = PromptComposer.applePrompt(
-      conversation: request.conversation,
-      settings: request.settings,
-      context: request.context,
-      hasTools: request.hasToolCalling,
-      toolPrompt: request.toolPrompt,
-      toolPromptInContext: request.toolPromptInContext,
-      messageLimitOverride: request.messageLimitOverride
-    )
+      model: systemModel(deviceOnly: deviceOnly), transcript: transcript(for: input))
+    let prompt = input.prompt
     let options = GenerationOptions(maximumResponseTokens: 1_200)
     let requestStart = Date()
 
@@ -1115,7 +1089,7 @@ enum AppleFoundationProvider {
       }
       // Time from the first partial so model warm-up never counts as generation.
       await recordEstimatedUsage(
-        request: request, promptCharacterCount: prompt.count,
+        request: request, promptCharacterCount: input.characterCount,
         outputCharacterCount: latest.count, requestStart: firstPartialAt ?? requestStart,
         firstTokenSeconds: firstPartialAt.map { max(0, $0.timeIntervalSince(requestStart)) })
       await MainActor.run { onUpdate(latest) }
@@ -1125,10 +1099,26 @@ enum AppleFoundationProvider {
     let response = try await session.respond(to: prompt, options: options)
     let content = response.content
     await recordEstimatedUsage(
-      request: request, promptCharacterCount: prompt.count,
+      request: request, promptCharacterCount: input.characterCount,
       outputCharacterCount: content.count, requestStart: requestStart)
     await MainActor.run { onUpdate(content) }
     return content
+  }
+
+  @available(iOS 26.0, *)
+  static func transcript(for input: AppleConversationInput) -> Transcript {
+    let entries = input.messages.dropLast(input.prompt.isEmpty ? 0 : 1).map { message -> Transcript.Entry in
+      let segments: [Transcript.Segment] = [.text(.init(content: message.text))]
+      switch message.role {
+      case .system, .developer:
+        return .instructions(.init(segments: segments, toolDefinitions: []))
+      case .assistant:
+        return .response(.init(assetIDs: [], segments: segments))
+      case .user, .tool:
+        return .prompt(.init(segments: segments))
+      }
+    }
+    return Transcript(entries: entries)
   }
 
   /// Foundation Models expose no token counts, so both sides are estimated
