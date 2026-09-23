@@ -586,8 +586,9 @@ enum AssistantToolLoop {
         conversation: conversation,
         requestState: requestState),
       hasToolCalling: !requestState.definitions.isEmpty,
-      toolPrompt: tailToolPrompt,
-      toolPromptInContext: requestState.usesTextProtocol && !requestState.toolPrompt.isEmpty
+      toolPrompt: conversation.provider == .apple ? requestState.toolPrompt : tailToolPrompt,
+      toolPromptInContext: conversation.provider != .apple
+        && requestState.usesTextProtocol && !requestState.toolPrompt.isEmpty
     )
     var latestStreamedResponse = ""
     let response: String
@@ -1147,7 +1148,7 @@ enum AssistantToolLoop {
       nativeTools == nil
       ? AgentTooling.promptDescription(for: loopDefinitions, mode: activeMode)
       : nativeToolLoopPrompt()
-    let requestContext = [baseContext, toolPrompt]
+    let requestContext = [baseContext, conversation.provider == .apple ? "" : toolPrompt]
       .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
       .filter { !$0.isEmpty }
       .joined(separator: "\n\n")
@@ -1300,22 +1301,11 @@ enum AssistantToolLoop {
       return state.completedToolRuns.isEmpty ? requestState.toolPrompt : ""
     }()
     if conversation.provider == .apple {
-      return [
-        ConversationDebugPromptMessage(
-          role: "system",
-          content: PromptComposer.systemPrompt(settings: store.settings, conversation: conversation)
-        ),
-        ConversationDebugPromptMessage(
-          role: "user",
-          content: PromptComposer.applePrompt(
-            conversation: conversation,
-            settings: store.settings,
-            context: requestState.context,
-            hasTools: !requestState.definitions.isEmpty,
-            toolPrompt: tailToolPrompt,
-            toolPromptInContext: requestState.usesTextProtocol && !requestState.toolPrompt.isEmpty)
-        ),
-      ]
+      let request = ChatCompletionRequest(
+        conversation: conversation, settings: store.settings, context: requestState.context,
+        assistantMessageID: assistantID, hasToolCalling: !requestState.definitions.isEmpty,
+        toolPrompt: requestState.toolPrompt)
+      return PromptComposer.appleInput(request: request).messages.map(debugPromptMessage)
     }
     if conversation.provider == .openAICompatible,
       let endpoint = OpenAICompatibleProvider.selectedEndpoint(
@@ -1486,7 +1476,7 @@ enum AssistantToolLoop {
     guard settings.toolCallingMode == .native, hasTools else { return nil }
     guard !conversation.provider.supportsNativeToolCalling else { return nil }
     return
-      "\(conversation.provider.displayName) does not expose native tool calling; using \(settings.toolCallingMode.textProtocolFallback(for: conversation.provider).displayName) text fallback."
+      "\(conversation.provider.displayName) uses pmai’s tool executor; using \(settings.toolCallingMode.textProtocolFallback(for: conversation.provider).displayName) text fallback."
   }
 
   private static func debugDefinition(

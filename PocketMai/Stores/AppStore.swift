@@ -5182,13 +5182,10 @@ final class AppStore: ObservableObject {
     let providerSystemPrompt =
       requestContext.isEmpty ? systemPrompt : "\(systemPrompt)\n\n## Context\n\(requestContext)"
     let hasToolCalling = !visibleDefinitions.isEmpty
-    let applePrompt = PromptComposer.applePrompt(
-      conversation: conversation,
-      settings: settings,
-      context: requestContext,
-      hasTools: hasToolCalling,
-      toolPrompt: providerNativeToolCalling ? "" : toolPrompt,
-      toolPromptInContext: toolPromptInContext)
+    let appleInput = PromptComposer.appleInput(
+      request: ChatCompletionRequest(
+        conversation: conversation, settings: settings, context: contextPrompt,
+        assistantMessageID: UUID(), hasToolCalling: hasToolCalling, toolPrompt: toolPrompt))
     let messageIDs = Set(conversation.messages.map(\.id))
     let runtimeIterations =
       (toolCallingDebugIterations[conversation.id] ?? [])
@@ -5246,14 +5243,19 @@ final class AppStore: ObservableObject {
       contextSignature: context?.signature ?? "",
       lastStoredContextSignature: conversation.lastContextSignature,
       systemPrompt: systemPrompt,
-      providerSystemPrompt: providerSystemPrompt,
-      applePrompt: applePrompt,
-      promptMessages: debugPromptMessages(
-        conversation: conversation,
-        systemPrompt: providerSystemPrompt,
-        messageLimit: settings.contextWindowMode.messageLimit,
-        toolPrompt: providerNativeToolCalling ? "" : toolPrompt,
-        toolPromptInContext: toolPromptInContext),
+      providerSystemPrompt: conversation.provider == .apple
+        ? appleInput.instructions : providerSystemPrompt,
+      applePrompt: conversation.provider == .apple ? appleInput.prompt : nil,
+      promptMessages: conversation.provider == .apple
+        ? appleInput.messages.map {
+          ConversationDebugPromptMessage(role: $0.role.rawValue, content: $0.text)
+        }
+        : debugPromptMessages(
+          conversation: conversation,
+          systemPrompt: providerSystemPrompt,
+          messageLimit: settings.contextWindowMode.messageLimit,
+          toolPrompt: providerNativeToolCalling ? "" : toolPrompt,
+          toolPromptInContext: toolPromptInContext),
       iterations: runtimeIterations.isEmpty ? storedIterations : runtimeIterations,
       notes: [
         "Debug prompt data is reconstructed at export time from current settings.",
@@ -5269,7 +5271,7 @@ final class AppStore: ObservableObject {
     guard settings.toolCallingMode == .native, hasTools else { return nil }
     guard !conversation.provider.supportsNativeToolCalling else { return nil }
     return
-      "\(conversation.provider.displayName) does not expose native tool calling; using \(settings.toolCallingMode.textProtocolFallback(for: conversation.provider).displayName) text fallback."
+      "\(conversation.provider.displayName) uses pmai’s tool executor; using \(settings.toolCallingMode.textProtocolFallback(for: conversation.provider).displayName) text fallback."
   }
 
   private func debugNativeToolSettings(
