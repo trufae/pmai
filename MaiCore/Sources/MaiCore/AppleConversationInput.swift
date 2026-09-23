@@ -5,6 +5,7 @@ public struct AppleConversationInput: Sendable {
   public private(set) var instructions: String
   public private(set) var history: [[AgentMessage]] = []
   public let prompt: String
+  private let protectedHistoryTurns: Int
 
   public init(
     instructions: String, messages: [AgentMessage], context: String = "", messageLimit: Int? = nil
@@ -36,15 +37,18 @@ public struct AppleConversationInput: Sendable {
     if let last = turns.last, !last.contains(where: { $0.role == .assistant }) {
       current = turns.removeLast()
     }
+    protectedHistoryTurns = current.isEmpty && !turns.isEmpty ? 1 : 0
     var promptParts = context.isEmpty ? [] : ["Context:\n\(context)"]
     promptParts += current.map(Self.promptText)
     if current.isEmpty, !turns.isEmpty { promptParts.append("Continue from the last response.") }
     prompt = promptParts.joined(separator: "\n\n")
     history = turns
     if let messageLimit {
-      var count = history.reduce(current.count) { $0 + $1.count }
-      while count > max(0, messageLimit), let first = history.first {
-        count -= first.count
+      var count = history.reduce(Set(current.map(\.id)).count) { $0 + Set($1.map(\.id)).count }
+      while count > max(0, messageLimit), history.count > protectedHistoryTurns,
+        let first = history.first
+      {
+        count -= Set(first.map(\.id)).count
         history.removeFirst()
       }
     }
@@ -75,8 +79,9 @@ public struct AppleConversationInput: Sendable {
 
   @discardableResult
   public mutating func trimForRetry(lastAttempt: Bool = false) -> Bool {
-    guard !history.isEmpty else { return false }
-    history = lastAttempt ? [] : Array(history.suffix(history.count / 2))
+    guard history.count > protectedHistoryTurns else { return false }
+    let count = lastAttempt ? protectedHistoryTurns : max(protectedHistoryTurns, history.count / 2)
+    history = Array(history.suffix(count))
     return true
   }
 

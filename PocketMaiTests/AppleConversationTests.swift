@@ -80,6 +80,19 @@ final class AppleConversationTests: XCTestCase {
     XCTAssertEqual(input.prompt, "New")
   }
 
+  func testToolExpansionPreservesStoredMessageLimits() {
+    var request = request([
+      ChatMessage(role: .user, text: "Old"),
+      ChatMessage(role: .assistant, text: "<tool_run>lookup tool ({}): Found</tool_run>Answer"),
+      ChatMessage(role: .user, text: "New"),
+    ])
+    request.messageLimitOverride = 3
+    let history = PromptComposer.appleInput(request: request).history
+    XCTAssertEqual(history.count, 1)
+    XCTAssertEqual(history.first?.count, 3)
+    XCTAssertEqual(Set(history.flatMap { $0 }.map(\.id)).count, 2)
+  }
+
   func testFailedTurnsAndHostStatusAreNotReplayedAsAnswers() {
     var request = request([
       ChatMessage(role: .user, text: "Old"), ChatMessage(role: .error, text: "Failure"),
