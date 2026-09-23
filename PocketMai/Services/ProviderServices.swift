@@ -1065,7 +1065,7 @@ enum AppleFoundationProvider {
     guard !input.prompt.isEmpty else { throw ChatProviderError.emptyResponse }
     let model = systemModel(deviceOnly: deviceOnly)
     var maximumResponseTokens = 1_200
-    #if compiler(>=6.3)
+    #if PMAI_FOUNDATION_MODELS_26_4
       if #available(iOS 26.4, *) {
         // Counting can fail independently of generation; typed overflow recovery remains available.
         let available = try? await input.trimToFit(
@@ -1166,7 +1166,7 @@ enum AppleFoundationProvider {
     timing: StreamTimingObservation
   ) async {
     var usage: TokenUsage?
-    #if compiler(>=6.4)
+    #if PMAI_FOUNDATION_MODELS_27
       if #available(iOS 27.0, *) { usage = tokenUsage(response.usage) }
     #endif
     let stats = GenerationStats.measured(
@@ -1178,7 +1178,7 @@ enum AppleFoundationProvider {
     await UsageStatsStore.record(stats, assistantMessageID: request.assistantMessageID)
   }
 
-  #if compiler(>=6.4)
+  #if PMAI_FOUNDATION_MODELS_27
     @available(iOS 27.0, *)
     static func tokenUsage(_ usage: LanguageModelSession.Usage) -> TokenUsage {
       TokenUsage(
@@ -1243,7 +1243,7 @@ enum AppleFoundationProvider {
 
   @available(iOS 26.0, *)
   static func isContextOverflowError(_ error: Error) -> Bool {
-    #if compiler(>=6.4)
+    #if PMAI_FOUNDATION_MODELS_27
       if #available(iOS 27.0, *), let modelError = error as? LanguageModelError,
         case .contextSizeExceeded = modelError
       {
