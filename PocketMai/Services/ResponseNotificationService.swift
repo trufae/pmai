@@ -94,23 +94,27 @@ final class ResponseNotificationService: NSObject, UNUserNotificationCenterDeleg
 
   nonisolated func userNotificationCenter(
     _ center: UNUserNotificationCenter,
-    willPresent notification: UNNotification
-  ) async -> UNNotificationPresentationOptions {
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler:
+      @escaping @Sendable (UNNotificationPresentationOptions) -> Void
+  ) {
     // Delivery raced with the app coming back to the foreground; the chat is visible.
-    []
+    Task { @MainActor in
+      completionHandler([])
+    }
   }
 
   nonisolated func userNotificationCenter(
     _ center: UNUserNotificationCenter,
-    didReceive response: UNNotificationResponse
-  ) async {
-    let userInfo = response.notification.request.content.userInfo
-    guard let raw = userInfo[conversationIDUserInfoKey] as? String,
-      let conversationID = UUID(uuidString: raw)
-    else {
-      return
-    }
-    await MainActor.run {
+    didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping @Sendable () -> Void
+  ) {
+    let raw = response.notification.request.content.userInfo[conversationIDUserInfoKey] as? String
+    let conversationID = raw.flatMap(UUID.init(uuidString:))
+    // UIKit's completion can perform state restoration and must also run on the main thread.
+    Task { @MainActor in
+      defer { completionHandler() }
+      guard let conversationID else { return }
       openConversationHandler?(conversationID)
     }
   }
