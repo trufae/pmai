@@ -898,8 +898,12 @@ struct ChatView: View {
             scrollToBottomAfterLayout(proxy, animated: true)
             return
           }
-          guard old.text != new.text, !userScrolledAfterLastMessage else { return }
+          guard old.text != new.text,
+            store.settings.appearance.scrollToFollowResponses,
+            !userScrolledAfterLastMessage
+          else { return }
           DispatchQueue.main.async {
+            guard store.settings.appearance.scrollToFollowResponses else { return }
             scrollToBottom(proxy, animated: false)
           }
         }
@@ -1401,7 +1405,10 @@ struct ChatView: View {
   private static let streamingScrollInterval: TimeInterval = 0.35
 
   private func scheduleStreamingScroll(_ proxy: ScrollViewProxy) {
-    guard !messageFontPinchSession.isActive, !userScrolledAfterLastMessage else { return }
+    guard store.settings.appearance.scrollToFollowResponses,
+      !messageFontPinchSession.isActive,
+      !userScrolledAfterLastMessage
+    else { return }
     let now = Date()
     if let last = lastStreamingScrollAt,
       now.timeIntervalSince(last) < Self.streamingScrollInterval
@@ -1412,6 +1419,7 @@ struct ChatView: View {
         try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
         streamingScrollTask = nil
         guard !Task.isCancelled,
+          store.settings.appearance.scrollToFollowResponses,
           !messageFontPinchSession.isActive,
           !userScrolledAfterLastMessage
         else { return }

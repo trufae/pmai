@@ -7,17 +7,17 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A20000000000000000000001 /* MaiCore in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000011 /* MaiCore */; };
-		A20000000000000000000002 /* MaiOpenAI in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000012 /* MaiOpenAI */; };
-		A20000000000000000000003 /* MaiMCP in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000013 /* MaiMCP */; };
-		A20000000000000000000004 /* MaiStandardTools in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000014 /* MaiStandardTools */; };
-		A20000000000000000000005 /* MaiDocuments in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000015 /* MaiDocuments */; };
 		A10000000000000000000001 /* MLX in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000011 /* MLX */; };
 		A10000000000000000000002 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000012 /* MLXLLM */; };
 		A10000000000000000000003 /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000013 /* MLXLMCommon */; };
 		A10000000000000000000004 /* MLXLMHFAPI in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000014 /* MLXLMHFAPI */; };
 		A10000000000000000000005 /* MLXLMTokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000015 /* MLXLMTokenizers */; };
 		A10000000000000000000006 /* BeautifulMermaid in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000016 /* BeautifulMermaid */; };
+		A20000000000000000000001 /* MaiCore in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000011 /* MaiCore */; };
+		A20000000000000000000002 /* MaiOpenAI in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000012 /* MaiOpenAI */; };
+		A20000000000000000000003 /* MaiMCP in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000013 /* MaiMCP */; };
+		A20000000000000000000004 /* MaiStandardTools in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000014 /* MaiStandardTools */; };
+		A20000000000000000000005 /* MaiDocuments in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000015 /* MaiDocuments */; };
 		C0000000000000000000000E /* PocketMaiWidgetsExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = C00000000000000000000002 /* PocketMaiWidgetsExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		D0000000000000000000000E /* PocketMaiShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = D00000000000000000000002 /* PocketMaiShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
@@ -301,8 +301,8 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				D00000000000000000000009 /* PocketMaiShare */,
 				C0000000000000000000000A /* SharedWidgetKit */,
+				D00000000000000000000009 /* PocketMaiShare */,
 			);
 			name = PocketMaiShareExtension;
 			packageProductDependencies = (
@@ -877,31 +877,6 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		A20000000000000000000011 /* MaiCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = A20000000000000000000021 /* XCLocalSwiftPackageReference "MaiCore" */;
-			productName = MaiCore;
-		};
-		A20000000000000000000012 /* MaiOpenAI */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = A20000000000000000000021 /* XCLocalSwiftPackageReference "MaiCore" */;
-			productName = MaiOpenAI;
-		};
-		A20000000000000000000013 /* MaiMCP */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = A20000000000000000000021 /* XCLocalSwiftPackageReference "MaiCore" */;
-			productName = MaiMCP;
-		};
-		A20000000000000000000014 /* MaiStandardTools */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = A20000000000000000000021 /* XCLocalSwiftPackageReference "MaiCore" */;
-			productName = MaiStandardTools;
-		};
-		A20000000000000000000015 /* MaiDocuments */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = A20000000000000000000021 /* XCLocalSwiftPackageReference "MaiCore" */;
-			productName = MaiDocuments;
-		};
 		A10000000000000000000011 /* MLX */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = A10000000000000000000021 /* XCRemoteSwiftPackageReference "mlx-swift" */;
@@ -931,6 +906,31 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A10000000000000000000025 /* XCRemoteSwiftPackageReference "beautiful-mermaid-swift" */;
 			productName = BeautifulMermaid;
+		};
+		A20000000000000000000011 /* MaiCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A20000000000000000000021 /* XCLocalSwiftPackageReference "MaiCore" */;
+			productName = MaiCore;
+		};
+		A20000000000000000000012 /* MaiOpenAI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A20000000000000000000021 /* XCLocalSwiftPackageReference "MaiCore" */;
+			productName = MaiOpenAI;
+		};
+		A20000000000000000000013 /* MaiMCP */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A20000000000000000000021 /* XCLocalSwiftPackageReference "MaiCore" */;
+			productName = MaiMCP;
+		};
+		A20000000000000000000014 /* MaiStandardTools */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A20000000000000000000021 /* XCLocalSwiftPackageReference "MaiCore" */;
+			productName = MaiStandardTools;
+		};
+		A20000000000000000000015 /* MaiDocuments */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A20000000000000000000021 /* XCLocalSwiftPackageReference "MaiCore" */;
+			productName = MaiDocuments;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

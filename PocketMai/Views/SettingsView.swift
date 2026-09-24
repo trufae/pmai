@@ -874,6 +874,12 @@ struct SettingsView: View {
     Toggle("Render images", isOn: settingsBinding(\.renderMarkdownImagesInChat))
     Toggle("Justify Text", isOn: settingsBinding(\.appearance.justifyText))
     Toggle("Unwrapped Tables", isOn: settingsBinding(\.appearance.unwrappedTables))
+    Toggle(
+      "Scroll to follow responses",
+      isOn: settingsBinding(\.appearance.scrollToFollowResponses))
+    Text("Keeps the latest response visible as it grows. Scrolling manually still pauses it.")
+      .font(.caption)
+      .foregroundStyle(.secondary)
   }
 
   @ViewBuilder
