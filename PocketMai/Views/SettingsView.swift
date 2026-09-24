@@ -3162,8 +3162,21 @@ private struct EndpointDetailView: View {
       Section {
         Toggle("Enabled", isOn: $endpoint.isEnabled)
         TextField(OpenAIEndpoint.defaultDisplayName, text: $endpoint.name)
+        Button {
+          saveEndpointAndDismiss(makeDefault: true)
+        } label: {
+          Label(
+            isDefaultProvider ? "Default Provider" : "Set as Default",
+            systemImage: isDefaultProvider ? "checkmark.circle" : "star"
+          )
+        }
+        .disabled(isDefaultProvider || !endpoint.isEnabled || store.settings.airplaneModeEnabled)
       } footer: {
-        Text("A friendly name shown in the provider picker.")
+        Text(
+          store.settings.airplaneModeEnabled
+            ? "Go online to set this provider as the default."
+            : "A friendly name shown in the provider picker. The default provider is used for new chats."
+        )
       }
 
       Section {
@@ -3690,7 +3703,12 @@ private struct EndpointDetailView: View {
     return false
   }
 
-  private func saveEndpointAndDismiss() {
+  private var isDefaultProvider: Bool {
+    store.settings.defaultProvider == .openAICompatible
+      && store.settings.selectedEndpointID == endpoint.id
+  }
+
+  private func saveEndpointAndDismiss(makeDefault: Bool = false) {
     normalizeAuthForSelectedProvider()
     endpoint.headers = ProviderHeaders.parse(headersText)
     if let message = EndpointNameResolution.validationMessage(
@@ -3708,6 +3726,10 @@ private struct EndpointDetailView: View {
       || endpoint.headers != savedEndpoint.headers
     savedEndpoint = endpoint
     onSave?(endpoint)
+    if makeDefault {
+      store.settings.defaultProvider = .openAICompatible
+      store.settings.selectedEndpointID = endpoint.id
+    }
     if connectionChanged {
       store.resetEndpointStatus(endpoint.id)
     }
