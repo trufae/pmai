@@ -24,6 +24,7 @@ enum LocalMLXModels {
 }
 
 enum LocalMLXError: LocalizedError {
+  case unavailable(LocalMLXAvailability)
   case invalidModelID(String)
   case modelNotDownloaded(String)
   case noDownloadedModels
@@ -33,6 +34,8 @@ enum LocalMLXError: LocalizedError {
 
   var errorDescription: String? {
     switch self {
+    case .unavailable(let availability):
+      return availability.unavailabilityMessage
     case .invalidModelID(let id):
       if id.isEmpty {
         return "Enter a Hugging Face repo id in the form org/model-name."
@@ -86,9 +89,14 @@ actor LocalMLXProvider {
   private var container: ModelContainer?
   private var loadedModelID: String?
   private let downloader: any Downloader
+  private let availability: LocalMLXAvailability
 
-  init(downloader: any Downloader = LocalMLXImmediateCancelDownloader()) {
+  init(
+    downloader: any Downloader = LocalMLXImmediateCancelDownloader(),
+    availability: LocalMLXAvailability = .current
+  ) {
     self.downloader = downloader
+    self.availability = availability
   }
 
   // Minimum headroom reserved for output tokens within the KV window.
@@ -99,6 +107,7 @@ actor LocalMLXProvider {
     allowDownload: Bool = false,
     progressHandler: @Sendable @escaping (Progress) -> Void = { _ in }
   ) async throws {
+    guard availability.isAvailable else { throw LocalMLXError.unavailable(availability) }
     let modelID = Self.normalizedModelID(rawModelID)
     guard !modelID.isEmpty else {
       throw LocalMLXError.noModelSelected
@@ -149,6 +158,7 @@ actor LocalMLXProvider {
     request: ChatCompletionRequest,
     onUpdate: @escaping @MainActor (String) -> Void
   ) async throws -> String {
+    guard availability.isAvailable else { throw LocalMLXError.unavailable(availability) }
     let modelID = Self.effectiveModelID(
       conversation: request.conversation,
       settings: request.settings
@@ -290,9 +300,9 @@ actor LocalMLXProvider {
       switch factoryError {
       case .unsupportedModelType:
         return
-          "Unsupported model format for \(modelID). Use a Hugging Face repo that is already converted to MLX and supported by mlx-swift-lm."
+          "PocketMai cannot run the model architecture used by \(modelID). Choose a preset MLX model in Settings > Providers > Local MLX LLM, or update PocketMai for newer model support."
       case .noModelFactoryAvailable:
-        return "MLX LLM support is not available in this build. Check that MLXLLM is linked."
+        return "MLX model support is missing from this build. Update PocketMai or choose another provider."
       case .configurationFileError, .configurationDecodingError, .invalidConfiguration,
         .unsupportedProcessorType:
         return
@@ -309,7 +319,7 @@ actor LocalMLXProvider {
       || lowercasedDetail.contains("timed out")
       || lowercasedDetail.contains("could not connect")
     {
-      return "Download failed for \(modelID): \(detail)"
+      return "Download failed for \(modelID): \(detail) Check your connection and available storage, then retry."
     }
 
     if lowercasedDetail.contains("out of memory")
@@ -317,7 +327,8 @@ actor LocalMLXProvider {
       || lowercasedDetail.contains("failed to allocate")
       || lowercasedDetail.contains("resource exhausted")
     {
-      return "Out of memory while using \(modelID). Try a smaller 4-bit MLX model."
+      return "Not enough memory to run \(modelID). Try a smaller 4-bit model such as Qwen2.5-0.5B, "
+        + "reduce MLX KV Cache in Settings, or use a remote provider. Download size is smaller than the memory needed to run a model."
     }
 
     if lowercasedDetail.contains("not found")

@@ -516,7 +516,7 @@ struct ChatView: View {
   private func providerLabel(for conversation: Conversation) -> String {
     switch conversation.provider {
     case .apple:
-      return store.appleIntelligenceIsAvailable ? "Apple Intelligence" : "MLX Local"
+      return "Apple Intelligence"
     case .mlx:
       return "MLX Local"
     case .openAICompatible:
@@ -532,15 +532,24 @@ struct ChatView: View {
   private func providerStatusBanner(_ status: (message: String, systemImage: String, color: Color))
     -> some View
   {
-    Label(status.message, systemImage: status.systemImage)
+    Button {
+      showingProviderModelSheet = true
+    } label: {
+      HStack {
+        Label(status.message, systemImage: status.systemImage)
+          .lineLimit(2)
+          .fixedSize(horizontal: false, vertical: true)
+          .frame(maxWidth: .infinity, alignment: .leading)
+        Image(systemName: "chevron.right")
+      }
       .font(.caption)
       .foregroundStyle(status.color)
-      .lineLimit(2)
-      .fixedSize(horizontal: false, vertical: true)
-      .frame(maxWidth: .infinity, alignment: .leading)
       .padding(.horizontal)
       .padding(.vertical, 10)
       .background(.ultraThinMaterial)
+    }
+    .buttonStyle(.plain)
+    .accessibilityHint("Open chat settings to choose a provider")
   }
 
   private func beginRename() {
@@ -624,14 +633,23 @@ struct ChatView: View {
   }
 
   private var providerStatus: (message: String, systemImage: String, color: Color)? {
+    if store.currentConversation?.provider == .mlx,
+      let message = LocalMLXAvailability.current.unavailabilityMessage
+    {
+      return (message, "exclamationmark.triangle", .orange)
+    }
+    if let conversation = store.currentConversation, conversation.provider == .openAICompatible,
+      OpenAICompatibleProvider.selectedEndpoint(for: conversation, settings: store.settings) == nil,
+      !store.settings.airplaneModeEnabled
+    {
+      return (LocalMLXAvailability.providerSetupSuggestion, "network", .orange)
+    }
     if let conversation = store.currentConversation,
       store.settings.airplaneModeEnabled,
       !conversation.provider.isAirplaneModeEligible
     {
       return (
-        store.appleIntelligenceIsAvailable
-          ? "Airplane Mode is on. Switch this chat to Apple Intelligence or MLX Local."
-          : "Airplane Mode is on. Switch this chat to MLX Local.",
+        store.offlineProviderGuidance,
         "airplane",
         .orange
       )
@@ -5723,8 +5741,9 @@ private struct ConversationModelSettingsView: View {
               Button {
                 providerSelectionBinding.wrappedValue = .mlx
               } label: {
-                Label("MLX Local", systemImage: "cpu")
+                Label(store.localMLXIsAvailable ? "MLX Local" : "MLX Local (Unavailable)", systemImage: "cpu")
               }
+              .disabled(!store.localMLXIsAvailable)
               if !store.settings.airplaneModeEnabled {
                 ForEach(store.settings.openAIEndpoints.filter(\.isEnabled)) { endpoint in
                   Button {
@@ -5882,9 +5901,6 @@ private struct ConversationModelSettingsView: View {
 
   private var provider: ProviderKind {
     guard let provider = store.currentConversation?.provider else { return .mlx }
-    if provider == .apple, !store.appleIntelligenceIsAvailable {
-      return .mlx
-    }
     return provider
   }
 
@@ -5898,7 +5914,7 @@ private struct ConversationModelSettingsView: View {
     }
     switch provider {
     case .apple:
-      return store.appleIntelligenceIsAvailable ? "Apple Intelligence" : "MLX Local"
+      return "Apple Intelligence"
     case .mlx:
       return "MLX Local"
     case .openAICompatible:
@@ -5910,7 +5926,7 @@ private struct ConversationModelSettingsView: View {
     if selectedProviderIsBlockedByAirplaneMode { return "network.slash" }
     switch provider {
     case .apple:
-      return store.appleIntelligenceIsAvailable ? "apple.logo" : "cpu"
+      return "apple.logo"
     case .mlx:
       return "cpu"
     case .openAICompatible:
@@ -5926,9 +5942,7 @@ private struct ConversationModelSettingsView: View {
       mlxModelControls
     } else if selectedProviderIsBlockedByAirplaneMode {
       Text(
-        store.appleIntelligenceIsAvailable
-          ? "Airplane Mode is on. Switch to Apple Intelligence or MLX Local."
-          : "Airplane Mode is on. Switch to MLX Local."
+        store.offlineProviderGuidance
       )
       .foregroundStyle(.secondary)
     } else if let endpoint = selectedEndpoint {
@@ -5964,7 +5978,9 @@ private struct ConversationModelSettingsView: View {
   private var mlxModelControls: some View {
     let modelIDs = store.localMLXModelIDs
     Group {
-      if modelIDs.isEmpty {
+      if let message = LocalMLXAvailability.current.unavailabilityMessage {
+        Text(message).foregroundStyle(.secondary)
+      } else if modelIDs.isEmpty {
         Text("No downloaded MLX models")
           .foregroundStyle(.secondary)
       } else {
@@ -5984,8 +6000,10 @@ private struct ConversationModelSettingsView: View {
       }
 
       Text(
-        "Only downloaded MLX models are shown. Manage downloads in Settings > Providers "
+        store.localMLXIsAvailable
+          ? "Only downloaded MLX models are shown. Manage downloads in Settings > Providers "
           + "> Local MLX LLM."
+          : "Choose another provider in the Provider menu."
       )
       .font(.caption)
       .foregroundStyle(.secondary)
@@ -6011,7 +6029,7 @@ private struct ConversationModelSettingsView: View {
     case .apple:
       return store.appleIntelligenceIsAvailable
     case .mlx:
-      return !store.localMLXModelIDs.isEmpty
+      return store.localMLXIsAvailable && !store.localMLXModelIDs.isEmpty
     case .openAICompatible:
       guard !store.settings.airplaneModeEnabled else { return false }
       return selectedEndpoint != nil
@@ -6028,6 +6046,7 @@ private struct ConversationModelSettingsView: View {
         && normalizedModel(conversation.modelID) == normalizedModel(defaults.modelID)
         && reasoningMatches
     case .mlx:
+      guard store.localMLXIsAvailable else { return false }
       let model =
         store.availableLocalMLXModelID(preferred: effectiveMLXModel(conversation))
         ?? effectiveMLXModel(conversation)
@@ -6084,6 +6103,8 @@ private struct ConversationModelSettingsView: View {
     if conversation.provider == .openAICompatible && selectedEndpoint == nil {
       return "Choose an enabled endpoint before using these settings as the default."
     }
+    if conversation.provider == .mlx,
+      let message = LocalMLXAvailability.current.unavailabilityMessage { return message }
     if conversation.provider == .mlx && store.localMLXModelIDs.isEmpty {
       return "Download an MLX model before using MLX as the default."
     }
@@ -6103,6 +6124,7 @@ private struct ConversationModelSettingsView: View {
       store.settings.defaultProvider = .apple
       store.settings.appleModelID = conversation.modelID
     case .mlx:
+      guard store.localMLXIsAvailable else { return }
       let model =
         store.availableLocalMLXModelID(preferred: effectiveMLXModel(conversation))
         ?? effectiveMLXModel(conversation)
@@ -6199,7 +6221,7 @@ private struct ConversationModelSettingsView: View {
         guard let conversation = store.currentConversation else { return .mlx }
         switch conversation.provider {
         case .apple:
-          return store.appleIntelligenceIsAvailable ? .apple : .mlx
+          return .apple
         case .mlx:
           return .mlx
         case .openAICompatible:
@@ -6215,18 +6237,10 @@ private struct ConversationModelSettingsView: View {
         }
       },
       set: { newSelection in
-        let needsMLXModel: Bool = {
-          switch newSelection {
-          case .apple:
-            return !store.appleIntelligenceIsAvailable
-          case .mlx:
-            return true
-          case .endpoint:
-            return false
-          }
-        }()
+        if newSelection == .mlx && !store.localMLXIsAvailable { return }
+        if newSelection == .apple && !store.appleIntelligenceIsAvailable { return }
         let selectedMLXModelID: String? = {
-          guard needsMLXModel else { return nil }
+          guard newSelection == .mlx else { return nil }
           store.refreshLocalMLXModelsInBackground()
           return store.availableLocalMLXModelID(preferred: store.settings.localMLXModelID)
             ?? normalizedModel(store.settings.localMLXModelID)
@@ -6234,13 +6248,6 @@ private struct ConversationModelSettingsView: View {
         store.updateCurrentConversationSettings { conversation in
           switch newSelection {
           case .apple:
-            guard store.appleIntelligenceIsAvailable else {
-              conversation.provider = .mlx
-              conversation.endpointID = nil
-              conversation.modelID = selectedMLXModelID ?? ""
-              didSaveDefaults = false
-              return
-            }
             conversation.provider = .apple
             conversation.endpointID = nil
             conversation.modelID = store.settings.appleModelID

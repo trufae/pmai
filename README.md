@@ -12,7 +12,7 @@ This app, comes after [MAI](https://github.com/trufae/mai), a cli agent with foc
 
 ## Features
 
-- **Providers**: Apple Intelligence (on-device) and any OpenAI-compatible API (OpenAI, Ollama, llama.cpp, vLLM, OpenRouter, ...).
+- **Providers**: Apple Intelligence and MLX on supported devices, plus any OpenAI-compatible API (OpenAI, Ollama, llama.cpp, vLLM, OpenRouter, ...).
 - **Tools**: datetime, location, weather, web search, browser, todo, text-to-speech, files, memory — invokable by the model via native tool-calling or a text-protocol fallback.
 - **Browser**: the model can open pages in an in-app WebKit view shown as a picture-in-picture card, read the text, DOM, links, or an on-device text-recognition pass over the screen, click, type, scroll, and run JavaScript. Tap the card to enlarge it and take over by hand for sign-ins and other steps only a person can do.
 - **MCP**: configure remote Streamable HTTP or CLI-local stdio servers and surface them to the model.
@@ -27,6 +27,26 @@ Requires Xcode 26+ and an iOS 18+ deployment target. iOS 26-only features
 such as Apple Foundation Models, Native iOS Live speech transcription, and
 Liquid Glass controls fall back or report unavailable at runtime on older OS
 versions.
+
+MLX inference requires a physical device with Apple GPU family 7 or later
+(A14/M1 or newer). PocketMai checks `MTLDevice.supportsFamily(.apple7)` before
+enabling MLX selection, downloading, or loading models. The iPhone XS's A12,
+A13 devices, and A12X/A12Z iPads do not meet this requirement. These devices
+can use an OpenAI-compatible service or connect to Ollama/llama.cpp on a computer
+through Settings > Providers > Add Provider.
+
+This GPU cutoff follows the SIMD-group matrix operations used by
+[MLX's Metal kernels](https://github.com/ml-explore/mlx/blob/v0.31.1/mlx/backend/metal/kernels/steel/gemm/mma.h)
+and [Apple's GPU feature table](https://developer.apple.com/metal/Metal-Feature-Set-Tables.pdf).
+The [MLX iOS guide](https://github.com/ml-explore/mlx-swift/blob/0.31.6/Source/MLX/Documentation.docc/Articles/running-on-ios.md)
+also rules out Simulator inference and describes iOS memory limits. Simulator
+builds support the UI and remote providers; test MLX on a supported device or
+an Apple silicon Mac using Designed for iPad. GPU support does not guarantee
+every model fits in memory: start with a small 4-bit model and a short context,
+and keep the app in the foreground while generating.
+
+As of 2026-09-24, the project already resolves the latest stable releases:
+`mlx-swift` 0.31.6 (includes the iOS build fix) and `mlx-swift-lm` 3.31.4.
 
 CI and release builds use Swift 6.4.0, including matching Static Linux and
 Android SDKs. The packages keep Swift 6 language mode. SwiftPM now defaults

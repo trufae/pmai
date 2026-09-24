@@ -1810,10 +1810,11 @@ private struct ConversationFolderDefaultsView: View {
         selectProvider(.mlx)
       } label: {
         providerMenuLabel(
-          "MLX Local",
+          store.localMLXIsAvailable ? "MLX Local" : "MLX Local (Unavailable)",
           systemImage: "cpu",
           isSelected: draft.provider == .mlx)
       }
+      .disabled(!store.localMLXIsAvailable)
       if !store.settings.airplaneModeEnabled {
         ForEach(store.settings.openAIEndpoints.filter(\.isEnabled)) { endpoint in
           Button {
@@ -1910,7 +1911,9 @@ private struct ConversationFolderDefaultsView: View {
   private var mlxModelControls: some View {
     let modelIDs = store.localMLXModelIDs
     Group {
-      if modelIDs.isEmpty {
+      if let message = LocalMLXAvailability.current.unavailabilityMessage {
+        Text(message).foregroundStyle(.secondary)
+      } else if modelIDs.isEmpty {
         Text("No downloaded MLX models")
           .foregroundStyle(.secondary)
       } else {
@@ -1934,7 +1937,7 @@ private struct ConversationFolderDefaultsView: View {
   @ViewBuilder
   private var openAICompatibleModelControls: some View {
     if store.settings.airplaneModeEnabled {
-      Text("Airplane Mode is on. Choose Apple Intelligence, MLX Local, or App Default.")
+      Text(store.offlineProviderGuidance)
         .foregroundStyle(.secondary)
     } else if let endpoint = selectedEndpoint {
       let models = store.endpointModels[endpoint.id] ?? []
@@ -1982,6 +1985,7 @@ private struct ConversationFolderDefaultsView: View {
     case .apple:
       return store.appleIntelligenceIsAvailable ? nil : "Apple Intelligence is unavailable."
     case .mlx:
+      if let message = LocalMLXAvailability.current.unavailabilityMessage { return message }
       return store.localMLXModelIDs.isEmpty ? "Download an MLX model before saving." : nil
     case .openAICompatible:
       if store.settings.airplaneModeEnabled {
@@ -2040,6 +2044,7 @@ private struct ConversationFolderDefaultsView: View {
       draft.endpointID = nil
       draft.modelID = store.settings.appleModelID
     case .mlx:
+      guard store.localMLXIsAvailable else { return }
       store.refreshLocalMLXModels()
       draft.provider = .mlx
       draft.endpointID = nil

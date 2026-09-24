@@ -180,7 +180,7 @@ enum ChatProviderError: LocalizedError {
 
   var errorDescription: String? {
     switch self {
-    case .missingEndpoint: "No OpenAI-compatible endpoint is selected."
+    case .missingEndpoint: "No provider is selected. " + LocalMLXAvailability.providerSetupSuggestion
     case .invalidEndpoint(let value): "Invalid endpoint URL: \(value)"
     case .emptyResponse: "The provider returned an empty response."
     case .appleModelUnavailable(let reason): reason
@@ -189,14 +189,18 @@ enum ChatProviderError: LocalizedError {
       message.isEmpty
         ? "Provider returned HTTP \(statusCode)."
         : "Provider returned HTTP \(statusCode): \(message)"
-    case .providerUnavailableInAirplaneMode(let name):
-      "Airplane mode is enabled. Switch this chat to MLX Local before using \(name)."
+    case .providerUnavailableInAirplaneMode:
+      LocalMLXAvailability.current.offlineGuidance(
+        appleAvailable: AppleFoundationProvider.availabilityReport(deviceOnly: true).isAvailable)
     }
   }
 }
 
 enum ChatProviderRouter {
-  static func preflightMessage(conversation: Conversation, settings: AppSettings) -> String? {
+  static func preflightMessage(
+    conversation: Conversation, settings: AppSettings,
+    mlxAvailability: LocalMLXAvailability = .current
+  ) -> String? {
     if settings.airplaneModeEnabled && !conversation.provider.isAirplaneModeEligible {
       return ChatProviderError.providerUnavailableInAirplaneMode(conversation.provider.displayName)
         .errorDescription
@@ -206,6 +210,7 @@ enum ChatProviderRouter {
       return AppleFoundationProvider.unavailableMessage(
         deviceOnly: settings.airplaneModeEnabled)
     case .mlx:
+      if let message = mlxAvailability.unavailabilityMessage { return message }
       let modelID = LocalMLXProvider.effectiveModelID(
         conversation: conversation, settings: settings)
       guard !modelID.isEmpty else {
@@ -946,7 +951,7 @@ struct AppleFoundationAvailabilityReport: Equatable, Sendable {
 
 enum AppleFoundationProvider {
   private static let unsupportedOSMessage =
-    "Apple Foundation Models require iOS 26 or later. Use MLX Local or another configured provider."
+    "Apple Foundation Models require iOS 26 or later. \(LocalMLXAvailability.current.alternativeProviderSuggestion)"
 
   static var availabilityReport: AppleFoundationAvailabilityReport {
     availabilityReport(deviceOnly: false)
@@ -1201,10 +1206,10 @@ enum AppleFoundationProvider {
     switch reason {
     case .deviceNotEligible:
       return
-        "Apple Intelligence is not available on this device. Use MLX Local or another configured provider."
+        "Apple Intelligence is not available on this device. \(LocalMLXAvailability.current.alternativeProviderSuggestion)"
     case .appleIntelligenceNotEnabled:
       return
-        "Apple Intelligence is not enabled on this device. Use MLX Local or another configured provider."
+        "Apple Intelligence is not enabled on this device. \(LocalMLXAvailability.current.alternativeProviderSuggestion)"
     case .modelNotReady:
       return
         "the local model is not ready yet. Keep the device online until the model finishes downloading, or switch providers."

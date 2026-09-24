@@ -1192,12 +1192,8 @@ struct SettingsView: View {
     .disabled(store.settings.airplaneModeEnabled)
     Text(
       store.settings.airplaneModeEnabled
-        ? (store.appleIntelligenceIsAvailable
-          ? "Airplane Mode is on. Apple Intelligence and MLX remain available; OpenAI-compatible providers are offline."
-          : "Airplane Mode is on. MLX remains available; OpenAI-compatible providers are offline.")
-        : (store.appleIntelligenceIsAvailable
-          ? "Apple Intelligence and MLX are built in. OpenAI-compatible providers can be added, edited, or removed."
-          : "MLX is built in. OpenAI-compatible providers can be added, edited, or removed.")
+        ? store.offlineProviderGuidance
+        : "OpenAI-compatible providers can be added, edited, or removed. On-device providers depend on this device's hardware."
     )
     .font(.caption)
     .foregroundStyle(.secondary)
@@ -1219,6 +1215,7 @@ struct SettingsView: View {
     let modelID = store.settings.localMLXModelID.trimmingCharacters(in: .whitespacesAndNewlines)
     let downloadedCount = store.localMLXModelIDs.count
     let subtitle: String = {
+      if !store.localMLXIsAvailable { return "Unsupported on this device. Tap for requirements and alternatives." }
       if downloadedCount == 0 {
         return "No downloaded models"
       }
@@ -1235,8 +1232,8 @@ struct SettingsView: View {
       title: "Local MLX LLM",
       subtitle: subtitle,
       systemImage: "cpu",
-      color: .green,
-      badge: "Built-in"
+      color: store.localMLXIsAvailable ? .green : .secondary,
+      badge: store.localMLXIsAvailable ? "Built-in" : "Unavailable"
     )
   }
 

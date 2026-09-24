@@ -1,5 +1,4 @@
 import Foundation
-import MLXLMCommon
 import SwiftUI
 
 @MainActor
@@ -22,6 +21,7 @@ final class LocalLLMViewModel: ObservableObject {
   private var activeLoadID: UUID?
 
   init() {
+    if let message = LocalMLXAvailability.current.unavailabilityMessage { status = message }
     refreshCachedModels()
   }
 
@@ -56,6 +56,10 @@ final class LocalLLMViewModel: ObservableObject {
   func toggleModelLoad() {
     if isLoading {
       cancelModelLoad()
+      return
+    }
+    guard LocalMLXAvailability.current.isAvailable else {
+      status = LocalMLXAvailability.current.unavailabilityMessage ?? "MLX is unavailable."
       return
     }
     let modelId = activeModelId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -220,66 +224,9 @@ final class LocalLLMViewModel: ObservableObject {
   }
 
   private func showFailure(_ error: Error, action: String, modelId: String) {
-    let message = Self.message(for: error, action: action, modelId: modelId)
+    let message = LocalMLXProvider.message(for: error, action: action, modelID: modelId)
     isReady = loadedModelId == activeModelId
     status = message
-  }
-
-  private static func message(for error: Error, action: String, modelId: String) -> String {
-    if let localError = error as? LocalMLXError {
-      return localError.localizedDescription
-    }
-
-    if let factoryError = error as? ModelFactoryError {
-      switch factoryError {
-      case .unsupportedModelType:
-        return
-          "Unsupported model format for \(modelId). Use a Hugging Face repo that is already converted to MLX and supported by mlx-swift-lm."
-      case .noModelFactoryAvailable:
-        return "MLX LLM support is not available in this build. Check that MLXLLM is linked."
-      case .configurationFileError, .configurationDecodingError, .invalidConfiguration,
-        .unsupportedProcessorType:
-        return
-          "Unsupported MLX model configuration for \(modelId): \(factoryError.localizedDescription)"
-      }
-    }
-
-    let nsError = error as NSError
-    let detail = error.localizedDescription
-    let lowercasedDetail = detail.lowercased()
-
-    if nsError.domain == NSURLErrorDomain || error is URLError
-      || lowercasedDetail.contains("network")
-      || lowercasedDetail.contains("timed out")
-      || lowercasedDetail.contains("could not connect")
-    {
-      return "Download failed for \(modelId): \(detail)"
-    }
-
-    if lowercasedDetail.contains("out of memory")
-      || lowercasedDetail.contains("memory allocation")
-      || lowercasedDetail.contains("failed to allocate")
-      || lowercasedDetail.contains("resource exhausted")
-    {
-      return "Out of memory while using \(modelId). Try a smaller 4-bit MLX model."
-    }
-
-    if lowercasedDetail.contains("not found")
-      || lowercasedDetail.contains("404")
-      || lowercasedDetail.contains("repository")
-    {
-      return
-        "Invalid model id or unavailable Hugging Face repo: \(modelId). Use an MLX-ready repo id such as org/model-name."
-    }
-
-    if lowercasedDetail.contains("safetensor")
-      || lowercasedDetail.contains("config.json")
-      || lowercasedDetail.contains("unsupported")
-    {
-      return "Unsupported model format for \(modelId): \(detail)"
-    }
-
-    return "\(action) failed for \(modelId): \(detail)"
   }
 
   private static func isCancellation(_ error: Error) -> Bool {
@@ -341,6 +288,18 @@ struct LocalLLMView: View {
 
   var body: some View {
     Form {
+      Section("Device Support") {
+        if let message = LocalMLXAvailability.current.unavailabilityMessage {
+          Label("MLX Unavailable", systemImage: "exclamationmark.triangle")
+          Text(message)
+        } else {
+          Label("GPU Supported", systemImage: "checkmark.circle")
+          Text("Start with a small 4-bit model, such as Qwen2.5-0.5B. Larger models and longer conversations need more memory and may cause iOS to close the app.")
+          Text("Keep PocketMai open while MLX is generating a reply.")
+        }
+      }
+      .font(.callout)
+
       Section {
         Picker("Preset", selection: $vm.selectedModelId) {
           ForEach(vm.presets, id: \.self) { id in
@@ -379,12 +338,15 @@ struct LocalLLMView: View {
           Label(vm.loadButtonTitle, systemImage: vm.loadButtonSystemImage)
         }
 
-        Text(vm.status)
-          .font(.caption)
-          .foregroundStyle(vm.isActiveModelReady ? Color.secondary : Color.primary)
+        if LocalMLXAvailability.current.isAvailable {
+          Text(vm.status)
+            .font(.caption)
+            .foregroundStyle(vm.isActiveModelReady ? Color.secondary : Color.primary)
+        }
       } header: {
         Text("MLX LLM Model")
       }
+      .disabled(!LocalMLXAvailability.current.isAvailable)
 
       Section {
         if vm.cachedModels.isEmpty {

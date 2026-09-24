@@ -3247,6 +3247,25 @@ struct AppSettings: Codable, Equatable, Sendable {
     }
   }
 
+  /// For new chats only; existing conversations keep their provider and show a preflight error.
+  func availableProviderConfiguration(
+    _ preferred: (provider: ProviderKind, endpointID: UUID?, modelID: String),
+    appleAvailable: Bool, mlxAvailable: Bool
+  ) -> (provider: ProviderKind, endpointID: UUID?, modelID: String) {
+    switch preferred.provider {
+    case .apple where appleAvailable, .mlx where mlxAvailable:
+      return preferred
+    case .openAICompatible where !airplaneModeEnabled:
+      return preferred
+    default:
+      if appleAvailable { return (.apple, nil, appleModelID) }
+      if mlxAvailable { return (.mlx, nil, localMLXModelID) }
+      // An empty remote selection leads to setup guidance, never an unusable MLX default.
+      let endpoint = airplaneModeEnabled ? nil : defaultOpenAIEndpoint
+      return (.openAICompatible, endpoint?.id, endpoint?.defaultModel ?? "")
+    }
+  }
+
   enum CodingKeys: String, CodingKey {
     case settingsVersion, stockPromptsVersion
     case defaultProvider, appleModelID, localMLXModelID, selectedEndpointID,

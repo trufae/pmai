@@ -6,12 +6,39 @@ import XCTest
 
 @MainActor
 final class LocalMLXProviderTests: XCTestCase {
+  func testUnsupportedHardwareNeverDownloadsOrTouchesCache() async throws {
+    for availability: LocalMLXAvailability in [
+      .simulator, .metalUnavailable, .unsupportedGPU("Apple A12 GPU"),
+    ] {
+      let modelID = "pmai-tests/\(UUID().uuidString)"
+      let directory = try XCTUnwrap(LocalMLXModelCache.cacheDirectoryURL(forRepoID: modelID))
+      defer { try? LocalMLXModelCache.deleteRepository(modelID) }
+      let snapshot = directory.appendingPathComponent("snapshots/test")
+      try FileManager.default.createDirectory(at: snapshot, withIntermediateDirectories: true)
+      let config = snapshot.appendingPathComponent("config.json")
+      try Data("{}".utf8).write(to: config)
+      let downloader = FailingDownloader(directory: directory)
+      let provider = LocalMLXProvider(downloader: downloader, availability: availability)
+      for allowDownload in [false, true] {
+        do {
+          try await provider.load(modelID: modelID, allowDownload: allowDownload)
+          XCTFail("Unsupported hardware must be rejected before loading or downloading")
+        } catch LocalMLXError.unavailable(let reason) {
+          XCTAssertEqual(reason, availability)
+        }
+      }
+      let requests = await downloader.requestedIDs
+      XCTAssertTrue(requests.isEmpty)
+      XCTAssertEqual(try Data(contentsOf: config), Data("{}".utf8))
+    }
+  }
+
   func testFreshModelRequiresExplicitDownload() async throws {
     let modelID = "pmai-tests/\(UUID().uuidString)"
     let directory = try XCTUnwrap(LocalMLXModelCache.cacheDirectoryURL(forRepoID: modelID))
     defer { try? LocalMLXModelCache.deleteRepository(modelID) }
     let downloader = FailingDownloader(directory: directory)
-    let provider = LocalMLXProvider(downloader: downloader)
+    let provider = LocalMLXProvider(downloader: downloader, availability: .available)
     XCTAssertFalse(LocalMLXModelCache.containsRepository(modelID))
 
     do {
@@ -54,7 +81,7 @@ final class LocalMLXProviderTests: XCTestCase {
     XCTAssertTrue(LocalMLXModelCache.containsRepository(modelID))
 
     let downloader = FailingDownloader(directory: directory)
-    let provider = LocalMLXProvider(downloader: downloader)
+    let provider = LocalMLXProvider(downloader: downloader, availability: .available)
     for allowDownload in [false, true] {
       do {
         try await provider.load(modelID: modelID, allowDownload: allowDownload)
@@ -71,7 +98,7 @@ final class LocalMLXProviderTests: XCTestCase {
 
   func testExplicitDownloadStillValidatesModelID() async throws {
     let downloader = FailingDownloader(directory: FileManager.default.temporaryDirectory)
-    let provider = LocalMLXProvider(downloader: downloader)
+    let provider = LocalMLXProvider(downloader: downloader, availability: .available)
     let modelID = "https://huggingface.co/org/model"
     do {
       try await provider.load(modelID: modelID, allowDownload: true)

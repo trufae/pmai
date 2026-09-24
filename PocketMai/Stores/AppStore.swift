@@ -669,10 +669,11 @@ final class AppStore: ObservableObject {
     switch provider {
     case .apple:
       guard appleIntelligenceIsAvailable else {
-        return (.mlx, nil, availableLocalMLXModelID(preferred: settings.localMLXModelID) ?? "")
+        return effectiveDefaultProviderConfiguration
       }
       return (.apple, nil, modelID)
     case .mlx:
+      guard localMLXIsAvailable else { return effectiveDefaultProviderConfiguration }
       return (.mlx, nil, availableLocalMLXModelID(preferred: modelID) ?? "")
     case .openAICompatible:
       guard !settings.airplaneModeEnabled,
@@ -911,14 +912,18 @@ final class AppStore: ObservableObject {
     appleAvailabilityReport.isAvailable
   }
 
+  var localMLXIsAvailable: Bool { LocalMLXAvailability.current.isAvailable }
+
+  var offlineProviderGuidance: String {
+    LocalMLXAvailability.current.offlineGuidance(appleAvailable: appleIntelligenceIsAvailable)
+  }
+
   var effectiveDefaultProviderConfiguration:
     (provider: ProviderKind, endpointID: UUID?, modelID: String)
   {
-    let configuration = settings.defaultProviderConfiguration
-    guard configuration.provider == .apple, !appleIntelligenceIsAvailable else {
-      return configuration
-    }
-    return (.mlx, nil, settings.localMLXModelID)
+    settings.availableProviderConfiguration(
+      settings.defaultProviderConfiguration,
+      appleAvailable: appleIntelligenceIsAvailable, mlxAvailable: localMLXIsAvailable)
   }
 
   func newConversation() {
@@ -1505,6 +1510,7 @@ final class AppStore: ObservableObject {
   ) -> Bool {
     guard appleAvailabilityReport.kind != .checking,
       !appleIntelligenceIsAvailable,
+      localMLXIsAvailable,
       conversation.provider == .apple
     else {
       return false
@@ -4255,7 +4261,8 @@ final class AppStore: ObservableObject {
   }
 
   private func normalizeUnavailableAppleProviderIfNeeded() {
-    guard appleAvailabilityReport.kind != .checking, !appleIntelligenceIsAvailable else { return }
+    guard appleAvailabilityReport.kind != .checking, !appleIntelligenceIsAvailable,
+      localMLXIsAvailable else { return }
     let fallbackModelID = fallbackLocalMLXModelID(preferred: settings.localMLXModelID)
     var settingsChanged = false
     if settings.defaultProvider == .apple {
@@ -4283,6 +4290,7 @@ final class AppStore: ObservableObject {
   private func normalizeCurrentAppleConversationIfNeeded(index: Int) {
     guard conversations.indices.contains(index),
       conversations[index].provider == .apple,
+      localMLXIsAvailable,
       !appleIntelligenceIsAvailable
     else {
       return
@@ -4885,7 +4893,7 @@ final class AppStore: ObservableObject {
     let provider: String
     switch conversation.provider {
     case .apple:
-      provider = appleIntelligenceIsAvailable ? "Apple Intelligence" : "MLX Local"
+      provider = "Apple Intelligence"
     case .mlx:
       provider = "MLX Local"
     case .openAICompatible:
