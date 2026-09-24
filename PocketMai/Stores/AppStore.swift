@@ -909,7 +909,7 @@ final class AppStore: ObservableObject {
   }
 
   var appleIntelligenceIsAvailable: Bool {
-    appleAvailabilityReport.isAvailable
+    settings.appleProviderEnabled && appleAvailabilityReport.isAvailable
   }
 
   var localMLXIsAvailable: Bool { LocalMLXAvailability.current.isAvailable }
@@ -1509,7 +1509,7 @@ final class AppStore: ObservableObject {
     in conversation: inout Conversation
   ) -> Bool {
     guard appleAvailabilityReport.kind != .checking,
-      !appleIntelligenceIsAvailable,
+      !appleAvailabilityReport.isAvailable,
       localMLXIsAvailable,
       conversation.provider == .apple
     else {
@@ -4261,7 +4261,7 @@ final class AppStore: ObservableObject {
   }
 
   private func normalizeUnavailableAppleProviderIfNeeded() {
-    guard appleAvailabilityReport.kind != .checking, !appleIntelligenceIsAvailable,
+    guard appleAvailabilityReport.kind != .checking, !appleAvailabilityReport.isAvailable,
       localMLXIsAvailable else { return }
     let fallbackModelID = fallbackLocalMLXModelID(preferred: settings.localMLXModelID)
     var settingsChanged = false
@@ -4291,7 +4291,7 @@ final class AppStore: ObservableObject {
     guard conversations.indices.contains(index),
       conversations[index].provider == .apple,
       localMLXIsAvailable,
-      !appleIntelligenceIsAvailable
+      !appleAvailabilityReport.isAvailable
     else {
       return
     }

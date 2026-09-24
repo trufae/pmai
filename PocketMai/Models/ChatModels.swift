@@ -3062,6 +3062,7 @@ struct AppSettings: Codable, Equatable, Sendable {
     """
 
   var defaultProvider: ProviderKind = .mlx
+  var appleProviderEnabled: Bool = true
   var appleModelID: String = AppSettings.appleDefaultModelID
   var localMLXModelID: String = AppSettings.localMLXDefaultModelID
   var selectedEndpointID: UUID? = nil
@@ -3268,7 +3269,7 @@ struct AppSettings: Codable, Equatable, Sendable {
 
   enum CodingKeys: String, CodingKey {
     case settingsVersion, stockPromptsVersion
-    case defaultProvider, appleModelID, localMLXModelID, selectedEndpointID,
+    case defaultProvider, appleProviderEnabled, appleModelID, localMLXModelID, selectedEndpointID,
       defaultReasoningLevel, streamByDefault, showThinkingByDefault
     case openAIEndpoints, systemPrompts, userPrompts, defaultSystemPromptID, compactPrompt
     case defaultEnabledTools
@@ -3299,6 +3300,7 @@ struct AppSettings: Codable, Equatable, Sendable {
     stockPromptsVersion = Self.currentStockPromptsVersion
     defaultProvider =
       (try? c.decode(ProviderKind.self, forKey: .defaultProvider)) ?? .mlx
+    appleProviderEnabled = (try? c.decode(Bool.self, forKey: .appleProviderEnabled)) ?? true
     appleModelID = (try? c.decode(String.self, forKey: .appleModelID)) ?? ""
     localMLXModelID =
       (try? c.decode(String.self, forKey: .localMLXModelID))
