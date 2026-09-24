@@ -447,7 +447,21 @@ private struct HistoryPanelPanBridge: UIViewRepresentable {
       _ gestureRecognizer: UIGestureRecognizer,
       shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
-      true
+      !isScrollViewPanGesture(otherGestureRecognizer)
+    }
+
+    func gestureRecognizer(
+      _ gestureRecognizer: UIGestureRecognizer,
+      shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+      // Give the drawer the first decision on horizontal edge pans. Otherwise
+      // the scroll view begins simultaneously and flashes its vertical indicator.
+      gestureRecognizer === panGesture && isScrollViewPanGesture(otherGestureRecognizer)
+    }
+
+    private func isScrollViewPanGesture(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+      guard let scrollView = gestureRecognizer.view as? UIScrollView else { return false }
+      return gestureRecognizer === scrollView.panGestureRecognizer
     }
 
     private func resolvedPanelWidth(for availableWidth: CGFloat) -> CGFloat {
