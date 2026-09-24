@@ -38,6 +38,7 @@ struct ChatView: View {
 
   private struct UserMessageNavigationState: Equatable {
     var isAtBottom = true
+    var hasScrollableContent = false
     var previousID: UUID?
     var nextID: UUID?
   }
@@ -45,6 +46,7 @@ struct ChatView: View {
   private struct MessageListScrollMetrics: Equatable {
     var viewportMinY: CGFloat
     var contentHeight: CGFloat
+    var hasScrollableContent: Bool
     var isAtBottom: Bool
   }
 
@@ -867,13 +869,17 @@ struct ChatView: View {
         .coordinateSpace(name: MessageFontPinchSession.coordinateSpaceName)
         .scrollDismissesKeyboard(.interactively)
         .onScrollGeometryChange(for: MessageListScrollMetrics.self) { geometry in
-          MessageListScrollMetrics(
+          let hasScrollableContent = geometry.contentSize.height > geometry.containerSize.height + 2
+          return MessageListScrollMetrics(
             viewportMinY: geometry.visibleRect.minY,
             contentHeight: geometry.contentSize.height,
-            isAtBottom: geometry.contentSize.height <= geometry.containerSize.height
+            hasScrollableContent: hasScrollableContent,
+            isAtBottom: !hasScrollableContent
               || geometry.visibleRect.maxY >= geometry.contentSize.height - 2)
         } action: { _, metrics in
-          refreshUserMessageNavigation(isAtBottom: metrics.isAtBottom)
+          refreshUserMessageNavigation(
+            isAtBottom: metrics.isAtBottom,
+            hasScrollableContent: metrics.hasScrollableContent)
         }
         .onScrollPhaseChange { _, phase in
           if phase == .interacting {
@@ -964,7 +970,11 @@ struct ChatView: View {
           }
         }
         .overlay(alignment: .bottomTrailing) {
-          if !userMessageNavigation.isAtBottom && !userMessageNavigationHiddenBySwipe {
+          if currentMessageIDs.count >= 2,
+            userMessageNavigation.hasScrollableContent,
+            !userMessageNavigation.isAtBottom,
+            !userMessageNavigationHiddenBySwipe
+          {
             userMessageNavigationControls(proxy: proxy)
               .transition(.move(edge: .bottom).combined(with: .opacity))
           }
@@ -1160,8 +1170,12 @@ struct ChatView: View {
       .map(\.id)
   }
 
-  private func refreshUserMessageNavigation(isAtBottom: Bool? = nil) {
+  private func refreshUserMessageNavigation(
+    isAtBottom: Bool? = nil,
+    hasScrollableContent: Bool? = nil
+  ) {
     let atBottom = isAtBottom ?? userMessageNavigation.isAtBottom
+    let scrollable = hasScrollableContent ?? userMessageNavigation.hasScrollableContent
     let userMessageIDs = currentUserMessageIDs
     let alignedTopTolerance: CGFloat = 4
     var previousID: UUID?
@@ -1178,6 +1192,7 @@ struct ChatView: View {
 
     let newState = UserMessageNavigationState(
       isAtBottom: atBottom,
+      hasScrollableContent: scrollable,
       previousID: previousID,
       nextID: nextID)
     guard newState != userMessageNavigation else { return }
