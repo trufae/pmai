@@ -636,6 +636,48 @@ func openAIModelCatalog() async throws {
   #expect(request.value(forHTTPHeaderField: "X-Workspace") == "test")
 }
 
+@Test("Anthropic model catalog sends its API version and follows cursor pages")
+func anthropicModelCatalog() async throws {
+  let first = URLRequestRecorder()
+  let second = URLRequestRecorder()
+  StubURLProtocol.install(forHost: "api.anthropic.com") { request in
+    let afterID = URLComponents(url: try #require(request.url), resolvingAgainstBaseURL: false)?
+      .queryItems?.first(where: { $0.name == "after_id" })?.value
+    if afterID == nil {
+      first.record(request, body: Data())
+      return try httpResponse(
+        request, contentType: "application/json",
+        body: """
+          {"data":[{"id":"claude-z","display_name":"Claude Z"}],
+           "has_more":true,"last_id":"claude-z"}
+          """)
+    }
+    second.record(request, body: Data())
+    return try httpResponse(
+      request, contentType: "application/json",
+      body: """
+        {"data":[{"id":"claude-a","capabilities":{"image_input":{"supported":true}}}],
+         "has_more":false,"last_id":"claude-a"}
+        """)
+  }
+  defer { StubURLProtocol.reset(host: "api.anthropic.com") }
+
+  let provider = OpenAICompatibleProvider(
+    configuration: .init(
+      baseURL: try #require(URL(string: "https://api.anthropic.com/v1")),
+      apiKey: "secret"), session: stubSession())
+  let models = try await provider.availableModels()
+
+  #expect(models.map(\.id) == ["claude-a", "claude-z"])
+  #expect(models.first?.capabilities.contains(.imageInput) == true)
+  #expect(models.first?.inputModalities == ["text", "image"])
+  for request in [try #require(first.request), try #require(second.request)] {
+    #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer secret")
+    #expect(request.value(forHTTPHeaderField: "anthropic-version") == "2023-06-01")
+  }
+  #expect(second.request?.url?.absoluteString == "https://api.anthropic.com/v1/models?after_id=claude-z")
+}
+
 @Test("OpenAI-compatible provider fills {{session}} in configured headers per request")
 func openAIConversationHeader() async throws {
   let recorder = URLRequestRecorder()

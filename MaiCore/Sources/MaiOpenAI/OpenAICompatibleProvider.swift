@@ -69,11 +69,22 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
   }
 
   public func availableModels() async throws -> [ModelDescriptor] {
-    let root = try await catalog("models")
-    guard let values = root["data"]?.arrayValue ?? root["models"]?.arrayValue else {
-      throw OpenAICompatibleProviderError.invalidResponse(
-        "Expected a model catalog in the provider response.")
-    }
+    var values: [JSONValue] = []
+    var afterID: String?
+    var seenCursors = Set<String>()
+    repeat {
+      let root = try await catalog("models", afterID: afterID)
+      guard let page = root["data"]?.arrayValue ?? root["models"]?.arrayValue else {
+        throw OpenAICompatibleProviderError.invalidResponse(
+          "Expected a model catalog in the provider response.")
+      }
+      values.append(contentsOf: page)
+      guard root["has_more"]?.boolValue == true,
+        let cursor = root["last_id"]?.stringValue,
+        !cursor.isEmpty, seenCursors.insert(cursor).inserted
+      else { break }
+      afterID = cursor
+    } while true
     return values.compactMap { value in
       guard let object = value.objectValue,
         let id = object["id"]?.stringValue ?? object["model"]?.stringValue
@@ -90,6 +101,11 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
         declaredModalities = modality.split(separator: "-").first.map {
           $0.split(separator: "+").map(String.init)
         }
+      }
+      let nativeImageInput = object["capabilities"]?.objectValue?["image_input"]?
+        .objectValue?["supported"]?.boolValue
+      if declaredModalities == nil, let nativeImageInput {
+        declaredModalities = nativeImageInput ? ["text", "image"] : ["text"]
       }
       let inputModalities = declaredModalities ?? []
       if inputModalities.contains(where: { $0.lowercased() == "image" })
@@ -741,11 +757,27 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     return try await session.data(for: request, delegate: delegate)
   }
 
-  private func catalog(_ endpoint: String) async throws -> [String: JSONValue] {
-    var request = URLRequest(url: try endpointURL(endpoint))
+  private func catalog(_ endpoint: String, afterID: String? = nil) async throws -> [String: JSONValue] {
+    var url = try endpointURL(endpoint)
+    if let afterID {
+      guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+        throw OpenAICompatibleProviderError.invalidBaseURL(url.absoluteString)
+      }
+      components.queryItems = [URLQueryItem(name: "after_id", value: afterID)]
+      guard let pageURL = components.url else {
+        throw OpenAICompatibleProviderError.invalidBaseURL(url.absoluteString)
+      }
+      url = pageURL
+    }
+    var request = URLRequest(url: url)
     request.httpMethod = "GET"
     request.timeoutInterval = min(15, max(1, configuration.requestTimeout))
     applyHeaders(to: &request)
+    if endpoint == "models", url.host?.lowercased() == "api.anthropic.com",
+      request.value(forHTTPHeaderField: "anthropic-version") == nil
+    {
+      request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+    }
     request.setValue("application/json", forHTTPHeaderField: "Accept")
 
     do {
@@ -851,7 +883,7 @@ public enum OpenAICompatibleProviderError: LocalizedError, Equatable, Sendable {
     case .invalidBaseURL(let value):
       "Invalid OpenAI-compatible base URL: \(value)"
     case .missingModel:
-      "An OpenAI-compatible model must be selected. Use /model NAME or --model NAME."
+      "Select a model for this endpoint before sending a message."
     case .emptyResponse:
       "The provider returned an empty response."
     case .invalidResponse(let message), .providerFailure(let message),
