@@ -17,7 +17,7 @@ BUNDLE_ID = io.github.trufae.mai
 APP_BUNDLE ?=
 BINDIR ?= /usr/local/bin
 
-.PHONY: all build test list run repl repl-install repl-musl plugin-fixture fmt clean check-shared-tooling aitest-build
+.PHONY: all build test list run uninstall repl repl-install repl-uninstall repl-musl plugin-fixture fmt clean check-shared-tooling aitest-build
 
 all: build
 
@@ -63,6 +63,21 @@ run:
 	xcrun devicectl device install app --device "$$device" "$$app_bundle"; \
 	xcrun devicectl device process launch --terminate-existing --device "$$device" "$(BUNDLE_ID)"
 
+uninstall:
+	@set -e; \
+	device='$(DEVICE)'; \
+	if [ -z "$$device" ]; then \
+		devices_json="$$(mktemp -t pocketmai-devices.XXXXXX)"; \
+		trap 'rm -f "$$devices_json"' EXIT; \
+		xcrun devicectl list devices --json-output "$$devices_json" >/dev/null; \
+		device="$$(jq -r '.result.devices[] | select(.hardwareProperties.platform == "iOS") | .identifier' "$$devices_json" | head -n 1)"; \
+	fi; \
+	if [ -z "$$device" ] || [ "$$device" = "null" ]; then \
+		echo "No connected iOS device found. Pass DEVICE=<UDID> to select one." >&2; \
+		exit 1; \
+	fi; \
+	xcrun devicectl device uninstall app --device "$$device" "$(BUNDLE_ID)"
+
 repl:
 	@set -a; \
 	if [ -f ./env.sh ] \
@@ -78,6 +93,9 @@ repl-install:
 	swift build --package-path MaiCore -c release --product pmai
 	$(SUDO) cp -f "$$(swift build --package-path MaiCore -c release --show-bin-path)/pmai" $(BINDIR)/pmai
 	$(SUDO) $(STRIP) $(BINDIR)/pmai
+
+repl-uninstall:
+	$(SUDO) rm -f "$(BINDIR)/pmai"
 
 # Fully static Linux build that also runs on musl distributions such as
 # Alpine. Needs the Swift Static Linux SDK matching the toolchain. swift-tui
