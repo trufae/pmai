@@ -82,9 +82,10 @@ problem. Do not ignore SIGILL or disable Swift safety checks to hide it.
 
 ## CPU usage while waiting
 
-The REPL updates its status on state changes. Its active spinner redraws only
-one cell and stops when idle; it does not re-render the saved transcript on
-every animation tick. Unchanged thinking rows are also left alone.
+The REPL updates its status on state changes. Its active spinner redraws one
+cell every 200 ms and the elapsed time redraws the status row once per second.
+Both stop when idle; neither re-renders the saved transcript or unchanged
+thinking rows.
 
 There is a separate Swift 6.4.0 FoundationNetworking issue while waiting for
 HTTP responses: a 1.2 MB POST reproduced high CPU even in a standalone

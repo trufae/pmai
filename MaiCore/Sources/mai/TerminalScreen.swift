@@ -56,6 +56,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var resizeSource: (any DispatchSourceProtocol)?
   private var activitySource: DispatchSourceTimer?
   private var animatingStatus = false
+  private var activityStartedAt: UInt64?
+  private var activityFrame = 0
+  private var displayedActivitySecond: UInt64 = 0
   /// Keystrokes that arrived while the terminal was asked for its cursor
   /// position, kept for the editor.
   private var typeahead: [UInt8] = []
@@ -65,6 +68,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private static let clearLine = "\u{1B}[2K"
   private static let clearBelow = "\u{1B}[J"
   private static let reset = "\u{1B}[0m"
+  private static let activityFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
   /// Nil unless both stdin and stdout are terminals; piped sessions keep the
   /// plain one-line-at-a-time prompt.
@@ -195,9 +199,15 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   /// Replaces the status line above the input; an unchanged line is not redrawn.
   func setStatus(_ text: String, animating: Bool = false) {
     lock.withLock {
+      let animationChanged = animatingStatus != animating
       animatingStatus = animating
+      if animationChanged {
+        activityStartedAt = animating ? DispatchTime.now().uptimeNanoseconds : nil
+        activityFrame = 0
+        displayedActivitySecond = 0
+      }
       updateActivityTimer()
-      guard text != statusText else { return }
+      guard text != statusText || animationChanged else { return }
       statusText = text
       // A tab-completion menu owns the row until it closes; the status is
       // still kept so the row can be restored when it does.
@@ -380,8 +390,6 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   private func drawStatusRow() {
     let width = max(1, columns - 1)
-    let content = Self.truncated(" \(statusText) ", width: width)
-    let padding = String(repeating: " ", count: max(0, width - Self.displayWidth(content)))
     var out = ""
     let colors = ProcessInfo.processInfo.environment["NO_COLOR"] == nil
     for (index, line) in thinkingRows.enumerated() {
@@ -389,6 +397,25 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       if colors { out += "\u{1B}[3;38;5;\(244 + index * 3)m" }
       out += Self.truncated(line, width: width) + Self.reset
     }
+    write(out)
+    drawStatusLine()
+  }
+
+  private func drawStatusLine() {
+    let width = max(1, columns - 1)
+    let status: String
+    if animatingStatus, let activityStartedAt {
+      let elapsed = (DispatchTime.now().uptimeNanoseconds - activityStartedAt) / 1_000_000_000
+      let frame = Self.activityFrames[activityFrame]
+      status = "\(frame) \(elapsed / 60)m\(elapsed % 60)s" + String(statusText.dropFirst())
+      displayedActivitySecond = elapsed
+    } else {
+      status = statusText
+    }
+    let content = Self.truncated(" \(status) ", width: width)
+    let padding = String(repeating: " ", count: max(0, width - Self.displayWidth(content)))
+    let colors = ProcessInfo.processInfo.environment["NO_COLOR"] == nil
+    var out = ""
     out += move(row: regionBottom + thinkingRows.count + 1, column: 1) + Self.clearLine
     if let menu = completionMenu {
       out += Self.completionMenuRow(menu, width: width, colors: colors)
@@ -465,8 +492,17 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private func drawActivity() {
     lock.withLock {
       // The completion menu owns the row; its first cell must not blink.
-      guard active, animatingStatus, completionMenu == nil, columns > 2 else { return }
-      let marker = String(Unicode.Scalar(Int.random(in: 0x2800...0x28FF))!)
+      guard active, animatingStatus, let activityStartedAt, completionMenu == nil,
+        columns > 2
+      else { return }
+      activityFrame = (activityFrame + 1) % Self.activityFrames.count
+      let elapsed = (DispatchTime.now().uptimeNanoseconds - activityStartedAt) / 1_000_000_000
+      if elapsed != displayedActivitySecond {
+        drawStatusLine()
+        placeCaret()
+        return
+      }
+      let marker = Self.activityFrames[activityFrame]
       let style = TerminalLineEditor.backgroundColorCode(ui.backgroundLine) ?? "2"
       write(
         move(row: regionBottom + thinkingRows.count + 1, column: 2)
