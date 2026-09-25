@@ -86,6 +86,37 @@ func speedExcludesReasoningAndNeedsDuration() {
   #expect(abs((burst.tokensPerSecond ?? -1) - 50.0) < 0.01)
 }
 
+@Test("Reported completions with unreported thinking do not inflate answer speed")
+func localCompletionSpeedUsesAnswerText() throws {
+  var timing = StreamTimingObservation(requestStart: start)
+  for offset in [1.0, 11.0, 21.0] {
+    timing.noteTokenChunk(at: start.addingTimeInterval(offset))
+  }
+  let call = ModelCallStats.measured(
+    providerLabel: "openai", modelID: "local",
+    usage: TokenUsage(inputTokens: 100, outputTokens: 4_000),
+    estimatedInputTokens: 100, outputCharacterCount: 100,
+    timing: timing, end: start.addingTimeInterval(21.1))
+  #expect(call.outputTokens == 4_000)
+  #expect(call.receivedTextTokens == 25)
+  #expect(call.visibleOutputTokensEstimated)
+  #expect(abs((call.tokensPerSecond ?? -1) - 1.25) < 0.0001)
+  #expect(call.summary.hasPrefix("~1.2 tok/s"))
+
+  var ledger = ModelUsageLedger()
+  ledger.record(call)
+  let row = try #require(ledger.totals.first)
+  #expect(abs((row.averageTokensPerSecond ?? -1) - 1.25) < 0.0001)
+  #expect(ModelUsageReport(ledger).rows[0].value(.speed) == "~1.2 tok/s")
+  #expect(row.detailLines.contains("Last output speed: ~1.2 tok/s"))
+  #expect(try ModelUsageLedger.decode(ledger.encoded()).totals.first?.lastOutputSpeedEstimated == true)
+
+  var oldRow = row
+  oldRow.lastOutputTokensPerSecond = 200
+  oldRow.lastOutputSpeedEstimated = nil
+  #expect(!oldRow.detailLines.contains { $0.hasPrefix("Last output speed:") })
+}
+
 @Test("Merging keeps the first round's first-token latency")
 func mergeKeepsEarliestFirstToken() {
   var first = ModelCallStats(

@@ -8268,9 +8268,10 @@ struct MaiCLI {
       /stats path            Print the file the statistics are saved in
     The runtime records tokens (from the provider's usage, or estimated from text
     length and marked ~) and the wall-clock time of every model call, in the REPL,
-    one-shot runs, and the visual workspace alike. Speed is visible output tokens
-    over the streaming window; time in use adds the wait for the first token;
-    efficiency is total tokens / (seconds in use × requests).
+    one-shot runs, and the visual workspace alike. Speed uses answer text tokens
+    over the streaming window (~ means estimated from text length). Time in use
+    adds the wait for the first token; efficiency is total tokens /
+    (seconds in use × requests).
     """
 
   private static let exportHelp = """

@@ -146,10 +146,17 @@ public struct ModelCallStats: Codable, Equatable, Sendable {
     self.callCount = callCount
   }
 
-  /// Completion tokens that correspond to the generated response text. Provider
-  /// completion totals include hidden reasoning tokens on reasoning models.
+  /// Approximate tokens in the answer the user received. Some local servers
+  /// include unreported thinking in completion_tokens, so that total cannot
+  /// stand in for displayed text. Keep the provider's count as an upper bound.
   public var visibleOutputTokens: Int {
-    max(0, outputTokens - (reasoningTokens ?? 0))
+    let reportedVisible = max(0, outputTokens - (reasoningTokens ?? 0))
+    return receivedTextTokens.map { min($0, reportedVisible) } ?? reportedVisible
+  }
+
+  public var visibleOutputTokensEstimated: Bool {
+    guard let receivedTextTokens else { return tokensEstimated }
+    return tokensEstimated || receivedTextTokens < max(0, outputTokens - (reasoningTokens ?? 0))
   }
 
   public var tokensPerSecond: Double? {
@@ -171,7 +178,7 @@ public struct ModelCallStats: Codable, Equatable, Sendable {
   public var summary: String {
     let approx = tokensEstimated ? "~" : ""
     return [
-      tokensPerSecond.map(ModelUsageFormat.speed),
+      tokensPerSecond.map { ModelUsageFormat.speed($0, estimated: visibleOutputTokensEstimated) },
       firstTokenSeconds.map { "first tok \(ModelUsageFormat.seconds($0))" },
       "\(approx)\(ModelUsageFormat.count(inputTokens)) in",
       cachedTokens > 0 ? "\(ModelUsageFormat.count(cachedTokens)) cached" : nil,
@@ -347,6 +354,8 @@ public struct ModelUsageTotals: Codable, Identifiable, Equatable, Sendable {
   public var estimatedCallCount = 0
   /// Speed of the most recent call, over visible output tokens.
   public var lastOutputTokensPerSecond: Double?
+  /// Nil on old ledgers, whose saved last speed used all completion tokens.
+  public var lastOutputSpeedEstimated: Bool?
   public var lastFirstTokenSeconds: TimeInterval?
   /// Sum and count of observed first-token latencies, for the average.
   public var firstTokenSecondsTotal: TimeInterval?
@@ -371,7 +380,15 @@ public struct ModelUsageTotals: Codable, Identifiable, Equatable, Sendable {
       : "\(providerLabel) — \(modelID)"
   }
 
-  public var visibleOutputTokens: Int { max(0, outputTokens - (reasoningTokens ?? 0)) }
+  public var visibleOutputTokens: Int {
+    let reportedVisible = max(0, outputTokens - (reasoningTokens ?? 0))
+    return receivedTextTokens.map { min($0, reportedVisible) } ?? reportedVisible
+  }
+  public var visibleOutputTokensEstimated: Bool {
+    guard let receivedTextTokens else { return estimatedCallCount > 0 }
+    return estimatedCallCount > 0
+      || receivedTextTokens < max(0, outputTokens - (reasoningTokens ?? 0))
+  }
   public var totalTokens: Int { inputTokens + outputTokens }
   /// Seconds this model has been busy answering: prompt waits plus generation.
   public var totalSeconds: TimeInterval { promptSeconds + generationSeconds }
@@ -417,7 +434,8 @@ public struct ModelUsageTotals: Codable, Identifiable, Equatable, Sendable {
     accumulate(&imageInputs, stats.imageInputs)
     callCount += stats.callCount
     if stats.tokensEstimated { estimatedCallCount += stats.callCount }
-    lastOutputTokensPerSecond = stats.tokensPerSecond ?? lastOutputTokensPerSecond
+    lastOutputTokensPerSecond = stats.tokensPerSecond
+    lastOutputSpeedEstimated = stats.tokensPerSecond.map { _ in stats.visibleOutputTokensEstimated }
     if let firstTokenSeconds = stats.firstTokenSeconds {
       lastFirstTokenSeconds = firstTokenSeconds
       firstTokenSecondsTotal = (firstTokenSecondsTotal ?? 0) + firstTokenSeconds
@@ -434,6 +452,15 @@ public struct ModelUsageTotals: Codable, Identifiable, Equatable, Sendable {
         averagePromptTokensPerSecond.map { "prompt \(ModelUsageFormat.speed($0))" },
         averageFirstTokenSeconds.map { "first tok \(ModelUsageFormat.seconds($0))" },
       ].compactMap { $0 }).joined(separator: " · ")
+  }
+
+  private var lastOutputSpeedText: String? {
+    guard let speed = lastOutputTokensPerSecond else { return nil }
+    if let estimated = lastOutputSpeedEstimated {
+      return ModelUsageFormat.speed(speed, estimated: estimated)
+    }
+    // Older rows may have saved a last speed inflated by unreported thinking.
+    return receivedTextTokens == nil ? ModelUsageFormat.speed(speed) : nil
   }
 
   /// Everything recorded about the row, one fact per line, for a detail
@@ -453,8 +480,10 @@ public struct ModelUsageTotals: Codable, Identifiable, Equatable, Sendable {
       ("Cached tokens", positive(cachedTokens).map { ModelUsageFormat.tokens($0) }),
       ("Requests", String(callCount)),
       ("Estimated counts", estimated ? "\(estimatedCallCount) req" : nil),
-      ("Average output speed", averageTokensPerSecond.map(ModelUsageFormat.speed)),
-      ("Last output speed", lastOutputTokensPerSecond.map(ModelUsageFormat.speed)),
+      ("Average output speed", averageTokensPerSecond.map {
+        ModelUsageFormat.speed($0, estimated: visibleOutputTokensEstimated)
+      }),
+      ("Last output speed", lastOutputSpeedText),
       ("Prompt processing speed", averagePromptTokensPerSecond.map(ModelUsageFormat.speed)),
       ("Last time to first token", lastFirstTokenSeconds.map(ModelUsageFormat.seconds)),
       ("Average time to first token", averageFirstTokenSeconds.map(ModelUsageFormat.seconds)),
@@ -870,6 +899,10 @@ public enum ModelUsageFormat {
     String(format: "%.1f tok/s", tokensPerSecond)
   }
 
+  public static func speed(_ tokensPerSecond: Double, estimated: Bool) -> String {
+    (estimated ? "~" : "") + speed(tokensPerSecond)
+  }
+
   /// `0.85s` under ten seconds, `12.3s` above.
   public static func seconds(_ seconds: TimeInterval) -> String {
     String(format: seconds >= 10 ? "%.1fs" : "%.2fs", seconds)
@@ -961,7 +994,7 @@ public struct ModelUsageReport: Equatable, Sendable {
 
     public static let speed = Metric(
       id: "speed", title: "Average output speed",
-      explanation: "visible output tokens over the streaming window of each call",
+      explanation: "answer text tokens over the streaming window of each call; ~ means estimated from text length",
       missing: "no speed", compute: { $0.averageTokensPerSecond }, format: ModelUsageFormat.speed)
     public static let time = Metric(
       id: "time", title: "Time in use",
@@ -1019,7 +1052,12 @@ public struct ModelUsageReport: Equatable, Sendable {
     public func fraction(_ metric: Metric) -> Double { fractions[metric] ?? 0 }
 
     /// The bar's number: `42.1 tok/s`, `12m34s`, or `3.2 tok/s/req`.
-    public func value(_ metric: Metric) -> String { metric.text(number(metric)) }
+    public func value(_ metric: Metric) -> String {
+      if metric == .speed, let speed = number(metric) {
+        return ModelUsageFormat.speed(speed, estimated: totals.visibleOutputTokensEstimated)
+      }
+      return metric.text(number(metric))
+    }
 
     /// What the row says after its bar — the other metrics, then requests and
     /// tokens — so every ranking reads whole: `12m34s · 3.2 tok/s/req · 45 req · 120.3k tok`.
@@ -1030,7 +1068,7 @@ public struct ModelUsageReport: Equatable, Sendable {
         }.joined(separator: " · ")
       }
       return (Metric.allCases.filter { $0 != metric }.compactMap { other in
-        number(other).map { other.text($0) }
+        number(other).map { _ in value(other) }
       }
         + [
           "\(totals.callCount) req",
@@ -1171,10 +1209,10 @@ public struct ModelUsageReport: Equatable, Sendable {
         ])
       }
     }
-    if ledger.estimatedCallCount > 0 {
+    if ledger.estimatedCallCount > 0 || rows.contains(where: { $0.totals.visibleOutputTokensEstimated }) {
       lines.append([
         Run(
-          "~ marks token counts estimated from text length (about 4 characters per token).",
+          "~ marks estimates from text length (about 4 characters per token).",
           .note)
       ])
     }
