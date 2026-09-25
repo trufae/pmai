@@ -401,7 +401,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     drawStatusLine()
   }
 
-  private func drawStatusLine() {
+  private func drawStatusLine(clear: Bool = true) {
     let width = max(1, columns - 1)
     let status: String
     if animatingStatus, let activityStartedAt {
@@ -416,7 +416,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     let padding = String(repeating: " ", count: max(0, width - Self.displayWidth(content)))
     let colors = ProcessInfo.processInfo.environment["NO_COLOR"] == nil
     var out = ""
-    out += move(row: regionBottom + thinkingRows.count + 1, column: 1) + Self.clearLine
+    out += move(row: regionBottom + thinkingRows.count + 1, column: 1)
+    if clear { out += Self.clearLine }
     if let menu = completionMenu {
       out += Self.completionMenuRow(menu, width: width, colors: colors)
     } else if let background = TerminalLineEditor.backgroundColorCode(ui.backgroundLine) {
@@ -498,7 +499,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       activityFrame = (activityFrame + 1) % Self.activityFrames.count
       let elapsed = (DispatchTime.now().uptimeNanoseconds - activityStartedAt) / 1_000_000_000
       if elapsed != displayedActivitySecond {
-        drawStatusLine()
+        drawStatusLine(clear: false)
         placeCaret()
         return
       }
