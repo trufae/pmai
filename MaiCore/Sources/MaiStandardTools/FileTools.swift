@@ -171,14 +171,18 @@ public struct MaiFileWorkspaceTool: AgentTool {
       return ToolDefinition(
         name: operation.rawValue,
         description:
-          "Find files and folders by approximate name or glob (* lists the whole tree), skipping ignored, hidden, build, and dependency paths.",
+          "Find files and folders by approximate name or glob (* lists the whole tree). An optional filter keeps only paths containing that literal text. Skips ignored, hidden, build, and dependency paths.",
         parameters: [
           ToolParameterDef(
             name: "query",
             type: "string",
-            description:
-              "File name, partial path, or glob: *.swift at any depth, src/*.c directly in src, src/**/*.c below it.",
-            required: true),
+            description: "File name, partial path, or glob: *.swift at any depth, src/*.c directly in src, src/**/*.c below it. Omit when using filter alone.",
+            required: false),
+          ToolParameterDef(
+            name: "filter",
+            type: "string",
+            description: "Literal substring that every returned path must contain, case insensitive. Can be used alone or with query.",
+            required: false),
           ToolParameterDef(
             name: "path",
             type: "string",
@@ -537,7 +541,14 @@ private struct MaiFileWorkspace: Sendable {
   }
 
   func find(_ arguments: [String: JSONValue]) async throws -> ToolOutput {
-    let query = try requiredText(arguments, key: "query")
+    let filter: String?
+    if arguments["filter"] != nil {
+      filter = try requiredText(arguments, key: "filter")
+    } else {
+      filter = nil
+    }
+    let query = arguments["query"] == nil && filter != nil
+      ? "*" : try requiredText(arguments, key: "query")
     let rawPath = arguments["path"]?.stringValue ?? ""
     let directory = try resolve(rawPath, allowRoot: true, mustExist: true)
     try requireDirectory(directory, displayPath: displayPath(rawPath))
@@ -556,6 +567,7 @@ private struct MaiFileWorkspace: Sendable {
         return false
       }
       let relative = relativePath(url)
+      if let filter, !relative.localizedCaseInsensitiveContains(filter) { return true }
       let score: Int
       if let glob {
         guard glob.matches(relative) || glob.matches(Self.path(relative, below: base)) else {
@@ -600,24 +612,26 @@ private struct MaiFileWorkspace: Sendable {
         "score": .integer(match.score),
       ])
     }
-    var text =
-      selected.isEmpty
-      ? "No files matched '\(query)'."
+    var text = selected.isEmpty
+      ? filter.map { "No files matched '\(query)' with filter '\($0)'." }
+        ?? "No files matched '\(query)'."
       : selected.map { relativePath($0.url) + ($0.kind == "directory" ? "/" : "") }
         .joined(separator: "\n")
     if selected.isEmpty, let glob, glob.matchesPath, !glob.pattern.contains("**") {
       text +=
         " A pattern with a slash must match the whole relative path below \(base == "." ? "the search folder" : base); **/ matches any depth, as in **/*.c."
     }
+    var structured: [String: JSONValue] = [
+      "query": .string(query),
+      "matches": .array(rows),
+      "scanned": .integer(min(scanned, Self.maximumSearchEntries)),
+      "searchMethod": .string(searchMethod),
+      "truncated": .bool(matches.count > selected.count || hitScanLimit),
+    ]
+    if let filter { structured["filter"] = .string(filter) }
     return ToolOutput(
       content: [.text(text)],
-      structuredContent: .object([
-        "query": .string(query),
-        "matches": .array(rows),
-        "scanned": .integer(min(scanned, Self.maximumSearchEntries)),
-        "searchMethod": .string(searchMethod),
-        "truncated": .bool(matches.count > selected.count || hitScanLimit),
-      ]))
+      structuredContent: .object(structured))
   }
 
   /// A glob for a query holding metacharacters; nil for a plain name.

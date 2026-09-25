@@ -113,7 +113,7 @@ func fileWorkspaceSearchUsesCodingFriendlyDefaults() async throws {
   let find = tool(tools, .find)
   let grep = tool(tools, .grep)
   // Only the arguments a model needs are offered; the rest are fixed defaults.
-  #expect(Set(find.definition.parameters.map(\.name)) == ["query", "path"])
+  #expect(Set(find.definition.parameters.map(\.name)) == ["query", "filter", "path"])
   #expect(Set(grep.definition.parameters.map(\.name)) == ["query", "path", "glob", "regex"])
 
   let normal = try await call(find, ["query": .string("Needle.swift")])
@@ -128,6 +128,20 @@ func fileWorkspaceSearchUsesCodingFriendlyDefaults() async throws {
   #expect(!normalPaths.contains(".cache/Needle.swift"))
   #expect(
     normal.structuredContent?.objectValue?["searchMethod"] == .string("filtered-filesystem"))
+
+  let filtered = try await call(find, [
+    "query": .string("Needle.swift"), "filter": .string("nested"),
+  ])
+  #expect(filtered.text == "Sources/Nested/Needle.swift")
+  #expect(filtered.structuredContent?.objectValue?["filter"] == .string("nested"))
+  let filterOnly = try await call(find, ["filter": .string("NEEDLE")])
+  let filterOnlyPaths = filterOnly.structuredContent?.objectValue?["matches"]?.arrayValue?
+    .compactMap { $0.objectValue?["path"]?.stringValue } ?? []
+  #expect(Set(filterOnlyPaths) == ["Sources/Needle.swift", "Sources/Nested/Needle.swift"])
+  #expect(filterOnlyPaths.allSatisfy { $0.localizedCaseInsensitiveContains("NEEDLE") })
+  let noFilteredMatch = try await call(find, ["filter": .string("absent")])
+  #expect(noFilteredMatch.text.contains("filter 'absent'"))
+  #expect(noFilteredMatch.structuredContent?.objectValue?["matches"] == .array([]))
 
   let normalGrep = try await call(grep, ["query": .string("needle")])
   #expect(normalGrep.structuredContent?.objectValue?["scannedFiles"] == .integer(2))
