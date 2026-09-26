@@ -3907,7 +3907,8 @@ private struct ChatComposer: View {
       do {
         let transcript = try await AudioTranscriptionService.transcribe(
           fileURL: staged,
-          localeIdentifier: localeIdentifier)
+          localeIdentifier: localeIdentifier,
+          policy: store.speechTranscriptionPolicy)
         pendingAttachments.append(
           .textFile(
             filename: transcriptAttachmentFilename(for: filename),
@@ -4290,7 +4291,8 @@ private struct ChatComposer: View {
     do {
       let transcript = try await AudioTranscriptionService.transcribe(
         fileURL: url,
-        localeIdentifier: store.settings.conversation.speechRecognitionLanguageIdentifier)
+        localeIdentifier: store.settings.conversation.speechRecognitionLanguageIdentifier,
+        policy: store.speechTranscriptionPolicy)
       pendingAttachments.append(
         .textFile(
           filename: transcriptAttachmentFilename(for: item.filename),

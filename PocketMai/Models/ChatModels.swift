@@ -3098,6 +3098,7 @@ struct AppSettings: Codable, Equatable, Sendable {
   var renderMarkdownInChat: Bool = true
   var renderMarkdownImagesInChat: Bool = true
   var airplaneModeEnabled: Bool = false
+  var allowAppleServerTranscription: Bool = false
   var attachmentImageSize: AttachmentImageSize = .prompt
   var mlxMaxKVSize: MLXKVCacheSize = .auto
   var mlxAutoCompact: Bool = false
@@ -3121,6 +3122,10 @@ struct AppSettings: Codable, Equatable, Sendable {
   static let defaults = AppSettings()
 
   init() {}
+
+  var appleServerTranscriptionAllowed: Bool {
+    allowAppleServerTranscription && !airplaneModeEnabled
+  }
 
   static func clampedMCPRequestTimeoutSeconds(_ seconds: Int) -> Int {
     min(mcpRequestTimeoutRange.upperBound, max(mcpRequestTimeoutRange.lowerBound, seconds))
@@ -3281,7 +3286,7 @@ struct AppSettings: Codable, Equatable, Sendable {
     case includeAssistantResponsesInContext, includeReasoningContentInContext
     case followUps, background
     case appearance, conversation, renderMarkdownInChat, renderMarkdownImagesInChat
-    case airplaneModeEnabled, attachmentImageSize
+    case airplaneModeEnabled, allowAppleServerTranscription, attachmentImageSize
     case mlxMaxKVSize, mlxAutoCompact
     case startupBehavior, lastSelectedConversationID
     case openAPIServer
@@ -3395,6 +3400,8 @@ struct AppSettings: Codable, Equatable, Sendable {
       (try? c.decode(Bool.self, forKey: .renderMarkdownImagesInChat)) ?? true
     airplaneModeEnabled =
       (try? c.decode(Bool.self, forKey: .airplaneModeEnabled)) ?? false
+    allowAppleServerTranscription =
+      (try? c.decode(Bool.self, forKey: .allowAppleServerTranscription)) ?? false
     attachmentImageSize =
       (try? c.decode(AttachmentImageSize.self, forKey: .attachmentImageSize)) ?? .prompt
     mlxMaxKVSize =

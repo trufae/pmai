@@ -971,6 +971,26 @@ struct SettingsView: View {
     Text("Voices are used by Speak Message and the assistant's text-to-speech tool.")
       .font(.caption)
       .foregroundStyle(.secondary)
+
+    Toggle(
+      "Allow Apple Server Transcription",
+      isOn: Binding(
+        get: { store.settings.appleServerTranscriptionAllowed },
+        set: { value in
+          store.settings.allowAppleServerTranscription = value
+          store.saveSettings()
+        }))
+      .disabled(store.settings.airplaneModeEnabled)
+    Text(
+      store.settings.airplaneModeEnabled
+        ? "Offline mode requires on-device transcription, even when Apple server transcription is permitted."
+        : "Off by default. Allows recordings and imported audio to be sent to Apple if on-device transcription fails or is unavailable. Native iOS Live always stays on device."
+    )
+    .font(.caption)
+    .foregroundStyle(.secondary)
+    Text("Transcription uses installed speech models only; PocketMai does not download them.")
+      .font(.caption)
+      .foregroundStyle(.secondary)
   }
 
   @ViewBuilder
