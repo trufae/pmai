@@ -206,7 +206,8 @@ public struct MaiFileWorkspaceTool: AgentTool {
           ToolParameterDef(
             name: "query",
             type: "string",
-            description: "Text to find. Put the pattern here when regex is true.",
+            description:
+              "Text to find. When regex is true, write the regular expression here; backslashes must be double-escaped in the JSON string so one survives to the regex engine (e.g. '\\\\*' for a literal *, '\\\\(' for a literal parenthesis, '\\\\b' for a word boundary).",
             required: true),
           ToolParameterDef(
             name: "path",
@@ -343,7 +344,7 @@ public struct MaiFileWorkspaceTool: AgentTool {
           ToolParameterDef(
             name: "find", type: "string",
             description:
-              "Exact text to find, or a regular expression when regex is true. Must match exactly expected_matches times (default once).",
+              "Exact text to find, or a regular expression when regex is true. Must match exactly expected_matches times (default once). When regex is true, backslashes must be double-escaped in the JSON string so one survives to the regex engine (e.g. '\\\\(' to match a literal parenthesis, '\\\\b' for a word boundary).",
             required: true),
           ToolParameterDef(
             name: "replace", type: "string",
@@ -676,6 +677,39 @@ private struct MaiFileWorkspace: Sendable {
     return String(relative.dropFirst(base.count + 1))
   }
 
+  /// Compile a regular expression and, on failure, detect the common case where
+  /// a backslash intended to escape a metacharacter was consumed by JSON decoding.
+  /// In the tool-call JSON a single backslash is an escape for the string itself,
+  /// so regex escapes must be doubled (e.g. "\\\\*") for a literal "*" to reach
+  /// the NSRegularExpression parser.
+  private static func compiledRegex(
+    pattern: String,
+    options: NSRegularExpression.Options = []
+  ) throws -> NSRegularExpression {
+    do {
+      return try NSRegularExpression(pattern: pattern, options: options)
+    } catch {
+      let bareMetacharacters = CharacterSet(charactersIn: "*+?{}[]()|^$.")
+      let hasBareMeta = pattern.unicodeScalars.enumerated().contains { index, scalar in
+        guard bareMetacharacters.contains(scalar) else { return false }
+        // A metacharacter is "bare" if it is not preceded by an odd number of backslashes.
+        let prefix = pattern.prefix(index)
+        let backslashCount = prefix.reversed().prefix(while: { $0 == "\\" }).count
+        return backslashCount % 2 == 0
+      }
+      let detail: String
+      if hasBareMeta {
+        detail =
+          "\(error.localizedDescription). The pattern contains an unescaped regex metacharacter; "
+          + "in the JSON tool call backslashes must be doubled so one survives decoding "
+          + "(e.g. '\\\\*' to match a literal '*', '\\\\(' for a literal '(')."
+      } else {
+        detail = error.localizedDescription
+      }
+      throw MaiFileWorkspaceError.invalidPattern(detail)
+    }
+  }
+
   func grep(_ arguments: [String: JSONValue]) async throws -> ToolOutput {
     let query = try requiredText(arguments, key: "query")
     var rawPath = arguments["path"]?.stringValue ?? ""
@@ -696,13 +730,9 @@ private struct MaiFileWorkspace: Sendable {
     let useRegex = arguments["regex"]?.coercedBoolValue == true
     let expression: NSRegularExpression?
     if useRegex {
-      do {
-        expression = try NSRegularExpression(
-          pattern: query,
-          options: caseSensitive ? [] : [.caseInsensitive])
-      } catch {
-        throw MaiFileWorkspaceError.invalidPattern(error.localizedDescription)
-      }
+      expression = try Self.compiledRegex(
+        pattern: query,
+        options: caseSensitive ? [] : [.caseInsensitive])
     } else {
       expression = nil
     }
@@ -1072,12 +1102,7 @@ private struct MaiFileWorkspace: Sendable {
     let patched: String
     let matchCount: Int
     if arguments["regex"]?.coercedBoolValue == true {
-      let expression: NSRegularExpression
-      do {
-        expression = try NSRegularExpression(pattern: find)
-      } catch {
-        throw MaiFileWorkspaceError.invalidPattern(error.localizedDescription)
-      }
+      let expression = try Self.compiledRegex(pattern: find)
       let range = NSRange(text.startIndex..<text.endIndex, in: text)
       let matches = expression.matches(in: text, range: range)
       guard matches.allSatisfy({ $0.range.length > 0 }) else {
