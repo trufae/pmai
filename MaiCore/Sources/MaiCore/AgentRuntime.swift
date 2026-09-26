@@ -801,7 +801,7 @@ public actor AgentRuntime {
       transcript.append(providerResponse.message)
       await supervisor.note(pid, transcript: transcript)
 
-      let calls = providerResponse.message.toolCalls
+      let calls = providerResponse.message.toolCalls.filter { !$0.name.isEmpty }
       if calls.isEmpty {
         // A message that arrived while the model was answering is not left
         // behind for a run that is about to end, and neither are children

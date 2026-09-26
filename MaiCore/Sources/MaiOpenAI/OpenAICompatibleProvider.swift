@@ -449,12 +449,13 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
         accumulator.arguments =
           ToolCallAccumulator.merge(accumulator.arguments, with: arguments)
         toolCalls[index] = accumulator
+        let deltaName = name.flatMap(resolver.canonicalName) ?? name ?? ""
         await emit(
           .toolCallDelta(
             ToolCallDelta(
               index: index,
               id: id,
-              name: name.flatMap(resolver.canonicalName) ?? name,
+              name: deltaName.isEmpty ? nil : deltaName,
               argumentsFragment: arguments)))
       }
       if let value = choice["finish_reason"]?.stringValue {
@@ -700,9 +701,14 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
       let providerName = function["name"]?.stringValue ?? ""
       let rawArguments = function["arguments"]?.stringValue ?? "{}"
       let arguments = try decodeToolArguments(rawArguments, tool: providerName)
+      let canonicalName = resolver.canonicalName(for: providerName) ?? providerName
+      guard !canonicalName.isEmpty else {
+        throw OpenAICompatibleProviderError.invalidResponse(
+          "Provider returned a tool call with an empty name. Arguments: \(rawArguments)")
+      }
       let call = ToolCall(
         id: object["id"]?.stringValue ?? "call_\(index)",
-        name: resolver.canonicalName(for: providerName) ?? providerName,
+        name: canonicalName,
         arguments: arguments)
       parts.append(.toolCall(call))
     }
@@ -946,9 +952,14 @@ private struct ToolCallAccumulator {
     else {
       throw OpenAICompatibleProviderError.invalidToolArguments(tool: name, arguments: raw)
     }
+    let canonicalName = resolver.canonicalName(for: name) ?? name
+    guard !canonicalName.isEmpty else {
+      throw OpenAICompatibleProviderError.invalidResponse(
+        "Provider streamed a tool call with an empty name. Arguments: \(raw)")
+    }
     return ToolCall(
       id: id.isEmpty ? "call_\(index)" : id,
-      name: resolver.canonicalName(for: name) ?? name,
+      name: canonicalName,
       arguments: decoded)
   }
 }
