@@ -46,6 +46,7 @@ struct LiveSpeechRecognitionEvent: Sendable {
 @MainActor
 protocol LiveSpeechRecognitionEngine: AnyObject {
   var onTranscript: ((LiveSpeechRecognitionEvent) -> Void)? { get set }
+  var onError: ((Error) -> Void)? { get set }
   var languageIdentifier: String { get }
   var recordingFilename: String? { get }
 
@@ -56,8 +57,6 @@ protocol LiveSpeechRecognitionEngine: AnyObject {
 
 private enum LiveSpeechRecognitionError: LocalizedError {
   case microphoneDenied
-  case speechRecognitionDenied
-  case recognizerUnavailable(String)
   case audioInputUnavailable
   case speechTranscriberUnsupportedOS
   case speechTranscriberUnavailable(String)
@@ -67,10 +66,6 @@ private enum LiveSpeechRecognitionError: LocalizedError {
     switch self {
     case .microphoneDenied:
       return "Microphone access is required for voice conversation."
-    case .speechRecognitionDenied:
-      return "Speech recognition access is required for voice conversation."
-    case .recognizerUnavailable(let language):
-      return "Speech recognition is not available for \(language)."
     case .audioInputUnavailable:
       return "No microphone input is available."
     case .speechTranscriberUnsupportedOS:
@@ -80,7 +75,7 @@ private enum LiveSpeechRecognitionError: LocalizedError {
         "Native live transcription is not available for \(language). Select Native iOS File or choose another language."
     case .speechTranscriberAssetsUnavailable(let language):
       return
-        "Native live transcription assets are not available for \(language). Select Native iOS File or choose another language."
+        "Native live transcription needs an installed speech model for \(language). Select Native iOS File or choose another language."
     }
   }
 }
@@ -96,14 +91,6 @@ private enum LiveSpeechPermissionRequester {
         AVAudioSession.sharedInstance().requestRecordPermission { granted in
           continuation.resume(returning: granted)
         }
-      }
-    }
-  }
-
-  static func requestSpeechRecognitionPermission() async -> SFSpeechRecognizerAuthorizationStatus {
-    await withCheckedContinuation { continuation in
-      SFSpeechRecognizer.requestAuthorization { status in
-        continuation.resume(returning: status)
       }
     }
   }
@@ -325,7 +312,8 @@ final class LiveVoiceSession: ObservableObject {
     languageIdentifier = Self.configuredLanguageIdentifier(from: conversationSettings)
 
     do {
-      let engine = try makeSpeechRecognitionEngine(settings: conversationSettings)
+      let engine = try makeSpeechRecognitionEngine(
+        settings: conversationSettings, policy: store.speechTranscriptionPolicy)
       recognitionGeneration += 1
       let engineGeneration = recognitionGeneration
       engine.onTranscript = { [weak self] event in
@@ -333,6 +321,12 @@ final class LiveVoiceSession: ObservableObject {
           guard let self, engineGeneration == self.recognitionGeneration else { return }
           self.handleTranscript(event)
         }
+      }
+      engine.onError = { [weak self] error in
+        guard let self, engineGeneration == self.recognitionGeneration else { return }
+        self.errorMessage = error.localizedDescription
+        self.state = .error(error.localizedDescription)
+        self.stopRecognition()
       }
       self.engine = engine
       try await engine.start()
@@ -353,7 +347,9 @@ final class LiveVoiceSession: ObservableObject {
     }
   }
 
-  private func makeSpeechRecognitionEngine(settings: ConversationSettings) throws
+  private func makeSpeechRecognitionEngine(
+    settings: ConversationSettings, policy: SpeechTranscriptionPolicy
+  ) throws
     -> LiveSpeechRecognitionEngine
   {
     switch settings.speechRecognitionBackend {
@@ -366,7 +362,8 @@ final class LiveVoiceSession: ObservableObject {
     case .nativeIOS:
       return NativeIOSSpeechRecognitionEngine(
         localeIdentifier: settings.speechRecognitionLanguageIdentifier,
-        silenceTimeoutSeconds: settings.silenceTimeoutSeconds)
+        silenceTimeoutSeconds: settings.silenceTimeoutSeconds,
+        policy: policy)
     }
   }
 
@@ -374,6 +371,7 @@ final class LiveVoiceSession: ObservableObject {
     let recordingFilename = engine?.recordingFilename
     recognitionGeneration += 1
     engine?.onTranscript = nil
+    engine?.onError = nil
     engine?.stop()
     engine = nil
     if !keepingRecording,
@@ -451,12 +449,15 @@ final class LiveVoiceSession: ObservableObject {
     var finalTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
     if finalTranscript.isEmpty {
       do {
-        if let event = try await engine?.finalize() {
+        let event = try await engine?.finalize()
+        guard generation == sessionGeneration else { return }
+        if let event {
           languageIdentifier = event.languageIdentifier
           finalTranscript = event.text.trimmingCharacters(in: .whitespacesAndNewlines)
           transcript = finalTranscript
         }
       } catch {
+        guard generation == sessionGeneration else { return }
         let text = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         errorMessage = text
         state = .error(text)
@@ -738,6 +739,7 @@ final class LiveVoiceSession: ObservableObject {
 @MainActor
 private final class NativeIOSSpeechTranscriberRecognitionEngine: LiveSpeechRecognitionEngine {
   var onTranscript: ((LiveSpeechRecognitionEvent) -> Void)?
+  var onError: ((Error) -> Void)?
   private(set) var languageIdentifier: String
   private(set) var recordingFilename: String?
 
@@ -777,7 +779,12 @@ private final class NativeIOSSpeechTranscriberRecognitionEngine: LiveSpeechRecog
       transcriptionOptions: [],
       reportingOptions: [.volatileResults, .fastResults],
       attributeOptions: [.audioTimeRange])
-    try await ensureAssetsAvailable(for: transcriber, locale: supportedLocale)
+    guard await SpeechTranscriber.installedLocales.contains(where: {
+      $0.identifier == supportedLocale.identifier
+    }) else {
+      throw LiveSpeechRecognitionError.speechTranscriberAssetsUnavailable(supportedLocale.identifier)
+    }
+    try Task.checkCancellation()
 
     try activateAudioSession()
     let audioEngine = AVAudioEngine()
@@ -801,12 +808,12 @@ private final class NativeIOSSpeechTranscriberRecognitionEngine: LiveSpeechRecog
     let analyzer = SpeechAnalyzer(
       modules: [transcriber],
       options: SpeechAnalyzer.Options(priority: .userInitiated, modelRetention: .whileInUse))
-    try await analyzer.prepareToAnalyze(in: analysisFormat)
-
     self.transcriber = transcriber
     self.analyzer = analyzer
     self.audioEngine = audioEngine
     self.audioSink = audioSink
+    try await analyzer.prepareToAnalyze(in: analysisFormat)
+    try Task.checkCancellation()
 
     resultsTask = Task { @MainActor [weak self, transcriber] in
       do {
@@ -816,14 +823,16 @@ private final class NativeIOSSpeechTranscriberRecognitionEngine: LiveSpeechRecog
         }
       } catch {
         guard !Task.isCancelled else { return }
+        self?.onError?(error)
       }
     }
 
-    analysisTask = Task { [analyzer, inputStream] in
+    analysisTask = Task { [weak self, analyzer, inputStream] in
       do {
         try await analyzer.start(inputSequence: inputStream)
       } catch {
         guard !Task.isCancelled else { return }
+        self?.onError?(error)
       }
     }
 
@@ -859,27 +868,6 @@ private final class NativeIOSSpeechTranscriberRecognitionEngine: LiveSpeechRecog
     analyzer = nil
     transcriber = nil
     deactivateAudioSession()
-  }
-
-  private func ensureAssetsAvailable(for transcriber: SpeechTranscriber, locale: Locale)
-    async throws
-  {
-    let modules: [any SpeechModule] = [transcriber]
-    let status = await AssetInventory.status(forModules: modules)
-    switch status {
-    case .installed:
-      return
-    case .supported, .downloading:
-      guard let request = try await AssetInventory.assetInstallationRequest(supporting: modules)
-      else {
-        return
-      }
-      try await request.downloadAndInstall()
-    case .unsupported:
-      throw LiveSpeechRecognitionError.speechTranscriberAssetsUnavailable(locale.identifier)
-    @unknown default:
-      throw LiveSpeechRecognitionError.speechTranscriberAssetsUnavailable(locale.identifier)
-    }
   }
 
   private func activateAudioSession() throws {
@@ -1125,13 +1113,12 @@ extension AVAudioPCMBuffer {
 @MainActor
 private final class NativeIOSSpeechRecognitionEngine: NSObject, LiveSpeechRecognitionEngine {
   var onTranscript: ((LiveSpeechRecognitionEvent) -> Void)?
+  var onError: ((Error) -> Void)?
   private(set) var languageIdentifier: String
 
-  private let locale: Locale
   private let silenceTimeoutSeconds: Double
-  private var recognizer: SFSpeechRecognizer?
+  private let policy: SpeechTranscriptionPolicy
   private var recorder: AVAudioRecorder?
-  private var recognitionTask: SFSpeechRecognitionTask?
   private var meteringTask: Task<Void, Never>?
   private var cachedFinalEvent: LiveSpeechRecognitionEvent?
   private var finalizationTask: Task<LiveSpeechRecognitionEvent?, Error>?
@@ -1142,28 +1129,18 @@ private final class NativeIOSSpeechRecognitionEngine: NSObject, LiveSpeechRecogn
   private var lastSoundDate = Date()
   private let speechPowerThreshold: Float = -45
 
-  init(localeIdentifier: String, silenceTimeoutSeconds: Double) {
+  init(localeIdentifier: String, silenceTimeoutSeconds: Double, policy: SpeechTranscriptionPolicy) {
     let identifier = localeIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
-    self.locale = identifier.isEmpty ? Locale.current : Locale(identifier: identifier)
     self.languageIdentifier = identifier.isEmpty ? Locale.current.identifier : identifier
     self.silenceTimeoutSeconds = ConversationSettings.clampedSilenceTimeout(silenceTimeoutSeconds)
+    self.policy = policy
   }
 
   func start() async throws {
     let microphoneGranted = await LiveSpeechPermissionRequester.requestMicrophonePermission()
     guard microphoneGranted else { throw LiveSpeechRecognitionError.microphoneDenied }
 
-    let speechStatus = await LiveSpeechPermissionRequester.requestSpeechRecognitionPermission()
-    guard speechStatus == .authorized else {
-      throw LiveSpeechRecognitionError.speechRecognitionDenied
-    }
-
-    guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable else {
-      throw LiveSpeechRecognitionError.recognizerUnavailable(locale.identifier)
-    }
-    self.recognizer = recognizer
-    languageIdentifier = recognizer.locale.identifier
-
+    try Task.checkCancellation()
     try activateAudioSession()
     try startRecording()
     startMetering()
@@ -1182,7 +1159,10 @@ private final class NativeIOSSpeechRecognitionEngine: NSObject, LiveSpeechRecogn
       self.stopRecordingOnly()
       self.deactivateAudioSession()
       guard let url = self.recordingURL else { return nil }
-      let event = try await self.recognizeRecording(at: url)
+      let text = try await AudioTranscriptionService.transcribe(
+        fileURL: url, localeIdentifier: self.languageIdentifier, policy: self.policy)
+      let event = LiveSpeechRecognitionEvent(
+        text: text, isFinal: true, languageIdentifier: self.languageIdentifier)
       self.cachedFinalEvent = event
       return event
     }
@@ -1202,11 +1182,8 @@ private final class NativeIOSSpeechRecognitionEngine: NSObject, LiveSpeechRecogn
     meteringTask = nil
     recorder?.stop()
     recorder = nil
-    recognitionTask?.cancel()
-    recognitionTask = nil
     finalizationTask?.cancel()
     finalizationTask = nil
-    recognizer = nil
     deactivateAudioSession()
   }
 
@@ -1293,6 +1270,8 @@ private final class NativeIOSSpeechRecognitionEngine: NSObject, LiveSpeechRecogn
         }
         self.onTranscript?(event)
       } catch {
+        guard !Task.isCancelled, !(error is CancellationError) else { return }
+        self.onError?(error)
         self.stop()
       }
     }
@@ -1305,61 +1284,5 @@ private final class NativeIOSSpeechRecognitionEngine: NSObject, LiveSpeechRecogn
       recorder?.stop()
     }
     recorder = nil
-  }
-
-  private func recognizeRecording(at url: URL) async throws -> LiveSpeechRecognitionEvent? {
-    guard let recognizer else {
-      throw LiveSpeechRecognitionError.recognizerUnavailable(languageIdentifier)
-    }
-
-    return try await withCheckedThrowingContinuation { continuation in
-      let resumeBox = RecognitionContinuationBox()
-      let request = SFSpeechURLRecognitionRequest(url: url)
-      request.shouldReportPartialResults = false
-      request.taskHint = .dictation
-
-      let languageIdentifier = self.languageIdentifier
-      let completion: @Sendable (SFSpeechRecognitionResult?, Error?) -> Void = { result, error in
-        if let error {
-          resumeBox.resume(continuation, throwing: error)
-          return
-        }
-        guard let result, result.isFinal else { return }
-        let text = result.bestTranscription.formattedString
-        let event = LiveSpeechRecognitionEvent(
-          text: text,
-          isFinal: true,
-          languageIdentifier: languageIdentifier)
-        resumeBox.resume(continuation, returning: event)
-      }
-      recognitionTask = recognizer.recognitionTask(with: request, resultHandler: completion)
-    }
-  }
-}
-
-private final class RecognitionContinuationBox: @unchecked Sendable {
-  private let lock = NSLock()
-  private var didResume = false
-
-  func resume(
-    _ continuation: CheckedContinuation<LiveSpeechRecognitionEvent?, Error>,
-    returning event: LiveSpeechRecognitionEvent?
-  ) {
-    lock.lock()
-    defer { lock.unlock() }
-    guard !didResume else { return }
-    didResume = true
-    continuation.resume(returning: event)
-  }
-
-  func resume(
-    _ continuation: CheckedContinuation<LiveSpeechRecognitionEvent?, Error>,
-    throwing error: Error
-  ) {
-    lock.lock()
-    defer { lock.unlock() }
-    guard !didResume else { return }
-    didResume = true
-    continuation.resume(throwing: error)
   }
 }

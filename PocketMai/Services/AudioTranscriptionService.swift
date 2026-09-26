@@ -3,29 +3,53 @@ import Foundation
 import Speech
 import UniformTypeIdentifiers
 
-/// Turns a shared audio file into text with the on-device recogniser.
-///
-/// This is the path a voice message takes when it is shared into PocketMai, or
-/// picked from Files with "Attach Document":
-/// WhatsApp and Telegram hand over Opus audio in an Ogg container, which
-/// AVFoundation does not read, so those files are repackaged as CAF first (see
-/// `OggOpusRemuxer`). Everything AVFoundation already reads — m4a voice memos,
-/// mp3, wav, caf, or the sound track of a short clip — goes straight to the
-/// recogniser.
+@MainActor
+final class SpeechTranscriptionPolicy {
+  var allowsServerRecognition = false {
+    didSet {
+      guard !allowsServerRecognition else { return }
+      let cancellations = serverRequests.values
+      serverRequests.removeAll()
+      for cancel in cancellations { cancel() }
+    }
+  }
+  private var serverRequests: [UUID: () -> Void] = [:]
+
+  func registerServerRequest(cancel: @escaping () -> Void) throws -> UUID {
+    guard allowsServerRecognition else {
+      throw AudioTranscriptionService.TranscriptionError.serverRecognitionDisabled
+    }
+    let id = UUID()
+    serverRequests[id] = cancel
+    return id
+  }
+
+  func removeServerRequest(_ id: UUID) {
+    serverRequests[id] = nil
+  }
+}
+
+/// Shared by recorded voice turns, Files imports and shared voice messages.
 enum AudioTranscriptionService {
   enum TranscriptionError: LocalizedError, Equatable {
     case permissionDenied
     case recognizerUnavailable(String)
+    case onDeviceUnavailable(String)
+    case serverRecognitionDisabled
     case unsupportedFormat(String)
     case noSpeech(String)
 
     var errorDescription: String? {
       switch self {
       case .permissionDenied:
-        "PocketMai needs Speech Recognition access to transcribe shared audio. "
+        "PocketMai needs Speech Recognition access to transcribe this audio. "
           + "Enable it in Settings > Privacy > Speech Recognition."
       case .recognizerUnavailable(let language):
         "Speech recognition is not available for \(language)."
+      case .onDeviceUnavailable(let language):
+        "On-device transcription is not available for \(language). Choose a language installed on this device."
+      case .serverRecognitionDisabled:
+        "Apple server transcription is disabled. Use an installed on-device language."
       case .unsupportedFormat(let name):
         "\(name) is in an audio format this device cannot decode."
       case .noSpeech(let name):
@@ -35,38 +59,91 @@ enum AudioTranscriptionService {
   }
 
   /// Recognises the speech in `fileURL` and returns the transcript.
-  static func transcribe(fileURL: URL, localeIdentifier: String) async throws -> String {
-    guard await requestAuthorization() == .authorized else {
-      throw TranscriptionError.permissionDenied
-    }
-
-    let locale = Locale(identifier: localeIdentifier)
-    guard let recognizer = SFSpeechRecognizer(locale: locale) ?? SFSpeechRecognizer(),
-      recognizer.isAvailable
-    else {
-      throw TranscriptionError.recognizerUnavailable(
-        locale.localizedString(forIdentifier: localeIdentifier) ?? localeIdentifier)
-    }
-
+  @MainActor
+  static func transcribe(
+    fileURL: URL, localeIdentifier: String, policy: SpeechTranscriptionPolicy
+  ) async throws -> String {
+    try Task.checkCancellation()
+    let identifier = localeIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+    let locale = identifier.isEmpty ? Locale.current : Locale(identifier: identifier)
     let name = fileURL.lastPathComponent
     let prepared = try await decodableURL(for: fileURL)
     defer {
       if prepared != fileURL { try? FileManager.default.removeItem(at: prepared) }
     }
 
-    // Voice messages are personal, so they stay on the device whenever the
-    // language is installed for offline recognition; the network recogniser is
-    // only asked when that returns nothing.
-    var transcript = ""
+    if #available(iOS 26.0, *) {
+      do {
+        if let transcript = try await transcribeOnDevice(prepared, locale: locale) {
+          return transcript
+        }
+      } catch is CancellationError {
+        throw CancellationError()
+      } catch {
+        // An installed legacy recognizer may still support this language or file.
+      }
+    }
+    try Task.checkCancellation()
+    guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable else {
+      throw TranscriptionError.recognizerUnavailable(locale.identifier)
+    }
+    guard recognizer.supportsOnDeviceRecognition || policy.allowsServerRecognition else {
+      throw TranscriptionError.onDeviceUnavailable(locale.identifier)
+    }
+    guard await requestAuthorization() == .authorized else {
+      throw TranscriptionError.permissionDenied
+    }
+
     if recognizer.supportsOnDeviceRecognition {
-      transcript = (try? await recognize(prepared, with: recognizer, onDevice: true)) ?? ""
+      do {
+        let transcript = try await recognize(
+          prepared, with: recognizer, onDevice: true, policy: policy)
+        return try recognizedText(transcript, name: name)
+      } catch is CancellationError {
+        throw CancellationError()
+      } catch {
+        guard policy.allowsServerRecognition else { throw error }
+      }
     }
-    if transcript.isEmpty {
-      transcript = (try? await recognize(prepared, with: recognizer, onDevice: false)) ?? ""
-    }
+    let transcript = try await recognize(
+      prepared, with: recognizer, onDevice: false, policy: policy)
+    return try recognizedText(transcript, name: name)
+  }
+
+  private static func recognizedText(_ transcript: String, name: String) throws -> String {
     let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else { throw TranscriptionError.noSpeech(name) }
     return text
+  }
+
+  @available(iOS 26.0, *)
+  private static func transcribeOnDevice(_ url: URL, locale: Locale) async throws -> String? {
+    guard SpeechTranscriber.isAvailable,
+      let locale = await SpeechTranscriber.supportedLocale(equivalentTo: locale),
+      await SpeechTranscriber.installedLocales.contains(where: { $0.identifier == locale.identifier })
+    else { return nil }
+    try Task.checkCancellation()
+    let transcriber = SpeechTranscriber(locale: locale, preset: .transcription)
+    let analyzer = SpeechAnalyzer(modules: [transcriber])
+    let file = try AVAudioFile(forReading: url)
+    return try await withTaskCancellationHandler {
+      async let transcript = transcriber.results.reduce("") { $0 + String($1.text.characters) }
+      do {
+        if let lastSample = try await analyzer.analyzeSequence(from: file) {
+          try await analyzer.finalizeAndFinish(through: lastSample)
+        } else {
+          await analyzer.cancelAndFinishNow()
+        }
+        let text = try await transcript
+        try Task.checkCancellation()
+        return try recognizedText(text, name: url.lastPathComponent)
+      } catch {
+        await analyzer.cancelAndFinishNow()
+        throw error
+      }
+    } onCancel: {
+      Task { await analyzer.cancelAndFinishNow() }
+    }
   }
 
   // MARK: - Permission
@@ -190,60 +267,96 @@ enum AudioTranscriptionService {
 
   // MARK: - Recognition
 
+  @MainActor
   private static func recognize(
     _ url: URL,
     with recognizer: SFSpeechRecognizer,
-    onDevice: Bool
+    onDevice: Bool,
+    policy: SpeechTranscriptionPolicy
   ) async throws -> String {
-    try await withCheckedThrowingContinuation { continuation in
-      let box = TranscriptionContinuationBox()
-      let request = SFSpeechURLRecognitionRequest(url: url)
-      request.shouldReportPartialResults = false
-      request.taskHint = .dictation
-      request.requiresOnDeviceRecognition = onDevice
-      let task = recognizer.recognitionTask(with: request) { result, error in
-        if let error {
-          box.resume(continuation, throwing: error)
-          return
-        }
-        guard let result, result.isFinal else { return }
-        box.resume(continuation, returning: result.bestTranscription.formattedString)
+    try Task.checkCancellation()
+    // Apple only honors requiresOnDeviceRecognition when this capability is true.
+    if onDevice && !recognizer.supportsOnDeviceRecognition {
+      throw TranscriptionError.onDeviceUnavailable(recognizer.locale.identifier)
+    }
+    let box = TranscriptionContinuationBox()
+    let serverRequestID: UUID?
+    if onDevice {
+      serverRequestID = nil
+    } else {
+      serverRequestID = try policy.registerServerRequest {
+        box.finish(.failure(TranscriptionError.serverRecognitionDisabled))
       }
-      box.keep(task)
+    }
+    defer {
+      if let serverRequestID { policy.removeServerRequest(serverRequestID) }
+    }
+    return try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        guard box.install(continuation) else { return }
+        let request = SFSpeechURLRecognitionRequest(url: url)
+        request.shouldReportPartialResults = false
+        request.taskHint = .dictation
+        request.requiresOnDeviceRecognition = onDevice
+        let completion: @Sendable (SFSpeechRecognitionResult?, Error?) -> Void = { result, error in
+          if let error {
+            box.finish(.failure(error))
+          } else if let result, result.isFinal {
+            box.finish(.success(result.bestTranscription.formattedString))
+          }
+        }
+        let task = recognizer.recognitionTask(with: request, resultHandler: completion)
+        box.keep(task)
+      }
+    } onCancel: {
+      box.finish(.failure(CancellationError()))
     }
   }
 }
 
-/// `recognitionTask` can report both a result and an error; the continuation
-/// must only be resumed once.
-private final class TranscriptionContinuationBox: @unchecked Sendable {
+/// Cancellation and Speech callbacks may arrive before setup or after completion.
+final class TranscriptionContinuationBox: @unchecked Sendable {
   private let lock = NSLock()
-  private var didResume = false
+  private var result: Result<String, Error>?
+  private var continuation: CheckedContinuation<String, Error>?
   private var task: SFSpeechRecognitionTask?
 
-  /// Keeps the task alive until it reports, and lets go of it afterwards.
+  func install(_ continuation: CheckedContinuation<String, Error>) -> Bool {
+    lock.lock()
+    if let result {
+      lock.unlock()
+      continuation.resume(with: result)
+      return false
+    }
+    self.continuation = continuation
+    lock.unlock()
+    return true
+  }
+
   func keep(_ task: SFSpeechRecognitionTask) {
     lock.lock()
-    defer { lock.unlock() }
-    guard !didResume else { return }
+    if result != nil {
+      lock.unlock()
+      task.cancel()
+      return
+    }
     self.task = task
+    lock.unlock()
   }
 
-  func resume(_ continuation: CheckedContinuation<String, Error>, returning text: String) {
+  func finish(_ result: Result<String, Error>) {
     lock.lock()
-    defer { lock.unlock() }
-    guard !didResume else { return }
-    didResume = true
-    task = nil
-    continuation.resume(returning: text)
-  }
-
-  func resume(_ continuation: CheckedContinuation<String, Error>, throwing error: Error) {
-    lock.lock()
-    defer { lock.unlock() }
-    guard !didResume else { return }
-    didResume = true
-    task = nil
-    continuation.resume(throwing: error)
+    guard self.result == nil else {
+      lock.unlock()
+      return
+    }
+    self.result = result
+    let continuation = self.continuation
+    self.continuation = nil
+    let task = self.task
+    self.task = nil
+    lock.unlock()
+    task?.cancel()
+    continuation?.resume(with: result)
   }
 }
