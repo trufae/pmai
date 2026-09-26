@@ -77,6 +77,52 @@ func fileWorkspaceToolsManageFiles() async throws {
   #expect(fileMatches?.first?.objectValue?["line"] == .integer(1))
   #expect(greppedFile.structuredContent?.objectValue?["scannedFiles"] == .integer(1))
 
+  // Regex queries must have their backslashes doubled in the JSON call so one
+  // survives JSON decoding and reaches NSRegularExpression. A pattern that
+  // arrives with a bare metacharacter (e.g. the user wrote "\\*" in chat,
+  // which decodes to "*") gets a helpful error instead of a raw regex error.
+  _ = try await call(
+    tool(tools, .write),
+    [
+      "path": .string("main.c"),
+      "content": .string("int main(int argc, char *argv[]) { return 0; }\n"),
+    ])
+  let regexGrep = try await call(
+    tool(tools, .grep),
+    [
+      "path": .string("main.c"), "regex": .bool(true),
+      "query": .string("char \\*argv\\[\\]"),
+    ])
+  #expect(regexGrep.text.contains("main.c:1:"))
+  let badRegexGrep = try await call(
+    tool(tools, .grep),
+    [
+      "path": .string("main.c"), "regex": .bool(true),
+      // After JSON decoding this becomes "char *argv[]", which is invalid regex.
+      "query": .string("char *argv[]"),
+    ])
+  #expect(badRegexGrep.isError)
+  #expect(badRegexGrep.text.contains("backslashes must be doubled"))
+
+  let regexPatch = try await call(
+    tool(tools, .patch),
+    [
+      "path": .string("main.c"), "regex": .bool(true),
+      "find": .string("char \\*argv\\[\\]"),
+      "replace": .string("char **args"),
+    ])
+  #expect(regexPatch.text.contains("Patched 1 match"))
+  let badRegexPatch = try await call(
+    tool(tools, .patch),
+    [
+      "path": .string("main.c"), "regex": .bool(true),
+      // After JSON decoding this becomes "char *argv[]", which is invalid regex.
+      "find": .string("char *argv[]"),
+      "replace": .string("char **args"),
+    ])
+  #expect(badRegexPatch.isError)
+  #expect(badRegexPatch.text.contains("backslashes must be doubled"))
+
   _ = try await call(
     tool(tools, .rename),
     ["path": .string("notes/todo.md"), "new_path": .string("notes/done.md")])
