@@ -7,6 +7,7 @@ import MaiDocuments
 /// `..`, absolute paths, or symbolic links.
 public struct MaiFileWorkspaceConfiguration: Equatable, Sendable {
   public var rootURL: URL
+  public var temporaryDirectoryURL: URL
   public var displayName: String
   public var writeEnabled: Bool
   public var followsProcessWorkingDirectory: Bool
@@ -15,6 +16,7 @@ public struct MaiFileWorkspaceConfiguration: Equatable, Sendable {
 
   public init(
     rootURL: URL,
+    temporaryDirectoryURL: URL? = nil,
     displayName: String? = nil,
     writeEnabled: Bool = true,
     followsProcessWorkingDirectory: Bool = false,
@@ -22,6 +24,10 @@ public struct MaiFileWorkspaceConfiguration: Equatable, Sendable {
     hiddenRootEntryNames: Set<String> = []
   ) {
     self.rootURL = rootURL.standardizedFileURL
+    self.temporaryDirectoryURL =
+      temporaryDirectoryURL?.standardizedFileURL
+      ?? URL(fileURLWithPath: ProcessInfo.processInfo.environment["TMPDIR"] ?? "/tmp", isDirectory: true)
+      .standardizedFileURL
     self.displayName = displayName ?? rootURL.lastPathComponent
     self.writeEnabled = writeEnabled
     self.followsProcessWorkingDirectory = followsProcessWorkingDirectory
@@ -476,6 +482,18 @@ private struct MaiFileWorkspace: Sendable {
     self.configuration = configuration
     rootURL = configuredRoot.resolvingSymlinksInPath().standardizedFileURL
   }
+
+  /// Returns whether the given URL is inside the workspace root or the configured
+  /// temporary directory, after resolving symlinks so links inside either root
+  /// remain valid while links that escape are rejected.
+  private func isAllowed(_ url: URL) -> Bool {
+    let resolved = url.resolvingSymlinksInPath().standardizedFileURL
+    return isInside(resolved, directory: rootURL)
+      || isInside(resolved, directory: configuration.temporaryDirectoryURL)
+      || resolved.path == rootURL.path
+      || resolved.path == configuration.temporaryDirectoryURL.path
+  }
+
 
   func list(_ arguments: [String: JSONValue]) throws -> ToolOutput {
     var rawPath = arguments["path"]?.stringValue ?? ""
