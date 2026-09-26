@@ -2377,6 +2377,11 @@ struct MaiCLI {
           await releaseIfIdle(workspace: workspace)
           continue
         }
+        if !heredoc, text == "@" {
+          await terminal.line("Usage: @TEXT or @@ TEXT or @PID TEXT or @2,3 TEXT")
+          await releaseIfIdle(workspace: workspace)
+          continue
+        }
         if !heredoc {
           do {
             if let addressed = try addressedMessage(text) {
@@ -10147,6 +10152,8 @@ struct MaiCLI {
            The prompt stays open while a turn runs: a message typed then is queued and
            joins the conversation at the next model turn. @2,3 TEXT or @2 @3 TEXT reaches several agents.
            @* TEXT reaches every active agent, including the main chat when it is running.
+           @@ TEXT and bare @ TEXT are aliases for @* TEXT.
+           @ alone prints usage help.
            Commands run right away too; a setting changed then reaches the next turn.
            Child agents print in blocks prefixed agent#PID; /set ui.subagents picks how much.
     """
@@ -10202,7 +10209,7 @@ struct MaiCLI {
       /set ui.toolResultLines <all|N>  Show all or the first N result lines (0 hides them)
       /set ui.thinking MODE        Thinking display: status, line, three, five, or full
       /set ui.subagents LEVEL      What child agents print: all, tools, stats, or none
-      /set ui.broadcast BOOL       Default unaddressed messages to @* (on/off; default off)
+      /set ui.broadcast BOOL       Default unaddressed messages to @* / @@ / bare @ (on/off; default off)
       /set use.agentsmd BOOL       Put the working tree's AGENTS.md files — this directory up to
                                    the repository root — into every run's system prompt (on/off)
       /set use.plan BOOL           Ask an agent that can start children to open a request of
@@ -10457,6 +10464,8 @@ struct MaiCLI {
     model turn: /queue lists it, @PID TEXT addresses one agent once, and
     @2,3 TEXT or @2 @3 TEXT sends the same message to several; @* TEXT reaches
     every active process, including the running main chat and paused agents.
+    @@ TEXT and bare @ TEXT are aliases for @* TEXT.
+    @ alone prints usage help.
     Idle chats and finished agents are skipped. /set ui.broadcast on makes
     unaddressed messages use @*; off restores the focus. Agent output prints
     in blocks prefixed agent#PID; /set ui.subagents picks how much.

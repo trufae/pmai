@@ -20,7 +20,8 @@ struct REPLMessageError: LocalizedError {
 }
 
 extension MaiCLI {
-  /// Leading addresses accept `@3,4`, `@3 @4`, and `@*`; other @words stay in the body.
+  /// Leading addresses accept `@3,4`, `@3 @4`, `@*`, `@@`, and bare `@`;
+  /// bare `@` is treated as broadcast. Other @words stay in the body.
   static func addressedMessage(_ text: String) throws -> (
     targets: [REPLMessageAddress], body: String
   )? {
@@ -28,7 +29,14 @@ extension MaiCLI {
     var targets: [REPLMessageAddress] = []
     while body.hasPrefix("@") {
       let parts = body.split(maxSplits: 1, whereSeparator: \.isWhitespace)
-      let addresses = parts[0].dropFirst().split(separator: ",", omittingEmptySubsequences: false)
+      let rawAddress = parts[0]
+      // @@... or bare @ means broadcast
+      if rawAddress == "@@" || rawAddress == "@" {
+        targets.append(.active)
+        body = parts.count > 1 ? parts[1] : ""
+        continue
+      }
+      let addresses = rawAddress.dropFirst().split(separator: ",", omittingEmptySubsequences: false)
       let parsed: [REPLMessageAddress] = addresses.compactMap { address in
         var value = address.lowercased()
         if value.hasPrefix("@") { value.removeFirst() }
@@ -218,6 +226,8 @@ extension MaiCLI {
     @* TEXT reaches every active process in this session, including the running
     main chat, paused agents, and children waiting for a slot. It skips idle
     chats and finished agents, and reports when no agents are active.
+    @@ TEXT and bare @ TEXT are aliases for @* TEXT.
+    @ alone prints usage help.
     /set ui.broadcast on makes unaddressed messages (also /queue push TEXT)
     use @* by default; off restores the current focus. Explicit @addresses
     override this saved setting. Use @main TEXT to start an idle chat.
