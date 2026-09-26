@@ -611,6 +611,41 @@ final class TerminalLineEditor {
   }
 
   /// Everything up to the paste's closing `ESC [ 201 ~`.
+  /// Reads a whole cursor report `ESC [ rows ; cols R` that arrived inside a
+  /// paste. Returns an empty array when the next bytes are such a report
+  /// (drop it); returns nil when the bytes do not form a report (so the
+  /// caller keeps the original Escape as paste content); puts any peeked bytes
+  /// back on the typeahead when returning nil.
+  private func readCursorReportMidPaste() -> [UInt8]? {
+    // The byte after the Escape was already consumed by readPastedBytes.
+    // Peek one byte without blocking to see if this could be a CPR.
+    guard let bracket = readByte(timeoutMilliseconds: 0) else { return nil }
+    guard bracket == UInt8(ascii: "[") else {
+      typeahead.insert(bracket, at: 0)
+      return nil
+    }
+    var parameters: [UInt8] = []
+    while let byte = readByte(timeoutMilliseconds: 0) {
+      if byte == UInt8(ascii: "R"),
+        !parameters.isEmpty,
+        parameters.allSatisfy({ $0 == 59 || (48...57).contains($0) })
+      {
+        return []
+      }
+      guard parameters.count < 16, byte == 59 || (48...57).contains(byte) else {
+        typeahead.insert(contentsOf: [bracket] + parameters + [byte], at: 0)
+        return nil
+      }
+      parameters.append(byte)
+    }
+    typeahead.insert(bracket, at: 0)
+    return nil
+  }
+
+  /// Pasted bytes until the bracketed-paste terminator.  Stray cursor-position
+  /// replies are dropped; everything else, including ESC bytes that do not form
+  /// a report, is kept as paste content.  No timeout is applied, so slow pastes
+  /// still work.
   private func readPastedBytes() -> [UInt8] {
     let terminator: [UInt8] = [27, 91, 50, 48, 49, 126]
     var result: [UInt8] = []
@@ -618,19 +653,8 @@ final class TerminalLineEditor {
       if byte == 27 {
         // A cursor report can arrive inside a bracketed paste. It is a reply
         // to a query the editor did not send, not paste content, so drop it.
-        // Other sequences stay, as they may be part of what was copied.
-        if let trailing = readCursorReportMidPaste() {
-          if trailing.isEmpty {
-            continue
-          }
-          result.append(contentsOf: trailing)
-          if let last = trailing.last, last == 126,
-            result.count >= terminator.count,
-            result.suffix(terminator.count).elementsEqual(terminator)
-          {
-            result.removeLast(terminator.count)
-            return result
-          }
+        // Other sequences stay as paste content without being consumed.
+        if let trailing = readCursorReportMidPaste(), trailing.isEmpty {
           continue
         }
       }
@@ -644,30 +668,6 @@ final class TerminalLineEditor {
     }
     return result
   }
-
-  /// Reads a whole cursor report `ESC [ rows ; cols R` that arrived inside a
-  /// paste. Returns an empty array when the next bytes are such a report
-  /// (drop it); returns the bytes read when they do not form a report (put
-  /// them into the paste); returns nil when nothing followed the Escape.
-  private func readCursorReportMidPaste() -> [UInt8]? {
-    guard let bracket = readByte(timeoutMilliseconds: 50) else { return nil }
-    guard bracket == UInt8(ascii: "[") else { return [bracket] }
-    var parameters: [UInt8] = []
-    while let byte = readByte(timeoutMilliseconds: 50) {
-      if byte == UInt8(ascii: "R"),
-        !parameters.isEmpty,
-        parameters.allSatisfy({ $0 == 59 || (48...57).contains($0) })
-      {
-        return []
-      }
-      guard parameters.count < 16, byte == 59 || (48...57).contains(byte) else {
-        return [bracket] + parameters + [byte]
-      }
-      parameters.append(byte)
-    }
-    return [bracket] + parameters
-  }
-
   /// Pasted text with its line ends as newlines and other control characters
   /// dropped; tabs stay.
   private func normalizedPaste(_ pasted: [UInt8]) -> [UInt8] {
