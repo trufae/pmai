@@ -470,7 +470,9 @@ final class TerminalLineEditor {
   /// What follows an Escape byte: a CSI or SS3 sequence, Alt+Enter, or
   /// nothing within a moment, which is the Escape key on its own.
   private func readEscapeSequence() -> Key {
-    guard let next = readByte(timeoutMilliseconds: 50) else { return .ignored }
+    guard let next = readByte(timeoutMilliseconds: 50) else {
+      return swallowTornReplyOrReseatKeys()
+    }
     switch next {
     case 10, 13:
       return .newline
@@ -484,13 +486,43 @@ final class TerminalLineEditor {
     }
   }
 
+  /// The Escape key was left alone for 50 ms. A reply torn into pieces by
+  /// the sender can continue here (e.g. a cursor report `ESC [ 8 ; 1 R`
+  /// split into two writes). A complete control sequence arriving right
+  /// after a lone Escape is such a reply, never text, so it is dropped.
+  /// Anything that does not form a sequence is put back for the editor to
+  /// read as ordinary keystrokes.
+  private func swallowTornReplyOrReseatKeys() -> Key {
+    guard let next = readByte(timeoutMilliseconds: 200) else { return .ignored }
+    guard next == UInt8(ascii: "[") else {
+      typeahead.insert(next, at: 0)
+      return .ignored
+    }
+    var consumed: [UInt8] = [next]
+    while consumed.count < 32, let byte = readByte(timeoutMilliseconds: 50) {
+      consumed.append(byte)
+      if (0x40...0x7E).contains(byte) {
+        // A complete sequence: a torn reply, swallowed.
+        return .ignored
+      }
+    }
+    typeahead.insert(contentsOf: consumed, at: 0)
+    return .ignored
+  }
+
   /// The parameters and final byte of a CSI sequence, `ESC [` already read.
   private func readControlSequence() -> Key {
     var parameters: [UInt8] = []
-    while let byte = readByte() {
+    while let byte = readByte(timeoutMilliseconds: parameters.isEmpty ? nil : 250) {
       if (0x40...0x7E).contains(byte) {
         return decodeControlSequence(
           parameters: String(decoding: parameters, as: UTF8.self), final: byte)
+      }
+      if byte == 27 {
+        // A new Escape cancels a sequence still waiting for its final byte,
+        // the way a terminal's parser does. A cursor report that arrives
+        // whole after a torn prefix then parses from its own Escape.
+        return readEscapeSequence()
       }
       guard parameters.count < 64 else { return .ignored }
       parameters.append(byte)
@@ -583,6 +615,25 @@ final class TerminalLineEditor {
     let terminator: [UInt8] = [27, 91, 50, 48, 49, 126]
     var result: [UInt8] = []
     while let byte = readByte() {
+      if byte == 27 {
+        // A cursor report can arrive inside a bracketed paste. It is a reply
+        // to a query the editor did not send, not paste content, so drop it.
+        // Other sequences stay, as they may be part of what was copied.
+        if let trailing = readCursorReportMidPaste() {
+          if trailing.isEmpty {
+            continue
+          }
+          result.append(contentsOf: trailing)
+          if let last = trailing.last, last == 126,
+            result.count >= terminator.count,
+            result.suffix(terminator.count).elementsEqual(terminator)
+          {
+            result.removeLast(terminator.count)
+            return result
+          }
+          continue
+        }
+      }
       result.append(byte)
       if byte == 126, result.count >= terminator.count,
         result.suffix(terminator.count).elementsEqual(terminator)
@@ -592,6 +643,29 @@ final class TerminalLineEditor {
       }
     }
     return result
+  }
+
+  /// Reads a whole cursor report `ESC [ rows ; cols R` that arrived inside a
+  /// paste. Returns an empty array when the next bytes are such a report
+  /// (drop it); returns the bytes read when they do not form a report (put
+  /// them into the paste); returns nil when nothing followed the Escape.
+  private func readCursorReportMidPaste() -> [UInt8]? {
+    guard let bracket = readByte(timeoutMilliseconds: 50) else { return nil }
+    guard bracket == UInt8(ascii: "[") else { return [bracket] }
+    var parameters: [UInt8] = []
+    while let byte = readByte(timeoutMilliseconds: 50) {
+      if byte == UInt8(ascii: "R"),
+        !parameters.isEmpty,
+        parameters.allSatisfy({ $0 == 59 || (48...57).contains($0) })
+      {
+        return []
+      }
+      guard parameters.count < 16, byte == 59 || (48...57).contains(byte) else {
+        return [bracket] + parameters + [byte]
+      }
+      parameters.append(byte)
+    }
+    return [bracket] + parameters
   }
 
   /// Pasted text with its line ends as newlines and other control characters
