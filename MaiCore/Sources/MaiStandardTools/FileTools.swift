@@ -356,7 +356,11 @@ public struct MaiFileWorkspaceTool: AgentTool {
       return ToolDefinition(
         name: operation.rawValue,
         description:
-          "Create a file, append to one, or create a folder. Replacing an existing file needs overwrite: true; to change part of a file use files_patch instead.",
+          "Create a file, append to an existing file, or overwrite it. "
+          + "Use mode: 'create' to create a new file (default, fails if it already exists), "
+          + "mode: 'append' to add content to the end, or mode: 'overwrite' to replace the entire contents. "
+          + "To edit part of a file, use files_patch instead. "
+          + "Set create_directory: true to create a folder.",
         parameters: [
           path,
           ToolParameterDef(
@@ -365,14 +369,9 @@ public struct MaiFileWorkspaceTool: AgentTool {
             description: "The complete contents, or the text to append. Omit for a folder.",
             required: false),
           ToolParameterDef(
-            name: "append",
-            type: "boolean",
-            description: "Append instead of replacing the file. Default: false.",
-            required: false),
-          ToolParameterDef(
-            name: "overwrite",
-            type: "boolean",
-            description: "Replace an existing non-empty file. Default: false.",
+            name: "mode",
+            type: "string",
+            description: "How to handle existing files: 'create' (fail if exists), 'append' (add to end), 'overwrite' (replace contents). Default: 'create'.",
             required: false),
           ToolParameterDef(
             name: "create_directory",
@@ -425,6 +424,12 @@ private struct MaiFileWorkspace: Sendable {
       case .mercurial: ".hg"
       }
     }
+  }
+
+  private enum FileWriteMode: String, Codable {
+    case create    = "create"
+    case append    = "append"
+    case overwrite = "overwrite"
   }
 
   private struct VersionControlledEntries {
@@ -1108,25 +1113,39 @@ private struct MaiFileWorkspace: Sendable {
     try FileManager.default.createDirectory(
       at: destination.deletingLastPathComponent(),
       withIntermediateDirectories: true)
-    let append = arguments["append"]?.coercedBoolValue == true
-    if !append, arguments["overwrite"]?.coercedBoolValue != true,
-      let existing = try? FileManager.default.attributesOfItem(atPath: destination.path),
-      let size = (existing[.size] as? NSNumber)?.intValue, size > 0
-    {
-      throw MaiFileWorkspaceError.overwriteRequired(displayPath(rawPath), size)
-    }
-    if append, FileManager.default.fileExists(atPath: destination.path) {
-      let handle = try FileHandle(forWritingTo: destination)
-      defer { try? handle.close() }
-      try handle.seekToEnd()
-      try handle.write(contentsOf: data)
+    let mode: FileWriteMode
+    if let modeString = arguments["mode"]?.stringValue,
+       let parsed = FileWriteMode(rawValue: modeString) {
+      mode = parsed
     } else {
-      try data.write(to: destination, options: append ? [] : [.atomic])
+      mode = .create
     }
+
+    let fileExists = FileManager.default.fileExists(atPath: destination.path)
+
+    switch mode {
+    case .create:
+      if fileExists {
+        throw MaiFileWorkspaceError.fileAlreadyExists(displayPath(rawPath))
+      }
+      try data.write(to: destination, options: [.atomic])
+    case .append:
+      if fileExists {
+        let handle = try FileHandle(forWritingTo: destination)
+        defer { try? handle.close() }
+        try handle.seekToEnd()
+        try handle.write(contentsOf: data)
+      } else {
+        try data.write(to: destination, options: [.atomic])
+      }
+    case .overwrite:
+      try data.write(to: destination, options: [.atomic])
+    }
+
     return mutationOutput(
-      "\(append ? "Appended" : "Wrote") \(data.count) bytes to \(displayPath(rawPath))",
+      "\(mode == .append ? "Appended" : "Wrote") \(data.count) bytes to \(displayPath(rawPath))",
       path: rawPath,
-      extra: ["bytes": .integer(data.count), "appended": .bool(append)])
+      extra: ["bytes": .integer(data.count), "appended": .bool(mode == .append)])
   }
 
   func rename(_ arguments: [String: JSONValue]) throws -> ToolOutput {
@@ -1664,6 +1683,7 @@ private enum MaiFileWorkspaceError: LocalizedError {
   case binary(String)
   case invalidUTF8(String)
   case alreadyExists(String)
+  case fileAlreadyExists(String)
   case recursiveRequired(String)
   case writeTooLarge(Int)
   case fileTooLarge(Int)
@@ -1675,7 +1695,6 @@ private enum MaiFileWorkspaceError: LocalizedError {
   case invalidMatchCount
   case emptyPatchMatch
   case patchMatchCount(Int, Int)
-  case overwriteRequired(String, Int)
   case invalidPath(String)
   case functionNotFound(String, String)
   case functionAmbiguous(String, [Int])
@@ -1694,6 +1713,8 @@ private enum MaiFileWorkspaceError: LocalizedError {
     case .binary(let path): "'\(path)' appears to be binary; text files only."
     case .invalidUTF8(let path): "'\(path)' is not valid UTF-8 text."
     case .alreadyExists(let path): "'\(path)' already exists."
+    case .fileAlreadyExists(let path):
+      "'\(path)' already exists. Use mode: .append to add to the end, or mode: .overwrite to replace the whole file; use files_patch to edit part of it."
     case .recursiveRequired(let path):
       "Directory '\(path)' is not empty; set recursive=true to delete it."
     case .writeTooLarge(let limit): "A single write is limited to \(limit) bytes."
@@ -1709,8 +1730,6 @@ private enum MaiFileWorkspaceError: LocalizedError {
     case .emptyPatchMatch: "The regular expression must not match an empty range."
     case .patchMatchCount(let expected, let actual):
       "Expected \(expected) patch matches, found \(actual)."
-    case .overwriteRequired(let path, let size):
-      "'\(path)' already exists (\(size) bytes). Use files_patch to change part of it, or set overwrite to true to replace the whole file."
     case .invalidPath(let path): "Could not change the current directory to '\(path)'."
     case .functionNotFound(let name, let path):
       "Could not find a complete function named '\(name)' in '\(path)'. Use files_read_index to inspect the available declarations."

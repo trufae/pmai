@@ -840,8 +840,8 @@ UTF-8 byte bounds plus a body revision. `files_set_function` uses that revision
 to atomically replace only the body, preserving concurrent edits to other
 functions and rejecting stale edits to the same function. Its lightweight
 locator supports common brace-, indentation-, and `end`-delimited languages,
-including HolyC `.hc` files. `files_write` refuses to replace a non-empty file unless
-`overwrite: true` is passed, so a model cannot clobber a file it meant to
+including HolyC `.hc` files. `files_write` refuses to replace an existing file unless
+`mode: 'overwrite'` is passed, so a model cannot clobber a file it meant to
 patch. `filesRoot` confines every relative
 path to one directory (including symlink checks), while `filesWriteEnabled`
 removes the mutation tools when disabled. Mutations still go through normal

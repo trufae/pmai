@@ -30,7 +30,7 @@ func fileWorkspaceToolsManageFiles() async throws {
     [
       "path": .string("notes/todo.md"),
       "content": .string("\ntwo"),
-      "append": .bool(true),
+      "mode": .string("append"),
     ])
   let read = try await call(tool(tools, .read), ["path": .string("notes/todo.md")])
   #expect(read.text == "one\ntwo")
@@ -552,7 +552,7 @@ func fileWorkspaceWriteRequiresOverwrite() async throws {
   let tools = MaiFileWorkspaceTool.makeTools(
     configuration: MaiFileWorkspaceConfiguration(rootURL: root, displayName: "test-workspace"))
   let write = tool(tools, .write)
-  #expect(write.definition.parameters.contains { $0.name == "overwrite" })
+  #expect(write.definition.parameters.contains { $0.name == "mode" })
 
   let created = try await call(write, ["path": .string("main.c"), "content": .string("int a;\n")])
   #expect(!created.isError)
@@ -560,23 +560,26 @@ func fileWorkspaceWriteRequiresOverwrite() async throws {
   let refused = try await call(write, ["path": .string("main.c"), "content": .string("int b;\n")])
   #expect(refused.isError)
   #expect(refused.text.contains("files_patch"))
-  #expect(refused.text.contains("overwrite"))
+  #expect(refused.text.contains("mode"))
   let unchanged = try await call(tool(tools, .read), ["path": .string("main.c")])
   #expect(unchanged.text == "int a;\n")
 
   let appended = try await call(
-    write, ["path": .string("main.c"), "content": .string("int c;\n"), "append": .bool(true)])
+    write,
+    ["path": .string("main.c"), "content": .string("int c;\n"), "mode": .string("append")])
   #expect(!appended.isError)
 
   let replaced = try await call(
-    write, ["path": .string("main.c"), "content": .string("int b;\n"), "overwrite": .bool(true)])
+    write,
+    ["path": .string("main.c"), "content": .string("int b;\n"), "mode": .string("overwrite")])
   #expect(!replaced.isError)
   let read = try await call(tool(tools, .read), ["path": .string("main.c")])
   #expect(read.text == "int b;\n")
 
   try Data().write(to: root.appendingPathComponent("empty.txt"))
   let filledEmpty = try await call(
-    write, ["path": .string("empty.txt"), "content": .string("now full")])
+    write,
+    ["path": .string("empty.txt"), "content": .string("now full"), "mode": .string("overwrite")])
   #expect(!filledEmpty.isError)
 }
 

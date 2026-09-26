@@ -458,7 +458,7 @@ enum FileWorkspaceService {
       let display = displayPath(path)
       guard case .plainText = WorkspaceDocumentKind(url: url) else {
         return
-          "Error: files_replace_range edits plain UTF-8 text files only; '\(display)' is read through a converted view. Use files_read and files_write with overwrite: true for raw edits."
+          "Error: files_replace_range edits plain UTF-8 text files only; '\(display)' is read through a converted view. Use files_read and files_write with mode: 'overwrite' for raw edits."
       }
       let document = try loadDocument(at: url, displayPath: display)
       let end = arguments["end_line"]?.numberValue.map(Int.init) ?? start
