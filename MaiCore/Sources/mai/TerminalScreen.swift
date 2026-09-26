@@ -123,7 +123,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     clampInputRows()
     // One newline per reserved row scrolls exactly as much as it takes for
     // the current row to end up inside the region, whatever row it was on.
-    let row = currentCursorRow() ?? rows
+    let row = currentOutputRow(fallback: rows)
     let bottom = regionBottom
     var out = TerminalInputModes.enable
     out += String(repeating: "\n", count: reservedRows)
@@ -163,10 +163,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     activitySource?.cancel()
     activitySource = nil
     write(Self.restoreCursor + (outputEndedLine ? "" : "\n"))
-    // Resetting the region homes the cursor, so the last output row is looked
-    // up first (the input thread is parked, so stdin is free to answer) and
-    // the shell continues right under it, with the reserved rows wiped.
-    let row = currentCursorRow() ?? regionBottom
+    // Resetting the region homes the cursor.  We use our tracked row so we
+    // never have to ask the terminal for its cursor position (which risks
+    // leaking CPR responses like `[9;1R` into the prompt).
+    let row = currentOutputRow(fallback: regionBottom)
     write(
       "\u{1B}[r" + move(row: max(1, row), column: 1) + "\n" + Self.clearBelow
         + TerminalInputModes.disable)
@@ -370,7 +370,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     // being restored more than once, and not every terminal keeps it.
     if bottom < previousBottom {
       write(Self.restoreCursor)
-      let outputRow = currentCursorRow() ?? previousBottom
+      let outputRow = currentOutputRow(fallback: previousBottom)
       out += Self.saveCursor
       let scroll = max(0, min(outputRow, previousBottom) - bottom)
       if scroll > 0 {
@@ -586,31 +586,12 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     }
   }
 
-  /// Asks the terminal where the cursor is; nil when it stays quiet. Bytes
-  /// that turn out to be keystrokes are kept for the editor, so this is safe
-  /// on the input thread as well as while it is parked.
-  private func currentCursorRow() -> Int? {
-    write("\u{1B}[6n")
-    var buffer: [UInt8] = []
-    let deadline = Date().addingTimeInterval(0.25)
-    defer { typeahead += buffer }
-    while Date() < deadline {
-      var descriptor = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
-      let remaining = Int32(max(1, deadline.timeIntervalSinceNow * 1000))
-      guard poll(&descriptor, 1, remaining) > 0 else { return nil }
-      var byte: UInt8 = 0
-      guard read(STDIN_FILENO, &byte, 1) == 1 else { return nil }
-      buffer.append(byte)
-      guard byte == UInt8(ascii: "R"), let start = buffer.lastIndex(of: 0x1B),
-        start + 1 < buffer.count, buffer[start + 1] == UInt8(ascii: "[")
-      else { continue }
-      let body = String(decoding: buffer[(start + 2)..<(buffer.count - 1)], as: UTF8.self)
-      let fields = body.split(separator: ";")
-      guard fields.count == 2, let row = Int(fields[0]), Int(fields[1]) != nil else { continue }
-      buffer.removeSubrange(start...)
-      return row
-    }
-    return nil
+  /// Returns the best-guess output row without querying the terminal.
+  /// We used to ask the terminal for its cursor position (CPR), but that risks
+  /// leaking responses like `[9;1R` into the input prompt when timing races or
+  /// unexpected bytes land on stdin while we are waiting for the reply.
+  private func currentOutputRow(fallback: Int) -> Int {
+    fallback
   }
 
   private static func truncated(_ text: String, width: Int) -> String {
