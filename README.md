@@ -18,8 +18,31 @@ This app, comes after [MAI](https://github.com/trufae/mai), a cli agent with foc
 - **MCP**: configure remote Streamable HTTP or CLI-local stdio servers and surface them to the model.
 - **Multiple system prompts**, persistent conversations, export to Markdown / HTML / plain text / JSON / ePUB / Word (docx).
 - **Attachments**: arbitrary text and source files plus HTML, Markdown, Word (docx), EPUB, JSON and PDF. HTML asks whether to keep its source, convert it to Markdown, or copy it to the chat's working folder; Word, EPUB and PDF are converted to Markdown on device (PDFs can also be attached as one image per page, and scanned pages are read with Vision OCR).
-- **Share sheet**: send pictures, voice messages and documents to PocketMai from WhatsApp, Telegram, Photos, Files or any other app. Voice messages are transcribed on device (Ogg Opus included), documents are converted to text, and pictures ask for their size or for OCR just like when they are attached inside the app.
+- **Share sheet**: send pictures, voice messages and documents to PocketMai from WhatsApp, Telegram, Photos, Files or any other app. Voice messages are transcribed on device by default (Ogg Opus included), documents are converted to text, and pictures ask for their size or for OCR just like when they are attached inside the app.
 - **Background replies**: a Live Activity on the Lock Screen and in the Dynamic Island follows running replies and tool calls, and a local notification tells you when a reply finishes, fails, or needs a tool approval while the app is in the background. An optional "Keep working when locked" mode keeps long replies running after the screen locks.
+
+## Voice privacy
+
+Voice recordings and imported audio stay on device for transcription by default.
+Settings > Voices > **Allow Apple Server Transcription** explicitly permits an
+Apple-server fallback if local recognition fails or is unavailable. The app's
+airplane button overrides this permission immediately and cancels active server
+recognition. Returning online restores the saved preference.
+
+On iOS 26+, file transcription first tries `SpeechAnalyzer` / `SpeechTranscriber`
+with an already-installed language model. The fallback on iOS 26+ and the primary
+path on iOS 18–25 use `SFSpeechRecognizer`, checking `supportsOnDeviceRecognition`
+before setting `requiresOnDeviceRecognition = true`. Without the server opt-in,
+missing local support or recognition errors never trigger a server request.
+Native iOS Live always uses the on-device analyzer and requires an installed model.
+PocketMai does not initiate speech-model downloads.
+
+Apple documents the guarantees in
+[Asking Permission to Use Speech Recognition](https://developer.apple.com/documentation/speech/asking-permission-to-use-speech-recognition),
+[`requiresOnDeviceRecognition`](https://developer.apple.com/documentation/speech/sfspeechrecognitionrequest/requiresondevicerecognition)
+and [`supportsOnDeviceRecognition`](https://developer.apple.com/documentation/speech/sfspeechrecognizer/supportsondevicerecognition).
+This setting controls audio transcription; sending the resulting text to a chat
+still uses that chat's selected model provider.
 
 ## Build
 

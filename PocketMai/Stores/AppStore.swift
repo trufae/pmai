@@ -201,7 +201,12 @@ final class AppStore: ObservableObject {
   @Published private(set) var messageBookmarks: [MessageBookmark] = []
   @Published var selectedConversationID: UUID?
   @Published var selectedConversationIDs: Set<UUID> = []
-  @Published var settings: AppSettings
+  @Published var settings: AppSettings {
+    didSet {
+      speechTranscriptionPolicy.allowsServerRecognition = settings.appleServerTranscriptionAllowed
+    }
+  }
+  let speechTranscriptionPolicy = SpeechTranscriptionPolicy()
   @Published var respondingConversationIDs: Set<UUID> = []
   @Published private(set) var loadingLocalModelConversationIDs: Set<UUID> = []
   @Published private(set) var queuedUserMessagesByConversationID: [UUID: [QueuedChatMessage]] = [:]
