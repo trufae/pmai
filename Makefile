@@ -15,7 +15,7 @@ endif
 DEVICE ?=
 BUNDLE_ID = io.github.trufae.mai
 APP_BUNDLE ?=
-BINDIR ?= /usr/local/bin
+BINDIR ?= $(HOME)/.local/bin
 
 .PHONY: all build test list run uninstall repl repl-install repl-uninstall repl-musl plugin-fixture fmt clean check-shared-tooling aitest-build
 
@@ -91,11 +91,13 @@ repl:
 
 repl-install:
 	swift build --package-path MaiCore -c release --product pmai
-	$(SUDO) cp -f "$$(swift build --package-path MaiCore -c release --show-bin-path)/pmai" $(BINDIR)/pmai
-	$(SUDO) $(STRIP) $(BINDIR)/pmai
+	mkdir -p $(BINDIR)
+	cp -f "$$(swift build --package-path MaiCore -c release --show-bin-path)/pmai" $(BINDIR)/pmai
+	chmod 755 $(BINDIR)/pmai
+	$(STRIP) $(BINDIR)/pmai
 
 repl-uninstall:
-	$(SUDO) rm -f "$(BINDIR)/pmai"
+	rm -f "$(BINDIR)/pmai"
 
 # Fully static Linux build that also runs on musl distributions such as
 # Alpine. Needs the Swift Static Linux SDK matching the toolchain. swift-tui
