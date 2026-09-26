@@ -2773,6 +2773,11 @@ struct MaiCLI {
         if let turn {
           let prefix = turn.kind == .btw ? "btw " : ""
           var took = "\(prefix)took \(elapsedDescription(since: turn.started))"
+          let tree = await runtime.supervisor.tree()
+          let subtree = tree.subtree(of: turn.pid)
+          let tokens = subtree.reduce(0) { $0 + ($1.usage?.totalTokens ?? 0) }
+          let estimated = subtree.contains { $0.usage?.isEstimated == true }
+          took += " and \(ModelUsageFormat.tokens(tokens, estimated: estimated))"
           if let elsewhere {
             took += " · saved in '\(elsewhere)'"
           } else if !settled {
