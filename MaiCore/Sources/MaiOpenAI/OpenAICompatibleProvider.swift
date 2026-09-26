@@ -441,8 +441,13 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
         let name = function["name"]?.stringValue
         let arguments = function["arguments"]?.stringValue ?? ""
         if let id, !id.isEmpty { accumulator.id = id }
-        if let name, !name.isEmpty { accumulator.name += name }
-        accumulator.arguments += arguments
+        if let name, !name.isEmpty { accumulator.name = name }
+        // OpenAI streams arguments as concatenated JSON fragments; some
+        // OpenAI-compatible endpoints (notably MiniMax-M3) re-send the full
+        // tool-call JSON in every chunk. Concatenating those yields an invalid
+        // string, so merge by preferring whichever form is a parseable prefix.
+        accumulator.arguments =
+          ToolCallAccumulator.merge(accumulator.arguments, with: arguments)
         toolCalls[index] = accumulator
         await emit(
           .toolCallDelta(
@@ -901,6 +906,37 @@ private struct ToolCallAccumulator {
   var id = ""
   var name = ""
   var arguments = ""
+
+  /// Merges a freshly arrived `arguments` string into whatever the accumulator
+  /// already has. OpenAI streams `arguments` as JSON fragments that form a
+  /// valid object only when concatenated (`{"text":` then `"hi"}` then `}`).
+  /// Some OpenAI-compatible endpoints — notably MiniMax-M3 — instead re-send
+  /// the full tool-call JSON in every chunk; concatenating those produces an
+  /// invalid string, so prefer whichever form parses as a JSON object.
+  ///
+  /// The rules, in priority order:
+  /// 1. If the concatenation already parses, keep it (OpenAI is mid-stream).
+  /// 2. If only the new fragment parses, replace the buffer with it (full
+  ///    re-send, possibly the first chunk that completes the object).
+  /// 3. If the buffer alone already parses, ignore the new fragment (later
+  ///    re-sends of the same complete object).
+  /// 4. Otherwise fall back to concatenation (mid-stream, not yet valid).
+  static func merge(_ existing: String, with fragment: String) -> String {
+    if fragment.isEmpty { return existing }
+    if existing.isEmpty { return fragment }
+    let combined = existing + fragment
+    if Self.isJSONObject(combined) { return combined }
+    if Self.isJSONObject(fragment) { return fragment }
+    if Self.isJSONObject(existing) { return existing }
+    return combined
+  }
+
+  private static func isJSONObject(_ text: String) -> Bool {
+    guard let data = text.data(using: .utf8),
+      let decoded = try? JSONDecoder().decode(JSONValue.self, from: data)
+    else { return false }
+    return decoded.objectValue != nil
+  }
 
   func toolCall(index: Int, resolver: ToolNameResolver) throws -> ToolCall {
     let raw = arguments.isEmpty ? "{}" : arguments

@@ -786,6 +786,54 @@ func openAIStreamingJSONFallback() async throws {
   #expect(response.stopReason == .stop)
 }
 
+@Test("OpenAI-compatible provider tolerates repeated full-argument chunks from MiniMax-M3")
+func openAIStreamingToolCallResendsArguments() async throws {
+  // MiniMax-M3 streaming repeats the full tool-call JSON in each chunk instead
+  // of emitting OpenAI-style argument fragments. Concatenating those chunks
+  // produces invalid JSON, so the provider must pick the longest valid chunk
+  // and ignore the shorter prefixes that would invalidate it.
+  StubURLProtocol.install(forHost: "stream.minimax.example.test") { request in
+    try httpResponse(
+      request,
+      contentType: "text/event-stream",
+      body: """
+        data: {"choices":[{"delta":{"reasoning_content":"planning "}}]}
+
+        data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-2","function":{"name":"echo","arguments":"{\\"text\\": \\"hello\\"}"}}]}}]}
+
+        data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"text\\": \\"hello\\"}"}}]}}]}
+
+        data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"text\\": \\"hello\\"}"}}]},"finish_reason":"tool_calls"}]}
+
+        data: {"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":2,"total_tokens":4}}
+
+        data: [DONE]
+
+        """)
+  }
+  defer { StubURLProtocol.reset(host: "stream.minimax.example.test") }
+
+  let provider = OpenAICompatibleProvider(
+    configuration: .init(
+      id: .openAI,
+      displayName: "minimax",
+      baseURL: try #require(URL(string: "https://stream.minimax.example.test/v1"))),
+    session: stubSession())
+  let response = try await provider.complete(
+    ProviderRequest(
+      model: "MiniMax-M3",
+      messages: [.user("echo hello")],
+      tools: [ToolDefinition(name: "echo", description: "Echo")],
+      stream: true))
+
+  #expect(response.message.reasoning == "planning ")
+  #expect(
+    response.message.toolCalls == [
+      ToolCall(id: "call-2", name: "echo", arguments: .object(["text": .string("hello")]))
+    ])
+  #expect(response.stopReason == .toolCall)
+}
+
 @Test("OpenAI-compatible provider accumulates streamed tool-call fragments")
 func openAIStreamingToolCall() async throws {
   StubURLProtocol.install(forHost: "stream.example.test") { request in
