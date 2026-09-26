@@ -5369,7 +5369,7 @@ private struct ToolPickerPopover: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 4) {
-        ForEach(BuiltInToolID.allCases.filter { $0 != .memory }) { tool in
+        ForEach(BuiltInToolID.allCases.filter { $0 != .memory }.sorted { $0.displayName < $1.displayName }) { tool in
           Button {
             toggleBuiltInTool(tool)
           } label: {
