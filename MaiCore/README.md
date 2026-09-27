@@ -408,7 +408,15 @@ PocketMai's Statistics screen is built on the same `ModelUsageLedger` and
 
 On piped input each prompt is preceded by a colored separator so prompts remain
 easy to find in terminal scrollback. Long input scrolls horizontally and is
-printed in full when submitted. `/set ui.` lists the persisted terminal styling
+printed in full when submitted. `/set debug true` enables a project-specific append-only
+`.pmai/debug.jsonl` log; `/set debug false` stops it. `/set debug` shows the
+current state and log path. Each JSON line has a timestamp and records full
+model requests and responses (including retries and compaction), model errors,
+tool calls and results, and run events. The setting survives restarts in
+`.pmai/settings.json`. The log is readable only by the current user and can
+contain prompts, tool output, and other private data.
+
+`/set ui.` lists the persisted terminal styling
 options; `ui.bgline` colors the status line (or the separator), `ui.fgprompt`,
 `ui.bgprompt`, `ui.fgcolor`, `ui.bgcolor`, and `ui.fgtoolresult` accept named
 ANSI colors, `rgb:RGB`, or `none`, while `ui.bold`, `ui.markdown`, and `ui.broadcast` accept `on`

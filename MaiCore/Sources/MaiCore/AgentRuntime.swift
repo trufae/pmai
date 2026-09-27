@@ -87,6 +87,7 @@ public actor AgentRuntime {
   /// Where every completed provider call's tokens and timing are folded in.
   /// Nil keeps the runtime silent about usage, as it was before hosts asked.
   private var usageStats: ModelUsageStore?
+  private var debugLog: AgentDebugLog?
 
   /// The process table every run reports into. Hosts read it for `/agents`,
   /// follow its events for notifications, and stop subtrees through it.
@@ -98,6 +99,57 @@ public actor AgentRuntime {
   ) {
     self.approvalHandler = approvalHandler
     self.supervisor = supervisor
+  }
+
+  /// The CLI may change this while an agent runs. The next event or model
+  /// call observes the new destination.
+  public func configureDebugLog(_ log: AgentDebugLog?) {
+    debugLog = log
+  }
+
+  private func recordDebugEvent(_ event: AgentEvent) async {
+    guard let debugLog else { return }
+    switch event {
+    case .started(let context, let provider):
+      await debugLog.record("run.started", context: context, value: provider)
+    case .modelStarted(let context, let turn):
+      await debugLog.record("model.started", context: context, value: turn)
+    case .provider:
+      // The complete provider response is recorded once, after streaming.
+      break
+    case .toolStarted(let context, let call):
+      await debugLog.record("tool.started", context: context, value: call)
+    case .toolFinished(let context, let result):
+      await debugLog.record("tool.finished", context: context, value: result)
+    case .approvalRequested(let context, let request):
+      await debugLog.record("approval.requested", context: context, value: request.call)
+    case .approvalDecided(let context, let decision):
+      await debugLog.record("approval.decided", context: context, value: String(describing: decision))
+    case .childStarted(let context, let child):
+      await debugLog.record("child.started", context: context, value: child)
+    case .childQueued(let context, let child):
+      await debugLog.record("child.queued", context: context, value: child)
+    case .childFinished(let context, let child):
+      await debugLog.record(
+        "child.finished", context: context,
+        value: "\(child.agentID): \(child.modelTurns) model turns, \(child.toolCalls) tool calls")
+    case .userMessage(let context, let message):
+      await debugLog.record("user.message", context: context, value: message)
+    case .transcriptEdited(let context, let report):
+      await debugLog.record("transcript.edited", context: context, value: String(describing: report))
+    case .retrying(let context, let attempt, let limit, let delay, let error):
+      await debugLog.record(
+        "model.retrying", context: context, attempt: attempt,
+        value: "\(error) (limit \(limit), delay \(delay)s)")
+    case .compactionStarted(let context, let tokens):
+      await debugLog.record("compaction.started", context: context, value: tokens)
+    case .compactionFailed(let context, let error):
+      await debugLog.record("compaction.failed", context: context, value: error)
+    case .finished(let context, let result):
+      await debugLog.record(
+        "run.finished", context: context,
+        value: "\(result.modelTurns) model turns, \(result.toolCalls) tool calls, stop \(result.stopReason), interruption \(String(describing: result.interruption))")
+    }
   }
 
   /// Adds any provider implementation to the runtime by its descriptor ID.
@@ -358,10 +410,12 @@ public actor AgentRuntime {
       return result
     } catch is CancellationError {
       await supervisor.fail(pid, state: .cancelled, message: "Cancelled", announce: false)
+      await debugLog?.record("run.cancelled", value: runID)
       throw CancellationError()
     } catch {
       await supervisor.fail(
         pid, state: .failed, message: error.localizedDescription, announce: false)
+      await debugLog?.record("run.error", value: "\(runID): \(error.localizedDescription)")
       throw error
     }
   }
@@ -430,8 +484,12 @@ public actor AgentRuntime {
     budget: RunBudget,
     derivedFrom: DerivedRun? = nil,
     registeredAgent: Bool = false,
-    emit: @escaping AgentEventHandler
+    emit downstream: @escaping AgentEventHandler
   ) async throws -> AgentResult {
+    let emit: AgentEventHandler = { event in
+      if depth == 0 { await self.recordDebugEvent(event) }
+      await downstream(event)
+    }
     try Task.checkCancellation()
     if liveRequests[pid] == nil {
       var installed = initialRequest
@@ -1029,6 +1087,9 @@ public actor AgentRuntime {
     var attempt = 0
     while true {
       let timing = StreamTimingRecorder()
+      await debugLog?.record(
+        "model.request", context: context, provider: provider.descriptor.id.rawValue,
+        attempt: attempt + 1, value: providerRequest)
       do {
         let response = try await withDeadline(budget) {
           try await provider.complete(providerRequest) { event in
@@ -1036,14 +1097,23 @@ public actor AgentRuntime {
             await onEvent(event)
           }
         }
+        await debugLog?.record(
+          "model.response", context: context, provider: provider.descriptor.id.rawValue,
+          attempt: attempt + 1, value: response)
         return ProviderCall(response: response, timing: timing.observation, ended: Date())
       } catch is CancellationError {
+        await debugLog?.record("model.cancelled", context: context, value: "cancelled")
         throw CancellationError()
       } catch is RunDeadlineExceeded {
+        await debugLog?.record("model.deadline", context: context, value: "deadline exceeded")
         throw RunDeadlineExceeded()
       } catch is ProviderEmptyResponseError where !retriesEmptyReply {
+        await debugLog?.record("model.empty", context: context, value: "empty response")
         throw ProviderEmptyReply()
       } catch {
+        await debugLog?.record(
+          "model.error", context: context, provider: provider.descriptor.id.rawValue,
+          attempt: attempt + 1, value: error.localizedDescription)
         let delayStarted = ContinuousClock.now
         let policy = liveRequests[pid]?.retry ?? retry
         guard attempt < policy.attempts else { throw error }

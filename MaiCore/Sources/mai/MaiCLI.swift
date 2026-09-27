@@ -827,6 +827,7 @@ private actor TerminalApprovalHandler: ApprovalHandler {
 
   private struct ProjectSettings: Codable {
     var yolo: Bool?
+    var debug: Bool?
   }
 
   private let configuration: ConfiguredApprovals
@@ -834,6 +835,7 @@ private actor TerminalApprovalHandler: ApprovalHandler {
   private var projectSettings: ProjectSettings
   private var delegate: (any ApprovalHandler)?
   private var yoloEnabled: Bool
+  private var debugEnabled: Bool
   /// Asks through the REPL's own prompt while the persistent screen owns the
   /// terminal, so a question from a child agent never fights the line editor
   /// for stdin.
@@ -851,6 +853,7 @@ private actor TerminalApprovalHandler: ApprovalHandler {
       : ProjectSettings()
     self.projectSettings = projectSettings
     self.yoloEnabled = yoloEnabled || (projectSettings.yolo ?? configuration.yolo)
+    self.debugEnabled = projectSettings.debug ?? false
   }
 
   /// Routes `ask` decisions elsewhere while another surface owns the terminal.
@@ -871,6 +874,21 @@ private actor TerminalApprovalHandler: ApprovalHandler {
 
   func isYOLOEnabled() -> Bool {
     yoloEnabled
+  }
+
+  func isDebugEnabled() -> Bool { debugEnabled }
+
+  func debugLogURL() -> URL {
+    projectSettingsURL.deletingLastPathComponent().appendingPathComponent("debug.jsonl")
+  }
+
+  func saveDebugEnabled(_ enabled: Bool) throws {
+    var draft = projectSettings
+    draft.debug = enabled
+    try MaiJSONCoding.default.makeEncoder().encode(draft)
+      .write(to: projectSettingsURL, options: .atomic)
+    projectSettings = draft
+    debugEnabled = enabled
   }
 
   func setPrompter(_ prompter: Prompter?) {
@@ -1006,6 +1024,10 @@ struct MaiCLI {
           "settings.json"),
         yoloEnabled: options.yolo)
       let runtime = AgentRuntime(approvalHandler: approvalHandler)
+      if await approvalHandler.isDebugEnabled() {
+        try await runtime.configureDebugLog(
+          AgentDebugLog(url: approvalHandler.debugLogURL()))
+      }
       let plugins = PluginRegistry()
       try await plugins.install(MaiCoreBuiltinsPlugin(), origin: "built-in")
       try await plugins.install(MaiMCPPlugin(), origin: "built-in")
@@ -6950,6 +6972,7 @@ struct MaiCLI {
     guard !parts.isEmpty else {
       let enabled = await approvalHandler.isYOLOEnabled()
       await terminal.line("yolo = \(enabled ? "on" : "off")")
+      await terminal.line("debug = \(await approvalHandler.isDebugEnabled() ? "true" : "false")")
       await listLimitSettings(session.profile.limits, terminal: terminal)
       await listRecoverySettings(session.profile, terminal: terminal)
       await listToolSettings(session.profile, terminal: terminal)
@@ -6961,6 +6984,28 @@ struct MaiCLI {
     }
     let key = parts[0].lowercased()
     let displayedKey = key == "ui.toolresultlines" ? "ui.toolResultLines" : key
+    if key == "debug" {
+      guard parts.count > 1 else {
+        let enabled = await approvalHandler.isDebugEnabled()
+        await terminal.line("debug = \(enabled ? "true" : "false")")
+        if enabled { await terminal.line("Log: \(await approvalHandler.debugLogURL().path)") }
+        return
+      }
+      guard parts.count == 2, let enabled = booleanSetting(parts[1]) else {
+        await terminal.line("Usage: /set debug <true|false>")
+        return
+      }
+      do {
+        let log = enabled ? try AgentDebugLog(url: await approvalHandler.debugLogURL()) : nil
+        try await approvalHandler.saveDebugEnabled(enabled)
+        await runtime.configureDebugLog(log)
+        await terminal.line("debug = \(enabled ? "true" : "false")")
+        if enabled { await terminal.line("Log: \(await approvalHandler.debugLogURL().path)") }
+      } catch {
+        await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+      }
+      return
+    }
     if key == "effort" {
       await handleEffortCommand(
         parts.dropFirst().joined(separator: " "),
@@ -7086,7 +7131,7 @@ struct MaiCLI {
         || levelKeys.contains(key) || textKeys.contains(key)
     else {
       await terminal.line(
-        "Unknown setting '\(parts[0])'. Available settings: effort, yolo, delegation, tool.calling, tool.proxy, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.strategy, ui.title, ui.editor, ui.bgline, ui.fgcolor, ui.bgcolor, ui.fgprompt, ui.bgprompt, ui.fgtoolresult, ui.bold, ui.markdown, ui.toolResultLines, ui.subagents, ui.broadcast, use.agentsmd, use.plan"
+        "Unknown setting '\(parts[0])'. Available settings: debug, effort, yolo, delegation, tool.calling, tool.proxy, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.strategy, ui.title, ui.editor, ui.bgline, ui.fgcolor, ui.bgcolor, ui.fgprompt, ui.bgprompt, ui.fgtoolresult, ui.bold, ui.markdown, ui.toolResultLines, ui.subagents, ui.broadcast, use.agentsmd, use.plan"
       )
       return
     }
@@ -9770,6 +9815,7 @@ struct MaiCLI {
   ) -> [String] {
     var values = [
       "/help", "/help set", "/exit", "/quit", "/set yolo on", "/set yolo off",
+      "/set debug true", "/set debug false",
       "/set ui.", "/set effort", "/set effort off", "/set effort auto", "/nothink",
       "/set ui.thinking status", "/set ui.thinking line", "/set ui.thinking three",
       "/set ui.thinking five", "/set ui.thinking full",
@@ -10185,6 +10231,7 @@ struct MaiCLI {
       /set                         List current settings and their values
       /set effort [LEVEL] [TEXT]   Show or set reasoning effort and optional guidance
       /set yolo BOOL               Permit all tool calls without asking (on/off); saved for this project
+      /set debug <true|false>       Log model calls, tool activity, and run events for this project
       /set tool.                   List the tool calling settings
       /set tool.calling MODE       Use automatic/native tools, or text/XML/JSON emulation
       /set tool.proxy BOOL         Show models only the shared list-tools and call-tool pair (on/off)
@@ -10220,7 +10267,9 @@ struct MaiCLI {
       /set use.plan BOOL           Ask an agent that can start children to open a request of
                                    several steps with a numbered plan before delegating (on/off)
 
-    YOLO is saved in the opened project's .pmai/settings.json; -y enables it for
+    YOLO and debug are saved in the opened project's .pmai/settings.json. Debug
+    entries append to .pmai/debug.jsonl and may contain prompts and tool output.
+    -y enables YOLO for
     one run only. Projects without a saved choice use approvals.yolo from the
     active configuration. Agent and UI settings use the active configuration.
     COLOR accepts a named ANSI color, rgb:RGB, or none.
