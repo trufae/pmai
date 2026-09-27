@@ -2673,6 +2673,11 @@ struct MaiCLI {
             await releaseIfIdle(workspace: workspace)
             continue
           }
+          if name == "/version" {
+            await terminal.line(MaiCLI.version)
+            await releaseIfIdle(workspace: workspace)
+            continue
+          }
           if name == "/prompts" {
             let before = REPLCommandSnapshot(session: session)
             var outcome = PromptsCommandOutcome.handled
