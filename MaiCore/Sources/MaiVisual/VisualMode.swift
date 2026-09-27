@@ -29,6 +29,9 @@ public enum VisualMode {
     await approvals.attach { pending in
       await workspace.present(pending)
     }
+    await approvals.attachCompaction(
+      presenter: { await workspace.presentCompaction($0) },
+      dismiss: { await workspace.dismissCompaction($0) })
     await workspace.refreshRegistries()
     applyDefaultRuntimeGates()
     VisualAppContext.workspace = workspace

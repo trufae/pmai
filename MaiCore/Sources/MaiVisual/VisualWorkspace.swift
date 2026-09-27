@@ -125,6 +125,9 @@ public final class VisualWorkspace {
   /// usage store after every run and shown as bars on the Stats tab.
   public private(set) var usageLedger = ModelUsageLedger()
   public var pendingApproval: VisualApprovalHandler.Pending?
+  public var pendingCompaction: VisualApprovalHandler.PendingCompaction?
+  private var compactionQueue: [VisualApprovalHandler.PendingCompaction] = []
+  private var presentedCompactionID: UUID?
   public var pendingConversationDeletion: ConversationActionRequest?
   public var pendingConversationRename: ConversationActionRequest?
   public var conversationRenameDraft = ""
@@ -893,6 +896,56 @@ public final class VisualWorkspace {
   }
 
   // MARK: Approvals
+
+  func presentCompaction(_ pending: VisualApprovalHandler.PendingCompaction) async {
+    if let pid = pending.request.run.pid,
+      let conversation = conversations.first(where: { $0.processID == pid })
+    {
+      let transcript = await runtime.supervisor.transcript(pid)
+      conversation.transcript.replaceAll(with: transcript)
+    }
+    if pendingCompaction == nil {
+      pendingCompaction = pending
+      presentedCompactionID = pending.id
+    } else {
+      compactionQueue.append(pending)
+    }
+  }
+
+  func dismissCompaction(_ id: UUID) {
+    compactionQueue.removeAll { $0.id == id }
+    guard presentedCompactionID == id else { return }
+    pendingCompaction = compactionQueue.isEmpty ? nil : compactionQueue.removeFirst()
+    presentedCompactionID = pendingCompaction?.id
+  }
+
+  public func resolveCompaction(_ decision: AutocompactionDecision, clearChat: Bool = false) {
+    guard let id = presentedCompactionID else { return }
+    if clearChat, let pid = pendingCompaction?.request.run.pid,
+      let conversation = conversations.first(where: { $0.processID == pid })
+    {
+      conversation.cancelRun()
+      conversation.resetTranscript()
+    }
+    dismissCompaction(id)
+    Task { await approvals.resolveCompaction(id, with: decision) }
+  }
+
+  public func compactionSheetDismissed() {
+    // A programmatic resolution may already have presented the next request.
+    guard pendingCompaction == nil else { return }
+    resolveCompaction(.cancelRun)
+  }
+
+  public var canClearCompactionChat: Bool {
+    guard let pid = pendingCompaction?.request.run.pid else { return false }
+    return conversations.contains { $0.processID == pid }
+  }
+
+  public func stopCompactionToChangeModel() {
+    resolveCompaction(.cancelRun)
+    status = "Response stopped with its messages kept. Change the chat model or use /model -compact NAME, then send continue."
+  }
 
   func present(_ pending: VisualApprovalHandler.Pending) {
     if pendingApproval == nil {

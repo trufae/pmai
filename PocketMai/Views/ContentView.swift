@@ -104,14 +104,22 @@ struct ContentView: View {
       // main-thread layout/scroll work ~8×/sec and starving the Settings UI.
       store.streamingTextStore.setPublishingSuspended(isShowing)
     }
-    .fullScreenCover(item: toolCallApprovalBinding) { request in
-      ToolCallApprovalView(request: request)
-        .environmentObject(store)
-        .interactiveDismissDisabled()
+    .fullScreenCover(item: approvalBinding) { approval in
+      Group {
+        switch approval {
+        case .tool(let request): ToolCallApprovalView(request: request)
+        case .compaction(let request): AutocompactionApprovalView(request: request)
+        }
+      }
+      .environmentObject(store)
+      .interactiveDismissDisabled()
     }
     .onChange(of: store.activeToolCallApprovalRequest?.id) { _, requestID in
       // An approval is a blocking decision. Dismiss any ordinary sheet so the
       // confirmation cannot be queued behind it while the assistant waits.
+      if requestID != nil { showingSettings = false }
+    }
+    .onChange(of: store.activeAutocompactionApprovalRequest?.id) { _, requestID in
       if requestID != nil { showingSettings = false }
     }
     .alert(
@@ -141,6 +149,7 @@ struct ContentView: View {
     .background {
       HistoryPanelPanBridge(
         isEnabled: !showingSettings && store.activeToolCallApprovalRequest == nil
+          && store.activeAutocompactionApprovalRequest == nil
           && store.activeLongRunningOperationTimeoutRequest == nil,
         isOpen: showingHistory,
         onChanged: { offset in
@@ -276,9 +285,25 @@ struct ContentView: View {
     isHistoryPanelMounted = true
   }
 
-  private var toolCallApprovalBinding: Binding<ToolCallApprovalRequest?> {
+  private enum ApprovalPresentation: Identifiable {
+    case tool(ToolCallApprovalRequest)
+    case compaction(AutocompactionApprovalRequest)
+
+    var id: UUID {
+      switch self {
+      case .tool(let request): request.id
+      case .compaction(let request): request.id
+      }
+    }
+  }
+
+  private var approvalBinding: Binding<ApprovalPresentation?> {
     Binding(
-      get: { store.activeToolCallApprovalRequest },
+      get: {
+        if let request = store.activeToolCallApprovalRequest { return .tool(request) }
+        if let request = store.activeAutocompactionApprovalRequest { return .compaction(request) }
+        return nil
+      },
       set: { _ in }
     )
   }
@@ -289,6 +314,7 @@ struct ContentView: View {
       // and is presented as soon as the approval is resolved.
       get: {
         store.activeToolCallApprovalRequest == nil
+          && store.activeAutocompactionApprovalRequest == nil
           && store.activeLongRunningOperationTimeoutRequest != nil
       },
       set: { _ in })
@@ -296,7 +322,10 @@ struct ContentView: View {
 
   private var errorBinding: Binding<Bool> {
     Binding(
-      get: { store.activeToolCallApprovalRequest == nil && store.errorMessage != nil },
+      get: {
+        store.activeToolCallApprovalRequest == nil
+          && store.activeAutocompactionApprovalRequest == nil && store.errorMessage != nil
+      },
       set: { if !$0 { store.errorMessage = nil } }
     )
   }
@@ -499,6 +528,70 @@ struct ChatScreenBackground: View {
       endPoint: .bottom
     )
     .ignoresSafeArea()
+  }
+}
+
+private struct AutocompactionApprovalView: View {
+  @EnvironmentObject private var store: AppStore
+  let request: AutocompactionApprovalRequest
+  @State private var showingModelSettings = false
+  @State private var confirmingClear = false
+
+  var body: some View {
+    NavigationStack {
+      Form {
+        Section {
+          Text(request.conversationTitle).font(.headline)
+          Text("This chat has about \(request.estimatedTokens) tokens, above its \(request.threshold)-token compaction threshold.")
+          Text("Compacting replaces older messages with a summary and keeps your latest message. Choose how to continue.")
+        }
+        Section("Model") {
+          Button("Change chat model…") {
+            Task {
+              await store.selectConversation(id: request.conversationID)
+              showingModelSettings = true
+            }
+          }
+          Picker("Compaction agent", selection: Binding(
+            get: { store.settings.taskAgents.compact ?? "" },
+            set: {
+              store.settings.taskAgents.compact = $0.isEmpty ? nil : $0
+              store.saveSettings()
+            })) {
+            Text("Current conversation agent").tag("")
+            ForEach(store.settings.agents) { agent in
+              Text(agent.name).tag(agent.id.uuidString.lowercased())
+            }
+          }
+        }
+        Section {
+          Button("Compact and continue") {
+            store.resolveAutocompactionApproval(id: request.id, decision: .compact)
+          }
+          Button("Continue without compacting") {
+            store.resolveAutocompactionApproval(id: request.id, decision: .continueWithoutCompacting)
+          }
+          Button("Stop response", role: .cancel) {
+            store.resolveAutocompactionApproval(id: request.id, decision: .cancelRun)
+          }
+          Button("Clear chat…", role: .destructive) { confirmingClear = true }
+        } footer: {
+          Text("Continuing without compaction keeps all messages for this response. The prompt can appear again on your next message.")
+        }
+      }
+      .navigationTitle("Compact this chat?")
+      .sheet(isPresented: $showingModelSettings) {
+        ConversationModelSettingsView().environmentObject(store)
+      }
+      .alert("Clear this chat?", isPresented: $confirmingClear) {
+        Button("Clear chat", role: .destructive) {
+          store.clearChatForAutocompaction(id: request.id)
+        }
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text("All messages in this chat will be removed and the response will stop.")
+      }
+    }
   }
 }
 

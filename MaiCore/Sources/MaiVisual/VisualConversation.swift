@@ -180,6 +180,8 @@ public final class VisualConversation: Identifiable {
 
   func consume(_ event: AgentEvent) {
     switch event {
+    case .started(let context, _) where context.depth == 0:
+      processID = context.pid
     case .modelStarted(let context, let turn) where context.depth == 0:
       if turn > 1, !liveReply.isEmpty {
         activity.append("assistant: \(liveReply.prefix(100))")

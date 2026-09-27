@@ -5701,7 +5701,7 @@ private struct ToolPickerPopover: View {
   }
 }
 
-private struct ConversationModelSettingsView: View {
+struct ConversationModelSettingsView: View {
   @EnvironmentObject private var store: AppStore
   @Environment(\.dismiss) private var dismiss
   @State private var didSaveDefaults = false

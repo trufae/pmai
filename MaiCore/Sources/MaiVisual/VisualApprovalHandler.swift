@@ -10,6 +10,15 @@ public actor VisualApprovalHandler: ApprovalHandler {
     public let request: ApprovalRequest
   }
 
+  public struct PendingCompaction: Identifiable, Equatable, Sendable {
+    public let id: UUID
+    public let request: AutocompactionRequest
+  }
+
+  private var compactionPresenter: (@Sendable (PendingCompaction) async -> Void)?
+  private var compactionDismiss: (@Sendable (UUID) async -> Void)?
+  private var compactions: [UUID: AsyncThrowingStream<AutocompactionDecision, any Error>.Continuation] = [:]
+
   private var presenter: (@Sendable (Pending) async -> Void)?
   private var continuations: [UUID: CheckedContinuation<ApprovalDecision, any Error>] = [:]
   private let onAlwaysApprove: @Sendable () async -> Void
@@ -32,6 +41,46 @@ public actor VisualApprovalHandler: ApprovalHandler {
     for continuation in waiting.values {
       continuation.resume(returning: .deny(reason: "Visual mode ended before the approval."))
     }
+    compactionPresenter = nil
+    compactionDismiss = nil
+    let pending = compactions
+    compactions.removeAll()
+    for continuation in pending.values { continuation.finish(throwing: CancellationError()) }
+  }
+
+  func attachCompaction(
+    presenter: @escaping @Sendable (PendingCompaction) async -> Void,
+    dismiss: @escaping @Sendable (UUID) async -> Void
+  ) {
+    compactionPresenter = presenter
+    compactionDismiss = dismiss
+  }
+
+  public func decideCompaction(_ request: AutocompactionRequest) async throws -> AutocompactionDecision {
+    guard let compactionPresenter else { return .cancelRun }
+    let dismiss = compactionDismiss
+    let pending = PendingCompaction(id: UUID(), request: request)
+    let (stream, continuation) = AsyncThrowingStream<AutocompactionDecision, any Error>.makeStream()
+    compactions[pending.id] = continuation
+    await compactionPresenter(pending)
+    do {
+      var iterator = stream.makeAsyncIterator()
+      let decision = try await iterator.next()
+      compactions[pending.id] = nil
+      await dismiss?(pending.id)
+      try Task.checkCancellation()
+      return decision ?? .cancelRun
+    } catch {
+      compactions[pending.id] = nil
+      await dismiss?(pending.id)
+      throw error
+    }
+  }
+
+  public func resolveCompaction(_ id: UUID, with decision: AutocompactionDecision) {
+    guard let continuation = compactions.removeValue(forKey: id) else { return }
+    continuation.yield(decision)
+    continuation.finish()
   }
 
   public func decide(_ request: ApprovalRequest) async throws -> ApprovalDecision {

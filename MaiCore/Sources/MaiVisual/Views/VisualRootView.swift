@@ -85,6 +85,12 @@ struct VisualRootView: View {
       ApprovalSheet(pending: pending, workspace: workspace)
     }
     .sheet(
+      item: $workspace.pendingCompaction,
+      onDismiss: { workspace.compactionSheetDismissed() }
+    ) { pending in
+      CompactionSheet(pending: pending, workspace: workspace)
+    }
+    .sheet(
       "Rename chat",
       item: $workspace.pendingConversationRename,
       onDismiss: { workspace.cancelConversationRename() }
@@ -262,6 +268,33 @@ struct RenameConversationSheet: View {
     }
     .padding(1)
     .frame(minWidth: 40, maxWidth: 70, alignment: .leading)
+  }
+}
+
+struct CompactionSheet: View {
+  let pending: VisualApprovalHandler.PendingCompaction
+  let workspace: VisualWorkspace
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 1) {
+      Text("Compact this chat?").bold()
+      Text("Agent '\(pending.request.run.agentID)' has about \(pending.request.estimatedTokens) tokens (threshold \(pending.request.threshold)).")
+      Text("Compaction replaces older exchanges with a summary. Skipping keeps all messages for this response.")
+      HStack(spacing: 2) {
+        Button("Compact") { workspace.resolveCompaction(.compact) }
+        Button("Continue without compacting") { workspace.resolveCompaction(.continueWithoutCompacting) }
+      }
+      HStack(spacing: 2) {
+        Button("Stop to change model") { workspace.stopCompactionToChangeModel() }
+        Button("Clear chat", role: .destructive) {
+          workspace.resolveCompaction(.cancelRun, clearChat: true)
+        }
+        .disabled(!workspace.canClearCompactionChat)
+        Button("Stop", role: .cancel) { workspace.resolveCompaction(.cancelRun) }
+      }
+    }
+    .padding(1)
+    .frame(minWidth: 50, maxWidth: 90, alignment: .leading)
   }
 }
 

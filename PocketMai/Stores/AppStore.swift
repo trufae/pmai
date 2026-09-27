@@ -2877,7 +2877,6 @@ final class AppStore: ObservableObject {
     let task = Task { @MainActor [weak self] in
       guard let self else { return }
       guard responseTaskTokens[conversationID] == responseTaskToken else { return }
-      let messageCountBeforeResponse = conversation(withID: conversationID)?.messages.count ?? 0
       defer {
         if responseTaskTokens[conversationID] == responseTaskToken {
           respondingConversationIDs.remove(conversationID)
@@ -2891,11 +2890,18 @@ final class AppStore: ObservableObject {
           completeAgentProcess(for: conversationID)
         }
       }
-      guard await autoCompactIfNeeded(conversationID: conversationID), !Task.isCancelled else { return }
+      guard await autoCompactIfNeeded(conversationID: conversationID), !Task.isCancelled else {
+        if responseTaskTokens[conversationID] == responseTaskToken {
+          responseOutcomes[conversationID] = .stopped
+        }
+        return
+      }
+      let messageCountBeforeResponse = conversation(withID: conversationID)?.messages.count ?? 0
       if let conversation = conversation(withID: conversationID),
         let message = ChatProviderRouter.preflightMessage(conversation: conversation, settings: settings)
       {
         errorMessage = message
+        responseOutcomes[conversationID] = .failed
         return
       }
       if let conversation = conversation(withID: conversationID), conversation.provider == .mlx {

@@ -2836,9 +2836,10 @@ struct MaiCLI {
               name == "/set"
               && argument.split(whereSeparator: \.isWhitespace).first?.lowercased()
                 == "ui.broadcast"
+            let commandText = text
             let command = await runForeground(name, resumeInput: !changesRouting) {
               await runCommand(
-                text,
+                commandText,
                 session: commandSession,
                 runtime: runtime,
                 plugins: plugins,
