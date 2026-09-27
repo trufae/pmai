@@ -34,6 +34,21 @@ func taskAgentConfiguration() throws {
   }
 }
 
+@Test("Model shorthand never rewrites an unrelated agent with a generated name")
+func taskAgentShorthandCollision() throws {
+  let main = AgentDefinition(
+    id: "task-tool", instructions: "primary", provider: "local", model: "large")
+  var configuration = MaiConfiguration(
+    defaultAgent: main.id,
+    providers: [ConfiguredProvider(id: "local", kind: .hello)], agents: [main])
+  try configuration.assignTask(.tool, selector: "small", current: main)
+  #expect(configuration.agents.first == main)
+  #expect(configuration.taskAgents.tool == "task-tool-2")
+  try configuration.assignTask(.tool, selector: "smaller", current: main)
+  #expect(configuration.agents.count == 2)
+  #expect(configuration.agents.last?.model == "smaller")
+}
+
 @Test("Task agent references are validated; older configurations inherit the current agent")
 func taskAgentValidation() throws {
   let legacy = try JSONDecoder().decode(MaiConfiguration.self, from: Data("{}".utf8))
@@ -153,6 +168,30 @@ func taskAgentManualCompaction() async throws {
   #expect(fallback.provider == original.provider && fallback.model == original.model)
 }
 
+@Test("A primary without native tools can synthesize after a native specialist")
+func taskAgentPrimaryNeedsNoNativeTools() async throws {
+  let primary = TaskFixtureProvider(
+    id: "primary", responses: [.init(message: .assistant("answer"))], nativeTools: false)
+  let specialist = TaskFixtureProvider(
+    id: "local", responses: [.init(message: .assistant("ready"))])
+  let runtime = AgentRuntime()
+  try await runtime.register(primary)
+  try await runtime.register(specialist)
+  try await runtime.register(tool: taskEchoTool())
+  try await runtime.register(
+    agent: AgentDefinition(
+      id: "fast", instructions: "decide", provider: "local", model: "small",
+      toolCallingStrategy: .native))
+  await runtime.configureTaskAgents(.init(tool: "fast"))
+  let result = try await runtime.run(
+    AgentRequest(
+      provider: "primary", model: "large", messages: [.user("answer")], toolNames: ["echo"],
+      toolCallingStrategy: .native, retry: .none))
+  #expect(result.response.text == "answer")
+  #expect(await primary.requests.count == 1)
+  #expect(await primary.requests.first?.tools.isEmpty == true)
+}
+
 private func taskEchoTool() -> ClosureTool {
   ClosureTool(
     definition: ToolDefinition(
@@ -171,9 +210,9 @@ private actor TaskFixtureProvider: ChatProvider {
   nonisolated let descriptor: ProviderDescriptor
   var responses: [ProviderResponse]
   private(set) var requests: [ProviderRequest] = []
-  init(id: ProviderID, responses: [ProviderResponse]) {
+  init(id: ProviderID, responses: [ProviderResponse], nativeTools: Bool = true) {
     descriptor = ProviderDescriptor(
-      id: id, displayName: id.rawValue, capabilities: [.nativeToolCalling])
+      id: id, displayName: id.rawValue, capabilities: nativeTools ? [.nativeToolCalling] : [])
     self.responses = responses
   }
   func complete(_ request: ProviderRequest, emit: @escaping ProviderEventHandler) async throws

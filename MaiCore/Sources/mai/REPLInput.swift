@@ -12,6 +12,8 @@ enum REPLEvent: Sendable {
   case turnFinished(Result<AgentResult, any Error>)
   case approval(ApprovalRequest, REPLApprovalReply)
   case approvalFinished(REPLApprovalReply)
+  case compaction(AutocompactionRequest, REPLCompactionReply)
+  case compactionFinished(REPLCompactionReply)
   case supervisor(AgentSupervisorEvent)
 }
 
@@ -20,14 +22,17 @@ struct REPLInterruptID: Equatable, Hashable, Sendable {
 }
 
 /// Answers one approval a tool call is waiting on, exactly once.
-final class REPLApprovalReply: Sendable {
-  private let continuation: AsyncThrowingStream<ApprovalDecision, any Error>.Continuation
+typealias REPLApprovalReply = REPLReply<ApprovalDecision>
+typealias REPLCompactionReply = REPLReply<AutocompactionDecision>
 
-  init(_ continuation: AsyncThrowingStream<ApprovalDecision, any Error>.Continuation) {
+final class REPLReply<Decision: Sendable>: Sendable {
+  private let continuation: AsyncThrowingStream<Decision, any Error>.Continuation
+
+  init(_ continuation: AsyncThrowingStream<Decision, any Error>.Continuation) {
     self.continuation = continuation
   }
 
-  func resume(with decision: ApprovalDecision) {
+  func resume(with decision: Decision) {
     continuation.yield(decision)
     continuation.finish()
   }

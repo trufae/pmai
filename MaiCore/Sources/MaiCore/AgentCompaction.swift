@@ -1,5 +1,25 @@
 import Foundation
 
+/// A host can pause before automatic summarization without exposing a fake tool.
+public struct AutocompactionRequest: Equatable, Sendable {
+  public var run: AgentEventContext
+  public var estimatedTokens: Int
+  public var threshold: Int
+
+  public init(run: AgentEventContext, estimatedTokens: Int, threshold: Int) {
+    self.run = run
+    self.estimatedTokens = estimatedTokens
+    self.threshold = threshold
+  }
+}
+
+public enum AutocompactionDecision: Equatable, Sendable {
+  case compact
+  /// Keep the transcript for the rest of this run, including subsequent tool turns.
+  case continueWithoutCompacting
+  case cancelRun
+}
+
 /// The prompt that folds a stretch of conversation into durable context.
 /// `/chat compact` and the runtime's autocompact both render it, so a summary
 /// reads the same however it was asked for. Overridable per installation
@@ -63,10 +83,10 @@ public enum AgentCompactionPrompt {
   }
 
   /// The transcript the template is given. Prose travels whole; a tool call
-  /// is one line of name and arguments; a tool result is cut to `resultLimit`
-  /// characters, since what the model did with it is in the prose that
-  /// follows. System messages are not included: the instructions survive
-  /// compaction as they are.
+  /// is one line of name and arguments; tool results and file/resource bodies
+  /// are cut to `resultLimit` characters, since what the model did with them
+  /// is in the prose that follows. System messages are not included: the
+  /// instructions survive compaction as they are.
   public static func transcript(of messages: [AgentMessage], resultLimit: Int = 4_000) -> String {
     var entries: [String] = []
     for message in messages {
@@ -77,7 +97,13 @@ public enum AgentCompactionPrompt {
         break
       }
       var lines: [String] = []
-      let prose = MessageContentFilter.textWithoutReasoning(from: message.text)
+      // AgentMessage.text also flattens file and resource bodies. Only prose
+      // belongs here; attachments are rendered once, with their limit, below.
+      let text = message.content.compactMap { part -> String? in
+        guard case .text(let value) = part else { return nil }
+        return value
+      }.joined(separator: "\n")
+      let prose = MessageContentFilter.textWithoutReasoning(from: text)
         .trimmingCharacters(in: .whitespacesAndNewlines)
       if !prose.isEmpty, message.role != .tool { lines.append(prose) }
       for part in message.content {
@@ -93,6 +119,12 @@ public enum AgentCompactionPrompt {
           lines.append("[file \(file.name)] \(truncated(file.text ?? "", limit: resultLimit))")
         case .file(let file):
           lines.append("[file \(file.name)]")
+        case .resource(let resource):
+          let text = resource.text ?? ""
+          lines.append(
+            text.isEmpty
+              ? "[resource \(resource.uri)]"
+              : "[resource \(resource.uri)] \(truncated(text, limit: resultLimit))")
         case .image(let image):
           lines.append("[image \(image.name ?? image.mimeType)]")
         default:

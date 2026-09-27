@@ -79,6 +79,15 @@ enum ToolCallApprovalDecision: Sendable {
   case interrupted
 }
 
+struct AutocompactionApprovalRequest: Identifiable {
+  let id: UUID
+  let conversationID: UUID
+  let conversationTitle: String
+  let estimatedTokens: Int
+  let threshold: Int
+  let continuation: CheckedContinuation<AutocompactionDecision, Never>
+}
+
 private enum OpenAPIServerAppError: LocalizedError {
   case emptyPrompt
   case unavailable(String)
@@ -418,6 +427,8 @@ final class AppStore: ObservableObject {
   @Published var errorMessage: String?
   @Published var isUpdatingMemory = false
   @Published var isCompacting = false
+  @Published private(set) var autocompactionApprovalRequests: [AutocompactionApprovalRequest] = []
+  private var autoCompactingConversationIDs: Set<UUID> = []
   @Published var endpointStatuses: [UUID: EndpointConnectionState] = [:]
   @Published var endpointModels: [UUID: [String]] = [:]
   @Published var endpointVoices: [UUID: [String]] = [:]
@@ -2736,26 +2747,34 @@ final class AppStore: ObservableObject {
     upsertSummary(for: conversations[i])
     saveConversations()
 
-    if let idx = indexedConversationIndex(for: conversationID),
-      conversations[idx].provider == .mlx,
-      settings.mlxAutoCompact
-    {
-      await autoCompactIfNeeded(conversationID: conversationID)
-    }
-
     dispatchAssistantTurn(
       conversationID: conversationID, context: context.text)
   }
 
-  private func autoCompactIfNeeded(conversationID: UUID) async {
-    guard let idx = indexedConversationIndex(for: conversationID) else { return }
-    let conversation = conversations[idx]
-    guard conversation.messages.count > 3, !isCompacting else { return }
+  func autoCompactIfNeeded(conversationID: UUID) async -> Bool {
+    guard let idx = indexedConversationIndex(for: conversationID) else { return false }
+    var conversation = conversations[idx]
+    guard conversation.provider == .mlx, settings.mlxAutoCompact,
+      conversation.messages.count > 3 else { return true }
 
-    // Estimate token count at ~3 chars/token; compact when exceeding 75% of the KV window.
+    // Estimate token count at ~3 chars/token against the configured KV window.
     let totalChars = conversation.messages.reduce(0) { $0 + $1.text.count }
     let kvLimit = (conversation.mlxMaxKVSize ?? settings.mlxMaxKVSize).effectiveSize
-    guard totalChars > kvLimit * 3 else { return }
+    guard totalChars > kvLimit * 3 else { return true }
+
+    let decision = await requestAutocompactionApproval(
+      conversation: conversation, estimatedTokens: totalChars / 3, threshold: kvLimit)
+    guard !Task.isCancelled, let current = self.conversation(withID: conversationID) else {
+      return false
+    }
+    switch decision {
+    case .cancelRun: return false
+    case .continueWithoutCompacting: return true
+    case .compact: break
+    }
+    // Model and summarizer settings may have changed while the prompt was open.
+    conversation = current
+    let settingsSnapshot = settings
 
     // Summarize all messages except the most recent user message so it is preserved.
     var summaryConversation = conversation
@@ -2763,17 +2782,23 @@ final class AppStore: ObservableObject {
     guard
       let compactReq = await ConversationPromptBuilder.compactRequest(
         conversation: summaryConversation,
-        settings: settings)
-    else { return }
+        settings: settingsSnapshot)
+    else { return true }
 
+    autoCompactingConversationIDs.insert(conversationID)
     isCompacting = true
-    defer { isCompacting = false }
+    defer {
+      autoCompactingConversationIDs.remove(conversationID)
+      isCompacting = !autoCompactingConversationIDs.isEmpty
+    }
 
     do {
-      let summary = try await OneShotPromptRunner.run(compactReq.oneShot, settings: settings)
+      let summary = try await OneShotPromptRunner.run(compactReq.oneShot, settings: settingsSnapshot)
+      try Task.checkCancellation()
       let trimmed = MessageContentFilter.promptSafeText(from: summary)
-      guard !trimmed.isEmpty else { return }
-      guard let i = indexedConversationIndex(for: conversationID) else { return }
+      guard !trimmed.isEmpty else { return true }
+      guard let i = indexedConversationIndex(for: conversationID) else { return false }
+      guard conversations[i].messages == conversation.messages else { return true }
       let lastMsg = conversations[i].messages.last
       let removed = Array(conversations[i].messages.dropLast())
       conversations[i].messages = [
@@ -2784,9 +2809,61 @@ final class AppStore: ObservableObject {
       upsertSummary(for: conversations[i])
       saveConversations()
       deleteUnreferencedVoiceRecordings(from: removed)
+    } catch is CancellationError {
+      return false
     } catch {
       // Best-effort: proceed without compaction if summarization fails.
     }
+    return !Task.isCancelled
+  }
+
+  var activeAutocompactionApprovalRequest: AutocompactionApprovalRequest? {
+    autocompactionApprovalRequests.first
+  }
+
+  func requestAutocompactionApproval(
+    conversation: Conversation, estimatedTokens: Int, threshold: Int
+  ) async -> AutocompactionDecision {
+    let id = UUID()
+    return await withTaskCancellationHandler {
+      await withCheckedContinuation { continuation in
+        guard !Task.isCancelled else {
+          continuation.resume(returning: .cancelRun)
+          return
+        }
+        autocompactionApprovalRequests.append(AutocompactionApprovalRequest(
+          id: id, conversationID: conversation.id, conversationTitle: conversation.displayTitle,
+          estimatedTokens: estimatedTokens, threshold: threshold, continuation: continuation))
+      }
+    } onCancel: {
+      Task { @MainActor [weak self] in
+        self?.resolveAutocompactionApproval(id: id, decision: .cancelRun)
+      }
+    }
+  }
+
+  func resolveAutocompactionApproval(id: UUID, decision: AutocompactionDecision) {
+    guard let index = autocompactionApprovalRequests.firstIndex(where: { $0.id == id }) else { return }
+    let request = autocompactionApprovalRequests.remove(at: index)
+    request.continuation.resume(returning: decision)
+  }
+
+  func clearChatForAutocompaction(id: UUID) {
+    guard let request = autocompactionApprovalRequests.first(where: { $0.id == id }) else { return }
+    let conversationID = request.conversationID
+    abandonResponse(in: conversationID)
+    resolveAutocompactionApproval(id: id, decision: .cancelRun)
+    guard let index = indexedConversationIndex(for: conversationID) else { return }
+    let removed = conversations[index].messages
+    clearStreamingText(for: removed)
+    removeBookmarks(for: removed, in: conversationID)
+    clearFollowUpSuggestions(in: conversationID)
+    conversations[index].messages.removeAll()
+    conversations[index].lastContextSignature = nil
+    conversations[index].updatedAt = Date()
+    upsertSummary(for: conversations[index])
+    saveConversations()
+    deleteUnreferencedVoiceRecordings(from: removed)
   }
 
   private func dispatchAssistantTurn(conversationID: UUID, context: String) {
@@ -2813,6 +2890,13 @@ final class AppStore: ObservableObject {
           activityTurnFinished(conversationID: conversationID)
           completeAgentProcess(for: conversationID)
         }
+      }
+      guard await autoCompactIfNeeded(conversationID: conversationID), !Task.isCancelled else { return }
+      if let conversation = conversation(withID: conversationID),
+        let message = ChatProviderRouter.preflightMessage(conversation: conversation, settings: settings)
+      {
+        errorMessage = message
+        return
       }
       if let conversation = conversation(withID: conversationID), conversation.provider == .mlx {
         let modelID = LocalMLXProvider.effectiveModelID(
@@ -3707,14 +3791,13 @@ final class AppStore: ObservableObject {
     refreshSelectedDisposableConversationDefaults()
   }
 
-  /// Adds an agent copied from the selected one and switches to it, so the
-  /// settings edited next belong to the new agent.
-  func addAgent(named name: String, description: String, canSpawnSubagents: Bool) {
+  /// Adds a reusable profile without changing the default conversation agent.
+  @discardableResult
+  func addAgent(named name: String, description: String, canSpawnSubagents: Bool) -> AgentProfile {
     let agent = settings.addAgent(
       named: name, description: description, canSpawnSubagents: canSpawnSubagents)
-    settings.selectAgent(agent.id)
     saveSettings()
-    refreshSelectedDisposableConversationDefaults()
+    return agent
   }
 
   func removeAgent(_ id: UUID) {
@@ -6193,6 +6276,7 @@ final class AppStoreViewObservation: ObservableObject {
       observe(store.$settings)
       observe(store.$errorMessage)
       observe(store.$toolCallApprovalRequests)
+      observe(store.$autocompactionApprovalRequests)
       observe(store.$longRunningOperationTimeoutRequests)
     case .chat:
       observe(store.$activeConversation)

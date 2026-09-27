@@ -844,6 +844,7 @@ private final class TerminalInterruptHandler: @unchecked Sendable {
 
 private actor TerminalApprovalHandler: ApprovalHandler {
   typealias Prompter = @Sendable (ApprovalRequest) async throws -> ApprovalDecision
+  typealias CompactionPrompter = @Sendable (AutocompactionRequest) async throws -> AutocompactionDecision
 
   private struct ProjectSettings: Codable {
     var yolo: Bool?
@@ -861,6 +862,7 @@ private actor TerminalApprovalHandler: ApprovalHandler {
   /// terminal, so a question from a child agent never fights the line editor
   /// for stdin.
   private var prompter: Prompter?
+  private var compactionPrompter: CompactionPrompter?
 
   init(
     configuration: ConfiguredApprovals, projectSettingsURL: URL, yoloEnabled: Bool = false
@@ -927,6 +929,33 @@ private actor TerminalApprovalHandler: ApprovalHandler {
 
   func setPrompter(_ prompter: Prompter?) {
     self.prompter = prompter
+  }
+
+  func setCompactionPrompter(_ prompter: CompactionPrompter?) {
+    compactionPrompter = prompter
+  }
+
+  func decideCompaction(_ request: AutocompactionRequest) async throws -> AutocompactionDecision {
+    // Tool YOLO does not grant permission to replace conversation history.
+    if let delegate { return try await delegate.decideCompaction(request) }
+    if let compactionPrompter { return try await compactionPrompter(request) }
+    guard isatty(STDIN_FILENO) != 0 else { return .compact }
+    FileHandle.standardError.write(Data(
+      "Automatic compaction: about \(request.estimatedTokens) tokens (threshold \(request.threshold)).\n"
+        .utf8))
+    let editor = TerminalLineEditor()
+    while true {
+      guard let line = editor.readLine(
+        prompt: "[y] compact / [n] continue without compacting / [c] stop: ", completions: [])
+      else { return .cancelRun }
+      if editor.wasInterrupted { throw CancellationError() }
+      switch line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+      case "y", "yes", "compact": return .compact
+      case "n", "no", "continue", "skip": return .continueWithoutCompacting
+      case "c", "cancel", "stop": return .cancelRun
+      default: continue
+      }
+    }
   }
 
   func decide(_ request: ApprovalRequest) async throws -> ApprovalDecision {
@@ -1694,6 +1723,7 @@ struct MaiCLI {
     var focus: REPLMessageTarget = .main
     var approvals: [(request: ApprovalRequest, reply: REPLApprovalReply)] = []
     var editingApproval: (request: ApprovalRequest, reply: REPLApprovalReply)?
+    var compactions: [(request: AutocompactionRequest, reply: REPLCompactionReply)] = []
     var pendingQueueMessage: String?
     /// True while the input thread waits for the loop before reading again.
     var readerParked = true
@@ -1703,6 +1733,8 @@ struct MaiCLI {
       exiting = true
       activeTurn?.task.cancel()
       cancelApprovals { _ in true }
+      for pending in compactions { pending.reply.fail(CancellationError()) }
+      compactions.removeAll()
     }
 
     mutating func cancelApprovals(matching matches: (ApprovalRequest) -> Bool) {
@@ -1834,6 +1866,20 @@ struct MaiCLI {
         return decision
       }
     }
+    if isatty(STDIN_FILENO) != 0 {
+      await visual.approvalHandler.setCompactionPrompter { request in
+        let (decisions, pending) = AsyncThrowingStream<AutocompactionDecision, any Error>.makeStream()
+        let reply = REPLCompactionReply(pending)
+        defer { continuation.yield(.compactionFinished(reply)) }
+        if case .terminated = continuation.yield(.compaction(request, reply)) {
+          throw CancellationError()
+        }
+        var iterator = decisions.makeAsyncIterator()
+        guard let decision = try await iterator.next() else { throw CancellationError() }
+        try Task.checkCancellation()
+        return decision
+      }
+    }
     let supervisorFeed = Task {
       for await change in await runtime.supervisor.events() {
         continuation.yield(.supervisor(change))
@@ -1897,6 +1943,8 @@ struct MaiCLI {
       } else if let waiting = loop.approvals.first {
         let who = waiting.request.run.pid.map { "agent#\($0.rawValue) " } ?? ""
         facts.append("approve? \(who)\(waiting.request.tool.name) [y/a/n/e/c]")
+      } else if !loop.compactions.isEmpty {
+        facts.append("compact? [y/n/m/x/c]")
       }
       let detail = facts.isEmpty ? "" : " · " + facts.joined(separator: " · ")
       // The chat title goes last so a narrow terminal truncates it, not the status.
@@ -1915,6 +1963,9 @@ struct MaiCLI {
       } else if let waiting = loop.approvals.first {
         let who = waiting.request.run.pid.map { "#\($0.rawValue) " } ?? ""
         prompt = "approve \(who)\(waiting.request.tool.name)? [y/a/n/e/c] "
+      } else if let waiting = loop.compactions.first {
+        let who = waiting.request.run.pid.map { "#\($0.rawValue) " } ?? ""
+        prompt = "compact \(who)? [y/n/m/x/c] "
       } else if configuration?.ui.broadcast == true {
         prompt = "pmai@*> "
       } else if case .agent(let pid) = loop.focus {
@@ -1962,7 +2013,7 @@ struct MaiCLI {
     /// On a plain terminal a turn owns the screen, so the next line waits for
     /// it; on the persistent screen the prompt is always open.
     func releaseIfIdle(workspace: AgentChatWorkspace) async {
-      if screen != nil || loop.activeTurn == nil {
+      if screen != nil || loop.activeTurn == nil || !loop.compactions.isEmpty {
         await releaseReader(workspace: workspace)
       }
     }
@@ -2437,7 +2488,7 @@ struct MaiCLI {
         loop.readerParked = true
         let typed = heredoc ? raw : raw.trimmingCharacters(in: .whitespacesAndNewlines)
         // `$NAME [TEXT]` is the short form of `/prompts NAME [TEXT]`.
-        let text =
+        var text =
           !heredoc && typed.hasPrefix("$")
           ? ("/prompts " + typed.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
           : typed
@@ -2475,6 +2526,44 @@ struct MaiCLI {
           await refreshStatus()
           await releaseIfIdle(workspace: workspace)
           continue
+        }
+        if !heredoc, let waiting = loop.compactions.first {
+          var decision: AutocompactionDecision?
+          switch text.lowercased() {
+          case "y", "yes", "compact": decision = .compact
+          case "n", "no", "skip", "continue": decision = .continueWithoutCompacting
+          case "c", "cancel", "stop": decision = .cancelRun
+          case "m", "model":
+            await terminal.line(
+              "Use /model NAME to change the conversation model, or /model -compact NAME to change the summarizer. Then choose y to compact or n to continue without compacting.")
+            await releaseIfIdle(workspace: workspace)
+            continue
+          case "x", "clear":
+            guard waiting.request.run.pid == chatProcessIDs[session.id] else {
+              await terminal.line("Switch to the requesting chat before clearing it; c stops this run.")
+              await releaseIfIdle(workspace: workspace)
+              continue
+            }
+            text = "/chat clear"
+          default:
+            if !text.hasPrefix("/") {
+              await terminal.line("Choose y (compact), n (continue without compacting), m (model), x (clear chat), or c (stop). Slash commands remain available.")
+              await releaseIfIdle(workspace: workspace)
+              continue
+            }
+          }
+          if let decision {
+            loop.compactions.removeFirst()
+            waiting.reply.resume(with: decision)
+            await refreshStatus()
+            await releaseIfIdle(workspace: workspace)
+            continue
+          }
+          if text == "/chat clear", waiting.request.run.pid == chatProcessIDs[session.id] {
+            loop.compactions.removeFirst()
+            waiting.reply.resume(with: .cancelRun)
+            loop.activeTurn?.task.cancel()
+          }
         }
         if !heredoc, text == "@" {
           await terminal.line("Usage: @TEXT or @@ TEXT or @PID TEXT or @2,3 TEXT")
@@ -2964,6 +3053,23 @@ struct MaiCLI {
         if loop.editingApproval?.reply === reply { loop.editingApproval = nil }
         await refreshStatus()
 
+      case .compaction(let request, let reply):
+        if loop.exiting {
+          reply.fail(CancellationError())
+        } else {
+          loop.compactions.append((request, reply))
+          await terminal.note(
+            "Automatic compaction for \(request.run.agentID): about \(request.estimatedTokens) tokens (threshold \(request.threshold)).", color: "yellow")
+          await terminal.line(
+            "[y] compact · [n] continue without compacting this response · [m] change model · [x] clear chat · [c] stop\n/model and /model -compact remain available before deciding.")
+        }
+        await refreshStatus()
+        await releaseIfIdle(workspace: workspace)
+
+      case .compactionFinished(let reply):
+        loop.compactions.removeAll { $0.reply === reply }
+        await refreshStatus()
+
       case .supervisor(let change):
         switch change {
         case .finished(let info) where info.depth > 0:
@@ -2989,6 +3095,7 @@ struct MaiCLI {
     supervisorFeed.cancel()
     continuation.finish()
     await visual.approvalHandler.setPrompter(nil)
+    await visual.approvalHandler.setCompactionPrompter(nil)
     await recordSubagents()
     workspace.upsert(session.chat, selecting: true)
     await saveWorkspace(&workspace, store: store, terminal: terminal, closing: true)

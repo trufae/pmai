@@ -54,8 +54,15 @@ extension MaiConfiguration {
       return
     }
     let selection = try modelSelection(selector, currentProvider: current.provider)
-    let id = "task-\(task.rawValue)"
+    let stem = "task-\(task.rawValue)"
+    var id = stem
+    var suffix = 2
+    while agents.contains(where: { $0.id == id }), taskAgents[task] != id || current.id == id {
+      id = "\(stem)-\(suffix)"
+      suffix += 1
+    }
     // Reusing a shorthand keeps its independently edited effort and prompt.
+    // An unrelated agent with the same name must never be overwritten.
     var agent =
       agents.first(where: { $0.id == id })
       ?? AgentDefinition(

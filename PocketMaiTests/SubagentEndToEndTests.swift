@@ -488,4 +488,13 @@ final class SubagentEndToEndTests: XCTestCase {
       })
   }
 
+  func testCreatingTaskProfilesDoesNotSwitchTheDefaultAgent() {
+    let selected = store.settings.selectedAgentID
+    let agent = store.addAgent(
+      named: "Compactor", description: "Summarizes", canSpawnSubagents: false)
+    XCTAssertNotEqual(agent.id, selected)
+    XCTAssertEqual(store.settings.selectedAgentID, selected)
+    XCTAssertTrue(store.settings.agents.contains { $0.id == agent.id })
+  }
+
 }

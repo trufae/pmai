@@ -295,6 +295,7 @@ public actor AgentRuntime {
       request.provider = agent.provider
       request.model = agent.model
       request.options = agent.options
+      request.responseFormat = agent.responseFormat
       request.retry = agent.retry
       request.stream = agent.stream
       request.toolCallingStrategy = agent.toolCallingStrategy
@@ -562,6 +563,7 @@ public actor AgentRuntime {
     /// What the provider counted on the last call, for the autocompact
     /// estimate. Cleared when a summary changes the transcript's shape.
     var lastUsage: TokenUsage?
+    var skipAutocompaction = false
     var localModelTurns = 0
     var localToolCalls = 0
     var answering = false
@@ -606,38 +608,6 @@ public actor AgentRuntime {
       try await holdWhilePaused(pid)
       request = currentRequest(request, for: pid)
       await budget.update(limits: request.limits)
-      let concreteDefinitions = try visibleDefinitions(for: request, depth: depth)
-      let selectingTools =
-        !answering && taskAgents.tool != nil && !concreteDefinitions.isEmpty
-        && localToolCalls < request.limits.maxToolCalls && !repeatGuardTripped
-      var inference = request
-      inference.messages = transcript
-      if selectingTools { inference = try taskRequest(.tool, from: inference) }
-      guard let provider = providers[inference.provider] else {
-        throw AgentRuntimeError.providerNotRegistered(inference.provider)
-      }
-      let definitions =
-        request.useToolProxy && !concreteDefinitions.isEmpty
-        ? ToolProxy.definitions(for: concreteDefinitions, exposing: request.proxyExposedTools)
-        : concreteDefinitions
-      let supportsNativeTools = provider.descriptor.capabilities.contains(.nativeToolCalling)
-      if inference.toolCallingStrategy == .native, !definitions.isEmpty, !supportsNativeTools {
-        throw AgentRuntimeError.nativeToolCallingUnavailable(inference.provider)
-      }
-      let textToolMode: ToolCallingMode?
-      switch inference.toolCallingStrategy {
-      case .automatic:
-        textToolMode = definitions.isEmpty || supportsNativeTools ? nil : .json
-      case .native:
-        textToolMode = nil
-      case .text:
-        textToolMode = definitions.isEmpty ? nil : .text
-      case .xml:
-        textToolMode = definitions.isEmpty ? nil : .xml
-      case .json:
-        textToolMode = definitions.isEmpty ? nil : .json
-      }
-      let usesTextToolProtocol = textToolMode != nil
       // Edits the agent asked for with the context tools land first, so the
       // next turn already runs on the smaller conversation. A compaction the
       // agent left for the runtime to write is summarized here, the way
@@ -662,7 +632,7 @@ public actor AgentRuntime {
           do {
             let text = try await summaryText(
               of: selection, in: transcript, focus: Self.requestedFocus(focus),
-              provider: provider, request: request, budget: budget, context: context, pid: pid,
+              request: request, budget: budget, context: context, pid: pid,
               totalUsage: &totalUsage, emit: emit)
             resolved.append(.compact(messageIDs: selection, summary: text))
           } catch is RunDeadlineExceeded {
@@ -694,6 +664,7 @@ public actor AgentRuntime {
       // read, so a running agent can be steered without stopping it.
       let injected = await supervisor.drainInbox(pid, excluding: request.ignoredQueuedMessageIDs)
       if !injected.isEmpty {
+        answering = false
         for message in injected {
           transcript.append(message)
           // A child started without waiting reports here too: its answer
@@ -712,17 +683,41 @@ public actor AgentRuntime {
       // A conversation past the agent's autocompact threshold is folded here,
       // before the limits are checked, so a run that pauses next hands its
       // host the smaller transcript too.
-      if request.autocompact.isEnabled {
+      if request.autocompact.isEnabled && !skipAutocompaction {
         let estimate = AgentAutocompaction.estimatedTokens(of: transcript, lastUsage: lastUsage)
         if estimate >= request.autocompact.tokens,
           let selection = AgentAutocompaction.selection(in: transcript)
         {
+          await supervisor.raise(.input("Automatic compaction needs a decision."), for: pid)
+          let decision: AutocompactionDecision
+          do {
+            decision = try await approvalHandler.decideCompaction(
+              AutocompactionRequest(
+                run: context, estimatedTokens: estimate, threshold: request.autocompact.tokens))
+            try Task.checkCancellation()
+          } catch {
+            await supervisor.clearAttention(for: pid)
+            throw error
+          }
+          await supervisor.clearAttention(for: pid)
+          switch decision {
+          case .cancelRun:
+            throw CancellationError()
+          case .continueWithoutCompacting:
+            skipAutocompaction = true
+            continue
+          case .compact:
+            break
+          }
+          // The person may have changed the model or task assignment while waiting.
+          request = currentRequest(request, for: pid)
+          if !request.autocompact.isEnabled { continue }
           await emit(.compactionStarted(context, estimatedTokens: estimate))
           await supervisor.note(pid, activity: "compacting")
           do {
             let text = try await summaryText(
               of: selection, in: transcript, focus: AgentCompactionPrompt.automaticFocus,
-              provider: provider, request: request, budget: budget, context: context, pid: pid,
+              request: request, budget: budget, context: context, pid: pid,
               totalUsage: &totalUsage, emit: emit)
             let applied = AgentTranscriptEditor.apply(
               [.compact(messageIDs: selection, summary: text)], to: transcript)
@@ -741,6 +736,13 @@ public actor AgentRuntime {
           }
         }
       }
+      request = currentRequest(request, for: pid)
+      await budget.update(limits: request.limits)
+      let concreteDefinitions = try visibleDefinitions(for: request, depth: depth)
+      let definitions =
+        request.useToolProxy && !concreteDefinitions.isEmpty
+        ? ToolProxy.definitions(for: concreteDefinitions, exposing: request.proxyExposedTools)
+        : concreteDefinitions
       if localModelTurns >= request.limits.maxModelTurns {
         return await pause(.modelTurns(limit: request.limits.maxModelTurns))
       }
@@ -757,13 +759,38 @@ public actor AgentRuntime {
         answering
         || (!definitions.isEmpty
           && (localToolCalls >= request.limits.maxToolCalls || repeatGuardTripped))
-      // Rebuild after any compaction or queued messages changed the transcript.
+      // Resolve once at the call boundary, after compaction and queued input.
+      // A task assignment changed during an await cannot mix one provider with
+      // another agent's model or options.
+      let selectingTools =
+        !answering && taskAgents.tool != nil && !concreteDefinitions.isEmpty
+        && localToolCalls < request.limits.maxToolCalls && !repeatGuardTripped
+      var inference = request
       inference.messages = transcript
-      if selectingTools {
-        var base = request
-        base.messages = transcript
-        inference = try taskRequest(.tool, from: base)
+      if selectingTools { inference = try taskRequest(.tool, from: inference) }
+      guard let provider = providers[inference.provider] else {
+        throw AgentRuntimeError.providerNotRegistered(inference.provider)
       }
+      let supportsNativeTools = provider.descriptor.capabilities.contains(.nativeToolCalling)
+      if !toolBudgetExhausted, inference.toolCallingStrategy == .native, !definitions.isEmpty,
+        !supportsNativeTools
+      {
+        throw AgentRuntimeError.nativeToolCallingUnavailable(inference.provider)
+      }
+      let textToolMode: ToolCallingMode?
+      switch inference.toolCallingStrategy {
+      case .automatic:
+        textToolMode = definitions.isEmpty || supportsNativeTools ? nil : .json
+      case .native:
+        textToolMode = nil
+      case .text:
+        textToolMode = definitions.isEmpty ? nil : .text
+      case .xml:
+        textToolMode = definitions.isEmpty ? nil : .xml
+      case .json:
+        textToolMode = definitions.isEmpty ? nil : .json
+      }
+      let usesTextToolProtocol = textToolMode != nil
       var providerMessages = inference.messages
       if let instructionsSection {
         insertSystem(instructionsSection, into: &providerMessages)
@@ -791,7 +818,7 @@ public actor AgentRuntime {
         messages: providerMessages,
         tools: offersTools ? definitions : [],
         toolChoice: definitions.isEmpty || !offersTools ? .none : request.toolChoice,
-        responseFormat: request.responseFormat,
+        responseFormat: inference.responseFormat,
         options: inference.options,
         stream: usesTextToolProtocol ? false : inference.stream,
         sessionID: request.sessionID)
@@ -1248,7 +1275,6 @@ public actor AgentRuntime {
     of selection: [String],
     in transcript: [AgentMessage],
     focus: String,
-    provider: any ChatProvider,
     request: AgentRequest,
     budget: RunBudget,
     context: AgentEventContext,
@@ -1257,7 +1283,7 @@ public actor AgentRuntime {
     emit: @escaping AgentEventHandler
   ) async throws -> String {
     let summary = try await summarize(
-      selection, of: transcript, focus: focus, provider: provider, request: request,
+      selection, of: transcript, focus: focus, request: request,
       budget: budget, context: context, pid: pid, emit: emit)
     let usage =
       summary.response.usage
@@ -1278,7 +1304,6 @@ public actor AgentRuntime {
     _ selection: [String],
     of transcript: [AgentMessage],
     focus: String,
-    provider: any ChatProvider,
     request: AgentRequest,
     budget: RunBudget,
     context: AgentEventContext,

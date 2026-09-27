@@ -340,6 +340,14 @@ public enum ApprovalDecision: Equatable, Sendable {
 
 public protocol ApprovalHandler: Sendable {
   func decide(_ request: ApprovalRequest) async throws -> ApprovalDecision
+  func decideCompaction(_ request: AutocompactionRequest) async throws -> AutocompactionDecision
+}
+
+extension ApprovalHandler {
+  /// Hosts without an interactive surface retain their configured automatic policy.
+  public func decideCompaction(_ request: AutocompactionRequest) async throws -> AutocompactionDecision {
+    .compact
+  }
 }
 
 public struct DenyInteractiveApprovals: ApprovalHandler {

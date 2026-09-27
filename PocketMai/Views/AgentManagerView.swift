@@ -11,6 +11,7 @@ struct AgentManagerView: View {
   @State private var showingNewAgent = false
   @State private var editingAgentID: UUID?
   @State private var pendingRemoval: AgentProfile?
+  @State private var createdAgentID: UUID?
 
   var body: some View {
     List {
@@ -84,9 +85,19 @@ struct AgentManagerView: View {
     .navigationDestination(item: $editingAgentID) { id in
       AgentEditorView(store: store, storeObservation: storeObservation, mode: .edit(id))
     }
-    .sheet(isPresented: $showingNewAgent) {
+    .sheet(
+      isPresented: $showingNewAgent,
+      onDismiss: {
+        if let id = createdAgentID {
+          editingAgentID = id
+          createdAgentID = nil
+        }
+      }
+    ) {
       NavigationStack {
-        AgentEditorView(store: store, storeObservation: storeObservation, mode: .create)
+        AgentEditorView(store: store, storeObservation: storeObservation, mode: .create) { agent in
+          createdAgentID = agent.id
+        }
       }
     }
     .alert(
@@ -204,8 +215,8 @@ struct AgentManagerView: View {
 }
 
 /// Edits what identifies an agent: its name, what it is for, and whether it
-/// may start child agents. Creating adds the agent as a copy of the selected
-/// one and selects it; editing saves as the fields change.
+/// may start child agents. Creating copies the selected agent; editing saves
+/// as the fields change without changing the default for new chats.
 struct AgentEditorView: View {
   enum Mode: Equatable {
     case create
@@ -215,6 +226,7 @@ struct AgentEditorView: View {
   let store: AppStore
   @ObservedObject var storeObservation: AppStoreViewObservation
   let mode: Mode
+  var onCreate: ((AgentProfile) -> Void)? = nil
   @Environment(\.dismiss) private var dismiss
   @State private var name = ""
   @State private var description = ""
@@ -236,7 +248,7 @@ struct AgentEditorView: View {
       } footer: {
         Text(
           (isCreating
-            ? "The new agent starts with the selected agent's model, prompt, tools, and MCP servers, and becomes the selected agent so you can change them in Settings. "
+            ? "The new agent starts with the selected agent's model, prompt, tools, and MCP servers, and opens for editing without changing the default for new chats. "
             : "Edit its model and instructions below. Select it in the list to configure tools and MCP servers in Settings. ")
             + "An agent that can spawn subagents gets the agent_start, agent_status, agent_result, and agent_stop tools: it can hand a task to a worker with its own model and tools, or to any other agent by name, and only the answer comes back into the chat. Running subagents show in a bar above the composer, where they can be paused, messaged, or stopped."
         )
@@ -255,8 +267,9 @@ struct AgentEditorView: View {
         }
         ToolbarItem(placement: .confirmationAction) {
           Button("Add") {
-            store.addAgent(
+            let agent = store.addAgent(
               named: name, description: description, canSpawnSubagents: canSpawnSubagents)
+            onCreate?(agent)
             dismiss()
           }
           .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)

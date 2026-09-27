@@ -184,7 +184,6 @@ enum AssistantToolLoop {
       let response: String
       do {
         response = try await requestModelResponse(
-          conversation: conversation,
           requestState: requestState,
           state: state,
           assistantID: activeAssistantID,
@@ -484,7 +483,6 @@ enum AssistantToolLoop {
         store: store,
         answering: state.answering)
       let response = try await requestModelResponse(
-        conversation: conversation,
         requestState: requestState,
         state: state,
         assistantID: assistantID,
@@ -583,7 +581,6 @@ enum AssistantToolLoop {
   }
 
   private static func requestModelResponse(
-    conversation: Conversation,
     requestState: RequestState,
     state: State,
     assistantID: UUID,
@@ -599,7 +596,7 @@ enum AssistantToolLoop {
       return state.completedToolRuns.isEmpty ? requestState.toolPrompt : ""
     }()
     let userInputTokens: Int?
-    if case .live = host, state.toolCallCount == 0, state.repairTurnCount == 0 {
+    if case .live = host, !state.answering, state.toolCallCount == 0, state.repairTurnCount == 0 {
       userInputTokens = userInputTokenEstimate(in: conversation, before: assistantID)
     } else {
       userInputTokens = nil
