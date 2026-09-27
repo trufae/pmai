@@ -222,7 +222,11 @@ def main():
                         assert ('agent_start' in tools) == (depth < max_depth), (depth, tools)
                     all_notes = {text for _, text in expected}
                     for depth, request in dict(requests).items():
-                        users = [m['content'] for m in request['messages'] if m['role'] == 'user']
+                        # The provider joins adjacent user turns with blank lines.
+                        # These notes are single lines, so recover each note to
+                        # check delivery order and rejected messages.
+                        users = [text for m in request['messages'] if m['role'] == 'user'
+                                 for text in m['content'].split('\n\n')]
                         notes = [text for pid, text in expected if pid == pids[depth]]
                         assert [text for text in users if text in all_notes] == notes, (depth, users, notes)
                         assert not any(text in ('discard me', 'must not arrive') for text in users), users

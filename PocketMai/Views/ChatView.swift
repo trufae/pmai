@@ -5717,8 +5717,6 @@ private struct ConversationModelSettingsView: View {
         if store.currentConversation == nil {
           ContentUnavailableView("No Chat Selected", systemImage: "bubble.left")
         } else {
-          folderSection
-
           Section {
             HStack {
               Button {
@@ -5781,6 +5779,8 @@ private struct ConversationModelSettingsView: View {
             }
             providerModelControls
           }
+
+          folderSection
 
           Section {
             ReasoningLevelControl(
