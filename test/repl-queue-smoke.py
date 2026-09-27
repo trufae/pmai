@@ -161,17 +161,37 @@ def main():
                     del output[:end]
                     return captured
 
-                def user_texts():
-                    try:
-                        request = requests.get(timeout=20)
-                    except queue.Empty as error:
-                        while select.select([master], [], [], 0)[0]:
+                def next_request(mailbox, timeout=20):
+                    # A terminal keeps consuming output while a request starts.
+                    # Do the same here: help text and input redraws can fill the
+                    # PTY buffer and block pmai before it reaches the provider.
+                    deadline = time.monotonic() + timeout
+                    while mailbox.empty():
+                        assert time.monotonic() < deadline, (
+                            choice, 'provider request timed out',
+                            process.poll(), output.decode(errors='replace'))
+                        assert process.poll() is None, (process.returncode, output)
+                        if select.select([master], [], [], .1)[0]:
+                            try:
+                                output.extend(os.read(master, 65536))
+                            except OSError as error:
+                                raise AssertionError((process.poll(), output)) from error
+                    return mailbox.get_nowait()
+
+                def wait_for_exit(timeout=10):
+                    deadline = time.monotonic() + timeout
+                    while process.poll() is None:
+                        assert time.monotonic() < deadline, (
+                            choice, 'exit timed out', output.decode(errors='replace'))
+                        if select.select([master], [], [], .1)[0]:
                             try:
                                 output.extend(os.read(master, 65536))
                             except OSError:
                                 break
-                        raise AssertionError((choice, 'provider request timed out',
-                                              process.poll(), output.decode(errors='replace'))) from error
+                    process.wait(timeout=max(.1, deadline - time.monotonic()))
+
+                def user_texts():
+                    request = next_request(requests)
                     # The OpenAI-compatible provider joins adjacent user turns
                     # on the wire; these prompts are each one line, so split
                     # them back out to check the queue's order.
@@ -193,7 +213,7 @@ def main():
                                 output.extend(os.read(master, 65536))
                         child_pid = int(marker.read_text())
                         if prompt == 'shell-child':
-                            assert requests.get(timeout=5)['model'] == 'worker'
+                            assert next_request(requests, timeout=5)['model'] == 'worker'
                         send('\x03')
                         wait_for('✗ took')
                         status = subprocess.run(['ps', '-p', str(child_pid), '-o', 'stat='],
@@ -204,7 +224,7 @@ def main():
                         assert user_texts()[-1] == 'yes'
                         wait_for('✓ took')
                         send('/exit\n')
-                        process.wait(timeout=10)
+                        wait_for_exit()
                         assert process.returncode == 0, process.returncode
                         print(f'PASS {choice}', flush=True)
                         continue
@@ -216,7 +236,7 @@ def main():
                         if prompt != 'approval':
                             wait_for("wants to run confirm tool 'agent_start'")
                             send('y\n')
-                            models = sorted(requests.get(timeout=20)['model']
+                            models = sorted(next_request(requests)['model']
                                             for _ in range(2 if prompt == 'background' else 1))
                             assert models == (['smoke', 'worker'] if prompt == 'background' else ['worker']), models
                         approval = wait_for("wants to run confirm tool 'files_write'")
@@ -251,7 +271,7 @@ def main():
                             send('/exit\n')
                         else:
                             send('\x04' if action == 'eof' else f'/{action}\n')
-                        process.wait(timeout=10)
+                        wait_for_exit()
                         assert process.returncode == 0, process.returncode
                         assert not (root / 'unapproved.txt').exists(), 'Unapproved tool ran'
                         assert requests.empty(), 'Provider called again after shutdown'
@@ -270,7 +290,7 @@ def main():
                         # subsequent input. It must be a normal cancellable job.
                         models_release.clear()
                         send('/models\n')
-                        assert model_requests.get(timeout=20).endswith('/models')
+                        assert next_request(model_requests).endswith('/models')
                         send('\x03')
                         wait_for('cancelled /models')
                         send('/help\n')
@@ -306,7 +326,7 @@ def main():
                     else:
                         wait_for('Nothing is queued')
                     send('/exit\n')
-                    process.wait(timeout=10)
+                    wait_for_exit()
                     assert process.returncode == 0
                     print(f'PASS queue {choice}')
                 finally:

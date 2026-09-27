@@ -10540,6 +10540,9 @@ struct MaiCLI {
 
   private static let replHelp = """
     /agent                 Select or edit this chat's agent; /help agent lists commands
+    /agent add NAME       Copy this agent's settings into a new saved agent
+    /agent default ID     Save the default agent for new chats and runs
+    /agent effort ID LEVEL  Set an agent's reasoning effort
     /agents                Manage agent definitions and running agents; /help agents lists commands
     /attach [MODE] PATH    Attach a document/source file; HTML asks for source, markdown, or copy
     /attach clear          Drop the attachments queued for the next message
@@ -10563,10 +10566,6 @@ struct MaiCLI {
     /model [PROVIDER::]MODEL  Select and save a model for this agent
     /model -compact [NAME] Select a compaction agent/model; omit NAME to clear
     /model -tool [NAME]    Select a tool-decision agent/model; omit NAME to clear
-    /provider add ID URL [--api-key-file PATH]  Save a provider connection
-    /agent add NAME       Copy this agent's settings into a new saved agent
-    /agent default ID     Save the default agent for new chats and runs
-    /agent effort ID LEVEL  Set an agent's reasoning effort
     /models [PROVIDER]     List models from the current or named provider
     /nothink               Disable reasoning where the model supports it
     /plugins               List statically and dynamically loaded plugins
@@ -10574,6 +10573,7 @@ struct MaiCLI {
     /prompt                Manage named system prompts; /help prompt lists commands
     /prompts               List every prompt and skill; $NAME [TEXT] sends one (/help prompt)
     /provider ID           Select a provider
+    /provider add ID URL [--api-key-file PATH]  Save a provider connection
     /providers             List registered providers
     /queue                 List, push, pop, or drop messages waiting for an agent
     /reply [WIDTH]         Answer the last reply in $EDITOR with it quoted above (/help reply)

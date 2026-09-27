@@ -2810,6 +2810,31 @@ private struct MetaSectionText: View, Equatable {
   }
 }
 
+/// Keeps expanded metadata within the chat while allowing long content to scroll.
+private struct BoundedMetaSectionContent<Content: View>: View {
+  let maxHeight: CGFloat
+  let content: Content
+  @State private var contentHeight: CGFloat
+
+  init(maxHeight: CGFloat, @ViewBuilder content: () -> Content) {
+    self.maxHeight = maxHeight
+    self.content = content()
+    _contentHeight = State(initialValue: maxHeight)
+  }
+
+  var body: some View {
+    ScrollView(.vertical) {
+      content
+        .onGeometryChange(for: CGFloat.self) {
+          $0.size.height
+        } action: {
+          contentHeight = $0
+        }
+    }
+    .frame(height: min(maxHeight, contentHeight))
+  }
+}
+
 private struct ScrollingMetaSectionContent: View {
   let content: String
   let isStreaming: Bool
@@ -2817,7 +2842,6 @@ private struct ScrollingMetaSectionContent: View {
   let style: MetaSectionTextStyle
 
   @State private var buffer: ReasoningRenderBuffer
-  @State private var contentHeight: CGFloat
 
   init(content: String, isStreaming: Bool, maxHeight: CGFloat, style: MetaSectionTextStyle) {
     self.content = content
@@ -2825,11 +2849,10 @@ private struct ScrollingMetaSectionContent: View {
     self.maxHeight = maxHeight
     self.style = style
     _buffer = State(initialValue: ReasoningRenderBuffer(content, isStreaming: isStreaming))
-    _contentHeight = State(initialValue: maxHeight)
   }
 
   var body: some View {
-    ScrollView(.vertical) {
+    BoundedMetaSectionContent(maxHeight: maxHeight) {
       VStack(alignment: .leading, spacing: 0) {
         if !buffer.settledText.isEmpty {
           MetaSectionText(content: buffer.settledText, style: style)
@@ -2845,13 +2868,7 @@ private struct ScrollingMetaSectionContent: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .padding(.horizontal, 12)
       .padding(.vertical, 10)
-      .onGeometryChange(for: CGFloat.self) {
-        $0.size.height
-      } action: {
-        contentHeight = $0
-      }
     }
-    .frame(height: min(maxHeight, contentHeight))
     .onChange(of: content) { _, text in
       buffer.update(text, isStreaming: isStreaming)
     }
@@ -2956,13 +2973,15 @@ private struct ToolCallRow: View {
       .buttonStyle(.plain)
       if expanded {
         Divider().opacity(0.4)
-        VStack(alignment: .leading, spacing: 8) {
-          toolSection(label: "Input", value: entry.params, emptyText: "(no input)")
-          toolSection(label: "Output", value: entry.body, emptyText: "(no output)")
+        BoundedMetaSectionContent(maxHeight: 240) {
+          VStack(alignment: .leading, spacing: 8) {
+            toolSection(label: "Input", value: entry.params, emptyText: "(no input)")
+            toolSection(label: "Output", value: entry.body, emptyText: "(no output)")
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.horizontal, 12)
+          .padding(.vertical, 10)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
       }
     }
     .sheet(item: $previewDocument) { document in
