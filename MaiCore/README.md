@@ -409,8 +409,11 @@ PocketMai's Statistics screen is built on the same `ModelUsageLedger` and
 On piped input each prompt is preceded by a colored separator so prompts remain
 easy to find in terminal scrollback. Long input scrolls horizontally and is
 printed in full when submitted. `/set debug true` enables a project-specific
-append-only `.pmai/debug.jsonl` log; `/set debug false` stops it. `/set debug` shows the
-current state and log path. Each JSON line has a timestamp and records full
+append-only `.pmai/debug.jsonl` log; `/set debug false` stops it. `/set
+debugfile PATH` chooses another file, and `/set debugfile default` restores the
+project log path. Relative paths resolve from the current working directory
+when the setting is saved. `/set debug` and `/set debugfile` show the current
+state and path. Each JSON line has a timestamp and records full
 model requests and responses (including retries and compaction), model errors,
 tool calls and results, and run events. The setting survives restarts in
 `.pmai/settings.json`. The log is readable only by the current user and can

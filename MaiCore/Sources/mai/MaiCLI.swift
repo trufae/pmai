@@ -114,9 +114,9 @@ private struct CLIOptions {
         agentOverride = try Self.value(after: argument, in: arguments, index: &index)
       case "--provider":
         providerOverride = ProviderID(try Self.value(after: argument, in: arguments, index: &index))
-      case "--model":
+      case "-m", "--model":
         modelOverride = try Self.value(after: argument, in: arguments, index: &index)
-      case "--base-url":
+      case "-b", "--base-url":
         let value = try Self.value(after: argument, in: arguments, index: &index)
         guard let url = URL(string: value) else { throw CLIError.invalidURL(value) }
         baseURLOverride = url
@@ -828,6 +828,7 @@ private actor TerminalApprovalHandler: ApprovalHandler {
   private struct ProjectSettings: Codable {
     var yolo: Bool?
     var debug: Bool?
+    var debugFile: String?
   }
 
   private let configuration: ConfiguredApprovals
@@ -879,7 +880,20 @@ private actor TerminalApprovalHandler: ApprovalHandler {
   func isDebugEnabled() -> Bool { debugEnabled }
 
   func debugLogURL() -> URL {
+    if let path = projectSettings.debugFile { return URL(fileURLWithPath: path) }
+    return defaultDebugLogURL()
+  }
+
+  func defaultDebugLogURL() -> URL {
     projectSettingsURL.deletingLastPathComponent().appendingPathComponent("debug.jsonl")
+  }
+
+  func saveDebugFile(_ url: URL?) throws {
+    var draft = projectSettings
+    draft.debugFile = url?.path
+    try MaiJSONCoding.default.makeEncoder().encode(draft)
+      .write(to: projectSettingsURL, options: .atomic)
+    projectSettings = draft
   }
 
   func saveDebugEnabled(_ enabled: Bool) throws {
@@ -6976,6 +6990,7 @@ struct MaiCLI {
       let enabled = await approvalHandler.isYOLOEnabled()
       await terminal.line("yolo = \(enabled ? "on" : "off")")
       await terminal.line("debug = \(await approvalHandler.isDebugEnabled() ? "true" : "false")")
+      await terminal.line("debugfile = \(await approvalHandler.debugLogURL().path)")
       await listLimitSettings(session.profile.limits, terminal: terminal)
       await listRecoverySettings(session.profile, terminal: terminal)
       await listToolSettings(session.profile, terminal: terminal)
@@ -6987,6 +7002,48 @@ struct MaiCLI {
     }
     let key = parts[0].lowercased()
     let displayedKey = key == "ui.toolresultlines" ? "ui.toolResultLines" : key
+    if key == "debugfile" {
+      // Preserve spaces and '=' in paths; the other /set values are tokenized.
+      let remainder = argument.trimmingCharacters(in: .whitespacesAndNewlines)
+        .dropFirst(parts[0].count)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      let rawPath = remainder.hasPrefix("=")
+        ? String(remainder.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+        : remainder
+      guard !rawPath.isEmpty else {
+        await terminal.line("debugfile = \(await approvalHandler.debugLogURL().path)")
+        return
+      }
+      let destination: URL?
+      if rawPath.lowercased() == "default" {
+        destination = nil
+      } else {
+        let expanded = (rawPath as NSString).expandingTildeInPath
+        guard !expanded.isEmpty else {
+          await terminal.line("Usage: /set debugfile <PATH|default>")
+          return
+        }
+        destination = URL(fileURLWithPath: expanded, relativeTo: URL(
+          fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true))
+          .standardizedFileURL
+      }
+      let selectedURL: URL
+      if let destination {
+        selectedURL = destination
+      } else {
+        selectedURL = await approvalHandler.defaultDebugLogURL()
+      }
+      do {
+        let enabled = await approvalHandler.isDebugEnabled()
+        let log = enabled ? try AgentDebugLog(url: selectedURL) : nil
+        try await approvalHandler.saveDebugFile(destination)
+        if enabled { await runtime.configureDebugLog(log) }
+        await terminal.line("debugfile = \(selectedURL.path)")
+      } catch {
+        await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+      }
+      return
+    }
     if key == "debug" {
       guard parts.count > 1 else {
         let enabled = await approvalHandler.isDebugEnabled()
@@ -7134,7 +7191,7 @@ struct MaiCLI {
         || levelKeys.contains(key) || textKeys.contains(key)
     else {
       await terminal.line(
-        "Unknown setting '\(parts[0])'. Available settings: debug, effort, yolo, delegation, tool.calling, tool.proxy, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.strategy, ui.title, ui.editor, ui.bgline, ui.fgcolor, ui.bgcolor, ui.fgprompt, ui.bgprompt, ui.fgtoolresult, ui.bold, ui.markdown, ui.toolResultLines, ui.subagents, ui.broadcast, use.agentsmd, use.plan"
+        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, effort, yolo, delegation, tool.calling, tool.proxy, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.strategy, ui.title, ui.editor, ui.bgline, ui.fgcolor, ui.bgcolor, ui.fgprompt, ui.bgprompt, ui.fgtoolresult, ui.bold, ui.markdown, ui.toolResultLines, ui.subagents, ui.broadcast, use.agentsmd, use.plan"
       )
       return
     }
@@ -9819,6 +9876,7 @@ struct MaiCLI {
     var values = [
       "/help", "/help set", "/exit", "/quit", "/set yolo on", "/set yolo off",
       "/set debug true", "/set debug false",
+      "/set debugfile ", "/set debugfile default",
       "/set ui.", "/set effort", "/set effort off", "/set effort auto", "/nothink",
       "/set ui.thinking status", "/set ui.thinking line", "/set ui.thinking three",
       "/set ui.thinking five", "/set ui.thinking full",
@@ -10235,6 +10293,7 @@ struct MaiCLI {
       /set effort [LEVEL] [TEXT]   Show or set reasoning effort and optional guidance
       /set yolo BOOL               Permit all tool calls without asking (on/off); saved for this project
       /set debug <true|false>       Log model calls, tool activity, and run events for this project
+      /set debugfile <PATH|default> Save debug logs at PATH; default uses .pmai/debug.jsonl
       /set tool.                   List the tool calling settings
       /set tool.calling MODE       Use automatic/native tools, or text/XML/JSON emulation
       /set tool.proxy BOOL         Show models only the shared list-tools and call-tool pair (on/off)
@@ -10270,8 +10329,8 @@ struct MaiCLI {
       /set use.plan BOOL           Ask an agent that can start children to open a request of
                                    several steps with a numbered plan before delegating (on/off)
 
-    YOLO and debug are saved in the opened project's .pmai/settings.json. Debug
-    entries append to .pmai/debug.jsonl and may contain prompts and tool output.
+    YOLO, debug, and debugfile are saved in the opened project's .pmai/settings.json.
+    Debug entries append to the chosen file and may contain prompts and tool output.
     -y enables YOLO for one run only. Projects without a saved choice use approvals.yolo from the
     active configuration. Agent and UI settings use the active configuration.
     COLOR accepts a named ANSI color, rgb:RGB, or none.

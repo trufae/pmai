@@ -15,6 +15,11 @@ public actor AgentDebugLog {
     if (try? manager.destinationOfSymbolicLink(atPath: url.path)) != nil {
       throw CocoaError(.fileWriteNoPermission)
     }
+    if manager.fileExists(atPath: url.path) {
+      guard (try manager.attributesOfItem(atPath: url.path)[.type] as? FileAttributeType)
+        == .typeRegular
+      else { throw CocoaError(.fileWriteNoPermission) }
+    }
     if !manager.fileExists(atPath: url.path) {
       guard manager.createFile(
         atPath: url.path, contents: nil,
