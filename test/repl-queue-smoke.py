@@ -172,7 +172,11 @@ def main():
                                 break
                         raise AssertionError((choice, 'provider request timed out',
                                               process.poll(), output.decode(errors='replace'))) from error
-                    return [m['content'] for m in request['messages'] if m['role'] == 'user']
+                    # The OpenAI-compatible provider joins adjacent user turns
+                    # on the wire; these prompts are each one line, so split
+                    # them back out to check the queue's order.
+                    return [text for m in request['messages'] if m['role'] == 'user'
+                            for text in m['content'].split('\n\n')]
 
                 try:
                     wait_for('pmai>')
