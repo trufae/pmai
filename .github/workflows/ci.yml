@@ -261,7 +261,7 @@ jobs:
 
       # Use the installer-based action that the Swift project runs on Windows.
       - name: Set up Swift
-        uses: compnerd/gha-setup-swift@v0.4.1
+        uses: compnerd/gha-setup-swift@v0.5.0
         with:
           swift-version: swift-${{ env.SWIFT_VERSION }}-release
           swift-build: ${{ env.SWIFT_VERSION }}-RELEASE
