@@ -8872,7 +8872,8 @@ struct MaiCLI {
         await terminal.line("There is only one chat.")
         return
       }
-      let offset = action == "next" ? 1 : -1
+      // The list is newest first: previous goes to an older chat, next to a newer one.
+      let offset = action == "next" ? -1 : 1
       let chat = ordered[(current + offset + ordered.count) % ordered.count]
       await switchSession(
         to: chat, session: &session, workspace: &workspace, configuration: configuration,
@@ -10342,7 +10343,7 @@ struct MaiCLI {
       /chat new [TITLE]             Start a fresh chat using the current agent
       /chat new --agent ID [TITLE]  Start a fresh chat using a configured agent
       /chat use INDEX|ID|TITLE      Switch to a chat by list index, ID prefix, or title
-      /chat next|previous           Cycle through chats
+      /chat next|previous|prev      Cycle newer or older through chats (wraps around)
       /chat info [INDEX|ID|TITLE]   Show a chat's agent, session, size, and timestamps
       /chat session [new]           Show the session id providers see, or start a fresh one
       /chat rename TITLE            Rename the active chat

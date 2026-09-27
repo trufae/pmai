@@ -21,6 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 requests = queue.Queue()
 release = threading.Event()
+slow_done = threading.Event()
 model_requests = queue.Queue()
 models_release = threading.Event()
 
@@ -33,7 +34,8 @@ class Provider(BaseHTTPRequestHandler):
         request = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         requests.put(request)
         texts = [m.get('content') for m in request['messages'] if m['role'] == 'user']
-        if texts == ['slow'] and not release.is_set():
+        slow = texts == ['slow'] and not release.is_set()
+        if slow:
             release.wait(30)
         message = {'role': 'assistant', 'content': 'answer'}
         if texts in (['subagent'], ['background'], ['shell-child']) and not any(m['role'] == 'tool' for m in request['messages']):
@@ -70,6 +72,9 @@ class Provider(BaseHTTPRequestHandler):
             self.wfile.write(body)
         except (BrokenPipeError, ConnectionResetError):
             pass
+        finally:
+            if slow:
+                slow_done.set()
 
     def do_GET(self):
         if self.path.endswith('/models'):
@@ -100,6 +105,7 @@ def main():
                        'background-interrupt', 'background-edit-interrupt',
                        'shell-interrupt', 'shell-child-interrupt'):
             release.clear()
+            slow_done.clear()
             with tempfile.TemporaryDirectory(prefix='pmai-queue-') as directory:
                 root = Path(directory)
                 config = root / 'config.json'
@@ -156,7 +162,16 @@ def main():
                     return captured
 
                 def user_texts():
-                    request = requests.get(timeout=20)
+                    try:
+                        request = requests.get(timeout=20)
+                    except queue.Empty as error:
+                        while select.select([master], [], [], 0)[0]:
+                            try:
+                                output.extend(os.read(master, 65536))
+                            except OSError:
+                                break
+                        raise AssertionError((choice, 'provider request timed out',
+                                              process.poll(), output.decode(errors='replace'))) from error
                     return [m['content'] for m in request['messages'] if m['role'] == 'user']
 
                 try:
@@ -264,9 +279,11 @@ def main():
                     send('/stop\n' if choice == 'stop' else '\x03')
                     wait_for('still waiting:')
                     release.set()
+                    assert slow_done.wait(10), 'Cancelled provider request did not finish'
                     if choice in ('continue', 'stop'):
                         send('/continue\n')
-                        assert user_texts() == ['slow', 'queued note']
+                        actual = user_texts()
+                        assert actual == ['slow', 'queued note'], (choice, actual)
                     else:
                         send('new message\n')
                         wait_for('Submit them before this message')
