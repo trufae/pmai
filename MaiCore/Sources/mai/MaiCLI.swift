@@ -1025,8 +1025,13 @@ struct MaiCLI {
         yoloEnabled: options.yolo)
       let runtime = AgentRuntime(approvalHandler: approvalHandler)
       if await approvalHandler.isDebugEnabled() {
-        try await runtime.configureDebugLog(
-          AgentDebugLog(url: approvalHandler.debugLogURL()))
+        do {
+          await runtime.configureDebugLog(
+            try AgentDebugLog(url: approvalHandler.debugLogURL()))
+        } catch {
+          FileHandle.standardError.write(
+            Data("warning: debug log unavailable: \(error.localizedDescription)\n".utf8))
+        }
       }
       let plugins = PluginRegistry()
       try await plugins.install(MaiCoreBuiltinsPlugin(), origin: "built-in")
@@ -1676,15 +1681,13 @@ struct MaiCLI {
 
   /// What a chat holds once a run that started from `sent` comes back with
   /// `result`. Usually nothing touched the chat meanwhile and the run's
-  /// transcript is the chat. When the person edited it during the run —
-  /// cleared it, undid a message, compacted it — their edits stay and what
-  /// the run added goes after them.
+  /// transcript is the chat. When the person edited it during the run, their
+  /// edits stay and the run's additions follow. If they removed the prompt
+  /// that started the run, its reply is discarded with it.
   static func mergedTranscript(
     current: [AgentMessage], sent: [AgentMessage], result: [AgentMessage]
   ) -> [AgentMessage] {
-    guard current != sent else { return result }
-    let shared = zip(sent, result).prefix { $0.0 == $0.1 }.count
-    return current + result.dropFirst(shared)
+    AgentTranscriptEditor.mergeCompletedRun(current: current, sent: sent, result: result)
   }
 
   /// The REPL is one loop over one stream of events. Typed lines arrive from
@@ -10269,8 +10272,7 @@ struct MaiCLI {
 
     YOLO and debug are saved in the opened project's .pmai/settings.json. Debug
     entries append to .pmai/debug.jsonl and may contain prompts and tool output.
-    -y enables YOLO for
-    one run only. Projects without a saved choice use approvals.yolo from the
+    -y enables YOLO for one run only. Projects without a saved choice use approvals.yolo from the
     active configuration. Agent and UI settings use the active configuration.
     COLOR accepts a named ANSI color, rgb:RGB, or none.
     """

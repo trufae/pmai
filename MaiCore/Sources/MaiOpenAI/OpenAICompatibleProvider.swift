@@ -196,7 +196,8 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     body["model"] = .string(model)
     let includesReasoningHistory = family != .deepSeek || !request.tools.isEmpty
     body["messages"] = .array(
-      try ReasoningEffort.messages(request.messages, options: request.options, model: model)
+      try Self.normalizedMessages(
+        ReasoningEffort.messages(request.messages, options: request.options, model: model))
         .flatMap {
           try openAIMessages(
             $0, resolver: resolver, family: family,
@@ -250,6 +251,67 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     applyHeaders(to: &urlRequest, sessionID: request.sessionID)
     urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
     return urlRequest
+  }
+
+  /// Some chat templates accept only one system message at the start and
+  /// require user and assistant turns to alternate. A compacted summary may
+  /// be stored as a later system message, and queued prompts may leave
+  /// adjacent turns with the same role. Normalize only the wire request so
+  /// the saved transcript and its message IDs stay unchanged.
+  private static func normalizedMessages(_ messages: [AgentMessage]) -> [AgentMessage] {
+    var system: AgentMessage?
+    var developers: [AgentMessage] = []
+    var conversation: [AgentMessage] = []
+    for message in messages {
+      switch message.role {
+      case .system:
+        if var first = system {
+          appendContent(message.content, to: &first)
+          system = first
+        } else {
+          system = message
+        }
+      case .developer:
+        developers.append(message)
+      case .user, .assistant:
+        if let index = conversation.indices.last,
+          conversation[index].role == message.role,
+          conversation[index].toolCalls.isEmpty,
+          conversation[index].toolResults.isEmpty,
+          message.toolCalls.isEmpty,
+          message.toolResults.isEmpty
+        {
+          appendContent(message.content, to: &conversation[index])
+        } else {
+          conversation.append(message)
+        }
+      case .tool:
+        conversation.append(message)
+      }
+    }
+    return (system.map { [$0] } ?? []) + developers + conversation
+  }
+
+  private static func appendContent(_ content: [ContentPart], to message: inout AgentMessage) {
+    guard !content.isEmpty else { return }
+    guard !message.content.isEmpty else {
+      message.content = content
+      return
+    }
+    if case .text(let previous) = message.content[message.content.count - 1],
+      case .text(let next) = content[0]
+    {
+      message.content[message.content.count - 1] = .text(previous + "\n\n" + next)
+      message.content.append(contentsOf: content.dropFirst())
+    } else if case .text(let next) = content[0] {
+      message.content.append(.text("\n\n" + next))
+      message.content.append(contentsOf: content.dropFirst())
+    } else if case .text(let previous) = message.content[message.content.count - 1] {
+      message.content[message.content.count - 1] = .text(previous + "\n\n")
+      message.content.append(contentsOf: content)
+    } else {
+      message.content.append(contentsOf: content)
+    }
   }
 
   private func applyHeaders(to request: inout URLRequest, sessionID: String? = nil) {

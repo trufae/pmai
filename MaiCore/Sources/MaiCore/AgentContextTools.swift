@@ -59,6 +59,22 @@ public struct AgentTranscriptEditReport: Equatable, Sendable {
 /// exchange removes the other side too, so what is left can still be sent to
 /// a provider.
 public enum AgentTranscriptEditor {
+  /// A reply from a run started before a chat edit belongs only while the
+  /// user message that started it is still in the chat. Clearing or compacting
+  /// the chat during a run must not append an orphan assistant reply afterward.
+  public static func mergeCompletedRun(
+    current: [AgentMessage], sent: [AgentMessage], result: [AgentMessage]
+  ) -> [AgentMessage] {
+    guard current != sent else { return result }
+    if let prompt = sent.last(where: { $0.role == .user }),
+      !current.contains(where: { $0.id == prompt.id })
+    {
+      return current
+    }
+    let shared = zip(sent, result).prefix { $0.0 == $0.1 }.count
+    return current + result.dropFirst(shared)
+  }
+
   public static func apply(
     _ edits: [AgentTranscriptEdit],
     to messages: [AgentMessage]

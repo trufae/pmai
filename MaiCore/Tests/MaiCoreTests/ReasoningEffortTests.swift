@@ -115,6 +115,56 @@ func openAIRequestCarriesEffort() throws {
   #expect(rawBody.objectValue?["think"] == .string("low"))
 }
 
+@Test("OpenAI-compatible requests put compacted system context first and join adjacent turns")
+func openAIRequestNormalizesMessageOrder() throws {
+  let provider = OpenAICompatibleProvider(
+    configuration: .init(baseURL: URL(string: "http://localhost:8000/v1")!))
+  let request = try provider.makeURLRequest(
+    ProviderRequest(
+      model: "local-model",
+      messages: [
+        .system("Instructions"), .user("Earlier question"), .assistant("Earlier answer"),
+        .system("Conversation summary (compacted): Earlier work"),
+        .user("First queued message"), .user("Second queued message"),
+        .assistant("First reply"), .assistant("Second reply"), .user("Next question"),
+      ], stream: false),
+    model: "local-model")
+  let body = try JSONDecoder().decode(JSONValue.self, from: try #require(request.httpBody))
+  let messages = try #require(body.objectValue?["messages"]?.arrayValue)
+  #expect(messages.compactMap { $0.objectValue?["role"]?.stringValue } == [
+    "system", "user", "assistant", "user", "assistant", "user",
+  ])
+  #expect(messages[0].objectValue?["content"] == .string(
+    "Instructions\n\nConversation summary (compacted): Earlier work"))
+  #expect(messages[3].objectValue?["content"] == .string(
+    "First queued message\n\nSecond queued message"))
+  #expect(messages[4].objectValue?["content"] == .string("First reply\n\nSecond reply"))
+}
+
+@Test("OpenAI-compatible requests keep native tool call and result boundaries")
+func openAIRequestKeepsToolBoundaries() throws {
+  let provider = OpenAICompatibleProvider(
+    configuration: .init(baseURL: URL(string: "http://localhost:8000/v1")!))
+  let call = ToolCall(id: "call-1", name: "lookup", arguments: .object([:]))
+  let request = try provider.makeURLRequest(
+    ProviderRequest(
+      model: "local-model",
+      messages: [
+        .user("Look it up"),
+        AgentMessage(role: .assistant, content: [.toolCall(call)]),
+        AgentMessage(role: .tool, content: [.toolResult(ToolResult(callID: "call-1", text: "Found"))]),
+        .assistant("Here is the answer"),
+      ], stream: false),
+    model: "local-model")
+  let body = try JSONDecoder().decode(JSONValue.self, from: try #require(request.httpBody))
+  let messages = try #require(body.objectValue?["messages"]?.arrayValue)
+  #expect(messages.compactMap { $0.objectValue?["role"]?.stringValue } == [
+    "user", "assistant", "tool", "assistant",
+  ])
+  #expect(messages[1].objectValue?["tool_calls"]?.arrayValue?.count == 1)
+  #expect(messages[2].objectValue?["tool_call_id"] == .string("call-1"))
+}
+
 @Test("A run at an effort level tells the model in the system prompt, after the instructions")
 func runtimeInsertsEffortSection() async throws {
   let provider = EffortScriptedProvider()

@@ -3,6 +3,34 @@ import Testing
 
 @testable import MaiCore
 
+@Test("A reply started before clearing or compacting does not reappear as an orphan turn")
+func completedRunAfterClearingChat() {
+  let system = AgentMessage.system("Instructions")
+  let prompt = AgentMessage.user("Old question")
+  let sent = [system, prompt]
+  let result = sent + [.assistant("Old answer")]
+  let cleared = [system]
+  let compacted = [system, .system("Conversation summary (compacted): Earlier work")]
+  #expect(
+    AgentTranscriptEditor.mergeCompletedRun(current: cleared, sent: sent, result: result)
+      == cleared)
+  #expect(
+    AgentTranscriptEditor.mergeCompletedRun(current: compacted, sent: sent, result: result)
+      == compacted)
+
+  let newPrompt = AgentMessage.user("New question")
+  let restarted = [system, newPrompt]
+  #expect(
+    AgentTranscriptEditor.mergeCompletedRun(current: restarted, sent: sent, result: result)
+      == restarted)
+  let editedPrompt = AgentMessage(id: prompt.id, role: .user, content: "Edited question")
+  #expect(
+    AgentTranscriptEditor.mergeCompletedRun(
+      current: [system, editedPrompt], sent: sent, result: result)
+      == [system, editedPrompt, result[2]])
+  #expect(AgentTranscriptEditor.mergeCompletedRun(current: sent, sent: sent, result: result) == result)
+}
+
 // The context tools let an agent shrink its own conversation: drop what no
 // longer matters, rewrite a message, or fold a stretch into a summary. Edits
 // are queued while the turn runs and applied before the next model call.
