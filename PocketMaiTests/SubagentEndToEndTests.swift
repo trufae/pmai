@@ -266,7 +266,8 @@ final class SubagentEndToEndTests: XCTestCase {
     let childPrompt = childMessages.last { $0["role"] as? String == "user" }?["content"] as? String
     XCTAssertTrue(childPrompt?.contains("## Task\n\nSay hi") == true, childPrompt ?? "")
     XCTAssertTrue(childPrompt?.contains("running as agent 'Main.worker'") == true)
-    let childSystem = childMessages.first { $0["role"] as? String == "system" }?["content"] as? String
+    let childSystem =
+      childMessages.first { $0["role"] as? String == "system" }?["content"] as? String
     XCTAssertTrue(childSystem?.contains("focused worker agent") == true, childSystem ?? "")
     // The worker is a peer: it gets the parent's tools and may delegate in
     // turn, since one level down is still above the depth limit.
@@ -392,7 +393,8 @@ final class SubagentEndToEndTests: XCTestCase {
     XCTAssertNotNil(deliveryRequest, "no request carried the delivery; requests: \(shapes)")
     if let deliveryRequest {
       XCTAssertTrue(deliveryRequest.lastUserText.hasPrefix("Agent #"), deliveryRequest.lastUserText)
-      XCTAssertTrue(deliveryRequest.lastUserText.contains("Child answer"), deliveryRequest.lastUserText)
+      XCTAssertTrue(
+        deliveryRequest.lastUserText.contains("Child answer"), deliveryRequest.lastUserText)
     }
     // The parent's follow-up — the last request made — carries the delivery
     // text as its newest user message, after the turn that started the child.
@@ -404,7 +406,8 @@ final class SubagentEndToEndTests: XCTestCase {
       followUpTexts.contains { $0.contains("Started Main.worker as #") },
       "follow-up messages: \(followUpTexts.map { $0.prefix(60) })")
     XCTAssertTrue(result.text.hasPrefix("Parent read: Agent #"), result.text)
-    XCTAssertTrue(result.text.contains("(Main.worker) finished. Its answer:\nChild answer"), result.text)
+    XCTAssertTrue(
+      result.text.contains("(Main.worker) finished. Its answer:\nChild answer"), result.text)
     let messages = result.conversation.messages
     XCTAssertEqual(
       messages.map(\.role), [.user, .assistant, .user, .assistant],
@@ -427,4 +430,62 @@ final class SubagentEndToEndTests: XCTestCase {
     let queued = await store.agentSupervisor.hasQueuedMessages(root)
     XCTAssertFalse(queued)
   }
+  func testToolTaskAgentUsesItsModelAndEffortThenHandsOffToPrimary() async throws {
+    var conversation = makeDelegatingConversation()
+    store.settings.agents[0].canSpawnSubagents = false
+    conversation.enabledTools = [.calculator]
+    conversation.modelID = "large"
+    conversation.reasoningLevel = .high
+    store.settings.openAIModelID = "small"
+    store.settings.defaultReasoningLevel = .low
+    store.settings.streamByDefault = false
+    let fast = store.settings.addAgent(named: "Fast")
+    store.settings.taskAgents.tool = fast.id.uuidString.lowercased()
+    StubChatEndpoint.script = { request in
+      if request["model"] as? String == "large" {
+        return (StubChatEndpoint.completion(content: "Main answer: 4"), 0)
+      }
+      let messages = request["messages"] as? [[String: Any]] ?? []
+      if messages.contains(where: { $0["role"] as? String == "tool" }) {
+        return (StubChatEndpoint.completion(content: "private specialist draft"), 0)
+      }
+      return (
+        [
+          "id": "calc", "object": "chat.completion",
+          "choices": [
+            [
+              "index": 0, "finish_reason": "tool_calls",
+              "message": [
+                "role": "assistant", "content": "",
+                "tool_calls": [
+                  [
+                    "id": "calc-1", "type": "function",
+                    "function": [
+                      "name": "calc", "arguments": "{\"expression\":\"2+2\"}",
+                    ],
+                  ]
+                ],
+              ],
+            ]
+          ],
+        ], 0
+      )
+    }
+    let result = try await AssistantToolLoop.runIsolated(
+      conversation: conversation, settings: store.settings, baseContext: "", store: store)
+    XCTAssertEqual(result.text, "Main answer: 4")
+    XCTAssertEqual(result.toolRuns.count, 1)
+    let requests = StubChatEndpoint.requests
+    XCTAssertEqual(requests.compactMap { $0["model"] as? String }, ["small", "small", "large"])
+    XCTAssertEqual(requests.first?["reasoning_effort"] as? String, "low")
+    XCTAssertEqual(requests.last?["reasoning_effort"] as? String, "high")
+    XCTAssertNil(requests.last?["tools"])
+    let finalMessages = requests.last?["messages"] as? [[String: Any]] ?? []
+    XCTAssertTrue(finalMessages.contains { ($0["content"] as? String)?.contains("4") == true })
+    XCTAssertFalse(
+      finalMessages.contains {
+        ($0["content"] as? String)?.contains("private specialist draft") == true
+      })
+  }
+
 }

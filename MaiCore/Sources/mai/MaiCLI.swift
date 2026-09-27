@@ -59,6 +59,10 @@ private struct CLIOptions {
   var agentOverride: String?
   var providerOverride: ProviderID?
   var modelOverride: String?
+  var compactAgent: String?
+  var toolAgent: String?
+  var effortOverride: String?
+  var saveDefaults = false
   var baseURLOverride: URL?
   var apiKeyOverride: String?
   var systemOverride: String?
@@ -120,6 +124,18 @@ private struct CLIOptions {
         let value = try Self.value(after: argument, in: arguments, index: &index)
         guard let url = URL(string: value) else { throw CLIError.invalidURL(value) }
         baseURLOverride = url
+      case "--compact-agent", "--compact-model":
+        compactAgent = try Self.value(after: argument, in: arguments, index: &index)
+      case "--tool-agent", "--tool-model":
+        toolAgent = try Self.value(after: argument, in: arguments, index: &index)
+      case "--effort":
+        let value = try Self.value(after: argument, in: arguments, index: &index)
+        guard let effort = ReasoningEffort(name: value) else {
+          throw CLIError.unknownOption("effort: \(value)")
+        }
+        effortOverride = effort.rawValue
+      case "--save-defaults":
+        saveDefaults = true
       case "--api-key":
         apiKeyOverride = try Self.value(after: argument, in: arguments, index: &index)
       case "--system":
@@ -163,6 +179,10 @@ private struct CLIOptions {
         positional.append(argument)
       }
       index += 1
+    }
+    if let modelOverride, let separator = modelOverride.range(of: "::") {
+      providerOverride = ProviderID(String(modelOverride[..<separator.lowerBound]))
+      self.modelOverride = String(modelOverride[separator.upperBound...])
     }
     if !positional.isEmpty { initialPrompt = positional.joined(separator: " ") }
     if readStdin, serve != nil { throw CLIError.stdinServesProtocol }
@@ -1096,6 +1116,13 @@ struct MaiCLI {
         plugins: plugins,
         configuration: configuration,
         environment: environment)
+      if let provider = options.providerOverride, let url = options.baseURLOverride,
+        var draft = configuration, !draft.providers.contains(where: { $0.id == provider.rawValue })
+      {
+        draft.providers.append(
+          ConfiguredProvider(id: provider.rawValue, kind: .openAICompatible, baseURL: url))
+        configuration = draft
+      }
       let setup = try await configureRuntime(
         runtime,
         plugins: plugins,
@@ -1123,6 +1150,29 @@ struct MaiCLI {
           configuration: created,
           options: options,
           environment: environment)
+      }
+      if var draft = configuration {
+        if let selector = options.compactAgent {
+          try draft.assignTask(.compact, selector: selector, current: profile.agentDefinition)
+        }
+        if let selector = options.toolAgent {
+          try draft.assignTask(.tool, selector: selector, current: profile.agentDefinition)
+        }
+        if options.saveDefaults {
+          draft.upsertAgent(profile.agentDefinition)
+          draft.defaultAgent = profile.agentID
+          if let index = draft.providers.firstIndex(where: { $0.id == profile.provider.rawValue }),
+            let url = options.baseURLOverride
+          {
+            draft.providers[index].baseURL = url
+          }
+          try draft.save(to: URL(fileURLWithPath: configurationPath))
+        }
+        configuration = draft
+        for agent in draft.agents {
+          try await runtime.register(agent: agent, replacingExisting: true)
+        }
+        await runtime.configureTaskAgents(draft.taskAgents)
       }
       let usageStats = ModelUsageStore(url: home.usageStatsURL)
       await runtime.configureUsageStats(usageStats)
@@ -1526,6 +1576,7 @@ struct MaiCLI {
         prompt: configuration.prompts?.delegation,
         workerInstructions: configuration.prompts?.worker)
       await runtime.configureCompaction(prompt: configuration.prompts?.compact)
+      await runtime.configureTaskAgents(configuration.taskAgents)
       let knownTools = Set(await runtime.availableTools().map(\.name))
       for var agent in configuration.agents {
         agent.toolNames.formIntersection(knownTools)
@@ -1538,7 +1589,7 @@ struct MaiCLI {
     try await runtime.register(plugins.makeProvider(from: hello, environment: environment))
     let baseURL = baseURLOverride ?? URL(string: "http://127.0.0.1:11434/v1")!
     let openAI = ConfiguredProvider(
-      id: ProviderID.openAI.rawValue,
+      id: (providerOverride ?? .openAI).rawValue,
       kind: .openAICompatible,
       baseURL: baseURL,
       apiKey: apiKeyOverride)
@@ -1582,6 +1633,7 @@ struct MaiCLI {
       var profile = SessionProfile(definition: definition)
       if let providerOverride { profile.provider = providerOverride }
       if let modelOverride { profile.model = modelOverride }
+      if let effort = options.effortOverride { profile.options.reasoningEffort = effort }
       if let system = options.systemOverride {
         profile.instructions = system
         profile.systemPrompt = nil
@@ -1595,6 +1647,7 @@ struct MaiCLI {
       model: modelOverride ?? "gpt-oss:20b",
       instructions: options.systemOverride ?? "You are a helpful, concise assistant.",
       stream: options.stream)
+    if let effort = options.effortOverride { profile.options.reasoningEffort = effort }
     options.applyLimitOverrides(to: &profile.limits)
     return profile
   }
@@ -1810,7 +1863,8 @@ struct MaiCLI {
     func statusLine() async -> (text: String, animating: Bool) {
       var facts: [String] = []
       let liveProcesses = await runtime.supervisor.liveProcesses()
-      let running = loop.foregroundCommand != nil || (!activityWasInterrupted && !liveProcesses.isEmpty)
+      let running =
+        loop.foregroundCommand != nil || (!activityWasInterrupted && !liveProcesses.isEmpty)
       let activityMarker = running ? "●" : "○"
       if let turn = loop.activeTurn {
         let activity = await runtime.supervisor.info(turn.pid)?.activity ?? ""
@@ -1848,7 +1902,8 @@ struct MaiCLI {
       // The chat title goes last so a narrow terminal truncates it, not the status.
       return (
         "\(activityMarker) \(currentDirectoryName()) · \(project.displayName) \(promptIdentity(session))\(detail) · \(session.title)",
-        running)
+        running
+      )
     }
 
     func promptText() -> String {
@@ -1992,7 +2047,8 @@ struct MaiCLI {
     /// its end as an event.
     func startTurn(_ texts: [String], ignoringQueue: Bool = false) async {
       let pid = await mainProcess()
-      let held = ignoringQueue
+      let held =
+        ignoringQueue
         ? Set(await runtime.supervisor.queuedMessages(for: pid).map(\.id)) : []
       var messages = await runtime.supervisor.drainInbox(pid, excluding: held)
       messages.append(contentsOf: texts.map { AgentMessage.user($0) })
@@ -2190,7 +2246,8 @@ struct MaiCLI {
           if count > 0 {
             loop.pendingQueueMessage = text
             await terminal.line(
-              "\(count) queued message(s). Submit them before this message, ignore them for this turn, or clear them? [submit/ignore/clear]")
+              "\(count) queued message(s). Submit them before this message, ignore them for this turn, or clear them? [submit/ignore/clear]"
+            )
           } else {
             await startTurn([text])
           }
@@ -2314,7 +2371,8 @@ struct MaiCLI {
       }
       if !pending.isEmpty {
         await terminal.note(
-          "approved \(pending.count) waiting tool call\(pending.count == 1 ? "" : "s"); YOLO mode is on")
+          "approved \(pending.count) waiting tool call\(pending.count == 1 ? "" : "s"); YOLO mode is on"
+        )
       }
     }
 
@@ -2406,7 +2464,9 @@ struct MaiCLI {
             await runtime.supervisor.clearQueuedMessages(for: pid)
             await startTurn([pending])
           default:
-            await terminal.line("Choose submit, ignore, or clear. Ctrl+C or /stop cancels this new message and keeps the queue.")
+            await terminal.line(
+              "Choose submit, ignore, or clear. Ctrl+C or /stop cancels this new message and keeps the queue."
+            )
           }
           await releaseIfIdle(workspace: workspace)
           continue
@@ -2683,8 +2743,10 @@ struct MaiCLI {
             let commandConfiguration = configuration
             let commandCatalogs = catalogs
             let commandChatProcess = chatProcessIDs[session.id]
-            let changesRouting = name == "/set"
-              && argument.split(whereSeparator: \.isWhitespace).first?.lowercased() == "ui.broadcast"
+            let changesRouting =
+              name == "/set"
+              && argument.split(whereSeparator: \.isWhitespace).first?.lowercased()
+                == "ui.broadcast"
             let command = await runForeground(name, resumeInput: !changesRouting) {
               await runCommand(
                 text,
@@ -3415,21 +3477,9 @@ struct MaiCLI {
         providerBaseURLs: visual.providerBaseURLs,
         terminal: terminal)
     case "/model":
-      if argument.isEmpty {
-        await terminal.line(
-          session.profile.model.isEmpty ? "No model selected." : "Model: \(session.profile.model)")
-      } else {
-        session.profile.model = argument
-        let saved = await persistAgentProfile(
-          session: session,
-          configuration: &configuration,
-          configurationPath: visual.configurationPath,
-          runtime: runtime,
-          terminal: terminal)
-        if saved {
-          await terminal.line("Model: \(argument) (saved for agent \(session.profile.agentID))")
-        }
-      }
+      await handleModelCommand(
+        argument, session: &session, runtime: runtime, configuration: &configuration,
+        configurationPath: visual.configurationPath, terminal: terminal)
     case "/agents":
       await handleAgentsCommand(
         argument,
@@ -3549,7 +3599,8 @@ struct MaiCLI {
       await terminal.line(
         "Use /reply at the chat prompt; it opens the last reply quoted in $EDITOR.")
     case "/stop":
-      await terminal.line("Use /stop at the chat prompt to interrupt the running turn and keep its queue.")
+      await terminal.line(
+        "Use /stop at the chat prompt to interrupt the running turn and keep its queue.")
     case "/continue":
       await terminal.line(
         "Use /continue at the chat prompt; in visual mode, send \"continue\" as a message.")
@@ -4975,6 +5026,7 @@ struct MaiCLI {
           prompt: editedConfiguration.prompts?.delegation,
           workerInstructions: editedConfiguration.prompts?.worker)
         await runtime.configureCompaction(prompt: editedConfiguration.prompts?.compact)
+        await runtime.configureTaskAgents(editedConfiguration.taskAgents)
         if let agent = editedConfiguration.agents.first(where: {
           $0.id == session.profile.agentID
         }) {
@@ -5142,6 +5194,67 @@ struct MaiCLI {
     "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
   }
 
+  private static func handleModelCommand(
+    _ argument: String, session: inout REPLSession, runtime: AgentRuntime,
+    configuration: inout MaiConfiguration?, configurationPath: String?, terminal: TerminalWriter
+  ) async {
+    let words = argument.split(whereSeparator: \Character.isWhitespace).map(String.init)
+    guard let first = words.first else {
+      await terminal.line("Chat: \(session.profile.provider)::\(session.profile.model)")
+      for task in AgentTask.allCases {
+        let id = configuration?.taskAgents[task]
+        let agent = configuration?.agents.first { $0.id == id }
+        let detail = agent.map {
+          "\($0.id) — \($0.provider)::\($0.model), effort \($0.options.reasoningEffort ?? "auto")"
+        }
+        await terminal.line("\(task.rawValue): \(detail ?? "current agent")")
+      }
+      await terminal.line(
+        "/model [PROVIDER::]MODEL · /model -compact|-tool [AGENT|PROVIDER::MODEL|MODEL] (no name clears)"
+      )
+      return
+    }
+    guard var draft = configuration, let configurationPath else { return }
+    do {
+      if first == "-compact" || first == "-tool" {
+        guard words.count <= 2 else {
+          await terminal.line("Usage: /model \(first) [AGENT|PROVIDER::MODEL|MODEL]")
+          return
+        }
+        let task: AgentTask = first == "-compact" ? .compact : .tool
+        try draft.assignTask(
+          task, selector: words.count == 2 ? words[1] : nil,
+          current: session.profile.agentDefinition)
+        try draft.save(to: URL(fileURLWithPath: configurationPath))
+        for agent in draft.agents
+        where configuration?.agents.first(where: { $0.id == agent.id }) != agent {
+          try await runtime.register(agent: agent, replacingExisting: true)
+        }
+        await runtime.configureTaskAgents(draft.taskAgents)
+        configuration = draft
+        await terminal.line(
+          "\(task.rawValue): \(draft.taskAgents[task] ?? "current agent") (saved)")
+      } else {
+        guard words.count == 1, !first.hasPrefix("-") else {
+          await terminal.line("Usage: /model [PROVIDER::]MODEL or /model -compact|-tool [NAME]")
+          return
+        }
+        let selection = try draft.modelSelection(first, currentProvider: session.profile.provider)
+        var definition = session.profile.agentDefinition
+        definition.provider = selection.provider
+        definition.model = selection.model
+        if await persistAgentDefinition(
+          definition, configuration: &configuration,
+          configurationPath: configurationPath, runtime: runtime, terminal: terminal)
+        {
+          try applyDefinition(definition, to: &session)
+          await terminal.line(
+            "Model: \(selection.provider)::\(selection.model) (saved for agent \(definition.id))")
+        }
+      }
+    } catch { await terminal.line("error: \(error.localizedDescription)", to: .standardError) }
+  }
+
   private static func handleProviderCommand(
     _ argument: String,
     session: inout REPLSession,
@@ -5169,7 +5282,40 @@ struct MaiCLI {
         }
       }
       await terminal.line(
-        "Use /baseurl URL to change its endpoint, or /edit provider to edit it as JSON.")
+        "Use /provider add ID URL to add one, /baseurl URL to change its endpoint, or /edit provider for keys and headers."
+      )
+      return
+    }
+
+    if fields[0] == "add" {
+      guard fields.count == 3 || (fields.count == 5 && fields[3] == "--api-key-file"),
+        let url = URL(string: fields[2]),
+        ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+        url.host != nil, var draft = configuration, let configurationPath
+      else {
+        await terminal.line("Usage: /provider add ID BASE_URL [--api-key-file PATH]")
+        return
+      }
+      guard !draft.providers.contains(where: { $0.id == fields[1] }) else {
+        await terminal.line(
+          "Provider '\(fields[1])' already exists; /edit provider \(fields[1]) edits it.")
+        return
+      }
+      let provider = ConfiguredProvider(
+        id: fields[1], kind: .openAICompatible, baseURL: url,
+        apiKeyFile: fields.count == 5 ? fields[4] : nil)
+      do {
+        let instance = try await plugins.makeProvider(
+          from: provider, environment: ProcessInfo.processInfo.environment)
+        draft.providers.append(provider)
+        try draft.save(to: URL(fileURLWithPath: configurationPath))
+        try await runtime.register(instance)
+        configuration = draft
+        providerBaseURLs.set(url, for: provider.id)
+        await terminal.line(
+          "Provider '\(provider.id)' saved. /models \(provider.id) lists models; /model \(provider.id)::MODEL selects one."
+        )
+      } catch { await terminal.line("error: \(error.localizedDescription)", to: .standardError) }
       return
     }
 
@@ -5744,7 +5890,52 @@ struct MaiCLI {
     }
 
     switch action {
+    case "default":
+      guard words.count == 2, var draft = configuration, let configurationPath,
+        let agent = draft.agents.first(where: { $0.id == words[1] }), agent.isEnabled
+      else {
+        await terminal.line("Usage: /agent default ID (an enabled saved agent)")
+        return
+      }
+      draft.defaultAgent = words[1]
+      do {
+        try draft.save(to: URL(fileURLWithPath: configurationPath))
+        configuration = draft
+        await terminal.line("Default agent: \(words[1]) (saved for new chats and runs)")
+      } catch { await terminal.line("error: \(error.localizedDescription)", to: .standardError) }
+    case "effort":
+      guard words.count == 3, let effort = ReasoningEffort(name: words[2]) else {
+        await terminal.line(
+          "Usage: /agent effort ID LEVEL (off, minimal, low, medium, high, max, auto)")
+        return
+      }
+      _ = await updateAgent(
+        words[1], session: &session, runtime: runtime,
+        configuration: &configuration, configurationPath: configurationPath, terminal: terminal
+      ) { definition, _ in
+        definition.options.reasoningEffort = effort.rawValue
+        return nil
+      }
     case "add", "new", "create":
+      if words.count == 2 {
+        guard configuration?.agents.contains(where: { $0.id == words[1] }) != true else {
+          await terminal.line("Agent '\(words[1])' already exists.")
+          return
+        }
+        var definition = session.profile.agentDefinition
+        definition.id = words[1]
+        definition.displayName = words[1]
+        definition.systemPrompt = nil
+        if await persistAgentDefinition(
+          definition, configuration: &configuration,
+          configurationPath: configurationPath, runtime: runtime, terminal: terminal)
+        {
+          await terminal.line(
+            "Added agent '\(words[1])'. /agent model, provider, prompt, effort, and tools edit it; /agent default selects it for new chats."
+          )
+        }
+        return
+      }
       await addAgent(
         Array(words.dropFirst()),
         session: &session,
@@ -5804,9 +5995,17 @@ struct MaiCLI {
         configuration: &configuration,
         configurationPath: configurationPath,
         terminal: terminal
-      ) { definition, _ in
-        definition.model = model
-        return nil
+      ) { definition, draft in
+        do {
+          if model.isEmpty {
+            definition.model = ""
+          } else {
+            let selected = try draft.modelSelection(model, currentProvider: definition.provider)
+            definition.provider = selected.provider
+            definition.model = selected.model
+          }
+          return nil
+        } catch { return error.localizedDescription }
       }
       if let saved {
         await terminal.line(
@@ -6176,6 +6375,7 @@ struct MaiCLI {
     do {
       try draft.save(to: URL(fileURLWithPath: configurationPath))
       await runtime.unregister(agentID: id)
+      await runtime.configureTaskAgents(draft.taskAgents)
       configuration = draft
       var notes = ["Removed agent '\(id)'."]
       if !parents.isEmpty {
@@ -6592,12 +6792,13 @@ struct MaiCLI {
     session.touch()
     let summary = effortDescription(session.profile.options)
     let endpoint = configuration?.providers.first { $0.id == session.profile.provider.rawValue }
-    let effort = session.profile.options.reasoningEffort.flatMap(ReasoningEffort.init(name:))
+    let effort =
+      session.profile.options.reasoningEffort.flatMap(ReasoningEffort.init(name:))
       ?? .automatic
     if let note = effort.limitation(
-        model: session.profile.model,
-        provider: session.profile.provider.rawValue,
-        baseURL: endpoint?.baseURL?.absoluteString ?? "")
+      model: session.profile.model,
+      provider: session.profile.provider.rawValue,
+      baseURL: endpoint?.baseURL?.absoluteString ?? "")
     {
       await terminal.line(note)
     }
@@ -7007,7 +7208,8 @@ struct MaiCLI {
       let remainder = argument.trimmingCharacters(in: .whitespacesAndNewlines)
         .dropFirst(parts[0].count)
         .trimmingCharacters(in: .whitespacesAndNewlines)
-      let rawPath = remainder.hasPrefix("=")
+      let rawPath =
+        remainder.hasPrefix("=")
         ? String(remainder.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
         : remainder
       guard !rawPath.isEmpty else {
@@ -7023,8 +7225,12 @@ struct MaiCLI {
           await terminal.line("Usage: /set debugfile <PATH|default>")
           return
         }
-        destination = URL(fileURLWithPath: expanded, relativeTo: URL(
-          fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true))
+        destination =
+          URL(
+            fileURLWithPath: expanded,
+            relativeTo: URL(
+              fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+          )
           .standardizedFileURL
       }
       let selectedURL: URL
@@ -8255,6 +8461,7 @@ struct MaiCLI {
       prompt: configuration.prompts?.delegation,
       workerInstructions: configuration.prompts?.worker)
     await runtime.configureCompaction(prompt: configuration.prompts?.compact)
+    await runtime.configureTaskAgents(configuration.taskAgents)
     let knownTools = Set(await runtime.availableTools().map(\.name))
     for requested in imported.agents ?? [] {
       guard var agent = configuration.agents.first(where: { $0.id == requested.id }) else {
@@ -8641,7 +8848,8 @@ struct MaiCLI {
             to: .standardError)
           return
         }
-        await terminal.line("Import \(url.lastPathComponent) as HTML source, Markdown, or a working-directory file?")
+        await terminal.line(
+          "Import \(url.lastPathComponent) as HTML source, Markdown, or a working-directory file?")
         let answer = editor.readLine(
           prompt: "html [source/markdown/copy/cancel]> ",
           completions: ["source", "markdown", "copy", "cancel"],
@@ -9457,7 +9665,8 @@ struct MaiCLI {
       sessionID: session.sessionID)
     await terminal.line("Compacting conversation…")
     do {
-      let result = try await runtime.run(request) { _ in }
+      let compactRequest = try await runtime.taskRequest(.compact, from: request)
+      let result = try await runtime.run(compactRequest) { _ in }
       let summary =
         result.transcript.last(where: { $0.role == .assistant })?.text
         .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -9713,10 +9922,15 @@ struct MaiCLI {
     let overridesLimits =
       options.maxToolCalls != nil || options.maxModelTurns != nil
       || options.maxSubagents != nil
-    if providerOverride != nil || modelOverride != nil || overridesLimits {
+    if providerOverride != nil || modelOverride != nil || options.effortOverride != nil
+      || overridesLimits
+    {
       for var chat in workspace.chats {
         if let providerOverride { chat.primaryAgent.provider = providerOverride }
         if let modelOverride { chat.primaryAgent.model = modelOverride }
+        if let effort = options.effortOverride {
+          chat.primaryAgent.options.reasoningEffort = effort
+        }
         options.applyLimitOverrides(to: &chat.primaryAgent.limits)
         workspace.upsert(chat)
       }
@@ -9907,7 +10121,9 @@ struct MaiCLI {
       "/set ui.broadcast on", "/set ui.broadcast off",
       "/set ui.toolResultLines all", "/set ui.toolResultLines ",
       "/cwd", "/pwd", "/cd ", "/plugins",
-      "/providers", "/models ", "/provider ", "/baseurl ", "/model ", "/prompts", "/prompt",
+      "/providers", "/models ", "/provider ", "/provider add ", "/baseurl ", "/model ",
+      "/model -compact ", "/model -tool ", "/agent default ", "/agent effort ", "/prompts",
+      "/prompt",
       "/prompt list", "/prompt show ", "/prompt add ", "/prompt set ", "/prompt edit ",
       "/prompt rm ", "/prompt use ", "/help prompts", "/prompts list", "/prompts show ",
       "/prompts add ", "/prompts edit ", "/prompts rm ", "/edit user ", "/edit system ",
@@ -9959,6 +10175,9 @@ struct MaiCLI {
     for agent in configuration?.agents ?? [] {
       values.append("/agent use \(agent.id)")
       values.append("/agent show \(agent.id)")
+      values.append("/agent default \(agent.id)")
+      values.append("/model -compact \(agent.id)")
+      values.append("/model -tool \(agent.id)")
       values.append("/chat new --agent \(agent.id) ")
     }
     for name in configuration?.prompts?.system.keys.sorted() ?? [] {
@@ -10233,7 +10452,13 @@ struct MaiCLI {
     /import PATH           Merge a PocketMai/pmai archive into settings, skills, and chats
     /mcp                   Manage MCP servers; /help mcp lists commands
     /memory                Show, edit, learn, or scope this project's durable memory
-    /model NAME            Select a model
+    /model [PROVIDER::]MODEL  Select and save a model for this agent
+    /model -compact [NAME] Select a compaction agent/model; omit NAME to clear
+    /model -tool [NAME]    Select a tool-decision agent/model; omit NAME to clear
+    /provider add ID URL [--api-key-file PATH]  Save a provider connection
+    /agent add NAME       Copy this agent's settings into a new saved agent
+    /agent default ID     Save the default agent for new chats and runs
+    /agent effort ID LEVEL  Set an agent's reasoning effort
     /models [PROVIDER]     List models from the current or named provider
     /nothink               Disable reasoning where the model supports it
     /plugins               List statically and dynamically loaded plugins
@@ -10557,6 +10782,11 @@ struct MaiCLI {
 
     Saving and changing definitions, one line each (/agent and /agents both work):
 
+      /agent add NAME            Copy the current agent into a new saved definition
+      /agent default ID          Save the default for future chats and runs
+      /agent effort ID LEVEL     Save an independent reasoning effort
+      /model -compact [NAME]     Assign a compaction agent or model; omit to clear
+      /model -tool [NAME]        Assign a tool-decision agent or model; omit to clear
       /agent add NAME MODEL GROUPS PROMPT [PROVIDER [BASE_URL]]
                                  GROUPS is a,b,c (see /tools) or -; PROMPT names a system
                                  prompt (see /prompts); PROVIDER defaults to this chat's, and
@@ -10660,7 +10890,11 @@ struct MaiCLI {
         --max-tool-calls N  tool calls allowed per agent run (default 50)
         --max-turns N       model turns allowed per agent run (default 60)
         --mcp               serve pmai as an MCP server on stdio (one prompt tool)
-        --model NAME        override the selected model
+        --model [ID::]MODEL  override model, optionally on provider ID
+        --compact-agent NAME  compaction agent or [PROVIDER::]MODEL; - inherits
+        --tool-agent NAME   tool-decision agent or [PROVIDER::]MODEL; - inherits
+        --effort LEVEL      override reasoning effort
+        --save-defaults     save explicit model/provider/URL/agent/task choices
         --no-markdown       print replies verbatim
         --no-stream         disable response streaming
         --plugin PATH       load a native .dylib plugin (repeatable)

@@ -637,7 +637,8 @@ struct SettingsView: View {
     Text("Applies to MCP tool calls, resource reads, and refreshes.")
       .font(.caption)
       .foregroundStyle(.secondary)
-    Stepper(value: settingsBinding(\.maxToolCallsPerTurn), in: AppSettings.maxToolCallsPerTurnRange) {
+    Stepper(value: settingsBinding(\.maxToolCallsPerTurn), in: AppSettings.maxToolCallsPerTurnRange)
+    {
       Text("Max Tool Calls: \(store.settings.maxToolCallsPerTurn)")
     }
   }
@@ -660,7 +661,7 @@ struct SettingsView: View {
       }
     } footer: {
       Text(
-        "Providers, prompts, tools, and advanced options below belong to the selected agent."
+        "Select the default agent for new chats, edit each agent’s model and reasoning, and assign compaction and tool decisions in Manage Agents. Provider connections and prompt libraries are shared."
       )
     }
   }
@@ -979,8 +980,9 @@ struct SettingsView: View {
         set: { value in
           store.settings.allowAppleServerTranscription = value
           store.saveSettings()
-        }))
-      .disabled(store.settings.airplaneModeEnabled)
+        })
+    )
+    .disabled(store.settings.airplaneModeEnabled)
     Text(
       store.settings.airplaneModeEnabled
         ? "Offline mode requires on-device transcription, even when Apple server transcription is permitted."
@@ -1240,7 +1242,9 @@ struct SettingsView: View {
     let modelID = store.settings.localMLXModelID.trimmingCharacters(in: .whitespacesAndNewlines)
     let downloadedCount = store.localMLXModelIDs.count
     let subtitle: String = {
-      if !store.localMLXIsAvailable { return "Unsupported on this device. Tap for requirements and alternatives." }
+      if !store.localMLXIsAvailable {
+        return "Unsupported on this device. Tap for requirements and alternatives."
+      }
       if downloadedCount == 0 {
         return "No downloaded models"
       }
@@ -3150,13 +3154,15 @@ private struct AppleIntelligenceDetailView: View {
   var body: some View {
     Form {
       Section {
-        Toggle("Enabled", isOn: Binding(
-          get: { store.settings.appleProviderEnabled },
-          set: { enabled in
-            store.settings.appleProviderEnabled = enabled
-            store.saveSettings()
-          }
-        ))
+        Toggle(
+          "Enabled",
+          isOn: Binding(
+            get: { store.settings.appleProviderEnabled },
+            set: { enabled in
+              store.settings.appleProviderEnabled = enabled
+              store.saveSettings()
+            }
+          ))
         LabeledContent("Status", value: store.appleAvailabilityReport.statusLabel)
         Text(store.appleAvailabilityReport.detail)
           .foregroundStyle(.secondary)
@@ -3166,7 +3172,9 @@ private struct AppleIntelligenceDetailView: View {
           Label("Refresh Availability", systemImage: "arrow.clockwise")
         }
       } footer: {
-        Text("This switch controls whether the app offers Apple Intelligence. It must also be enabled in iOS settings and ready on this device.")
+        Text(
+          "This switch controls whether the app offers Apple Intelligence. It must also be enabled in iOS settings and ready on this device."
+        )
       }
 
       Section {

@@ -13,6 +13,8 @@ struct OneShotPromptRequest: Sendable {
   let modelID: String
   let endpointID: UUID?
   var responseFormat: OneShotPromptResponseFormat = .text
+  var reasoningLevel: ReasoningLevel = .automatic
+  var systemPromptID: UUID?
 }
 
 struct CompactConversationRequest: Sendable {
@@ -47,15 +49,16 @@ enum ConversationPromptBuilder {
         else { return nil }
         promptText = generated
       }
+      let inference = settings.taskConversation(.compact, from: conversation)
       let model: String = {
-        let m = conversation.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let m = inference.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
         if !m.isEmpty { return m }
-        if conversation.provider == .apple { return settings.appleModelID }
-        if conversation.provider == .mlx {
-          return LocalMLXProvider.effectiveModelID(conversation: conversation, settings: settings)
+        if inference.provider == .apple { return settings.appleModelID }
+        if inference.provider == .mlx {
+          return LocalMLXProvider.effectiveModelID(conversation: inference, settings: settings)
         }
         if let endpoint = OpenAICompatibleProvider.selectedEndpoint(
-          for: conversation, settings: settings)
+          for: inference, settings: settings)
         {
           return endpoint.defaultModel
         }
@@ -67,9 +70,11 @@ enum ConversationPromptBuilder {
         oneShot: OneShotPromptRequest(
           title: "Compact",
           prompt: promptText,
-          provider: conversation.provider,
+          provider: inference.provider,
           modelID: model,
-          endpointID: conversation.endpointID
+          endpointID: inference.endpointID,
+          reasoningLevel: inference.reasoningLevel,
+          systemPromptID: inference.systemPromptID
         )
       )
     }.value
@@ -129,6 +134,8 @@ enum OneShotPromptRunner {
     oneShot.provider = prompt.provider
     oneShot.modelID = prompt.modelID
     oneShot.endpointID = prompt.endpointID
+    oneShot.reasoningLevel = prompt.reasoningLevel
+    oneShot.systemPromptID = prompt.systemPromptID
     oneShot.toolsEnabled = false
     oneShot.enabledTools = []
     oneShot.usesStreaming = false

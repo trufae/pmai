@@ -683,7 +683,8 @@ final class AppStore: ObservableObject {
     case .openAICompatible:
       guard !settings.airplaneModeEnabled,
         let endpointID = defaults.endpointID,
-        let endpoint = settings.openAIEndpoints.first(where: { $0.id == endpointID && $0.isEnabled })
+        let endpoint = settings.openAIEndpoints.first(where: { $0.id == endpointID && $0.isEnabled }
+        )
       else {
         return effectiveDefaultProviderConfiguration
       }
@@ -843,7 +844,8 @@ final class AppStore: ObservableObject {
     for folderID in folderIDs.sorted()
     where !folderID.isEmpty
       && !ConversationFolder.reservedIDs.contains(folderID)
-      && !knownIDs.contains(folderID) {
+      && !knownIDs.contains(folderID)
+    {
       let name = nextImportedConversationFolderName(existingNames: &existingNames)
       settings.conversationFolders.append(ConversationFolder(id: folderID, name: name))
       knownIDs.insert(folderID)
@@ -898,7 +900,8 @@ final class AppStore: ObservableObject {
       normalized.endpointID = nil
     case .mlx:
       normalized.endpointID = nil
-      normalized.modelID = availableLocalMLXModelID(preferred: normalized.modelID)
+      normalized.modelID =
+        availableLocalMLXModelID(preferred: normalized.modelID)
         ?? normalized.modelID
     case .openAICompatible:
       guard let endpointID = normalized.endpointID,
@@ -1068,8 +1071,7 @@ final class AppStore: ObservableObject {
       }
     }
     for bookmark in messageBookmarks
-    where dirtyBookmarkKeysBeforeLoad.contains(bookmark.storageKey)
-    {
+    where dirtyBookmarkKeysBeforeLoad.contains(bookmark.storageKey) {
       byKey[bookmark.storageKey] = bookmark
     }
     messageBookmarks = Self.sortedMessageBookmarks(Array(byKey.values))
@@ -1491,9 +1493,10 @@ final class AppStore: ObservableObject {
     }
     guard indexedConversationIndex(for: id) == nil else { return }
     let normalizedProvider = normalizeUnavailableAppleProviderIfNeeded(in: &conversation)
-    let insertionIndex = conversations.firstIndex {
-      Self.conversationPrecedes(conversation, $0)
-    } ?? conversations.endIndex
+    let insertionIndex =
+      conversations.firstIndex {
+        Self.conversationPrecedes(conversation, $0)
+      } ?? conversations.endIndex
     conversations.insert(conversation, at: insertionIndex)
     rebuildConversationIndexes()
     if normalizedProvider {
@@ -1502,9 +1505,10 @@ final class AppStore: ObservableObject {
 
     guard !conversationSummaries.contains(where: { $0.id == id }) else { return }
     let summary = ConversationSummary(conversation: conversation)
-    let summaryInsertionIndex = conversationSummaries.firstIndex {
-      Self.summaryPrecedes(summary, $0)
-    } ?? conversationSummaries.endIndex
+    let summaryInsertionIndex =
+      conversationSummaries.firstIndex {
+        Self.summaryPrecedes(summary, $0)
+      } ?? conversationSummaries.endIndex
     conversationSummaries.insert(summary, at: summaryInsertionIndex)
     refreshRecentConversationSummaries()
     persistence.saveConversationSummaries(conversationSummaries)
@@ -1809,7 +1813,8 @@ final class AppStore: ObservableObject {
     selectedConversationIDs.removeAll()
     saveConversations()
 
-    _ = await send(prompt: prompt, displayText: message.displayText, attachments: message.attachments)
+    _ = await send(
+      prompt: prompt, displayText: message.displayText, attachments: message.attachments)
   }
 
   private func restartPrompt(from message: ChatMessage) -> String? {
@@ -1877,7 +1882,8 @@ final class AppStore: ObservableObject {
 
   private func replacementConversationID(afterDeleting ids: Set<UUID>) -> UUID? {
     guard let selectedConversationID, ids.contains(selectedConversationID) else { return nil }
-    let visibleIDs = conversationSummaries
+    let visibleIDs =
+      conversationSummaries
       .filter { $0.folderID == selectedConversationFolderID }
       .map(\.id)
     if let index = visibleIDs.firstIndex(of: selectedConversationID) {
@@ -3290,9 +3296,10 @@ final class AppStore: ObservableObject {
 
   func suggestedConversationImportFolderName(conversationCount: Int) -> String {
     let base = conversationCount == 1 ? "Imported Conversation" : "Imported Conversations"
-    let existing = Set(conversationFolders.map {
-      normalizedConversationFolderName($0.displayName)
-    })
+    let existing = Set(
+      conversationFolders.map {
+        normalizedConversationFolderName($0.displayName)
+      })
     if !existing.contains(normalizedConversationFolderName(base)) { return base }
     var index = 2
     while existing.contains(normalizedConversationFolderName("\(base) \(index)")) {
@@ -3316,9 +3323,11 @@ final class AppStore: ObservableObject {
       let name = ConversationFolder.normalizedCustomName(rawName)
       guard !name.isEmpty else { throw ConversationImportError.folderNameRequired }
       let normalizedName = normalizedConversationFolderName(name)
-      guard !conversationFolders.contains(where: {
-        normalizedConversationFolderName($0.displayName) == normalizedName
-      }) else {
+      guard
+        !conversationFolders.contains(where: {
+          normalizedConversationFolderName($0.displayName) == normalizedName
+        })
+      else {
         throw ConversationImportError.folderAlreadyExists(name)
       }
       let folder = ConversationFolder(name: name)
@@ -3509,8 +3518,7 @@ final class AppStore: ObservableObject {
     _ conversation: Conversation,
     format: ConversationExportFormat,
     imageSize: AttachmentImageSize = .full
-  ) async -> URL?
-  {
+  ) async -> URL? {
     switch format {
     case .markdown:
       return writeConversationExport(
@@ -4267,7 +4275,8 @@ final class AppStore: ObservableObject {
 
   private func normalizeUnavailableAppleProviderIfNeeded() {
     guard appleAvailabilityReport.kind != .checking, !appleAvailabilityReport.isAvailable,
-      localMLXIsAvailable else { return }
+      localMLXIsAvailable
+    else { return }
     let fallbackModelID = fallbackLocalMLXModelID(preferred: settings.localMLXModelID)
     var settingsChanged = false
     if settings.defaultProvider == .apple {
@@ -4881,8 +4890,9 @@ final class AppStore: ObservableObject {
   /// widgets to reload so home/lock-screen widgets follow the app's selection.
   func publishWidgetSelection() {
     let labels = widgetProviderModelLabels()
-    guard labels.provider != SharedAppState.providerLabel
-      || labels.model != SharedAppState.modelLabel
+    guard
+      labels.provider != SharedAppState.providerLabel
+        || labels.model != SharedAppState.modelLabel
     else {
       return
     }
@@ -5596,7 +5606,12 @@ final class AppStore: ObservableObject {
   }
 
   private func providersBackup() -> SettingsProvidersBackup {
-    SettingsProvidersBackup(
+    var snapshot = settings
+    snapshot.syncSelectedAgent()
+    return SettingsProvidersBackup(
+      agents: snapshot.agents,
+      selectedAgentID: snapshot.selectedAgentID,
+      taskAgents: snapshot.taskAgents,
       endpoints: settings.openAIEndpoints,
       selectedEndpointID: settings.selectedEndpointID,
       defaultProvider: settings.defaultProvider)
@@ -5854,6 +5869,15 @@ final class AppStore: ObservableObject {
         settings.defaultProvider = provider
       }
     }
+    if let agents = payload.agents {
+      settings.agents = agents
+      settings.selectedAgentID = payload.selectedAgentID ?? AgentProfile.stockID
+      if let selected = agents.first(where: { $0.id == settings.selectedAgentID }) {
+        settings.agentSettings = selected.settings
+      }
+      settings.taskAgents = payload.taskAgents ?? .init()
+      settings.normalizeAgents()
+    }
     endpointStatuses.removeAll()
     endpointModels.removeAll()
     endpointVoices.removeAll()
@@ -5906,7 +5930,8 @@ final class AppStore: ObservableObject {
       PromptSlashCommand.normalized(PromptSlashCommand.commandName(for: name))
     }
     for (name, text) in imported.system.sorted(by: { $0.key < $1.key }) {
-      if let index = settings.systemPrompts.firstIndex(where: { key($0.displayName) == key(name) }) {
+      if let index = settings.systemPrompts.firstIndex(where: { key($0.displayName) == key(name) })
+      {
         settings.systemPrompts[index].name = name
         settings.systemPrompts[index].text = text
       } else {

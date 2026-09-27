@@ -1,5 +1,8 @@
 # MaiCore
 
+Task-specific models are configured through saved agents in both pmai and iOS. See [providers, agents, and task defaults](../doc/task-agents.md) for `/model -compact`, `/model -tool`, persistent CLI overrides, and the iOS workflow.
+
+
 MaiCore is the provider-neutral agent runtime shared by the `pmai` command-line
 client and PocketMai. Concrete integrations are separate products:
 `MaiOpenAI`, `MaiMCP`, and `MaiVisionOCR`. `MaiVisual` adds the SwiftTUI

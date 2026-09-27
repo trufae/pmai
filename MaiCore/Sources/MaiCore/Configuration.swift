@@ -641,6 +641,7 @@ public struct ConfiguredUse: Codable, Equatable, Sendable {
 public struct MaiConfiguration: Codable, Equatable, Sendable {
   public var version: Int
   public var defaultAgent: String?
+  public var taskAgents: TaskAgentAssignments
   public var plugins: [ConfiguredPlugin]
   public var providers: [ConfiguredProvider]
   public var toolSources: [ConfiguredToolSource]
@@ -656,6 +657,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
   public init(
     version: Int = 1,
     defaultAgent: String? = nil,
+    taskAgents: TaskAgentAssignments = .init(),
     plugins: [ConfiguredPlugin] = [],
     providers: [ConfiguredProvider] = [],
     toolSources: [ConfiguredToolSource] = [],
@@ -670,6 +672,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
   ) {
     self.version = version
     self.defaultAgent = defaultAgent
+    self.taskAgents = taskAgents
     self.plugins = plugins
     self.providers = providers
     self.toolSources = toolSources
@@ -684,7 +687,8 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
   }
 
   private enum CodingKeys: String, CodingKey {
-    case version, defaultAgent, plugins, providers, toolSources, ocrProviders, mcpServers, agents,
+    case version, defaultAgent, taskAgents, plugins, providers, toolSources, ocrProviders,
+      mcpServers, agents,
       prompts, memory, ui,
       approvals, use
   }
@@ -694,6 +698,8 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
     self.init(
       version: try container.decodeIfPresent(Int.self, forKey: .version) ?? 1,
       defaultAgent: try container.decodeIfPresent(String.self, forKey: .defaultAgent),
+      taskAgents: try container.decodeIfPresent(TaskAgentAssignments.self, forKey: .taskAgents)
+        ?? .init(),
       plugins: try container.decodeIfPresent([ConfiguredPlugin].self, forKey: .plugins) ?? [],
       providers: try container.decodeIfPresent([ConfiguredProvider].self, forKey: .providers) ?? [],
       toolSources: try container.decodeIfPresent([ConfiguredToolSource].self, forKey: .toolSources)
@@ -777,6 +783,14 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
     let agentIDs = Set(agents.map(\.id))
     if let defaultAgent, !agentIDs.contains(defaultAgent) {
       throw MaiConfigurationError.unknownAgent(defaultAgent)
+    }
+    for task in AgentTask.allCases {
+      if let id = taskAgents[task] {
+        guard let agent = agents.first(where: { $0.id == id }) else {
+          throw MaiConfigurationError.unknownAgent(id)
+        }
+        guard agent.isEnabled else { throw MaiConfigurationError.disabledTaskAgent(id) }
+      }
     }
     for agent in agents {
       guard providerIDs.contains(agent.provider.rawValue) else {
@@ -883,6 +897,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
   public mutating func removeAgent(_ id: String) -> Bool {
     guard let index = agents.firstIndex(where: { $0.id == id }) else { return false }
     agents.remove(at: index)
+    taskAgents.removeReferences(to: id)
     for other in agents.indices { agents[other].subagentNames.remove(id) }
     if defaultAgent == id { defaultAgent = agents.first?.id }
     return true
@@ -910,6 +925,7 @@ public enum MaiConfigurationError: LocalizedError, Equatable, Sendable {
   case mcpServerMissingCommand(String)
   case unknownProvider(String)
   case unknownAgent(String)
+  case disabledTaskAgent(String)
   case unknownTool(agent: String, tool: String)
   case missingEnvironmentVariable(String)
   case unreadableAPIKeyFile(String)
@@ -934,6 +950,8 @@ public enum MaiConfigurationError: LocalizedError, Equatable, Sendable {
       "Stdio MCP server '\(id)' is missing a command."
     case .unknownProvider(let id):
       "Configuration references unknown provider '\(id)'."
+    case .disabledTaskAgent(let id):
+      "Task agent '\(id)' is disabled. Enable it or clear its task assignment."
     case .unknownAgent(let id):
       "Configuration references unknown agent '\(id)'."
     case .unknownTool(let agent, let tool):

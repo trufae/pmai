@@ -21,19 +21,22 @@ public struct MaiArchiveSettings: Codable, Equatable, Sendable {
   public var mcpServers: [ConfiguredMCPServer]?
   public var agents: [AgentDefinition]?
   public var defaultAgent: String?
+  public var taskAgents: TaskAgentAssignments?
 
   public init(
     providers: [ConfiguredProvider]? = nil,
     prompts: ConfiguredPrompts? = nil,
     mcpServers: [ConfiguredMCPServer]? = nil,
     agents: [AgentDefinition]? = nil,
-    defaultAgent: String? = nil
+    defaultAgent: String? = nil,
+    taskAgents: TaskAgentAssignments? = nil
   ) {
     self.providers = providers
     self.prompts = prompts
     self.mcpServers = mcpServers
     self.agents = agents
     self.defaultAgent = defaultAgent
+    self.taskAgents = taskAgents
   }
 
   public init(configuration: MaiConfiguration) {
@@ -42,7 +45,8 @@ public struct MaiArchiveSettings: Codable, Equatable, Sendable {
       prompts: configuration.prompts,
       mcpServers: configuration.mcpServers,
       agents: configuration.agents,
-      defaultAgent: configuration.defaultAgent)
+      defaultAgent: configuration.defaultAgent,
+      taskAgents: configuration.taskAgents)
   }
 
   public var isEmpty: Bool {
@@ -106,7 +110,8 @@ public struct MaiArchiveSkill: Codable, Equatable, Sendable {
       }
       guard values.isRegularFile == true else { continue }
       let relative = try Self.relativePath(of: file.standardizedFileURL, under: directory)
-      let permissions = try fileManager.attributesOfItem(atPath: file.path)[.posixPermissions]
+      let permissions =
+        try fileManager.attributesOfItem(atPath: file.path)[.posixPermissions]
         as? NSNumber
       captured.append(
         MaiArchiveSkillFile(
@@ -335,12 +340,14 @@ extension MaiConfiguration {
           agents[index].instructions = text
         }
       }
-      result.prompts = values.system.count + values.user.count
+      result.prompts =
+        values.system.count + values.user.count
         + [values.compact, values.delegation, values.worker, values.memory].compactMap { $0 }.count
     }
     if let selected = imported.defaultAgent, agents.contains(where: { $0.id == selected }) {
       defaultAgent = selected
     }
+    if let assignments = imported.taskAgents { taskAgents = assignments }
     try validate()
     return result
   }

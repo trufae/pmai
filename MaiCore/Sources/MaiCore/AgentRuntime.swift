@@ -79,6 +79,7 @@ public actor AgentRuntime {
   private var plansBeforeDelegating = false
   /// The compaction prompt autocompact renders; nil keeps the built-in one.
   private var compactionTemplate: String?
+  private var taskAgents = TaskAgentAssignments()
   /// Durable notes added to the system prompt of top-level runs. A child agent
   /// grepping a file does not need the user's standing preferences, so this
   /// never reaches one.
@@ -124,7 +125,8 @@ public actor AgentRuntime {
     case .approvalRequested(let context, let request):
       await debugLog.record("approval.requested", context: context, value: request.call)
     case .approvalDecided(let context, let decision):
-      await debugLog.record("approval.decided", context: context, value: String(describing: decision))
+      await debugLog.record(
+        "approval.decided", context: context, value: String(describing: decision))
     case .childStarted(let context, let child):
       await debugLog.record("child.started", context: context, value: child)
     case .childQueued(let context, let child):
@@ -136,7 +138,8 @@ public actor AgentRuntime {
     case .userMessage(let context, let message):
       await debugLog.record("user.message", context: context, value: message)
     case .transcriptEdited(let context, let report):
-      await debugLog.record("transcript.edited", context: context, value: String(describing: report))
+      await debugLog.record(
+        "transcript.edited", context: context, value: String(describing: report))
     case .retrying(let context, let attempt, let limit, let delay, let error):
       await debugLog.record(
         "model.retrying", context: context, attempt: attempt,
@@ -148,7 +151,9 @@ public actor AgentRuntime {
     case .finished(let context, let result):
       await debugLog.record(
         "run.finished", context: context,
-        value: "\(result.modelTurns) model turns, \(result.toolCalls) tool calls, stop \(result.stopReason), interruption \(String(describing: result.interruption))")
+        value:
+          "\(result.modelTurns) model turns, \(result.toolCalls) tool calls, stop \(result.stopReason), interruption \(String(describing: result.interruption))"
+      )
     }
   }
 
@@ -274,6 +279,41 @@ public actor AgentRuntime {
   /// uses for `/chat compact`. Empty or nil restores `AgentCompactionPrompt`.
   public func configureCompaction(prompt: String?) {
     compactionTemplate = prompt?.trimmingCharacters(in: .whitespacesAndNewlines).nilWhenEmpty
+  }
+
+  public func configureTaskAgents(_ assignments: TaskAgentAssignments) {
+    taskAgents = assignments
+  }
+
+  /// Resolve inference settings only. The caller keeps its tool permissions,
+  /// approvals, budgets, and session identity; task assignments never recurse.
+  public func taskRequest(_ task: AgentTask, from original: AgentRequest) throws -> AgentRequest {
+    var request = original
+    if let id = taskAgents[task] {
+      guard let agent = agents[id] else { throw MaiConfigurationError.unknownAgent(id) }
+      guard agent.isEnabled else { throw MaiConfigurationError.disabledTaskAgent(id) }
+      request.provider = agent.provider
+      request.model = agent.model
+      request.options = agent.options
+      request.retry = agent.retry
+      request.stream = agent.stream
+      request.toolCallingStrategy = agent.toolCallingStrategy
+      if !agent.instructions.isEmpty {
+        insertSystem(agent.instructions, into: &request.messages)
+      }
+    }
+    if task == .compact {
+      request.agentID = "\(original.agentID).compact"
+      request.toolNames = []
+      request.toolGroupNames = []
+      request.subagentNames = []
+      request.toolChoice = .none
+      request.responseFormat = .text
+      request.stream = false
+      request.autocompact = .init(tokens: 0)
+      request.useToolProxy = false
+    }
+    return request
   }
 
   @discardableResult
@@ -524,6 +564,7 @@ public actor AgentRuntime {
     var lastUsage: TokenUsage?
     var localModelTurns = 0
     var localToolCalls = 0
+    var answering = false
     var repeatedCalls: [ToolCallKey: Int] = [:]
     /// Set once a call came back a fourth time with the same arguments, or the
     /// model answered three tool results in a row with nothing. The next turn
@@ -565,20 +606,26 @@ public actor AgentRuntime {
       try await holdWhilePaused(pid)
       request = currentRequest(request, for: pid)
       await budget.update(limits: request.limits)
-      guard let provider = providers[request.provider] else {
-        throw AgentRuntimeError.providerNotRegistered(request.provider)
-      }
       let concreteDefinitions = try visibleDefinitions(for: request, depth: depth)
+      let selectingTools =
+        !answering && taskAgents.tool != nil && !concreteDefinitions.isEmpty
+        && localToolCalls < request.limits.maxToolCalls && !repeatGuardTripped
+      var inference = request
+      inference.messages = transcript
+      if selectingTools { inference = try taskRequest(.tool, from: inference) }
+      guard let provider = providers[inference.provider] else {
+        throw AgentRuntimeError.providerNotRegistered(inference.provider)
+      }
       let definitions =
         request.useToolProxy && !concreteDefinitions.isEmpty
         ? ToolProxy.definitions(for: concreteDefinitions, exposing: request.proxyExposedTools)
         : concreteDefinitions
       let supportsNativeTools = provider.descriptor.capabilities.contains(.nativeToolCalling)
-      if request.toolCallingStrategy == .native, !definitions.isEmpty, !supportsNativeTools {
-        throw AgentRuntimeError.nativeToolCallingUnavailable(request.provider)
+      if inference.toolCallingStrategy == .native, !definitions.isEmpty, !supportsNativeTools {
+        throw AgentRuntimeError.nativeToolCallingUnavailable(inference.provider)
       }
       let textToolMode: ToolCallingMode?
-      switch request.toolCallingStrategy {
+      switch inference.toolCallingStrategy {
       case .automatic:
         textToolMode = definitions.isEmpty || supportsNativeTools ? nil : .json
       case .native:
@@ -707,9 +754,17 @@ public actor AgentRuntime {
       // Once the run's tool budget is spent the model gets no tools and is
       // told to answer, instead of the run failing with a limit error.
       let toolBudgetExhausted =
-        !definitions.isEmpty
-        && (localToolCalls >= request.limits.maxToolCalls || repeatGuardTripped)
-      var providerMessages = transcript
+        answering
+        || (!definitions.isEmpty
+          && (localToolCalls >= request.limits.maxToolCalls || repeatGuardTripped))
+      // Rebuild after any compaction or queued messages changed the transcript.
+      inference.messages = transcript
+      if selectingTools {
+        var base = request
+        base.messages = transcript
+        inference = try taskRequest(.tool, from: base)
+      }
+      var providerMessages = inference.messages
       if let instructionsSection {
         insertSystem(instructionsSection, into: &providerMessages)
       }
@@ -718,36 +773,42 @@ public actor AgentRuntime {
       }
       // The effort level and its guidance reach the model in words as well as
       // in the provider's own field, for the models that have none.
-      if let effortSection = ReasoningEffort.promptSection(for: request.options) {
+      if let effortSection = ReasoningEffort.promptSection(for: inference.options) {
         insertSystem(effortSection, into: &providerMessages)
       }
       if textToolMode != nil || toolBudgetExhausted {
         let prompt =
           toolBudgetExhausted
-          ? (repeatGuardTripped ? Self.repeatedCallPrompt : Self.toolBudgetExhaustedPrompt)
+          ? (answering
+            ? "Use the tool results to answer the user's request. No further tools are available for this turn."
+            : repeatGuardTripped ? Self.repeatedCallPrompt : Self.toolBudgetExhaustedPrompt)
           : textToolPrompt(definitions, mode: textToolMode ?? .text)
         insertSystem(prompt, into: &providerMessages)
       }
       let offersTools = !usesTextToolProtocol && !toolBudgetExhausted
       let providerRequest = ProviderRequest(
-        model: request.model,
+        model: inference.model,
         messages: providerMessages,
         tools: offersTools ? definitions : [],
         toolChoice: definitions.isEmpty || !offersTools ? .none : request.toolChoice,
         responseFormat: request.responseFormat,
-        options: request.options,
-        stream: usesTextToolProtocol ? false : request.stream,
+        options: inference.options,
+        stream: usesTextToolProtocol ? false : inference.stream,
         sessionID: request.sessionID)
       let call: ProviderCall
       let repairsEmptyReply = localToolCalls > 0 && localModelTurns < request.limits.maxModelTurns
       do {
         call = try await complete(
-          providerRequest, with: provider, retry: request.retry, budget: budget,
+          providerRequest, with: provider, retry: inference.retry, budget: budget,
           context: context, pid: pid, retriesEmptyReply: !repairsEmptyReply, emit: emit
         ) { event in
-          if usesTextToolProtocol, case .textDelta = event {
-            return
+          if selectingTools {
+            switch event {
+            case .textDelta, .reasoningDelta: return
+            default: break
+            }
           }
+          if usesTextToolProtocol, case .textDelta = event { return }
           await emit(.provider(context, event))
         }
       } catch is RunDeadlineExceeded {
@@ -780,7 +841,7 @@ public actor AgentRuntime {
         await usageStats.record(
           ModelCallStats.measured(
             providerLabel: provider.descriptor.id.rawValue,
-            modelID: request.model,
+            modelID: inference.model,
             messages: providerMessages,
             response: providerResponse,
             timing: call.timing,
@@ -815,7 +876,9 @@ public actor AgentRuntime {
         let content = respond.arguments.objectValue?["content"]?.coercedStringValue ?? ""
         providerResponse.message = .assistant(content)
         providerResponse.stopReason = .stop
-        if !content.isEmpty { await emit(.provider(context, .textDelta(content))) }
+        if !content.isEmpty && !selectingTools {
+          await emit(.provider(context, .textDelta(content)))
+        }
       }
       if let textToolMode, !toolBudgetExhausted, providerResponse.message.toolCalls.isEmpty {
         let decision = AgentToolLoopPolicy.evaluate(
@@ -829,7 +892,7 @@ public actor AgentRuntime {
           if text != providerResponse.message.text {
             providerResponse.message = replacingText(in: providerResponse.message, with: text)
           }
-          if !text.isEmpty { await emit(.provider(context, .textDelta(text))) }
+          if !text.isEmpty && !selectingTools { await emit(.provider(context, .textDelta(text))) }
         case .repair(let feedback):
           providerResponse.message = .assistant(feedback)
           transcript.append(providerResponse.message)
@@ -855,6 +918,12 @@ public actor AgentRuntime {
                     argumentsFragment: call.arguments.compactJSONString))))
           }
         }
+      }
+      if selectingTools && providerResponse.message.toolCalls.isEmpty {
+        // The specialist's stop decision hands the tool results to the primary
+        // model. Its draft is not promoted to a user-visible final answer.
+        answering = true
+        continue
       }
       transcript.append(providerResponse.message)
       await supervisor.note(pid, transcript: transcript)
@@ -926,7 +995,8 @@ public actor AgentRuntime {
             results[index] = result
             continue
           }
-          guard localToolCalls < callRequest.limits.maxToolCalls, await budget.claimToolCall() else {
+          guard localToolCalls < callRequest.limits.maxToolCalls, await budget.claimToolCall()
+          else {
             let result = ToolResult(
               callID: call.id,
               text:
@@ -1217,28 +1287,39 @@ public actor AgentRuntime {
   ) async throws -> ProviderCall {
     let selected = Set(selection)
     let prompt = AgentCompactionPrompt.render(
-      transcript: AgentCompactionPrompt.transcript(of: transcript.filter { selected.contains($0.id) }),
+      transcript: AgentCompactionPrompt.transcript(
+        of: transcript.filter { selected.contains($0.id) }),
       focus: focus,
       template: compactionTemplate)
+    var base = request
+    base.messages = [.user(prompt)]
+    let inference = try taskRequest(.compact, from: base)
+    guard let provider = providers[inference.provider] else {
+      throw AgentRuntimeError.providerNotRegistered(inference.provider)
+    }
+    var messages = inference.messages
+    if let effort = ReasoningEffort.promptSection(for: inference.options) {
+      insertSystem(effort, into: &messages)
+    }
     let call = try await complete(
       ProviderRequest(
-        model: request.model,
-        messages: [.user(prompt)],
+        model: inference.model,
+        messages: messages,
         tools: [],
         toolChoice: .none,
         responseFormat: .text,
-        options: request.options,
+        options: inference.options,
         stream: false,
         sessionID: request.sessionID),
-      with: provider, retry: request.retry, budget: budget, context: context, pid: pid,
+      with: provider, retry: inference.retry, budget: budget, context: context, pid: pid,
       emit: emit
     ) { _ in }
     if let usageStats {
       await usageStats.record(
         ModelCallStats.measured(
           providerLabel: provider.descriptor.id.rawValue,
-          modelID: request.model,
-          messages: [.user(prompt)],
+          modelID: inference.model,
+          messages: messages,
           response: call.response,
           timing: call.timing,
           end: call.ended),
@@ -1570,7 +1651,8 @@ public actor AgentRuntime {
       depth: childDepth,
       pid: childPID)
     await emit(
-      admitted ? .childStarted(parent, child: childContext) : .childQueued(parent, child: childContext))
+      admitted
+        ? .childStarted(parent, child: childContext) : .childQueued(parent, child: childContext))
     // Every child's events reach the host, background or not, tagged with the
     // child's own context and pid. How they are shown — prefixed, folded into
     // one line, or dropped — is the host's call, not the runtime's. The child
@@ -1767,11 +1849,13 @@ public actor AgentRuntime {
           || Self.agentToolNames.isSubset(of: request.toolNames)
       } ?? true
     if agentToolsEnabled, delegating || !offeredAgents.isEmpty {
-      let canStart = request.limits.maxSubagents > 0
+      let canStart =
+        request.limits.maxSubagents > 0
         && depth < request.limits.maxSubagentDepth
         && (delegating || !offeredAgents.isEmpty)
-      definitions.append(contentsOf:
-        agentToolDefinitions(allowedAgentNames: offeredAgents, delegating: delegating)
+      definitions.append(
+        contentsOf:
+          agentToolDefinitions(allowedAgentNames: offeredAgents, delegating: delegating)
           .filter { canStart || $0.name != Self.agentStartToolName })
     }
     return definitions
@@ -1990,11 +2074,11 @@ private actor RunBudget {
   }
 }
 
-private extension AgentRequest {
+extension AgentRequest {
   /// Copies only values that may change while a run is in progress. The
   /// transcript, queued-message exclusions, process identity and chat session
   /// belong to the run itself and are never replaced by reconfiguration.
-  mutating func applyRuntimeSettings(from other: AgentRequest) {
+  fileprivate mutating func applyRuntimeSettings(from other: AgentRequest) {
     provider = other.provider
     model = other.model
     toolNames = other.toolNames
@@ -2014,7 +2098,7 @@ private extension AgentRequest {
     context = other.context
   }
 
-  mutating func applyRuntimeSettings(from definition: AgentDefinition) {
+  fileprivate mutating func applyRuntimeSettings(from definition: AgentDefinition) {
     provider = definition.provider
     model = definition.model
     toolNames = definition.toolNames

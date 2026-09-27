@@ -1802,17 +1802,15 @@ struct OpenAIEndpoint: Identifiable, Codable, Equatable, Sendable {
   /// Identifies the fields that affect model/voice discovery, so a cached fetch
   /// can be reused until the URL or credentials actually change.
   var connectionSignature: String {
-    (
-      [
-        baseURL,
-        apiKey,
-        authMethod.rawValue,
-        oauthClientID,
-        oauthRefreshToken,
-        oauthTokenURL,
-        oauthIssuer,
-      ] + ProviderHeaders.lines(headers)
-    ).joined(separator: "\u{1}")
+    ([
+      baseURL,
+      apiKey,
+      authMethod.rawValue,
+      oauthClientID,
+      oauthRefreshToken,
+      oauthTokenURL,
+      oauthIssuer,
+    ] + ProviderHeaders.lines(headers)).joined(separator: "\u{1}")
   }
 
   static let openAIAuthDefaults = OAuthPresetDefaults(
@@ -2240,6 +2238,9 @@ struct SettingsBackupSelection: Equatable, Sendable {
 }
 
 struct SettingsProvidersBackup: Codable, Sendable {
+  var agents: [AgentProfile]? = nil
+  var selectedAgentID: UUID? = nil
+  var taskAgents: TaskAgentAssignments? = nil
   var endpoints: [OpenAIEndpoint]
   var selectedEndpointID: UUID?
   var defaultProvider: ProviderKind?
@@ -3066,6 +3067,7 @@ struct AppSettings: Codable, Equatable, Sendable {
   var appleModelID: String = AppSettings.appleDefaultModelID
   var localMLXModelID: String = AppSettings.localMLXDefaultModelID
   var selectedEndpointID: UUID? = nil
+  var openAIModelID: String = ""
   var defaultReasoningLevel: ReasoningLevel = .automatic
   var streamByDefault: Bool = true
   var showThinkingByDefault: Bool = false
@@ -3113,6 +3115,7 @@ struct AppSettings: Codable, Equatable, Sendable {
   /// selected one mirrors the live fields above.
   var agents: [AgentProfile] = [.stock()]
   var selectedAgentID: UUID = AgentProfile.stockID
+  var taskAgents = TaskAgentAssignments()
   /// Asks an agent that can spawn subagents to open a request of several
   /// steps with a short numbered plan before its first `agent_start`; a
   /// single question gets no plan. Carried by the tool's description, so it
@@ -3249,7 +3252,10 @@ struct AppSettings: Codable, Equatable, Sendable {
       guard let endpoint = defaultOpenAIEndpoint else {
         return (.mlx, nil, localMLXModelID)
       }
-      return (.openAICompatible, endpoint.id, endpoint.defaultModel)
+      return (
+        .openAICompatible, endpoint.id,
+        openAIModelID.isEmpty ? endpoint.defaultModel : openAIModelID
+      )
     }
   }
 
@@ -3292,7 +3298,7 @@ struct AppSettings: Codable, Equatable, Sendable {
     case openAPIServer
     case recentChatLanguageIdentifiers
     case conversationFolders, conversationFolderDefaults, selectedConversationFolderID
-    case agents, selectedAgentID, plansBeforeDelegating
+    case agents, selectedAgentID, plansBeforeDelegating, taskAgents, openAIModelID
   }
 
   init(from decoder: Decoder) throws {
@@ -3311,6 +3317,8 @@ struct AppSettings: Codable, Equatable, Sendable {
       (try? c.decode(String.self, forKey: .localMLXModelID))
       ?? AppSettings.localMLXDefaultModelID
     selectedEndpointID = try? c.decode(UUID.self, forKey: .selectedEndpointID)
+    openAIModelID = (try? c.decode(String.self, forKey: .openAIModelID)) ?? ""
+    taskAgents = (try? c.decode(TaskAgentAssignments.self, forKey: .taskAgents)) ?? .init()
     defaultReasoningLevel =
       (try? c.decode(ReasoningLevel.self, forKey: .defaultReasoningLevel)) ?? .automatic
     streamByDefault = (try? c.decode(Bool.self, forKey: .streamByDefault)) ?? true

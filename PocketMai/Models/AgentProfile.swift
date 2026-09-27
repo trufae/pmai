@@ -1,4 +1,5 @@
 import Foundation
+import MaiCore
 
 /// The settings that belong to one agent: which model answers, which system
 /// prompt it starts from, which tools and MCP servers it may use, and how the
@@ -10,6 +11,7 @@ struct AgentSettings: Codable, Equatable, Sendable {
   var appleModelID: String = AppSettings.appleDefaultModelID
   var localMLXModelID: String = AppSettings.localMLXDefaultModelID
   var selectedEndpointID: UUID? = nil
+  var openAIModelID: String = ""
   var defaultReasoningLevel: ReasoningLevel = .automatic
   var streamByDefault: Bool = true
   var showThinkingByDefault: Bool = false
@@ -32,7 +34,7 @@ struct AgentSettings: Codable, Equatable, Sendable {
   init() {}
 
   enum CodingKeys: String, CodingKey {
-    case defaultProvider, appleModelID, localMLXModelID, selectedEndpointID
+    case defaultProvider, appleModelID, localMLXModelID, selectedEndpointID, openAIModelID
     case defaultReasoningLevel, streamByDefault, showThinkingByDefault
     case defaultSystemPromptID, defaultEnabledTools
     case defaultEnabledMCPServers, defaultEnabledMCPTools
@@ -53,6 +55,7 @@ struct AgentSettings: Codable, Equatable, Sendable {
     localMLXModelID =
       (try? c.decode(String.self, forKey: .localMLXModelID)) ?? defaults.localMLXModelID
     selectedEndpointID = try? c.decode(UUID.self, forKey: .selectedEndpointID)
+    openAIModelID = (try? c.decode(String.self, forKey: .openAIModelID)) ?? ""
     defaultReasoningLevel =
       (try? c.decode(ReasoningLevel.self, forKey: .defaultReasoningLevel))
       ?? defaults.defaultReasoningLevel
@@ -157,6 +160,7 @@ extension AppSettings {
       agent.appleModelID = appleModelID
       agent.localMLXModelID = localMLXModelID
       agent.selectedEndpointID = selectedEndpointID
+      agent.openAIModelID = openAIModelID
       agent.defaultReasoningLevel = defaultReasoningLevel
       agent.streamByDefault = streamByDefault
       agent.showThinkingByDefault = showThinkingByDefault
@@ -182,6 +186,7 @@ extension AppSettings {
       appleModelID = newValue.appleModelID
       localMLXModelID = newValue.localMLXModelID
       selectedEndpointID = newValue.selectedEndpointID
+      openAIModelID = newValue.openAIModelID
       defaultReasoningLevel = newValue.defaultReasoningLevel
       streamByDefault = newValue.streamByDefault
       showThinkingByDefault = newValue.showThinkingByDefault
@@ -232,6 +237,13 @@ extension AppSettings {
     if !agents.contains(where: { $0.id == selectedAgentID }) {
       selectedAgentID = AgentProfile.stockID
     }
+    for task in AgentTask.allCases {
+      if let id = taskAgents[task],
+        !agents.contains(where: { $0.id.uuidString.lowercased() == id.lowercased() })
+      {
+        taskAgents[task] = nil
+      }
+    }
     syncSelectedAgent()
   }
 
@@ -280,6 +292,7 @@ extension AppSettings {
     guard id != AgentProfile.stockID, let index = agents.firstIndex(where: { $0.id == id })
     else { return false }
     agents.remove(at: index)
+    taskAgents.removeReferences(to: id.uuidString.lowercased())
     if selectedAgentID == id {
       selectedAgentID = AgentProfile.stockID
       if let stock = agents.first(where: \.isStock) {
@@ -300,6 +313,38 @@ extension AppSettings {
     agents[index].name = Self.normalizedAgentName(name, fallback: agents[index].name)
     agents[index].description = Self.normalizedAgentDescription(description)
     agents[index].canSpawnSubagents = canSpawnSubagents
+  }
+
+  /// Task inference uses the named agent but keeps the caller's tool grants.
+  /// Missing references in imported/older settings mean the current agent.
+  func taskAgent(_ task: AgentTask) -> AgentProfile? {
+    guard let id = taskAgents[task] else { return nil }
+    guard var agent = agents.first(where: { $0.id.uuidString.lowercased() == id.lowercased() })
+    else { return nil }
+    if agent.id == selectedAgentID { agent.settings = agentSettings }
+    return agent
+  }
+
+  func taskConversation(_ task: AgentTask, from original: Conversation) -> Conversation {
+    guard let agent = taskAgent(task) else { return original }
+    let profile = agent.settings
+    var result = original
+    result.provider = profile.defaultProvider
+    result.endpointID = profile.selectedEndpointID
+    switch profile.defaultProvider {
+    case .apple: result.modelID = profile.appleModelID
+    case .mlx: result.modelID = profile.localMLXModelID
+    case .openAICompatible:
+      result.modelID =
+        profile.openAIModelID.isEmpty
+        ? openAIEndpoints.first(where: { $0.id == profile.selectedEndpointID })?.defaultModel ?? ""
+        : profile.openAIModelID
+    }
+    result.systemPromptID = profile.defaultSystemPromptID
+    result.reasoningLevel = profile.defaultReasoningLevel
+    result.usesStreaming = profile.streamByDefault
+    result.mlxMaxKVSize = profile.mlxMaxKVSize
+    return result
   }
 
   static func normalizedAgentName(_ name: String, fallback: String) -> String {

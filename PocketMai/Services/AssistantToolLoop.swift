@@ -20,6 +20,9 @@ enum AssistantToolLoop {
   }
 
   private struct RequestState {
+    let conversation: Conversation
+    let settings: AppSettings
+    let isToolAgent: Bool
     let definitions: [ToolDefinition]
     let nativeTools: [ToolDefinition]?
     let activeMode: ToolCallingMode
@@ -59,6 +62,7 @@ enum AssistantToolLoop {
 
   private struct State {
     var assistantText = ""
+    var answering = false
     var nativeContinuationMessages: [AgentMessage] = []
     var completedToolRuns: [ToolCallKey: String] = [:]
     var provisionalText = ""
@@ -119,7 +123,7 @@ enum AssistantToolLoop {
       requestState: RequestState
     ) -> Bool {
       requestState.activeMode == .native
-        && conversation.provider == .openAICompatible
+        && requestState.conversation.provider == .openAICompatible
         && requestState.nativeTools != nil
     }
   }
@@ -150,18 +154,26 @@ enum AssistantToolLoop {
       await store.refreshEnabledMCPServers(for: conversation)
     }
 
-    while state.toolCallCount < maxToolCalls && state.repairTurnCount < maxRepairTurns {
+    while state.answering || store.settings.taskAgent(.tool) != nil
+      || (state.toolCallCount < maxToolCalls && state.repairTurnCount < maxRepairTurns)
+    {
       try Task.checkCancellation()
       guard let conversation = store.conversation(withID: conversationID) else { return }
       let host = RunHost.live(
         assistantID: activeAssistantID,
         baselineText: state.displayText,
         conversationID: conversationID)
+      if Self.settings(for: host, store: store).taskAgent(.tool) != nil,
+        state.toolCallCount >= maxToolCalls || state.repairTurnCount >= maxRepairTurns
+      {
+        state.answering = true
+      }
       let requestState = makeRequestState(
         conversation: conversation,
         baseContext: baseContext,
         host: host,
-        store: store)
+        store: store,
+        answering: state.answering)
       let promptMessages = debugPromptMessages(
         conversation: conversation,
         requestState: requestState,
@@ -219,6 +231,10 @@ enum AssistantToolLoop {
 
       switch outcome {
       case .final(let turnText):
+        if requestState.isToolAgent {
+          state.answering = true
+          continue
+        }
         if shouldRetryHiddenOnlyFinal(turnText, state: state, maxRepairTurns: maxRepairTurns) {
           state.debugRoundIndex += 1
           state.repairTurnCount += 1
@@ -410,7 +426,9 @@ enum AssistantToolLoop {
 
     await store.refreshEnabledMCPServers(for: conversation, settings: settings)
 
-    while state.toolCallCount < maxToolCalls && state.repairTurnCount < maxRepairTurns {
+    while state.answering || settings.taskAgent(.tool) != nil
+      || (state.toolCallCount < maxToolCalls && state.repairTurnCount < maxRepairTurns)
+    {
       try Task.checkCancellation()
       // A run started without a process gets one the first time it uses an
       // agent tool, registered under its conversation; from then on its
@@ -454,11 +472,17 @@ enum AssistantToolLoop {
         mcpResources: store.mcpResources,
         mcpStatuses: store.mcpStatuses,
         process: process)
+      if Self.settings(for: host, store: store).taskAgent(.tool) != nil,
+        state.toolCallCount >= maxToolCalls || state.repairTurnCount >= maxRepairTurns
+      {
+        state.answering = true
+      }
       let requestState = makeRequestState(
         conversation: conversation,
         baseContext: baseContext,
         host: host,
-        store: store)
+        store: store,
+        answering: state.answering)
       let response = try await requestModelResponse(
         conversation: conversation,
         requestState: requestState,
@@ -477,6 +501,10 @@ enum AssistantToolLoop {
 
       switch outcome {
       case .final(let turnText):
+        if requestState.isToolAgent {
+          state.answering = true
+          continue
+        }
         if shouldRetryHiddenOnlyFinal(turnText, state: state, maxRepairTurns: maxRepairTurns) {
           state.debugRoundIndex += 1
           state.repairTurnCount += 1
@@ -562,6 +590,7 @@ enum AssistantToolLoop {
     host: RunHost,
     store: AppStore
   ) async throws -> String {
+    let conversation = requestState.conversation
     // In the synthesis round (after a tool has run), suppress the tail reminder that says
     // "emit exactly one valid tool call and stop" — small models echo the tool result instead
     // of answering when they see that instruction a second time.
@@ -577,7 +606,7 @@ enum AssistantToolLoop {
     }
     let request = ChatCompletionRequest(
       conversation: conversation,
-      settings: settings(for: host, store: store),
+      settings: requestState.settings,
       context: requestState.context,
       assistantMessageID: assistantID,
       userInputTokens: userInputTokens,
@@ -598,7 +627,7 @@ enum AssistantToolLoop {
         timeoutHandler: timeoutHandler(store: store)
       ) { [weak store] streamed in
         latestStreamedResponse = streamed
-        guard case .live = host else { return }
+        guard case .live = host, !requestState.isToolAgent else { return }
         let turnText =
           requestState.definitions.isEmpty
           ? AppStore.strippedSpuriousToolCallText(streamed) : streamed
@@ -1131,10 +1160,19 @@ enum AssistantToolLoop {
     conversation: Conversation,
     baseContext: String,
     host: RunHost,
-    store: AppStore
+    store: AppStore,
+    answering: Bool = false
   ) -> RequestState {
-    let settings = settings(for: host, store: store)
-    let visibleDefinitions = currentVisibleDefinitions(for: host, store: store)
+    var settings = settings(for: host, store: store)
+    let visibleDefinitions = answering ? [] : currentVisibleDefinitions(for: host, store: store)
+    let taskAgent = visibleDefinitions.isEmpty ? nil : settings.taskAgent(.tool)
+    let conversation =
+      taskAgent == nil ? conversation : settings.taskConversation(.tool, from: conversation)
+    if let taskAgent {
+      settings.toolCallingMode = taskAgent.settings.toolCallingMode
+      settings.llmRequestTimeoutSeconds = taskAgent.settings.llmRequestTimeoutSeconds
+      settings.mlxMaxKVSize = taskAgent.settings.mlxMaxKVSize
+    }
     let loopDefinitions = AgentToolLoopPolicy.definitions(includingResponseTool: visibleDefinitions)
     let nativeTools = nativeToolsIfNeeded(
       conversation: conversation,
@@ -1145,14 +1183,26 @@ enum AssistantToolLoop {
       ? settings.toolCallingMode.textProtocolFallback(for: conversation.provider)
       : .native
     let toolPrompt =
-      nativeTools == nil
-      ? AgentTooling.promptDescription(for: loopDefinitions, mode: activeMode)
-      : nativeToolLoopPrompt()
-    let requestContext = [baseContext, conversation.provider == .apple ? "" : toolPrompt]
-      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-      .filter { !$0.isEmpty }
-      .joined(separator: "\n\n")
+      visibleDefinitions.isEmpty
+      ? ""
+      : nativeTools == nil
+        ? AgentTooling.promptDescription(for: loopDefinitions, mode: activeMode)
+        : nativeToolLoopPrompt()
+    let taskPrompt = taskAgent == nil ? "" : AgentTask.tool.instructions
+    let answerPrompt =
+      answering
+      ? "Use the tool results in the conversation to answer the user's request. No further tools are available for this turn."
+      : ""
+    let requestContext = [
+      baseContext, taskPrompt, answerPrompt, conversation.provider == .apple ? "" : toolPrompt,
+    ]
+    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    .filter { !$0.isEmpty }
+    .joined(separator: "\n\n")
     return RequestState(
+      conversation: conversation,
+      settings: settings,
+      isToolAgent: taskAgent != nil,
       definitions: visibleDefinitions,
       nativeTools: nativeTools,
       activeMode: activeMode,
@@ -1259,9 +1309,9 @@ enum AssistantToolLoop {
       roundIndex: roundIndex,
       source: "runtime",
       createdAt: Date(),
-      provider: conversation.provider.rawValue,
-      model: debugModelName(for: conversation, store: store),
-      selectedMode: store.settings.toolCallingMode.rawValue,
+      provider: requestState.conversation.provider.rawValue,
+      model: debugModelName(for: requestState.conversation, store: store),
+      selectedMode: requestState.settings.toolCallingMode.rawValue,
       effectiveMode: requestState.activeMode.rawValue,
       maxToolCallsPerTurn: maxToolCallsPerTurn(store: store),
       maxRepairTurnsPerTurn: maxRepairTurnsPerTurn(store: store),
@@ -1296,13 +1346,14 @@ enum AssistantToolLoop {
     assistantID: UUID,
     store: AppStore
   ) -> [ConversationDebugPromptMessage] {
+    let conversation = requestState.conversation
     let tailToolPrompt: String = {
       guard requestState.usesTextProtocol else { return "" }
       return state.completedToolRuns.isEmpty ? requestState.toolPrompt : ""
     }()
     if conversation.provider == .apple {
       let request = ChatCompletionRequest(
-        conversation: conversation, settings: store.settings, context: requestState.context,
+        conversation: conversation, settings: requestState.settings, context: requestState.context,
         assistantMessageID: assistantID, hasToolCalling: !requestState.definitions.isEmpty,
         toolPrompt: requestState.toolPrompt)
       return PromptComposer.appleInput(request: request).messages.map(debugPromptMessage)
@@ -1310,12 +1361,12 @@ enum AssistantToolLoop {
     if conversation.provider == .openAICompatible,
       let endpoint = OpenAICompatibleProvider.selectedEndpoint(
         for: conversation,
-        settings: store.settings)
+        settings: requestState.settings)
     {
       let model = conversation.modelID.isEmpty ? endpoint.defaultModel : conversation.modelID
       return PromptComposer.openAIMessages(
         conversation: conversation,
-        settings: store.settings,
+        settings: requestState.settings,
         context: requestState.context,
         model: model,
         endpoint: endpoint,
@@ -1330,7 +1381,7 @@ enum AssistantToolLoop {
     }
 
     let baseSystem = PromptComposer.systemPrompt(
-      settings: store.settings,
+      settings: requestState.settings,
       conversation: conversation)
     let systemContent =
       requestState.context.isEmpty
@@ -1339,11 +1390,12 @@ enum AssistantToolLoop {
     var messages = [ConversationDebugPromptMessage(role: "system", content: systemContent)]
     let limited = PromptComposer.contextMessages(
       from: conversation,
-      settings: store.settings,
-      limit: store.settings.contextWindowMode.messageLimit)
+      settings: requestState.settings,
+      limit: requestState.settings.contextWindowMode.messageLimit)
     messages.append(
       contentsOf: limited.flatMap { message in
-        PromptComposer.contextTranscriptEntries(from: message, settings: store.settings).map {
+        PromptComposer.contextTranscriptEntries(from: message, settings: requestState.settings).map
+        {
           ConversationDebugPromptMessage(
             role: debugRole(displayName: $0.displayName),
             content: $0.content)

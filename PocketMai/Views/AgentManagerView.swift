@@ -1,3 +1,4 @@
+import MaiCore
 import SwiftUI
 
 /// Lists the agents, switches between them, and adds, edits, or removes them.
@@ -43,6 +44,22 @@ struct AgentManagerView: View {
       } footer: {
         Text(
           "Tap an agent to select it; the provider, model, system prompt, tools, MCP servers, and advanced options in Settings then belong to it, and new chats start from it. \(AgentProfile.stockName) is always available. A new agent starts as a copy of the selected one."
+        )
+      }
+      Section {
+        ForEach(AgentTask.allCases, id: \.rawValue) { task in
+          Picker(task == .compact ? "Compaction" : "Tool decisions", selection: taskBinding(task)) {
+            Text("Current conversation agent").tag("")
+            ForEach(store.settings.agents) { agent in
+              Text(agent.name).tag(agent.id.uuidString.lowercased())
+            }
+          }
+        }
+      } header: {
+        Text("Task agents")
+      } footer: {
+        Text(
+          "Each task uses its agent's provider, model, prompt, and reasoning effort. Tool decisions use the conversation's allowed tools; the conversation agent writes the final answer. These defaults are saved for all chats."
         )
       }
       Section {
@@ -143,7 +160,9 @@ struct AgentManagerView: View {
         $0.id == settings.selectedEndpointID
       }) {
         let name = endpoint.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let modelName = endpoint.defaultModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let modelName =
+          (settings.openAIModelID.isEmpty ? endpoint.defaultModel : settings.openAIModelID)
+          .trimmingCharacters(in: .whitespacesAndNewlines)
         model = [name, modelName].filter { !$0.isEmpty }.joined(separator: " · ")
       } else {
         model = "No provider selected"
@@ -157,6 +176,15 @@ struct AgentManagerView: View {
       parts.append("Subagents")
     }
     return parts.joined(separator: " · ")
+  }
+
+  private func taskBinding(_ task: AgentTask) -> Binding<String> {
+    Binding(
+      get: { store.settings.taskAgents[task] ?? "" },
+      set: { value in
+        store.settings.taskAgents[task] = value.isEmpty ? nil : value
+        store.saveSettings()
+      })
   }
 
   private var planBinding: Binding<Bool> {
@@ -209,9 +237,13 @@ struct AgentEditorView: View {
         Text(
           (isCreating
             ? "The new agent starts with the selected agent's model, prompt, tools, and MCP servers, and becomes the selected agent so you can change them in Settings. "
-            : "Select this agent in the list to choose its model, prompt, tools, and MCP servers in Settings. ")
+            : "Edit its model and instructions below. Select it in the list to configure tools and MCP servers in Settings. ")
             + "An agent that can spawn subagents gets the agent_start, agent_status, agent_result, and agent_stop tools: it can hand a task to a worker with its own model and tools, or to any other agent by name, and only the answer comes back into the chat. Running subagents show in a bar above the composer, where they can be paused, messaged, or stopped."
         )
+      }
+      if case .edit(let id) = mode, let agent = store.settings.agents.first(where: { $0.id == id })
+      {
+        inferenceSection(agent)
       }
     }
     .navigationTitle(isCreating ? "New Agent" : "Edit Agent")
@@ -235,6 +267,75 @@ struct AgentEditorView: View {
     .onChange(of: name) { _, _ in commitEdit() }
     .onChange(of: description) { _, _ in commitEdit() }
     .onChange(of: canSpawnSubagents) { _, _ in commitEdit() }
+  }
+
+  private func inferenceSection(_ agent: AgentProfile) -> some View {
+    Section {
+      Picker("Provider", selection: agentBinding(agent.id, \.defaultProvider)) {
+        ForEach(ProviderKind.allCases) { provider in
+          Text(provider.displayName).tag(provider)
+        }
+      }
+      if agent.settings.defaultProvider == .openAICompatible {
+        Picker("Connection", selection: agentBinding(agent.id, \.selectedEndpointID)) {
+          Text("Choose a provider").tag(UUID?.none)
+          ForEach(store.settings.openAIEndpoints) { endpoint in
+            Text(endpoint.name).tag(Optional(endpoint.id))
+          }
+        }
+        TextField(
+          "Model (empty uses provider default)", text: agentBinding(agent.id, \.openAIModelID)
+        )
+        .textInputAutocapitalization(.never)
+        .autocorrectionDisabled()
+      } else if agent.settings.defaultProvider == .mlx {
+        TextField("On-device model", text: agentBinding(agent.id, \.localMLXModelID))
+          .textInputAutocapitalization(.never)
+          .autocorrectionDisabled()
+      }
+      Picker("Reasoning effort", selection: agentBinding(agent.id, \.defaultReasoningLevel)) {
+        ForEach(ReasoningLevel.allCases, id: \.rawValue) { level in
+          Text(level.displayName).tag(level)
+        }
+      }
+      Picker("System prompt", selection: agentBinding(agent.id, \.defaultSystemPromptID)) {
+        ForEach(store.settings.systemPrompts) { prompt in
+          Text(prompt.displayName).tag(prompt.id)
+        }
+      }
+      Picker("Tool format", selection: agentBinding(agent.id, \.toolCallingMode)) {
+        ForEach(ToolCallingMode.allCases, id: \.rawValue) { mode in
+          Text(mode.displayName).tag(mode)
+        }
+      }
+    } header: {
+      Text("Model and instructions")
+    } footer: {
+      Text(
+        "Connection URLs and credentials are shared and edited under Settings → Providers. Model, prompt, and reasoning belong to this agent. Changes are saved automatically."
+      )
+    }
+  }
+
+  private func agentBinding<Value>(_ id: UUID, _ key: WritableKeyPath<AgentSettings, Value>)
+    -> Binding<Value>
+  {
+    Binding(
+      get: {
+        let profile =
+          id == store.settings.selectedAgentID
+          ? store.settings.agentSettings
+          : store.settings.agents.first(where: { $0.id == id })?.settings ?? AgentSettings()
+        return profile[keyPath: key]
+      },
+      set: { value in
+        guard let index = store.settings.agents.firstIndex(where: { $0.id == id }) else { return }
+        store.settings.agents[index].settings[keyPath: key] = value
+        if id == store.settings.selectedAgentID {
+          store.settings.agentSettings = store.settings.agents[index].settings
+        }
+        store.saveSettings()
+      })
   }
 
   private func loadIfNeeded() {

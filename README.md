@@ -1,4 +1,7 @@
 <p align="center">
+
+[Providers, agents, and task defaults](doc/task-agents.md) explains configuring separate models for compaction and tool decisions in PocketMai and pmai.
+
   <img src="mai-logo.png" alt="MAI logo" width="300" />
 </p>
 

@@ -20,6 +20,7 @@ final class AgentProfileTests: XCTestCase {
     custom.appleModelID = "apple-model"
     custom.localMLXModelID = "local/model"
     custom.selectedEndpointID = endpointID
+    custom.openAIModelID = "agent-specific-model"
     custom.defaultReasoningLevel = ReasoningLevel.allCases.last ?? .automatic
     custom.streamByDefault = false
     custom.showThinkingByDefault = true
@@ -182,4 +183,87 @@ final class AgentProfileTests: XCTestCase {
       repaired.agents[0].settings.maxToolCallsPerTurn, 9,
       "the stock agent is rebuilt from the live fields")
   }
+  func testTaskAssignmentsAndIndependentRemoteModelsSurviveRestart() throws {
+    var settings = AppSettings()
+    settings.openAIEndpoints = [
+      OpenAIEndpoint(
+        id: endpointID, name: "Local", baseURL: "http://localhost:11434/v1",
+        defaultModel: "provider-default")
+    ]
+    settings.agentSettings = customAgentSettings()
+    let fast = settings.addAgent(named: "Fast")
+    settings.selectAgent(fast.id)
+    settings.openAIModelID = "small"
+    settings.defaultReasoningLevel = .disabled
+    settings.syncSelectedAgent()
+    settings.selectAgent(AgentProfile.stockID)
+    settings.taskAgents = .init(
+      compact: fast.id.uuidString.lowercased(), tool: fast.id.uuidString.lowercased())
+    let restored = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
+    XCTAssertEqual(restored.defaultProviderConfiguration.modelID, "agent-specific-model")
+    XCTAssertEqual(restored.taskAgent(.tool)?.settings.openAIModelID, "small")
+    XCTAssertEqual(restored.taskAgent(.compact)?.settings.defaultReasoningLevel, .disabled)
+    XCTAssertEqual(restored.openAIEndpoints[0].defaultModel, "provider-default")
+    var cleaned = restored
+    cleaned.removeAgent(fast.id)
+    XCTAssertEqual(cleaned.taskAgents, TaskAgentAssignments())
+  }
+
+  func testTaskRoutingPreservesConversationPermissionsAndMainModel() {
+    var settings = AppSettings()
+    settings.agentSettings = customAgentSettings()
+    settings.openAIEndpoints = [
+      OpenAIEndpoint(
+        id: endpointID, name: "Local", baseURL: "http://localhost:11434/v1",
+        defaultModel: "fallback")
+    ]
+    let fast = settings.addAgent(named: "Fast")
+    settings.taskAgents.tool = fast.id.uuidString.lowercased()
+    var conversation = Conversation()
+    conversation.provider = .apple
+    conversation.modelID = "primary"
+    conversation.enabledTools = []
+    conversation.enabledMCPServers = []
+    conversation.reasoningLevel = .high
+    conversation.messages = [ChatMessage(role: .user, text: "find it")]
+    let routed = settings.taskConversation(.tool, from: conversation)
+    XCTAssertEqual(routed.provider, .openAICompatible)
+    XCTAssertEqual(routed.modelID, "agent-specific-model")
+    XCTAssertEqual(routed.endpointID, endpointID)
+    XCTAssertEqual(routed.enabledTools, [])
+    XCTAssertEqual(routed.enabledMCPServers, [])
+    XCTAssertEqual(routed.messages, conversation.messages)
+    XCTAssertEqual(conversation.modelID, "primary")
+    settings.taskAgents.tool = nil
+    XCTAssertEqual(settings.taskConversation(.tool, from: conversation), conversation)
+  }
+
+  func testCompactionUsesAssignedAgentAndFallsBackToConversation() async throws {
+    var settings = AppSettings()
+    var conversation = Conversation()
+    conversation.provider = .apple
+    conversation.modelID = "primary"
+    conversation.reasoningLevel = .high
+    conversation.messages = [
+      ChatMessage(role: .user, text: "Keep this path: /tmp/file"),
+      ChatMessage(role: .assistant, text: "done"),
+    ]
+    let fallbackValue = await ConversationPromptBuilder.compactRequest(
+      conversation: conversation, settings: settings)
+    let fallback = try XCTUnwrap(fallbackValue)
+    XCTAssertEqual(fallback.oneShot.modelID, "primary")
+    XCTAssertEqual(fallback.oneShot.reasoningLevel, .high)
+    settings.agentSettings = customAgentSettings()
+    let compact = settings.addAgent(named: "Compact")
+    settings.taskAgents.compact = compact.id.uuidString.lowercased()
+    let requestValue = await ConversationPromptBuilder.compactRequest(
+      conversation: conversation, settings: settings)
+    let request = try XCTUnwrap(requestValue)
+    XCTAssertEqual(request.oneShot.provider, .openAICompatible)
+    XCTAssertEqual(request.oneShot.modelID, "agent-specific-model")
+    XCTAssertEqual(request.oneShot.endpointID, endpointID)
+    XCTAssertEqual(request.oneShot.systemPromptID, promptID)
+    XCTAssertTrue(request.oneShot.prompt.contains("/tmp/file"))
+  }
+
 }
