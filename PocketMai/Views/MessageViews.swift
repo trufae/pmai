@@ -352,6 +352,8 @@ private struct MessageBubbleContent: View, Equatable {
             italicContent: true,
             markdownAppearance: canRenderMarkdown ? appearance : nil,
             renderImages: renderImages,
+            expandedMaxHeight: 240,
+            isStreaming: isStreaming,
             onDelete: hiddenSectionDeleteAction(
               for: section, partID: part.id, in: prepared)
           )
@@ -2612,6 +2614,8 @@ private struct FoldableMetaSection: View {
   var italicContent: Bool = false
   var markdownAppearance: AppearanceSettings? = nil
   var renderImages: Bool = true
+  var expandedMaxHeight: CGFloat? = nil
+  var isStreaming: Bool = false
   var onDelete: (() -> Void)? = nil
 
   @State private var expanded: Bool = false
@@ -2630,6 +2634,8 @@ private struct FoldableMetaSection: View {
     italicContent: Bool = false,
     markdownAppearance: AppearanceSettings? = nil,
     renderImages: Bool = true,
+    expandedMaxHeight: CGFloat? = nil,
+    isStreaming: Bool = false,
     onDelete: (() -> Void)? = nil
   ) {
     self.title = title
@@ -2644,6 +2650,8 @@ private struct FoldableMetaSection: View {
     self.italicContent = italicContent
     self.markdownAppearance = markdownAppearance
     self.renderImages = renderImages
+    self.expandedMaxHeight = expandedMaxHeight
+    self.isStreaming = isStreaming
     self.onDelete = onDelete
     self._expanded = State(initialValue: initiallyExpanded)
   }
@@ -2715,27 +2723,20 @@ private struct FoldableMetaSection: View {
         }
       } else if expanded {
         Divider().opacity(0.4)
-        Group {
-          if let markdownAppearance, MarkdownParser.mayContainMarkdown(content) {
-            MarkdownContentView(
-              text: content, appearance: markdownAppearance,
-              allowsTextSelection: true,
-              foregroundStyle: dimmedContent ? Color.secondary : nil,
-              renderImages: renderImages,
-              italic: italicContent)
-          } else {
-            let contentFont =
-              (monospaced ? Font.system(.footnote, design: .monospaced) : Font.callout)
-              .italicizedIf(italicContent)
-            Text(content)
-              .font(contentFont)
-              .foregroundStyle(dimmedContent ? Color.secondary : Color.primary)
-              .textSelection(.enabled)
-          }
+        let textStyle = MetaSectionTextStyle(
+          monospaced: monospaced, dimmed: dimmedContent, italic: italicContent,
+          markdownAppearance: markdownAppearance, renderImages: renderImages)
+        if let expandedMaxHeight {
+          ScrollingMetaSectionContent(
+            content: content, isStreaming: isStreaming,
+            maxHeight: expandedMaxHeight, style: textStyle)
+        } else {
+          MetaSectionText(content: content, style: textStyle)
+            .equatable()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
       }
     }
     .background(.thinMaterial.opacity(0.55))
@@ -2764,6 +2765,109 @@ private struct FoldableMetaSection: View {
     }
     .onChange(of: initiallyExpanded) { _, expandedByDefault in
       expanded = expandedByDefault
+    }
+  }
+}
+
+private struct MetaSectionTextStyle: Equatable {
+  var monospaced: Bool
+  var dimmed: Bool
+  var italic: Bool
+  var markdownAppearance: AppearanceSettings?
+  var renderImages: Bool
+}
+
+/// Equatable at the text boundary so tail updates do not even invoke the
+/// Markdown parser or rebuild the platform text views for the settled history.
+private struct MetaSectionText: View, Equatable {
+  let content: String
+  var style: MetaSectionTextStyle
+  var rendersMarkdown: Bool = true
+
+  var body: some View {
+    if rendersMarkdown, let appearance = style.markdownAppearance,
+      MarkdownParser.mayContainMarkdown(content)
+    {
+      MarkdownContentView(
+        text: content, appearance: appearance,
+        allowsTextSelection: true,
+        foregroundStyle: style.dimmed ? Color.secondary : nil,
+        renderImages: style.renderImages,
+        italic: style.italic)
+    } else {
+      Text(content)
+        .font(plainTextFont.italicizedIf(style.italic))
+        .foregroundStyle(style.dimmed ? Color.secondary : Color.primary)
+        .textSelection(.enabled)
+    }
+  }
+
+  private var plainTextFont: Font {
+    if !rendersMarkdown, let appearance = style.markdownAppearance {
+      return appearance.assistantFontFamily.swiftUIFont(size: appearance.fontSize)
+    }
+    return style.monospaced ? .system(.footnote, design: .monospaced) : .callout
+  }
+}
+
+private struct ScrollingMetaSectionContent: View {
+  let content: String
+  let isStreaming: Bool
+  let maxHeight: CGFloat
+  let style: MetaSectionTextStyle
+
+  @State private var buffer: ReasoningRenderBuffer
+  @State private var contentHeight: CGFloat
+
+  init(content: String, isStreaming: Bool, maxHeight: CGFloat, style: MetaSectionTextStyle) {
+    self.content = content
+    self.isStreaming = isStreaming
+    self.maxHeight = maxHeight
+    self.style = style
+    _buffer = State(initialValue: ReasoningRenderBuffer(content, isStreaming: isStreaming))
+    _contentHeight = State(initialValue: maxHeight)
+  }
+
+  var body: some View {
+    ScrollView(.vertical) {
+      VStack(alignment: .leading, spacing: 0) {
+        if !buffer.settledText.isEmpty {
+          MetaSectionText(content: buffer.settledText, style: style)
+            .equatable()
+        }
+        if !buffer.tail.isEmpty {
+          // The tail can start inside a Markdown construct. Show it verbatim
+          // until consolidation parses it together with the preceding text.
+          MetaSectionText(content: buffer.tail, style: style, rendersMarkdown: false)
+            .equatable()
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.horizontal, 12)
+      .padding(.vertical, 10)
+      .onGeometryChange(for: CGFloat.self) {
+        $0.size.height
+      } action: {
+        contentHeight = $0
+      }
+    }
+    .frame(height: min(maxHeight, contentHeight))
+    .onChange(of: content) { _, text in
+      buffer.update(text, isStreaming: isStreaming)
+    }
+    .onChange(of: isStreaming) { _, streaming in
+      buffer.update(content, isStreaming: streaming)
+    }
+    .task(id: isStreaming) {
+      guard isStreaming else { return }
+      while !Task.isCancelled {
+        do {
+          try await Task.sleep(for: ReasoningRenderBuffer.consolidationInterval)
+        } catch {
+          return
+        }
+        if !buffer.tail.isEmpty { buffer.consolidateCompletedParagraphs() }
+      }
     }
   }
 }
