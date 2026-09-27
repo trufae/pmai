@@ -2658,6 +2658,21 @@ struct MaiCLI {
             await releaseIfIdle(workspace: workspace)
             continue
           }
+          if name == "/last" {
+            if let lastMessage = session.history.messages.last {
+              if lastMessage.role == .assistant {
+                await terminal.line("\n--- Last Response ---")
+                await terminal.line(lastMessage.text)
+                await terminal.line("---------------------\n")
+              } else {
+                await terminal.line("The last message was not a response from the assistant.")
+              }
+            } else {
+              await terminal.line("No messages in the chat history.")
+            }
+            await releaseIfIdle(workspace: workspace)
+            continue
+          }
           if name == "/prompts" {
             let before = REPLCommandSnapshot(session: session)
             var outcome = PromptsCommandOutcome.handled
