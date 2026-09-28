@@ -8,6 +8,35 @@ import UniformTypeIdentifiers
 @testable import MaiMCP
 @testable import MaiOpenAI
 
+@Test("Registered skills are only visible and callable when enabled for the agent", arguments: [false, true])
+func skillToolAvailability(enabled: Bool) async throws {
+  let skill = AgentSkill(
+    name: "review", description: "Review code.",
+    directoryURL: URL(fileURLWithPath: "/skills/review"), body: "Read AGENTS.md first.")
+  let provider = ScriptedProvider(responses: [
+    ProviderResponse(
+      message: AgentMessage(role: .assistant, content: [
+        .toolCall(ToolCall(id: "skill", name: skill.toolName, arguments: .object([:])))
+      ]), stopReason: .toolCall),
+    ProviderResponse(message: .assistant("Done"), stopReason: .stop),
+  ])
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  try await runtime.register(tool: MaiSkillTools.makeTool(for: skill) {
+    AgentSkillCatalog(skills: [skill])
+  })
+  let result = try await runtime.run(AgentRequest(
+    provider: "scripted", model: "fixture", messages: [.user("Review the project")],
+    toolNames: enabled ? [skill.toolName] : [], toolGroupNames: []))
+  let request = try #require(await provider.requests.first)
+  #expect(request.tools.contains { $0.name == skill.toolName } == enabled)
+  #expect(!request.messages.contains { $0.text.contains(skill.directoryURL.path) })
+  let output = try #require(result.transcript.flatMap(\.toolResults).first)
+  #expect(output.isError == !enabled)
+  #expect(output.text.contains(skill.body) == enabled)
+  if !enabled { #expect(output.text.contains("not available to this agent")) }
+}
+
 @Test("Image attachment modes resize images and preserve their metadata")
 func imageAttachmentResize() async throws {
   let original = try pngData(width: 200, height: 100)

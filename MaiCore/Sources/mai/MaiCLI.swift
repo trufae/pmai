@@ -2717,8 +2717,13 @@ struct MaiCLI {
             if request.name.isEmpty {
               await terminal.line("Usage: /skills prompt NAME [TEXT]   (/skills lists the names)")
             } else if let skill = visual.skills.catalog.skill(named: request.name) {
-              session.refreshTitle(from: "\(skill.name) \(request.arguments)")
-              await deliver(skill.prompt(arguments: request.arguments), to: loop.focus)
+              if isSkillEnabled(skill, profile: session.profile) {
+                session.refreshTitle(from: "\(skill.name) \(request.arguments)")
+                await deliver(skill.prompt(arguments: request.arguments), to: loop.focus)
+              } else {
+                await terminal.line(
+                  "Skill '\(skill.name)' has no enabled tool for this agent. /skills lists availability.")
+              }
             } else {
               await terminal.line("Unknown skill '\(request.name)'. /skills lists them.")
             }
@@ -4369,7 +4374,7 @@ struct MaiCLI {
       lines.append(
         row(" ", entry.commandName, replaced ? "replaced by the user prompt above" : entry.summary))
     }
-    lines.append("Skills — /skills; $NAME sends one whether or not this agent may call it:")
+    lines.append("Skills — /skills; $NAME sends one when its tool is enabled for this agent:")
     let skillEntries = catalog.entries(of: .skill)
     for entry in skillEntries { lines.append(row(" ", entry.commandName, entry.summary)) }
     if skillEntries.isEmpty { lines.append("  None found; /skills path lists the folders read.") }
@@ -4527,7 +4532,14 @@ struct MaiCLI {
       switch entry.kind {
       case .system:
         return .selectSystemPrompt(entry.name, then: rest.isEmpty ? nil : rest)
-      case .user, .builtin, .skill:
+      case .skill:
+        guard let skill = entry.skill, isSkillEnabled(skill, profile: session.profile) else {
+          await terminal.line(
+            "Skill '\(entry.name)' has no enabled tool for this agent. /skills lists availability.")
+          return .handled
+        }
+        return .send(skill.prompt(arguments: rest), title: "\(entry.name) \(rest)")
+      case .user, .builtin:
         return .send(entry.message(arguments: rest) ?? rest, title: "\(entry.name) \(rest)")
       }
     }
@@ -6996,8 +7008,9 @@ struct MaiCLI {
   }
 
   private static func isSkillEnabled(_ skill: AgentSkill, profile: SessionProfile) -> Bool {
-    profile.toolNames.contains(skill.toolName)
-      || profile.toolGroupNames.contains(MaiSkillTools.groupID)
+    skill.isModelInvocable
+      && (profile.toolNames.contains(skill.toolName)
+        || profile.toolGroupNames.contains(MaiSkillTools.groupID))
   }
 
   /// The name and extra text of a `/skills prompt NAME [TEXT]` line; nil for
@@ -7061,7 +7074,7 @@ struct MaiCLI {
         let mark =
           skill.isModelInvocable && isSkillEnabled(skill, profile: session.profile) ? "*" : " "
         var note = skill.rootURL.path == skills.userDirectory.path ? "user" : "project"
-        if !skill.isModelInvocable { note += ", prompt only" }
+        if !skill.isModelInvocable { note += ", not callable" }
         await terminal.line("\(mark) \(skill.name) — \(skill.description) [\(note)]")
       }
       await terminal.line(
@@ -7102,13 +7115,13 @@ struct MaiCLI {
         await terminal.line(
           enabling
             ? "Enabled all \(names.count) skill\(names.count == 1 ? "" : "s") for agent \(agentID); skills added later are offered too."
-            : "Disabled every skill for agent \(agentID); /skills prompt NAME still sends one.")
+            : "Disabled every skill for agent \(agentID).")
         return
       }
       guard let skill = await resolveSkill(rest, in: catalog, terminal: terminal) else { return }
       guard skill.isModelInvocable else {
         await terminal.line(
-          "Skill '\(skill.name)' says disable-model-invocation, so the model never calls it; /skills prompt \(skill.name) sends it."
+          "Skill '\(skill.name)' says disable-model-invocation, so it has no skill tool."
         )
         return
       }
@@ -7128,7 +7141,7 @@ struct MaiCLI {
       await terminal.line(
         enabling
           ? "Enabled skill '\(skill.name)' for agent \(agentID): the model may call \(skill.toolName)."
-          : "Disabled skill '\(skill.name)' for agent \(agentID); /skills prompt \(skill.name) still sends it."
+          : "Disabled skill '\(skill.name)' for agent \(agentID)."
       )
 
     case "prompt", "send", "use":
@@ -10840,8 +10853,8 @@ struct MaiCLI {
       /skills                    List skills; * marks the ones the agent may call
       /skills show NAME          Print a skill's file, tool state, and instructions
       /skills enable NAME|all    Offer a skill (or every skill) to the current agent
-      /skills disable NAME|all   Stop offering it; /skills prompt still works
-      /skills prompt NAME [TEXT] Send the instructions, then TEXT, as your next message
+      /skills disable NAME|all   Disable a skill (or every skill) for this agent
+      /skills prompt NAME [TEXT] Send an enabled skill's instructions, then TEXT
       /skills path               Print the directories scanned
       /skills reload             Rescan the directories (every /skills command does)
 
@@ -10858,8 +10871,8 @@ struct MaiCLI {
     one, and editing the prompt updates all of them. A user prompt is a
     message sent by name (prompts.user), and MaiCore ships builtin ones —
     goal, newapp, tldr, followup — that a user prompt of the same name
-    replaces. Skills (/skills) are sent by name the same way, whether or not
-    the agent may call them as tools.
+    replaces. Skills (/skills) are sent by name the same way when their tools
+    are enabled for the agent.
 
       /prompts                   List every prompt and skill by kind
       $NAME [TEXT]               Send prompt or skill NAME with TEXT after it: TEXT goes

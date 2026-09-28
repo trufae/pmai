@@ -723,18 +723,19 @@ a skill takes effect at once. A skill whose front matter says
 
 `/skills prompt NAME [TEXT]` — or `$NAME [TEXT]`, which also reaches the
 user and builtin prompts — sends the skill's instructions, then `TEXT`, as
-the next message, whether or not the skill is enabled: a way to use one by
-hand without letting the model decide. Where the body says `$ARGUMENTS` the
+the next message when the skill's tool is enabled for the agent.
+Where the body says `$ARGUMENTS` the
 text goes there instead. The message carries the instructions inside a
-`<skill name="…" directory="…">` envelope naming the folder, so paths in
-them can be resolved.
+`<skill name="…" directory="…">` envelope identifying its resource folder.
+Project paths such as `AGENTS.md`, source files, and output files remain
+relative to the workspace.
 
 ```
 /skills                    list skills; * marks the ones the agent may call
 /skills show NAME          print a skill's file, tool state, and instructions
 /skills enable NAME|all    offer a skill, or every skill, to the current agent
-/skills disable NAME|all   stop offering it; /skills prompt still works
-/skills prompt NAME [TEXT] send the instructions, then TEXT, as the next message
+/skills disable NAME|all   disable a skill (or every skill) for this agent
+/skills prompt NAME [TEXT] send an enabled skill's instructions, then TEXT
 /skills path               print the directories scanned
 /skills reload             rescan the directories (every /skills command does)
 ```

@@ -81,7 +81,7 @@ public struct AgentSkill: Equatable, Identifiable, Sendable {
   }
 
   /// The text a host sends for the skill: the instructions inside a `<skill>`
-  /// envelope naming the folder, so relative paths in them can be resolved,
+  /// envelope identifying its resource folder without changing the project paths,
   /// and the caller's own words after it. A body that mentions `$ARGUMENTS`
   /// takes them there instead.
   public func prompt(arguments: String? = nil) -> String {
@@ -93,6 +93,7 @@ public struct AgentSkill: Equatable, Identifiable, Sendable {
       consumed = true
     }
     var text = "<skill name=\"\(name)\" directory=\"\(directoryURL.path)\">\n"
+    text += "Apply this skill in the current workspace. Project paths, including AGENTS.md and output files, are relative to the workspace, not the skill directory.\n\n"
     text += instructions
     text += "\n</skill>"
     if !extra.isEmpty, !consumed { text += "\n\n" + extra }
@@ -358,7 +359,7 @@ public enum MaiSkillTools {
       .compactMap { arguments[$0]?.coercedStringValue }
       .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     let text =
-      "Follow the instructions of skill '\(skill.name)' now. Paths they mention are relative to \(skill.directoryURL.path) unless absolute.\n\n"
+      "Follow the instructions of skill '\(skill.name)' now.\n\n"
       + skill.prompt(arguments: extra)
     return ToolOutput(text: text)
   }

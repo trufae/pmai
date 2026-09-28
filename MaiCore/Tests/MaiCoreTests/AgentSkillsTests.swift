@@ -6,7 +6,7 @@ import Testing
 // Skills are folders with a SKILL.md: front matter names and describes them,
 // the body is what the model follows. pmai reads the project's .pmai/skills
 // and ~/.pmai/skills, offers each as a skills_<name> tool, and /skills prompt
-// sends one as a message without enabling it.
+// sends an enabled skill as a message.
 
 @Test("Front matter yields the scalar fields and the body; quoting and block scalars are read")
 func frontMatterParsing() {
@@ -106,9 +106,11 @@ func promptRendering() {
     name: "fix",
     description: "Fix it.",
     directoryURL: URL(fileURLWithPath: "/tmp/skills/fix", isDirectory: true),
-    body: "Fix the bug.")
+    body: "Read AGENTS.md and fix the bug. Write report.md.")
   #expect(
-    skill.prompt() == "<skill name=\"fix\" directory=\"/tmp/skills/fix\">\nFix the bug.\n</skill>")
+    skill.prompt().hasPrefix("<skill name=\"fix\" directory=\"/tmp/skills/fix\">\n"))
+  #expect(skill.prompt().contains("Project paths, including AGENTS.md and output files, are relative to the workspace"))
+  #expect(skill.prompt().hasSuffix("Read AGENTS.md and fix the bug. Write report.md.\n</skill>"))
   #expect(skill.prompt(arguments: " in parser.c ").hasSuffix("</skill>\n\nin parser.c"))
 
   var templated = skill
@@ -148,6 +150,8 @@ func skillTools() async throws {
     arguments: .object(["arguments": .string("the parser")]), context: context)
   #expect(!output.isError)
   #expect(output.text.hasPrefix("Follow the instructions of skill 'my skill' now."))
+  #expect(!output.text.contains("Paths they mention are relative to"))
+  #expect(output.text.contains("Project paths, including AGENTS.md and output files, are relative to the workspace"))
   #expect(output.text.contains("<skill name=\"my skill\" directory=\""))
   #expect(output.text.contains("Step one.\n</skill>\n\nthe parser"))
 
