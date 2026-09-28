@@ -98,8 +98,8 @@ actor TerminalWriter {
     markdown = capturesOutput ? nil : renderer
   }
 
-  func configureToolResultLines(_ count: Int) {
-    toolResultLines = max(-1, count)
+  func configureToolResultLines(_ display: ToolResultDisplay) {
+    toolResultLines = display
   }
 
   func configureToolResultColor(_ color: String) {
@@ -179,7 +179,7 @@ actor TerminalWriter {
       status(ToolCallPreview.render(call), color: "green")
     case .toolFinished(let context, let result) where context.depth == 0:
       status(
-        ToolResultPreview.render(result, maxLines: toolResultLines),
+        ToolResultPreview.render(result, display: toolResultLines),
         color: result.isError ? "red" : toolResultColor)
     case .userMessage(let context, let message) where context.depth == 0:
       finishReply()
@@ -274,7 +274,7 @@ actor TerminalWriter {
       }
       childBlock(
         pid,
-        ToolResultPreview.render(result, maxLines: toolResultLines),
+        ToolResultPreview.render(result, display: toolResultLines),
         color: result.isError ? "red" : toolResultColor)
     case .userMessage(let context, let message):
       guard let pid = context.pid else { return }

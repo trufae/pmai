@@ -6,6 +6,12 @@ public enum ToolApprovalRequirement: String, Codable, Equatable, Sendable {
   case dangerous
 }
 
+/// How useful a tool's complete result is to the person following a run.
+public enum ToolResultImportance: String, Codable, Sendable {
+  case normal
+  case important
+}
+
 public struct ToolAnnotations: Codable, Equatable, Sendable {
   public var title: String?
   public var readOnly: Bool
@@ -20,6 +26,8 @@ public struct ToolAnnotations: Codable, Equatable, Sendable {
   /// stays sequential, which is the default.
   public var concurrent: Bool
   public var approval: ToolApprovalRequirement
+  /// Important results remain complete when the terminal uses `relevant` output.
+  public var resultImportance: ToolResultImportance
 
   public init(
     title: String? = nil,
@@ -28,7 +36,8 @@ public struct ToolAnnotations: Codable, Equatable, Sendable {
     idempotent: Bool = false,
     openWorld: Bool = true,
     concurrent: Bool = false,
-    approval: ToolApprovalRequirement = .confirm
+    approval: ToolApprovalRequirement = .confirm,
+    resultImportance: ToolResultImportance = .normal
   ) {
     self.title = title
     self.readOnly = readOnly
@@ -37,14 +46,15 @@ public struct ToolAnnotations: Codable, Equatable, Sendable {
     self.openWorld = openWorld
     self.concurrent = concurrent
     self.approval = approval
+    self.resultImportance = resultImportance
   }
 
   private enum CodingKeys: String, CodingKey {
-    case title, readOnly, destructive, idempotent, openWorld, concurrent, approval
+    case title, readOnly, destructive, idempotent, openWorld, concurrent, approval, resultImportance
   }
 
   /// Every key is optional on the way in, so annotations written before
-  /// `concurrent` existed — plugin manifests, saved tool catalogs — decode.
+  /// newer annotations existed — plugin manifests, saved tool catalogs — decode.
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.init(
@@ -55,7 +65,9 @@ public struct ToolAnnotations: Codable, Equatable, Sendable {
       openWorld: try container.decodeIfPresent(Bool.self, forKey: .openWorld) ?? true,
       concurrent: try container.decodeIfPresent(Bool.self, forKey: .concurrent) ?? false,
       approval: try container.decodeIfPresent(ToolApprovalRequirement.self, forKey: .approval)
-        ?? .confirm)
+        ?? .confirm,
+      resultImportance: try container.decodeIfPresent(ToolResultImportance.self, forKey: .resultImportance)
+        ?? .normal)
   }
 }
 
@@ -259,6 +271,16 @@ package enum ToolCallPreview {
 /// after `←`, the rest indented, cut at `maxLines`. No heading line, because
 /// the result is the point; `← done` only when nothing is to be shown.
 package enum ToolResultPreview {
+  package static func render(_ result: ToolResult, display: ToolResultDisplay) -> String {
+    let maxLines: Int
+    switch display {
+    case .all: maxLines = -1
+    case .relevant: maxLines = result.isError || result.importance == .important ? -1 : 3
+    case .lines(let count): maxLines = max(0, count)
+    }
+    return render(result, maxLines: maxLines)
+  }
+
   package static func render(
     _ result: ToolResult,
     maxLines: Int,

@@ -37,7 +37,7 @@ func configurationSaveRoundTrip() throws {
       promptForeground: "cyan",
       toolResultForeground: "bright-yellow",
       bold: true,
-      toolResultLines: 7))
+      toolResultLines: .lines(7)))
 
   try configuration.save(to: url)
 

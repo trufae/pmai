@@ -348,21 +348,42 @@ public struct ToolResult: Codable, Equatable, Sendable {
   public var content: [ContentPart]
   public var structuredContent: JSONValue?
   public var isError: Bool
+  /// Copied from the tool definition for result display; does not change model input.
+  public var importance: ToolResultImportance
 
   public init(
     callID: String,
     content: [ContentPart],
     structuredContent: JSONValue? = nil,
-    isError: Bool = false
+    isError: Bool = false,
+    importance: ToolResultImportance = .normal
   ) {
     self.callID = callID
     self.content = content
     self.structuredContent = structuredContent
     self.isError = isError
+    self.importance = importance
   }
 
-  public init(callID: String, text: String, isError: Bool = false) {
-    self.init(callID: callID, content: [.text(text)], isError: isError)
+  public init(
+    callID: String, text: String, isError: Bool = false,
+    importance: ToolResultImportance = .normal
+  ) {
+    self.init(callID: callID, content: [.text(text)], isError: isError, importance: importance)
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case callID, content, structuredContent, isError, importance
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      callID: try container.decode(String.self, forKey: .callID),
+      content: try container.decode([ContentPart].self, forKey: .content),
+      structuredContent: try container.decodeIfPresent(JSONValue.self, forKey: .structuredContent),
+      isError: try container.decode(Bool.self, forKey: .isError),
+      importance: try container.decodeIfPresent(ToolResultImportance.self, forKey: .importance) ?? .normal)
   }
 
   public var text: String {

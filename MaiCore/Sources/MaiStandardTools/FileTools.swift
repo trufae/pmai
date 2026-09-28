@@ -298,7 +298,8 @@ public struct MaiFileWorkspaceTool: AgentTool {
             required: false),
         ],
         annotations: ToolAnnotations(
-          readOnly: false, idempotent: false, openWorld: false, approval: .confirm))
+          readOnly: false, idempotent: false, openWorld: false, approval: .confirm,
+          resultImportance: .important))
     case .readRange:
       return ToolDefinition(
         name: operation.rawValue,
@@ -337,7 +338,8 @@ public struct MaiFileWorkspaceTool: AgentTool {
             required: false),
         ],
         annotations: ToolAnnotations(
-          readOnly: false, idempotent: false, openWorld: false, approval: .confirm))
+          readOnly: false, idempotent: false, openWorld: false, approval: .confirm,
+          resultImportance: .important))
     case .patch:
       return ToolDefinition(
         name: operation.rawValue,
@@ -362,7 +364,8 @@ public struct MaiFileWorkspaceTool: AgentTool {
             description: "Required number of matches, 1-100. Default: 1.", required: false),
         ],
         annotations: ToolAnnotations(
-          readOnly: false, idempotent: false, openWorld: false, approval: .confirm))
+          readOnly: false, idempotent: false, openWorld: false, approval: .confirm,
+          resultImportance: .important))
     case .write:
       return ToolDefinition(
         name: operation.rawValue,
@@ -391,7 +394,8 @@ public struct MaiFileWorkspaceTool: AgentTool {
             required: false),
         ],
         annotations: ToolAnnotations(
-          readOnly: false, idempotent: false, openWorld: false, approval: .confirm))
+          readOnly: false, idempotent: false, openWorld: false, approval: .confirm,
+          resultImportance: .important))
     case .rename:
       return ToolDefinition(
         name: operation.rawValue,
@@ -401,7 +405,8 @@ public struct MaiFileWorkspaceTool: AgentTool {
           ToolParameterDef(name: "new_path", type: "string", description: "New path.", required: true),
         ],
         annotations: ToolAnnotations(
-          readOnly: false, idempotent: false, openWorld: false, approval: .confirm))
+          readOnly: false, idempotent: false, openWorld: false, approval: .confirm,
+          resultImportance: .important))
     case .delete:
       return ToolDefinition(
         name: operation.rawValue,
@@ -419,7 +424,8 @@ public struct MaiFileWorkspaceTool: AgentTool {
           destructive: true,
           idempotent: false,
           openWorld: false,
-          approval: .dangerous))
+          approval: .dangerous,
+          resultImportance: .important))
     }
   }
 }

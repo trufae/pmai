@@ -1561,7 +1561,8 @@ public actor AgentRuntime {
         callID: approvedCall.id,
         content: output.content,
         structuredContent: output.structuredContent,
-        isError: output.isError)
+        isError: output.isError,
+        importance: definition.annotations.resultImportance)
       await emit(.toolFinished(context, result))
       return result
     } catch is CancellationError {

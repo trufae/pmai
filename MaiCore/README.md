@@ -427,8 +427,15 @@ contain prompts, tool output, and other private data.
 status line (or the separator), `ui.fgprompt`,
 `ui.bgprompt`, `ui.fgcolor`, `ui.bgcolor`, and `ui.fgtoolresult` accept named
 ANSI colors, `rgb:RGB`, or `none`, while `ui.bold`, `ui.markdown`, and `ui.broadcast` accept `on`
-or `off`. `ui.toolResultLines` accepts `all` or a line count (the default is
-`all`; `0` restores the compact status-only display).
+or `off`. `ui.toolResultLines` accepts `all`, `relevant`, or a line count (the default is
+`all`; `0` restores the compact status-only display). Use
+`/set ui.toolResultLines relevant` to show complete file-edit results and errors,
+while keeping routine results such as reads and searches to three leading lines.
+This applies to both main and child agents. The setting persists as
+`"toolResultLines": "relevant"` in the configuration's `ui` object; existing numeric
+values still work, including `-1` for `all`. Tools opt into complete output in this
+mode through `ToolAnnotations.resultImportance = .important`; unmarked tools use
+the normal preview. This only changes terminal display, not what the model receives.
 `/set ui.title TEXT` adds `[TEXT]` to the prompt and sets the terminal/tab title
 with an ANSI escape sequence; `/set ui.title none` clears the configured label.
 `/set ui.editor COMMAND` picks the editor `/edit`, `/reply`, and the other

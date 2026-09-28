@@ -7562,13 +7562,8 @@ struct MaiCLI {
         ui.title = value
       }
     } else if countKeys.contains(key) {
-      let value: Int
-      if parts[1].lowercased() == "all" {
-        value = -1
-      } else if let count = Int(parts[1]), count >= 0 {
-        value = count
-      } else {
-        await terminal.line("Usage: /set ui.toolResultLines <all|N>")
+      guard let value = ToolResultDisplay(setting: parts[1]) else {
+        await terminal.line("Usage: /set ui.toolResultLines <all|relevant|N>")
         return
       }
       ui.toolResultLines = value
@@ -8281,7 +8276,7 @@ struct MaiCLI {
     case "ui.fgtoolresult": value = ui.toolResultForeground
     case "ui.bold": return ui.bold ? "on" : "off"
     case "ui.markdown": return ui.markdown ? "on" : "off"
-    case "ui.toolresultlines": return ui.toolResultLines < 0 ? "all" : String(ui.toolResultLines)
+    case "ui.toolresultlines": return ui.toolResultLines.description
     case "ui.thinking": return ui.thinking.rawValue
     case "ui.subagents": return ui.subagentOutput.rawValue
     case "ui.broadcast": return ui.broadcast ? "on" : "off"
@@ -10260,7 +10255,7 @@ struct MaiCLI {
       "/set use.plan on", "/set use.plan off",
       "/set ui.bold on", "/set ui.bold off", "/set ui.markdown on", "/set ui.markdown off",
       "/set ui.broadcast on", "/set ui.broadcast off",
-      "/set ui.toolResultLines all", "/set ui.toolResultLines ",
+      "/set ui.toolResultLines all", "/set ui.toolResultLines relevant", "/set ui.toolResultLines ",
       "/cwd", "/pwd", "/cd ", "/plugins",
       "/providers", "/models ", "/provider ", "/provider add ", "/baseurl ", "/model ",
       "/model -compact ", "/model -tool ", "/agent default ", "/agent effort ", "/prompts",
@@ -10687,7 +10682,7 @@ struct MaiCLI {
       /set ui.fgtoolresult COLOR   Set successful tool-result output color
       /set ui.bold BOOL            Render input in bold (on/off)
       /set ui.markdown BOOL        Render replies as styled markdown (on/off)
-      /set ui.toolResultLines <all|N>  Show all or the first N result lines (0 hides them)
+      /set ui.toolResultLines <all|relevant|N>  Full results, full edits/errors with 3-line previews otherwise, or first N lines (0 hides them)
       /set ui.thinking MODE        Thinking display: status, line, three, five, or full
       /set ui.subagents LEVEL      What child agents print: all, tools, stats, or none
       /set ui.broadcast BOOL       Default unaddressed messages to @* / @@ / bare @ (on/off; default off)

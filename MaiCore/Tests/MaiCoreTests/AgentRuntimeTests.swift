@@ -1066,6 +1066,42 @@ func proxiedToolLoop() async throws {
   #expect(offered.first?.description.contains("They are: uppercase") == true)
 }
 
+@Test("Tool result events carry importance from the resolved definition", arguments: [false, true])
+func toolResultImportanceThroughRuntime(proxied: Bool) async throws {
+  let arguments: JSONValue = proxied
+    ? .object(["name": .string("edit"), "arguments": .object([:])]) : .object([:])
+  let provider = ScriptedProvider(responses: [
+    ProviderResponse(
+      message: AgentMessage(role: .assistant, content: [
+        .toolCall(ToolCall(
+          id: "edit-1", name: proxied ? ToolProxy.callName : "edit", arguments: arguments))
+      ]), stopReason: .toolCall),
+    ProviderResponse(message: .assistant("Done."), stopReason: .stop),
+  ])
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  try await runtime.register(tool: ClosureTool(
+    definition: ToolDefinition(
+      name: "edit", description: "Edit a file",
+      annotations: ToolAnnotations(approval: .automatic, resultImportance: .important))
+  ) { _, _ in ToolOutput(text: "header\ncontext\n-old\n+new") })
+  let events = EventRecorder()
+  let result = try await runtime.run(
+    AgentRequest(
+      provider: "scripted", model: "fixture", messages: [.user("Edit the file")],
+      toolNames: ["edit"], useToolProxy: proxied),
+    emit: { await events.append($0) })
+  #expect(result.transcript.flatMap(\.toolResults).first?.importance == .important)
+  let eventResult = try #require(await events.events.compactMap { event -> ToolResult? in
+    guard case .toolFinished(_, let result) = event else { return nil }
+    return result
+  }.first)
+  #expect(eventResult.importance == .important)
+  #expect(ToolResultPreview.render(eventResult, display: .relevant).hasSuffix("  +new"))
+  let followup = try #require(await provider.requests.last)
+  #expect(followup.messages.flatMap(\.toolResults).first?.text == "header\ncontext\n-old\n+new")
+}
+
 @Test("Providers without native tools use the JSON fallback without leaking protocol text")
 func textToolFallback() async throws {
   let provider = ScriptedProvider(
@@ -2246,7 +2282,7 @@ func configurationLoading() async throws {
   #expect(configuration.agents[0].useToolProxy)
   #expect(configuration.agents[0].options.maxOutputTokens == 100)
   #expect(configuration.ui.toolResultForeground == "yellow")
-  #expect(configuration.ui.toolResultLines == -1)
+  #expect(configuration.ui.toolResultLines == .all)
   let plugins = PluginRegistry()
   try await plugins.install(MaiOpenAIPlugin())
   let provider = try await plugins.makeProvider(

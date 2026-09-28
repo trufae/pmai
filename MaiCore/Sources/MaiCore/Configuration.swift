@@ -437,6 +437,54 @@ public enum SubagentOutputLevel: String, Codable, CaseIterable, Sendable {
   case none
 }
 
+/// Terminal result visibility. Numeric JSON values keep older configurations working.
+public enum ToolResultDisplay: Codable, Equatable, Sendable, CustomStringConvertible {
+  case all
+  case relevant
+  case lines(Int)
+
+  public init?(setting: String) {
+    switch setting.lowercased() {
+    case "all": self = .all
+    case "relevant": self = .relevant
+    default:
+      guard let count = Int(setting), count >= 0 else { return nil }
+      self = .lines(count)
+    }
+  }
+
+  public var description: String {
+    switch self {
+    case .all: "all"
+    case .relevant: "relevant"
+    case .lines(let count): String(max(0, count))
+    }
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.singleValueContainer()
+    if let count = try? container.decode(Int.self) {
+      self = count < 0 ? .all : .lines(count)
+    } else if let setting = try? container.decode(String.self),
+      let value = Self(setting: setting)
+    {
+      self = value
+    } else {
+      throw DecodingError.dataCorruptedError(
+        in: container, debugDescription: "Expected all, relevant, or a nonnegative line count.")
+    }
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.singleValueContainer()
+    switch self {
+    case .all: try container.encode(-1)
+    case .relevant: try container.encode("relevant")
+    case .lines(let count): try container.encode(max(0, count))
+    }
+  }
+}
+
 public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   /// Optional label shown in the REPL prompt and used as the terminal window title.
   public var title: String
@@ -450,8 +498,8 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   public var bold: Bool
   /// Render assistant replies as styled markdown in the REPL and visual mode.
   public var markdown: Bool
-  /// Number of leading tool-result lines printed by the text REPL. Negative shows all.
-  public var toolResultLines: Int
+  /// Show all results, important results in full, or a fixed number of leading lines.
+  public var toolResultLines: ToolResultDisplay
   /// What the text REPL prints while child agents run.
   public var subagentOutput: SubagentOutputLevel
   /// Send unaddressed REPL messages to every active process instead of the focus.
@@ -471,7 +519,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     toolResultForeground: String = "yellow",
     bold: Bool = false,
     markdown: Bool = true,
-    toolResultLines: Int = -1,
+    toolResultLines: ToolResultDisplay = .all,
     subagentOutput: SubagentOutputLevel = .all,
     broadcast: Bool = false,
     thinking: ThinkingDisplay = .status,
@@ -486,7 +534,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     self.toolResultForeground = toolResultForeground
     self.bold = bold
     self.markdown = markdown
-    self.toolResultLines = max(-1, toolResultLines)
+    self.toolResultLines = toolResultLines
     self.subagentOutput = subagentOutput
     self.broadcast = broadcast
     self.thinking = thinking
@@ -525,7 +573,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
         String.self, forKey: .toolResultForeground) ?? "yellow",
       bold: try container.decodeIfPresent(Bool.self, forKey: .bold) ?? false,
       markdown: try container.decodeIfPresent(Bool.self, forKey: .markdown) ?? true,
-      toolResultLines: try container.decodeIfPresent(Int.self, forKey: .toolResultLines) ?? -1,
+      toolResultLines: try container.decodeIfPresent(ToolResultDisplay.self, forKey: .toolResultLines) ?? .all,
       subagentOutput: try container.decodeIfPresent(
         SubagentOutputLevel.self, forKey: .subagentOutput) ?? .all,
       broadcast: try container.decodeIfPresent(Bool.self, forKey: .broadcast) ?? false,
