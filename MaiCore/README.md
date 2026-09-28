@@ -501,13 +501,16 @@ resume the same input or active run.
 `/set ctx.strategy size` (config key `context`, default `cache`) turns on the cheap
 half of that: before every model call the runtime replaces the body of any file
 read while answering an *earlier* prompt with one line saying what it was and
-that `files_read` brings it back. Everything read for the prompt in progress
+how to read it again. This includes full files, `files_read_range`, and
+`files_get_function` results. Everything read for the prompt in progress
 stays (pruning inside a run made models re-read what they still needed). File
 bodies are the largest part of a coding conversation and are rarely read again
 for a later prompt, so `size` cuts the tokens of a long chat; the price is that
 a server's prompt cache is invalidated from the rewritten message on. `cache`, the default, never changes a message once sent, so the
 cache covers every earlier turn and each call pays only for what is new. The
-REPL prints `✂ context: rewrote 1 message (12.3k → 2.1k chars)` when it prunes.
+REPL prints `✂ context: pruned 1 old read result (12.3k → 2.1k chars)` when it
+prunes. Those sizes are totals for the conversation; pruning only removes old
+read bodies. Full summarization is a separate compaction step.
 
 `/set effort LEVEL [TEXT]` sets how hard the model thinks, with one scale for every
 provider: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` (the REPL completes them).

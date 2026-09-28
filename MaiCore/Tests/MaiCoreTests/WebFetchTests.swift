@@ -309,7 +309,7 @@ func webFetchPrunesPreviousBodies() {
       structuredContent: .object(["tool": .string("web_fetch"), "source_id": .string(id), "offset": .integer(16000)])))])
   }
   var messages: [AgentMessage] = [.user("first task"), message("first"), .assistant("done"), .user("next task"), message("current")]
-  #expect(AgentContextPruning.prune(&messages)?.rewritten == 1)
+  #expect(AgentContextPruning.prune(&messages)?.pruned == 1)
   let reference = messages[1].toolResults[0].text
   #expect(reference.contains("source_id first and offset 16000"))
   #expect(reference.contains("https://example.test/source"))

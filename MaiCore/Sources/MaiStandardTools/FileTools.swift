@@ -344,13 +344,13 @@ public struct MaiFileWorkspaceTool: AgentTool {
       return ToolDefinition(
         name: operation.rawValue,
         description:
-          "Edit a text file by replacing a literal string or regular-expression match; returns a unified diff.",
+          "Edit a text file by replacing a literal string or regular-expression match; returns a unified diff. Copy find from a fresh read of the same path, preserving whitespace and line endings. JSON-escape find and replace once; do not add extra backslashes before source quotes or newlines. If no match is found, reread that path and correct find before retrying.",
         parameters: [
           path,
           ToolParameterDef(
             name: "find", type: "string",
             description:
-              "Exact text to find, or a regular expression when regex is true. Must match exactly expected_matches times (default once). When regex is true, backslashes must be double-escaped in the JSON string so one survives to the regex engine (e.g. '\\\\(' to match a literal parenthesis, '\\\\b' for a word boundary).",
+              "Exact text to find, or a regular expression when regex is true. Must match exactly expected_matches times (default once). In literal mode, JSON \\n represents a newline; JSON \\\\n searches for a literal backslash followed by n. When regex is true, backslashes must be double-escaped in the JSON string so one survives to the regex engine (e.g. '\\\\(' to match a literal parenthesis, '\\\\b' for a word boundary).",
             required: true),
           ToolParameterDef(
             name: "replace", type: "string",
@@ -1120,14 +1120,16 @@ private struct MaiFileWorkspace: Sendable {
       }
       matchCount = matches.count
       guard matchCount == expected else {
-        throw MaiFileWorkspaceError.patchMatchCount(expected, matchCount)
+        throw patchMatchError(
+          expected: expected, actual: matchCount, path: rawPath, text: text, find: find, regex: true)
       }
       patched = expression.stringByReplacingMatches(
         in: text, range: range, withTemplate: replacement)
     } else {
       matchCount = text.components(separatedBy: find).count - 1
       guard matchCount == expected else {
-        throw MaiFileWorkspaceError.patchMatchCount(expected, matchCount)
+        throw patchMatchError(
+          expected: expected, actual: matchCount, path: rawPath, text: text, find: find, regex: false)
       }
       patched = text.replacingOccurrences(of: find, with: replacement)
     }
@@ -1140,6 +1142,36 @@ private struct MaiFileWorkspace: Sendable {
       "Patched \(matchCount) match\(matchCount == 1 ? "" : "es") in \(displayPath(rawPath)).",
       path: rawPath,
       diff: MaiUnifiedDiff.render(old: text, new: patched, path: displayPath(rawPath)))
+  }
+
+  private func patchMatchError(
+    expected: Int, actual: Int, path: String, text: String, find: String, regex: Bool
+  ) -> MaiFileWorkspaceError {
+    var hint = "No changes were made. "
+    if actual == 0 {
+      if !regex {
+        if ["\\n", "\\r", "\\t"].contains(where: { find.contains($0) }) {
+          hint += "find contains literal backslash escape sequences. If you intended newlines or tabs, "
+            + "encode them once in JSON (\\n, \\r, \\t), not twice (\\\\n, \\\\r, \\\\t). "
+        }
+        if find.contains("\\\"") {
+          hint += "find contains literal backslashes before double quotes. If the source has ordinary quotes, "
+            + "JSON-escape those quotes only once in find and replace; the decoded arguments must contain no added backslashes. "
+        }
+        let normalizedText = text.replacingOccurrences(of: "\r\n", with: "\n")
+        let normalizedFind = find.replacingOccurrences(of: "\r\n", with: "\n")
+        if normalizedText.contains(normalizedFind) {
+          hint += "The text matches after normalizing CRLF/LF line endings; preserve the file's line endings in find. "
+        }
+      }
+      hint += "Read this same path with files_read or files_read_range (use files_grep to locate the text), "
+        + "then correct find to match the current content, including whitespace. Do not retry the identical call."
+    } else if actual <= 100 {
+      hint += "Make find more specific, or set expected_matches to \(actual) if you intend to replace every match (maximum 100)."
+    } else {
+      hint += "Make find more specific; expected_matches cannot exceed 100."
+    }
+    return .patchMatchCount(expected, actual, displayPath(path), hint)
   }
 
   func write(_ arguments: [String: JSONValue]) throws -> ToolOutput {
@@ -1749,7 +1781,7 @@ private enum MaiFileWorkspaceError: LocalizedError {
   case invalidGlob(String)
   case invalidMatchCount
   case emptyPatchMatch
-  case patchMatchCount(Int, Int)
+  case patchMatchCount(Int, Int, String, String)
   case invalidPath(String)
   case functionNotFound(String, String)
   case functionAmbiguous(String, [Int])
@@ -1787,8 +1819,8 @@ private enum MaiFileWorkspaceError: LocalizedError {
     case .invalidGlob(let message): "Invalid pattern: \(message)"
     case .invalidMatchCount: "expected_matches must be between 1 and 100."
     case .emptyPatchMatch: "The regular expression must not match an empty range."
-    case .patchMatchCount(let expected, let actual):
-      "Expected \(expected) patch matches, found \(actual)."
+    case .patchMatchCount(let expected, let actual, let path, let hint):
+      "Expected \(expected) patch matches, found \(actual) in '\(path)'. \(hint)"
     case .invalidPath(let path): "Could not change the current directory to '\(path)'."
     case .functionNotFound(let name, let path):
       "Could not find a complete function named '\(name)' in '\(path)'. Use files_read_index to inspect the available declarations."

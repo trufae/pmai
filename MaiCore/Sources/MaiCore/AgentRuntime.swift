@@ -651,7 +651,7 @@ public actor AgentRuntime {
           await supervisor.note(pid, transcript: transcript)
         }
       }
-      // In size mode the bodies of files read two or more results ago make
+      // In size mode the bodies of files read for earlier user prompts make
       // way for a reference before every call; in cache mode nothing sent
       // is ever touched, so the server's prompt cache covers it.
       if request.context == .size, let report = AgentContextPruning.prune(&transcript) {

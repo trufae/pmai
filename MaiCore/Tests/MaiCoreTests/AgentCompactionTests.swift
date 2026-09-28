@@ -70,3 +70,69 @@ func compactionPreservesProseAndTools() {
   #expect(!transcript.contains("Persistent"))
   #expect(!transcript.contains("private reasoning"))
 }
+
+@Test("Pruning includes old plain-text file reads and keeps their recovery arguments")
+func pruningIncludesPlainTextFileReads() throws {
+  let body = String(repeating: "line of source\n", count: 800)
+  let metadata: JSONValue = .object(["revision": .string("abc"), "startLine": .integer(12)])
+  let range: JSONValue = .object([
+    "path": .string("src/file.cpp"), "start_line": .integer(12), "end_line": .integer(811),
+  ])
+  let function: JSONValue = .object(["path": .string("src/file.cpp"), "name": .string("main")])
+  func exchange(_ id: String, _ name: String, _ arguments: JSONValue) -> [AgentMessage] {
+    [
+      AgentMessage(role: .assistant, content: [.toolCall(ToolCall(id: id, name: name, arguments: arguments))]),
+      AgentMessage(role: .tool, content: [.toolResult(ToolResult(
+        callID: id, content: [.text(body)], structuredContent: metadata))]),
+    ]
+  }
+  var messages: [AgentMessage] = [.user("Inspect the code.")]
+  messages += exchange("range", "files_read_range", range)
+  messages += exchange("function", "files_get_function", function)
+  messages += exchange("proxy", ToolProxy.callName, .object([
+    "name": .string("files_read_range"), "arguments": range,
+  ]))
+  messages += [.assistant("Inspected."), .user("Next task.")]
+  messages += exchange("current", "files_read_range", range)
+  let before = AgentTranscriptEditor.characterCount(of: messages)
+  let report = try #require(AgentContextPruning.prune(&messages))
+  #expect(report.pruned == 3)
+  #expect(report.rewritten == 0)
+  #expect(!report.isEmpty)
+  #expect(report.summary.hasPrefix("pruned 3 old read results ("))
+  #expect(report.charactersBefore == before)
+  #expect(report.charactersAfter == AgentTranscriptEditor.characterCount(of: messages))
+  #expect(report.charactersAfter < before / 3)
+  let results = messages.flatMap(\.toolResults)
+  for result in results.prefix(3) {
+    #expect(result.text.contains("Earlier file read removed"))
+    #expect(result.structuredContent == metadata)
+  }
+  #expect(results[0].text.contains("files_read_range with \(range.compactJSONString)"))
+  #expect(results[1].text.contains("files_get_function with \(function.compactJSONString)"))
+  #expect(results[2].text == results[0].text)
+  #expect(results[3].text == body)
+  #expect(messages.flatMap(\.toolCalls).map(\.id) == ["range", "function", "proxy", "current"])
+  #expect(AgentContextPruning.prune(&messages) == nil)
+}
+
+@Test("Pruning does not mistake errors, edits or shell output for file reads")
+func pruningPreservesOtherTextResults() {
+  let body = String(repeating: "important output\n", count: 100)
+  var messages: [AgentMessage] = [.user("First task.")]
+  for (id, name, text, error) in [
+    ("shell", "run_sh", body, false),
+    ("edit", "files_patch", body, false),
+    ("error", "files_read_range", body, true),
+    ("short", "files_get_function", "short body", false),
+  ] {
+    messages.append(AgentMessage(role: .assistant, content: [.toolCall(ToolCall(
+      id: id, name: name, arguments: .object(["path": .string("source.cpp")])))]))
+    messages.append(AgentMessage(role: .tool, content: [.toolResult(ToolResult(
+      callID: id, text: text, isError: error))]))
+  }
+  messages.append(.user("Next task."))
+  let original = messages
+  #expect(AgentContextPruning.prune(&messages) == nil)
+  #expect(messages == original)
+}

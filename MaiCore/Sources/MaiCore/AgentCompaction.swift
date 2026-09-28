@@ -211,10 +211,16 @@ public enum AgentContextPruning {
 
   public static func prune(_ messages: inout [AgentMessage]) -> AgentTranscriptEditReport? {
     guard let currentPrompt = messages.lastIndex(where: { $0.role == .user }) else { return nil }
+    var calls: [String: ToolCall] = [:]
+    for message in messages[..<currentPrompt] {
+      for call in message.toolCalls { calls[call.id] = call }
+    }
     var candidates: [Int] = []
     for (index, message) in messages.enumerated()
     where index < currentPrompt && message.role == .tool {
-      if message.toolResults.contains(where: { hasPrunableContent($0) }) { candidates.append(index) }
+      if message.toolResults.contains(where: { hasPrunableContent($0, call: calls[$0.callID]) }) {
+        candidates.append(index)
+      }
     }
     guard !candidates.isEmpty else { return nil }
     var report = AgentTranscriptEditReport(
@@ -222,11 +228,17 @@ public enum AgentContextPruning {
     for index in candidates {
       var message = messages[index]
       message.content = message.content.map { part in
-        guard case .toolResult(var result) = part, hasPrunableContent(result) else { return part }
+        guard case .toolResult(var result) = part,
+          hasPrunableContent(result, call: calls[result.callID])
+        else { return part }
+        let reference = fileReadReference(calls[result.callID])
         let path = result.structuredContent?.objectValue?["path"]?.stringValue
         let sourceID = result.structuredContent?.objectValue?["source_id"]?.stringValue
         let offset = result.structuredContent?.objectValue?["offset"]?.intValue ?? 0
         result.content = result.content.map { inner in
+          if case .text(let text) = inner, let reference, canPrune(text, to: reference) {
+            return .text(reference)
+          }
           if case .resource(let resource) = inner, let sourceID,
             let text = resource.text, text.count >= minimumCharacters {
             return .text(
@@ -241,18 +253,21 @@ public enum AgentContextPruning {
             "[\(path ?? file.name): \(lines) lines, \(text.count) characters, read earlier and removed from the context; call files_read again if needed]"
           )
         }
-        report.rewritten += 1
+        report.pruned += 1
         return .toolResult(result)
       }
       messages[index] = message
     }
-    guard report.rewritten > 0 else { return nil }
+    guard report.pruned > 0 else { return nil }
     report.charactersAfter = AgentTranscriptEditor.characterCount(of: messages)
     return report
   }
 
-  private static func hasPrunableContent(_ result: ToolResult) -> Bool {
-    result.content.contains { part in
+  private static func hasPrunableContent(_ result: ToolResult, call: ToolCall?) -> Bool {
+    guard !result.isError else { return false }
+    let reference = fileReadReference(call)
+    return result.content.contains { part in
+      if case .text(let text) = part, let reference { return canPrune(text, to: reference) }
       if case .file(let file) = part { return (file.text?.count ?? 0) >= minimumCharacters }
       if case .resource(let resource) = part,
         result.structuredContent?.objectValue?["tool"]?.stringValue == "web_fetch",
@@ -261,5 +276,26 @@ public enum AgentContextPruning {
       }
       return false
     }
+  }
+
+  /// Range and function reads return plain text rather than FileContent. Use
+  /// the linked call to identify them, never a guess based on the body or path.
+  private static func fileReadReference(_ call: ToolCall?) -> String? {
+    guard let call else { return nil }
+    var name = call.name
+    var arguments = call.arguments
+    if name == ToolProxy.callName, let envelope = arguments.objectValue {
+      name = envelope["name"]?.stringValue ?? ""
+      arguments = envelope["arguments"] ?? .null
+    }
+    guard ["files_read", "files_read_range", "files_get_function"].contains(name),
+      arguments.objectValue?["path"]?.stringValue != nil
+    else { return nil }
+    return "[Earlier file read removed from context; call \(name) with \(arguments.compactJSONString) to read it again.]"
+  }
+
+  private static func canPrune(_ text: String, to reference: String) -> Bool {
+    text.count >= minimumCharacters && text.count > reference.count
+      && !text.hasPrefix("[Earlier file read removed from context;")
   }
 }

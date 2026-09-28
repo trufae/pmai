@@ -793,6 +793,106 @@ func fileWorkspacePagesAdvance() async throws {
   #expect(invalid.text.contains("UTF-8"))
 }
 
+@Test("Patch failures diagnose literal escapes and preserve the file until corrected")
+func fileWorkspacePatchEscapes() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let source = "bool valid_flag_name() {\n  return true;\n}\n"
+  let file = root.appendingPathComponent("source.cpp")
+  try Data(source.utf8).write(to: file)
+  let patch = MaiFileWorkspaceTool(operation: .patch, configuration: .init(rootURL: root))
+  let bad = try await call(patch, [
+    "path": .string("source.cpp"),
+    "find": .string(source.replacingOccurrences(of: "\n", with: "\\n")),
+    "replace": .string(""),
+  ])
+  #expect(bad.isError)
+  #expect(bad.text.contains("found 0 in 'source.cpp'"))
+  #expect(bad.text.contains("literal backslash escape sequences"))
+  #expect(bad.text.contains("files_read"))
+  #expect(bad.text.contains("Do not retry the identical call"))
+  #expect(try Data(contentsOf: file) == Data(source.utf8))
+  let fixed = try await call(patch, [
+    "path": .string("source.cpp"), "find": .string(source), "replace": .string(""),
+  ])
+  #expect(!fixed.isError)
+  #expect(try Data(contentsOf: file).isEmpty)
+
+  // Literal escapes in source code are valid search text, not an instruction to unescape.
+  let literal = #"const char *s = "\n";"#
+  try Data(literal.utf8).write(to: file)
+  let exact = try await call(patch, [
+    "path": .string("source.cpp"), "find": .string(#"\n"#), "replace": .string(#"\t"#),
+  ])
+  #expect(!exact.isError)
+  #expect(try String(contentsOf: file, encoding: .utf8) == #"const char *s = "\t";"#)
+}
+
+@Test("Patch failures diagnose over-escaped quotes without changing literal source escapes")
+func fileWorkspacePatchQuoteEscapes() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let file = root.appendingPathComponent("tables_io_maps.cpp")
+  let source = #"xsql::set_vtab_error("io_maps: name must be [A-Za-z0-9._$] (no spaces)");"#
+  let replacement = #"xsql::set_vtab_error("io_maps: name must be a valid flag name");"#
+  let overescaped = source.replacingOccurrences(of: "\"", with: "\\\"")
+  try Data(source.utf8).write(to: file)
+  let patch = MaiFileWorkspaceTool(operation: .patch, configuration: .init(rootURL: root))
+  let bad = try await call(patch, [
+    "path": .string(file.lastPathComponent), "find": .string(overescaped),
+    "replace": .string(replacement.replacingOccurrences(of: "\"", with: "\\\"")),
+  ])
+  #expect(bad.isError)
+  #expect(bad.text.contains("literal backslashes before double quotes"))
+  #expect(bad.text.contains("find and replace"))
+  #expect(try Data(contentsOf: file) == Data(source.utf8))
+  let corrected = try await call(patch, [
+    "path": .string(file.lastPathComponent), "find": .string(source), "replace": .string(replacement),
+  ])
+  #expect(!corrected.isError)
+  #expect(try String(contentsOf: file, encoding: .utf8) == replacement)
+
+  // Source can legitimately contain escaped quotes, which must still match literally.
+  let literal = #"const char *s = "\"quoted\"";"#
+  try Data(literal.utf8).write(to: file)
+  let exact = try await call(patch, [
+    "path": .string(file.lastPathComponent), "find": .string(#"\"quoted\""#),
+    "replace": .string(#"\"renamed\""#),
+  ])
+  #expect(!exact.isError)
+  #expect(try String(contentsOf: file, encoding: .utf8) == #"const char *s = "\"renamed\"";"#)
+}
+
+@Test("Patch mismatch guidance distinguishes line endings, regexes and ambiguous matches")
+func fileWorkspacePatchMismatchGuidance() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let file = root.appendingPathComponent("source.txt")
+  let source = Data("one\r\ntwo\r\none\r\n".utf8)
+  try source.write(to: file)
+  let patch = MaiFileWorkspaceTool(operation: .patch, configuration: .init(rootURL: root))
+  for (find, regex, hint) in [
+    ("one\ntwo", false, "CRLF/LF"),
+    ("one\n two", false, "including whitespace"),
+    (#"missing\ntext"#, true, "files_read"),
+    ("one", false, "expected_matches to 2"),
+    ("one", true, "expected_matches to 2"),
+  ] {
+    let result = try await call(patch, [
+      "path": .string("source.txt"), "find": .string(find), "replace": .string(""),
+      "regex": .bool(regex),
+    ])
+    #expect(result.isError)
+    #expect(result.text.contains(hint))
+    #expect(result.text.contains("No changes were made"))
+    #expect(!result.text.contains("literal backslash escape sequences"))
+    #expect(try Data(contentsOf: file) == source)
+  }
+}
+
 private func fileReadBody(_ output: ToolOutput) -> String {
   output.content.compactMap { part in
     if case .file(let file) = part { return file.text }

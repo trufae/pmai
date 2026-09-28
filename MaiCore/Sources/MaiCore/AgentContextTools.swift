@@ -20,6 +20,7 @@ public enum AgentTranscriptEdit: Equatable, Sendable {
 public struct AgentTranscriptEditReport: Equatable, Sendable {
   public var removed: Int
   public var rewritten: Int
+  public var pruned: Int
   public var compacted: Int
   public var charactersBefore: Int
   public var charactersAfter: Int
@@ -27,24 +28,27 @@ public struct AgentTranscriptEditReport: Equatable, Sendable {
   public init(
     removed: Int = 0,
     rewritten: Int = 0,
+    pruned: Int = 0,
     compacted: Int = 0,
     charactersBefore: Int = 0,
     charactersAfter: Int = 0
   ) {
     self.removed = removed
     self.rewritten = rewritten
+    self.pruned = pruned
     self.compacted = compacted
     self.charactersBefore = charactersBefore
     self.charactersAfter = charactersAfter
   }
 
-  public var isEmpty: Bool { removed == 0 && rewritten == 0 && compacted == 0 }
+  public var isEmpty: Bool { removed == 0 && rewritten == 0 && pruned == 0 && compacted == 0 }
 
   /// `removed 3 messages, compacted 4 into a summary (12.3k → 2.1k chars)`
   public var summary: String {
     var parts: [String] = []
     if removed > 0 { parts.append("removed \(removed) message\(removed == 1 ? "" : "s")") }
     if rewritten > 0 { parts.append("rewrote \(rewritten) message\(rewritten == 1 ? "" : "s")") }
+    if pruned > 0 { parts.append("pruned \(pruned) old read result\(pruned == 1 ? "" : "s")") }
     if compacted > 0 {
       parts.append("compacted \(compacted) message\(compacted == 1 ? "" : "s") into a summary")
     }

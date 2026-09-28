@@ -904,6 +904,45 @@ func openAIStreamingToolCall() async throws {
   #expect(response.stopReason == .toolCall)
 }
 
+@Test("Tool argument decoding preserves newlines and literal backslashes", arguments: [false, true])
+func openAIToolArgumentEscapes(stream: Bool) async throws {
+  let host = "escapes-\(stream).example.test"
+  // One JSON escape means a newline; two mean a literal backslash followed by n.
+  let rawArguments = #"{"find":"one\ntwo","replace":"one\\ntwo","quote":"\"","escapedQuote":"\\\""}"#
+  StubURLProtocol.install(forHost: host) { request in
+    func payload(_ fragment: String) -> String {
+      let call: JSONValue = .object([
+        "index": .integer(0), "id": .string("patch"), "type": .string("function"),
+        "function": .object(["name": .string("files_patch"), "arguments": .string(fragment)]),
+      ])
+      return JSONValue.object([
+        "choices": .array([.object([
+          stream ? "delta" : "message": .object(["tool_calls": .array([call])]),
+        ])]),
+      ]).compactJSONString
+    }
+    // Split inside the first escape sequence to exercise stream accumulation too.
+    let split = rawArguments.index(after: rawArguments.firstIndex(of: "\\")!)
+    let body = stream
+      ? "data: \(payload(String(rawArguments[..<split])))\n\ndata: \(payload(String(rawArguments[split...])))\n\ndata: [DONE]\n\n"
+      : payload(rawArguments)
+    return try httpResponse(
+      request, contentType: stream ? "text/event-stream" : "application/json", body: body)
+  }
+  defer { StubURLProtocol.reset(host: host) }
+  let provider = OpenAICompatibleProvider(
+    configuration: .init(baseURL: try #require(URL(string: "https://\(host)/v1"))),
+    session: stubSession())
+  let response = try await provider.complete(ProviderRequest(
+    model: "test-model", messages: [.user("patch")],
+    tools: [ToolDefinition(name: "files_patch", description: "Patch")], stream: stream))
+  let arguments = try #require(response.message.toolCalls.first?.arguments.objectValue)
+  #expect(arguments["find"] == .string("one\ntwo"))
+  #expect(arguments["replace"] == .string(#"one\ntwo"#))
+  #expect(arguments["quote"] == .string("\""))
+  #expect(arguments["escapedQuote"] == .string("\\\""))
+}
+
 @Test("Cancelling a streamed provider request cancels its URL session task")
 func openAIStreamingCancellation() async throws {
   HangingURLProtocol.reset()
@@ -1542,7 +1581,7 @@ func pruningKeepsSmallAndCurrent() {
     .assistant("done"), .user("second"), toolMessage("3", long),
   ]
   let report = AgentContextPruning.prune(&messages)
-  #expect(report?.rewritten == 1)
+  #expect(report?.pruned == 1)
   #expect(messages[1].toolResults[0].text == "short")
   #expect(messages[2].toolResults[0].text.hasPrefix("[2.txt: 1 lines, 500 characters"))
   #expect(messages[5].toolResults[0].text == long)
