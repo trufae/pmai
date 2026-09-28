@@ -302,15 +302,19 @@ public struct MaiFileWorkspaceTool: AgentTool {
     case .readRange:
       return ToolDefinition(
         name: operation.rawValue,
-        description: "Read a 1-based inclusive line range of a file.",
+        description:
+          "Read a file using absolute, 1-based line numbers, including both endpoints. Requires end_line >= start_line. To read 100 lines starting at line 2600, use start_line=2600 and end_line=2699. Returns at most 1000 lines, stopping at the end of the file.",
         parameters: [
           path,
           ToolParameterDef(
-            name: "start_line", type: "integer", description: "First line, 1-based. Default: 1.",
+            name: "start_line", type: "integer",
+            description: "Absolute first line number, at least 1. Default: 1.",
             required: false),
           ToolParameterDef(
             name: "end_line", type: "integer",
-            description: "Last line, inclusive. Default: start_line + 199.", required: false),
+            description:
+              "Absolute last line number, inclusive; must be >= start_line. For N lines, use start_line + N - 1. Omit to read up to 200 lines from start_line.",
+            required: false),
         ],
         annotations: ToolAnnotations(
           readOnly: true, idempotent: true, openWorld: false, approval: .confirm))
@@ -1043,12 +1047,12 @@ private struct MaiFileWorkspace: Sendable {
     }
     let lines = Self.documentLines(text)
     let start = arguments["start_line"]?.intValue ?? 1
-    guard start >= 1 else { throw MaiFileWorkspaceError.invalidLineRange }
+    guard start >= 1 else { throw MaiFileWorkspaceError.invalidReadStartLine(start) }
     guard start <= lines.count else {
       throw MaiFileWorkspaceError.lineOutOfRange(start, lines.count)
     }
     let end = arguments["end_line"]?.intValue ?? start + min(199, lines.count - start)
-    guard end >= start else { throw MaiFileWorkspaceError.invalidLineRange }
+    guard end >= start else { throw MaiFileWorkspaceError.invalidReadLineRange(start, end) }
     let finalEnd = min(end, start + min(999, lines.count - start))
     let rendered = (start...finalEnd).map { "\($0): \(lines[$0 - 1])" }
     return ToolOutput(content: [
@@ -1730,6 +1734,8 @@ private enum MaiFileWorkspaceError: LocalizedError {
   case recursiveRequired(String)
   case writeTooLarge(Int)
   case fileTooLarge(Int)
+  case invalidReadStartLine(Int)
+  case invalidReadLineRange(Int, Int)
   case invalidLineRange
   case lineOutOfRange(Int, Int)
   case writeDisabled
@@ -1763,6 +1769,10 @@ private enum MaiFileWorkspaceError: LocalizedError {
     case .writeTooLarge(let limit): "A single write is limited to \(limit) bytes."
     case .fileTooLarge(let limit):
       "The file is larger than \(limit) bytes; use files_read with offsets instead."
+    case .invalidReadStartLine(let start):
+      "start_line=\(start) is invalid: files_read_range requires start_line >= 1."
+    case .invalidReadLineRange(let start, let end):
+      "end_line=\(end) is before start_line=\(start). files_read_range requires end_line >= start_line. end_line is an absolute, inclusive line number. To read N lines, use end_line=start_line+N-1, or omit end_line to read up to 200 lines."
     case .invalidLineRange:
       "Line ranges must be 1-based and inclusive. Use end_line=start_line-1 to insert."
     case .lineOutOfRange(let line, let count): "Line \(line) is outside this file's \(count) lines."
