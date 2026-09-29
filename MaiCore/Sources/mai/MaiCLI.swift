@@ -1240,8 +1240,10 @@ struct MaiCLI {
       memoryState.adopt(project: project, settings: configuration?.memory ?? .init())
       todoState.focus(project: project)
       skillState.focus(project: project)
+      let terminal = TerminalWriter()
       await runtime.configureMemory(memoryState.promptSection)
-      await runtime.configureProjectInstructions(projectInstructionsSection(configuration, terminal: terminal))
+      await runtime.configureProjectInstructions(
+        projectInstructionsSection(configuration, terminal: terminal))
       await runtime.configurePlanning(configuration?.use.plan ?? true)
       var session = REPLSession(chat: workspace.selectedChat!)
       session.pendingContent.append(contentsOf: try options.imagePaths.map(imageContent))
@@ -1251,7 +1253,6 @@ struct MaiCLI {
       }
       session.touch()
       workspace.upsert(session.chat, selecting: true)
-      let terminal = TerminalWriter()
       await terminal.configureMarkdown(
         markdownRenderer(
           enabled: options.markdown ?? configuration?.ui.markdown ?? true,
@@ -1901,7 +1902,8 @@ struct MaiCLI {
       visual.memory.focus(project: project, chatID: session.id)
       visual.todo.focus(project: project)
       await runtime.configureMemory(visual.memory.promptSection)
-      await runtime.configureProjectInstructions(Self.projectInstructionsSection(configuration, terminal: terminal))
+      await runtime.configureProjectInstructions(
+        Self.projectInstructionsSection(configuration, terminal: terminal))
       await runtime.configurePlanning(configuration?.use.plan ?? true)
     }
 
@@ -8177,7 +8179,7 @@ struct MaiCLI {
   }
 
   private static func listUseSettings(_ use: ConfiguredUse, terminal: TerminalWriter) async {
-    await terminal.line("use.agentsmd = \(use.agentsmd ? "on" : "off")")
+    await terminal.line("use.agentsmd = \(use.agentsmd.rawValue)")
     await terminal.line("use.plan = \(use.plan ? "on" : "off")")
   }
 
@@ -8280,7 +8282,9 @@ struct MaiCLI {
   }
 
   /// The AGENTS.md block for the working directory, when `use.agentsmd` is on.
-  private static func projectInstructionsSection(_ configuration: MaiConfiguration?, terminal: TerminalWriter? = nil) -> String? {
+  private static func projectInstructionsSection(
+    _ configuration: MaiConfiguration?, terminal: TerminalWriter? = nil
+  ) async -> String? {
     guard configuration?.use.agentsmd == .on else { return nil }
     let directory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
     let located = AgentInstructionsFile.locate(from: directory)
@@ -10989,27 +10993,6 @@ struct MaiCLI {
 
       exit(exitCode)
     #endif
-  }
-
-
-
-  private static func handleEditSoulCommand(terminal: TerminalWriter) async {
-    let soulPath = AgentHome.expandUserPath("~/.pmai/SOUL.md")
-    let url = URL(fileURLWithPath: soulPath)
-    
-    let previous = (try? String(contentsOf: url)) ?? ""
-    
-    guard
-      let edited = await editTemporaryText(
-        previous, suffix: "soul.md", terminal: terminal)
-    else { return }
-    
-    do {
-      try edited.write(to: url, atomically: true, encoding: .utf8)
-      await terminal.line("Soul saved to \(soulPath).")
-    } catch {
-      await terminal.line("error: \(error.localizedDescription)", to: .standardError)
-    }
   }
 
   private static func handleEditSoulCommand(terminal: TerminalWriter) async {

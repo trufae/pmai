@@ -83,19 +83,19 @@ func projectInstructionsReachRuns() async throws {
   #expect(await provider.requests.last?.messages.map(\.role) == [.system, .user])
 }
 
-@Test("use.agentsmd is off unless set, and older configurations decode without it")
+@Test("use.agentsmd defaults to maybe, and older configurations decode without it")
 func useSettingsDecode() throws {
   let legacy = try JSONDecoder().decode(
     MaiConfiguration.self,
     from: Data(#"{"version":1,"providers":[{"id":"p","kind":"hello"}]}"#.utf8))
   #expect(legacy.use == ConfiguredUse())
-  #expect(!legacy.use.agentsmd)
+  #expect(legacy.use.agentsmd == .maybe)
 
   let enabled = try JSONDecoder().decode(
-    MaiConfiguration.self, from: Data(#"{"version":1,"use":{"agentsmd":true}}"#.utf8))
-  #expect(enabled.use.agentsmd)
+    MaiConfiguration.self, from: Data(#"{"version":1,"use":{"agentsmd":"on"}}"#.utf8))
+  #expect(enabled.use.agentsmd == .on)
   let roundTrip = try JSONDecoder().decode(MaiConfiguration.self, from: enabled.encoded())
-  #expect(roundTrip.use.agentsmd)
+  #expect(roundTrip.use.agentsmd == .on)
 }
 
 /// Delegates once when it can, then answers.

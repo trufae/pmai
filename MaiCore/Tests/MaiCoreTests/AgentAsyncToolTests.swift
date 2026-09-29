@@ -45,9 +45,9 @@ func concurrentAnnotationDecodes() throws {
 @Test("use.plan is on unless set off, and older configurations decode without it")
 func usePlanDefaultsOn() throws {
   let legacy = try JSONDecoder().decode(
-    MaiConfiguration.self, from: Data(#"{"version":1,"use":{"agentsmd":true}}"#.utf8))
+    MaiConfiguration.self, from: Data(#"{"version":1,"use":{"agentsmd":"on"}}"#.utf8))
   #expect(legacy.use.plan)
-  #expect(legacy.use.agentsmd)
+  #expect(legacy.use.agentsmd == .on)
   let off = try JSONDecoder().decode(
     MaiConfiguration.self, from: Data(#"{"version":1,"use":{"plan":false}}"#.utf8))
   #expect(!off.use.plan)
