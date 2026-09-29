@@ -15,6 +15,8 @@ public actor ACPClient {
     public var arguments: [String]
     public var environment: [String: String]?
     public var workingDirectory: URL?
+    public var remoteWorkingDirectory: String?
+    public var readClientFiles: Bool
     public var permission: ACPPermissionPolicy
     public var promptTimeout: TimeInterval
 
@@ -24,7 +26,9 @@ public actor ACPClient {
       environment: [String: String]? = nil,
       workingDirectory: URL? = nil,
       permission: ACPPermissionPolicy = .auto,
-      promptTimeout: TimeInterval = 600
+      promptTimeout: TimeInterval = 600,
+      remoteWorkingDirectory: String? = nil,
+      readClientFiles: Bool = true
     ) {
       self.command = command
       self.arguments = arguments
@@ -32,6 +36,8 @@ public actor ACPClient {
       self.workingDirectory = workingDirectory
       self.permission = permission
       self.promptTimeout = promptTimeout
+      self.remoteWorkingDirectory = remoteWorkingDirectory
+      self.readClientFiles = readClientFiles
     }
   }
 
@@ -39,6 +45,9 @@ public actor ACPClient {
   private var transport: StdioJSONRPCTransport?
   private var peer: JSONRPCPeer?
   private var sessionID: String?
+  private var sessionLoaded = false
+  private var supportsLoad = false
+  private var busy = false
   /// The delta sink for the prompt in flight; only one prompt runs at a time.
   private var activeSink: (@Sendable (ProviderEvent) async -> Void)?
 
@@ -52,6 +61,9 @@ public actor ACPClient {
     _ text: String,
     emit: @escaping @Sendable (ProviderEvent) async -> Void
   ) async throws -> ProviderStopReason {
+    guard !busy else { throw JSONRPCError.invalidParams("An ACP prompt is already running") }
+    busy = true
+    defer { busy = false }
     let peer = try await connectedPeer()
     let sessionID = try await ensureSession(peer: peer)
     activeSink = emit
@@ -68,23 +80,33 @@ public actor ACPClient {
     } catch is CancellationError {
       try? peer.notify(
         ACP.Method.sessionCancel, params: .object(["sessionId": .string(sessionID)]))
+      await disconnect()
       throw CancellationError()
+    } catch {
+      // Do not resend a prompt: the worker may already have executed tools.
+      await disconnect()
+      throw error
     }
   }
 
   public func close() async {
+    await disconnect()
+    sessionID = nil
+  }
+
+  private func disconnect() async {
     await peer?.close()
     transport?.close()
     peer = nil
     transport = nil
-    sessionID = nil
+    sessionLoaded = false
   }
 
   // MARK: - Connection
 
   private func connectedPeer() async throws -> JSONRPCPeer {
     if let peer, transport?.isRunning == true { return peer }
-    await close()
+    await disconnect()
     let transport = try StdioJSONRPCTransport.spawn(
       command: configuration.command,
       arguments: configuration.arguments,
@@ -103,7 +125,7 @@ public actor ACPClient {
     self.transport = transport
     self.peer = peer
     do {
-      _ = try await peer.request(
+      let initialized = try await peer.request(
         ACP.Method.initialize,
         params: .object([
           "protocolVersion": .integer(ACP.protocolVersion),
@@ -112,13 +134,15 @@ public actor ACPClient {
           ]),
           "clientCapabilities": .object([
             "fs": .object([
-              "readTextFile": .bool(true), "writeTextFile": .bool(false),
+              "readTextFile": .bool(configuration.readClientFiles), "writeTextFile": .bool(false),
             ]),
             "terminal": .bool(false),
           ]),
         ]),
         timeout: 30)
+      supportsLoad = initialized.objectValue?["agentCapabilities"]?.objectValue?["loadSession"]?.boolValue == true
     } catch {
+      await disconnect()
       throw ACPClientError.launchFailed(
         command: configuration.command,
         detail: transport.recentErrorOutput.isEmpty
@@ -128,9 +152,16 @@ public actor ACPClient {
   }
 
   private func ensureSession(peer: JSONRPCPeer) async throws -> String {
-    if let sessionID { return sessionID }
-    let cwd =
-      configuration.workingDirectory?.path ?? FileManager.default.currentDirectoryPath
+    if let sessionID, sessionLoaded { return sessionID }
+    let cwd = configuration.remoteWorkingDirectory
+      ?? configuration.workingDirectory?.path ?? AgentExecutionScope.directory.path
+    if let sessionID, supportsLoad {
+      _ = try await peer.request(ACP.Method.sessionLoad, params: .object([
+        "sessionId": .string(sessionID), "cwd": .string(cwd), "mcpServers": .array([])
+      ]), timeout: 60)
+      sessionLoaded = true
+      return sessionID
+    }
     let result = try await peer.request(
       ACP.Method.sessionNew,
       params: .object(["cwd": .string(cwd), "mcpServers": .array([])]),
@@ -139,13 +170,16 @@ public actor ACPClient {
       throw ACPClientError.noSession(configuration.command)
     }
     sessionID = id
+    sessionLoaded = true
     return id
   }
 
   // MARK: - Agent-initiated traffic
 
   private func handleAgentNotification(method: String, params: JSONValue?) async {
-    guard method == ACP.Method.sessionUpdate, let sink = activeSink else { return }
+    guard method == ACP.Method.sessionUpdate,
+      params?.objectValue?["sessionId"]?.stringValue == sessionID,
+      let sink = activeSink else { return }
     guard let update = params?.objectValue?["update"]?.objectValue,
       let kind = update["sessionUpdate"]?.stringValue.flatMap(ACP.Update.init)
     else { return }
@@ -165,6 +199,7 @@ public actor ACPClient {
     case ACP.Method.requestPermission:
       return permissionOutcome(params: params)
     case ACP.Method.readTextFile:
+      guard configuration.readClientFiles else { throw JSONRPCError.methodNotFound(method) }
       return try readTextFile(params: params)
     default:
       throw JSONRPCError.methodNotFound(method)

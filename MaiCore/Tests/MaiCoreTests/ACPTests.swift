@@ -282,3 +282,125 @@ private actor ChunkRecorder {
   func append(_ chunk: String) { chunks.append(chunk) }
   var joined: String { chunks.joined() }
 }
+
+@Test("ACP sessions persist across connections, replay history, and hold exclusive leases")
+func acpSessionRecovery() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent("acp-session-\(UUID())")
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let runtime = AgentRuntime()
+  try await runtime.register(HelloProvider())
+  let agent = AgentDefinition(id: "main", instructions: "", provider: .hello, model: "hello")
+  func connection() async -> (JSONRPCPeer, Task<Void, Never>, ChunkRecorder) {
+    let (clientTransport, serverTransport) = PipeTransport.pair()
+    let server = ACPServer(runtime: runtime, agent: agent, bridge: ACPPermissionBridge(),
+      sessionDirectory: root.appendingPathComponent("sessions"), workspaceRoot: root)
+    let serving = Task { await server.serve(on: serverTransport) }
+    let recorder = ChunkRecorder()
+    let client = JSONRPCPeer(transport: clientTransport, onNotification: { _, params in
+      let update = params?.objectValue?["update"]?.objectValue
+      await recorder.append(ACP.ContentBlock.text(from: update?["content"]))
+    })
+    await client.start()
+    return (client, serving, recorder)
+  }
+  let (first, firstServer, _) = await connection()
+  let initialized = try await first.request("initialize", params: .object(["protocolVersion": .integer(1)]), timeout: 5)
+  #expect(initialized.objectValue?["agentCapabilities"]?.objectValue?["loadSession"] == .bool(true))
+  let created = try await first.request("session/new", params: .object(["cwd": .string(root.path)]), timeout: 5)
+  let id = try #require(created.objectValue?["sessionId"]?.stringValue)
+  _ = try await first.request("session/prompt", params: .object([
+    "sessionId": .string(id), "prompt": .array([ACP.ContentBlock.text("remember this").json])
+  ]), timeout: 5)
+  let (second, secondServer, replay) = await connection()
+  _ = try await second.request("initialize", params: .object(["protocolVersion": .integer(1)]), timeout: 5)
+  let load: JSONValue = .object(["sessionId": .string(id), "cwd": .string(root.path)])
+  await #expect(throws: JSONRPCError.self) { try await second.request("session/load", params: load, timeout: 5) }
+  await first.close()
+  await firstServer.value
+  _ = try await second.request("session/load", params: load, timeout: 5)
+  #expect(await replay.joined.contains("remember this"))
+  await #expect(throws: JSONRPCError.self) {
+    try await second.request("session/new", params: .object(["cwd": .string("/etc")]), timeout: 5)
+  }
+  await #expect(throws: JSONRPCError.self) {
+    try await second.request("session/load", params: .object(["sessionId": .string("../secret"), "cwd": .string(root.path)]), timeout: 5)
+  }
+  await second.close()
+  await secondServer.value
+}
+
+@Test("Concurrent ACP sessions use their own cwd and permission session IDs")
+func acpSessionIsolation() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent("acp-cwd-\(UUID())")
+  let left = root.appendingPathComponent("left"), right = root.appendingPathComponent("right")
+  try FileManager.default.createDirectory(at: left, withIntermediateDirectories: true)
+  try FileManager.default.createDirectory(at: right, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let provider = ACPCwdProvider()
+  let bridge = ACPPermissionBridge()
+  let runtime = AgentRuntime(approvalHandler: bridge.approvalHandler)
+  try await runtime.register(provider)
+  try await runtime.register(tool: ClosureTool(definition: ToolDefinition(
+    name: "cwd", description: "Report the scoped directory", parameters: [],
+    annotations: ToolAnnotations(readOnly: true, approval: .confirm))) { _, _ in
+      ToolOutput(text: AgentExecutionScope.directory.path)
+    })
+  let agent = AgentDefinition(id: "main", instructions: "", provider: "cwd-provider", model: "",
+    toolNames: ["cwd"])
+  let (clientTransport, serverTransport) = PipeTransport.pair()
+  let server = ACPServer(runtime: runtime, agent: agent, bridge: bridge)
+  let serving = Task { await server.serve(on: serverTransport) }
+  let permissions = ACPPermissionRecorder()
+  let client = JSONRPCPeer(transport: clientTransport, onRequest: { method, params in
+    #expect(method == "session/request_permission")
+    let fields = try #require(params?.objectValue)
+    let id = try #require(fields["sessionId"]?.stringValue)
+    let call = try #require(fields["toolCall"]?.objectValue?["toolCallId"]?.stringValue)
+    await permissions.record(id: id, call: call)
+    return .object(["outcome": .object(["outcome": .string("selected"), "optionId": .string("allow_once")])])
+  })
+  await client.start()
+  _ = try await client.request("initialize", params: .object(["protocolVersion": .integer(1)]), timeout: 5)
+  var ids: [String] = []
+  for directory in [left, right] {
+    let session = try await client.request("session/new", params: .object(["cwd": .string(directory.path)]), timeout: 5)
+    ids.append(try #require(session.objectValue?["sessionId"]?.stringValue))
+  }
+  try await withThrowingTaskGroup(of: Void.self) { group in
+    for id in ids {
+      group.addTask {
+        _ = try await client.request("session/prompt", params: .object([
+          "sessionId": .string(id), "prompt": .array([ACP.ContentBlock.text(id).json])
+        ]), timeout: 5)
+      }
+    }
+    try await group.waitForAll()
+  }
+  #expect(await permissions.calls == Dictionary(uniqueKeysWithValues: ids.map { ($0, $0) }))
+  let outputs = await provider.outputs
+  #expect(outputs[ids[0]] == left.resolvingSymlinksInPath().path)
+  #expect(outputs[ids[1]] == right.resolvingSymlinksInPath().path)
+  await client.close()
+  await serving.value
+}
+
+private actor ACPPermissionRecorder {
+  var calls: [String: String] = [:]
+  func record(id: String, call: String) { calls[id] = call }
+}
+
+private actor ACPCwdProvider: ChatProvider {
+  nonisolated let descriptor = ProviderDescriptor(id: "cwd-provider", displayName: "Cwd", capabilities: [.nativeToolCalling])
+  var outputs: [String: String] = [:]
+  func complete(_ request: ProviderRequest, emit: @escaping ProviderEventHandler) async throws -> ProviderResponse {
+    let id = request.messages.last(where: { $0.role == .user })!.text
+    if let result = request.messages.flatMap(\.toolResults).last {
+      outputs[id] = result.text
+      return ProviderResponse(message: .assistant("done"), stopReason: .stop)
+    }
+    return ProviderResponse(message: AgentMessage(role: .assistant, content: [
+      .toolCall(ToolCall(id: id, name: "cwd", arguments: .object([:])))
+    ]), stopReason: .toolCall)
+  }
+}

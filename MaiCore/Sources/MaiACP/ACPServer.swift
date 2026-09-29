@@ -18,6 +18,7 @@ public actor ACPServer {
     var saved: SavedSession
     var task: Task<AgentResult, Error>?
     var lease: ACPFileLock?
+    var processes: [AgentPID] = []
   }
 
   private let runtime: AgentRuntime
@@ -31,6 +32,7 @@ public actor ACPServer {
   private let extensionHandler: @Sendable (String, JSONValue?) throws -> JSONValue?
   private var connected = false
   private var initialized = false
+  private var connectedAt = Date()
 
   /// - Parameters:
   ///   - runtime: built with `bridge.approvalHandler` so tool approvals reach
@@ -65,6 +67,7 @@ public actor ACPServer {
       })
     self.peer = peer
     connected = true
+    connectedAt = Date()
     bridge.connect(to: self)
     // Revocation also closes idle connections and cancels in-flight work.
     let monitor = Task { [weak self] in
@@ -76,6 +79,9 @@ public actor ACPServer {
     await peer.run()
     connected = false
     monitor.cancel()
+    for session in sessions.values {
+      for pid in session.processes { await runtime.supervisor.stop(pid, reason: "ACP disconnected") }
+    }
     let tasks = sessions.values.compactMap(\.task)
     for task in tasks { task.cancel() }
     for task in tasks { _ = try? await task.value }
@@ -117,6 +123,7 @@ public actor ACPServer {
     guard connected, (try? authorize()) != nil, method == ACP.Method.sessionCancel else { return }
     guard let id = params?.objectValue?["sessionId"]?.stringValue else { return }
     sessions[id]?.task?.cancel()
+    for pid in sessions[id]?.processes ?? [] { await runtime.supervisor.stop(pid, reason: "ACP cancelled") }
   }
 
   private func initializeResult() -> JSONValue {
@@ -137,7 +144,10 @@ public actor ACPServer {
 
   private func checkAuthorization() async {
     // A fresh, not-yet-paired connection must be able to redeem its invite.
-    guard initialized else { return }
+    guard initialized else {
+      if Date().timeIntervalSince(connectedAt) > 30 { await peer?.close() }
+      return
+    }
     do { try authorize() } catch { await peer?.close() }
   }
 
@@ -269,7 +279,9 @@ public actor ACPServer {
     sessions[id]?.task = task
 
     do {
-      let result = try await task.value
+      let result = try await withTaskCancellationHandler {
+        try await task.value
+      } onCancel: { task.cancel() }
       sessions[id]?.saved.transcript = result.transcript
       if let saved = sessions[id]?.saved { try save(saved) }
       sessions[id]?.task = nil
@@ -305,6 +317,8 @@ public actor ACPServer {
     // Child agents report through the same handler; the editor gets the served
     // agent's own stream, and children stay behind the tool result they become.
     switch event {
+    case .started(let context, _) where context.depth == 0:
+      if let pid = context.pid { sessions[id]?.processes.append(pid) }
     case .provider(let context, .textDelta(let text)) where context.depth == 0 && !text.isEmpty:
       await update(session: id, kind: .agentMessageChunk, text: text)
     case .provider(let context, .reasoningDelta(let text))

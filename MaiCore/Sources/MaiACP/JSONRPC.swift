@@ -121,6 +121,7 @@ public final class StdioJSONRPCTransport: JSONRPCTransport, @unchecked Sendable 
   private var continuation: AsyncStream<JSONRPCMessage>.Continuation?
   private var stream: AsyncStream<JSONRPCMessage>?
   private var isClosed = false
+  private var reachedEOF = false
   /// The last lines of the child's stderr, so a failure can say why.
   private var errorTail: [String] = []
 
@@ -172,7 +173,7 @@ public final class StdioJSONRPCTransport: JSONRPCTransport, @unchecked Sendable 
     return transport
   }
 
-  public var isRunning: Bool { process?.isRunning ?? !isClosedNow }
+  public var isRunning: Bool { !stateLock.withLock { isClosed || reachedEOF } && (process?.isRunning ?? true) }
 
   private var isClosedNow: Bool { stateLock.withLock { isClosed } }
 
@@ -248,6 +249,8 @@ public final class StdioJSONRPCTransport: JSONRPCTransport, @unchecked Sendable 
         let chunk = self.input.availableData
         if chunk.isEmpty { break }
         buffer.append(chunk)
+        // A network peer must not grow an unterminated frame without bound.
+        guard buffer.count <= 16 * 1024 * 1024 else { self.close(); return }
         while let newline = buffer.firstIndex(of: 0x0A) {
           let line = buffer[..<newline]
           buffer.removeSubrange(...newline)
@@ -255,6 +258,7 @@ public final class StdioJSONRPCTransport: JSONRPCTransport, @unchecked Sendable 
         }
       }
       if !buffer.isEmpty { self.deliver(buffer) }
+      self.stateLock.withLock { self.reachedEOF = true }
       self.finishMessages()
     }
     thread.name = "mai.jsonrpc.reader"
@@ -329,6 +333,7 @@ public actor JSONRPCPeer {
   private var pending: [Int: PendingRequest] = [:]
   private var reader: Task<Void, Never>?
   private var closed = false
+  private var incoming: [UUID: Task<Void, Never>] = [:]
 
   public init(
     transport: any JSONRPCTransport,
@@ -349,10 +354,16 @@ public actor JSONRPCPeer {
       if message.isResponse {
         resolve(message)
       } else if let method = message.method {
-        dispatch(method: method, message: message)
+        if message.id == nil {
+          await onNotification(method, message.params)
+        } else {
+          dispatch(method: method, message: message)
+        }
       }
     }
+    let tasks = Array(incoming.values)
     finish()
+    for task in tasks { await task.value }
   }
 
   /// Starts `run` in the background, for peers that also send requests.
@@ -396,6 +407,10 @@ public actor JSONRPCPeer {
     params: JSONValue?,
     timeout: TimeInterval?
   ) {
+    guard !closed, !Task.isCancelled else {
+      continuation.resume(throwing: Task.isCancelled ? CancellationError() : JSONRPCTransportError.closed)
+      return
+    }
     pending[id] = PendingRequest(continuation: continuation)
     do {
       try transport.send(.request(id: id, method: method, params: params))
@@ -443,8 +458,11 @@ public actor JSONRPCPeer {
       Task { await onNotification(method, message.params) }
       return
     }
-    Task { [transport, onRequest] in
+    let token = UUID()
+    incoming[token] = Task { [transport, onRequest] in
+      defer { incoming[token] = nil }
       do {
+        try Task.checkCancellation()
         let result = try await onRequest(method, message.params)
         try transport.send(.response(id: id, result: result))
       } catch let error as JSONRPCError {
@@ -460,6 +478,7 @@ public actor JSONRPCPeer {
     guard !closed else { return }
     closed = true
     reader?.cancel()
+    for task in incoming.values { task.cancel() }
     for request in pending.values {
       request.timeout?.cancel()
       request.continuation.resume(throwing: JSONRPCTransportError.closed)

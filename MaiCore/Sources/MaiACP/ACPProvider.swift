@@ -36,7 +36,7 @@ public actor ACPProvider: ChatProvider {
     _ request: ProviderRequest,
     emit: @escaping ProviderEventHandler
   ) async throws -> ProviderResponse {
-    let client = client(for: configuration.workingDirectory)
+    let client = client(for: configuration.workingDirectory ?? AgentExecutionScope.directory)
     // The runtime hands over the whole transcript each turn, but the ACP agent
     // keeps its own session, so only the latest user turn is new to it.
     let text = ACPProvider.latestUserText(request.messages)
@@ -140,7 +140,9 @@ public struct ACPConfiguredProviderFactory: ConfiguredProviderFactory {
         environment: childEnvironment,
         workingDirectory: workingDirectory,
         permission: permission,
-        promptTimeout: configuration.timeout ?? 600))
+        promptTimeout: configuration.timeout ?? 600,
+        remoteWorkingDirectory: options["remoteCwd"]?.stringValue,
+        readClientFiles: options["readClientFiles"]?.boolValue ?? true))
   }
 }
 

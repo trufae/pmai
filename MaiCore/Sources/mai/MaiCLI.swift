@@ -92,6 +92,9 @@ private struct CLIOptions {
   var listChats = false
   /// Serve one protocol on stdio instead of the REPL.
   var serve: ServeMode?
+  var acpRoot: String?
+  var acpSessionDirectory: String?
+  var tailcatGateway: String?
 
   init(arguments: [String], environment: [String: String]) throws {
     configPath = environment["PMAI_CONFIG"]
@@ -170,6 +173,12 @@ private struct CLIOptions {
         printConfig = true
       case "-U", "--update":
         update = true
+      case "--acp-root":
+        acpRoot = try Self.value(after: argument, in: arguments, index: &index)
+      case "--acp-sessions":
+        acpSessionDirectory = try Self.value(after: argument, in: arguments, index: &index)
+      case "--tailcat-gateway":
+        tailcatGateway = try Self.value(after: argument, in: arguments, index: &index)
       case "--acp":
         serve = .acp
       case "--mcp":
@@ -186,6 +195,7 @@ private struct CLIOptions {
     }
     if !positional.isEmpty { initialPrompt = positional.joined(separator: " ") }
     if readStdin, serve != nil { throw CLIError.stdinServesProtocol }
+    if tailcatGateway != nil, serve != .acp { throw CLIError.unknownOption("Tailcat gateway requires --acp") }
   }
 
   private static func value(
@@ -1038,6 +1048,16 @@ struct MaiCLI {
   static func main() async {
     let environment = ProcessInfo.processInfo.environment
     let commandLineArguments = platformCommandLineArguments(environment: environment)
+    if commandLineArguments.dropFirst().first == "tailcat" {
+      do {
+        try await TailcatCLI.run(Array(commandLineArguments.dropFirst(2)),
+          executable: commandLineArguments[0], environment: environment)
+      } catch {
+        FileHandle.standardError.write(Data("error: \(error.localizedDescription)\n".utf8))
+        exit(2)
+      }
+      return
+    }
     if commandLineArguments.dropFirst().contains(where: { $0 == "--help" || $0 == "-h" }) {
       printUsage()
       return
@@ -1270,11 +1290,12 @@ struct MaiCLI {
       configureEditor(configuration?.ui.editor ?? "")
 
       if let mode = options.serve {
-        await runServer(
+        try await runServer(
           mode,
           runtime: runtime,
           approvalHandler: approvalHandler,
-          agent: profile.agentDefinition)
+          agent: profile.agentDefinition,
+          options: options, environment: environment)
         return
       }
       if loaded == nil {
@@ -1537,15 +1558,61 @@ struct MaiCLI {
     _ mode: ServeMode,
     runtime: AgentRuntime,
     approvalHandler: TerminalApprovalHandler,
-    agent: AgentDefinition
-  ) async {
+    agent: AgentDefinition,
+    options: CLIOptions,
+    environment: [String: String]
+  ) async throws {
     let transport = StdioJSONRPCTransport.standardIO()
     switch mode {
     case .acp:
       // Tool approvals belong to the editor, not to a terminal nobody is at.
       let bridge = ACPPermissionBridge()
       await approvalHandler.setDelegate(bridge.approvalHandler)
-      let server = ACPServer(runtime: runtime, agent: agent, bridge: bridge)
+      var directory = options.acpSessionDirectory.map {
+        URL(fileURLWithPath: NSString(string: $0).expandingTildeInPath, isDirectory: true)
+      } ?? resolvedHome(options: options, environment: environment).rootURL
+        .appendingPathComponent("acp", isDirectory: true)
+      directory.appendPathComponent(ACPStateFiles.component(agent.id), isDirectory: true)
+      var root = options.acpRoot.map {
+        URL(fileURLWithPath: NSString(string: $0).expandingTildeInPath, isDirectory: true)
+      }
+      var authorize: @Sendable () throws -> Void = {}
+      var extensionHandler: @Sendable (String, JSONValue?) throws -> JSONValue? = { _, _ in nil }
+      if let path = options.tailcatGateway {
+        let store = TailcatStore(directory: URL(fileURLWithPath: path, isDirectory: true))
+        guard let worker = try store.read().worker,
+          let key = environment["TAILCAT_PEER_KEY"], TailcatStore.validNodeKey(key) else {
+          throw TailcatCLI.Error.message("Tailcat gateway requires an authenticated Tailcat peer")
+        }
+        root = URL(fileURLWithPath: worker.workspace, isDirectory: true)
+        directory.appendPathComponent(ACPStateFiles.component(key), isDirectory: true)
+        authorize = { _ = try store.authorize(key) }
+        extensionHandler = { method, params in
+          if method == "_pmai/enroll" {
+            guard let fields = params?.objectValue,
+              let token = fields["token"]?.stringValue, let name = fields["name"]?.stringValue else {
+              throw JSONRPCError.invalidParams("token and name are required")
+            }
+            let registered = try store.enroll(token: token, nodeKey: key, name: name)
+            return .object(["workerID": .string(registered.id), "workspace": .string(registered.workspace)])
+          }
+          if method == "_pmai/status" {
+            _ = try store.authorize(key)
+            return .object([
+              "workerID": .string(worker.id), "name": .string(worker.name),
+              "workspace": .string(worker.workspace), "agent": .string(agent.id),
+              "tools": .array(agent.toolNames.sorted().map(JSONValue.string)),
+              "loadSession": .bool(true), "time": .number(Date().timeIntervalSince1970),
+            ])
+          }
+          _ = try store.authorize(key)
+          try store.audit(method, nodeKey: key)
+          return nil
+        }
+      }
+      let server = ACPServer(runtime: runtime, agent: agent, bridge: bridge,
+        sessionDirectory: directory, workspaceRoot: root,
+        authorize: authorize, extensionHandler: extensionHandler)
       FileHandle.standardError.write(
         Data("pmai ACP agent ready (\(agent.id)); waiting for a client on stdio.\n".utf8))
       await server.serve(on: transport)
@@ -11024,6 +11091,9 @@ struct MaiCLI {
 
       Options:
         --acp               serve pmai as an ACP agent on stdio (for IDEs)
+        --acp-root DIR      restrict ACP session directories to this workspace
+        --acp-sessions DIR  directory for persistent ACP sessions (default: PMAI_HOME/acp)
+        tailcat ...         pair and serve remote agents; pmai tailcat --help
         --agent ID          select a configured agent
         --api-key KEY       prefer an environment variable or config reference
         --base-url URL      ad-hoc OpenAI-compatible endpoint
