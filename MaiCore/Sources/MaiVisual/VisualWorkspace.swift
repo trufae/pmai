@@ -944,7 +944,7 @@ public final class VisualWorkspace {
 
   public func stopCompactionToChangeModel() {
     resolveCompaction(.cancelRun)
-    status = "Response stopped with its messages kept. Change the chat model or use /model -compact NAME, then send continue."
+    status = "Response stopped with its messages kept. Change the chat model or use /model-compact NAME, then send continue."
   }
 
   func present(_ pending: VisualApprovalHandler.Pending) {

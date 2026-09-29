@@ -29,8 +29,8 @@ Create an agent by copying the current one, then edit the fields you need:
 /prompt add tool-decisions Choose tools efficiently and preserve the facts needed to answer.
 /agent prompt fast tool-decisions
 /agent tools fast -
-/model -tool fast
-/model -compact fast
+/model-tool fast
+/model-compact fast
 ```
 
 The existing `/agent add NAME MODEL GROUPS PROMPT [PROVIDER [BASE_URL]]` form still works. `/edit agent fast` exposes the complete definition, including tool format and generation options. Assigning an agent to a task borrows its inference settings; its own tool list can be empty.
@@ -38,17 +38,17 @@ The existing `/agent add NAME MODEL GROUPS PROMPT [PROVIDER [BASE_URL]]` form st
 For a quick alternative model, these create or update ordinary task agents, which can then be edited with `/agent effort`, `/agent prompt`, or `/edit agent`:
 
 ```text
-/model -compact local::qwen3:8b
-/model -tool local::qwen3:8b
+/model-compact local::qwen3:8b
+/model-tool local::qwen3:8b
 ```
 
 A selector first matches a saved agent ID. Otherwise it names a model: `PROVIDER::MODEL` chooses both, and a bare model uses the current provider. The separator is deliberately `::`, so model IDs containing `/` or a single `:` keep their meaning.
 
 ```text
 /model                     # show main model and both task assignments
-/model -compact            # clear the compaction assignment
-/model -tool               # clear the tool assignment
-/model -tool -             # also clears; "default" does the same
+/model-compact            # clear the compaction assignment
+/model-tool               # clear the tool assignment
+/model-tool -             # also clears; "default" does the same
 /model remote::large-model # save this conversation agent's provider and model
 /agent default main        # save the agent used for future chats and runs
 /agent use fast            # switch this chat to fast; existing command clears its history
@@ -84,7 +84,7 @@ Remote agents can share a provider while using different models. An empty model 
 
 Compaction sends the compaction template and selected transcript to the assigned agent with its prompt and reasoning settings, with tools disabled. Both manual and automatic compaction use the assignment. A failed summary leaves the existing conversation intact. With no assignment, the current model and reasoning settings are used.
 
-Interactive autocompaction asks before replacing history, including when tool YOLO is enabled. In the pmai REPL, choose `y` to compact, `n` to continue without compaction for the current response, `m` for model-change instructions, `x` to clear the chat, or `c` to stop with the transcript kept. While the decision is pending, `/model NAME` changes the conversation model and `/model -compact NAME` changes the summarizer; then choose `y` or `n`. `/set ctx.compact 0` disables future automatic compaction. Piped and other noninteractive runs keep the configured automatic behavior.
+Interactive autocompaction asks before replacing history, including when tool YOLO is enabled. In the pmai REPL, choose `y` to compact, `n` to continue without compaction for the current response, `m` for model-change instructions, `x` to clear the chat, or `c` to stop with the transcript kept. While the decision is pending, `/model NAME` changes the conversation model and `/model-compact NAME` changes the summarizer; then choose `y` or `n`. `/set ctx.compact 0` disables future automatic compaction. Piped and other noninteractive runs keep the configured automatic behavior.
 
 PocketMai shows the same decision before its MLX autocompaction. The prompt includes the chat's model settings, a compaction-agent picker, continue and stop actions, and a confirmed clear-chat action. Skipping applies to the current response; a later message may prompt again. In `/visual`, the compaction dialog also offers stopping to change models before continuing.
 

@@ -2547,7 +2547,7 @@ struct MaiCLI {
           case "c", "cancel", "stop": decision = .cancelRun
           case "m", "model":
             await terminal.line(
-              "Use /model NAME to change the conversation model, or /model -compact NAME to change the summarizer. Then choose y to summarize, p to prune available old tool output, or n to keep context.")
+              "Use /model NAME to change the conversation model, or /model-compact NAME to change the summarizer. Then choose y to summarize, p to prune available old tool output, or n to keep context.")
             await releaseIfIdle(workspace: workspace)
             continue
           case "x", "clear":
@@ -3107,7 +3107,7 @@ struct MaiCLI {
           }
           await terminal.line(
             (request.pruning == nil ? "" : "[p] prune old tool output · ")
-              + "[y] summarize older context · [n] keep context this response · [m] change model · [x] clear chat · [c] stop\n/model and /model -compact remain available before deciding.")
+              + "[y] summarize older context · [n] keep context this response · [m] change model · [x] clear chat · [c] stop\n/model and /model-compact remain available before deciding.")
         }
         await refreshStatus()
         await releaseIfIdle(workspace: workspace)
@@ -3634,6 +3634,14 @@ struct MaiCLI {
     case "/model":
       await handleModelCommand(
         argument, session: &session, runtime: runtime, configuration: &configuration,
+        configurationPath: visual.configurationPath, terminal: terminal)
+    case "/model-compact":
+      await handleModelCommand(
+        "-compact " + argument, session: &session, runtime: runtime, configuration: &configuration,
+        configurationPath: visual.configurationPath, terminal: terminal)
+    case "/model-tool":
+      await handleModelCommand(
+        "-tool " + argument, session: &session, runtime: runtime, configuration: &configuration,
         configurationPath: visual.configurationPath, terminal: terminal)
     case "/agents":
       await handleAgentsCommand(
@@ -5372,7 +5380,7 @@ struct MaiCLI {
         await terminal.line("\(task.rawValue): \(detail ?? "current agent")")
       }
       await terminal.line(
-        "/model [PROVIDER::]MODEL · /model -compact|-tool [AGENT|PROVIDER::MODEL|MODEL] (no name clears)"
+        "/model [PROVIDER::]MODEL · /model-compact [NAME] · /model-tool [NAME] (no name clears)"
       )
       return
     }
@@ -5398,7 +5406,7 @@ struct MaiCLI {
           "\(task.rawValue): \(draft.taskAgents[task] ?? "current agent") (saved)")
       } else {
         guard words.count == 1, !first.hasPrefix("-") else {
-          await terminal.line("Usage: /model [PROVIDER::]MODEL or /model -compact|-tool [NAME]")
+          await terminal.line("Usage: /model [PROVIDER::]MODEL or /model-compact [NAME] or /model-tool [NAME]")
           return
         }
         let selection = try draft.modelSelection(first, currentProvider: session.profile.provider)
@@ -10218,7 +10226,7 @@ struct MaiCLI {
       "/set ui.toolResultLines all", "/set ui.toolResultLines relevant", "/set ui.toolResultLines ",
       "/cwd", "/pwd", "/cd ", "/plugins",
       "/providers", "/models ", "/provider ", "/provider add ", "/baseurl ", "/model ",
-      "/model -compact ", "/model -tool ", "/agent default ", "/agent effort ", "/prompts",
+      "/model-compact ", "/model-tool ", "/agent default ", "/agent effort ", "/prompts",
       "/prompt",
       "/prompt list", "/prompt show ", "/prompt add ", "/prompt set ", "/prompt edit ",
       "/prompt rm ", "/prompt use ", "/help prompts", "/prompts list", "/prompts show ",
@@ -10272,8 +10280,8 @@ struct MaiCLI {
       values.append("/agent use \(agent.id)")
       values.append("/agent show \(agent.id)")
       values.append("/agent default \(agent.id)")
-      values.append("/model -compact \(agent.id)")
-      values.append("/model -tool \(agent.id)")
+      values.append("/model-compact \(agent.id)")
+      values.append("/model-tool \(agent.id)")
       values.append("/chat new --agent \(agent.id) ")
     }
     for name in configuration?.prompts?.system.keys.sorted() ?? [] {
@@ -10284,7 +10292,7 @@ struct MaiCLI {
     for provider in configuration?.providers ?? [] {
       values.append("/provider \(provider.id)")
       values.append("/models \(provider.id)")
-      for prefix in ["/model ", "/model -compact ", "/model -tool "] {
+      for prefix in ["/model ", "/model-compact ", "/model-tool "] {
         values.append("\(prefix)\(provider.id)::")
       }
       values.append("/edit provider \(provider.id)")
@@ -10555,8 +10563,8 @@ struct MaiCLI {
     /mcp                   Manage MCP servers; /help mcp lists commands
     /memory                Show, edit, learn, or scope this project's durable memory
     /model [PROVIDER::]MODEL  Select and save a model for this agent
-    /model -compact [NAME] Select a compaction agent/model; omit NAME to clear
-    /model -tool [NAME]    Select a tool-decision agent/model; omit NAME to clear
+    /model-compact [NAME] Select a compaction agent/model; omit NAME to clear
+    /model-tool [NAME]    Select a tool-decision agent/model; omit NAME to clear
     /models [PROVIDER]     List models and refresh /model Tab completion
     /nothink               Disable reasoning where the model supports it
     /plugins               List statically and dynamically loaded plugins
@@ -10884,8 +10892,8 @@ struct MaiCLI {
       /agent add NAME            Copy the current agent into a new saved definition
       /agent default ID          Save the default for future chats and runs
       /agent effort ID LEVEL     Save an independent reasoning effort
-      /model -compact [NAME]     Assign a compaction agent or model; omit to clear
-      /model -tool [NAME]        Assign a tool-decision agent or model; omit to clear
+      /model-compact [NAME]     Assign a compaction agent or model; omit to clear
+      /model-tool [NAME]        Assign a tool-decision agent or model; omit to clear
       /agent add NAME MODEL GROUPS PROMPT [PROVIDER [BASE_URL]]
                                  GROUPS is a,b,c (see /tools) or -; PROMPT names a system
                                  prompt (see /prompts); PROVIDER defaults to this chat's, and
