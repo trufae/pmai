@@ -861,6 +861,37 @@ public enum AgentTooling {
     "Error: tool '\(name)' is not available. It may be unknown or disabled for this conversation."
   }
 
+  /// Suggest an enabled tool and its fields without guessing which call to execute.
+  static func unavailableToolError(name: String, tools: [ToolDefinition]) -> String {
+    let preview = name.prefix(120).replacingOccurrences(of: "\n", with: "\\n")
+      .replacingOccurrences(of: "\r", with: "\\r").replacingOccurrences(of: "\t", with: "\\t")
+      + (name.count > 120 ? "…" : "")
+    var message = "Error: tool '\(preview)' is not available to this agent."
+    guard !tools.isEmpty else { return message }
+    let resolver = AgentToolNameResolver(tools: tools)
+    let requested = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let related = tools.filter { tool in
+      [tool.name, resolver.apiName(for: tool.name)].contains { candidate in
+        let candidate = candidate.lowercased()
+        return requested.hasPrefix(candidate + "_") || requested.hasPrefix(candidate + "<")
+      }
+    }.sorted { $0.name.count > $1.name.count }
+    message += " Retry with an exact tool name; keep reasoning and arguments out of the name."
+    if related.isEmpty {
+      message += " Enabled tools: " + tools.prefix(8).map(\.name).joined(separator: ", ")
+        + (tools.count > 8 ? ", …" : "") + "."
+    } else {
+      let hints = related.prefix(3).map { tool in
+        let fields = tool.parameters.prefix(12).map {
+          "\($0.name) (\($0.type)\($0.required ? ", required" : ""))"
+        }.joined(separator: ", ")
+        return "\(tool.name): \(fields.isEmpty ? "no arguments" : fields)"
+      }
+      message += " Related enabled tools and JSON fields: " + hints.joined(separator: "; ") + "."
+    }
+    return message
+  }
+
   private static func requiredArgumentIsMissing(_ value: AgentToolArgumentValue?) -> Bool {
     guard let value else { return true }
     if case .string(let string) = value {

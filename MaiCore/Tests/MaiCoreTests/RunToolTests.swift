@@ -138,7 +138,10 @@ func runToolsManageOutput() async throws {
   let path = try #require(spilled.structuredContent?.objectValue?["stdoutFile"]?.stringValue)
   defer { try? FileManager.default.removeItem(atPath: path) }
   #expect(spilled.text.contains("[full stdout saved to \(path)]"))
-  #expect(!spilled.text.contains(String(repeating: "x", count: 100)))
+  #expect(spilled.text.hasPrefix(String(repeating: "x", count: 1_024)))
+  #expect(spilled.text.contains("[stdout truncated: 3976 more bytes not shown]"))
+  #expect(spilled.structuredContent?.objectValue?["truncated"] == .bool(true))
+  #expect(spilled.text.contains("Read a bounded section"))
   #expect((try Data(contentsOf: URL(fileURLWithPath: path))).count == 5_000)
 
   let ansi = try await call(tool, ["command": .string("printf '\\033[31mred\\033[0m'")])
@@ -150,12 +153,31 @@ func runToolsManageOutput() async throws {
   let savedPath = try #require(saved.structuredContent?.objectValue?["stdoutFile"]?.stringValue)
   defer { try? FileManager.default.removeItem(atPath: savedPath) }
   #expect(saved.text.contains("[full stdout saved to \(savedPath)]"))
+  #expect(!saved.text.contains("retained"))
   #expect(String(decoding: try Data(contentsOf: URL(fileURLWithPath: savedPath)), as: UTF8.self) == "retained")
 
   let silent = try await call(tool, [
     "command": .string("printf hidden; printf hidden >&2"), "output": .string("none"),
   ])
   #expect(silent.text == "(no output; exit code 0)")
+}
+
+@Test("Spilled streams keep the preview and every byte across multiple reads", arguments: [false, true])
+func runToolsSpillMultipleChunks(stderr: Bool) async throws {
+  let tool = MaiRunTool(configuration: MaiRunConfiguration(outputLimit: 1_024))
+  let script = "head -c 1024 /dev/zero | tr '\\0' a\nhead -c 150000 /dev/zero | tr '\\0' b\nprintf tail"
+  let output = try await call(tool, ["script": .string((stderr ? "exec 1>&2\n" : "") + script)])
+  let stream = stderr ? "stderr" : "stdout"
+  let path = try #require(output.structuredContent?.objectValue?[stream + "File"]?.stringValue)
+  defer { try? FileManager.default.removeItem(atPath: path) }
+  let preview = String(repeating: "a", count: 1_024)
+  #expect(!output.isError)
+  #expect(output.text.hasPrefix((stderr ? "[stderr]\n" : "") + preview))
+  #expect(output.text.contains("[\(stream) truncated: 150004 more bytes not shown]"))
+  #expect(!output.text.contains(String(repeating: "b", count: 100)))
+  #expect(output.structuredContent?.objectValue?["truncated"] == .bool(true))
+  #expect(try String(contentsOfFile: path, encoding: .utf8)
+    == preview + String(repeating: "b", count: 150_000) + "tail")
 }
 
 @Test("Cancellation and timeout kill children even after the shell exits", arguments: [false, true])

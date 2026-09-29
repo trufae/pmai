@@ -1450,7 +1450,7 @@ func runLoopResolvesGluedNames() async throws {
       ProviderResponse(message: .assistant("Probed."), stopReason: .stop),
     ],
     capabilities: [.streaming])
-  let runtime = AgentRuntime()
+  let runtime = AgentRuntime(approvalHandler: AllowAllApprovals())
   try await runtime.register(provider)
   try await runtime.register(
     tool: ClosureTool(definition: ToolDefinition(name: "probe", description: "Probe")) { _, _ in
@@ -1464,7 +1464,9 @@ func runLoopResolvesGluedNames() async throws {
 
   #expect(result.response.text == "Probed.")
   #expect(result.toolCalls == 1)
-  #expect(result.transcript.contains { $0.role == .tool })
+  let output = try #require(result.transcript.flatMap(\.toolResults).first)
+  #expect(!output.isError)
+  #expect(output.text == "42")
 }
 
 @Test("A native respond call in a text protocol is the final answer, not a host tool")
@@ -3169,7 +3171,7 @@ func queuedRunningAgentReconfiguresWithoutRestarting() async throws {
   #expect(result.response.text == "new settings")
   #expect(
     result.transcript.flatMap(\.toolResults).contains {
-      $0.text == "Error: tool 'old-tool' is not available to this agent."
+      $0.isError && $0.text.hasPrefix("Error: tool 'old-tool' is not available to this agent.")
     })
   let request = try #require(await newProvider.requests.first)
   #expect(request.model == "new-model")

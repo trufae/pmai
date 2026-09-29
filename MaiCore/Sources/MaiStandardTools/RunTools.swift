@@ -162,6 +162,11 @@ public struct MaiRunTool: AgentTool {
       }
       if let path = outcome.stdoutFile { sections.append("[full stdout saved to \(path)]") }
       if let path = outcome.stderrFile { sections.append("[full stderr saved to \(path)]") }
+      if (outcome.stdoutFile != nil && outcome.stdoutDropped > 0)
+        || (outcome.stderrFile != nil && outcome.stderrDropped > 0)
+      {
+        sections.append("[Read a bounded section of the saved file with head -c, tail -c, or a targeted search; reading the whole file may exceed the output limit again.]")
+      }
       if outcome.timedOut {
         sections.append("[timed out after \(Int(timeout)) seconds; the process was killed]")
       } else if outcome.exitCode != 0 {
@@ -299,7 +304,7 @@ public struct MaiRunTool: AgentTool {
       "type": .string("string"),
       "enum": .array([.string("auto"), .string("inline"), .string("file"), .string("none")]),
       "description": .string(
-        "Output handling. auto (default) returns small output and saves an over-limit stream to a temporary file; inline drops excess; file saves both streams to temporary files; none discards both streams. ANSI escape sequences are removed from returned text."),
+        "Output handling. auto (default) returns a bounded preview and saves the full stream to a temporary file when it exceeds the limit; inline drops excess; file saves both streams to temporary files; none discards both streams. Read saved files in bounded sections. ANSI escape sequences are removed from returned text."),
     ])
     return ToolDefinition(
       name: name,
@@ -612,6 +617,7 @@ enum MaiRunToolError: LocalizedError {
         }
         if let file {
           append(data, to: file)
+          if outputMode == .automatic { dropped += data.count }
           return
         }
         let room = outputLimit - buffer.count
@@ -623,7 +629,7 @@ enum MaiRunToolError: LocalizedError {
             file = spill
             append(buffer, to: spill)
             append(data.dropFirst(max(room, 0)), to: spill)
-            buffer.removeAll(keepingCapacity: false)
+            dropped += data.count - max(room, 0)
           } else {
             dropped += data.count - max(room, 0)
           }

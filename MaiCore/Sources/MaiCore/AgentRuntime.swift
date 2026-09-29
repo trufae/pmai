@@ -1472,6 +1472,7 @@ public actor AgentRuntime {
     // and a name the provider could not map (text protocols offer no tools, so
     // its resolver is empty) gets the same alias and glued-suffix treatment.
     let definitionName = Self.canonicalToolName(resolvedCall.name)
+    let isLegacyName = definitionName != resolvedCall.name
     let definition =
       definitions.first(where: { $0.name == definitionName })
       ?? AgentToolNameResolver(tools: definitions).canonicalName(for: definitionName)
@@ -1493,16 +1494,19 @@ public actor AgentRuntime {
       await emit(.toolStarted(context, resolvedCall))
       let result = ToolResult(
         callID: resolvedCall.id,
-        text: "Error: tool '\(resolvedCall.name)' is not available to this agent.",
+        text: AgentTooling.unavailableToolError(name: resolvedCall.name, tools: definitions),
         isError: true)
       await emit(.toolFinished(context, result))
       return result
     }
+    // Use the resolved name for approval and dispatch as well as validation.
+    // Retired agent-start names still select their legacy argument format.
+    if !isLegacyName { resolvedCall.name = definition.name }
     resolvedCall.arguments = ToolSchemaValidator.repairArgumentKeys(
       resolvedCall.arguments, definition: definition)
     resolvedCall.arguments = ToolSchemaValidator.coerceBooleans(
       resolvedCall.arguments, schema: definition.inputSchema)
-    if definitionName == resolvedCall.name,
+    if !isLegacyName,
       let validationError = ToolSchemaValidator.validate(
         arguments: resolvedCall.arguments,
         definition: definition)
@@ -1548,7 +1552,7 @@ public actor AgentRuntime {
       }
     }
 
-    if definitionName == approvedCall.name,
+    if !isLegacyName,
       let validationError = ToolSchemaValidator.validate(
         arguments: approvedCall.arguments,
         definition: definition)
@@ -1561,7 +1565,7 @@ public actor AgentRuntime {
       return result
     }
     await emit(.toolStarted(context, approvedCall))
-    switch definitionName {
+    switch definition.name {
     case Self.agentStartToolName:
       return await startAgent(
         approvedCall,

@@ -253,6 +253,88 @@ func nativeRunArgumentsPreserveHeredocs() async throws {
   #expect(approvals.first { $0.call.id == "repair-2" }?.call.arguments == .object(["script": .string(script)]))
 }
 
+@Test("Malformed names from the ImHex log receive enabled tool names and fields")
+func malformedToolNamesHaveRepairHints() async throws {
+  let names = ["run_sh_command", "run_sh_think</think>Wait,", "files_read_section"]
+  let runtime = AgentRuntime(approvalHandler: AllowAllApprovals())
+  try await runtime.register(UsabilityScriptedProvider(responses: [
+    ProviderResponse(message: AgentMessage(role: .assistant, content: names.enumerated().map {
+      .toolCall(ToolCall(id: "unknown-\($0.offset)", name: $0.element,
+        arguments: .object(["not an argument": .string("")])))
+    }), stopReason: .toolCall),
+    ProviderResponse(message: .assistant("done"), stopReason: .stop),
+  ]))
+  let files = MaiFileWorkspaceTool.makeTools(configuration: MaiFileWorkspaceConfiguration(
+    rootURL: FileManager.default.temporaryDirectory, followsProcessWorkingDirectory: false))
+  let read = try #require(files.first { $0.definition.name == "files_read" })
+  for definition in [MaiRunTool(configuration: MaiRunConfiguration()).definition, read.definition] {
+    try await runtime.register(tool: ClosureTool(definition: definition) { _, _ in
+      Issue.record("An unknown tool name must not execute a guessed replacement")
+      return ToolOutput(text: "unexpected")
+    })
+  }
+  let recorder = UsabilityEventRecorder()
+  let result = try await runtime.run(AgentRequest(
+    provider: "usability-scripted", model: "fixture", messages: [.user("read source")],
+    toolNames: ["run_sh", "files_read"], limits: AgentRunLimits(maxModelTurns: 2))
+  ) { await recorder.append($0) }
+  let results = result.transcript.flatMap(\.toolResults)
+  #expect(results.count == names.count)
+  #expect(results.allSatisfy { $0.isError && $0.text.contains("Retry with an exact tool name") })
+  #expect(results.prefix(2).allSatisfy { $0.text.contains("run_sh:") && $0.text.contains("script (string)") })
+  #expect(results.last?.text.contains("files_read:") == true)
+  #expect(results.last?.text.contains("path (string, required)") == true)
+  #expect(await recorder.events.allSatisfy {
+    if case .approvalRequested = $0 { return false }
+    return true
+  })
+  let bounded = AgentTooling.unavailableToolError(
+    name: "run_sh_think</think>\n" + String(repeating: "x", count: 20_000),
+    tools: [MaiRunTool(configuration: MaiRunConfiguration()).definition])
+  #expect(bounded.count < 1_000)
+  #expect(!bounded.contains("\n"))
+}
+
+@Test("Recovered native names are approved and executed with their canonical name")
+func nativeToolAliasesUseCanonicalDispatch() async throws {
+  let definition = MaiRunTool(configuration: MaiRunConfiguration()).definition
+  let calls = [
+    ToolCall(id: "valid", name: "run_sh</think>The",
+      arguments: .object(["command=\"printf repaired\"": .string("")])),
+    ToolCall(id: "invalid", name: "run_sh</think>The", arguments: .object([
+      #"The test harness hardcodes its source:<tool_call>run_sh command="cat test_parser.ts | tr '\n' '|'" | head -c 2000"#: .string("")
+    ])),
+  ]
+  let runtime = AgentRuntime(approvalHandler: AllowAllApprovals())
+  try await runtime.register(UsabilityScriptedProvider(responses: [
+    ProviderResponse(message: AgentMessage(role: .assistant, content: calls.map(ContentPart.toolCall)),
+      stopReason: .toolCall),
+    ProviderResponse(message: .assistant("done"), stopReason: .stop),
+  ]))
+  try await runtime.register(tool: ClosureTool(definition: definition) { arguments, _ in
+    #expect(arguments == .object(["command": .string("printf repaired")]))
+    return ToolOutput(text: "repaired")
+  })
+  let recorder = UsabilityEventRecorder()
+  let result = try await runtime.run(AgentRequest(
+    provider: "usability-scripted", model: "fixture", messages: [.user("read source")],
+    toolNames: ["run_sh"], limits: AgentRunLimits(maxModelTurns: 2))
+  ) { await recorder.append($0) }
+  let results = result.transcript.flatMap(\.toolResults)
+  #expect(results.count == 2)
+  #expect(results.first?.isError == false)
+  #expect(results.first?.text == "repaired")
+  #expect(results.last?.isError == true)
+  #expect(results.last?.text.contains("Use exact field names as JSON keys") == true)
+  let approvals = await recorder.events.compactMap { event -> ApprovalRequest? in
+    if case .approvalRequested(_, let request) = event { return request }
+    return nil
+  }
+  #expect(approvals.count == 1)
+  #expect(approvals.first?.call.name == "run_sh")
+  #expect(approvals.first?.call.arguments == .object(["command": .string("printf repaired")]))
+}
+
 // MARK: - Fixtures
 
 private func usabilityTool(
