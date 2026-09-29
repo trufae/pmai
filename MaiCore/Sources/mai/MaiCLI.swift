@@ -10955,13 +10955,24 @@ struct MaiCLI {
       let directory =
         environment["PMAI_INSTALL_DIR"].flatMap { $0.isEmpty ? nil : $0 }
         ?? URL(fileURLWithPath: path).resolvingSymlinksInPath().deletingLastPathComponent().path
+
       let command = """
         installer=$(curl -fsSL https://raw.githubusercontent.com/trufae/pmai/main/www/install.sh) &&
         PMAI_INSTALL_DIR=\(shellQuote(directory)) sh -c "$installer"
         """
+
+      print("Current version: \(version)")
+
       let status = command.withCString(posixSystem)
       guard status != -1 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
-      exit(status & 0x7f == 0 ? (status >> 8) & 0xff : 128 + (status & 0x7f))
+
+      let exitCode = status & 0x7f == 0 ? (status >> 8) & 0xff : 128 + (status & 0x7f)
+      if exitCode == 0 {
+        let printNewVersion = "echo \"New version: $(\(shellQuote(path)) -v)\""
+        _ = printNewVersion.withCString(posixSystem)
+      }
+
+      exit(exitCode)
     #endif
   }
 
