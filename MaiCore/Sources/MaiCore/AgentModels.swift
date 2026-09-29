@@ -869,8 +869,9 @@ public enum AgentContextMode: String, Codable, Equatable, Sendable {
 }
 
 public struct AgentAutocompact: Codable, Equatable, Sendable {
-  /// Estimated tokens in the conversation at which compaction runs. Zero
-  /// turns it off.
+  /// Estimated tokens at which the host asks whether to prune tool output,
+  /// summarize, keep context, or stop. Zero disables this prompt; automatic
+  /// file-read pruning in `context: size` is independent.
   public var tokens: Int
 
   public init(tokens: Int = 64_000) {

@@ -5,16 +5,23 @@ public struct AutocompactionRequest: Equatable, Sendable {
   public var run: AgentEventContext
   public var estimatedTokens: Int
   public var threshold: Int
+  /// Expected savings from shortening old tool output without model inference.
+  public var pruning: AgentTranscriptEditReport?
 
-  public init(run: AgentEventContext, estimatedTokens: Int, threshold: Int) {
+  public init(
+    run: AgentEventContext, estimatedTokens: Int, threshold: Int,
+    pruning: AgentTranscriptEditReport? = nil
+  ) {
     self.run = run
     self.estimatedTokens = estimatedTokens
     self.threshold = threshold
+    self.pruning = pruning
   }
 }
 
 public enum AutocompactionDecision: Equatable, Sendable {
   case compact
+  case pruneToolOutput
   /// Keep the transcript for the rest of this run, including subsequent tool turns.
   case continueWithoutCompacting
   case cancelRun
@@ -208,6 +215,49 @@ public enum AgentAutocompaction {
 public enum AgentContextPruning {
   /// Bodies shorter than this are left alone; the reference would not be smaller.
   public static let minimumCharacters = 400
+
+  /// An explicit user choice: shorten successful tool output of any kind,
+  /// including searches and shell commands. Preserve the newest exchange,
+  /// errors, call arguments and all conversation text. Unlike read pruning,
+  /// this loses the middle of an output, so it never runs automatically.
+  public static func pruneToolOutput(_ messages: inout [AgentMessage]) -> AgentTranscriptEditReport? {
+    guard let tail = messages.lastIndex(where: { $0.role == .user || $0.role == .assistant })
+    else { return nil }
+    var report = AgentTranscriptEditReport(
+      charactersBefore: AgentTranscriptEditor.characterCount(of: messages))
+    for index in messages.indices where index < tail && messages[index].role == .tool {
+      messages[index].content = messages[index].content.map { part in
+        guard case .toolResult(var result) = part, !result.isError else { return part }
+        let original = result.content
+        result.content = result.content.map { content in
+          switch content {
+          case .text(let text): return .text(shortenedOutput(text))
+          case .file(var file):
+            if let text = file.text { file.text = shortenedOutput(text) }
+            return .file(file)
+          case .resource(var resource):
+            if let text = resource.text { resource.text = shortenedOutput(text) }
+            return .resource(resource)
+          default: return content
+          }
+        }
+        if result.content != original { report.trimmedToolResults += 1 }
+        return .toolResult(result)
+      }
+    }
+    guard report.trimmedToolResults > 0 else { return nil }
+    report.charactersAfter = AgentTranscriptEditor.characterCount(of: messages)
+    return report
+  }
+
+  private static func shortenedOutput(_ text: String) -> String {
+    // Keep enough of the beginning and end to identify the operation and its
+    // outcome. Already-shortened outputs are below the threshold (idempotent).
+    guard text.count > 1_400 else { return text }
+    return text.prefix(800)
+      + "\n[Earlier tool output pruned by user choice: \(text.count - 1_000) characters omitted.]\n"
+      + text.suffix(200)
+  }
 
   public static func prune(_ messages: inout [AgentMessage]) -> AgentTranscriptEditReport? {
     guard let currentPrompt = messages.lastIndex(where: { $0.role == .user }) else { return nil }

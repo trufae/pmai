@@ -941,16 +941,22 @@ private actor TerminalApprovalHandler: ApprovalHandler {
     if let compactionPrompter { return try await compactionPrompter(request) }
     guard isatty(STDIN_FILENO) != 0 else { return .compact }
     FileHandle.standardError.write(Data(
-      "Automatic compaction: about \(request.estimatedTokens) tokens (threshold \(request.threshold)).\n"
+      "Context limit: about \(request.estimatedTokens) tokens (threshold \(request.threshold)).\n"
         .utf8))
+    if let pruning = request.pruning {
+      FileHandle.standardError.write(Data("Pruning preview: \(pruning.summary). Keeps the start and end of each output.\n".utf8))
+    }
     let editor = TerminalLineEditor()
     while true {
       guard let line = editor.readLine(
-        prompt: "[y] compact / [n] continue without compacting / [c] stop: ", completions: [])
+        prompt: (request.pruning == nil ? "" : "[p] prune old tool output / ")
+          + "[y] summarize / [n] keep context / [c] stop: ", completions: [])
       else { return .cancelRun }
       if editor.wasInterrupted { throw CancellationError() }
       switch line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-      case "y", "yes", "compact": return .compact
+      case "y", "yes", "compact", "s", "summarize": return .compact
+      case "p", "prune":
+        if request.pruning != nil { return .pruneToolOutput }
       case "n", "no", "continue", "skip": return .continueWithoutCompacting
       case "c", "cancel", "stop": return .cancelRun
       default: continue
@@ -2530,12 +2536,20 @@ struct MaiCLI {
         if !heredoc, let waiting = loop.compactions.first {
           var decision: AutocompactionDecision?
           switch text.lowercased() {
-          case "y", "yes", "compact": decision = .compact
+          case "y", "yes", "compact", "s", "summarize": decision = .compact
+          case "p", "prune":
+            if waiting.request.pruning != nil {
+              decision = .pruneToolOutput
+            } else {
+              await terminal.line("No older tool output can be shortened. Choose y to summarize, n to keep context, or c to stop.")
+              await releaseIfIdle(workspace: workspace)
+              continue
+            }
           case "n", "no", "skip", "continue": decision = .continueWithoutCompacting
           case "c", "cancel", "stop": decision = .cancelRun
           case "m", "model":
             await terminal.line(
-              "Use /model NAME to change the conversation model, or /model -compact NAME to change the summarizer. Then choose y to compact or n to continue without compacting.")
+              "Use /model NAME to change the conversation model, or /model -compact NAME to change the summarizer. Then choose y to summarize, p to prune available old tool output, or n to keep context.")
             await releaseIfIdle(workspace: workspace)
             continue
           case "x", "clear":
@@ -2547,7 +2561,7 @@ struct MaiCLI {
             text = "/chat clear"
           default:
             if !text.hasPrefix("/") {
-              await terminal.line("Choose y (compact), n (continue without compacting), m (model), x (clear chat), or c (stop). Slash commands remain available.")
+              await terminal.line("Choose y (summarize), p (prune available old tool output), n (keep context), m (model), x (clear chat), or c (stop). Slash commands remain available.")
               await releaseIfIdle(workspace: workspace)
               continue
             }
@@ -3085,9 +3099,13 @@ struct MaiCLI {
         } else {
           loop.compactions.append((request, reply))
           await terminal.note(
-            "Automatic compaction for \(request.run.agentID): about \(request.estimatedTokens) tokens (threshold \(request.threshold)).", color: "yellow")
+            "Context limit for \(request.run.agentID): about \(request.estimatedTokens) tokens (threshold \(request.threshold)).", color: "yellow")
+          if let pruning = request.pruning {
+            await terminal.line("Pruning preview: \(pruning.summary). Keeps the start and end of each output; the middle is dropped.")
+          }
           await terminal.line(
-            "[y] compact · [n] continue without compacting this response · [m] change model · [x] clear chat · [c] stop\n/model and /model -compact remain available before deciding.")
+            (request.pruning == nil ? "" : "[p] prune old tool output · ")
+              + "[y] summarize older context · [n] keep context this response · [m] change model · [x] clear chat · [c] stop\n/model and /model -compact remain available before deciding.")
         }
         await refreshStatus()
         await releaseIfIdle(workspace: workspace)
@@ -8077,6 +8095,11 @@ struct MaiCLI {
     }
     guard parts.count > 1 else {
       await terminal.line("\(key) = \(current())")
+      if key == "ctx.compact" {
+        await terminal.line(autocompact.isEnabled
+          ? "At this threshold, choose pruning, summarization, keeping context, or stopping."
+          : "The context action prompt is disabled. /set ctx.compact 64k enables it; ctx.strategy size can still prune old reads independently.")
+      }
       return
     }
     let raw = parts.count == 2 ? parts[1].lowercased() : ""
@@ -8103,7 +8126,7 @@ struct MaiCLI {
         autocompact.tokens = tokens
       } else {
         await terminal.line(
-          "Usage: /set ctx.compact <off|N|Nk>  (summarize the chat once it holds about N tokens)")
+          "Usage: /set ctx.compact <off|N|Nk>  (prompt to prune or summarize once the chat holds about N tokens)")
         return
       }
     }
@@ -8113,7 +8136,7 @@ struct MaiCLI {
     var notes: [String] = []
     if key == "ctx.compact", autocompact.isEnabled {
       notes.append(
-        "Older exchanges are summarized before a model turn once the conversation is estimated at \(autocompact.tokens) tokens; the newest exchange is kept verbatim."
+        "Before a model turn at about \(autocompact.tokens) tokens, choose pruning old tool output, summarizing older context, keeping context, or stopping. The newest exchange is kept verbatim."
       )
     }
     let applied = current()
@@ -10669,8 +10692,8 @@ struct MaiCLI {
       /set limits.maxSeconds <off|N|Nm|Nh>   Wall-clock time a run may take before it pauses
       /set retry.attempts N        Times a failed model call is repeated (default 2)
       /set retry.delay SECONDS     Wait before each retry (default 5)
-      /set ctx.compact <off|N|Nk>  Summarize older exchanges once the chat holds ~N tokens
-      /set ctx.strategy <cache|size>  Keep prompt-cache history intact, or compact old file reads
+      /set ctx.compact <off|N|Nk>  Prompt to prune tool output or summarize older context at ~N tokens
+      /set ctx.strategy <cache|size>  Keep prompt-cache history intact, or automatically prune old reads
       /set ui.                     List terminal UI settings
       /set ui.title TEXT           Set the prompt label and terminal/tab title (`none` clears it)
       /set ui.editor COMMAND       Editor /edit opens (`none` falls back to $EDITOR, $VISUAL, vim)

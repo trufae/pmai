@@ -525,7 +525,7 @@ enum ToolSchemaValidator {
       // Naming what arrived and what the tool takes lets a model fix the
       // call on its next try instead of guessing at field names.
       let accepted = properties.keys.sorted().map { required.contains($0) ? "\($0) (required)" : $0 }
-      let received = object.keys.sorted()
+      let received = object.keys.sorted().map { $0.isEmpty ? "\"\"" : $0 }
       let shape =
         path == "arguments"
         ? (received.isEmpty ? ". No fields were given" : ". Received: \(received.joined(separator: ", "))")
@@ -539,6 +539,7 @@ enum ToolSchemaValidator {
       }
       if schema["additionalProperties"]?.boolValue == false {
         let unknown = object.keys.filter { properties[$0] == nil }.sorted()
+          .map { $0.isEmpty ? "\"\"" : $0 }
         if !unknown.isEmpty {
           return
             "unknown field\(unknown.count == 1 ? "" : "s"): \(unknown.joined(separator: ", "))"

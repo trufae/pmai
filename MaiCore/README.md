@@ -467,13 +467,25 @@ checkpoint and the task continues on its own; the token and time caps always
 stop, since they exist to bound the spend. A model call that fails — a dropped
 connection, a 5xx — is repeated after `retry.delay` seconds up to
 `retry.attempts` times (`↻ retry 1/2 in 5s: …`) before the turn fails.
-`/set ctx.compact 120k` makes the runtime summarize the older part of the
-conversation, in place and before a model turn, once it is estimated to hold
-that many tokens (from the provider's own count when it reports one); the
-newest exchange stays verbatim, the compact prompt gets a focus on finishing
-the task at hand, and `✂ context: compacted 14 messages into a summary` says
-what happened. Context windows differ per model and few providers state
-theirs, so the threshold is an absolute count rather than a percentage.
+`/set ctx.compact 64k` enables a context action prompt before a model turn
+once the conversation reaches about that many tokens (using the provider's
+count when available). Choose **prune old tool output**, **summarize older
+context**, **keep context for this response**, or **stop**. Tool YOLO does
+not bypass this choice. The prompt also permits changing the model or clearing
+the chat. Noninteractive CLI runs continue to summarize automatically.
+Pruning shows its expected savings, needs no model call, and keeps the first
+800 and last 200 characters of large successful tool outputs, including search
+and shell results. The middle is discarded. Errors, call arguments, conversation
+text, and the newest exchange stay intact. The prune option is offered only
+when it can save space. If pruning still leaves the context over the threshold,
+the prompt offers summarization or keeping the remaining context.
+Summarization replaces older exchanges with a model-written summary focused on
+finishing the current task; the newest exchange stays verbatim.
+`✂ context: compacted 14 messages into a summary` reports that replacement.
+`/set ctx.compact off` (`autocompact.tokens: 0` in the agent configuration)
+disables the context action prompt entirely. `/set ctx.compact` shows the
+current setting. Context windows differ per model, so the threshold is an
+absolute token count rather than a percentage.
 `/set tool.calling text|xml|json` forces message-based tool calling for
 models without native tools; `automatic` prefers native calls and otherwise
 uses JSON, while `native` requires native support. The selected mode is saved
@@ -504,13 +516,17 @@ read while answering an *earlier* prompt with one line saying what it was and
 how to read it again. This includes full files, `files_read_range`, and
 `files_get_function` results. Everything read for the prompt in progress
 stays (pruning inside a run made models re-read what they still needed). File
-bodies are the largest part of a coding conversation and are rarely read again
-for a later prompt, so `size` cuts the tokens of a long chat; the price is that
+bodies can be a large part of a coding conversation and are often no longer
+needed for a later prompt, so `size` can cut tokens; the price is that
 a server's prompt cache is invalidated from the rewritten message on. `cache`, the default, never changes a message once sent, so the
 cache covers every earlier turn and each call pays only for what is new. The
 REPL prints `✂ context: pruned 1 old read result (12.3k → 2.1k chars)` when it
 prunes. Those sizes are totals for the conversation; pruning only removes old
-read bodies. Full summarization is a separate compaction step.
+read bodies. Large search results, shell output, generated code in tool
+arguments, and assistant prose remain, so the reduction can be small.
+This automatic read pruning is independent of `ctx.compact` and does not ask
+for a decision. It never enables summarization implicitly. Use the context
+action prompt above for broader tool-output pruning or summary replacement.
 
 `/set effort LEVEL [TEXT]` sets how hard the model thinks, with one scale for every
 provider: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` (the REPL completes them).

@@ -774,6 +774,15 @@ public enum AgentTooling {
     let repaired = tool.flatMap {
       ToolSchemaValidator.repairArgumentKeys(.object(arguments), definition: $0).objectValue
     } ?? arguments
+    // Do not let the legacy alias normalizer discard a failed repair and
+    // silently choose one of two conflicting values in a proxied call.
+    if let tool,
+      repaired.keys.contains(where: { key in
+        (key.isEmpty || key.contains("=")) && !tool.parameters.contains(where: { $0.name == key })
+      })
+    {
+      return repaired
+    }
     let normalized = normalizeValues(repaired, for: tool)
     guard let tool,
       tool.parameters.filter(\.required).count == 1,

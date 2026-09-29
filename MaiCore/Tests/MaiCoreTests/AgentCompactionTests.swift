@@ -136,3 +136,45 @@ func pruningPreservesOtherTextResults() {
   #expect(AgentContextPruning.prune(&messages) == nil)
   #expect(messages == original)
 }
+
+@Test("Explicit pruning shortens old tool output and preserves the latest exchange and errors")
+func aggressivePruningKeepsConversationAndLatestExchange() throws {
+  let body = "START" + String(repeating: "search result\n", count: 1_000) + "END"
+  let metadata: JSONValue = .object(["exitCode": .integer(0)])
+  func exchange(_ id: String, _ content: [ContentPart], error: Bool = false) -> [AgentMessage] {
+    [
+      AgentMessage(role: .assistant, content: [
+        .text("Keep this conclusion."), .toolCall(ToolCall(
+          id: id, name: "web_search", arguments: .object(["query": .string("important search")]))),
+      ]),
+      AgentMessage(role: .tool, content: [.toolResult(ToolResult(
+        callID: id, content: content, structuredContent: metadata, isError: error))]),
+    ]
+  }
+  var messages: [AgentMessage] = [.system("Instructions"), .user("Keep my request.")]
+  messages += exchange("search", [.text(body)])
+  messages += exchange("attachments", [
+    .file(FileContent(name: "source.c", mimeType: "text/plain", text: body)),
+    .resource(ResourceContent(uri: "source://web", text: body)),
+  ])
+  messages += exchange("error", [.text(body)], error: true)
+  messages += exchange("latest", [.text(body)])
+  let original = messages
+  var cheap = messages
+  #expect(AgentContextPruning.prune(&cheap) == nil)
+  let report = try #require(AgentContextPruning.pruneToolOutput(&messages))
+  #expect(report.trimmedToolResults == 2)
+  #expect(!report.isEmpty)
+  #expect(report.summary.hasPrefix("pruned 2 old tool outputs"))
+  #expect(report.charactersBefore - report.charactersAfter > 30_000)
+  #expect(messages.filter { $0.role != .tool } == original.filter { $0.role != .tool })
+  let results = messages.flatMap(\.toolResults)
+  #expect(results[0].text.hasPrefix("START"))
+  #expect(results[0].text.hasSuffix("END"))
+  #expect(results[0].text.contains("pruned by user choice"))
+  #expect(results[0].text.count < 1_400)
+  #expect(results.allSatisfy { $0.structuredContent == metadata })
+  #expect(results[2].text == body)
+  #expect(results[3].text == body)
+  #expect(AgentContextPruning.pruneToolOutput(&messages) == nil)
+}

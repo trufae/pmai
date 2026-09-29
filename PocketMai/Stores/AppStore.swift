@@ -2769,7 +2769,8 @@ final class AppStore: ObservableObject {
     }
     switch decision {
     case .cancelRun: return false
-    case .continueWithoutCompacting: return true
+    // Tool-output pruning is offered only by hosts using MaiCore transcripts.
+    case .continueWithoutCompacting, .pruneToolOutput: return true
     case .compact: break
     }
     // Model and summarizer settings may have changed while the prompt was open.

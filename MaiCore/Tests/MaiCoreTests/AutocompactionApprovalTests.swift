@@ -10,6 +10,82 @@ private let compactionHistory: [AgentMessage] = [
   .assistant("Earlier answer"), .user("Finish the task."),
 ]
 
+private func historyWithLargeToolOutput() -> [AgentMessage] {
+  [
+    .system("Keep instructions"), .user("Search for background."),
+    AgentMessage(role: .assistant, content: [.toolCall(ToolCall(
+      id: "old-search", name: "web_search", arguments: .object(["query": .string("topic")])))]),
+    AgentMessage(role: .tool, content: [.toolResult(ToolResult(
+      callID: "old-search", text: String(repeating: "search result\n", count: 3_000)))]),
+    .assistant("Keep this conclusion."), .user("Continue the task."),
+  ]
+}
+
+@Test("Choosing pruning waits for approval, saves old tool output, and makes no summary call")
+func compactionApprovalCanChoosePruning() async throws {
+  let history = historyWithLargeToolOutput()
+  let approval = CompactionApprovalProbe()
+  let provider = CompactionApprovalProvider(responses: [.assistant("final answer")])
+  let runtime = AgentRuntime(approvalHandler: approval)
+  try await runtime.register(provider)
+  let run = Task {
+    try await runtime.run(AgentRequest(
+      provider: provider.descriptor.id, model: "main", messages: history,
+      retry: .none, autocompact: .init(tokens: 5_000)))
+  }
+  var iterator = approval.events.makeAsyncIterator()
+  let pending = try #require(await iterator.next())
+  let pid = try #require(pending.run.pid)
+  #expect(pending.pruning?.trimmedToolResults == 1)
+  #expect(await provider.requests.isEmpty)
+  #expect(await runtime.supervisor.transcript(pid) == history)
+  await approval.resolve(.pruneToolOutput)
+  let result = try await run.value
+  #expect(await provider.requests.count == 1)
+  #expect(await approval.requests.count == 1)
+  #expect(result.response.text == "final answer")
+  #expect(result.transcript.flatMap(\.toolResults).first?.text.contains("pruned by user choice") == true)
+  #expect(result.transcript.filter { $0.role != .tool }.dropLast() == history.filter { $0.role != .tool }[...])
+}
+
+@Test("Pruning that leaves context over the threshold offers another decision without repeating pruning")
+func compactionApprovalPruningStillOverLimit() async throws {
+  let approval = CompactionApprovalProbe()
+  let provider = CompactionApprovalProvider(responses: [.assistant("final answer")])
+  let runtime = AgentRuntime(approvalHandler: approval)
+  try await runtime.register(provider)
+  let run = Task {
+    try await runtime.run(AgentRequest(
+      provider: provider.descriptor.id, model: "main", messages: historyWithLargeToolOutput(),
+      retry: .none, autocompact: .init(tokens: 1)))
+  }
+  var iterator = approval.events.makeAsyncIterator()
+  let first = try #require(await iterator.next())
+  #expect(first.pruning != nil)
+  await approval.resolve(.pruneToolOutput)
+  let second = try #require(await iterator.next())
+  #expect(second.pruning == nil)
+  #expect(second.estimatedTokens < first.estimatedTokens)
+  #expect(await provider.requests.isEmpty)
+  await approval.resolve(.continueWithoutCompacting)
+  #expect(try await run.value.response.text == "final answer")
+  #expect(await approval.requests.count == 2)
+}
+
+@Test("Disabled autocompaction never asks for a context action")
+func disabledCompactionDoesNotPrompt() async throws {
+  let approval = CompactionApprovalProbe(decision: .cancelRun)
+  let provider = CompactionApprovalProvider(responses: [.assistant("done")])
+  let runtime = AgentRuntime(approvalHandler: approval)
+  try await runtime.register(provider)
+  let history = historyWithLargeToolOutput()
+  let result = try await runtime.run(AgentRequest(
+    provider: provider.descriptor.id, model: "main", messages: history,
+    retry: .none, autocompact: .init(tokens: 0), context: .size))
+  #expect(await approval.requests.isEmpty)
+  #expect(Array(result.transcript.prefix(history.count)) == history)
+}
+
 @Test("Autocompaction waits before any inference and uses model changes made at the prompt")
 func compactionApprovalWaitsAndRefreshesModels() async throws {
   let approval = CompactionApprovalProbe()

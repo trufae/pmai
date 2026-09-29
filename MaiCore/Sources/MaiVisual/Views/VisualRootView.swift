@@ -277,12 +277,16 @@ struct CompactionSheet: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 1) {
-      Text("Compact this chat?").bold()
+      Text("Reduce this chat's context?").bold()
       Text("Agent '\(pending.request.run.agentID)' has about \(pending.request.estimatedTokens) tokens (threshold \(pending.request.threshold)).")
-      Text("Compaction replaces older exchanges with a summary. Skipping keeps all messages for this response.")
+      Text("Summarization replaces older exchanges with a summary. Pruning shortens older tool output without a model call. Keeping context skips both for this response.")
+      if let pruning = pending.request.pruning {
+        Text("Pruning preview: \(pruning.summary). Keeps the start and end of each output; the middle is dropped.")
+        Button("Prune old tool output") { workspace.resolveCompaction(.pruneToolOutput) }
+      }
       HStack(spacing: 2) {
-        Button("Compact") { workspace.resolveCompaction(.compact) }
-        Button("Continue without compacting") { workspace.resolveCompaction(.continueWithoutCompacting) }
+        Button("Summarize") { workspace.resolveCompaction(.compact) }
+        Button("Keep context") { workspace.resolveCompaction(.continueWithoutCompacting) }
       }
       HStack(spacing: 2) {
         Button("Stop to change model") { workspace.stopCompactionToChangeModel() }

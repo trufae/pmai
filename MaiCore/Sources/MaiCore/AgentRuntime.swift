@@ -688,12 +688,15 @@ public actor AgentRuntime {
         if estimate >= request.autocompact.tokens,
           let selection = AgentAutocompaction.selection(in: transcript)
         {
-          await supervisor.raise(.input("Automatic compaction needs a decision."), for: pid)
+          var prunedTranscript = transcript
+          let pruning = AgentContextPruning.pruneToolOutput(&prunedTranscript)
+          await supervisor.raise(.input("Context reduction needs a decision."), for: pid)
           let decision: AutocompactionDecision
           do {
             decision = try await approvalHandler.decideCompaction(
               AutocompactionRequest(
-                run: context, estimatedTokens: estimate, threshold: request.autocompact.tokens))
+                run: context, estimatedTokens: estimate, threshold: request.autocompact.tokens,
+                pruning: pruning))
             try Task.checkCancellation()
           } catch {
             await supervisor.clearAttention(for: pid)
@@ -705,6 +708,20 @@ public actor AgentRuntime {
             throw CancellationError()
           case .continueWithoutCompacting:
             skipAutocompaction = true
+            continue
+          case .pruneToolOutput:
+            guard let pruning else {
+              // A host should not offer this action without a preview. Do
+              // not spin at the prompt if a custom handler still chooses it.
+              skipAutocompaction = true
+              continue
+            }
+            transcript = prunedTranscript
+            lastUsage = nil
+            await emit(.transcriptEdited(context, pruning))
+            await supervisor.note(pid, transcript: transcript)
+            // If still above the threshold, offer summarization or keeping
+            // the context; the pruning preview will now be empty.
             continue
           case .compact:
             break
