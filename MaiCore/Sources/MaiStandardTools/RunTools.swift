@@ -232,7 +232,7 @@ public struct MaiRunTool: AgentTool {
     }
 
     private static func workingDirectory(_ rawPath: String?) throws -> URL {
-      let current = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+      let current = AgentExecutionScope.directory
       guard let rawPath, !rawPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
         return current
       }

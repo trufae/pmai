@@ -145,7 +145,7 @@ public struct MaiFileWorkspaceTool: AgentTool {
     } catch let error as MaiFileWorkspaceError {
       let root =
         configuration.followsProcessWorkingDirectory
-        ? FileManager.default.currentDirectoryPath : configuration.rootURL.path
+        ? AgentExecutionScope.directory.path : configuration.rootURL.path
       return ToolOutput(
         text: "Error: \(error.localizedDescription)\(error.pathHint(root: root))", isError: true)
     } catch {
@@ -479,7 +479,7 @@ private struct MaiFileWorkspace: Sendable {
   init(configuration: MaiFileWorkspaceConfiguration) throws {
     let configuredRoot =
       configuration.followsProcessWorkingDirectory
-      ? URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+      ? AgentExecutionScope.directory
       : configuration.rootURL
     var isDirectory: ObjCBool = false
     guard

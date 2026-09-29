@@ -1681,7 +1681,7 @@ public actor AgentRuntime {
     let prompt = AgentDelegationPrompt.render(
       start.brief,
       agent: definition.id,
-      workingDirectory: FileManager.default.currentDirectoryPath,
+      workingDirectory: AgentExecutionScope.directory.path,
       template: delegationTemplate)
     // A child works in the session of the chat that started it, so a
     // per-session header carries the same value for the whole tree.
