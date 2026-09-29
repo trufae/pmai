@@ -685,8 +685,15 @@ public struct ConfiguredUse: Codable, Equatable, Sendable {
 
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
+    let agentsmd: AgentsMDMode
+    // Configurations saved before the "maybe" mode used a boolean.
+    if let enabled = try? container.decode(Bool.self, forKey: .agentsmd) {
+      agentsmd = enabled ? .on : .off
+    } else {
+      agentsmd = try container.decodeIfPresent(AgentsMDMode.self, forKey: .agentsmd) ?? .maybe
+    }
     self.init(
-      agentsmd: try container.decodeIfPresent(AgentsMDMode.self, forKey: .agentsmd) ?? .maybe,
+      agentsmd: agentsmd,
       plan: try container.decodeIfPresent(Bool.self, forKey: .plan) ?? true)
   }
 }

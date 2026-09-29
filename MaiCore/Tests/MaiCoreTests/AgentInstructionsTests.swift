@@ -98,6 +98,37 @@ func useSettingsDecode() throws {
   #expect(roundTrip.use.agentsmd == .on)
 }
 
+@Test(
+  "use.agentsmd loads legacy booleans and current modes, and saves the mode as a string",
+  arguments: [
+    ("true", AgentsMDMode.on), ("false", .off),
+    (#""on""#, .on), (#""off""#, .off), (#""maybe""#, .maybe), ("null", .maybe),
+  ])
+func useAgentsMarkdownModesDecode(value: String, expected: AgentsMDMode) throws {
+  let url = FileManager.default.temporaryDirectory
+    .appendingPathComponent("maicore-config-\(UUID().uuidString).json")
+  defer { try? FileManager.default.removeItem(at: url) }
+  try Data(#"{"version":1,"use":{"agentsmd":\#(value),"plan":false}}"#.utf8)
+    .write(to: url)
+
+  let configuration = try MaiConfiguration.load(from: url)
+  #expect(configuration.use.agentsmd == expected)
+  #expect(!configuration.use.plan)
+
+  try configuration.save(to: url)
+  #expect(try MaiConfiguration.load(from: url) == configuration)
+  let saved = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: url))
+  #expect(saved.objectValue?["use"]?.objectValue?["agentsmd"] == .string(expected.rawValue))
+}
+
+@Test("use.agentsmd rejects invalid settings", arguments: [#""invalid""#, "1", "[]", "{}"])
+func useAgentsMarkdownRejectsInvalid(value: String) throws {
+  #expect(throws: DecodingError.self) {
+    try JSONDecoder().decode(
+      MaiConfiguration.self, from: Data(#"{"use":{"agentsmd":\#(value)}}"#.utf8))
+  }
+}
+
 /// Delegates once when it can, then answers.
 private actor InstructionsFixtureProvider: ChatProvider {
   nonisolated let descriptor = ProviderDescriptor(
