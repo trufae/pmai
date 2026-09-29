@@ -10217,7 +10217,7 @@ struct MaiCLI {
       "/set tool.proxy on", "/set tool.proxy off",
       "/set ui.title ", "/set ui.title none", "/set ui.editor ", "/set ui.editor none",
       "/set ui.bgline rgb:024", "/set ui.bgline none",
-      "/set ui.fgprompt yellow",
+      "/set ui.fgprompt yellow", "/version", "/last", "/skills", "/skill",
       "/set ui.fgcolor none", "/set ui.bgcolor none", "/set ui.bgprompt none",
       "/set ui.fgtoolresult yellow", "/set use.", "/set use.agentsmd on", "/set use.agentsmd off",
       "/set use.plan on", "/set use.plan off",

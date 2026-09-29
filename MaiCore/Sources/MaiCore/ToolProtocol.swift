@@ -1147,8 +1147,14 @@ public enum AgentTooling {
     let attrAPIName = firstNonEmpty(attrs["api_name"], attrs["api"], attrs["native_name"])
     let attrArgs = firstNonEmpty(attrs["arguments"], attrs["args"], attrs["params"], attrs["input"])
     let normalizedPayload = stripMarkdownFence(from: payload)
+    let xmlCall = xmlToolCallPayload(
+      normalizedPayload, attrName: attrName, attrID: attrID,
+      attrAPIName: attrAPIName, rawBlock: rawBlock)
     var candidates = [normalizedPayload]
-    if let object = firstJSONObject(in: normalizedPayload), object != normalizedPayload {
+    // JSON inside an XML argument is data, not a replacement call envelope.
+    if xmlCall?.argumentValues.isEmpty != false,
+      let object = firstJSONObject(in: normalizedPayload), object != normalizedPayload
+    {
       candidates.append(object)
     }
     if let attrArgs, !attrArgs.isEmpty {
@@ -1182,15 +1188,7 @@ public enum AgentTooling {
       }
     }
 
-    if let xmlCall = xmlToolCallPayload(
-      normalizedPayload,
-      attrName: attrName,
-      attrID: attrID,
-      attrAPIName: attrAPIName,
-      rawBlock: rawBlock)
-    {
-      return xmlCall
-    }
+    if let xmlCall { return xmlCall }
 
     if let attrName {
       return ParsedToolCall(
@@ -1294,7 +1292,6 @@ public enum AgentTooling {
       .replacingOccurrences(of: "&quot;", with: "\"")
       .replacingOccurrences(of: "&apos;", with: "'")
       .replacingOccurrences(of: "&amp;", with: "&")
-      .trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
   public static func xmlEscapedAttribute(_ value: String) -> String {

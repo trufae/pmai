@@ -943,6 +943,75 @@ func openAIToolArgumentEscapes(stream: Bool) async throws {
   #expect(arguments["escapedQuote"] == .string("\\\""))
 }
 
+@Test("Native streaming preserves object-shaped fragments inside arguments", arguments: [
+  [#"{"text":"before "#, "{}", #" after"}"#],
+  [#"{"payload":["#, #"{"nested":true}"#, "]}"],
+  [#"{"payload":"#, #"{"payload":true}"#, "}"],
+])
+func openAIStreamingNestedObjectFragments(fragments: [String]) async throws {
+  let host = "nested-fragments-\(UUID().uuidString).example.test"
+  StubURLProtocol.install(forHost: host) { request in
+    let chunks = fragments.map { fragment in
+      let function: JSONValue = .object([
+        "name": .string("echo"), "arguments": .string(fragment),
+      ])
+      let payload: JSONValue = .object(["choices": .array([.object([
+        "delta": .object(["tool_calls": .array([.object([
+          "index": .integer(0), "id": .string("nested"), "function": function,
+        ])])]),
+      ])])])
+      return "data: \(payload.compactJSONString)\n\n"
+    }.joined()
+    return try httpResponse(request, contentType: "text/event-stream", body: chunks + "data: [DONE]\n\n")
+  }
+  defer { StubURLProtocol.reset(host: host) }
+  let provider = OpenAICompatibleProvider(
+    configuration: .init(baseURL: try #require(URL(string: "https://\(host)/v1"))),
+    session: stubSession())
+  let response = try await provider.complete(ProviderRequest(
+    model: "fixture", messages: [.user("echo")],
+    tools: [ToolDefinition(name: "echo", description: "Echo")], stream: true))
+  let expected = try JSONDecoder().decode(JSONValue.self, from: Data(fragments.joined().utf8))
+  #expect(response.message.toolCalls == [ToolCall(id: "nested", name: "echo", arguments: expected)])
+}
+
+@Test("Native streaming associates unindexed chunks by call ID or array position", arguments: [false, true])
+func openAIStreamingUnindexedCalls(reordered: Bool) async throws {
+  let host = "unindexed-\(reordered).example.test"
+  StubURLProtocol.install(forHost: host) { request in
+    func payload(_ calls: [[String: JSONValue]]) -> String {
+      let value: JSONValue = .object(["choices": .array([.object([
+        "delta": .object(["tool_calls": .array(calls.map(JSONValue.object))]),
+      ])])])
+      return "data: \(value.compactJSONString)\n\n"
+    }
+    let first = (0..<2).map { index -> [String: JSONValue] in
+      ["id": .string("call-\(index)"), "function": .object([
+        "name": .string("echo"), "arguments": .string(#"{"text":"#),
+      ])]
+    }
+    let last = (reordered ? [1, 0] : [0, 1]).map { index -> [String: JSONValue] in
+      var call: [String: JSONValue] = ["function": .object([
+        "arguments": .string("\"value-\(index)\"}"),
+      ])]
+      if reordered { call["id"] = .string("call-\(index)") }
+      return call
+    }
+    return try httpResponse(request, contentType: "text/event-stream",
+      body: payload(first) + payload(last) + "data: [DONE]\n\n")
+  }
+  defer { StubURLProtocol.reset(host: host) }
+  let provider = OpenAICompatibleProvider(
+    configuration: .init(baseURL: try #require(URL(string: "https://\(host)/v1"))),
+    session: stubSession())
+  let response = try await provider.complete(ProviderRequest(
+    model: "fixture", messages: [.user("echo")],
+    tools: [ToolDefinition(name: "echo", description: "Echo")], stream: true))
+  #expect(response.message.toolCalls == (0..<2).map {
+    ToolCall(id: "call-\($0)", name: "echo", arguments: .object(["text": .string("value-\($0)")]))
+  })
+}
+
 @Test("Cancelling a streamed provider request cancels its URL session task")
 func openAIStreamingCancellation() async throws {
   HangingURLProtocol.reset()

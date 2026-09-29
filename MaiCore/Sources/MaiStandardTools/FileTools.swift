@@ -1162,6 +1162,15 @@ private struct MaiFileWorkspace: Sendable {
         let normalizedFind = find.replacingOccurrences(of: "\r\n", with: "\n")
         if normalizedText.contains(normalizedFind) {
           hint += "The text matches after normalizing CRLF/LF line endings; preserve the file's line endings in find. "
+        } else {
+          let unindentedText = normalizedText.replacingOccurrences(
+            of: #"(?m)^[ \t]+"#, with: "", options: .regularExpression)
+          let unindentedFind = normalizedFind.replacingOccurrences(
+            of: #"(?m)^[ \t]+"#, with: "", options: .regularExpression)
+          if !unindentedFind.isEmpty, unindentedText.contains(unindentedFind) {
+            hint += "The text matches after removing leading spaces/tabs; correct the indentation in find. "
+              + "Numbered file output adds one separator space after the colon; that space is not part of the file. "
+          }
         }
       }
       hint += "Read this same path with files_read or files_read_range (use files_grep to locate the text), "

@@ -494,12 +494,23 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
       if delta["tool_calls"]?.arrayValue?.isEmpty == false {
         await emitParts(reasoningStream.flush(), emit: emit)
       }
-      for rawCall in delta["tool_calls"]?.arrayValue ?? [] {
+      for (position, rawCall) in (delta["tool_calls"]?.arrayValue ?? []).enumerated() {
         guard let object = rawCall.objectValue else { continue }
-        let index = object["index"]?.intValue ?? toolCalls.count
-        var accumulator = toolCalls[index] ?? ToolCallAccumulator()
         let function = object["function"]?.objectValue ?? [:]
         let id = object["id"]?.stringValue
+        // Compatible endpoints may omit index. Reuse the call's ID, then
+        // its array position, rather than starting a new call on every chunk.
+        let index: Int
+        if let explicit = object["index"]?.intValue {
+          index = explicit
+        } else if let id, !id.isEmpty {
+          index = toolCalls.first(where: { $0.value.id == id })?.key
+            ?? (toolCalls[position]?.id.isEmpty != false
+              ? position : (toolCalls.keys.max() ?? -1) + 1)
+        } else {
+          index = position
+        }
+        var accumulator = toolCalls[index] ?? ToolCallAccumulator()
         let name = function["name"]?.stringValue
         let arguments = function["arguments"]?.stringValue ?? ""
         if let id, !id.isEmpty { accumulator.id = id }
@@ -507,9 +518,8 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
         // OpenAI streams arguments as concatenated JSON fragments; some
         // OpenAI-compatible endpoints (notably MiniMax-M3) re-send the full
         // tool-call JSON in every chunk. Concatenating those yields an invalid
-        // string, so merge by preferring whichever form is a parseable prefix.
-        accumulator.arguments =
-          ToolCallAccumulator.merge(accumulator.arguments, with: arguments)
+        // string, so recognize snapshots without discarding nested fragments.
+        accumulator.append(arguments)
         toolCalls[index] = accumulator
         let deltaName = name.flatMap(resolver.canonicalName) ?? name ?? ""
         await emit(
@@ -974,43 +984,46 @@ private struct ToolCallAccumulator {
   var id = ""
   var name = ""
   var arguments = ""
+  private var snapshotArguments = ""
+
+  mutating func append(_ fragment: String) {
+    arguments += fragment
+    snapshotArguments = Self.merge(snapshotArguments, with: fragment)
+  }
 
   /// Merges a freshly arrived `arguments` string into whatever the accumulator
   /// already has. OpenAI streams `arguments` as JSON fragments that form a
   /// valid object only when concatenated (`{"text":` then `"hi"}` then `}`).
   /// Some OpenAI-compatible endpoints — notably MiniMax-M3 — instead re-send
-  /// the full tool-call JSON in every chunk; concatenating those produces an
-  /// invalid string, so prefer whichever form parses as a JSON object.
-  ///
-  /// The rules, in priority order:
-  /// 1. If the concatenation already parses, keep it (OpenAI is mid-stream).
-  /// 2. If only the new fragment parses, replace the buffer with it (full
-  ///    re-send, possibly the first chunk that completes the object).
-  /// 3. If the buffer alone already parses, ignore the new fragment (later
-  ///    re-sends of the same complete object).
-  /// 4. Otherwise fall back to concatenation (mid-stream, not yet valid).
+  /// the full tool-call JSON in every chunk. Only replace an incomplete buffer
+  /// when the snapshot includes that prefix: a standalone object can also be
+  /// an ordinary fragment inside a string, array, or nested argument object.
   static func merge(_ existing: String, with fragment: String) -> String {
     if fragment.isEmpty { return existing }
     if existing.isEmpty { return fragment }
     let combined = existing + fragment
-    if Self.isJSONObject(combined) { return combined }
-    if Self.isJSONObject(fragment) { return fragment }
-    if Self.isJSONObject(existing) { return existing }
+    if Self.jsonObject(combined) != nil { return combined }
+    if fragment.hasPrefix(existing), Self.jsonObject(fragment) != nil { return fragment }
+    if Self.jsonObject(existing) != nil {
+      if Self.jsonObject(fragment) != nil { return fragment }
+      if existing.hasPrefix(fragment) { return existing }
+    }
     return combined
   }
 
-  private static func isJSONObject(_ text: String) -> Bool {
+  private static func jsonObject(_ text: String) -> JSONValue? {
     guard let data = text.data(using: .utf8),
-      let decoded = try? JSONDecoder().decode(JSONValue.self, from: data)
-    else { return false }
-    return decoded.objectValue != nil
+      let decoded = try? JSONDecoder().decode(JSONValue.self, from: data),
+      decoded.objectValue != nil
+    else { return nil }
+    return decoded
   }
 
   func toolCall(index: Int, resolver: ToolNameResolver) throws -> ToolCall {
     let raw = arguments.isEmpty ? "{}" : arguments
-    guard let data = raw.data(using: .utf8),
-      let decoded = try? JSONDecoder().decode(JSONValue.self, from: data),
-      decoded.objectValue != nil
+    // Valid concatenated deltas always win: even a fragment sharing the
+    // current prefix can be a nested object rather than a full snapshot.
+    guard let decoded = Self.jsonObject(raw) ?? Self.jsonObject(snapshotArguments)
     else {
       throw OpenAICompatibleProviderError.invalidToolArguments(tool: name, arguments: raw)
     }

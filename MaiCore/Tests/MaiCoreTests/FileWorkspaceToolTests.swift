@@ -893,6 +893,31 @@ func fileWorkspacePatchMismatchGuidance() async throws {
   }
 }
 
+@Test("Patch failures identify the extra separator space copied from numbered file output")
+func fileWorkspacePatchIndentationGuidance() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let file = root.appendingPathComponent("source.swift")
+  let source = "      values.append(\"/model -compact\")\n      values.append(\"/model -tool\")\n"
+  try Data(source.utf8).write(to: file)
+  let patch = MaiFileWorkspaceTool(operation: .patch, configuration: .init(rootURL: root))
+  let bad = try await call(patch, [
+    "path": .string(file.lastPathComponent),
+    "find": .string(" " + source.replacingOccurrences(of: "\n      ", with: "\n       ")),
+    "replace": .string(""),
+  ])
+  #expect(bad.isError)
+  #expect(bad.text.contains("correct the indentation"))
+  #expect(bad.text.contains("one separator space after the colon"))
+  #expect(try String(contentsOf: file, encoding: .utf8) == source)
+  let fixed = try await call(patch, [
+    "path": .string(file.lastPathComponent), "find": .string(source), "replace": .string(""),
+  ])
+  #expect(!fixed.isError)
+  #expect(try Data(contentsOf: file).isEmpty)
+}
+
 private func fileReadBody(_ output: ToolOutput) -> String {
   output.content.compactMap { part in
     if case .file(let file) = part { return file.text }
