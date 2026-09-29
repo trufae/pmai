@@ -227,6 +227,7 @@ final class TerminalLineEditor {
   /// while the input still belongs to it.
   private var completionMenu: CompletionMenu?
   private var completionMatches: [String] = []
+  private var completionQuery: String?
 
   init(historyURL: URL? = nil) {
     self.historyURL = historyURL
@@ -244,6 +245,7 @@ final class TerminalLineEditor {
   func readLine(
     prompt: String,
     completions: [String],
+    additionalCompletions: ((String) -> [String])? = nil,
     separator: String? = nil,
     rememberInput: Bool = true
   ) -> String? {
@@ -252,7 +254,8 @@ final class TerminalLineEditor {
       surface = persistentSurface
       defer { surface = nil }
       return readInteractive(
-        prompt: prompt, completions: completions, separator: nil, rememberInput: rememberInput)
+        prompt: prompt, completions: completions, additionalCompletions: additionalCompletions,
+        separator: nil, rememberInput: rememberInput)
     }
     guard isatty(STDIN_FILENO) != 0, isatty(STDOUT_FILENO) != 0 else {
       FileHandle.standardOutput.write(Data(prompt.utf8))
@@ -278,12 +281,14 @@ final class TerminalLineEditor {
     surface = ClassicEditorSurface(cooked: original, raw: raw)
     defer { surface = nil }
     return readInteractive(
-      prompt: prompt, completions: completions, separator: separator, rememberInput: rememberInput)
+      prompt: prompt, completions: completions, additionalCompletions: additionalCompletions,
+      separator: separator, rememberInput: rememberInput)
   }
 
   private func readInteractive(
     prompt: String,
     completions: [String],
+    additionalCompletions: ((String) -> [String])?,
     separator: String?,
     rememberInput: Bool
   ) -> String? {
@@ -294,6 +299,7 @@ final class TerminalLineEditor {
     viewTop = 0
     completionMenu = nil
     completionMatches = []
+    completionQuery = nil
     drawSeparator(separator)
     redraw(prompt: prompt, bytes: bytes, cursor: cursor)
 
@@ -359,11 +365,13 @@ final class TerminalLineEditor {
           cursor = nextCharacterEnd(in: bytes, after: cursor)
           redraw(prompt: prompt, bytes: bytes, cursor: cursor)
         case 9:  // Tab
+          let query = completionQuery ?? String(decoding: bytes, as: UTF8.self)
+          let candidates = completions + (additionalCompletions?(query) ?? [])
           complete(
             prompt: prompt,
             bytes: &bytes,
             cursor: &cursor,
-            candidates: completions)
+            candidates: candidates)
         case 10:  // Ctrl+J: a line break, for terminals that send Enter for Shift+Enter
           insert([10])
         case 12:  // Ctrl+L
@@ -787,7 +795,9 @@ final class TerminalLineEditor {
       return
     }
 
-    if let menu = completionMenu, !completionMatches.isEmpty {
+    let line = completionQuery ?? String(decoding: bytes, as: UTF8.self)
+    let matches = Set(candidates.filter { $0.hasPrefix(line) }).sorted()
+    if let menu = completionMenu, !completionMatches.isEmpty, matches == completionMatches {
       let applied = (menu.selected + 1) % completionMatches.count
       bytes = Array(completionMatches[applied].utf8)
       cursor = bytes.count
@@ -799,14 +809,13 @@ final class TerminalLineEditor {
       return
     }
 
-    let line = String(decoding: bytes, as: UTF8.self)
-    let matches = Set(candidates.filter { $0.hasPrefix(line) }).sorted()
+    dismissCompletion()
     guard !matches.isEmpty else {
       surface?.bell()
       return
     }
     if matches.count == 1 {
-      let value = matches[0] + (matches[0].hasSuffix(" ") ? "" : " ")
+      let value = matches[0] + (matches[0].hasSuffix(" ") || matches[0].hasSuffix("::") ? "" : " ")
       bytes = Array(value.utf8)
       cursor = bytes.count
       redraw(prompt: prompt, bytes: bytes, cursor: cursor)
@@ -814,6 +823,7 @@ final class TerminalLineEditor {
     }
 
     let prefix = commonPrefix(matches)
+    completionQuery = line
     completionMatches = matches
     completionMenu = CompletionMenu(
       options: matches.map { String($0.dropFirst(prefix.count)) },
@@ -830,6 +840,7 @@ final class TerminalLineEditor {
     guard completionMenu != nil || !completionMatches.isEmpty else { return }
     completionMenu = nil
     completionMatches = []
+    completionQuery = nil
     surface?.drawCompletionMenu(nil)
   }
 

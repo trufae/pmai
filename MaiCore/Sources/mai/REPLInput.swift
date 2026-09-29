@@ -50,6 +50,7 @@ final class REPLInputReader: @unchecked Sendable {
   struct Prompt: Sendable {
     var text: String
     var completions: [String]
+    var additionalCompletions: (@Sendable (String) -> [String])? = nil
     /// The line drawn above the prompt on a classic terminal; nil on the
     /// persistent screen, whose status row the loop keeps by itself.
     var separator: String?
@@ -97,7 +98,8 @@ final class REPLInputReader: @unchecked Sendable {
       if done { return }
       guard
         let line = editor.readLine(
-          prompt: prompt.text, completions: prompt.completions, separator: prompt.separator)
+          prompt: prompt.text, completions: prompt.completions,
+          additionalCompletions: prompt.additionalCompletions, separator: prompt.separator)
       else {
         continuation.yield(.endOfFile)
         return

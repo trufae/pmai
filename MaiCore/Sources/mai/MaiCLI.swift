@@ -375,6 +375,7 @@ private struct VisualBridge: Sendable {
   var skills: SkillState
   /// Tokens/s and time in use per provider:model, shared with the runtime.
   var usageStats: ModelUsageStore
+  let modelCatalog = REPLModelCatalog()
 }
 
 /// Where the current project's todo list lives. The `todo_*` tools are
@@ -1981,6 +1982,7 @@ struct MaiCLI {
 
     func refreshStatus() async {
       guard let screen else { return }
+      visual.modelCatalog.select(session.profile.provider, runtime: runtime)
       let status = await statusLine()
       screen.setStatus(status.text, animating: status.animating)
     }
@@ -1988,6 +1990,9 @@ struct MaiCLI {
     /// Lets the input thread read the next line. Settings that the editor
     /// reads are refreshed here, while the thread is parked and cannot race.
     func releaseReader(workspace: AgentChatWorkspace) async {
+      if isatty(STDIN_FILENO) != 0 {
+        visual.modelCatalog.select(session.profile.provider, runtime: runtime)
+      }
       guard loop.readerParked, !loop.exiting else { return }
       await refreshTerminalSettings()
       if screen == nil {
@@ -2005,6 +2010,7 @@ struct MaiCLI {
           completions: completionCandidates(
             workspace: workspace, configuration: configuration,
             skills: visual.skills.catalog.skills),
+          additionalCompletions: { visual.modelCatalog.completions(for: $0, runtime: runtime) },
           separator: screen == nil ? status.text : nil))
     }
 
@@ -2790,7 +2796,11 @@ struct MaiCLI {
             await releaseIfIdle(workspace: workspace)
             continue
           }
-          if name == "/chat" {
+          // Compaction uses the cancellable command path below, which keeps
+          // the input prompt open while the summary request is in flight.
+          if name == "/chat",
+            argument.split(whereSeparator: \.isWhitespace).first?.lowercased() != "compact"
+          {
             await recordSubagents()
             workspace.upsert(session.chat, selecting: true)
             await handleWorkspaceChatCommand(
@@ -3128,6 +3138,7 @@ struct MaiCLI {
 
     loop.beginExit()
     reader.stop()
+    visual.modelCatalog.cancel()
     supervisorFeed.cancel()
     continuation.finish()
     await visual.approvalHandler.setPrompter(nil)
@@ -3518,6 +3529,7 @@ struct MaiCLI {
       let providerID = argument.isEmpty ? session.profile.provider : ProviderID(argument)
       do {
         let models = try await runtime.availableModels(provider: providerID)
+        visual.modelCatalog.store(models, for: providerID)
         if models.isEmpty {
           await terminal.line("Provider '\(providerID)' returned no models.")
         }
@@ -10272,6 +10284,9 @@ struct MaiCLI {
     for provider in configuration?.providers ?? [] {
       values.append("/provider \(provider.id)")
       values.append("/models \(provider.id)")
+      for prefix in ["/model ", "/model -compact ", "/model -tool "] {
+        values.append("\(prefix)\(provider.id)::")
+      }
       values.append("/edit provider \(provider.id)")
     }
     for skill in skills {
@@ -10542,7 +10557,7 @@ struct MaiCLI {
     /model [PROVIDER::]MODEL  Select and save a model for this agent
     /model -compact [NAME] Select a compaction agent/model; omit NAME to clear
     /model -tool [NAME]    Select a tool-decision agent/model; omit NAME to clear
-    /models [PROVIDER]     List models from the current or named provider
+    /models [PROVIDER]     List models and refresh /model Tab completion
     /nothink               Disable reasoning where the model supports it
     /plugins               List statically and dynamically loaded plugins
     /project               Show, list, rename, or tint the project (the start directory)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check local model discovery, bounded waits, and idle REPL work over real HTTP."""
+"""Check model completion, compaction input, and idle REPL work over real HTTP."""
 import fcntl
 import json
 import os
@@ -19,6 +19,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 requests = queue.Queue()
 release = threading.Event()
+catalog_release = threading.Event()
+compact_release = threading.Event()
 shutdown = threading.Event()
 catalog = {
     'models': [{'name': 'test.gguf', 'model': 'test.gguf'}],
@@ -65,6 +67,8 @@ class Provider(BaseHTTPRequestHandler):
                 {'model': 'native.gguf', 'name': 'Native model'}, {'name': 'name-only.gguf'},
             ]})
         else:
+            if self.path == '/models':
+                catalog_release.wait(30)
             self.respond(catalog)
 
     def do_POST(self):
@@ -73,6 +77,9 @@ class Provider(BaseHTTPRequestHandler):
         if body['messages'][-1]['content'] == 'slow':
             requests.put(('chat', length, None))
             release.wait(30)
+        elif body['messages'][-1]['content'].startswith('Compact the transcript below'):
+            requests.put(('compact', length, None))
+            compact_release.wait(30)
         self.respond({'choices': [{'message': {'role': 'assistant', 'content': 'answer'},
                                    'finish_reason': 'stop'}]})
 
@@ -94,7 +101,7 @@ def main():
                 for name, path in [('openai', ''), ('v1', '/v1/'),
                                    ('completion', '/v1/chat/completions'),
                                    ('native', '/native'), ('unavailable', '/unavailable'),
-                                   ('stalled', '/stalled'), ('drip', '/drip')]
+                                   ('stalled', '/stalled'), ('lazy', '/lazy'), ('drip', '/drip')]
             ]
             providers[-1]['timeout'] = 1
             config = root / 'config.json'
@@ -180,6 +187,26 @@ def main():
 
             try:
                 wait_for('pmai>')
+                # Cold-cache discovery must leave both typing and commands live.
+                assert next_request()[0] == '/models'
+                send('/model te\t')
+                wait_for('/model te')
+                send('\x03')
+                wait_for('Nothing to cancel.')
+                send('/cwd\n')
+                wait_for(str(root))
+                send('/model \t')
+                wait_for('-compact')
+                catalog_release.set()
+                read_for(.3)
+                send('\t')
+                wait_for('test.gguf')
+                send('\x03')
+                wait_for('Nothing to cancel.')
+                send('/model te\t\n')
+                wait_for('Model: openai::test.gguf')
+                assert requests.empty(), 'Completion started duplicate discovery requests'
+                print('PASS cold model cache: background discovery and live completion', flush=True)
                 sample('idle large history', idle=True)
                 # /btw leaves the large saved history on screen without sending it.
                 send('/btw slow\n')
@@ -199,6 +226,32 @@ def main():
                     else:
                         wait_for('test.gguf — llamacpp')
                     print(f'PASS model catalog {provider}', flush=True)
+                # /models refreshes the live cache, including a prompt already open.
+                catalog['data'] = [{'id': 'fresh.gguf', 'owned_by': 'llamacpp'}]
+                catalog['models'] = [{'model': 'fresh.gguf'}]
+                send('/models\n')
+                assert next_request()[0] == '/models'
+                wait_for('fresh.gguf — llamacpp')
+                send('/model fre\t\n')
+                wait_for('Model: openai::fresh.gguf')
+                for task in ('compact', 'tool'):
+                    send(f'/model -{task} fre\t\n')
+                    wait_for(f'{task}: task-{task} (saved)')
+                send('/model native::nat\t\n')
+                wait_for('Model: native::native.gguf')
+                wait_for('· native.gguf ·')
+                send('/model name-\t\n')
+                wait_for('Model: native::name-only.gguf')
+                assert requests.empty(), 'Cached completion refetched a catalog'
+                send('/model lazy::fre\t')
+                assert next_request()[0] == '/lazy/models'
+                read_for(.3)
+                send('\t\n')
+                wait_for('Model: lazy::fresh.gguf')
+                send('/model openai::fre\t\n')
+                wait_for('Model: openai::fresh.gguf')
+                wait_for('· fresh.gguf ·')
+                print('PASS refreshed, task, and provider-qualified model completion', flush=True)
                 send('/models unavailable\n')
                 wait_for('Loading model')
                 assert next_request()[0] == '/unavailable/models'
@@ -214,6 +267,27 @@ def main():
                 send('/model changed.gguf\n')
                 wait_for('· changed.gguf')
                 sample('idle after cancellation', idle=True)
+                # The summary is deliberately stalled while the editor accepts text.
+                send('/chat compact\n')
+                assert next_request()[0] == 'compact'
+                send('draft-during-compaction')
+                wait_for('draft-during-compaction')
+                assert not compact_release.is_set()
+                send('\x03')
+                wait_for('cancelled /chat')
+                # Cancellation kept the original history, so a second compact can run.
+                send('/chat compact\n')
+                assert next_request()[0] == 'compact'
+                send('draft-after-compaction')
+                wait_for('draft-after-compaction')
+                compact_release.set()
+                wait_for('Conversation compacted into a summary.')
+                # Completion must preserve the existing draft and its cursor.
+                send('-preserved')
+                wait_for('draft-after-compaction-preserved')
+                send('\n')
+                wait_for('✓ took')
+                print('PASS manual compaction: prompt, cancellation, and preserved draft', flush=True)
                 send('/exit\n')
                 # macOS terminal restoration waits for pending PTY output to drain.
                 deadline = time.monotonic() + 10
@@ -221,14 +295,21 @@ def main():
                     assert time.monotonic() < deadline, ('/exit timed out', output.decode(errors='replace'))
                     read_for(.05)
                 assert process.returncode == 0, (process.returncode, output.decode(errors='replace'))
+                messages = json.loads(chat_file.read_text())['messages']
+                assert [m['content'][0]['text']['_0'] for m in messages if m['role'] == 'user'] == [
+                    'draft-after-compaction-preserved']
             finally:
                 release.set()
+                catalog_release.set()
+                compact_release.set()
                 if process.poll() is None:
                     process.kill()
                     process.wait()
                 os.close(master)
     finally:
         release.set()
+        catalog_release.set()
+        compact_release.set()
         shutdown.set()
         server.shutdown()
         server.server_close()

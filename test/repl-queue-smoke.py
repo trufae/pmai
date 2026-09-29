@@ -106,6 +106,7 @@ def main():
                        'shell-interrupt', 'shell-child-interrupt'):
             release.clear()
             slow_done.clear()
+            models_release.set()
             with tempfile.TemporaryDirectory(prefix='pmai-queue-') as directory:
                 root = Path(directory)
                 config = root / 'config.json'
@@ -200,6 +201,7 @@ def main():
 
                 try:
                     wait_for('pmai>')
+                    assert next_request(model_requests).endswith('/models')
                     if choice.startswith('shell-'):
                         prompt = 'shell-child' if choice == 'shell-child-interrupt' else 'shell'
                         send(prompt + '\n')
