@@ -286,7 +286,7 @@ public struct MaiRunTool: AgentTool {
     properties["args"] = .object([
       "type": .string("array"),
       "items": .object(["type": .string("string")]),
-      "description": .string("Arguments passed to the script as $1, $2, …"),
+      "description": .string("JSON array of positional arguments passed to script as $1, $2, … . Put the shell code in script, not in args; these are not shell options such as -c or -lc."),
     ])
     properties["stdin"] = stringProperty("Text piped to standard input.")
     properties["cwd"] = stringProperty("Working directory. Default: the current directory.")
@@ -328,7 +328,8 @@ enum MaiRunToolError: LocalizedError {
 
   var errorDescription: String? {
     switch self {
-    case .missingArgument(let name): "\(name) is required."
+    case .missingArgument(let name):
+      "\(name) is required (command is an alias). Pass shell code as {\"script\":\"echo hello\"}; args is only an array of positional arguments for that script, not shell options or code."
     case .notDirectory(let path): "'\(path)' is not a directory."
     case .scriptWriteFailed(let path): "Could not write the temporary script '\(path)'."
     case .interpreterNotFound(let name):

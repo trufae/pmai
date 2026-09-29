@@ -66,7 +66,9 @@ pmai --tool-agent - --compact-agent -
 
 `--tool-model` and `--compact-model` are aliases for the corresponding agent selectors. Add `--save-defaults` to persist the selected primary agent, provider/model, explicit base URL, effort, and task assignments. Otherwise command-line overrides are temporary for an existing configuration. The first launch still creates the initial configuration as before. API keys supplied with `--api-key` remain invocation overrides; use the provider's `apiKeyFile`, `apiKeyEnvironment`, or `apiKey` settings for persistent credentials.
 
-For the main model and connection, precedence remains explicit flags, environment overrides, saved agent/provider settings, then built-in defaults. Task assignments use explicit task flags, then saved assignments, then the current conversation agent. A task assignment to a named agent uses that agent's own model and effort; it does not inherit the primary model's command-line overrides.
+For a new chat, model and connection precedence is explicit flags, environment overrides, saved agent/provider settings, then built-in defaults. `pmai -r` restores the chat's saved agent settings, including provider/model, reasoning, instructions, limits, and tools; only explicit flags override them, and only for the selected chat. Its endpoint comes from the saved provider unless `--base-url` is given. Credentials still resolve from the current configuration/environment. `/chat use` also restores the selected chat's settings. `--save-defaults` on resume saves the restored profile with any explicit overrides.
+
+Task assignments use explicit task flags, then saved assignments, then the current conversation agent. A task assignment to a named agent uses that agent's own model and effort; it does not inherit the primary model's command-line overrides.
 
 ## iOS workflow
 

@@ -973,6 +973,25 @@ public actor AgentRuntime {
       await supervisor.note(pid, transcript: transcript)
 
       let calls = providerResponse.message.toolCalls.filter { !$0.name.isEmpty }
+      if answering, !calls.isEmpty {
+        // The specialist handed off for a final answer, so this request had
+        // no tool schemas. Some servers still parse guessed calls from the
+        // primary's output. Do not execute those guesses or keep asking the
+        // primary without schemas: return the work to tool selection.
+        var deferred: [ContentPart] = []
+        for call in calls {
+          let result = ToolResult(
+            callID: call.id,
+            text: "Error: this final-answer request offered no tools; the call was not executed. Tool selection will resume with the available tool schemas. Reissue any needed call with those schemas.",
+            isError: true)
+          deferred.append(.toolResult(result))
+          await emit(.toolFinished(context, result))
+        }
+        transcript.append(AgentMessage(role: .tool, content: deferred))
+        answering = false
+        await supervisor.note(pid, transcript: transcript)
+        continue
+      }
       if calls.isEmpty {
         // A message that arrived while the model was answering is not left
         // behind for a run that is about to end, and neither are children

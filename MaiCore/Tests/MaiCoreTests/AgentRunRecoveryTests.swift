@@ -365,6 +365,12 @@ func recoverySettingsRoundTrip() throws {
   #expect(minimal.autocompact.isEnabled)
   #expect(minimal.autocompact.tokens == 64_000)
   #expect(minimal.limits.maxSeconds == nil)
+  #expect(minimal.toolCallingStrategy == .automatic)
+  #expect(definition.toolCallingStrategy == .automatic)
+  #expect(AgentRequest(provider: "p", model: "m", messages: []).toolCallingStrategy == .automatic)
+  let explicit = try JSONDecoder().decode(
+    AgentDefinition.self, from: Data(#"{"id":"a","provider":"p","toolCallingStrategy":"native"}"#.utf8))
+  #expect(explicit.toolCallingStrategy == .native)
   #expect(AgentRunLimits(maxSeconds: 0).maxSeconds == nil)
   #expect(AgentProcessState.queued.shortLabel == "queued")
   #expect(AgentProcessState.interrupted.isTerminal)

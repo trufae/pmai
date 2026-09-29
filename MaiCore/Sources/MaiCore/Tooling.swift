@@ -423,13 +423,26 @@ enum ToolSchemaValidator {
       properties[""] == nil
     else { return value }
     var result = arguments
+    // Native providers sometimes serialize an array/object one extra time.
+    // Decode only structured schema fields, never strings such as scripts.
+    for (key, value) in arguments {
+      guard let property = properties[key],
+        let type = property.objectValue?["type"]?.stringValue,
+        type == "array" || type == "object", let string = value.stringValue,
+        let decoded = try? JSONDecoder().decode(JSONValue.self, from: Data(string.utf8)),
+        validate(decoded, schema: property, path: key) == nil
+      else { continue }
+      result[key] = decoded
+    }
     for (key, value) in arguments where properties[key] == nil {
       if key.isEmpty, value == .string("") {
         result.removeValue(forKey: key)
         continue
       }
       let source = key.isEmpty ? value.stringValue : (value == .string("") ? key : nil)
-      guard let source, let assignment = quotedAssignment(source) else { continue }
+      guard let source,
+        let assignment = quotedAssignment(source, properties: properties, tool: definition.name)
+      else { continue }
       let fields: [String: JSONValue]
       if properties[assignment.name]?.objectValue?["type"] == .string("string") {
         fields = [assignment.name: .string(assignment.value)]
@@ -459,7 +472,9 @@ enum ToolSchemaValidator {
     return .object(result)
   }
 
-  private static func quotedAssignment(_ source: String) -> (name: String, value: String)? {
+  private static func quotedAssignment(
+    _ source: String, properties: [String: JSONValue], tool: String
+  ) -> (name: String, value: String)? {
     guard let equals = source.firstIndex(of: "=") else { return nil }
     let name = source[..<equals].trimmingCharacters(in: .whitespacesAndNewlines)
     let literal = source[source.index(after: equals)...]
@@ -470,6 +485,22 @@ enum ToolSchemaValidator {
       literal.last == quote
     else { return nil }
     let body = literal.dropFirst().dropLast()
+    // Shell quotes belong to the script itself; they are not escaping for
+    // this display-style wrapper. A quoted heredoc routinely contains both
+    // kinds of quotes, including unescaped nested double quotes.
+    if tool == "run_sh", name == "script" || name == "command" {
+      let fields = properties.keys.map(NSRegularExpression.escapedPattern(for:)).joined(separator: "|")
+      let anotherAssignment = #"["'][ \t]+(?:\#(fields))[ \t]*="#
+      guard body.range(of: anotherAssignment, options: .regularExpression) == nil else { return nil }
+      return (name, String(body))
+    }
+    if let type = properties[name]?.objectValue?["type"]?.stringValue,
+      type == "array" || type == "object",
+      let decoded = try? JSONDecoder().decode(JSONValue.self, from: Data(body.utf8)),
+      matches(decoded, type: type)
+    {
+      return (name, String(body))
+    }
     var escaped = false
     for character in body {
       if escaped {
@@ -525,10 +556,10 @@ enum ToolSchemaValidator {
       // Naming what arrived and what the tool takes lets a model fix the
       // call on its next try instead of guessing at field names.
       let accepted = properties.keys.sorted().map { required.contains($0) ? "\($0) (required)" : $0 }
-      let received = object.keys.sorted().map { $0.isEmpty ? "\"\"" : $0 }
+      let received = diagnosticFields(object.keys.sorted())
       let shape =
         path == "arguments"
-        ? (received.isEmpty ? ". No fields were given" : ". Received: \(received.joined(separator: ", "))")
+        ? (received.isEmpty ? ". No fields were given" : ". Received: \(received)")
           + (accepted.isEmpty ? "" : ". Accepted fields: \(accepted.joined(separator: ", "))")
         : ""
       let missing = required.filter { object[$0] == nil }
@@ -539,11 +570,13 @@ enum ToolSchemaValidator {
       }
       if schema["additionalProperties"]?.boolValue == false {
         let unknown = object.keys.filter { properties[$0] == nil }.sorted()
-          .map { $0.isEmpty ? "\"\"" : $0 }
         if !unknown.isEmpty {
           return
-            "unknown field\(unknown.count == 1 ? "" : "s"): \(unknown.joined(separator: ", "))"
+            "unknown field\(unknown.count == 1 ? "" : "s"): \(diagnosticFields(unknown))"
             + shape
+            + (unknown.contains { $0.isEmpty || $0.contains("=") || $0.contains("<") }
+              ? ". Use exact field names as JSON keys and put their contents in the values; do not include XML tags or key=\"value\" syntax in keys"
+              : "")
         }
       }
       for (name, propertySchema) in properties {
@@ -562,6 +595,19 @@ enum ToolSchemaValidator {
       }
     }
     return nil
+  }
+
+  /// Malformed keys can contain whole scripts and prose. Echoing them twice
+  /// inflated each retry's context by thousands of characters in real logs.
+  private static func diagnosticFields(_ names: [String]) -> String {
+    var fields = names.prefix(8).map { name in
+      if name.isEmpty { return "\"\"" }
+      let preview = name.prefix(120).replacingOccurrences(of: "\n", with: "\\n")
+        .replacingOccurrences(of: "\r", with: "\\r").replacingOccurrences(of: "\t", with: "\\t")
+      return preview + (name.count > 120 ? "… (\(name.count) characters)" : "")
+    }
+    if names.count > 8 { fields.append("… and \(names.count - 8) more fields") }
+    return fields.joined(separator: ", ")
   }
 
   private static func matches(_ value: JSONValue, type: String) -> Bool {

@@ -304,7 +304,13 @@ upgrading a store cannot lose a chat. `AgentProject`, `AgentProjectIndex`, and
 PocketMai folder colors always were.
 `-l` lists saved chats for the current project, and `-r INDEX|ID|TITLE` (or
 `--resume`) reopens one; `-r` without a selector reopens the most recently
-updated chat. A chat is saved with the agents its runs started and their
+updated chat. Resuming or switching to a saved chat restores its provider,
+model, reasoning options, instructions, run limits, and tool settings.
+Environment model/provider defaults apply to new chats. Explicit flags such
+as `--model`, `--effort`, and `--max-turns` override only the chat being opened.
+Resumed chats use their provider's saved endpoint unless `--base-url` is
+given; credentials still resolve from the current configuration/environment.
+A chat is saved with the agents its runs started and their
 transcripts, so a reopened chat lists them under `/agents tree`, `/agents log
 PID` reads one, and `/agents clear` drops them (see `doc/agents.md`). `/chat list`
 shows the earlier chats grouped by day (Today, Yesterday, This week, Last week,
@@ -949,5 +955,6 @@ default.
 Agents can force MaiCore's emulated tool loop with `toolCallingStrategy` set to
 `text`, `xml`, or `json`. These modes send tool instructions as messages, parse
 the model's response, execute the calls, return results, and continue until the
-model answers. `automatic` uses native calls when the provider supports them
-and JSON emulation otherwise; `native` requires provider-native tool calling.
+model answers. The default, `automatic`, uses native calls when the provider
+advertises support and JSON emulation otherwise; it does not select XML.
+`native` requires provider-native tool calling.

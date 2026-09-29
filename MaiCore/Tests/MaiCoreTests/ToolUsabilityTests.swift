@@ -214,7 +214,7 @@ func nativeBooleanArguments() async throws {
 
 @Test("Native malformed run_sh calls execute after recovery, preserving heredocs")
 func nativeRunArgumentsPreserveHeredocs() async throws {
-  let body = "  field_peek\\|placement  \n\t$HOME `pwd` \\n"
+  let body = "  field_peek\\|placement  \n\t$HOME `pwd` \\n\nprint(\"nested quotes\")"
   let script = "cat <<'PYEOF'\n\(body)\nPYEOF\nprintf finished"
   let arguments: [JSONValue] = [
     .object(["": .string(""), "script": .string("printf first")]),
@@ -222,6 +222,8 @@ func nativeRunArgumentsPreserveHeredocs() async throws {
     .object(["": .string("script=\"\(script)\"")]),
     .object(["command=\"printf fourth\"": .string("")]),
     .object([#"args='{"script":"printf fifth"}'"#: .string("")]),
+    .object(["script": .string("printf '%s' \"$1\""), "args": .string(#"["sixth"]"#)]),
+    .object(["script": .string("printf '%s' \"$1\""), #"args="["seventh"]""#: .string("")]),
     .object(["script": .string("printf valid"), "script=\"printf conflicting\"": .string("")]),
   ]
   let calls = arguments.enumerated().map { index, arguments in
@@ -240,14 +242,14 @@ func nativeRunArgumentsPreserveHeredocs() async throws {
   ) { await recorder.append($0) }
   let results = result.transcript.flatMap(\.toolResults)
   #expect(results.count == arguments.count)
-  #expect(results.prefix(5).allSatisfy { !$0.isError })
-  #expect(results.prefix(5).map(\.text) == ["first", "second", body + "\nfinished", "fourth", "fifth"])
+  #expect(results.prefix(7).allSatisfy { !$0.isError })
+  #expect(results.prefix(7).map(\.text) == ["first", "second", body + "\nfinished", "fourth", "fifth", "sixth", "seventh"])
   #expect(results.last?.isError == true)
   let approvals = await recorder.events.compactMap { event -> ApprovalRequest? in
     if case .approvalRequested(_, let request) = event { return request }
     return nil
   }
-  #expect(approvals.count == 5)
+  #expect(approvals.count == 7)
   #expect(approvals.first { $0.call.id == "repair-2" }?.call.arguments == .object(["script": .string(script)]))
 }
 

@@ -92,3 +92,34 @@ func recoverProxiedArgumentKeys() throws {
   let call = try #require(result.call)
   #expect(call.argumentValues == ["script": .string(recoveryHeredoc)])
 }
+
+@Test("Structured argument recovery validates element types and preserves script strings")
+func recoverStructuredArgumentValues() {
+  let definition = MaiRunTool(configuration: MaiRunConfiguration()).definition
+  let valid = JSONValue.object([
+    "script": .string(#"{"literal":"\\n"}"#), "args": .string(#"["-lc","echo test"]"#),
+  ])
+  let repaired = ToolSchemaValidator.repairArgumentKeys(valid, definition: definition)
+  #expect(repaired.objectValue?["script"] == valid.objectValue?["script"])
+  #expect(repaired.objectValue?["args"] == .array([.string("-lc"), .string("echo test")]))
+  for malformed in ["[true]", "{\"script\":\"echo test\"}", "[\"truncated\""] {
+    let input = JSONValue.object(["args": .string(malformed)])
+    #expect(ToolSchemaValidator.repairArgumentKeys(input, definition: definition) == input)
+    #expect(ToolSchemaValidator.validate(arguments: input, definition: definition) != nil)
+  }
+}
+
+@Test("Malformed argument diagnostics bound whole-script keys and explain the JSON shape")
+func boundedArgumentKeyDiagnostics() throws {
+  let definition = MaiRunTool(configuration: MaiRunConfiguration()).definition
+  let key = "</think><tool_call>run_sh\tscript=\"\n" + String(repeating: "x", count: 20_000)
+  let input = JSONValue.object([key: .string("")])
+  #expect(ToolSchemaValidator.repairArgumentKeys(input, definition: definition) == input)
+  let error = try #require(ToolSchemaValidator.validate(arguments: input, definition: definition))
+  #expect(error.count < 1_000)
+  #expect(!error.contains("\n") && !error.contains("\t"))
+  #expect(error.contains("\\n") && error.contains("\\t"))
+  #expect(error.contains("characters)"))
+  #expect(error.contains("Use exact field names as JSON keys"))
+  #expect(error.contains("Accepted fields:"))
+}

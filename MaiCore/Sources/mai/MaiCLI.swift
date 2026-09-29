@@ -214,6 +214,19 @@ private struct CLIOptions {
     if let maxModelTurns { limits.maxModelTurns = max(1, maxModelTurns) }
     if let maxSubagents { limits.maxSubagents = max(0, maxSubagents) }
   }
+
+  /// Explicit flags take precedence over both saved chats and launch defaults.
+  func applyOverrides(to profile: inout SessionProfile) {
+    if let providerOverride { profile.provider = providerOverride }
+    if let modelOverride { profile.model = modelOverride }
+    if let effortOverride { profile.options.reasoningEffort = effortOverride }
+    if let systemOverride {
+      profile.instructions = systemOverride
+      profile.systemPrompt = nil
+    }
+    profile.stream = stream && profile.stream
+    applyLimitOverrides(to: &profile.limits)
+  }
 }
 
 /// A protocol pmai speaks over stdio instead of running its REPL.
@@ -1158,15 +1171,27 @@ struct MaiCLI {
           ConfiguredProvider(id: provider.rawValue, kind: .openAICompatible, baseURL: url))
         configuration = draft
       }
+      var profile = try selectedProfile(
+        configuration: configuration,
+        options: options,
+        environment: environment)
+      let store = resolvedChatStore(
+        options: options, home: home, project: project, environment: environment)
+      importLegacyChats(into: store, project: project, options: options, environment: environment)
+      let restored = try loadChatWorkspace(
+        from: store,
+        initialProfile: profile,
+        configuredAgents: configuration?.agents ?? [],
+        options: options)
+      var workspace = restored.workspace
+      profile = SessionProfile(definition: workspace.selectedChat!.primaryAgent)
       let setup = try await configureRuntime(
         runtime,
         plugins: plugins,
         configuration: configuration,
         options: options,
-        environment: environment)
-      var profile = try selectedProfile(
-        configuration: configuration,
-        options: options,
+        selectedProvider: profile.provider,
+        resumingChat: restored.resumed,
         environment: environment)
       if configuration == nil {
         var created = MaiConfiguration(
@@ -1181,10 +1206,10 @@ struct MaiCLI {
         created.associateSystemPrompts()
         try created.save(to: URL(fileURLWithPath: configurationPath))
         configuration = created
-        profile = try selectedProfile(
-          configuration: created,
-          options: options,
-          environment: environment)
+        profile = SessionProfile(definition: created.agents[0])
+        var chat = workspace.selectedChat!
+        chat.primaryAgent = profile.agentDefinition
+        workspace.upsert(chat)
       }
       if var draft = configuration {
         if let selector = options.compactAgent {
@@ -1217,24 +1242,6 @@ struct MaiCLI {
       await runtime.configureMemory(memoryState.promptSection)
       await runtime.configureProjectInstructions(projectInstructionsSection(configuration))
       await runtime.configurePlanning(configuration?.use.plan ?? true)
-      let store = resolvedChatStore(
-        options: options, home: home, project: project, environment: environment)
-      importLegacyChats(into: store, project: project, options: options, environment: environment)
-      let providerOverride =
-        options.providerOverride
-        ?? environmentValue(["PMAI_PROVIDER", "MAI_PROVIDER"], in: environment).map {
-          ProviderID($0)
-        }
-      let modelOverride =
-        options.modelOverride
-        ?? environmentValue(["PMAI_MODEL", "MAI_MODEL", "OPENAI_MODEL"], in: environment)
-      var workspace = try loadChatWorkspace(
-        from: store,
-        initialProfile: profile,
-        configuredAgents: configuration?.agents ?? [],
-        providerOverride: providerOverride,
-        modelOverride: modelOverride,
-        options: options)
       var session = REPLSession(chat: workspace.selectedChat!)
       session.pendingContent.append(contentsOf: try options.imagePaths.map(imageContent))
       if options.readStdin {
@@ -1553,17 +1560,18 @@ struct MaiCLI {
     plugins: PluginRegistry,
     configuration: MaiConfiguration?,
     options: CLIOptions,
+    selectedProvider: ProviderID,
+    resumingChat: Bool,
     environment: [String: String]
   ) async throws -> RuntimeSetup {
-    let providerOverride =
-      options.providerOverride
-      ?? environmentValue(["PMAI_PROVIDER", "MAI_PROVIDER"], in: environment).map {
-        ProviderID($0)
-      }
+    // Endpoints saved through /baseurl belong to the shared provider. A
+    // resumed chat uses that endpoint unless this invocation explicitly changes it.
     let rawBaseURL =
       options.baseURLOverride?.absoluteString
-      ?? environmentValue(
-        ["PMAI_BASE_URL", "MAI_BASE_URL", "OPENAI_BASE_URL"], in: environment)
+      ?? (resumingChat && configuration != nil
+        ? nil
+        : environmentValue(
+          ["PMAI_BASE_URL", "MAI_BASE_URL", "OPENAI_BASE_URL"], in: environment))
     let baseURLOverride: URL?
     if let rawBaseURL {
       guard let url = URL(string: rawBaseURL) else { throw CLIError.invalidURL(rawBaseURL) }
@@ -1575,19 +1583,10 @@ struct MaiCLI {
       try options.apiKeyOverride ?? environmentAPIKey(in: environment)
 
     if let configuration {
-      let selectedAgentID =
-        options.agentOverride ?? configuration.defaultAgent
-        ?? configuration.agents.first?.id
-      let selectedProviderID = selectedAgentID.flatMap { selectedAgentID in
-        configuration.agents.first { $0.id == selectedAgentID }?.provider.rawValue
-      }
-      let targetProviderID =
-        providerOverride?.rawValue ?? selectedProviderID
-        ?? ProviderID.openAI.rawValue
       var providerBaseURLs: [String: URL] = [:]
       for configuredProvider in configuration.providers {
         var provider = configuredProvider
-        if provider.id == targetProviderID {
+        if provider.id == selectedProvider.rawValue {
           if let baseURLOverride { provider.baseURL = baseURLOverride }
           if let apiKeyOverride {
             provider.apiKey = apiKeyOverride
@@ -1624,7 +1623,7 @@ struct MaiCLI {
     try await runtime.register(plugins.makeProvider(from: hello, environment: environment))
     let baseURL = baseURLOverride ?? URL(string: "http://127.0.0.1:11434/v1")!
     let openAI = ConfiguredProvider(
-      id: (providerOverride ?? .openAI).rawValue,
+      id: selectedProvider.rawValue,
       kind: .openAICompatible,
       baseURL: baseURL,
       apiKey: apiKeyOverride)
@@ -1668,13 +1667,7 @@ struct MaiCLI {
       var profile = SessionProfile(definition: definition)
       if let providerOverride { profile.provider = providerOverride }
       if let modelOverride { profile.model = modelOverride }
-      if let effort = options.effortOverride { profile.options.reasoningEffort = effort }
-      if let system = options.systemOverride {
-        profile.instructions = system
-        profile.systemPrompt = nil
-      }
-      profile.stream = options.stream && profile.stream
-      options.applyLimitOverrides(to: &profile.limits)
+      options.applyOverrides(to: &profile)
       return profile
     }
     var profile = SessionProfile(
@@ -1682,8 +1675,7 @@ struct MaiCLI {
       model: modelOverride ?? "gpt-oss:20b",
       instructions: options.systemOverride ?? "You are a helpful, concise assistant.",
       stream: options.stream)
-    if let effort = options.effortOverride { profile.options.reasoningEffort = effort }
-    options.applyLimitOverrides(to: &profile.limits)
+    options.applyOverrides(to: &profile)
     return profile
   }
 
@@ -9229,7 +9221,7 @@ struct MaiCLI {
         return
       }
       await switchSession(
-        to: chat, session: &session, workspace: &workspace, configuration: configuration,
+        to: chat, session: &session, workspace: &workspace,
         terminal: terminal)
     case "next", "previous", "prev":
       let ordered = workspace.orderedChats
@@ -9243,7 +9235,7 @@ struct MaiCLI {
       let offset = action == "next" ? -1 : 1
       let chat = ordered[(current + offset + ordered.count) % ordered.count]
       await switchSession(
-        to: chat, session: &session, workspace: &workspace, configuration: configuration,
+        to: chat, session: &session, workspace: &workspace,
         terminal: terminal)
     case "info", "show":
       guard let chat = rest.isEmpty ? session.chat : resolveChat(rest, in: workspace) else {
@@ -9324,8 +9316,7 @@ struct MaiCLI {
       _ = workspace.removeChat(id: closed.id)
       if let next = workspace.activeChats.first ?? workspace.orderedChats.first {
         _ = workspace.selectChat(id: next.id)
-        session = REPLSession(
-          chat: chatApplyingConfiguredAgentSettings(next, configuration: configuration))
+        session = REPLSession(chat: next)
         await terminal.line("Closed '\(closed.displayTitle)'; switched to '\(session.title)'.")
       } else {
         session = REPLSession(
@@ -9357,12 +9348,10 @@ struct MaiCLI {
     to chat: AgentChat,
     session: inout REPLSession,
     workspace: inout AgentChatWorkspace,
-    configuration: MaiConfiguration?,
     terminal: TerminalWriter
   ) async {
     _ = workspace.selectChat(id: chat.id)
-    session = REPLSession(
-      chat: chatApplyingConfiguredAgentSettings(chat, configuration: configuration))
+    session = REPLSession(chat: chat)
     let status = chat.isArchived ? ", archived" : ""
     await terminal.line(
       "Switched to '\(chat.displayTitle)' (agent \(chat.primaryAgent.id)\(status)).")
@@ -10069,110 +10058,46 @@ struct MaiCLI {
     from store: AgentChatStore,
     initialProfile: SessionProfile,
     configuredAgents: [AgentDefinition],
-    providerOverride: ProviderID?,
-    modelOverride: String?,
     options: CLIOptions
-  ) throws -> AgentChatWorkspace {
+  ) throws -> (workspace: AgentChatWorkspace, resumed: Bool) {
     var workspace = try store.loadWorkspace { error in
       FileHandle.standardError.write(
         Data("warning: skipped a chat file. \(error.localizedDescription)\n".utf8))
     }
-    synchronizeConfiguredAgentSettings(in: &workspace, agents: configuredAgents)
-    let overridesLimits =
-      options.maxToolCalls != nil || options.maxModelTurns != nil
-      || options.maxSubagents != nil
-    if providerOverride != nil || modelOverride != nil || options.effortOverride != nil
-      || overridesLimits
-    {
-      for var chat in workspace.chats {
-        if let providerOverride { chat.primaryAgent.provider = providerOverride }
-        if let modelOverride { chat.primaryAgent.model = modelOverride }
-        if let effort = options.effortOverride {
-          chat.primaryAgent.options.reasoningEffort = effort
-        }
-        options.applyLimitOverrides(to: &chat.primaryAgent.limits)
-        workspace.upsert(chat)
-      }
-    }
     // Like the PocketMai app, every launch opens a fresh chat and keeps the
     // earlier ones one `/chat use` away; `--resume` reopens a saved chat instead.
     if options.resume {
+      let chat: AgentChat?
       if let selector = options.resumeSelector {
-        guard let chat = resolveChat(selector, in: workspace) else {
+        guard let selected = resolveChat(selector, in: workspace) else {
           throw CLIError.unknownChat(selector)
         }
-        workspace.selectChat(id: chat.id)
-        return workspace
+        chat = selected
+      } else {
+        chat = workspace.mostRecentChat
       }
-      if let recent = workspace.mostRecentChat {
-        workspace.selectChat(id: recent.id)
-        return workspace
+      if let chat {
+        // The chat snapshot owns its settings. Environment and configured
+        // defaults seed new chats; only explicit flags change a resumed one.
+        var session = REPLSession(chat: chat)
+        if let agentID = options.agentOverride,
+          let agent = configuredAgents.first(where: { $0.id == agentID })
+        {
+          session.profile = SessionProfile(definition: agent)
+        }
+        options.applyOverrides(to: &session.profile)
+        if session.profile.instructions != chat.primaryAgent.instructions {
+          try applySystemInstructions(
+            session.profile.instructions,
+            replacing: chat.primaryAgent.instructions,
+            session: &session)
+        }
+        workspace.upsert(session.chat, selecting: true)
+        return (workspace, true)
       }
     }
     workspace.startNewChat(primaryAgent: initialProfile.agentDefinition)
-    return workspace
-  }
-
-  /// Chat files retain an agent snapshot for portability, but reusable agent
-  /// controls are configured in pmai.json. Refreshing them prevents an old
-  /// chat from masking or overwriting newer `/edit config` and `/set` values.
-  private static func synchronizeConfiguredAgentSettings(
-    in workspace: inout AgentChatWorkspace,
-    agents: [AgentDefinition]
-  ) {
-    let configuredByID = Dictionary(uniqueKeysWithValues: agents.map { ($0.id, $0) })
-    for var chat in workspace.chats {
-      guard let configured = configuredByID[chat.primaryAgent.id] else { continue }
-      applyConfiguredAgentSettings(configured, to: &chat)
-      workspace.upsert(chat)
-    }
-  }
-
-  private static func applyConfiguredAgentSettings(
-    _ configured: AgentDefinition,
-    to chat: inout AgentChat
-  ) {
-    let previousInstructions = chat.primaryAgent.instructions
-    chat.primaryAgent.limits = configured.limits
-    chat.primaryAgent.toolCallingStrategy = configured.toolCallingStrategy
-    chat.primaryAgent.instructions = configured.instructions
-    chat.primaryAgent.systemPrompt = configured.systemPrompt
-    // The chat keeps a copy of its agent, and every tool change made from the
-    // REPL is saved into the configuration, so the configuration is the truth:
-    // a chat opened after a group was enabled must see the new tools too.
-    chat.primaryAgent.toolNames = configured.toolNames
-    chat.primaryAgent.toolGroupNames = configured.toolGroupNames
-    chat.primaryAgent.subagentNames = configured.subagentNames
-    chat.primaryAgent.toolDelegation = configured.toolDelegation
-    chat.primaryAgent.useToolProxy = configured.useToolProxy
-    chat.primaryAgent.proxyExposedTools = configured.proxyExposedTools
-    chat.primaryAgent.context = configured.context
-    guard previousInstructions != configured.instructions else { return }
-    var transcript = AgentTranscript(messages: chat.messages)
-    if let index = transcript.messages.firstIndex(where: {
-      $0.role == .system && $0.text == previousInstructions
-    }) {
-      if configured.instructions.isEmpty {
-        _ = try? transcript.removeMessage(at: index)
-      } else {
-        _ = try? transcript.editMessage(at: index, text: configured.instructions)
-      }
-    } else if !configured.instructions.isEmpty {
-      transcript.replaceAll(with: [.system(configured.instructions)] + transcript.messages)
-    }
-    chat.messages = transcript.messages
-  }
-
-  private static func chatApplyingConfiguredAgentSettings(
-    _ chat: AgentChat,
-    configuration: MaiConfiguration?
-  ) -> AgentChat {
-    guard
-      let configured = configuration?.agents.first(where: { $0.id == chat.primaryAgent.id })
-    else { return chat }
-    var chat = chat
-    applyConfiguredAgentSettings(configured, to: &chat)
-    return chat
+    return (workspace, false)
   }
 
   /// Commits the workspace to the project's chat store. The selected
@@ -11061,7 +10986,7 @@ struct MaiCLI {
         --projects          list every project pmai has been started in, then exit
         --provider ID       override the selected provider
         -r, --resume [CHAT] reopen CHAT (list index, ID, or title), or the latest chat,
-                            with the agents its runs started
+                            with its saved settings and the agents its runs started
         --state DIR         keep this project's chats in DIR, not ./.pmai/chats (or PMAI_STATE)
         --stdin             attach standard input as a text file (git diff | pmai --stdin "review it")
         --system TEXT       override agent instructions
@@ -11077,6 +11002,11 @@ struct MaiCLI {
         PMAI_PROVIDER, PMAI_MODEL, PMAI_BASE_URL, and PMAI_API_KEY, or
         PMAI_API_KEY_FILE naming a file that holds the key, so the secret
         never sits in the environment
+
+      Resuming a chat:
+        Saved model/provider and agent settings take precedence over environment
+        defaults. Explicit flags override only the chat being opened. The saved
+        provider endpoint is used unless --base-url is given.
 
       Persistent REPL state:
         Chats belong to the project rooted at the current directory and are

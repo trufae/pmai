@@ -192,6 +192,49 @@ func taskAgentPrimaryNeedsNoNativeTools() async throws {
   #expect(await primary.requests.first?.tools.isEmpty == true)
 }
 
+@Test("Unexpected final-answer tool calls return to the specialist with schemas", arguments: [false, true])
+func taskAgentResumesToolSelection(malformed: Bool) async throws {
+  let guessed = ToolCall(
+    id: "guessed", name: "echo",
+    arguments: .object(malformed ? ["text=\"guessed\"": .string("")] : ["text": .string("guessed")]))
+  let secondGuess = ToolCall(id: "second-guess", name: "echo", arguments: .object(["text": .string("also guessed")]))
+  let selected = ToolCall(id: "selected", name: "echo", arguments: .object(["text": .string("evidence")]))
+  let primary = TaskFixtureProvider(id: "primary", responses: [
+    .init(message: AgentMessage(role: .assistant, content: [.toolCall(guessed), .toolCall(secondGuess)])),
+    .init(message: .assistant("final answer")),
+  ])
+  let specialist = TaskFixtureProvider(id: "local", responses: [
+    .init(message: .assistant("ready")),
+    .init(message: AgentMessage(role: .assistant, content: [.toolCall(selected)])),
+    .init(message: .assistant("ready again")),
+  ])
+  let runtime = AgentRuntime()
+  try await runtime.register(primary)
+  try await runtime.register(specialist)
+  try await runtime.register(tool: taskEchoTool())
+  try await runtime.register(agent: AgentDefinition(
+    id: "fast", instructions: "select tools", provider: "local", model: "small"))
+  await runtime.configureTaskAgents(.init(tool: "fast"))
+  let result = try await runtime.run(AgentRequest(
+    provider: "primary", model: "large", messages: [.user("look it up")], toolNames: ["echo"],
+    limits: AgentRunLimits(maxModelTurns: 5, maxToolCalls: 2), retry: .none))
+  #expect(result.response.text == "final answer")
+  #expect(result.modelTurns == 5)
+  #expect(result.toolCalls == 1)
+  let requests = await specialist.requests
+  #expect(requests.count == 3)
+  #expect(requests.allSatisfy { $0.tools.map(\.name) == ["echo"] && $0.toolChoice == .automatic })
+  let deferred = requests[1].messages.flatMap(\.toolResults)
+  #expect(deferred.map(\.callID) == ["guessed", "second-guess"])
+  #expect(deferred.allSatisfy { $0.isError && $0.text.contains("call was not executed") })
+  let executed = result.transcript.flatMap(\.toolResults).filter { !$0.isError }
+  #expect(executed.map(\.callID) == ["selected"])
+  #expect(executed.map(\.text) == ["evidence"])
+  let answers = await primary.requests
+  #expect(answers.count == 2)
+  #expect(answers.allSatisfy { $0.tools.isEmpty && $0.toolChoice == .none })
+}
+
 private func taskEchoTool() -> ClosureTool {
   ClosureTool(
     definition: ToolDefinition(
