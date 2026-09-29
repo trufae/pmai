@@ -660,10 +660,15 @@ public struct ConfiguredMemory: Codable, Equatable, Sendable {
 }
 
 /// Optional behaviours a person switches on with `/set use.*`.
+public enum AgentsMDMode: String, Codable, Sendable {
+  case off, on, maybe
+}
+
 public struct ConfiguredUse: Codable, Equatable, Sendable {
   /// Adds the working tree's AGENTS.md files — from the working directory up
   /// to the repository root — to the system prompt of every run.
-  public var agentsmd: Bool
+  /// `.maybe` prompts the user at the start of a run if files are found.
+  public var agentsmd: AgentsMDMode
   /// Asks an agent that can start children to open a request of several
   /// steps with a short numbered plan — which steps go to child agents and
   /// which of those run in parallel — before its first `agent_start`; a
@@ -671,7 +676,7 @@ public struct ConfiguredUse: Codable, Equatable, Sendable {
   /// so it costs nothing where children are not allowed. On by default.
   public var plan: Bool
 
-  public init(agentsmd: Bool = true, plan: Bool = true) {
+  public init(agentsmd: AgentsMDMode = .maybe, plan: Bool = true) {
     self.agentsmd = agentsmd
     self.plan = plan
   }
@@ -681,7 +686,7 @@ public struct ConfiguredUse: Codable, Equatable, Sendable {
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.init(
-      agentsmd: try container.decodeIfPresent(Bool.self, forKey: .agentsmd) ?? true,
+      agentsmd: try container.decodeIfPresent(AgentsMDMode.self, forKey: .agentsmd) ?? .maybe,
       plan: try container.decodeIfPresent(Bool.self, forKey: .plan) ?? true)
   }
 }

@@ -1241,7 +1241,7 @@ struct MaiCLI {
       todoState.focus(project: project)
       skillState.focus(project: project)
       await runtime.configureMemory(memoryState.promptSection)
-      await runtime.configureProjectInstructions(projectInstructionsSection(configuration))
+      await runtime.configureProjectInstructions(projectInstructionsSection(configuration, terminal: terminal))
       await runtime.configurePlanning(configuration?.use.plan ?? true)
       var session = REPLSession(chat: workspace.selectedChat!)
       session.pendingContent.append(contentsOf: try options.imagePaths.map(imageContent))
@@ -1901,7 +1901,7 @@ struct MaiCLI {
       visual.memory.focus(project: project, chatID: session.id)
       visual.todo.focus(project: project)
       await runtime.configureMemory(visual.memory.promptSection)
-      await runtime.configureProjectInstructions(Self.projectInstructionsSection(configuration))
+      await runtime.configureProjectInstructions(Self.projectInstructionsSection(configuration, terminal: terminal))
       await runtime.configurePlanning(configuration?.use.plan ?? true)
     }
 
@@ -8231,15 +8231,15 @@ struct MaiCLI {
     let directory = URL(
       fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
     let located = AgentInstructionsFile.locate(from: directory)
-    let enabled = configuration?.use.agentsmd ?? false
+    let mode = configuration?.use.agentsmd ?? .maybe
     guard parts.count > 1 else {
       await terminal.line(
-        "use.agentsmd = \(enabled ? "on" : "off") · \(agentsMarkdownSummary(located, directory: directory))"
+        "use.agentsmd = \(mode.rawValue) · \(agentsMarkdownSummary(located, directory: directory))"
       )
       return
     }
-    guard parts.count == 2, let wanted = booleanSetting(parts[1]) else {
-      await terminal.line("Usage: /set use.agentsmd <on|off>")
+    guard parts.count == 2, let wanted = AgentsMDMode(rawValue: parts[1].lowercased()) else {
+      await terminal.line("Usage: /set use.agentsmd <on|off|maybe>")
       return
     }
     guard var draft = configuration, let configurationPath else {
@@ -8255,9 +8255,9 @@ struct MaiCLI {
       return
     }
     await runtime.configureProjectInstructions(
-      wanted ? AgentInstructionsFile.promptSection(files: located) : nil)
+      wanted == .on ? AgentInstructionsFile.promptSection(files: located) : nil)
     await terminal.line(
-      "Set use.agentsmd = \(wanted ? "on" : "off"). \(agentsMarkdownSummary(located, directory: directory))"
+      "Set use.agentsmd = \(wanted.rawValue). \(agentsMarkdownSummary(located, directory: directory))"
     )
   }
 
@@ -8278,10 +8278,14 @@ struct MaiCLI {
   }
 
   /// The AGENTS.md block for the working directory, when `use.agentsmd` is on.
-  private static func projectInstructionsSection(_ configuration: MaiConfiguration?) -> String? {
-    guard configuration?.use.agentsmd == true else { return nil }
-    return AgentInstructionsFile.promptSection(
-      from: URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true))
+  private static func projectInstructionsSection(_ configuration: MaiConfiguration?, terminal: TerminalWriter? = nil) -> String? {
+    guard configuration?.use.agentsmd == .on else { return nil }
+    let directory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+    let located = AgentInstructionsFile.locate(from: directory)
+    if !located.isEmpty {
+      await terminal?.line("Loaded AGENTS.md from \(located.count) location(s).")
+    }
+    return AgentInstructionsFile.promptSection(from: directory)
   }
 
   private static func listUISettings(_ ui: ConfiguredTerminalUI, terminal: TerminalWriter) async {
