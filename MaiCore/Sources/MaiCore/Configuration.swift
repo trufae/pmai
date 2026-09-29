@@ -671,7 +671,7 @@ public struct ConfiguredUse: Codable, Equatable, Sendable {
   /// so it costs nothing where children are not allowed. On by default.
   public var plan: Bool
 
-  public init(agentsmd: Bool = false, plan: Bool = true) {
+  public init(agentsmd: Bool = true, plan: Bool = true) {
     self.agentsmd = agentsmd
     self.plan = plan
   }
@@ -681,7 +681,7 @@ public struct ConfiguredUse: Codable, Equatable, Sendable {
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.init(
-      agentsmd: try container.decodeIfPresent(Bool.self, forKey: .agentsmd) ?? false,
+      agentsmd: try container.decodeIfPresent(Bool.self, forKey: .agentsmd) ?? true,
       plan: try container.decodeIfPresent(Bool.self, forKey: .plan) ?? true)
   }
 }
