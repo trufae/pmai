@@ -3600,6 +3600,8 @@ struct MaiCLI {
         compactPrompt: configuration?.prompts?.compact,
         chatProcess: chatProcess,
         terminal: terminal)
+    case "/edit soul":
+      await handleEditSoulCommand(terminal: terminal)
     case "/edit":
       await handleEditCommand(
         argument,
@@ -10756,6 +10758,7 @@ struct MaiCLI {
     /edit mcps               Edit the configured MCP server list as JSON
     /edit N|MESSAGE_ID       Edit conversation message N or its full message ID
     /edit input              Write the next message in the editor and send it
+    /edit soul               Edit your core personality (lives in ~/.pmai/SOUL.md)
 
     The compact and memory templates must contain {{transcript}}; {{focus}} and
     {{memory}} are optional. The delegation template must contain {{task}};
@@ -11054,5 +11057,24 @@ struct MaiCLI {
       Without a config file, the offline hello and OpenAI-compatible providers
       are registered as before.
       """)
+  }
+
+  private static func handleEditSoulCommand(terminal: TerminalWriter) async {
+    let soulPath = AgentChatStore.expandUserPath("~/.pmai/SOUL.md")
+    let url = URL(fileURLWithPath: soulPath)
+    
+    let previous = (try? String(contentsOf: url)) ?? ""
+    
+    guard
+      let edited = await editTemporaryText(
+        previous, suffix: "soul.md", terminal: terminal)
+    else { return }
+    
+    do {
+      try edited.write(to: url, atomically: true, encoding: .utf8)
+      await terminal.line("Soul saved to \(soulPath).")
+    } catch {
+      await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+    }
   }
 }

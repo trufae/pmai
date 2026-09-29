@@ -566,7 +566,9 @@ public actor AgentRuntime {
     var skipAutocompaction = false
     var localModelTurns = 0
     var localToolCalls = 0
-    var answering = false
+    // Once the specialist hands off, the primary owns the rest of this reply,
+    // including any tool work the specialist left unfinished.
+    var usingPrimary = false
     var repeatedCalls: [ToolCallKey: Int] = [:]
     /// Set once a call came back a fourth time with the same arguments, or the
     /// model answered three tool results in a row with nothing. The next turn
@@ -664,7 +666,7 @@ public actor AgentRuntime {
       // read, so a running agent can be steered without stopping it.
       let injected = await supervisor.drainInbox(pid, excluding: request.ignoredQueuedMessageIDs)
       if !injected.isEmpty {
-        answering = false
+        usingPrimary = false
         for message in injected {
           transcript.append(message)
           // A child started without waiting reports here too: its answer
@@ -773,14 +775,13 @@ public actor AgentRuntime {
       // Once the run's tool budget is spent the model gets no tools and is
       // told to answer, instead of the run failing with a limit error.
       let toolBudgetExhausted =
-        answering
-        || (!definitions.isEmpty
-          && (localToolCalls >= request.limits.maxToolCalls || repeatGuardTripped))
+        !definitions.isEmpty
+        && (localToolCalls >= request.limits.maxToolCalls || repeatGuardTripped)
       // Resolve once at the call boundary, after compaction and queued input.
       // A task assignment changed during an await cannot mix one provider with
       // another agent's model or options.
       let selectingTools =
-        !answering && taskAgents.tool != nil && !concreteDefinitions.isEmpty
+        !usingPrimary && taskAgents.tool != nil && !concreteDefinitions.isEmpty
         && localToolCalls < request.limits.maxToolCalls && !repeatGuardTripped
       var inference = request
       inference.messages = transcript
@@ -789,6 +790,11 @@ public actor AgentRuntime {
         throw AgentRuntimeError.providerNotRegistered(inference.provider)
       }
       let supportsNativeTools = provider.descriptor.capabilities.contains(.nativeToolCalling)
+      // A text-only primary can still finish after a native specialist. Give
+      // it the text protocol if further work is needed at the handoff.
+      if usingPrimary, inference.toolCallingStrategy == .native, !supportsNativeTools {
+        inference.toolCallingStrategy = .automatic
+      }
       if !toolBudgetExhausted, inference.toolCallingStrategy == .native, !definitions.isEmpty,
         !supportsNativeTools
       {
@@ -815,17 +821,26 @@ public actor AgentRuntime {
       if let memorySection, depth == 0 {
         insertSystem(memorySection, into: &providerMessages)
       }
+      if depth == 0 {
+        let soulPath = AgentChatStore.expandUserPath("~/.pmai/SOUL.md")
+        if let soul = try? String(contentsOfFile: soulPath).trimmingCharacters(in: .whitespacesAndNewlines), !soul.isEmpty {
+          insertSystem(soul, into: &providerMessages)
+        }
+      }
       // The effort level and its guidance reach the model in words as well as
       // in the provider's own field, for the models that have none.
       if let effortSection = ReasoningEffort.promptSection(for: inference.options) {
         insertSystem(effortSection, into: &providerMessages)
       }
+      if usingPrimary, !toolBudgetExhausted {
+        insertSystem(
+          "Use the tool results to answer the user's request. If the task is unfinished, use the available tools to complete it before answering.",
+          into: &providerMessages)
+      }
       if textToolMode != nil || toolBudgetExhausted {
         let prompt =
           toolBudgetExhausted
-          ? (answering
-            ? "Use the tool results to answer the user's request. No further tools are available for this turn."
-            : repeatGuardTripped ? Self.repeatedCallPrompt : Self.toolBudgetExhaustedPrompt)
+          ? (repeatGuardTripped ? Self.repeatedCallPrompt : Self.toolBudgetExhaustedPrompt)
           : textToolPrompt(definitions, mode: textToolMode ?? .text)
         insertSystem(prompt, into: &providerMessages)
       }
@@ -966,32 +981,13 @@ public actor AgentRuntime {
       if selectingTools && providerResponse.message.toolCalls.isEmpty {
         // The specialist's stop decision hands the tool results to the primary
         // model. Its draft is not promoted to a user-visible final answer.
-        answering = true
+        usingPrimary = true
         continue
       }
       transcript.append(providerResponse.message)
       await supervisor.note(pid, transcript: transcript)
 
       let calls = providerResponse.message.toolCalls.filter { !$0.name.isEmpty }
-      if answering, !calls.isEmpty {
-        // The specialist handed off for a final answer, so this request had
-        // no tool schemas. Some servers still parse guessed calls from the
-        // primary's output. Do not execute those guesses or keep asking the
-        // primary without schemas: return the work to tool selection.
-        var deferred: [ContentPart] = []
-        for call in calls {
-          let result = ToolResult(
-            callID: call.id,
-            text: "Error: this final-answer request offered no tools; the call was not executed. Tool selection will resume with the available tool schemas. Reissue any needed call with those schemas.",
-            isError: true)
-          deferred.append(.toolResult(result))
-          await emit(.toolFinished(context, result))
-        }
-        transcript.append(AgentMessage(role: .tool, content: deferred))
-        answering = false
-        await supervisor.note(pid, transcript: transcript)
-        continue
-      }
       if calls.isEmpty {
         // A message that arrived while the model was answering is not left
         // behind for a run that is about to end, and neither are children

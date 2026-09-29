@@ -109,7 +109,8 @@ func taskAgentToolRouting(textProtocol: Bool) async throws {
   let mainRequest = try #require(await primary.requests.first)
   #expect(mainRequest.model == "large")
   #expect(mainRequest.options.reasoningEffort == "high")
-  #expect(mainRequest.tools.isEmpty)
+  #expect(mainRequest.tools.map(\.name) == ["echo"])
+  #expect(mainRequest.toolChoice == .automatic)
   #expect(mainRequest.messages.flatMap(\.toolResults).contains { $0.text.contains("evidence") })
   #expect(!mainRequest.messages.contains { $0.text.contains("private draft") })
   #expect(await events.text == "final answer")
@@ -168,10 +169,14 @@ func taskAgentManualCompaction() async throws {
   #expect(fallback.provider == original.provider && fallback.model == original.model)
 }
 
-@Test("A primary without native tools can synthesize after a native specialist")
+@Test("A primary without native tools can continue after a native specialist")
 func taskAgentPrimaryNeedsNoNativeTools() async throws {
   let primary = TaskFixtureProvider(
-    id: "primary", responses: [.init(message: .assistant("answer"))], nativeTools: false)
+    id: "primary",
+    responses: [
+      .init(message: .assistant("{\"tool\":\"echo\",\"arguments\":{\"text\":\"evidence\"}}")),
+      .init(message: .assistant("answer")),
+    ], nativeTools: false)
   let specialist = TaskFixtureProvider(
     id: "local", responses: [.init(message: .assistant("ready"))])
   let runtime = AgentRuntime()
@@ -188,51 +193,147 @@ func taskAgentPrimaryNeedsNoNativeTools() async throws {
       provider: "primary", model: "large", messages: [.user("answer")], toolNames: ["echo"],
       toolCallingStrategy: .native, retry: .none))
   #expect(result.response.text == "answer")
-  #expect(await primary.requests.count == 1)
-  #expect(await primary.requests.first?.tools.isEmpty == true)
+  #expect(result.toolCalls == 1)
+  let requests = await primary.requests
+  #expect(requests.count == 2)
+  #expect(requests.allSatisfy { $0.tools.isEmpty && $0.toolChoice == .none })
+  #expect(requests[0].messages.contains { $0.text.contains("echo") })
+  #expect(requests[1].messages.flatMap(\.toolResults).map(\.text) == ["evidence"])
+  #expect(await specialist.requests.count == 1)
 }
 
-@Test("Unexpected final-answer tool calls return to the specialist with schemas", arguments: [false, true])
-func taskAgentResumesToolSelection(malformed: Bool) async throws {
-  let guessed = ToolCall(
-    id: "guessed", name: "echo",
-    arguments: .object(malformed ? ["text=\"guessed\"": .string("")] : ["text": .string("guessed")]))
-  let secondGuess = ToolCall(id: "second-guess", name: "echo", arguments: .object(["text": .string("also guessed")]))
-  let selected = ToolCall(id: "selected", name: "echo", arguments: .object(["text": .string("evidence")]))
-  let primary = TaskFixtureProvider(id: "primary", responses: [
-    .init(message: AgentMessage(role: .assistant, content: [.toolCall(guessed), .toolCall(secondGuess)])),
-    .init(message: .assistant("final answer")),
-  ])
-  let specialist = TaskFixtureProvider(id: "local", responses: [
-    .init(message: .assistant("ready")),
-    .init(message: AgentMessage(role: .assistant, content: [.toolCall(selected)])),
-    .init(message: .assistant("ready again")),
-  ])
+@Test(
+  "The primary receives schemas and finishes tool work without returning to the specialist",
+  arguments: [false, true])
+func taskAgentPrimaryContinuesWork(textProtocol: Bool) async throws {
+  let calls = ["first evidence", "second evidence"].enumerated().map { index, text in
+    ToolCall(id: "c\(index)", name: "echo", arguments: .object(["text": .string(text)]))
+  }
+  let responses = calls.map { call in
+    textProtocol
+      ? ProviderResponse(
+        message: .assistant(
+          "{\"tool\":\"echo\",\"arguments\":\(call.arguments.compactJSONString)}"))
+      : ProviderResponse(message: AgentMessage(role: .assistant, content: [.toolCall(call)]))
+  }
+  let primary = TaskFixtureProvider(
+    id: "primary", responses: responses + [.init(message: .assistant("final answer"))])
+  let specialist = TaskFixtureProvider(
+    id: "local", responses: [.init(message: .assistant("ready"))])
   let runtime = AgentRuntime()
   try await runtime.register(primary)
   try await runtime.register(specialist)
   try await runtime.register(tool: taskEchoTool())
-  try await runtime.register(agent: AgentDefinition(
-    id: "fast", instructions: "select tools", provider: "local", model: "small"))
+  try await runtime.register(
+    agent: AgentDefinition(
+      id: "fast", instructions: "select tools", provider: "local", model: "small",
+      toolNames: ["forbidden"]))
   await runtime.configureTaskAgents(.init(tool: "fast"))
-  let result = try await runtime.run(AgentRequest(
-    provider: "primary", model: "large", messages: [.user("look it up")], toolNames: ["echo"],
-    limits: AgentRunLimits(maxModelTurns: 5, maxToolCalls: 2), retry: .none))
+  let result = try await runtime.run(
+    AgentRequest(
+      provider: "primary", model: "large", messages: [.user("look it up")], toolNames: ["echo"],
+      limits: AgentRunLimits(maxModelTurns: 4, maxToolCalls: 3),
+      toolCallingStrategy: textProtocol ? .json : .native, retry: .none, sessionID: "same-session"))
   #expect(result.response.text == "final answer")
-  #expect(result.modelTurns == 5)
-  #expect(result.toolCalls == 1)
-  let requests = await specialist.requests
+  #expect(result.modelTurns == 4)
+  #expect(result.toolCalls == 2)
+  #expect(await specialist.requests.count == 1)
+  let requests = await primary.requests
   #expect(requests.count == 3)
-  #expect(requests.allSatisfy { $0.tools.map(\.name) == ["echo"] && $0.toolChoice == .automatic })
-  let deferred = requests[1].messages.flatMap(\.toolResults)
-  #expect(deferred.map(\.callID) == ["guessed", "second-guess"])
-  #expect(deferred.allSatisfy { $0.isError && $0.text.contains("call was not executed") })
-  let executed = result.transcript.flatMap(\.toolResults).filter { !$0.isError }
-  #expect(executed.map(\.callID) == ["selected"])
-  #expect(executed.map(\.text) == ["evidence"])
-  let answers = await primary.requests
-  #expect(answers.count == 2)
-  #expect(answers.allSatisfy { $0.tools.isEmpty && $0.toolChoice == .none })
+  #expect(requests.allSatisfy { $0.model == "large" && $0.sessionID == "same-session" })
+  if textProtocol {
+    #expect(requests.allSatisfy { $0.tools.isEmpty && $0.toolChoice == .none })
+    #expect(requests.allSatisfy { $0.messages.contains { $0.text.contains("echo") } })
+  } else {
+    #expect(requests.allSatisfy { $0.tools.map(\.name) == ["echo"] && $0.toolChoice == .automatic })
+  }
+  let results = result.transcript.flatMap(\.toolResults)
+  #expect(results.allSatisfy { !$0.isError })
+  #expect(results.map(\.text) == ["first evidence", "second evidence"])
+  #expect(requests[2].messages.flatMap(\.toolResults) == results)
+}
+
+@Test("Primary tool work after a handoff retains validation and tool permissions")
+func taskAgentPrimaryToolValidation() async throws {
+  let unavailable = ToolCall(id: "unavailable", name: "forbidden", arguments: .object([:]))
+  let invalid = ToolCall(id: "invalid", name: "echo", arguments: .object(["text": .array([])]))
+  let valid = ToolCall(id: "valid", name: "echo", arguments: .object(["text": .string("evidence")]))
+  let primary = TaskFixtureProvider(
+    id: "primary",
+    responses: [
+      .init(
+        message: AgentMessage(
+          role: .assistant, content: [.toolCall(unavailable), .toolCall(invalid)])),
+      .init(message: AgentMessage(role: .assistant, content: [.toolCall(valid)])),
+      .init(message: .assistant("final answer")),
+    ])
+  let specialist = TaskFixtureProvider(
+    id: "local", responses: [.init(message: .assistant("ready"))])
+  let runtime = AgentRuntime()
+  try await runtime.register(primary)
+  try await runtime.register(specialist)
+  try await runtime.register(tool: taskEchoTool())
+  try await runtime.register(
+    tool: ClosureTool(
+      definition: ToolDefinition(name: "forbidden", description: "Not granted to the conversation")
+    ) { _, _ in
+      Issue.record("A tool outside the conversation's permissions ran")
+      return ToolOutput(text: "forbidden")
+    })
+  try await runtime.register(
+    agent: AgentDefinition(
+      id: "fast", instructions: "select tools", provider: "local", model: "small",
+      toolNames: ["forbidden"]))
+  await runtime.configureTaskAgents(.init(tool: "fast"))
+  let result = try await runtime.run(
+    AgentRequest(
+      provider: "primary", model: "large", messages: [.user("look it up")], toolNames: ["echo"],
+      retry: .none))
+  #expect(result.response.text == "final answer")
+  #expect(await specialist.requests.count == 1)
+  let results = result.transcript.flatMap(\.toolResults)
+  #expect(results.map(\.callID) == ["unavailable", "invalid", "valid"])
+  #expect(results.map(\.isError) == [true, true, false])
+  #expect(results.last?.text == "evidence")
+}
+
+@Test("Primary tool work after a handoff cannot exceed the shared tool budget")
+func taskAgentPrimaryToolBudget() async throws {
+  let calls = ["allowed", "over-budget"].map {
+    ToolCall(id: $0, name: "echo", arguments: .object(["text": .string($0)]))
+  }
+  let primary = TaskFixtureProvider(
+    id: "primary",
+    responses: [
+      .init(message: AgentMessage(role: .assistant, content: calls.map(ContentPart.toolCall))),
+      .init(message: .assistant("final answer")),
+    ])
+  let specialist = TaskFixtureProvider(
+    id: "local", responses: [.init(message: .assistant("ready"))])
+  let runtime = AgentRuntime()
+  try await runtime.register(primary)
+  try await runtime.register(specialist)
+  try await runtime.register(tool: taskEchoTool())
+  try await runtime.register(
+    agent: AgentDefinition(
+      id: "fast", instructions: "select tools", provider: "local", model: "small"))
+  await runtime.configureTaskAgents(.init(tool: "fast"))
+  let result = try await runtime.run(
+    AgentRequest(
+      provider: "primary", model: "large", messages: [.user("look it up")], toolNames: ["echo"],
+      limits: AgentRunLimits(maxModelTurns: 3, maxToolCalls: 1), retry: .none))
+  #expect(result.response.text == "final answer")
+  #expect(result.toolCalls == 1)
+  #expect(await specialist.requests.count == 1)
+  let results = result.transcript.flatMap(\.toolResults)
+  #expect(results.map(\.callID) == ["allowed", "over-budget"])
+  #expect(results.map(\.isError) == [false, true])
+  #expect(results.last?.text.contains("budget") == true)
+  let requests = await primary.requests
+  #expect(requests.count == 2)
+  #expect(requests[0].tools.map(\.name) == ["echo"])
+  #expect(requests[1].tools.isEmpty && requests[1].toolChoice == .none)
+  #expect(requests[1].messages.contains { $0.text == AgentRuntime.toolBudgetExhaustedPrompt })
 }
 
 private func taskEchoTool() -> ClosureTool {
