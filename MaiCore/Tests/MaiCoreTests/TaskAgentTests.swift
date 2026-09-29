@@ -195,7 +195,7 @@ func taskAgentPrimaryNeedsNoNativeTools() async throws {
   #expect(result.response.text == "answer")
   #expect(result.toolCalls == 1)
   let requests = await primary.requests
-  #expect(requests.count == 2)
+  try #require(requests.count == 2)
   #expect(requests.allSatisfy { $0.tools.isEmpty && $0.toolChoice == .none })
   #expect(requests[0].messages.contains { $0.text.contains("echo") })
   #expect(requests[1].messages.flatMap(\.toolResults).map(\.text) == ["evidence"])
@@ -239,7 +239,7 @@ func taskAgentPrimaryContinuesWork(textProtocol: Bool) async throws {
   #expect(result.toolCalls == 2)
   #expect(await specialist.requests.count == 1)
   let requests = await primary.requests
-  #expect(requests.count == 3)
+  try #require(requests.count == 3)
   #expect(requests.allSatisfy { $0.model == "large" && $0.sessionID == "same-session" })
   if textProtocol {
     #expect(requests.allSatisfy { $0.tools.isEmpty && $0.toolChoice == .none })
@@ -253,17 +253,19 @@ func taskAgentPrimaryContinuesWork(textProtocol: Bool) async throws {
   #expect(requests[2].messages.flatMap(\.toolResults) == results)
 }
 
-@Test("Primary tool work after a handoff retains validation and tool permissions")
+@Test("Primary tool work after a handoff retains validation, approvals and tool permissions")
 func taskAgentPrimaryToolValidation() async throws {
   let unavailable = ToolCall(id: "unavailable", name: "forbidden", arguments: .object([:]))
   let invalid = ToolCall(id: "invalid", name: "echo", arguments: .object(["text": .array([])]))
+  let denied = ToolCall(id: "denied", name: "needs_approval", arguments: .object([:]))
   let valid = ToolCall(id: "valid", name: "echo", arguments: .object(["text": .string("evidence")]))
   let primary = TaskFixtureProvider(
     id: "primary",
     responses: [
       .init(
         message: AgentMessage(
-          role: .assistant, content: [.toolCall(unavailable), .toolCall(invalid)])),
+          role: .assistant,
+          content: [.toolCall(unavailable), .toolCall(invalid), .toolCall(denied)])),
       .init(message: AgentMessage(role: .assistant, content: [.toolCall(valid)])),
       .init(message: .assistant("final answer")),
     ])
@@ -275,10 +277,19 @@ func taskAgentPrimaryToolValidation() async throws {
   try await runtime.register(tool: taskEchoTool())
   try await runtime.register(
     tool: ClosureTool(
-      definition: ToolDefinition(name: "forbidden", description: "Not granted to the conversation")
+      definition: ToolDefinition(
+        name: "forbidden", description: "Not granted to the conversation",
+        annotations: ToolAnnotations(approval: .automatic))
     ) { _, _ in
       Issue.record("A tool outside the conversation's permissions ran")
       return ToolOutput(text: "forbidden")
+    })
+  try await runtime.register(
+    tool: ClosureTool(
+      definition: ToolDefinition(name: "needs_approval", description: "Requires confirmation")
+    ) { _, _ in
+      Issue.record("A tool ran without approval")
+      return ToolOutput(text: "unapproved")
     })
   try await runtime.register(
     agent: AgentDefinition(
@@ -287,18 +298,21 @@ func taskAgentPrimaryToolValidation() async throws {
   await runtime.configureTaskAgents(.init(tool: "fast"))
   let result = try await runtime.run(
     AgentRequest(
-      provider: "primary", model: "large", messages: [.user("look it up")], toolNames: ["echo"],
+      provider: "primary", model: "large", messages: [.user("look it up")],
+      toolNames: ["echo", "needs_approval"],
       retry: .none))
   #expect(result.response.text == "final answer")
   #expect(await specialist.requests.count == 1)
   let results = result.transcript.flatMap(\.toolResults)
-  #expect(results.map(\.callID) == ["unavailable", "invalid", "valid"])
-  #expect(results.map(\.isError) == [true, true, false])
+  #expect(results.map(\.callID) == ["unavailable", "invalid", "denied", "valid"])
+  #expect(results.map(\.isError) == [true, true, true, false])
   #expect(results.last?.text == "evidence")
 }
 
-@Test("Primary tool work after a handoff cannot exceed the shared tool budget")
-func taskAgentPrimaryToolBudget() async throws {
+@Test(
+  "Primary tool work after a handoff cannot exceed the shared tool budget",
+  arguments: [false, true])
+func taskAgentPrimaryToolBudget(textProtocol: Bool) async throws {
   let calls = ["allowed", "over-budget"].map {
     ToolCall(id: $0, name: "echo", arguments: .object(["text": .string($0)]))
   }
@@ -318,11 +332,15 @@ func taskAgentPrimaryToolBudget() async throws {
     agent: AgentDefinition(
       id: "fast", instructions: "select tools", provider: "local", model: "small"))
   await runtime.configureTaskAgents(.init(tool: "fast"))
+  let events = TaskFixtureEvents()
   let result = try await runtime.run(
     AgentRequest(
       provider: "primary", model: "large", messages: [.user("look it up")], toolNames: ["echo"],
-      limits: AgentRunLimits(maxModelTurns: 3, maxToolCalls: 1), retry: .none))
+      limits: AgentRunLimits(maxModelTurns: 3, maxToolCalls: 1),
+      toolCallingStrategy: textProtocol ? .json : .native, retry: .none)
+  ) { event in await events.append(event) }
   #expect(result.response.text == "final answer")
+  #expect(await events.text == "final answer")
   #expect(result.toolCalls == 1)
   #expect(await specialist.requests.count == 1)
   let results = result.transcript.flatMap(\.toolResults)
@@ -330,8 +348,8 @@ func taskAgentPrimaryToolBudget() async throws {
   #expect(results.map(\.isError) == [false, true])
   #expect(results.last?.text.contains("budget") == true)
   let requests = await primary.requests
-  #expect(requests.count == 2)
-  #expect(requests[0].tools.map(\.name) == ["echo"])
+  try #require(requests.count == 2)
+  if !textProtocol { #expect(requests[0].tools.map(\.name) == ["echo"]) }
   #expect(requests[1].tools.isEmpty && requests[1].toolChoice == .none)
   #expect(requests[1].messages.contains { $0.text == AgentRuntime.toolBudgetExhaustedPrompt })
 }

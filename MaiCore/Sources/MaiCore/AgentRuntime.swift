@@ -813,7 +813,7 @@ public actor AgentRuntime {
       case .json:
         textToolMode = definitions.isEmpty ? nil : .json
       }
-      let usesTextToolProtocol = textToolMode != nil
+      let usesTextToolProtocol = textToolMode != nil && !toolBudgetExhausted
       var providerMessages = inference.messages
       if let instructionsSection {
         insertSystem(instructionsSection, into: &providerMessages)
@@ -822,7 +822,7 @@ public actor AgentRuntime {
         insertSystem(memorySection, into: &providerMessages)
       }
       if depth == 0 {
-        let soulPath = AgentChatStore.expandUserPath("~/.pmai/SOUL.md")
+        let soulPath = AgentHome.expandUserPath("~/.pmai/SOUL.md")
         if let soul = try? String(contentsOfFile: soulPath).trimmingCharacters(in: .whitespacesAndNewlines), !soul.isEmpty {
           insertSystem(soul, into: &providerMessages)
         }

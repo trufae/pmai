@@ -10991,6 +10991,46 @@ struct MaiCLI {
     #endif
   }
 
+
+
+  private static func handleEditSoulCommand(terminal: TerminalWriter) async {
+    let soulPath = AgentHome.expandUserPath("~/.pmai/SOUL.md")
+    let url = URL(fileURLWithPath: soulPath)
+    
+    let previous = (try? String(contentsOf: url)) ?? ""
+    
+    guard
+      let edited = await editTemporaryText(
+        previous, suffix: "soul.md", terminal: terminal)
+    else { return }
+    
+    do {
+      try edited.write(to: url, atomically: true, encoding: .utf8)
+      await terminal.line("Soul saved to \(soulPath).")
+    } catch {
+      await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+    }
+  }
+
+  private static func handleEditSoulCommand(terminal: TerminalWriter) async {
+    let soulPath = AgentHome.expandUserPath("~/.pmai/SOUL.md")
+    let url = URL(fileURLWithPath: soulPath)
+    
+    let previous = (try? String(contentsOf: url)) ?? ""
+    
+    guard
+      let edited = await editTemporaryText(
+        previous, suffix: "soul.md", terminal: terminal)
+    else { return }
+    
+    do {
+      try edited.write(to: url, atomically: true, encoding: .utf8)
+      await terminal.line("Soul saved to \(soulPath).")
+    } catch {
+      await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+    }
+  }
+
   private static func printUsage() {
     print(
       """
@@ -11059,22 +11099,4 @@ struct MaiCLI {
       """)
   }
 
-  private static func handleEditSoulCommand(terminal: TerminalWriter) async {
-    let soulPath = AgentChatStore.expandUserPath("~/.pmai/SOUL.md")
-    let url = URL(fileURLWithPath: soulPath)
-    
-    let previous = (try? String(contentsOf: url)) ?? ""
-    
-    guard
-      let edited = await editTemporaryText(
-        previous, suffix: "soul.md", terminal: terminal)
-    else { return }
-    
-    do {
-      try edited.write(to: url, atomically: true, encoding: .utf8)
-      await terminal.line("Soul saved to \(soulPath).")
-    } catch {
-      await terminal.line("error: \(error.localizedDescription)", to: .standardError)
-    }
-  }
 }
