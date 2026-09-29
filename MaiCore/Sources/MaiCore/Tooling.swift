@@ -412,6 +412,81 @@ public enum AgentToolError: LocalizedError, Equatable, Sendable {
 }
 
 enum ToolSchemaValidator {
+  /// Some native providers return a display-style `script="..."` as a JSON
+  /// key (with an empty value), or as the value of an empty key. Repair only
+  /// explicit, schema-known assignments, before validation and approval.
+  static func repairArgumentKeys(_ value: JSONValue, definition: ToolDefinition) -> JSONValue {
+    guard let arguments = value.objectValue,
+      let schema = definition.inputSchema.objectValue,
+      schema["additionalProperties"] == .bool(false),
+      let properties = schema["properties"]?.objectValue,
+      properties[""] == nil
+    else { return value }
+    var result = arguments
+    for (key, value) in arguments where properties[key] == nil {
+      if key.isEmpty, value == .string("") {
+        result.removeValue(forKey: key)
+        continue
+      }
+      let source = key.isEmpty ? value.stringValue : (value == .string("") ? key : nil)
+      guard let source, let assignment = quotedAssignment(source) else { continue }
+      let fields: [String: JSONValue]
+      if properties[assignment.name]?.objectValue?["type"] == .string("string") {
+        fields = [assignment.name: .string(assignment.value)]
+      } else if let decoded = try? JSONDecoder().decode(
+        JSONValue.self, from: Data(assignment.value.utf8))
+      {
+        if let property = properties[assignment.name],
+          validate(decoded, schema: property, path: assignment.name) == nil
+        {
+          fields = [assignment.name: decoded]
+        } else if ["args", "arguments", "parameters", "params", "input"].contains(assignment.name),
+          let object = decoded.objectValue, !object.isEmpty,
+          object.keys.allSatisfy({ properties[$0] != nil })
+        {
+          fields = object
+        } else {
+          continue
+        }
+      } else {
+        continue
+      }
+      // Never choose between competing values, even when they look equal.
+      guard fields.keys.allSatisfy({ result[$0] == nil }) else { return .object(arguments) }
+      result.removeValue(forKey: key)
+      result.merge(fields) { existing, _ in existing }
+    }
+    return .object(result)
+  }
+
+  private static func quotedAssignment(_ source: String) -> (name: String, value: String)? {
+    guard let equals = source.firstIndex(of: "=") else { return nil }
+    let name = source[..<equals].trimmingCharacters(in: .whitespacesAndNewlines)
+    let literal = source[source.index(after: equals)...]
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty,
+      name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" }),
+      literal.count >= 2, let quote = literal.first, quote == "\"" || quote == "'",
+      literal.last == quote
+    else { return nil }
+    let body = literal.dropFirst().dropLast()
+    var escaped = false
+    for character in body {
+      if escaped {
+        escaped = false
+      } else if character == "\\" {
+        escaped = true
+      } else if character == quote {
+        // Multiple assignments or mismatched quoting are ambiguous.
+        return nil
+      }
+    }
+    guard !escaped else { return nil }
+    // This is an already decoded JSON key/value, not shell input or another
+    // JSON string. Keep backslashes, newlines and heredoc indentation verbatim.
+    return (name, String(body))
+  }
+
   /// Coerce unambiguous boolean spellings without dropping invalid or unknown fields.
   static func coerceBooleans(_ value: JSONValue, schema: JSONValue) -> JSONValue {
     guard let schema = schema.objectValue else { return value }

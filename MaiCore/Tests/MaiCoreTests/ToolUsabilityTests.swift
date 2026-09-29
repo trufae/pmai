@@ -212,6 +212,45 @@ func nativeBooleanArguments() async throws {
   #expect(ToolSchemaValidator.validate(arguments: normalized, definition: definition)?.contains("unknown field") == true)
 }
 
+@Test("Native malformed run_sh calls execute after recovery, preserving heredocs")
+func nativeRunArgumentsPreserveHeredocs() async throws {
+  let body = "  field_peek\\|placement  \n\t$HOME `pwd` \\n"
+  let script = "cat <<'PYEOF'\n\(body)\nPYEOF\nprintf finished"
+  let arguments: [JSONValue] = [
+    .object(["": .string(""), "script": .string("printf first")]),
+    .object(["script=\"printf second\"": .string("")]),
+    .object(["": .string("script=\"\(script)\"")]),
+    .object(["command=\"printf fourth\"": .string("")]),
+    .object([#"args='{"script":"printf fifth"}'"#: .string("")]),
+    .object(["script": .string("printf valid"), "script=\"printf conflicting\"": .string("")]),
+  ]
+  let calls = arguments.enumerated().map { index, arguments in
+    ContentPart.toolCall(ToolCall(id: "repair-\(index)", name: "run_sh", arguments: arguments))
+  }
+  let runtime = AgentRuntime(approvalHandler: AllowAllApprovals())
+  try await runtime.register(UsabilityScriptedProvider(responses: [
+    ProviderResponse(message: AgentMessage(role: .assistant, content: calls), stopReason: .toolCall),
+    ProviderResponse(message: .assistant("done"), stopReason: .stop),
+  ]))
+  try await runtime.register(tool: MaiRunTool(configuration: MaiRunConfiguration()))
+  let recorder = UsabilityEventRecorder()
+  let result = try await runtime.run(AgentRequest(
+    provider: "usability-scripted", model: "fixture", messages: [.user("test shell arguments")],
+    toolNames: ["run_sh"], limits: AgentRunLimits(maxModelTurns: 2, maxToolCalls: 10))
+  ) { await recorder.append($0) }
+  let results = result.transcript.flatMap(\.toolResults)
+  #expect(results.count == arguments.count)
+  #expect(results.prefix(5).allSatisfy { !$0.isError })
+  #expect(results.prefix(5).map(\.text) == ["first", "second", body + "\nfinished", "fourth", "fifth"])
+  #expect(results.last?.isError == true)
+  let approvals = await recorder.events.compactMap { event -> ApprovalRequest? in
+    if case .approvalRequested(_, let request) = event { return request }
+    return nil
+  }
+  #expect(approvals.count == 5)
+  #expect(approvals.first { $0.call.id == "repair-2" }?.call.arguments == .object(["script": .string(script)]))
+}
+
 // MARK: - Fixtures
 
 private func usabilityTool(

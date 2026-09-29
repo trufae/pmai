@@ -279,7 +279,8 @@ public struct MaiRunTool: AgentTool {
   private static func definition(configuration: MaiRunConfiguration) -> ToolDefinition {
     var properties: [String: JSONValue] = [:]
     properties["script"] = stringProperty(
-      "Shell command line or multi-line script. Other languages run through the shell, for example python3 - <<'EOF' … EOF."
+      "Shell command line or multi-line script, passed as the value of the script field, never as a field name like script=\"...\". "
+        + "For heredocs, use real newlines and put the closing delimiter alone on its own line: python3 - <<'PY'\nprint('hello')\nPY"
     )
     properties["command"] = stringProperty("Accepted as an alias of script.")
     properties["args"] = .object([

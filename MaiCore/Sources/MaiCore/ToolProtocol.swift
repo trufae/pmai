@@ -771,7 +771,10 @@ public enum AgentTooling {
     _ arguments: [String: AgentToolArgumentValue],
     for tool: ToolDefinition?
   ) -> [String: AgentToolArgumentValue] {
-    let normalized = normalizeValues(arguments, for: tool)
+    let repaired = tool.flatMap {
+      ToolSchemaValidator.repairArgumentKeys(.object(arguments), definition: $0).objectValue
+    } ?? arguments
+    let normalized = normalizeValues(repaired, for: tool)
     guard let tool,
       tool.parameters.filter(\.required).count == 1,
       let requiredName = tool.parameters.first(where: \.required)?.name,

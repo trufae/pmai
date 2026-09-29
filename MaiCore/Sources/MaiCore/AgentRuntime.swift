@@ -1462,6 +1462,8 @@ public actor AgentRuntime {
       await emit(.toolFinished(context, result))
       return result
     }
+    resolvedCall.arguments = ToolSchemaValidator.repairArgumentKeys(
+      resolvedCall.arguments, definition: definition)
     resolvedCall.arguments = ToolSchemaValidator.coerceBooleans(
       resolvedCall.arguments, schema: definition.inputSchema)
     if definitionName == resolvedCall.name,
