@@ -36,7 +36,9 @@ public actor ACPProvider: ChatProvider {
     _ request: ProviderRequest,
     emit: @escaping ProviderEventHandler
   ) async throws -> ProviderResponse {
-    let client = client(for: configuration.workingDirectory ?? AgentExecutionScope.directory)
+    let client = client(
+      for: configuration.workingDirectory ?? AgentExecutionScope.directory,
+      sessionID: request.sessionID ?? AgentExecutionScope.current?.sessionID)
     // The runtime hands over the whole transcript each turn, but the ACP agent
     // keeps its own session, so only the latest user turn is new to it.
     let text = ACPProvider.latestUserText(request.messages)
@@ -57,8 +59,9 @@ public actor ACPProvider: ChatProvider {
     clients.removeAll()
   }
 
-  private func client(for workingDirectory: URL?) -> ACPClient {
-    let key = workingDirectory?.standardizedFileURL.path ?? "."
+  private func client(for workingDirectory: URL?, sessionID: String?) -> ACPClient {
+    let key =
+      (workingDirectory?.standardizedFileURL.path ?? ".") + "\u{0}" + (sessionID ?? "default")
     if let existing = clients[key] { return existing }
     var configuration = self.configuration
     if configuration.workingDirectory == nil { configuration.workingDirectory = workingDirectory }
@@ -118,7 +121,22 @@ public struct ACPConfiguredProviderFactory: ConfiguredProviderFactory {
     environment: [String: String]
   ) throws -> any ChatProvider {
     let options = configuration.options
-    guard let command = options["command"]?.stringValue, !command.isEmpty else {
+    let url: URL?
+    if let address = options["url"]?.stringValue {
+      guard let parsed = URL(string: address) else {
+        throw JSONRPCError.invalidParams("Invalid ACP WebSocket URL")
+      }
+      try ACPRemoteConnection.validate(url: parsed)
+      guard options["remoteCwd"]?.stringValue?.hasPrefix("/") == true else {
+        throw JSONRPCError.invalidParams(
+          "WebSocket ACP providers require an absolute options.remoteCwd")
+      }
+      url = parsed
+    } else {
+      url = nil
+    }
+    let command = options["command"]?.stringValue ?? (url == nil ? "" : configuration.id)
+    guard !command.isEmpty else {
       throw ACPConfigurationError.missingCommand(configuration.id)
     }
     let arguments = options["args"]?.arrayValue?.compactMap(\.stringValue) ?? []
@@ -142,7 +160,10 @@ public struct ACPConfiguredProviderFactory: ConfiguredProviderFactory {
         permission: permission,
         promptTimeout: configuration.timeout ?? 600,
         remoteWorkingDirectory: options["remoteCwd"]?.stringValue,
-        readClientFiles: options["readClientFiles"]?.boolValue ?? true))
+        readClientFiles: options["readClientFiles"]?.boolValue ?? (url == nil),
+        webSocketURL: url,
+        bearerToken: options["tokenEnv"]?.stringValue.flatMap { environment[$0] }
+          ?? options["token"]?.stringValue))
   }
 }
 
@@ -152,7 +173,7 @@ public enum ACPConfigurationError: LocalizedError, Equatable, Sendable {
   public var errorDescription: String? {
     switch self {
     case .missingCommand(let id):
-      "ACP provider '\(id)' is missing its command in options.command."
+      "ACP provider '\(id)' needs options.command or options.url."
     }
   }
 }

@@ -104,12 +104,20 @@ public struct JSONRPCError: Codable, Equatable, Sendable, LocalizedError {
 /// A bidirectional stream of JSON-RPC messages. Both ACP directions and the
 /// MCP server ride on the same abstraction; only the peers' handlers differ.
 public protocol JSONRPCTransport: Sendable {
+  var isRunning: Bool { get }
+  var recentErrorOutput: String { get }
   /// Every message the other side sends, until the stream closes.
   func messages() -> AsyncStream<JSONRPCMessage>
   func send(_ message: JSONRPCMessage) throws
   func close()
 }
 
+extension JSONRPCTransport {
+  public var isRunning: Bool { true }
+  public var recentErrorOutput: String { "" }
+}
+
+#if os(macOS) || os(Linux) || os(Windows) || os(Android)
 /// Newline-delimited JSON over a pair of file handles: this process's stdio
 /// when serving an IDE, or a child process's pipes when driving an agent.
 public final class StdioJSONRPCTransport: JSONRPCTransport, @unchecked Sendable {
@@ -301,6 +309,8 @@ public final class StdioJSONRPCTransport: JSONRPCTransport, @unchecked Sendable 
     thread.start()
   }
 }
+
+#endif
 
 public enum JSONRPCTransportError: LocalizedError, Equatable, Sendable {
   case closed

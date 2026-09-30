@@ -19,6 +19,9 @@ public actor ACPClient {
     public var readClientFiles: Bool
     public var permission: ACPPermissionPolicy
     public var promptTimeout: TimeInterval
+    public var webSocketURL: URL?
+    public var bearerToken: String?
+    public var sessionID: String?
 
     public init(
       command: String,
@@ -28,7 +31,10 @@ public actor ACPClient {
       permission: ACPPermissionPolicy = .auto,
       promptTimeout: TimeInterval = 600,
       remoteWorkingDirectory: String? = nil,
-      readClientFiles: Bool = true
+      readClientFiles: Bool = true,
+      webSocketURL: URL? = nil,
+      bearerToken: String? = nil,
+      sessionID: String? = nil
     ) {
       self.command = command
       self.arguments = arguments
@@ -38,11 +44,16 @@ public actor ACPClient {
       self.promptTimeout = promptTimeout
       self.remoteWorkingDirectory = remoteWorkingDirectory
       self.readClientFiles = readClientFiles
+      self.webSocketURL = webSocketURL
+      self.bearerToken = bearerToken
+      self.sessionID = sessionID
     }
   }
 
   private let configuration: Configuration
-  private var transport: StdioJSONRPCTransport?
+  private var transport: (any JSONRPCTransport)?
+  private let onUpdate: (@Sendable (JSONValue) async -> Void)?
+  private let onPermission: (@Sendable (JSONValue) async throws -> String?)?
   private var peer: JSONRPCPeer?
   private var sessionID: String?
   private var sessionLoaded = false
@@ -51,9 +62,26 @@ public actor ACPClient {
   /// The delta sink for the prompt in flight; only one prompt runs at a time.
   private var activeSink: (@Sendable (ProviderEvent) async -> Void)?
 
-  public init(configuration: Configuration) {
+  public init(
+    configuration: Configuration,
+    onUpdate: (@Sendable (JSONValue) async -> Void)? = nil,
+    onPermission: (@Sendable (JSONValue) async throws -> String?)? = nil
+  ) {
     self.configuration = configuration
+    self.sessionID = configuration.sessionID
+    self.onUpdate = onUpdate
+    self.onPermission = onPermission
   }
+
+  /// Connects and creates or restores a session; history arrives through onUpdate.
+  public func connect() async throws -> String {
+    guard !busy else { throw JSONRPCError.invalidParams("An ACP operation is already running") }
+    busy = true
+    defer { busy = false }
+    return try await ensureSession(peer: connectedPeer())
+  }
+
+  public var currentSessionID: String? { sessionID }
 
   /// Runs one prompt to completion, streaming assistant and reasoning deltas
   /// through `emit`, and returns the agent's stop reason.
@@ -94,7 +122,7 @@ public actor ACPClient {
     sessionID = nil
   }
 
-  private func disconnect() async {
+  public func disconnect() async {
     await peer?.close()
     transport?.close()
     peer = nil
@@ -107,11 +135,20 @@ public actor ACPClient {
   private func connectedPeer() async throws -> JSONRPCPeer {
     if let peer, transport?.isRunning == true { return peer }
     await disconnect()
-    let transport = try StdioJSONRPCTransport.spawn(
-      command: configuration.command,
-      arguments: configuration.arguments,
-      environment: configuration.environment,
-      workingDirectory: configuration.workingDirectory)
+    let transport: any JSONRPCTransport
+    if let url = configuration.webSocketURL {
+      transport = try WebSocketJSONRPCTransport(url: url, bearerToken: configuration.bearerToken)
+    } else {
+      #if os(macOS) || os(Linux) || os(Windows) || os(Android)
+        transport = try StdioJSONRPCTransport.spawn(
+          command: configuration.command,
+          arguments: configuration.arguments,
+          environment: configuration.environment,
+          workingDirectory: configuration.workingDirectory)
+      #else
+        throw JSONRPCError.invalidParams("This platform requires an ACP WebSocket URL")
+      #endif
+    }
     let peer = JSONRPCPeer(
       transport: transport,
       onRequest: { [weak self] method, params in
@@ -140,7 +177,12 @@ public actor ACPClient {
           ]),
         ]),
         timeout: 30)
-      supportsLoad = initialized.objectValue?["agentCapabilities"]?.objectValue?["loadSession"]?.boolValue == true
+      supportsLoad =
+        initialized.objectValue?["agentCapabilities"]?.objectValue?["loadSession"]?.boolValue
+        == true
+      guard initialized.objectValue?["protocolVersion"]?.intValue == ACP.protocolVersion else {
+        throw JSONRPCError.invalidParams("The agent returned an unsupported ACP protocol version")
+      }
     } catch {
       await disconnect()
       throw ACPClientError.launchFailed(
@@ -153,14 +195,21 @@ public actor ACPClient {
 
   private func ensureSession(peer: JSONRPCPeer) async throws -> String {
     if let sessionID, sessionLoaded { return sessionID }
-    let cwd = configuration.remoteWorkingDirectory
+    let cwd =
+      configuration.remoteWorkingDirectory
       ?? configuration.workingDirectory?.path ?? AgentExecutionScope.directory.path
     if let sessionID, supportsLoad {
-      _ = try await peer.request(ACP.Method.sessionLoad, params: .object([
-        "sessionId": .string(sessionID), "cwd": .string(cwd), "mcpServers": .array([])
-      ]), timeout: 60)
+      _ = try await peer.request(
+        ACP.Method.sessionLoad,
+        params: .object([
+          "sessionId": .string(sessionID), "cwd": .string(cwd), "mcpServers": .array([]),
+        ]), timeout: 60)
       sessionLoaded = true
       return sessionID
+    }
+    if sessionID != nil {
+      throw JSONRPCError.invalidParams(
+        "This agent cannot restore sessions. Start a new chat to continue.")
     }
     let result = try await peer.request(
       ACP.Method.sessionNew,
@@ -178,8 +227,10 @@ public actor ACPClient {
 
   private func handleAgentNotification(method: String, params: JSONValue?) async {
     guard method == ACP.Method.sessionUpdate,
-      params?.objectValue?["sessionId"]?.stringValue == sessionID,
-      let sink = activeSink else { return }
+      params?.objectValue?["sessionId"]?.stringValue == sessionID
+    else { return }
+    if let update = params?.objectValue?["update"] { await onUpdate?(update) }
+    guard let sink = activeSink else { return }
     guard let update = params?.objectValue?["update"]?.objectValue,
       let kind = update["sessionUpdate"]?.stringValue.flatMap(ACP.Update.init)
     else { return }
@@ -197,6 +248,23 @@ public actor ACPClient {
   private func handleAgentRequest(method: String, params: JSONValue?) async throws -> JSONValue {
     switch method {
     case ACP.Method.requestPermission:
+      guard params?.objectValue?["sessionId"]?.stringValue == sessionID else {
+        throw JSONRPCError.invalidParams("Permission requested for an unknown session")
+      }
+      if let onPermission, let params {
+        let optionID = try await onPermission(params)
+        let options = params.objectValue?["options"]?.arrayValue ?? []
+        guard let optionID,
+          options.contains(where: { $0.objectValue?["optionId"]?.stringValue == optionID })
+        else {
+          return .object(["outcome": .object(["outcome": .string("cancelled")])])
+        }
+        return .object([
+          "outcome": .object([
+            "outcome": .string("selected"), "optionId": .string(optionID),
+          ])
+        ])
+      }
       return permissionOutcome(params: params)
     case ACP.Method.readTextFile:
       guard configuration.readClientFiles else { throw JSONRPCError.methodNotFound(method) }
