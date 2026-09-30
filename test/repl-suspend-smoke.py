@@ -82,11 +82,11 @@ def main():
             send(b'/set tool.calling ')
             for option in ('automatic', 'json', 'native', 'text', 'xml', 'automatic', 'json'):
                 send(b'\t')
-                wait_for(re.compile(rb'\x1b\[44m\x1b\[97m' + option.encode() + rb'\x1b\[0m'))
+                wait_for(f'\x1b[97;44m{option}\x1b[0m')
             send(b'\r')
             wait_for('Set tool.calling = json')
             send(b'/set tool.calling \t')
-            wait_for(re.compile(rb'\x1b\[44m\x1b\[97mautomatic\x1b\[0m'))
+            wait_for('\x1b[97;44mautomatic\x1b[0m')
             send(b'\x7f\t\r')
             wait_for('Set tool.calling = automatic')
             print('PASS: completion selection, wraparound, narrow rows and editing')
