@@ -1,5 +1,8 @@
 # ACP and MCP
 
+For a standalone WebSocket gateway, the iOS remote frontend, and optional
+Tailcat routing, see [Remote ACP agents](tailcat.md).
+
 pmai speaks the [Agent Client Protocol](https://agentclientprotocol.com) — JSON-RPC
 over stdio between an editor and a coding agent — in both directions, and serves
 [MCP](https://modelcontextprotocol.io) as well. All three ride one transport in
