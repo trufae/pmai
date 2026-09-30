@@ -93,6 +93,9 @@ public enum ACP {
         return array.map { text(from: $0) }.joined()
       }
       guard let object = value.objectValue else { return "" }
+      if object["type"]?.stringValue == "content" {
+        return text(from: object["content"])
+      }
       if let text = object["text"]?.stringValue { return text }
       if let resource = object["resource"]?.objectValue ?? object["contents"]?.objectValue {
         if let text = resource["text"]?.stringValue { return text }

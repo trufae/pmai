@@ -144,6 +144,9 @@ func acpContentBlocks() {
 
   #expect(ACP.StopReason(.cancelled) == .cancelled)
   #expect(ACP.StopReason.endTurn.providerStopReason == .stop)
+  #expect(ACP.ContentBlock.text(from: .object([
+    "type": .string("content"), "content": .object(["type": .string("text"), "text": .string("tool output")])
+  ])) == "tool output")
 }
 
 @Test("The permission policy picks the once option matching the verdict")
@@ -403,4 +406,48 @@ private actor ACPCwdProvider: ChatProvider {
       .toolCall(ToolCall(id: id, name: "cwd", arguments: .object([:])))
     ]), stopReason: .toolCall)
   }
+}
+
+private actor ACPWaitingProvider: ChatProvider {
+  nonisolated let descriptor = ProviderDescriptor(id: "waiting", displayName: "Waiting", capabilities: [.streaming])
+  var started = false
+  func availableModels() -> [ModelDescriptor] { [] }
+  func complete(_ request: ProviderRequest, emit: @escaping ProviderEventHandler) async throws -> ProviderResponse {
+    started = true
+    await emit(.textDelta("partial"))
+    try await Task.sleep(for: .seconds(60))
+    return ProviderResponse(message: .assistant("finished"), stopReason: .stop)
+  }
+}
+
+@Test("ACP rejects overlapping prompts and records cancellation for safe recovery")
+func acpCancellationRecovery() async throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let runtime = AgentRuntime(approvalHandler: AllowAllApprovals())
+  let provider = ACPWaitingProvider()
+  try await runtime.register(provider)
+  let agent = AgentDefinition(id: "main", instructions: "", provider: "waiting", model: "fixture")
+  let (clientTransport, serverTransport) = PipeTransport.pair()
+  let server = ACPServer(runtime: runtime, agent: agent, bridge: ACPPermissionBridge(), sessionDirectory: directory)
+  let serving = Task { await server.serve(on: serverTransport) }
+  let client = JSONRPCPeer(transport: clientTransport)
+  await client.start()
+  _ = try await client.request("initialize", params: .object(["protocolVersion": .integer(1)]), timeout: 5)
+  let created = try await client.request("session/new", params: .object(["cwd": .string("/tmp")]), timeout: 5)
+  let id = try #require(created.objectValue?["sessionId"]?.stringValue)
+  let params: JSONValue = .object(["sessionId": .string(id), "prompt": .array([ACP.ContentBlock.text("wait").json])])
+  let prompt = Task { try await client.request("session/prompt", params: params, timeout: 5) }
+  while !(await provider.started) { await Task.yield() }
+  await #expect(throws: JSONRPCError.self) {
+    _ = try await client.request("session/prompt", params: params, timeout: 5)
+  }
+  try client.notify("session/cancel", params: .object(["sessionId": .string(id)]))
+  #expect(try await prompt.value.objectValue?["stopReason"]?.stringValue == "cancelled")
+  let state = try String(contentsOf: directory.appendingPathComponent(id + ".json"), encoding: .utf8)
+  #expect(state.contains("Verify the current state"))
+  let saved = try JSONDecoder().decode(JSONValue.self, from: Data(state.utf8))
+  #expect(saved.objectValue?["promptInFlight"]?.boolValue == false)
+  await client.close()
+  await serving.value
 }

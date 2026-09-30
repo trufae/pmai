@@ -12,6 +12,7 @@ public actor ACPServer {
     var agentID: String
     var workingDirectory: URL
     var transcript: [AgentMessage]
+    var promptInFlight: Bool?
   }
 
   private struct Session {
@@ -210,9 +211,14 @@ public actor ACPServer {
       let lock = try lease(id)
       let url = sessionDirectory.appendingPathComponent(id + ".json")
       guard let data = try? Data(contentsOf: url),
-        let saved = try? JSONDecoder().decode(SavedSession.self, from: data),
+        var saved = try? JSONDecoder().decode(SavedSession.self, from: data),
         saved.id == id, saved.agentID == agent.id, saved.workingDirectory == cwd else {
         throw JSONRPCError.invalidParams("Session does not belong to this agent and workspace")
+      }
+      if saved.promptInFlight == true {
+        saved.transcript.append(.assistant(Self.interruptedPromptNotice))
+        saved.promptInFlight = false
+        try save(saved)
       }
       sessions[id] = Session(saved: saved, lease: lock)
     }
@@ -246,6 +252,7 @@ public actor ACPServer {
       throw JSONRPCError.invalidParams("prompt is empty")
     }
     sessions[id]?.saved.transcript.append(.user(text))
+    sessions[id]?.saved.promptInFlight = true
     try save(sessions[id]!.saved)
 
     let request = AgentRequest(
@@ -283,6 +290,7 @@ public actor ACPServer {
         try await task.value
       } onCancel: { task.cancel() }
       sessions[id]?.saved.transcript = result.transcript
+      sessions[id]?.saved.promptInFlight = false
       if let saved = sessions[id]?.saved { try save(saved) }
       sessions[id]?.task = nil
       // A limit pauses the run with its transcript kept, so the next prompt
@@ -301,14 +309,25 @@ public actor ACPServer {
       }
       return .object(["stopReason": .string(ACP.StopReason(result.stopReason).rawValue)])
     } catch is CancellationError {
+      try? finishInterruptedPrompt(id)
       sessions[id]?.task = nil
       return .object(["stopReason": .string(ACP.StopReason.cancelled.rawValue)])
     } catch {
+      try? finishInterruptedPrompt(id)
       sessions[id]?.task = nil
       // A run that never produced text should still tell the editor why.
       await update(session: id, kind: .agentMessageChunk, text: error.localizedDescription)
       return .object(["stopReason": .string(ACP.StopReason.refusal.rawValue)])
     }
+  }
+
+  private static let interruptedPromptNotice =
+    "The previous prompt was interrupted. Some tools may already have run and partial output may be missing. Verify the current state before repeating actions."
+
+  private func finishInterruptedPrompt(_ id: String) throws {
+    sessions[id]?.saved.transcript.append(.assistant(Self.interruptedPromptNotice))
+    sessions[id]?.saved.promptInFlight = false
+    if let saved = sessions[id]?.saved { try save(saved) }
   }
 
   // MARK: - Streaming out
