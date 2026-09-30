@@ -66,7 +66,9 @@ make repl ARGS='--config MaiCore/pmai.example.json'
 
 Inside the REPL, `/models` queries the current provider's model catalog and
 `/models PROVIDER` queries another registered provider without switching the
-session. Use `/model NAME` to select one of the returned model IDs.
+session. Use `/model NAME` to select a model for chat, compaction, tool decisions,
+and approval, or `/model-chat NAME` to change only the chat model. Both accept
+`PROVIDER::MODEL` and support Tab completion.
 For llama.cpp or llamafile, use an OpenAI-compatible provider with a base URL
 such as `http://127.0.0.1:8080/v1`; omit the API key unless the server requires
 one. Model and voice discovery have a 15-second total deadline (or the

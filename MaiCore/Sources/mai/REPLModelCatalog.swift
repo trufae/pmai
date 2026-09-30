@@ -34,14 +34,18 @@ final class REPLModelCatalog: @unchecked Sendable {
 
   func completions(for line: String, runtime: AgentRuntime) -> [String] {
     guard
-      let prefix = ["/model-compact ", "/model-tool ", "/model-aproval ", "/model "].first(where: {
+      let prefix = [
+        "/model-chat ", "/model-compact ", "/model-tool ", "/model-aproval ", "/model ",
+      ].first(where: {
         line.hasPrefix($0)
-      }) else { return [] }
+      })
+    else { return [] }
     let current = lock.withLock { currentProvider }
     let selector = String(line.dropFirst(prefix.count))
-    let provider = selector.range(of: "::").map {
-      ProviderID(String(selector[..<$0.lowerBound]))
-    } ?? current
+    let provider =
+      selector.range(of: "::").map {
+        ProviderID(String(selector[..<$0.lowerBound]))
+      } ?? current
     prefetch(provider, runtime: runtime)
     let catalogs = lock.withLock { models }
     return catalogs.flatMap { id, catalog in

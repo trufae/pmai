@@ -105,12 +105,12 @@ os.execv(os.environ['SMOKE_CURL'], [os.environ['SMOKE_CURL'], *args])
             assert 'installed ' in run(installer, env)
             assert subprocess.check_output([target, '--version'], text=True).strip() == '99.0.0'
             original = target.read_bytes()
-            assert 'No updates available' in run(installer, env)
+            assert run(installer, env) == 'No updates available\n'
             assert not server.requests, server.requests
             assert target.read_bytes() == original
 
             env = {**environment, 'PATH': str(installed) + os.pathsep + environment['PATH']}
-            assert 'No updates available' in run(installer, env)
+            assert run(installer, env) == 'No updates available\n'
             assert not server.requests, server.requests
             pinned = root / 'pinned'
             env.update(PMAI_VERSION='v99.0.0', PMAI_INSTALL_DIR=str(pinned),
@@ -128,7 +128,7 @@ os.execv(os.environ['SMOKE_CURL'], [os.environ['SMOKE_CURL'], *args])
             assert not server.requests
             run([str(target), '--system', '--update', '--print-config'], env)
             assert not server.requests, '--update was consumed as a flag value'
-            assert 'No updates available' in run(['pmai', '-U'], env)
+            assert run(['pmai', '-U'], env) == 'No updates available\n'
             assert server.requests == ['/install.sh'], server.requests
             assert target.read_bytes() == original
 
@@ -171,7 +171,7 @@ os.execv(os.environ['SMOKE_CURL'], [os.environ['SMOKE_CURL'], *args])
             assert 'installed android/arm64' in run(installer, env)
             assert (android / 'pmai-android').exists()
             assert (android / 'libc++_shared.so').exists()
-            assert 'No updates available' in run(installer, env)
+            assert run(installer, env) == 'No updates available\n'
             assert not server.requests
             print('PASS Android wrapper version check without downloading the runtime again')
         finally:

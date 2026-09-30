@@ -50,12 +50,15 @@ A selector first matches a saved agent ID. Otherwise it names a model: `PROVIDER
 /model-tool               # clear the tool assignment
 /model-aproval            # clear the approval assignment
 /model-tool -             # also clears; "default" does the same
-/model remote::large-model # save this conversation agent's provider and model
+/model remote::large-model # set chat, compaction, tool decisions, and approval to this model
+/model-chat local::qwen3:8b # change only this conversation agent's provider and model
 /agent default main        # save the agent used for future chats and runs
 /agent use fast            # switch this chat to fast; existing command clears its history
 ```
 
 Slash commands save to the active configuration: `--config PATH`, a local `pmai.json`, or the default pmai configuration. No environment variables are needed to keep these choices.
+
+`/model MODEL` selects the model for chat and every task, replacing any task assignments with model-specific task agents. `/model-chat MODEL` keeps the task assignments unchanged. Both accept `PROVIDER::MODEL` or a bare model on the current provider; without a model they show the current selections. Use the individual task commands to override or clear one assignment afterward.
 
 For one invocation:
 
@@ -92,7 +95,7 @@ and sends one working-context message alongside the original system/developer
 instructions. The saved transcript keeps growing and still autocompacts normally.
 Preparation calls count toward token/time budgets and usage statistics.
 
-Interactive autocompaction asks before replacing history, including when `tool.aproval` is `yolo`. In the pmai REPL, choose `y` to compact, `n` to continue without compaction for the current response, `m` for model-change instructions, `x` to clear the chat, or `c` to stop with the transcript kept. While the decision is pending, `/model NAME` changes the conversation model and `/model-compact NAME` changes the summarizer; then choose `y` or `n`. `/set ctx.compact 0` disables future automatic compaction. Piped and other noninteractive runs keep the configured automatic behavior.
+Interactive autocompaction asks before replacing history, including when `tool.aproval` is `yolo`. In the pmai REPL, choose `y` to compact, `n` to continue without compaction for the current response, `m` for model-change instructions, `x` to clear the chat, or `c` to stop with the transcript kept. While the decision is pending, `/model NAME` changes all models, `/model-chat NAME` changes only the conversation model, and `/model-compact NAME` changes the summarizer; then choose `y` or `n`. `/set ctx.compact 0` disables future automatic compaction. Piped and other noninteractive runs keep the configured automatic behavior.
 
 PocketMai shows the same decision before its MLX autocompaction. The prompt includes the chat's model settings, a compaction-agent picker, continue and stop actions, and a confirmed clear-chat action. Skipping applies to the current response; a later message may prompt again. In `/visual`, the compaction dialog also offers stopping to change models before continuing.
 
@@ -130,7 +133,7 @@ Omit a task key or set it to `null` to inherit. Existing configuration version 1
 
 System One uses a separate `systemone` provider kind for Ollama's `/v1/systemone` endpoint. Ollama 0.35 or later supports local Tev and Nimble decision models. See [Ollama's Tev documentation](https://ollama.com/library/tev1).
 
-Keep a regular chat model selected with `/model`, then configure routing:
+Keep a regular chat model selected with `/model-chat`, then configure routing:
 
 ```text
 /provider add decisions http://127.0.0.1:11434 --kind systemone

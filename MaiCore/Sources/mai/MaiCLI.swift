@@ -2637,7 +2637,8 @@ struct MaiCLI {
           case "c", "cancel", "stop": decision = .cancelRun
           case "m", "model":
             await terminal.line(
-              "Use /model NAME to change the conversation model, or /model-compact NAME to change the summarizer. Then choose y to summarize, p to prune available old tool output, or n to keep context.")
+              "Use /model NAME to change all models, /model-chat NAME for chat only, or /model-compact NAME for the summarizer. Then choose y to summarize, p to prune available old tool output, or n to keep context."
+            )
             await releaseIfIdle(workspace: workspace)
             continue
           case "x", "clear":
@@ -3198,7 +3199,8 @@ struct MaiCLI {
           }
           await terminal.line(
             (request.pruning == nil ? "" : "[p] prune old tool output · ")
-              + "[y] summarize older context · [n] keep context this response · [m] change model · [x] clear chat · [c] stop\n/model and /model-compact remain available before deciding.")
+              + "[y] summarize older context · [n] keep context this response · [m] change model · [x] clear chat · [c] stop\n/model, /model-chat, and /model-compact remain available before deciding."
+          )
         }
         await refreshStatus()
         await releaseIfIdle(workspace: workspace)
@@ -3731,6 +3733,11 @@ struct MaiCLI {
       await handleModelCommand(
         argument, session: &session, runtime: runtime, configuration: &configuration,
         configurationPath: visual.configurationPath, terminal: terminal)
+    case "/model-chat":
+      await handleModelCommand(
+        argument, chatOnly: true, session: &session, runtime: runtime,
+        configuration: &configuration, configurationPath: visual.configurationPath,
+        terminal: terminal)
     case "/model-compact":
       await handleModelCommand(
         "-compact " + argument, session: &session, runtime: runtime, configuration: &configuration,
@@ -5481,7 +5488,7 @@ struct MaiCLI {
   }
 
   private static func handleModelCommand(
-    _ argument: String, session: inout REPLSession, runtime: AgentRuntime,
+    _ argument: String, chatOnly: Bool = false, session: inout REPLSession, runtime: AgentRuntime,
     configuration: inout MaiConfiguration?, configurationPath: String?, terminal: TerminalWriter
   ) async {
     let words = argument.split(whereSeparator: \Character.isWhitespace).map(String.init)
@@ -5496,13 +5503,15 @@ struct MaiCLI {
         await terminal.line("\(task.rawValue): \(detail ?? "current agent")")
       }
       await terminal.line(
-        "/model [PROVIDER::]MODEL · /model-compact [NAME] · /model-tool [NAME] · /model-aproval [NAME] (no name clears)"
+        "/model [PROVIDER::]MODEL (all models) · /model-chat [PROVIDER::]MODEL (chat only) · /model-compact [NAME] · /model-tool [NAME] · /model-aproval [NAME] (no name clears)"
       )
       return
     }
     guard var draft = configuration, let configurationPath else { return }
     do {
-      if ["-compact", "-tool", "-aproval"].contains(first) {
+      var chatDefinition: AgentDefinition?
+      let message: String
+      if !chatOnly, ["-compact", "-tool", "-aproval"].contains(first) {
         guard words.count <= 2 else {
           await terminal.line("Usage: /model \(first) [AGENT|PROVIDER::MODEL|MODEL]")
           return
@@ -5511,19 +5520,11 @@ struct MaiCLI {
         try draft.assignTask(
           task, selector: words.count == 2 ? words[1] : nil,
           current: session.profile.agentDefinition)
-        try draft.save(to: URL(fileURLWithPath: configurationPath))
-        for agent in draft.agents
-        where configuration?.agents.first(where: { $0.id == agent.id }) != agent {
-          try await runtime.register(agent: agent, replacingExisting: true)
-        }
-        await runtime.configureTaskAgents(draft.taskAgents)
-        configuration = draft
-        await terminal.line(
-          "\(task.rawValue): \(draft.taskAgents[task] ?? "current agent") (saved)")
+        message = "\(task.rawValue): \(draft.taskAgents[task] ?? "current agent") (saved)"
       } else {
         guard words.count == 1, !first.hasPrefix("-") else {
           await terminal.line(
-            "Usage: /model [PROVIDER::]MODEL or /model-compact [NAME] or /model-tool [NAME] or /model-aproval [NAME]"
+            "Usage: /model [PROVIDER::]MODEL (all models) or /model-chat [PROVIDER::]MODEL (chat only) or /model-compact [NAME] or /model-tool [NAME] or /model-aproval [NAME]"
           )
           return
         }
@@ -5531,15 +5532,28 @@ struct MaiCLI {
         var definition = session.profile.agentDefinition
         definition.provider = selection.provider
         definition.model = selection.model
-        if await persistAgentDefinition(
-          definition, configuration: &configuration,
-          configurationPath: configurationPath, runtime: runtime, terminal: terminal)
-        {
-          try applyDefinition(definition, to: &session)
-          await terminal.line(
-            "Model: \(selection.provider)::\(selection.model) (saved for agent \(definition.id))")
+        draft.upsertAgent(definition)
+        if !chatOnly {
+          for task in AgentTask.allCases {
+            try draft.assignTask(
+              task, selector: "\(selection.provider)::\(selection.model)", current: definition)
+          }
         }
+        chatDefinition = definition
+        let scope = chatOnly ? "agent \(definition.id)" : "chat and all tasks"
+        message = "Model: \(selection.provider)::\(selection.model) (saved for \(scope))"
       }
+      try draft.save(to: URL(fileURLWithPath: configurationPath))
+      for agent in draft.agents
+      where configuration?.agents.first(where: { $0.id == agent.id }) != agent {
+        try await runtime.register(agent: agent, replacingExisting: true)
+      }
+      await runtime.configureTaskAgents(draft.taskAgents)
+      configuration = draft
+      if let chatDefinition {
+        try applyDefinition(chatDefinition, to: &session)
+      }
+      await terminal.line(message)
     } catch { await terminal.line("error: \(error.localizedDescription)", to: .standardError) }
   }
 
@@ -10434,7 +10448,8 @@ struct MaiCLI {
       "/set ui.broadcast on", "/set ui.broadcast off",
       "/set ui.toolResultLines all", "/set ui.toolResultLines relevant", "/set ui.toolResultLines ",
       "/cwd", "/pwd", "/cd ", "/plugins",
-      "/providers", "/models ", "/provider ", "/provider add ", "/baseurl ", "/model ",
+      "/providers", "/models ", "/provider ", "/provider add ", "/baseurl ",
+      "/model ", "/model-chat ",
       "/model-compact ", "/model-tool ", "/model-aproval ", "/agent default ", "/agent effort ",
       "/prompts",
       "/prompt",
@@ -10504,7 +10519,9 @@ struct MaiCLI {
     for provider in configuration?.providers ?? [] {
       values.append("/provider \(provider.id)")
       values.append("/models \(provider.id)")
-      for prefix in ["/model ", "/model-compact ", "/model-tool ", "/model-aproval "] {
+      for prefix in [
+        "/model ", "/model-chat ", "/model-compact ", "/model-tool ", "/model-aproval ",
+      ] {
         values.append("\(prefix)\(provider.id)::")
       }
       values.append("/edit provider \(provider.id)")
@@ -10774,7 +10791,8 @@ struct MaiCLI {
     /import PATH           Merge a PocketMai/pmai archive into settings, skills, and chats
     /mcp                   Manage MCP servers; /help mcp lists commands
     /memory                Show, edit, learn, or scope this project's durable memory
-    /model [PROVIDER::]MODEL  Select and save a model for this agent
+    /model [PROVIDER::]MODEL  Select and save a model for chat and all tasks
+    /model-chat [PROVIDER::]MODEL  Select and save only this agent's chat model
     /model-compact [NAME] Select a compaction agent/model; omit NAME to clear
     /model-aproval [NAME] Select a smart-approval agent/model; omit NAME to use the current chat model
     /model-tool [NAME]    Select a tool-decision agent/model; omit NAME to clear
@@ -11114,6 +11132,8 @@ struct MaiCLI {
       /agent add NAME            Copy the current agent into a new saved definition
       /agent default ID          Save the default for future chats and runs
       /agent effort ID LEVEL     Save an independent reasoning effort
+      /model [PROVIDER::]MODEL  Set the chat, compaction, tool, and approval models
+      /model-chat [PROVIDER::]MODEL  Change only this agent's chat model
       /model-compact [NAME]     Assign a compaction agent or model; omit to clear
       /model-aproval [NAME]     Assign a smart-approval agent or model; omit to clear
       /model-tool [NAME]        Assign a tool-decision agent or model; omit to clear
@@ -11192,17 +11212,10 @@ struct MaiCLI {
         PMAI_INSTALL_DIR=\(shellQuote(directory)) sh -c "$installer"
         """
 
-      print("Current version: \(version)")
-
       let status = command.withCString(posixSystem)
       guard status != -1 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
 
       let exitCode = status & 0x7f == 0 ? (status >> 8) & 0xff : 128 + (status & 0x7f)
-      if exitCode == 0 {
-        let printNewVersion = "echo \"New version: $(\(shellQuote(path)) -v)\""
-        _ = printNewVersion.withCString(posixSystem)
-      }
-
       exit(exitCode)
     #endif
   }

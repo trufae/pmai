@@ -78,7 +78,7 @@ class Provider(BaseHTTPRequestHandler):
             requests.put(('chat', length, None))
             release.wait(30)
         elif body['messages'][-1]['content'].startswith('Compact the transcript below'):
-            requests.put(('compact', length, None))
+            requests.put(('compact', length, body['model']))
             compact_release.wait(30)
         self.respond({'choices': [{'message': {'role': 'assistant', 'content': 'answer'},
                                    'finish_reason': 'stop'}]})
@@ -238,6 +238,11 @@ def main():
                     command = 'aproval' if task == 'approval' else task
                     send(f'/model-{command} fre\t\n')
                     wait_for(f'{task}: task-{task} (saved)')
+                send('/model-chat native::nat\t\n')
+                wait_for('Model: native::native.gguf (saved for agent test)')
+                wait_for('· native.gguf ·')
+                send('/model-chat name-\t\n')
+                wait_for('Model: native::name-only.gguf (saved for agent test)')
                 send('/model native::nat\t\n')
                 wait_for('Model: native::native.gguf')
                 wait_for('· native.gguf ·')
@@ -267,10 +272,13 @@ def main():
                 wait_for('cancelled /models')
                 send('/model changed.gguf\n')
                 wait_for('· changed.gguf')
+                send('/model-chat chat-only.gguf\n')
+                wait_for('Model: openai::chat-only.gguf (saved for agent test)')
                 sample('idle after cancellation', idle=True)
                 # The summary is deliberately stalled while the editor accepts text.
                 send('/chat compact\n')
-                assert next_request()[0] == 'compact'
+                request = next_request()
+                assert request[0] == 'compact' and request[2] == 'changed.gguf', request
                 send('draft-during-compaction')
                 wait_for('draft-during-compaction')
                 assert not compact_release.is_set()
@@ -278,7 +286,8 @@ def main():
                 wait_for('cancelled /chat')
                 # Cancellation kept the original history, so a second compact can run.
                 send('/chat compact\n')
-                assert next_request()[0] == 'compact'
+                request = next_request()
+                assert request[0] == 'compact' and request[2] == 'changed.gguf', request
                 send('draft-after-compaction')
                 wait_for('draft-after-compaction')
                 compact_release.set()

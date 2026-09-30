@@ -67,6 +67,46 @@ def main():
         assert 'Chat: another::other' in run(['/model'])
         print('PASS task agents: creation, model/effort, restart, reset, deletion, temporary and saved overrides')
 
+        run(['/model-compact cheap', '/model-tool cheap', '/model-aproval cheap'])
+        cheap = next(agent for agent in json.loads(config.read_text())['agents']
+                     if agent['id'] == 'cheap')
+        output = run(['/model hello::org/unified:latest', '/model'])
+        # Reload once so newly created task agents have their named prompts normalized.
+        output += run(['/model'])
+        saved = json.loads(config.read_text())
+        agents = {agent['id']: agent for agent in saved['agents']}
+        assert agents['main']['provider'] == 'hello'
+        assert agents['main']['model'] == 'org/unified:latest'
+        assert set(saved['taskAgents']) == {'compact', 'tool', 'approval'}
+        for task, agent_id in saved['taskAgents'].items():
+            agent = agents[agent_id]
+            assert agent['provider'] == 'hello' and agent['model'] == 'org/unified:latest'
+            assert f'{task}: {agent_id} — hello::org/unified:latest' in output, output
+        assert agents['cheap'] == cheap, 'changing all models rewrote an unrelated saved agent'
+        tasks = saved['taskAgents']
+        task_agents = {agent_id: agents[agent_id] for agent_id in tasks.values()}
+
+        output = run(['/model-chat local::chat-only', '/model'])
+        saved = json.loads(config.read_text())
+        agents = {agent['id']: agent for agent in saved['agents']}
+        assert agents['main']['provider'] == 'local' and agents['main']['model'] == 'chat-only'
+        assert saved['taskAgents'] == tasks
+        assert {agent_id: agents[agent_id] for agent_id in tasks.values()} == task_agents
+        assert 'Chat: local::chat-only' in output, output
+        assert 'Chat: local::chat-only' in run(['/model-chat'])
+
+        # Bare names use the current provider and remain model IDs even when an agent matches.
+        run(['/model cheap', '/model-chat final-chat'])
+        saved = json.loads(config.read_text())
+        agents = {agent['id']: agent for agent in saved['agents']}
+        assert agents['main']['model'] == 'final-chat'
+        for agent_id in saved['taskAgents'].values():
+            assert agents[agent_id]['provider'] == 'local' and agents[agent_id]['model'] == 'cheap'
+        original = config.read_bytes()
+        run(['/model', '/model-chat'])
+        assert config.read_bytes() == original, 'showing models changed the configuration'
+        print('PASS /model updates all tasks; /model-chat preserves their assignments across restarts')
+
 
 if __name__ == '__main__':
     main()

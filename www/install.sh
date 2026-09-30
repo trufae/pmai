@@ -164,7 +164,7 @@ release_base="${PMAI_RELEASE_BASE:-$release_base}"
 target="$install_dir/pmai"
 current_version=$("$target" --version 2>/dev/null || true)
 if [ -n "$current_version" ] && [ "${current_version#v}" = "${version#v}" ]; then
-  say "No updates available (pmai $current_version)."
+  printf '%s\n' 'No updates available'
   exit 0
 fi
 mkdir -p "$install_dir" || die "cannot create install directory: $install_dir"
