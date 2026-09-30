@@ -230,7 +230,7 @@ enum ToolAgentRegistry {
       mcpTools: mcpTools,
       mcpResources: mcpResources,
       mcpStatuses: mcpStatuses)
-    guard settings.useToolProxy else { return fullDefinitions }
+    guard settings.useToolProxy && !settings.useSystemOne else { return fullDefinitions }
     return fullDefinitions.isEmpty ? [] : ToolProxy.definitions
   }
 

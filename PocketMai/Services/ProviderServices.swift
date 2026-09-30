@@ -1267,7 +1267,7 @@ enum AppleFoundationProvider {
 
 enum OpenAICompatibleProvider {
   static func fetchModels(endpoint: OpenAIEndpoint) async throws -> [String] {
-    let provider = try await coreProvider(endpoint: endpoint)
+    let provider = try await PocketMaiPluginHost.shared.makeProvider(endpoint: endpoint)
     let decoded: [MaiCore.ModelDescriptor]
     do {
       decoded = try await provider.availableModels()
@@ -1298,6 +1298,7 @@ enum OpenAICompatibleProvider {
   }
 
   static func fetchVoices(endpoint: OpenAIEndpoint) async throws -> [String] {
+    guard endpoint.kind != .systemOne else { return [] }
     do {
       return try await coreProvider(endpoint: endpoint).availableVoices()
     } catch {

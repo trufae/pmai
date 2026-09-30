@@ -32,7 +32,7 @@ extension ConfiguredProvider {
     }
     self.init(
       id: endpoint.portableID ?? endpoint.id.uuidString.lowercased(),
-      kind: .openAICompatible,
+      kind: endpoint.kind,
       displayName: endpoint.name,
       baseURL: URL(string: endpoint.baseURL),
       apiKey: endpoint.apiKey,
@@ -43,7 +43,8 @@ extension ConfiguredProvider {
 
 extension OpenAIEndpoint {
   init?(archive provider: ConfiguredProvider) {
-    guard provider.kind == .openAICompatible, let baseURL = provider.baseURL else { return nil }
+    guard [.openAICompatible, .systemOne].contains(provider.kind), let baseURL = provider.baseURL
+    else { return nil }
     let options = provider.options
     let portableIdentifier = UUID(uuidString: provider.id)
     let identifier = portableIdentifier ?? UUID()
@@ -68,7 +69,7 @@ extension OpenAIEndpoint {
       oauthAuthorizeURL: options.archiveString("oauthAuthorizeURL"),
       oauthTokenURL: options.archiveString("oauthTokenURL"),
       headers: provider.headers,
-      portableID: portableIdentifier == nil ? provider.id : nil)
+      portableID: portableIdentifier == nil ? provider.id : nil, kind: provider.kind)
   }
 }
 

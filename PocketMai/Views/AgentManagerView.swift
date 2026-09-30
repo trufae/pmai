@@ -232,6 +232,7 @@ struct AgentEditorView: View {
   @State private var description = ""
   @State private var canSpawnSubagents = false
   @State private var loaded = false
+  @State private var modelFilter = ""
 
   private var isCreating: Bool { mode == .create }
 
@@ -293,8 +294,20 @@ struct AgentEditorView: View {
         Picker("Connection", selection: agentBinding(agent.id, \.selectedEndpointID)) {
           Text("Choose a provider").tag(UUID?.none)
           ForEach(store.settings.openAIEndpoints) { endpoint in
-            Text(endpoint.name).tag(Optional(endpoint.id))
+            Text(endpoint.kind == .systemOne ? "\(endpoint.name) · System One" : endpoint.name).tag(
+              Optional(endpoint.id))
           }
+        }
+        if let endpoint = store.settings.openAIEndpoints.first(where: {
+          $0.id == agent.settings.selectedEndpointID
+        }),
+          endpoint.kind == .systemOne
+        {
+          FilteredModelPicker(
+            selection: agentBinding(agent.id, \.openAIModelID), filter: $modelFilter,
+            models: store.endpointModels[endpoint.id] ?? [], emptySelectionTitle: "Provider default"
+          )
+          .task(id: endpoint.connectionSignature) { await store.refreshEndpoint(endpoint) }
         }
         TextField(
           "Model (empty uses provider default)", text: agentBinding(agent.id, \.openAIModelID)
@@ -316,6 +329,7 @@ struct AgentEditorView: View {
           Text(prompt.displayName).tag(prompt.id)
         }
       }
+      Toggle("System One tool decisions", isOn: agentBinding(agent.id, \.useSystemOne))
       Picker("Tool format", selection: agentBinding(agent.id, \.toolCallingMode)) {
         ForEach(ToolCallingMode.allCases, id: \.rawValue) { mode in
           Text(mode.displayName).tag(mode)

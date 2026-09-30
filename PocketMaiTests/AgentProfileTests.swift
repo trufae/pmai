@@ -34,6 +34,7 @@ final class AgentProfileTests: XCTestCase {
     custom.maxToolCallsPerTurn = 3
     custom.yoloModeEnabled = false
     custom.useToolProxy = true
+    custom.useSystemOne = true
     custom.contextWindowMode = ContextWindowMode.allCases.first { $0 != .full } ?? .full
     custom.includeAssistantResponsesInContext = false
     custom.includeReasoningContentInContext = true
@@ -41,6 +42,27 @@ final class AgentProfileTests: XCTestCase {
     custom.mlxAutoCompact = true
     XCTAssertNotEqual(custom, AgentSettings())
     return custom
+  }
+
+  func testSystemOneDefaultsAndProviderRoundTrip() throws {
+    XCTAssertFalse(try JSONDecoder().decode(AgentSettings.self, from: Data("{}".utf8)).useSystemOne)
+    XCTAssertFalse(try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8)).useSystemOne)
+    let endpoint = OpenAIEndpoint(
+      name: "Decisions", baseURL: "http://localhost:11434",
+      defaultModel: "tev1", kind: .systemOne)
+    let restored = try JSONDecoder().decode(
+      OpenAIEndpoint.self, from: JSONEncoder().encode(endpoint))
+    XCTAssertEqual(restored, endpoint)
+    let portable = ConfiguredProvider(pocketMai: endpoint)
+    XCTAssertEqual(portable.kind, .systemOne)
+    XCTAssertEqual(OpenAIEndpoint(archive: portable)?.kind, .systemOne)
+    var legacy = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: JSONEncoder().encode(endpoint)) as? [String: Any])
+    legacy.removeValue(forKey: "kind")
+    let old = try JSONDecoder().decode(
+      OpenAIEndpoint.self, from: JSONSerialization.data(withJSONObject: legacy))
+    XCTAssertEqual(old.kind, .openAICompatible)
+    XCTAssertNotEqual(old.connectionSignature, endpoint.connectionSignature)
   }
 
   func testDefaultsStartWithTheStockAgentSelected() {

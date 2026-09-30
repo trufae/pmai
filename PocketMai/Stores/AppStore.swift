@@ -5727,7 +5727,7 @@ final class AppStore: ObservableObject {
       toolCallingMode: settings.toolCallingMode,
       maxToolCallsPerTurn: settings.maxToolCallsPerTurn,
       yoloModeEnabled: settings.yoloModeEnabled,
-      useToolProxy: settings.useToolProxy)
+      useToolProxy: settings.useToolProxy, useSystemOne: settings.useSystemOne)
   }
 
   private func backupFilename(scope: SettingsBackupScope) -> String {
@@ -6064,6 +6064,7 @@ final class AppStore: ObservableObject {
     if let yolo = payload.yoloModeEnabled {
       settings.yoloModeEnabled = yolo
     }
+    if let routing = payload.useSystemOne { settings.useSystemOne = routing }
     if let proxy = payload.useToolProxy {
       settings.useToolProxy = proxy
     }

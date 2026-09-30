@@ -168,7 +168,7 @@ enum AssistantToolLoop {
       {
         state.answering = true
       }
-      let requestState = makeRequestState(
+      let requestState = try await makeRequestState(
         conversation: conversation,
         baseContext: baseContext,
         host: host,
@@ -476,7 +476,7 @@ enum AssistantToolLoop {
       {
         state.answering = true
       }
-      let requestState = makeRequestState(
+      let requestState = try await makeRequestState(
         conversation: conversation,
         baseContext: baseContext,
         host: host,
@@ -1159,10 +1159,42 @@ enum AssistantToolLoop {
     host: RunHost,
     store: AppStore,
     answering: Bool = false
-  ) -> RequestState {
+  ) async throws -> RequestState {
     var settings = settings(for: host, store: store)
-    let visibleDefinitions = answering ? [] : currentVisibleDefinitions(for: host, store: store)
-    let taskAgent = visibleDefinitions.isEmpty ? nil : settings.taskAgent(.tool)
+    var visibleDefinitions = answering ? [] : currentVisibleDefinitions(for: host, store: store)
+    let routing = settings.useSystemOne && !visibleDefinitions.isEmpty
+    if routing {
+      guard !settings.airplaneModeEnabled, settings.taskAgent(.tool) != nil else {
+        throw ChatProviderError.providerRequestFailed(
+          "System One needs an online Tool decisions agent. Select one in Manage Agents.")
+      }
+      let specialist = settings.taskConversation(.tool, from: conversation)
+      guard specialist.provider == .openAICompatible,
+        let endpoint = OpenAICompatibleProvider.selectedEndpoint(
+          for: specialist, settings: settings),
+        endpoint.kind == .systemOne
+      else {
+        throw ChatProviderError.providerRequestFailed(
+          "Select a System One connection for the Tool decisions agent.")
+      }
+      let provider = try await PocketMaiPluginHost.shared.makeProvider(
+        endpoint: endpoint,
+        requestTimeout: TimeInterval(settings.llmRequestTimeoutSeconds))
+      let decision = try await provider.complete(
+        ProviderRequest(
+          model: specialist.modelID,
+          messages: [.system(baseContext)]
+            + conversation.messages.map { AgentMessage(pocketMai: $0) },
+          tools: visibleDefinitions, stream: false, sessionID: conversation.sessionID))
+      try Task.checkCancellation()
+      switch decision.toolDecision {
+      case .tool(let name): visibleDefinitions = visibleDefinitions.filter { $0.name == name }
+      case .some(.none): visibleDefinitions = []
+      default:
+        throw ChatProviderError.providerRequestFailed("System One returned no valid tool decision.")
+      }
+    }
+    let taskAgent = routing || visibleDefinitions.isEmpty ? nil : settings.taskAgent(.tool)
     let conversation =
       taskAgent == nil ? conversation : settings.taskConversation(.tool, from: conversation)
     if let taskAgent {

@@ -1825,6 +1825,11 @@ struct SettingsView: View {
   @ViewBuilder
   private var externalToolsContent: some View {
     Toggle("Use tool proxy (list / call)", isOn: settingsBinding(\.useToolProxy))
+    Toggle("System One tool decisions", isOn: settingsBinding(\.useSystemOne))
+    Text(
+      "Assign a System One provider and model to Tool decisions in Manage Agents. The chat model fills tool arguments."
+    )
+    .font(.caption).foregroundStyle(.secondary)
     Text(toolProxySummary)
       .font(.caption)
       .foregroundStyle(.secondary)
@@ -3271,6 +3276,22 @@ private struct EndpointDetailView: View {
       }
 
       Section {
+        Picker("API", selection: $endpoint.kind) {
+          Text("OpenAI-compatible").tag(ConfiguredProviderKind.openAICompatible)
+          Text("System One (TEV / JEV)").tag(ConfiguredProviderKind.systemOne)
+        }
+        .onChange(of: endpoint.kind) { _, _ in
+          endpoint.defaultModel = ""
+          store.endpointModels[endpoint.id] = nil
+          store.endpointVoices[endpoint.id] = nil
+          store.endpointStatuses[endpoint.id] = .unknown
+        }
+        if endpoint.kind == .systemOne {
+          Text(
+            "Use a decision model such as tev1 on Ollama 0.35 or later. Assign this connection to a Tool decisions agent; keep a chat model for answers and arguments."
+          )
+          .font(.caption).foregroundStyle(.secondary)
+        }
         Picker("Provider", selection: providerPresetBinding) {
           ForEach(endpointProviderPresets, id: \.tag) { preset in
             Text(preset.name).tag(preset.tag)

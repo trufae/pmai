@@ -1672,6 +1672,7 @@ enum EndpointAuthMethod: String, Codable, CaseIterable, Identifiable, Sendable {
 }
 
 struct OpenAIEndpoint: Identifiable, Codable, Equatable, Sendable {
+  var kind: ConfiguredProviderKind
   var id: UUID
   /// The original Mai provider ID when it is not representable as an iOS
   /// UUID. Keeping it makes repeated CLI/iOS imports stable and reversible.
@@ -1716,10 +1717,12 @@ struct OpenAIEndpoint: Identifiable, Codable, Equatable, Sendable {
     oauthAuthorizeURL: String = "",
     oauthTokenURL: String = "",
     headers: [String: String] = [:],
-    portableID: String? = nil
+    portableID: String? = nil,
+    kind: ConfiguredProviderKind = .openAICompatible
   ) {
     self.id = id
     self.portableID = portableID
+    self.kind = kind
     self.name = name
     self.baseURL = baseURL
     self.apiKey = apiKey
@@ -1740,7 +1743,7 @@ struct OpenAIEndpoint: Identifiable, Codable, Equatable, Sendable {
   }
 
   enum CodingKeys: String, CodingKey {
-    case id, portableID, name, baseURL, apiKey, defaultModel, defaultReasoningLevel, isEnabled
+    case id, kind, portableID, name, baseURL, apiKey, defaultModel, defaultReasoningLevel, isEnabled
     case authMethod, oauthIssuer, oauthClientID, oauthAudience, oauthScope, oauthRedirectURI
     case oauthRefreshToken, oauthAccessTokenExpiresAt
     case oauthAuthorizeURL, oauthTokenURL
@@ -1750,6 +1753,7 @@ struct OpenAIEndpoint: Identifiable, Codable, Equatable, Sendable {
   init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
     id = try c.decode(UUID.self, forKey: .id)
+    kind = (try? c.decode(ConfiguredProviderKind.self, forKey: .kind)) ?? .openAICompatible
     portableID = try? c.decode(String.self, forKey: .portableID)
     name = try c.decode(String.self, forKey: .name)
     baseURL = try c.decode(String.self, forKey: .baseURL)
@@ -1777,6 +1781,7 @@ struct OpenAIEndpoint: Identifiable, Codable, Equatable, Sendable {
   func encode(to encoder: Encoder) throws {
     var c = encoder.container(keyedBy: CodingKeys.self)
     try c.encode(id, forKey: .id)
+    try c.encode(kind, forKey: .kind)
     try c.encodeIfPresent(portableID, forKey: .portableID)
     try c.encode(name, forKey: .name)
     try c.encode(baseURL, forKey: .baseURL)
@@ -1803,6 +1808,7 @@ struct OpenAIEndpoint: Identifiable, Codable, Equatable, Sendable {
   /// can be reused until the URL or credentials actually change.
   var connectionSignature: String {
     ([
+      kind.rawValue,
       baseURL,
       apiKey,
       authMethod.rawValue,
@@ -2265,6 +2271,7 @@ struct SettingsToolsBackup: Codable, Sendable {
   var maxToolCallsPerTurn: Int?
   var yoloModeEnabled: Bool?
   var useToolProxy: Bool?
+  var useSystemOne: Bool? = nil
 }
 
 struct SettingsVoiceRecordingAttachment: Codable, Sendable {
@@ -3090,6 +3097,7 @@ struct AppSettings: Codable, Equatable, Sendable {
   var maxToolCallsPerTurn: Int = AppSettings.defaultMaxToolCallsPerTurn
   var yoloModeEnabled: Bool = true
   var useToolProxy: Bool = false
+  var useSystemOne: Bool = false
   var contextWindowMode: ContextWindowMode = .full
   var includeAssistantResponsesInContext: Bool = true
   var includeReasoningContentInContext: Bool = false
@@ -3288,7 +3296,7 @@ struct AppSettings: Codable, Equatable, Sendable {
     case toolSettings, mcpServers, mcpRequestTimeoutSeconds, llmRequestTimeoutSeconds, memory,
       toolCallingMode,
       maxToolCallsPerTurn
-    case yoloModeEnabled, useToolProxy, contextWindowMode
+    case yoloModeEnabled, useToolProxy, useSystemOne, contextWindowMode
     case includeAssistantResponsesInContext, includeReasoningContentInContext
     case followUps, background
     case appearance, conversation, renderMarkdownInChat, renderMarkdownImagesInChat
@@ -3386,6 +3394,7 @@ struct AppSettings: Codable, Equatable, Sendable {
         ?? Self.defaultMaxToolCallsPerTurn)
     yoloModeEnabled =
       (try? c.decode(Bool.self, forKey: .yoloModeEnabled)) ?? true
+    useSystemOne = (try? c.decode(Bool.self, forKey: .useSystemOne)) ?? false
     useToolProxy =
       (try? c.decode(Bool.self, forKey: .useToolProxy)) ?? migratedFromLegacyProxy
     contextWindowMode =

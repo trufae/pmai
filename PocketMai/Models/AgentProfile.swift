@@ -25,6 +25,7 @@ struct AgentSettings: Codable, Equatable, Sendable {
   var maxToolCallsPerTurn: Int = AppSettings.defaultMaxToolCallsPerTurn
   var yoloModeEnabled: Bool = true
   var useToolProxy: Bool = false
+  var useSystemOne: Bool = false
   var contextWindowMode: ContextWindowMode = .full
   var includeAssistantResponsesInContext: Bool = true
   var includeReasoningContentInContext: Bool = false
@@ -39,7 +40,7 @@ struct AgentSettings: Codable, Equatable, Sendable {
     case defaultSystemPromptID, defaultEnabledTools
     case defaultEnabledMCPServers, defaultEnabledMCPTools
     case mcpRequestTimeoutSeconds, llmRequestTimeoutSeconds
-    case toolCallingMode, maxToolCallsPerTurn, yoloModeEnabled, useToolProxy
+    case toolCallingMode, maxToolCallsPerTurn, yoloModeEnabled, useToolProxy, useSystemOne
     case contextWindowMode, includeAssistantResponsesInContext, includeReasoningContentInContext
     case mlxMaxKVSize, mlxAutoCompact
   }
@@ -85,6 +86,7 @@ struct AgentSettings: Codable, Equatable, Sendable {
       (try? c.decode(Int.self, forKey: .maxToolCallsPerTurn)) ?? defaults.maxToolCallsPerTurn)
     yoloModeEnabled =
       (try? c.decode(Bool.self, forKey: .yoloModeEnabled)) ?? defaults.yoloModeEnabled
+    useSystemOne = (try? c.decode(Bool.self, forKey: .useSystemOne)) ?? false
     useToolProxy = (try? c.decode(Bool.self, forKey: .useToolProxy)) ?? defaults.useToolProxy
     contextWindowMode =
       (try? c.decode(ContextWindowMode.self, forKey: .contextWindowMode))
@@ -174,6 +176,7 @@ extension AppSettings {
       agent.maxToolCallsPerTurn = maxToolCallsPerTurn
       agent.yoloModeEnabled = yoloModeEnabled
       agent.useToolProxy = useToolProxy
+      agent.useSystemOne = useSystemOne
       agent.contextWindowMode = contextWindowMode
       agent.includeAssistantResponsesInContext = includeAssistantResponsesInContext
       agent.includeReasoningContentInContext = includeReasoningContentInContext
@@ -200,6 +203,7 @@ extension AppSettings {
       maxToolCallsPerTurn = newValue.maxToolCallsPerTurn
       yoloModeEnabled = newValue.yoloModeEnabled
       useToolProxy = newValue.useToolProxy
+      useSystemOne = newValue.useSystemOne
       contextWindowMode = newValue.contextWindowMode
       includeAssistantResponsesInContext = newValue.includeAssistantResponsesInContext
       includeReasoningContentInContext = newValue.includeReasoningContentInContext
