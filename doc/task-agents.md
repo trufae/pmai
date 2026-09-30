@@ -94,7 +94,7 @@ Task agents are inference profiles, not recursive child agents. Their own task a
 
 Provider failure does not silently switch a configured task to the expensive main model. The normal error/retry behavior applies. Invalid CLI agent references or disabled task agents fail validation; deletion clears assignments explicitly. Legacy settings without task assignments continue to use their current agent.
 
-Routing is independent of tool-call serialization. The current checkout supports Native, Text, XML, and JSON; future KEV/JEV formats can use the same task-agent routing when added to the shared tool protocol.
+Routing is independent of tool-call serialization. Native, Text, XML, and JSON work with the selected chat model.
 
 ## Configuration
 
@@ -117,3 +117,24 @@ The shared configuration keeps references rather than copying a second provider/
 ```
 
 Omit a task key or set it to `null` to inherit. Existing configuration version 1 files remain valid. PocketMai stores the same assignment structure using its agents' stable UUIDs.
+
+## System One decision models
+
+System One uses a separate `systemone` provider kind for Ollama's `/v1/systemone` endpoint. Ollama 0.35 or later supports local Tev and Nimble decision models. See [Ollama's Tev documentation](https://ollama.com/library/tev1).
+
+Keep a regular chat model selected with `/model`, then configure routing:
+
+```text
+/provider add decisions http://127.0.0.1:11434 --kind systemone
+/models decisions
+/model-tool decisions::tev1:latest
+/set tool.systemone true
+```
+
+`tool.systemone` defaults to `false` and is saved with the conversation agent. `/set tool.systemone` displays it. To restore ordinary tool calling, set it to `false` and clear `/model-tool` or assign a regular chat specialist.
+
+`/models decisions` and completion suggestions only list local GGUF models declaring the `decision` capability, including renamed models. Catalogs without capability metadata are checked through `/api/show`. A non-Ollama service with only `/v1/models` uses a conservative Tev/Nimble/Jev name filter; explicit model IDs remain usable.
+
+System One classifies supplied choices; it does not generate arbitrary argument text. It chooses one enabled concrete tool or `none`; the primary chat model receives only that tool's schema and fills its parameters. `none` sends the primary model a turn with no tools to answer. Tool validation, approvals, execution limits, retries, and cancellation remain in place. Catalogs above 23 tools use successive choice rounds. The short decision context retains the latest user request and recent activity. Routing bypasses the proxy catalog while enabled, and adds a decision inference before each argument-generation turn; actual latency depends on both models and catalog size.
+
+On iOS, add a connection in **Settings → Providers**, choose **API → System One (TEV / JEV)**, set its Ollama URL, and refresh models. In **Manage Agents**, configure a tool-decision agent with that connection and a filtered model selection, then assign it under **Tool decisions**. Enable **System One tool decisions** on the conversation agent. Keep the conversation agent on a chat provider for arguments and final answers. Provider backups preserve the API kind and agent backups preserve the routing toggle.

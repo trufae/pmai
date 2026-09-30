@@ -570,6 +570,7 @@ struct SessionProfile: Sendable {
   var options: GenerationOptions
   var toolCallingStrategy: ToolCallingStrategy
   var useToolProxy: Bool
+  var useSystemOne: Bool
   var proxyExposedTools: Set<String>?
   var toolDelegation: AgentToolDelegation
   var retry: AgentRetryPolicy
@@ -595,6 +596,7 @@ struct SessionProfile: Sendable {
     options = definition.options
     toolCallingStrategy = definition.toolCallingStrategy
     useToolProxy = definition.useToolProxy
+    useSystemOne = definition.useSystemOne
     proxyExposedTools = definition.proxyExposedTools
     toolDelegation = definition.toolDelegation
     retry = definition.retry
@@ -633,6 +635,7 @@ struct SessionProfile: Sendable {
     options = .init()
     toolCallingStrategy = .automatic
     useToolProxy = false
+    useSystemOne = false
     proxyExposedTools = nil
     toolDelegation = .inline
     retry = .init()
@@ -660,6 +663,7 @@ struct SessionProfile: Sendable {
       options: options,
       toolCallingStrategy: toolCallingStrategy,
       useToolProxy: useToolProxy,
+      useSystemOne: useSystemOne,
       proxyExposedTools: proxyExposedTools,
       toolDelegation: toolDelegation,
       retry: retry,
@@ -2215,6 +2219,7 @@ struct MaiCLI {
         stream: profile.stream,
         toolCallingStrategy: profile.toolCallingStrategy,
         useToolProxy: profile.useToolProxy,
+        useSystemOne: profile.useSystemOne,
         proxyExposedTools: profile.proxyExposedTools,
         toolDelegation: profile.toolDelegation,
         retry: profile.retry,
@@ -3323,6 +3328,7 @@ struct MaiCLI {
         stream: profile.stream,
         toolCallingStrategy: profile.toolCallingStrategy,
         useToolProxy: profile.useToolProxy,
+        useSystemOne: profile.useSystemOne,
         proxyExposedTools: profile.proxyExposedTools,
         toolDelegation: profile.toolDelegation,
         retry: profile.retry,
@@ -3374,6 +3380,7 @@ struct MaiCLI {
       stream: profile.stream,
       toolCallingStrategy: profile.toolCallingStrategy,
       useToolProxy: profile.useToolProxy,
+      useSystemOne: profile.useSystemOne,
       proxyExposedTools: profile.proxyExposedTools,
       toolDelegation: profile.toolDelegation,
       retry: profile.retry,
@@ -5538,12 +5545,27 @@ struct MaiCLI {
     }
 
     if fields[0] == "add" {
-      guard fields.count == 3 || (fields.count == 5 && fields[3] == "--api-key-file"),
+      let flags = Array(fields.dropFirst(3))
+      var kind = ConfiguredProviderKind.openAICompatible
+      var keyFile: String?
+      var validFlags = flags.count.isMultiple(of: 2)
+      if validFlags {
+        for index in stride(from: 0, to: flags.count, by: 2) {
+          switch flags[index] {
+          case "--kind" where ["systemone", "openAICompatible"].contains(flags[index + 1]):
+            kind = ConfiguredProviderKind(flags[index + 1])
+          case "--api-key-file": keyFile = flags[index + 1]
+          default: validFlags = false
+          }
+        }
+      }
+      guard fields.count >= 3, validFlags,
         let url = URL(string: fields[2]),
         ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
         url.host != nil, var draft = configuration, let configurationPath
       else {
-        await terminal.line("Usage: /provider add ID BASE_URL [--api-key-file PATH]")
+        await terminal.line(
+          "Usage: /provider add ID BASE_URL [--kind systemone] [--api-key-file PATH]")
         return
       }
       guard !draft.providers.contains(where: { $0.id == fields[1] }) else {
@@ -5552,8 +5574,8 @@ struct MaiCLI {
         return
       }
       let provider = ConfiguredProvider(
-        id: fields[1], kind: .openAICompatible, baseURL: url,
-        apiKeyFile: fields.count == 5 ? fields[4] : nil)
+        id: fields[1], kind: kind, baseURL: url,
+        apiKeyFile: keyFile)
       do {
         let instance = try await plugins.makeProvider(
           from: provider, environment: ProcessInfo.processInfo.environment)
@@ -7607,6 +7629,25 @@ struct MaiCLI {
         terminal: terminal)
       return
     }
+    if key == "tool.systemone" {
+      guard parts.count > 1 else {
+        await terminal.line("tool.systemone = \(session.profile.useSystemOne)")
+        return
+      }
+      guard parts.count == 2, let enabled = booleanSetting(parts[1]) else {
+        await terminal.line("Usage: /set tool.systemone <true|false>")
+        return
+      }
+      session.profile.useSystemOne = enabled
+      session.touch()
+      if configuration != nil, configurationPath != nil {
+        _ = await persistAgentProfile(
+          session: session, configuration: &configuration,
+          configurationPath: configurationPath, runtime: runtime, terminal: terminal)
+      }
+      await terminal.line("tool.systemone = \(enabled)")
+      return
+    }
     if toolProxyKeys.contains(key) {
       await setToolProxy(
         parts: parts,
@@ -7648,7 +7689,7 @@ struct MaiCLI {
         || levelKeys.contains(key) || textKeys.contains(key)
     else {
       await terminal.line(
-        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, effort, yolo, delegation, tool.calling, tool.proxy, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.strategy, ui.title, ui.editor, ui.bgline, ui.fgcolor, ui.bgcolor, ui.fgprompt, ui.bgprompt, ui.fgtoolresult, ui.bold, ui.markdown, ui.toolResultLines, ui.subagents, ui.broadcast, use.agentsmd, use.plan"
+        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, effort, yolo, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.strategy, ui.title, ui.editor, ui.bgline, ui.fgcolor, ui.bgcolor, ui.fgprompt, ui.bgprompt, ui.fgtoolresult, ui.bold, ui.markdown, ui.toolResultLines, ui.subagents, ui.broadcast, use.agentsmd, use.plan"
       )
       return
     }
@@ -7782,6 +7823,7 @@ struct MaiCLI {
   private static func listToolSettings(_ profile: SessionProfile, terminal: TerminalWriter) async {
     await terminal.line("tool.calling = \(profile.toolCallingStrategy.rawValue)")
     await terminal.line("tool.proxy = \(toolProxySetting(profile))")
+    await terminal.line("tool.systemone = \(profile.useSystemOne)")
   }
 
   /// `/set yolo [on|off]`: permits every tool call without asking. The choice
@@ -10300,6 +10342,7 @@ struct MaiCLI {
       "/continue", "/stop",
       "/set tool.", "/set tool.calling automatic", "/set tool.calling native",
       "/set tool.calling text", "/set tool.calling xml", "/set tool.calling json",
+      "/set tool.systemone true", "/set tool.systemone false",
       "/set tool.proxy on", "/set tool.proxy off",
       "/set ui.title ", "/set ui.title none", "/set ui.editor ", "/set ui.editor none",
       "/set ui.bgline rgb:024", "/set ui.bgline none",
@@ -10715,6 +10758,7 @@ struct MaiCLI {
       /set debugfile <PATH|default> Save debug logs at PATH; default uses .pmai/debug.jsonl
       /set tool.                   List the tool calling settings
       /set tool.calling MODE       Use automatic/native tools, or text/XML/JSON emulation
+      /set tool.systemone BOOL     Route tools via the System One /model-tool provider (default false)
       /set tool.proxy BOOL         Show models only the shared list-tools and call-tool pair (on/off)
       /set delegation MODE         off: runs every tool itself; subagent: may also hand work to a child
       /set limits.                 List the tool, turn, and subagent limits
