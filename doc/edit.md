@@ -38,6 +38,7 @@ so syntax highlighting and JSON checking work without configuration.
 | `/edit prompt compact` | The generated compact agent's system prompt (formerly `task-compact`). | Immediately. |
 | `/edit prompt tool` | The generated tool agent's system prompt (formerly `task-tool`). | Immediately. |
 | `/edit memory` | This project's durable notes (`.pmai/memory.md`). Same as `/memory edit`. | Immediately. |
+| `/edit soul` | Your global core personality (`~/.pmai/SOUL.md`); creates the file and its directory if needed. | On the next model request. |
 | `/edit memory-prompt` | The template `/memory learn` sends to the model. | Immediately. |
 | `/edit delegation` | The brief a child agent receives when started. | Immediately. |
 | `/edit worker` | The instructions of the derived worker agent. | Immediately. |

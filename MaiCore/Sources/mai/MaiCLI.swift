@@ -3714,8 +3714,6 @@ struct MaiCLI {
         recapPrompt: configuration?.prompts?.recap,
         chatProcess: chatProcess,
         terminal: terminal)
-    case "/edit soul":
-      await handleEditSoulCommand(terminal: terminal)
     case "/edit":
       await handleEditCommand(
         argument,
@@ -5104,6 +5102,9 @@ struct MaiCLI {
       ? "smart" : fields[0].lowercased()
 
     switch action {
+    case "soul":
+      await handleEditSoulCommand(terminal: terminal)
+
     case "system":
       await editSystemPrompt(
         named: actionArgument.isEmpty
@@ -10521,7 +10522,7 @@ struct MaiCLI {
       "/mcp add ", "/mcp enable ", "/mcp disable ",
       "/edit prompt", "/edit compact", "/edit config", "/edit mcps", "/edit provider",
       "/edit prompt recap", "/edit smart", "/edit prompt smart",
-      "/edit input",
+      "/edit input", "/edit soul",
       "/chat compact ", "/chat recap",
       "/image tiny ", "/image small ", "/image medium ", "/image big ", "/image full ",
       "/image ocr ", "/attach ", "/attach source ", "/attach markdown ", "/attach copy ",
@@ -11283,15 +11284,17 @@ struct MaiCLI {
   private static func handleEditSoulCommand(terminal: TerminalWriter) async {
     let soulPath = AgentHome.expandUserPath("~/.pmai/SOUL.md")
     let url = URL(fileURLWithPath: soulPath)
-    
-    let previous = (try? String(contentsOf: url)) ?? ""
-    
+
+    let previous = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+
     guard
       let edited = await editTemporaryText(
         previous, suffix: "soul.md", terminal: terminal)
     else { return }
-    
+
     do {
+      try FileManager.default.createDirectory(
+        at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
       try edited.write(to: url, atomically: true, encoding: .utf8)
       await terminal.line("Soul saved to \(soulPath).")
     } catch {
