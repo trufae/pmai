@@ -24,6 +24,11 @@ overrides, and invalid input without changing your configuration:
 
     python3 test/repl-theme-smoke.py MaiCore/.build/debug/pmai
 
+The color smoke test uses a local mock provider and a PTY to check tool and diff
+colors, diagnostics, live updates, TAB selection, and color-disabled output:
+
+    python3 test/repl-colors-smoke.py MaiCore/.build/debug/pmai
+
 The recap integration smoke test uses a local mock provider and isolated chat
 state to check model routing, prompt edits, and history preservation:
 

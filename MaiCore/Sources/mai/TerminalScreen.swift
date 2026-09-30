@@ -394,7 +394,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     let colors = ProcessInfo.processInfo.environment["NO_COLOR"] == nil
     for (index, line) in thinkingRows.enumerated() {
       out += move(row: regionBottom + index + 1, column: 1) + Self.clearLine
-      if colors { out += "\u{1B}[3;38;5;\(244 + index * 3)m" }
+      if colors {
+        let code = TerminalLineEditor.foregroundColorCode(ui.thinkingForeground)
+        out += "\u{1B}[3" + (code.map { ";" + $0 } ?? "") + "m"
+      }
       out += Self.truncated(line, width: width) + Self.reset
     }
     write(out)
@@ -419,7 +422,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     out += move(row: regionBottom + thinkingRows.count + 1, column: 1)
     if clear { out += Self.clearLine }
     if let menu = completionMenu {
-      out += Self.completionMenuRow(menu, width: width, colors: colors)
+      out += completionMenuRow(menu, width: width, colors: colors)
     } else if let background = TerminalLineEditor.backgroundColorCode(ui.backgroundLine) {
       out += "\u{1B}[\(background)m" + content + padding + Self.reset
     } else {
@@ -433,18 +436,24 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   /// already carries — so the repeated common part is not listed once per
   /// match. The selected option gets a background of its own, or plain reverse
   /// video when colors are off.
-  private static func completionMenuRow(_ menu: CompletionMenu, width: Int, colors: Bool) -> String {
+  private func completionMenuRow(_ menu: CompletionMenu, width: Int, colors: Bool) -> String
+  {
     let separator = "  "
     let marker = "\u{1B}[7m"  // reverse video, always available
-    let selectionBackground = colors ? TerminalLineEditor.backgroundColorCode("blue") : nil
+    let selectionCodes = colors ? [
+      TerminalLineEditor.foregroundColorCode(ui.selectionForeground),
+      TerminalLineEditor.backgroundColorCode(ui.selectionBackground),
+    ].compactMap { $0 } : []
+    let selection = selectionCodes.isEmpty
+      ? marker : "\u{1B}[" + selectionCodes.joined(separator: ";") + "m"
     let labels = menu.options.map { option in
       option.isEmpty ? "↵" : option.components(separatedBy: .controlCharacters).joined(separator: " ")
     }
     guard labels.indices.contains(menu.selected) else { return "" }
     var first = menu.selected
-    var needed = min(width, displayWidth(labels[first]))
+    var needed = min(width, Self.displayWidth(labels[first]))
     while first > 0 {
-      let extra = displayWidth(labels[first - 1]) + separator.count
+      let extra = Self.displayWidth(labels[first - 1]) + separator.count
       guard needed + extra <= width else { break }
       first -= 1
       needed += extra
@@ -460,16 +469,15 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       let room = max(0, width - used)
       guard room > 0 else { break }
       let label = labels[index]
-      let shown = displayWidth(label) > room
+      let shown =
+        Self.displayWidth(label) > room
         ? TerminalScreen.truncated(label, width: room) : label
       guard !shown.isEmpty else { break }
-      // The highlighted option gets a background of its own — blue behind
-      // white text — or reverse video where colors are unavailable.
       if index == menu.selected {
-        out += selectionBackground.map { "\u{1B}[\($0)m\u{1B}[97m" } ?? marker
+        out += selection
       }
       out += shown + Self.reset
-      used += displayWidth(shown)
+      used += Self.displayWidth(shown)
     }
     let pad = String(repeating: " ", count: max(0, width - used))
     return out + pad

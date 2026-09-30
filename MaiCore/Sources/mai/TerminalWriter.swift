@@ -36,9 +36,8 @@ actor TerminalWriter {
   private var markdown: MarkdownTerminalRenderer?
   private var outputEndedLine = true
   private var toolResultLines = ConfiguredTerminalUI().toolResultLines
-  private var toolResultColor = ConfiguredTerminalUI().toolResultForeground
+  private var ui = ConfiguredTerminalUI()
   private var subagentOutput = ConfiguredTerminalUI().subagentOutput
-  private var promptColor = ConfiguredTerminalUI().promptForeground
   /// Last requested title. A first empty value leaves the shell's title alone.
   private var terminalTitle: String?
   private let colorsStatus: Bool
@@ -64,7 +63,8 @@ actor TerminalWriter {
 
   init(capturesOutput: Bool = false) {
     self.capturesOutput = capturesOutput
-    let noColor = ProcessInfo.processInfo.environment["NO_COLOR"] != nil
+    let environment = ProcessInfo.processInfo.environment
+    let noColor = environment["NO_COLOR"] != nil || environment["TERM"] == "dumb"
     colorsStatus = !capturesOutput && isatty(STDERR_FILENO) != 0 && !noColor
     terminalOutput = !capturesOutput && isatty(STDOUT_FILENO) != 0
     colorsOutput = terminalOutput && !noColor
@@ -102,8 +102,8 @@ actor TerminalWriter {
     toolResultLines = display
   }
 
-  func configureToolResultColor(_ color: String) {
-    toolResultColor = color
+  func configureColors(_ ui: ConfiguredTerminalUI) {
+    self.ui = ui
   }
 
   func configureSubagentOutput(_ level: SubagentOutputLevel) {
@@ -113,10 +113,6 @@ actor TerminalWriter {
   func configureThinking(_ mode: ThinkingDisplay) {
     finishThinking()
     thinkingDisplay = mode
-  }
-
-  func configurePromptColor(_ color: String) {
-    promptColor = color
   }
 
   /// Sets the terminal/tab title with OSC 0. Control characters are removed
@@ -176,34 +172,34 @@ actor TerminalWriter {
     case .toolStarted(let context, let call) where context.depth == 0:
       finishReply()
       closeRootLine()
-      status(ToolCallPreview.render(call), color: "green")
+      status(ToolCallPreview.render(call), color: ui.toolCallForeground)
     case .toolFinished(let context, let result) where context.depth == 0:
       status(
         ToolResultPreview.render(result, display: toolResultLines),
-        color: result.isError ? "red" : toolResultColor)
+        color: result.isError ? ui.errorForeground : ui.toolResultForeground, diff: true)
     case .userMessage(let context, let message) where context.depth == 0:
       finishReply()
       closeRootLine()
-      status("⇐ you: \(message.text)", color: promptColor)
+      status("⇐ you: \(message.text)", color: ui.promptForeground)
     case .transcriptEdited(let context, let report) where context.depth == 0:
       finishReply()
       closeRootLine()
-      status("✂ context: \(report.summary)", color: "magenta")
+      status("✂ context: \(report.summary)", color: ui.infoForeground)
     case .compactionStarted(let context, let estimated) where context.depth == 0:
       finishReply()
       closeRootLine()
       status(
         "✂ context: \(ModelUsageFormat.tokens(estimated, estimated: true)), compacting…",
-        color: "magenta")
+        color: ui.infoForeground)
     case .compactionFailed(let context, let message) where context.depth == 0:
-      status("✂ context: compaction failed: \(message)", color: "red")
+      status("✂ context: compaction failed: \(message)", color: ui.errorForeground)
     case .retrying(let context, let attempt, let limit, let delay, let error)
     where context.depth == 0:
       finishReply()
       closeRootLine()
       status(
         "↻ retry \(attempt)/\(limit) in \(ModelUsageFormat.duration(delay)): \(error)",
-        color: "yellow")
+        color: ui.warningForeground)
     case .finished(let context, let result) where context.depth == 0:
       finishThinking()
       if wroteRootDelta {
@@ -267,7 +263,7 @@ actor TerminalWriter {
       flushChildText(pid)
       childToolCalls[pid, default: 0] += 1
       guard subagentOutput == .all || subagentOutput == .tools else { return }
-      childBlock(pid, ToolCallPreview.render(call), color: "green")
+      childBlock(pid, ToolCallPreview.render(call), color: ui.toolCallForeground)
     case .toolFinished(let context, let result):
       guard let pid = context.pid, subagentOutput == .all || subagentOutput == .tools else {
         return
@@ -275,41 +271,41 @@ actor TerminalWriter {
       childBlock(
         pid,
         ToolResultPreview.render(result, display: toolResultLines),
-        color: result.isError ? "red" : toolResultColor)
+        color: result.isError ? ui.errorForeground : ui.toolResultForeground, diff: true)
     case .userMessage(let context, let message):
       guard let pid = context.pid else { return }
       flushChildText(pid)
       guard subagentOutput != .none else { return }
-      childBlock(pid, "⇐ you: \(message.text)", color: promptColor)
+      childBlock(pid, "⇐ you: \(message.text)", color: ui.promptForeground)
     case .transcriptEdited(let context, let report):
       guard let pid = context.pid else { return }
       flushChildText(pid)
       guard subagentOutput != .none else { return }
-      childBlock(pid, "✂ context: \(report.summary)", color: "magenta")
+      childBlock(pid, "✂ context: \(report.summary)", color: ui.infoForeground)
     case .compactionStarted(let context, let estimated):
       guard let pid = context.pid else { return }
       flushChildText(pid)
       guard subagentOutput != .none else { return }
       childBlock(
         pid, "✂ context: \(ModelUsageFormat.tokens(estimated, estimated: true)), compacting…",
-        color: "magenta")
+        color: ui.infoForeground)
     case .compactionFailed(let context, let message):
       guard let pid = context.pid, subagentOutput != .none else { return }
-      childBlock(pid, "✂ context: compaction failed: \(message)", color: "red")
+      childBlock(pid, "✂ context: compaction failed: \(message)", color: ui.errorForeground)
     case .retrying(let context, let attempt, let limit, let delay, let error):
       guard let pid = context.pid else { return }
       flushChildText(pid)
       guard subagentOutput != .none else { return }
       childBlock(
         pid, "↻ retry \(attempt)/\(limit) in \(ModelUsageFormat.duration(delay)): \(error)",
-        color: "yellow")
+        color: ui.warningForeground)
     case .finished(let context, let result):
       guard let pid = context.pid else { return }
       flushChildText(pid)
       childrenEnded.insert(pid)
       guard subagentOutput != .none else { return }
       if let interruption = result.interruption {
-        childBlock(pid, "↲ stopped: \(interruption.summary)", color: "red")
+        childBlock(pid, "↲ stopped: \(interruption.summary)", color: ui.errorForeground)
         return
       }
       var facts: [String] = []
@@ -338,7 +334,7 @@ actor TerminalWriter {
     flushChildText(info.pid)
     guard subagentOutput != .none else { return }
     let reason = info.failure.map { ": \($0)" } ?? ""
-    childBlock(info.pid, "✗ \(info.state.shortLabel)\(reason)", color: "red")
+    childBlock(info.pid, "✗ \(info.state.shortLabel)\(reason)", color: ui.errorForeground)
   }
 
   /// Prints what a tool call is waiting on, for the person to answer at the
@@ -354,33 +350,57 @@ actor TerminalWriter {
       ? arguments: \(request.call.arguments.compactJSONString)
       ? answer y (yes) · a (always) · n (no) · e (edit arguments) · c (cancel run); anything else is a normal message
       """,
-      color: "yellow")
+      color: ui.warningForeground)
   }
 
   func recoverAfterError(_ message: String) {
     finishReply()
     closeRootLine()
-    status("error: \(message)")
+    status("error: \(message)", color: ui.errorForeground)
   }
 
   func recoverAfterCancellation() {
     finishReply()
     closeRootLine()
-    status("cancelled")
+    status("cancelled", color: ui.warningForeground)
   }
 
   func prompt(_ value: String) { write(value) }
 
-  /// A one-line remark between replies, styled like tool status lines unless
-  /// a color is given.
-  func note(_ value: String, color: String? = nil) { status(value, color: color) }
+  enum Tone {
+    case error, warning, success, info
+  }
+
+  func note(_ value: String, tone: Tone? = nil) {
+    let color: String?
+    switch tone {
+    case .error: color = ui.errorForeground
+    case .warning: color = ui.warningForeground
+    case .success: color = ui.successForeground
+    case .info: color = ui.infoForeground
+    case nil: color = nil
+    }
+    status(value, color: color)
+  }
 
   func line(_ value: String = "", to handle: FileHandle = .standardOutput) {
     if capturesOutput {
       captured.append(value + "\n")
       return
     }
-    emit(value + "\n", to: handle)
+    // CLI diagnostics consistently use these prefixes on stderr. Keep stdout
+    // (including quoted tool/assistant text) untouched.
+    var output = value
+    if handle === FileHandle.standardError, colorsStatus {
+      let color =
+        value.hasPrefix("error:")
+        ? ui.errorForeground
+        : value.hasPrefix("warning:") ? ui.warningForeground : ""
+      output = value.components(separatedBy: "\n").map {
+        Self.styled($0, foreground: color)
+      }.joined(separator: "\n")
+    }
+    emit(output + "\n", to: handle)
     if handle === FileHandle.standardOutput { outputEndedLine = true }
   }
 
@@ -395,7 +415,7 @@ actor TerminalWriter {
         ? "Thinking…"
         : ThinkingPreview.lines(text, count: thinkingDisplay.lineCount, width: 70).joined(
           separator: "\n")
-    childBlock(pid, visible, color: "grey", italic: true)
+    childBlock(pid, visible, color: ui.thinkingForeground, italic: true)
   }
 
   private func flushChildText(_ pid: AgentPID) {
@@ -415,11 +435,13 @@ actor TerminalWriter {
 
   /// One block from one child: every line carries the pid, and the whole
   /// block is written in one go so nothing else lands in the middle of it.
-  private func childBlock(_ pid: AgentPID, _ text: String, color: String? = nil, italic: Bool = false) {
+  private func childBlock(
+    _ pid: AgentPID, _ text: String, color: String? = nil, italic: Bool = false, diff: Bool = false
+  ) {
     finishReply()
     closeRootLine()
     let prefix = childPrefix(pid)
-    let body = styledLines(text, color: color).map { line in
+    let body = styledLines(text, color: color, diff: diff).map { line in
       prefix + (italic && colorsStatus ? "\u{1B}[3m\(line)\u{1B}[23m" : line)
     }.joined(separator: "\n")
     emitStatus(body)
@@ -460,7 +482,7 @@ actor TerminalWriter {
       thinkingPreview = ThinkingPreview()
       lastThinkingDraw = .distantPast
       if thinkingDisplay != .full && screen == nil {
-        status("Thinking…", color: "grey")
+        status("Thinking…", color: ui.thinkingForeground)
       }
     }
     if thinkingDisplay == .full {
@@ -468,7 +490,8 @@ actor TerminalWriter {
         $0 == "\n" || $0 == "\t" || !CharacterSet.controlCharacters.contains($0)
       }
       let text = String(String.UnicodeScalarView(safe))
-      write(colorsOutput ? "\u{1B}[3;38;5;248m\(text)\u{1B}[0m" : text)
+      write(
+        colorsOutput ? Self.styled(text, foreground: ui.thinkingForeground, italic: true) : text)
       outputEndedLine = text.hasSuffix("\n")
     } else {
       thinkingPreview.append(delta)
@@ -512,12 +535,12 @@ actor TerminalWriter {
     }
   }
 
-  private func status(_ value: String, color: String? = nil) {
+  private func status(_ value: String, color: String? = nil, diff: Bool = false) {
     if capturesOutput {
       captured.append(value + "\n")
       return
     }
-    emitStatus(styledLines(value, color: color).joined(separator: "\n"))
+    emitStatus(styledLines(value, color: color, diff: diff).joined(separator: "\n"))
   }
 
   private func emitStatus(_ styled: String) {
@@ -528,28 +551,49 @@ actor TerminalWriter {
     emit(styled + "\n", to: .standardError)
   }
 
-  /// Colours a status text line by line: unified diffs get their own tint,
-  /// everything else the requested colour.
-  private func styledLines(_ value: String, color: String?) -> [String] {
+  private static func styled(
+    _ text: String, foreground: String?, background: String? = nil, italic: Bool = false
+  ) -> String {
+    var codes = [
+      foreground.flatMap(TerminalLineEditor.foregroundColorCode),
+      background.flatMap(TerminalLineEditor.backgroundColorCode),
+    ].compactMap { $0 }
+    if italic { codes.insert("3", at: 0) }
+    guard !codes.isEmpty else { return text }
+    return "\u{1B}[\(codes.joined(separator: ";"))m\(text)\u{1B}[0m"
+  }
+
+  /// Tool previews add a two-character prefix. Remove only that prefix when
+  /// inspecting a diff, preserving its context marker and source indentation.
+  private func styledLines(_ value: String, color: String?, diff: Bool) -> [String] {
     let lines = value.components(separatedBy: "\n")
     guard colorsStatus else { return lines }
-    let hasUnifiedDiff = lines.indices.dropLast().contains { index in
-      let line = lines[index].drop(while: { $0.isWhitespace })
-      let next = lines[index + 1].drop(while: { $0.isWhitespace })
-      return line.hasPrefix("--- ") && next.hasPrefix("+++ ")
-    }
-    return lines.map { line in
-      let marker = line.drop(while: { $0.isWhitespace })
-      if hasUnifiedDiff, marker.hasPrefix("-") && !marker.hasPrefix("--- ") {
-        return "\u{1B}[38;2;255;217;221;48;2;66;31;36m\(line)\u{1B}[0m"
+    let content = diff ? lines.map { String($0.dropFirst(2)) } : lines
+    let hasUnifiedDiff =
+      diff
+      && content.indices.dropLast().contains { index in
+        content[index].hasPrefix("--- ") && content[index + 1].hasPrefix("+++ ")
       }
-      if hasUnifiedDiff, marker.hasPrefix("+") && !marker.hasPrefix("+++ ") {
-        return "\u{1B}[38;2;217;247;227;48;2;22;58;36m\(line)\u{1B}[0m"
+    return lines.indices.map { index in
+      let line = lines[index]
+      let marker = content[index]
+      if hasUnifiedDiff {
+        if marker.hasPrefix("--- ") || marker.hasPrefix("+++ ")
+          || marker.hasPrefix("@@ ") || marker.hasPrefix("diff --git ")
+          || marker.hasPrefix("index ")
+        {
+          return Self.styled(line, foreground: ui.diffHeaderForeground)
+        }
+        if marker.hasPrefix("-") {
+          return Self.styled(
+            line, foreground: ui.diffRemovedForeground, background: ui.diffRemovedBackground)
+        }
+        if marker.hasPrefix("+") {
+          return Self.styled(
+            line, foreground: ui.diffAddedForeground, background: ui.diffAddedBackground)
+        }
       }
-      guard let color, let code = TerminalLineEditor.foregroundColorCode(color) else {
-        return line
-      }
-      return "\u{1B}[\(code)m\(line)\u{1B}[0m"
+      return Self.styled(line, foreground: color)
     }
   }
 

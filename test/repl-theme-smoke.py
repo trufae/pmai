@@ -40,16 +40,24 @@ def main():
             return json.loads(config.read_text())['ui']
 
         output = run('/theme', '/help theme')
-        assert 'default\nember\nlight\nslime\n' in output, output
+        assert 'default\nember\nlight\norange\npink\nsky\nslime\n' in output, output
         assert 'PMAI_THEME=NAME' in output, output
         assert not themes.exists(), 'listing must not install built-in theme files'
 
         run('/theme use default')
         original = ui()
-        for name in ('slime', 'light', 'ember'):
+        colors = ('fgtoolcall', 'fgerror', 'fgwarning', 'fgsuccess', 'fginfo', 'fgthinking',
+                  'fgdiffadd', 'bgdiffadd', 'fgdiffdel', 'bgdiffdel', 'fgdiffheader',
+                  'fgselection', 'bgselection')
+        listing = run('/set ui.', '/help set')
+        for key in colors:
+            assert f'ui.{key} = {original[key]}' in listing, listing
+            assert f'/set ui.{key} COLOR' in listing, listing
+        for name in ('slime', 'light', 'ember', 'pink', 'orange', 'sky'):
             output = run(f'/theme use {name}')
             assert f"Applied theme '{name}'." in output, output
             assert ui() != original
+            assert all(ui()[key] != original[key] for key in colors), ui()
             for key in ('title', 'markdown', 'toolResultLines'):
                 assert ui()[key] == original[key], ui()
             run('/theme use default')
@@ -58,8 +66,10 @@ def main():
         run('/theme use light', '/theme save mine')
         light = ui()
         saved = (themes / 'mine').read_text()
-        assert len(saved.splitlines()) == 7 and '/set ui.bold off' in saved, saved
+        assert len(saved.splitlines()) == 20 and '/set ui.bold off' in saved, saved
         assert 'ui.title' not in saved
+        for key in colors:
+            assert f'/set ui.{key} {light[key]}' in saved, saved
         run('/theme use slime', '/theme use mine')
         assert ui() == light, 'saved themes must round-trip'
         assert 'mine' in run('/theme list').splitlines()
@@ -80,9 +90,19 @@ def main():
         (themes / 'slime').write_text('/set ui.fgcolor blue\n')
         assert 'ui.fgcolor = blue' in run('/set ui.fgcolor', theme='slime')
 
+        for key in colors:
+            run(f'/set ui.{key} #123456')
+            assert ui()[key] == '#123456', ui()
+            run(f'/set ui.{key} none')
+            assert ui()[key] == '', ui()
+        run('/theme save plain')
+        run('/theme use sky', '/theme use plain')
+        assert all(ui()[key] == '' for key in colors), ui()
+
         before = config.read_bytes()
         for invalid in ('/set ui.bgline bad-color', '/set ui.bold maybe',
-                        '/set ui.broadcast on', '!touch forbidden', '/set ui.fgcolor'):
+                        '/set ui.broadcast on', '!touch forbidden', '/set ui.fgcolor',
+                        '/set ui.fgerror bad-color', '/set ui.bgdiffadd bad-color'):
             (themes / 'broken').write_text('/set ui.fgcolor red\n' + invalid + '\n')
             output = run('/theme use broken', '/set ui.fgcolor')
             assert "Theme 'broken', line 2:" in output, output

@@ -1281,6 +1281,7 @@ struct MaiCLI {
       todoState.focus(project: project)
       skillState.focus(project: project)
       let terminal = TerminalWriter()
+      await terminal.configureColors(configuration?.ui ?? .init())
       await runtime.configureMemory(memoryState.promptSection)
       await runtime.configureProjectInstructions(
         projectInstructionsSection(configuration, terminal: terminal))
@@ -1311,12 +1312,9 @@ struct MaiCLI {
       await terminal.configureThinking(configuration?.ui.thinking ?? .status)
       await terminal.configureToolResultLines(
         configuration?.ui.toolResultLines ?? ConfiguredTerminalUI().toolResultLines)
-      await terminal.configureToolResultColor(
-        configuration?.ui.toolResultForeground ?? ConfiguredTerminalUI().toolResultForeground)
+      await terminal.configureColors(configuration?.ui ?? .init())
       await terminal.configureSubagentOutput(
         configuration?.ui.subagentOutput ?? ConfiguredTerminalUI().subagentOutput)
-      await terminal.configurePromptColor(
-        configuration?.ui.promptForeground ?? ConfiguredTerminalUI().promptForeground)
       configureEditor(configuration?.ui.editor ?? "")
 
       if let mode = options.serve {
@@ -1993,9 +1991,8 @@ struct MaiCLI {
       screen?.configure(ui: ui)
       await terminal.configureThinking(ui.thinking)
       await terminal.configureToolResultLines(ui.toolResultLines)
-      await terminal.configureToolResultColor(ui.toolResultForeground)
+      await terminal.configureColors(ui)
       await terminal.configureSubagentOutput(ui.subagentOutput)
-      await terminal.configurePromptColor(ui.promptForeground)
       await terminal.configureTerminalTitle(ui.title)
       configureEditor(ui.editor)
       visual.memory.focus(project: project, chatID: session.id)
@@ -2980,7 +2977,7 @@ struct MaiCLI {
             let changesInput =
               name == "/theme" || name == "/set"
               && argument.split(whereSeparator: \.isWhitespace).first?.lowercased()
-                == "ui.broadcast"
+                .hasPrefix("ui.") == true
             let commandText = text
             let command = await runForeground(name, resumeInput: !changesInput) {
               await runCommand(
@@ -3120,10 +3117,10 @@ struct MaiCLI {
             took += " · its chat was closed; /agents log \(turn.pid.rawValue) shows the reply"
           }
           if let paused {
-            await terminal.note("⏸ \(took) · \(paused.summary)", color: "yellow")
+            await terminal.note("⏸ \(took) · \(paused.summary)", tone: .warning)
           } else {
             await terminal.note(
-              succeeded ? "✓ \(took)" : "✗ \(took)", color: succeeded ? "cyan" : "red")
+              succeeded ? "✓ \(took)" : "✗ \(took)", tone: succeeded ? .success : .error)
           }
         }
         if let turn, turn.chatID != nil {
@@ -3156,7 +3153,7 @@ struct MaiCLI {
             if paused.isCheckpoint, await visual.approvalHandler.permitsUnattendedExecution() {
               await terminal.note(
                 "continuing: yolo is on, so a spent turn budget does not stop the task (/set tool.aproval ask to be asked)",
-                color: "yellow")
+                tone: .warning)
               await continueTurn()
             } else {
               await terminal.note(
@@ -3205,7 +3202,8 @@ struct MaiCLI {
         } else {
           loop.compactions.append((request, reply))
           await terminal.note(
-            "Context limit for \(request.run.agentID): about \(request.estimatedTokens) tokens (threshold \(request.threshold)).", color: "yellow")
+            "Context limit for \(request.run.agentID): about \(request.estimatedTokens) tokens (threshold \(request.threshold)).",
+            tone: .warning)
           if let pruning = request.pruning {
             await terminal.line("Pruning preview: \(pruning.summary). Keeps the start and end of each output; the middle is dropped.")
           }
@@ -3366,7 +3364,7 @@ struct MaiCLI {
       if let interruption = result.interruption {
         await terminal.note(
           "⏸ \(interruption.summary) · send another message to continue, or raise \(interruption.settingKey)",
-          color: "yellow")
+          tone: .warning)
       }
       return true
     } catch {
@@ -7002,18 +7000,22 @@ struct MaiCLI {
     case "show":
       let count = group.toolNames.count
       let enabled = isToolGroupEnabled(group, profile: session.profile)
-      // Names in the bold cyan of headings, traits yellow, parameter names
-      // green with their type dim, so the eye can jump from tool to tool and
-      // the descriptions read as prose in between.
+      let ui = configuration?.ui ?? .init()
+      let heading = TerminalLineEditor.foregroundColorCode(ui.infoForeground)
+      let tool = TerminalLineEditor.foregroundColorCode(ui.toolCallForeground)
+      let warning = TerminalLineEditor.foregroundColorCode(ui.warningForeground)
+      let error = TerminalLineEditor.foregroundColorCode(ui.errorForeground)
+      let success = TerminalLineEditor.foregroundColorCode(ui.successForeground)
       let colors = await terminal.paintsOutput
       func paint(_ text: String, _ code: String?) -> String {
         guard colors, let code else { return text }
         return "\u{1B}[\(code)m\(text)\u{1B}[0m"
       }
       await terminal.line(
-        paint(group.displayName, "1;36") + " " + paint("(\(group.catalogID))", "2")
+        paint(group.displayName, heading.map { "1;" + $0 } ?? "1") + " "
+          + paint("(\(group.catalogID))", "2")
           + ": \(count) tool\(count == 1 ? "" : "s"), "
-          + paint(enabled ? "enabled" : "disabled", enabled ? "32" : "31")
+          + paint(enabled ? "enabled" : "disabled", enabled ? success : error)
           + " for agent \(session.profile.agentID)")
       // The agent family is synthesized per run rather than registered, so
       // its help comes from the definitions the model would see.
@@ -7024,13 +7026,13 @@ struct MaiCLI {
       }
       let helpLines = ToolGroupHelp.lines(for: group, tools: tools) { text, style in
         switch style {
-        case .group: return paint(text, "36")
-        case .tool: return paint(text, "1;36")
-        case .trait: return paint(text, "33")
+        case .group: return paint(text, heading)
+        case .tool: return paint(text, heading.map { "1;" + $0 } ?? "1")
+        case .trait: return paint(text, warning)
         case .description, .parameterDetail: return text
-        case .parameter: return paint(text, "32")
+        case .parameter: return paint(text, tool)
         case .parameterType, .note: return paint(text, "2")
-        case .missing: return paint(text, "31")
+        case .missing: return paint(text, error)
         }
       }
       for line in helpLines {
@@ -7040,12 +7042,12 @@ struct MaiCLI {
       let options = configuredOptions(for: group, configuration: configuration)
       await terminal.line("")
       await terminal.line(
-        paint("Settings", "1;36")
+        paint("Settings", heading.map { "1;" + $0 } ?? "1")
           + paint(", changed with /tools set \(group.id) OPTION VALUE:", "2"))
       for option in group.options {
         let value = options[option.id] ?? option.defaultValue
         var line =
-          "  " + paint(option.id, "32") + " = "
+          "  " + paint(option.id, tool) + " = "
           + paint(displayedOption(value, kind: option.kind), "1")
           + "  " + paint("\(option.label).", "2")
         if let help = option.help?.trimmingCharacters(in: .whitespacesAndNewlines), !help.isEmpty {
@@ -7543,8 +7545,7 @@ struct MaiCLI {
         draft.ui = try TerminalTheme.load(parts[1], directory: directory, ui: draft.ui)
         try draft.save(to: URL(fileURLWithPath: configurationPath))
         configuration = draft
-        await terminal.configureToolResultColor(draft.ui.toolResultForeground)
-        await terminal.configurePromptColor(draft.ui.promptForeground)
+        await terminal.configureColors(draft.ui)
         await terminal.line("Applied theme '\(parts[1])'.")
       }
     } catch {
@@ -7790,7 +7791,7 @@ struct MaiCLI {
         || levelKeys.contains(key) || textKeys.contains(key)
     else {
       await terminal.line(
-        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, effort, tool.aproval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.context, ctx.strategy, ui.title, ui.editor, ui.bgline, ui.fgcolor, ui.bgcolor, ui.fgprompt, ui.bgprompt, ui.fgtoolresult, ui.bold, ui.markdown, ui.toolResultLines, ui.subagents, ui.broadcast, use.agentsmd, use.plan"
+        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, effort, tool.aproval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.context, ctx.strategy, \((textKeys + themeKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), use.agentsmd, use.plan"
       )
       return
     }
@@ -7853,7 +7854,7 @@ struct MaiCLI {
       do {
         try TerminalTheme.set(key, value: parts[1], in: &ui)
       } catch {
-        await terminal.line(error.localizedDescription)
+        await terminal.line("error: \(error.localizedDescription)", to: .standardError)
         return
       }
     }
@@ -7865,7 +7866,7 @@ struct MaiCLI {
     do {
       try draft.save(to: URL(fileURLWithPath: configurationPath))
       configuration = draft
-      await terminal.configureToolResultColor(ui.toolResultForeground)
+      await terminal.configureColors(ui)
       if key == "ui.title" { await terminal.configureTerminalTitle(ui.title) }
       if key == "ui.editor" { configureEditor(ui.editor) }
       await terminal.line("Set \(displayedKey) = \(uiSetting(key, in: ui)).")
@@ -8495,17 +8496,21 @@ struct MaiCLI {
   }
 
   private static func listUISettings(_ ui: ConfiguredTerminalUI, terminal: TerminalWriter) async {
-    for key in [
-      "ui.title", "ui.editor", "ui.bgline", "ui.fgcolor", "ui.bgcolor", "ui.fgprompt",
-      "ui.bgprompt", "ui.bold",
-      "ui.fgtoolresult", "ui.markdown", "ui.toolResultLines", "ui.subagents", "ui.thinking",
-      "ui.broadcast",
-    ] {
+    let keys =
+      ["ui.title", "ui.editor"] + TerminalTheme.colors.map(\.0) + [
+        "ui.bold", "ui.markdown", "ui.toolResultLines", "ui.subagents", "ui.thinking",
+        "ui.broadcast",
+      ]
+    for key in keys {
       await terminal.line("\(key) = \(uiSetting(key, in: ui))")
     }
   }
 
   private static func uiSetting(_ key: String, in ui: ConfiguredTerminalUI) -> String {
+    if let (_, path) = TerminalTheme.colors.first(where: { $0.0 == key.lowercased() }) {
+      let value = ui[keyPath: path]
+      return value.isEmpty ? "none" : value
+    }
     let value: String
     switch key.lowercased() {
     case "ui.title": value = visibleUITitle(ui.title)
@@ -8513,12 +8518,6 @@ struct MaiCLI {
     // that actually opens.
     case "ui.editor":
       return ui.editor.isEmpty ? "\(resolvedEditor()) (from the environment)" : ui.editor
-    case "ui.bgline": value = ui.backgroundLine
-    case "ui.fgcolor": value = ui.foreground
-    case "ui.bgcolor": value = ui.background
-    case "ui.fgprompt": value = ui.promptForeground
-    case "ui.bgprompt": value = ui.promptBackground
-    case "ui.fgtoolresult": value = ui.toolResultForeground
     case "ui.bold": return ui.bold ? "on" : "off"
     case "ui.markdown": return ui.markdown ? "on" : "off"
     case "ui.toolresultlines": return ui.toolResultLines.description
@@ -10539,6 +10538,7 @@ struct MaiCLI {
     for tint in AgentProjectTint.presetNames {
       values.append("/project tint \(tint)")
     }
+    values += TerminalTheme.colors.map { "/set \($0.0) " }
     values += TerminalTheme.names(directory: themesDirectory).map { "/theme use \($0)" }
     #if PMAI_HAS_VISUAL
       values.append("/visual")
@@ -10905,7 +10905,8 @@ struct MaiCLI {
     /theme use NAME      Apply and persist a theme's UI settings
     /theme save NAME     Save current colors and bold as a theme (overwrites NAME)
 
-    Built-ins: default (original styling), slime (green), light (white terminals), ember (warm).
+    Built-ins: default, slime (green), light (white terminals), ember (warm),
+    pink, orange, sky (blue).
     PMAI_THEME=NAME selects a theme at startup, overriding configured colors and bold.
     Custom themes live in ~/.pmai/themes/NAME ($PMAI_HOME or --home relocates it)
     and take precedence over built-ins. Each line is /set ui.COLOR VALUE or
@@ -10945,6 +10946,19 @@ struct MaiCLI {
       /set ui.fgprompt COLOR       Set the prompt foreground
       /set ui.bgprompt COLOR       Set the prompt background
       /set ui.fgtoolresult COLOR   Set successful tool-result output color
+      /set ui.fgtoolcall COLOR     Set tool-call preview color
+      /set ui.fgerror COLOR        Set errors and failed tool-result color
+      /set ui.fgwarning COLOR      Set warnings, retries, and approval-request color
+      /set ui.fgsuccess COLOR      Set successful run-status color
+      /set ui.fginfo COLOR         Set context-notice and tool-help heading color
+      /set ui.fgthinking COLOR     Set thinking text color
+      /set ui.fgdiffadd COLOR      Set added diff-line foreground
+      /set ui.bgdiffadd COLOR      Set added diff-line background
+      /set ui.fgdiffdel COLOR      Set removed diff-line foreground
+      /set ui.bgdiffdel COLOR      Set removed diff-line background
+      /set ui.fgdiffheader COLOR   Set diff file and hunk header color
+      /set ui.fgselection COLOR    Set selected TAB-completion foreground
+      /set ui.bgselection COLOR    Set selected TAB-completion background
       /set ui.bold BOOL            Render input in bold (on/off)
       /set ui.markdown BOOL        Render replies as styled markdown (on/off)
       /set ui.toolResultLines <all|relevant|N>  Full results, full edits/errors with 3-line previews otherwise, or first N lines (0 hides them)
@@ -10960,7 +10974,7 @@ struct MaiCLI {
     Debug entries append to the chosen file and may contain prompts and tool output.
     --tool-aproval MODE overrides approval for one run. Projects without a saved choice use approvals.mode from the
     active configuration. Agent and UI settings use the active configuration.
-    COLOR accepts a named ANSI color, rgb:RGB, or none.
+    COLOR accepts a named ANSI color, rgb:RGB, #RRGGBB, or none.
     """
 
   private static let chatHelp = """
@@ -11354,7 +11368,7 @@ struct MaiCLI {
         --config, PMAI_CONFIG, ./pmai.json, ~/.config/pmai/config.json
 
       Terminal theme:
-        PMAI_THEME=default|slime|light|ember or a name in ~/.pmai/themes
+        PMAI_THEME=default|slime|light|ember|pink|orange|sky or a name in ~/.pmai/themes
 
       Ad-hoc provider (overrides the selected agent's):
         PMAI_PROVIDER, PMAI_MODEL, PMAI_BASE_URL, and PMAI_API_KEY, or

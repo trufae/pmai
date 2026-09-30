@@ -453,10 +453,11 @@ tool calls and results, and run events. The setting survives restarts in
 `.pmai/settings.json`. The log is readable only by the current user and can
 contain prompts, tool output, and other private data.
 
-`/theme` (or `/theme list`) lists terminal themes. Four are built in:
+`/theme` (or `/theme list`) lists terminal themes. Seven are built in:
 `default` preserves the original styling, `slime` is green, `light` suits
-white-background terminals, and `ember` uses warm colors. `/theme use slime`
-applies and saves the theme's six UI colors and `ui.bold` together.
+white-background terminals, `ember` uses warm colors, and `pink`, `orange`, and
+`sky` provide pink, orange, and blue palettes. `/theme use slime`
+applies and saves all the theme's UI colors and `ui.bold` together.
 Set `PMAI_THEME=light` in your environment to apply a theme at startup over
 the configured styling; startup selection alone does not write the configuration.
 
@@ -474,15 +475,36 @@ scripts with one `/set` per line; for example:
 ```
 
 Use `/theme use mine` or `PMAI_THEME=mine` to load it. User files take
-precedence over built-ins of the same name. Themes accept `ui.bgline`,
-`ui.fgcolor`, `ui.bgcolor`, `ui.fgprompt`, `ui.bgprompt`, `ui.fgtoolresult`,
-and `ui.bold`; omitted settings keep their current values. Blank lines and
-`#` comment lines are ignored, and invalid scripts leave the UI unchanged.
+precedence over built-ins of the same name. Themes accept all the color settings
+listed below and `ui.bold`; omitted settings keep their current values. Blank
+lines and `#` comment lines are ignored, and invalid scripts leave the UI unchanged.
+Old configuration files and saved themes remain valid.
 
-`/set ui.` lists the persisted terminal styling options; `ui.bgline` colors the
-status line (or the separator), `ui.fgprompt`,
-`ui.bgprompt`, `ui.fgcolor`, `ui.bgcolor`, and `ui.fgtoolresult` accept named
-ANSI colors, `rgb:RGB`, or `none`, while `ui.bold`, `ui.markdown`, and `ui.broadcast` accept `on`
+| Settings | REPL output |
+| --- | --- |
+| `ui.bgline` | Input/status-line background |
+| `ui.fgcolor`, `ui.bgcolor` | Input text |
+| `ui.fgprompt`, `ui.bgprompt` | Prompt |
+| `ui.fgtoolcall`, `ui.fgtoolresult` | Tool calls and successful results |
+| `ui.fgerror` | Errors and failed tool results |
+| `ui.fgwarning` | Warnings, retries, interruptions, and approval requests |
+| `ui.fgsuccess` | Successful run status |
+| `ui.fginfo` | Context notices and tool-help headings |
+| `ui.fgthinking` | Thinking previews and full reasoning text |
+| `ui.fgdiffadd`, `ui.bgdiffadd` | Added lines in tool-output diffs |
+| `ui.fgdiffdel`, `ui.bgdiffdel` | Removed lines in tool-output diffs |
+| `ui.fgdiffheader` | Diff file and hunk headers |
+| `ui.fgselection`, `ui.bgselection` | Selected TAB completion |
+
+Colors apply immediately to main and child agent output. For example,
+`/set ui.fgerror bright-red` changes error text, and `/set ui.bgdiffadd none`
+removes the background from added diff lines. `/theme save mine` saves these
+choices along with the prompt and input colors. TAB selection falls back to
+reverse video when both selection colors are `none` or colors are disabled.
+Colored output respects `NO_COLOR`, `TERM=dumb`, and redirected output.
+
+`/set ui.` lists the persisted terminal styling options. All color settings accept
+named ANSI colors, `rgb:RGB`, `#RRGGBB`, or `none`, while `ui.bold`, `ui.markdown`, and `ui.broadcast` accept `on`
 or `off`. `ui.toolResultLines` accepts `all`, `relevant`, or a line count (the default is
 `all`; `0` restores the compact status-only display). Use
 `/set ui.toolResultLines relevant` to show complete file-edit results and errors,
@@ -499,7 +521,7 @@ editor commands hand the terminal to; it is saved in the configuration and used
 before `$EDITOR`, `$VISUAL`, and vim, which are what an unset (or
 `/set ui.editor none`) value falls back to. The command may carry arguments,
 as in `/set ui.editor code -w`, and the file path is appended to it.
-Successful tool results are yellow by default, tool starts remain green, and
+In the default theme, successful tool results are yellow, tool starts are green, and
 failed results are red. Unified diff removals and additions, including output
 from `files_patch`, use dark red and dark green backgrounds. `/set limits.`
 shows the per-run limits of the current

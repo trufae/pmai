@@ -484,6 +484,19 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   public var promptBackground: String
   /// Foreground color used for successful tool-result previews in the text REPL.
   public var toolResultForeground: String
+  public var toolCallForeground: String
+  public var errorForeground: String
+  public var warningForeground: String
+  public var successForeground: String
+  public var infoForeground: String
+  public var thinkingForeground: String
+  public var diffAddedForeground: String
+  public var diffAddedBackground: String
+  public var diffRemovedForeground: String
+  public var diffRemovedBackground: String
+  public var diffHeaderForeground: String
+  public var selectionForeground: String
+  public var selectionBackground: String
   public var bold: Bool
   /// Render assistant replies as styled markdown in the REPL and visual mode.
   public var markdown: Bool
@@ -506,6 +519,19 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     promptForeground: String = "yellow",
     promptBackground: String = "",
     toolResultForeground: String = "yellow",
+    toolCallForeground: String = "green",
+    errorForeground: String = "red",
+    warningForeground: String = "yellow",
+    successForeground: String = "cyan",
+    infoForeground: String = "magenta",
+    thinkingForeground: String = "grey",
+    diffAddedForeground: String = "#d9f7e3",
+    diffAddedBackground: String = "#163a24",
+    diffRemovedForeground: String = "#ffd9dd",
+    diffRemovedBackground: String = "#421f24",
+    diffHeaderForeground: String = "cyan",
+    selectionForeground: String = "bright-white",
+    selectionBackground: String = "blue",
     bold: Bool = false,
     markdown: Bool = true,
     toolResultLines: ToolResultDisplay = .all,
@@ -521,6 +547,19 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     self.promptForeground = promptForeground
     self.promptBackground = promptBackground
     self.toolResultForeground = toolResultForeground
+    self.toolCallForeground = toolCallForeground
+    self.errorForeground = errorForeground
+    self.warningForeground = warningForeground
+    self.successForeground = successForeground
+    self.infoForeground = infoForeground
+    self.thinkingForeground = thinkingForeground
+    self.diffAddedForeground = diffAddedForeground
+    self.diffAddedBackground = diffAddedBackground
+    self.diffRemovedForeground = diffRemovedForeground
+    self.diffRemovedBackground = diffRemovedBackground
+    self.diffHeaderForeground = diffHeaderForeground
+    self.selectionForeground = selectionForeground
+    self.selectionBackground = selectionBackground
     self.bold = bold
     self.markdown = markdown
     self.toolResultLines = toolResultLines
@@ -538,6 +577,19 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     case promptForeground = "fgprompt"
     case promptBackground = "bgprompt"
     case toolResultForeground = "fgtoolresult"
+    case toolCallForeground = "fgtoolcall"
+    case errorForeground = "fgerror"
+    case warningForeground = "fgwarning"
+    case successForeground = "fgsuccess"
+    case infoForeground = "fginfo"
+    case thinkingForeground = "fgthinking"
+    case diffAddedForeground = "fgdiffadd"
+    case diffAddedBackground = "bgdiffadd"
+    case diffRemovedForeground = "fgdiffdel"
+    case diffRemovedBackground = "bgdiffdel"
+    case diffHeaderForeground = "fgdiffheader"
+    case selectionForeground = "fgselection"
+    case selectionBackground = "bgselection"
     case bold
     case markdown
     case toolResultLines
@@ -560,6 +612,32 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
       promptBackground: try container.decodeIfPresent(String.self, forKey: .promptBackground) ?? "",
       toolResultForeground: try container.decodeIfPresent(
         String.self, forKey: .toolResultForeground) ?? "yellow",
+      toolCallForeground: try container.decodeIfPresent(
+        String.self, forKey: .toolCallForeground) ?? "green",
+      errorForeground: try container.decodeIfPresent(String.self, forKey: .errorForeground)
+        ?? "red",
+      warningForeground: try container.decodeIfPresent(
+        String.self, forKey: .warningForeground) ?? "yellow",
+      successForeground: try container.decodeIfPresent(
+        String.self, forKey: .successForeground) ?? "cyan",
+      infoForeground: try container.decodeIfPresent(String.self, forKey: .infoForeground)
+        ?? "magenta",
+      thinkingForeground: try container.decodeIfPresent(
+        String.self, forKey: .thinkingForeground) ?? "grey",
+      diffAddedForeground: try container.decodeIfPresent(
+        String.self, forKey: .diffAddedForeground) ?? "#d9f7e3",
+      diffAddedBackground: try container.decodeIfPresent(
+        String.self, forKey: .diffAddedBackground) ?? "#163a24",
+      diffRemovedForeground: try container.decodeIfPresent(
+        String.self, forKey: .diffRemovedForeground) ?? "#ffd9dd",
+      diffRemovedBackground: try container.decodeIfPresent(
+        String.self, forKey: .diffRemovedBackground) ?? "#421f24",
+      diffHeaderForeground: try container.decodeIfPresent(
+        String.self, forKey: .diffHeaderForeground) ?? "cyan",
+      selectionForeground: try container.decodeIfPresent(
+        String.self, forKey: .selectionForeground) ?? "bright-white",
+      selectionBackground: try container.decodeIfPresent(
+        String.self, forKey: .selectionBackground) ?? "blue",
       bold: try container.decodeIfPresent(Bool.self, forKey: .bold) ?? false,
       markdown: try container.decodeIfPresent(Bool.self, forKey: .markdown) ?? true,
       toolResultLines: try container.decodeIfPresent(ToolResultDisplay.self, forKey: .toolResultLines) ?? .all,
