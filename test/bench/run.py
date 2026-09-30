@@ -178,7 +178,7 @@ def run_case(name, args, upstream, key):
     env = clean_env()
     env["PMAI_HOME"] = str(out_dir / "home")
     cmd = [str(args.pmai), "--config", str(config_path), "--state", str(out_dir / "state"),
-           "--agent", "coder", "--yolo", "--no-markdown", prompt]
+           "--agent", "coder", "--tool-aproval", "yolo", "--no-markdown", prompt]
     started = time.time()
     timed_out = False
     with open(out_dir / "stdout.txt", "wb") as out, open(out_dir / "stderr.txt", "wb") as err:

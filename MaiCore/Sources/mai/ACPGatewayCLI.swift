@@ -2,10 +2,14 @@ import Foundation
 import MaiACP
 import MaiACPGateway
 
-#if canImport(Darwin)
-  import Darwin
+#if canImport(Android)
+  import Android
+#elseif canImport(Musl)
+  import Musl
 #elseif canImport(Glibc)
   import Glibc
+#elseif canImport(Darwin)
+  import Darwin
 #endif
 
 enum ACPGatewayCLI {
@@ -76,7 +80,7 @@ enum ACPGatewayCLI {
       }
       print("Connection profile (contains the gateway credential):\n\(uri)")
       try TailcatQR.show(uri, output: flags["--qr"].map { URL(fileURLWithPath: $0) })
-      fflush(stdout)
+      fflush(nil)
     } else if flags["--url"] != nil || flags["--qr"] != nil || flags["--profile"] != nil {
       throw TailcatCLI.Error.message(
         "QR/profile export requires a valid --url ws://host:port/acp or wss://host/acp")

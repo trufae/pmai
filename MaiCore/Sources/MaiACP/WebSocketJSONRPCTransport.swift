@@ -106,10 +106,10 @@ public final class WebSocketJSONRPCTransport: NSObject, JSONRPCTransport,
   }
 
   private func ping() {
-    let timeout = DispatchWorkItem { [weak self] in
+    let timeout = Task { [weak self] in
+      do { try await Task.sleep(for: .seconds(10)) } catch { return }
       self?.fail(JSONRPCTransportError.timedOut("WebSocket heartbeat"))
     }
-    DispatchQueue.global().asyncAfter(deadline: .now() + 10, execute: timeout)
     socket.sendPing { [weak self] error in
       timeout.cancel()
       if let error { self?.fail(error) }

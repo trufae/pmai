@@ -112,7 +112,7 @@ def main():
                 "memory": {"enabled": False, "scope": "project"}, "use": {"plan": False},
             }))
             result = subprocess.run([executable, "--config", str(config), "--home", str(root / "home"),
-                                     "--no-stream", "--no-markdown", "-y", "extract the needle"],
+                                     "--no-stream", "--no-markdown", "--tool-aproval", "yolo", "extract the needle"],
                                     cwd=root, env=environment, stdin=subprocess.DEVNULL,
                                     capture_output=True, text=True, encoding="utf-8", timeout=60)
             output = result.stdout + result.stderr

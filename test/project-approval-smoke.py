@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check project YOLO choices across CLI restarts and real tool approvals."""
+"""Check project approval modes across CLI restarts and real tool approvals."""
 import json
 import os
 from pathlib import Path
@@ -59,7 +59,7 @@ def main():
                 'agents': [{'id': 'smoke', 'provider': 'smoke', 'model': 'smoke', 'enabled': True,
                             'toolNames': ['files_write'], 'toolGroupNames': [],
                             'retry': {'attempts': 0}}],
-                'approvals': {'confirm': 'ask', 'dangerous': 'ask', 'yolo': False},
+                'approvals': {'mode': 'ask'},
                 'memory': {'enabled': False, 'scope': 'project'}, 'use': {'plan': False},
             }))
 
@@ -74,7 +74,7 @@ def main():
                 return output
 
             def states(output):
-                return re.findall(r'yolo = (on|off)', output)
+                return re.findall(r'tool\.aproval = (yolo|ask|smart)', output)
 
             def write(project, allowed, **kwargs):
                 marker = project / 'yolo-proof.txt'
@@ -85,44 +85,56 @@ def main():
                 if allowed:
                     assert marker.read_text() == 'project choice honored'
 
-            assert states(run(first, ['/set yolo'])) == ['off']
+            assert states(run(first, ['/set tool.aproval'])) == ['ask']
             original = config.read_bytes()
-            output = run(first, ['/set yolo on', '/project name Renamed', '/set yolo'])
-            assert states(output) == ['on'], output
+            output = run(first, ['/set tool.aproval yolo', '/project name Renamed', '/set tool.aproval'])
+            assert states(output) == ['yolo', 'yolo'], output
             settings = first / '.pmai' / 'settings.json'
-            assert settings.is_file(), 'YOLO was not saved inside the project .pmai'
-            assert json.loads(settings.read_text())['yolo'] is True
+            assert settings.is_file(), 'Approval mode was not saved inside the project .pmai'
+            assert json.loads(settings.read_text())['approvalMode'] == 'yolo'
             assert config.read_bytes() == original, 'Project choice changed shared configuration'
-            assert states(run(first, ['/set yolo'])) == ['on']
-            assert states(run(second, ['/set yolo'])) == ['off']
+            assert states(run(first, ['/set tool.aproval'])) == ['yolo']
+            assert states(run(second, ['/set tool.aproval'])) == ['ask']
             write(first, True)
             write(second, False)
 
             # A project choice must survive using a different configuration.
             legacy = root / 'legacy.json'
             value = json.loads(config.read_text())
-            value['approvals']['yolo'] = True
+            value['approvals'] = {'yolo': True}
             legacy.write_text(json.dumps(value))
             write(second, True, configuration=legacy)
-            run(first, ['/set yolo off'], configuration=legacy)
-            assert json.loads(settings.read_text())['yolo'] is False
+            run(first, ['/set tool.aproval ask'], configuration=legacy)
+            assert json.loads(settings.read_text())['approvalMode'] == 'ask'
             write(first, False, configuration=legacy)
-            write(first, True, configuration=legacy, args=['-y'])
-            assert states(run(first, ['/set yolo'], configuration=legacy)) == ['off']
+            write(first, True, configuration=legacy, args=['--tool-aproval', 'yolo'])
+            assert states(run(first, ['/set tool.aproval'], configuration=legacy)) == ['ask']
             assert json.loads(legacy.read_text())['approvals']['yolo'] is True
 
-            assert states(run(second, ['/set yolo'], args=['-y'])) == ['on']
-            assert states(run(second, ['/set yolo'])) == ['off']
-            assert not (second / '.pmai' / 'settings.json').exists(), '-y became persistent'
-            output = run(first, ['/set yolo invalid', '/set yolo'])
-            assert 'Usage: /set yolo <on|off>' in output and states(output) == ['off'], output
+            assert states(run(second, ['/set tool.aproval'], args=['--tool-aproval', 'yolo'])) == ['yolo']
+            assert states(run(second, ['/set tool.aproval'])) == ['ask']
+            assert not (second / '.pmai' / 'settings.json').exists(), '--tool-aproval became persistent'
+            output = run(first, ['/set tool.aproval invalid', '/set tool.aproval'])
+            assert 'Usage: /set tool.aproval <yolo|ask|smart>' in output and states(output) == ['ask'], output
+
+            run(first, ['/set tool.aproval smart'])
+            assert json.loads(settings.read_text())['approvalMode'] == 'smart'
+            assert states(run(first, ['/set tool.aproval'])) == ['smart']
+
+            # Old project settings still load, then save using the new key.
+            for enabled, mode in ((True, 'yolo'), (False, 'ask')):
+                settings.write_text(json.dumps({'yolo': enabled}))
+                assert states(run(first, ['/set tool.aproval'])) == [mode]
+                write(first, enabled)
+            run(first, ['/set tool.aproval ask'])
+            assert json.loads(settings.read_text()) == {'approvalMode': 'ask'}
 
             # /cd changes tool cwd; settings still belong to the opened project.
-            run(first, [f'/cd {second}', '/set yolo on'], args=['--state', str(root / 'chats')])
-            assert json.loads(settings.read_text())['yolo'] is True
-            assert states(run(second, ['/set yolo'])) == ['off']
+            run(first, [f'/cd {second}', '/set tool.aproval yolo'], args=['--state', str(root / 'chats')])
+            assert json.loads(settings.read_text())['approvalMode'] == 'yolo'
+            assert states(run(second, ['/set tool.aproval'])) == ['ask']
             assert config.read_bytes() == original
-            print('PASS project YOLO persistence, isolation, approvals, legacy defaults and -y')
+            print('PASS project approval persistence, isolation, legacy settings and --tool-aproval')
     finally:
         server.shutdown()
         server.server_close()

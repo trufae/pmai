@@ -61,7 +61,7 @@ def main():
                 'agents': [{'id': 'smoke', 'provider': 'smoke', 'model': 'smoke', 'enabled': True,
                             'toolNames': ['files_write'], 'toolGroupNames': [],
                             'retry': {'attempts': 0}}],
-                'approvals': {'confirm': 'ask', 'dangerous': 'ask', 'yolo': False},
+                'approvals': {'mode': 'ask'},
                 'memory': {'enabled': False, 'scope': 'project'}, 'use': {'plan': False},
             }))
 
@@ -78,11 +78,11 @@ def main():
             log = project / '.pmai' / 'debug.jsonl'
             assert 'debug = false' in run(project, '/set debug')
             assert not log.exists()
-            output = run(project, '/set debug true', '/set yolo on', 'first prompt')
+            output = run(project, '/set debug true', '/set tool.aproval yolo', 'first prompt')
             assert 'debug smoke done' in output, output
             assert (project / 'debug-proof.txt').read_text() == 'logged tool call'
             settings = json.loads((project / '.pmai' / 'settings.json').read_text())
-            assert settings == {'debug': True, 'yolo': True}, settings
+            assert settings == {'debug': True, 'approvalMode': 'yolo'}, settings
             assert stat.S_IMODE(log.stat().st_mode) == 0o600
             entries = [json.loads(line) for line in log.read_text().splitlines()]
             kinds = [entry['kind'] for entry in entries]

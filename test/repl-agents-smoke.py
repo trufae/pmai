@@ -79,7 +79,7 @@ def main():
                                 'toolGroupNames': ['agents'], 'subagentNames': ['worker'],
                                 'stream': False, 'retry': {'attempts': 0},
                                 'limits': {'maxSubagents': 1, 'maxSubagentDepth': max_depth}}],
-                    'approvals': {'confirm': 'allow', 'dangerous': 'deny'},
+                    'approvals': {'mode': 'yolo'},
                     'memory': {'enabled': False}, 'use': {'plan': False},
                 }))
                 master, slave = pty.openpty()
@@ -141,7 +141,15 @@ def main():
                         wait_for('No active agents.')
                     assert not requests, requests
                     send('level 0')
-                    assert leaf_started.wait(15), f'{mode}: recursive leaf never started'
+                    # Keep draining the PTY while recursive agents start; their
+                    # tool output can fill its buffer before the leaf runs.
+                    deadline = time.monotonic() + 15
+                    while not leaf_started.is_set():
+                        assert time.monotonic() < deadline, (
+                            mode, 'recursive leaf never started', output.decode(errors='replace'))
+                        assert process.poll() is None, (process.returncode, output)
+                        if select.select([master], [], [], .1)[0]:
+                            output.extend(os.read(master, 65536))
                     send('/agents')
                     pids = check_tree('run')
                     assert len(pids) == max_depth + 1, pids
