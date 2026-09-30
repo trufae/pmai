@@ -855,7 +855,7 @@ public actor AgentRuntime {
       }
       if depth == 0 {
         let soulPath = AgentHome.expandUserPath("~/.pmai/SOUL.md")
-        if let soul = try? String(contentsOfFile: soulPath).trimmingCharacters(in: .whitespacesAndNewlines), !soul.isEmpty {
+        if let soul = try? String(contentsOfFile: soulPath, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines), !soul.isEmpty {
           insertSystem(soul, into: &providerMessages)
         }
       }

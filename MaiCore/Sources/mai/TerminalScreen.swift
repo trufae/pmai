@@ -59,6 +59,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var activityStartedAt: UInt64?
   private var activityFrame = 0
   private var displayedActivitySecond: UInt64 = 0
+  private var animator = BrailleAnimator.randomStyle()
+  /// Whether `setStatus` also restarted the animator; used to avoid
+  /// advancing the frame on a line that has not changed.
+  private var activityRestarted = false
   /// Keystrokes that arrived while the terminal was asked for its cursor
   /// position, kept for the editor.
   private var typeahead: [UInt8] = []
@@ -68,7 +72,6 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private static let clearLine = "\u{1B}[2K"
   private static let clearBelow = "\u{1B}[J"
   private static let reset = "\u{1B}[0m"
-  private static let activityFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
   /// Nil unless both stdin and stdout are terminals; piped sessions keep the
   /// plain one-line-at-a-time prompt.
@@ -198,17 +201,33 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   /// Replaces the status line above the input; an unchanged line is not redrawn.
   func setStatus(_ text: String, animating: Bool = false) {
+    setStatus(text, animating: animating, style: nil)
+  }
+
+  /// Replaces the status line and optionally switches the Braille animation style.
+  func setStatus(_ text: String, animating: Bool, style: BrailleAnimator.Style?) {
     lock.withLock {
       let animationChanged = animatingStatus != animating
       animatingStatus = animating
+      activityRestarted = animationChanged && animating
       if animationChanged {
         activityStartedAt = animating ? DispatchTime.now().uptimeNanoseconds : nil
         activityFrame = 0
         displayedActivitySecond = 0
+        if animating {
+          animator = BrailleAnimator.randomStyle()
+          animator.start()
+        }
+      }
+      if let style {
+        animator = style == .random ? BrailleAnimator.randomStyle() : BrailleAnimator(style: style)
+        animator.start()
+        activityRestarted = true
       }
       updateActivityTimer()
-      guard text != statusText || animationChanged else { return }
+      guard text != statusText || animationChanged || activityRestarted else { return }
       statusText = text
+      activityRestarted = false
       // A tab-completion menu owns the row until it closes; the status is
       // still kept so the row can be restored when it does.
       guard active, completionMenu == nil else { return }
@@ -409,7 +428,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     let status: String
     if animatingStatus, let activityStartedAt {
       let elapsed = (DispatchTime.now().uptimeNanoseconds - activityStartedAt) / 1_000_000_000
-      let frame = Self.activityFrames[activityFrame]
+      let frame = animator.next()
       status = "\(frame) \(elapsed / 60)m\(elapsed % 60)s" + String(statusText.dropFirst())
       displayedActivitySecond = elapsed
     } else {
@@ -504,14 +523,14 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       guard active, animatingStatus, let activityStartedAt, completionMenu == nil,
         columns > 2
       else { return }
-      activityFrame = (activityFrame + 1) % Self.activityFrames.count
+      activityFrame = (activityFrame + 1) % 10
       let elapsed = (DispatchTime.now().uptimeNanoseconds - activityStartedAt) / 1_000_000_000
       if elapsed != displayedActivitySecond {
         drawStatusLine(clear: false)
         placeCaret()
         return
       }
-      let marker = Self.activityFrames[activityFrame]
+      let marker = animator.next()
       let style = TerminalLineEditor.backgroundColorCode(ui.backgroundLine) ?? "2"
       write(
         move(row: regionBottom + thinkingRows.count + 1, column: 2)

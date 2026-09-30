@@ -56,7 +56,7 @@ public enum ACPWebSocketGateway {
         .childChannelOption(ChannelOptions.socketOption(.tcp_nodelay), value: 1)
         .childChannelOption(
           ChannelOptions.writeBufferWaterMark,
-          value: WriteBufferWaterMark(low: 1024 * 1024, high: 32 * 1024 * 1024)
+          value: ChannelOptions.Types.WriteBufferWaterMark(low: 1024 * 1024, high: 32 * 1024 * 1024)
         )
         .childChannelInitializer { channel in
           guard slots.acquire() else { return channel.close() }
