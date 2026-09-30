@@ -1698,6 +1698,7 @@ struct MaiCLI {
         prompt: configuration.prompts?.delegation,
         workerInstructions: configuration.prompts?.worker)
       await runtime.configureCompaction(prompt: configuration.prompts?.compact)
+      await runtime.configureSmartContext(prompt: configuration.prompts?.smart)
       await runtime.configureTaskAgents(configuration.taskAgents)
       let knownTools = Set(await runtime.availableTools().map(\.name))
       for var agent in configuration.agents {
@@ -4510,13 +4511,14 @@ struct MaiCLI {
     if skillEntries.isEmpty { lines.append("  None found; /skills path lists the folders read.") }
     let templates: [(String, String?)] = [
       ("compact", configuration?.prompts?.compact),
+      ("smart", configuration?.prompts?.smart),
       ("recap", configuration?.prompts?.recap),
       ("delegation", configuration?.prompts?.delegation),
       ("worker", configuration?.prompts?.worker),
       ("memory", configuration?.prompts?.memory),
     ]
     lines.append(
-      "Templates — not sent by name; /edit compact, /edit prompt recap, /edit delegation, /edit worker, /edit memory-prompt:"
+      "Templates — not sent by name; /edit compact, /edit smart, /edit prompt recap, /edit delegation, /edit worker, /edit memory-prompt:"
     )
     for (name, text) in templates {
       let custom = text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
@@ -5072,8 +5074,9 @@ struct MaiCLI {
     }
     let fields = target.split(maxSplits: 1, whereSeparator: \Character.isWhitespace).map(
       String.init)
-    let action = fields[0].lowercased()
     let actionArgument = fields.count == 2 ? fields[1] : ""
+    let action = fields[0].lowercased() == "prompt" && actionArgument.lowercased() == "smart"
+      ? "smart" : fields[0].lowercased()
 
     switch action {
     case "system":
@@ -5172,36 +5175,42 @@ struct MaiCLI {
         "Use /edit input at the chat prompt; it opens an empty file and sends what you write in it."
       )
 
-    case "compact":
+    case "compact", "smart":
+      let smart = action == "smart"
+      let defaultPrompt = smart ? AgentSmartContextPrompt.template : defaultCompactPrompt
       guard var draft = configuration, let configurationPath else {
         await terminal.line("error: No writable configuration is active.", to: .standardError)
         return
       }
-      let previous = draft.prompts?.compact ?? defaultCompactPrompt
+      let previous = (smart ? draft.prompts?.smart : draft.prompts?.compact) ?? defaultPrompt
       guard
         let edited = await editTemporaryText(
-          previous, suffix: "compact-prompt.md", terminal: terminal)
+          previous, suffix: "\(action)-prompt.md", terminal: terminal)
       else { return }
       let candidate = edited.trimmingCharacters(in: .whitespacesAndNewlines)
       guard candidate.isEmpty || candidate.contains("{{transcript}}") else {
         await terminal.line(
-          "error: The compact prompt must contain {{transcript}}; no changes were saved.",
+          "error: The \(action) prompt must contain {{transcript}}; no changes were saved.",
           to: .standardError)
         return
       }
       let customPrompt =
-        candidate.isEmpty || candidate == defaultCompactPrompt ? nil : candidate
+        candidate.isEmpty || candidate == defaultPrompt ? nil : candidate
       var prompts = draft.prompts ?? ConfiguredPrompts()
-      prompts.compact = customPrompt
+      if smart { prompts.smart = customPrompt } else { prompts.compact = customPrompt }
       draft.prompts = prompts
       do {
         try draft.save(to: URL(fileURLWithPath: configurationPath))
-        await runtime.configureCompaction(prompt: customPrompt)
+        if smart {
+          await runtime.configureSmartContext(prompt: customPrompt)
+        } else {
+          await runtime.configureCompaction(prompt: customPrompt)
+        }
         configuration = draft
         await terminal.line(
           customPrompt == nil
-            ? "Compact prompt restored to the built-in default."
-            : "Compact prompt saved to \(configurationPath).")
+            ? "\(action.capitalized) prompt restored to the built-in default."
+            : "\(action.capitalized) prompt saved to \(configurationPath).")
       } catch {
         await terminal.line("error: \(error.localizedDescription)", to: .standardError)
       }
@@ -5302,6 +5311,7 @@ struct MaiCLI {
           prompt: editedConfiguration.prompts?.delegation,
           workerInstructions: editedConfiguration.prompts?.worker)
         await runtime.configureCompaction(prompt: editedConfiguration.prompts?.compact)
+        await runtime.configureSmartContext(prompt: editedConfiguration.prompts?.smart)
         await runtime.configureTaskAgents(editedConfiguration.taskAgents)
         if let agent = editedConfiguration.agents.first(where: {
           $0.id == session.profile.agentID
@@ -7710,7 +7720,7 @@ struct MaiCLI {
         || levelKeys.contains(key) || textKeys.contains(key)
     else {
       await terminal.line(
-        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, effort, tool.aproval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.strategy, ui.title, ui.editor, ui.bgline, ui.fgcolor, ui.bgcolor, ui.fgprompt, ui.bgprompt, ui.fgtoolresult, ui.bold, ui.markdown, ui.toolResultLines, ui.subagents, ui.broadcast, use.agentsmd, use.plan"
+        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, effort, tool.aproval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.context, ctx.strategy, ui.title, ui.editor, ui.bgline, ui.fgcolor, ui.bgcolor, ui.fgprompt, ui.bgprompt, ui.fgtoolresult, ui.bold, ui.markdown, ui.toolResultLines, ui.subagents, ui.broadcast, use.agentsmd, use.plan"
       )
       return
     }
@@ -7839,7 +7849,7 @@ struct MaiCLI {
     "tool.proxy", "tools.proxy", "toolproxy", "usetoolproxy",
   ]
 
-  private static let contextModeKeys: Set<String> = ["ctx.strategy"]
+  private static let contextModeKeys: Set<String> = ["ctx.context", "ctx.strategy"]
 
   private static func listToolSettings(_ profile: SessionProfile, terminal: TerminalWriter) async {
     await terminal.line("tool.calling = \(profile.toolCallingStrategy.rawValue)")
@@ -7921,8 +7931,7 @@ struct MaiCLI {
     }
   }
 
-  /// `/set ctx.strategy <cache|size>`: cache never changes a sent message, size
-  /// replaces consumed file bodies with references before each model call.
+  /// Both context-setting spellings persist the same agent context mode.
   private static func setContextMode(
     parts: [String],
     session: inout REPLSession,
@@ -7932,17 +7941,17 @@ struct MaiCLI {
     terminal: TerminalWriter
   ) async {
     guard parts.count > 1 else {
-      await terminal.line("ctx.strategy = \(session.profile.context.rawValue)")
+      await terminal.line("\(parts[0]) = \(session.profile.context.rawValue)")
       return
     }
     guard parts.count == 2, let mode = AgentContextMode(rawValue: parts[1].lowercased()) else {
-      await terminal.line("Usage: /set ctx.strategy <cache|size>")
+      await terminal.line("Usage: /set \(parts[0]) <cache|size|smart>")
       return
     }
     session.profile.context = mode
     session.touch()
     guard configuration != nil, configurationPath != nil else {
-      await terminal.line("Set ctx.strategy = \(mode.rawValue) for this chat.")
+      await terminal.line("Set \(parts[0]) = \(mode.rawValue) for this chat.")
       return
     }
     if await persistAgentProfile(
@@ -7953,7 +7962,7 @@ struct MaiCLI {
       terminal: terminal)
     {
       await terminal.line(
-        "Set ctx.strategy = \(mode.rawValue) for agent '\(session.profile.agentID)'.")
+        "Set \(parts[0]) = \(mode.rawValue) for agent '\(session.profile.agentID)'.")
     }
   }
 
@@ -8028,7 +8037,7 @@ struct MaiCLI {
     await terminal.line("retry.attempts = \(profile.retry.attempts)")
     await terminal.line("retry.delay = \(durationSetting(profile.retry.delaySeconds))")
     await terminal.line("ctx.compact = \(autocompactSetting(profile.autocompact))")
-    await terminal.line("ctx.strategy = \(profile.context.rawValue)")
+    await terminal.line("ctx.context = \(profile.context.rawValue) (ctx.strategy alias)")
   }
 
   private static func durationSetting(_ seconds: Double) -> String {
@@ -8552,6 +8561,7 @@ struct MaiCLI {
           "retry.attempts": String(profile.retry.attempts),
           "retry.delay": durationSetting(profile.retry.delaySeconds),
           "ctx.compact": autocompactSetting(profile.autocompact),
+          "ctx.context": profile.context.rawValue,
           "ctx.strategy": profile.context.rawValue,
         ],
         subagents: chat.subagents)
@@ -8774,6 +8784,7 @@ struct MaiCLI {
       prompt: configuration.prompts?.delegation,
       workerInstructions: configuration.prompts?.worker)
     await runtime.configureCompaction(prompt: configuration.prompts?.compact)
+    await runtime.configureSmartContext(prompt: configuration.prompts?.smart)
     await runtime.configureTaskAgents(configuration.taskAgents)
     let knownTools = Set(await runtime.availableTools().map(\.name))
     for requested in imported.agents ?? [] {
@@ -10406,6 +10417,8 @@ struct MaiCLI {
       "/set limits.maxSubagents ", "/set limits.maxSeconds ", "/set limits.maxTotalTokens ",
       "/set retry.attempts ", "/set retry.delay ", "/set ctx.strategy ", "/set ctx.compact ",
       "/set ctx.compact off",
+      "/set ctx.context ", "/set ctx.context cache", "/set ctx.context size", "/set ctx.context smart",
+      "/set ctx.strategy cache", "/set ctx.strategy size", "/set ctx.strategy smart",
       "/continue", "/stop",
       "/set tool.", "/set tool.calling automatic", "/set tool.calling native",
       "/set tool.calling text", "/set tool.calling xml", "/set tool.calling json",
@@ -10446,7 +10459,7 @@ struct MaiCLI {
       "/mcp list",
       "/mcp add ", "/mcp enable ", "/mcp disable ",
       "/edit prompt", "/edit compact", "/edit config", "/edit mcps", "/edit provider",
-      "/edit prompt recap",
+      "/edit prompt recap", "/edit smart", "/edit prompt smart",
       "/edit input",
       "/chat compact ", "/chat recap",
       "/image tiny ", "/image small ", "/image medium ", "/image big ", "/image full ",
@@ -10842,7 +10855,8 @@ struct MaiCLI {
       /set retry.attempts N        Times a failed model call is repeated (default 2)
       /set retry.delay SECONDS     Wait before each retry (default 5)
       /set ctx.compact <off|N|Nk>  Prompt to prune tool output or summarize older context at ~N tokens
-      /set ctx.strategy <cache|size>  Keep prompt-cache history intact, or automatically prune old reads
+      /set ctx.context <cache|size|smart>  Keep history, prune old reads, or build context with the compact model
+      /set ctx.strategy <cache|size|smart>  Alias for ctx.context
       /set ui.                     List terminal UI settings
       /set ui.title TEXT           Set the prompt label and terminal/tab title (`none` clears it)
       /set ui.editor COMMAND       Editor /edit opens (`none` falls back to $EDITOR, $VISUAL, vim)
@@ -10946,6 +10960,7 @@ struct MaiCLI {
     /edit agent [ID]         Edit a saved agent as JSON (current when omitted)
     /edit provider [ID]      Edit a configured provider as JSON (current when omitted)
     /edit compact            Edit the global chat-compaction prompt template
+    /edit smart              Edit the per-turn smart context template (also /edit prompt smart)
     /edit prompt recap       Edit the recap template (goals, actions, pending tasks)
     /edit prompt compact     Edit the generated compact agent's system prompt
     /edit prompt tool        Edit the generated tool agent's system prompt
@@ -10959,7 +10974,7 @@ struct MaiCLI {
     /edit input              Write the next message in the editor and send it
     /edit soul               Edit your core personality (lives in ~/.pmai/SOUL.md)
 
-    The compact, recap, and memory templates must contain {{transcript}}; {{focus}} and
+    The compact, smart, recap, and memory templates must contain {{transcript}}; {{focus}} and
     {{memory}} are optional. The delegation template must contain {{task}};
     {{context}}, {{output}}, {{agent}}, and {{cwd}} are optional.
     Clearing it restores the built-in default. Uses /set ui.editor when it is
@@ -11073,8 +11088,9 @@ struct MaiCLI {
       /prompts add commit Write a commit message for the staged changes: $ARGUMENTS
       $commit one line, imperative mood
 
-    The other templates — compact, delegation, worker, memory — are edited
-    with /edit compact, /edit delegation, /edit worker, and /edit memory-prompt.
+    The other templates — compact, smart, recap, delegation, worker, memory — are edited
+    with /edit compact, /edit smart, /edit prompt recap, /edit delegation, /edit worker,
+    and /edit memory-prompt.
     """
 
   private static let agentsHelp = """

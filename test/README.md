@@ -24,6 +24,11 @@ state to check model routing, prompt edits, and history preservation:
 
     python3 test/repl-recap-smoke.py MaiCore/.build/debug/pmai
 
+The smart-context smoke test checks `ctx.context=smart`, the compact-model
+assignment, prompt editing, and saved history across resumed turns:
+
+    python3 test/repl-smart-context-smoke.py MaiCore/.build/debug/pmai
+
 The endpoint and key come from `UPSTREAM` / `UPSTREAM_KEY`, or from
 `env-ollamacloud.sh` at the repository root. pmai must be built first:
 

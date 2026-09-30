@@ -79,6 +79,7 @@ public actor AgentRuntime {
   private var plansBeforeDelegating = false
   /// The compaction prompt autocompact renders; nil keeps the built-in one.
   private var compactionTemplate: String?
+  private var smartContextTemplate: String?
   private var taskAgents = TaskAgentAssignments()
   /// Durable notes added to the system prompt of top-level runs. A child agent
   /// grepping a file does not need the user's standing preferences, so this
@@ -281,6 +282,11 @@ public actor AgentRuntime {
     compactionTemplate = prompt?.trimmingCharacters(in: .whitespacesAndNewlines).nilWhenEmpty
   }
 
+  /// Installs the disposable working-context prompt used by `context: smart`.
+  public func configureSmartContext(prompt: String?) {
+    smartContextTemplate = prompt?.trimmingCharacters(in: .whitespacesAndNewlines).nilWhenEmpty
+  }
+
   public func configureTaskAgents(_ assignments: TaskAgentAssignments) {
     taskAgents = assignments
   }
@@ -312,6 +318,7 @@ public actor AgentRuntime {
       request.responseFormat = .text
       request.stream = false
       request.autocompact = .init(tokens: 0)
+      request.context = .cache
       request.useToolProxy = false
     }
     return request
@@ -767,12 +774,9 @@ public actor AgentRuntime {
       if localModelTurns >= request.limits.maxModelTurns {
         return await pause(.modelTurns(limit: request.limits.maxModelTurns))
       }
-      if let interruption = await budget.claimModelTurn() {
+      if let interruption = await budget.exhausted() {
         return await pause(interruption)
       }
-      localModelTurns += 1
-      await emit(.modelStarted(context, turn: localModelTurns))
-      await supervisor.note(pid, modelTurns: localModelTurns, activity: "thinking")
 
       // Once the run's tool budget is spent the model gets no tools and is
       // told to answer, instead of the run failing with a limit error.
@@ -877,6 +881,27 @@ public actor AgentRuntime {
           : textToolPrompt(definitions, mode: textToolMode ?? .text)
         insertSystem(prompt, into: &providerMessages)
       }
+      if request.context == .smart {
+        await supervisor.note(pid, activity: "preparing context")
+        do {
+          let brief = try await compactText(
+            prompt: AgentSmartContextPrompt.render(
+              messages: providerMessages, template: smartContextTemplate),
+            request: request, budget: budget, context: context, pid: pid,
+            totalUsage: &totalUsage, emit: emit)
+          providerMessages = AgentSmartContextPrompt.messages(brief: brief, from: providerMessages)
+        } catch is RunDeadlineExceeded {
+          return await pause(await budget.timeInterruption)
+        }
+      }
+      // Context preparation spends tokens too. Check the budget again before
+      // starting the conversation call, and count only conversation turns.
+      if let interruption = await budget.claimModelTurn() {
+        return await pause(interruption)
+      }
+      localModelTurns += 1
+      await emit(.modelStarted(context, turn: localModelTurns))
+      await supervisor.note(pid, modelTurns: localModelTurns, activity: "thinking")
       let offersTools = !usesTextToolProtocol && !toolBudgetExhausted
       let providerRequest = ProviderRequest(
         model: inference.model,
@@ -950,7 +975,8 @@ public actor AgentRuntime {
           outputTokens: ModelCallStats.estimatedTokenCount(
             forCharacterCount: providerResponse.message.text.count))
       totalUsage = totalUsage.merging(usage)
-      lastUsage = providerResponse.usage
+      // A smart request's usage describes its brief, not the saved transcript.
+      lastUsage = request.context == .smart ? nil : providerResponse.usage
       await supervisor.note(pid, usage: totalUsage)
       await budget.record(tokens: usage.totalTokens)
 
@@ -1363,40 +1389,28 @@ public actor AgentRuntime {
     totalUsage: inout TokenUsage?,
     emit: @escaping AgentEventHandler
   ) async throws -> String {
-    let summary = try await summarize(
-      selection, of: transcript, focus: focus, request: request,
-      budget: budget, context: context, pid: pid, emit: emit)
-    let usage =
-      summary.response.usage
-      ?? .estimated(
-        inputTokens: ModelCallStats.estimatedTokenCount(
-          of: transcript.filter { selection.contains($0.id) }),
-        outputTokens: ModelCallStats.estimatedTokenCount(
-          forCharacterCount: summary.response.message.text.count))
-    totalUsage = totalUsage.merging(usage)
-    await supervisor.note(pid, usage: totalUsage)
-    await budget.record(tokens: usage.totalTokens)
-    let text = summary.response.message.text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty else { throw CompactionError.emptySummary }
-    return text
-  }
-
-  private func summarize(
-    _ selection: [String],
-    of transcript: [AgentMessage],
-    focus: String,
-    request: AgentRequest,
-    budget: RunBudget,
-    context: AgentEventContext,
-    pid: AgentPID,
-    emit: @escaping AgentEventHandler
-  ) async throws -> ProviderCall {
     let selected = Set(selection)
     let prompt = AgentCompactionPrompt.render(
       transcript: AgentCompactionPrompt.transcript(
         of: transcript.filter { selected.contains($0.id) }),
       focus: focus,
       template: compactionTemplate)
+    return try await compactText(
+      prompt: prompt, request: request, budget: budget, context: context,
+      pid: pid, totalUsage: &totalUsage, emit: emit)
+  }
+
+  /// Shared inference plumbing; durable compaction and smart context have
+  /// separate prompts and only durable compaction edits the transcript.
+  private func compactText(
+    prompt: String,
+    request: AgentRequest,
+    budget: RunBudget,
+    context: AgentEventContext,
+    pid: AgentPID,
+    totalUsage: inout TokenUsage?,
+    emit: @escaping AgentEventHandler
+  ) async throws -> String {
     var base = request
     base.messages = [.user(prompt)]
     let inference = try taskRequest(.compact, from: base)
@@ -1431,7 +1445,17 @@ public actor AgentRuntime {
           end: call.ended),
         at: call.ended)
     }
-    return call
+    let usage = call.response.usage ?? .estimated(
+      inputTokens: ModelCallStats.estimatedTokenCount(of: messages),
+      outputTokens: ModelCallStats.estimatedTokenCount(
+        forCharacterCount: call.response.message.text.count))
+    totalUsage = totalUsage.merging(usage)
+    await supervisor.note(pid, usage: totalUsage)
+    await budget.record(tokens: usage.totalTokens)
+    let text = MessageContentFilter.textWithoutReasoning(from: call.response.message.text)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty else { throw CompactionError.emptySummary }
+    return text
   }
 
   private enum CompactionError: LocalizedError {

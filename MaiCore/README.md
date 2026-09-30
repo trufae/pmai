@@ -538,6 +538,23 @@ cursor position and history search. It does not clear the conversation.
 `Ctrl+Z` suspends pmai with the terminal restored; run `fg` in the shell to
 resume the same input or active run.
 
+`/set ctx.context=smart` (config key `context: "smart"`) uses the `/model-compact`
+model before every conversation-model turn, including turns after tool calls.
+It builds a fresh task brief from the full current transcript, including tool
+arguments, complete text and structured results, files, and child-agent findings.
+The conversation model receives one working-context message with the relevant
+goals, constraints, evidence, and remaining work. System/developer instructions
+keep their roles and text; binary attachments are forwarded in that message.
+The brief is disposable: saved history continues growing with the actual replies
+and tool results, and `ctx.compact` still reduces that history when needed.
+Smart mode uses its own `prompts.smart` template, editable with `/edit smart`
+or `/edit prompt smart`; it must contain `{{transcript}}`.
+Each turn adds a compact-model call, whose usage counts toward statistics and
+token/time limits. If no compact model is assigned, the current model is used.
+A failed or empty context-generation response stops the run with history retained.
+`ctx.strategy` remains an alias for `ctx.context`; both accept `cache`, `size`,
+and `smart`.
+
 `/set ctx.strategy size` (config key `context`, default `cache`) turns on the cheap
 half of that: before every model call the runtime replaces the body of any file
 read while answering an *earlier* prompt with one line saying what it was and

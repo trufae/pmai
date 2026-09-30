@@ -576,6 +576,8 @@ public struct ConfiguredPrompts: Codable, Equatable, Sendable {
   /// Template used by chat compaction. `{{transcript}}` is required and
   /// `{{focus}}` is replaced when `/chat compact` receives optional guidance.
   public var compact: String?
+  /// Per-turn working context for `context: smart`; `{{transcript}}` is required.
+  public var smart: String?
   /// Read-only chat recap template. `{{transcript}}` is required.
   public var recap: String?
   /// Template that turns an `agent_start` brief into the prompt a child agent
@@ -596,6 +598,7 @@ public struct ConfiguredPrompts: Codable, Equatable, Sendable {
 
   public init(
     compact: String? = nil,
+    smart: String? = nil,
     recap: String? = nil,
     delegation: String? = nil,
     worker: String? = nil,
@@ -604,6 +607,7 @@ public struct ConfiguredPrompts: Codable, Equatable, Sendable {
     user: [String: String] = [:]
   ) {
     self.compact = compact
+    self.smart = smart
     self.recap = recap
     self.delegation = delegation
     self.worker = worker
@@ -613,13 +617,14 @@ public struct ConfiguredPrompts: Codable, Equatable, Sendable {
   }
 
   private enum CodingKeys: String, CodingKey {
-    case compact, recap, delegation, worker, memory, system, user
+    case compact, smart, recap, delegation, worker, memory, system, user
   }
 
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.init(
       compact: try container.decodeIfPresent(String.self, forKey: .compact),
+      smart: try container.decodeIfPresent(String.self, forKey: .smart),
       recap: try container.decodeIfPresent(String.self, forKey: .recap),
       delegation: try container.decodeIfPresent(String.self, forKey: .delegation),
       worker: try container.decodeIfPresent(String.self, forKey: .worker),
@@ -801,6 +806,11 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
 
   public func validate() throws {
     guard version == 1 else { throw MaiConfigurationError.unsupportedVersion(version) }
+    if let smart = prompts?.smart,
+      let missing = AgentCompactionPrompt.missingPlaceholder(in: smart)
+    {
+      throw MaiConfigurationError.missingPromptPlaceholder(prompt: "smart", placeholder: missing)
+    }
     if let recap = prompts?.recap,
       let missing = AgentCompactionPrompt.missingPlaceholder(in: recap)
     {

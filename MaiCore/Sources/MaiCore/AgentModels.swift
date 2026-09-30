@@ -870,9 +870,12 @@ public struct AgentRetryPolicy: Codable, Equatable, Sendable {
 /// replaces the bodies of files read in earlier turns with a one-line
 /// reference before each model call, at the price of invalidating the cache
 /// from that message on.
+/// `smart` builds a fresh working context with the compact model before each
+/// conversation call while retaining the transcript for normal compaction.
 public enum AgentContextMode: String, Codable, Equatable, Sendable {
   case cache
   case size
+  case smart
 }
 
 public struct AgentAutocompact: Codable, Equatable, Sendable {
@@ -968,8 +971,8 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
   public var retry: AgentRetryPolicy
   /// When the runtime summarizes the older part of a conversation by itself.
   public var autocompact: AgentAutocompact
-  /// Whether the run keeps every message as sent (cache) or prunes consumed
-  /// file bodies before each call (size).
+  /// Keep messages as sent (cache), prune old file bodies (size), or prepare
+  /// a fresh working context with the compact model for each call (smart).
   public var context: AgentContextMode
 
   public init(

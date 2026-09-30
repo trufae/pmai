@@ -85,6 +85,13 @@ Remote agents can share a provider while using different models. An empty model 
 
 Compaction sends the compaction template and selected transcript to the assigned agent with its prompt and reasoning settings, with tools disabled. Both manual and automatic compaction use the assignment. A failed summary leaves the existing conversation intact. With no assignment, the current model and reasoning settings are used.
 
+`/set ctx.context=smart` also uses the compact assignment, with a separate
+`prompts.smart` template (`/edit smart`). Before each conversation turn it selects
+task-relevant context from the full transcript, including complete tool outputs,
+and sends one working-context message alongside the original system/developer
+instructions. The saved transcript keeps growing and still autocompacts normally.
+Preparation calls count toward token/time budgets and usage statistics.
+
 Interactive autocompaction asks before replacing history, including when `tool.aproval` is `yolo`. In the pmai REPL, choose `y` to compact, `n` to continue without compaction for the current response, `m` for model-change instructions, `x` to clear the chat, or `c` to stop with the transcript kept. While the decision is pending, `/model NAME` changes the conversation model and `/model-compact NAME` changes the summarizer; then choose `y` or `n`. `/set ctx.compact 0` disables future automatic compaction. Piped and other noninteractive runs keep the configured automatic behavior.
 
 PocketMai shows the same decision before its MLX autocompaction. The prompt includes the chat's model settings, a compaction-agent picker, continue and stop actions, and a confirmed clear-chat action. Skipping applies to the current response; a later message may prompt again. In `/visual`, the compaction dialog also offers stopping to change models before continuing.

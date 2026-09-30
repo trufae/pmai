@@ -197,13 +197,14 @@ finishes with the copy it was given.
 
 ## The other templates
 
-`/prompts` also lists five templates that are not system prompts. Each has a
+`/prompts` also lists six templates that are not system prompts. Each has a
 built-in default; a custom text is saved under `prompts` in the
 configuration, and clearing it in the editor restores the default.
 
 | template | used by | must contain | edit with |
 |---|---|---|---|
 | `compact` | `/chat compact`, and autocompact (`/set ctx.compact N`) with a built-in focus on the task in hand | `{{transcript}}` (`{{focus}}` optional) | `/edit compact` |
+| `smart` | `/set ctx.context smart`: fresh task context before each conversation turn, using the compact model and full tool results without replacing history | `{{transcript}}` | `/edit smart` or `/edit prompt smart` |
 | `recap` | `/chat recap`: short goals, actions/results, and pending tasks with emoji labels; uses the compact model and keeps history unchanged | `{{transcript}}` | `/edit prompt recap` |
 | `delegation` | the brief a child agent receives | `{{task}}` (`{{context}}`, `{{output}}`, `{{agent}}`, `{{cwd}}` optional) | `/edit delegation` |
 | `worker` | the derived `<agent>.worker` instructions | — | `/edit worker` |
