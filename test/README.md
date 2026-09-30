@@ -19,6 +19,11 @@ model call so the runs can be studied for wasted turns and tokens.
 
 ## Running
 
+The offline theme smoke test checks built-ins, custom scripts, saving, startup
+overrides, and invalid input without changing your configuration:
+
+    python3 test/repl-theme-smoke.py MaiCore/.build/debug/pmai
+
 The recap integration smoke test uses a local mock provider and isolated chat
 state to check model routing, prompt edits, and history preservation:
 

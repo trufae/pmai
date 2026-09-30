@@ -453,6 +453,32 @@ tool calls and results, and run events. The setting survives restarts in
 `.pmai/settings.json`. The log is readable only by the current user and can
 contain prompts, tool output, and other private data.
 
+`/theme` (or `/theme list`) lists terminal themes. Four are built in:
+`default` preserves the original styling, `slime` is green, `light` suits
+white-background terminals, and `ember` uses warm colors. `/theme use slime`
+applies and saves the theme's six UI colors and `ui.bold` together.
+Set `PMAI_THEME=light` in your environment to apply a theme at startup over
+the configured styling; startup selection alone does not write the configuration.
+
+After tweaking colors with `/set`, `/theme save mine` writes the current
+colors and bold setting to `~/.pmai/themes/mine`, replacing that file if it
+exists. `PMAI_HOME` or `--home` relocates the themes directory. Files are plain
+scripts with one `/set` per line; for example:
+
+```text
+# ~/.pmai/themes/mine
+/set ui.bgline rgb:eee
+/set ui.fgcolor rgb:222
+/set ui.fgprompt rgb:046
+/set ui.bold off
+```
+
+Use `/theme use mine` or `PMAI_THEME=mine` to load it. User files take
+precedence over built-ins of the same name. Themes accept `ui.bgline`,
+`ui.fgcolor`, `ui.bgcolor`, `ui.fgprompt`, `ui.bgprompt`, `ui.fgtoolresult`,
+and `ui.bold`; omitted settings keep their current values. Blank lines and
+`#` comment lines are ignored, and invalid scripts leave the UI unchanged.
+
 `/set ui.` lists the persisted terminal styling options; `ui.bgline` colors the
 status line (or the separator), `ui.fgprompt`,
 `ui.bgprompt`, `ui.fgcolor`, `ui.bgcolor`, and `ui.fgtoolresult` accept named

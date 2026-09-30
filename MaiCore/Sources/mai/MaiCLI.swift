@@ -387,6 +387,7 @@ private struct VisualBridge: Sendable {
   var memory: MemoryState
   var todo: TodoState
   var skills: SkillState
+  var themesDirectory: URL
   /// Tokens/s and time in use per provider:model, shared with the runtime.
   var usageStats: ModelUsageStore
   let modelCatalog = REPLModelCatalog()
@@ -1292,6 +1293,16 @@ struct MaiCLI {
       }
       session.touch()
       workspace.upsert(session.chat, selecting: true)
+      let themesDirectory = home.rootURL.appendingPathComponent("themes", isDirectory: true)
+      if let theme = environmentValue(["PMAI_THEME"], in: environment) {
+        do {
+          let ui = try TerminalTheme.load(
+            theme, directory: themesDirectory, ui: configuration?.ui ?? .init())
+          configuration?.ui = ui
+        } catch {
+          await terminal.line("warning: \(error.localizedDescription)", to: .standardError)
+        }
+      }
       await terminal.configureMarkdown(
         markdownRenderer(
           enabled: options.markdown ?? configuration?.ui.markdown ?? true,
@@ -1357,6 +1368,7 @@ struct MaiCLI {
           memory: memoryState,
           todo: todoState,
           skills: skillState,
+          themesDirectory: themesDirectory,
           usageStats: usageStats),
         terminal: terminal)
     } catch {
@@ -2098,7 +2110,7 @@ struct MaiCLI {
           text: promptText(),
           completions: completionCandidates(
             workspace: workspace, configuration: configuration,
-            skills: visual.skills.catalog.skills),
+            skills: visual.skills.catalog.skills, themesDirectory: visual.themesDirectory),
           additionalCompletions: { visual.modelCatalog.completions(for: $0, runtime: runtime) },
           separator: screen == nil ? status.text : nil))
     }
@@ -2965,12 +2977,12 @@ struct MaiCLI {
             let commandConfiguration = configuration
             let commandCatalogs = catalogs
             let commandChatProcess = chatProcessIDs[session.id]
-            let changesRouting =
-              name == "/set"
+            let changesInput =
+              name == "/theme" || name == "/set"
               && argument.split(whereSeparator: \.isWhitespace).first?.lowercased()
                 == "ui.broadcast"
             let commandText = text
-            let command = await runForeground(name, resumeInput: !changesRouting) {
+            let command = await runForeground(name, resumeInput: !changesInput) {
               await runCommand(
                 commandText,
                 session: commandSession,
@@ -3551,6 +3563,8 @@ struct MaiCLI {
         await terminal.line(replHelp)
       case "set", "/set":
         await terminal.line(setHelp)
+      case "theme", "/theme":
+        await terminal.line(themeHelp)
       case "memory", "/memory":
         await terminal.line(memoryHelp)
       case "todo", "/todo":
@@ -3583,7 +3597,7 @@ struct MaiCLI {
         await terminal.line(skillsHelp)
       default:
         await terminal.line(
-          "Unknown help topic '\(argument)'. Try /help, or /help set, memory, todo, prompts, agents, mcp, chat, edit, tools, skills, queue, export, import, copy, or stats."
+          "Unknown help topic '\(argument)'. Try /help, or /help set, theme, memory, todo, prompts, agents, mcp, chat, edit, tools, skills, queue, export, import, copy, or stats."
         )
       }
     case "/cwd", "/pwd":
@@ -3603,6 +3617,10 @@ struct MaiCLI {
         configuration: &configuration,
         configurationPath: visual.configurationPath,
         terminal: terminal)
+    case "/theme":
+      await handleThemeCommand(
+        argument, configuration: &configuration, configurationPath: visual.configurationPath,
+        directory: visual.themesDirectory, terminal: terminal)
     case "/providers":
       for provider in await runtime.availableProviders() {
         let selected = provider.id == session.profile.provider ? "*" : " "
@@ -7493,6 +7511,46 @@ struct MaiCLI {
     }
   }
 
+  private static func handleThemeCommand(
+    _ argument: String,
+    configuration: inout MaiConfiguration?,
+    configurationPath: String?,
+    directory: URL,
+    terminal: TerminalWriter
+  ) async {
+    let parts = argument.split(whereSeparator: \.isWhitespace).map(String.init)
+    if parts.isEmpty || parts == ["list"] {
+      await terminal.line(TerminalTheme.names(directory: directory).joined(separator: "\n"))
+      await terminal.line("/theme use NAME · /theme save NAME · \(directory.path)")
+      return
+    }
+    guard parts.count == 2, ["use", "save"].contains(parts[0]) else {
+      await terminal.line(themeHelp)
+      return
+    }
+    do {
+      if parts[0] == "save" {
+        let url = try TerminalTheme.file(parts[1], directory: directory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try TerminalTheme.script(configuration?.ui ?? .init())
+          .write(to: url, atomically: true, encoding: .utf8)
+        await terminal.line("Saved theme '\(parts[1])' to \(url.path).")
+      } else {
+        guard var draft = configuration, let configurationPath else {
+          throw TerminalTheme.Invalid(message: "No writable configuration is active.")
+        }
+        draft.ui = try TerminalTheme.load(parts[1], directory: directory, ui: draft.ui)
+        try draft.save(to: URL(fileURLWithPath: configurationPath))
+        configuration = draft
+        await terminal.configureToolResultColor(draft.ui.toolResultForeground)
+        await terminal.configurePromptColor(draft.ui.promptForeground)
+        await terminal.line("Applied theme '\(parts[1])'.")
+      }
+    } catch {
+      await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+    }
+  }
+
   private static func handleSetCommand(
     _ argument: String,
     session: inout REPLSession,
@@ -7721,16 +7779,13 @@ struct MaiCLI {
       return
     }
 
-    let colorKeys = [
-      "ui.bgline", "ui.fgcolor", "ui.bgcolor", "ui.fgprompt", "ui.bgprompt",
-      "ui.fgtoolresult",
-    ]
-    let booleanKeys = ["ui.bold", "ui.markdown", "ui.broadcast"]
+    let themeKeys = TerminalTheme.colors.map(\.0) + ["ui.bold"]
+    let booleanKeys = ["ui.markdown", "ui.broadcast"]
     let countKeys = ["ui.toolresultlines"]
     let levelKeys = ["ui.subagents", "ui.thinking"]
     let textKeys = ["ui.title", "ui.editor"]
     guard
-      colorKeys.contains(key) || booleanKeys.contains(key) || countKeys.contains(key)
+      themeKeys.contains(key) || booleanKeys.contains(key) || countKeys.contains(key)
         || levelKeys.contains(key) || textKeys.contains(key)
     else {
       await terminal.line(
@@ -7785,9 +7840,7 @@ struct MaiCLI {
         await terminal.line("Usage: /set \(key) <on|off>")
         return
       }
-      if key == "ui.bold" {
-        ui.bold = enabled
-      } else if key == "ui.broadcast" {
+      if key == "ui.broadcast" {
         ui.broadcast = enabled
       } else {
         ui.markdown = enabled
@@ -7796,21 +7849,11 @@ struct MaiCLI {
             enabled: enabled, forced: false, environment: ProcessInfo.processInfo.environment))
       }
     } else {
-      guard let color = TerminalLineEditor.normalizedColor(parts[1]) else {
-        await terminal.line(
-          "Unknown color '\(parts[1])'. Use a named ANSI color, rgb:RGB, or none.")
+      do {
+        try TerminalTheme.set(key, value: parts[1], in: &ui)
+      } catch {
+        await terminal.line(error.localizedDescription)
         return
-      }
-      switch key {
-      case "ui.bgline": ui.backgroundLine = color
-      case "ui.fgcolor": ui.foreground = color
-      case "ui.bgcolor": ui.background = color
-      case "ui.fgprompt": ui.promptForeground = color
-      case "ui.bgprompt": ui.promptBackground = color
-      case "ui.fgtoolresult":
-        ui.toolResultForeground = color
-        await terminal.configureToolResultColor(color)
-      default: break
       }
     }
     guard var draft = configuration, let configurationPath else {
@@ -7821,6 +7864,7 @@ struct MaiCLI {
     do {
       try draft.save(to: URL(fileURLWithPath: configurationPath))
       configuration = draft
+      await terminal.configureToolResultColor(ui.toolResultForeground)
       if key == "ui.title" { await terminal.configureTerminalTitle(ui.title) }
       if key == "ui.editor" { configureEditor(ui.editor) }
       await terminal.line("Set \(displayedKey) = \(uiSetting(key, in: ui)).")
@@ -10409,10 +10453,12 @@ struct MaiCLI {
   private static func completionCandidates(
     workspace: AgentChatWorkspace,
     configuration: MaiConfiguration?,
-    skills: [AgentSkill] = []
+    skills: [AgentSkill] = [],
+    themesDirectory: URL
   ) -> [String] {
     var values = [
       "/help", "/help set", "/exit", "/quit", "/set tool.aproval yolo", "/set tool.aproval ask",
+      "/help theme", "/theme", "/theme list", "/theme use ", "/theme save ",
       "/set tool.aproval smart",
       "/set debug true", "/set debug false",
       "/set debugfile ", "/set debugfile default",
@@ -10492,6 +10538,7 @@ struct MaiCLI {
     for tint in AgentProjectTint.presetNames {
       values.append("/project tint \(tint)")
     }
+    values += TerminalTheme.names(directory: themesDirectory).map { "/theme use \($0)" }
     #if PMAI_HAS_VISUAL
       values.append("/visual")
     #endif
@@ -10811,6 +10858,7 @@ struct MaiCLI {
     /skills                List, enable, disable, or send skills (/help skills)
     /stats                 Combined ranking, tokens/s, time in use, and efficiency per provider:model, as bars
     /stop                  Interrupt the current turn and keep its queue; /continue resumes it
+    /theme                 List, apply, or save terminal themes (/help theme)
     /todo                  Show, add to, tick off, or edit this project's todo list
     /tools                 List logical tool groups for the current agent
     /version               Print the pmai version
@@ -10849,6 +10897,18 @@ struct MaiCLI {
       /set effort high
       /set effort max Check every edge case and verify the result before answering
       /set effort low Keep answers to one paragraph
+    """
+
+  private static let themeHelp = """
+    /theme [list]        List built-in and saved themes
+    /theme use NAME      Apply and persist a theme's UI settings
+    /theme save NAME     Save current colors and bold as a theme (overwrites NAME)
+
+    Built-ins: default (original styling), slime (green), light (white terminals), ember (warm).
+    PMAI_THEME=NAME selects a theme at startup, overriding configured colors and bold.
+    Custom themes live in ~/.pmai/themes/NAME ($PMAI_HOME or --home relocates it)
+    and take precedence over built-ins. Each line is /set ui.COLOR VALUE or
+    /set ui.bold on|off; blank lines and # comments are allowed. Other settings stay as they are.
     """
 
   private static let setHelp = """
@@ -11289,6 +11349,9 @@ struct MaiCLI {
 
       Config discovery:
         --config, PMAI_CONFIG, ./pmai.json, ~/.config/pmai/config.json
+
+      Terminal theme:
+        PMAI_THEME=default|slime|light|ember or a name in ~/.pmai/themes
 
       Ad-hoc provider (overrides the selected agent's):
         PMAI_PROVIDER, PMAI_MODEL, PMAI_BASE_URL, and PMAI_API_KEY, or
