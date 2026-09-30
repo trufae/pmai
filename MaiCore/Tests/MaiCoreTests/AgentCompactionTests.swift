@@ -121,7 +121,7 @@ func pruningPreservesOtherTextResults() {
   let body = String(repeating: "important output\n", count: 100)
   var messages: [AgentMessage] = [.user("First task.")]
   for (id, name, text, error) in [
-    ("shell", "run_sh", body, false),
+    ("shell", "run_shell", body, false),
     ("edit", "files_patch", body, false),
     ("error", "files_read_range", body, true),
     ("short", "files_get_function", "short body", false),

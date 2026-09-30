@@ -942,7 +942,7 @@ launched. An explicit `filesRoot` remains fixed. Paths are relative to that
 directory, and an absolute path is accepted as long as it lies inside it, so a
 model can reuse a path a shell command printed; a path error names the directory
 so the model can correct itself.
-The `run` group is one tool, `run_sh`, which executes code on this computer
+The `run` group is one tool, `run_shell`, which executes code on this computer
 with the privileges of the `pmai` process: the command line or script is saved
 to a temporary file and run with the configured shell (`runShell`; a name looked
 up in `PATH` or a full path, leading arguments such as `bash -e` honoured).
@@ -983,7 +983,7 @@ compiled out on iOS. The iOS app continues to support Streamable HTTP only.
 The example MCP entry is disabled so the example remains safe to inspect. Set
 an HTTP URL or stdio command and enable it to expose all discovered tools. Set
 `useToolProxy` on an agent to keep only the common tools (`files_read`,
-`files_grep`, `files_patch`, `files_write`, `files_list`, `run_sh`) as native
+`files_grep`, `files_patch`, `files_write`, `files_list`, `run_shell`) as native
 schemas and put the rest behind MaiCore's `list-tools` and `call-tool`, whose
 description names every hidden tool. `proxyExposedTools` chooses another set of
 native tools, and an empty set hides them all; `/set tool.proxy on|all|off`

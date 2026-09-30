@@ -12,7 +12,7 @@ print(src)
 PYEOF
 """
 
-@Test("Native argument keys from the failed run_sh calls recover without changing shell text",
+@Test("Native argument keys from the failed run_shell calls recover without changing shell text",
   arguments: [
     (["": "", "script": recoveryScript], ["script": recoveryScript]),
     (["script=\"\(recoveryScript)\"": ""], ["script": recoveryScript]),
@@ -55,7 +55,7 @@ func rejectAmbiguousArgumentKeys(arguments: [String: String]) {
   #expect(repaired == input)
   #expect(ToolSchemaValidator.validate(arguments: repaired, definition: definition) != nil)
   let proxy = ToolProxy.resolveCall(arguments: [
-    "name": .string("run_sh"), "arguments": input,
+    "name": .string("run_shell"), "arguments": input,
   ], definitions: [definition])
   #expect(proxy.call?.argumentValues == input.objectValue)
 }
@@ -82,11 +82,11 @@ func emptyArgumentNameDiagnostic() {
   #expect(error?.contains("Received: \"\"") == true)
 }
 
-@Test("Proxied run_sh calls use the same argument recovery")
+@Test("Proxied run_shell calls use the same argument recovery")
 func recoverProxiedArgumentKeys() throws {
   let definition = MaiRunTool(configuration: MaiRunConfiguration()).definition
   let result = ToolProxy.resolveCall(arguments: [
-    "name": .string("run_sh"),
+    "name": .string("run_shell"),
     "arguments": .object(["": .string("script=\"\(recoveryHeredoc)\"")]),
   ], definitions: [definition])
   let call = try #require(result.call)
@@ -112,7 +112,7 @@ func recoverStructuredArgumentValues() {
 @Test("Malformed argument diagnostics bound whole-script keys and explain the JSON shape")
 func boundedArgumentKeyDiagnostics() throws {
   let definition = MaiRunTool(configuration: MaiRunConfiguration()).definition
-  let key = "</think><tool_call>run_sh\tscript=\"\n" + String(repeating: "x", count: 20_000)
+  let key = "</think><tool_call>run_shell\tscript=\"\n" + String(repeating: "x", count: 20_000)
   let input = JSONValue.object([key: .string("")])
   #expect(ToolSchemaValidator.repairArgumentKeys(input, definition: definition) == input)
   let error = try #require(ToolSchemaValidator.validate(arguments: input, definition: definition))

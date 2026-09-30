@@ -68,7 +68,7 @@ func runShellScriptUsesArgumentsAndStdin() async throws {
 @Test("Other languages run through the shell, and a missing shell is reported")
 func runOtherLanguagesThroughTheShell() async throws {
   let tools = MaiRunTool.makeTools(configuration: MaiRunConfiguration())
-  #expect(tools.map(\.definition.name) == ["run_sh"])
+  #expect(tools.map(\.definition.name) == ["run_shell"])
   let environment = ProcessInfo.processInfo.environment
   if (try? MaiHostProcess.resolve("python3", environment: environment)) != nil {
     let output = try await call(

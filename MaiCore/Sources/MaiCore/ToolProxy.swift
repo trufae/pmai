@@ -17,7 +17,7 @@ public enum ToolProxy {
   /// tools by their own schema makes far fewer mistakes than one wrapping
   /// every call in an envelope, and the six schemas cost about 1k tokens.
   public static let defaultExposedNames: Set<String> = [
-    "files_read", "files_grep", "files_patch", "files_write", "files_list", "run_sh",
+    "files_read", "files_grep", "files_patch", "files_write", "files_list", "run_shell",
   ]
 
   /// Tools shown at most in the list-tools description before "and N more".

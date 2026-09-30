@@ -23,13 +23,13 @@ def tool_message(request, mode):
         ("files_read_range", {"path": "sample.txt", "start_line": 1e100, "end_line": 2},
          "must be integer" if mode == "native" else "lines 1-2"),
         ("context_rewrite", {"message": 1e100, "text": "replacement"}, "must be integer"),
-        ("run_sh", {"script": "printf smoke-shell", "timeout_seconds": 1e100}, "smoke-shell"),
-        ("run_sh", {"script": "printf smoke-shell", "timeout_seconds": "inf"},
+        ("run_shell", {"script": "printf smoke-shell", "timeout_seconds": 1e100}, "smoke-shell"),
+        ("run_shell", {"script": "printf smoke-shell", "timeout_seconds": "inf"},
          "must be number" if mode == "native" else "smoke-shell"),
         ("context_rewrite", {"message": 9223372036854775807, "text": "replacement"},
          "9223372036854775807"),
         # The shell exits before its child closes the output pipe.
-        ("run_sh", {"script": "(sleep 0.1; printf smoke-pipe) &"}, "smoke-pipe"),
+        ("run_shell", {"script": "(sleep 0.1; printf smoke-pipe) &"}, "smoke-pipe"),
         ("files_grep", {"path": "sample.txt", "query": "o.e", "regex": "true"}, "one"),
         ("files_grep", {"path": "sample.txt", "query": "o.e", "regex": "false"}, "No matching lines"),
         ("files_grep", {"path": "sample.txt", "query": "one", "regex": "o.e"},
@@ -95,7 +95,7 @@ class Provider(BaseHTTPRequestHandler):
                              "arguments-array": '[]', "arguments-null": 'null'}[case]
                 message = {"role": "assistant", "tool_calls": [{
                     "index": 0, "id": "bad-json", "type": "function",
-                    "function": {"name": "run_sh", "arguments": arguments},
+                    "function": {"name": "run_shell", "arguments": arguments},
                 }]}
             payload = {"choices": [{field: message,
                                      "finish_reason": "stop"}], "usage": usage}
@@ -134,7 +134,7 @@ def main():
                 with tempfile.TemporaryDirectory(prefix="pmai-network-") as directory:
                     root = Path(directory)
                     (root / "sample.txt").write_text("one\ntwo\n")
-                    tools = ["files_read_range", "files_grep", "run_sh", "context_rewrite"] if case.startswith("tool-") else []
+                    tools = ["files_read_range", "files_grep", "run_shell", "context_rewrite"] if case.startswith("tool-") else []
                     config = root / "config.json"
                     config.write_text(json.dumps({
                         "version": 1, "defaultAgent": "smoke",

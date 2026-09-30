@@ -158,7 +158,7 @@
         "github_read_file",
         "github_releases",
         "mastodon",
-        "run_sh",
+        "run_shell",
         "todo_add",
         "todo_done",
         "todo_list",

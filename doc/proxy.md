@@ -115,13 +115,13 @@ doing the work:
    tool"): it now runs (`9ffb9e3`). The proxy saves tokens; the agent's tool
    list is the permission boundary.
 7. **`files_grep` stopped at 100 lines silently** (`cc2e74a`): the proxy runs
-   reached for grep where the native runs used `run_sh grep -c`, counted the
+   reached for grep where the native runs used `run_shell grep -c`, counted the
    100 lines shown and answered "114 ERROR lines" for a log with 287.
 
 ### The hybrid
 
 `useToolProxy` now keeps `files_read`, `files_grep`, `files_patch`,
-`files_write`, `files_list` and `run_sh` native (about 1k tokens of schema)
+`files_write`, `files_list` and `run_shell` native (about 1k tokens of schema)
 and puts the rest behind `list-tools` and `call-tool`. An agent's
 `proxyExposedTools` names another set; an empty set is the pure proxy. On the
 benchmark the hybrid solves 12 of 13 tasks in both runs, like the native

@@ -850,7 +850,7 @@ private struct MaiFileWorkspace: Sendable {
     if hitLimit {
       // Without this line a model counts what it sees and reports it as the total.
       text +=
-        "\nStopped after \(limit) matching lines; more exist. Narrow the query, or count with run_sh (grep -c)."
+        "\nStopped after \(limit) matching lines; more exist. Narrow the query, or count with run_shell (grep -c)."
     }
     return ToolOutput(content: [.text(text)], structuredContent: .object(structured))
   }

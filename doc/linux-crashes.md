@@ -28,7 +28,7 @@ without its backtrace.
 
 Tool arguments had separate unchecked conversions: the 1.7.8 musl release
 also exits with SIGILL when a text tool call supplies `1e100` or `inf` as
-`run_sh.timeout_seconds`, or `1e100` as `files_read_range.start_line`.
+`run_shell.timeout_seconds`, or `1e100` as `files_read_range.start_line`.
 Normalization now converts integers exactly and keeps large finite numbers
 as numbers. Invalid required integer arguments reach the usual tool validation;
 numeric timeouts still use the Run tool's existing bounds. Context message

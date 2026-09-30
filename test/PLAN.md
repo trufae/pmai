@@ -66,7 +66,7 @@ Three facts decide everything below:
   protocol now run like any native turn. After: text 13/13, xml 12/13, json 12/13.
 - [x] **Every tool result was sent twice** (`87cef61`, `6b81c1b`). Each result
   carried a `<structured_content>` JSON copy of its text: a `files_list` result
-  was more than doubled, `files_read` appended offsets, `run_sh` appended the
+  was more than doubled, `files_read` appended offsets, `run_shell` appended the
   absolute cwd and a duration, on every later request of the run. Structured
   content now goes out only when a result has no text (MCP tools that answer
   with structured data alone).
@@ -84,7 +84,7 @@ Three facts decide everything below:
   `{"name":T,"arguments":{"name":T,"arguments":{…}}}`; the inner envelope
   reached the tool, `path` was "missing", the identical call repeated 40 times.
 - [x] **Glued tool names** (`3a1655f`, run-loop lookup `64f5ece`).
-  Servers hand over names like `run_sh Optimize:` or `files_read:`. The
+  Servers hand over names like `run_shell Optimize:` or `files_read:`. The
   resolver now tries the leading identifier, and the run loop uses the resolver
   too (text protocols offer no tools, so the provider's resolver is empty).
 - [x] **Empty reply killed the run** (`55fb63c`). A swallowed malformed call
@@ -124,10 +124,10 @@ prompt from 12,812 to 7,163 characters, and MaiStandardTools lost more lines
 than it gained.
 
 - [x] **Duplicate tools removed** (`818b499`, `613f4cf`). `read_text_file`
-  duplicated `files_read`; `run_system` duplicated `run_sh`. Gone, with their
+  duplicated `files_read`; `run_system` duplicated `run_shell`. Gone, with their
   schemas (~1.1k characters per call).
 - [x] **One run tool** (`613f4cf`). `run_python` and `run_js` (used once in 300
-  calls) are folded into `run_sh`; other languages go through the shell
+  calls) are folded into `run_shell`; other languages go through the shell
   (`python3 - <<'EOF' … EOF`). The `runPython`/`runNode` options went with them.
 - [x] **`files_read_document` merged into `files_read`** (`8b68ed5`): `.pdf`
   and `.docx` are converted to Markdown, everything else, JSON included, stays
@@ -215,7 +215,7 @@ reuse (append only, never touch old messages).
   tasks. So the current prompt's reads now stay untouched and only bodies
   read for *earlier* prompts collapse, which is where the debt accumulates in
   a long chat. Open: a multi-prompt benchmark case (the runner is one-shot) to
-  measure that saving, and extending the rule to long `run_sh` outputs of
+  measure that saving, and extending the rule to long `run_shell` outputs of
   earlier prompts.
 - [x] **Context tools removed** (`150afc7`). Never called in 900+ model calls
   while costing four schemas on every call of the default agent. The edit
@@ -227,7 +227,7 @@ reuse (append only, never touch old messages).
   19") and its description steers to `files_patch`; `files_grep` says in its
   text when it stopped at 100 matching lines (the structured flag no longer
   reaches the model, and a proxy run had counted the 100 lines as the total).
-- [x] **`run_sh` keeps 24 KB per stream instead of 100 KB** (`41df7e2`). The
+- [x] **`run_shell` keeps 24 KB per stream instead of 100 KB** (`41df7e2`). The
   truncation note says how much was dropped; head, tail or grep get the rest.
 - [x] **Exploration nudges** (`dc3e68e`): `files_list` says it lists one folder
   and points at `files_find` with `*` for the whole tree; `files_find` says so
@@ -457,7 +457,7 @@ first sweep; `18` re-run on the fixed binary):
   narrowed-leaf rule keep it off the leaves; the default `maxSubagentDepth`
   of 2 still gives every first-level worker the four schemas.
 - [ ] **Children list the tree first.** Every child of 17/18 opened with
-  `run_sh "ls -R"` although the brief named the files. One sentence in the
+  `run_shell "ls -R"` although the brief named the files. One sentence in the
   brief template ("the paths above exist; do not list the tree to find
   them") is cheap to measure.
 - [ ] Sequential calls after a concurrent one in the same reply do not wait

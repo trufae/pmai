@@ -16,7 +16,7 @@ func recapTranscript() {
         .text("<think>Private reasoning</think>Running checks"),
         .toolCall(
           ToolCall(
-            id: "check", name: "run_sh", arguments: .object(["command": .string("make test")]))),
+            id: "check", name: "run_shell", arguments: .object(["command": .string("make test")]))),
       ]),
     AgentMessage(
       role: .tool, content: [.toolResult(ToolResult(callID: "check", text: "Tests passed"))]),

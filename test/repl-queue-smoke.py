@@ -50,7 +50,7 @@ class Provider(BaseHTTPRequestHandler):
         elif texts == ['shell'] or any('SHELL_PROCESS_TEST' in (text or '') for text in texts):
             message = {'role': 'assistant', 'content': None, 'tool_calls': [{
                 'id': 'shell-1', 'type': 'function', 'function': {
-                    'name': 'run_sh',
+                    'name': 'run_shell',
                     'arguments': json.dumps({'script':
                         'sh -c \'trap "" TERM; echo $$ > child.pid; exec sleep 30\' >/dev/null 2>&1 & wait'}),
                 },
@@ -116,13 +116,13 @@ def main():
                                    'baseURL': f'http://127.0.0.1:{server.server_port}/v1',
                                    'apiKey': 'smoke', 'timeout': 60}],
                     'toolSources': [{'id': 'standard', 'kind': 'standard-tools',
-                                     'options': {'tools': ['files_write', 'run_sh']}}],
+                                     'options': {'tools': ['files_write', 'run_shell']}}],
                     'agents': [{'id': 'smoke', 'provider': 'smoke', 'model': 'smoke',
-                                'toolNames': ['files_write', 'run_sh'], 'toolGroupNames': ['agents'], 'enabled': True,
+                                'toolNames': ['files_write', 'run_shell'], 'toolGroupNames': ['agents'], 'enabled': True,
                                 'subagentNames': ['worker'],
                                 'retry': {'attempts': 0}},
                                {'id': 'worker', 'provider': 'smoke', 'model': 'worker',
-                                'toolNames': ['files_write', 'run_sh'], 'toolGroupNames': [], 'enabled': True,
+                                'toolNames': ['files_write', 'run_shell'], 'toolGroupNames': [], 'enabled': True,
                                 'stream': False,
                                 'retry': {'attempts': 0}}],
                     'approvals': {'mode': 'ask'},

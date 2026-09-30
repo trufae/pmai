@@ -169,7 +169,7 @@ public struct AgentToolNameResolver: Sendable {
       return known
     }
     // A model writing a call in its own syntax can hand the server a name with
-    // the arguments glued on ("run_sh Optimize:", "files_read.arguments"). The
+    // the arguments glued on ("run_shell Optimize:", "files_read.arguments"). The
     // leading identifier is the tool it meant; failing it costs a whole turn.
     let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
     let head = trimmed.prefix { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" }

@@ -44,7 +44,7 @@ public struct MaiRunConfiguration: Equatable, Sendable {
 /// and executed on the host. Other languages go through the shell too
 /// (`python3 - <<'EOF' … EOF`), so one tool and one schema cover them all.
 public struct MaiRunTool: AgentTool {
-  public static let name = "run_sh"
+  public static let name = "run_shell"
   public static let toolNames = [name]
 
   /// Spawning processes is unavailable on iOS, where the group is simply absent.

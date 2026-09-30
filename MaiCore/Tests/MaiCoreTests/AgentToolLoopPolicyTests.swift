@@ -91,12 +91,12 @@ func toolLoopRepairDecisions() {
 @Test("Tool names with arguments glued on resolve to their leading identifier")
 func resolverAcceptsGluedNames() {
   let resolver = AgentToolNameResolver(tools: [
-    ToolDefinition(name: "run_sh", description: "Run"),
+    ToolDefinition(name: "run_shell", description: "Run"),
     ToolDefinition(name: "files_read", description: "Read"),
   ])
-  #expect(resolver.canonicalName(for: "run_sh Optimize:") == "run_sh")
+  #expect(resolver.canonicalName(for: "run_shell Optimize:") == "run_shell")
   #expect(resolver.canonicalName(for: "files_read.arguments") == "files_read")
-  #expect(resolver.canonicalName(for: "run_sh") == "run_sh")
+  #expect(resolver.canonicalName(for: "run_shell") == "run_shell")
   #expect(resolver.canonicalName(for: "weather") == nil)
   #expect(resolver.canonicalName(for: "weather now") == nil)
 }

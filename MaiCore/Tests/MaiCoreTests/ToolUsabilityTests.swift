@@ -48,10 +48,10 @@ func fileToolsAcceptAbsolutePathsInsideTheWorkspace() async throws {
   #expect(notFolder.text.contains("not a folder; files_read reads a file"))
 }
 
-@Test("run_sh takes command and script as aliases of each other")
+@Test("run_shell takes command and script as aliases of each other")
 func runToolsAcceptAliases() async throws {
   let tools = MaiRunTool.makeTools(configuration: MaiRunConfiguration())
-  let shell = try #require(tools.first { $0.definition.name == "run_sh" })
+  let shell = try #require(tools.first { $0.definition.name == "run_shell" })
 
   let viaCommand = try await usabilityCall(shell, ["command": .string("printf via-command")])
   #expect(!viaCommand.isError)
@@ -79,7 +79,7 @@ func runToolsAcceptAliases() async throws {
 @Test("Schema errors name the fields the call had and the fields the tool takes")
 func schemaErrorsNameFields() {
   let definition = ToolDefinition(
-    name: "run_sh",
+    name: "run_shell",
     description: "Run",
     inputSchema: .object([
       "type": .string("object"),
@@ -212,7 +212,7 @@ func nativeBooleanArguments() async throws {
   #expect(ToolSchemaValidator.validate(arguments: normalized, definition: definition)?.contains("unknown field") == true)
 }
 
-@Test("Native malformed run_sh calls execute after recovery, preserving heredocs")
+@Test("Native malformed run_shell calls execute after recovery, preserving heredocs")
 func nativeRunArgumentsPreserveHeredocs() async throws {
   let body = "  field_peek\\|placement  \n\t$HOME `pwd` \\n\nprint(\"nested quotes\")"
   let script = "cat <<'PYEOF'\n\(body)\nPYEOF\nprintf finished"
@@ -227,7 +227,7 @@ func nativeRunArgumentsPreserveHeredocs() async throws {
     .object(["script": .string("printf valid"), "script=\"printf conflicting\"": .string("")]),
   ]
   let calls = arguments.enumerated().map { index, arguments in
-    ContentPart.toolCall(ToolCall(id: "repair-\(index)", name: "run_sh", arguments: arguments))
+    ContentPart.toolCall(ToolCall(id: "repair-\(index)", name: "run_shell", arguments: arguments))
   }
   let runtime = AgentRuntime(approvalHandler: AllowAllApprovals())
   try await runtime.register(UsabilityScriptedProvider(responses: [
@@ -238,7 +238,7 @@ func nativeRunArgumentsPreserveHeredocs() async throws {
   let recorder = UsabilityEventRecorder()
   let result = try await runtime.run(AgentRequest(
     provider: "usability-scripted", model: "fixture", messages: [.user("test shell arguments")],
-    toolNames: ["run_sh"], limits: AgentRunLimits(maxModelTurns: 2, maxToolCalls: 10))
+    toolNames: ["run_shell"], limits: AgentRunLimits(maxModelTurns: 2, maxToolCalls: 10))
   ) { await recorder.append($0) }
   let results = result.transcript.flatMap(\.toolResults)
   #expect(results.count == arguments.count)
@@ -255,7 +255,7 @@ func nativeRunArgumentsPreserveHeredocs() async throws {
 
 @Test("Malformed names from the ImHex log receive enabled tool names and fields")
 func malformedToolNamesHaveRepairHints() async throws {
-  let names = ["run_sh_command", "run_sh_think</think>Wait,", "files_read_section"]
+  let names = ["run_shell_command", "run_shell_think</think>Wait,", "files_read_section"]
   let runtime = AgentRuntime(approvalHandler: AllowAllApprovals())
   try await runtime.register(UsabilityScriptedProvider(responses: [
     ProviderResponse(message: AgentMessage(role: .assistant, content: names.enumerated().map {
@@ -276,12 +276,12 @@ func malformedToolNamesHaveRepairHints() async throws {
   let recorder = UsabilityEventRecorder()
   let result = try await runtime.run(AgentRequest(
     provider: "usability-scripted", model: "fixture", messages: [.user("read source")],
-    toolNames: ["run_sh", "files_read"], limits: AgentRunLimits(maxModelTurns: 2))
+    toolNames: ["run_shell", "files_read"], limits: AgentRunLimits(maxModelTurns: 2))
   ) { await recorder.append($0) }
   let results = result.transcript.flatMap(\.toolResults)
   #expect(results.count == names.count)
   #expect(results.allSatisfy { $0.isError && $0.text.contains("Retry with an exact tool name") })
-  #expect(results.prefix(2).allSatisfy { $0.text.contains("run_sh:") && $0.text.contains("script (string)") })
+  #expect(results.prefix(2).allSatisfy { $0.text.contains("run_shell:") && $0.text.contains("script (string)") })
   #expect(results.last?.text.contains("files_read:") == true)
   #expect(results.last?.text.contains("path (string, required)") == true)
   #expect(await recorder.events.allSatisfy {
@@ -289,7 +289,7 @@ func malformedToolNamesHaveRepairHints() async throws {
     return true
   })
   let bounded = AgentTooling.unavailableToolError(
-    name: "run_sh_think</think>\n" + String(repeating: "x", count: 20_000),
+    name: "run_shell_think</think>\n" + String(repeating: "x", count: 20_000),
     tools: [MaiRunTool(configuration: MaiRunConfiguration()).definition])
   #expect(bounded.count < 1_000)
   #expect(!bounded.contains("\n"))
@@ -299,10 +299,10 @@ func malformedToolNamesHaveRepairHints() async throws {
 func nativeToolAliasesUseCanonicalDispatch() async throws {
   let definition = MaiRunTool(configuration: MaiRunConfiguration()).definition
   let calls = [
-    ToolCall(id: "valid", name: "run_sh</think>The",
+    ToolCall(id: "valid", name: "run_shell</think>The",
       arguments: .object(["command=\"printf repaired\"": .string("")])),
-    ToolCall(id: "invalid", name: "run_sh</think>The", arguments: .object([
-      #"The test harness hardcodes its source:<tool_call>run_sh command="cat test_parser.ts | tr '\n' '|'" | head -c 2000"#: .string("")
+    ToolCall(id: "invalid", name: "run_shell</think>The", arguments: .object([
+      #"The test harness hardcodes its source:<tool_call>run_shell command="cat test_parser.ts | tr '\n' '|'" | head -c 2000"#: .string("")
     ])),
   ]
   let runtime = AgentRuntime(approvalHandler: AllowAllApprovals())
@@ -318,7 +318,7 @@ func nativeToolAliasesUseCanonicalDispatch() async throws {
   let recorder = UsabilityEventRecorder()
   let result = try await runtime.run(AgentRequest(
     provider: "usability-scripted", model: "fixture", messages: [.user("read source")],
-    toolNames: ["run_sh"], limits: AgentRunLimits(maxModelTurns: 2))
+    toolNames: ["run_shell"], limits: AgentRunLimits(maxModelTurns: 2))
   ) { await recorder.append($0) }
   let results = result.transcript.flatMap(\.toolResults)
   #expect(results.count == 2)
@@ -331,7 +331,7 @@ func nativeToolAliasesUseCanonicalDispatch() async throws {
     return nil
   }
   #expect(approvals.count == 1)
-  #expect(approvals.first?.call.name == "run_sh")
+  #expect(approvals.first?.call.name == "run_shell")
   #expect(approvals.first?.call.arguments == .object(["command": .string("printf repaired")]))
 }
 

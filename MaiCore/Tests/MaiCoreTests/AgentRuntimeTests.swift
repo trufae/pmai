@@ -380,7 +380,7 @@ func toolCallPreview() {
     arguments: .object(["path": .string("a.py"), "content": .string(String(repeating: "x", count: 200) + "\ny")]))
   let rendered = ToolCallPreview.render(long)
   #expect(rendered == "→ files_write path=a.py content=" + String(repeating: "x", count: 60) + "… (+1 lines)")
-  #expect(ToolCallPreview.render(ToolCall(id: "5", name: "run_sh", arguments: .object(["script": .string("make -s && ./app")]))) == "→ run_sh \"make -s && ./app\"")
+  #expect(ToolCallPreview.render(ToolCall(id: "5", name: "run_shell", arguments: .object(["script": .string("make -s && ./app")]))) == "→ run_shell \"make -s && ./app\"")
   #expect(ToolCallPreview.render(patch, maxLength: 20) == "→ files_patch path=s…")
 }
 
@@ -3563,7 +3563,7 @@ func systemOneApprovalHarm(probability: Double) async throws {
     configuration: .init(baseURL: URL(string: "https://\(host)")!), session: stubSession())
   let arguments: JSONValue = .object(["script": .string("rm -rf ~")])
   let review = ToolApprovalReview(
-    tool: .init(name: "run_sh", description: "shell"), arguments: arguments,
+    tool: .init(name: "run_shell", description: "shell"), arguments: arguments,
     task: "list files",
     environment: .init(
       workingDirectory: "/workspace", allowedPaths: ["/workspace"], sandbox: "test"))
@@ -3589,7 +3589,7 @@ func systemOneApprovalInvalid() async throws {
     configuration: .init(baseURL: URL(string: "https://bad-harm.example.test")!),
     session: stubSession())
   let review = ToolApprovalReview(
-    tool: .init(name: "run_sh", description: "shell"), arguments: .object([:]),
+    tool: .init(name: "run_shell", description: "shell"), arguments: .object([:]),
     task: "test", environment: .current)
   await #expect(throws: OpenAICompatibleProviderError.self) {
     try await provider.complete(SmartToolApproval.request(review: review, model: "tev1"))

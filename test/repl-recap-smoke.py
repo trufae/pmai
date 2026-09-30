@@ -188,7 +188,7 @@ def main():
                     'text': {'_0': 'Conversation summary (compacted): EARLIER GOAL'}}]})
             chat['messages'].extend([
                 {'id': 'call', 'role': 'assistant', 'content': [{'toolCall': {'_0': {
-                    'id': 'check', 'name': 'run_sh', 'arguments': {'command': 'make test'}}}}]},
+                    'id': 'check', 'name': 'run_shell', 'arguments': {'command': 'make test'}}}}]},
                 {'id': 'result', 'role': 'tool', 'content': [{'toolResult': {'_0': {
                     'callID': 'check', 'isError': False, 'importance': 'normal',
                     'content': [{'text': {'_0': 'TEST EVIDENCE: all checks passed'}}]}}}]},

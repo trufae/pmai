@@ -137,7 +137,7 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
         id: "run",
         displayName: "Run",
         description:
-          "Run programs on this computer: run_sh executes a shell command line or script with the "
+          "Run programs on this computer: run_shell executes a shell command line or script with the "
           + "configured shell and returns its output and exit status, killing it after the default "
           + "timeout unless the call sets one. Use it for builds, tests, git, and anything a person "
           + "would type in a terminal.",
@@ -146,7 +146,7 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
           .init(
             id: "runShell",
             label: "Shell",
-            help: "Runs run_sh scripts; a name found in PATH or a full path, optionally with leading arguments.",
+            help: "Runs run_shell scripts; a name found in PATH or a full path, optionally with leading arguments.",
             defaultValue: .string(MaiRunConfiguration.defaultShell)),
           .init(
             id: "runTimeoutSeconds",

@@ -498,7 +498,7 @@ enum ToolSchemaValidator {
     // Shell quotes belong to the script itself; they are not escaping for
     // this display-style wrapper. A quoted heredoc routinely contains both
     // kinds of quotes, including unescaped nested double quotes.
-    if tool == "run_sh", name == "script" || name == "command" {
+    if tool == "run_shell", name == "script" || name == "command" {
       let fields = properties.keys.map(NSRegularExpression.escapedPattern(for:)).joined(separator: "|")
       let anotherAssignment = #"["'][ \t]+(?:\#(fields))[ \t]*="#
       guard body.range(of: anotherAssignment, options: .regularExpression) == nil else { return nil }

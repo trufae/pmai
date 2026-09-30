@@ -260,6 +260,16 @@ def main():
                     users = [m['content'] for m in requests[-1][1]['messages'] if m['role'] == 'user']
                     assert users[-1] == 'start idle chat', users
                     send('/exit')
+                    # Exit also writes to the terminal while saving the chat.
+                    deadline = time.monotonic() + 10
+                    while process.poll() is None:
+                        assert time.monotonic() < deadline, (
+                            mode, 'exit timed out', output.decode(errors='replace'))
+                        if select.select([master], [], [], .1)[0]:
+                            try:
+                                output.extend(os.read(master, 65536))
+                            except OSError:
+                                break
                     process.wait(timeout=10)
                     assert process.returncode == 0, process.returncode
                     reloaded = subprocess.run(
