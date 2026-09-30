@@ -75,6 +75,7 @@ private enum ConversationImportError: LocalizedError {
 
 enum ToolCallApprovalDecision: Sendable {
   case approved(ParsedToolCall)
+  case denied(String)
   case cancelled
   case interrupted
 }
@@ -3912,21 +3913,16 @@ final class AppStore: ObservableObject {
     mode: ToolCallingMode,
     conversationID: UUID
   ) async -> ToolCallApprovalDecision {
-    let needsApproval = !settings.yoloModeEnabled
-    if needsApproval {
-      activityApprovalRequested(conversationID: conversationID, toolName: call.name)
-    }
+    activityApprovalRequested(conversationID: conversationID, toolName: call.name)
     let decision = await requestToolCallApproval(
       call: call,
       definitions: definitions,
       mode: mode,
       conversationTitle: conversation(withID: conversationID)?.displayTitle)
-    if needsApproval {
-      activityApprovalResolved(
-        conversationID: conversationID,
-        toolName: call.name,
-        decision: decision)
-    }
+    activityApprovalResolved(
+      conversationID: conversationID,
+      toolName: call.name,
+      decision: decision)
     return decision
   }
 
@@ -3936,8 +3932,6 @@ final class AppStore: ObservableObject {
     mode: ToolCallingMode,
     conversationTitle: String?
   ) async -> ToolCallApprovalDecision {
-    guard !settings.yoloModeEnabled else { return .approved(call) }
-
     let normalizedCall = AgentTooling.normalized(call: call, tools: definitions)
     let requestID = UUID()
     let originalText = AgentTooling.editableToolCallText(for: normalizedCall, mode: mode)
@@ -5324,7 +5318,7 @@ final class AppStore: ObservableObject {
       maxRepairTurnsPerTurn: maxRepairTurns,
       mcpRequestTimeoutSeconds: AppSettings.clampedMCPRequestTimeoutSeconds(
         settings.mcpRequestTimeoutSeconds),
-      yoloModeEnabled: settings.yoloModeEnabled,
+      toolApprovalMode: settings.toolApprovalMode,
       useToolProxy: settings.useToolProxy,
       airplaneModeEnabled: settings.airplaneModeEnabled,
       contextWindowMode: settings.contextWindowMode.rawValue,
@@ -5726,7 +5720,7 @@ final class AppStore: ObservableObject {
       defaultEnabledMCPTools: settings.defaultEnabledMCPTools,
       toolCallingMode: settings.toolCallingMode,
       maxToolCallsPerTurn: settings.maxToolCallsPerTurn,
-      yoloModeEnabled: settings.yoloModeEnabled,
+      toolApprovalMode: settings.toolApprovalMode,
       useToolProxy: settings.useToolProxy, useSystemOne: settings.useSystemOne)
   }
 
@@ -6061,8 +6055,8 @@ final class AppStore: ObservableObject {
     if let limit = payload.maxToolCallsPerTurn {
       settings.maxToolCallsPerTurn = AppSettings.clampedMaxToolCallsPerTurn(limit)
     }
-    if let yolo = payload.yoloModeEnabled {
-      settings.yoloModeEnabled = yolo
+    if let mode = payload.toolApprovalMode {
+      settings.toolApprovalMode = mode
     }
     if let routing = payload.useSystemOne { settings.useSystemOne = routing }
     if let proxy = payload.useToolProxy {

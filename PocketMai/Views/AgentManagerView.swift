@@ -49,7 +49,10 @@ struct AgentManagerView: View {
       }
       Section {
         ForEach(AgentTask.allCases, id: \.rawValue) { task in
-          Picker(task == .compact ? "Compaction" : "Tool decisions", selection: taskBinding(task)) {
+          Picker(
+            task == .compact ? "Compaction" : task == .tool ? "Tool decisions" : "Tool approval",
+            selection: taskBinding(task)
+          ) {
             Text("Current conversation agent").tag("")
             ForEach(store.settings.agents) { agent in
               Text(agent.name).tag(agent.id.uuidString.lowercased())
@@ -328,6 +331,9 @@ struct AgentEditorView: View {
         ForEach(store.settings.systemPrompts) { prompt in
           Text(prompt.displayName).tag(prompt.id)
         }
+      }
+      Picker("Tool approval", selection: agentBinding(agent.id, \.toolApprovalMode)) {
+        ForEach(ToolApprovalMode.allCases, id: \.rawValue) { mode in Text(mode.rawValue).tag(mode) }
       }
       Toggle("System One tool decisions", isOn: agentBinding(agent.id, \.useSystemOne))
       Picker("Tool format", selection: agentBinding(agent.id, \.toolCallingMode)) {

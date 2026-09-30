@@ -1991,7 +1991,7 @@ struct ConversationToolCallingDebug: Codable, Equatable, Sendable {
   var maxToolCallsPerTurn: Int
   var maxRepairTurnsPerTurn: Int
   var mcpRequestTimeoutSeconds: Int?
-  var yoloModeEnabled: Bool
+  var toolApprovalMode: ToolApprovalMode? = nil
   var useToolProxy: Bool
   var airplaneModeEnabled: Bool
   var contextWindowMode: String
@@ -2090,7 +2090,7 @@ struct ConversationDebugToolIteration: Codable, Equatable, Sendable {
   var effectiveMode: String? = nil
   var maxToolCallsPerTurn: Int? = nil
   var maxRepairTurnsPerTurn: Int? = nil
-  var yoloModeEnabled: Bool? = nil
+  var toolApprovalMode: ToolApprovalMode? = nil
   var useToolProxy: Bool? = nil
   var nativeToolCallingUnavailableReason: String? = nil
   var requestContext: String? = nil
@@ -2269,9 +2269,31 @@ struct SettingsToolsBackup: Codable, Sendable {
   var defaultEnabledMCPTools: Set<String>?
   var toolCallingMode: ToolCallingMode?
   var maxToolCallsPerTurn: Int?
-  var yoloModeEnabled: Bool?
+  var toolApprovalMode: ToolApprovalMode?
   var useToolProxy: Bool?
   var useSystemOne: Bool? = nil
+}
+
+extension SettingsToolsBackup {
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    toolSettings = try c.decode(NativeToolSettings.self, forKey: .toolSettings)
+    mcpServers = try c.decode([MCPServer].self, forKey: .mcpServers)
+    mcpRequestTimeoutSeconds = try c.decodeIfPresent(Int.self, forKey: .mcpRequestTimeoutSeconds)
+    defaultEnabledTools = try c.decodeIfPresent(
+      Set<BuiltInToolID>.self, forKey: .defaultEnabledTools)
+    defaultEnabledMCPServers = try c.decodeIfPresent(
+      Set<UUID>.self, forKey: .defaultEnabledMCPServers)
+    defaultEnabledMCPTools = try c.decodeIfPresent(
+      Set<String>.self, forKey: .defaultEnabledMCPTools)
+    toolCallingMode = try c.decodeIfPresent(ToolCallingMode.self, forKey: .toolCallingMode)
+    maxToolCallsPerTurn = try c.decodeIfPresent(Int.self, forKey: .maxToolCallsPerTurn)
+    toolApprovalMode =
+      try c.decodeIfPresent(ToolApprovalMode.self, forKey: .toolApprovalMode)
+      ?? ToolApprovalMode.legacyValue(from: decoder)
+    useToolProxy = try c.decodeIfPresent(Bool.self, forKey: .useToolProxy)
+    useSystemOne = try c.decodeIfPresent(Bool.self, forKey: .useSystemOne)
+  }
 }
 
 struct SettingsVoiceRecordingAttachment: Codable, Sendable {
@@ -3095,7 +3117,7 @@ struct AppSettings: Codable, Equatable, Sendable {
   var memory: String = ""
   var toolCallingMode: ToolCallingMode = .text
   var maxToolCallsPerTurn: Int = AppSettings.defaultMaxToolCallsPerTurn
-  var yoloModeEnabled: Bool = true
+  var toolApprovalMode: ToolApprovalMode = .yolo
   var useToolProxy: Bool = false
   var useSystemOne: Bool = false
   var contextWindowMode: ContextWindowMode = .full
@@ -3296,7 +3318,7 @@ struct AppSettings: Codable, Equatable, Sendable {
     case toolSettings, mcpServers, mcpRequestTimeoutSeconds, llmRequestTimeoutSeconds, memory,
       toolCallingMode,
       maxToolCallsPerTurn
-    case yoloModeEnabled, useToolProxy, useSystemOne, contextWindowMode
+    case toolApprovalMode, useToolProxy, useSystemOne, contextWindowMode
     case includeAssistantResponsesInContext, includeReasoningContentInContext
     case followUps, background
     case appearance, conversation, renderMarkdownInChat, renderMarkdownImagesInChat
@@ -3392,8 +3414,9 @@ struct AppSettings: Codable, Equatable, Sendable {
     maxToolCallsPerTurn = Self.clampedMaxToolCallsPerTurn(
       (try? c.decode(Int.self, forKey: .maxToolCallsPerTurn))
         ?? Self.defaultMaxToolCallsPerTurn)
-    yoloModeEnabled =
-      (try? c.decode(Bool.self, forKey: .yoloModeEnabled)) ?? true
+    toolApprovalMode =
+      (try? c.decode(ToolApprovalMode.self, forKey: .toolApprovalMode))
+      ?? ToolApprovalMode.legacyValue(from: decoder) ?? .yolo
     useSystemOne = (try? c.decode(Bool.self, forKey: .useSystemOne)) ?? false
     useToolProxy =
       (try? c.decode(Bool.self, forKey: .useToolProxy)) ?? migratedFromLegacyProxy

@@ -644,8 +644,16 @@ struct SettingsView: View {
   }
 
   @ViewBuilder
-  private var yoloModeContent: some View {
-    Toggle("YOLO mode", isOn: settingsBinding(\.yoloModeEnabled))
+  private var toolApprovalContent: some View {
+    Picker("Tool approval", selection: settingsBinding(\.toolApprovalMode)) {
+      ForEach(ToolApprovalMode.allCases, id: \.rawValue) { mode in
+        Text(mode.rawValue).tag(mode)
+      }
+    }
+    Text(
+      "yolo runs all tools; ask lets you approve or edit each call; smart uses the approval agent selected in Manage Agents, or the current chat model."
+    )
+    .font(.caption).foregroundStyle(.secondary)
   }
 
   private var agentsSection: some View {
@@ -1517,7 +1525,7 @@ struct SettingsView: View {
 
       SettingsLazyDisclosureGroup {
         toolCallingContent
-        yoloModeContent
+        toolApprovalContent
       } label: {
         Label("Options", systemImage: "slider.horizontal.3")
       }

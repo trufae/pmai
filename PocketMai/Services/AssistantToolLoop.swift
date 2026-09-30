@@ -992,9 +992,39 @@ enum AssistantToolLoop {
     let approvedCall: ParsedToolCall
     let shouldExecute: Bool
     let approval: ToolCallApprovalDecision
-    switch host {
-    case .live(_, _, let conversationID):
-      approval = await store.requestToolCallApproval(
+    let approvalSettings = settings(for: host, store: store)
+    switch approvalSettings.toolApprovalMode {
+    case .yolo: approval = .approved(normalizedCall)
+    case .smart:
+      let conversation: Conversation?
+      let definitions: [ToolDefinition]
+      switch host {
+      case .live(_, _, let id):
+        conversation = store.conversation(withID: id)
+        definitions =
+          conversation.map {
+            ToolAgentRegistry.definitions(
+              for: $0, settings: approvalSettings,
+              mcpTools: store.mcpTools, mcpResources: store.mcpResources,
+              mcpStatuses: store.mcpStatuses)
+          } ?? []
+      case .isolated(let value, _, let tools, let resources, let statuses, _):
+        conversation = value
+        definitions = ToolAgentRegistry.definitions(
+          for: value, settings: approvalSettings,
+          mcpTools: tools, mcpResources: resources, mcpStatuses: statuses)
+      }
+      if let conversation {
+        approval = try await smartApproval(
+          call: normalizedCall, conversation: conversation,
+          settings: approvalSettings, definitions: definitions, store: store)
+      } else {
+        approval = .denied("The conversation is no longer available.")
+      }
+    case .ask:
+      switch host {
+      case .live(_, _, let conversationID):
+        approval = await store.requestToolCallApproval(
         call: normalizedCall,
         definitions: currentDefinitions,
         mode: mode,
@@ -1006,7 +1036,11 @@ enum AssistantToolLoop {
         mode: mode,
         conversationTitle: conversation.displayTitle)
     }
+    }
     switch approval {
+    case .denied(let reason):
+      return .answered(
+        CallResult(call: normalizedCall, result: "Error: tool call denied. \(reason)"))
     case .approved(let call):
       approvedCall = call
       shouldExecute = true
@@ -1100,6 +1134,117 @@ enum AssistantToolLoop {
     return .ready(
       ReadyToolCall(
         call: executableCall, concurrent: concurrent, context: context, execute: execute))
+  }
+
+  private static func smartApproval(
+    call: ParsedToolCall, conversation: Conversation,
+    settings: AppSettings, definitions: [ToolDefinition], store: AppStore
+  ) async throws -> ToolCallApprovalDecision {
+    do {
+      // Evaluate the concrete target behind the proxy, preserving the original
+      // envelope for execution only when these exact arguments are approved.
+      let reviewedCall: ParsedToolCall
+      if settings.useToolProxy && call.name == ToolProxy.callName {
+        guard
+          let resolved = ToolProxy.resolveCall(
+            arguments: call.argumentValues, definitions: definitions
+          ).call
+        else {
+          return .denied("Cannot resolve the proxied tool for approval.")
+        }
+        reviewedCall = resolved
+      } else {
+        reviewedCall = call
+      }
+      let definition =
+        definitions.first { $0.name == reviewedCall.name }
+        ?? ToolProxy.definitions.first { $0.name == reviewedCall.name }
+      guard let definition else { return .denied("Cannot identify the tool for approval.") }
+      let root: URL
+      if reviewedCall.name.hasPrefix("files_") {
+        root = try FileWorkspaceTool.context(for: conversation, settings: settings).context.rootURL
+      } else {
+        root =
+          (try? FileWorkspaceTool.context(for: conversation, settings: settings).context.rootURL)
+          ?? PocketMaiDirectories.filesWorkspaceURL
+      }
+      let environment = ToolApprovalEnvironment(
+        workingDirectory: root.path, allowedPaths: [root.path],
+        sandbox:
+          "The iOS app sandbox and the selected Files workspace restrict local access. Files tools cannot escape their workspace. Remote MCP services have their own permissions; do not assume local sandbox restrictions apply remotely."
+      )
+      let review = ToolApprovalReview(
+        tool: definition, arguments: .object(reviewedCall.argumentValues),
+        task: conversation.messages.last(where: { $0.role == .user })?.text ?? "",
+        environment: environment)
+      let specialist = settings.taskConversation(.approval, from: conversation)
+      func evaluate(_ selected: Conversation) async throws -> ApprovalDecision {
+        if selected.provider == .openAICompatible {
+          guard !settings.airplaneModeEnabled else {
+            throw ChatProviderError.providerUnavailableInAirplaneMode("Approval provider")
+          }
+          guard
+            let endpoint = OpenAICompatibleProvider.selectedEndpoint(
+              for: selected, settings: settings)
+          else {
+            throw ChatProviderError.missingEndpoint
+          }
+          let provider = try await PocketMaiPluginHost.shared.makeProvider(
+            endpoint: endpoint,
+            requestTimeout: InteractiveOperationTimeout.extendedTransportTimeoutInterval)
+          let request = SmartToolApproval.request(
+            review: review,
+            model: selected.modelID.isEmpty ? endpoint.defaultModel : selected.modelID,
+            options: .init(reasoningEffort: selected.reasoningLevel.optionValue),
+            sessionID: conversation.sessionID)
+          let timing = StreamTimingObservation()
+          let response = try await InteractiveOperationTimeout.run(
+            seconds: TimeInterval(settings.llmRequestTimeoutSeconds),
+            context: LongRunningOperationContext(
+              kind: .modelResponse, conversationID: conversation.id,
+              assistantMessageID: nil, operationName: "Tool approval",
+              conversationTitle: conversation.displayTitle,
+              timeoutInterval: TimeInterval(settings.llmRequestTimeoutSeconds)),
+            onTimeout: timeoutHandler(store: store)
+          ) { try await provider.complete(request) }
+          UsageStatsStore.record(
+            GenerationStats.measured(
+              providerLabel: endpoint.name,
+              modelID: request.model, messages: request.messages, response: response, timing: timing
+            ),
+            assistantMessageID: nil)
+          return SmartToolApproval.decision(response, arguments: .object(call.argumentValues))
+        }
+        var reviewConversation = selected
+        reviewConversation.messages = [
+          ChatMessage(role: .user, text: review.state.compactJSONString)
+        ]
+        reviewConversation.toolsEnabled = false
+        reviewConversation.usesStreaming = false
+        let response = try await ChatProviderRouter.complete(
+          request: ChatCompletionRequest(
+            conversation: reviewConversation, settings: settings,
+            context: SmartToolApproval.instructions
+              + "\nReturn only JSON: {\"decision\":\"allow\" or \"block\",\"reason\":\"short explanation\"}.",
+            assistantMessageID: UUID(), hasToolCalling: false),
+          timeoutHandler: timeoutHandler(store: store)
+        ) { _ in }
+        return SmartToolApproval.decision(
+          .init(message: .assistant(response)), arguments: .object(call.argumentValues))
+      }
+      let decision: ApprovalDecision
+      do { decision = try await evaluate(specialist) } catch is ToolApprovalUnavailable {
+        decision = try await evaluate(conversation)
+      }
+      try Task.checkCancellation()
+      switch decision {
+      case .approve: return .approved(call)
+      case .deny(let reason): return .denied(reason)
+      case .cancelRun: throw CancellationError()
+      }
+    } catch is CancellationError { throw CancellationError() } catch {
+      return .denied("Approval review failed: \(error.localizedDescription)")
+    }
   }
 
   private static func executeToolCall(
@@ -1344,7 +1489,7 @@ enum AssistantToolLoop {
       effectiveMode: requestState.activeMode.rawValue,
       maxToolCallsPerTurn: maxToolCallsPerTurn(store: store),
       maxRepairTurnsPerTurn: maxRepairTurnsPerTurn(store: store),
-      yoloModeEnabled: store.settings.yoloModeEnabled,
+      toolApprovalMode: store.settings.toolApprovalMode,
       useToolProxy: store.settings.useToolProxy,
       nativeToolCallingUnavailableReason: nativeToolCallingUnavailableReason(
         conversation: conversation,

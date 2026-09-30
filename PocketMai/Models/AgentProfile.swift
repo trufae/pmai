@@ -23,7 +23,7 @@ struct AgentSettings: Codable, Equatable, Sendable {
   var llmRequestTimeoutSeconds: Int = AppSettings.defaultLLMRequestTimeoutSeconds
   var toolCallingMode: ToolCallingMode = .text
   var maxToolCallsPerTurn: Int = AppSettings.defaultMaxToolCallsPerTurn
-  var yoloModeEnabled: Bool = true
+  var toolApprovalMode: ToolApprovalMode = .yolo
   var useToolProxy: Bool = false
   var useSystemOne: Bool = false
   var contextWindowMode: ContextWindowMode = .full
@@ -40,7 +40,7 @@ struct AgentSettings: Codable, Equatable, Sendable {
     case defaultSystemPromptID, defaultEnabledTools
     case defaultEnabledMCPServers, defaultEnabledMCPTools
     case mcpRequestTimeoutSeconds, llmRequestTimeoutSeconds
-    case toolCallingMode, maxToolCallsPerTurn, yoloModeEnabled, useToolProxy, useSystemOne
+    case toolCallingMode, maxToolCallsPerTurn, toolApprovalMode, useToolProxy, useSystemOne
     case contextWindowMode, includeAssistantResponsesInContext, includeReasoningContentInContext
     case mlxMaxKVSize, mlxAutoCompact
   }
@@ -84,8 +84,9 @@ struct AgentSettings: Codable, Equatable, Sendable {
       (try? c.decode(ToolCallingMode.self, forKey: .toolCallingMode)) ?? defaults.toolCallingMode
     maxToolCallsPerTurn = AppSettings.clampedMaxToolCallsPerTurn(
       (try? c.decode(Int.self, forKey: .maxToolCallsPerTurn)) ?? defaults.maxToolCallsPerTurn)
-    yoloModeEnabled =
-      (try? c.decode(Bool.self, forKey: .yoloModeEnabled)) ?? defaults.yoloModeEnabled
+    toolApprovalMode =
+      (try? c.decode(ToolApprovalMode.self, forKey: .toolApprovalMode))
+      ?? ToolApprovalMode.legacyValue(from: decoder) ?? defaults.toolApprovalMode
     useSystemOne = (try? c.decode(Bool.self, forKey: .useSystemOne)) ?? false
     useToolProxy = (try? c.decode(Bool.self, forKey: .useToolProxy)) ?? defaults.useToolProxy
     contextWindowMode =
@@ -174,7 +175,7 @@ extension AppSettings {
       agent.llmRequestTimeoutSeconds = llmRequestTimeoutSeconds
       agent.toolCallingMode = toolCallingMode
       agent.maxToolCallsPerTurn = maxToolCallsPerTurn
-      agent.yoloModeEnabled = yoloModeEnabled
+      agent.toolApprovalMode = toolApprovalMode
       agent.useToolProxy = useToolProxy
       agent.useSystemOne = useSystemOne
       agent.contextWindowMode = contextWindowMode
@@ -201,7 +202,7 @@ extension AppSettings {
       llmRequestTimeoutSeconds = newValue.llmRequestTimeoutSeconds
       toolCallingMode = newValue.toolCallingMode
       maxToolCallsPerTurn = newValue.maxToolCallsPerTurn
-      yoloModeEnabled = newValue.yoloModeEnabled
+      toolApprovalMode = newValue.toolApprovalMode
       useToolProxy = newValue.useToolProxy
       useSystemOne = newValue.useSystemOne
       contextWindowMode = newValue.contextWindowMode

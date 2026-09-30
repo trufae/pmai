@@ -16,7 +16,7 @@ final class AutocompactionApprovalTests: XCTestCase {
     store = AppStore(persistence: PersistenceStore(localBaseURL: directory))
     try await waitUntil { self.store.hasLoadedPersistedSettings && self.store.currentConversation != nil }
     store.settings.mlxAutoCompact = true
-    store.settings.yoloModeEnabled = true
+    store.settings.toolApprovalMode = .yolo
     store.updateCurrentConversationSettings {
       $0.provider = .mlx
       $0.mlxMaxKVSize = .size1024
@@ -38,7 +38,7 @@ final class AutocompactionApprovalTests: XCTestCase {
     try await super.tearDown()
   }
 
-  func testSkipPromptsEvenWithYOLOAndKeepsHistoryAndModelChanges() async throws {
+  func testSkipPromptsEvenWithUnattendedApprovalAndKeepsHistoryAndModelChanges() async throws {
     let conversation = try XCTUnwrap(store.currentConversation)
     let task = Task { await store.autoCompactIfNeeded(conversationID: conversation.id) }
     defer { task.cancel() }

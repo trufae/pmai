@@ -230,7 +230,7 @@ final class SubagentEndToEndTests: XCTestCase {
     store.settings.defaultProvider = .openAICompatible
     store.settings.selectedEndpointID = endpoint.id
     store.settings.toolCallingMode = .native
-    store.settings.yoloModeEnabled = true
+    store.settings.toolApprovalMode = .yolo
     store.settings.agents[0].canSpawnSubagents = true
     XCTAssertTrue(store.settings.selectedAgent.canSpawnSubagents)
 
@@ -243,6 +243,74 @@ final class SubagentEndToEndTests: XCTestCase {
     conversation.enabledMCPServers = []
     conversation.messages = [ChatMessage(role: .user, text: "Delegate this")]
     return conversation
+  }
+
+  func testSmartApprovalUsesIsolatedSettingsAndBothReviewerAPIs() async throws {
+    for systemOne in [false, true] {
+      for allow in [false, true] {
+        StubChatEndpoint.install()
+        let conversation = makeDelegatingConversation()
+        var settings = store.settings
+        settings.toolApprovalMode = .smart
+        let endpoint = OpenAIEndpoint(
+          name: "Reviewer", baseURL: "https://\(StubChatEndpoint.host)/v1",
+          defaultModel: "review", kind: systemOne ? .systemOne : .openAICompatible)
+        settings.openAIEndpoints.append(endpoint)
+        let reviewer = settings.addAgent(named: "Reviewer")
+        let index = try XCTUnwrap(settings.agents.firstIndex { $0.id == reviewer.id })
+        settings.agents[index].settings.selectedEndpointID = endpoint.id
+        settings.agents[index].settings.openAIModelID = "review"
+        settings.taskAgents.approval = reviewer.id.uuidString.lowercased()
+        StubChatEndpoint.script = { request in
+          if request["model"] as? String == "review" {
+            if systemOne { return (["answers": ["harm": ["noul": allow ? 0.01 : 0.99]]], 0) }
+            return (
+              StubChatEndpoint.completion(
+                content: allow
+                  ? #"{"decision":"allow","reason":"within task"}"#
+                  : #"{"decision":"block","reason":"outside task"}"#), 0
+            )
+          }
+          let messages = request["messages"] as? [[String: Any]] ?? []
+          if let result = messages.last(where: { $0["role"] as? String == "tool" }) {
+            return (
+              StubChatEndpoint.completion(content: "Result: \(result["content"] as? String ?? "")"),
+              0
+            )
+          }
+          let task = messages.last { $0["role"] as? String == "user" }?["content"] as? String ?? ""
+          if task.contains("## Task") {
+            return (StubChatEndpoint.completion(content: "Child answer"), 0)
+          }
+          return (
+            StubChatEndpoint.toolCalls([
+              ("approval_call", ["task": "Say hi", "output": "Two words"])
+            ]), 0
+          )
+        }
+        let result = try await AssistantToolLoop.runIsolated(
+          conversation: conversation,
+          settings: settings, baseContext: "", store: store)
+        XCTAssertEqual(result.toolRuns.count, 1)
+        XCTAssertEqual(result.toolRuns.first?.isError, !allow, result.text)
+        XCTAssertTrue(
+          result.text.contains(allow ? "Child answer" : "tool call denied"), result.text)
+        let requests = StubChatEndpoint.requests.filter { $0["model"] as? String == "review" }
+        XCTAssertEqual(requests.count, 1)
+        let request = try XCTUnwrap(requests.first)
+        if systemOne {
+          let state = try XCTUnwrap(request["state"] as? [String: Any])
+          XCTAssertEqual(state["tool"] as? String, AgentProcessTools.startToolName)
+          XCTAssertEqual(state["task"] as? String, "Delegate this")
+          XCTAssertNotNil(state["valid_paths"])
+        } else {
+          XCTAssertNil(request["tools"])
+          let messages = try XCTUnwrap(request["messages"] as? [[String: Any]])
+          XCTAssertTrue((messages.last?["content"] as? String ?? "").contains("valid_paths"))
+        }
+        XCTAssertTrue(store.toolCallApprovalRequests.isEmpty)
+      }
+    }
   }
 
   func testAgentStartRunsAChildAndHandsItsAnswerToTheParent() async throws {

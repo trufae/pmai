@@ -32,7 +32,7 @@ final class AgentProfileTests: XCTestCase {
     custom.llmRequestTimeoutSeconds = 180
     custom.toolCallingMode = ToolCallingMode.allCases.first { $0 != .text } ?? .text
     custom.maxToolCallsPerTurn = 3
-    custom.yoloModeEnabled = false
+    custom.toolApprovalMode = .ask
     custom.useToolProxy = true
     custom.useSystemOne = true
     custom.contextWindowMode = ContextWindowMode.allCases.first { $0 != .full } ?? .full
@@ -63,6 +63,34 @@ final class AgentProfileTests: XCTestCase {
       OpenAIEndpoint.self, from: JSONSerialization.data(withJSONObject: legacy))
     XCTAssertEqual(old.kind, .openAICompatible)
     XCTAssertNotEqual(old.connectionSignature, endpoint.connectionSignature)
+  }
+
+  func testApprovalModesMigrateAndOnlyEncodeTheNewSetting() throws {
+    let decoder = JSONDecoder()
+    for (json, expected) in [
+      ("{}", ToolApprovalMode.yolo),
+      (#"{"yoloModeEnabled":false}"#, .ask),
+      (#"{"yoloModeEnabled":true}"#, .yolo),
+      (#"{"yoloModeEnabled":true,"toolApprovalMode":"smart"}"#, .smart),
+    ] {
+      let data = Data(json.utf8)
+      let agent = try decoder.decode(AgentSettings.self, from: data)
+      let settings = try decoder.decode(AppSettings.self, from: data)
+      XCTAssertEqual(agent.toolApprovalMode, expected)
+      XCTAssertEqual(settings.toolApprovalMode, expected)
+      XCTAssertEqual(settings.agents[0].settings.toolApprovalMode, expected)
+      let encoded = try JSONEncoder().encode(settings)
+      XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("yoloModeEnabled"))
+      XCTAssertEqual(try decoder.decode(AppSettings.self, from: encoded).toolApprovalMode, expected)
+    }
+    let backup = try decoder.decode(
+      SettingsToolsBackup.self,
+      from: Data(#"{"toolSettings":{},"mcpServers":[],"yoloModeEnabled":false}"#.utf8))
+    XCTAssertEqual(backup.toolApprovalMode, .ask)
+    let encoded = try JSONEncoder().encode(backup)
+    XCTAssertFalse(String(decoding: encoded, as: UTF8.self).contains("yoloModeEnabled"))
+    XCTAssertEqual(
+      try decoder.decode(SettingsToolsBackup.self, from: encoded).toolApprovalMode, .ask)
   }
 
   func testDefaultsStartWithTheStockAgentSelected() {
@@ -132,7 +160,7 @@ final class AgentProfileTests: XCTestCase {
     settings.agentSettings = stockSettings
     let extra = settings.addAgent(named: "Extra")
     settings.selectAgent(extra.id)
-    settings.yoloModeEnabled = true
+    settings.toolApprovalMode = .yolo
 
     XCTAssertFalse(settings.removeAgent(AgentProfile.stockID), "the stock agent stays")
     XCTAssertTrue(settings.removeAgent(extra.id))
@@ -220,10 +248,12 @@ final class AgentProfileTests: XCTestCase {
     settings.syncSelectedAgent()
     settings.selectAgent(AgentProfile.stockID)
     settings.taskAgents = .init(
-      compact: fast.id.uuidString.lowercased(), tool: fast.id.uuidString.lowercased())
+      compact: fast.id.uuidString.lowercased(), tool: fast.id.uuidString.lowercased(),
+      approval: fast.id.uuidString.lowercased())
     let restored = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
     XCTAssertEqual(restored.defaultProviderConfiguration.modelID, "agent-specific-model")
     XCTAssertEqual(restored.taskAgent(.tool)?.settings.openAIModelID, "small")
+    XCTAssertEqual(restored.taskAgent(.approval)?.settings.openAIModelID, "small")
     XCTAssertEqual(restored.taskAgent(.compact)?.settings.defaultReasoningLevel, .disabled)
     XCTAssertEqual(restored.openAIEndpoints[0].defaultModel, "provider-default")
     var cleaned = restored
