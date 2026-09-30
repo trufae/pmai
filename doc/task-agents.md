@@ -4,7 +4,7 @@ pmai and PocketMai use three concepts:
 
 - A **provider** is a reusable connection: backend, base URL, credentials, headers, and timeout. Many agents can share it.
 - An **agent** chooses a provider, model, system prompt, reasoning effort, and tool format. It also owns the permissions used when it runs as a conversation agent.
-- A **task assignment** points compaction or tool decisions at a saved agent. An empty assignment uses the current conversation agent. Assignments are installation defaults, independent of which chat is open.
+- A **task assignment** points compaction, tool decisions, or tool approval at a saved agent. An empty assignment uses the current conversation agent. Assignments are installation defaults, independent of which chat is open.
 
 The default conversation agent is selected separately. Changing a task assignment does not switch the conversation's main model.
 
@@ -45,9 +45,10 @@ For a quick alternative model, these create or update ordinary task agents, whic
 A selector first matches a saved agent ID. Otherwise it names a model: `PROVIDER::MODEL` chooses both, and a bare model uses the current provider. The separator is deliberately `::`, so model IDs containing `/` or a single `:` keep their meaning.
 
 ```text
-/model                     # show main model and both task assignments
+/model                     # show main model and all task assignments
 /model-compact            # clear the compaction assignment
 /model-tool               # clear the tool assignment
+/model-aproval            # clear the approval assignment
 /model-tool -             # also clears; "default" does the same
 /model remote::large-model # save this conversation agent's provider and model
 /agent default main        # save the agent used for future chats and runs
@@ -74,7 +75,7 @@ Task assignments use explicit task flags, then saved assignments, then the curre
 
 1. In **Settings → Providers**, add a local or remote connection and configure its URL and authentication. Apple and MLX are available as on-device providers.
 2. In **Settings → Manage Agents**, add an agent; its editor opens without changing the default agent. Use its Edit button to select its provider connection, model, system prompt, reasoning effort, and tool format. Select it in the list to configure its tools and other advanced settings. Selecting an agent also makes it the default for new chats.
-3. Under **Task agents** in Manage Agents, choose **Compaction** and **Tool decisions** independently. Select **Current conversation agent** to clear either assignment.
+3. Under **Task agents** in Manage Agents, choose **Compaction**, **Tool decisions**, and **Tool approval** independently. Select **Current conversation agent** to clear an assignment.
 
 Changes save automatically and survive restarting the app. Task choices do not change when you select another main agent. Removing an assigned agent clears its task assignments. Native provider/settings backups include the agent definitions and task defaults.
 
@@ -84,7 +85,7 @@ Remote agents can share a provider while using different models. An empty model 
 
 Compaction sends the compaction template and selected transcript to the assigned agent with its prompt and reasoning settings, with tools disabled. Both manual and automatic compaction use the assignment. A failed summary leaves the existing conversation intact. With no assignment, the current model and reasoning settings are used.
 
-Interactive autocompaction asks before replacing history, including when tool YOLO is enabled. In the pmai REPL, choose `y` to compact, `n` to continue without compaction for the current response, `m` for model-change instructions, `x` to clear the chat, or `c` to stop with the transcript kept. While the decision is pending, `/model NAME` changes the conversation model and `/model-compact NAME` changes the summarizer; then choose `y` or `n`. `/set ctx.compact 0` disables future automatic compaction. Piped and other noninteractive runs keep the configured automatic behavior.
+Interactive autocompaction asks before replacing history, including when `tool.aproval` is `yolo`. In the pmai REPL, choose `y` to compact, `n` to continue without compaction for the current response, `m` for model-change instructions, `x` to clear the chat, or `c` to stop with the transcript kept. While the decision is pending, `/model NAME` changes the conversation model and `/model-compact NAME` changes the summarizer; then choose `y` or `n`. `/set ctx.compact 0` disables future automatic compaction. Piped and other noninteractive runs keep the configured automatic behavior.
 
 PocketMai shows the same decision before its MLX autocompaction. The prompt includes the chat's model settings, a compaction-agent picker, continue and stop actions, and a confirmed clear-chat action. Skipping applies to the current response; a later message may prompt again. In `/visual`, the compaction dialog also offers stopping to change models before continuing.
 
@@ -92,7 +93,7 @@ When tools are available, the tool agent handles successive tool decisions using
 
 Task agents are inference profiles, not recursive child agents. Their own task assignments or tool grants are not followed. Calls retain the chat session ID, and usage is attributed to the provider/model that performed each call. CLI run limits count specialist and final-answer turns together, so a low turn limit can pause before final synthesis.
 
-Provider failure does not silently switch a configured task to the expensive main model. The normal error/retry behavior applies. Invalid CLI agent references or disabled task agents fail validation; deletion clears assignments explicitly. Legacy settings without task assignments continue to use their current agent.
+Compaction and tool-decision provider failures do not switch to the main model. The normal error/retry behavior applies. Invalid CLI agent references or disabled task agents fail validation; deletion clears assignments explicitly. Legacy settings without task assignments continue to use their current agent.
 
 Routing is independent of tool-call serialization. Native, Text, XML, and JSON work with the selected chat model.
 
@@ -138,3 +139,44 @@ Keep a regular chat model selected with `/model`, then configure routing:
 System One classifies supplied choices; it does not generate arbitrary argument text. It chooses one enabled concrete tool or `none`; the primary chat model receives only that tool's schema and fills its parameters. `none` sends the primary model a turn with no tools to answer. Tool validation, approvals, execution limits, retries, and cancellation remain in place. Catalogs above 23 tools use successive choice rounds. The short decision context retains the latest user request and recent activity. Routing bypasses the proxy catalog while enabled, and adds a decision inference before each argument-generation turn; actual latency depends on both models and catalog size.
 
 On iOS, add a connection in **Settings → Providers**, choose **API → System One (TEV / JEV)**, set its Ollama URL, and refresh models. In **Manage Agents**, configure a tool-decision agent with that connection and a filtered model selection, then assign it under **Tool decisions**. Enable **System One tool decisions** on the conversation agent. Keep the conversation agent on a chat provider for arguments and final answers. Provider backups preserve the API kind and agent backups preserve the routing toggle.
+
+## Tool approval
+
+Tool selection and approval are independent. `/set tool.aproval` shows the mode;
+`/set tool.aproval yolo|ask|smart` saves it for the current project. The default
+`yolo` runs every tool without a prompt. `ask` prompts before every call, including
+read-only and proxy catalog tools, and permits editing the arguments. `smart`
+reviews each concrete tool and its arguments before execution:
+
+```text
+/model-aproval decisions::tev1:latest
+/set tool.aproval smart
+```
+
+This uses System One's `questions.harm` with type `noul`. A finite probability
+below 0.5 allows the call; 0.5 or above blocks it. An unavailable endpoint or
+unsupported model falls back to the conversation's chat model. To use a regular
+model directly, run `/model-aproval local::qwen3:8b`; to use the current model,
+clear the assignment with `/model-aproval -`. These choices work independently
+of `tool.systemone` and `/model-tool`.
+
+Regular reviewers receive a tools-disabled prompt requesting exactly
+`{"decision":"allow|block","reason":"..."}`. The state includes the tool and its
+arguments, the latest user task, working directory, valid paths, and tool-specific
+sandbox information. Harmful, uncertain, out-of-scope, and sandbox-bypassing
+calls are to be blocked. An invalid answer or review failure blocks execution;
+a block verdict never triggers fallback. Reviews cannot change arguments or
+expand the host's permissions. Model review does not provide OS isolation.
+CLI review calls count towards run budgets and usage.
+
+The shared CLI configuration stores `approvals.mode` and
+`taskAgents.approval`. `--tool-aproval MODE` overrides the mode for one run. Old
+`yolo` booleans migrate on load (`true` → `yolo`, `false` → `ask`); they are no
+longer written or exposed as settings or command-line flags.
+
+On iOS, choose **Tool approval → smart** in the conversation agent's tool
+settings. Create an approval agent using either a regular provider or a System
+One connection, then select it under **Manage Agents → Task agents → Tool
+approval**. Each agent keeps its approval mode, and backups retain both the mode
+and reviewer assignment. The `ask` mode displays the editable approval dialog
+for every call. Existing settings with approval prompts enabled migrate to `ask`.

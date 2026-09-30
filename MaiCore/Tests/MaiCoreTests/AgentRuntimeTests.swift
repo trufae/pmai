@@ -2382,7 +2382,7 @@ func configurationLoading() async throws {
   let configuration = try JSONDecoder().decode(MaiConfiguration.self, from: data)
   try configuration.validate()
   #expect(configuration.defaultAgent == "main")
-  #expect(configuration.approvals.confirm == .allow)
+  #expect(configuration.approvals.mode == .ask)
   #expect(configuration.agents[0].limits == AgentRunLimits())
   #expect(configuration.agents[0].limits.maxModelTurns == 60)
   #expect(configuration.agents[0].limits.maxToolCalls == 50)

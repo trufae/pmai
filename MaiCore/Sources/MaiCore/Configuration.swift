@@ -389,38 +389,26 @@ public struct ConfiguredMCPServer: Codable, Equatable, Identifiable, Sendable {
   #endif
 }
 
-public enum ConfiguredApprovalMode: String, Codable, Sendable {
-  case ask
-  case allow
-  case deny
-}
-
 public struct ConfiguredApprovals: Codable, Equatable, Sendable {
-  public var confirm: ConfiguredApprovalMode
-  public var dangerous: ConfiguredApprovalMode
-  /// Permits every tool call without asking. The CLI uses this default when
-  /// the opened project has no saved `/set yolo` choice.
-  public var yolo: Bool
+  public var mode: ToolApprovalMode
+  public init(mode: ToolApprovalMode = .yolo) { self.mode = mode }
 
-  public init(
-    confirm: ConfiguredApprovalMode = .ask,
-    dangerous: ConfiguredApprovalMode = .ask,
-    yolo: Bool = false
-  ) {
-    self.confirm = confirm
-    self.dangerous = dangerous
-    self.yolo = yolo
-  }
-
-  private enum CodingKeys: String, CodingKey { case confirm, dangerous, yolo }
-
+  private enum CodingKeys: String, CodingKey { case mode, yolo, confirm, dangerous }
   public init(from decoder: Decoder) throws {
-    let container = try decoder.container(keyedBy: CodingKeys.self)
-    self.init(
-      confirm: try container.decodeIfPresent(ConfiguredApprovalMode.self, forKey: .confirm) ?? .ask,
-      dangerous: try container.decodeIfPresent(ConfiguredApprovalMode.self, forKey: .dangerous)
-        ?? .ask,
-      yolo: try container.decodeIfPresent(Bool.self, forKey: .yolo) ?? false)
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    if let mode = try c.decodeIfPresent(ToolApprovalMode.self, forKey: .mode) {
+      self.mode = mode
+    } else if let legacy = try c.decodeIfPresent(Bool.self, forKey: .yolo) {
+      mode = legacy ? .yolo : .ask
+    } else if c.contains(.confirm) || c.contains(.dangerous) {
+      mode = .ask
+    } else {
+      mode = .yolo
+    }
+  }
+  public func encode(to encoder: Encoder) throws {
+    var c = encoder.container(keyedBy: CodingKeys.self)
+    try c.encode(mode, forKey: .mode)
   }
 }
 

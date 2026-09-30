@@ -70,8 +70,8 @@ private struct CLIOptions {
   var maxModelTurns: Int?
   var maxSubagents: Int?
   var stream = true
-  /// Permit all tool calls without prompting for this process.
-  var yolo = false
+  /// Override the project approval policy for this process.
+  var approvalMode: ToolApprovalMode?
   /// Reopen the most recently updated chat instead of starting a fresh one.
   var resume = false
   /// A chat list index, UUID prefix, or title to reopen.
@@ -157,8 +157,12 @@ private struct CLIOptions {
         pluginPaths.append(try Self.value(after: argument, in: arguments, index: &index))
       case "--no-stream":
         stream = false
-      case "-y", "--yolo":
-        yolo = true
+      case "--tool-aproval":
+        let value = try Self.value(after: argument, in: arguments, index: &index)
+        guard let mode = ToolApprovalMode(rawValue: value) else {
+          throw CLIError.unknownOption("--tool-aproval expects yolo, ask, or smart")
+        }
+        approvalMode = mode
       case "-r", "--resume", "--continue":
         resume = true
         if index + 1 < arguments.count, !arguments[index + 1].hasPrefix("-") {
@@ -875,16 +879,31 @@ private actor TerminalApprovalHandler: ApprovalHandler {
   typealias CompactionPrompter = @Sendable (AutocompactionRequest) async throws -> AutocompactionDecision
 
   private struct ProjectSettings: Codable {
-    var yolo: Bool?
+    var approvalMode: ToolApprovalMode?
     var debug: Bool?
     var debugFile: String?
+    init() {}
+    private enum CodingKeys: String, CodingKey { case approvalMode, yolo, debug, debugFile }
+    init(from decoder: Decoder) throws {
+      let c = try decoder.container(keyedBy: CodingKeys.self)
+      approvalMode =
+        try c.decodeIfPresent(ToolApprovalMode.self, forKey: .approvalMode)
+        ?? c.decodeIfPresent(Bool.self, forKey: .yolo).map { $0 ? .yolo : .ask }
+      debug = try c.decodeIfPresent(Bool.self, forKey: .debug)
+      debugFile = try c.decodeIfPresent(String.self, forKey: .debugFile)
+    }
+    func encode(to encoder: Encoder) throws {
+      var c = encoder.container(keyedBy: CodingKeys.self)
+      try c.encodeIfPresent(approvalMode, forKey: .approvalMode)
+      try c.encodeIfPresent(debug, forKey: .debug)
+      try c.encodeIfPresent(debugFile, forKey: .debugFile)
+    }
   }
 
-  private let configuration: ConfiguredApprovals
   private let projectSettingsURL: URL
   private var projectSettings: ProjectSettings
   private var delegate: (any ApprovalHandler)?
-  private var yoloEnabled: Bool
+  private var approvalMode: ToolApprovalMode
   private var debugEnabled: Bool
   /// Asks through the REPL's own prompt while the persistent screen owns the
   /// terminal, so a question from a child agent never fights the line editor
@@ -893,9 +912,8 @@ private actor TerminalApprovalHandler: ApprovalHandler {
   private var compactionPrompter: CompactionPrompter?
 
   init(
-    configuration: ConfiguredApprovals, projectSettingsURL: URL, yoloEnabled: Bool = false
+    configuration: ConfiguredApprovals, projectSettingsURL: URL, mode: ToolApprovalMode? = nil
   ) throws {
-    self.configuration = configuration
     self.projectSettingsURL = projectSettingsURL
     let projectSettings =
       FileManager.default.fileExists(atPath: projectSettingsURL.path)
@@ -903,7 +921,7 @@ private actor TerminalApprovalHandler: ApprovalHandler {
         ProjectSettings.self, from: Data(contentsOf: projectSettingsURL))
       : ProjectSettings()
     self.projectSettings = projectSettings
-    self.yoloEnabled = yoloEnabled || (projectSettings.yolo ?? configuration.yolo)
+    self.approvalMode = mode ?? projectSettings.approvalMode ?? configuration.mode
     self.debugEnabled = projectSettings.debug ?? false
   }
 
@@ -912,19 +930,16 @@ private actor TerminalApprovalHandler: ApprovalHandler {
     delegate = handler
   }
 
-  func setYOLOEnabled(_ enabled: Bool) {
-    yoloEnabled = enabled
-  }
+  func setApprovalMode(_ mode: ToolApprovalMode) { approvalMode = mode }
+  func toolApprovalMode() -> ToolApprovalMode? { approvalMode }
+  func currentApprovalMode() -> ToolApprovalMode { approvalMode }
+  func permitsUnattendedExecution() -> Bool { approvalMode == .yolo }
 
-  func saveYOLOEnabled(_ enabled: Bool) throws {
-    yoloEnabled = enabled
-    projectSettings.yolo = enabled
+  func saveApprovalMode(_ mode: ToolApprovalMode) throws {
+    approvalMode = mode
+    projectSettings.approvalMode = mode
     try MaiJSONCoding.default.makeEncoder().encode(projectSettings)
       .write(to: projectSettingsURL, options: .atomic)
-  }
-
-  func isYOLOEnabled() -> Bool {
-    yoloEnabled
   }
 
   func isDebugEnabled() -> Bool { debugEnabled }
@@ -964,7 +979,7 @@ private actor TerminalApprovalHandler: ApprovalHandler {
   }
 
   func decideCompaction(_ request: AutocompactionRequest) async throws -> AutocompactionDecision {
-    // Tool YOLO does not grant permission to replace conversation history.
+    // Unattended tool approval does not grant permission to replace conversation history.
     if let delegate { return try await delegate.decideCompaction(request) }
     if let compactionPrompter { return try await compactionPrompter(request) }
     guard isatty(STDIN_FILENO) != 0 else { return .compact }
@@ -993,54 +1008,45 @@ private actor TerminalApprovalHandler: ApprovalHandler {
   }
 
   func decide(_ request: ApprovalRequest) async throws -> ApprovalDecision {
-    if yoloEnabled {
-      return .approve(arguments: request.call.arguments)
+    if approvalMode == .yolo { return .approve(arguments: request.call.arguments) }
+    guard approvalMode == .ask else {
+      return .deny(reason: "Smart approval must be evaluated by the runtime.")
     }
-    let mode =
-      request.tool.annotations.approval == .dangerous
-      ? configuration.dangerous : configuration.confirm
-    switch mode {
-    case .allow:
+    if let delegate { return try await delegate.decide(request) }
+    if let prompter { return try await prompter(request) }
+    guard isatty(STDIN_FILENO) != 0 else {
+      return .deny(reason: "Interactive approval requires a terminal.")
+    }
+    FileHandle.standardError.write(
+      Data(
+        "Approve \(request.tool.annotations.approval.rawValue) tool '\(request.tool.name)'?\nArguments: \(request.call.arguments.compactJSONString)\n"
+          .utf8))
+    let editor = TerminalLineEditor()
+    editor.configure(
+      ui: ConfiguredTerminalUI(backgroundLine: "", promptForeground: "yellow"))
+    guard
+      let answer = editor.readLine(
+        prompt: "[y]es/[a]lways/[n]o/[e]dit/[c]ancel run: ", completions: [])?
+        .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    else { return .deny(reason: "No approval response.") }
+    if editor.wasInterrupted { throw CancellationError() }
+    switch answer {
+    case "y", "yes":
       return .approve(arguments: request.call.arguments)
-    case .deny:
-      return .deny(reason: "Denied by configuration.")
-    case .ask:
-      if let delegate { return try await delegate.decide(request) }
-      if let prompter { return try await prompter(request) }
-      guard isatty(STDIN_FILENO) != 0 else {
-        return .deny(reason: "Interactive approval requires a terminal.")
-      }
-      FileHandle.standardError.write(
-        Data(
-          "Approve \(request.tool.annotations.approval.rawValue) tool '\(request.tool.name)'?\nArguments: \(request.call.arguments.compactJSONString)\n"
-            .utf8))
-      let editor = TerminalLineEditor()
-      editor.configure(
-        ui: ConfiguredTerminalUI(backgroundLine: "", promptForeground: "yellow"))
-      guard
-        let answer = editor.readLine(
-          prompt: "[y]es/[a]lways/[n]o/[e]dit/[c]ancel run: ", completions: [])?
-          .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-      else { return .deny(reason: "No approval response.") }
-      if editor.wasInterrupted { throw CancellationError() }
-      switch answer {
-      case "y", "yes":
-        return .approve(arguments: request.call.arguments)
-      case "a", "always":
-        yoloEnabled = true
-        return .approve(arguments: request.call.arguments)
-      case "e", "edit":
-        FileHandle.standardError.write(Data("Replacement JSON arguments: ".utf8))
-        guard let raw = readLine(), let data = raw.data(using: .utf8),
-          let value = try? JSONDecoder().decode(JSONValue.self, from: data),
-          value.objectValue != nil
-        else { return .deny(reason: "Edited arguments were not a JSON object.") }
-        return .approve(arguments: value)
-      case "c", "cancel":
-        return .cancelRun
-      default:
-        return .deny(reason: "Denied by user.")
-      }
+    case "a", "always":
+      approvalMode = .yolo
+      return .approve(arguments: request.call.arguments)
+    case "e", "edit":
+      FileHandle.standardError.write(Data("Replacement JSON arguments: ".utf8))
+      guard let raw = readLine(), let data = raw.data(using: .utf8),
+        let value = try? JSONDecoder().decode(JSONValue.self, from: data),
+        value.objectValue != nil
+      else { return .deny(reason: "Edited arguments were not a JSON object.") }
+      return .approve(arguments: value)
+    case "c", "cancel":
+      return .cancelRun
+    default:
+      return .deny(reason: "Denied by user.")
     }
   }
 }
@@ -1138,7 +1144,7 @@ struct MaiCLI {
         configuration: configuration?.approvals ?? .init(),
         projectSettingsURL: home.storageDirectory(for: project).appendingPathComponent(
           "settings.json"),
-        yoloEnabled: options.yolo)
+        mode: options.approvalMode)
       let runtime = AgentRuntime(approvalHandler: approvalHandler)
       if await approvalHandler.isDebugEnabled() {
         do {
@@ -2472,9 +2478,9 @@ struct MaiCLI {
         waiting.reply.resume(with: .approve(arguments: waiting.request.call.arguments))
         await terminal.note("approved \(tool)")
       case "a", "always":
-        await visual.approvalHandler.setYOLOEnabled(true)
+        await visual.approvalHandler.setApprovalMode(.yolo)
         waiting.reply.resume(with: .approve(arguments: waiting.request.call.arguments))
-        await terminal.note("approved \(tool); YOLO mode is on for this session")
+        await terminal.note("approved \(tool); tool.aproval = yolo for this session")
       case "n", "no":
         waiting.reply.resume(with: .deny(reason: "Denied by user."))
         await terminal.note("denied \(tool)")
@@ -2493,11 +2499,11 @@ struct MaiCLI {
       return true
     }
 
-    /// Turning YOLO on while calls already wait for approval releases them as
+    /// Choosing yolo approval while calls already wait for approval releases them as
     /// well as future calls. Otherwise the setting is live but the run still
     /// appears blocked on decisions made under the old value.
-    func releasePendingApprovalsIfYOLO() async {
-      guard await visual.approvalHandler.isYOLOEnabled() else { return }
+    func releasePendingApprovalsIfUnattended() async {
+      guard await visual.approvalHandler.permitsUnattendedExecution() else { return }
       if let editing = loop.editingApproval {
         editing.reply.resume(with: .approve(arguments: editing.request.call.arguments))
         loop.editingApproval = nil
@@ -2509,7 +2515,7 @@ struct MaiCLI {
       }
       if !pending.isEmpty {
         await terminal.note(
-          "approved \(pending.count) waiting tool call\(pending.count == 1 ? "" : "s"); YOLO mode is on"
+          "approved \(pending.count) waiting tool call\(pending.count == 1 ? "" : "s"); tool.aproval = yolo"
         )
       }
     }
@@ -2985,7 +2991,7 @@ struct MaiCLI {
             loop.exiting = true
             break events
           }
-          await releasePendingApprovalsIfYOLO()
+          await releasePendingApprovalsIfUnattended()
           #if PMAI_HAS_VISUAL
             if text == "/visual", let snapshot = session.visualSnapshot {
               workspace = chatWorkspace(from: snapshot, focusedID: session.id, previous: workspace)
@@ -3132,9 +3138,9 @@ struct MaiCLI {
           } else if let paused, atPrompt {
             // A spent turn budget is a checkpoint, and with yolo on the person
             // asked not to be consulted; time and token caps are theirs to lift.
-            if paused.isCheckpoint, await visual.approvalHandler.isYOLOEnabled() {
+            if paused.isCheckpoint, await visual.approvalHandler.permitsUnattendedExecution() {
               await terminal.note(
-                "continuing: yolo is on, so a spent turn budget does not stop the task (/set yolo off to be asked)",
+                "continuing: yolo is on, so a spent turn budget does not stop the task (/set tool.aproval ask to be asked)",
                 color: "yellow")
               await continueTurn()
             } else {
@@ -3165,7 +3171,7 @@ struct MaiCLI {
       case .approval(let request, let reply):
         if loop.exiting {
           reply.fail(CancellationError())
-        } else if await visual.approvalHandler.isYOLOEnabled() {
+        } else if await visual.approvalHandler.permitsUnattendedExecution() {
           reply.resume(with: .approve(arguments: request.call.arguments))
         } else {
           loop.approvals.append((request, reply))
@@ -3726,6 +3732,11 @@ struct MaiCLI {
       await handleModelCommand(
         "-compact " + argument, session: &session, runtime: runtime, configuration: &configuration,
         configurationPath: visual.configurationPath, terminal: terminal)
+    case "/model-aproval":
+      await handleModelCommand(
+        "-aproval " + argument, session: &session, runtime: runtime,
+        configuration: &configuration, configurationPath: visual.configurationPath,
+        terminal: terminal)
     case "/model-tool":
       await handleModelCommand(
         "-tool " + argument, session: &session, runtime: runtime, configuration: &configuration,
@@ -5467,18 +5478,18 @@ struct MaiCLI {
         await terminal.line("\(task.rawValue): \(detail ?? "current agent")")
       }
       await terminal.line(
-        "/model [PROVIDER::]MODEL · /model-compact [NAME] · /model-tool [NAME] (no name clears)"
+        "/model [PROVIDER::]MODEL · /model-compact [NAME] · /model-tool [NAME] · /model-aproval [NAME] (no name clears)"
       )
       return
     }
     guard var draft = configuration, let configurationPath else { return }
     do {
-      if first == "-compact" || first == "-tool" {
+      if ["-compact", "-tool", "-aproval"].contains(first) {
         guard words.count <= 2 else {
           await terminal.line("Usage: /model \(first) [AGENT|PROVIDER::MODEL|MODEL]")
           return
         }
-        let task: AgentTask = first == "-compact" ? .compact : .tool
+        let task: AgentTask = first == "-compact" ? .compact : first == "-tool" ? .tool : .approval
         try draft.assignTask(
           task, selector: words.count == 2 ? words[1] : nil,
           current: session.profile.agentDefinition)
@@ -5493,7 +5504,9 @@ struct MaiCLI {
           "\(task.rawValue): \(draft.taskAgents[task] ?? "current agent") (saved)")
       } else {
         guard words.count == 1, !first.hasPrefix("-") else {
-          await terminal.line("Usage: /model [PROVIDER::]MODEL or /model-compact [NAME] or /model-tool [NAME]")
+          await terminal.line(
+            "Usage: /model [PROVIDER::]MODEL or /model-compact [NAME] or /model-tool [NAME] or /model-aproval [NAME]"
+          )
           return
         }
         let selection = try draft.modelSelection(first, currentProvider: session.profile.provider)
@@ -7461,8 +7474,7 @@ struct MaiCLI {
       .split(whereSeparator: \Character.isWhitespace)
       .map(String.init)
     guard !parts.isEmpty else {
-      let enabled = await approvalHandler.isYOLOEnabled()
-      await terminal.line("yolo = \(enabled ? "on" : "off")")
+      await terminal.line("tool.aproval = \(await approvalHandler.currentApprovalMode().rawValue)")
       await terminal.line("debug = \(await approvalHandler.isDebugEnabled() ? "true" : "false")")
       await terminal.line("debugfile = \(await approvalHandler.debugLogURL().path)")
       await listLimitSettings(session.profile.limits, terminal: terminal)
@@ -7616,6 +7628,7 @@ struct MaiCLI {
       return
     }
     if key == "tool" || key == "tool." || key == "tools" || key == "tools." {
+      await terminal.line("tool.aproval = \(await approvalHandler.currentApprovalMode().rawValue)")
       await listToolSettings(session.profile, terminal: terminal)
       return
     }
@@ -7668,8 +7681,8 @@ struct MaiCLI {
         terminal: terminal)
       return
     }
-    if key == "yolo" {
-      await setYOLO(
+    if key == "tool.aproval" {
+      await setToolApproval(
         parts: parts,
         approvalHandler: approvalHandler,
         terminal: terminal)
@@ -7689,7 +7702,7 @@ struct MaiCLI {
         || levelKeys.contains(key) || textKeys.contains(key)
     else {
       await terminal.line(
-        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, effort, yolo, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.strategy, ui.title, ui.editor, ui.bgline, ui.fgcolor, ui.bgcolor, ui.fgprompt, ui.bgprompt, ui.fgtoolresult, ui.bold, ui.markdown, ui.toolResultLines, ui.subagents, ui.broadcast, use.agentsmd, use.plan"
+        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, effort, tool.aproval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.strategy, ui.title, ui.editor, ui.bgline, ui.fgcolor, ui.bgcolor, ui.fgprompt, ui.bgprompt, ui.fgtoolresult, ui.bold, ui.markdown, ui.toolResultLines, ui.subagents, ui.broadcast, use.agentsmd, use.plan"
       )
       return
     }
@@ -7826,32 +7839,25 @@ struct MaiCLI {
     await terminal.line("tool.systemone = \(profile.useSystemOne)")
   }
 
-  /// `/set yolo [on|off]`: permits every tool call without asking. The choice
-  /// is saved in the opened project's .pmai/settings.json for later runs.
-  private static func setYOLO(
-    parts: [String],
-    approvalHandler: TerminalApprovalHandler,
+  /// Approval policy is saved for the current project.
+  private static func setToolApproval(
+    parts: [String], approvalHandler: TerminalApprovalHandler,
     terminal: TerminalWriter
   ) async {
     guard parts.count > 1 else {
-      let enabled = await approvalHandler.isYOLOEnabled()
-      await terminal.line("yolo = \(enabled ? "on" : "off")")
+      await terminal.line("tool.aproval = \(await approvalHandler.currentApprovalMode().rawValue)")
       return
     }
-    guard parts.count == 2, let enabled = booleanSetting(parts[1]) else {
-      await terminal.line("Usage: /set yolo <on|off>")
+    guard parts.count == 2, let mode = ToolApprovalMode(rawValue: parts[1].lowercased()) else {
+      await terminal.line("Usage: /set tool.aproval <yolo|ask|smart>")
       return
     }
-    let effect =
-      enabled
-      ? "YOLO mode enabled; all tool calls are permitted"
-      : "YOLO mode disabled; configured approval rules restored"
     do {
-      try await approvalHandler.saveYOLOEnabled(enabled)
-      await terminal.line("\(effect), and saved for later runs in this project.")
+      try await approvalHandler.saveApprovalMode(mode)
+      await terminal.line("tool.aproval = \(mode.rawValue) (saved for this project)")
     } catch {
       await terminal.line(
-        "\(effect) for this session; could not save the project settings: \(error.localizedDescription)",
+        "tool.aproval = \(mode.rawValue) for this session; could not save: \(error.localizedDescription)",
         to: .standardError)
     }
   }
@@ -9227,7 +9233,7 @@ struct MaiCLI {
             visual: visual)
         })
       let approvals = VisualApprovalHandler {
-        await visual.approvalHandler.setYOLOEnabled(true)
+        await visual.approvalHandler.setApprovalMode(.yolo)
       }
       await visual.approvalHandler.setDelegate(approvals)
       do {
@@ -10321,7 +10327,8 @@ struct MaiCLI {
     skills: [AgentSkill] = []
   ) -> [String] {
     var values = [
-      "/help", "/help set", "/exit", "/quit", "/set yolo on", "/set yolo off",
+      "/help", "/help set", "/exit", "/quit", "/set tool.aproval yolo", "/set tool.aproval ask",
+      "/set tool.aproval smart",
       "/set debug true", "/set debug false",
       "/set debugfile ", "/set debugfile default",
       "/set ui.", "/set effort", "/set effort off", "/set effort auto", "/nothink",
@@ -10355,7 +10362,8 @@ struct MaiCLI {
       "/set ui.toolResultLines all", "/set ui.toolResultLines relevant", "/set ui.toolResultLines ",
       "/cwd", "/pwd", "/cd ", "/plugins",
       "/providers", "/models ", "/provider ", "/provider add ", "/baseurl ", "/model ",
-      "/model-compact ", "/model-tool ", "/agent default ", "/agent effort ", "/prompts",
+      "/model-compact ", "/model-tool ", "/model-aproval ", "/agent default ", "/agent effort ",
+      "/prompts",
       "/prompt",
       "/prompt list", "/prompt show ", "/prompt add ", "/prompt set ", "/prompt edit ",
       "/prompt rm ", "/prompt use ", "/help prompts", "/prompts list", "/prompts show ",
@@ -10411,6 +10419,7 @@ struct MaiCLI {
       values.append("/agent default \(agent.id)")
       values.append("/model-compact \(agent.id)")
       values.append("/model-tool \(agent.id)")
+      values.append("/model-aproval \(agent.id)")
       values.append("/chat new --agent \(agent.id) ")
     }
     for name in configuration?.prompts?.system.keys.sorted() ?? [] {
@@ -10421,7 +10430,7 @@ struct MaiCLI {
     for provider in configuration?.providers ?? [] {
       values.append("/provider \(provider.id)")
       values.append("/models \(provider.id)")
-      for prefix in ["/model ", "/model-compact ", "/model-tool "] {
+      for prefix in ["/model ", "/model-compact ", "/model-tool ", "/model-aproval "] {
         values.append("\(prefix)\(provider.id)::")
       }
       values.append("/edit provider \(provider.id)")
@@ -10655,7 +10664,7 @@ struct MaiCLI {
           "researcher": "Investigate the delegated task and return a concise result.",
         ]),
       memory: ConfiguredMemory(),
-      approvals: ConfiguredApprovals(confirm: .ask, dangerous: .ask))
+      approvals: ConfiguredApprovals())
   }
 
   private static let visualHelp: String = {
@@ -10693,6 +10702,7 @@ struct MaiCLI {
     /memory                Show, edit, learn, or scope this project's durable memory
     /model [PROVIDER::]MODEL  Select and save a model for this agent
     /model-compact [NAME] Select a compaction agent/model; omit NAME to clear
+    /model-aproval [NAME] Select a smart-approval agent/model; omit NAME to use the current chat model
     /model-tool [NAME]    Select a tool-decision agent/model; omit NAME to clear
     /models [PROVIDER]     List models and refresh /model Tab completion
     /nothink               Disable reasoning where the model supports it
@@ -10753,7 +10763,7 @@ struct MaiCLI {
     Settings commands:
       /set                         List current settings and their values
       /set effort [LEVEL] [TEXT]   Show or set reasoning effort and optional guidance
-      /set yolo BOOL               Permit all tool calls without asking (on/off); saved for this project
+      /set tool.aproval MODE       yolo (default), ask for every tool, or smart model review; saved for this project
       /set debug <true|false>       Log model calls, tool activity, and run events for this project
       /set debugfile <PATH|default> Save debug logs at PATH; default uses .pmai/debug.jsonl
       /set tool.                   List the tool calling settings
@@ -10792,9 +10802,9 @@ struct MaiCLI {
       /set use.plan BOOL           Ask an agent that can start children to open a request of
                                    several steps with a numbered plan before delegating (on/off)
 
-    YOLO, debug, and debugfile are saved in the opened project's .pmai/settings.json.
+    tool.aproval, debug, and debugfile are saved in the opened project's .pmai/settings.json.
     Debug entries append to the chosen file and may contain prompts and tool output.
-    -y enables YOLO for one run only. Projects without a saved choice use approvals.yolo from the
+    --tool-aproval MODE overrides approval for one run. Projects without a saved choice use approvals.mode from the
     active configuration. Agent and UI settings use the active configuration.
     COLOR accepts a named ANSI color, rgb:RGB, or none.
     """
@@ -11024,6 +11034,7 @@ struct MaiCLI {
       /agent default ID          Save the default for future chats and runs
       /agent effort ID LEVEL     Save an independent reasoning effort
       /model-compact [NAME]     Assign a compaction agent or model; omit to clear
+      /model-aproval [NAME]     Assign a smart-approval agent or model; omit to clear
       /model-tool [NAME]        Assign a tool-decision agent or model; omit to clear
       /agent add NAME MODEL GROUPS PROMPT [PROVIDER [BASE_URL]]
                                  GROUPS is a,b,c (see /tools) or -; PROMPT names a system
@@ -11180,8 +11191,7 @@ struct MaiCLI {
         --system TEXT       override agent instructions
         -U, --update        check for updates and install the latest release
         -v, --version       print the pmai version
-        -y, --yolo          permit all tool calls without prompting for this run
-                            (/set yolo on saves the choice for this project)
+        --tool-aproval MODE yolo, ask, or smart for this run; /set tool.aproval saves the project default
 
       Config discovery:
         --config, PMAI_CONFIG, ./pmai.json, ~/.config/pmai/config.json

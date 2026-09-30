@@ -159,7 +159,7 @@ A run that reaches `limits.maxModelTurns`, `limits.maxTotalTokens`, or
 the last reply, never between a call and its answer — and returns an
 `AgentResult` whose `interruption` says which limit it was and whose transcript
 is whole. Running that transcript again, on the same pid, picks the task up with
-a fresh budget; pmai does this with `/continue`, and by itself when `yolo` is on
+a fresh budget; pmai does this with `/continue`, and by itself when `tool.aproval` is `yolo`
 and the limit was the turn budget (a checkpoint), never for the token and time
 caps a person set to bound the spend. The deadline also cuts a model call
 short, and a tool call that would start past it is answered with an error

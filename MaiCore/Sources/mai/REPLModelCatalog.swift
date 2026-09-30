@@ -33,9 +33,10 @@ final class REPLModelCatalog: @unchecked Sendable {
   }
 
   func completions(for line: String, runtime: AgentRuntime) -> [String] {
-    guard let prefix = ["/model-compact ", "/model-tool ", "/model "].first(where: {
-      line.hasPrefix($0)
-    }) else { return [] }
+    guard
+      let prefix = ["/model-compact ", "/model-tool ", "/model-aproval ", "/model "].first(where: {
+        line.hasPrefix($0)
+      }) else { return [] }
     let current = lock.withLock { currentProvider }
     let selector = String(line.dropFirst(prefix.count))
     let provider = selector.range(of: "::").map {

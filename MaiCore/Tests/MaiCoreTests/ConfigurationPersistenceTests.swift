@@ -166,20 +166,24 @@ func catalogEditsStayConsistent() throws {
   try configuration.validate()
 }
 
-@Test("The YOLO approval choice is saved and defaults to off")
-func yoloApprovalPersists() throws {
+@Test("Approval mode is saved and legacy booleans migrate")
+func approvalModePersists() throws {
   let root = FileManager.default.temporaryDirectory
     .appendingPathComponent("maicore-config-\(UUID().uuidString)", isDirectory: true)
   let url = root.appendingPathComponent("pmai.json")
-  let configuration = MaiConfiguration(approvals: ConfiguredApprovals(yolo: true))
+  let configuration = MaiConfiguration(approvals: ConfiguredApprovals(mode: .smart))
 
   try configuration.save(to: url)
 
-  #expect(try MaiConfiguration.load(from: url).approvals.yolo)
+  #expect(try MaiConfiguration.load(from: url).approvals.mode == .smart)
   let legacy = try JSONDecoder().decode(
     MaiConfiguration.self, from: Data(#"{"approvals":{"confirm":"allow"}}"#.utf8))
-  #expect(legacy.approvals.confirm == .allow)
-  #expect(!legacy.approvals.yolo)
+  #expect(legacy.approvals.mode == .ask)
+  #expect(ConfiguredApprovals().mode == .yolo)
+  let migrated = try JSONDecoder().decode(
+    ConfiguredApprovals.self, from: Data(#"{"yolo":false}"#.utf8))
+  #expect(migrated.mode == .ask)
+  #expect(!String(decoding: try JSONEncoder().encode(migrated), as: UTF8.self).contains("yolo"))
 }
 
 @Test(

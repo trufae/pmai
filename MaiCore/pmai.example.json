@@ -232,9 +232,7 @@
     "toolResultLines": -1
   },
   "approvals": {
-    "confirm": "ask",
-    "dangerous": "ask",
-    "yolo": false
+    "mode": "yolo"
   },
   "memory": {
     "enabled": true,

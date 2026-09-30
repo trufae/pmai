@@ -110,13 +110,25 @@ The compact template must contain `{{transcript}}`. `{{focus}}` is replaced with
 guidance passed to `/chat compact FOCUS`; if omitted, the focus is appended.
 Clearing the compact template restores its built-in default.
 
-Start `pmai` with `-y` (or `--yolo`) to permit all tool calls without approval
-prompts for that process. `/set yolo on` saves the choice as `yolo` in the opened
-project's `.pmai/settings.json`, so later runs in that project honor it until
-`/set yolo off`. Both on and off override the configuration's `approvals.yolo`
-default; projects without a saved choice still use that default. Changing the
-project choice leaves the shared configuration unchanged. `-y` overrides the
-saved choice for one run without changing it.
+`/set tool.aproval yolo|ask|smart` controls every tool execution. `yolo` is the
+default and runs tools without prompting. `ask` prompts to approve, edit the
+arguments, reject, or cancel. `smart` asks a model to allow or block each call.
+The spelling `aproval` is intentional in the setting and command names.
+
+Use `/model-aproval PROVIDER::MODEL` (or a saved agent ID) to select the reviewer;
+`/model-aproval -` restores the conversation model. A System One provider uses
+its `harm` probability; a regular model returns a strict JSON allow/block
+verdict. The review includes the tool, arguments/command, user task, working
+directory, valid paths, and sandbox context. Reviewers receive no executable
+tools. Missing/unsupported System One endpoints or models fall back to the
+conversation's chat model; malformed decisions or other failures block the
+call. See [task agents](../doc/task-agents.md) for setup and details.
+
+The mode is saved in the project's `.pmai/settings.json`; `--tool-aproval MODE`
+overrides it for one invocation. The shared default is `approvals.mode` in the
+configuration. The old `yolo` setting and `-y`/`--yolo` flags have been removed.
+Existing saved booleans migrate to `yolo` or `ask`, and subsequent saves write
+only the new mode.
 
 The REPL accepts heredoc-style multiline messages. Enter `<<WORD`, type the
 message verbatim, then put `WORD` alone on its own line. The delimiter can be
@@ -468,7 +480,7 @@ the end of the work. `/stop` is the command equivalent of Ctrl+C: it interrupts
 the current turn and preserves undelivered messages. A new message with a
 nonempty queue asks whether to submit it first, ignore it for that turn, or
 clear it. `/retry` has been removed; `/continue` is the single resume command.
-With `yolo` on, a spent turn budget is treated as a
+With `tool.aproval = yolo`, a spent turn budget is treated as a
 checkpoint and the task continues on its own; the token and time caps always
 stop, since they exist to bound the spend. A model call that fails — a dropped
 connection, a 5xx — is repeated after `retry.delay` seconds up to
@@ -476,7 +488,7 @@ connection, a 5xx — is repeated after `retry.delay` seconds up to
 `/set ctx.compact 64k` enables a context action prompt before a model turn
 once the conversation reaches about that many tokens (using the provider's
 count when available). Choose **prune old tool output**, **summarize older
-context**, **keep context for this response**, or **stop**. Tool YOLO does
+context**, **keep context for this response**, or **stop**. The `yolo` approval mode does
 not bypass this choice. The prompt also permits changing the model or clearing
 the chat. Noninteractive CLI runs continue to summarize automatically.
 Pruning shows its expected savings, needs no model call, and keeps the first
@@ -694,9 +706,8 @@ latest user prompt, and the turn in progress cannot be touched, and a task
 that should start with no history at all belongs in a child agent
 (`agent_start`). The tools live in
 `MaiCore` (`MaiContextTools`), are part of the default agent's set, and
-`/tools enable context` adds them to another. The three editing tools ask for
-`confirm` approval; `/set yolo on` or `approvals.confirm = allow` lets an agent
-use them freely. The edited conversation is what gets saved, so what an agent
+`/tools enable context` adds them to another. The three editing tools follow
+`tool.aproval`, like other tools. The edited conversation is what gets saved, so what an agent
 removes is gone from the chat.
 
 ### Todo list

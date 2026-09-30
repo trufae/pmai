@@ -975,7 +975,7 @@ public final class VisualWorkspace {
     approvalQueue.removeAll()
     let approvals = approvals
     Task { await approvals.resolveAlways(pending) }
-    status = "YOLO mode enabled; all tool calls are permitted for this session."
+    status = "tool.aproval = yolo; all tool calls are permitted for this session."
   }
 
   /// Called when the approval sheet closes without a decision, for example on Escape.

@@ -319,7 +319,7 @@ struct ApprovalSheet: View {
         Button("Approve") {
           workspace.resolveApproval(.approve(arguments: pending.request.call.arguments))
         }
-        Button("Always (YOLO)") {
+        Button("Always (yolo)") {
           workspace.resolveApprovalAlways()
         }
         Button("Deny", role: .destructive) {
