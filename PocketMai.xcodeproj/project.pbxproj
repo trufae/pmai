@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A20000000000000000000006 /* MaiACP in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000016 /* MaiACP */; };
 		A10000000000000000000001 /* MLX in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000011 /* MLX */; };
 		A10000000000000000000002 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000012 /* MLXLLM */; };
 		A10000000000000000000003 /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000013 /* MLXLMCommon */; };
@@ -144,6 +145,7 @@
 				A20000000000000000000003 /* MaiMCP in Frameworks */,
 				A20000000000000000000004 /* MaiStandardTools in Frameworks */,
 				A20000000000000000000005 /* MaiDocuments in Frameworks */,
+				A20000000000000000000006 /* MaiACP in Frameworks */,
 				A10000000000000000000001 /* MLX in Frameworks */,
 				A10000000000000000000002 /* MLXLLM in Frameworks */,
 				A10000000000000000000003 /* MLXLMCommon in Frameworks */,
@@ -231,6 +233,7 @@
 				A20000000000000000000013 /* MaiMCP */,
 				A20000000000000000000014 /* MaiStandardTools */,
 				A20000000000000000000015 /* MaiDocuments */,
+				A20000000000000000000016 /* MaiACP */,
 				A10000000000000000000011 /* MLX */,
 				A10000000000000000000012 /* MLXLLM */,
 				A10000000000000000000013 /* MLXLMCommon */,
@@ -931,6 +934,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A20000000000000000000021 /* XCLocalSwiftPackageReference "MaiCore" */;
 			productName = MaiDocuments;
+		};
+		A20000000000000000000016 /* MaiACP */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A20000000000000000000021 /* XCLocalSwiftPackageReference "MaiCore" */;
+			productName = MaiACP;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

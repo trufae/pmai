@@ -25,6 +25,7 @@ struct SidebarView: View {
   @State private var pendingDeletion: PendingConversationDeletion?
   @State private var showingFolderManager = false
   @State private var showingGallery = false
+  @State private var showingRemoteAgents = false
   @State private var showingMoveDestinationDialog = false
   @State private var keyboardOverlap: CGFloat = 0
   @State private var isLoadingBookmarks = false
@@ -121,6 +122,14 @@ struct SidebarView: View {
       GalleryView()
         .environmentObject(store)
         .environmentObject(TTSPlayer.shared)
+    }
+    .sheet(isPresented: $showingRemoteAgents) {
+      NavigationStack {
+        RemoteAgentsView()
+          .toolbar { ToolbarItem(placement: .cancellationAction) {
+            Button("Done") { showingRemoteAgents = false }
+          } }
+      }
     }
   }
 
@@ -493,6 +502,7 @@ struct SidebarView: View {
   @ViewBuilder
   private func defaultFloatingActions(compact: Bool) -> some View {
     Menu {
+      Button("Remote Agents", systemImage: "network") { showingRemoteAgents = true }
       Button {
         showBookmarks()
       } label: {

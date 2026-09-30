@@ -40,9 +40,9 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>PocketMai can include your current location in prompts when the Location tool is enabled.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>PocketMai scans for Ollama servers and can serve the selected chat to local Ollama or OpenAI-compatible clients.</string>
+	<string>PocketMai connects to remote agents and Ollama servers, and can serve chats to local clients.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>PocketMai uses the camera to attach a picture to your chat when you choose Take picture.</string>
+	<string>PocketMai uses the camera to attach pictures and scan remote agent connection QR codes.</string>
 	<key>NSAlarmKitUsageDescription</key>
 	<string>PocketMai can schedule alarms only when the Alarms tool is enabled and called in chat.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>

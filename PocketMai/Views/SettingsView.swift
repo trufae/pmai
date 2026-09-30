@@ -651,6 +651,11 @@ struct SettingsView: View {
   private var agentsSection: some View {
     Section {
       NavigationLink {
+        RemoteAgentsView()
+      } label: {
+        Label("Remote Agents", systemImage: "network")
+      }
+      NavigationLink {
         AgentManagerView(store: store, storeObservation: storeObservation)
       } label: {
         LabeledContent {
