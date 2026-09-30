@@ -68,6 +68,13 @@ prompt or a user prompt); without a name it opens the current agent's system
 prompt. The name is what the commands take everywhere; matching is
 case-insensitive when that leaves exactly one candidate.
 
+`/edit prompt recap` opens the built-in recap template. `/edit prompt compact`
+and `/edit prompt tool` edit the generated task agents' system prompts, named
+`compact` and `tool`. Older `task-compact` and `task-tool` prompt names migrate
+automatically, keeping custom text and agent IDs. Existing unrelated prompt
+names are preserved; a numeric suffix resolves collisions. `/edit compact`
+edits the separate compaction template.
+
 ## User prompts, builtin prompts, and `$NAME`
 
 A **user prompt** is a message sent by name: text you send often, kept under
@@ -190,13 +197,14 @@ finishes with the copy it was given.
 
 ## The other templates
 
-`/prompts` also lists four templates that are not system prompts. Each has a
+`/prompts` also lists five templates that are not system prompts. Each has a
 built-in default; a custom text is saved under `prompts` in the
 configuration, and clearing it in the editor restores the default.
 
 | template | used by | must contain | edit with |
 |---|---|---|---|
 | `compact` | `/chat compact`, and autocompact (`/set ctx.compact N`) with a built-in focus on the task in hand | `{{transcript}}` (`{{focus}}` optional) | `/edit compact` |
+| `recap` | `/chat recap`: short goals, actions/results, and pending tasks with emoji labels; uses the compact model and keeps history unchanged | `{{transcript}}` | `/edit prompt recap` |
 | `delegation` | the brief a child agent receives | `{{task}}` (`{{context}}`, `{{output}}`, `{{agent}}`, `{{cwd}}` optional) | `/edit delegation` |
 | `worker` | the derived `<agent>.worker` instructions | — | `/edit worker` |
 | `memory` | `/memory learn` | `{{transcript}}` (`{{memory}}`, `{{focus}}` optional) | `/edit memory-prompt` |

@@ -576,6 +576,8 @@ public struct ConfiguredPrompts: Codable, Equatable, Sendable {
   /// Template used by chat compaction. `{{transcript}}` is required and
   /// `{{focus}}` is replaced when `/chat compact` receives optional guidance.
   public var compact: String?
+  /// Read-only chat recap template. `{{transcript}}` is required.
+  public var recap: String?
   /// Template that turns an `agent_start` brief into the prompt a child agent
   /// receives. `{{task}}` is required; `{{context}}`, `{{output}}`, `{{agent}}`,
   /// and `{{cwd}}` are replaced when present. Nil keeps MaiCore's built-in text.
@@ -594,6 +596,7 @@ public struct ConfiguredPrompts: Codable, Equatable, Sendable {
 
   public init(
     compact: String? = nil,
+    recap: String? = nil,
     delegation: String? = nil,
     worker: String? = nil,
     memory: String? = nil,
@@ -601,6 +604,7 @@ public struct ConfiguredPrompts: Codable, Equatable, Sendable {
     user: [String: String] = [:]
   ) {
     self.compact = compact
+    self.recap = recap
     self.delegation = delegation
     self.worker = worker
     self.memory = memory
@@ -609,13 +613,14 @@ public struct ConfiguredPrompts: Codable, Equatable, Sendable {
   }
 
   private enum CodingKeys: String, CodingKey {
-    case compact, delegation, worker, memory, system, user
+    case compact, recap, delegation, worker, memory, system, user
   }
 
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.init(
       compact: try container.decodeIfPresent(String.self, forKey: .compact),
+      recap: try container.decodeIfPresent(String.self, forKey: .recap),
       delegation: try container.decodeIfPresent(String.self, forKey: .delegation),
       worker: try container.decodeIfPresent(String.self, forKey: .worker),
       memory: try container.decodeIfPresent(String.self, forKey: .memory),
@@ -796,6 +801,11 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
 
   public func validate() throws {
     guard version == 1 else { throw MaiConfigurationError.unsupportedVersion(version) }
+    if let recap = prompts?.recap,
+      let missing = AgentCompactionPrompt.missingPlaceholder(in: recap)
+    {
+      throw MaiConfigurationError.missingPromptPlaceholder(prompt: "recap", placeholder: missing)
+    }
     if let compact = prompts?.compact?.trimmingCharacters(in: .whitespacesAndNewlines),
       !compact.isEmpty, !compact.contains("{{transcript}}")
     {
@@ -873,6 +883,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
       agents[index].systemPrompt = name
     }
     prompts = originalPrompts == nil && configured == ConfiguredPrompts() ? nil : configured
+    normalizeTaskPromptNames()
     return originalPrompts != prompts || previousAgents != agents
   }
 

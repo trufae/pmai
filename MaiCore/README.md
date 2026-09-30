@@ -85,9 +85,16 @@ describing the information the summary should prioritize. Trimming keeps
 messages through the selected index and removes newer ones; linked tool-call
 transactions are kept structurally valid when removing or trimming messages.
 
+`/chat recap` prints a short Markdown recap with emoji labels for goals,
+completed actions and results, and pending work. It uses the compact model
+selected by `/model-compact` (or the current model when unset), and leaves
+history and pending attachments unchanged. It also includes context from
+earlier compaction summaries. `/edit prompt recap` edits its embedded default
+template; keep `{{transcript}}`, or clear the file to restore the default.
+
 `/prompts` lists every prompt that can be sent by name — the named system
 prompts and which agents use them, the user prompts, the builtin prompts, and
-the skills — plus the compact, delegation, worker, and memory templates.
+the skills — plus the compact, recap, delegation, worker, and memory templates.
 `$NAME [TEXT]` (short for `/prompts NAME [TEXT]`) sends prompt or skill `NAME`
 with `TEXT` where its `$ARGUMENTS` stands, or after it; for a system prompt it
 switches the agent to that prompt and then sends `TEXT`. User prompts are
@@ -109,6 +116,9 @@ automatically. `doc/prompts.md` walks through registering prompts and agents.
 The compact template must contain `{{transcript}}`. `{{focus}}` is replaced with
 guidance passed to `/chat compact FOCUS`; if omitted, the focus is appended.
 Clearing the compact template restores its built-in default.
+The generated task agents' system prompts are edited with `/edit prompt compact`
+and `/edit prompt tool`. Older `task-compact` and `task-tool` prompt names migrate
+automatically, preserving custom text and agent IDs; a suffix avoids name conflicts.
 
 `/set tool.aproval yolo|ask|smart` controls every tool execution. `yolo` is the
 default and runs tools without prompting. `ask` prompts to approve, edit the

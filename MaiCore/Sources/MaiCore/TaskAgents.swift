@@ -88,6 +88,37 @@ extension MaiConfiguration {
     agent.isEnabled = true
     upsertAgent(agent)
     taskAgents[task] = id
+    normalizeTaskPromptNames()
+  }
+
+  /// Generated task agents keep their IDs, but expose shorter prompt names.
+  /// Only migrate their original prompt association; explicit choices survive.
+  mutating func normalizeTaskPromptNames() {
+    for task in [AgentTask.compact, .tool] {
+      guard let id = taskAgents[task], let index = agents.firstIndex(where: { $0.id == id })
+      else { continue }
+      let stem = "task-\(task.rawValue)"
+      guard id == stem || (id.hasPrefix(stem + "-") && Int(id.dropFirst(stem.count + 1)) != nil),
+        agents[index].systemPrompt == nil || agents[index].systemPrompt == id
+      else { continue }
+      var configured = prompts ?? ConfiguredPrompts()
+      let text = configured.system[id] ?? agents[index].instructions
+      var name = task.rawValue
+      var suffix = 2
+      while configured.system[name] != nil
+        || agents.contains(where: { ($0.systemPrompt ?? $0.id) == name })
+      {
+        name = "\(task.rawValue)-\(suffix)"
+        suffix += 1
+      }
+      configured.system[name] = text
+      agents[index].systemPrompt = name
+      agents[index].instructions = text
+      if !agents.contains(where: { ($0.systemPrompt ?? $0.id) == id }) {
+        configured.system[id] = nil
+      }
+      prompts = configured
+    }
   }
 
   public func modelSelection(_ selector: String, currentProvider: ProviderID) throws

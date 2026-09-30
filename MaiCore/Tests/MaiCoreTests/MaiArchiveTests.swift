@@ -99,6 +99,7 @@ func archiveSettingsMerge() throws {
       providers: [newProvider],
       prompts: ConfiguredPrompts(
         compact: "Compact {{transcript}}",
+        recap: "Recap {{transcript}}",
         system: ["review": "Imported prompt"],
         user: ["remote": "Remote prompt"]),
       mcpServers: [ConfiguredMCPServer(id: "remote-mcp", enabled: false)],
@@ -116,9 +117,10 @@ func archiveSettingsMerge() throws {
   #expect(configuration.prompts?.system["kept"] == "Keep me")
   #expect(configuration.prompts?.user["local"] == "Local prompt")
   #expect(configuration.prompts?.user["remote"] == "Remote prompt")
+  #expect(configuration.prompts?.recap == "Recap {{transcript}}")
   #expect(configuration.defaultAgent == "reviewer")
   #expect(summary.providers == 1)
-  #expect(summary.prompts == 3)
+  #expect(summary.prompts == 4)
   #expect(summary.mcpServers == 1)
   #expect(summary.agents == 1)
 }

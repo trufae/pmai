@@ -19,6 +19,11 @@ model call so the runs can be studied for wasted turns and tokens.
 
 ## Running
 
+The recap integration smoke test uses a local mock provider and isolated chat
+state to check model routing, prompt edits, and history preservation:
+
+    python3 test/repl-recap-smoke.py MaiCore/.build/debug/pmai
+
 The endpoint and key come from `UPSTREAM` / `UPSTREAM_KEY`, or from
 `env-ollamacloud.sh` at the repository root. pmai must be built first:
 

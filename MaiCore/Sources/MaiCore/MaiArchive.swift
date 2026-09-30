@@ -331,6 +331,7 @@ extension MaiConfiguration {
       destination.system.merge(values.system) { _, imported in imported }
       destination.user.merge(values.user) { _, imported in imported }
       if let value = values.compact { destination.compact = value }
+      if let value = values.recap { destination.recap = value }
       if let value = values.delegation { destination.delegation = value }
       if let value = values.worker { destination.worker = value }
       if let value = values.memory { destination.memory = value }
@@ -342,7 +343,7 @@ extension MaiConfiguration {
       }
       result.prompts =
         values.system.count + values.user.count
-        + [values.compact, values.delegation, values.worker, values.memory].compactMap { $0 }.count
+        + [values.compact, values.recap, values.delegation, values.worker, values.memory].compactMap { $0 }.count
     }
     if let selected = imported.defaultAgent, agents.contains(where: { $0.id == selected }) {
       defaultAgent = selected

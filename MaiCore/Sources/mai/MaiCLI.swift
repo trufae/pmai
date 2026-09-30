@@ -2885,10 +2885,11 @@ struct MaiCLI {
             await releaseIfIdle(workspace: workspace)
             continue
           }
-          // Compaction uses the cancellable command path below, which keeps
+          // Summaries use the cancellable command path below, which keeps
           // the input prompt open while the summary request is in flight.
           if name == "/chat",
-            argument.split(whereSeparator: \.isWhitespace).first?.lowercased() != "compact"
+            !["compact", "recap"].contains(
+              argument.split(whereSeparator: \.isWhitespace).first?.lowercased() ?? "")
           {
             await recordSubagents()
             workspace.upsert(session.chat, selecting: true)
@@ -3689,6 +3690,7 @@ struct MaiCLI {
         session: &session,
         runtime: runtime,
         compactPrompt: configuration?.prompts?.compact,
+        recapPrompt: configuration?.prompts?.recap,
         chatProcess: chatProcess,
         terminal: terminal)
     case "/edit soul":
@@ -4508,12 +4510,13 @@ struct MaiCLI {
     if skillEntries.isEmpty { lines.append("  None found; /skills path lists the folders read.") }
     let templates: [(String, String?)] = [
       ("compact", configuration?.prompts?.compact),
+      ("recap", configuration?.prompts?.recap),
       ("delegation", configuration?.prompts?.delegation),
       ("worker", configuration?.prompts?.worker),
       ("memory", configuration?.prompts?.memory),
     ]
     lines.append(
-      "Templates — not sent by name; /edit compact, /edit delegation, /edit worker, /edit memory-prompt:"
+      "Templates — not sent by name; /edit compact, /edit prompt recap, /edit delegation, /edit worker, /edit memory-prompt:"
     )
     for (name, text) in templates {
       let custom = text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
@@ -5110,7 +5113,12 @@ struct MaiCLI {
         return
       }
       let wanted = PromptSlashCommand.normalized(actionArgument)
-      if let name = resolvedSystemPromptName(actionArgument, configuration: configuration) {
+      if wanted == "recap" {
+        await editRecapPrompt(
+          configuration: &configuration,
+          configurationPath: configurationPath,
+          terminal: terminal)
+      } else if let name = resolvedSystemPromptName(actionArgument, configuration: configuration) {
         await editSystemPrompt(
           named: name,
           session: &session,
@@ -9483,14 +9491,16 @@ struct MaiCLI {
         session: &session,
         runtime: runtime,
         compactPrompt: configuration?.prompts?.compact,
+        recapPrompt: configuration?.prompts?.recap,
         chatProcess: chatProcess,
         terminal: terminal)
-    case "log", "edit", "remove", "rm", "undo", "trim", "compact", "clear", "help":
+    case "log", "edit", "remove", "rm", "undo", "trim", "compact", "recap", "clear", "help":
       await handleChatCommand(
         argument,
         session: &session,
         runtime: runtime,
         compactPrompt: configuration?.prompts?.compact,
+        recapPrompt: configuration?.prompts?.recap,
         chatProcess: chatProcess,
         terminal: terminal)
     default:
@@ -9812,6 +9822,7 @@ struct MaiCLI {
     session: inout REPLSession,
     runtime: AgentRuntime,
     compactPrompt: String?,
+    recapPrompt: String?,
     chatProcess: AgentPID? = nil,
     terminal: TerminalWriter
   ) async {
@@ -9883,10 +9894,15 @@ struct MaiCLI {
       } catch {
         await terminal.line("error: \(error.localizedDescription)", to: .standardError)
       }
-    case "compact":
-      await compactChat(
+    case "compact", "recap":
+      guard action != "recap" || actionArgument.isEmpty else {
+        await terminal.line("Usage: /chat recap")
+        return
+      }
+      await summarizeChat(
+        recap: action == "recap",
         focus: actionArgument,
-        promptTemplate: compactPrompt,
+        promptTemplate: action == "recap" ? recapPrompt : compactPrompt,
         session: &session,
         runtime: runtime,
         terminal: terminal)
@@ -9918,36 +9934,76 @@ struct MaiCLI {
 
   private static let defaultCompactPrompt = AgentCompactionPrompt.template
 
-  /// Ask the selected model for durable context using the configured prompt
-  /// template, then replace the transcript while retaining system instructions.
-  private static func compactChat(
+  private static func editRecapPrompt(
+    configuration: inout MaiConfiguration?,
+    configurationPath: String?,
+    terminal: TerminalWriter
+  ) async {
+    guard var draft = configuration, let configurationPath else {
+      await terminal.line("error: No writable configuration is active.", to: .standardError)
+      return
+    }
+    guard let edited = await editTemporaryText(
+      draft.prompts?.recap ?? AgentRecapPrompt.template,
+      suffix: "recap-prompt.md", terminal: terminal)
+    else { return }
+    let candidate = edited.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let missing = AgentCompactionPrompt.missingPlaceholder(in: candidate) {
+      await terminal.line(
+        "error: The recap prompt must contain \(missing); no changes were saved.",
+        to: .standardError)
+      return
+    }
+    var prompts = draft.prompts ?? ConfiguredPrompts()
+    prompts.recap = candidate.isEmpty || candidate == AgentRecapPrompt.template ? nil : candidate
+    draft.prompts = prompts
+    do {
+      try draft.save(to: URL(fileURLWithPath: configurationPath))
+      configuration = draft
+      await terminal.line(
+        prompts.recap == nil
+          ? "Recap prompt restored to the built-in default."
+          : "Recap prompt saved to \(configurationPath).")
+    } catch {
+      await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+    }
+  }
+
+  /// Both summaries use the compact model. A recap only prints its result;
+  /// compaction replaces the transcript while retaining system instructions.
+  private static func summarizeChat(
+    recap: Bool,
     focus: String,
     promptTemplate: String?,
     session: inout REPLSession,
     runtime: AgentRuntime,
     terminal: TerminalWriter
   ) async {
+    let action = recap ? "recap" : "compact"
+    let transcript = recap
+      ? AgentRecapPrompt.transcript(of: session.history.messages)
+      : AgentCompactionPrompt.transcript(of: session.history.messages)
     let spoken = session.history.messages.filter {
       ($0.role == .user || $0.role == .assistant)
         && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
-    guard spoken.count >= 2 else {
-      await terminal.line("Nothing to compact yet.")
+    guard recap ? !transcript.isEmpty : spoken.count >= 2 else {
+      await terminal.line("Nothing to \(action) yet.")
       return
     }
     let configuredTemplate = promptTemplate?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     guard configuredTemplate.isEmpty || configuredTemplate.contains("{{transcript}}") else {
       await terminal.line(
-        "error: The compact prompt must contain {{transcript}}. Edit it with /edit compact.",
+        "error: The \(action) prompt must contain {{transcript}}. Edit it with /edit \(recap ? "prompt recap" : "compact").",
         to: .standardError)
       return
     }
-    // The same prompt and transcript rendering autocompact uses, so a summary
-    // reads the same whether a person or the runtime asked for it.
-    let prompt = AgentCompactionPrompt.render(
-      transcript: AgentCompactionPrompt.transcript(of: session.history.messages),
-      focus: focus,
-      template: configuredTemplate)
+    // Compaction shares its template with autocompact; recap has its own
+    // reader-facing template while using the same inference settings.
+    let prompt = recap
+      ? AgentRecapPrompt.render(transcript: transcript, template: configuredTemplate)
+      : AgentCompactionPrompt.render(
+        transcript: transcript, focus: focus, template: configuredTemplate)
     let profile = session.profile
     let request = AgentRequest(
       agentID: profile.agentID,
@@ -9965,15 +10021,19 @@ struct MaiCLI {
       useToolProxy: false,
       retry: profile.retry,
       sessionID: session.sessionID)
-    await terminal.line("Compacting conversation…")
+    await terminal.line(recap ? "Recapping conversation…" : "Compacting conversation…")
     do {
       let compactRequest = try await runtime.taskRequest(.compact, from: request)
       let result = try await runtime.run(compactRequest) { _ in }
-      let summary =
-        result.transcript.last(where: { $0.role == .assistant })?.text
-        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+      let summary = MessageContentFilter.textWithoutReasoning(
+        from: result.transcript.last(where: { $0.role == .assistant })?.text ?? "")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
       guard !summary.isEmpty else {
-        await terminal.line("error: Compact returned an empty summary.", to: .standardError)
+        await terminal.line("error: \(action.capitalized) returned an empty summary.", to: .standardError)
+        return
+      }
+      if recap {
+        await terminal.line(await terminal.render(summary))
         return
       }
       var compacted: [AgentMessage] = []
@@ -10386,8 +10446,9 @@ struct MaiCLI {
       "/mcp list",
       "/mcp add ", "/mcp enable ", "/mcp disable ",
       "/edit prompt", "/edit compact", "/edit config", "/edit mcps", "/edit provider",
+      "/edit prompt recap",
       "/edit input",
-      "/chat compact ",
+      "/chat compact ", "/chat recap",
       "/image tiny ", "/image small ", "/image medium ", "/image big ", "/image full ",
       "/image ocr ", "/attach ", "/attach source ", "/attach markdown ", "/attach copy ",
       "/attach clear", "/copy", "/help copy", "/reply", "/help reply",
@@ -10829,6 +10890,7 @@ struct MaiCLI {
       /chat undo [INDEX]  Remove the last conversation message or selected message
       /chat trim INDEX    Keep through the selected message; remove newer messages
       /chat compact [FOCUS]  Summarize the chat, prioritizing what FOCUS says to preserve
+      /chat recap         Print a short recap using the compact model; keep the history
       /chat clear         Clear the conversation and restore configured instructions
 
     Message indexes are 1-based. Negative indexes count back from the end;
@@ -10884,6 +10946,9 @@ struct MaiCLI {
     /edit agent [ID]         Edit a saved agent as JSON (current when omitted)
     /edit provider [ID]      Edit a configured provider as JSON (current when omitted)
     /edit compact            Edit the global chat-compaction prompt template
+    /edit prompt recap       Edit the recap template (goals, actions, pending tasks)
+    /edit prompt compact     Edit the generated compact agent's system prompt
+    /edit prompt tool        Edit the generated tool agent's system prompt
     /edit memory             Edit this project's durable memory notes
     /edit memory-prompt      Edit the template /memory learn uses
     /edit delegation         Edit the brief template child agents receive
@@ -10894,7 +10959,7 @@ struct MaiCLI {
     /edit input              Write the next message in the editor and send it
     /edit soul               Edit your core personality (lives in ~/.pmai/SOUL.md)
 
-    The compact and memory templates must contain {{transcript}}; {{focus}} and
+    The compact, recap, and memory templates must contain {{transcript}}; {{focus}} and
     {{memory}} are optional. The delegation template must contain {{task}};
     {{context}}, {{output}}, {{agent}}, and {{cwd}} are optional.
     Clearing it restores the built-in default. Uses /set ui.editor when it is

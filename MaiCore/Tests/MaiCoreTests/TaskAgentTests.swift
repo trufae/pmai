@@ -18,6 +18,8 @@ func taskAgentConfiguration() throws {
   #expect(compact.provider == "local")
   #expect(compact.model == "org/small:latest")
   #expect(compact.toolNames.isEmpty)
+  #expect(compact.systemPrompt == "compact")
+  #expect(configuration.prompts?.system["compact"] == AgentTask.compact.instructions)
   try configuration.assignTask(.tool, selector: compact.id, current: main)
   let decoded = try JSONDecoder().decode(MaiConfiguration.self, from: configuration.encoded())
   #expect(decoded == configuration)
@@ -27,11 +29,65 @@ func taskAgentConfiguration() throws {
   try configuration.validate()
   try configuration.assignTask(.tool, selector: "small:7b", current: main)
   #expect(configuration.agents.last?.model == "small:7b")
+  #expect(configuration.agents.last?.systemPrompt == "tool")
   try configuration.assignTask(.tool, selector: nil, current: main)
   #expect(configuration.taskAgents.tool == nil)
   #expect(throws: MaiConfigurationError.unknownProvider("missing")) {
     try configuration.assignTask(.compact, selector: "missing::small", current: main)
   }
+}
+
+@Test("Generated task prompt names migrate without losing custom text or changing agent IDs")
+func taskPromptNamesMigrate() throws {
+  var configuration = MaiConfiguration(
+    taskAgents: .init(compact: "task-compact", tool: "task-tool"),
+    providers: [ConfiguredProvider(id: "hello", kind: .hello)],
+    agents: [
+      AgentDefinition(
+        id: "task-compact", instructions: "stale", systemPrompt: "task-compact", provider: "hello",
+        model: "small"),
+      AgentDefinition(
+        id: "task-tool", instructions: "Custom tool instructions", provider: "hello", model: "tools"
+      ),
+    ],
+    prompts: ConfiguredPrompts(system: ["task-compact": "Custom compact instructions"]))
+  let migrated = configuration.associateSystemPrompts()
+  #expect(migrated)
+  #expect(configuration.agents.map(\.systemPrompt) == ["compact", "tool"])
+  #expect(
+    configuration.taskAgents == TaskAgentAssignments(compact: "task-compact", tool: "task-tool"))
+  #expect(
+    configuration.prompts?.system == [
+      "compact": "Custom compact instructions", "tool": "Custom tool instructions",
+    ])
+  #expect(configuration.agents[0].instructions == "Custom compact instructions")
+  let migratedAgain = configuration.associateSystemPrompts()
+  #expect(!migratedAgain)
+  try configuration.validate()
+}
+
+@Test("Task prompt migration preserves other prompts and explicit associations")
+func taskPromptNameCollisions() {
+  var configuration = MaiConfiguration(
+    taskAgents: .init(compact: "task-compact", tool: "task-tool"),
+    agents: [
+      AgentDefinition(
+        id: "task-compact", instructions: "Generated", provider: "hello", model: "small"),
+      AgentDefinition(
+        id: "task-tool", instructions: "Explicit", systemPrompt: "chosen", provider: "hello",
+        model: "tools"),
+      AgentDefinition(
+        id: "other", instructions: "Shared", systemPrompt: "task-compact", provider: "hello",
+        model: "large"),
+    ],
+    prompts: ConfiguredPrompts(system: ["compact": "Unrelated", "task-compact": "Shared"]))
+  configuration.associateSystemPrompts()
+  #expect(configuration.agents.map(\.systemPrompt) == ["compact-2", "chosen", "task-compact"])
+  #expect(configuration.prompts?.system["compact"] == "Unrelated")
+  #expect(configuration.prompts?.system["compact-2"] == "Shared")
+  #expect(configuration.prompts?.system["task-compact"] == "Shared")
+  let migratedAgain = configuration.associateSystemPrompts()
+  #expect(!migratedAgain)
 }
 
 @Test("Model shorthand never rewrites an unrelated agent with a generated name")
