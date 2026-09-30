@@ -26,6 +26,8 @@ public struct ProviderCapabilities: OptionSet, Codable, Hashable, Sendable {
   public static let structuredOutput = ProviderCapabilities(rawValue: 1 << 4)
   public static let audioInput = ProviderCapabilities(rawValue: 1 << 5)
   public static let fileInput = ProviderCapabilities(rawValue: 1 << 6)
+  /// Classifies the next tool; cannot generate chat text or arbitrary arguments.
+  public static let toolDecision = ProviderCapabilities(rawValue: 1 << 7)
 }
 
 public struct ProviderDescriptor: Codable, Equatable, Sendable {
@@ -383,7 +385,8 @@ public struct ToolResult: Codable, Equatable, Sendable {
       content: try container.decode([ContentPart].self, forKey: .content),
       structuredContent: try container.decodeIfPresent(JSONValue.self, forKey: .structuredContent),
       isError: try container.decode(Bool.self, forKey: .isError),
-      importance: try container.decodeIfPresent(ToolResultImportance.self, forKey: .importance) ?? .normal)
+      importance: try container.decodeIfPresent(ToolResultImportance.self, forKey: .importance)
+        ?? .normal)
   }
 
   public var text: String {
@@ -756,15 +759,18 @@ public struct ProviderResponse: Codable, Equatable, Sendable {
   public var message: AgentMessage
   public var usage: TokenUsage?
   public var stopReason: ProviderStopReason
+  public var toolDecision: ToolChoice?
 
   public init(
     message: AgentMessage,
     usage: TokenUsage? = nil,
-    stopReason: ProviderStopReason = .unknown
+    stopReason: ProviderStopReason = .unknown,
+    toolDecision: ToolChoice? = nil
   ) {
     self.message = message
     self.usage = usage
     self.stopReason = stopReason
+    self.toolDecision = toolDecision
   }
 
   public var reasoning: String { message.reasoning }
@@ -951,6 +957,7 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
   public var options: GenerationOptions
   public var toolCallingStrategy: ToolCallingStrategy
   public var useToolProxy: Bool
+  public var useSystemOne: Bool
   /// With the proxy on, the tools still offered natively; nil means
   /// `ToolProxy.defaultExposedNames`, an empty set hides them all.
   public var proxyExposedTools: Set<String>?
@@ -983,6 +990,7 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
     options: GenerationOptions = .init(),
     toolCallingStrategy: ToolCallingStrategy = .automatic,
     useToolProxy: Bool = false,
+    useSystemOne: Bool = false,
     proxyExposedTools: Set<String>? = nil,
     toolDelegation: AgentToolDelegation = .inline,
     retry: AgentRetryPolicy = .init(),
@@ -1007,6 +1015,7 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
     self.options = options
     self.toolCallingStrategy = toolCallingStrategy
     self.useToolProxy = useToolProxy
+    self.useSystemOne = useSystemOne
     self.proxyExposedTools = proxyExposedTools
     self.toolDelegation = toolDelegation
     self.retry = retry
@@ -1017,7 +1026,8 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
   private enum CodingKeys: String, CodingKey {
     case id, displayName, instructions, systemPrompt, provider, model, toolNames, toolGroupNames,
       subagentNames, stream, limits
-    case toolChoice, responseFormat, options, toolCallingStrategy, useToolProxy, proxyExposedTools,
+    case toolChoice, responseFormat, options, toolCallingStrategy, useToolProxy, useSystemOne,
+      proxyExposedTools,
       toolDelegation
     case description
     case isEnabled = "enabled"
@@ -1050,7 +1060,9 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
         ToolCallingStrategy.self,
         forKey: .toolCallingStrategy) ?? .automatic,
       useToolProxy: try container.decodeIfPresent(Bool.self, forKey: .useToolProxy) ?? false,
-      proxyExposedTools: try container.decodeIfPresent(Set<String>.self, forKey: .proxyExposedTools),
+      useSystemOne: try container.decodeIfPresent(Bool.self, forKey: .useSystemOne) ?? false,
+      proxyExposedTools: try container.decodeIfPresent(
+        Set<String>.self, forKey: .proxyExposedTools),
       toolDelegation: try container.decodeIfPresent(
         AgentToolDelegation.self,
         forKey: .toolDelegation) ?? .inline,
@@ -1081,6 +1093,7 @@ public struct AgentRequest: Sendable {
   public var stream: Bool
   public var toolCallingStrategy: ToolCallingStrategy
   public var useToolProxy: Bool
+  public var useSystemOne: Bool
   public var proxyExposedTools: Set<String>?
   public var toolDelegation: AgentToolDelegation
   public var retry: AgentRetryPolicy
@@ -1106,6 +1119,7 @@ public struct AgentRequest: Sendable {
     stream: Bool = true,
     toolCallingStrategy: ToolCallingStrategy = .automatic,
     useToolProxy: Bool = false,
+    useSystemOne: Bool = false,
     proxyExposedTools: Set<String>? = nil,
     toolDelegation: AgentToolDelegation = .inline,
     retry: AgentRetryPolicy = .init(),
@@ -1127,6 +1141,7 @@ public struct AgentRequest: Sendable {
     self.stream = stream
     self.toolCallingStrategy = toolCallingStrategy
     self.useToolProxy = useToolProxy
+    self.useSystemOne = useSystemOne
     self.proxyExposedTools = proxyExposedTools
     self.toolDelegation = toolDelegation
     self.retry = retry

@@ -14,6 +14,9 @@ public struct MaiOpenAIPlugin: MaiPlugin {
     try await registry.register(
       providerFactory: OpenAIConfiguredProviderFactory(),
       from: manifest.id)
+    try await registry.register(
+      providerFactory: SystemOneConfiguredProviderFactory(),
+      from: manifest.id)
   }
 }
 

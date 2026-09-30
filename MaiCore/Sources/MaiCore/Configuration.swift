@@ -23,6 +23,7 @@ public struct ConfiguredProviderKind: RawRepresentable, Codable, Hashable, Senda
 
   public static let hello: ConfiguredProviderKind = "hello"
   public static let openAICompatible: ConfiguredProviderKind = "openAICompatible"
+  public static let systemOne: ConfiguredProviderKind = "systemone"
 }
 
 public struct ConfiguredProvider: Codable, Equatable, Identifiable, Sendable {

@@ -3435,3 +3435,111 @@ private actor LiveSettingsProvider: ChatProvider {
 
   func releaseBlockedRequest() { blockedRequestReleased = true }
 }
+
+@Test("System One sends choices and validates decisions without fabricating arguments")
+func systemOneDecisionTransport() async throws {
+  StubURLProtocol.install(forHost: "systemone.example.test") { request in
+    #expect(request.url?.path == "/v1/systemone")
+    #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer secret")
+    #expect(request.value(forHTTPHeaderField: "X-Session") == "decision-chat")
+    let data = try requestBodyData(request)
+    let root = try JSONDecoder().decode(JSONValue.self, from: data).objectValue
+    #expect(root?["model"] == .string("tev1:0.8b"))
+    #expect(root?["messages"] == nil)
+    #expect(
+      root?["questions"]?.objectValue?["tool"]?.objectValue?["criteria"]?.objectValue?.count == 2)
+    return try httpResponse(
+      request, contentType: "application/json",
+      body:
+        #"{"answers":{"tool":{"choice":"tool_0","confidence":0.9}},"usage":{"input_tokens":12,"output_tokens":1}}"#
+    )
+  }
+  defer { StubURLProtocol.reset(host: "systemone.example.test") }
+  let provider = SystemOneProvider(
+    configuration: .init(
+      baseURL: URL(string: "https://systemone.example.test/v1/systemone")!, apiKey: "secret",
+      additionalHeaders: ["X-Session": "{{session}}"]), session: stubSession())
+  let response = try await provider.complete(
+    .init(
+      model: "tev1:0.8b", messages: [.user("read a file")],
+      tools: [ToolDefinition(name: "read", description: "Read a file", parameters: [])],
+      sessionID: "decision-chat"))
+  #expect(response.toolDecision == .tool("read"))
+  #expect(response.message.toolCalls.isEmpty)
+  #expect(response.usage?.totalTokens == 13)
+}
+
+@Test("System One catalog uses decision capabilities, including renamed local models")
+func systemOneCatalog() async throws {
+  StubURLProtocol.install(forHost: "decision-models.example.test") { request in
+    let body: String
+    if request.url?.path == "/api/tags" {
+      body = #"{"models":[{"name":"gpt-oss:20b"},{"name":"my-router"}]}"#
+    } else {
+      #expect(request.url?.path == "/api/show")
+      let data = try requestBodyData(request)
+      let root = try JSONDecoder().decode(JSONValue.self, from: data).objectValue
+      body =
+        root?["model"] == .string("my-router")
+        ? #"{"capabilities":["completion","decision"],"details":{"format":"gguf"}}"#
+        : #"{"capabilities":["completion","tools"],"details":{"format":"gguf"}}"#
+    }
+    return try httpResponse(request, contentType: "application/json", body: body)
+  }
+  defer { StubURLProtocol.reset(host: "decision-models.example.test") }
+  let provider = SystemOneProvider(
+    configuration: .init(
+      baseURL: URL(string: "https://decision-models.example.test/v1")!), session: stubSession())
+  #expect(try await provider.availableModels().map(\.id) == ["my-router"])
+}
+
+@Test("System One rejects unknown choices and preserves endpoint errors")
+func systemOneInvalidResponse() async throws {
+  StubURLProtocol.install(forHost: "bad-decision.example.test") { request in
+    try httpResponse(
+      request, contentType: "application/json",
+      body: #"{"answers":{"tool":{"choice":"nonexistent"}}}"#)
+  }
+  defer { StubURLProtocol.reset(host: "bad-decision.example.test") }
+  let provider = SystemOneProvider(
+    configuration: .init(
+      baseURL: URL(string: "https://bad-decision.example.test")!), session: stubSession())
+  await #expect(throws: OpenAICompatibleProviderError.self) {
+    try await provider.complete(
+      .init(
+        model: "tev1", messages: [.user("hello")],
+        tools: [ToolDefinition(name: "read", description: "read", parameters: [])]))
+  }
+}
+
+@Test("System One bounds large catalogs and keeps the latest request after many tool results")
+func systemOneLargeCatalog() async throws {
+  StubURLProtocol.install(forHost: "large-decision.example.test") { request in
+    let data = try requestBodyData(request)
+    let root = try #require(try JSONDecoder().decode(JSONValue.self, from: data).objectValue)
+    #expect(root["state"]?.stringValue?.contains("original task") == true)
+    let criteria = try #require(
+      root["questions"]?.objectValue?["tool"]?.objectValue?["criteria"]?.objectValue)
+    #expect((2...24).contains(criteria.count))
+    // Keep the final tool even though it lies beyond the first batch.
+    let choice =
+      criteria.first { $0.value.stringValue?.hasPrefix("tool46:") == true }?.key ?? "none"
+    return try httpResponse(
+      request, contentType: "application/json",
+      body: #"{"answers":{"tool":{"choice":""# + choice + #""}}}"#)
+  }
+  defer { StubURLProtocol.reset(host: "large-decision.example.test") }
+  let provider = SystemOneProvider(
+    configuration: .init(
+      baseURL: URL(string: "https://large-decision.example.test")!), session: stubSession())
+  let response = try await provider.complete(
+    .init(
+      model: "tev1",
+      messages: [.user("original task")]
+        + (0..<12).map { .assistant("result \($0)") },
+      tools: (0..<47).map {
+        ToolDefinition(name: "tool\($0)", description: "A tool", parameters: [])
+      }))
+  #expect(response.toolDecision == .tool("tool46"))
+  #expect(response.usage?.isEstimated == true)
+}
