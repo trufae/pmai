@@ -3543,3 +3543,55 @@ func systemOneLargeCatalog() async throws {
   #expect(response.toolDecision == .tool("tool46"))
   #expect(response.usage?.isEstimated == true)
 }
+
+@Test(
+  "System One approval uses a harm question and blocks uncertainty", arguments: [0.05, 0.5, 0.99])
+func systemOneApprovalHarm(probability: Double) async throws {
+  let host = "harm-\(probability).example.test"
+  StubURLProtocol.install(forHost: host) { request in
+    let body = try #require(
+      try JSONDecoder().decode(JSONValue.self, from: requestBodyData(request)).objectValue)
+    #expect(request.url?.path == "/v1/systemone")
+    #expect(body["questions"]?.objectValue?["harm"]?.objectValue?["type"] == .string("noul"))
+    #expect(body["state"]?.objectValue?["arguments"]?.objectValue?["script"] == .string("rm -rf ~"))
+    return try httpResponse(
+      request, contentType: "application/json",
+      body: "{\"answers\":{\"harm\":{\"noul\":\(probability)}}}")
+  }
+  defer { StubURLProtocol.reset(host: host) }
+  let provider = SystemOneProvider(
+    configuration: .init(baseURL: URL(string: "https://\(host)")!), session: stubSession())
+  let arguments: JSONValue = .object(["script": .string("rm -rf ~")])
+  let review = ToolApprovalReview(
+    tool: .init(name: "run_sh", description: "shell"), arguments: arguments,
+    task: "list files",
+    environment: .init(
+      workingDirectory: "/workspace", allowedPaths: ["/workspace"], sandbox: "test"))
+  let response = try await provider.complete(
+    SmartToolApproval.request(review: review, model: "nimble"))
+  let decision = SmartToolApproval.decision(response, arguments: arguments)
+  if probability < 0.5 {
+    #expect(decision == .approve(arguments: arguments))
+  } else if case .deny = decision {
+  } else {
+    Issue.record("Harmful or uncertain tool approved")
+  }
+}
+
+@Test("Malformed System One harm responses fail closed")
+func systemOneApprovalInvalid() async throws {
+  StubURLProtocol.install(forHost: "bad-harm.example.test") { request in
+    try httpResponse(
+      request, contentType: "application/json", body: #"{"answers":{"harm":{"noul":2}}}"#)
+  }
+  defer { StubURLProtocol.reset(host: "bad-harm.example.test") }
+  let provider = SystemOneProvider(
+    configuration: .init(baseURL: URL(string: "https://bad-harm.example.test")!),
+    session: stubSession())
+  let review = ToolApprovalReview(
+    tool: .init(name: "run_sh", description: "shell"), arguments: .object([:]),
+    task: "test", environment: .current)
+  await #expect(throws: OpenAICompatibleProviderError.self) {
+    try await provider.complete(SmartToolApproval.request(review: review, model: "tev1"))
+  }
+}

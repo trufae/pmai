@@ -722,6 +722,7 @@ public struct GenerationOptions: Codable, Equatable, Sendable {
 }
 
 public struct ProviderRequest: Codable, Sendable {
+  public var approvalReview: ToolApprovalReview? = nil
   public var model: String
   public var messages: [AgentMessage]
   public var tools: [ToolDefinition]

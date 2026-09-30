@@ -194,6 +194,7 @@ public struct ToolExecutionContext: Codable, Equatable, Sendable {
 }
 
 public protocol AgentTool: Sendable {
+  func approvalEnvironment(arguments: JSONValue) throws -> ToolApprovalEnvironment
   var definition: ToolDefinition { get }
 
   func call(
@@ -322,6 +323,12 @@ package enum ToolResultPreview {
   }
 }
 
+extension AgentTool {
+  public func approvalEnvironment(arguments: JSONValue) throws -> ToolApprovalEnvironment {
+    .current
+  }
+}
+
 public struct ClosureTool: AgentTool {
   public let definition: ToolDefinition
   private let operation: @Sendable (JSONValue, ToolExecutionContext) async throws -> ToolOutput
@@ -361,11 +368,14 @@ public enum ApprovalDecision: Equatable, Sendable {
 }
 
 public protocol ApprovalHandler: Sendable {
+  func toolApprovalMode() async -> ToolApprovalMode?
   func decide(_ request: ApprovalRequest) async throws -> ApprovalDecision
   func decideCompaction(_ request: AutocompactionRequest) async throws -> AutocompactionDecision
 }
 
 extension ApprovalHandler {
+  /// Nil preserves annotation-based behavior for existing host integrations.
+  public func toolApprovalMode() async -> ToolApprovalMode? { nil }
   /// Hosts without an interactive surface retain their configured automatic policy.
   public func decideCompaction(_ request: AutocompactionRequest) async throws -> AutocompactionDecision {
     .compact

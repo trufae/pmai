@@ -4,9 +4,12 @@ import Foundation
 public enum AgentTask: String, CaseIterable, Codable, Sendable {
   case compact
   case tool
+  case approval
 
   public var instructions: String {
     switch self {
+    case .approval:
+      SmartToolApproval.instructions
     case .compact:
       "Summarize the conversation accurately, preserving the facts needed to continue the task."
     case .tool:
@@ -20,16 +23,28 @@ public enum AgentTask: String, CaseIterable, Codable, Sendable {
 public struct TaskAgentAssignments: Codable, Equatable, Sendable {
   public var compact: String?
   public var tool: String?
+  public var approval: String?
 
-  public init(compact: String? = nil, tool: String? = nil) {
+  public init(compact: String? = nil, tool: String? = nil, approval: String? = nil) {
     self.compact = compact
     self.tool = tool
+    self.approval = approval
   }
 
   public subscript(task: AgentTask) -> String? {
-    get { task == .compact ? compact : tool }
+    get {
+      switch task {
+      case .compact: compact
+      case .tool: tool
+      case .approval: approval
+      }
+    }
     set {
-      if task == .compact { compact = newValue } else { tool = newValue }
+      switch task {
+      case .compact: compact = newValue
+      case .tool: tool = newValue
+      case .approval: approval = newValue
+      }
     }
   }
 

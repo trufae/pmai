@@ -89,6 +89,18 @@ public struct MaiFileWorkspaceTool: AgentTool {
     }
   }
 
+  public func approvalEnvironment(arguments: JSONValue) throws -> ToolApprovalEnvironment {
+    let root =
+      configuration.followsProcessWorkingDirectory
+      ? AgentExecutionScope.directory : configuration.rootURL
+    return .init(
+      workingDirectory: root.path,
+      allowedPaths: [root.path, configuration.temporaryDirectoryURL.path],
+      sandbox:
+        "File paths are checked by the Files tool against its workspace and temporary directory, including symlinks. Write enabled: \(configuration.writeEnabled). Approval never bypasses those checks."
+    )
+  }
+
   public func call(arguments: JSONValue, context: ToolExecutionContext) async throws -> ToolOutput {
     var arguments = arguments.objectValue ?? [:]
     if operation == .read, arguments["max_bytes"] == nil, let limit = context.suggestedOutputBytes {

@@ -595,9 +595,9 @@ public actor AgentRuntime {
         provider: request.provider,
         response: response,
         transcript: transcript,
-        usage: totalUsage,
+        usage: totalUsage.merging(await budget.approvalUsage(for: pid)),
         stopReason: .unknown,
-        modelTurns: localModelTurns,
+        modelTurns: localModelTurns + (await budget.approvalTurns(for: pid)),
         toolCalls: localToolCalls,
         interruption: interruption)
       await emit(.finished(context, result))
@@ -1055,9 +1055,9 @@ public actor AgentRuntime {
           provider: request.provider,
           response: providerResponse.message,
           transcript: transcript,
-          usage: totalUsage,
+          usage: totalUsage.merging(await budget.approvalUsage(for: pid)),
           stopReason: providerResponse.stopReason,
-          modelTurns: localModelTurns,
+          modelTurns: localModelTurns + (await budget.approvalTurns(for: pid)),
           toolCalls: localToolCalls)
         await emit(.finished(context, result))
         return result
@@ -1286,6 +1286,8 @@ public actor AgentRuntime {
       } catch is ProviderEmptyResponseError where !retriesEmptyReply {
         await debugLog?.record("model.empty", context: context, value: "empty response")
         throw ProviderEmptyReply()
+      } catch let error as ToolApprovalUnavailable {
+        throw error
       } catch {
         await debugLog?.record(
           "model.error", context: context, provider: provider.descriptor.id.rawValue,
@@ -1467,6 +1469,70 @@ public actor AgentRuntime {
     }
   }
 
+  private func reviewToolApproval(
+    _ approval: ApprovalRequest, request: AgentRequest,
+    budget: RunBudget, emit: @escaping AgentEventHandler
+  ) async throws -> ApprovalDecision {
+    do {
+      guard let pid = approval.run.pid else {
+        return .deny(reason: "Approval review has no run context.")
+      }
+      let transcript = await supervisor.transcript(pid)
+      let environment =
+        try tools[approval.tool.name]?.approvalEnvironment(arguments: approval.call.arguments)
+        ?? ToolApprovalEnvironment.current
+      let review = ToolApprovalReview(
+        tool: approval.tool, arguments: approval.call.arguments,
+        task: transcript.last(where: { $0.role == .user })?.text
+          ?? request.messages.last(where: { $0.role == .user })?.text ?? "",
+        environment: environment)
+      let inference = try taskRequest(.approval, from: request)
+      func evaluate(_ inference: AgentRequest) async throws -> ApprovalDecision {
+        guard let provider = providers[inference.provider] else {
+          throw AgentRuntimeError.providerNotRegistered(inference.provider)
+        }
+        if let interruption = await budget.claimModelTurn() {
+          return .deny(reason: "Approval review cannot run: \(interruption).")
+        }
+        await budget.noteApprovalTurn(for: pid)
+        let providerRequest = SmartToolApproval.request(
+          review: review, model: inference.model,
+          options: inference.options, sessionID: request.sessionID,
+          additionalInstructions: taskAgents.approval.flatMap { agents[$0]?.instructions } ?? "")
+        let call = try await complete(
+          providerRequest, with: provider, retry: inference.retry,
+          budget: budget, context: approval.run, pid: pid, emit: emit
+        ) { _ in }
+        let usage =
+          call.response.usage
+          ?? .estimated(
+            inputTokens: ModelCallStats.estimatedTokenCount(of: providerRequest.messages),
+            outputTokens: ModelCallStats.estimatedTokenCount(
+              forCharacterCount: call.response.message.text.count))
+        await budget.recordApproval(usage, for: pid)
+        if let usageStats {
+          await usageStats.record(
+            ModelCallStats.measured(
+              providerLabel: provider.descriptor.id.rawValue,
+              modelID: inference.model, messages: providerRequest.messages, response: call.response,
+              timing: call.timing, end: call.ended), at: call.ended)
+        }
+        return SmartToolApproval.decision(call.response, arguments: approval.call.arguments)
+      }
+      do { return try await evaluate(inference) } catch is ToolApprovalUnavailable {
+        guard let primary = providers[request.provider],
+          !primary.descriptor.capabilities.contains(.toolDecision)
+        else {
+          return .deny(
+            reason: "System One approval is unavailable and no chat model can review the call.")
+        }
+        return try await evaluate(request)
+      }
+    } catch is CancellationError { throw CancellationError() } catch {
+      return .deny(reason: "Approval review failed: \(error.localizedDescription)")
+    }
+  }
+
   private func execute(
     _ call: ToolCall,
     definitions: [ToolDefinition],
@@ -1481,18 +1547,6 @@ public actor AgentRuntime {
   ) async throws -> ToolResult {
     // A proxied model that names a hidden tool directly still gets it run:
     // the proxy saves tokens, it is not a permission boundary.
-    if request.useToolProxy, call.name == ToolProxy.listName {
-      await emit(.toolStarted(context, call))
-      let result = ToolResult(
-        callID: call.id,
-        text: ToolProxy.listTools(
-          arguments: call.arguments.objectValue ?? [:],
-          definitions: ToolProxy.hiddenDefinitions(
-            in: definitions, exposing: request.proxyExposedTools)))
-      await emit(.toolFinished(context, result))
-      return result
-    }
-
     var resolvedCall: ToolCall
     if request.useToolProxy, call.name == ToolProxy.callName {
       let resolved = ToolProxy.resolveCall(
@@ -1517,7 +1571,11 @@ public actor AgentRuntime {
     let definitionName = Self.canonicalToolName(resolvedCall.name)
     let isLegacyName = definitionName != resolvedCall.name
     let definition =
-      definitions.first(where: { $0.name == definitionName })
+      (request.useToolProxy && definitionName == ToolProxy.listName
+        ? ToolProxy.listDefinition(
+          for: ToolProxy.hiddenDefinitions(in: definitions, exposing: request.proxyExposedTools))
+        : nil)
+      ?? definitions.first(where: { $0.name == definitionName })
       ?? AgentToolNameResolver(tools: definitions).canonicalName(for: definitionName)
       .flatMap { canonical in definitions.first(where: { $0.name == canonical }) }
     guard let definition else {
@@ -1564,7 +1622,10 @@ public actor AgentRuntime {
     }
 
     let approvedCall: ToolCall
-    if definition.annotations.approval == .automatic {
+    let approvalMode = await approvalHandler.toolApprovalMode()
+    if approvalMode == .yolo
+      || (approvalMode == nil && definition.annotations.approval == .automatic)
+    {
       approvedCall = resolvedCall
     } else {
       let approval = ApprovalRequest(run: context, tool: definition, call: resolvedCall)
@@ -1572,7 +1633,12 @@ public actor AgentRuntime {
       if let pid = context.pid { await supervisor.raise(.approval(approval), for: pid) }
       let decision: ApprovalDecision
       do {
-        decision = try await approvalHandler.decide(approval)
+        if approvalMode == .smart {
+          decision = try await reviewToolApproval(
+            approval, request: request, budget: budget, emit: emit)
+        } else {
+          decision = try await approvalHandler.decide(approval)
+        }
       } catch {
         if let pid = context.pid { await supervisor.clearAttention(for: pid) }
         throw error
@@ -1609,6 +1675,15 @@ public actor AgentRuntime {
     }
     await emit(.toolStarted(context, approvedCall))
     switch definition.name {
+    case ToolProxy.listName where request.useToolProxy:
+      let result = ToolResult(
+        callID: approvedCall.id,
+        text: ToolProxy.listTools(
+          arguments: approvedCall.arguments.objectValue ?? [:],
+          definitions: ToolProxy.hiddenDefinitions(
+            in: definitions, exposing: request.proxyExposedTools)))
+      await emit(.toolFinished(context, result))
+      return result
     case Self.agentStartToolName:
       return await startAgent(
         approvedCall,
@@ -2139,6 +2214,16 @@ private actor RunBudget {
   private var limits: AgentRunLimits
   private var modelTurns = 0
   private var toolCalls = 0
+  private var approvalUsageByProcess: [AgentPID: TokenUsage] = [:]
+  private var approvalTurnsByProcess: [AgentPID: Int] = [:]
+
+  func approvalUsage(for pid: AgentPID) -> TokenUsage? { approvalUsageByProcess[pid] }
+  func approvalTurns(for pid: AgentPID) -> Int { approvalTurnsByProcess[pid, default: 0] }
+  func noteApprovalTurn(for pid: AgentPID) { approvalTurnsByProcess[pid, default: 0] += 1 }
+  func recordApproval(_ usage: TokenUsage, for pid: AgentPID) {
+    approvalUsageByProcess[pid] = approvalUsageByProcess[pid].merging(usage)
+    tokens += max(0, usage.totalTokens)
+  }
   private var tokens = 0
   private let startedAt = ContinuousClock.now
 

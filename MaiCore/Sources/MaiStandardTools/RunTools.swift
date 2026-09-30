@@ -68,6 +68,18 @@ public struct MaiRunTool: AgentTool {
     isSupported ? [MaiRunTool(configuration: configuration)] : []
   }
 
+  public func approvalEnvironment(arguments: JSONValue) throws -> ToolApprovalEnvironment {
+    var environment = ToolApprovalEnvironment.current
+    #if os(macOS) || os(Linux) || os(Android)
+      environment.workingDirectory = try Self.workingDirectory(
+        arguments.objectValue?["cwd"]?.stringValue
+      ).path
+    #endif
+    environment.sandbox =
+      "Shell commands run with the host process's privileges, without a tool-enforced filesystem sandbox. Valid paths identify the task workspace, not all paths technically accessible to the shell. Check command substitutions, redirections, scripts, path traversal, and external effects."
+    return environment
+  }
+
   public func call(arguments: JSONValue, context: ToolExecutionContext) async throws -> ToolOutput {
     #if os(macOS) || os(Linux) || os(Android)
       let arguments = arguments.objectValue ?? [:]
