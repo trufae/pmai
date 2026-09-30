@@ -372,9 +372,12 @@ private actor TaskFixtureProvider: ChatProvider {
   nonisolated let descriptor: ProviderDescriptor
   var responses: [ProviderResponse]
   private(set) var requests: [ProviderRequest] = []
-  init(id: ProviderID, responses: [ProviderResponse], nativeTools: Bool = true) {
+  init(
+    id: ProviderID, responses: [ProviderResponse], nativeTools: Bool = true, decision: Bool = false
+  ) {
     descriptor = ProviderDescriptor(
-      id: id, displayName: id.rawValue, capabilities: nativeTools ? [.nativeToolCalling] : [])
+      id: id, displayName: id.rawValue,
+      capabilities: decision ? [.toolDecision] : nativeTools ? [.nativeToolCalling] : [])
     self.responses = responses
   }
   func complete(_ request: ProviderRequest, emit: @escaping ProviderEventHandler) async throws
@@ -392,5 +395,72 @@ private actor TaskFixtureEvents {
   var text = ""
   func append(_ event: AgentEvent) {
     if case .provider(_, .textDelta(let value)) = event { text += value }
+  }
+}
+
+@Test(
+  "System One routes a concrete tool, primary supplies arguments, and none produces an answer",
+  arguments: [false, true])
+func systemOneRuntimeRouting(textProtocol: Bool) async throws {
+  let tool = taskEchoTool()
+  let call = ToolCall(id: "echo-1", name: "echo", arguments: .object(["text": .string("evidence")]))
+  let primary = TaskFixtureProvider(
+    id: "primary",
+    responses: [
+      textProtocol
+        ? .init(message: .assistant(#"{"tool":"echo","arguments":{"text":"evidence"}}"#))
+        : .init(message: AgentMessage(role: .assistant, content: [.toolCall(call)])),
+      .init(message: .assistant("answer")),
+    ], nativeTools: !textProtocol)
+  let decision = TaskFixtureProvider(
+    id: "decision",
+    responses: [
+      .init(message: .assistant(""), toolDecision: .tool("echo")),
+      .init(message: .assistant(""), toolDecision: ToolChoice.none),
+    ], decision: true)
+  let runtime = AgentRuntime()
+  try await runtime.register(primary)
+  try await runtime.register(decision)
+  try await runtime.register(tool: tool)
+  try await runtime.register(
+    agent: AgentDefinition(id: "router", instructions: "", provider: "decision", model: "tev1"))
+  await runtime.configureTaskAgents(.init(tool: "router"))
+  let result = try await runtime.run(
+    .init(
+      provider: "primary", model: "chat", messages: [.user("echo evidence")],
+      toolNames: ["echo"], toolCallingStrategy: textProtocol ? .json : .native,
+      useToolProxy: true, useSystemOne: true, proxyExposedTools: [], retry: .none))
+  #expect(result.response.text == "answer")
+  #expect(result.modelTurns == 4)
+  #expect(result.toolCalls == 1)
+  #expect(await decision.requests.map { $0.tools.map(\.name) } == [["echo"], ["echo"]])
+  let requests = await primary.requests
+  #expect(requests.count == 2)
+  #expect(requests.last?.tools.isEmpty == true)
+  #expect(requests.last?.toolChoice == ToolChoice.none)
+  if !textProtocol { #expect(requests.first?.tools.map(\.name) == ["echo"]) }
+  #expect(result.transcript.flatMap(\.toolResults).last?.text == "evidence")
+}
+
+@Test("System One stays opt-in and old agent files default to false")
+func systemOneOptIn() async throws {
+  let decoded = try JSONDecoder().decode(
+    AgentDefinition.self, from: Data(#"{"id":"old","provider":"hello"}"#.utf8))
+  #expect(!decoded.useSystemOne)
+  var enabled = decoded
+  enabled.useSystemOne = true
+  #expect(
+    try JSONDecoder().decode(AgentDefinition.self, from: JSONEncoder().encode(enabled)).useSystemOne
+  )
+  let runtime = AgentRuntime()
+  try await runtime.register(TaskFixtureProvider(id: "primary", responses: []))
+  try await runtime.register(TaskFixtureProvider(id: "decision", responses: [], decision: true))
+  try await runtime.register(tool: taskEchoTool())
+  try await runtime.register(
+    agent: AgentDefinition(id: "router", instructions: "", provider: "decision", model: "tev1"))
+  await runtime.configureTaskAgents(.init(tool: "router"))
+  await #expect(throws: AgentRuntimeError.self) {
+    try await runtime.run(
+      .init(provider: "primary", messages: [.user("echo")], toolNames: ["echo"]))
   }
 }

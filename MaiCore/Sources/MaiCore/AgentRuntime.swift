@@ -568,6 +568,7 @@ public actor AgentRuntime {
     var localToolCalls = 0
     // Once the specialist hands off, the primary owns the rest of this reply,
     // including any tool work the specialist left unfinished.
+    var pendingDecision: ToolChoice?
     var usingPrimary = false
     var repeatedCalls: [ToolCallKey: Int] = [:]
     /// Set once a call came back a fourth time with the same arguments, or the
@@ -666,6 +667,7 @@ public actor AgentRuntime {
       // read, so a running agent can be steered without stopping it.
       let injected = await supervisor.drainInbox(pid, excluding: request.ignoredQueuedMessageIDs)
       if !injected.isEmpty {
+        pendingDecision = nil
         usingPrimary = false
         for message in injected {
           transcript.append(message)
@@ -758,7 +760,7 @@ public actor AgentRuntime {
       request = currentRequest(request, for: pid)
       await budget.update(limits: request.limits)
       let concreteDefinitions = try visibleDefinitions(for: request, depth: depth)
-      let definitions =
+      var definitions =
         request.useToolProxy && !concreteDefinitions.isEmpty
         ? ToolProxy.definitions(for: concreteDefinitions, exposing: request.proxyExposedTools)
         : concreteDefinitions
@@ -780,8 +782,17 @@ public actor AgentRuntime {
       // Resolve once at the call boundary, after compaction and queued input.
       // A task assignment changed during an await cannot mix one provider with
       // another agent's model or options.
+      let routedDecision = pendingDecision
+      pendingDecision = nil
+      if let routedDecision {
+        switch routedDecision {
+        case .tool(let name): definitions = concreteDefinitions.filter { $0.name == name }
+        default: definitions = []
+        }
+      }
       let selectingTools =
-        !usingPrimary && taskAgents.tool != nil && !concreteDefinitions.isEmpty
+        routedDecision == nil && !usingPrimary && taskAgents.tool != nil
+        && !concreteDefinitions.isEmpty
         && localToolCalls < request.limits.maxToolCalls && !repeatGuardTripped
       var inference = request
       inference.messages = transcript
@@ -789,7 +800,24 @@ public actor AgentRuntime {
       guard let provider = providers[inference.provider] else {
         throw AgentRuntimeError.providerNotRegistered(inference.provider)
       }
-      let supportsNativeTools = provider.descriptor.capabilities.contains(.nativeToolCalling)
+      let deciding = provider.descriptor.capabilities.contains(.toolDecision)
+      if deciding {
+        guard selectingTools, request.useSystemOne else {
+          throw AgentRuntimeError.systemOneConfiguration(
+            "System One requires /set tool.systemone true and a /model-tool assignment; keep a chat provider as the primary model."
+          )
+        }
+        definitions = concreteDefinitions
+      } else if selectingTools, request.useSystemOne {
+        throw AgentRuntimeError.systemOneConfiguration(
+          "tool.systemone requires a System One provider in /model-tool.")
+      }
+      if request.useSystemOne, taskAgents.tool == nil, !concreteDefinitions.isEmpty {
+        throw AgentRuntimeError.systemOneConfiguration(
+          "Select a System One model with /model-tool PROVIDER::MODEL first.")
+      }
+      let supportsNativeTools =
+        deciding || provider.descriptor.capabilities.contains(.nativeToolCalling)
       // A text-only primary can still finish after a native specialist. Give
       // it the text protocol if further work is needed at the handoff.
       if usingPrimary, inference.toolCallingStrategy == .native, !supportsNativeTools {
@@ -801,7 +829,7 @@ public actor AgentRuntime {
         throw AgentRuntimeError.nativeToolCallingUnavailable(inference.provider)
       }
       let textToolMode: ToolCallingMode?
-      switch inference.toolCallingStrategy {
+      switch deciding ? .native : inference.toolCallingStrategy {
       case .automatic:
         textToolMode = definitions.isEmpty || supportsNativeTools ? nil : .json
       case .native:
@@ -831,6 +859,11 @@ public actor AgentRuntime {
       // in the provider's own field, for the models that have none.
       if let effortSection = ReasoningEffort.promptSection(for: inference.options) {
         insertSystem(effortSection, into: &providerMessages)
+      }
+      if case .tool(let name) = routedDecision {
+        insertSystem(
+          "The decision model selected \(name). Fill its arguments from the conversation and call it if appropriate. Do not invent missing values.",
+          into: &providerMessages)
       }
       if usingPrimary, !toolBudgetExhausted {
         insertSystem(
@@ -920,6 +953,20 @@ public actor AgentRuntime {
       lastUsage = providerResponse.usage
       await supervisor.note(pid, usage: totalUsage)
       await budget.record(tokens: usage.totalTokens)
+
+      if deciding {
+        guard let decision = providerResponse.toolDecision else {
+          throw AgentRuntimeError.systemOneConfiguration("System One returned no tool decision.")
+        }
+        switch decision {
+        case .none: break
+        case .tool(let name) where concreteDefinitions.contains(where: { $0.name == name }): break
+        default:
+          throw AgentRuntimeError.systemOneConfiguration("System One returned an unavailable tool.")
+        }
+        pendingDecision = decision
+        continue
+      }
 
       // A server such as Ollama parses the model's own function-call syntax
       // into native tool calls even when the request offered no tools. Those
@@ -1856,6 +1903,7 @@ public actor AgentRuntime {
       options: request.options,
       toolCallingStrategy: request.toolCallingStrategy,
       useToolProxy: request.useToolProxy,
+      useSystemOne: request.useSystemOne,
       proxyExposedTools: request.proxyExposedTools,
       toolDelegation: delegates ? request.toolDelegation : .inline,
       retry: request.retry,
@@ -1965,6 +2013,7 @@ public actor AgentRuntime {
       stream: definition.stream,
       toolCallingStrategy: definition.toolCallingStrategy,
       useToolProxy: definition.useToolProxy,
+      useSystemOne: definition.useSystemOne,
       proxyExposedTools: definition.proxyExposedTools,
       toolDelegation: definition.toolDelegation,
       retry: definition.retry,
@@ -2054,10 +2103,13 @@ public enum AgentRuntimeError: LocalizedError, Equatable, Sendable {
   case agentNotRegistered(String)
   case reservedToolName(String)
   case nativeToolCallingUnavailable(ProviderID)
+  case systemOneConfiguration(String)
   case limitExceeded(String)
 
   public var errorDescription: String? {
     switch self {
+    case .systemOneConfiguration(let message):
+      message
     case .invalidProviderID:
       "Provider identifiers cannot be empty."
     case .providerAlreadyRegistered(let id):
@@ -2155,6 +2207,7 @@ extension AgentRequest {
     stream = other.stream
     toolCallingStrategy = other.toolCallingStrategy
     useToolProxy = other.useToolProxy
+    useSystemOne = other.useSystemOne
     proxyExposedTools = other.proxyExposedTools
     toolDelegation = other.toolDelegation
     retry = other.retry
@@ -2175,6 +2228,7 @@ extension AgentRequest {
     stream = definition.stream
     toolCallingStrategy = definition.toolCallingStrategy
     useToolProxy = definition.useToolProxy
+    useSystemOne = definition.useSystemOne
     proxyExposedTools = definition.proxyExposedTools
     toolDelegation = definition.toolDelegation
     retry = definition.retry
