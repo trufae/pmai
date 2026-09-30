@@ -1048,6 +1048,15 @@ struct MaiCLI {
   static func main() async {
     let environment = ProcessInfo.processInfo.environment
     let commandLineArguments = platformCommandLineArguments(environment: environment)
+    if commandLineArguments.dropFirst().first == "acp-gateway" {
+      do {
+        try await ACPGatewayCLI.run(Array(commandLineArguments.dropFirst(2)), environment: environment)
+      } catch {
+        FileHandle.standardError.write(Data("error: \(error.localizedDescription)\n".utf8))
+        exit(2)
+      }
+      return
+    }
     if commandLineArguments.dropFirst().first == "tailcat" {
       do {
         try await TailcatCLI.run(Array(commandLineArguments.dropFirst(2)),
@@ -11094,6 +11103,7 @@ struct MaiCLI {
         --acp-root DIR      restrict ACP session directories to this workspace
         --acp-sessions DIR  directory for persistent ACP sessions (default: PMAI_HOME/acp)
         tailcat ...         pair and serve remote agents; pmai tailcat --help
+        acp-gateway ...     bridge WebSocket clients to an ACP agent; pmai acp-gateway --help
         --agent ID          select a configured agent
         --api-key KEY       prefer an environment variable or config reference
         --base-url URL      ad-hoc OpenAI-compatible endpoint

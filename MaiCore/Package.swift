@@ -8,7 +8,7 @@ import PackageDescription
 let visualEnabled = Context.environment["PMAI_NO_VISUAL"] == nil
 var cliDependencies: [Target.Dependency] = [
   "MaiCore", "MaiMCP", "MaiOpenAI", "MaiPluginHost", "MaiStandardTools", "MaiVisionOCR",
-  "MaiDocuments", "MaiMarkdown", "MaiACP",
+  "MaiDocuments", "MaiMarkdown", "MaiACP", "MaiACPGateway",
 ]
 var cliSwiftSettings: [SwiftSetting] = []
 if visualEnabled {
@@ -38,13 +38,21 @@ let package = Package(
     .executable(name: "pmai", targets: ["MaiCLI"]),
   ],
   dependencies: [
-    .package(url: "https://github.com/SwiftTUI/swift-tui", .upToNextMinor(from: "0.10.1"))
+    .package(url: "https://github.com/SwiftTUI/swift-tui", .upToNextMinor(from: "0.10.1")),
+    .package(url: "https://github.com/apple/swift-nio", from: "2.81.0"),
   ],
   targets: [
     .target(name: "MaiCore"),
     .target(name: "MaiMarkdown"),
     .target(name: "MaiOpenAI", dependencies: ["MaiCore"]),
     .target(name: "MaiACP", dependencies: ["MaiCore"]),
+    .target(name: "MaiACPGateway", dependencies: [
+      "MaiACP", "MaiCore",
+      .product(name: "NIOCore", package: "swift-nio"),
+      .product(name: "NIOPosix", package: "swift-nio"),
+      .product(name: "NIOHTTP1", package: "swift-nio"),
+      .product(name: "NIOWebSocket", package: "swift-nio"),
+    ]),
     .target(name: "MaiMCP", dependencies: ["MaiCore"]),
     .target(name: "MaiStandardTools", dependencies: ["MaiCore", "MaiDocuments"]),
     .target(name: "MaiVisionOCR", dependencies: ["MaiCore"]),
