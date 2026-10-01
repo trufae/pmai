@@ -1425,6 +1425,70 @@ func textToolRepairAndRespond() async throws {
   #expect(await provider.requests.first?.messages.contains { $0.text.contains("respond") } == true)
 }
 
+@Test("Repeated malformed text calls reach a bounded final turn")
+func malformedTextCallsAreBounded() async throws {
+  let malformed = ProviderResponse(message: .assistant(#"{"name":"echo","arguments":{"text":"unfinished"}"#))
+  let provider = ScriptedProvider(responses: Array(repeating: malformed, count: 3) + [
+    ProviderResponse(message: .assistant("Unable to call the tool."), stopReason: .stop)
+  ])
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  try await runtime.register(tool: ClosureTool(
+    definition: ToolDefinition(name: "echo", description: "Echo")
+  ) { _, _ in
+    Issue.record("Malformed calls must not execute")
+    return ToolOutput(text: "unexpected")
+  })
+  let result = try await runtime.run(AgentRequest(
+    provider: "scripted", model: "fixture", messages: [.user("echo")],
+    toolNames: ["echo"], toolCallingStrategy: .json))
+  #expect(result.modelTurns == 4)
+  #expect(result.toolCalls == 0)
+  #expect(result.response.text == "Unable to call the tool.")
+  #expect(await provider.requests.last?.messages.contains { $0.text.contains("No tools are available") } == true)
+}
+
+@Test("Malformed native arguments receive feedback without blind retries", arguments: [false, true])
+func malformedNativeArgumentsAreRepaired(stream: Bool) async throws {
+  let host = stream ? "repair-stream.example.test" : "repair-json.example.test"
+  StubURLProtocol.install(forHost: host) { request in
+    let body = try jsonObject(try requestBodyData(request))
+    let messages = try #require(body["messages"] as? [[String: Any]])
+    let repaired = messages.contains { ($0["content"] as? String)?.contains("Tool call rejected") == true }
+    if repaired {
+      return try httpResponse(request, contentType: "application/json", body:
+        #"{"choices":[{"message":{"content":"Corrected."},"finish_reason":"stop"}]}"#)
+    }
+    if stream {
+      return try httpResponse(request, contentType: "text/event-stream", body: """
+        data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"bad","function":{"name":"echo","arguments":"{"}}]},"finish_reason":"tool_calls"}]}
+
+        data: [DONE]
+
+        """)
+    }
+    return try httpResponse(request, contentType: "application/json", body:
+      #"{"choices":[{"message":{"tool_calls":[{"id":"bad","function":{"name":"echo","arguments":"{"}}]},"finish_reason":"tool_calls"}]}"#)
+  }
+  defer { StubURLProtocol.reset(host: host) }
+  let provider = OpenAICompatibleProvider(configuration: .init(
+    baseURL: try #require(URL(string: "https://\(host)/v1"))), session: stubSession())
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  try await runtime.register(tool: ClosureTool(
+    definition: ToolDefinition(name: "echo", description: "Echo")
+  ) { _, _ in
+    Issue.record("Invalid arguments must never execute")
+    return ToolOutput(text: "unexpected")
+  })
+  let result = try await runtime.run(AgentRequest(
+    provider: provider.descriptor.id, model: "fixture", messages: [.user("echo")],
+    toolNames: ["echo"], stream: stream, retry: .none))
+  #expect(result.modelTurns == 2)
+  #expect(result.toolCalls == 0)
+  #expect(result.response.text == "Corrected.")
+}
+
 @Test("Text fallback runs native tool calls a server parsed out of the model's own syntax")
 func textToolAcceptsNativeCalls() async throws {
   let provider = ScriptedProvider(

@@ -980,6 +980,16 @@ public enum OpenAICompatibleProviderError: LocalizedError, Equatable, Sendable {
   }
 }
 
+extension OpenAICompatibleProviderError: ProviderToolCallError {
+  public var toolCallRepairMessage: String? {
+    guard case .invalidToolArguments(let tool, let arguments) = self else { return nil }
+    return "Tool call rejected: invalid JSON arguments for \(tool.prefix(100)). "
+      + "No tools from that response were executed. Send a corrected call with a JSON object "
+      + "matching the tool's schema, or explain the blocker.\n"
+      + "Rejected arguments (up to 1000 characters):\n" + arguments.prefix(1_000)
+  }
+}
+
 private struct ToolCallAccumulator {
   var id = ""
   var name = ""

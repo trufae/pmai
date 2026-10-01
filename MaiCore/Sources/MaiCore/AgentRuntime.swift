@@ -579,12 +579,12 @@ public actor AgentRuntime {
     var usingPrimary = false
     var repeatedCalls: [ToolCallKey: Int] = [:]
     /// Set once a call came back a fourth time with the same arguments, or the
-    /// model answered three tool results in a row with nothing. The next turn
+    /// model needed three consecutive protocol repairs. The next turn
     /// is offered no tools and asked to answer: a model that keeps repeating a
     /// refused call, or keeps saying nothing, otherwise does so until the turn
     /// limit.
     var repeatGuardTripped = false
-    var consecutiveEmptyReplies = 0
+    var consecutiveRepairs = 0
     var completedToolRuns: [ToolCallKey: String] = [:]
 
     /// A limit met at a turn boundary pauses the run instead of failing it.
@@ -932,12 +932,20 @@ public actor AgentRuntime {
         // Time ran out inside the call. The reply is lost, but the transcript
         // is whole, so the pause is as clean as one at the top of the loop.
         return await pause(await budget.timeInterruption)
+      } catch let error as any ProviderToolCallError
+        where error.toolCallRepairMessage != nil && !definitions.isEmpty && !toolBudgetExhausted
+      {
+        consecutiveRepairs += 1
+        if consecutiveRepairs >= Self.maximumRepairAttempts { repeatGuardTripped = true }
+        transcript.append(.assistant(error.toolCallRepairMessage!))
+        await supervisor.note(pid, transcript: transcript)
+        continue
       } catch is ProviderEmptyResponseError where repairsEmptyReply {
         // A model that answers a tool result with nothing at all is told what
         // is expected of it, as after a malformed call; retrying the same
         // request twice and then failing the whole run threw the work away.
-        consecutiveEmptyReplies += 1
-        if consecutiveEmptyReplies >= Self.maximumEmptyReplies { repeatGuardTripped = true }
+        consecutiveRepairs += 1
+        if consecutiveRepairs >= Self.maximumRepairAttempts { repeatGuardTripped = true }
         var feedback = AgentToolLoopPolicy.repairFeedbackAfterToolResult(
           mode: textToolMode ?? .native)
         if request.useToolProxy { feedback += "\n" + ToolProxy.repairHint }
@@ -945,7 +953,6 @@ public actor AgentRuntime {
         await supervisor.note(pid, transcript: transcript)
         continue
       }
-      consecutiveEmptyReplies = 0
       var providerResponse = call.response
       try Task.checkCancellation()
       if let usageStats {
@@ -1026,8 +1033,11 @@ public actor AgentRuntime {
           }
           if !text.isEmpty && !selectingTools { await emit(.provider(context, .textDelta(text))) }
         case .repair(let feedback):
+          consecutiveRepairs += 1
+          if consecutiveRepairs >= Self.maximumRepairAttempts { repeatGuardTripped = true }
           providerResponse.message = .assistant(feedback)
           transcript.append(providerResponse.message)
+          await supervisor.note(pid, transcript: transcript)
           continue
         case .execute(let parsedCalls):
           let calls = parsedCalls.map(toolCall)
@@ -1051,6 +1061,7 @@ public actor AgentRuntime {
           }
         }
       }
+      consecutiveRepairs = 0
       if selectingTools && providerResponse.message.toolCalls.isEmpty {
         // The specialist's stop decision hands the tool results to the primary
         // model. Its draft is not promoted to a user-visible final answer.
@@ -1313,6 +1324,8 @@ public actor AgentRuntime {
         await debugLog?.record("model.empty", context: context, value: "empty response")
         throw ProviderEmptyReply()
       } catch let error as ToolApprovalUnavailable {
+        throw error
+      } catch let error as any ProviderToolCallError where error.toolCallRepairMessage != nil {
         throw error
       } catch {
         await debugLog?.record(
@@ -2124,9 +2137,9 @@ public actor AgentRuntime {
   static let toolBudgetExhaustedPrompt =
     "The tool call budget for this run is exhausted and no tools are available anymore. Do not call tools; give the final answer using the information already gathered."
   static let repeatedCallPrompt =
-    "The last turns made no progress: the same tool call was repeated with identical arguments, or no reply was produced. No tools are available anymore. Do not call tools; give the final answer using the information already gathered, and say what could not be done."
-  /// Empty replies in a row before the tools are withdrawn.
-  static let maximumEmptyReplies = 3
+    "The last turns made no progress: tool calls repeated or could not be parsed, or no reply was produced. No tools are available anymore. Do not call tools; give the final answer using the information already gathered, and say what could not be done."
+  /// Consecutive empty or malformed replies before tools are withdrawn.
+  static let maximumRepairAttempts = 3
 
   /// Adds a system message after the configured instructions and before the
   /// conversation, so run-scoped context never enters the stored transcript.
