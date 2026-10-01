@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Logging forward proxy for OpenAI-compatible chat completions.
+"""Logging forward proxy for Chat Completions, Responses, and Messages APIs.
 
 Sits between pmai and the real endpoint. Every request body and the assembled
-response (streamed or not) are appended as one JSON line to LOG, so a run can be
+normalized response (streamed or not) are appended as one JSON line to LOG, so a run can be
 studied offline: exact messages, tool schemas, tool calls, usage, timings.
 
 Environment:

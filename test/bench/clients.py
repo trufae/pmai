@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run opencode 2 against the same fixtures and logging proxy as run.py."""
+"""Run opencode, Codex, or Claude Code on run.py's fixtures and logging proxy."""
 import argparse
 import json
 import os
@@ -39,7 +39,8 @@ def configuration(port, model):
 
 
 def environment(root):
-    env = {k: v for k, v in clean_env().items() if not k.startswith("OPENCODE_")}
+    env = {k: v for k, v in clean_env().items()
+           if not k.startswith(("OPENCODE_", "ANTHROPIC_", "CLAUDE_"))}
     # OpenCode prefers PWD over cwd; discard the parent's directory hints.
     for name in ("PWD", "OLDPWD", "INIT_CWD"):
         env.pop(name, None)
@@ -58,6 +59,48 @@ def environment(root):
     return env
 
 
+def client_command(args, out, work, port, env):
+    if args.client == "opencode":
+        config = Path(env["OPENCODE_CONFIG_DIR"]) / "opencode.json"
+        config.parent.mkdir(parents=True)
+        config.write_text(json.dumps(configuration(port, args.model), indent=2))
+        return [args.binary, "run", "--standalone", "--auto", "--format", "json",
+                "--model", f"bench/{args.model}", "--agent", "build", "--title", work.parent.name]
+    if args.client == "claude":
+        env.update(ANTHROPIC_BASE_URL=f"http://127.0.0.1:{port}", ANTHROPIC_API_KEY="benchmark",
+                   ANTHROPIC_DEFAULT_HAIKU_MODEL=args.model, ANTHROPIC_DEFAULT_SONNET_MODEL=args.model,
+                   ANTHROPIC_DEFAULT_OPUS_MODEL=args.model, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1",
+                   CLAUDE_CONFIG_DIR=str(out / "home" / "claude"))
+        command = [args.binary, "--print", "--bare" if args.bare else "--safe-mode", "--model", args.model,
+                "--output-format", "stream-json", "--verbose", "--no-session-persistence",
+                "--setting-sources", "", "--strict-mcp-config", "--disable-slash-commands",
+                "--tools", "Bash,Read,Edit,Write,Glob,Grep,TodoWrite",
+                "--allowedTools", "Bash,Read,Edit,Write,Glob,Grep,TodoWrite", "--max-turns", "40"]
+        if args.effort:
+            command.extend(["--effort", args.effort])
+        return command
+    command = [args.binary, "exec", "--ignore-user-config", "--ignore-rules", "--ephemeral",
+               "--json", "--cd", str(work), "--sandbox", "workspace-write", "--model", args.model]
+    overrides = {
+        "model_provider": "bench", "model_providers.bench.name": "Benchmark endpoint",
+        "model_providers.bench.base_url": f"http://127.0.0.1:{port}/v1",
+        "model_providers.bench.wire_api": "responses", "model_providers.bench.requires_openai_auth": False,
+        "model_providers.bench.supports_websockets": False, "web_search": "disabled",
+        "approval_policy": "never", "project_doc_max_bytes": 0,
+        "features.multi_agent": False, "features.plugins": False, "features.apps": False,
+        "features.hooks": False, "features.skip_host_skill_discovery": True,
+        "features.shell_snapshot": False, "features.daemon_auto_start": False,
+    }
+    for key, value in overrides.items():
+        command.extend(["-c", f"{key}={json.dumps(value)}"])
+    # Ignoring config does not disable skills stored in the existing Codex home.
+    skills = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills"
+    paths = sorted(skills.glob("*/SKILL.md")) + sorted(skills.glob(".system/*/SKILL.md"))
+    entries = ",".join(f"{{path={json.dumps(str(p))},enabled=false}}" for p in paths)
+    command.extend(["-c", f"skills.config=[{entries}]"])
+    return command
+
+
 def run_case(name, args):
     case = CASES / name
     out = RESULTS / args.run_id / name
@@ -72,9 +115,7 @@ def run_case(name, args):
     port = free_port()
     log = out / "proxy.jsonl"
     env = environment(out / "home")
-    config = Path(env["OPENCODE_CONFIG_DIR"]) / "opencode.json"
-    config.parent.mkdir(parents=True)
-    config.write_text(json.dumps(configuration(port, args.model), indent=2))
+    command = client_command(args, out, work, port, env)
     version = subprocess.check_output([args.binary, "--version"], cwd=work, env=env, text=True).strip()
     proxy_env = dict(env, UPSTREAM=args.upstream, UPSTREAM_KEY="", LOG=str(log), PORT=str(port))
     with (out / "proxy.err").open("w") as proxy_errors:
@@ -83,9 +124,6 @@ def run_case(name, args):
         try:
             if not wait_port(port):
                 raise RuntimeError("Benchmark proxy failed to start")
-            command = [args.binary, "run", "--standalone", "--auto", "--format", "json",
-                       "--model", f"bench/{args.model}", "--agent", "build",
-                       "--title", name]
             started = time.monotonic()
             timed_out = False
             with (out / "stdout.txt").open("w") as stdout, (out / "stderr.txt").open("w") as stderr:
@@ -111,9 +149,9 @@ def run_case(name, args):
                                     STDOUT=str(out / "stdout.txt")),
                            capture_output=True, text=True, timeout=120)
     meta = {
-        "client": "opencode", "version": version, "variant": "build",
+        "client": args.client, "version": version,
         "case": name, "model": args.model,
-        "prompt": prompt, "instructions": "opencode built-in build agent",
+        "prompt": prompt, "instructions": f"{args.client} built-in instructions",
         "command": command, "elapsed": round(elapsed, 1), "exit_code": code,
         "timed_out": timed_out, "check": check.returncode == 0,
         "check_output": (check.stdout + check.stderr).strip()[-2000:],
@@ -128,14 +166,18 @@ def run_case(name, args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("cases", nargs="+")
-    parser.add_argument("--binary", default=shutil.which("opencode"))
+    parser.add_argument("--client", required=True, choices=["opencode", "codex", "claude"])
+    parser.add_argument("--binary")
     parser.add_argument("--model", required=True)
     parser.add_argument("--upstream", required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--timeout", type=int, default=180)
+    parser.add_argument("--effort", help="Claude reasoning effort override (otherwise its default)")
+    parser.add_argument("--bare", action="store_true", help="Use Claude's minimal prompt and tools")
     args = parser.parse_args()
+    args.binary = args.binary or shutil.which(args.client)
     if not args.binary:
-        parser.error("opencode was not found; install it or pass --binary")
+        parser.error(f"{args.client} was not found; install it or pass --binary")
     results = [run_case(name, args) for name in args.cases]
     (RESULTS / args.run_id / "run.json").write_text(json.dumps(results, indent=2))
 

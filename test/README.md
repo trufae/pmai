@@ -13,7 +13,7 @@ model call so the runs can be studied for wasted turns and tokens.
   Every request body and the assembled response (streamed or not) become one
   JSON line: messages, tool schemas, tool calls, usage, timings.
 - `bench/run.py` — runs the cases through pmai behind the proxy.
-- `bench/opencode.py` — runs the same cases through installed opencode 2.
+- `bench/clients.py` — runs the same cases through opencode 2, Codex, or Claude Code.
 - `bench/analyze.py` — summary table and per-call timelines of a run.
 - `results/<run-id>/<case>/` — `work/` (the directory after the run),
   `proxy.jsonl`, `stdout.txt`, `stderr.txt`, `meta.json`, `pmai.json`.
@@ -61,7 +61,7 @@ instructions to compare prompts.
 To compare installed opencode 2 using its built-in build agent, native tools,
 isolated configuration/state, and the same logging proxy and fixture checks:
 
-    python3 test/bench/opencode.py --model qwen38 \
+    python3 test/bench/clients.py --client opencode --model qwen38 \
       --upstream http://192.168.1.60:8000/v1 \
       --run-id opencode2-qwen38 --timeout 180 \
       02-fix-failing-test 11-multi-step
@@ -73,6 +73,34 @@ directory hints and sends the prompt through stdin, because the CLI prefers
 `PWD` over its process working directory and quotes positional message arguments.
 Existing run directories are never overwritten. Provider configuration follows
 the [opencode 2 provider schema](https://opencode.ai/v2/docs/providers).
+
+The same runner supports Codex and Claude Code against a server exposing native
+Responses and Anthropic Messages endpoints:
+
+    python3 test/bench/clients.py --client codex --model qwen38 \
+      --upstream http://192.168.1.60:8000/v1 --run-id codex-qwen38 \
+      02-fix-failing-test 11-multi-step
+    python3 test/bench/clients.py --client claude --model qwen38 --effort xhigh \
+      --upstream http://192.168.1.60:8000/v1 --run-id claude-qwen38 \
+      02-fix-failing-test 11-multi-step
+
+Codex ignores user configuration/rules, disables local skills, plugins and
+delegation, and uses an ephemeral session with the workspace-write sandbox.
+Its normal home location is preserved. Claude uses safe mode, isolated state,
+explicit file/shell tools and disabled skills/MCP configuration. `--bare` is an
+optional Claude variant with a much smaller prompt and tool set. Neither client
+receives a replacement system prompt. The proxy forwards each API unchanged;
+only the recorded response and offline history analysis are normalized.
+Catalog and token-count requests are retained in logs but excluded from model
+generation counts. Input-token totals include cache reads once, not twice.
+
+The local Qwen server rejects Claude's default `high` effort. `--effort xhigh`
+selects the server's supported default explicitly; other clients leave it unset.
+Provider setup follows the [Codex custom-provider documentation](https://learn.chatgpt.com/docs/config-file/config-advanced#custom-model-providers)
+and [Claude gateway configuration](https://code.claude.com/docs/en/llm-gateway-connect).
+Offline accounting checks run with:
+
+    python3 -m unittest discover -s test/bench -p test_proxy.py
 
 ## Cases
 
@@ -194,3 +222,72 @@ request; `20261001-opencode2-qwen38-native` inherited the parent `PWD`, selected
 the repository instead of the fixture, and was stopped. The successful runner
 fixes both setup issues and its captured requests confirm exact user prompts
 and fixture working directories.
+
+## Codex and Claude Code extension, 2026-10-01
+
+Both installed clients were tested on the same two fixtures, prompts and Qwen38
+server, using native Responses (Codex) and Messages (Claude) APIs. These are
+**Qwen38-driven CLI benchmarks**, not measurements of OpenAI or Anthropic models.
+The earlier pmai and opencode measurements are reused unchanged.
+
+| Client | Passed | Model calls | Tool calls | Input tokens (sum) | Completion tokens | Time |
+|---|---:|---:|---:|---:|---:|---:|
+| opencode 2.0.21 | 2/2 | 10 | 13 | 47,942 | 3,715 | 114.7s |
+| Old pmai (fe1e310) | 2/2 | 10 | 10 | 40,081 | 2,819 | 96.0s |
+| New pmai | 2/2 | 10 | 10 | 39,867 | 1,213 | 48.3s |
+| Codex 0.159.3 | 2/2 | 12 | 12 | 99,006 | 6,147 | 207.6s |
+| Claude Code 2.1.283 | 2/2 | 11 | 11 | 58,385 | 2,794 | 94.1s |
+
+| Task | Client | Check | Model calls | Tool calls | Input tokens (sum) | Completion tokens | Time |
+|---|---|---|---:|---:|---:|---:|---:|
+| 02-fix-failing-test | Codex 0.159.3 | PASS | 7 | 8 | 56,907 | 1,570 | 51.8s |
+| 11-multi-step | Codex 0.159.3 | PASS | 5 | 4 | 42,099 | 4,577 | 155.8s |
+| 02-fix-failing-test | Claude Code 2.1.283 | PASS | 5 | 6 | 27,037 | 1,082 | 35.5s |
+| 11-multi-step | Claude Code 2.1.283 | PASS | 6 | 5 | 31,348 | 1,712 | 58.6s |
+
+Codex used its built-in prompt with local skills disabled. Claude used its
+regular built-in prompt in safe mode with six file/shell tools, no custom
+instructions, and `xhigh` effort. All runs finished within the same 180-second
+limit. Claude had a 40-turn cap; Codex was bounded by wall time. No subagents
+were used. Proxy totals agree exactly with each client's final usage event.
+Claude marks the intentionally failing initial unit-test command as a tool
+error; the final tests pass and their source remains unchanged.
+
+Codex's multi-step run spent 129.1s in one model request, producing 3,906 output
+tokens, including 3,712 reasoning tokens. This single long generation dominates
+its result. These are single samples, without fixed seeds or controlled cache
+warmup, and do not establish a general ranking or isolate the cause of the
+latency differences. No compaction was triggered.
+
+Additional completed variants are retained, rather than selected into the main
+table based on speed:
+
+| Task | Variant | Check | Model calls | Tool calls | Input tokens (sum) | Completion tokens | Time |
+|---|---|---|---:|---:|---:|---:|---:|
+| 02-fix-failing-test | Codex with local skill catalog | PASS | 6 | 5 | 50,077 | 1,261 | 42.0s |
+| 11-multi-step | Codex with local skill catalog | PASS | 4 | 3 | 31,454 | 1,212 | 40.1s |
+| 02-fix-failing-test | Claude Code --bare, xhigh | PASS | 5 | 6 | 12,496 | 1,109 | 32.8s |
+| 11-multi-step | Claude Code --bare, xhigh | PASS | 7 | 6 | 18,216 | 1,838 | 53.3s |
+
+The initial Codex run still included the machine's skill catalog despite
+ignoring user configuration. Its combined result was 81,531 input tokens,
+2,473 completion tokens and 82.1s. Explicitly disabling those skills produced
+the clean run in the main table; the samples cannot attribute the timing change
+to that setting. Claude's `--bare` variant used only Bash/Edit/Read and a much
+shorter prompt; it totaled 30,712 input tokens, 2,947 completion tokens and 86.1s.
+
+The initial Claude default-effort attempt returned HTTP 400 for each fixture:
+`Unexpected reasoning effort high. Supported types are xhigh (default), medium,
+and low.` Both attempts generated zero tokens and changed no fixture files;
+they are compatibility failures, excluded from task-performance totals.
+Codex also logged model-catalog decoding warnings for `/v1/models`; its actual
+Responses requests all succeeded. Catalog requests are not counted as model
+turns. The two tiny endpoint probes were connectivity checks, not fixture runs.
+
+Raw logs and checks are in these ignored directories:
+
+- `test/results/20261001-codex-qwen38-clean/` — main Codex results
+- `test/results/20261001-claude-qwen38-full/` — main Claude results
+- `test/results/20261001-codex-qwen38/` — local skill catalog present
+- `test/results/20261001-claude-qwen38-xhigh/` — minimal `--bare` variant
+- `test/results/20261001-claude-qwen38/` — rejected default effort
