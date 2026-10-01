@@ -28,12 +28,54 @@ def text_of(content):
 
 def load_calls(path):
     calls = []
-    for line in open(path):
-        try:
-            calls.append(json.loads(line))
-        except Exception:
-            pass
+    with open(path) as log:
+        for line in log:
+            call = json.loads(line)
+            if call.get("path", "").split("?")[0] not in (
+                    "/v1/chat/completions", "/v1/responses", "/v1/messages"):
+                continue  # Catalog and token-count requests do not generate model output.
+            call["request"] = call.get("request") or {}
+            call["request"]["messages"] = request_messages(call["request"])
+            calls.append(call)
     return calls
+
+
+def request_messages(req):
+    """Normalize histories for analysis only; the proxy keeps original requests."""
+    messages = []
+    instructions = req.get("instructions") or req.get("system")
+    if instructions:
+        messages.append({"role": "system", "content": text_of(instructions)})
+    source = req.get("messages", req.get("input", []))
+    if isinstance(source, str):
+        source = [{"role": "user", "content": source}]
+    for item in source:
+        kind = item.get("type")
+        if kind in ("function_call", "custom_tool_call"):
+            messages.append({"role": "assistant", "tool_calls": [{"id": item.get("call_id"),
+                "function": {"name": item["name"], "arguments": item.get("arguments", item.get("input", ""))}}]})
+        elif kind in ("function_call_output", "custom_tool_call_output"):
+            messages.append({"role": "tool", "tool_call_id": item.get("call_id"),
+                             "content": item.get("output", "")})
+        elif "role" in item:
+            blocks = item.get("content")
+            if not isinstance(blocks, list) or not any(b.get("type") in ("tool_use", "tool_result") for b in blocks):
+                messages.append(item)
+                continue
+            message = {"role": item["role"], "content": text_of(blocks)}
+            calls = [{"id": b["id"], "function": {"name": b["name"], "arguments": json.dumps(b["input"])}}
+                     for b in blocks if b["type"] == "tool_use"]
+            if calls:
+                message["tool_calls"] = calls
+            if calls or message["content"]:
+                messages.append(message)
+            for block in blocks:
+                if block["type"] == "tool_result":
+                    content = text_of(block.get("content"))
+                    if block.get("is_error"):
+                        content = "Error: " + content
+                    messages.append({"role": "tool", "tool_call_id": block["tool_use_id"], "content": content})
+    return messages
 
 
 def est_tokens(chars):

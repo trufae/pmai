@@ -105,6 +105,86 @@ class Assembler:
         }
 
 
+def token_usage(usage):
+    """Normalize usage for reports while retaining the original API fields."""
+    return dict(usage,
+                prompt_tokens=sum(usage.get(k, 0) for k in
+                                  ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")),
+                completion_tokens=usage.get("output_tokens", 0))
+
+
+class ResponsesAssembler(Assembler):
+    def __init__(self):
+        super().__init__()
+        self.items = {}
+
+    def feed(self, obj):
+        self.chunks += 1
+        self.first_at = self.first_at or time.time()
+        if obj.get("type") == "response.output_item.done":
+            self.items[obj["output_index"]] = obj["item"]
+        response = obj if obj.get("object") == "response" else obj.get("response", {})
+        if response.get("status") in ("completed", "incomplete", "failed"):
+            self.items = dict(enumerate(response.get("output", [])))
+            self.finish_reason = response["status"]
+            if response.get("usage"):
+                self.usage = token_usage(response["usage"])
+
+    def message(self):
+        result = super().message()
+        for item in self.items.values():
+            kind = item.get("type")
+            if kind in ("function_call", "custom_tool_call"):
+                result["tool_calls"].append({"id": item.get("call_id"), "name": item["name"],
+                                             "arguments": item.get("arguments", item.get("input", ""))})
+            elif kind == "message":
+                result["content"] += "".join(p.get("text", "") for p in item.get("content", []))
+            elif kind == "reasoning":
+                result["reasoning"] += "".join(p.get("text", "") for p in
+                                               item.get("summary", []) + (item.get("content") or []))
+        return result
+
+
+class MessagesAssembler(Assembler):
+    def __init__(self):
+        super().__init__()
+        self.blocks = {}
+        self.native_usage = {}
+
+    def feed(self, obj):
+        self.chunks += 1
+        self.first_at = self.first_at or time.time()
+        kind = obj.get("type")
+        if kind in ("message", "message_start"):
+            message = obj.get("message", obj)
+            self.blocks = dict(enumerate(message.get("content", [])))
+            self.native_usage.update(message.get("usage", {}))
+            self.finish_reason = message.get("stop_reason")
+        elif kind == "content_block_start":
+            self.blocks[obj["index"]] = dict(obj["content_block"])
+        elif kind == "content_block_delta":
+            block = self.blocks[obj["index"]]
+            delta = obj["delta"]
+            for key in ("text", "thinking", "partial_json"):
+                if key in delta:
+                    block[key] = block.get(key, "") + delta[key]
+        elif kind == "message_delta":
+            self.native_usage.update(obj.get("usage", {}))
+            self.finish_reason = obj.get("delta", {}).get("stop_reason")
+        if self.native_usage:
+            self.usage = token_usage(self.native_usage)
+
+    def message(self):
+        result = super().message()
+        for block in self.blocks.values():
+            result["content"] += block.get("text", "")
+            result["reasoning"] += block.get("thinking", "")
+            if block["type"] == "tool_use":
+                result["tool_calls"].append({"id": block["id"], "name": block["name"],
+                    "arguments": block.get("partial_json", json.dumps(block.get("input", {})))})
+        return result
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -133,6 +213,9 @@ class Handler(BaseHTTPRequestHandler):
             req_json = None
         conn = _upstream_conn()
         headers = {"Content-Type": "application/json", "Accept": self.headers.get("Accept", "*/*")}
+        for key in ("anthropic-version", "anthropic-beta"):
+            if self.headers.get(key):
+                headers[key] = self.headers[key]
         if UPSTREAM_KEY:
             headers["Authorization"] = f"Bearer {UPSTREAM_KEY}"
         try:
@@ -155,7 +238,10 @@ class Handler(BaseHTTPRequestHandler):
             if key.lower() in ("content-length", "transfer-encoding", "connection"):
                 continue
             self.send_header(key, value)
-        asm = Assembler()
+        route = urlsplit(self.path).path
+        assembler = (ResponsesAssembler if route.endswith("/responses") else
+                     MessagesAssembler if route.endswith("/messages") else Assembler)
+        asm = assembler()
         raw_error = None
         if streaming:
             self.send_header("Transfer-Encoding", "chunked")
