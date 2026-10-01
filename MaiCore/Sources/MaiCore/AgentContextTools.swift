@@ -110,7 +110,11 @@ public enum AgentTranscriptEditor {
         guard dropped > 0 else { continue }
         report.compacted += dropped
         var all = transcript.messages
-        all.insert(summaryMessage(summary), at: min(first, all.count))
+        // A summary has a user role for chat-template compatibility. Keep it
+        // before the retained request so it cannot become the "latest user"
+        // on the next compaction or hide the task behind synthesized context.
+        let insertion = min(first, all.lastIndex(where: { $0.role == .user }) ?? all.count)
+        all.insert(summaryMessage(summary), at: insertion)
         transcript.replaceAll(with: all)
       case .summarize:
         continue

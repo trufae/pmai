@@ -270,32 +270,33 @@ func autocompactFoldsOlderMessages() async throws {
       messages: [.user("start")],
       toolNames: ["echo"],
       retry: .none,
-      autocompact: AgentAutocompact(tokens: 500))
+      autocompact: AgentAutocompact(tokens: 500, preserveRecentTokens: 0))
   ) { event in
     await recorder.append(event)
   }
 
   #expect(result.isComplete)
   #expect(result.response.text == "done")
-  // The first exchange and the opening message became one summary; the
+  // The first tool exchange became a summary. The user's request and the
   // exchange the model had not acted on yet stayed verbatim.
-  #expect(result.transcript.count == 4)
+  #expect(result.transcript.count == 5)
   #expect(result.transcript[0].role == .user)
+  #expect(result.transcript[1].text == "start")
   #expect(result.transcript[0].text.hasPrefix("Summary of earlier parts of this conversation"))
   #expect(result.transcript[0].text.hasSuffix("Compacted state"))
-  #expect(result.transcript[1].toolCalls.first?.id == "c2")
+  #expect(result.transcript[2].toolCalls.first?.id == "c2")
   let events = await recorder.events
   let compactions = events.compactMap { event -> Int? in
     guard case .compactionStarted(_, let estimated) = event else { return nil }
     return estimated
   }
-  #expect(compactions == [1_010])
+  #expect(compactions == [1_012])
   let edits = events.compactMap { event -> AgentTranscriptEditReport? in
     guard case .transcriptEdited(_, let report) = event else { return nil }
     return report
   }
   #expect(edits.count == 1)
-  #expect(edits.first?.compacted == 3)
+  #expect(edits.first?.compacted == 2)
   let requests = await provider.requests
   #expect(requests.count == 4)
   let compaction = try #require(requests.first { $0.tools.isEmpty && $0.messages.count == 1 })
@@ -304,8 +305,8 @@ func autocompactFoldsOlderMessages() async throws {
   #expect(prompt.contains("This compaction runs automatically"))
   #expect(prompt.contains("[tool call echo"))
   #expect(!prompt.contains("c2"))
-  #expect(requests.last?.messages.count == 3)
-  #expect(requests.last?.messages.first?.text.hasSuffix("Compacted state") == true)
+  #expect(requests.last?.messages.count == 4)
+  #expect(requests.last?.messages.contains { $0.text.hasSuffix("Compacted state") } == true)
 }
 
 @Test("Autocompact leaves the newest exchange alone and needs something to fold")
@@ -317,8 +318,8 @@ func autocompactSelection() {
   let older = echoCall("c0").message
   let olderResult = AgentMessage(role: .tool, content: [.toolResult(ToolResult(callID: "c0", text: "y"))])
   let selection = AgentAutocompaction.selection(
-    in: [.system("sys"), user, older, olderResult, tail, toolResult])
-  #expect(selection == [user.id, older.id, olderResult.id])
+    in: [.system("sys"), user, older, olderResult, tail, toolResult], preservingRecentTokens: 0)
+  #expect(selection == [older.id, olderResult.id])
   #expect(
     AgentAutocompaction.estimatedTokens(
       of: [user], lastUsage: TokenUsage(inputTokens: 300, outputTokens: 7)) == 307)

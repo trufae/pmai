@@ -164,9 +164,8 @@ public enum AgentCompactionPrompt {
 }
 
 /// How the runtime decides that a conversation needs compacting and which
-/// part of it to fold. Everything but the system prompt and the newest
-/// exchange — the reply the model is about to act on and the tool results it
-/// has not seen yet — is fair game.
+/// part of it to fold. Instructions, the latest user request, and a budgeted
+/// tail of complete exchanges stay verbatim.
 public enum AgentAutocompaction {
   /// The smallest stretch worth summarizing: one message would only be
   /// rewritten, and a summary of a summary gains nothing.
@@ -182,19 +181,46 @@ public enum AgentAutocompaction {
   /// provider's own count from the last call is exact for the messages it
   /// saw; the character estimate covers what was appended since, and stands
   /// in entirely when the provider reports nothing.
-  public static func estimatedTokens(of messages: [AgentMessage], lastUsage: TokenUsage?) -> Int {
+  public static func estimatedTokens(
+    of messages: [AgentMessage], lastUsage: TokenUsage?, lastUsageMessageCount: Int? = nil
+  ) -> Int {
     let estimated = ModelCallStats.estimatedTokenCount(
       forCharacterCount: AgentTranscriptEditor.characterCount(of: messages))
     guard let lastUsage else { return estimated }
-    return max(estimated, lastUsage.inputTokens + lastUsage.outputTokens)
+    // The usage covers the last request and its reply, but not tool results
+    // or queued user input appended afterwards. A max alone loses that growth
+    // whenever the provider's tokenizer counts more than our text estimate.
+    let added = lastUsageMessageCount.map {
+      ModelCallStats.estimatedTokenCount(forCharacterCount:
+        AgentTranscriptEditor.characterCount(of: Array(messages.dropFirst(max(0, $0)))))
+    } ?? 0
+    return max(estimated, lastUsage.inputTokens + lastUsage.outputTokens + added)
   }
 
   /// The IDs of the messages to fold into one summary, or nil when there is
   /// too little to gain.
-  public static func selection(in messages: [AgentMessage]) -> [String]? {
-    guard let tailStart = messages.lastIndex(where: { $0.role == .user || $0.role == .assistant })
+  public static func selection(
+    in messages: [AgentMessage], preservingRecentTokens: Int = 8_000
+  ) -> [String]? {
+    guard var tailStart = messages.lastIndex(where: { $0.role == .user || $0.role == .assistant })
     else { return nil }
-    let candidates = messages[..<tailStart].filter { $0.role != .system && $0.role != .developer }
+    let latestUser = messages.lastIndex { $0.role == .user }
+    let budget = min(max(0, preservingRecentTokens), Int.max / 4) * 4
+    var retained = AgentTranscriptEditor.characterCount(of: Array(messages[tailStart...]))
+    // Split a long current task at assistant/tool boundaries. Earlier user
+    // turns are kept whole, so an answer is not detached from its question.
+    for index in (0..<tailStart).reversed() {
+      retained += AgentTranscriptEditor.characterCount(of: messages[index])
+      if retained > budget { break }
+      if messages[index].role == .user
+        || (messages[index].role == .assistant && index > (latestUser ?? -1))
+      {
+        tailStart = index
+      }
+    }
+    let candidates = messages[..<tailStart].enumerated().compactMap { index, message in
+      index != latestUser && message.role != .system && message.role != .developer ? message : nil
+    }
     guard candidates.count >= minimumMessages else { return nil }
     let total = AgentTranscriptEditor.characterCount(of: messages)
     let compactable = AgentTranscriptEditor.characterCount(of: Array(candidates))

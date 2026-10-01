@@ -883,18 +883,26 @@ public struct AgentAutocompact: Codable, Equatable, Sendable {
   /// summarize, keep context, or stop. Zero disables this prompt; automatic
   /// file-read pruning in `context: size` is independent.
   public var tokens: Int
+  /// Recent exchanges retained verbatim during summarization. Nil reserves
+  /// a quarter of the trigger, capped at 8k tokens; zero keeps only the newest
+  /// exchange. The latest user request is always kept.
+  public var preserveRecentTokens: Int?
 
-  public init(tokens: Int = 64_000) {
+  public init(tokens: Int = 64_000, preserveRecentTokens: Int? = nil) {
     self.tokens = max(0, tokens)
+    self.preserveRecentTokens = preserveRecentTokens.map { max(0, $0) }
   }
 
   public var isEnabled: Bool { tokens > 0 }
+  public var recentTokenBudget: Int { preserveRecentTokens ?? min(8_000, tokens / 4) }
 
-  private enum CodingKeys: String, CodingKey { case tokens }
+  private enum CodingKeys: String, CodingKey { case tokens, preserveRecentTokens }
 
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    self.init(tokens: try container.decodeIfPresent(Int.self, forKey: .tokens) ?? 64_000)
+    self.init(
+      tokens: try container.decodeIfPresent(Int.self, forKey: .tokens) ?? 64_000,
+      preserveRecentTokens: try container.decodeIfPresent(Int.self, forKey: .preserveRecentTokens))
   }
 }
 

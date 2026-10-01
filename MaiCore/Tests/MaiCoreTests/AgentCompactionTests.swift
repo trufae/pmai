@@ -3,6 +3,55 @@ import Testing
 
 @testable import MaiCore
 
+@Test("Context estimates add new tool output to measured provider usage")
+func compactionCountsAppendedOutput() {
+  let original: [AgentMessage] = [.user("go"), .assistant("working")]
+  let output = AgentMessage(role: .tool, content: [.toolResult(
+    ToolResult(callID: "read", text: String(repeating: "x", count: 8_000)))])
+  let usage = TokenUsage(inputTokens: 10_000, outputTokens: 100)
+  #expect(AgentAutocompaction.estimatedTokens(
+    of: original + [output], lastUsage: usage, lastUsageMessageCount: original.count) == 12_100)
+  #expect(AgentAutocompaction.estimatedTokens(
+    of: original, lastUsage: usage, lastUsageMessageCount: original.count) == 10_100)
+  #expect(AgentAutocompaction.estimatedTokens(
+    of: [output], lastUsage: nil, lastUsageMessageCount: original.count) == 2_000)
+}
+
+@Test("Compaction keeps a recent tail, the user request, and complete tool transactions")
+func compactionRetainsRecentExchanges() throws {
+  let user = AgentMessage.user("Implement the change; do not modify the public API.")
+  func exchange(_ id: String, count: Int) -> [AgentMessage] {
+    [AgentMessage(role: .assistant, content: [.toolCall(ToolCall(
+      id: id, name: "read", arguments: .object([:])))]),
+     AgentMessage(role: .tool, content: [.toolResult(ToolResult(
+       callID: id, text: String(repeating: "x", count: count)))])]
+  }
+  let old = exchange("old", count: 10_000)
+  let recent = exchange("recent", count: 400) + exchange("newest", count: 400)
+  let messages = [AgentMessage.system("instructions"), user] + old + recent
+  let selection = try #require(AgentAutocompaction.selection(in: messages, preservingRecentTokens: 300))
+  #expect(selection == old.map(\.id))
+  let compacted = AgentTranscriptEditor.apply([.compact(messageIDs: selection, summary: "old findings")], to: messages).messages
+  #expect(compacted.last(where: { $0.role == .user }) == user)
+  #expect(Array(compacted.suffix(recent.count)) == recent)
+  #expect(compacted.first == messages.first)
+  // The next compaction must still protect the real request, not the summary.
+  let next = try #require(AgentAutocompaction.selection(
+    in: compacted + exchange("later", count: 200), preservingRecentTokens: 0))
+  #expect(!next.contains(user.id))
+  #expect(next.contains(compacted[1].id))
+  #expect(AgentAutocompaction.selection(in: messages, preservingRecentTokens: 100_000) == nil)
+}
+
+@Test("Compaction tail budgets decode compatibly and allow explicit overrides")
+func compactionTailConfiguration() throws {
+  let defaults = try JSONDecoder().decode(AgentAutocompact.self, from: Data(#"{"tokens":16000}"#.utf8))
+  #expect(defaults.recentTokenBudget == 4_000)
+  #expect(AgentAutocompact().recentTokenBudget == 8_000)
+  let explicit = AgentAutocompact(tokens: 16_000, preserveRecentTokens: 0)
+  #expect(try JSONDecoder().decode(AgentAutocompact.self, from: JSONEncoder().encode(explicit)) == explicit)
+}
+
 @Test("Compaction includes attachment bodies once and bounds files and resources")
 func compactionBoundsAttachments() {
   let messages = [

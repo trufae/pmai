@@ -558,7 +558,13 @@ text, and the newest exchange stay intact. The prune option is offered only
 when it can save space. If pruning still leaves the context over the threshold,
 the prompt offers summarization or keeping the remaining context.
 Summarization replaces older exchanges with a model-written summary focused on
-finishing the current task; the newest exchange stays verbatim.
+finishing the current task. The latest user request stays verbatim, together
+with recent complete tool exchanges. By default this tail has a budget of
+one quarter of `autocompact.tokens`, capped at 8,000 tokens. Set the agent's
+`autocompact.preserveRecentTokens` to override it; zero keeps only the newest
+exchange and the user request. Tool calls and results stay together, even when
+the newest exchange exceeds this budget. Provider usage is supplemented with
+an estimate for tool output and queued messages added since that call.
 `✂ context: compacted 14 messages into a summary` reports that replacement.
 `/set ctx.compact off` (`autocompact.tokens: 0` in the agent configuration)
 disables the context action prompt entirely. `/set ctx.compact` shows the

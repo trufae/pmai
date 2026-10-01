@@ -570,6 +570,7 @@ public actor AgentRuntime {
     /// What the provider counted on the last call, for the autocompact
     /// estimate. Cleared when a summary changes the transcript's shape.
     var lastUsage: TokenUsage?
+    var lastUsageMessageCount = 0
     var skipAutocompaction = false
     var localModelTurns = 0
     var localToolCalls = 0
@@ -637,7 +638,7 @@ public actor AgentRuntime {
             .compactionStarted(
               context,
               estimatedTokens: AgentAutocompaction.estimatedTokens(
-                of: transcript, lastUsage: lastUsage)))
+                of: transcript, lastUsage: lastUsage, lastUsageMessageCount: lastUsageMessageCount)))
           await supervisor.note(pid, activity: "compacting")
           do {
             let text = try await summaryText(
@@ -695,9 +696,11 @@ public actor AgentRuntime {
       // before the limits are checked, so a run that pauses next hands its
       // host the smaller transcript too.
       if request.autocompact.isEnabled && !skipAutocompaction {
-        let estimate = AgentAutocompaction.estimatedTokens(of: transcript, lastUsage: lastUsage)
+        let estimate = AgentAutocompaction.estimatedTokens(
+          of: transcript, lastUsage: lastUsage, lastUsageMessageCount: lastUsageMessageCount)
         if estimate >= request.autocompact.tokens,
-          let selection = AgentAutocompaction.selection(in: transcript)
+          let selection = AgentAutocompaction.selection(
+            in: transcript, preservingRecentTokens: request.autocompact.recentTokenBudget)
         {
           var prunedTranscript = transcript
           let pruning = AgentContextPruning.pruneToolOutput(&prunedTranscript)
@@ -983,7 +986,8 @@ public actor AgentRuntime {
             forCharacterCount: providerResponse.message.text.count))
       totalUsage = totalUsage.merging(usage)
       // A smart request's usage describes its brief, not the saved transcript.
-      lastUsage = request.context == .smart ? nil : providerResponse.usage
+      lastUsage = request.context == .smart || deciding ? nil : providerResponse.usage
+      lastUsageMessageCount = transcript.count + 1
       await supervisor.note(pid, usage: totalUsage)
       await budget.record(tokens: usage.totalTokens)
 
@@ -1107,7 +1111,8 @@ public actor AgentRuntime {
       // the rest. The results join the transcript in call order once the
       // last of them is in.
       let modelTurn = localModelTurns
-      let usedTokens = AgentAutocompaction.estimatedTokens(of: transcript, lastUsage: lastUsage)
+      let usedTokens = AgentAutocompaction.estimatedTokens(
+        of: transcript, lastUsage: lastUsage, lastUsageMessageCount: lastUsageMessageCount)
       var results = [ToolResult?](repeating: nil, count: calls.count)
       var definitionsByCall = [[ToolDefinition]](repeating: [], count: calls.count)
       try await withThrowingTaskGroup(of: (Int, ToolResult).self) { group in
@@ -1403,9 +1408,10 @@ public actor AgentRuntime {
     emit: @escaping AgentEventHandler
   ) async throws -> String {
     let selected = Set(selection)
+    let latestUserID = transcript.last(where: { $0.role == .user })?.id
     let prompt = AgentCompactionPrompt.render(
       transcript: AgentCompactionPrompt.transcript(
-        of: transcript.filter { selected.contains($0.id) }),
+        of: transcript.filter { selected.contains($0.id) || $0.id == latestUserID }),
       focus: focus,
       template: compactionTemplate)
     return try await compactText(

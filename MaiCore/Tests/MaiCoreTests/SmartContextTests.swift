@@ -112,8 +112,8 @@ func smartContextAutocompaction() async throws {
       definition: ToolDefinition(
         name: "read", description: "Read",
         annotations: ToolAnnotations(approval: .automatic))
-    ) { _, _ in ToolOutput(text: "done") })
-  let original = [AgentMessage.user(String(repeating: "important context ", count: 500))]
+    ) { _, _ in ToolOutput(text: String(repeating: "important context ", count: 500)) })
+  let original = [AgentMessage.user("Finish the task, preserving this exact constraint.")]
   let result = try await runtime.run(
     AgentRequest(
       provider: "primary", messages: original, toolNames: ["read"], retry: .none,
@@ -123,6 +123,7 @@ func smartContextAutocompaction() async throws {
   #expect(preparations[2].messages.last?.text.contains("Compact the transcript") == true)
   #expect(preparations[3].messages.last?.text.contains("durable summary") == true)
   #expect(result.transcript.contains { $0.text.contains("durable summary") })
+  #expect(result.transcript.contains(original[0]))
   #expect(!result.transcript.contains { $0.text == "brief one" || $0.text == "brief two" })
 }
 
