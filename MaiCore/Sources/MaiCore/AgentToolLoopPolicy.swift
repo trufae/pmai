@@ -72,7 +72,7 @@ public enum AgentToolLoopPolicy {
     visibleText: String? = nil,
     tools: [ToolDefinition],
     mode: ToolCallingMode,
-    completedToolRuns: [ToolCallKey: String] = [:],
+    hasToolResults: Bool = false,
     remainingToolCalls: Int
   ) -> AgentToolLoopDecision {
     guard !tools.isEmpty else { return .final(response) }
@@ -95,7 +95,7 @@ public enum AgentToolLoopPolicy {
           ).trimmingCharacters(in: .whitespacesAndNewlines))
       }
       let visible = visibleText ?? MessageContentFilter.render(actionable).visibleText
-      if !completedToolRuns.isEmpty,
+      if hasToolResults,
         visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
         remainingToolCalls > 0
       {

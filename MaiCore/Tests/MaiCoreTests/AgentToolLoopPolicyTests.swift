@@ -47,7 +47,7 @@ func toolLoopExecutionAndDeduplication() {
     response: response,
     tools: [aliasedTool],
     mode: .json,
-    completedToolRuns: [ToolCallKey(call): "22 C"],
+    hasToolResults: true,
     remainingToolCalls: 1)
   guard case .execute(let repeatedCalls) = repeated else {
     Issue.record("Expected a fresh execution")
@@ -69,17 +69,13 @@ func toolLoopRepairDecisions() {
   }
   #expect(malformedFeedback.contains("Error:"))
 
-  let completedCall = ParsedToolCall(
-    name: "weather",
-    arguments: ["city": "Rome"],
-    rawBlock: "")
   let hiddenOnly = AgentToolLoopPolicy.evaluate(
     response: "<think>done</think>",
     actionableResponse: "",
     visibleText: "",
     tools: [weatherTool],
     mode: .json,
-    completedToolRuns: [ToolCallKey(completedCall): "22 C"],
+    hasToolResults: true,
     remainingToolCalls: 1)
   guard case .repair(let missingActionFeedback) = hiddenOnly else {
     Issue.record("Expected missing-action feedback")

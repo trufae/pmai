@@ -586,7 +586,6 @@ public actor AgentRuntime {
     /// limit.
     var repeatGuardTripped = false
     var consecutiveRepairs = 0
-    var completedToolRuns: [ToolCallKey: String] = [:]
 
     /// A limit met at a turn boundary pauses the run instead of failing it.
     /// The transcript ends in a user message or in tool results, so running
@@ -1028,7 +1027,7 @@ public actor AgentRuntime {
           response: providerResponse.message.text,
           tools: definitions,
           mode: textToolMode,
-          completedToolRuns: completedToolRuns,
+          hasToolResults: localToolCalls > 0,
           remainingToolCalls: request.limits.maxToolCalls - localToolCalls)
         switch decision {
         case .final(let text):
@@ -1217,7 +1216,6 @@ public actor AgentRuntime {
       }
       for (index, call) in calls.enumerated() {
         guard let result = results[index] else { continue }
-        if !result.isError { completedToolRuns[ToolCallKey(call)] = result.text }
         transcript.append(AgentMessage(role: .tool, content: [.toolResult(result)]))
         // A call that changed something makes repeating an earlier call
         // reasonable again — the tests run after each fix are the common

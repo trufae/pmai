@@ -35,7 +35,6 @@ enum AssistantToolLoop {
   private struct RunOutput {
     let text: String
     let nativeMessages: [AgentMessage]
-    let completedRuns: [(key: ToolCallKey, result: String)]
     let parsedCalls: [ParsedToolCall]
     let results: [CallResult]
   }
@@ -64,7 +63,7 @@ enum AssistantToolLoop {
     var assistantText = ""
     var answering = false
     var nativeContinuationMessages: [AgentMessage] = []
-    var completedToolRuns: [ToolCallKey: String] = [:]
+    var hasSuccessfulToolRun = false
     var provisionalText = ""
     var debugRoundIndex = 0
     var toolCallCount = 0
@@ -225,7 +224,7 @@ enum AssistantToolLoop {
         requestState: requestState,
         host: host,
         store: store,
-        completedToolRuns: state.completedToolRuns,
+        hasToolResults: state.toolCallCount > 0,
         remainingToolCalls: maxToolCalls - state.toolCallCount)
 
       switch outcome {
@@ -360,9 +359,8 @@ enum AssistantToolLoop {
             streaming: true)
         }
         store.saveConversations()
-        for completedRun in output.completedRuns where isSuccessfulToolResult(completedRun.result) {
-          state.completedToolRuns[completedRun.key] = completedRun.result
-        }
+        state.hasSuccessfulToolRun = state.hasSuccessfulToolRun
+          || output.results.contains { isSuccessfulToolResult($0.result) }
         state.toolCallCount += output.results.count
         state.applyNativeContinuation(
           output.nativeMessages,
@@ -494,7 +492,7 @@ enum AssistantToolLoop {
         requestState: requestState,
         host: host,
         store: store,
-        completedToolRuns: state.completedToolRuns,
+        hasToolResults: state.toolCallCount > 0,
         remainingToolCalls: maxToolCalls - state.toolCallCount)
 
       switch outcome {
@@ -547,9 +545,8 @@ enum AssistantToolLoop {
               result: $0.result,
               isError: isToolResultError($0.result))
           })
-        for completedRun in output.completedRuns where isSuccessfulToolResult(completedRun.result) {
-          state.completedToolRuns[completedRun.key] = completedRun.result
-        }
+        state.hasSuccessfulToolRun = state.hasSuccessfulToolRun
+          || output.results.contains { isSuccessfulToolResult($0.result) }
         state.toolCallCount += output.results.count
         state.applyNativeContinuation(
           output.nativeMessages,
@@ -593,7 +590,7 @@ enum AssistantToolLoop {
     // of answering when they see that instruction a second time.
     let tailToolPrompt: String = {
       guard requestState.usesTextProtocol else { return "" }
-      return state.completedToolRuns.isEmpty ? requestState.toolPrompt : ""
+      return state.hasSuccessfulToolRun ? "" : requestState.toolPrompt
     }()
     let userInputTokens: Int?
     if case .live = host, !state.answering, state.toolCallCount == 0, state.repairTurnCount == 0 {
@@ -692,7 +689,7 @@ enum AssistantToolLoop {
     requestState: RequestState,
     host: RunHost,
     store: AppStore,
-    completedToolRuns: [ToolCallKey: String],
+    hasToolResults: Bool,
     remainingToolCalls: Int
   ) async throws -> Outcome {
     guard !requestState.definitions.isEmpty else { return .final(response) }
@@ -705,7 +702,7 @@ enum AssistantToolLoop {
       response: response,
       tools: hostDefinitions,
       mode: requestState.activeMode,
-      completedToolRuns: completedToolRuns,
+      hasToolResults: hasToolResults,
       remainingToolCalls: remainingToolCalls)
     let calls: [ParsedToolCall]
     switch decision {
@@ -819,7 +816,6 @@ enum AssistantToolLoop {
     let assembled = assembleRunBlocks(
       response: response, calls: calls, results: results, dropped: dropped)
     let ordered = results.compactMap { $0 }
-    let completedRuns = ordered.map { (key: ToolCallKey($0.call), result: $0.result) }
     let text =
       ([assembled.text.trimmingCharacters(in: .whitespacesAndNewlines)] + assembled.appended)
       .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -843,7 +839,6 @@ enum AssistantToolLoop {
         definitions: parseDefinitions,
         mode: mode,
         echoReasoningContent: echoReasoningContent),
-      completedRuns: completedRuns,
       parsedCalls: calls,
       results: ordered)
   }
@@ -1523,7 +1518,7 @@ enum AssistantToolLoop {
     let conversation = requestState.conversation
     let tailToolPrompt: String = {
       guard requestState.usesTextProtocol else { return "" }
-      return state.completedToolRuns.isEmpty ? requestState.toolPrompt : ""
+      return state.hasSuccessfulToolRun ? "" : requestState.toolPrompt
     }()
     if conversation.provider == .apple {
       let request = ChatCompletionRequest(
