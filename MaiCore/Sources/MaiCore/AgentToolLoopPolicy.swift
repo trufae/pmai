@@ -108,11 +108,9 @@ public enum AgentToolLoopPolicy {
     if normalizedCalls.contains(where: { $0.name == responseToolName }) {
       return responseDecision(calls: normalizedCalls, mode: mode)
     }
-    if let repeated = repeatedResult(
-      calls: normalizedCalls, tools: parseTools, completedToolRuns: completedToolRuns)
-    {
-      return .final(repeated)
-    }
+    // A repeated read may observe a file changed by an intervening write.
+    // Let the runtime's bounded repeat guard handle loops in every protocol;
+    // a previous tool result is never a substitute for the assistant's answer.
     return remainingToolCalls > 0 ? .execute(normalizedCalls) : .final(response)
   }
 
@@ -137,22 +135,6 @@ public enum AgentToolLoopPolicy {
       .trimmingCharacters(in: .whitespacesAndNewlines)
     guard !content.isEmpty else { return .repair(emptyResponseToolFeedback(mode: mode)) }
     return .final(content)
-  }
-
-  private static func repeatedResult(
-    calls: [ParsedToolCall],
-    tools: [ToolDefinition],
-    completedToolRuns: [ToolCallKey: String]
-  ) -> String? {
-    guard !completedToolRuns.isEmpty else { return nil }
-    let results = calls.compactMap { call -> String? in
-      guard AgentTooling.containsDefinition(named: call.name, in: tools) else { return nil }
-      return completedToolRuns[ToolCallKey(call)]
-    }
-    guard results.count == calls.count else { return nil }
-    return results.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-      .filter { !$0.isEmpty }
-      .joined(separator: "\n\n")
   }
 
   private static func normalizedAction(_ action: String) -> String {

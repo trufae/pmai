@@ -1354,6 +1354,39 @@ func multipleTextToolCalls() async throws {
   #expect(result.transcript.flatMap(\.toolResults).map(\.text) == ["one", "two"])
 }
 
+@Test("Text fallback can read again after a write and still produce a final answer")
+func textToolReadAfterWrite() async throws {
+  let read = ProviderResponse(message: .assistant(#"{"name":"read","arguments":{}}"#))
+  let provider = ScriptedProvider(responses: [
+    read,
+    ProviderResponse(message: .assistant(#"{"name":"write","arguments":{}}"#)),
+    read,
+    ProviderResponse(message: .assistant("Verified the change."), stopReason: .stop),
+  ])
+  actor FileState {
+    var text = "before"
+    func write() { text = "after" }
+  }
+  let file = FileState()
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  try await runtime.register(tool: ClosureTool(definition: ToolDefinition(
+    name: "read", description: "Read", annotations: ToolAnnotations(readOnly: true, approval: .automatic)
+  )) { _, _ in ToolOutput(text: await file.text) })
+  try await runtime.register(tool: ClosureTool(definition: ToolDefinition(
+    name: "write", description: "Write", annotations: ToolAnnotations(approval: .automatic)
+  )) { _, _ in
+    await file.write()
+    return ToolOutput(text: "written")
+  })
+  let result = try await runtime.run(AgentRequest(
+    provider: "scripted", model: "fixture", messages: [.user("edit and verify")],
+    toolNames: ["read", "write"], toolCallingStrategy: .json))
+  #expect(result.response.text == "Verified the change.")
+  #expect(result.toolCalls == 3)
+  #expect(result.transcript.flatMap(\.toolResults).map(\.text) == ["before", "written", "after"])
+}
+
 @Test("Text fallback repairs malformed turns and resolves respond without host execution")
 func textToolRepairAndRespond() async throws {
   let provider = ScriptedProvider(

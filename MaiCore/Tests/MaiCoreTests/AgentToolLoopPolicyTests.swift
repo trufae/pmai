@@ -26,7 +26,7 @@ func toolLoopResponseTool() {
   #expect(text == "Which city?")
 }
 
-@Test("Tool-loop policy normalizes executable calls and reuses completed results")
+@Test("Tool-loop policy normalizes calls without treating old results as final answers")
 func toolLoopExecutionAndDeduplication() {
   var aliasedTool = weatherTool
   aliasedTool.providerName = "get_weather"
@@ -49,11 +49,11 @@ func toolLoopExecutionAndDeduplication() {
     mode: .json,
     completedToolRuns: [ToolCallKey(call): "22 C"],
     remainingToolCalls: 1)
-  guard case .final(let text) = repeated else {
-    Issue.record("Expected the completed result")
+  guard case .execute(let repeatedCalls) = repeated else {
+    Issue.record("Expected a fresh execution")
     return
   }
-  #expect(text == "22 C")
+  #expect(repeatedCalls.map(\.name) == ["weather"])
 }
 
 @Test("Tool-loop policy repairs malformed and missing post-tool actions")
