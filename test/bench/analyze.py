@@ -166,9 +166,7 @@ def analyze_case(case_dir):
         msgs = req.get("messages") or []
         if msgs:
             final_msgs = msgs
-            for m in msgs:
-                if m.get("role") == "system":
-                    system_chars = len(text_of(m.get("content")))
+            system_chars = sum(len(text_of(m.get("content"))) for m in msgs if m.get("role") == "system")
     # Context composition of the last request: what is sitting in the window.
     tool_result_chars = 0
     file_chars = 0

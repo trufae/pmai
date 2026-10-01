@@ -1,7 +1,10 @@
 """Regression checks for native API accounting (no model or network needed)."""
 import unittest
+import json
+import tempfile
+from pathlib import Path
 
-from analyze import request_messages
+from analyze import analyze_case, request_messages
 from proxy import Assembler, MessagesAssembler, ResponsesAssembler
 
 
@@ -58,6 +61,14 @@ class AccountingTests(unittest.TestCase):
         self.assertEqual(messages[0]["content"], "system")
         self.assertEqual(messages[1]["tool_calls"][0]["id"], messages[2]["tool_call_id"])
         self.assertEqual(messages[2]["content"], "Error: missing file")
+
+    def test_report_counts_all_system_sections(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root)
+            (path / "meta.json").write_text(json.dumps({"case": "fixture"}))
+            (path / "proxy.jsonl").write_text(json.dumps({"path": "/v1/messages", "request": {
+                "system": "main", "messages": [{"role": "system", "content": "date"}]}}) + "\n")
+            self.assertEqual(analyze_case(path)["system_chars"], 8)
 
 
 if __name__ == "__main__":
