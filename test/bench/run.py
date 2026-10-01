@@ -38,9 +38,6 @@ CASES = ROOT / "test" / "cases"
 RESULTS = ROOT / "test" / "results"
 PROXY = Path(__file__).resolve().parent / "proxy.py"
 
-DEFAULT_INSTRUCTIONS = "You are a helpful assistant. Use tools when needed."
-
-
 def read_env_file():
     values = {}
     path = ROOT / "env-ollamacloud.sh"
@@ -74,7 +71,6 @@ def make_config(port, model, variant, instructions, strategy="automatic", contex
     agent = {
         "id": "coder",
         "displayName": "Coder",
-        "instructions": instructions,
         "provider": "bench",
         "model": model,
         "toolGroupNames": groups,
@@ -90,6 +86,8 @@ def make_config(port, model, variant, instructions, strategy="automatic", contex
         },
         "enabled": True,
     }
+    if instructions is not None:
+        agent["instructions"] = instructions
     if variant == "subagent":
         agent["toolGroupNames"] = groups + ["agents"]
     if variant == "proxy":
@@ -158,7 +156,7 @@ def run_case(name, args, upstream, key):
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     before = file_digests(work)
 
-    instructions = DEFAULT_INSTRUCTIONS
+    instructions = None
     if args.system:
         instructions = Path(args.system).read_text().strip()
     port = free_port()

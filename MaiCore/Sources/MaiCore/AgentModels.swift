@@ -988,7 +988,7 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
     displayName: String? = nil,
     description: String = "",
     isEnabled: Bool = true,
-    instructions: String,
+    instructions: String = SystemPrompt.defaultInstructions,
     systemPrompt: String? = nil,
     provider: ProviderID,
     model: String,
@@ -1054,7 +1054,8 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
       displayName: try container.decodeIfPresent(String.self, forKey: .displayName),
       description: try container.decodeIfPresent(String.self, forKey: .description) ?? "",
       isEnabled: try container.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true,
-      instructions: try container.decodeIfPresent(String.self, forKey: .instructions) ?? "",
+      instructions: try container.decodeIfPresent(String.self, forKey: .instructions)
+        ?? SystemPrompt.defaultInstructions,
       systemPrompt: try container.decodeIfPresent(String.self, forKey: .systemPrompt),
       provider: try container.decode(ProviderID.self, forKey: .provider),
       model: try container.decodeIfPresent(String.self, forKey: .model) ?? "",

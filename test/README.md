@@ -53,7 +53,7 @@ The endpoint and key come from `UPSTREAM` / `UPSTREAM_KEY`, or from
 
 Each run isolates `PMAI_HOME`, the chat state and the config, and unsets the
 `PMAI_*` variables so the shell's provider never leaks in. The agent uses the
-default instructions ("You are a helpful assistant. Use tools when needed.")
+default instructions from MaiCore
 and the `files`, `run` and `todo` groups; `--system FILE` replaces the
 instructions to compare prompts.
 

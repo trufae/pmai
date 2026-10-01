@@ -12,6 +12,14 @@ API available to third-party providers. Together they support structured
 message content, multimodal requests, native tool calls, approvals, MCP
 Streamable HTTP servers, CLI-only stdio MCP processes, and bounded child agents.
 
+Agents without configured instructions use `SystemPrompt.defaultInstructions`:
+a short prompt focused on completing the task, targeted tool use, and verification.
+Explicit prompts (including an empty one) take precedence. Native tools are used
+automatically when the provider supports them. `/set tool.calling` selects native,
+text, XML, or JSON calling, and `/set tool.proxy` controls discovery through a proxy.
+Malformed calls receive corrective feedback; three consecutive empty or malformed
+turns withdraw tools and ask for a final answer explaining any unfinished work.
+
 Run the offline REPL from the repository root:
 
 ```sh
@@ -561,7 +569,8 @@ Summarization replaces older exchanges with a model-written summary focused on
 finishing the current task. The latest user request stays verbatim, together
 with recent complete tool exchanges. By default this tail has a budget of
 one quarter of `autocompact.tokens`, capped at 8,000 tokens. Set the agent's
-`autocompact.preserveRecentTokens` to override it; zero keeps only the newest
+`autocompact.preserveRecentTokens` (or `/set ctx.recent 4k`) to override it;
+`/set ctx.recent auto` restores the default. Zero keeps only the newest
 exchange and the user request. Tool calls and results stay together, even when
 the newest exchange exceeds this budget. Provider usage is supplemented with
 an estimate for tool output and queued messages added since that call.

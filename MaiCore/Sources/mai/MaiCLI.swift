@@ -1772,7 +1772,7 @@ struct MaiCLI {
     var profile = SessionProfile(
       provider: providerOverride ?? .openAI,
       model: modelOverride ?? "gpt-oss:20b",
-      instructions: options.systemOverride ?? "You are a helpful, concise assistant.",
+      instructions: options.systemOverride ?? SystemPrompt.defaultInstructions,
       stream: options.stream)
     options.applyOverrides(to: &profile)
     return profile
@@ -7791,7 +7791,7 @@ struct MaiCLI {
         || levelKeys.contains(key) || textKeys.contains(key)
     else {
       await terminal.line(
-        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, effort, tool.aproval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.context, ctx.strategy, \((textKeys + themeKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), use.agentsmd, use.plan"
+        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, effort, tool.aproval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.context, ctx.strategy, \((textKeys + themeKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), use.agentsmd, use.plan"
       )
       return
     }
@@ -7895,6 +7895,7 @@ struct MaiCLI {
     "retry.delay": "retry.delay",
     "retry.delayseconds": "retry.delay",
     "ctx.compact": "ctx.compact",
+    "ctx.recent": "ctx.recent",
   ]
 
   private static let delegationSettingKeys: Set<String> = [
@@ -8097,6 +8098,7 @@ struct MaiCLI {
     await terminal.line("retry.attempts = \(profile.retry.attempts)")
     await terminal.line("retry.delay = \(durationSetting(profile.retry.delaySeconds))")
     await terminal.line("ctx.compact = \(autocompactSetting(profile.autocompact))")
+    await terminal.line("ctx.recent = \(profile.autocompact.preserveRecentTokens.map(String.init) ?? "auto")")
     await terminal.line("ctx.context = \(profile.context.rawValue) (ctx.strategy alias)")
   }
 
@@ -8307,6 +8309,7 @@ struct MaiCLI {
       switch key {
       case "retry.attempts": String(retry.attempts)
       case "retry.delay": durationSetting(retry.delaySeconds)
+      case "ctx.recent": autocompact.preserveRecentTokens.map(String.init) ?? "auto"
       default: autocompactSetting(autocompact)
       }
     }
@@ -8321,6 +8324,15 @@ struct MaiCLI {
     }
     let raw = parts.count == 2 ? parts[1].lowercased() : ""
     switch key {
+    case "ctx.recent":
+      if raw == "auto" {
+        autocompact.preserveRecentTokens = nil
+      } else if let tokens = parseTokenCount(raw), tokens >= 0 {
+        autocompact.preserveRecentTokens = tokens
+      } else {
+        await terminal.line("Usage: /set ctx.recent <auto|N|Nk>  (recent tokens kept verbatim when summarizing)")
+        return
+      }
     case "retry.attempts":
       guard let value = Int(raw), value >= 0 else {
         await terminal.line("Usage: /set retry.attempts N  (0 fails on the first error)")
@@ -8619,6 +8631,7 @@ struct MaiCLI {
           "retry.attempts": String(profile.retry.attempts),
           "retry.delay": durationSetting(profile.retry.delaySeconds),
           "ctx.compact": autocompactSetting(profile.autocompact),
+          "ctx.recent": profile.autocompact.preserveRecentTokens.map(String.init) ?? "auto",
           "ctx.context": profile.context.rawValue,
           "ctx.strategy": profile.context.rawValue,
         ],
@@ -10477,6 +10490,7 @@ struct MaiCLI {
       "/set limits.maxSubagents ", "/set limits.maxSeconds ", "/set limits.maxTotalTokens ",
       "/set retry.attempts ", "/set retry.delay ", "/set ctx.strategy ", "/set ctx.compact ",
       "/set ctx.compact off",
+      "/set ctx.recent ", "/set ctx.recent auto",
       "/set ctx.context ", "/set ctx.context cache", "/set ctx.context size", "/set ctx.context smart",
       "/set ctx.strategy cache", "/set ctx.strategy size", "/set ctx.strategy smart",
       "/continue", "/stop",
@@ -10762,7 +10776,7 @@ struct MaiCLI {
         AgentDefinition(
           id: "main",
           description: "General assistant with the full tool set.",
-          instructions: "You are a helpful assistant. Use tools when needed.",
+          instructions: SystemPrompt.defaultInstructions,
           systemPrompt: "main",
           provider: "openai",
           model: "your-model",
@@ -10781,8 +10795,7 @@ struct MaiCLI {
             "github", "todo", "context",
           ],
           subagentNames: ["researcher"],
-          limits: AgentRunLimits(),
-          useToolProxy: true),
+          limits: AgentRunLimits()),
         AgentDefinition(
           id: "researcher",
           description: "Investigates one question and answers in a few lines.",
@@ -10799,7 +10812,7 @@ struct MaiCLI {
         memory: AgentMemoryPrompt.template,
         system: [
           "hello": "Exercise the offline MaiCore provider.",
-          "main": "You are a helpful assistant. Use tools when needed.",
+          "main": SystemPrompt.defaultInstructions,
           "researcher": "Investigate the delegated task and return a concise result.",
         ]),
       memory: ConfiguredMemory(),
@@ -10935,6 +10948,7 @@ struct MaiCLI {
       /set retry.attempts N        Times a failed model call is repeated (default 2)
       /set retry.delay SECONDS     Wait before each retry (default 5)
       /set ctx.compact <off|N|Nk>  Prompt to prune tool output or summarize older context at ~N tokens
+      /set ctx.recent <auto|N|Nk>  Recent tokens kept verbatim when summarizing (auto: up to 8k)
       /set ctx.context <cache|size|smart>  Keep history, prune old reads, or build context with the compact model
       /set ctx.strategy <cache|size|smart>  Alias for ctx.context
       /set ui.                     List terminal UI settings

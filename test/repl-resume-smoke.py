@@ -51,7 +51,7 @@ def main():
              '/set effort high Think carefully.', '/set limits.maxToolCalls 7',
              '/set limits.maxModelTurns 9', '/set limits.maxSubagents 2',
              '/set limits.maxSeconds 10m', '/set retry.attempts 4',
-             '/set ctx.compact 64k', '/set ctx.strategy size',
+             '/set ctx.compact 64k', '/set ctx.recent 4k', '/set ctx.strategy size',
              '/set tool.calling xml', '/set tool.proxy all'],
             ['--system', 'Saved instructions.'])
         run(args=['-r', 'retained', 'First conversation.'])
@@ -59,6 +59,7 @@ def main():
         retained = json.loads(retained_path.read_text())
         assert retained['primaryAgent']['model'] == 'chosen', retained
         assert retained['primaryAgent']['limits']['maxToolCalls'] == 7, retained
+        assert retained['primaryAgent']['autocompact']['preserveRecentTokens'] == 4000, retained
 
         run(['/chat rename latest', '/model alternate::different',
              '/set effort low', '/set limits.maxToolCalls 19',
@@ -87,6 +88,7 @@ def main():
             output = run(['/model', '/set', '/baseurl'], ['-r', selector], env)
             assert 'Chat: hello::chosen' in output, output
             assert 'limits.maxToolCalls = 7' in output, output
+            assert 'ctx.recent = 4000' in output, output
             assert "Base URL for 'hello': http://saved.example/v1" in output, output
             assert 'runtime override' not in output, output
             assert_restored(retained_path, retained)
