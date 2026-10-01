@@ -237,7 +237,8 @@ def print_summary(run_dir, rows):
 def print_detail(case_dir):
     calls = load_calls(case_dir / "proxy.jsonl")
     meta = json.loads((case_dir / "meta.json").read_text())
-    print(f"\n### {meta['case']} — {meta['variant']} {meta['model']} — check={meta.get('check')} elapsed={meta.get('elapsed')}s")
+    variant = meta.get("variant", meta.get("client", "?"))
+    print(f"\n### {meta['case']} — {variant} {meta['model']} — check={meta.get('check')} elapsed={meta.get('elapsed')}s")
     print(f"prompt: {meta['prompt']}")
     for call in calls:
         res = call.get("response") or {}
