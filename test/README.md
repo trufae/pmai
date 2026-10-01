@@ -76,3 +76,31 @@ instructions to compare prompts.
 | 13-big-log | count and rank errors in a 4000-line log | run (grep/sort), never a full read |
 
 The findings and the todo list live in `PLAN.md` next to this file.
+
+## Qwen38 prompt smoke comparison, 2026-10-01
+
+Two fixtures (`02-fix-failing-test`, `11-multi-step`) were run once each against
+the user's vLLM `qwen38` endpoint, with native tools, inline execution, and cache
+context. Both runs used the updated runtime. Only the system prompt changed:
+the earlier one-sentence prompt versus `SystemPrompt.defaultInstructions`.
+
+| Combined result | Earlier prompt | New default |
+|---|---:|---:|
+| Fixture checks passed | 2/2 | 2/2 |
+| Model calls | 9 | 10 |
+| Tool calls | 13 | 10 |
+| Input tokens, summed across calls | 35.6k | 39.9k |
+| Completion tokens | 2,005 | 1,213 |
+| Elapsed time | 72.7s | 48.3s |
+
+The shorter completions and fewer tool calls suggest better focus on these
+fixtures; the extra model turn increased input tokens. This is a smoke check,
+not a statistically reliable performance comparison, a test of long-context
+compaction, or a benchmark against opencode. Logs from this local run are in
+`test/results/20261001-qwen38-{old,new}-prompt/` (ignored by Git).
+
+The implementation was informed by opencode's recent-tail compaction,
+malformed-call feedback, and repetition guards in `src/session/compaction.ts`,
+`src/session/llm.ts`, and `src/session/processor.ts` under the local
+`opencode/packages/opencode` checkout. MaiCore keeps its existing configurable
+tool protocols and context modes; the changes share their runtime policy.
