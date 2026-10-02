@@ -42,6 +42,20 @@ colors, diagnostics, live updates, TAB selection, and color-disabled output:
 
     python3 test/repl-colors-smoke.py MaiCore/.build/debug/pmai
 
+The resize smoke test uses a local mock provider and a PTY to check long status
+lines, styled drafts, completion, animation, and multiline input while shrinking
+the terminal, including redraws before the resize signal is delivered:
+
+    python3 test/repl-resize-smoke.py MaiCore/.build/debug/pmai
+
+The reflow regression also runs those terminal bytes through Ghostty's headless
+engine. It checks that resizing leaves exactly one status row, no footer fragments
+in scrollback, and the complete transcript. Install the optional test engine in
+a temporary directory, then pass its package path:
+
+    npm install --prefix /tmp/pmai-terminal-tests --ignore-scripts ghostty-web@0.4.0
+    python3 test/repl-reflow-smoke.py MaiCore/.build/debug/pmai /tmp/pmai-terminal-tests/node_modules/ghostty-web
+
 The recap integration smoke test uses a local mock provider and isolated chat
 state to check model routing, prompt edits, and history preservation:
 

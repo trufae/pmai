@@ -81,6 +81,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   func configure(ui: ConfiguredTerminalUI) {
     lock.withLock {
+      refreshSize()
       self.ui = ui
       guard active else { return }
       drawStatusRow()
@@ -161,6 +162,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   private func deactivateLocked() {
     guard active else { return }
+    refreshSize()
     resizeSource?.cancel()
     resizeSource = nil
     activitySource?.cancel()
@@ -187,6 +189,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         handle.write(Data(text.utf8))
         return
       }
+      refreshSize()
       if handle === FileHandle.standardOutput {
         write(Self.restoreCursor + text + Self.saveCursor)
       } else {
@@ -207,6 +210,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   /// Replaces the status line and optionally switches the Braille animation style.
   func setStatus(_ text: String, animating: Bool, style: BrailleAnimator.Style?) {
     lock.withLock {
+      refreshSize()
       let animationChanged = animatingStatus != animating
       animatingStatus = animating
       activityRestarted = animationChanged && animating
@@ -244,6 +248,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   /// A transient reasoning window above the status and editable prompt.
   func setThinking(_ lines: [String]) {
     lock.withLock {
+      refreshSize()
       let lines = Array(lines.suffix(min(3, rows / 4)))
       guard lines != thinkingRows else { return }
       let oldCount = thinkingRows.count
@@ -271,11 +276,13 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   func drawInput(rows: [String], caretRow: Int, caretColumn: Int) {
     lock.withLock {
+      refreshSize()
       let previousCount = inputRows.count
       inputRows = rows.isEmpty ? [""] : rows
       self.caretRow = caretRow
       self.caretColumn = caretColumn
       guard active else { return }
+      clampInputRows()
       if inputRows.count != previousCount {
         resizeRegion(
           inputRows: previousCount + thinkingRows.count, to: inputRows.count + thinkingRows.count)
@@ -288,6 +295,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   func acceptInput(styled: String) {
     lock.withLock {
+      refreshSize()
       let previousCount = inputRows.count
       inputRows = [""]
       caretRow = 0
@@ -314,6 +322,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   func clearScreen() {
     lock.withLock {
       guard active else { return }
+      refreshSize()
       write("\u{1B}[2J" + move(row: 1, column: 1) + Self.saveCursor)
       outputEndedLine = true
       drawStatusRow()
@@ -335,6 +344,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   /// the REPL's status when the menu closes.
   func drawCompletionMenu(_ menu: CompletionMenu?) {
     lock.withLock {
+      refreshSize()
       guard completionMenu != menu else { return }
       completionMenu = menu
       guard active else { return }
@@ -419,7 +429,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       }
       out += Self.truncated(line, width: width) + Self.reset
     }
-    write(out)
+    writeFixedRows(out)
     drawStatusLine()
   }
 
@@ -447,7 +457,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     } else {
       out += "\u{1B}[2m" + content + Self.reset
     }
-    write(out)
+    writeFixedRows(out)
   }
 
   /// One row of completion options, joined by two spaces. Each option is shown
@@ -519,6 +529,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   // Animate one cell without rebuilding the status or traversing the transcript.
   private func drawActivity() {
     lock.withLock {
+      refreshSize()
       // The completion menu owns the row; its first cell must not blink.
       guard active, animatingStatus, let activityStartedAt, completionMenu == nil,
         columns > 2
@@ -532,7 +543,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       }
       let marker = animator.next()
       let style = TerminalLineEditor.backgroundColorCode(ui.backgroundLine) ?? "2"
-      write(
+      writeFixedRows(
         move(row: regionBottom + thinkingRows.count + 1, column: 2)
           + "\u{1B}[\(style)m" + marker + Self.reset)
       placeCaret()
@@ -541,14 +552,28 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   private func drawInputRows() {
     var out = ""
+    let width = max(1, columns - 1)
     for (index, row) in inputRows.enumerated() {
-      out += move(row: firstInputRow + index, column: 1) + Self.clearLine + row
+      out +=
+        move(row: firstInputRow + index, column: 1) + Self.clearLine
+        + Self.clippedInputRow(row, width: width) + Self.reset
     }
-    write(out)
+    writeFixedRows(out)
   }
 
   private func placeCaret() {
-    write(move(row: firstInputRow + caretRow, column: max(1, 1 + caretColumn)))
+    write(
+      move(
+        row: min(rows, firstInputRow + caretRow),
+        column: min(columns, max(1, 1 + caretColumn))))
+  }
+
+  /// A resize can still happen between measuring and writing. Fixed rows must
+  /// never wrap into the transcript or scroll the prompt, even in that window.
+  /// Scrolling output keeps normal autowrap.
+  private func writeFixedRows(_ text: String) {
+    guard !text.isEmpty else { return }
+    write("\u{1B}[?7l" + text + "\u{1B}[?7h")
   }
 
   private func move(row: Int, column: Int) -> String {
@@ -592,25 +617,53 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   private func resizedIfNeeded() {
-    lock.withLock {
-      guard active else { return }
-      var size = winsize()
-      guard ioctl(STDOUT_FILENO, UInt(TIOCGWINSZ), &size) == 0 else { return }
-      let newRows = size.ws_row >= 3 ? Int(size.ws_row) : rows
-      let newColumns = size.ws_col > 0 ? Int(size.ws_col) : columns
-      guard newRows != rows || newColumns != columns else { return }
-      rows = newRows
-      columns = newColumns
-      clampInputRows()
-      let bottom = regionBottom
-      var out = "\u{1B}[1;\(bottom)r"
-      out += move(row: bottom, column: 1) + Self.saveCursor
-      write(out)
-      outputEndedLine = true
-      drawStatusRow()
-      drawInputRows()
-      placeCaret()
+    lock.withLock { refreshSize() }
+  }
+
+  /// Called under `lock` before drawing: SIGWINCH delivery can lag behind a
+  /// keystroke, streamed output, or an animation tick during a window drag.
+  private func refreshSize() {
+    guard active else { return }
+    let previousRows = rows
+    let previousColumns = columns
+    measure()
+    guard rows != previousRows || columns != previousColumns else { return }
+    clampInputRows()
+    let bottom = regionBottom
+    // The saved output position follows the terminal's resize. Erase the old
+    // footer from that boundary, including rows reflowed above the new footer
+    // and rows left behind when growing the window. Keep partial output intact.
+    var out = Self.restoreCursor + Self.clearBelow
+    out += "\u{1B}[1;\(bottom)r"
+    out += move(row: bottom, column: 1) + Self.saveCursor
+    write(out)
+    outputEndedLine = true
+    drawStatusRow()
+    drawInputRows()
+    placeCaret()
+  }
+
+  /// Cached input may have been styled at a wider size. Keep complete SGR
+  /// sequences while clipping its characters until the editor lays it out again.
+  private static func clippedInputRow(_ text: String, width: Int) -> String {
+    var result = ""
+    var used = 0
+    var index = text.startIndex
+    while index < text.endIndex {
+      let character = text[index]
+      if character == "\u{1B}" {
+        guard let end = text[index...].firstIndex(of: "m") else { break }
+        result += text[index...end]
+        index = text.index(after: end)
+        continue
+      }
+      let characterWidth = displayWidth(String(character))
+      guard used + characterWidth <= width else { break }
+      result.append(character)
+      used += characterWidth
+      index = text.index(after: index)
     }
+    return result
   }
 
   /// Returns the best-guess output row without querying the terminal.
