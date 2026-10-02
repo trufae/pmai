@@ -85,6 +85,7 @@ private struct CLIOptions {
   var pluginPaths: [String] = []
   var initialPrompt: String?
   var printConfig = false
+  var editConfig = false
   var update = false
   /// List every known project and exit.
   var listProjects = false
@@ -175,6 +176,8 @@ private struct CLIOptions {
         markdown = false
       case "--print-config":
         printConfig = true
+      case "-E":
+        editConfig = true
       case "-U", "--update":
         update = true
       case "--acp-root":
@@ -257,6 +260,7 @@ private enum CLIError: LocalizedError {
   case unknownChat(String)
   case invalidCount(String, String)
   case configNotFound(String)
+  case noEditor
   case noProvider
   case noProject
   case invalidImage(String)
@@ -283,6 +287,7 @@ private enum CLIError: LocalizedError {
     case .invalidCount(let option, let value):
       "\(option) expects a non-negative integer, got '\(value)'."
     case .configNotFound(let path): "Configuration file not found: \(path)"
+    case .noEditor: "No editor found. Set EDITOR or install vim, nano, or notepad in PATH."
     case .noProvider: "No provider is configured."
     case .invalidImage(let path): "Unable to load image: \(path)"
     case .isDirectory(let path): "\(path) is a folder; give a file name."
@@ -1101,6 +1106,10 @@ struct MaiCLI {
       let options = try CLIOptions(
         arguments: Array(commandLineArguments.dropFirst()),
         environment: environment)
+      if options.editConfig {
+        try await editConfiguration(environment: environment)
+        return
+      }
       if options.update {
         try updateCLI(executable: commandLineArguments[0], environment: environment)
         return
@@ -5783,9 +5792,15 @@ struct MaiCLI {
     return "vim"
   }
 
-  private static func launchEditor(at url: URL, terminal: TerminalWriter) async -> Bool {
-    let command = resolvedEditor()
-    let shellCommand = "\(command) \(shellQuote(url.path))"
+  private static func launchEditor(
+    at url: URL, command: String? = nil, terminal: TerminalWriter
+  ) async -> Bool {
+    let command = command ?? resolvedEditor()
+    #if os(Windows)
+      let shellCommand = "\"\(command) \"\(url.path)\"\""
+    #else
+      let shellCommand = "\(command) \(shellQuote(url.path))"
+    #endif
     var waitStatus: CInt = -1
     let launch = { waitStatus = shellCommand.withCString(posixSystem) }
     if let screen = TerminalScreen.current {
@@ -5799,7 +5814,11 @@ struct MaiCLI {
         to: .standardError)
       return false
     }
-    let exitStatus = waitStatus & 0x7f == 0 ? (waitStatus >> 8) & 0xff : 128 + (waitStatus & 0x7f)
+    #if os(Windows)
+      let exitStatus = waitStatus
+    #else
+      let exitStatus = waitStatus & 0x7f == 0 ? (waitStatus >> 8) & 0xff : 128 + (waitStatus & 0x7f)
+    #endif
     guard exitStatus == 0 else {
       await terminal.line(
         "error: Editor exited with status \(exitStatus).", to: .standardError)
@@ -10549,6 +10568,51 @@ struct MaiCLI {
     AgentHome.expandUserPath("~/.config/pmai/config.json", environment: environment)
   }
 
+  private static func editConfiguration(environment: [String: String]) async throws {
+    let editor = environment["EDITOR"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    guard let command = editor.isEmpty ? fallbackEditor(environment: environment) : editor else {
+      throw CLIError.noEditor
+    }
+    let url = URL(fileURLWithPath: defaultConfigurationPath(environment: environment))
+    if !FileManager.default.fileExists(atPath: url.path) {
+      try sampleConfiguration().save(to: url)
+    }
+    guard await launchEditor(at: url, command: command, terminal: TerminalWriter()) else {
+      exit(1)
+    }
+  }
+
+  private static func fallbackEditor(environment: [String: String]) -> String? {
+    #if os(Windows)
+      let editors = ["vim.exe", "nano.exe", "notepad.exe"]
+      var directories = (environment["PATH"] ?? environment["Path"] ?? "")
+        .components(separatedBy: ";")
+      if let windows = environment["SystemRoot"] ?? environment["WINDIR"] {
+        directories.append(URL(fileURLWithPath: windows).appendingPathComponent("System32").path)
+      }
+    #else
+      let editors = ["vim", "nano", "notepad"]
+      let directories = (environment["PATH"] ?? "").components(separatedBy: ":")
+    #endif
+    for editor in editors {
+      for directory in directories {
+        let path = URL(fileURLWithPath: directory.isEmpty ? "." : directory)
+          .appendingPathComponent(editor).path
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+          !isDirectory.boolValue, FileManager.default.isExecutableFile(atPath: path)
+        {
+          #if os(Windows)
+            return "\"\(path)\""
+          #else
+            return shellQuote(path)
+          #endif
+        }
+      }
+    }
+    return nil
+  }
+
   /// Where pmai kept chats and history before projects existed.
   private static let legacyStateDirectory = "~/.config/pmai"
 
@@ -11657,6 +11721,7 @@ struct MaiCLI {
         --api-key KEY       prefer an environment variable or config reference
         --base-url URL      ad-hoc OpenAI-compatible endpoint
         --config PATH       load plugins, providers, tools, MCPs, agents, and approvals
+        -E                  edit ~/.config/pmai/config.json in $EDITOR (or vim, nano, notepad) and exit
         -h, --help          show this help
         --history PATH      persist editable input history (or PMAI_HISTORY)
         --home DIR          keep the project index and shared state in DIR (or PMAI_HOME)

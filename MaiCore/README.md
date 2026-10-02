@@ -72,6 +72,13 @@ Load a configuration explicitly:
 make repl ARGS='--config MaiCore/pmai.example.json'
 ```
 
+Run `pmai -E` to edit `$HOME/.config/pmai/config.json` and exit. It uses `$EDITOR`
+(which may include arguments), or the first available `vim`, `nano`, or `notepad`
+in `PATH`; Windows also checks its system directory for Notepad. If the config
+does not exist, pmai creates it from the example configuration. This always
+edits the user config, regardless of `--config`, `PMAI_CONFIG`, or `./pmai.json`,
+and works even when the existing JSON is invalid.
+
 Inside the REPL, `/models` queries the current provider's model catalog and
 `/models PROVIDER` queries another registered provider without switching the
 session. Use `/model NAME` to select a model for chat, compaction, tool decisions,
