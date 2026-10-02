@@ -51,8 +51,14 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
       shell: context.string("runShell", environment: "PMAI_RUN_SHELL"),
       defaultTimeout: context.options["runTimeoutSeconds"]?.numberValue
         ?? MaiRunConfiguration.defaultTimeout)
+    // Whether these may change anything is the group's own setting, so the
+    // tools are offered off and a person turns them on per agent with
+    // /tools enable pmai.
+    let pmaiPolicy = PmaiCommandPolicy(
+      options: context.options, environment: context.environment)
     let tools: [any AgentTool] =
-      [
+      MaiPmaiCommands.makeTools(policy: pmaiPolicy)
+      + [
         MaiCurrentTimeTool(),
         MaiCalculatorTool(),
         MaiWeatherTool(
@@ -200,6 +206,37 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
             label: "Allow fetching pages",
             kind: .boolean,
             defaultValue: .bool(true)),
+        ]),
+      ToolGroupDefinition(
+        id: "pmai",
+        displayName: "pmai commands",
+        description:
+          "Run pmai's own slash commands — the ones the person types at the prompt — and read back "
+          + "what they printed. pmai_run runs one (`/set tool.aproval smart`, `/mcp add …`, "
+          + "`/model gpt-5`, `/theme use NAME`, `/tools enable …`); pmai_help returns a command's "
+          + "usage without running it. Use them to read and change this installation. Ask the person "
+          + "before running one that changes something, and check pmai_help first when unsure of the "
+          + "syntax. Every call needs approval.",
+        toolNames: Set(MaiPmaiCommands.toolNames),
+        options: [
+          .init(
+            id: PmaiCommandPolicy.blockedCommandsOption,
+            label: "Blocked commands",
+            help:
+              "Commands pmai_run refuses, as names or as /regex/. The default holds back the few that "
+              + "cannot work away from the prompt. Empty allows everything.",
+            defaultValue: .string(PmaiCommandPolicy.defaultBlockedCommands)),
+          .init(
+            id: PmaiCommandPolicy.readOnlyOption,
+            label: "Read-only",
+            help: "When on, pmai_run only runs the commands in the allowlist below.",
+            kind: .boolean,
+            defaultValue: .bool(false)),
+          .init(
+            id: PmaiCommandPolicy.readOnlyCommandsOption,
+            label: "Read-only allowlist",
+            help: "The commands a read-only pmai_run may run, as names or as /regex/.",
+            defaultValue: .string(PmaiCommandPolicy.defaultReadOnlyCommands)),
         ]),
       ToolGroupDefinition(
         id: "mastodon",

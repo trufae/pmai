@@ -1315,6 +1315,18 @@ struct MaiCLI {
       session.touch()
       workspace.upsert(session.chat, selecting: true)
       let themesDirectory = home.rootURL.appendingPathComponent("themes", isDirectory: true)
+      // Shared by the REPL and by the pmai_run/pmai_help tools, so a command
+      // either of them runs reaches the same session, configuration and themes.
+      let visual = VisualBridge(
+        approvalHandler: approvalHandler,
+        configurationPath: configurationPath,
+        implicitProviders: setup.implicitProviders,
+        providerBaseURLs: ProviderBaseURLStore(setup.providerBaseURLs),
+        memory: memoryState,
+        todo: todoState,
+        skills: skillState,
+        themesDirectory: themesDirectory,
+        usageStats: usageStats)
       if let theme = environmentValue(["PMAI_THEME"], in: environment) {
         do {
           let ui = try TerminalTheme.load(
@@ -1349,10 +1361,29 @@ struct MaiCLI {
       if loaded == nil, FileManager.default.fileExists(atPath: configurationPath) {
         await terminal.line("Created \(configurationPath)", to: .standardError)
       }
+      // The bridge is what a pmai_run call runs its command on. The loop keeps
+      // it current; here, with one prompt and no loop, the session is handed
+      // over once before the run and collected once after it.
+      let pmaiBridge = PmaiCommandBridge()
+      await PmaiCommandHost.shared.install { line in
+        try await pmaiCommand(
+          line,
+          bridge: pmaiBridge,
+          runtime: runtime,
+          plugins: plugins,
+          ocrProvider: ocrProvider,
+          visual: visual)
+      }
+      defer { Task { await PmaiCommandHost.shared.install(runner: nil) } }
       if let prompt = options.initialPrompt {
         var oneShotProcess: AgentPID? = await runtime.allocateProcess(
           agentID: session.profile.agentID, task: session.title)
         await runtime.supervisor.restore(session.subagents, under: oneShotProcess!)
+        pmaiBridge.sync(
+          session: session,
+          configuration: configuration,
+          catalogs: setup.catalogs,
+          chatProcess: oneShotProcess)
         let succeeded = await submit(
           prompt,
           session: &session,
@@ -1363,6 +1394,10 @@ struct MaiCLI {
             workspace.upsert(chat, selecting: true)
             try store.commit(&workspace)
           })
+        if let changes = pmaiBridge.takeChanges() {
+          session.profile = changes.profile
+          configuration = changes.configuration
+        }
         if let process = oneShotProcess {
           session.subagents = AgentProcessRecord.merging(
             saved: session.subagents,
@@ -1393,16 +1428,8 @@ struct MaiCLI {
         ocrProvider: ocrProvider,
         configuration: configuration,
         catalogs: setup.catalogs,
-        visual: VisualBridge(
-          approvalHandler: approvalHandler,
-          configurationPath: configurationPath,
-          implicitProviders: setup.implicitProviders,
-          providerBaseURLs: ProviderBaseURLStore(setup.providerBaseURLs),
-          memory: memoryState,
-          todo: todoState,
-          skills: skillState,
-          themesDirectory: themesDirectory,
-          usageStats: usageStats),
+        visual: visual,
+        pmaiBridge: pmaiBridge,
         terminal: terminal)
     } catch {
       FileHandle.standardError.write(Data("error: \(error.localizedDescription)\n".utf8))
@@ -1884,6 +1911,80 @@ struct MaiCLI {
 
   /// What a command may change under a running turn, taken before it runs
   /// so the person can be told how the change and the run meet.
+  /// What a pmai command run from a tool changed, waiting for the REPL loop to
+  /// adopt it.
+  private struct PmaiToolChanges {
+    var profile: SessionProfile
+    var configuration: MaiConfiguration?
+    var catalogs: [MCPServerCatalog]
+  }
+
+  /// The state one slash command may change, in the one place the REPL loop
+  /// and the `pmai_run` tool both go through.
+  ///
+  /// The loop keeps its own copies for the length of a turn and hands them here
+  /// before the turn starts; a command the model runs leaves what it changed
+  /// behind and the loop adopts it when the turn ends. Without the hand-off a
+  /// command run from a tool would save its change to the configuration file
+  /// and the loop's next command would write its older copy straight back over
+  /// it. Only the profile comes back with the change: the transcript and the
+  /// queued attachments belong to the run in flight.
+  private final class PmaiCommandBridge: @unchecked Sendable {
+    private let lock = NSLock()
+    private var session: REPLSession?
+    private var configuration: MaiConfiguration?
+    private var catalogs: [MCPServerCatalog] = []
+    private var chatProcess: AgentPID?
+    private var changes: PmaiToolChanges?
+
+    /// The state a command starts from, or nil when no loop has handed any
+    /// over yet.
+    func begin() -> (
+      session: REPLSession, configuration: MaiConfiguration?, catalogs: [MCPServerCatalog],
+      chatProcess: AgentPID?
+    )? {
+      lock.withLock {
+        guard let session else { return nil }
+        return (session, configuration, catalogs, chatProcess)
+      }
+    }
+
+    /// Keeps what the command changed for the loop's next `takeChanges`.
+    func finish(
+      session: REPLSession, configuration: MaiConfiguration?, catalogs: [MCPServerCatalog]
+    ) {
+      lock.withLock {
+        changes = PmaiToolChanges(
+          profile: session.profile, configuration: configuration, catalogs: catalogs)
+      }
+    }
+
+    /// The loop hands over the state a command should start from.
+    func sync(
+      session: REPLSession,
+      configuration: MaiConfiguration?,
+      catalogs: [MCPServerCatalog],
+      chatProcess: AgentPID?
+    ) {
+      lock.withLock {
+        self.session = session
+        self.configuration = configuration
+        self.catalogs = catalogs
+        self.chatProcess = chatProcess
+      }
+    }
+
+    /// What the last command changed, handed over once.
+    func takeChanges() -> PmaiToolChanges? {
+      lock.withLock {
+        defer { changes = nil }
+        return changes
+      }
+    }
+  }
+
+  /// What a command may change under a running turn, taken before it runs
+  /// so the person can be told how the change and the run meet.
   private struct REPLCommandSnapshot {
     let chatID: UUID
     let title: String
@@ -1940,12 +2041,34 @@ struct MaiCLI {
     configuration: MaiConfiguration?,
     catalogs: [MCPServerCatalog],
     visual: VisualBridge,
+    pmaiBridge: PmaiCommandBridge,
     terminal: TerminalWriter
   ) async {
     var configuration = configuration
     var catalogs = catalogs
     var project = project
     var session = REPLSession(chat: workspace.selectedChat!)
+    /// Hands the loop's state to `pmai_run`, so a command the model runs
+    /// starts from the same session, configuration and MCP catalogs the next
+    /// typed command will see.
+    func shareStateWithPmaiTools() {
+      pmaiBridge.sync(
+        session: session,
+        configuration: configuration,
+        catalogs: catalogs,
+        chatProcess: chatProcessIDs[session.id])
+    }
+    /// Takes back what a command the model ran changed, so the loop keeps it
+    /// instead of writing its own older copy over the saved file. A theme the
+    /// tool applied repaints here, since the command's own terminal was a
+    /// collector rather than the screen.
+    func adoptPmaiToolChanges() async {
+      guard let changes = pmaiBridge.takeChanges() else { return }
+      session.profile = changes.profile
+      configuration = changes.configuration
+      catalogs = changes.catalogs
+      await terminal.configureColors(configuration?.ui ?? .init())
+    }
     let editor = TerminalLineEditor(historyURL: historyURL)
     var announcedAttention: Set<AgentPID> = []
     // One process per chat, not per turn: a background agent started three
@@ -2273,6 +2396,7 @@ struct MaiCLI {
     }
 
     func beginTurn(_ request: AgentRequest, process pid: AgentPID, kind: REPLTurnKind) async {
+      shareStateWithPmaiTools()
       if kind == .chat {
         await recordSubagents()
         session.touch()
@@ -3109,6 +3233,7 @@ struct MaiCLI {
                 catalogs: commandCatalogs,
                 visual: visual,
                 chatProcess: commandChatProcess,
+                pmaiBridge: pmaiBridge,
                 terminal: terminal)
             }
             commandWasInterrupted = command.interrupted
@@ -3184,6 +3309,9 @@ struct MaiCLI {
         break events
 
       case .turnFinished(let outcome):
+        // A pmai_run call may have changed the session's profile, the
+        // configuration or the MCP servers while the turn was running.
+        await adoptPmaiToolChanges()
         let turn = loop.activeTurn
         let wasInterrupted = turn.map { interruptHandler.deactivate($0.interrupt) } ?? false
         loop.activeTurn = nil
@@ -3649,11 +3777,19 @@ struct MaiCLI {
     catalogs: [MCPServerCatalog],
     visual: VisualBridge,
     chatProcess: AgentPID?,
+    pmaiBridge: PmaiCommandBridge? = nil,
     terminal: TerminalWriter
   ) async -> REPLCommandResult {
     var session = session
     var configuration = configuration
     var catalogs = catalogs
+    // A command the model ran before this one changed the state the loop was
+    // holding; take it back before running a typed command off the same base.
+    if let changes = pmaiBridge?.takeChanges() {
+      session.profile = changes.profile
+      configuration = changes.configuration
+      catalogs = changes.catalogs
+    }
     let exits = await handleCommand(
       input,
       session: &session,
@@ -3667,6 +3803,43 @@ struct MaiCLI {
       terminal: terminal)
     return REPLCommandResult(
       session: session, configuration: configuration, catalogs: catalogs, exits: exits)
+  }
+
+  /// What `pmai_run` and `pmai_help` call: the REPL's own command switch, with
+  /// the output collected instead of printed, so the model reads exactly what
+  /// the person would have seen at the prompt. Whatever the command changed is
+  /// left on the bridge for the loop to adopt when the turn ends.
+  private static func pmaiCommand(
+    _ line: String,
+    bridge: PmaiCommandBridge,
+    runtime: AgentRuntime,
+    plugins: PluginRegistry,
+    ocrProvider: any OCRProvider,
+    visual: VisualBridge
+  ) async throws -> String {
+    guard let state = bridge.begin() else { throw PmaiCommandError.noSession }
+    var session = state.session
+    var configuration = state.configuration
+    var catalogs = state.catalogs
+    let terminal = TerminalWriter(capturesOutput: true)
+    let exits = await handleCommand(
+      line,
+      session: &session,
+      runtime: runtime,
+      plugins: plugins,
+      ocrProvider: ocrProvider,
+      configuration: &configuration,
+      catalogs: &catalogs,
+      visual: visual,
+      chatProcess: state.chatProcess,
+      terminal: terminal)
+    bridge.finish(session: session, configuration: configuration, catalogs: catalogs)
+    let output = await terminal.drainCaptured()
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    // A command that ends the session ends the person's prompt, not this one:
+    // the turn the model is inside of is still going.
+    let closing = exits ? "\n\n\(line) would have closed the session; the person is still in it." : ""
+    return output.isEmpty ? "\(line) printed nothing.\(closing)" : output + closing
   }
 
   private static func handleCommand(
