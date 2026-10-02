@@ -253,6 +253,7 @@ private enum CLIError: LocalizedError {
   case invalidURL(String)
   case missingValue(String)
   case unknownOption(String)
+  case chatSettingsWhileRunning
   case unknownChat(String)
   case invalidCount(String, String)
   case configNotFound(String)
@@ -276,6 +277,8 @@ private enum CLIError: LocalizedError {
     case .invalidURL(let value): "Invalid URL: \(value)"
     case .missingValue(let option): "Missing value after \(option)."
     case .unknownOption(let option): "Unknown option: \(option)"
+    case .chatSettingsWhileRunning:
+      "Wait for active agents to finish before switching to a chat with different provider or model settings."
     case .unknownChat(let selector): "No chat matches '\(selector)'. Run pmai -l to list chats."
     case .invalidCount(let option, let value):
       "\(option) expects a non-negative integer, got '\(value)'."
@@ -372,6 +375,10 @@ private final class ProviderBaseURLStore: @unchecked Sendable {
 
   func set(_ url: URL, for providerID: String) {
     lock.withLock { urls[providerID] = url }
+  }
+
+  func replace(_ urls: [String: URL]) {
+    lock.withLock { self.urls = urls }
   }
 
   func snapshot() -> [String: URL] {
@@ -693,6 +700,7 @@ struct REPLSession: Sendable {
   /// runs end and puts them back in the process table when the chat is
   /// reopened, so `/agents tree` and `/agents log` outlive the session.
   var subagents: [AgentProcessRecord]
+  var runtimeConfiguration: AgentChatConfiguration?
   #if PMAI_HAS_VISUAL
     /// Conversations and panes left behind by the last `/visual` session.
     var visualSnapshot: VisualWorkspaceSnapshot?
@@ -730,6 +738,7 @@ struct REPLSession: Sendable {
     updatedAt = chat.updatedAt
     isArchived = chat.isArchived
     subagents = chat.subagents
+    runtimeConfiguration = chat.runtimeConfiguration
   }
 
   var chat: AgentChat {
@@ -743,7 +752,8 @@ struct REPLSession: Sendable {
       updatedAt: updatedAt,
       isArchived: isArchived,
       sessionID: sessionID,
-      subagents: subagents)
+      subagents: subagents,
+      runtimeConfiguration: runtimeConfiguration)
   }
 
   /// Names a placeholder chat after its first message; chosen titles stay.
@@ -1146,7 +1156,10 @@ struct MaiCLI {
         projectSettingsURL: home.storageDirectory(for: project).appendingPathComponent(
           "settings.json"),
         mode: options.approvalMode)
-      let runtime = AgentRuntime(approvalHandler: approvalHandler)
+      // Chat history owns these records until /agents clear. The runtime's
+      // bounded default can evict a parent before its subtree is saved.
+      let runtime = AgentRuntime(
+        approvalHandler: approvalHandler, supervisor: AgentSupervisor(finishedRetention: .max))
       if await approvalHandler.isDebugEnabled() {
         do {
           await runtime.configureDebugLog(
@@ -1226,6 +1239,9 @@ struct MaiCLI {
         options: options)
       var workspace = restored.workspace
       profile = SessionProfile(definition: workspace.selectedChat!.primaryAgent)
+      if let saved = workspace.selectedChat?.runtimeConfiguration {
+        configuration = saved.applying(to: configuration ?? MaiConfiguration())
+      }
       let setup = try await configureRuntime(
         runtime,
         plugins: plugins,
@@ -1287,6 +1303,10 @@ struct MaiCLI {
         projectInstructionsSection(configuration, terminal: terminal))
       await runtime.configurePlanning(configuration?.use.plan ?? true)
       var session = REPLSession(chat: workspace.selectedChat!)
+      if let configuration {
+        session.runtimeConfiguration = AgentChatConfiguration(
+          configuration: configuration, providerBaseURLs: setup.providerBaseURLs)
+      }
       session.pendingContent.append(contentsOf: try options.imagePaths.map(imageContent))
       if options.readStdin {
         session.pendingContent.append(
@@ -1326,22 +1346,37 @@ struct MaiCLI {
           options: options, environment: environment)
         return
       }
-      if loaded == nil {
+      if loaded == nil, FileManager.default.fileExists(atPath: configurationPath) {
         await terminal.line("Created \(configurationPath)", to: .standardError)
       }
       if let prompt = options.initialPrompt {
-        var oneShotProcess: AgentPID?
+        var oneShotProcess: AgentPID? = await runtime.allocateProcess(
+          agentID: session.profile.agentID, task: session.title)
+        await runtime.supervisor.restore(session.subagents, under: oneShotProcess!)
         let succeeded = await submit(
           prompt,
           session: &session,
           runtime: runtime,
           process: &oneShotProcess,
-          terminal: terminal)
+          terminal: terminal,
+          checkpoint: { chat in
+            workspace.upsert(chat, selecting: true)
+            try store.commit(&workspace)
+          })
         if let process = oneShotProcess {
           session.subagents = AgentProcessRecord.merging(
             saved: session.subagents,
             current: await runtime.supervisor.records(under: process))
+          if !succeeded {
+            let partial = await runtime.supervisor.transcript(process)
+            if !partial.isEmpty {
+              session.history.replaceAll(
+                with: AgentTranscriptEditor.answeringUnansweredToolCalls(
+                  in: partial, reason: "The previous run was interrupted."))
+            }
+          }
         }
+        session.touch()
         workspace.upsert(session.chat, selecting: true)
         try store.commit(&workspace)
         if !succeeded { exit(1) }
@@ -2121,7 +2156,9 @@ struct MaiCLI {
     }
 
     func mainProcess() async -> AgentPID {
-      if let pid = chatProcessIDs[session.id] { return pid }
+      if let pid = chatProcessIDs[session.id], await runtime.supervisor.info(pid) != nil {
+        return pid
+      }
       let pid = await runtime.allocateProcess(agentID: session.profile.agentID, task: session.title)
       chatProcessIDs[session.id] = pid
       return pid
@@ -2132,16 +2169,69 @@ struct MaiCLI {
     /// saved copy, and what the table has since forgotten stays as saved.
     /// Called wherever the workspace is about to be written.
     func recordSubagents() async {
+      if let configuration {
+        session.runtimeConfiguration = AgentChatConfiguration(
+          configuration: configuration, providerBaseURLs: visual.providerBaseURLs.snapshot())
+      }
       for (chatID, pid) in chatProcessIDs {
         let current = await runtime.supervisor.records(under: pid)
         if chatID == session.id {
-          session.subagents = AgentProcessRecord.merging(
+          let records = AgentProcessRecord.merging(
             saved: session.subagents, current: current)
+          if records != session.subagents {
+            session.subagents = records
+            session.touch()
+          }
         } else if var chat = workspace.chats.first(where: { $0.id == chatID }) {
-          chat.subagents = AgentProcessRecord.merging(saved: chat.subagents, current: current)
-          workspace.upsert(chat)
+          let records = AgentProcessRecord.merging(saved: chat.subagents, current: current)
+          if records != chat.subagents {
+            chat.subagents = records
+            chat.touch()
+            workspace.upsert(chat)
+          }
         }
       }
+    }
+
+    // Provider and task registries are shared by running agents. Build all
+    // providers before changing them, and leave a failed switch on its old chat.
+    func restoreChatConfiguration(previous: REPLSession, isNewChat: Bool) async throws {
+      guard previous.id != session.id else { return }
+      if isNewChat {
+        session.runtimeConfiguration = previous.runtimeConfiguration
+        return
+      }
+      let base: MaiConfiguration
+      if let path = visual.configurationPath, FileManager.default.fileExists(atPath: path) {
+        base = try MaiConfiguration.load(from: URL(fileURLWithPath: path))
+      } else {
+        base = configuration ?? MaiConfiguration()
+      }
+      let draft = session.runtimeConfiguration?.applying(to: base) ?? base
+      let saved = AgentChatConfiguration(configuration: draft)
+      guard saved != previous.runtimeConfiguration else { return }
+      guard await runtime.supervisor.liveProcesses().isEmpty else {
+        throw CLIError.chatSettingsWhileRunning
+      }
+      var providers: [any ChatProvider] = []
+      for provider in draft.providers {
+        providers.append(
+          try await plugins.makeProvider(
+            from: provider, environment: ProcessInfo.processInfo.environment))
+      }
+      for provider in providers { try await runtime.register(provider, replacingExisting: true) }
+      for agent in draft.agents {
+        try await runtime.register(agent: agent, replacingExisting: true)
+      }
+      await runtime.configureTaskAgents(draft.taskAgents)
+      configuration = draft
+      visual.providerBaseURLs.replace(
+        Dictionary(
+          uniqueKeysWithValues: draft.providers.compactMap { provider in
+            provider.baseURL.map { (provider.id, $0) }
+          }))
+      visual.modelCatalog.invalidate()
+      session.runtimeConfiguration = saved
     }
 
     /// Puts the agents saved with the chat at the prompt back in the process
@@ -2166,12 +2256,29 @@ struct MaiCLI {
     /// table no longer holds, after `/agents clear`. Answers how many went.
     func dropForgottenSubagents() async -> Int {
       let known = Set(await runtime.supervisor.processes().map(\.runID))
-      let before = session.subagents.count
+      var dropped = session.subagents.count
       session.subagents.removeAll { !known.contains($0.runID) }
-      return before - session.subagents.count
+      dropped -= session.subagents.count
+      for var chat in workspace.chats
+      where chat.id != session.id && restoredChatIDs.contains(chat.id) {
+        let before = chat.subagents.count
+        chat.subagents.removeAll { !known.contains($0.runID) }
+        if before != chat.subagents.count {
+          dropped += before - chat.subagents.count
+          chat.touch()
+          workspace.upsert(chat)
+        }
+      }
+      return dropped
     }
 
     func beginTurn(_ request: AgentRequest, process pid: AgentPID, kind: REPLTurnKind) async {
+      if kind == .chat {
+        await recordSubagents()
+        session.touch()
+        workspace.upsert(session.chat, selecting: true)
+        await saveWorkspace(&workspace, store: store, terminal: terminal)
+      }
       await terminal.resetResponse()
       let task = Task {
         try await runtime.run(request, process: pid) { event in
@@ -2904,6 +3011,8 @@ struct MaiCLI {
           {
             await recordSubagents()
             workspace.upsert(session.chat, selecting: true)
+            let previousSession = session
+            let previousWorkspace = workspace
             await handleWorkspaceChatCommand(
               argument,
               session: &session,
@@ -2912,6 +3021,16 @@ struct MaiCLI {
               configuration: configuration,
               chatProcess: chatProcessIDs[session.id],
               terminal: terminal)
+            do {
+              try await restoreChatConfiguration(
+                previous: previousSession,
+                isNewChat: !previousWorkspace.chats.contains { $0.id == session.id })
+            } catch {
+              session = previousSession
+              workspace = previousWorkspace
+              await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+            }
+            await recordSubagents()
             await restoreSavedSubagents()
             workspace.upsert(session.chat, selecting: true)
             await saveWorkspace(&workspace, store: store, terminal: terminal)
@@ -3003,6 +3122,7 @@ struct MaiCLI {
             loop.exiting = true
             break events
           }
+          await recordSubagents()
           await releasePendingApprovalsIfUnattended()
           #if PMAI_HAS_VISUAL
             if text == "/visual", let snapshot = session.visualSnapshot {
@@ -3235,6 +3355,18 @@ struct MaiCLI {
         default:
           break
         }
+        // Background children may finish after the main turn. Save their
+        // progress here too, while their parent chat is still identifiable.
+        let info: AgentProcessInfo
+        switch change {
+        case .started(let value), .changed(let value), .attention(let value), .finished(let value):
+          info = value
+        }
+        if info.depth > 0 {
+          await recordSubagents()
+          workspace.upsert(session.chat, selecting: true)
+          await saveWorkspace(&workspace, store: store, terminal: terminal)
+        }
         await refreshStatus()
       }
     }
@@ -3318,12 +3450,13 @@ struct MaiCLI {
     }
   }
 
-  private static func submit(
+  @MainActor private static func submit(
     _ text: String,
     session: inout REPLSession,
     runtime: AgentRuntime,
     process: inout AgentPID?,
-    terminal: TerminalWriter
+    terminal: TerminalWriter,
+    checkpoint: (AgentChat) throws -> Void = { _ in }
   ) async -> Bool {
     var content: [ContentPart] = [.text(text)]
     content.append(contentsOf: session.pendingContent)
@@ -3332,6 +3465,8 @@ struct MaiCLI {
     session.refreshTitle(from: text)
     await terminal.resetResponse()
     do {
+      session.touch()
+      try checkpoint(session.chat)
       let profile = session.profile
       let request = AgentRequest(
         agentID: profile.agentID,
@@ -10457,7 +10592,8 @@ struct MaiCLI {
           updatedAt: untouched ? old!.updatedAt : Date(),
           isArchived: old?.isArchived ?? false,
           sessionID: conversation.sessionID,
-          subagents: old?.subagents ?? [])
+          subagents: old?.subagents ?? [],
+          runtimeConfiguration: old?.runtimeConfiguration)
       }
       return AgentChatWorkspace(chats: chats, selectedChatID: focusedID)
     }

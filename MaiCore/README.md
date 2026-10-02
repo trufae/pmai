@@ -340,11 +340,24 @@ updated chat. Resuming or switching to a saved chat restores its provider,
 model, reasoning options, instructions, run limits, and tool settings.
 Environment model/provider defaults apply to new chats. Explicit flags such
 as `--model`, `--effort`, and `--max-turns` override only the chat being opened.
-Resumed chats use their provider's saved endpoint unless `--base-url` is
-given; credentials still resolve from the current configuration/environment.
+Chats snapshot their provider definitions (including effective launch-time
+base URLs, headers and options), task-model assignments, and named subagent
+definitions. Resuming restores these even when shared defaults have changed
+or those definitions have been removed. `--base-url`, `--compact-agent`, and
+`--tool-agent` override the saved setup for that chat and survive its next
+resume; shared defaults change only when requested. API keys and authentication
+headers still resolve from the current configuration/environment. Older chats
+without a setup snapshot fall back to the current configuration and acquire a
+snapshot when saved; endpoints never recorded by an older version cannot be
+recovered. Switching between different setups waits until active agents finish.
 A chat is saved with the agents its runs started and their
 transcripts, so a reopened chat lists them under `/agents tree`, `/agents log
-PID` reads one, and `/agents clear` drops them (see `doc/agents.md`). `/chat list`
+PID` reads one, and `/agents clear` drops them (see `doc/agents.md`). This also
+works for one-shot resumes. Finished agents retain their transcripts; agents
+left running or paused by a previous process appear as cancelled history and
+are never silently relaunched. The CLI retains the complete saved tree until
+it is cleared. Interactive turns checkpoint before inference and save child
+progress as it changes. `/chat list`
 shows the earlier chats grouped by day (Today, Yesterday, This week, Last week,
 then dates), newest first, with their agent, size, and last-update time, and
 lists archived chats last; `/chat list active` and `/chat list archived` narrow

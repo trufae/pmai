@@ -3,6 +3,18 @@
 Sample coding tasks that pmai should solve, plus a harness that records every
 model call so the runs can be studied for wasted turns and tokens.
 
+Session persistence regression checks use temporary projects and configurations:
+
+    swift build --package-path MaiCore --product pmai
+    python3 test/repl-resume-smoke.py MaiCore/.build/debug/pmai
+    python3 test/repl-resume-state-smoke.py MaiCore/.build/debug/pmai
+    python3 test/repl-resume-routing-smoke.py MaiCore/.build/debug/pmai
+
+The state check covers provider/task snapshots, removed definitions, chat
+switching, and saved subagent trees. The routing check starts a local mock HTTP
+provider and verifies actual requests, credential rotation, one-shot history,
+and recovery after terminating a process during nested work.
+
 ## Layout
 
 - `cases/<NN-name>/` — one workflow each: `prompt.txt` (the user message),

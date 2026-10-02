@@ -20,8 +20,8 @@ public enum ChatSession {
 }
 
 /// A durable chat transcript associated with one primary agent definition.
-/// Providers remain normalized in `MaiConfiguration`; the agent's provider ID
-/// resolves the endpoint, credentials, and provider-specific options.
+/// Hosts can snapshot the inference setup so changes to installation defaults
+/// do not change the models or endpoints of a resumed chat.
 public struct AgentChat: StoredChat, Equatable {
   /// Title given to a chat that has not received its first message yet. A chat
   /// keeping this title with no conversation is disposable, like the placeholder
@@ -46,6 +46,7 @@ public struct AgentChat: StoredChat, Equatable {
   /// once the chat is resumed, and what the debug export carries. Hosts
   /// bring these up to date from the supervisor as runs end.
   public var subagents: [AgentProcessRecord]
+  public var runtimeConfiguration: AgentChatConfiguration?
 
   public init(
     id: UUID = UUID(),
@@ -57,7 +58,8 @@ public struct AgentChat: StoredChat, Equatable {
     updatedAt: Date = Date(),
     isArchived: Bool = false,
     sessionID: String? = nil,
-    subagents: [AgentProcessRecord] = []
+    subagents: [AgentProcessRecord] = [],
+    runtimeConfiguration: AgentChatConfiguration? = nil
   ) {
     self.id = id
     self.title = title
@@ -69,11 +71,12 @@ public struct AgentChat: StoredChat, Equatable {
     self.isArchived = isArchived
     self.sessionID = sessionID ?? ChatSession.newID()
     self.subagents = subagents
+    self.runtimeConfiguration = runtimeConfiguration
   }
 
   private enum CodingKeys: String, CodingKey {
     case id, title, primaryAgent, messages, pendingContent, createdAt, updatedAt, isArchived
-    case sessionID, subagents
+    case sessionID, subagents, runtimeConfiguration
   }
 
   public init(from decoder: Decoder) throws {
@@ -92,6 +95,8 @@ public struct AgentChat: StoredChat, Equatable {
     isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
     subagents =
       try container.decodeIfPresent([AgentProcessRecord].self, forKey: .subagents) ?? []
+    runtimeConfiguration = try container.decodeIfPresent(
+      AgentChatConfiguration.self, forKey: .runtimeConfiguration)
   }
 
   /// The title shown to people; empty titles fall back to the placeholder.

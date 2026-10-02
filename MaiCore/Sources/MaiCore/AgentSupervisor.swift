@@ -216,8 +216,8 @@ public actor AgentSupervisor {
 
   /// Puts records a host saved back in the table under `parent` — a chat's
   /// own process — with fresh pids, so they are listed, read, and exported
-  /// like the processes of this session. Records come parents before
-  /// children, and a child whose `parentRunID` is not among them hangs off
+  /// like the processes of this session. Records may arrive in any order,
+  /// and a child whose `parentRunID` is not among them hangs off
   /// `parent`. A process that was still running when it was saved is listed
   /// as cancelled, with `restoredWhileRunning` as its reason, since the run
   /// that owned it is gone; nothing restored is ever run again. Answers the
@@ -226,8 +226,21 @@ public actor AgentSupervisor {
   public func restore(_ records: [AgentProcessRecord], under parent: AgentPID) -> [AgentPID] {
     guard let root = entries[parent] else { return [] }
     var pidsByRunID: [UUID: AgentPID] = [:]
-    var assigned: [AgentPID] = []
-    for record in records {
+    for process in tree().subtree(of: parent).dropFirst() {
+      pidsByRunID[process.runID] = process.pid
+    }
+    var pending = records.filter { pidsByRunID[$0.runID] == nil }
+    let savedRunIDs = Set(records.map(\.runID))
+    while !pending.isEmpty {
+      // If every remaining record depends on another remaining record, the
+      // file has a cycle. Attach one to the root to break it deterministically.
+      let index =
+        pending.firstIndex { record in
+          guard let parentID = record.parentRunID else { return true }
+          return pidsByRunID[parentID] != nil || !savedRunIDs.contains(parentID)
+        } ?? pending.startIndex
+      let record = pending.remove(at: index)
+      guard pidsByRunID[record.runID] == nil else { continue }
       let pid = AgentPID(nextPID)
       nextPID += 1
       let parentPID = record.parentRunID.flatMap { pidsByRunID[$0] } ?? parent
@@ -253,11 +266,10 @@ public actor AgentSupervisor {
         isCollected: true)
       entries[pid] = Entry(info: info, transcript: record.messages)
       pidsByRunID[record.runID] = pid
-      assigned.append(pid)
       publish(.started(info))
     }
     pruneFinished()
-    return assigned
+    return records.compactMap { pidsByRunID[$0.runID] }
   }
 
   // MARK: - Inbox

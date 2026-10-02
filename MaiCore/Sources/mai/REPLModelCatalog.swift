@@ -32,6 +32,16 @@ final class REPLModelCatalog: @unchecked Sendable {
     }
   }
 
+  /// The same provider ID can point at a different endpoint in another chat.
+  func invalidate() {
+    lock.withLock {
+      for task in pending.values { task.cancel() }
+      pending.removeAll()
+      models.removeAll()
+      retryAfter.removeAll()
+    }
+  }
+
   func completions(for line: String, runtime: AgentRuntime) -> [String] {
     guard
       let prefix = [

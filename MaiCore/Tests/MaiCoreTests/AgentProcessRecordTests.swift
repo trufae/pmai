@@ -107,6 +107,7 @@ func recordsFromSupervisor() async throws {
   #expect(merged[1].messages.last?.text == "old answer")
   #expect(AgentProcessRecord.merging(saved: [], current: records) == records)
   #expect(AgentProcessRecord.merging(saved: records, current: []) == records)
+  #expect(AgentProcessRecord.merging(saved: records + records, current: []) == records)
 }
 
 @Test("Saved records restore under a chat with fresh pids, and the tools read them like live ones")
@@ -231,4 +232,34 @@ func chatFileKeepsSubagents() throws {
   #expect(decoded.parentRunID == nil)
   #expect(decoded.updatedAt == decoded.finishedAt)
   #expect(decoded.messages == saved.messages)
+}
+
+@Test("Restoring unordered or duplicate records preserves the tree and is idempotent")
+func restoreUnorderedRecords() async throws {
+  let parentID = UUID()
+  let parent = record(
+    pid: 7, parent: 1, runID: parentID, agentID: "parent", task: "work",
+    state: .completed, depth: 1, messages: [.assistant("parent result")])
+  let child = record(
+    pid: 8, parent: 7, parentRunID: parentID, agentID: "child", task: "nested work",
+    state: .paused, depth: 2, messages: [.user("child task")])
+  let supervisor = AgentSupervisor()
+  let chat = await supervisor.register(
+    runID: UUID(), parent: nil, agentID: "main", task: "chat", depth: 0)
+  let pids = await supervisor.restore([child, parent, child], under: chat)
+  #expect(pids.count == 3)
+  #expect(pids[0] == pids[2])
+  #expect(await supervisor.info(pids[0])?.parent == pids[1])
+  #expect(await supervisor.info(pids[0])?.depth == 2)
+  #expect(await supervisor.info(pids[0])?.state == .cancelled)
+  #expect(await supervisor.restore([child, parent], under: chat) == Array(pids.prefix(2)))
+  #expect(await supervisor.records(under: chat).count == 2)
+
+  var cyclicParent = parent
+  cyclicParent.parentRunID = child.runID
+  let other = await supervisor.register(
+    runID: UUID(), parent: nil, agentID: "main", task: "other chat", depth: 0)
+  let recovered = await supervisor.restore([cyclicParent, child], under: other)
+  #expect(recovered.count == 2)
+  #expect(await supervisor.tree().subtree(of: other).count == 3)
 }

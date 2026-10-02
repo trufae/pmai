@@ -446,10 +446,9 @@ public struct AgentProcessRecord: Codable, Equatable, Sendable, Identifiable {
     saved: [AgentProcessRecord],
     current: [AgentProcessRecord]
   ) -> [AgentProcessRecord] {
-    var merged = saved
+    var merged: [AgentProcessRecord] = []
     var indexByRunID: [UUID: Int] = [:]
-    for (index, record) in merged.enumerated() { indexByRunID[record.runID] = index }
-    for record in current {
+    for record in saved + current {
       if let index = indexByRunID[record.runID] {
         merged[index] = record
       } else {
