@@ -4204,8 +4204,16 @@ struct MaiCLI {
       await terminal.line(
         "Use /stop at the chat prompt to interrupt the running turn and keep its queue.")
     case "/continue":
-      await terminal.line(
-        "Use /continue at the chat prompt; in visual mode, send \"continue\" as a message.")
+        // /continue is handled directly at the chat prompt; from a command it
+        // just explains itself. If text is supplied, queue it as a user message
+        // so the next /continue at the prompt sees it.
+        if argument.isEmpty {
+          await terminal.line(
+                "Use /continue at the chat prompt; in visual mode, send \"continue\" as a message.")
+        } else {
+          session.history.append(AgentMessage.user(argument))
+          await terminal.line("Message added to history; use /continue at the chat prompt to resume.")
+        }
     default:
       await terminal.line("Unknown command. Type /help.")
     }
