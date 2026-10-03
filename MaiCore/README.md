@@ -740,6 +740,21 @@ they are for and how the tools work together: `agent_start`, `agent_status`,
 `skills_*` tools `skills` (`AgentRuntime.builtInToolGroups`); enable or
 disable each group independently on each agent.
 
+GitHub keeps the same read-only tools with optional authentication. Export
+`GITHUB_TOKEN` before starting pmai, or save a token with
+`/tools set github githubAPIKey YOUR_TOKEN`; `/tools set github githubAPIKeyEnvironment GH_TOKEN`
+selects another environment variable. The selected environment variable takes
+precedence over the saved key. Enable the group with `/tools enable github`.
+On iOS, set **GitHub personal access token** in Settings → Tools → Native → GitHub.
+With no token, public access works as before. The token is a setting, never a
+model tool argument. Private release links still require GitHub login in the browser.
+[Authentication](https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api)
+uses the same endpoints with a bearer token. For a fine-grained token, select
+repositories and grant read permissions for Contents (files, commits, releases),
+Pull requests, Issues, Checks (CI results), and Actions (job logs), as needed.
+[Personal-token limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)
+are normally 5,000 requests/hour, compared with 60/hour for anonymous access.
+
 MCP tool names are namespaced as `<toolNamePrefix>::<remoteName>`, or
 `<server-id>::<remoteName>` when no prefix is configured. Connecting an enabled
 MCP exposes all of that server's discovered tools to every agent; the server is

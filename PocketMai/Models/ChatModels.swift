@@ -2786,6 +2786,7 @@ struct NativeToolSettings: Codable, Equatable, Sendable {
   var webxdcAllowRealtimeChannels: Bool = false
   var voices: VoiceSettings = .defaults
   var conversationSearchScope: ConversationSearchScope = .none
+  var githubAPIKey: String = ""
   var mastodonInstance: String = "mastodon.social"
   var mastodonAPIKey: String = ""
   var mastodonWriteEnabled: Bool = false
@@ -2808,6 +2809,7 @@ struct NativeToolSettings: Codable, Equatable, Sendable {
     case webxdcAllowNotifications, webxdcAllowRealtimeChannels
     case voices
     case conversationSearchScope, mastodonInstance, mastodonAPIKey, mastodonWriteEnabled
+    case githubAPIKey
   }
 
   private enum LegacyCodingKeys: String, CodingKey {
@@ -2924,6 +2926,7 @@ struct NativeToolSettings: Codable, Equatable, Sendable {
       (try? c.decode(String.self, forKey: .mastodonInstance)) ?? defaults.mastodonInstance
     mastodonAPIKey =
       (try? c.decode(String.self, forKey: .mastodonAPIKey)) ?? defaults.mastodonAPIKey
+    githubAPIKey = (try? c.decode(String.self, forKey: .githubAPIKey)) ?? defaults.githubAPIKey
     mastodonWriteEnabled =
       (try? c.decode(Bool.self, forKey: .mastodonWriteEnabled)) ?? defaults.mastodonWriteEnabled
   }
@@ -2965,6 +2968,7 @@ struct NativeToolSettings: Codable, Equatable, Sendable {
     try c.encode(conversationSearchScope, forKey: .conversationSearchScope)
     try c.encode(mastodonInstance, forKey: .mastodonInstance)
     try c.encode(mastodonAPIKey, forKey: .mastodonAPIKey)
+    try c.encode(githubAPIKey, forKey: .githubAPIKey)
     try c.encode(mastodonWriteEnabled, forKey: .mastodonWriteEnabled)
   }
 }

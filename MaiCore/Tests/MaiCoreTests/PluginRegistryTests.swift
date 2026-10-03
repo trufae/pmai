@@ -65,6 +65,8 @@ func toolFactoryGroups() async throws {
   let github = try #require(groups.first { $0.id == "github" })
   #expect(github.sourceID == "standard")
   #expect(github.toolNames == Set(MaiGitHubTool.toolNames))
+  #expect(github.options.contains { $0.id == "githubAPIKey" && $0.kind == .secret })
+  #expect(github.options.contains { $0.id == "githubAPIKeyEnvironment" })
   let mastodon = try #require(groups.first { $0.id == "mastodon" })
   #expect(mastodon.options.contains { $0.id == "mastodonAPIKeyEnvironment" })
   #expect(mastodon.options.contains { $0.id == "mastodonWriteEnabled" })

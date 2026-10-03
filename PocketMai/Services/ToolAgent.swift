@@ -96,7 +96,8 @@ enum BuiltInToolCatalog {
       guard !store.settings.airplaneModeEnabled else {
         return "Error: GitHub tools are disabled while Airplane Mode is enabled."
       }
-      guard let tool = MaiGitHubTool(name: name) else {
+      guard let tool = MaiGitHubTool(name: name, apiKey: store.settings.toolSettings.githubAPIKey)
+      else {
         return "Error: GitHub tool '\(name)' is not registered."
       }
       return await PocketMaiPluginHost.shared.call(tool: tool, arguments: call.argumentValues)

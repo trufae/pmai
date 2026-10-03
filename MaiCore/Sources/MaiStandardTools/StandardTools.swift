@@ -89,7 +89,10 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
       ]
       + MaiFileWorkspaceTool.makeTools(configuration: fileConfiguration)
       + MaiRunTool.makeTools(configuration: runConfiguration)
-      + MaiGitHubTool.makeTools()
+      + MaiGitHubTool.makeTools(
+        apiKey: context.secret(
+          "githubAPIKey", environmentOption: "githubAPIKeyEnvironment",
+          defaultEnvironment: "GITHUB_TOKEN"))
     guard let names = context.options["tools"]?.arrayValue else { return tools }
     let enabled = Set(names.compactMap(\.stringValue))
     return tools.filter { enabled.contains($0.definition.name) }
@@ -263,10 +266,17 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
         id: "github",
         displayName: "GitHub",
         description:
-          "Browse public GitHub repositories without cloning them: list and read files, commits, pull "
+          "Browse GitHub repositories without cloning them: list and read files, commits, pull "
           + "requests with their diffs, issues, releases, and CI runs with their logs. Use it to review "
-          + "a change, answer a question about a project, or fetch one file; nothing here writes to GitHub.",
-        toolNames: Set(MaiGitHubTool.toolNames)),
+          + "a change, answer a question about a project, or fetch one file. An optional token enables "
+          + "private repositories and higher rate limits; all actions are read-only.",
+        toolNames: Set(MaiGitHubTool.toolNames),
+        options: [
+          .init(id: "githubAPIKey", label: "Personal access token", kind: .secret),
+          .init(
+            id: "githubAPIKeyEnvironment", label: "Token environment variable",
+            defaultValue: .string("GITHUB_TOKEN")),
+        ]),
     ].compactMap { group in
       let names = group.toolNames.intersection(available)
       guard !names.isEmpty else { return nil }

@@ -1754,10 +1754,16 @@ struct SettingsView: View {
       .foregroundStyle(.secondary)
     case .github:
       Text(
-        "Read-only GitHub tools for public repositories using the unauthenticated GitHub API: list and review pull requests and diffs, browse files, read commit history, check issues, and inspect CI check runs and job logs. No login is used, so private repositories are unreachable and the anonymous rate limit of 60 requests per hour applies. Disabled by default; each call asks for confirmation."
+        "Read GitHub files, commits, pull requests, diffs, issues, releases, and CI results. An optional personal access token enables private repositories, job logs, and higher rate limits. Leave empty for public access. For a fine-grained token, select repositories and grant read access to Contents, Pull requests, Issues, Checks, and Actions as needed. Disabled by default; each call asks for confirmation."
       )
       .font(.caption)
       .foregroundStyle(.secondary)
+      SecureField(
+        "GitHub personal access token (optional)",
+        text: settingsBinding(\.toolSettings.githubAPIKey)
+      )
+      .textInputAutocapitalization(.never)
+      .autocorrectionDisabled()
     case .browser:
       Text(
         "Opens web pages in a small in-app browser card. The model can read the page, click, type, scroll, and run JavaScript; tap the card to enlarge it and take over by hand, for example to sign in, then tell the model to continue. Website data such as cookies stays on this device. Calls ask for confirmation."

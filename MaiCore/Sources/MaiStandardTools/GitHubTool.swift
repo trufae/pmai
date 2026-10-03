@@ -5,9 +5,7 @@ import MaiCore
   import FoundationNetworking
 #endif
 
-/// Read-only GitHub tools backed by the public REST API. No authentication is
-/// used, so only public repositories are reachable and the unauthenticated
-/// rate limit (60 requests/hour per IP) applies.
+/// Read-only GitHub REST tools with optional token authentication.
 public struct MaiGitHubTool: AgentTool {
   public static let listPRsName = "github_list_prs"
   public static let prName = "github_pr"
@@ -43,7 +41,7 @@ public struct MaiGitHubTool: AgentTool {
   public static let definitions: [ToolDefinition] = [
     ToolDefinition(
       name: listPRsName,
-      description: "List pull requests of a public GitHub repository.",
+      description: "List pull requests of a GitHub repository.",
       parameters: [
         repoParameter,
         ToolParameterDef(
@@ -73,7 +71,7 @@ public struct MaiGitHubTool: AgentTool {
       ]),
     ToolDefinition(
       name: listFilesName,
-      description: "List files and folders at a path of a public GitHub repository.",
+      description: "List files and folders at a path of a GitHub repository.",
       parameters: [
         repoParameter,
         ToolParameterDef(
@@ -84,7 +82,7 @@ public struct MaiGitHubTool: AgentTool {
       ]),
     ToolDefinition(
       name: readFileName,
-      description: "Read one text file from a public GitHub repository.",
+      description: "Read one text file from a GitHub repository.",
       parameters: [
         repoParameter,
         ToolParameterDef(
@@ -96,7 +94,7 @@ public struct MaiGitHubTool: AgentTool {
     ToolDefinition(
       name: commitsName,
       description:
-        "List recent commits of a public GitHub repository, optionally for one file or folder. Useful to inspect history or suggest commit messages.",
+        "List recent commits of a GitHub repository, optionally for one file or folder. Useful to inspect history or suggest commit messages.",
       parameters: [
         repoParameter,
         ToolParameterDef(
@@ -117,7 +115,7 @@ public struct MaiGitHubTool: AgentTool {
       ]),
     ToolDefinition(
       name: issuesName,
-      description: "List issues of a public GitHub repository.",
+      description: "List issues of a GitHub repository.",
       parameters: [
         repoParameter,
         ToolParameterDef(
@@ -138,7 +136,7 @@ public struct MaiGitHubTool: AgentTool {
     ToolDefinition(
       name: releasesName,
       description:
-        "List releases of a public GitHub repository as markdown, with each release's downloadable assets and source archives as download links.",
+        "List releases of a GitHub repository as markdown, with each release's downloadable assets and source archives as download links.",
       parameters: [
         repoParameter,
         limitParameter,
@@ -168,46 +166,51 @@ public struct MaiGitHubTool: AgentTool {
   ]
 
   public let definition: ToolDefinition
+  public let apiKey: String
 
-  public init?(name: String) {
+  public init?(name: String, apiKey: String = "") {
     guard let definition = Self.definitions.first(where: { $0.name == name }) else { return nil }
     self.definition = definition
+    self.apiKey = apiKey
   }
 
-  public static func makeTools() -> [MaiGitHubTool] {
-    definitions.compactMap { MaiGitHubTool(name: $0.name) }
+  public static func makeTools(apiKey: String = "") -> [MaiGitHubTool] {
+    definitions.compactMap { MaiGitHubTool(name: $0.name, apiKey: apiKey) }
   }
 
   public func call(arguments: JSONValue, context: ToolExecutionContext) async throws -> ToolOutput {
     let result = await Self.execute(
       name: definition.name,
-      arguments: arguments.objectValue ?? [:])
+      arguments: arguments.objectValue ?? [:], apiKey: apiKey)
     return ToolOutput(text: result, isError: result.hasPrefix("Error:"))
   }
 
   public static func execute(
     name: String,
-    arguments: [String: AgentToolArgumentValue]
+    arguments: [String: AgentToolArgumentValue],
+    apiKey: String = "",
+    session: URLSession = .shared
   ) async -> String {
     guard let repo = repoPath(arguments["repo"]?.stringValue ?? "") else {
       return "Error: repo is required as owner/name, such as torvalds/linux."
     }
+    let service = GitHubService(apiKey: apiKey, session: session)
     switch name {
     case listPRsName:
-      return await GitHubService.listPullRequests(
+      return await service.listPullRequests(
         repo: repo, state: stateArgument(arguments), limit: limitArgument(arguments))
     case prName:
       guard let number = numberArgument(arguments, key: "number") else {
         return "Error: number is required."
       }
-      return await GitHubService.pullRequest(repo: repo, number: number)
+      return await service.pullRequest(repo: repo, number: number)
     case prDiffName:
       guard let number = numberArgument(arguments, key: "number") else {
         return "Error: number is required."
       }
-      return await GitHubService.pullRequestDiff(repo: repo, number: number)
+      return await service.pullRequestDiff(repo: repo, number: number)
     case listFilesName:
-      return await GitHubService.listFiles(
+      return await service.listFiles(
         repo: repo,
         path: arguments["path"]?.stringValue ?? "",
         ref: arguments["ref"]?.stringValue ?? "")
@@ -215,10 +218,10 @@ public struct MaiGitHubTool: AgentTool {
       let path = (arguments["path"]?.stringValue ?? "")
         .trimmingCharacters(in: .whitespacesAndNewlines)
       guard !path.isEmpty else { return "Error: path is required." }
-      return await GitHubService.readFile(
+      return await service.readFile(
         repo: repo, path: path, ref: arguments["ref"]?.stringValue ?? "")
     case commitsName:
-      return await GitHubService.commits(
+      return await service.commits(
         repo: repo,
         path: arguments["path"]?.stringValue ?? "",
         ref: arguments["ref"]?.stringValue ?? "",
@@ -227,27 +230,27 @@ public struct MaiGitHubTool: AgentTool {
       let sha = (arguments["sha"]?.stringValue ?? "")
         .trimmingCharacters(in: .whitespacesAndNewlines)
       guard !sha.isEmpty else { return "Error: sha is required." }
-      return await GitHubService.commit(repo: repo, sha: sha)
+      return await service.commit(repo: repo, sha: sha)
     case issuesName:
-      return await GitHubService.listIssues(
+      return await service.listIssues(
         repo: repo, state: stateArgument(arguments), limit: limitArgument(arguments))
     case issueName:
       guard let number = numberArgument(arguments, key: "number") else {
         return "Error: number is required."
       }
-      return await GitHubService.issue(repo: repo, number: number)
+      return await service.issue(repo: repo, number: number)
     case releasesName:
-      return await GitHubService.listReleases(repo: repo, limit: limitArgument(arguments))
+      return await service.listReleases(repo: repo, limit: limitArgument(arguments))
     case ciStatusName:
       let ref = (arguments["ref"]?.stringValue ?? "")
         .trimmingCharacters(in: .whitespacesAndNewlines)
       guard !ref.isEmpty else { return "Error: ref is required." }
-      return await GitHubService.ciStatus(repo: repo, ref: ref)
+      return await service.ciStatus(repo: repo, ref: ref)
     case ciLogName:
       guard let jobID = numberArgument(arguments, key: "job_id") else {
         return "Error: job_id is required."
       }
-      return await GitHubService.ciLog(repo: repo, jobID: jobID)
+      return await service.ciLog(repo: repo, jobID: jobID)
     default:
       return "Error: unknown GitHub tool."
     }
@@ -292,13 +295,15 @@ public struct MaiGitHubTool: AgentTool {
   }
 }
 
-enum GitHubService {
-  private static let userAgent = "mai/1.0 (+https://github.com/trufae/mai)"
-  private static let requestTimeout: TimeInterval = 15
-  private static let maxBodyChars = 4_000
-  private static let maxFileChars = 30_000
-  private static let maxDiffChars = 30_000
-  private static let maxLogChars = 15_000
+private struct GitHubService {
+  let apiKey: String
+  let session: URLSession
+  private let userAgent = "mai/1.0 (+https://github.com/trufae/mai)"
+  private let requestTimeout: TimeInterval = 15
+  private let maxBodyChars = 4_000
+  private let maxFileChars = 30_000
+  private let maxDiffChars = 30_000
+  private let maxLogChars = 15_000
 
   private struct RequestError: LocalizedError {
     let message: String
@@ -307,7 +312,7 @@ enum GitHubService {
 
   // MARK: - Pull requests
 
-  static func listPullRequests(repo: String, state: String, limit: Int) async -> String {
+  func listPullRequests(repo: String, state: String, limit: Int) async -> String {
     do {
       let data = try await get(
         "/repos/\(repo)/pulls",
@@ -334,7 +339,7 @@ enum GitHubService {
     }
   }
 
-  static func pullRequest(repo: String, number: Int) async -> String {
+  func pullRequest(repo: String, number: Int) async -> String {
     do {
       let data = try await get("/repos/\(repo)/pulls/\(number)")
       guard let pr = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -369,7 +374,7 @@ enum GitHubService {
     }
   }
 
-  private static func pullRequestFiles(repo: String, number: Int) async -> String {
+  private func pullRequestFiles(repo: String, number: Int) async -> String {
     guard
       let data = try? await get(
         "/repos/\(repo)/pulls/\(number)/files",
@@ -385,7 +390,7 @@ enum GitHubService {
     }.joined(separator: "\n")
   }
 
-  static func pullRequestDiff(repo: String, number: Int) async -> String {
+  func pullRequestDiff(repo: String, number: Int) async -> String {
     do {
       let data = try await get(
         "/repos/\(repo)/pulls/\(number)", accept: "application/vnd.github.diff")
@@ -400,7 +405,7 @@ enum GitHubService {
 
   // MARK: - Repository contents
 
-  static func listFiles(repo: String, path: String, ref: String) async -> String {
+  func listFiles(repo: String, path: String, ref: String) async -> String {
     let cleanPath = normalizedPath(path)
     do {
       let data = try await get(
@@ -423,7 +428,7 @@ enum GitHubService {
     }
   }
 
-  static func readFile(repo: String, path: String, ref: String) async -> String {
+  func readFile(repo: String, path: String, ref: String) async -> String {
     let cleanPath = normalizedPath(path)
     do {
       let data = try await get(
@@ -441,7 +446,7 @@ enum GitHubService {
 
   // MARK: - Commits
 
-  static func commits(repo: String, path: String, ref: String, limit: Int) async -> String {
+  func commits(repo: String, path: String, ref: String, limit: Int) async -> String {
     var query = [URLQueryItem(name: "per_page", value: String(limit))]
     let cleanPath = normalizedPath(path)
     if !cleanPath.isEmpty {
@@ -474,7 +479,7 @@ enum GitHubService {
     }
   }
 
-  static func commit(repo: String, sha: String) async -> String {
+  func commit(repo: String, sha: String) async -> String {
     do {
       let data = try await get("/repos/\(repo)/commits/\(sha)")
       guard let item = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -519,7 +524,7 @@ enum GitHubService {
 
   // MARK: - Issues
 
-  static func listIssues(repo: String, state: String, limit: Int) async -> String {
+  func listIssues(repo: String, state: String, limit: Int) async -> String {
     do {
       // The /issues endpoint returns pull requests interleaved with issues, so
       // requesting exactly `limit` items and filtering PRs out afterward yields
@@ -554,7 +559,7 @@ enum GitHubService {
     }
   }
 
-  static func issue(repo: String, number: Int) async -> String {
+  func issue(repo: String, number: Int) async -> String {
     do {
       let data = try await get("/repos/\(repo)/issues/\(number)")
       guard let issue = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -582,7 +587,7 @@ enum GitHubService {
     }
   }
 
-  private static func issueComments(repo: String, number: Int) async -> String? {
+  private func issueComments(repo: String, number: Int) async -> String? {
     guard
       let data = try? await get(
         "/repos/\(repo)/issues/\(number)/comments",
@@ -599,7 +604,7 @@ enum GitHubService {
 
   // MARK: - Releases
 
-  static func listReleases(repo: String, limit: Int) async -> String {
+  func listReleases(repo: String, limit: Int) async -> String {
     do {
       let data = try await get(
         "/repos/\(repo)/releases",
@@ -655,7 +660,7 @@ enum GitHubService {
     }
   }
 
-  private static func formattedBytes(_ bytes: Int) -> String {
+  private func formattedBytes(_ bytes: Int) -> String {
     let formatter = ByteCountFormatter()
     formatter.countStyle = .file
     return formatter.string(fromByteCount: Int64(bytes))
@@ -663,7 +668,7 @@ enum GitHubService {
 
   // MARK: - CI
 
-  static func ciStatus(repo: String, ref: String) async -> String {
+  func ciStatus(repo: String, ref: String) async -> String {
     do {
       let data = try await get(
         "/repos/\(repo)/commits/\(ref)/check-runs",
@@ -695,7 +700,7 @@ enum GitHubService {
     }
   }
 
-  static func ciLog(repo: String, jobID: Int) async -> String {
+  func ciLog(repo: String, jobID: Int) async -> String {
     do {
       let data = try await get("/repos/\(repo)/actions/jobs/\(jobID)/logs", accept: "*/*")
       guard let log = String(data: data, encoding: .utf8), !log.isEmpty else {
@@ -708,17 +713,16 @@ enum GitHubService {
         : log
       return "Log of job \(jobID) in \(repo):\n" + tail
     } catch {
-      // Raw log download often requires authentication; the check run's
-      // output and annotations are public and usually carry the failure.
+      // Check output and annotations can still explain unavailable logs.
       if let fallback = await checkRunDetails(repo: repo, checkRunID: jobID) {
         return fallback
       }
       return
-        "Error: \(error.localizedDescription) (GitHub requires authentication to download raw logs of this job; github_ci_status still shows each check's conclusion and summary)."
+        "Error: \(error.localizedDescription) (job logs require a token with Actions read access; github_ci_status shows check summaries)."
     }
   }
 
-  private static func checkRunDetails(repo: String, checkRunID: Int) async -> String? {
+  private func checkRunDetails(repo: String, checkRunID: Int) async -> String? {
     guard
       let data = try? await get("/repos/\(repo)/check-runs/\(checkRunID)"),
       let run = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
@@ -728,7 +732,7 @@ enum GitHubService {
     let status = stringValue(run["status"]) ?? "?"
     let conclusion = stringValue(run["conclusion"]) ?? "pending"
     lines.append(
-      "Raw log of job \(checkRunID) requires authentication; check run details for '\(name)' (\(status)/\(conclusion)):"
+      "Raw log of job \(checkRunID) unavailable; check run details for '\(name)' (\(status)/\(conclusion)):"
     )
     if let output = run["output"] as? [String: Any] {
       if let title = stringValue(output["title"]) { lines.append(title) }
@@ -760,7 +764,7 @@ enum GitHubService {
 
   // MARK: - HTTP
 
-  private static func get(
+  private func get(
     _ path: String,
     query: [URLQueryItem] = [],
     accept: String = "application/vnd.github+json"
@@ -776,9 +780,13 @@ enum GitHubService {
     var request = URLRequest(url: url)
     request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
     request.setValue(accept, forHTTPHeaderField: "Accept")
+    let token = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !token.isEmpty {
+      request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    }
     request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
     request.timeoutInterval = requestTimeout
-    let (data, response) = try await URLSession.shared.data(for: request)
+    let (data, response) = try await session.data(for: request, delegate: GitHubRedirectDelegate())
     guard let http = response as? HTTPURLResponse else {
       throw RequestError(message: "no HTTP response from GitHub.")
     }
@@ -788,12 +796,14 @@ enum GitHubService {
       {
         throw RequestError(
           message:
-            "GitHub API rate limit exceeded (60 unauthenticated requests per hour). Try again later."
+            "GitHub API rate limit exceeded. Try again after the rate limit resets."
         )
       }
       if http.statusCode == 404 {
         throw RequestError(
-          message: "not found on GitHub (private repositories are not accessible without login).")
+          message:
+            "not found on GitHub. Check the repository/ref and token access to private repositories."
+        )
       }
       let body = String(data: data.prefix(300), encoding: .utf8) ?? ""
       throw RequestError(message: "GitHub HTTP \(http.statusCode): \(body)")
@@ -801,42 +811,59 @@ enum GitHubService {
     return data
   }
 
-  private static func refQuery(_ ref: String) -> [URLQueryItem] {
+  private func refQuery(_ ref: String) -> [URLQueryItem] {
     let trimmed = ref.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? [] : [URLQueryItem(name: "ref", value: trimmed)]
   }
 
-  private static func normalizedPath(_ path: String) -> String {
+  private func normalizedPath(_ path: String) -> String {
     path.trimmingCharacters(in: .whitespacesAndNewlines)
       .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
   }
 
-  private static func escapedPath(_ path: String) -> String {
+  private func escapedPath(_ path: String) -> String {
     let allowed = CharacterSet.urlPathAllowed
     return path.split(separator: "/")
       .map { $0.addingPercentEncoding(withAllowedCharacters: allowed) ?? String($0) }
       .joined(separator: "/")
   }
 
-  private static func prStateLabel(_ pr: [String: Any]) -> String {
+  private func prStateLabel(_ pr: [String: Any]) -> String {
     if stringValue(pr["merged_at"]) != nil { return "merged" }
     return stringValue(pr["state"]) ?? "?"
   }
 
-  private static func truncated(_ text: String, limit: Int) -> String {
+  private func truncated(_ text: String, limit: Int) -> String {
     guard text.count > limit else { return text }
     return text.prefix(limit) + "\n[... truncated, \(text.count - limit) characters omitted ...]"
   }
 
-  private static func stringValue(_ raw: Any?) -> String? {
+  private func stringValue(_ raw: Any?) -> String? {
     guard let s = raw as? String, !s.isEmpty else { return nil }
     return s
   }
 
-  private static func intValue(_ raw: Any?) -> Int? {
+  private func intValue(_ raw: Any?) -> Int? {
     if let int = raw as? Int { return int }
     if let double = raw as? Double { return Int(exactly: double) }
     if let number = raw as? NSNumber { return number.intValue }
     return nil
+  }
+}
+
+/// Signed log-download URLs need no GitHub credentials.
+final class GitHubRedirectDelegate: NSObject, URLSessionTaskDelegate {
+  func urlSession(
+    _ session: URLSession, task: URLSessionTask,
+    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+    completionHandler: @escaping @Sendable (URLRequest?) -> Void
+  ) {
+    var request = request
+    if request.url?.scheme != "https" || request.url?.host != "api.github.com"
+      || (request.url?.port ?? 443) != 443
+    {
+      request.setValue(nil, forHTTPHeaderField: "Authorization")
+    }
+    completionHandler(request)
   }
 }

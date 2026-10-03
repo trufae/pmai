@@ -11115,6 +11115,7 @@ struct MaiCLI {
           options: [
             "webSearchProvider": .string(MaiWebSearchProvider.exa.rawValue),
             "weatherLocation": .string(""),
+            "githubAPIKeyEnvironment": .string("GITHUB_TOKEN"),
             "mastodonInstance": .string("mastodon.social"),
             "mastodonAPIKeyEnvironment": .string("MASTODON_API_KEY"),
             "mastodonWriteEnabled": .bool(false),
@@ -11652,6 +11653,7 @@ struct MaiCLI {
 
     Examples:
       /tools enable github
+      /tools set github githubAPIKeyEnvironment GITHUB_TOKEN
       /tools set mastodon mastodonInstance mastodon.social
       /tools set mastodon mastodonAPIKeyEnvironment MASTODON_API_KEY
       /tools set mastodon mastodonWriteEnabled on

@@ -4,6 +4,10 @@ import Testing
 @testable import MaiCore
 @testable import MaiStandardTools
 
+#if canImport(FoundationNetworking)
+  import FoundationNetworking
+#endif
+
 private let networkTestContext = ToolExecutionContext(
   run: AgentEventContext(runID: UUID(), parentRunID: nil, agentID: "test", depth: 0),
   modelTurn: 1)
@@ -77,6 +81,100 @@ func githubRepositoryNormalization() {
   #expect(MaiGitHubTool.repoPath("https://github.com/apple/swift.git") == "apple/swift")
   #expect(MaiGitHubTool.repoPath("git@github.com:radareorg/radare2.git") == "radareorg/radare2")
   #expect(MaiGitHubTool.repoPath("not-a-repository") == nil)
+}
+
+@Test("GitHub factory resolves optional tokens without exposing them to the model")
+func githubFactoryCredentials() async throws {
+  for (options, environment, expected): ([String: JSONValue], [String: String], String) in [
+    ([:], [:], ""),
+    (["githubAPIKey": .string("saved")], [:], "saved"),
+    (["githubAPIKey": .string("saved")], ["GITHUB_TOKEN": "environment"], "environment"),
+    (["githubAPIKeyEnvironment": .string("GH_TOKEN")], ["GH_TOKEN": "custom"], "custom"),
+  ] {
+    let tools = try await MaiStandardToolFactory().makeTools(
+      context: PluginFactoryContext(id: "github", options: options, environment: environment))
+    let github = tools.compactMap { $0 as? MaiGitHubTool }
+    #expect(github.count == MaiGitHubTool.toolNames.count)
+    #expect(github.allSatisfy { $0.apiKey == expected })
+    #expect(github.map(\.definition) == MaiGitHubTool.definitions)
+  }
+}
+
+@Test(
+  "Every GitHub action authenticates all requests only when a token is configured",
+  arguments: ["", " \n", " secret "])
+func githubAuthenticatedRequests(token: String) async throws {
+  let configuration = URLSessionConfiguration.ephemeral
+  configuration.protocolClasses = [GitHubTestProtocol.self]
+  let session = URLSession(configuration: configuration)
+  defer { session.invalidateAndCancel() }
+  for name in MaiGitHubTool.toolNames {
+    let result = await MaiGitHubTool.execute(
+      name: name,
+      arguments: [
+        "repo": .string(token.contains("secret") ? "owner/private" : "owner/public"),
+        "number": .integer(7), "job_id": .integer(7), "path": .string("README.md"),
+        "ref": .string("main"), "sha": .string("abc"),
+      ], apiKey: token, session: session)
+    #expect(!result.hasPrefix("Error:"), "\(name): \(result)")
+  }
+}
+
+private final class GitHubTestProtocol: URLProtocol, @unchecked Sendable {
+  override class func canInit(with request: URLRequest) -> Bool { true }
+  override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+  override func startLoading() {
+    let url = request.url!
+    #expect(url.host == "api.github.com")
+    #expect(request.httpMethod == "GET")
+    #expect(
+      request.value(forHTTPHeaderField: "Authorization")
+        == (url.path.contains("/private/") ? "Bearer secret" : nil))
+    let accept = request.value(forHTTPHeaderField: "Accept") ?? ""
+    let body: String
+    if accept == "application/vnd.github.diff" || accept == "application/vnd.github.raw+json"
+      || url.path.hasSuffix("/logs")
+    {
+      body = "fixture text"
+    } else if url.path.hasSuffix("/check-runs") {
+      body = "{\"check_runs\":[]}"
+    } else if ["7", "abc"].contains(url.lastPathComponent) {
+      body = "{}"
+    } else {
+      body = "[]"
+    }
+    client?.urlProtocol(
+      self,
+      didReceive: HTTPURLResponse(
+        url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+      cacheStoragePolicy: .notAllowed)
+    client?.urlProtocol(self, didLoad: Data(body.utf8))
+    client?.urlProtocolDidFinishLoading(self)
+  }
+  override func stopLoading() {}
+}
+
+@Test(
+  "GitHub redirects remove credentials outside the API origin",
+  arguments: [
+    "https://api.github.com/moved", "https://logs.example.com/signed",
+    "http://api.github.com/moved", "https://api.github.com:8443/moved",
+  ])
+func githubRedirectCredentials(destination: String) async {
+  var request = URLRequest(url: URL(string: destination)!)
+  request.setValue("Bearer secret", forHTTPHeaderField: "Authorization")
+  let response = HTTPURLResponse(
+    url: URL(string: "https://api.github.com/original")!,
+    statusCode: 302, httpVersion: nil, headerFields: nil)!
+  let redirected = await withCheckedContinuation { continuation in
+    GitHubRedirectDelegate().urlSession(
+      .shared, task: URLSession.shared.dataTask(with: request),
+      willPerformHTTPRedirection: response, newRequest: request
+    ) { continuation.resume(returning: $0) }
+  }
+  #expect(
+    redirected?.value(forHTTPHeaderField: "Authorization")
+      == (destination == "https://api.github.com/moved" ? "Bearer secret" : nil))
 }
 
 @Test("Shared web fetch cleaner extracts readable HTML")
