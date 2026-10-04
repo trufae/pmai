@@ -66,6 +66,11 @@ assignment, prompt editing, and saved history across resumed turns:
 
     python3 test/repl-smart-context-smoke.py MaiCore/.build/debug/pmai
 
+The tool-context smoke test checks result-only summaries, saved full output,
+and live status growth and reduction through a tool loop in a real PTY:
+
+    python3 test/repl-tool-context-smoke.py MaiCore/.build/debug/pmai
+
 The endpoint and key come from `UPSTREAM` / `UPSTREAM_KEY`, or from
 `env-ollamacloud.sh` at the repository root. pmai must be built first:
 

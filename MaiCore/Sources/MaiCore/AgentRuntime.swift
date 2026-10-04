@@ -566,6 +566,7 @@ public actor AgentRuntime {
       depth: depth,
       pid: pid)
     var transcript = request.messages
+    var toolContext = AgentToolResultContext(messages: request.context == .tools ? transcript : [])
     var totalUsage: TokenUsage?
     /// What the provider counted on the last call, for the autocompact
     /// estimate. Cleared when a summary changes the transcript's shape.
@@ -693,8 +694,9 @@ public actor AgentRuntime {
       }
       // A conversation past the agent's autocompact threshold is folded here,
       // before the limits are checked, so a run that pauses next hands its
-      // host the smaller transcript too.
-      if request.autocompact.isEnabled && !skipAutocompaction {
+      // host the smaller transcript too. Tools mode reduces only the model's
+      // view of tool output, leaving the conversation itself intact.
+      if request.autocompact.isEnabled && !skipAutocompaction && request.context != .tools {
         let estimate = AgentAutocompaction.estimatedTokens(
           of: transcript, lastUsage: lastUsage, lastUsageMessageCount: lastUsageMessageCount)
         if estimate >= request.autocompact.tokens,
@@ -800,8 +802,29 @@ public actor AgentRuntime {
         routedDecision == nil && !usingPrimary && taskAgents.tool != nil
         && !concreteDefinitions.isEmpty
         && localToolCalls < request.limits.maxToolCalls && !repeatGuardTripped
+      if request.context == .tools {
+        let candidates = toolContext.pending(in: transcript)
+        if !candidates.isEmpty {
+          await supervisor.note(pid, activity: "summarizing tool results")
+          do {
+            let summaries = try await compactText(
+              prompt: AgentToolResultContext.prompt(for: candidates, in: transcript),
+              request: request, budget: budget, context: context, pid: pid,
+              totalUsage: &totalUsage, emit: emit)
+            toolContext.store(summaries, for: candidates)
+          } catch is RunDeadlineExceeded {
+            return await pause(await budget.timeInterruption)
+          } catch is CancellationError {
+            throw CancellationError()
+          } catch {
+            toolContext.store(nil, for: candidates)
+            await emit(.compactionFailed(context, error.localizedDescription))
+          }
+        }
+      }
       var inference = request
-      inference.messages = transcript
+      inference.messages =
+        request.context == .tools ? toolContext.messages(from: transcript) : transcript
       if selectingTools { inference = try taskRequest(.tool, from: inference) }
       guard let provider = providers[inference.provider] else {
         throw AgentRuntimeError.providerNotRegistered(inference.provider)
@@ -903,7 +926,9 @@ public actor AgentRuntime {
       }
       localModelTurns += 1
       await emit(.modelStarted(context, turn: localModelTurns))
-      await supervisor.note(pid, modelTurns: localModelTurns, activity: "thinking")
+      await supervisor.note(
+        pid, modelTurns: localModelTurns, activity: "thinking",
+        contextSize: AgentContextSize(messages: providerMessages))
       let offersTools = !usesTextToolProtocol && !toolBudgetExhausted
       let providerRequest = ProviderRequest(
         model: inference.model,
@@ -957,6 +982,7 @@ public actor AgentRuntime {
       }
       var providerResponse = call.response
       try Task.checkCancellation()
+      if request.context == .tools { toolContext.didRead(transcript) }
       if let usageStats {
         // The user's own words count once, on the turn that carried them;
         // later turns of the same run only resend context.
@@ -984,8 +1010,9 @@ public actor AgentRuntime {
           outputTokens: ModelCallStats.estimatedTokenCount(
             forCharacterCount: providerResponse.message.text.count))
       totalUsage = totalUsage.merging(usage)
-      // A smart request's usage describes its brief, not the saved transcript.
-      lastUsage = request.context == .smart || deciding ? nil : providerResponse.usage
+      // Reduced context usage does not describe the full saved transcript.
+      lastUsage = request.context == .smart || request.context == .tools || deciding
+        ? nil : providerResponse.usage
       lastUsageMessageCount = transcript.count + 1
       await supervisor.note(pid, usage: totalUsage)
       await budget.record(tokens: usage.totalTokens)
@@ -1072,7 +1099,10 @@ public actor AgentRuntime {
         continue
       }
       transcript.append(providerResponse.message)
-      await supervisor.note(pid, transcript: transcript)
+      await supervisor.note(
+        pid, transcript: transcript,
+        contextSize: AgentContextSize(
+          messages: request.context == .tools ? toolContext.messages(from: transcript) : transcript))
 
       let calls = providerResponse.message.toolCalls.filter { !$0.name.isEmpty }
       if calls.isEmpty {
@@ -1111,7 +1141,8 @@ public actor AgentRuntime {
       // last of them is in.
       let modelTurn = localModelTurns
       let usedTokens = AgentAutocompaction.estimatedTokens(
-        of: transcript, lastUsage: lastUsage, lastUsageMessageCount: lastUsageMessageCount)
+        of: request.context == .tools ? toolContext.messages(from: transcript) : transcript,
+        lastUsage: lastUsage, lastUsageMessageCount: lastUsageMessageCount)
       var results = [ToolResult?](repeating: nil, count: calls.count)
       var definitionsByCall = [[ToolDefinition]](repeating: [], count: calls.count)
       try await withThrowingTaskGroup(of: (Int, ToolResult).self) { group in
@@ -1225,7 +1256,10 @@ public actor AgentRuntime {
           repeatedCalls = repeatedCalls.filter { $0.key == own }
         }
       }
-      await supervisor.note(pid, transcript: transcript)
+      await supervisor.note(
+        pid, transcript: transcript,
+        contextSize: AgentContextSize(
+          messages: request.context == .tools ? toolContext.messages(from: transcript) : transcript))
     }
   }
 

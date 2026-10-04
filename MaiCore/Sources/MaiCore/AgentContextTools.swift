@@ -164,7 +164,8 @@ public enum AgentTranscriptEditor {
       switch part {
       case .text(let text), .reasoning(let text): total + text.count
       case .toolCall(let call): total + call.name.count + call.arguments.compactJSONString.count
-      case .toolResult(let result): total + result.text.count
+      case .toolResult(let result):
+        total + result.text.count + (result.structuredContent?.compactJSONString.count ?? 0)
       case .file(let file): total + (file.text?.count ?? 0)
       case .resource(let resource): total + (resource.text?.count ?? 0)
       case .image, .audio: total + 64

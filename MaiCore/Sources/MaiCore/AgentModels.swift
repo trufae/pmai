@@ -872,10 +872,12 @@ public struct AgentRetryPolicy: Codable, Equatable, Sendable {
 /// from that message on.
 /// `smart` builds a fresh working context with the compact model before each
 /// conversation call while retaining the transcript for normal compaction.
+/// `tools` summarizes only older tool results in a disposable model context.
 public enum AgentContextMode: String, Codable, Equatable, Sendable {
   case cache
   case size
   case smart
+  case tools
 }
 
 public struct AgentAutocompact: Codable, Equatable, Sendable {
@@ -980,7 +982,7 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
   /// When the runtime summarizes the older part of a conversation by itself.
   public var autocompact: AgentAutocompact
   /// Keep messages as sent (cache), prune old file bodies (size), or prepare
-  /// a fresh working context with the compact model for each call (smart).
+  /// a fresh working context (smart), or summarize only old tool results (tools).
   public var context: AgentContextMode
 
   public init(

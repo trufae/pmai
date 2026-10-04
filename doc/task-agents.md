@@ -95,6 +95,21 @@ and sends one working-context message alongside the original system/developer
 instructions. The saved transcript keeps growing and still autocompacts normally.
 Preparation calls count toward token/time budgets and usage statistics.
 
+`/set ctx.strategy tools` uses the compact assignment to summarize only large
+tool results (at least 4,000 characters), after a conversation model has seen
+them in full. New results, errors, binary attachments, user messages, assistant
+prose, and tool-call arguments stay intact. Each result is summarized once per
+run and reused in subsequent model calls; the full output stays in the saved
+transcript. A changed user request invalidates the summaries, and edited results
+must be read again before summarization. Failed or oversized summaries keep the
+original output. This mode replaces automatic whole-transcript compaction with
+tool-result reduction; manual `/chat compact` and context tools remain available.
+Summary calls count toward token/time budgets and usage statistics.
+
+During a run, the REPL status line shows the live model context instead of the
+chat history saved at the previous turn. Its message and estimated token counts
+grow as tool output arrives and shrink when the model context is reduced.
+
 Interactive autocompaction asks before replacing history, including when `tool.aproval` is `yolo`. In the pmai REPL, choose `y` to compact, `n` to continue without compaction for the current response, `m` for model-change instructions, `x` to clear the chat, or `c` to stop with the transcript kept. While the decision is pending, `/model NAME` changes all models, `/model-chat NAME` changes only the conversation model, and `/model-compact NAME` changes the summarizer; then choose `y` or `n`. `/set ctx.compact 0` disables future automatic compaction. Piped and other noninteractive runs keep the configured automatic behavior.
 
 PocketMai shows the same decision before its MLX autocompaction. The prompt includes the chat's model settings, a compaction-agent picker, continue and stop actions, and a confirmed clear-chat action. Skipping applies to the current response; a later message may prompt again. In `/visual`, the compaction dialog also offers stopping to change models before continuing.

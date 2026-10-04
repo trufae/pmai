@@ -2172,6 +2172,12 @@ struct MaiCLI {
 
     func statusLine() async -> (text: String, animating: Bool) {
       var facts: [String] = []
+      var liveContext: AgentContextSize?
+      if case .agent(let pid) = loop.focus {
+        liveContext = await runtime.supervisor.info(pid)?.contextSize
+      } else if let turn = loop.activeTurn, turn.chatID == session.id {
+        liveContext = await runtime.supervisor.info(turn.pid)?.contextSize
+      }
       let liveProcesses = await runtime.supervisor.liveProcesses()
       let running =
         loop.foregroundCommand != nil || (!activityWasInterrupted && !liveProcesses.isEmpty)
@@ -2213,7 +2219,7 @@ struct MaiCLI {
       let detail = facts.isEmpty ? "" : " · " + facts.joined(separator: " · ")
       // The chat title goes last so a narrow terminal truncates it, not the status.
       return (
-        "\(activityMarker) \(currentDirectoryName()) · \(project.displayName) \(promptIdentity(session))\(detail) · \(session.title)",
+        "\(activityMarker) \(currentDirectoryName()) · \(project.displayName) \(promptIdentity(session, contextSize: liveContext))\(detail) · \(session.title)",
         running
       )
     }
@@ -3707,10 +3713,12 @@ struct MaiCLI {
 
   /// The agent, estimated context, and model a chat runs on. The context is
   /// deliberately immediately before the model so it stays easy to compare.
-  private static func promptIdentity(_ session: REPLSession) -> String {
+  private static func promptIdentity(
+    _ session: REPLSession, contextSize: AgentContextSize? = nil
+  ) -> String {
     let profile = session.profile
     let model = profile.model.isEmpty ? profile.provider.rawValue : profile.model
-    return "[\(profile.agentID)] · \(promptContextStatus(session)) · \(model)"
+    return "[\(profile.agentID)] · \(promptContextStatus(session, contextSize: contextSize)) · \(model)"
   }
 
   /// The final component of the working directory, with a useful root label.
@@ -3741,13 +3749,11 @@ struct MaiCLI {
   /// A fast, deliberately approximate context indicator. Providers tokenize
   /// differently and do not all expose their context-window size, so showing
   /// an estimate is more honest than implying an exact percentage.
-  private static func promptContextStatus(_ session: REPLSession) -> String {
-    let characters = session.history.messages.reduce(0) { total, message in
-      total + message.content.reduce(0) { $0 + renderFullContent($1).utf8.count }
-    }
-    let estimatedTokens = (characters + 2) / 3
-    let messageLabel = "\(session.history.count) msg"
-    return "\(messageLabel) \(ModelUsageFormat.tokens(estimatedTokens, estimated: true))"
+  private static func promptContextStatus(
+    _ session: REPLSession, contextSize: AgentContextSize? = nil
+  ) -> String {
+    let size = contextSize ?? AgentContextSize(messages: session.history.messages)
+    return "\(size.messageCount) msg \(ModelUsageFormat.tokens(size.estimatedTokens, estimated: true))"
   }
 
   private static func changeWorkingDirectory(_ argument: String, terminal: TerminalWriter) async {
@@ -8341,7 +8347,7 @@ struct MaiCLI {
       return
     }
     guard parts.count == 2, let mode = AgentContextMode(rawValue: parts[1].lowercased()) else {
-      await terminal.line("Usage: /set \(parts[0]) <cache|size|smart>")
+      await terminal.line("Usage: /set \(parts[0]) <cache|size|smart|tools>")
       return
     }
     session.profile.context = mode
@@ -10873,6 +10879,7 @@ struct MaiCLI {
       "/set ctx.compact off",
       "/set ctx.recent ", "/set ctx.recent auto",
       "/set ctx.context ", "/set ctx.context cache", "/set ctx.context size", "/set ctx.context smart",
+      "/set ctx.context tools", "/set ctx.strategy tools",
       "/set ctx.strategy cache", "/set ctx.strategy size", "/set ctx.strategy smart",
       "/continue", "/stop",
       "/set tool.", "/set tool.calling automatic", "/set tool.calling native",
@@ -11331,8 +11338,8 @@ struct MaiCLI {
       /set retry.delay SECONDS     Wait before each retry (default 5)
       /set ctx.compact <off|N|Nk>  Prompt to prune tool output or summarize older context at ~N tokens
       /set ctx.recent <auto|N|Nk>  Recent tokens kept verbatim when summarizing (auto: up to 8k)
-      /set ctx.context <cache|size|smart>  Keep history, prune old reads, or build context with the compact model
-      /set ctx.strategy <cache|size|smart>  Alias for ctx.context
+      /set ctx.context <cache|size|smart|tools>  Keep history, prune reads, build a brief, or summarize old tool results
+      /set ctx.strategy <cache|size|smart|tools>  Alias for ctx.context
       /set ui.                     List terminal UI settings
       /set ui.title TEXT           Set the prompt label and terminal/tab title (`none` clears it)
       /set ui.editor COMMAND       Editor /edit opens (`none` falls back to $EDITOR, $VISUAL, vim)

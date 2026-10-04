@@ -428,6 +428,7 @@ public actor AgentSupervisor {
     entry.info.isCollected = false
     entry.info.modelTurns = 0
     entry.info.toolCalls = 0
+    entry.info.contextSize = nil
     entry.info.activity = ""
     entry.info.updatedAt = Date()
     entry.result = nil
@@ -490,7 +491,8 @@ public actor AgentSupervisor {
     toolCalls: Int? = nil,
     usage: TokenUsage? = nil,
     activity: String? = nil,
-    transcript: [AgentMessage]? = nil
+    transcript: [AgentMessage]? = nil,
+    contextSize: AgentContextSize? = nil
   ) {
     guard var entry = entries[pid] else { return }
     let previous = entry.info
@@ -502,6 +504,11 @@ public actor AgentSupervisor {
     if let usage { entry.info.usage = usage }
     if let activity { entry.info.activity = activity }
     if let transcript { entry.transcript = transcript }
+    if let contextSize {
+      entry.info.contextSize = contextSize
+    } else if let transcript {
+      entry.info.contextSize = AgentContextSize(messages: transcript)
+    }
     entry.info.updatedAt = Date()
     entries[pid] = entry
     if previous != entry.info { publish(.changed(entry.info)) }

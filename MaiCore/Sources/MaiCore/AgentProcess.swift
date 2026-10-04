@@ -125,6 +125,18 @@ public enum AgentAttention: Equatable, Sendable {
   }
 }
 
+/// Estimated model context, distinct from cumulative tokens spent by a run.
+public struct AgentContextSize: Equatable, Sendable {
+  public var messageCount: Int
+  public var estimatedTokens: Int
+
+  public init(messages: [AgentMessage]) {
+    messageCount = messages.count
+    estimatedTokens = ModelCallStats.estimatedTokenCount(
+      forCharacterCount: AgentTranscriptEditor.characterCount(of: messages))
+  }
+}
+
 /// Everything a host needs to list, follow, or act on one running agent.
 /// Deliberately not `Codable`: a process is live session state, and a resumed
 /// child would answer a question its parent has already forgotten.
@@ -149,6 +161,8 @@ public struct AgentProcessInfo: Equatable, Sendable, Identifiable {
   public var modelTurns: Int
   public var toolCalls: Int
   public var usage: TokenUsage?
+  /// The live model context, which may be smaller than the saved transcript.
+  public var contextSize: AgentContextSize?
   /// The most recent thing the process did, such as the tool it is running.
   public var activity: String
   public var failure: String?
@@ -176,6 +190,7 @@ public struct AgentProcessInfo: Equatable, Sendable, Identifiable {
     modelTurns: Int = 0,
     toolCalls: Int = 0,
     usage: TokenUsage? = nil,
+    contextSize: AgentContextSize? = nil,
     activity: String = "",
     failure: String? = nil,
     isCollected: Bool = false,
@@ -197,6 +212,7 @@ public struct AgentProcessInfo: Equatable, Sendable, Identifiable {
     self.modelTurns = modelTurns
     self.toolCalls = toolCalls
     self.usage = usage
+    self.contextSize = contextSize
     self.activity = activity
     self.failure = failure
     self.isCollected = isCollected

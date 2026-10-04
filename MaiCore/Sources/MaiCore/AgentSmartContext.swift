@@ -74,7 +74,7 @@ public enum AgentSmartContextPrompt {
     return instructions + [AgentMessage(role: .user, content: [.text(brief)] + attachments)]
   }
 
-  private static func binaryAttachments(_ part: ContentPart) -> [ContentPart] {
+  static func binaryAttachments(_ part: ContentPart) -> [ContentPart] {
     switch part {
     case .image, .audio: return [part]
     case .file(let file): return file.text == nil && file.source != nil ? [part] : []

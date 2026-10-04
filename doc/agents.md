@@ -477,7 +477,7 @@ forwards only depth-0 events to the editor.
 /set limits.maxTotalTokens 120k   token cap on a run (off to lift)
 /set retry.attempts N             repeats of a failed model call; /set retry.delay 5
 /set ctx.compact 120k             summarize older exchanges once the chat holds ~N tokens
-/set ctx.strategy cache|size      preserve prompt cache, or compact old file reads
+/set ctx.strategy cache|size|smart|tools  cache history, prune reads, build a brief, or summarize only tool results
 /set effort LEVEL [TEXT]          how hard the model thinks (low, medium, high, xhigh, max), plus guidance
 /set use.agentsmd on              add the tree's AGENTS.md files (here up to the repo root) to every run's prompt
 /set use.plan off                 stop asking for a numbered plan before the first delegation (on by default)
