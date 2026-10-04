@@ -172,6 +172,26 @@ public actor AgentRuntime {
     providers[descriptor.id] = provider
   }
 
+  /// Calls already in flight finish with their existing connection; subsequent
+  /// calls and live agent references use the renamed provider.
+  public func renameProvider(_ id: ProviderID, to provider: any ChatProvider) throws {
+    guard providers[id] != nil else { throw AgentRuntimeError.providerNotRegistered(id) }
+    let newID = provider.descriptor.id
+    guard newID != id else { return }
+    try register(provider)
+    providers.removeValue(forKey: id)
+    for key in Array(agents.keys) where agents[key]?.provider == id {
+      agents[key]?.provider = newID
+    }
+    for pid in Array(liveRequests.keys) where liveRequests[pid]?.provider == id {
+      liveRequests[pid]?.provider = newID
+    }
+    for pid in Array(pendingReconfigurations.keys)
+    where pendingReconfigurations[pid]?.provider == id {
+      pendingReconfigurations[pid]?.provider = newID
+    }
+  }
+
   public func register(
     tool: any AgentTool,
     replacingExisting: Bool = false

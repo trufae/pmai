@@ -1,5 +1,28 @@
 import Foundation
 
+/// A model name, optionally qualified by a provider ID. Split only the first
+/// double colon so slashes, single colons and the rest of the model stay intact.
+public struct ModelSelection: Equatable, Sendable {
+  public var provider: ProviderID
+  public var model: String
+
+  public init(_ selector: String, currentProvider: ProviderID) throws {
+    if let separator = selector.range(of: "::") {
+      provider = ProviderID(String(selector[..<separator.lowerBound]))
+      model = String(selector[separator.upperBound...])
+    } else {
+      provider = currentProvider
+      model = selector
+    }
+    guard !provider.rawValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      throw MaiConfigurationError.emptyIdentifier("provider")
+    }
+    guard !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      throw MaiConfigurationError.emptyIdentifier("model")
+    }
+  }
+}
+
 /// Tasks borrow an agent's inference settings, never its tool permissions.
 public enum AgentTask: String, CaseIterable, Codable, Sendable {
   case compact
@@ -124,15 +147,10 @@ extension MaiConfiguration {
   public func modelSelection(_ selector: String, currentProvider: ProviderID) throws
     -> (provider: ProviderID, model: String)
   {
-    let parts = selector.components(separatedBy: "::")
-    let provider = parts.count == 1 ? currentProvider : ProviderID(parts[0])
-    let model = parts.count == 1 ? selector : parts.dropFirst().joined(separator: "::")
-    guard providers.contains(where: { $0.id == provider.rawValue }) else {
-      throw MaiConfigurationError.unknownProvider(provider.rawValue)
+    let selection = try ModelSelection(selector, currentProvider: currentProvider)
+    guard providers.contains(where: { $0.id == selection.provider.rawValue }) else {
+      throw MaiConfigurationError.unknownProvider(selection.provider.rawValue)
     }
-    guard !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      throw MaiConfigurationError.emptyIdentifier("model")
-    }
-    return (provider, model)
+    return (selection.provider, selection.model)
   }
 }

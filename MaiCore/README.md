@@ -33,11 +33,15 @@ provider settings are `PMAI_PROVIDER`, `PMAI_MODEL`, `PMAI_BASE_URL`, and
 compatibility. `PMAI_API_KEY_FILE` names a file holding the key instead, read
 at startup with its trailing newline dropped, so the secret never sits in the
 environment where every child process could read it; it cannot be combined
-with `PMAI_API_KEY`. These variables override the selected agent's provider for the
-current process. `/baseurl` shows the effective URL and also identifies a
-different persisted URL when one is being overridden. Export `PMAI_API_KEY=`
-to explicitly send no API key and suppress configured or legacy API-key
-fallbacks; merely unsetting it allows those fallbacks to be used.
+with `PMAI_API_KEY`. Model/provider variables select defaults for new chats;
+`PMAI_MODEL`, `MAI_MODEL`, and `OPENAI_MODEL` also accept `PROVIDER::MODEL`.
+A configured provider's URL and credential sources take precedence over ambient
+URL/key variables. Those variables supply missing settings or the initial ad-hoc
+connection. Explicit `--base-url` and `--api-key` flags override the selected
+connection for one invocation. `/set provider.baseurl` shows the effective URL
+and identifies a different persisted URL when an explicit flag overrides it.
+Export `PMAI_API_KEY=` to suppress legacy key fallbacks for an ad-hoc connection;
+use `--api-key ''` to suppress a configured provider's credentials for this run.
 Keep `env.sh` local because it can contain credentials.
 
 Install a release build system-wide with `make repl-install`. The Linux
@@ -388,10 +392,15 @@ one saved agent, `/agent remove ID` drops one, and `/edit agent [ID]` opens one
 as JSON. `/provider`, `/model`, and `/set tool.proxy` save changes back to the
 current chat's agent in the shared configuration.
 
-Use `/baseurl URL` to change the current provider endpoint. To edit another
-provider, select it first with `/provider ID`. The provider is replaced in the
-live runtime and the new URL is saved immediately. `/provider baseurl URL`
-remains an alias, and `/edit provider [ID]` opens the whole provider record
+Use `/set provider.baseurl URL` to change the current provider endpoint, or
+`/set provider.baseurl ID URL` to edit another provider without selecting it.
+Omit the URL to inspect the current provider, or supply only its ID to inspect
+another. `/set provider baseurl` accepts the same arguments. The provider is
+replaced in the live runtime and the URL is saved immediately. `/baseurl` and
+`/provider baseurl` remain aliases. `/provider rename OLD NEW` renames a
+connection and updates all configured agents, including task agents; omit OLD
+to rename the current provider. The active chat follows the rename, while other
+saved chats retain their independent snapshots. `/edit provider [ID]` opens the whole provider record
 (base URL, key source, headers, timeout, options) as JSON with the same live
 reload. In `/visual`, open the Providers tab, choose **Edit** beside a
 configured provider, change **Base URL**, and choose **Update**. See

@@ -977,6 +977,26 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
 
   // MARK: - Catalog edits
 
+  /// Renames the connection and every configured agent that uses it, including
+  /// task agents. The complete provider record and task assignments survive.
+  public mutating func renameProvider(_ id: String, to newID: String) throws {
+    guard let index = providers.firstIndex(where: { $0.id == id }) else {
+      throw MaiConfigurationError.unknownProvider(id)
+    }
+    guard !newID.isEmpty, !newID.contains(where: \.isWhitespace), !newID.contains("::") else {
+      throw MaiConfigurationError.invalidFile(
+        "Provider IDs must be nonempty, without spaces or '::'.")
+    }
+    guard newID != id else { return }
+    guard !providers.contains(where: { $0.id == newID }) else {
+      throw MaiConfigurationError.duplicateIdentifier(kind: "provider", id: newID)
+    }
+    providers[index].id = newID
+    for index in agents.indices where agents[index].provider.rawValue == id {
+      agents[index].provider = ProviderID(newID)
+    }
+  }
+
   /// The ids of the agents whose instructions come from the named prompt.
   public func agentsUsingSystemPrompt(_ name: String) -> [String] {
     agents.filter { $0.systemPrompt == name }.map(\.id).sorted()

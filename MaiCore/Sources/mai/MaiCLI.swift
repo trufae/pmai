@@ -126,7 +126,9 @@ private struct CLIOptions {
         modelOverride = try Self.value(after: argument, in: arguments, index: &index)
       case "-b", "--base-url":
         let value = try Self.value(after: argument, in: arguments, index: &index)
-        guard let url = URL(string: value) else { throw CLIError.invalidURL(value) }
+        guard let url = URL(string: value),
+          ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil
+        else { throw CLIError.invalidURL(value) }
         baseURLOverride = url
       case "--compact-agent", "--compact-model":
         compactAgent = try Self.value(after: argument, in: arguments, index: &index)
@@ -196,9 +198,11 @@ private struct CLIOptions {
       }
       index += 1
     }
-    if let modelOverride, let separator = modelOverride.range(of: "::") {
-      providerOverride = ProviderID(String(modelOverride[..<separator.lowerBound]))
-      self.modelOverride = String(modelOverride[separator.upperBound...])
+    if let modelOverride {
+      let selection = try ModelSelection(
+        modelOverride, currentProvider: providerOverride ?? .openAI)
+      if modelOverride.contains("::") { providerOverride = selection.provider }
+      self.modelOverride = selection.model
     }
     if !positional.isEmpty { initialPrompt = positional.joined(separator: " ") }
     if readStdin, serve != nil { throw CLIError.stdinServesProtocol }
@@ -342,7 +346,7 @@ private func environmentValue(
 }
 
 /// Unlike the other ad-hoc settings, an explicitly exported empty API key is
-/// meaningful: it suppresses lower-priority aliases and configured secrets.
+/// meaningful: it suppresses lower-priority aliases for an ad-hoc connection.
 /// `PMAI_API_KEY_FILE` names a file holding the key instead, so the secret
 /// itself never sits in the environment; it excludes `PMAI_API_KEY`.
 private func environmentAPIKey(in environment: [String: String]) throws -> String? {
@@ -378,7 +382,7 @@ private final class ProviderBaseURLStore: @unchecked Sendable {
     lock.withLock { urls[providerID] }
   }
 
-  func set(_ url: URL, for providerID: String) {
+  func set(_ url: URL?, for providerID: String) {
     lock.withLock { urls[providerID] = url }
   }
 
@@ -1733,30 +1737,34 @@ struct MaiCLI {
     resumingChat: Bool,
     environment: [String: String]
   ) async throws -> RuntimeSetup {
-    // Endpoints saved through /baseurl belong to the shared provider. A
-    // resumed chat uses that endpoint unless this invocation explicitly changes it.
-    let rawBaseURL =
-      options.baseURLOverride?.absoluteString
-      ?? (resumingChat && configuration != nil
-        ? nil
-        : environmentValue(
-          ["PMAI_BASE_URL", "MAI_BASE_URL", "OPENAI_BASE_URL"], in: environment))
-    let baseURLOverride: URL?
-    if let rawBaseURL {
-      guard let url = URL(string: rawBaseURL) else { throw CLIError.invalidURL(rawBaseURL) }
-      baseURLOverride = url
-    } else {
-      baseURLOverride = nil
+    // Flags deliberately override a connection. Ambient variables only fill
+    // missing settings; a named provider owns its endpoint and credentials.
+    func resolvedBaseURL(_ configured: URL?) throws -> URL? {
+      if let explicit = options.baseURLOverride { return explicit }
+      if let configured { return configured }
+      guard !resumingChat || configuration == nil,
+        let raw = environmentValue(
+          ["PMAI_BASE_URL", "MAI_BASE_URL", "OPENAI_BASE_URL"], in: environment)
+      else { return nil }
+      guard let url = URL(string: raw),
+        ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil
+      else { throw CLIError.invalidURL(raw) }
+      return url
     }
-    let apiKeyOverride =
-      try options.apiKeyOverride ?? environmentAPIKey(in: environment)
 
     if let configuration {
       var providerBaseURLs: [String: URL] = [:]
       for configuredProvider in configuration.providers {
         var provider = configuredProvider
         if provider.id == selectedProvider.rawValue {
-          if let baseURLOverride { provider.baseURL = baseURLOverride }
+          provider.baseURL = try resolvedBaseURL(provider.baseURL)
+          let hasCredentials =
+            provider.apiKey != nil
+            || !(provider.apiKeyEnvironment ?? "").isEmpty
+            || !(provider.apiKeyFile ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+          let apiKeyOverride =
+            try options.apiKeyOverride
+            ?? (hasCredentials ? nil : environmentAPIKey(in: environment))
           if let apiKeyOverride {
             provider.apiKey = apiKeyOverride
             provider.apiKeyEnvironment = nil
@@ -1791,7 +1799,8 @@ struct MaiCLI {
 
     let hello = ConfiguredProvider(id: "hello", kind: .hello)
     try await runtime.register(plugins.makeProvider(from: hello, environment: environment))
-    let baseURL = baseURLOverride ?? URL(string: "http://127.0.0.1:11434/v1")!
+    let baseURL = try resolvedBaseURL(nil) ?? URL(string: "http://127.0.0.1:11434/v1")!
+    let apiKeyOverride = try options.apiKeyOverride ?? environmentAPIKey(in: environment)
     let openAI = ConfiguredProvider(
       id: selectedProvider.rawValue,
       kind: .openAICompatible,
@@ -1824,9 +1833,8 @@ struct MaiCLI {
       ?? environmentValue(["PMAI_PROVIDER", "MAI_PROVIDER"], in: environment).map {
         ProviderID($0)
       }
-    let modelOverride =
-      options.modelOverride
-      ?? environmentValue(["PMAI_MODEL", "MAI_MODEL", "OPENAI_MODEL"], in: environment)
+    let modelDefault = environmentValue(["PMAI_MODEL", "MAI_MODEL", "OPENAI_MODEL"], in: environment)
+    var profile: SessionProfile
     if let configuration, !configuration.agents.isEmpty {
       let selectedID =
         options.agentOverride ?? configuration.defaultAgent
@@ -1834,17 +1842,22 @@ struct MaiCLI {
       guard let definition = configuration.agents.first(where: { $0.id == selectedID }) else {
         throw MaiConfigurationError.unknownAgent(selectedID ?? "")
       }
-      var profile = SessionProfile(definition: definition)
-      if let providerOverride { profile.provider = providerOverride }
-      if let modelOverride { profile.model = modelOverride }
-      options.applyOverrides(to: &profile)
-      return profile
+      profile = SessionProfile(definition: definition)
+    } else {
+      profile = SessionProfile(
+        provider: providerOverride ?? .openAI,
+        model: "gpt-oss:20b",
+        instructions: options.systemOverride ?? SystemPrompt.defaultInstructions,
+        stream: options.stream)
     }
-    var profile = SessionProfile(
-      provider: providerOverride ?? .openAI,
-      model: modelOverride ?? "gpt-oss:20b",
-      instructions: options.systemOverride ?? SystemPrompt.defaultInstructions,
-      stream: options.stream)
+    if let providerOverride { profile.provider = providerOverride }
+    // Flag selectors were already split by CLIOptions; parsing them again
+    // would reinterpret a double colon that belongs to the remaining model ID.
+    if options.modelOverride == nil, let modelDefault {
+      let selection = try ModelSelection(modelDefault, currentProvider: profile.provider)
+      profile.provider = options.providerOverride ?? selection.provider
+      profile.model = selection.model
+    }
     options.applyOverrides(to: &profile)
     return profile
   }
@@ -3872,6 +3885,15 @@ struct MaiCLI {
   ) async -> Bool {
     let parts = input.split(maxSplits: 1, whereSeparator: \Character.isWhitespace).map(String.init)
     let argument = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+    let previousProviders = configuration?.providers
+    let previousURLs = visual.providerBaseURLs.snapshot()
+    defer {
+      if configuration?.providers != previousProviders
+        || visual.providerBaseURLs.snapshot() != previousURLs
+      {
+        visual.modelCatalog.invalidate()
+      }
+    }
 
     switch parts[0] {
     case "/exit", "/quit":
@@ -3884,6 +3906,8 @@ struct MaiCLI {
         await terminal.line(replHelp)
       case "set", "/set":
         await terminal.line(setHelp)
+      case "provider", "providers", "baseurl", "/provider", "/providers", "/baseurl":
+        await terminal.line(providerHelp)
       case "theme", "/theme":
         await terminal.line(themeHelp)
       case "memory", "/memory":
@@ -3934,6 +3958,8 @@ struct MaiCLI {
         argument,
         session: &session,
         runtime: runtime,
+        plugins: plugins,
+        providerBaseURLs: visual.providerBaseURLs,
         approvalHandler: visual.approvalHandler,
         configuration: &configuration,
         configurationPath: visual.configurationPath,
@@ -5942,8 +5968,47 @@ struct MaiCLI {
         }
       }
       await terminal.line(
-        "Use /provider add ID URL to add one, /baseurl URL to change its endpoint, or /edit provider for keys and headers."
+        "Use /provider add ID URL, /set provider.baseurl [ID] URL, /provider rename [OLD] NEW, or /edit provider [ID] for keys and headers."
       )
+      return
+    }
+
+    if fields[0].lowercased() == "rename" {
+      guard (2...3).contains(fields.count), var draft = configuration, let configurationPath else {
+        await terminal.line("Usage: /provider rename [OLD] NEW")
+        return
+      }
+      let oldID = fields.count == 3 ? fields[1] : session.profile.provider.rawValue
+      let newID = fields.last!
+      do {
+        try draft.renameProvider(oldID, to: newID)
+        guard oldID != newID else {
+          await terminal.line("Provider '\(oldID)' already has that name.")
+          return
+        }
+        var provider = draft.providers.first { $0.id == newID }!
+        let effectiveURL = providerBaseURLs.url(for: oldID) ?? provider.baseURL
+        provider.baseURL = effectiveURL
+        let built = try await plugins.makeProvider(
+          from: provider, environment: ProcessInfo.processInfo.environment)
+        guard await runtime.availableProviders().contains(where: { $0.id.rawValue == oldID }) else {
+          throw MaiConfigurationError.unknownProvider(oldID)
+        }
+        guard !(await runtime.availableProviders().contains(where: { $0.id.rawValue == newID }))
+        else {
+          throw MaiConfigurationError.duplicateIdentifier(kind: "provider", id: newID)
+        }
+        try draft.save(to: URL(fileURLWithPath: configurationPath))
+        try await runtime.renameProvider(ProviderID(oldID), to: built)
+        configuration = draft
+        if session.profile.provider.rawValue == oldID {
+          session.profile.provider = ProviderID(newID)
+        }
+        providerBaseURLs.set(nil, for: oldID)
+        providerBaseURLs.set(effectiveURL, for: newID)
+        await terminal.line(
+          "Provider '\(oldID)' renamed to '\(newID)' (saved; agent references updated).")
+      } catch { await terminal.line("error: \(error.localizedDescription)", to: .standardError) }
       return
     }
 
@@ -6007,7 +6072,12 @@ struct MaiCLI {
       return
     }
 
-    let selectedID = fields[0].lowercased() == "use" && fields.count == 2 ? fields[1] : fields[0]
+    guard fields.count == 1 || (fields[0].lowercased() == "use" && fields.count == 2) else {
+      await terminal.line(
+        "Usage: /provider [use] ID · /provider add ID URL · /provider rename [OLD] NEW")
+      return
+    }
+    let selectedID = fields.count == 2 ? fields[1] : fields[0]
     let id = ProviderID(selectedID)
     guard await runtime.availableProviders().contains(where: { $0.id == id }) else {
       await terminal.line("Unknown provider '\(selectedID)'. Use /providers.")
@@ -6036,26 +6106,29 @@ struct MaiCLI {
     terminal: TerminalWriter
   ) async {
     let fields = argument.split(whereSeparator: \Character.isWhitespace).map(String.init)
-    guard !fields.isEmpty else {
+    let queryingID =
+      fields.count == 1 && configuration?.providers.contains { $0.id == fields[0] } == true
+    let providerID = fields.count == 2 || queryingID ? ProviderID(fields[0]) : currentProvider
+    let usage = "Usage: /set provider.baseurl [ID] [URL]"
+    guard !fields.isEmpty, !queryingID else {
       let configuredURL = configuration?.providers.first {
-        $0.id == currentProvider.rawValue
+        $0.id == providerID.rawValue
       }?.baseURL
-      let effectiveURL = providerBaseURLs.url(for: currentProvider.rawValue) ?? configuredURL
+      let effectiveURL = providerBaseURLs.url(for: providerID.rawValue) ?? configuredURL
       var detail = effectiveURL?.absoluteString ?? "-"
       if let effectiveURL, let configuredURL, effectiveURL != configuredURL {
         detail += " (runtime override; configured: \(configuredURL.absoluteString))"
       }
-      await terminal.line("Base URL for '\(currentProvider)': \(detail)")
-      await terminal.line("Usage: /baseurl URL")
+      await terminal.line("Base URL for '\(providerID)': \(detail)")
+      await terminal.line(usage)
       return
     }
 
-    guard fields.count == 1 else {
-      await terminal.line("Usage: /baseurl URL")
+    guard fields.count <= 2 else {
+      await terminal.line(usage)
       return
     }
-    let providerID = currentProvider
-    let rawURL = fields[0]
+    let rawURL = fields.last!
     guard let baseURL = URL(string: rawURL),
       ["http", "https"].contains(baseURL.scheme?.lowercased() ?? ""),
       baseURL.host != nil
@@ -6078,8 +6151,8 @@ struct MaiCLI {
       let provider = try await plugins.makeProvider(
         from: draft.providers[index],
         environment: ProcessInfo.processInfo.environment)
-      try await runtime.register(provider, replacingExisting: true)
       try draft.save(to: URL(fileURLWithPath: configurationPath))
+      try await runtime.register(provider, replacingExisting: true)
       configuration = draft
       providerBaseURLs.set(baseURL, for: providerID.rawValue)
       await terminal.line("Provider '\(providerID)' base URL set to \(baseURL.absoluteString).")
@@ -6813,8 +6886,18 @@ struct MaiCLI {
     }
     var draft = configuration ?? MaiConfiguration()
     let name = words[0]
-    let model = words[1] == "-" ? "" : words[1]
-    let providerID = words.count >= 5 ? ProviderID(words[4]) : session.profile.provider
+    var model = words[1] == "-" ? "" : words[1]
+    var providerID = words.count >= 5 ? ProviderID(words[4]) : session.profile.provider
+    if !model.isEmpty {
+      do {
+        let selection = try ModelSelection(model, currentProvider: providerID)
+        providerID = selection.provider
+        model = selection.model
+      } catch {
+        await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+        return
+      }
+    }
 
     var providerChanged = false
     if words.count == 6 {
@@ -7155,7 +7238,7 @@ struct MaiCLI {
       else { return }
       let provider = try JSONDecoder().decode(ConfiguredProvider.self, from: edited)
       guard provider.id == id else {
-        await terminal.line("Keep the id '\(id)'; /edit config adds providers.")
+        await terminal.line("Keep the id '\(id)'; /provider rename \(id) NEW renames it.")
         return
       }
       let built = try await plugins.makeProvider(
@@ -7164,9 +7247,7 @@ struct MaiCLI {
       draft.providers[index] = provider
       try draft.save(to: URL(fileURLWithPath: configurationPath))
       configuration = draft
-      if let baseURL = provider.baseURL {
-        providerBaseURLs.set(baseURL, for: id)
-      }
+      providerBaseURLs.set(provider.baseURL, for: id)
       await terminal.line("Provider '\(id)' saved to \(configurationPath) and reloaded.")
     } catch {
       await terminal.line("error: \(error.localizedDescription)", to: .standardError)
@@ -7898,15 +7979,46 @@ struct MaiCLI {
     _ argument: String,
     session: inout REPLSession,
     runtime: AgentRuntime,
+    plugins: PluginRegistry,
+    providerBaseURLs: ProviderBaseURLStore,
     approvalHandler: TerminalApprovalHandler,
     configuration: inout MaiConfiguration?,
     configurationPath: String?,
     terminal: TerminalWriter
   ) async {
+    // Parse provider URLs before the generic setting tokenizer, which treats
+    // every '=' as a separator even when it is part of a URL's query string.
+    var providerValue = argument.trimmingCharacters(in: .whitespacesAndNewlines)
+    var providerKey = String(providerValue.prefix { !$0.isWhitespace && $0 != "=" })
+    providerValue = String(providerValue.dropFirst(providerKey.count))
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    if providerKey.lowercased() == "provider" {
+      let child = String(providerValue.prefix { !$0.isWhitespace && $0 != "=" })
+      providerKey += "." + child
+      providerValue = String(providerValue.dropFirst(child.count))
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    if providerKey.lowercased() == "provider.baseurl" {
+      if providerValue.hasPrefix("=") {
+        providerValue = String(providerValue.dropFirst())
+          .trimmingCharacters(in: .whitespacesAndNewlines)
+      }
+      await handleBaseURLCommand(
+        providerValue, currentProvider: session.profile.provider,
+        runtime: runtime, plugins: plugins, configuration: &configuration,
+        configurationPath: configurationPath, providerBaseURLs: providerBaseURLs, terminal: terminal
+      )
+      return
+    }
     let parts = argument.replacingOccurrences(of: "=", with: " ")
       .split(whereSeparator: \Character.isWhitespace)
       .map(String.init)
     guard !parts.isEmpty else {
+      let providerID = session.profile.provider.rawValue
+      let url =
+        providerBaseURLs.url(for: providerID)
+        ?? configuration?.providers.first { $0.id == providerID }?.baseURL
+      await terminal.line("provider.baseurl (\(providerID)) = \(url?.absoluteString ?? "-")")
       await terminal.line("tool.aproval = \(await approvalHandler.currentApprovalMode().rawValue)")
       await terminal.line("debug = \(await approvalHandler.isDebugEnabled() ? "true" : "false")")
       await terminal.line("debugfile = \(await approvalHandler.debugLogURL().path)")
@@ -8132,7 +8244,7 @@ struct MaiCLI {
         || levelKeys.contains(key) || textKeys.contains(key)
     else {
       await terminal.line(
-        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, effort, tool.aproval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.context, ctx.strategy, \((textKeys + themeKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), use.agentsmd, use.plan"
+        "Unknown setting '\(parts[0])'. Available settings: provider.baseurl, debug, debugfile, effort, tool.aproval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.context, ctx.strategy, \((textKeys + themeKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), use.agentsmd, use.plan"
       )
       return
     }
@@ -10896,7 +11008,8 @@ struct MaiCLI {
       "/set ui.broadcast on", "/set ui.broadcast off",
       "/set ui.toolResultLines all", "/set ui.toolResultLines relevant", "/set ui.toolResultLines ",
       "/cwd", "/pwd", "/cd ", "/plugins",
-      "/providers", "/models ", "/provider ", "/provider add ", "/baseurl ",
+      "/providers", "/models ", "/provider ", "/provider add ", "/provider rename ",
+      "/set provider.baseurl ", "/set provider baseurl ", "/help provider",
       "/model ", "/model-chat ",
       "/model-compact ", "/model-tool ", "/model-aproval ", "/agent default ", "/agent effort ",
       "/prompts",
@@ -10975,6 +11088,8 @@ struct MaiCLI {
         values.append("\(prefix)\(provider.id)::")
       }
       values.append("/edit provider \(provider.id)")
+      values.append("/provider rename \(provider.id) ")
+      values.append("/set provider.baseurl \(provider.id) ")
     }
     for skill in skills {
       values.append("/skills show \(skill.name)")
@@ -11224,7 +11339,6 @@ struct MaiCLI {
     /agents                Manage agent definitions and running agents; /help agents lists commands
     /attach [MODE] PATH    Attach a document/source file; HTML asks for source, markdown, or copy
     /attach clear          Drop the attachments queued for the next message
-    /baseurl URL           Change the current provider endpoint
     /btw PROMPT            Ask in a fresh context without changing this chat
     /cd PATH               Change the current working directory
     /chat                  List, switch, archive, rename, or edit this project's chats
@@ -11254,10 +11368,12 @@ struct MaiCLI {
     /prompts               List every prompt and skill; $NAME [TEXT] sends one (/help prompt)
     /provider ID           Select a provider
     /provider add ID URL [--api-key-file PATH]  Save a provider connection
+    /provider rename [OLD] NEW  Rename a provider and update its agents
     /providers             List registered providers
     /queue                 List, push, pop, or drop messages waiting for an agent
     /reply [WIDTH]         Answer the last reply in $EDITOR with it quoted above (/help reply)
     /set [SETTING VALUE]   Show or change settings; /help set lists them
+    /set provider.baseurl [ID] [URL]  Show or change a provider endpoint
     /skills                List, enable, disable, or send skills (/help skills)
     /stats                 Combined ranking, tokens/s, time in use, and efficiency per provider:model, as bars
     /stop                  Interrupt the current turn and keep its queue; /continue resumes it
@@ -11315,7 +11431,31 @@ struct MaiCLI {
     /set ui.bold on|off; blank lines and # comments are allowed. Other settings stay as they are.
     """
 
+  private static let providerHelp = """
+    /provider                         Show the current connection
+    /providers                        List connections and their effective URLs
+    /provider [use] ID                Select and save this agent's provider
+    /provider add ID URL [--api-key-file PATH] [--kind systemone]
+    /provider rename [OLD] NEW        Rename a connection and update configured agents
+    /set provider.baseurl [ID] [URL]  Show or save its endpoint; omit ID for the current provider
+    /edit provider [ID]               Edit its credentials, headers, timeout, and options
+
+    /set provider baseurl accepts the same arguments. /baseurl and /provider baseurl
+    remain aliases. URLs and credential sources belong to each provider. Ambient
+    URL/key variables only fill missing settings; --base-url and --api-key explicitly
+    override the selected connection for one invocation. PROVIDER::MODEL selects
+    that connection and sends only MODEL, including in environment model variables.
+    A rename updates the active chat; other saved chats keep their own snapshots.
+    """
+
   private static let setHelp = """
+    Provider settings:
+      /set provider.baseurl [ID] [URL]  Show or save a provider endpoint (current when ID is omitted)
+      /set provider baseurl [ID] [URL]  Same setting, with separate words
+      /provider rename [OLD] NEW        Rename a connection and update all configured agents
+      /edit provider [ID]               Edit its keys, headers, timeout, and options
+      /baseurl [URL] and /provider baseurl [ID] [URL] remain aliases.
+
     Settings commands:
       /set                         List current settings and their values
       /set effort [LEVEL] [TEXT]   Show or set reasoning effort and optional guidance
@@ -11775,10 +11915,13 @@ struct MaiCLI {
       Terminal theme:
         PMAI_THEME=default|slime|light|ember|pink|orange|sky or a name in ~/.pmai/themes
 
-      Ad-hoc provider (overrides the selected agent's):
+      Ad-hoc provider defaults:
         PMAI_PROVIDER, PMAI_MODEL, PMAI_BASE_URL, and PMAI_API_KEY, or
         PMAI_API_KEY_FILE naming a file that holds the key, so the secret
         never sits in the environment
+        PMAI_MODEL also accepts PROVIDER::MODEL. Configured provider URLs and
+        credentials take precedence over ambient variables; explicit --base-url
+        and --api-key flags override the selected connection for this run.
 
       Resuming a chat:
         Saved model/provider and agent settings take precedence over environment
