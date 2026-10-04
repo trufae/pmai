@@ -1095,7 +1095,7 @@ private actor TerminalApprovalHandler: ApprovalHandler {
 
 @main
 struct MaiCLI {
-  private static let version = "1.8.15"
+  private static let version = "1.8.16"
 
   static func main() async {
     let environment = ProcessInfo.processInfo.environment
