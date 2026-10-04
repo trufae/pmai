@@ -804,6 +804,17 @@ struct SettingsView: View {
       }
 
       SettingsLazyDisclosureGroup {
+        Toggle(
+          "Include Tool Calls and Results", isOn: settingsBinding(\.documentExport.includeToolCalls))
+        Toggle("Include Thinking", isOn: settingsBinding(\.documentExport.includeThinking))
+        Text("Include technical content when exporting conversations to Markdown, HTML, EPUB, or Word.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      } label: {
+        Label("Document Exports", systemImage: "doc.text")
+      }
+
+      SettingsLazyDisclosureGroup {
         backgroundActivityContent
       } label: {
         Label("Background & Notifications", systemImage: "bell.badge")

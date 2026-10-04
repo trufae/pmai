@@ -3131,6 +3131,7 @@ struct AppSettings: Codable, Equatable, Sendable {
   var background: BackgroundActivitySettings = .defaults
   var appearance: AppearanceSettings = .defaults
   var conversation: ConversationSettings = .defaults
+  var documentExport: DocumentExportOptions = .init()
   var renderMarkdownInChat: Bool = true
   var renderMarkdownImagesInChat: Bool = true
   var airplaneModeEnabled: Bool = false
@@ -3325,7 +3326,7 @@ struct AppSettings: Codable, Equatable, Sendable {
     case toolApprovalMode, useToolProxy, useSystemOne, contextWindowMode
     case includeAssistantResponsesInContext, includeReasoningContentInContext
     case followUps, background
-    case appearance, conversation, renderMarkdownInChat, renderMarkdownImagesInChat
+    case appearance, conversation, documentExport, renderMarkdownInChat, renderMarkdownImagesInChat
     case airplaneModeEnabled, allowAppleServerTranscription, attachmentImageSize
     case mlxMaxKVSize, mlxAutoCompact
     case startupBehavior, lastSelectedConversationID
@@ -3438,6 +3439,8 @@ struct AppSettings: Codable, Equatable, Sendable {
       (try? c.decode(AppearanceSettings.self, forKey: .appearance)) ?? .defaults
     conversation =
       (try? c.decode(ConversationSettings.self, forKey: .conversation)) ?? .defaults
+    documentExport =
+      (try? c.decode(DocumentExportOptions.self, forKey: .documentExport)) ?? .init()
     renderMarkdownInChat =
       (try? c.decode(Bool.self, forKey: .renderMarkdownInChat)) ?? true
     renderMarkdownImagesInChat =

@@ -1,10 +1,52 @@
 import Foundation
 import MaiCore
+import MaiDocuments
 import XCTest
 
 @testable import PocketMai
 
 final class ConversationTransferTests: XCTestCase {
+  func testDocumentExportsFilterTechnicalRowsAndKeepVisibleText() {
+    var chat = Conversation()
+    chat.messages = [
+      ChatMessage(role: .user, text: "Question"),
+      ChatMessage(role: .assistant, text: "<think>Thinking only</think>"),
+      ChatMessage(role: .assistant, text: "<think>Mixed thought</think>\n\nAnswer"),
+      ChatMessage(role: .tool, text: "Plain tool result"),
+      ChatMessage(role: .tool, text: "<tool_run>Tool result</tool_run>"),
+      ChatMessage(role: .assistant, text: "<tool_call>Tool call</tool_call>"),
+    ]
+    chat.showThinking = true
+    let clean = ConversationExportContent.exportDocument(conversation: chat)
+    XCTAssertEqual(clean.entries.map(\.body), ["Question", "Answer"])
+    XCTAssertTrue(clean.entries.allSatisfy { $0.reasoning.isEmpty })
+    XCTAssertEqual(clean.summary.messageCount, "2 messages")
+
+    for tools in [false, true] {
+      for thinking in [false, true] {
+        let document = ConversationExportContent.exportDocument(
+          conversation: chat, options: .init(includeToolCalls: tools, includeThinking: thinking))
+        let markdown = MarkdownExport.text(for: document)
+        XCTAssertTrue(markdown.contains("Answer"))
+        XCTAssertEqual(markdown.contains("Thinking only"), thinking)
+        XCTAssertEqual(markdown.contains("Mixed thought"), thinking)
+        XCTAssertEqual(markdown.contains("Plain tool result"), tools)
+        XCTAssertEqual(markdown.contains("Tool result"), tools)
+        XCTAssertEqual(markdown.contains("Tool call"), tools)
+      }
+    }
+  }
+
+  func testDocumentExportSettingsDefaultOffForExistingSettingsAndRoundTrip() throws {
+    var settings = try JSONDecoder().decode(AppSettings.self,
+      from: Data(#"{"showThinkingByDefault":true}"#.utf8))
+    XCTAssertFalse(settings.documentExport.includeToolCalls)
+    XCTAssertFalse(settings.documentExport.includeThinking)
+    settings.documentExport = .init(includeToolCalls: true, includeThinking: true)
+    let restored = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
+    XCTAssertEqual(restored.documentExport, settings.documentExport)
+  }
+
   private func conversation(_ title: String, createdAt: TimeInterval) -> Conversation {
     let timestamp = Date(timeIntervalSince1970: createdAt)
     var conversation = Conversation()

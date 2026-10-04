@@ -8028,11 +8028,46 @@ struct MaiCLI {
       await terminal.line("delegation = \(session.profile.toolDelegation.rawValue)")
       await terminal.line(effortDescription(session.profile.options))
       await listUISettings(configuration?.ui ?? .init(), terminal: terminal)
+      await listExportSettings(configuration?.documentExport ?? .init(), terminal: terminal)
       await listUseSettings(configuration?.use ?? .init(), terminal: terminal)
       return
     }
     let key = parts[0].lowercased()
     let displayedKey = key == "ui.toolresultlines" ? "ui.toolResultLines" : key
+    if key == "export" || key == "export." {
+      await listExportSettings(configuration?.documentExport ?? .init(), terminal: terminal)
+      return
+    }
+    if key == "export.tools" || key == "export.thinking" {
+      var options = configuration?.documentExport ?? .init()
+      guard parts.count > 1 else {
+        let enabled = key == "export.tools" ? options.includeToolCalls : options.includeThinking
+        await terminal.line("\(key) = \(enabled ? "on" : "off")")
+        return
+      }
+      guard parts.count == 2, let enabled = booleanSetting(parts[1]) else {
+        await terminal.line("Usage: /set \(key) <on|off>")
+        return
+      }
+      guard var draft = configuration, let configurationPath else {
+        await terminal.line("error: No writable configuration is active.", to: .standardError)
+        return
+      }
+      if key == "export.tools" {
+        options.includeToolCalls = enabled
+      } else {
+        options.includeThinking = enabled
+      }
+      draft.documentExport = options
+      do {
+        try draft.save(to: URL(fileURLWithPath: configurationPath))
+        configuration = draft
+        await terminal.line("Set \(key) = \(enabled ? "on" : "off").")
+      } catch {
+        await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+      }
+      return
+    }
     if key == "debugfile" {
       // Preserve spaces and '=' in paths; the other /set values are tokenized.
       let remainder = argument.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -8244,7 +8279,7 @@ struct MaiCLI {
         || levelKeys.contains(key) || textKeys.contains(key)
     else {
       await terminal.line(
-        "Unknown setting '\(parts[0])'. Available settings: provider.baseurl, debug, debugfile, effort, tool.aproval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.context, ctx.strategy, \((textKeys + themeKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), use.agentsmd, use.plan"
+        "Unknown setting '\(parts[0])'. Available settings: provider.baseurl, debug, debugfile, effort, tool.aproval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.context, ctx.strategy, \((textKeys + themeKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), export.tools, export.thinking, use.agentsmd, use.plan"
       )
       return
     }
@@ -8960,6 +8995,13 @@ struct MaiCLI {
     return AgentInstructionsFile.promptSection(from: directory)
   }
 
+  private static func listExportSettings(
+    _ options: DocumentExportOptions, terminal: TerminalWriter
+  ) async {
+    await terminal.line("export.tools = \(options.includeToolCalls ? "on" : "off")")
+    await terminal.line("export.thinking = \(options.includeThinking ? "on" : "off")")
+  }
+
   private static func listUISettings(_ ui: ConfiguredTerminalUI, terminal: TerminalWriter) async {
     let keys =
       ["ui.title", "ui.editor"] + TerminalTheme.colors.map(\.0) + [
@@ -9094,7 +9136,9 @@ struct MaiCLI {
       fields.count > 1 ? fields[1] : nil,
       defaultFilename: ChatExport.filename(for: chat, format: format))
     do {
-      let data = try ChatExport.data(for: chat, format: format, generator: "pmai", debug: debug)
+      let data = try ChatExport.data(
+        for: chat, format: format, generator: "pmai", debug: debug,
+        options: configuration?.documentExport ?? .init())
       try data.write(to: target, options: .atomic)
       await terminal.line(
         "Exported \(format.displayName) (\(AgentProcessInfo.compactCount(data.count)) bytes) to \(target.path)"
@@ -9459,6 +9503,9 @@ struct MaiCLI {
 
     PATH may be a file or a folder; without it the file is named after the
     chat title and written to the current directory.
+
+    Documents omit tool calls, results, and thinking by default. Include them with
+    /set export.tools on and /set export.thinking on. JSON keeps the complete chat.
 
     Archives can contain credentials already stored literally in the
     configuration. Environment-variable and key-file references stay as references.
@@ -10977,6 +11024,8 @@ struct MaiCLI {
       "/set ui.", "/set effort", "/set effort off", "/set effort auto", "/nothink",
       "/set ui.thinking status", "/set ui.thinking line", "/set ui.thinking three",
       "/set ui.thinking five", "/set ui.thinking full",
+      "/set export.", "/set export.tools on", "/set export.tools off",
+      "/set export.thinking on", "/set export.thinking off",
       "/btw ",
       "/help memory", "/help agents", "/help chat", "/help edit", "/help tools",
       "/agent acp list", "/agent acp add ", "/agents acp list",
@@ -11480,6 +11529,9 @@ struct MaiCLI {
       /set ctx.recent <auto|N|Nk>  Recent tokens kept verbatim when summarizing (auto: up to 8k)
       /set ctx.context <cache|size|smart|tools>  Keep history, prune reads, build a brief, or summarize old tool results
       /set ctx.strategy <cache|size|smart|tools>  Alias for ctx.context
+      /set export.                 List document export settings
+      /set export.tools BOOL       Include tool calls and results in documents (default off)
+      /set export.thinking BOOL    Include thinking blocks in documents (default off)
       /set ui.                     List terminal UI settings
       /set ui.title TEXT           Set the prompt label and terminal/tab title (`none` clears it)
       /set ui.editor COMMAND       Editor /edit opens (`none` falls back to $EDITOR, $VISUAL, vim)
@@ -11516,7 +11568,7 @@ struct MaiCLI {
     tool.aproval, debug, and debugfile are saved in the opened project's .pmai/settings.json.
     Debug entries append to the chosen file and may contain prompts and tool output.
     --tool-aproval MODE overrides approval for one run. Projects without a saved choice use approvals.mode from the
-    active configuration. Agent and UI settings use the active configuration.
+    active configuration. Agent, UI, and document export settings use the active configuration.
     COLOR accepts a named ANSI color, rgb:RGB, #RRGGBB, or none.
     """
 

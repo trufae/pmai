@@ -413,9 +413,12 @@ turn runs is queued and joins the conversation at the agent's next model turn â€
 after the tool results it is about to read â€” so a running agent can be steered
 without stopping it. `/queue` lists what is waiting, `/queue push TEXT` adds
 without sending, `/queue pop` drops the newest, and `/queue drop` drops all.
-`/export markdown|html|json|debug|epub|docx [PATH]` saves the chat as a file, with
-the same writers PocketMai uses (`MaiDocuments`): `debug` is the JSON envelope
-plus the tools and settings the chat runs with.
+`/export markdown|html|json|debug|epub|docx [PATH]` saves the chat as a file using
+the same writers PocketMai uses (`MaiDocuments`). Tool calls, tool results, and
+thinking are omitted from readable documents by default.
+`/set export.tools on` and `/set export.thinking on` opt into each independently;
+`/set export.` lists the saved preferences. JSON and debug exports keep the full chat.
+`debug` adds the tools and settings the chat runs with to the JSON envelope.
 `/export archive [PATH]` writes a portable `.pocketmai.json` archive containing
 the configured providers, prompts, MCP servers, agents, visible skills, and the
 current chat together with every nested subagent chat and transcript.

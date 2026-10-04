@@ -775,6 +775,27 @@ public struct ConfiguredUse: Codable, Equatable, Sendable {
   }
 }
 
+/// Optional technical content in readable conversation documents.
+/// JSON archives keep the full conversation regardless of these options.
+public struct DocumentExportOptions: Codable, Equatable, Sendable {
+  public var includeToolCalls: Bool
+  public var includeThinking: Bool
+
+  public init(includeToolCalls: Bool = false, includeThinking: Bool = false) {
+    self.includeToolCalls = includeToolCalls
+    self.includeThinking = includeThinking
+  }
+
+  private enum CodingKeys: String, CodingKey { case includeToolCalls, includeThinking }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      includeToolCalls: try container.decodeIfPresent(Bool.self, forKey: .includeToolCalls) ?? false,
+      includeThinking: try container.decodeIfPresent(Bool.self, forKey: .includeThinking) ?? false)
+  }
+}
+
 public struct MaiConfiguration: Codable, Equatable, Sendable {
   public var version: Int
   public var defaultAgent: String?
@@ -790,6 +811,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
   public var ui: ConfiguredTerminalUI
   public var approvals: ConfiguredApprovals
   public var use: ConfiguredUse
+  public var documentExport: DocumentExportOptions
 
   public init(
     version: Int = 1,
@@ -805,7 +827,8 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
     memory: ConfiguredMemory = .init(),
     ui: ConfiguredTerminalUI = .init(),
     approvals: ConfiguredApprovals = .init(),
-    use: ConfiguredUse = .init()
+    use: ConfiguredUse = .init(),
+    documentExport: DocumentExportOptions = .init()
   ) {
     self.version = version
     self.defaultAgent = defaultAgent
@@ -821,13 +844,14 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
     self.ui = ui
     self.approvals = approvals
     self.use = use
+    self.documentExport = documentExport
   }
 
   private enum CodingKeys: String, CodingKey {
     case version, defaultAgent, taskAgents, plugins, providers, toolSources, ocrProviders,
       mcpServers, agents,
       prompts, memory, ui,
-      approvals, use
+      approvals, use, documentExport
   }
 
   public init(from decoder: Decoder) throws {
@@ -852,7 +876,9 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
       ui: try container.decodeIfPresent(ConfiguredTerminalUI.self, forKey: .ui) ?? .init(),
       approvals: try container.decodeIfPresent(ConfiguredApprovals.self, forKey: .approvals)
         ?? .init(),
-      use: try container.decodeIfPresent(ConfiguredUse.self, forKey: .use) ?? .init())
+      use: try container.decodeIfPresent(ConfiguredUse.self, forKey: .use) ?? .init(),
+      documentExport: try container.decodeIfPresent(DocumentExportOptions.self, forKey: .documentExport)
+        ?? .init())
   }
 
   public static func load(from url: URL) throws -> MaiConfiguration {

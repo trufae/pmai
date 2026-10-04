@@ -53,6 +53,18 @@ func configurationPromptDefaults() throws {
 
   #expect(configuration.prompts == nil)
   #expect(configuration.ui.title.isEmpty)
+  #expect(configuration.documentExport == DocumentExportOptions())
+}
+
+@Test("Document export options default off and persist independently")
+func documentExportOptionsPersist() throws {
+  let decoder = JSONDecoder()
+  #expect(try decoder.decode(DocumentExportOptions.self, from: Data("{}".utf8)) == .init())
+  #expect(try decoder.decode(DocumentExportOptions.self,
+    from: Data(#"{"includeThinking":true}"#.utf8)) == .init(includeThinking: true))
+  let configuration = MaiConfiguration(documentExport: .init(includeToolCalls: true, includeThinking: true))
+  #expect(try decoder.decode(MaiConfiguration.self,
+    from: JSONEncoder().encode(configuration)).documentExport == configuration.documentExport)
 }
 
 @Test("The terminal editor setting is optional and round-trips")

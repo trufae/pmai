@@ -129,16 +129,16 @@ public struct ChatExportEnvelope: Codable, Equatable, Sendable {
 
 /// Turns a MaiCore chat into any export format.
 public enum ChatExport {
-  /// The document every format is written from. Tool calls and results are
-  /// kept as code blocks so the record shows what the agent did; reasoning
-  /// goes into the entry's hidden sections.
+  /// Readable documents omit tool traffic and thinking unless requested.
   public static func document(
     for chat: AgentChat,
     generator: String = "MaiCore",
-    includeToolTraffic: Bool = true
+    includeToolTraffic: Bool = false,
+    includeThinking: Bool = false
   ) -> ExportDocument {
     var entries: [ExportEntry] = []
     for message in chat.messages {
+      if message.role == .tool && !includeToolTraffic { continue }
       var body: [String] = []
       var reasoning: [String] = []
       var attachments: [ExportImage] = []
@@ -147,9 +147,18 @@ public enum ChatExport {
         case .text(let text):
           let rendered = MessageContentFilter.render(text)
           body.append(rendered.visibleText)
-          reasoning.append(contentsOf: rendered.hiddenSections.filter { $0.tag == "think" }.map(\.content))
+          if includeThinking {
+            reasoning.append(
+              contentsOf: rendered.hiddenSections.filter { $0.tag == "think" }.map(\.content))
+          }
+          if includeToolTraffic {
+            body.append(
+              contentsOf: rendered.hiddenSections.filter {
+                $0.tag == "tool_call" || $0.tag == "tool_run"
+              }.map { fenced($0.content) })
+          }
         case .reasoning(let text):
-          reasoning.append(text)
+          if includeThinking { reasoning.append(text) }
         case .image(let image):
           switch image.source {
           case .data(let data):
@@ -185,12 +194,12 @@ public enum ChatExport {
         case .system, .developer: .system
         case .tool: .tool
         }
-      entries.append(
-        ExportEntry(
-          role: role,
-          reasoning: reasoning,
-          body: body.joined(separator: "\n\n"),
-          attachments: attachments))
+      let entry = ExportEntry(
+        role: role,
+        reasoning: reasoning,
+        body: body.joined(separator: "\n\n"),
+        attachments: attachments)
+      if !entry.isEmpty { entries.append(entry) }
     }
     return ExportDocument(
       identifier: chat.id,
@@ -205,11 +214,17 @@ public enum ChatExport {
     for chat: AgentChat,
     format: ChatExportFormat,
     generator: String = "MaiCore",
-    debug: ChatExportDebug? = nil
+    debug: ChatExportDebug? = nil,
+    options: DocumentExportOptions = .init()
   ) throws -> Data {
+    func exportDocument() -> ExportDocument {
+      document(
+        for: chat, generator: generator,
+        includeToolTraffic: options.includeToolCalls, includeThinking: options.includeThinking)
+    }
     switch format {
     case .markdown:
-      return Data(MarkdownExport.text(for: document(for: chat, generator: generator)).utf8)
+      return Data(MarkdownExport.text(for: exportDocument()).utf8)
     case .json, .debug:
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -218,11 +233,11 @@ public enum ChatExport {
         chat: chat, generator: generator, debug: format == .debug ? debug : nil)
       return try encoder.encode(envelope)
     case .html:
-      return HTMLExport.data(for: document(for: chat, generator: generator))
+      return HTMLExport.data(for: exportDocument())
     case .epub:
-      return EPUBExport.data(for: document(for: chat, generator: generator))
+      return EPUBExport.data(for: exportDocument())
     case .docx:
-      return DOCXExport.data(for: document(for: chat, generator: generator))
+      return DOCXExport.data(for: exportDocument())
     }
   }
 

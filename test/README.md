@@ -9,6 +9,7 @@ Session persistence regression checks use temporary projects and configurations:
     python3 test/repl-resume-smoke.py MaiCore/.build/debug/pmai
     python3 test/repl-resume-state-smoke.py MaiCore/.build/debug/pmai
     python3 test/repl-resume-routing-smoke.py MaiCore/.build/debug/pmai
+    python3 test/repl-export-smoke.py MaiCore/.build/debug/pmai
     python3 test/provider-routing-smoke.py MaiCore/.build/debug/pmai
 
 The state check covers provider/task snapshots, removed definitions, chat

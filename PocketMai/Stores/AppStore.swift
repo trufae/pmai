@@ -3571,14 +3571,14 @@ final class AppStore: ObservableObject {
     _ conversation: Conversation,
     imageSize: AttachmentImageSize
   ) async throws -> ExportDocument {
-    let includeThinking = effectiveShowThinking(for: conversation)
+    let options = settings.documentExport
     let catalog = try await ConversationExportContent.buildImageResourceCatalog(
       conversation: conversation,
-      includeThinking: includeThinking,
+      options: options,
       imageSize: imageSize)
     return ConversationExportContent.exportDocument(
       conversation: conversation,
-      includeThinking: includeThinking,
+      options: options,
       imageCatalog: catalog)
   }
 
@@ -5221,7 +5221,7 @@ final class AppStore: ObservableObject {
       return MarkdownExport.text(
         for: ConversationExportContent.exportDocument(
           conversation: conversation,
-          includeThinking: effectiveShowThinking(for: conversation)))
+          options: settings.documentExport))
     case .json, .debug:
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

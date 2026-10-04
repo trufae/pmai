@@ -1,4 +1,5 @@
 import Foundation
+import MaiCore
 import MaiDocuments
 import SwiftUI
 import UIKit
@@ -449,29 +450,44 @@ enum ConversationExportContent {
     }
   }
 
-  static func messageContent(for message: ChatMessage, includeThinking: Bool)
+  static func messageContent(for message: ChatMessage, options: DocumentExportOptions = .init())
     -> MessageContent
   {
+    guard options.includeToolCalls || message.role != .tool else {
+      return MessageContent(visibleText: "", reasoningSections: [])
+    }
     let rendered = MessageContentFilter.render(message.presentationText)
     let reasoningSections =
-      includeThinking
+      options.includeThinking
       ? rendered.hiddenSections.filter { $0.tag == "think" }.map(\.content)
       : []
-    return MessageContent(visibleText: rendered.visibleText, reasoningSections: reasoningSections)
+    var body = [rendered.visibleText]
+    if options.includeToolCalls {
+      for section in rendered.hiddenSections
+      where section.tag == "tool_call" || section.tag == "tool_run" {
+        var fence = "```"
+        while section.content.contains(fence) { fence += "`" }
+        body.append("\(fence)\n\(section.content)\n\(fence)")
+      }
+    }
+    return MessageContent(
+      visibleText: body.filter { !$0.isEmpty }.joined(separator: "\n\n"),
+      reasoningSections: reasoningSections)
   }
 
   static func buildImageResourceCatalog(
     conversation: Conversation,
-    includeThinking: Bool,
+    options: DocumentExportOptions = .init(),
     imageSize: AttachmentImageSize
   ) async throws -> ImageResourceCatalog {
     var catalog = ImageResourceCatalog(imageSize: imageSize)
     for message in conversation.messages {
+      if message.role == .tool && !options.includeToolCalls { continue }
       for attachment in message.attachments where attachment.kind == .image {
         try catalog.addImageAttachment(attachment)
       }
 
-      let content = messageContent(for: message, includeThinking: includeThinking)
+      let content = messageContent(for: message, options: options)
       for source in markdownImageSources(in: content.visibleText) {
         try await catalog.addRemoteImage(source: source)
       }
@@ -758,13 +774,14 @@ extension ConversationExportContent {
   /// one only the text does, which is all markdown needs.
   static func exportDocument(
     conversation: Conversation,
-    includeThinking: Bool,
+    options: DocumentExportOptions = .init(),
     imageCatalog: ImageResourceCatalog? = nil
   ) -> ExportDocument {
     var entries: [ExportEntry] = []
     var diagramSources: [String] = []
     for message in conversation.messages {
-      let content = messageContent(for: message, includeThinking: includeThinking)
+      if message.role == .tool && !options.includeToolCalls { continue }
+      let content = messageContent(for: message, options: options)
       let attachments = message.attachments.compactMap { attachment -> ExportImage? in
         guard attachment.kind == .image, let resource = imageCatalog?.resource(for: attachment)
         else { return nil }
@@ -772,12 +789,12 @@ extension ConversationExportContent {
           name: attachment.displayName, mediaType: resource.mediaType, data: resource.data,
           width: resource.width, height: resource.height)
       }
-      entries.append(
-        ExportEntry(
-          role: ExportRole(rawValue: message.role.rawValue) ?? .assistant,
-          reasoning: content.reasoningSections,
-          body: content.visibleText,
-          attachments: attachments))
+      let entry = ExportEntry(
+        role: ExportRole(rawValue: message.role.rawValue) ?? .assistant,
+        reasoning: content.reasoningSections,
+        body: content.visibleText,
+        attachments: attachments)
+      if !entry.isEmpty { entries.append(entry) }
       for text in [content.visibleText] + content.reasoningSections {
         diagramSources.append(contentsOf: ExportDocument.mermaidSources(in: text))
       }

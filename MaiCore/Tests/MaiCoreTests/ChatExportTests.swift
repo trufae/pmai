@@ -57,9 +57,9 @@ func chatExportsToEveryFormat() throws {
   let markdown = String(decoding: try ChatExport.data(for: chat, format: .markdown, generator: "pmai"), as: UTF8.self)
   #expect(markdown.hasPrefix("# Export sample\n"))
   #expect(markdown.contains("## You\n\nHello **there**"))
-  #expect(markdown.contains("> **Reasoning**\n>\n> thinking hard"))
-  #expect(markdown.contains("→ echo {\"text\":\"hi\"}"))
-  #expect(markdown.contains("← result\nhi"))
+  #expect(!markdown.contains("thinking hard"))
+  #expect(!markdown.contains("→ echo"))
+  #expect(!markdown.contains("← result"))
   #expect(markdown.contains("*Attached image: dot.gif*"))
 
   let html = String(
@@ -82,11 +82,8 @@ func chatExportsToEveryFormat() throws {
   #expect(xhtml.contains("<p>Hello <strong>there</strong></p>"))
   #expect(xhtml.contains("<img src=\"images/image001.gif\""))
   #expect(epub.contains { $0.path == "OEBPS/images/image001.gif" })
-  let reply = try #require(epub.first { $0.path == "OEBPS/msg002.xhtml" })
-  let replyHTML = String(decoding: reply.data, as: UTF8.self)
-  #expect(replyHTML.contains("<section class=\"reasoning\"><h2>Reasoning</h2><p>thinking hard</p></section>"))
-  #expect(replyHTML.contains("<pre><code>→ echo {"))
-  let final = try #require(epub.first { $0.path == "OEBPS/msg004.xhtml" })
+  #expect(!epub.contains { $0.path == "OEBPS/msg003.xhtml" })
+  let final = try #require(epub.first { $0.path == "OEBPS/msg002.xhtml" })
   let finalHTML = String(decoding: final.data, as: UTF8.self)
   #expect(finalHTML.contains("<pre><code class=\"language-swift\"><span class=\"syntax-keyword\">let</span> x = <span class=\"syntax-number\">1</span></code></pre>"))
   #expect(finalHTML.contains("<a href=\"https://example.com/\">a link</a>"))
@@ -163,6 +160,36 @@ func chatExportsToEveryFormat() throws {
     from: try ChatExport.data(for: kept, format: .json, generator: "pmai"))
   #expect(keptEnvelope.chat.subagents.map(\.runID) == withChildren.subagents.map(\.runID))
   #expect(keptEnvelope.chat.subagents.first?.messages == withChildren.subagents.first?.messages)
+}
+
+@Test("Documents independently opt into tools and thinking in every format",
+  arguments: [ChatExportFormat.markdown, .html, .epub, .docx],
+  [DocumentExportOptions(), .init(includeToolCalls: true), .init(includeThinking: true),
+   .init(includeToolCalls: true, includeThinking: true)])
+func documentExportContentOptions(format: ChatExportFormat, options: DocumentExportOptions) throws {
+  var chat = sampleChat()
+  chat.messages.append(AgentMessage(role: .tool, content: [.text("plain tool result")]))
+  chat.messages.append(.assistant("<think>inline thought</think>\n\nVisible answer."))
+  chat.messages.append(.assistant("<tool_call>legacy call</tool_call>\n\n<tool_run>legacy result</tool_run>"))
+  let data = try ChatExport.data(for: chat, format: format, options: options)
+  let text: String
+  switch format {
+  case .epub, .docx:
+    text = try ZipArchiveReader.entries(in: data)
+      .filter { $0.path.hasSuffix(".xml") || $0.path.hasSuffix(".xhtml") }
+      .map { String(decoding: $0.data, as: UTF8.self) }.joined(separator: "\n")
+  default:
+    text = String(decoding: data, as: UTF8.self)
+  }
+  #expect(text.contains("Visible answer."))
+  #expect(text.contains("thinking hard") == options.includeThinking)
+  #expect(text.contains("inline thought") == options.includeThinking)
+  #expect(text.contains("→ echo") == options.includeToolCalls)
+  #expect(text.contains("← result") == options.includeToolCalls)
+  #expect(text.contains("plain tool result") == options.includeToolCalls)
+  #expect(text.contains("legacy call") == options.includeToolCalls)
+  #expect(text.contains("legacy result") == options.includeToolCalls)
+  #expect(ChatExport.document(for: chat).entries.map(\.role) == [.user, .assistant, .assistant])
 }
 
 @Test("Export file names come from the title and formats accept common spellings")
