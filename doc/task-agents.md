@@ -18,7 +18,7 @@ Add connections once, then refer to them by ID. OpenAI-compatible local servers 
 /models local
 ```
 
-Use `/edit provider ID` for credentials, headers, backend options, or connection changes. `/baseurl URL` changes the current provider's connection and saves it; other agents sharing that provider use the same connection.
+Use `/edit provider ID` for the URL, default model, credentials, headers, and backend options. Other agents sharing that provider use the updated connection. A provider's `defaultModel` is selected by `/provider use ID` and fills an empty agent model; an explicit model takes precedence.
 
 Create an agent by copying the current one, then edit the fields you need:
 
@@ -70,7 +70,7 @@ pmai --tool-agent - --compact-agent -
 
 `--tool-model` and `--compact-model` are aliases for the corresponding agent selectors. Add `--save-defaults` to persist the selected primary agent, provider/model, explicit base URL, effort, and task assignments. Otherwise command-line overrides are temporary for an existing configuration. The first launch still creates the initial configuration as before. API keys supplied with `--api-key` remain invocation overrides; use the provider's `apiKeyFile`, `apiKeyEnvironment`, or `apiKey` settings for persistent credentials.
 
-For a new chat, model/provider selection uses explicit flags, environment defaults, saved agent settings, then built-in defaults. Environment model values also accept `PROVIDER::MODEL`; only `MODEL` is sent to the selected provider. Connection URLs and credential sources belong to that provider: its configured settings take precedence over ambient URL/key variables, which only fill missing settings. Explicit `--base-url` and `--api-key` flags override the selected connection. `/set provider.baseurl [ID] URL` saves an endpoint, and `/provider rename [OLD] NEW` renames a connection and updates configured agent references.
+For a new chat, model/provider selection uses explicit flags, environment defaults, saved agent settings, then built-in defaults. Environment model values also accept `PROVIDER::MODEL`; only `MODEL` is sent to the selected provider. Connection URLs and credential sources belong to that provider: its configured settings take precedence over ambient URL/key variables, which only fill missing settings. Explicit `--base-url` and `--api-key` flags override the selected connection. `/edit provider [ID]` saves an endpoint, and `/provider rename [OLD] NEW` renames a connection and updates configured agent references.
 
 `pmai -r` restores the chat's saved agent settings, including provider/model, reasoning, instructions, limits, and tools; only explicit flags override them, and only for the selected chat. Its endpoint comes from the saved provider unless `--base-url` is given. Credentials still resolve from the current configuration/environment. `/chat use` also restores the selected chat's settings. `--save-defaults` on resume saves the restored profile with any explicit overrides.
 
@@ -134,8 +134,8 @@ The shared configuration keeps references rather than copying a second provider/
   "defaultAgent": "main",
   "taskAgents": { "compact": "fast", "tool": "fast" },
   "providers": [
-    { "id": "remote", "kind": "openAICompatible", "baseURL": "https://your-server.example/v1", "apiKeyFile": "~/.config/pmai/key" },
-    { "id": "local", "kind": "openAICompatible", "baseURL": "http://127.0.0.1:11434/v1" }
+    { "id": "remote", "kind": "openAICompatible", "baseURL": "https://your-server.example/v1", "defaultModel": "large-model", "apiKeyFile": "~/.config/pmai/key" },
+    { "id": "local", "kind": "openAICompatible", "baseURL": "http://127.0.0.1:11434/v1", "defaultModel": "qwen3:8b" }
   ],
   "agents": [
     { "id": "main", "provider": "remote", "model": "large-model", "instructions": "Help the user.", "options": { "reasoningEffort": "high" } },

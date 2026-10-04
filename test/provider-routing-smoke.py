@@ -50,6 +50,39 @@ def main():
             config = root / 'config.json'
             key_file = root / 'key'
             key_file.write_text('file-key\n')
+            editor = root / 'provider-editor.py'
+            editor.write_text('''import json, os, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+provider = json.loads(path.read_text())
+assert provider['_credentialHelp']
+assert any('baseURL:' in line for line in provider['_credentialHelp'])
+assert any('defaultModel:' in line for line in provider['_credentialHelp'])
+assert all(field in provider for field in ('apiKey', 'apiKeyEnvironment', 'apiKeyFile'))
+assert 'defaultModel' in provider
+if 'TEST_EDIT_URL' in os.environ and 'TEST_EDIT_RETRY' not in os.environ:
+    provider['baseURL'] = os.environ['TEST_EDIT_URL']
+if 'TEST_EDIT_DEFAULT_MODEL' in os.environ:
+    provider['defaultModel'] = os.environ['TEST_EDIT_DEFAULT_MODEL']
+if 'TEST_EDIT_KEY_ENV' in os.environ:
+    provider['apiKeyEnvironment'] = os.environ['TEST_EDIT_KEY_ENV'] or None
+if 'TEST_EDIT_KEY' in os.environ:
+    provider['apiKey'] = os.environ['TEST_EDIT_KEY']
+if 'TEST_EDIT_RETRY' in os.environ:
+    state = pathlib.Path(os.environ['TEST_EDIT_RETRY'])
+    if not state.exists():
+        state.write_text('1')
+        provider['baseUrL'] = 'misspelled field'
+    elif state.read_text() == '1':
+        assert provider.pop('baseUrL') == 'misspelled field'
+        assert provider['defaultModel'] == os.environ['TEST_EDIT_DEFAULT_MODEL']
+        state.write_text('2')
+        provider['baseURL'] = 'not-a-url'
+    else:
+        assert provider['baseURL'] == 'not-a-url'
+        provider['baseURL'] = os.environ['TEST_EDIT_URL']
+        state.write_text('3')
+path.write_text(json.dumps(provider))
+''')
             config.write_text(json.dumps({
                 'defaultAgent': 'main', 'taskAgents': {'compact': 'summary'},
                 'providers': [
@@ -103,6 +136,19 @@ def main():
             check_request('/envkey/v1', 'environment-key')
             run(args=['--model', 'fallback::org/model:tag', 'Ad-hoc key fallback.'])
             check_request('/fallback/v1', 'wrong-key')
+            run(['/edit provider fallback'],
+                env={'EDITOR': f'python3 {editor}', 'TEST_EDIT_KEY_ENV': 'REMOTE_KEY'})
+            run(args=['--model', 'fallback::org/model:tag', 'Edited key source.'])
+            check_request('/fallback/v1', 'environment-key')
+            saved_fallback = next(p for p in json.loads(config.read_text())['providers']
+                                  if p['id'] == 'fallback')
+            assert saved_fallback['apiKeyEnvironment'] == 'REMOTE_KEY'
+            assert '_credentialHelp' not in saved_fallback
+            run(['/edit provider fallback'],
+                env={'EDITOR': f'python3 {editor}', 'TEST_EDIT_KEY_ENV': '',
+                     'TEST_EDIT_KEY': 'saved-key'})
+            run(args=['--model', 'fallback::org/model:tag', 'Edited direct key.'])
+            check_request('/fallback/v1', 'saved-key')
             run(args=['--model', 'remote::org/model:tag', 'Ignore unused ambient errors.'],
                 env={'PMAI_BASE_URL': 'bad url', 'PMAI_API_KEY_FILE': '/missing-key'})
             check_request('/remote/v1', 'file-key')
@@ -121,10 +167,11 @@ def main():
             for selector in ('::model', 'remote::', 'missing::model'):
                 run(args=['--model', selector, 'Invalid selection.'], error=True)
 
-            # A targeted setting edits another connection without selecting it.
-            output = run(['/set provider.baseurl remote',
-                          f'/set provider baseurl remote {base}/edited/v1',
-                          '/provider', '/model-chat remote::org/model:tag', 'Edited endpoint.'])
+            # Edit another connection without selecting it.
+            output = run(['/edit provider remote', '/provider',
+                          '/model-chat remote::org/model:tag', 'Edited endpoint.'],
+                         env={'EDITOR': f'python3 {editor}',
+                              'TEST_EDIT_URL': f'{base}/edited/v1'})
             assert "Current provider: local" in output, output
             check_request('/edited/v1', 'file-key')
             saved = json.loads(config.read_text())
@@ -133,12 +180,40 @@ def main():
             assert remote['apiKeyFile'] == str(key_file) and remote['headers']['x-provider'] == 'remote'
             assert next(p for p in saved['providers'] if p['id'] == 'local')['baseURL'] == f'{base}/local/v1'
 
-            # '=' syntax preserves URL query values; old slash commands remain scoped aliases.
+            retry_state = root / 'editor-retries'
+            output = run(['/edit provider remote'],
+                         env={'EDITOR': f'python3 {editor}',
+                              'TEST_EDIT_URL': f'{base}/edited/v1',
+                              'TEST_EDIT_DEFAULT_MODEL': 'remote-default',
+                              'TEST_EDIT_RETRY': str(retry_state)}, error=True)
+            assert 'Unknown provider field: baseUrL' in output, output
+            assert 'baseURL must be an http:// or https:// URL' in output, output
+            assert 'Reopening provider editor' in output, output
+            assert retry_state.read_text() == '3'
+            remote = next(p for p in json.loads(config.read_text())['providers']
+                          if p['id'] == 'remote')
+            assert remote['defaultModel'] == 'remote-default' and 'baseUrL' not in remote
+            run(['/provider use remote', 'Provider default model.'])
+            check_request('/edited/v1', 'file-key', 'remote-default')
+            run(args=['--provider', 'remote', 'Provider flag default model.'])
+            check_request('/edited/v1', 'file-key', 'remote-default')
+            run(['/model-chat remote::org/model:tag'])
+
+            # JSON editing preserves URL query values. Old setters cannot change the URL.
             query = f'{base}/query/v1?tenant=one&mode=two'
-            run([f'/set provider.baseurl={query}', '/set provider.baseurl'])
+            run(['/edit provider remote'],
+                env={'EDITOR': f'python3 {editor}', 'TEST_EDIT_URL': query})
             assert next(p for p in json.loads(config.read_text())['providers']
                         if p['id'] == 'remote')['baseURL'] == query
-            run([f'/baseurl {base}/alias/v1', f'/provider baseurl remote {base}/edited/v1'])
+            before = config.read_bytes()
+            output = run([f'/set provider.baseurl={base}/wrong/v1',
+                          f'/baseurl {base}/wrong/v1',
+                          f'/provider baseurl remote {base}/wrong/v1'])
+            assert output.count('Change baseURL with /edit provider remote.') == 3, output
+            assert config.read_bytes() == before
+            run(['/edit provider remote'],
+                env={'EDITOR': f'python3 {editor}',
+                     'TEST_EDIT_URL': f'{base}/edited/v1'})
 
             # Renaming preserves connection data, updates primary/task agents, and survives resume.
             output = run(['/chat rename renamed-chat', '/provider rename remote renamed',
@@ -160,7 +235,7 @@ def main():
             assert next(a for a in json.loads(config.read_text())['agents']
                         if a['id'] == 'main')['provider'] == 'final'
             print('PASS providers: qualified models, URL/key precedence, explicit overrides, '
-                  'scoped settings, aliases, rename, task references, collision, and resume')
+                  'provider editing, rename, task references, collision, and resume')
     finally:
         server.shutdown()
         server.server_close()

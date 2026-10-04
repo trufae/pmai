@@ -20,6 +20,18 @@ func providerModelSelection() throws {
   }
 }
 
+@Test("Configured provider default models survive JSON and reach the runtime descriptor")
+func configuredProviderDefaultModel() async throws {
+  let configured = ConfiguredProvider(id: "local", kind: .hello, defaultModel: "model-for-local")
+  let decoded = try JSONDecoder().decode(
+    ConfiguredProvider.self, from: JSONEncoder().encode(configured))
+  #expect(decoded.defaultModel == "model-for-local")
+  let registry = PluginRegistry()
+  try await registry.install(MaiCoreBuiltinsPlugin())
+  let provider = try await registry.makeProvider(from: decoded, environment: [:])
+  #expect(provider.descriptor.defaultModel == "model-for-local")
+}
+
 @Test("Renaming providers preserves connection settings and updates task agents")
 func providerRenameConfiguration() throws {
   let original = ConfiguredProvider(

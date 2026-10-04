@@ -31,6 +31,8 @@ public struct ConfiguredProvider: Codable, Equatable, Identifiable, Sendable {
   public var kind: ConfiguredProviderKind
   public var displayName: String?
   public var baseURL: URL?
+  /// Model to use when an agent does not select one explicitly.
+  public var defaultModel: String?
   public var apiKey: String?
   public var apiKeyEnvironment: String?
   /// A file holding the key, for secrets mounted on disk rather than exported
@@ -47,6 +49,7 @@ public struct ConfiguredProvider: Codable, Equatable, Identifiable, Sendable {
     kind: ConfiguredProviderKind,
     displayName: String? = nil,
     baseURL: URL? = nil,
+    defaultModel: String? = nil,
     apiKey: String? = nil,
     apiKeyEnvironment: String? = nil,
     apiKeyFile: String? = nil,
@@ -59,6 +62,7 @@ public struct ConfiguredProvider: Codable, Equatable, Identifiable, Sendable {
     self.kind = kind
     self.displayName = displayName
     self.baseURL = baseURL
+    self.defaultModel = defaultModel
     self.apiKey = apiKey
     self.apiKeyEnvironment = apiKeyEnvironment
     self.apiKeyFile = apiKeyFile
@@ -69,7 +73,7 @@ public struct ConfiguredProvider: Codable, Equatable, Identifiable, Sendable {
   }
 
   private enum CodingKeys: String, CodingKey {
-    case id, kind, displayName, baseURL, apiKey, apiKeyEnvironment, apiKeyFile, headers,
+    case id, kind, displayName, baseURL, defaultModel, apiKey, apiKeyEnvironment, apiKeyFile, headers,
       headerEnvironment, timeout
     case options
   }
@@ -81,6 +85,7 @@ public struct ConfiguredProvider: Codable, Equatable, Identifiable, Sendable {
       kind: try container.decode(ConfiguredProviderKind.self, forKey: .kind),
       displayName: try container.decodeIfPresent(String.self, forKey: .displayName),
       baseURL: try container.decodeIfPresent(URL.self, forKey: .baseURL),
+      defaultModel: try container.decodeIfPresent(String.self, forKey: .defaultModel),
       apiKey: try container.decodeIfPresent(String.self, forKey: .apiKey),
       apiKeyEnvironment: try container.decodeIfPresent(String.self, forKey: .apiKeyEnvironment),
       apiKeyFile: try container.decodeIfPresent(String.self, forKey: .apiKeyFile),

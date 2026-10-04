@@ -25,7 +25,7 @@ def main():
         config = root / 'config.json'
         config.write_text(json.dumps({
             'version': 1, 'defaultAgent': 'smoke',
-            'providers': [{'id': 'offline', 'kind': 'hello'}],
+            'providers': [{'id': name, 'kind': 'hello'} for name in ('offline', 'other')],
             'agents': [{'id': 'smoke', 'provider': 'offline', 'model': 'hello',
                         'toolGroupNames': [], 'enabled': True}],
             'memory': {'enabled': False, 'scope': 'project'},
@@ -89,6 +89,22 @@ def main():
             wait_for('\x1b[97;44mautomatic\x1b[0m')
             send(b'\x7f\t\r')
             wait_for('Set tool.calling = automatic')
+            send(b'/provider use \t')
+            wait_for('/provider use offline')
+            send(b'\t')
+            wait_for('/provider use other')
+            send(b'\r')
+            wait_for('Provider: other (saved for agent smoke)')
+            send(b'/edit provider\t')
+            wait_for('/edit provider offline')
+            send(b'\t')
+            wait_for('/edit provider other')
+            send(b'\x03')
+            wait_for('Nothing to cancel.')
+            send(b'/edit provider \t')
+            wait_for('/edit provider offline')
+            send(b'\x03')
+            wait_for('Nothing to cancel.')
             print('PASS: completion selection, wraparound, narrow rows and editing')
 
             for cycle in range(8):

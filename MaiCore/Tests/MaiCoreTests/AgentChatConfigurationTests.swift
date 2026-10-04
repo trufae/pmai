@@ -14,7 +14,8 @@ func chatConfigurationRoundTrip() throws {
   let nested = AgentDefinition(id: "nested", provider: "remote", model: "nested")
   let provider = ConfiguredProvider(
     id: "remote", kind: .openAICompatible,
-    baseURL: URL(string: "https://configured.example/v1"), apiKey: "do-not-copy",
+    baseURL: URL(string: "https://configured.example/v1"), defaultModel: "original-default",
+    apiKey: "do-not-copy",
     apiKeyEnvironment: "REMOTE_KEY",
     headers: ["x-session": "{{session}}", "Authorization": "Bearer private-header"],
     timeout: 91, options: ["custom": .bool(true)])
@@ -33,6 +34,7 @@ func chatConfigurationRoundTrip() throws {
 
   var changed = configuration
   changed.providers[0].baseURL = URL(string: "https://changed.example/v1")
+  changed.providers[0].defaultModel = "new-default"
   changed.providers[0].apiKey = "rotated-key"
   changed.providers[0].apiKeyEnvironment = "NEW_KEY"
   changed.providers[0].headers["Authorization"] = "Bearer rotated-header"
@@ -40,6 +42,7 @@ func chatConfigurationRoundTrip() throws {
   changed.taskAgents = .init()
   let restored = snapshot.applying(to: changed)
   #expect(restored.providers[0].baseURL?.absoluteString == "https://effective.example/v1")
+  #expect(restored.providers[0].defaultModel == "new-default")
   #expect(restored.providers[0].apiKey == "rotated-key")
   #expect(restored.providers[0].apiKeyEnvironment == "NEW_KEY")
   #expect(restored.providers[0].headers["x-session"] == "{{session}}")
@@ -51,6 +54,7 @@ func chatConfigurationRoundTrip() throws {
 
   let missing = snapshot.applying(to: MaiConfiguration())
   #expect(missing.providers[0].apiKey == nil)
+  #expect(missing.providers[0].defaultModel == "original-default")
   #expect(missing.providers[0].apiKeyEnvironment == "REMOTE_KEY")
   #expect(missing.agents == configuration.agents)
   #expect(missing.prompts?.system["worker-prompt"] == "Saved instructions")

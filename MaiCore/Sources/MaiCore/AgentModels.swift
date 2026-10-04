@@ -34,15 +34,18 @@ public struct ProviderDescriptor: Codable, Equatable, Sendable {
   public var id: ProviderID
   public var displayName: String
   public var capabilities: ProviderCapabilities
+  public var defaultModel: String?
 
   public init(
     id: ProviderID,
     displayName: String,
-    capabilities: ProviderCapabilities = []
+    capabilities: ProviderCapabilities = [],
+    defaultModel: String? = nil
   ) {
     self.id = id
     self.displayName = displayName
     self.capabilities = capabilities
+    self.defaultModel = defaultModel
   }
 }
 

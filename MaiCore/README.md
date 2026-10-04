@@ -38,7 +38,7 @@ with `PMAI_API_KEY`. Model/provider variables select defaults for new chats;
 A configured provider's URL and credential sources take precedence over ambient
 URL/key variables. Those variables supply missing settings or the initial ad-hoc
 connection. Explicit `--base-url` and `--api-key` flags override the selected
-connection for one invocation. `/set provider.baseurl` shows the effective URL
+connection for one invocation. `/baseurl` shows the effective URL
 and identifies a different persisted URL when an explicit flag overrides it.
 Export `PMAI_API_KEY=` to suppress legacy key fallbacks for an ad-hoc connection;
 use `--api-key ''` to suppress a configured provider's credentials for this run.
@@ -392,17 +392,14 @@ one saved agent, `/agent remove ID` drops one, and `/edit agent [ID]` opens one
 as JSON. `/provider`, `/model`, and `/set tool.proxy` save changes back to the
 current chat's agent in the shared configuration.
 
-Use `/set provider.baseurl URL` to change the current provider endpoint, or
-`/set provider.baseurl ID URL` to edit another provider without selecting it.
-Omit the URL to inspect the current provider, or supply only its ID to inspect
-another. `/set provider baseurl` accepts the same arguments. The provider is
-replaced in the live runtime and the URL is saved immediately. `/baseurl` and
-`/provider baseurl` remain aliases. `/provider rename OLD NEW` renames a
+Use `/edit provider [ID]` to change a provider's `baseURL`, `defaultModel`,
+credentials, headers, timeout, or options. The provider is replaced in the live
+runtime and the change is saved when the editor closes. `/baseurl [ID]` shows the
+effective URL without changing it. `/provider rename OLD NEW` renames a
 connection and updates all configured agents, including task agents; omit OLD
 to rename the current provider. The active chat follows the rename, while other
-saved chats retain their independent snapshots. `/edit provider [ID]` opens the whole provider record
-(base URL, key source, headers, timeout, options) as JSON with the same live
-reload. In `/visual`, open the Providers tab, choose **Edit** beside a
+saved chats retain their independent snapshots. In `/visual`, open the Providers
+tab, choose **Edit** beside a
 configured provider, change **Base URL**, and choose **Update**. See
 `doc/edit.md` for everything `/edit` reaches.
 

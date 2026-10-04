@@ -887,6 +887,7 @@ public actor AgentRuntime {
       guard let provider = providers[inference.provider] else {
         throw AgentRuntimeError.providerNotRegistered(inference.provider)
       }
+      inference.model = resolvedModel(inference.model, for: provider)
       let deciding = provider.descriptor.capabilities.contains(.toolDecision)
       if deciding {
         guard selectingTools, request.useSystemOne else {
@@ -1384,6 +1385,11 @@ public actor AgentRuntime {
     var ended: Date
   }
 
+  private func resolvedModel(_ model: String, for provider: any ChatProvider) -> String {
+    model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      ? provider.descriptor.defaultModel ?? model : model
+  }
+
   /// One provider call under the run's retry policy and deadline. A failure
   /// that is not a cancellation is repeated after the policy's delay, up to
   /// its attempts, each announced with `retrying`; the deadline cuts a call
@@ -1529,10 +1535,11 @@ public actor AgentRuntime {
   ) async throws -> String {
     var base = request
     base.messages = [.user(prompt)]
-    let inference = try taskRequest(.compact, from: base)
+    var inference = try taskRequest(.compact, from: base)
     guard let provider = providers[inference.provider] else {
       throw AgentRuntimeError.providerNotRegistered(inference.provider)
     }
+    inference.model = resolvedModel(inference.model, for: provider)
     var messages = inference.messages
     if let effort = ReasoningEffort.promptSection(for: inference.options) {
       insertSystem(effort, into: &messages)
@@ -1627,10 +1634,12 @@ public actor AgentRuntime {
           ?? request.messages.last(where: { $0.role == .user })?.text ?? "",
         environment: environment)
       let inference = try taskRequest(.approval, from: request)
-      func evaluate(_ inference: AgentRequest) async throws -> ApprovalDecision {
+      func evaluate(_ selected: AgentRequest) async throws -> ApprovalDecision {
+        var inference = selected
         guard let provider = providers[inference.provider] else {
           throw AgentRuntimeError.providerNotRegistered(inference.provider)
         }
+        inference.model = resolvedModel(inference.model, for: provider)
         if let interruption = await budget.claimModelTurn() {
           return .deny(reason: "Approval review cannot run: \(interruption).")
         }

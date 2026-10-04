@@ -31,7 +31,7 @@ so syntax highlighting and JSON checking work without configuration.
 | `/edit user NAME` | A user prompt — a message sent with `$NAME`; creates it when NAME is new, starting from the builtin prompt of that name if there is one. | Immediately. |
 | `/edit NAME` | The same, for an existing system or user prompt name. | Immediately. |
 | `/edit agent [ID]` | One saved agent as JSON: provider, model, tools, limits, prompt name, delegation, retry, autocompact. Current agent when omitted. | Immediately; the current chat picks up its own agent's changes. |
-| `/edit provider [ID]` | One configured provider as JSON: base URL, key source, headers, timeout, options. Current provider when omitted. | Immediately; the provider is rebuilt in the running session. |
+| `/edit provider [ID]` | One configured provider as JSON: base URL, default model, key source, headers, timeout, options. Current provider when omitted. | Immediately; the provider is rebuilt in the running session. |
 | `/edit compact` | The template `/chat compact` and autocompact render. | Immediately. |
 | `/edit smart` or `/edit prompt smart` | The per-turn working-context template for `ctx.context=smart`, using the compact model. | Immediately. |
 | `/edit prompt recap` | The embedded recap template: short goals, actions/results, and pending tasks with emoji labels. Must keep `{{transcript}}`; clearing it restores the default. | Immediately. |
@@ -77,10 +77,17 @@ the one-field cases without an editor.
 
 ```json
 {
+  "_credentialHelp": [
+    "baseURL: the remote API endpoint, such as https://api.openai.com/v1.",
+    "defaultModel: the model ID to use when no model is explicitly selected."
+  ],
   "id": "opencode",
   "kind": "openAICompatible",
   "baseURL": "https://opencode.ai/zen/go/v1",
+  "defaultModel": "some-model-id",
+  "apiKey": null,
   "apiKeyEnvironment": "OPENCODE_API_KEY",
+  "apiKeyFile": null,
   "headers": {
     "x-opencode-session": "{{session}}"
   },
@@ -88,6 +95,23 @@ the one-field cases without an editor.
   "options": {}
 }
 ```
+
+The editor always shows `baseURL`, `defaultModel`, `apiKey`,
+`apiKeyEnvironment`, and `apiKeyFile`, even when they are unset (`null`).
+It also shows a `_credentialHelp` note, which is
+discarded when you save. To use an environment variable, set
+`apiKeyEnvironment` to its **name** (for example, `OPENAI_API_KEY`) and export
+the variable before starting pmai. Set `apiKeyFile` to a file path containing
+the key, or set `apiKey` to the key itself if you want it saved in the config
+file. A configured environment variable takes precedence over the file, which
+takes precedence over `apiKey`.
+
+`defaultModel` is the model used when you select that provider without naming
+a model, or when an agent's model is empty. An explicit model still takes
+precedence. Set it to `null` to leave it unset.
+
+For example, run `export OPENCODE_API_KEY='your-key'` in the shell before
+starting pmai, then set `"apiKeyEnvironment": "OPENCODE_API_KEY"` in the provider.
 
 `headers` are sent with every request. Write them as an object of names to
 values, as shown, or as `"Name: value"` strings in an array; the file is saved
@@ -103,7 +127,10 @@ file, and `apiKeyEnvironment` or `apiKeyFile` do the same for the bearer key.
 When the editor closes, the provider is built again from the record and
 replaces the old one in the running session, so a header or URL change is
 live at the next message. `/provider` lists the header names the current
-provider sends, and `/baseurl URL` changes just the URL.
+provider sends. Change `baseURL` in this editor to update the connection.
+Unknown top-level fields, invalid JSON, and invalid field values produce an
+error and reopen the same draft for correction. `headers`, `headerEnvironment`,
+and `options` remain maps with provider-specific names.
 
 ### Templates
 

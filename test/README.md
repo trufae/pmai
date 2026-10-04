@@ -17,8 +17,8 @@ switching, and saved subagent trees. The routing check starts a local mock HTTP
 provider and verifies actual requests, credential rotation, one-shot history,
 and recovery after terminating a process during nested work.
 The provider check verifies qualified environment/flag models against a local
-HTTP server, URL and credential precedence, scoped endpoint edits, and renaming
-connections with task references and chat resume.
+HTTP server, URL and credential precedence, provider editor changes, and
+renaming connections with task references and chat resume.
 
 ## Layout
 

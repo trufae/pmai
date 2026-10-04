@@ -17,7 +17,11 @@ def main():
         config = root / 'pmai.json'
         config.write_text(json.dumps({
             'defaultAgent': 'main',
-            'providers': [{'id': name, 'kind': 'hello'} for name in ('hello', 'alternate')],
+            'providers': [
+                {'id': 'hello', 'kind': 'hello',
+                 'baseURL': 'http://saved.example/v1'},
+                {'id': 'alternate', 'kind': 'hello'},
+            ],
             'agents': [
                 {'id': 'main', 'provider': 'hello', 'model': 'original'},
                 {'id': 'other', 'provider': 'hello', 'model': 'agent-model',
@@ -47,7 +51,6 @@ def main():
                 assert restored[key] == saved[key], (key, restored[key], saved[key])
 
         run(['/chat rename retained', '/model hello::chosen',
-             '/baseurl http://saved.example/v1',
              '/set effort high Think carefully.', '/set limits.maxToolCalls 7',
              '/set limits.maxModelTurns 9', '/set limits.maxSubagents 2',
              '/set limits.maxSeconds 10m', '/set retry.attempts 4',

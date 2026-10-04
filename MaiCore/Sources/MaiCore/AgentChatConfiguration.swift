@@ -27,6 +27,7 @@ public struct AgentChatConfiguration: Codable, Equatable, Sendable {
     for var provider in providers {
       if let index = restored.providers.firstIndex(where: { $0.id == provider.id }) {
         let current = restored.providers[index]
+        provider.defaultModel = current.defaultModel
         provider.apiKey = current.apiKey
         provider.apiKeyEnvironment = current.apiKeyEnvironment
         provider.apiKeyFile = current.apiKeyFile

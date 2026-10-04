@@ -8,6 +8,22 @@ import UniformTypeIdentifiers
 @testable import MaiMCP
 @testable import MaiOpenAI
 
+@Test("Provider default model fills an empty model but keeps explicit selections")
+func providerDefaultModelInference() async throws {
+  let provider = ScriptedProvider(
+    responses: [
+      ProviderResponse(message: .assistant("Default"), stopReason: .stop),
+      ProviderResponse(message: .assistant("Explicit"), stopReason: .stop),
+    ], defaultModel: "provider-default")
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  _ = try await runtime.run(AgentRequest(
+    provider: "scripted", model: "", messages: [.user("Use default")]))
+  _ = try await runtime.run(AgentRequest(
+    provider: "scripted", model: "chosen", messages: [.user("Use chosen")]))
+  #expect(await provider.requests.map(\.model) == ["provider-default", "chosen"])
+}
+
 @Test("Registered skills are only visible and callable when enabled for the agent", arguments: [false, true])
 func skillToolAvailability(enabled: Bool) async throws {
   let skill = AgentSkill(
@@ -2746,12 +2762,14 @@ private actor ScriptedProvider: ChatProvider {
   init(
     responses: [ProviderResponse],
     capabilities: ProviderCapabilities = [.streaming, .nativeToolCalling, .imageInput],
-    failures: [Int: any Error] = [:]
+    failures: [Int: any Error] = [:],
+    defaultModel: String? = nil
   ) {
     descriptor = ProviderDescriptor(
       id: "scripted",
       displayName: "Scripted",
-      capabilities: capabilities)
+      capabilities: capabilities,
+      defaultModel: defaultModel)
     self.responses = responses
     self.failures = failures
   }

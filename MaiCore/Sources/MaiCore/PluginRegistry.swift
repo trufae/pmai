@@ -435,7 +435,11 @@ public actor PluginRegistry {
         capability: .chatProvider,
         kind: configuration.kind.rawValue)
     }
-    return try registered.value.makeProvider(from: configuration, environment: environment)
+    let provider = try registered.value.makeProvider(from: configuration, environment: environment)
+    guard let defaultModel = configuration.defaultModel?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !defaultModel.isEmpty
+    else { return provider }
+    return ConfiguredDefaultModelProvider(provider: provider, defaultModel: defaultModel)
   }
 
   public func makeTools(
@@ -548,6 +552,33 @@ public actor PluginRegistry {
         found: manifest.apiVersion,
         supported: PluginManifest.currentAPIVersion)
     }
+  }
+}
+
+private struct ConfiguredDefaultModelProvider: ChatProvider {
+  let provider: any ChatProvider
+  let descriptor: ProviderDescriptor
+
+  init(provider: any ChatProvider, defaultModel: String) {
+    self.provider = provider
+    var descriptor = provider.descriptor
+    descriptor.defaultModel = defaultModel
+    self.descriptor = descriptor
+  }
+
+  func availableModels() async throws -> [ModelDescriptor] {
+    try await provider.availableModels()
+  }
+
+  func complete(
+    _ request: ProviderRequest,
+    emit: @escaping ProviderEventHandler
+  ) async throws -> ProviderResponse {
+    var request = request
+    if request.model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      request.model = descriptor.defaultModel ?? request.model
+    }
+    return try await provider.complete(request, emit: emit)
   }
 }
 
