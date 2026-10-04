@@ -1312,8 +1312,8 @@ struct MaiCLI {
       let terminal = TerminalWriter()
       await terminal.configureColors(configuration?.ui ?? .init())
       await runtime.configureMemory(memoryState.promptSection)
-      await runtime.configureProjectInstructions(
-        projectInstructionsSection(configuration, terminal: terminal))
+      await runtime.configureProjectInstructionDirectory(
+        configuration?.use.agentsmd == .on ? AgentExecutionScope.directory : nil)
       await runtime.configurePlanning(configuration?.use.plan ?? true)
       var session = REPLSession(chat: workspace.selectedChat!)
       if let configuration {
@@ -1389,6 +1389,12 @@ struct MaiCLI {
       }
       defer { Task { await PmaiCommandHost.shared.install(runner: nil) } }
       if let prompt = options.initialPrompt {
+        if configuration?.use.agentsmd == .ask || configuration?.use.agentsmd == .maybe {
+          let directory = AgentExecutionScope.directory
+          let approved = await askForAgentsMarkdown(
+            from: directory, editor: TerminalLineEditor(), terminal: terminal)
+          await runtime.configureProjectInstructionDirectory(approved ? directory : nil)
+        }
         var oneShotProcess: AgentPID? = await runtime.allocateProcess(
           agentID: session.profile.agentID, task: session.title)
         await runtime.supervisor.restore(session.subagents, under: oneShotProcess!)
@@ -2092,6 +2098,7 @@ struct MaiCLI {
       await terminal.configureColors(configuration?.ui ?? .init())
     }
     let editor = TerminalLineEditor(historyURL: historyURL)
+    var agentsMarkdownChoice: (directory: URL, mode: AgentsMDMode, approved: Bool)?
     var announcedAttention: Set<AgentPID> = []
     // One process per chat, not per turn: a background agent started three
     // turns ago is still the current run's child, so it stays collectable,
@@ -2178,8 +2185,28 @@ struct MaiCLI {
       visual.memory.focus(project: project, chatID: session.id)
       visual.todo.focus(project: project)
       await runtime.configureMemory(visual.memory.promptSection)
-      await runtime.configureProjectInstructions(
-        Self.projectInstructionsSection(configuration, terminal: terminal))
+      let directory = AgentExecutionScope.directory.standardizedFileURL
+      let mode = configuration?.use.agentsmd ?? .off
+      let approved: Bool
+      switch mode {
+      case .on:
+        agentsMarkdownChoice = nil
+        approved = true
+      case .off:
+        agentsMarkdownChoice = nil
+        approved = false
+      case .ask, .maybe:
+        if let choice = agentsMarkdownChoice,
+          choice.directory == directory, choice.mode == mode
+        {
+          approved = choice.approved
+        } else {
+          approved = await Self.askForAgentsMarkdown(
+            from: directory, editor: editor, terminal: terminal)
+          agentsMarkdownChoice = (directory, mode, approved)
+        }
+      }
+      await runtime.configureProjectInstructionDirectory(approved ? directory : nil)
       await runtime.configurePlanning(configuration?.use.plan ?? true)
     }
 
@@ -8923,78 +8950,6 @@ struct MaiCLI {
           : "Agents delegate without planning first."))
   }
 
-  /// `/set use.agentsmd [on|off]`: shows or changes whether the working
-  /// tree's AGENTS.md files go into every run's system prompt, and says which
-  /// files that means from here.
-  private static func setAgentsMarkdown(
-    parts: [String],
-    runtime: AgentRuntime,
-    configuration: inout MaiConfiguration?,
-    configurationPath: String?,
-    terminal: TerminalWriter
-  ) async {
-    let directory = URL(
-      fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
-    let located = AgentInstructionsFile.locate(from: directory)
-    let mode = configuration?.use.agentsmd ?? .maybe
-    guard parts.count > 1 else {
-      await terminal.line(
-        "use.agentsmd = \(mode.rawValue) · \(agentsMarkdownSummary(located, directory: directory))"
-      )
-      return
-    }
-    guard parts.count == 2, let wanted = AgentsMDMode(rawValue: parts[1].lowercased()) else {
-      await terminal.line("Usage: /set use.agentsmd <on|off|maybe>")
-      return
-    }
-    guard var draft = configuration, let configurationPath else {
-      await terminal.line("error: No writable configuration is active.", to: .standardError)
-      return
-    }
-    draft.use.agentsmd = wanted
-    do {
-      try draft.save(to: URL(fileURLWithPath: configurationPath))
-      configuration = draft
-    } catch {
-      await terminal.line("error: \(error.localizedDescription)", to: .standardError)
-      return
-    }
-    await runtime.configureProjectInstructions(
-      wanted == .on ? AgentInstructionsFile.promptSection(files: located) : nil)
-    await terminal.line(
-      "Set use.agentsmd = \(wanted.rawValue). \(agentsMarkdownSummary(located, directory: directory))"
-    )
-  }
-
-  /// Which AGENTS.md files apply from `directory`, as one line, each path
-  /// relative to it: `AGENTS.md`, `../AGENTS.md`, and so on up the tree.
-  private static func agentsMarkdownSummary(_ files: [URL], directory: URL) -> String {
-    guard !files.isEmpty else {
-      return "No AGENTS.md from \(directory.path) up to the repository root."
-    }
-    let base = directory.standardizedFileURL.pathComponents
-    let names = files.map { file -> String in
-      let target = file.standardizedFileURL.pathComponents
-      let shared = zip(base, target).prefix { $0 == $1 }.count
-      let ups = Array(repeating: "..", count: base.count - shared)
-      return (ups + target.dropFirst(shared)).joined(separator: "/")
-    }
-    return "AGENTS.md from here up to the repository root: \(names.joined(separator: ", "))."
-  }
-
-  /// The AGENTS.md block for the working directory, when `use.agentsmd` is on.
-  private static func projectInstructionsSection(
-    _ configuration: MaiConfiguration?, terminal: TerminalWriter? = nil
-  ) async -> String? {
-    guard configuration?.use.agentsmd == .on else { return nil }
-    let directory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
-    let located = AgentInstructionsFile.locate(from: directory)
-    if !located.isEmpty {
-      await terminal?.line("Loaded AGENTS.md from \(located.count) location(s).")
-    }
-    return AgentInstructionsFile.promptSection(from: directory)
-  }
-
   private static func listExportSettings(
     _ options: DocumentExportOptions, terminal: TerminalWriter
   ) async {
@@ -11052,6 +11007,7 @@ struct MaiCLI {
       "/set ui.fgprompt yellow", "/version", "/last", "/skills", "/skill",
       "/set ui.fgcolor none", "/set ui.bgcolor none", "/set ui.bgprompt none",
       "/set ui.fgtoolresult yellow", "/set use.", "/set use.agentsmd on", "/set use.agentsmd off",
+      "/set use.agentsmd ask",
       "/set use.plan on", "/set use.plan off",
       "/set ui.bold on", "/set ui.bold off", "/set ui.markdown on", "/set ui.markdown off",
       "/set ui.broadcast on", "/set ui.broadcast off",
@@ -11560,8 +11516,8 @@ struct MaiCLI {
       /set ui.thinking MODE        Thinking display: status, line, three, five, or full
       /set ui.subagents LEVEL      What child agents print: all, tools, stats, or none
       /set ui.broadcast BOOL       Default unaddressed messages to @* / @@ / bare @ (on/off; default off)
-      /set use.agentsmd BOOL       Put the working tree's AGENTS.md files — this directory up to
-                                   the repository root — into every run's system prompt (on/off)
+      /set use.agentsmd MODE       Use applicable AGENTS.md files: on, off (default), or ask
+                                   (prompts once per working directory in an interactive session)
       /set use.plan BOOL           Ask an agent that can start children to open a request of
                                    several steps with a numbered plan before delegating (on/off)
 

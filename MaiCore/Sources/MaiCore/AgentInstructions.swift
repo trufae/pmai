@@ -1,9 +1,8 @@
 import Foundation
 
 /// AGENTS.md: the instructions a repository leaves for coding agents. When a
-/// host turns them on (`/set use.agentsmd on` in pmai), every such file from
-/// the working directory up to the repository root goes into the system
-/// prompt of every run, the most general first.
+/// host turns them on (`/set use.agentsmd on` in pmai), applicable files are
+/// supplied to the model, the most general first.
 public enum AgentInstructionsFile {
   public static let filename = "AGENTS.md"
 
@@ -51,10 +50,12 @@ public enum AgentInstructionsFile {
   /// The block for the given files, root first. Each is labelled with its
   /// path so the model can tell which part of the tree a rule is about.
   public static func promptSection(files: [URL]) -> String? {
-    let parts = files.compactMap { url -> String? in
-      guard let text = read(url) else { return nil }
-      return "### \(url.path)\n\n\(text)"
-    }
+    promptSection(entries: files.compactMap { url in read(url).map { (url, $0) } })
+  }
+
+  /// Builds a section from content already read by a session's instruction cache.
+  public static func promptSection(entries: [(URL, String)]) -> String? {
+    let parts = entries.map { url, text in "### \(url.path)\n\n\(text)" }
     guard !parts.isEmpty else { return nil }
     return """
       <project_instructions>

@@ -479,7 +479,8 @@ forwards only depth-0 events to the editor.
 /set ctx.compact 120k             summarize older exchanges once the chat holds ~N tokens
 /set ctx.strategy cache|size|smart|tools  cache history, prune reads, build a brief, or summarize only tool results
 /set effort LEVEL [TEXT]          how hard the model thinks (low, medium, high, xhigh, max), plus guidance
-/set use.agentsmd on              add the tree's AGENTS.md files (here up to the repo root) to every run's prompt
+/set use.agentsmd on              use applicable AGENTS.md files (off by default)
+/set use.agentsmd ask             ask once per working directory before using them
 /set use.plan off                 stop asking for a numbered plan before the first delegation (on by default)
 /continue                         run a paused, failed, or cancelled task on from where it stopped
 /edit delegation                  edit the brief template

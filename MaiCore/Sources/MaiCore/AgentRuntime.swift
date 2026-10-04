@@ -86,6 +86,8 @@ public actor AgentRuntime {
   /// never reaches one.
   private var memorySection: String?
   private var instructionsSection: String?
+  private var instructionsDirectory: URL?
+  private var instructionContexts: [String: AgentInstructionsContext] = [:]
   /// Where every completed provider call's tokens and timing are folded in.
   /// Nil keeps the runtime silent about usage, as it was before hosts asked.
   private var usageStats: ModelUsageStore?
@@ -279,6 +281,42 @@ public actor AgentRuntime {
   public func configureProjectInstructions(_ section: String?) {
     instructionsSection =
       section?.trimmingCharacters(in: .whitespacesAndNewlines).nilWhenEmpty
+  }
+
+  /// Enables scoped AGENTS.md discovery for a workspace. Reconfiguring the
+  /// same directory keeps the per-conversation cache intact.
+  public func configureProjectInstructionDirectory(_ directory: URL?) {
+    let selected = directory?.standardizedFileURL.resolvingSymlinksInPath()
+    guard selected != instructionsDirectory else { return }
+    instructionsDirectory = selected
+    instructionContexts.removeAll()
+  }
+
+  private func instructionContextKey(sessionID: String?, pid: AgentPID) -> String {
+    sessionID ?? "process:\(pid.rawValue)"
+  }
+
+  private func projectInstructionSection(
+    sessionID: String?, pid: AgentPID, messages: [AgentMessage]
+  ) -> String? {
+    guard let instructionsDirectory else { return nil }
+    let key = instructionContextKey(sessionID: sessionID, pid: pid)
+    if instructionContexts[key] == nil {
+      instructionContexts[key] = AgentInstructionsContext(directory: instructionsDirectory)
+    }
+    return instructionContexts[key]?.section(alreadyIn: messages)
+  }
+
+  private func observeProjectInstructions(_ call: ToolCall, request: AgentRequest,
+    context: AgentEventContext) -> Bool
+  {
+    guard let instructionsDirectory, let pid = context.pid else { return false }
+    let key = instructionContextKey(sessionID: request.sessionID, pid: pid)
+    var instructions = instructionContexts[key]
+      ?? AgentInstructionsContext(directory: instructionsDirectory)
+    let discovered = instructions.observe(call, workingDirectory: AgentExecutionScope.directory)
+    instructionContexts[key] = instructions
+    return discovered != nil
   }
 
   /// Installs host-configured delegation text. Empty or nil values restore the
@@ -893,7 +931,14 @@ public actor AgentRuntime {
       let usesTextToolProtocol = textToolMode != nil && !toolBudgetExhausted
       var providerMessages = inference.messages
       if let instructionsSection {
-        insertSystem(instructionsSection, into: &providerMessages)
+        if !providerMessages.contains(where: { $0.role == .system && $0.text == instructionsSection }) {
+          insertSystem(instructionsSection, into: &providerMessages)
+        }
+      }
+      if let projectSection = projectInstructionSection(
+        sessionID: request.sessionID, pid: pid, messages: providerMessages)
+      {
+        insertSystem(projectSection, into: &providerMessages)
       }
       if let memorySection, depth == 0 {
         insertSystem(memorySection, into: &providerMessages)
@@ -1764,6 +1809,17 @@ public actor AgentRuntime {
       let result = ToolResult(
         callID: approvedCall.id,
         text: "Error: approved arguments are invalid: \(validationError).",
+        isError: true)
+      await emit(.toolFinished(context, result))
+      return result
+    }
+    if observeProjectInstructions(
+      approvedCall, request: request, context: context), !definition.annotations.readOnly
+    {
+      await emit(.toolStarted(context, approvedCall))
+      let result = ToolResult(
+        callID: approvedCall.id,
+        text: "Additional AGENTS.md instructions apply to this path. Review the new project instructions and repeat the call.",
         isError: true)
       await emit(.toolFinished(context, result))
       return result
