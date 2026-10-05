@@ -7951,15 +7951,19 @@ struct MaiCLI {
         )
         return
       }
+      let ui = configuration?.ui ?? .init()
       for skill in catalog.skills {
-        let mark =
-          skill.isModelInvocable && isSkillEnabled(skill, profile: session.profile) ? "*" : " "
-        var note = skill.rootURL.path == skills.userDirectory.path ? "user" : "project"
-        if !skill.isModelInvocable { note += ", not callable" }
-        await terminal.line("\(mark) \(skill.name) — \(skill.description) [\(note)]")
+        let enabled = isSkillEnabled(skill, profile: session.profile)
+        let status = !skill.isModelInvocable ? "not callable" : enabled ? "enabled" : "disabled"
+        let color = !skill.isModelInvocable
+          ? ui.warningForeground : enabled ? ui.successForeground : ui.errorForeground
+        let label = await terminal.paint(
+          "[\(status)]".padding(toLength: 14, withPad: " ", startingAt: 0), color: color)
+        let source = skill.rootURL.path == skills.userDirectory.path ? "user" : "project"
+        await terminal.line("\(label) \(skill.name) — \(skill.description) [\(source)]")
       }
       await terminal.line(
-        "* marks the skills agent \(agentID) may call. /skills enable NAME offers one; /skills prompt NAME [TEXT] sends one now."
+        "Statuses apply to agent \(agentID). /skills enable NAME enables a skill; /skills prompt NAME [TEXT] sends an enabled skill now."
       )
 
     case "show", "cat":
@@ -11908,7 +11912,7 @@ struct MaiCLI {
     skills_NAME tool the model may call to get the instructions, once it is
     enabled for the agent.
 
-      /skills                    List skills; * marks the ones the agent may call
+      /skills                    List skills with colored enabled/disabled status
       /skills show NAME          Print a skill's file, tool state, and instructions
       /skills enable NAME|all    Offer a skill (or every skill) to the current agent
       /skills disable NAME|all   Disable a skill (or every skill) for this agent

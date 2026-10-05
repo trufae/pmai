@@ -916,7 +916,7 @@ Project paths such as `AGENTS.md`, source files, and output files remain
 relative to the workspace.
 
 ```
-/skills                    list skills; * marks the ones the agent may call
+/skills                    list skills with colored enabled/disabled status
 /skills show NAME          print a skill's file, tool state, and instructions
 /skills enable NAME|all    offer a skill, or every skill, to the current agent
 /skills disable NAME|all   disable a skill (or every skill) for this agent
