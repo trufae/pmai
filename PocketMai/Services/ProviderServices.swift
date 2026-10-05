@@ -518,7 +518,15 @@ enum PromptComposer {
       if message.id == request.assistantMessageID {
         historySettings.includeAssistantResponsesInContext = false
       }
-      let entries = contextTranscriptEntries(from: message, settings: historySettings)
+      var entries = contextTranscriptEntries(from: message, settings: historySettings)
+      if message.id == request.assistantMessageID {
+        // This message is still being generated, so its redacted placeholder
+        // must not close the user's current turn. Completed tool results remain
+        // available as part of the prompt for the next tool-loop iteration.
+        entries.removeAll {
+          $0.displayName == ChatRole.assistant.displayName && $0.content == "(redacted)"
+        }
+      }
       // Keep turn boundaries even when assistant history is disabled.
       if message.role == .assistant, entries.isEmpty { return [.assistant("")] }
       return entries.map { entry in
