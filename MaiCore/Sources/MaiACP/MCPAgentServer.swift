@@ -97,6 +97,8 @@ public actor MCPAgentServer {
       stream: false,
       toolCallingStrategy: agent.toolCallingStrategy,
       useToolProxy: agent.useToolProxy,
+      proxyExposedTools: agent.proxyExposedTools,
+      toolPolicy: agent.toolPolicy,
       toolDelegation: agent.toolDelegation)
     do {
       let result = try await runtime.run(request)

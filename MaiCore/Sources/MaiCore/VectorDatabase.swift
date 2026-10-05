@@ -196,7 +196,8 @@ public struct MaiVectorDatabase: Codable, Sendable {
         let length = min(
           $0.chunk.endLine - $0.chunk.startLine + 1,
           match.chunk.endLine - match.chunk.startLine + 1)
-        let overlap = min($0.chunk.endLine, match.chunk.endLine)
+        let overlap =
+          min($0.chunk.endLine, match.chunk.endLine)
           - max($0.chunk.startLine, match.chunk.startLine) + 1
         return length > 1 && Double(overlap) / Double(length) > 0.5
       }) {

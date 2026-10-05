@@ -615,6 +615,7 @@ struct SessionProfile: Sendable {
   var useToolProxy: Bool
   var useSystemOne: Bool
   var proxyExposedTools: Set<String>?
+  var toolPolicy: AgentToolPolicy
   var toolDelegation: AgentToolDelegation
   var retry: AgentRetryPolicy
   var autocompact: AgentAutocompact
@@ -641,6 +642,7 @@ struct SessionProfile: Sendable {
     useToolProxy = definition.useToolProxy
     useSystemOne = definition.useSystemOne
     proxyExposedTools = definition.proxyExposedTools
+    toolPolicy = definition.toolPolicy
     toolDelegation = definition.toolDelegation
     retry = definition.retry
     autocompact = definition.autocompact
@@ -678,9 +680,10 @@ struct SessionProfile: Sendable {
     responseFormat = .text
     options = .init()
     toolCallingStrategy = .automatic
-    useToolProxy = false
+    useToolProxy = true
     useSystemOne = false
     proxyExposedTools = nil
+    toolPolicy = .init()
     toolDelegation = .inline
     retry = .init()
     autocompact = .init()
@@ -709,6 +712,7 @@ struct SessionProfile: Sendable {
       useToolProxy: useToolProxy,
       useSystemOne: useSystemOne,
       proxyExposedTools: proxyExposedTools,
+      toolPolicy: toolPolicy,
       toolDelegation: toolDelegation,
       retry: retry,
       autocompact: autocompact,
@@ -1365,6 +1369,7 @@ struct MaiCLI {
       }
       let usageStats = ModelUsageStore(url: home.usageStatsURL)
       await runtime.configureUsageStats(usageStats)
+      await runtime.configureToolUsage(AgentToolUsageStore(url: home.toolUsageURL))
       memoryState.adopt(project: project, settings: configuration?.memory ?? .init())
       todoState.focus(project: project)
       skillState.focus(project: project)
@@ -1605,6 +1610,8 @@ struct MaiCLI {
     runtime: AgentRuntime,
     environment: [String: String]
   ) async throws {
+    let catalog = try await toolGroupCatalog(
+      runtime: runtime, plugins: plugins, configuration: configuration)
     guard var draft = configuration else { return }
     var toolsByGroup: [String: Set<String>] = [
       AgentRuntime.agentToolGroup.id: AgentRuntime.agentToolGroup.toolNames
@@ -1624,6 +1631,9 @@ struct MaiCLI {
     let hostTools = await runtime.availableTools().filter { !grouped.contains($0.name) }
     for group in ToolGroupDefinition.inferred(from: hostTools) {
       toolsByGroup[group.id, default: []].formUnion(group.toolNames)
+    }
+    for group in catalog {
+      toolsByGroup[group.catalogID, default: []].formUnion(group.toolNames)
     }
     var changed = false
     for index in draft.agents.indices {
@@ -2610,6 +2620,7 @@ struct MaiCLI {
         useToolProxy: profile.useToolProxy,
         useSystemOne: profile.useSystemOne,
         proxyExposedTools: profile.proxyExposedTools,
+        toolPolicy: profile.toolPolicy,
         toolDelegation: profile.toolDelegation,
         retry: profile.retry,
         autocompact: profile.autocompact,
@@ -3868,6 +3879,7 @@ struct MaiCLI {
         useToolProxy: profile.useToolProxy,
         useSystemOne: profile.useSystemOne,
         proxyExposedTools: profile.proxyExposedTools,
+        toolPolicy: profile.toolPolicy,
         toolDelegation: profile.toolDelegation,
         retry: profile.retry,
         autocompact: profile.autocompact,
@@ -3920,6 +3932,7 @@ struct MaiCLI {
       useToolProxy: profile.useToolProxy,
       useSystemOne: profile.useSystemOne,
       proxyExposedTools: profile.proxyExposedTools,
+      toolPolicy: profile.toolPolicy,
       toolDelegation: profile.toolDelegation,
       retry: profile.retry,
       autocompact: profile.autocompact,
@@ -4248,6 +4261,7 @@ struct MaiCLI {
         session: &session,
         runtime: runtime,
         skills: visual.skills,
+        plugins: plugins,
         configuration: &configuration,
         configurationPath: visual.configurationPath,
         terminal: terminal)
@@ -4496,6 +4510,14 @@ struct MaiCLI {
       maxSplits: 1, whereSeparator: \Character.isWhitespace
     ).map(String.init)
     let action = pieces.first?.lowercased() ?? "list"
+    if ["direct", "proxy", "inherit", "tools"].contains(action), pieces.count == 2 {
+      let selector = "mcp/" + pieces[1]
+      await handleToolsCommand(
+        "\(action == "tools" ? "show" : action) \(selector)", session: &session,
+        runtime: runtime, plugins: plugins, configuration: &configuration,
+        configurationPath: configurationPath, terminal: terminal)
+      return
+    }
     switch action {
     case "", "list":
       let configured = configuration?.mcpServers ?? []
@@ -7683,55 +7705,80 @@ struct MaiCLI {
       return
     }
 
+    let tools = await runtime.availableTools()
+    let usage = await runtime.toolUsageSnapshot()
+    let modesByName = session.profile.agentDefinition.toolModes(in: groups, usage: usage)
+    let names = Set(tools.map(\.name)).union(AgentRuntime.agentToolNames)
     if action == "list" || fields.isEmpty {
-      if session.profile.useToolProxy {
-        await terminal.line(
-          "Tool proxy \(toolProxySetting(session.profile)): models see \(session.profile.proxyExposedTools?.isEmpty == true ? "only" : "the common tools plus") list-tools and call-tool."
-        )
-      }
+      await terminal.line("Tool proxy default: \(toolProxySetting(session.profile)); automatic exposure: \(session.profile.toolPolicy.automatic ? "on" : "off"). Per-tool overrides take precedence.")
       for group in groups {
-        let enabled = isToolGroupEnabled(group, profile: session.profile) ? "*" : " "
-        await terminal.line(
-          "\(enabled) \(group.id) — \(group.displayName) [\(group.toolNames.count) tool\(group.toolNames.count == 1 ? "" : "s")]"
-        )
+        let label = group.sourceID == "mcp" ? group.catalogID : group.id
+        let modes = group.toolNames.map {
+          (modesByName[$0] ?? .disabled).rawValue
+        }
+        let summary = Set(modes).sorted().map { mode in
+          "\(modes.filter { $0 == mode }.count) \(mode)"
+        }.joined(separator: ", ")
+        await terminal.line("\(label) — \(group.displayName) [\(summary); \(usage.count(for: group)) calls]")
       }
-      await terminal.line(
-        "Use /tools show GROUP to see what a group is for, each tool with its parameters, and its settings."
-      )
+      await terminal.line("/tools show GROUP lists each member; /tools direct|proxy|disable|inherit GROUP|TOOL selects its state.")
       return
     }
 
-    guard fields.count >= 2, let group = resolveToolGroup(fields[1], in: groups) else {
+    guard fields.count >= 2,
+      let selection = AgentToolSelection.resolve(fields[1], groups: groups, names: names)
+    else {
+      if fields.count >= 2 { await terminal.line("Unknown or ambiguous tool/group '\(fields[1])'. Use /tools or a qualified name.") }
       await terminal.line(toolHelp)
       return
     }
+    if ["enable", "on", "disable", "off", "direct", "proxy", "inherit"].contains(action) {
+      var definition = session.profile.agentDefinition
+      switch selection {
+      case .tool(let name):
+        if action == "enable" || action == "on" {
+          definition.toolNames.insert(name)
+          definition.setToolMode(AgentToolPolicy.defaultMode(
+            for: name, useToolProxy: definition.useToolProxy,
+            exposedTools: definition.proxyExposedTools), for: name)
+        } else {
+          let mode: AgentToolMode? = action == "inherit" ? nil
+            : action == "direct" ? .direct : action == "proxy" ? .proxy : .disabled
+          definition.setToolMode(mode, for: name)
+        }
+      case .group(let group):
+        if action == "enable" || action == "on" {
+          definition.toolGroupNames.insert(group.sourceID == "mcp" ? group.catalogID : group.id)
+          definition.toolNames.formUnion(group.toolNames)
+          definition.setToolGroupMode(nil, for: group)
+        } else {
+          let mode: AgentToolMode? = action == "inherit" ? nil
+            : action == "direct" ? .direct : action == "proxy" ? .proxy : .disabled
+          definition.setToolGroupMode(mode, for: group)
+        }
+      }
+      session.profile = SessionProfile(definition: definition)
+      session.touch()
+      if await persistAgentProfile(
+        session: session, configuration: &configuration, configurationPath: configurationPath,
+        runtime: runtime, terminal: terminal)
+      {
+        await terminal.line("Tool selection '\(fields[1])': \(action) for agent \(session.profile.agentID).")
+      }
+      return
+    }
+    if case .tool(let name) = selection {
+      guard action == "show", let tool = tools.first(where: { $0.name == name }) else {
+        await terminal.line(toolHelp)
+        return
+      }
+      let mode = modesByName[name] ?? .disabled
+      await terminal.line("\(name) [\(mode.rawValue); \(usage.counts[name, default: 0]) calls]")
+      for line in ToolGroupHelp.lines(for: tool) { await terminal.line(line) }
+      return
+    }
+    guard case .group(let group) = selection else { return }
     switch action {
-    case "enable", "on":
-      session.profile.toolGroupNames.insert(group.id)
-      session.profile.toolNames.formUnion(group.toolNames)
-      if await persistAgentProfile(
-        session: session,
-        configuration: &configuration,
-        configurationPath: configurationPath,
-        runtime: runtime,
-        terminal: terminal)
-      {
-        await terminal.line(
-          "Enabled tool group '\(group.id)' for agent \(session.profile.agentID).")
-      }
-    case "disable", "off":
-      session.profile.toolGroupNames.remove(group.id)
-      session.profile.toolNames.subtract(group.toolNames)
-      if await persistAgentProfile(
-        session: session,
-        configuration: &configuration,
-        configurationPath: configurationPath,
-        runtime: runtime,
-        terminal: terminal)
-      {
-        await terminal.line(
-          "Disabled tool group '\(group.id)' for agent \(session.profile.agentID).")
-      }
     case "show":
       let count = group.toolNames.count
       let enabled = isToolGroupEnabled(group, profile: session.profile)
@@ -7749,7 +7796,7 @@ struct MaiCLI {
       await terminal.line(
         paint(group.displayName, heading.map { "1;" + $0 } ?? "1") + " "
           + paint("(\(group.catalogID))", "2")
-          + ": \(count) tool\(count == 1 ? "" : "s"), "
+          + ": \(count) tool\(count == 1 ? "" : "s"), \(usage.count(for: group)) calls, "
           + paint(enabled ? "enabled" : "disabled", enabled ? success : error)
           + " for agent \(session.profile.agentID)")
       // The agent family is synthesized per run rather than registered, so
@@ -7758,6 +7805,10 @@ struct MaiCLI {
       if group.id == AgentRuntime.agentToolGroup.id {
         tools += AgentProcessTools.definitions(
           offering: [], delegating: true, planFirst: configuration?.use.plan ?? true)
+      }
+      for name in group.toolNames.sorted() {
+        let mode = modesByName[name] ?? .disabled
+        await terminal.line("  \(name) [\(mode.rawValue); \(usage.counts[name, default: 0]) calls]")
       }
       let helpLines = ToolGroupHelp.lines(for: group, tools: tools) { text, style in
         switch style {
@@ -7941,9 +7992,8 @@ struct MaiCLI {
   }
 
   private static func isSkillEnabled(_ skill: AgentSkill, profile: SessionProfile) -> Bool {
-    skill.isModelInvocable
-      && (profile.toolNames.contains(skill.toolName)
-        || profile.toolGroupNames.contains(MaiSkillTools.groupID))
+    skill.isModelInvocable && profile.agentDefinition.toolMode(
+      for: skill.toolName, in: [MaiSkillTools.group(toolNames: [skill.toolName])]) != .disabled
   }
 
   /// The name and extra text of a `/skills prompt NAME [TEXT]` line; nil for
@@ -7982,6 +8032,7 @@ struct MaiCLI {
     session: inout REPLSession,
     runtime: AgentRuntime,
     skills: SkillState,
+    plugins: PluginRegistry,
     configuration: inout MaiConfiguration?,
     configurationPath: String?,
     terminal: TerminalWriter
@@ -7993,6 +8044,9 @@ struct MaiCLI {
     let synced = await synchronizeSkillTools(runtime: runtime, state: skills)
     let catalog = synced.catalog
     let agentID = session.profile.agentID
+    let usage = await runtime.toolUsageSnapshot()
+    let groups = await runtime.availableToolGroups()
+    let modes = session.profile.agentDefinition.toolModes(in: groups, usage: usage)
 
     switch action {
     case "", "list", "ls":
@@ -8006,14 +8060,14 @@ struct MaiCLI {
       let ui = configuration?.ui ?? .init()
       for skill in catalog.skills {
         let enabled = isSkillEnabled(skill, profile: session.profile)
-        let status = !skill.isModelInvocable ? "not callable" : enabled ? "enabled" : "disabled"
+        let status = !skill.isModelInvocable ? "not callable" : (modes[skill.toolName] ?? .disabled).rawValue
         let color =
           !skill.isModelInvocable
           ? ui.warningForeground : enabled ? ui.successForeground : ui.errorForeground
         let label = await terminal.paint(
           "[\(status)]".padding(toLength: 14, withPad: " ", startingAt: 0), color: color)
         let source = skill.rootURL.path == skills.userDirectory.path ? "user" : "project"
-        await terminal.line("\(label) \(skill.name) — \(skill.description) [\(source)]")
+        await terminal.line("\(label) \(skill.name) — \(skill.description) [\(source); \(usage.counts[skill.toolName, default: 0]) calls]")
       }
       await terminal.line(
         "Statuses apply to agent \(agentID). /skills enable NAME enables a skill; /skills prompt NAME [TEXT] sends an enabled skill now."
@@ -8028,62 +8082,27 @@ struct MaiCLI {
           ? "enabled for \(agentID)" : "disabled for \(agentID)"
       await terminal.line("\(skill.name): \(skill.description)")
       await terminal.line("File: \(skill.fileURL.path)")
-      await terminal.line("Tool: \(skill.toolName) (\(state))")
+      await terminal.line("Tool: \(skill.toolName) (\(state); \(usage.counts[skill.toolName, default: 0]) calls)")
       await terminal.line("")
       await terminal.line(skill.body)
 
-    case "enable", "on", "disable", "off":
-      let enabling = action == "enable" || action == "on"
+    case "enable", "on", "disable", "off", "direct", "proxy", "inherit":
+      let selector: String
       if rest.lowercased() == "all" {
-        let names = catalog.modelInvocable.map(\.toolName)
-        if enabling {
-          session.profile.toolGroupNames.insert(MaiSkillTools.groupID)
-          session.profile.toolNames.formUnion(names)
-        } else {
-          session.profile.toolGroupNames.remove(MaiSkillTools.groupID)
-          session.profile.toolNames = session.profile.toolNames.filter {
-            !MaiSkillTools.isSkillTool($0)
-          }
-        }
-        guard
-          await persistAgentProfile(
-            session: session, configuration: &configuration,
-            configurationPath: configurationPath, runtime: runtime, terminal: terminal)
-        else { return }
-        await terminal.line(
-          enabling
-            ? "Enabled all \(names.count) skill\(names.count == 1 ? "" : "s") for agent \(agentID); skills added later are offered too."
-            : "Disabled every skill for agent \(agentID).")
-        return
-      }
-      guard let skill = await resolveSkill(rest, in: catalog, terminal: terminal) else { return }
-      guard skill.isModelInvocable else {
-        await terminal.line(
-          "Skill '\(skill.name)' says disable-model-invocation, so it has no skill tool."
-        )
-        return
-      }
-      if enabling {
-        session.profile.toolNames.insert(skill.toolName)
+        selector = "skills"
       } else {
-        if session.profile.toolGroupNames.contains(MaiSkillTools.groupID) {
-          session.profile.toolNames.formUnion(catalog.modelInvocable.map(\.toolName))
+        guard let skill = await resolveSkill(rest, in: catalog, terminal: terminal) else { return }
+        guard skill.isModelInvocable else {
+          await terminal.line(
+            "Skill '\(skill.name)' says disable-model-invocation, so it has no skill tool.")
+          return
         }
-        session.profile.toolNames.remove(skill.toolName)
-        // The group means "every skill, present and future"; one dropped
-        // out of it has to be listed by name from now on.
-        session.profile.toolGroupNames.remove(MaiSkillTools.groupID)
+        selector = "tool:" + skill.toolName
       }
-      guard
-        await persistAgentProfile(
-          session: session, configuration: &configuration,
-          configurationPath: configurationPath, runtime: runtime, terminal: terminal)
-      else { return }
-      await terminal.line(
-        enabling
-          ? "Enabled skill '\(skill.name)' for agent \(agentID): the model may call \(skill.toolName)."
-          : "Disabled skill '\(skill.name)' for agent \(agentID)."
-      )
+      await handleToolsCommand(
+        "\(action) \(selector)", session: &session, runtime: runtime,
+        plugins: plugins, configuration: &configuration,
+        configurationPath: configurationPath, terminal: terminal)
 
     case "prompt", "send", "use":
       await terminal.line(
@@ -8121,33 +8140,31 @@ struct MaiCLI {
     plugins: PluginRegistry,
     configuration: MaiConfiguration?
   ) async throws -> [ToolGroupDefinition] {
-    let tools = await runtime.availableTools()
-    var groups = AgentRuntime.builtInToolGroups(for: tools)
+    var groups: [ToolGroupDefinition] = []
     for source in configuration?.toolSources.filter(\.enabled) ?? [] {
       groups.append(
         contentsOf: try await plugins.toolGroups(
           kind: source.kind,
           context: source.context(environment: ProcessInfo.processInfo.environment)))
     }
-    return ToolGroupDefinition.catalog(known: groups, tools: tools)
+    await runtime.configureToolGroups(groups)
+    return await runtime.availableToolGroups()
   }
 
   private static func resolveToolGroup(
     _ selector: String,
     in groups: [ToolGroupDefinition]
   ) -> ToolGroupDefinition? {
-    let matches = groups.filter {
-      $0.id.caseInsensitiveCompare(selector) == .orderedSame
-        || $0.catalogID.caseInsensitiveCompare(selector) == .orderedSame
-    }
-    return matches.count == 1 ? matches[0] : nil
+    AgentToolSelection.group(named: selector, in: groups)
   }
 
   private static func isToolGroupEnabled(
     _ group: ToolGroupDefinition,
     profile: SessionProfile
   ) -> Bool {
-    profile.toolGroupNames.contains(group.id) || group.toolNames.isSubset(of: profile.toolNames)
+    group.toolNames.contains {
+      profile.agentDefinition.toolMode(for: $0, in: [group]) != .disabled
+    }
   }
 
   private static func configuredOptions(
@@ -8556,6 +8573,23 @@ struct MaiCLI {
       await terminal.line("tool.systemone = \(enabled)")
       return
     }
+    if ["tool.auto", "tools.auto", "tool.automatic"].contains(key) {
+      if parts.count == 1 {
+        await terminal.line("tool.auto = \(session.profile.toolPolicy.automatic)")
+        return
+      }
+      guard parts.count == 2, let enabled = booleanSetting(parts[1]) else {
+        await terminal.line("Usage: /set tool.auto <on|off>")
+        return
+      }
+      session.profile.toolPolicy.automatic = enabled
+      session.touch()
+      _ = await persistAgentProfile(
+        session: session, configuration: &configuration, configurationPath: configurationPath,
+        runtime: runtime, terminal: terminal)
+      await terminal.line("tool.auto = \(enabled)")
+      return
+    }
     if toolProxyKeys.contains(key) {
       await setToolProxy(
         parts: parts,
@@ -8718,6 +8752,7 @@ struct MaiCLI {
   private static func listToolSettings(_ profile: SessionProfile, terminal: TerminalWriter) async {
     await terminal.line("tool.calling = \(profile.toolCallingStrategy.rawValue)")
     await terminal.line("tool.proxy = \(toolProxySetting(profile))")
+    await terminal.line("tool.auto = \(profile.toolPolicy.automatic)")
     await terminal.line("tool.systemone = \(profile.useSystemOne)")
   }
 
@@ -8744,8 +8779,7 @@ struct MaiCLI {
     }
   }
 
-  /// `/set tool.proxy [on|off]`: shows or changes whether models see only the
-  /// shared list-tools and call-tool pair instead of the agent's tools.
+  /// Changes the inherited exposure default without erasing per-tool overrides.
   private static func setToolProxy(
     parts: [String],
     session: inout REPLSession,
@@ -8772,11 +8806,10 @@ struct MaiCLI {
       value = "on"
     case let word:
       guard let enabled = booleanSetting(word) else {
-        await terminal.line("Usage: /set tool.proxy <on|all|off>")
+        await terminal.line("Usage: /set tool.proxy <on|hybrid|all|off>")
         return
       }
       session.profile.useToolProxy = enabled
-      if enabled { session.profile.proxyExposedTools = nil }
       value = enabled ? "on" : "off"
     }
     session.touch()
@@ -10843,7 +10876,7 @@ struct MaiCLI {
       limits: profile.limits,
       stream: false,
       toolCallingStrategy: .automatic,
-      useToolProxy: false,
+      useToolProxy: true,
       retry: profile.retry,
       sessionID: session.sessionID)
     await terminal.line(recap ? "Recapping conversation…" : "Compacting conversation…")

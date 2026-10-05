@@ -71,6 +71,7 @@ public actor AgentRuntime {
   /// has installed its request in this actor.
   private var pendingReconfigurations: [AgentPID: AgentRequest] = [:]
   private var registeredMCPs: [String: RegisteredMCP] = [:]
+  private var configuredToolGroups: [ToolGroupDefinition] = []
   private let approvalHandler: any ApprovalHandler
   /// Overrides for the delegation brief and the derived worker's instructions.
   /// Nil keeps the built-in text, so MaiCore works without configuration.
@@ -90,6 +91,8 @@ public actor AgentRuntime {
   private var instructionContexts: [String: AgentInstructionsContext] = [:]
   /// Where every completed provider call's tokens and timing are folded in.
   /// Nil keeps the runtime silent about usage, as it was before hosts asked.
+  private var toolUsageStore: AgentToolUsageStore?
+  private var toolUsage = AgentToolUsage()
   private var usageStats: ModelUsageStore?
   private var debugLog: AgentDebugLog?
 
@@ -370,6 +373,7 @@ public actor AgentRuntime {
     if task == .compact {
       request.agentID = "\(original.agentID).compact"
       request.toolNames = []
+      request.toolPolicy = .init()
       request.toolGroupNames = []
       request.subagentNames = []
       request.toolChoice = .none
@@ -433,6 +437,59 @@ public actor AgentRuntime {
     tools.values.map(\.definition).sorted {
       $0.name.localizedStandardCompare($1.name) == .orderedAscending
     }
+  }
+
+  /// Install plugin-defined memberships; inferred and MCP groups are kept
+  /// current by the runtime. Replacing this list also drops stale memberships.
+  public func configureToolGroups(_ groups: [ToolGroupDefinition]) {
+    configuredToolGroups = groups
+  }
+
+  public func availableToolGroups() -> [ToolGroupDefinition] {
+    let definitions = availableTools()
+    let mcpGroups = registeredMCPs.map { id, registration in
+      ToolGroupDefinition(
+        id: id, sourceID: "mcp", displayName: "MCP " + id,
+        description: "Tools supplied by MCP server " + id + ".",
+        toolNames: registration.toolNames)
+    }.sorted { $0.catalogID < $1.catalogID }
+    let known = Self.builtInToolGroups(for: definitions) + configuredToolGroups + mcpGroups
+    return ToolGroupDefinition.catalog(known: known, tools: definitions)
+  }
+
+  public func configureToolUsage(_ store: AgentToolUsageStore) async {
+    toolUsageStore = store
+    toolUsage = await store.usage
+  }
+
+  public func toolUsageSnapshot() -> AgentToolUsage { toolUsage }
+
+  private func recordToolUse(_ name: String) async {
+    if let toolUsageStore { toolUsage = await toolUsageStore.record(name) }
+    else { toolUsage.record(name) }
+  }
+
+  private func toolModes(for request: AgentRequest) -> [String: AgentToolMode] {
+    let groups = availableToolGroups()
+    let names = Set(tools.keys).union(Self.agentToolNames)
+    var enabled = request.toolNames
+    if request.toolGroupNames == nil { enabled.formUnion(Self.agentToolNames) }
+    for group in groups where group.sourceID == "mcp"
+      || request.toolGroupNames?.contains(group.id) == true
+      || request.toolGroupNames?.contains(group.catalogID) == true
+    { enabled.formUnion(group.toolNames) }
+    var result = request.toolPolicy.modes(
+      for: names, in: groups, enabledNames: enabled, useToolProxy: request.useToolProxy,
+      exposedTools: request.proxyExposedTools, usage: toolUsage)
+    if let scope = request.restrictedToolNames {
+      for name in names where !scope.contains(name) { result[name] = .disabled }
+    }
+    return result
+  }
+
+  private func exposedTools(in definitions: [ToolDefinition], request: AgentRequest) -> Set<String> {
+    let modes = toolModes(for: request)
+    return Set(definitions.filter { modes[$0.name] == .direct }.map(\.name))
   }
 
   /// Every registered definition, disabled ones included, so a host can list
@@ -557,6 +614,10 @@ public actor AgentRuntime {
         toolNames: narrowedTools,
         delegates: derived.delegates)
       current.applyRuntimeSettings(from: definition)
+      current.restrictedToolNames = derived.tools
+      if let inherited = parent.restrictedToolNames {
+        current.restrictedToolNames = derived.tools.map { $0.intersection(inherited) } ?? inherited
+      }
     }
     liveRequests[pid] = current
     return current
@@ -835,9 +896,8 @@ public actor AgentRuntime {
       await budget.update(limits: request.limits)
       let concreteDefinitions = try visibleDefinitions(for: request, depth: depth)
       var definitions =
-        request.useToolProxy && !concreteDefinitions.isEmpty
-        ? ToolProxy.definitions(for: concreteDefinitions, exposing: request.proxyExposedTools)
-        : concreteDefinitions
+        ToolProxy.definitions(
+          for: concreteDefinitions, exposing: exposedTools(in: concreteDefinitions, request: request))
       if localModelTurns >= request.limits.maxModelTurns {
         return await pause(.modelTurns(limit: request.limits.maxModelTurns))
       }
@@ -1059,7 +1119,7 @@ public actor AgentRuntime {
         if consecutiveRepairs >= Self.maximumRepairAttempts { repeatGuardTripped = true }
         var feedback = AgentToolLoopPolicy.repairFeedbackAfterToolResult(
           mode: textToolMode ?? .native)
-        if request.useToolProxy { feedback += "\n" + ToolProxy.repairHint }
+        if request.usesToolProxy { feedback += "\n" + ToolProxy.repairHint }
         transcript.append(.assistant(feedback))
         await supervisor.note(pid, transcript: transcript)
         continue
@@ -1715,7 +1775,7 @@ public actor AgentRuntime {
     // A proxied model that names a hidden tool directly still gets it run:
     // the proxy saves tokens, it is not a permission boundary.
     var resolvedCall: ToolCall
-    if request.useToolProxy, call.name == ToolProxy.callName {
+    if request.usesToolProxy, call.name == ToolProxy.callName {
       let resolved = ToolProxy.resolveCall(
         arguments: call.arguments.objectValue ?? [:], definitions: definitions)
       guard let target = resolved.call else {
@@ -1738,9 +1798,9 @@ public actor AgentRuntime {
     let definitionName = Self.canonicalToolName(resolvedCall.name)
     let isLegacyName = definitionName != resolvedCall.name
     let definition =
-      (request.useToolProxy && definitionName == ToolProxy.listName
+      (request.usesToolProxy && definitionName == ToolProxy.listName
         ? ToolProxy.listDefinition(
-          for: ToolProxy.hiddenDefinitions(in: definitions, exposing: request.proxyExposedTools))
+          for: ToolProxy.hiddenDefinitions(in: definitions, exposing: exposedTools(in: definitions, request: request)))
         : nil)
       ?? definitions.first(where: { $0.name == definitionName })
       ?? AgentToolNameResolver(tools: definitions).canonicalName(for: definitionName)
@@ -1852,14 +1912,17 @@ public actor AgentRuntime {
       return result
     }
     await emit(.toolStarted(context, approvedCall))
+    if definition.name != ToolProxy.listName,
+      tools[definition.name] != nil || Self.agentToolNames.contains(definition.name)
+    { await recordToolUse(definition.name) }
     switch definition.name {
-    case ToolProxy.listName where request.useToolProxy:
+    case ToolProxy.listName where request.usesToolProxy:
       let result = ToolResult(
         callID: approvedCall.id,
         text: ToolProxy.listTools(
           arguments: approvedCall.arguments.objectValue ?? [:],
           definitions: ToolProxy.hiddenDefinitions(
-            in: definitions, exposing: request.proxyExposedTools)))
+            in: definitions, exposing: exposedTools(in: definitions, request: request))))
       await emit(.toolFinished(context, result))
       return result
     case Self.agentStartToolName:
@@ -1985,8 +2048,12 @@ public actor AgentRuntime {
       template: delegationTemplate)
     // A child works in the session of the chat that started it, so a
     // per-session header carries the same value for the whole tree.
-    let childRequest = self.request(
+    var childRequest = self.request(
       for: definition, messages: [.user(prompt)], sessionID: request.sessionID)
+    childRequest.restrictedToolNames = start.tools
+    if start.agent == nil, let inherited = request.restrictedToolNames {
+      childRequest.restrictedToolNames = start.tools.map { $0.intersection(inherited) } ?? inherited
+    }
     // Limits belong to an agent, not to its whole delegation tree. A child
     // receives a fresh allowance from its own definition while its parent
     // retains control over how many children it may start and how deep they
@@ -2158,6 +2225,7 @@ public actor AgentRuntime {
       useToolProxy: request.useToolProxy,
       useSystemOne: request.useSystemOne,
       proxyExposedTools: request.proxyExposedTools,
+      toolPolicy: request.toolPolicy,
       toolDelegation: delegates ? request.toolDelegation : .inline,
       retry: request.retry,
       autocompact: request.autocompact,
@@ -2176,9 +2244,13 @@ public actor AgentRuntime {
   }
 
   private static func canDeriveWorker(for request: AgentRequest) -> Bool {
-    request.toolDelegation.delegatesTools
+    let enabled = request.toolDelegation.delegatesTools
       || request.toolGroupNames?.contains(agentToolGroup.id) == true
+      || request.toolGroupNames?.contains(agentToolGroup.catalogID) == true
       || agentToolNames.isSubset(of: request.toolNames)
+    return request.toolPolicy.mode(
+      for: agentStartToolName, in: [agentToolGroup], enabled: enabled,
+      useToolProxy: request.useToolProxy, exposedTools: request.proxyExposedTools) != .disabled
   }
 
   /// Hide start at the depth limit, but keep tools for existing children.
@@ -2189,10 +2261,6 @@ public actor AgentRuntime {
     for name in request.subagentNames where agents[name] == nil {
       throw AgentRuntimeError.agentNotRegistered(name)
     }
-    let mcpToolNames = registeredMCPs.values.reduce(into: Set<String>()) {
-      $0.formUnion($1.toolNames)
-    }
-    let concreteNames = request.toolNames.union(mcpToolNames)
     // A disabled definition stays registered so a host can list it, but it is
     // never offered as a subagent.
     let offeredAgents = request.subagentNames.filter { agents[$0]?.isEnabled == true }
@@ -2202,17 +2270,24 @@ public actor AgentRuntime {
     // children are actually permitted.
     let delegating = Self.canDeriveWorker(for: request)
     var definitions: [ToolDefinition] = []
-    for name in concreteNames.sorted() {
+    let modes = toolModes(for: request)
+    for name in tools.keys.sorted() where modes[name] != .disabled {
       if let tool = tools[name] { definitions.append(tool.definition) }
     }
     // Raw AgentRequest callers predate tool groups, so nil preserves their
     // behavior. Hosts pass the profile's groups and make this a real per-agent
     // permission; accepting the full name set also honors hand-written files.
-    let agentToolsEnabled =
+    let legacyAgentToolsEnabled =
       request.toolGroupNames.map {
         $0.contains(Self.agentToolGroup.id)
+          || $0.contains(Self.agentToolGroup.catalogID)
           || Self.agentToolNames.isSubset(of: request.toolNames)
       } ?? true
+    let agentToolsEnabled = Self.agentToolNames.contains {
+      request.toolPolicy.mode(
+        for: $0, in: [Self.agentToolGroup], enabled: legacyAgentToolsEnabled,
+        useToolProxy: request.useToolProxy, exposedTools: request.proxyExposedTools) != .disabled
+    }
     if agentToolsEnabled, delegating || !offeredAgents.isEmpty {
       let canStart =
         request.limits.maxSubagents > 0
@@ -2223,7 +2298,13 @@ public actor AgentRuntime {
           agentToolDefinitions(allowedAgentNames: offeredAgents, delegating: delegating)
           .filter { canStart || $0.name != Self.agentStartToolName })
     }
-    return definitions
+    return definitions.filter { definition in
+      (request.restrictedToolNames?.contains(definition.name) ?? true)
+        && (!Self.agentToolNames.contains(definition.name)
+        || request.toolPolicy.mode(
+          for: definition.name, in: [Self.agentToolGroup], enabled: legacyAgentToolsEnabled,
+          useToolProxy: request.useToolProxy, exposedTools: request.proxyExposedTools) != .disabled)
+    }
   }
 
   private func agentToolDefinitions(
@@ -2268,6 +2349,7 @@ public actor AgentRuntime {
       useToolProxy: definition.useToolProxy,
       useSystemOne: definition.useSystemOne,
       proxyExposedTools: definition.proxyExposedTools,
+      toolPolicy: definition.toolPolicy,
       toolDelegation: definition.toolDelegation,
       retry: definition.retry,
       autocompact: definition.autocompact,
@@ -2472,6 +2554,7 @@ extension AgentRequest {
     useToolProxy = other.useToolProxy
     useSystemOne = other.useSystemOne
     proxyExposedTools = other.proxyExposedTools
+    toolPolicy = other.toolPolicy
     toolDelegation = other.toolDelegation
     retry = other.retry
     autocompact = other.autocompact
@@ -2493,6 +2576,7 @@ extension AgentRequest {
     useToolProxy = definition.useToolProxy
     useSystemOne = definition.useSystemOne
     proxyExposedTools = definition.proxyExposedTools
+    toolPolicy = definition.toolPolicy
     toolDelegation = definition.toolDelegation
     retry = definition.retry
     autocompact = definition.autocompact

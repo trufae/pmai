@@ -171,41 +171,49 @@ public struct MaiVectorDatabaseTool: AgentTool {
       try Task.checkCancellation()
       let source = workspace.vectorSource(file)
       present.insert(source)
+      let text: String
       do {
         let attachment = try DocumentAttachmentImporter.attachment(at: file)
-        guard case .file(let content) = attachment.content, let text = content.text else {
+        guard case .file(let content) = attachment.content, let imported = content.text else {
           continue
         }
-        var chunks = MaiVectorChunker.chunks(text: text, source: source)
-        if let old = previous[source], old.map(\.text) == chunks.map(\.text),
-          zip(old, chunks).allSatisfy({ $0.startLine == $1.startLine && $0.endLine == $1.endLine })
-        {
-          unchanged += 1
-          continue
-        }
-        if let embeddingProvider {
-          for offset in stride(from: 0, to: chunks.count, by: 32) {
-            try Task.checkCancellation()
-            let end = min(chunks.count, offset + 32)
-            let vectors = try await embeddingProvider.embeddings(
-              for: chunks[offset..<end].map(\.text))
-            guard vectors.count == end - offset else {
-              throw MaiVectorDatabaseError.incompatibleEmbedding
-            }
-            for index in offset..<end { chunks[index].embedding = vectors[index - offset] }
-          }
-        }
-        incoming.append(contentsOf: chunks)
-        guard incoming.count <= MaiVectorDatabase.maximumChunks else {
-          throw MaiVectorDatabaseError.tooLarge
-        }
-        replaced.insert(source)
-        indexed += 1
+        text = imported
       } catch is CancellationError {
         throw CancellationError()
-      } catch let error as DocumentImportError {
+      } catch DocumentImportError.emptyText {
+        // Emptying a formerly indexed file must also empty its snapshot.
+        replaced.insert(source)
+        indexed += 1
+        continue
+      } catch {
         skipped.append("\(source): \(error.localizedDescription)")
+        continue
       }
+      var chunks = MaiVectorChunker.chunks(text: text, source: source)
+      if let old = previous[source], old.map(\.text) == chunks.map(\.text),
+        zip(old, chunks).allSatisfy({ $0.startLine == $1.startLine && $0.endLine == $1.endLine })
+      {
+        unchanged += 1
+        continue
+      }
+      if let embeddingProvider {
+        for offset in stride(from: 0, to: chunks.count, by: 32) {
+          try Task.checkCancellation()
+          let end = min(chunks.count, offset + 32)
+          let vectors = try await embeddingProvider.embeddings(
+            for: chunks[offset..<end].map(\.text))
+          guard vectors.count == end - offset else {
+            throw MaiVectorDatabaseError.incompatibleEmbedding
+          }
+          for index in offset..<end { chunks[index].embedding = vectors[index - offset] }
+        }
+      }
+      incoming.append(contentsOf: chunks)
+      guard incoming.count <= MaiVectorDatabase.maximumChunks else {
+        throw MaiVectorDatabaseError.tooLarge
+      }
+      replaced.insert(source)
+      indexed += 1
     }
     let prefix = workspace.vectorSource(target)
     let removed = Set(

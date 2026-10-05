@@ -978,6 +978,7 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
   /// With the proxy on, the tools still offered natively; nil means
   /// `ToolProxy.defaultExposedNames`, an empty set hides them all.
   public var proxyExposedTools: Set<String>?
+  public var toolPolicy: AgentToolPolicy
   /// Whether this agent runs its tools itself or delegates them to a child.
   public var toolDelegation: AgentToolDelegation
   /// How failed model calls are repeated before the run gives up.
@@ -1006,9 +1007,10 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
     responseFormat: ResponseFormat = .text,
     options: GenerationOptions = .init(),
     toolCallingStrategy: ToolCallingStrategy = .automatic,
-    useToolProxy: Bool = false,
+    useToolProxy: Bool = true,
     useSystemOne: Bool = false,
     proxyExposedTools: Set<String>? = nil,
+    toolPolicy: AgentToolPolicy = .init(),
     toolDelegation: AgentToolDelegation = .inline,
     retry: AgentRetryPolicy = .init(),
     autocompact: AgentAutocompact = .init(),
@@ -1034,6 +1036,7 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
     self.useToolProxy = useToolProxy
     self.useSystemOne = useSystemOne
     self.proxyExposedTools = proxyExposedTools
+    self.toolPolicy = toolPolicy
     self.toolDelegation = toolDelegation
     self.retry = retry
     self.autocompact = autocompact
@@ -1044,7 +1047,7 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
     case id, displayName, instructions, systemPrompt, provider, model, toolNames, toolGroupNames,
       subagentNames, stream, limits
     case toolChoice, responseFormat, options, toolCallingStrategy, useToolProxy, useSystemOne,
-      proxyExposedTools,
+      proxyExposedTools, toolPolicy,
       toolDelegation
     case description
     case isEnabled = "enabled"
@@ -1077,10 +1080,11 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
       toolCallingStrategy: try container.decodeIfPresent(
         ToolCallingStrategy.self,
         forKey: .toolCallingStrategy) ?? .automatic,
-      useToolProxy: try container.decodeIfPresent(Bool.self, forKey: .useToolProxy) ?? false,
+      useToolProxy: try container.decodeIfPresent(Bool.self, forKey: .useToolProxy) ?? true,
       useSystemOne: try container.decodeIfPresent(Bool.self, forKey: .useSystemOne) ?? false,
       proxyExposedTools: try container.decodeIfPresent(
         Set<String>.self, forKey: .proxyExposedTools),
+      toolPolicy: try container.decodeIfPresent(AgentToolPolicy.self, forKey: .toolPolicy) ?? .init(),
       toolDelegation: try container.decodeIfPresent(
         AgentToolDelegation.self,
         forKey: .toolDelegation) ?? .inline,
@@ -1092,6 +1096,8 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
 }
 
 public struct AgentRequest: Sendable {
+  /// A child's explicit narrowing caps every group and policy override.
+  var restrictedToolNames: Set<String>? = nil
   /// Inbox entries held for a later run. New messages still steer this run.
   public var ignoredQueuedMessageIDs: Set<UUID> = []
   public var agentID: String
@@ -1113,6 +1119,7 @@ public struct AgentRequest: Sendable {
   public var useToolProxy: Bool
   public var useSystemOne: Bool
   public var proxyExposedTools: Set<String>?
+  public var toolPolicy: AgentToolPolicy
   public var toolDelegation: AgentToolDelegation
   public var retry: AgentRetryPolicy
   public var autocompact: AgentAutocompact
@@ -1136,9 +1143,10 @@ public struct AgentRequest: Sendable {
     limits: AgentRunLimits = .init(),
     stream: Bool = true,
     toolCallingStrategy: ToolCallingStrategy = .automatic,
-    useToolProxy: Bool = false,
+    useToolProxy: Bool = true,
     useSystemOne: Bool = false,
     proxyExposedTools: Set<String>? = nil,
+    toolPolicy: AgentToolPolicy = .init(),
     toolDelegation: AgentToolDelegation = .inline,
     retry: AgentRetryPolicy = .init(),
     autocompact: AgentAutocompact = .init(),
@@ -1161,6 +1169,7 @@ public struct AgentRequest: Sendable {
     self.useToolProxy = useToolProxy
     self.useSystemOne = useSystemOne
     self.proxyExposedTools = proxyExposedTools
+    self.toolPolicy = toolPolicy
     self.toolDelegation = toolDelegation
     self.retry = retry
     self.autocompact = autocompact

@@ -270,6 +270,8 @@ public actor ACPServer {
       stream: true,
       toolCallingStrategy: agent.toolCallingStrategy,
       useToolProxy: agent.useToolProxy,
+      proxyExposedTools: agent.proxyExposedTools,
+      toolPolicy: agent.toolPolicy,
       toolDelegation: agent.toolDelegation,
       retry: agent.retry, autocompact: agent.autocompact, context: agent.context,
       sessionID: id)

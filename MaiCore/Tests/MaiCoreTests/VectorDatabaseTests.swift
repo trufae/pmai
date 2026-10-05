@@ -5,6 +5,41 @@ import Testing
 @testable import MaiStandardTools
 
 struct VectorDatabaseTests {
+  private struct TestEmbeddingProvider: MaiVectorEmbeddingProvider {
+    let identifier = "test-model"
+    var fails = false
+    func embeddings(for texts: [String]) async throws -> [[Float]] {
+      if fails { throw MaiVectorDatabaseError.invalidIndex("embedding service unavailable") }
+      return texts.map { _ in [1, 0] }
+    }
+  }
+
+  @Test("Host embedding providers enable semantic-only matches and fail without changing the index")
+  func embeddingProviderIntegration() async throws {
+    let directory = try root()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let file = directory.appendingPathComponent("guide.md")
+    try Data("Canine training advice".utf8).write(to: file)
+    let configuration = MaiFileWorkspaceConfiguration(rootURL: directory)
+    let tool = MaiVectorDatabaseTool(
+      configuration: configuration, embeddingProvider: TestEmbeddingProvider())
+    let indexed = try await call(tool, ["action": .string("index")])
+    #expect(!indexed.isError)
+    let semantic = try await call(tool, ["query": .string("puppy")])
+    #expect(semantic.text.contains("Canine training advice"))
+    let local = MaiVectorDatabaseTool(configuration: configuration)
+    #expect(try await call(local, ["query": .string("canine")]).isError)
+    let snapshot = directory.appendingPathComponent(MaiVectorDatabaseStore.relativePath)
+    let before = try Data(contentsOf: snapshot)
+    try Data("Updated canine advice".utf8).write(to: file)
+    let failing = MaiVectorDatabaseTool(
+      configuration: configuration, embeddingProvider: TestEmbeddingProvider(fails: true))
+    #expect(try await call(failing, ["action": .string("index")]).isError)
+    #expect(try Data(contentsOf: snapshot) == before)
+    #expect(try await call(failing, ["query": .string("puppy")]).isError)
+    #expect(!(try await call(local, ["action": .string("clear")])).isError)
+  }
+
   private func chunk(_ text: String, source: String) -> MaiVectorChunk {
     MaiVectorChunk(source: source, startLine: 1, endLine: 1, text: text)
   }
@@ -154,6 +189,16 @@ struct VectorDatabaseTests {
     #expect(try await restarted.database(at: url).sourceCount == 8)
     _ = try await restarted.replace(at: url, with: [chunk("other", source: "new.md")])
     #expect(try await store.database(at: url).sourceCount == 9)
+    try await withThrowingTaskGroup(of: Void.self) { group in
+      for index in 0..<8 {
+        let item = chunk("parallel \(index)", source: "parallel/\(index).md")
+        group.addTask {
+          _ = try await MaiVectorDatabaseStore().replace(at: url, with: [item])
+        }
+      }
+      try await group.waitForAll()
+    }
+    #expect(try await store.database(at: url).sourceCount == 17)
   }
 
   @Test(
@@ -190,6 +235,11 @@ struct VectorDatabaseTests {
     #expect(refresh.structuredContent?.objectValue?["removed"]?.intValue == 1)
     #expect(
       try await call(tool, ["query": .string("refreshToken")]).text == "No matching passages.")
+    try Data().write(to: docs.appendingPathComponent("guide.md"))
+    let emptied = try await call(
+      tool, ["action": .string("index"), "path": .string("docs/guide.md")])
+    #expect(!emptied.isError)
+    #expect(try await call(tool, ["query": .string("banana")]).text == "No matching passages.")
     let remove = try await call(tool, ["action": .string("remove"), "path": .string("docs")])
     #expect(remove.structuredContent?.objectValue?["sources"]?.intValue == 0)
     #expect(FileManager.default.fileExists(atPath: docs.appendingPathComponent("guide.md").path))
@@ -225,6 +275,7 @@ struct VectorDatabaseTests {
       try await call(tool, ["action": .string("index"), "path": .string("escape.md")]).isError)
     #expect(try await call(tool, ["action": .string("index"), "path": .string("../")]).isError)
     #expect(try await call(tool, ["action": .string("index"), "path": .string("Models")]).isError)
+    #expect(try await call(tool, ["action": .string("index"), "path": .string(".pmai")]).isError)
     #expect(try await call(tool, ["query": .string("secret")]).text == "No matching passages.")
     try FileManager.default.removeItem(at: directory.appendingPathComponent(".pmai"))
     try FileManager.default.createSymbolicLink(
@@ -232,6 +283,16 @@ struct VectorDatabaseTests {
     #expect(try await call(tool, ["action": .string("clear")]).isError)
     #expect(
       !FileManager.default.fileExists(atPath: external.appendingPathComponent("vdb.json").path))
+    try FileManager.default.removeItem(at: directory.appendingPathComponent(".pmai"))
+    try FileManager.default.createDirectory(
+      at: directory.appendingPathComponent(".pmai"), withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(
+      at: directory.appendingPathComponent(MaiVectorDatabaseStore.relativePath),
+      withDestinationURL: directory.appendingPathComponent("readme"))
+    #expect(try await call(tool, ["action": .string("clear")]).isError)
+    #expect(
+      try String(contentsOf: directory.appendingPathComponent("readme"), encoding: .utf8)
+        == "public documentation")
   }
 
   @Test(

@@ -312,10 +312,17 @@ private struct FocusedToolsList: View {
     )
     .foregroundStyle(.muted)
     Toggle(
-      "Tool proxy (models see list-tools and call-tool)",
+      "Hybrid tool proxy default",
       isOn: Binding(
         get: { conversation.profile.useToolProxy },
         set: { workspace.setToolProxy($0, for: conversation) }))
+    Toggle(
+      "Automatically expose frequently used tools",
+      isOn: Binding(
+        get: { conversation.profile.toolPolicy.automatic },
+        set: { workspace.setAutomaticToolExposure($0, for: conversation) }))
+    Text("Individual settings override groups. Inherit follows the hybrid default and usage.")
+      .foregroundStyle(.muted)
     Divider()
     if workspace.toolGroups.isEmpty {
       Text("No tool groups are registered.").foregroundStyle(.muted)
@@ -333,6 +340,7 @@ private struct ToolGroupRow: View {
   @State private var draft: [String: JSONValue]
   @State private var message: String?
   @State private var isSaving = false
+  @State private var showsTools = false
 
   init(
     group: ToolGroupDefinition,
@@ -347,11 +355,37 @@ private struct ToolGroupRow: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      Toggle(
-        "\(group.displayName) (\(group.toolNames.count))",
-        isOn: Binding(
-          get: { workspace.isToolGroupEnabled(group, for: conversation) },
-          set: { workspace.setToolGroup(group, allowed: $0, for: conversation) }))
+      Picker(
+        "\(group.displayName) (\(group.toolNames.count)) · \(workspace.toolUsage.count(for: group)) calls",
+        selection: Binding(
+          get: {
+            (conversation.profile.toolPolicy.groups[group.catalogID]
+              ?? (group.sourceID == "mcp" ? nil : conversation.profile.toolPolicy.groups[group.id]))?
+              .rawValue ?? "inherit"
+          },
+          set: { workspace.setToolGroupMode(AgentToolMode(rawValue: $0), group: group, for: conversation) }))
+      {
+        Text("Inherit").tag("inherit")
+        Text("Direct").tag("direct")
+        Text("Proxy").tag("proxy")
+        Text("Disabled").tag("disabled")
+      }
+      Button(showsTools ? "Hide individual tools" : "Show individual tools") { showsTools.toggle() }
+      if showsTools {
+        ForEach(group.toolNames.sorted(), id: \.self) { name in
+          Picker(
+            "  \(name) [\(workspace.toolMode(name, for: conversation).rawValue)] · \(workspace.toolUsage.counts[name, default: 0]) calls",
+            selection: Binding(
+              get: { conversation.profile.toolPolicy.tools[name]?.rawValue ?? "inherit" },
+              set: { workspace.setToolMode(AgentToolMode(rawValue: $0), name: name, for: conversation) }))
+          {
+            Text("Inherit").tag("inherit")
+            Text("Direct").tag("direct")
+            Text("Proxy").tag("proxy")
+            Text("Disabled").tag("disabled")
+          }
+        }
+      }
       if !group.description.isEmpty {
         Text("  \(group.description)")
           .foregroundStyle(.separator)

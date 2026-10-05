@@ -1,5 +1,15 @@
 import Foundation
 
+#if canImport(Android)
+  import Android
+#elseif canImport(Musl)
+  import Musl
+#elseif canImport(Glibc)
+  import Glibc
+#elseif canImport(Darwin)
+  import Darwin
+#endif
+
 /// Serializes tool calls across chats and child agents. Atomic JSON snapshots
 /// survive restarts; modified snapshots are reloaded before the next operation.
 public actor MaiVectorDatabaseStore {
@@ -48,28 +58,53 @@ public actor MaiVectorDatabaseStore {
     at url: URL, with chunks: [MaiVectorChunk], removingSources: Set<String> = [],
     embeddingSpace: String? = nil
   ) throws -> MaiVectorDatabase {
-    var database = try database(at: url)
-    try database.replace(
-      with: chunks, removingSources: removingSources, embeddingSpace: embeddingSpace)
-    try save(database, at: url)
-    return database
+    try withWriteLock(at: url) {
+      var database = try database(at: url)
+      try database.replace(
+        with: chunks, removingSources: removingSources, embeddingSpace: embeddingSpace)
+      try save(database, at: url)
+      return database
+    }
   }
 
   public func remove(at url: URL, sourcePrefix: String) throws -> MaiVectorDatabase {
-    var database = try database(at: url)
-    let sources = Set(
-      database.chunks.map(\.source).filter {
-        MaiVectorDatabase.contains(source: $0, in: sourcePrefix)
-      })
-    try database.replace(
-      with: [], removingSources: sources, embeddingSpace: database.embeddingSpace)
-    try save(database, at: url)
-    return database
+    try withWriteLock(at: url) {
+      var database = try database(at: url)
+      let sources = Set(
+        database.chunks.map(\.source).filter {
+          MaiVectorDatabase.contains(source: $0, in: sourcePrefix)
+        })
+      try database.replace(
+        with: [], removingSources: sources, embeddingSpace: database.embeddingSpace)
+      try save(database, at: url)
+      return database
+    }
   }
 
   /// Clearing deliberately also recovers an unreadable or obsolete snapshot.
   public func clear(at url: URL) throws {
-    try save(MaiVectorDatabase(), at: url)
+    try withWriteLock(at: url) { try save(MaiVectorDatabase(), at: url) }
+  }
+
+  private func withWriteLock<T>(at url: URL, _ operation: () throws -> T) throws -> T {
+    try FileManager.default.createDirectory(
+      at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    #if !os(Windows)
+      let descriptor = open(
+        url.appendingPathExtension("lock").path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0o600)
+      guard descriptor >= 0 else {
+        throw MaiVectorDatabaseError.invalidIndex("cannot open index lock")
+      }
+      defer { close(descriptor) }
+      guard flock(descriptor, LOCK_EX) == 0 else {
+        throw MaiVectorDatabaseError.invalidIndex("cannot lock index")
+      }
+      defer { _ = flock(descriptor, LOCK_UN) }
+    #endif
+    try Task.checkCancellation()
+    // Another process or store may have committed while we acquired the lock.
+    cached = nil
+    return try operation()
   }
 
   private func save(_ database: MaiVectorDatabase, at url: URL) throws {

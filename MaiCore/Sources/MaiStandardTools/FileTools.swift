@@ -1488,13 +1488,25 @@ struct MaiFileWorkspace: Sendable {
   // VDB uses the same path checks and source traversal as the Files tools.
   func vectorPath(_ path: String, mustExist: Bool = true) throws -> URL {
     let url = try resolve(path, allowRoot: true, mustExist: mustExist)
-    guard !isInHiddenRootEntry(url) else { throw MaiFileWorkspaceError.outsideWorkspace(path) }
+    guard !isInHiddenRootEntry(url),
+      !MaiVectorDatabase.contains(source: relativePath(url), in: ".pmai")
+    else {
+      throw MaiFileWorkspaceError.outsideWorkspace(path)
+    }
     return url
   }
 
   func vectorSource(_ url: URL) -> String { relativePath(url) }
 
   func vectorIndexURL() throws -> URL {
+    let directory = rootURL.appendingPathComponent(".pmai")
+    let snapshot = rootURL.appendingPathComponent(MaiVectorDatabaseStore.relativePath)
+    for item in [directory, snapshot] {
+      guard (try? FileManager.default.destinationOfSymbolicLink(atPath: item.path)) == nil else {
+        throw MaiVectorDatabaseError.invalidIndex(
+          "the index file and its .pmai directory cannot be symbolic links")
+      }
+    }
     let url = try resolve(MaiVectorDatabaseStore.relativePath, allowRoot: false, mustExist: false)
     guard isInside(url, directory: rootURL) else {
       throw MaiFileWorkspaceError.outsideWorkspace(MaiVectorDatabaseStore.relativePath)

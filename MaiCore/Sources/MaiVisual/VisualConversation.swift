@@ -153,8 +153,12 @@ public final class VisualConversation: Identifiable {
       stream: profile.stream,
       toolCallingStrategy: profile.toolCallingStrategy,
       useToolProxy: profile.useToolProxy,
+      useSystemOne: profile.useSystemOne,
+      proxyExposedTools: profile.proxyExposedTools,
+      toolPolicy: profile.toolPolicy,
       retry: profile.retry,
       autocompact: profile.autocompact,
+      context: profile.context,
       sessionID: sessionID)
   }
 

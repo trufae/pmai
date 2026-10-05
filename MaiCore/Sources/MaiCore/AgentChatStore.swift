@@ -226,6 +226,10 @@ public struct AgentHome: Sendable {
     rootURL.appendingPathComponent(Self.usageStatsFilename)
   }
 
+  public var toolUsageURL: URL {
+    rootURL.appendingPathComponent("tool-usage.json")
+  }
+
   /// Skills every project may use, one folder with a SKILL.md per skill.
   public var skillsDirectoryURL: URL {
     rootURL.appendingPathComponent(Self.skillsDirectoryName, isDirectory: true)

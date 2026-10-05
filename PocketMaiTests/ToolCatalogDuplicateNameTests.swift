@@ -1,3 +1,4 @@
+import MaiCore
 import MaiStandardTools
 import XCTest
 
@@ -10,6 +11,26 @@ import XCTest
 /// The catalog now keeps the first definition per name — built-ins, then
 /// servers in settings order — matching dispatch resolution order.
 final class ToolCatalogDuplicateNameTests: XCTestCase {
+  func testVectorDatabaseIndexesAndQueriesOnIOS() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "ios-vdb-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try Data("func renewCredentials() { return refreshToken }\n".utf8).write(
+      to: root.appendingPathComponent("Auth.swift"))
+    let tool = MaiVectorDatabaseTool(configuration: MaiFileWorkspaceConfiguration(rootURL: root))
+    let context = ToolExecutionContext(
+      run: AgentEventContext(runID: UUID(), parentRunID: nil, agentID: "test", depth: 0),
+      modelTurn: 0)
+    let index = try await tool.call(
+      arguments: .object(["action": .string("index")]), context: context)
+    XCTAssertFalse(index.isError, index.text)
+    let query = try await tool.call(
+      arguments: .object(["query": .string("renew credentials")]), context: context)
+    XCTAssertFalse(query.isError, query.text)
+    XCTAssertTrue(query.text.contains("Auth.swift:1-1"))
+  }
+
   @MainActor
   func testVectorDatabaseCatalogUsesWorkspaceAccessAndWorksOffline() {
     var settings = AppSettings()
@@ -17,8 +38,9 @@ final class ToolCatalogDuplicateNameTests: XCTestCase {
     var conversation = Conversation()
     conversation.toolsEnabled = true
     conversation.enabledTools = [.vdb]
-    XCTAssertFalse(BuiltInToolCatalog.definitions(for: conversation, settings: settings)
-      .contains { $0.name == MaiVectorDatabaseTool.name })
+    XCTAssertFalse(
+      BuiltInToolCatalog.definitions(for: conversation, settings: settings)
+        .contains { $0.name == MaiVectorDatabaseTool.name })
     settings.toolSettings.filesWorkspaceAccessEnabled = true
     let definitions = BuiltInToolCatalog.definitions(for: conversation, settings: settings)
     XCTAssertEqual(definitions.map(\.name), [MaiVectorDatabaseTool.name])

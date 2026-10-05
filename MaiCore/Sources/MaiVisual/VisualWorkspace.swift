@@ -124,6 +124,7 @@ public final class VisualWorkspace {
   /// Tokens/s and time in use per provider:model, mirrored from the runtime's
   /// usage store after every run and shown as bars on the Stats tab.
   public private(set) var usageLedger = ModelUsageLedger()
+  public private(set) var toolUsage = AgentToolUsage()
   public var pendingApproval: VisualApprovalHandler.Pending?
   public var pendingCompaction: VisualApprovalHandler.PendingCompaction?
   private var compactionQueue: [VisualApprovalHandler.PendingCompaction] = []
@@ -204,7 +205,7 @@ public final class VisualWorkspace {
     agents = await runtime.availableAgents()
     await refreshAgentTree()
     await refreshUsageStats()
-    var groups = AgentRuntime.builtInToolGroups(for: tools)
+    var groups: [ToolGroupDefinition] = []
     for source in configuration.toolSources where source.enabled {
       do {
         groups.append(
@@ -216,7 +217,8 @@ public final class VisualWorkspace {
           "warning: tool groups for '\(source.id)' are unavailable: \(error.localizedDescription)"
       }
     }
-    toolGroups = ToolGroupDefinition.catalog(known: groups, tools: tools)
+    await runtime.configureToolGroups(groups)
+    toolGroups = await runtime.availableToolGroups()
   }
 
   @discardableResult
@@ -601,6 +603,7 @@ public final class VisualWorkspace {
   // MARK: Usage statistics
 
   public func refreshUsageStats() async {
+    toolUsage = await runtime.toolUsageSnapshot()
     guard let store = await runtime.usageStatsStore() else {
       usageLedger = ModelUsageLedger()
       return
@@ -660,8 +663,28 @@ public final class VisualWorkspace {
     _ group: ToolGroupDefinition,
     for conversation: VisualConversation
   ) -> Bool {
-    conversation.profile.toolGroupNames.contains(group.id)
-      || group.toolNames.isSubset(of: conversation.profile.toolNames)
+    group.toolNames.contains { toolMode($0, for: conversation) != .disabled }
+  }
+
+  public func toolMode(_ name: String, for conversation: VisualConversation) -> AgentToolMode {
+    conversation.profile.toolMode(for: name, in: toolGroups, usage: toolUsage)
+  }
+
+  public func setAutomaticToolExposure(_ enabled: Bool, for conversation: VisualConversation) {
+    conversation.profile.toolPolicy.automatic = enabled
+    persistAgentProfile(for: conversation)
+  }
+
+  public func setToolMode(_ mode: AgentToolMode?, name: String, for conversation: VisualConversation) {
+    conversation.profile.setToolMode(mode, for: name)
+    persistAgentProfile(for: conversation)
+  }
+
+  public func setToolGroupMode(
+    _ mode: AgentToolMode?, group: ToolGroupDefinition, for conversation: VisualConversation
+  ) {
+    conversation.profile.setToolGroupMode(mode, for: group)
+    persistAgentProfile(for: conversation)
   }
 
   public func setToolGroup(
@@ -670,11 +693,12 @@ public final class VisualWorkspace {
     for conversation: VisualConversation
   ) {
     if allowed {
-      conversation.profile.toolGroupNames.insert(group.id)
+      let key = group.sourceID == "mcp" ? group.catalogID : group.id
+      conversation.profile.toolGroupNames.insert(key)
       conversation.profile.toolNames.formUnion(group.toolNames)
+      conversation.profile.setToolGroupMode(nil, for: group)
     } else {
-      conversation.profile.toolGroupNames.remove(group.id)
-      conversation.profile.toolNames.subtract(group.toolNames)
+      conversation.profile.setToolGroupMode(.disabled, for: group)
     }
     persistAgentProfile(for: conversation)
   }
