@@ -5,7 +5,19 @@ DESTINATION ?= generic/platform=iOS Simulator
 TEST_DESTINATION ?=
 TEST_RESULT_BUNDLE ?= build/TestResults.xcresult
 DERIVED_DATA ?= build/DerivedData
-XCODE_PACKAGE_FLAGS ?= -skipPackagePluginValidation
+XCODE_PACKAGE_FLAGS ?= -skipPackagePluginValidation -skipPackageUpdates
+# Command-line builds skip indexing and coverage. Keep the same settings for
+# build, test and run so they can reuse compilation outputs.
+XCODE_BUILD_FLAGS ?= -parallelizeTargets COMPILATION_CACHE_ENABLE_CACHING=YES COMPILER_INDEX_STORE_ENABLE=NO ENABLE_CODE_COVERAGE=NO
+SWIFT ?= swift
+SWIFT_BUILD_FLAGS ?= --disable-index-store
+# A generic Simulator destination has no active device, so Xcode otherwise
+# compiles both architectures even with ONLY_ACTIVE_ARCH enabled.
+ifeq ($(CONFIG),Debug)
+ifneq ($(findstring generic/platform=iOS Simulator,$(DESTINATION)),)
+XCODE_ARCH_FLAGS ?= ARCHS=$(shell uname -m)
+endif
+endif
 SUDO ?= sudo
 ifeq ($(shell uname),Darwin)
 STRIP ?= strip -x
@@ -17,7 +29,7 @@ BUNDLE_ID = io.github.trufae.mai
 APP_BUNDLE ?=
 BINDIR ?= $(HOME)/.local/bin
 
-.PHONY: all build test list run uninstall repl repl-install repl-uninstall repl-musl plugin-fixture fmt clean check-shared-tooling aitest-build
+.PHONY: all build test list run uninstall repl repl-build repl-install repl-uninstall repl-musl plugin-fixture fmt clean check-shared-tooling aitest-build
 .PHONY: android android-test
 
 all: build
@@ -29,13 +41,13 @@ android-test:
 	$(MAKE) -C PocketMaiAndroid test
 
 build:
-	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration $(CONFIG) -destination '$(DESTINATION)' -derivedDataPath $(DERIVED_DATA) $(XCODE_PACKAGE_FLAGS) CODE_SIGNING_ALLOWED=NO build
+	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration $(CONFIG) -destination '$(DESTINATION)' -derivedDataPath $(DERIVED_DATA) $(XCODE_PACKAGE_FLAGS) $(XCODE_BUILD_FLAGS) $(XCODE_ARCH_FLAGS) CODE_SIGNING_ALLOWED=NO build
 
 test:
 	TEST_DESTINATION='$(TEST_DESTINATION)' TEST_RESULT_BUNDLE='$(TEST_RESULT_BUNDLE)' \
 		bash test/run-ios-tests.sh -project '$(PROJECT)' -scheme '$(SCHEME)' \
 		-configuration '$(CONFIG)' -derivedDataPath '$(DERIVED_DATA)' \
-		$(XCODE_PACKAGE_FLAGS) CODE_SIGNING_ALLOWED=NO
+		$(XCODE_PACKAGE_FLAGS) $(XCODE_BUILD_FLAGS) CODE_SIGNING_ALLOWED=NO
 
 list:
 	xcrun devicectl list devices
@@ -60,7 +72,7 @@ run:
 	if [ -z "$$app_bundle" ]; then \
 		xcodebuild -project '$(PROJECT)' -scheme '$(SCHEME)' -configuration '$(CONFIG)' \
 			-destination "platform=iOS,id=$$device" -derivedDataPath '$(DERIVED_DATA)' \
-			$(XCODE_PACKAGE_FLAGS) -allowProvisioningUpdates build; \
+			$(XCODE_PACKAGE_FLAGS) $(XCODE_BUILD_FLAGS) -allowProvisioningUpdates build; \
 		app_bundle='$(DERIVED_DATA)/Build/Products/$(CONFIG)-iphoneos/$(SCHEME).app'; \
 	fi; \
 	if [ -z "$$app_bundle" ] || [ ! -d "$$app_bundle" ]; then \
@@ -94,12 +106,15 @@ repl:
 		&& [ -z "$${PMAI_API_KEY+x}$${MAI_API_KEY+x}$${OPENAI_API_KEY+x}" ]; then \
 		. ./env.sh; \
 	fi; \
-	swift run --package-path MaiCore pmai $(ARGS)
+	$(SWIFT) run --package-path MaiCore $(SWIFT_BUILD_FLAGS) pmai $(ARGS)
+
+repl-build:
+	$(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) --product pmai
 
 repl-install:
-	swift build --package-path MaiCore -c release --product pmai
+	$(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) -c release --product pmai
 	mkdir -p $(BINDIR)
-	cp -f "$$(swift build --package-path MaiCore -c release --show-bin-path)/pmai" $(BINDIR)/pmai
+	cp -f "$$($(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) -c release --show-bin-path)/pmai" $(BINDIR)/pmai
 	chmod 755 $(BINDIR)/pmai
 	$(STRIP) $(BINDIR)/pmai
 
@@ -111,11 +126,11 @@ repl-uninstall:
 # does not build against musl, so the /visual workspace is left out.
 MUSL_ARCH ?= $(shell uname -m)
 repl-musl:
-	PMAI_NO_VISUAL=1 swift build --package-path MaiCore -c release --product pmai \
+	PMAI_NO_VISUAL=1 $(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) -c release --product pmai \
 		--swift-sdk $(MUSL_ARCH)-swift-linux-musl -Xswiftc -Osize
 
 plugin-fixture:
-	swift build --package-path MaiCore --product MaiFixturePlugin
+	$(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) --product MaiFixturePlugin
 
 fmt:
 	xcrun swift-format format -i -r PocketMai PocketMaiShare Shared SharedWidgetKit MaiCore/Sources MaiCore/Tests MaiCore/Package.swift
@@ -124,7 +139,7 @@ check-shared-tooling:
 	test "$$(readlink aitest/Sources/aitest/AgentTooling.swift)" = "../../../Shared/AgentTooling.swift"
 
 aitest-build: check-shared-tooling
-	swift build --package-path aitest
+	$(SWIFT) build --package-path aitest $(SWIFT_BUILD_FLAGS)
 
 clean:
 	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration $(CONFIG) -derivedDataPath $(DERIVED_DATA) clean

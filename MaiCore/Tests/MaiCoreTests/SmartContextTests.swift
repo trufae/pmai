@@ -62,10 +62,10 @@ func smartContextToolTurns(textProtocol: Bool) async throws {
   try #require(requests.count == 2)
   #expect(
     requests.map { $0.messages.filter { $0.role == .user }.map(\.text) }
-      == [["First working brief"], ["Second working brief"]])
+      == [["First working brief", "Keep the API stable"], ["Second working brief", "Keep the API stable"]])
   #expect(
     requests.allSatisfy { request in
-      request.messages.filter { $0.role != .system && $0.role != .developer }.count == 1
+      request.messages.filter { $0.role != .system && $0.role != .developer }.count == 2
         && request.messages.contains(original[1])
         && request.messages.contains { $0.role == .system && $0.text.contains(original[0].text) }
         && request.model == "frontier" && request.sessionID == "same-session"
@@ -80,6 +80,8 @@ func smartContextToolTurns(textProtocol: Bool) async throws {
   #expect(next.contains("Earlier finding") && next.contains("Keep the API stable"))
   #expect(next.contains("tool call") && next.contains("tool result"))
   #expect(!next.contains("First working brief"))
+  #expect(!next.contains("Keep all safety constraints") && !next.contains("Developer rule"))
+  #expect(!next.contains("Tools are available through") && !next.contains("parameter schema"))
   #expect(await stats.totals().count == 2)
 }
 
@@ -184,8 +186,9 @@ func smartContextAttachments() {
   #expect(!prompt.contains("private reasoning"))
   #expect(prompt.contains("Visible finding") && prompt.contains("[image image/png]"))
   let messages = AgentSmartContextPrompt.messages(brief: "Inspect the attachment", from: original)
-  #expect(messages.count == 2 && messages[0] == original[0])
+  #expect(messages.count == 3 && messages[0] == original[0])
   #expect(messages[1].content == [.text("Inspect the attachment"), attachment])
+  #expect(messages[2] == original[1])
 }
 
 @Test("Smart mode and its independent prompt persist and validate")
@@ -260,6 +263,17 @@ func smartContextSkills(textProtocol: Bool, proxied: Bool) async throws {
     })
   #expect(!requests[0].messages.contains { $0.text.contains(skill.body) })
   #expect(result.transcript.flatMap(\.toolResults).first?.text.contains(skill.body) == true)
+  #expect(requests.dropFirst().allSatisfy { request in
+    let bodies = request.messages.filter { $0.text.contains(skill.body) }
+    return bodies.count == 1 && bodies.first?.role == .system
+  })
+  let preparations = await compact.requests
+  #expect(preparations.allSatisfy { request in
+    let input = request.messages.map(\.text).joined(separator: "\n")
+    return !input.contains(skill.body) && !input.contains(MaiSkillTools.promptSection)
+      && !input.contains("Tools are available through")
+  })
+  #expect(preparations[1].messages.last?.text.contains("input.txt") == true)
 }
 
 @Test("Smart context keeps an explicit skill prompt and its arguments verbatim")
@@ -271,6 +285,11 @@ func smartContextSkillPrompt() {
   let messages = AgentSmartContextPrompt.messages(brief: "A lossy brief", from: [.user(prompt)])
   #expect(messages.contains { $0.text.contains(prompt) })
   #expect(messages.contains { $0.text.contains("A lossy brief") })
+  #expect(messages.filter { $0.text.contains(skill.body) }.map(\.role) == [.system])
+  #expect(messages.last?.text.contains("Use the literal value $418 and preserve all spacing.") == true)
+  let rendered = AgentSmartContextPrompt.render(messages: [.user(prompt)])
+  #expect(!rendered.contains(skill.body))
+  #expect(rendered.contains("Use the literal value $418 and preserve all spacing."))
   let ordinary = AgentSmartContextPrompt.messages(
     brief: "Next task", from: [.user(prompt), .assistant("Done"), .user("Unrelated task")])
   #expect(!ordinary.contains { $0.text.contains(prompt) })

@@ -86,9 +86,21 @@ artifacts in the Release workflow.
 
 ```sh
 make build               # builds for the iOS Simulator without code signing
+make repl-build          # builds the debug CLI without starting the REPL
 make run                 # installs and launches Xcode's latest signed device build
 make fmt                 # swift-format the sources
 ```
+
+Local builds reuse their existing outputs. Xcode compilation caching is
+enabled, and Make's command-line builds skip editor indexing, coverage
+instrumentation, and remote package update checks. The default Debug
+Simulator build compiles only the host Mac's architecture; Release
+builds keep their full architecture set. Keep the same toolchain and build
+options between invocations; use `make clean` only when you need to discard
+iOS build outputs. Set `XCODE_ARCH_FLAGS=`, `XCODE_BUILD_FLAGS=`, or
+`SWIFT_BUILD_FLAGS=` to override the command-line defaults.
+To check package remotes again, run
+`make build XCODE_PACKAGE_FLAGS=-skipPackagePluginValidation`.
 
 `make run` selects the first connected iOS device and uses the latest signed
 `Debug` device app in Xcode's Derived Data. Use `make run DEVICE=<UDID>` to

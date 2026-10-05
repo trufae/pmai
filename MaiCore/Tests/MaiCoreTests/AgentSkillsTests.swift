@@ -117,7 +117,7 @@ func promptRendering() {
   templated.body = "Fix $ARGUMENTS and nothing else."
   let rendered = templated.prompt(arguments: "the parser")
   #expect(rendered.contains("Fix the parser and nothing else."))
-  #expect(rendered.hasSuffix("</skill>"))
+  #expect(rendered.hasSuffix("</skill>\n\nSkill invocation arguments:\nthe parser"))
   #expect(templated.prompt().contains("Fix  and nothing else."))
 }
 

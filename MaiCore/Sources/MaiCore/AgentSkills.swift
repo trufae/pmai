@@ -93,10 +93,12 @@ public struct AgentSkill: Equatable, Identifiable, Sendable {
       consumed = true
     }
     var text = "<skill name=\"\(name)\" directory=\"\(directoryURL.path)\">\n"
-    text += "Apply this skill in the current workspace. Project paths, including AGENTS.md and output files, are relative to the workspace, not the skill directory.\n\n"
+    text += "Apply this skill's workflow and required output format to the user's task in the current workspace. Project paths, including AGENTS.md and output files, are relative to the workspace, not the skill directory.\n\n"
     text += instructions
     text += "\n</skill>"
-    if !extra.isEmpty, !consumed { text += "\n\n" + extra }
+    if !extra.isEmpty {
+      text += "\n\n" + (consumed ? "Skill invocation arguments:\n" : "") + extra
+    }
     return text
   }
 
@@ -288,7 +290,7 @@ public enum MaiSkillTools {
   public static let toolPrefix = "skills_"
   public static let groupID = "skills"
   public static let promptSection = """
-    Skills are available through skills_* tools. When the user names a skill or a task matches its description, call that skill to load its instructions before doing the task. Calling a skill only loads instructions; use the other tools to perform its steps, and follow its required final-answer format. Project paths in a skill are relative to the workspace; scripts and reference resources beside SKILL.md are relative to the skill's directory in its envelope.
+    Skills are available through skills_* tools. When the user names a skill or a task matches its description, load its instructions before doing the task unless they are already provided in the active skill instructions. When continuing an earlier skill task whose instructions are no longer active, reload that skill by the name in its receipt. Calling a skill only loads instructions; use the other tools to perform its steps, and follow its required final-answer format. Project paths in a skill are relative to the workspace; scripts and reference resources beside SKILL.md are relative to the skill's directory in its envelope.
     """
 
   public static func toolName(for skillName: String) -> String {
@@ -379,28 +381,40 @@ public enum MaiSkillTools {
   }
 }
 
-/// Skill instructions for the current user turn must survive context reduction
+/// Skill instructions for the active task must survive context reduction
 /// exactly. Tool results are identified by their actual calls, not their text.
 enum AgentSkillContext {
-  private static func currentTurn(in messages: [AgentMessage]) -> ArraySlice<AgentMessage> {
+  private static func currentTurn(
+    in messages: [AgentMessage], activeTaskID: String?
+  ) -> ArraySlice<AgentMessage> {
     guard !messages.isEmpty else { return messages[...] }
-    return messages[(messages.lastIndex { $0.role == .user } ?? 0)...]
+    let start = activeTaskID.flatMap { id in messages.firstIndex { $0.id == id } }
+      ?? messages.lastIndex { $0.role == .user } ?? 0
+    return messages[start...]
   }
 
-  static func instructions(in messages: [AgentMessage]) -> String? {
-    let current = currentTurn(in: messages)
+  static func instructions(in messages: [AgentMessage], activeTaskID: String? = nil) -> String? {
+    let current = currentTurn(in: messages, activeTaskID: activeTaskID)
     var calls: [String: String] = [:]
     for call in current.flatMap(\.toolCalls) {
       if let name = MaiSkillTools.invokedSkillName(for: call) { calls[call.id] = name }
     }
     var instructions: [String] = []
+    var seen = Set<String>()
     for message in current {
-      if message.role == .user, message.text.hasPrefix("<skill name=\"") {
-        instructions.append(message.text)
+      if message.role == .user {
+        for part in message.content {
+          if case .text(let text) = part, envelope(in: text) != nil,
+            seen.insert(instructionKey(text)).inserted
+          {
+            instructions.append(text)
+          }
+        }
       }
       if message.role == .tool {
         for result in message.toolResults where !result.isError {
-          guard let name = calls[result.callID] else { continue }
+          guard let name = calls[result.callID], seen.insert(instructionKey(result.text)).inserted
+          else { continue }
           instructions.append("[Loaded by \(name), call \(result.callID)]\n" + result.text)
         }
       }
@@ -408,10 +422,61 @@ enum AgentSkillContext {
     return instructions.isEmpty ? nil : instructions.joined(separator: "\n\n")
   }
 
+  /// Skill bodies are replaced with receipts only in the inference/evidence
+  /// view. The exact current bodies are attached separately as instructions.
+  static func conversation(in messages: [AgentMessage]) -> [AgentMessage] {
+    let calls = Dictionary(
+      messages.flatMap(\.toolCalls).compactMap { call in
+        MaiSkillTools.invokedSkillName(for: call).map { (call.id, $0) }
+      }, uniquingKeysWith: { _, last in last })
+    return messages.map { message in
+      var projected = message
+      projected.content = message.content.map { part in
+        if message.role == .user, case .text(let text) = part,
+          let envelope = envelope(in: text)
+        {
+          return .text("[User invoked skill \(envelope.header); instructions loaded separately.]"
+            + (envelope.arguments.isEmpty ? "" : "\n\n" + envelope.arguments))
+        }
+        if message.role == .tool, case .toolResult(var result) = part, !result.isError,
+          let name = calls[result.callID]
+        {
+          result.content = [
+            .text("[Skill instructions loaded by \(name), call \(result.callID). If continuing this task without active instructions, reload \(name).]")
+          ]
+            + result.content.flatMap(AgentSmartContextPrompt.binaryAttachments)
+          result.structuredContent = nil
+          return .toolResult(result)
+        }
+        return part
+      }
+      return projected
+    }
+  }
+
+  private static func envelope(in text: String) -> (header: String, arguments: String)? {
+    guard text.hasPrefix("<skill name=\""), let headerEnd = text.firstIndex(of: ">"),
+      let closing = text.range(of: "\n</skill>", options: .backwards)
+    else { return nil }
+    return (
+      String(text[text.index(text.startIndex, offsetBy: 7)..<headerEnd]),
+      String(text[closing.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines))
+  }
+
+  private static func instructionKey(_ text: String) -> String {
+    if let start = text.range(of: "<skill name=\"") {
+      let prompt = String(text[start.lowerBound...])
+      if envelope(in: prompt) != nil { return prompt }
+    }
+    return text
+  }
+
   /// Keep whole exchanges when skills share a turn with other tools, so
   /// automatic compaction cannot remove a skill's call through its sibling.
-  static func protectedMessageIDs(in messages: [AgentMessage]) -> Set<String> {
-    let current = currentTurn(in: messages)
+  static func protectedMessageIDs(
+    in messages: [AgentMessage], activeTaskID: String? = nil
+  ) -> Set<String> {
+    let current = currentTurn(in: messages, activeTaskID: activeTaskID)
     let successful = Set(
       current.filter { $0.role == .tool }.flatMap(\.toolResults)
         .filter { !$0.isError }.map(\.callID))
@@ -422,8 +487,14 @@ enum AgentSkillContext {
         }
     }
     let paired = Set(exchanges.flatMap(\.toolCalls).map(\.id))
+    let direct = current.filter { message in
+      message.role == .user && message.content.contains { part in
+        if case .text(let text) = part { return envelope(in: text) != nil }
+        return false
+      }
+    }
     return Set(
-      exchanges.map(\.id)
+      direct.map(\.id) + exchanges.map(\.id)
         + current.filter { message in
           message.role == .tool && message.toolResults.contains { paired.contains($0.callID) }
         }.map(\.id))

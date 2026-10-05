@@ -7955,7 +7955,8 @@ struct MaiCLI {
       for skill in catalog.skills {
         let enabled = isSkillEnabled(skill, profile: session.profile)
         let status = !skill.isModelInvocable ? "not callable" : enabled ? "enabled" : "disabled"
-        let color = !skill.isModelInvocable
+        let color =
+          !skill.isModelInvocable
           ? ui.warningForeground : enabled ? ui.successForeground : ui.errorForeground
         let label = await terminal.paint(
           "[\(status)]".padding(toLength: 14, withPad: " ", startingAt: 0), color: color)
@@ -10808,12 +10809,8 @@ struct MaiCLI {
         await terminal.line(await terminal.render(summary))
         return
       }
-      var compacted: [AgentMessage] = []
-      if !profile.instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-        compacted.append(.system(profile.instructions))
-      }
-      compacted.append(.system("Conversation summary (compacted):\n\n\(summary)"))
-      session.history.replaceAll(with: compacted)
+      session.history.replaceAll(with: AgentTranscriptEditor.compactingConversation(
+        session.history.messages, summary: summary))
       session.pendingContent.removeAll()
       session.touch()
       await terminal.line("Conversation compacted into a summary.")

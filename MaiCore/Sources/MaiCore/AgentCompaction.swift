@@ -96,7 +96,7 @@ public enum AgentCompactionPrompt {
   /// instructions survive compaction as they are.
   public static func transcript(of messages: [AgentMessage], resultLimit: Int = 4_000) -> String {
     var entries: [String] = []
-    for message in messages {
+    for message in AgentPromptContext(messages: messages).conversation {
       switch message.role {
       case .system, .developer:
         continue
@@ -200,7 +200,7 @@ public enum AgentAutocompaction {
   /// The IDs of the messages to fold into one summary, or nil when there is
   /// too little to gain.
   public static func selection(
-    in messages: [AgentMessage], preservingRecentTokens: Int = 8_000
+    in messages: [AgentMessage], preservingRecentTokens: Int = 8_000, activeTaskID: String? = nil
   ) -> [String]? {
     guard var tailStart = messages.lastIndex(where: { $0.role == .user || $0.role == .assistant })
     else { return nil }
@@ -218,9 +218,10 @@ public enum AgentAutocompaction {
         tailStart = index
       }
     }
-    let skillInstructions = AgentSkillContext.protectedMessageIDs(in: messages)
+    let skillInstructions = AgentPromptContext.protectedInstructionMessageIDs(
+      in: messages, activeTaskID: activeTaskID)
     let candidates = messages[..<tailStart].enumerated().compactMap { index, message in
-      index != latestUser && message.role != .system && message.role != .developer
+      index != latestUser && !AgentPromptContext.isInstruction(message)
         && !skillInstructions.contains(message.id) ? message : nil
     }
     guard candidates.count >= minimumMessages else { return nil }
@@ -248,12 +249,17 @@ public enum AgentContextPruning {
   /// including searches and shell commands. Preserve the newest exchange,
   /// errors, call arguments and all conversation text. Unlike read pruning,
   /// this loses the middle of an output, so it never runs automatically.
-  public static func pruneToolOutput(_ messages: inout [AgentMessage]) -> AgentTranscriptEditReport? {
+  public static func pruneToolOutput(
+    _ messages: inout [AgentMessage], activeTaskID: String? = nil
+  ) -> AgentTranscriptEditReport? {
     guard let tail = messages.lastIndex(where: { $0.role == .user || $0.role == .assistant })
     else { return nil }
     var report = AgentTranscriptEditReport(
       charactersBefore: AgentTranscriptEditor.characterCount(of: messages))
-    for index in messages.indices where index < tail && messages[index].role == .tool {
+    let protected = AgentPromptContext.protectedInstructionMessageIDs(
+      in: messages, activeTaskID: activeTaskID)
+    for index in messages.indices
+    where index < tail && messages[index].role == .tool && !protected.contains(messages[index].id) {
       messages[index].content = messages[index].content.map { part in
         guard case .toolResult(var result) = part, !result.isError else { return part }
         let original = result.content
@@ -287,15 +293,19 @@ public enum AgentContextPruning {
       + text.suffix(200)
   }
 
-  public static func prune(_ messages: inout [AgentMessage]) -> AgentTranscriptEditReport? {
+  public static func prune(
+    _ messages: inout [AgentMessage], activeTaskID: String? = nil
+  ) -> AgentTranscriptEditReport? {
     guard let currentPrompt = messages.lastIndex(where: { $0.role == .user }) else { return nil }
     var calls: [String: ToolCall] = [:]
     for message in messages[..<currentPrompt] {
       for call in message.toolCalls { calls[call.id] = call }
     }
     var candidates: [Int] = []
+    let protected = AgentPromptContext.protectedInstructionMessageIDs(
+      in: messages, activeTaskID: activeTaskID)
     for (index, message) in messages.enumerated()
-    where index < currentPrompt && message.role == .tool {
+    where index < currentPrompt && message.role == .tool && !protected.contains(message.id) {
       if message.toolResults.contains(where: { hasPrunableContent($0, call: calls[$0.callID]) }) {
         candidates.append(index)
       }

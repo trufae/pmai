@@ -105,14 +105,27 @@ def main():
                         assert len(primary) == 3, primary
                         expected = BODY.replace('$ARGUMENTS', 'input.txt')
                         for request in primary[1:]:
-                            assert any(expected in str(m.get('content')) for m in request['messages']), request
+                            loaded = [m for m in request['messages'] if expected in str(m.get('content'))]
+                            assert len(loaded) == 1 and loaded[0]['role'] == 'system', request
                         if mode == 'smart':
                             assert all(any('LOSSY BRIEF' in str(m.get('content')) for m in r['messages']) for r in primary)
+                            assert all(any('Use alpha for input.txt' in str(m.get('content'))
+                                           for m in r['messages'] if m['role'] == 'user') for r in primary)
+                            for request in requests:
+                                if request['model'] == 'compact':
+                                    evidence = str(request['messages'])
+                                    assert 'EXACT SKILL STEPS' not in evidence and 'Rules' not in evidence, request
+                                    assert 'Tools are available through' not in evidence, request
             base['agents'][0].update(context='smart', toolCallingStrategy='native', useToolProxy=False)
             for command in ('$alpha input.txt', '/skills prompt alpha input.txt'):
                 config.write_text(json.dumps(base))
                 primary = run(['/model-compact local::compact', command], [final])
-                assert BODY.replace('$ARGUMENTS', 'input.txt') in primary[0]['messages'][-1]['content'], primary
+                loaded = [m for m in primary[0]['messages']
+                          if BODY.replace('$ARGUMENTS', 'input.txt') in str(m.get('content'))]
+                assert len(loaded) == 1 and loaded[0]['role'] == 'system', primary
+                assert 'input.txt' in primary[0]['messages'][-1]['content'], primary
+                compact = next(r for r in requests if r['model'] == 'compact')
+                assert 'input.txt' in str(compact['messages']) and 'EXACT SKILL STEPS' not in str(compact['messages']), compact
             base['agents'][0].update(context='cache')
             config.write_text(json.dumps(base))
             primary = run(['/skills disable alpha', 'Check availability'], [final])

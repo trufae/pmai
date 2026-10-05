@@ -40,6 +40,8 @@ public actor AgentSupervisor {
     var handle: Task<AgentResult, Error>?
     var transcript: [AgentMessage] = []
     var result: AgentResult?
+    /// Ephemeral task boundary: queued steering remains in this active run.
+    var activeTaskStartID: String?
   }
 
   /// How many finished processes to keep for inspection before the oldest are
@@ -87,6 +89,26 @@ public actor AgentSupervisor {
   /// one; a finished process keeps the transcript it ended with.
   public func transcript(_ pid: AgentPID) -> [AgentMessage] {
     entries[pid]?.transcript ?? []
+  }
+
+  func activeTaskStartID(_ pid: AgentPID) -> String? {
+    entries[pid]?.activeTaskStartID
+  }
+
+  /// Reopening a limit-interrupted process without a new user message resumes
+  /// its task. A newly appended user ID starts an independent task.
+  func beginActiveTask(in messages: [AgentMessage], for pid: AgentPID) -> String? {
+    guard var entry = entries[pid] else { return messages.last(where: { $0.role == .user })?.id }
+    let latest = messages.last(where: { $0.role == .user })?.id
+    if let boundary = entry.activeTaskStartID,
+      messages.contains(where: { $0.id == boundary }),
+      entry.transcript.contains(where: { $0.id == latest })
+    {
+      return boundary
+    }
+    entry.activeTaskStartID = latest
+    entries[pid] = entry
+    return latest
   }
 
   public func result(_ pid: AgentPID) -> AgentResult? {

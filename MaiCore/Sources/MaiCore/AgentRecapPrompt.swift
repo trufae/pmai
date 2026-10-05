@@ -27,14 +27,6 @@ public enum AgentRecapPrompt {
   }
 
   public static func transcript(of messages: [AgentMessage]) -> String {
-    // Manual compaction stores its summary as a system message. Keep that
-    // context in a recap, while excluding ordinary system instructions.
-    AgentCompactionPrompt.transcript(
-      of: messages.map { message in
-        if message.role == .system, message.text.hasPrefix("Conversation summary (compacted):") {
-          return AgentMessage(role: .user, content: message.content)
-        }
-        return message
-      })
+    AgentCompactionPrompt.transcript(of: messages)
   }
 }

@@ -89,24 +89,42 @@ public enum AgentTranscriptEditor {
 
   public static func apply(
     _ edits: [AgentTranscriptEdit],
-    to messages: [AgentMessage]
+    to messages: [AgentMessage],
+    activeTaskID: String? = nil
   ) -> (messages: [AgentMessage], report: AgentTranscriptEditReport) {
     var transcript = AgentTranscript(messages: messages)
     var report = AgentTranscriptEditReport(charactersBefore: characterCount(of: messages))
     for edit in edits {
+      let protected = Set(transcript.messages.filter(AgentPromptContext.isInstruction).map(\.id))
+        .union(AgentPromptContext.protectedInstructionMessageIDs(
+          in: transcript.messages, activeTaskID: activeTaskID))
+      func remove(_ id: String) -> Int {
+        guard !protected.contains(id) else { return 0 }
+        var candidate = transcript
+        guard let removed = try? candidate.removeMessage(id: id),
+          !removed.contains(where: { protected.contains($0.id) })
+        else { return 0 }
+        transcript = candidate
+        return removed.count
+      }
       switch edit {
       case .remove(let ids):
-        for id in ids {
-          if let dropped = try? transcript.removeMessage(id: id) { report.removed += dropped.count }
-        }
+        for id in ids { report.removed += remove(id) }
       case .rewrite(let id, let text):
+        guard !protected.contains(id) else { continue }
+        if let index = transcript.index(ofMessageID: id),
+          AgentPromptContext.isLegacySummary(transcript.messages[index])
+        {
+          var all = transcript.messages
+          all[index].role = .user
+          transcript.replaceAll(with: all)
+        }
         if (try? transcript.editMessage(id: id, text: text)) != nil { report.rewritten += 1 }
       case .compact(let ids, let summary):
-        guard let first = ids.compactMap({ transcript.index(ofMessageID: $0) }).min() else { continue }
+        let editable = ids.filter { !protected.contains($0) }
+        guard let first = editable.compactMap({ transcript.index(ofMessageID: $0) }).min() else { continue }
         var dropped = 0
-        for id in ids {
-          if let removed = try? transcript.removeMessage(id: id) { dropped += removed.count }
-        }
+        for id in editable { dropped += remove(id) }
         guard dropped > 0 else { continue }
         report.compacted += dropped
         var all = transcript.messages
@@ -122,6 +140,20 @@ public enum AgentTranscriptEditor {
     }
     report.charactersAfter = characterCount(of: transcript.messages)
     return (transcript.messages, report)
+  }
+
+  /// Manual chat compaction follows the same rules as runtime compaction:
+  /// preserve real instruction messages and the exact task/active skill state,
+  /// and store the summary as conversation evidence, never a system instruction.
+  public static func compactingConversation(
+    _ messages: [AgentMessage], summary: String
+  ) -> [AgentMessage] {
+    let latestTask = messages.last(where: { $0.role == .user })?.id
+    let protected = AgentPromptContext.protectedInstructionMessageIDs(in: messages)
+    let ids = messages.filter {
+      !AgentPromptContext.isInstruction($0) && $0.id != latestTask && !protected.contains($0.id)
+    }.map(\.id)
+    return apply([.compact(messageIDs: ids, summary: summary)], to: messages).messages
   }
 
   /// A transcript cut off inside a tool exchange — by Ctrl+C, a crash, a
@@ -296,7 +328,8 @@ public enum MaiContextTools {
     pid: AgentPID,
     supervisor: AgentSupervisor
   ) async -> ToolOutput {
-    let view = ContextView(messages: await supervisor.transcript(pid))
+    let activeTaskID = await supervisor.activeTaskStartID(pid)
+    let view = ContextView(messages: await supervisor.transcript(pid), activeTaskID: activeTaskID)
     switch name {
     case listName:
       return ToolOutput(text: view.listing)
@@ -313,7 +346,7 @@ public enum MaiContextTools {
         return self.error(error.localizedDescription)
       }
       let edit = AgentTranscriptEdit.remove(messageIDs: view.ids(selection))
-      let preview = AgentTranscriptEditor.apply([edit], to: view.messages).report
+      let preview = AgentTranscriptEditor.apply([edit], to: view.messages, activeTaskID: activeTaskID).report
       await supervisor.post(edit: edit, to: pid)
       return ToolOutput(
         text:
@@ -359,7 +392,7 @@ public enum MaiContextTools {
         )
       }
       let edit = AgentTranscriptEdit.compact(messageIDs: ids, summary: summary)
-      let preview = AgentTranscriptEditor.apply([edit], to: view.messages).report
+      let preview = AgentTranscriptEditor.apply([edit], to: view.messages, activeTaskID: activeTaskID).report
       await supervisor.post(edit: edit, to: pid)
       return ToolOutput(text: "Before your next turn: \(preview.summary).")
     default:
@@ -380,13 +413,22 @@ public enum MaiContextTools {
     let protected: [Int: String]
     let currentTurnStart: Int?
 
-    init(messages: [AgentMessage]) {
+    init(messages: [AgentMessage], activeTaskID: String? = nil) {
       self.messages = messages
       var protected: [Int: String] = [:]
-      if messages.first?.role == .system { protected[0] = "system prompt" }
+      for (index, message) in messages.enumerated() where AgentPromptContext.isInstruction(message) {
+        protected[index] = message.role == .system ? "system prompt" : "developer instructions"
+      }
+      let skillInstructions = AgentPromptContext.protectedInstructionMessageIDs(
+        in: messages, activeTaskID: activeTaskID)
+      for (index, message) in messages.enumerated() where skillInstructions.contains(message.id) {
+        protected[index] = "active instructions and exchange"
+      }
       let currentTurn = messages.lastIndex { $0.role == .assistant }
       if let currentTurn {
-        for index in currentTurn..<messages.count { protected[index] = "turn in progress" }
+        for index in currentTurn..<messages.count where protected[index] == nil {
+          protected[index] = "turn in progress"
+        }
       }
       if let latestUser = messages.lastIndex(where: { $0.role == .user }),
         protected[latestUser] == nil

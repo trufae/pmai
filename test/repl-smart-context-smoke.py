@@ -83,7 +83,8 @@ def main():
             assert 'Fix the parser' in requests[0]['messages'][-1]['content'], requests[0]
             assert not requests[0].get('tools'), requests[0]
             conversation = [m for m in requests[1]['messages'] if m['role'] not in ('system', 'developer')]
-            assert conversation == [{'role': 'user', 'content': 'WORKING BRIEF'}], conversation
+            assert conversation == [{'role': 'user', 'content': 'WORKING BRIEF\n\nFix the parser'}], conversation
+            assert 'ORIGINAL RULES' not in str(requests[0]['messages']), requests[0]
             assert any('ORIGINAL RULES' in m['content'] for m in requests[1]['messages']), requests[1]
 
             chat_file = next((root / '.pmai/chats').glob('*.json'))

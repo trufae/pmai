@@ -634,17 +634,32 @@ resume the same input or active run.
 
 `/set ctx.context=smart` (config key `context: "smart"`) uses the `/model-compact`
 model before every conversation-model turn, including turns after tool calls.
-It builds a fresh task brief from the full current transcript, including tool
+It builds a fresh task brief from conversation evidence, including tool
 arguments, complete text and structured results, files, and child-agent findings.
-The conversation model receives one working-context message with the relevant
-goals, constraints, evidence, and remaining work. Skills invoked for the current
-user turn, including `$NAME` and `/skills prompt`, are appended verbatim so their
-steps, arguments, resource directories, and output formats survive a lossy brief.
-Automatic compaction retains those skill exchanges while the turn is in progress;
-`ctx.context=tools` also leaves skill instructions whole. System/developer instructions
-keep their roles and text; binary attachments are forwarded in that message.
+System/developer instructions, active skill bodies, and loaded proxy tool catalogs
+are excluded from the brief-generation input. The conversation model receives
+the brief alongside the exact current user task and skill-loading receipts.
+Skills invoked for the current user turn, including `$NAME` and `/skills prompt`,
+and proxy catalogs loaded by `list-tools` reach the model verbatim in separate
+instruction sections. Their steps, arguments, resource directories, output formats,
+and tool schemas survive a lossy brief. These instruction sections are supplied
+in every context mode. System/developer instructions keep their original roles
+and text; runtime instructions and tool protocols are injected after reduction.
+Cache mode leaves conversational evidence whole; its inference view still
+separates injected instructions and replaces skill/catalog bodies with receipts.
+Binary attachments remain available unchanged. Automatic/manual compaction,
+context-edit tools, and explicit output pruning protect active instruction
+exchanges, including sibling tool results. Manual `/chat compact` retains all
+system/developer instructions and stores summaries as conversation evidence;
+older chats with system-role summaries remain readable as evidence.
+Messages queued while a task is running steer that same task: its exact starting
+request, corrections, loaded skills, and catalogs remain active. Continuing a
+limit-interrupted process retains that task boundary; a new user turn starts
+with a fresh active instruction scope.
 The brief is disposable: saved history continues growing with the actual replies
 and tool results, and `ctx.compact` still reduces that history when needed.
+Exact instruction delivery does not guarantee that a particular model follows
+the skill's workflow or output format.
 Smart mode uses its own `prompts.smart` template, editable with `/edit smart`
 or `/edit prompt smart`; it must contain `{{transcript}}`.
 Each turn adds a compact-model call, whose usage counts toward statistics and

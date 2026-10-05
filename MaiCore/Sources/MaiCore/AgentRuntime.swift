@@ -624,6 +624,7 @@ public actor AgentRuntime {
       depth: depth,
       pid: pid)
     var transcript = request.messages
+    let activeTaskID = await supervisor.beginActiveTask(in: transcript, for: pid)
     var toolContext = AgentToolResultContext(messages: request.context == .tools ? transcript : [])
     var totalUsage: TokenUsage?
     /// What the provider counted on the last call, for the autocompact
@@ -712,7 +713,7 @@ public actor AgentRuntime {
             await emit(.compactionFailed(context, error.localizedDescription))
           }
         }
-        let applied = AgentTranscriptEditor.apply(resolved, to: transcript)
+        let applied = AgentTranscriptEditor.apply(resolved, to: transcript, activeTaskID: activeTaskID)
         if !applied.report.isEmpty {
           transcript = applied.messages
           lastUsage = nil
@@ -721,9 +722,11 @@ public actor AgentRuntime {
         }
       }
       // In size mode the bodies of files read for earlier user prompts make
-      // way for a reference before every call; in cache mode nothing sent
-      // is ever touched, so the server's prompt cache covers it.
-      if request.context == .size, let report = AgentContextPruning.prune(&transcript) {
+      // way for a reference before every call; cache mode leaves conversation
+      // evidence whole. Instruction separation affects only the provider view.
+      if request.context == .size,
+        let report = AgentContextPruning.prune(&transcript, activeTaskID: activeTaskID)
+      {
         lastUsage = nil
         await emit(.transcriptEdited(context, report))
         await supervisor.note(pid, transcript: transcript)
@@ -759,10 +762,11 @@ public actor AgentRuntime {
           of: transcript, lastUsage: lastUsage, lastUsageMessageCount: lastUsageMessageCount)
         if estimate >= request.autocompact.tokens,
           let selection = AgentAutocompaction.selection(
-            in: transcript, preservingRecentTokens: request.autocompact.recentTokenBudget)
+            in: transcript, preservingRecentTokens: request.autocompact.recentTokenBudget,
+            activeTaskID: activeTaskID)
         {
           var prunedTranscript = transcript
-          let pruning = AgentContextPruning.pruneToolOutput(&prunedTranscript)
+          let pruning = AgentContextPruning.pruneToolOutput(&prunedTranscript, activeTaskID: activeTaskID)
           await supervisor.raise(.input("Context reduction needs a decision."), for: pid)
           let decision: AutocompactionDecision
           do {
@@ -810,7 +814,7 @@ public actor AgentRuntime {
               request: request, budget: budget, context: context, pid: pid,
               totalUsage: &totalUsage, emit: emit)
             let applied = AgentTranscriptEditor.apply(
-              [.compact(messageIDs: selection, summary: text)], to: transcript)
+              [.compact(messageIDs: selection, summary: text)], to: transcript, activeTaskID: activeTaskID)
             transcript = applied.messages
             lastUsage = nil
             await emit(.transcriptEdited(context, applied.report))
@@ -930,7 +934,23 @@ public actor AgentRuntime {
         textToolMode = definitions.isEmpty ? nil : .json
       }
       let usesTextToolProtocol = textToolMode != nil && !toolBudgetExhausted
-      var providerMessages = inference.messages
+      let promptContext = AgentPromptContext(messages: inference.messages, activeTaskID: activeTaskID)
+      var providerMessages: [AgentMessage]
+      if request.context == .smart {
+        await supervisor.note(pid, activity: "preparing context")
+        do {
+          let brief = try await compactText(
+            prompt: AgentSmartContextPrompt.render(
+              messages: promptContext.conversation, template: smartContextTemplate),
+            request: request, budget: budget, context: context, pid: pid,
+            totalUsage: &totalUsage, emit: emit)
+          providerMessages = promptContext.messages(brief: brief)
+        } catch is RunDeadlineExceeded {
+          return await pause(await budget.timeInterruption)
+        }
+      } else {
+        providerMessages = promptContext.messages()
+      }
       if concreteDefinitions.contains(where: { MaiSkillTools.isSkillTool($0.name) }) {
         insertSystem(MaiSkillTools.promptSection, into: &providerMessages)
       }
@@ -974,19 +994,6 @@ public actor AgentRuntime {
           ? (repeatGuardTripped ? Self.repeatedCallPrompt : Self.toolBudgetExhaustedPrompt)
           : textToolPrompt(definitions, mode: textToolMode ?? .text)
         insertSystem(prompt, into: &providerMessages)
-      }
-      if request.context == .smart {
-        await supervisor.note(pid, activity: "preparing context")
-        do {
-          let brief = try await compactText(
-            prompt: AgentSmartContextPrompt.render(
-              messages: providerMessages, template: smartContextTemplate),
-            request: request, budget: budget, context: context, pid: pid,
-            totalUsage: &totalUsage, emit: emit)
-          providerMessages = AgentSmartContextPrompt.messages(brief: brief, from: providerMessages)
-        } catch is RunDeadlineExceeded {
-          return await pause(await budget.timeInterruption)
-        }
       }
       // Context preparation spends tokens too. Check the budget again before
       // starting the conversation call, and count only conversation turns.

@@ -30,10 +30,13 @@ of the model's summarization quality:
 
 The skill smoke checks native, JSON, XML, and text calls, with and without the
 tool proxy, in `cache`, `size`, `smart`, and `tools` modes. It checks exact
-instructions and arguments after later tool calls, `$NAME`,
+instructions in separate system sections and exact task arguments after later tool calls, `$NAME`,
 `/skills prompt`, and disabling a single skill while keeping the others enabled.
-Swift tests additionally cover tool proxies, long skills, automatic compaction
-with mixed tool exchanges, failed loads, and invocation disabled by an edited file.
+It also checks that smart-summary requests exclude static instructions, tool
+protocols, and skill bodies. Swift tests additionally cover tool proxies, long
+skills, duplicate loads, preserved catalog schemas, automatic/manual compaction
+and context edits with mixed tool exchanges, legacy system-role summaries,
+failed loads, and invocation disabled by an edited file.
 
 To exercise a real model and retain requests, transcripts, and checked output files:
 
