@@ -77,6 +77,7 @@ def main():
                                    'apiKey': 'smoke', 'timeout': 60}],
                     'agents': [{'id': 'worker', 'provider': 'smoke', 'model': mode,
                                 'toolGroupNames': ['agents'], 'subagentNames': ['worker'],
+                                'useToolProxy': False,
                                 'stream': False, 'retry': {'attempts': 0},
                                 'limits': {'maxSubagents': 1, 'maxSubagentDepth': max_depth}}],
                     'approvals': {'mode': 'yolo'},
