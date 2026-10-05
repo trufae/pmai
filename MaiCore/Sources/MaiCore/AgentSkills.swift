@@ -287,6 +287,9 @@ public struct AgentSkillCatalog: Equatable, Sendable {
 public enum MaiSkillTools {
   public static let toolPrefix = "skills_"
   public static let groupID = "skills"
+  public static let promptSection = """
+    Skills are available through skills_* tools. When the user names a skill or a task matches its description, call that skill to load its instructions before doing the task. Calling a skill only loads instructions; use the other tools to perform its steps, and follow its required final-answer format. Project paths in a skill are relative to the workspace; scripts and reference resources beside SKILL.md are relative to the skill's directory in its envelope.
+    """
 
   public static func toolName(for skillName: String) -> String {
     let safe = skillName.trimmingCharacters(in: .whitespacesAndNewlines).map { character in
@@ -298,6 +301,13 @@ public enum MaiSkillTools {
 
   public static func isSkillTool(_ name: String) -> Bool {
     name.hasPrefix(toolPrefix)
+  }
+
+  static func invokedSkillName(for call: ToolCall) -> String? {
+    let name =
+      call.name == ToolProxy.callName
+      ? ToolProxy.requestedToolName(in: call.arguments.objectValue ?? [:]) : call.name
+    return isSkillTool(name.lowercased()) ? name : nil
   }
 
   /// What `/tools` shows for the family, over the skill tools a host holds.
@@ -343,6 +353,10 @@ public enum MaiSkillTools {
           text: "Error: skill '\(name)' is no longer available; its SKILL.md was removed.",
           isError: true)
       }
+      guard current.isModelInvocable else {
+        return ToolOutput(
+          text: "Error: skill '\(name)' now disables model invocation.", isError: true)
+      }
       return execute(skill: current, arguments: arguments.objectValue ?? [:])
     }
   }
@@ -362,6 +376,57 @@ public enum MaiSkillTools {
       "Follow the instructions of skill '\(skill.name)' now.\n\n"
       + skill.prompt(arguments: extra)
     return ToolOutput(text: text)
+  }
+}
+
+/// Skill instructions for the current user turn must survive context reduction
+/// exactly. Tool results are identified by their actual calls, not their text.
+enum AgentSkillContext {
+  private static func currentTurn(in messages: [AgentMessage]) -> ArraySlice<AgentMessage> {
+    guard !messages.isEmpty else { return messages[...] }
+    return messages[(messages.lastIndex { $0.role == .user } ?? 0)...]
+  }
+
+  static func instructions(in messages: [AgentMessage]) -> String? {
+    let current = currentTurn(in: messages)
+    var calls: [String: String] = [:]
+    for call in current.flatMap(\.toolCalls) {
+      if let name = MaiSkillTools.invokedSkillName(for: call) { calls[call.id] = name }
+    }
+    var instructions: [String] = []
+    for message in current {
+      if message.role == .user, message.text.hasPrefix("<skill name=\"") {
+        instructions.append(message.text)
+      }
+      if message.role == .tool {
+        for result in message.toolResults where !result.isError {
+          guard let name = calls[result.callID] else { continue }
+          instructions.append("[Loaded by \(name), call \(result.callID)]\n" + result.text)
+        }
+      }
+    }
+    return instructions.isEmpty ? nil : instructions.joined(separator: "\n\n")
+  }
+
+  /// Keep whole exchanges when skills share a turn with other tools, so
+  /// automatic compaction cannot remove a skill's call through its sibling.
+  static func protectedMessageIDs(in messages: [AgentMessage]) -> Set<String> {
+    let current = currentTurn(in: messages)
+    let successful = Set(
+      current.filter { $0.role == .tool }.flatMap(\.toolResults)
+        .filter { !$0.isError }.map(\.callID))
+    let exchanges = current.filter { message in
+      message.role == .assistant
+        && message.toolCalls.contains {
+          MaiSkillTools.invokedSkillName(for: $0) != nil && successful.contains($0.id)
+        }
+    }
+    let paired = Set(exchanges.flatMap(\.toolCalls).map(\.id))
+    return Set(
+      exchanges.map(\.id)
+        + current.filter { message in
+          message.role == .tool && message.toolResults.contains { paired.contains($0.callID) }
+        }.map(\.id))
   }
 }
 

@@ -163,6 +163,14 @@ func skillTools() async throws {
   #expect(again.text.contains("Step two.\n</skill>"))
   #expect(!again.text.contains("Step one."))
 
+  // Invocation settings are rechecked even before the host rescans tools.
+  try writeSkill(
+    in: root, folder: "my skill",
+    text: "---\nname: my skill\ndisable-model-invocation: true\n---\nPrivate instructions.")
+  let disabled = try await tool.call(arguments: .object([:]), context: context)
+  #expect(disabled.isError)
+  #expect(!disabled.text.contains("Private instructions."))
+
   // Removing it turns the tool into an error rather than stale instructions.
   try files.removeItem(at: root.appendingPathComponent("my skill"))
   let gone = try await tool.call(arguments: .object([:]), context: context)

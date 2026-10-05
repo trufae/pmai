@@ -931,6 +931,9 @@ public actor AgentRuntime {
       }
       let usesTextToolProtocol = textToolMode != nil && !toolBudgetExhausted
       var providerMessages = inference.messages
+      if concreteDefinitions.contains(where: { MaiSkillTools.isSkillTool($0.name) }) {
+        insertSystem(MaiSkillTools.promptSection, into: &providerMessages)
+      }
       if let instructionsSection {
         if !providerMessages.contains(where: { $0.role == .system && $0.text == instructionsSection }) {
           insertSystem(instructionsSection, into: &providerMessages)

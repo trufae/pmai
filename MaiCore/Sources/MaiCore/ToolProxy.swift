@@ -150,14 +150,7 @@ public enum ToolProxy {
     var argumentValues = argumentObject(from: arguments["arguments"])
     // Some models put the name inside the arguments object instead of next
     // to it: {"arguments": {"name": T, "arguments": {...}}}.
-    var requestedName =
-      arguments["name"]?.stringValue ?? arguments["tool_name"]?.stringValue
-      ?? arguments["tool"]?.stringValue ?? ""
-    if requestedName.isEmpty,
-      let inner = argumentValues["name"]?.stringValue ?? argumentValues["tool"]?.stringValue
-    {
-      requestedName = inner
-    }
+    let requestedName = requestedToolName(in: arguments)
     let resolver = AgentToolNameResolver(tools: definitions)
     guard let canonicalName = resolver.canonicalName(for: requestedName) else {
       return (
@@ -187,6 +180,16 @@ public enum ToolProxy {
         rawBlock: ""),
       nil
     )
+  }
+
+  /// Also used when identifying a concrete call in a saved proxy exchange.
+  static func requestedToolName(in arguments: [String: AgentToolArgumentValue]) -> String {
+    let outer =
+      arguments["name"]?.stringValue ?? arguments["tool_name"]?.stringValue
+      ?? arguments["tool"]?.stringValue ?? ""
+    guard outer.isEmpty else { return outer }
+    let inner = argumentObject(from: arguments["arguments"])
+    return inner["name"]?.stringValue ?? inner["tool"]?.stringValue ?? ""
   }
 
   private static func searchableText(for definition: ToolDefinition) -> String {

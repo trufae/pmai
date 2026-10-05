@@ -209,6 +209,123 @@ func smartContextConfiguration() async throws {
   #expect(auxiliary.context == .cache)
 }
 
+@Test(
+  "Smart context forwards invoked skill instructions verbatim after later tools",
+  arguments: [false, true], [false, true])
+func smartContextSkills(textProtocol: Bool, proxied: Bool) async throws {
+  let skill = AgentSkill(
+    name: "stamp", description: "Make a stamp",
+    directoryURL: URL(fileURLWithPath: "/tmp/skills/stamp"),
+    body: String(repeating: "Keep every exact step.\n", count: 250) + "Answer exactly STAMP SAVED.")
+  let details: JSONValue = .object(["arguments": .string("input.txt")])
+  let load = ToolCall(
+    id: "load", name: proxied ? ToolProxy.callName : skill.toolName,
+    arguments: proxied ? .object(["name": .string(skill.toolName), "arguments": details]) : details)
+  let read = ToolCall(id: "read", name: "read", arguments: .object([:]))
+  let primary = SmartContextProvider(
+    id: "primary",
+    responses: [load, read].map { call in
+      ProviderResponse(
+        message: textProtocol
+          ? .assistant(
+            "{\"tool\":\"\(call.name)\",\"arguments\":\(call.arguments.compactJSONString)}")
+          : AgentMessage(role: .assistant, content: [.toolCall(call)]))
+    } + [.init(message: .assistant("STAMP SAVED"))])
+  let compact = SmartContextProvider(
+    id: "compact",
+    responses: (0..<3).map { _ in
+      .init(message: .assistant("Make a stamp; the brief omits all skill steps."))
+    })
+  let runtime = try await smartRuntime(primary, compact)
+  try await runtime.register(tool: MaiSkillTools.makeTool(for: skill) { .init(skills: [skill]) })
+  try await runtime.register(
+    tool: ClosureTool(
+      definition: .init(
+        name: "read", description: "Read", annotations: .init(approval: .automatic))
+    ) { _, _ in
+      ToolOutput(text: "payload")
+    })
+  let result = try await runtime.run(
+    AgentRequest(
+      provider: "primary", messages: [.user("Produce a checked stamp")],
+      toolNames: [skill.toolName, "read"], toolCallingStrategy: textProtocol ? .json : .native,
+      useToolProxy: proxied,
+      retry: .none, autocompact: .init(tokens: 0), context: .smart))
+  #expect(result.toolCalls == 2)
+  let requests = await primary.requests
+  try #require(requests.count == 3)
+  #expect(
+    requests.dropFirst().allSatisfy { request in
+      request.messages.contains { $0.text.contains(skill.prompt(arguments: "input.txt")) }
+    })
+  #expect(!requests[0].messages.contains { $0.text.contains(skill.body) })
+  #expect(result.transcript.flatMap(\.toolResults).first?.text.contains(skill.body) == true)
+}
+
+@Test("Smart context keeps an explicit skill prompt and its arguments verbatim")
+func smartContextSkillPrompt() {
+  let skill = AgentSkill(
+    name: "stamp", description: "Make a stamp",
+    directoryURL: URL(fileURLWithPath: "/tmp/skills/stamp"), body: "Answer exactly STAMP SAVED.")
+  let prompt = skill.prompt(arguments: "Use the literal value $418 and preserve all spacing.")
+  let messages = AgentSmartContextPrompt.messages(brief: "A lossy brief", from: [.user(prompt)])
+  #expect(messages.contains { $0.text.contains(prompt) })
+  #expect(messages.contains { $0.text.contains("A lossy brief") })
+  let ordinary = AgentSmartContextPrompt.messages(
+    brief: "Next task", from: [.user(prompt), .assistant("Done"), .user("Unrelated task")])
+  #expect(!ordinary.contains { $0.text.contains(prompt) })
+}
+
+@Test(
+  "Automatic compaction retains current skill exchanges, including sibling tool results",
+  arguments: [false, true])
+func smartContextSkillCompaction(proxied: Bool) throws {
+  let skill = ToolCall(
+    id: "skill", name: proxied ? ToolProxy.callName : "skills_stamp",
+    arguments: proxied
+      ? .object(["name": .string("skills_stamp"), "arguments": .object([:])]) : .object([:]))
+  let sibling = ToolCall(id: "sibling", name: "read", arguments: .object([:]))
+  let load = AgentMessage(role: .assistant, content: [.toolCall(skill), .toolCall(sibling)])
+  let skillResult = AgentMessage(
+    role: .tool,
+    content: [
+      .toolResult(
+        .init(
+          callID: skill.id,
+          text: String(repeating: "EXACT SKILL STEP\n", count: 300)))
+    ])
+  let siblingResult = AgentMessage(
+    role: .tool, content: [.toolResult(.init(callID: sibling.id, text: "payload"))])
+  var messages = [AgentMessage.user("Make a stamp"), load, skillResult, siblingResult]
+  for index in 0..<5 {
+    let call = ToolCall(id: "read-\(index)", name: "read", arguments: .object([:]))
+    messages.append(AgentMessage(role: .assistant, content: [.toolCall(call)]))
+    messages.append(
+      AgentMessage(
+        role: .tool,
+        content: [
+          .toolResult(
+            .init(
+              callID: call.id,
+              text: String(repeating: "Other large evidence\n", count: 400)))
+        ]))
+  }
+  let ids = try #require(AgentAutocompaction.selection(in: messages, preservingRecentTokens: 0))
+  #expect(
+    !ids.contains(load.id) && !ids.contains(skillResult.id) && !ids.contains(siblingResult.id))
+  let applied = AgentTranscriptEditor.apply(
+    [.compact(messageIDs: ids, summary: "Lossy summary")], to: messages)
+  #expect([load, skillResult, siblingResult].allSatisfy { applied.messages.contains($0) })
+  #expect(
+    AgentSmartContextPrompt.messages(brief: "Brief", from: applied.messages)
+      .contains { $0.text.contains(skillResult.toolResults[0].text) })
+  #expect(AgentSmartContextPrompt.messages(brief: "Empty", from: []).last?.text == "Empty")
+  let error = AgentMessage(
+    role: .tool, content: [.toolResult(.init(callID: skill.id, text: "Unavailable", isError: true))]
+  )
+  #expect(AgentSkillContext.instructions(in: [.user("Work"), load, error]) == nil)
+}
+
 private func smartRuntime(_ primary: SmartContextProvider, _ compact: SmartContextProvider)
   async throws -> AgentRuntime
 {

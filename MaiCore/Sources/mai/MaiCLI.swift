@@ -8009,6 +8009,9 @@ struct MaiCLI {
       if enabling {
         session.profile.toolNames.insert(skill.toolName)
       } else {
+        if session.profile.toolGroupNames.contains(MaiSkillTools.groupID) {
+          session.profile.toolNames.formUnion(catalog.modelInvocable.map(\.toolName))
+        }
         session.profile.toolNames.remove(skill.toolName)
         // The group means "every skill, present and future"; one dropped
         // out of it has to be listed by name from now on.

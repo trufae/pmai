@@ -99,6 +99,33 @@ func toolResultContextLoop() async throws {
   #expect(sizes[3].estimatedTokens < sizes[2].estimatedTokens)
 }
 
+@Test("Tool context never summarizes loaded skill instructions", arguments: [false, true])
+func toolResultContextSkills(proxied: Bool) {
+  let call = ToolCall(
+    id: "skill", name: proxied ? ToolProxy.callName : "skills_stamp",
+    arguments: proxied
+      ? .object(["name": .string("skills_stamp"), "arguments": .object([:])]) : .object([:]))
+  let ordinary = ToolCall(id: "file", name: "files_read", arguments: .object([:]))
+  let body = String(repeating: "Follow the exact skill steps.\n", count: 300)
+  let messages: [AgentMessage] = [
+    .user("Make a stamp"),
+    AgentMessage(role: .assistant, content: [.toolCall(call), .toolCall(ordinary)]),
+    AgentMessage(
+      role: .tool,
+      content: [
+        .toolResult(.init(callID: call.id, text: body)),
+        .toolResult(.init(callID: ordinary.id, text: body)),
+      ]),
+  ]
+  var context = AgentToolResultContext(messages: messages)
+  context.didRead(messages)
+  let candidates = context.pending(in: messages)
+  #expect(candidates.count == 1)
+  #expect(candidates.first?.call?.name == "files_read")
+  context.store(#"{"0":"Short file summary"}"#, for: candidates)
+  #expect(context.messages(from: messages).flatMap(\.toolResults).first?.text == body)
+}
+
 @Test("Tool context batches consumed results and invalidates edited or retasked evidence")
 func toolResultContextEdits() throws {
   let call = ToolCall(id: "one", name: "read", arguments: .object(["path": .string("a.swift")]))

@@ -218,8 +218,10 @@ public enum AgentAutocompaction {
         tailStart = index
       }
     }
+    let skillInstructions = AgentSkillContext.protectedMessageIDs(in: messages)
     let candidates = messages[..<tailStart].enumerated().compactMap { index, message in
-      index != latestUser && message.role != .system && message.role != .developer ? message : nil
+      index != latestUser && message.role != .system && message.role != .developer
+        && !skillInstructions.contains(message.id) ? message : nil
     }
     guard candidates.count >= minimumMessages else { return nil }
     let total = AgentTranscriptEditor.characterCount(of: messages)

@@ -637,7 +637,11 @@ model before every conversation-model turn, including turns after tool calls.
 It builds a fresh task brief from the full current transcript, including tool
 arguments, complete text and structured results, files, and child-agent findings.
 The conversation model receives one working-context message with the relevant
-goals, constraints, evidence, and remaining work. System/developer instructions
+goals, constraints, evidence, and remaining work. Skills invoked for the current
+user turn, including `$NAME` and `/skills prompt`, are appended verbatim so their
+steps, arguments, resource directories, and output formats survive a lossy brief.
+Automatic compaction retains those skill exchanges while the turn is in progress;
+`ctx.context=tools` also leaves skill instructions whole. System/developer instructions
 keep their roles and text; binary attachments are forwarded in that message.
 The brief is disposable: saved history continues growing with the actual replies
 and tool results, and `ctx.compact` still reduces that history when needed.
@@ -892,7 +896,9 @@ tools live in `AgentSkills.swift`.
 Each skill is also a `skills_<name>` tool, described by the skill's own
 description, that answers with the instructions when the model calls it, so a
 model that sees `skills_aicommit` can pick it up the way it picks up any
-tool. The `skills` group holds them all: `/tools enable skills` (or naming
+tool. The runtime tells the model to load a named or matching skill before doing
+its task, then perform the steps and honor its final-answer format. The `skills`
+group holds them all: `/tools enable skills` (or naming
 `skills` in an agent's `toolGroupNames`) offers every skill, present and
 future, while `/skills enable NAME` and `/skills disable NAME` change one
 skill at a time and persist in the agent's allow-list like any tool. The

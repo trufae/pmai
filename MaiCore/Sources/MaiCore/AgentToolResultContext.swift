@@ -58,6 +58,7 @@ struct AgentToolResultContext {
     for message in messages where message.role == .tool {
       for (index, part) in message.content.enumerated() {
         guard case .toolResult(let result) = part, !result.isError,
+          calls[result.callID].flatMap(MaiSkillTools.invokedSkillName) == nil,
           Self.characterCount(result) >= Self.minimumCharacters
         else { continue }
         let key = Key(messageID: message.id, partIndex: index)

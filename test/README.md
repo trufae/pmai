@@ -20,6 +20,46 @@ The provider check verifies qualified environment/flag models against a local
 HTTP server, URL and credential precedence, provider editor changes, and
 renaming connections with task references and chat resume.
 
+Skill/context regressions use a local fixture provider that deliberately returns
+an incomplete smart brief, so instruction preservation is checked independently
+of the model's summarization quality:
+
+    python3 test/repl-skills-smoke.py MaiCore/.build/debug/pmai
+    python3 test/repl-smart-context-smoke.py MaiCore/.build/debug/pmai
+    python3 test/repl-tool-context-smoke.py MaiCore/.build/debug/pmai
+
+The skill smoke checks native, JSON, XML, and text calls, with and without the
+tool proxy, in `cache`, `size`, `smart`, and `tools` modes. It checks exact
+instructions and arguments after later tool calls, `$NAME`,
+`/skills prompt`, and disabling a single skill while keeping the others enabled.
+Swift tests additionally cover tool proxies, long skills, automatic compaction
+with mixed tool exchanges, failed loads, and invocation disabled by an edited file.
+
+To exercise a real model and retain requests, transcripts, and checked output files:
+
+    python3 test/repl-skills-live.py MaiCore/.build/debug/pmai \
+      --upstream http://192.168.1.60:8000/v1 --model ornith \
+      --results /tmp/pmai-skills-live
+
+The live runner tests four context modes and four invocation paths. Add
+`--protocols native json` for both calling protocols, `--long-skill` for instructions
+larger than the tool-summary threshold, or `--compact-tokens 500` to exercise
+automatic compaction. Each isolated case checks loading, exact file contents,
+reading the output back, exact final-answer text, and whether full skill instructions
+reach the conversation model. Provider failures stop the run and keep the logs.
+
+Verification on 2026-10-05 used `ornith` at the endpoint above. Before the fix,
+smart-mode tool and `$NAME` runs completed the stamp task, but forwarded only
+summaries of the skill: none of their conversation requests contained its full
+instructions. A long-skill `tools` run forwarded the instructions once and then
+summarized them. The deterministic regressions reproduced the instruction loss
+and the single-skill disable bug, then passed after the fixes.
+The full Swift suite passed 508 tests, and the CLI skill matrix passed 36 cases.
+The existing smart-context and tool-context CLI smoke checks also passed.
+Post-fix Ornith requests included the full instructions, but the server returned
+an EngineCore HTTP 500 error and stopped accepting connections before the first
+task finished. The complete post-fix live matrix remains unverified.
+
 ## Layout
 
 - `cases/<NN-name>/` — one workflow each: `prompt.txt` (the user message),
