@@ -183,6 +183,7 @@
       ],
       "toolCallingStrategy": "automatic",
       "useToolProxy": true,
+      "toolPolicy": {"automatic": true, "groups": {}, "tools": {}},
       "limits": {
         "maxModelTurns": 60,
         "maxToolCalls": 50,

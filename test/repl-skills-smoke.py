@@ -108,7 +108,7 @@ def main():
                             loaded = [m for m in request['messages'] if expected in str(m.get('content'))]
                             assert len(loaded) == 1 and loaded[0]['role'] == 'system', request
                         if mode == 'smart':
-                            assert all(any('LOSSY BRIEF' in str(m.get('content')) for m in r['messages']) for r in primary)
+                            assert not any(r['model'] == 'compact' for r in requests), requests
                             assert all(any('Use alpha for input.txt' in str(m.get('content'))
                                            for m in r['messages'] if m['role'] == 'user') for r in primary)
                             for request in requests:
@@ -124,16 +124,16 @@ def main():
                           if BODY.replace('$ARGUMENTS', 'input.txt') in str(m.get('content'))]
                 assert len(loaded) == 1 and loaded[0]['role'] == 'system', primary
                 assert 'input.txt' in primary[0]['messages'][-1]['content'], primary
-                compact = next(r for r in requests if r['model'] == 'compact')
-                assert 'input.txt' in str(compact['messages']) and 'EXACT SKILL STEPS' not in str(compact['messages']), compact
+                assert not any(r['model'] == 'compact' for r in requests), requests
             base['agents'][0].update(context='cache')
             config.write_text(json.dumps(base))
             primary = run(['/skills disable alpha', 'Check availability'], [final])
             names = {t['function']['name'] for t in primary[0]['tools']}
             assert 'skills_alpha' not in names and 'skills_beta' in names, names
             saved = json.loads(config.read_text())['agents'][0]
-            assert 'skills_beta' in saved['toolNames'] and 'skills' not in saved['toolGroupNames'], saved
-            primary = run(['/skills enable all', '/skills disable beta', 'Check availability'], [final])
+            assert 'skills' in saved['toolGroupNames'], saved
+            assert saved['toolPolicy']['tools']['skills_alpha'] == 'disabled', saved
+            primary = run(['/skills enable all', '/skills enable alpha', '/skills disable beta', 'Check availability'], [final])
             names = {t['function']['name'] for t in primary[0]['tools']}
             assert 'skills_alpha' in names and 'skills_beta' not in names, names
     finally:

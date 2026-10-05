@@ -1,7 +1,9 @@
 # The tool proxy: what it saves and what it costs
 
-`useToolProxy` on an agent replaces the whole tool catalog offered to the model
-with two tools, `list-tools` and `call-tool`. This note explains the mechanism,
+`useToolProxy` defaults to hybrid exposure: common tools keep their schemas,
+while other enabled tools are available through `list-tools` and `call-tool`.
+`proxyExposedTools: []` selects the pure proxy described in the early study
+below. This note explains the mechanism,
 the token arithmetic behind it, what the `test/` benchmark measured on
 `gemma4:31b`, the bugs that measurement found, and when the mode pays off.
 `MaiCore/README.md` documents the setting; `doc/agents.md` covers subagents,
@@ -157,3 +159,29 @@ the proxy's: the same tasks fail natively now and then.
 The `--detail` timeline shows each `list-tools` call and how many characters
 its result added (`new_tool_out`), which is exactly the context debt discussed
 above.
+
+## Per-tool policy and automatic exposure
+
+`toolPolicy.groups` and `toolPolicy.tools` select `direct`, `proxy`, or
+`disabled`. Exact tool names override qualified groups, then short group
+names, then the inherited hybrid default. Native GitHub members can therefore
+be mixed individually; MCP groups use `mcp/SERVER` so a GitHub MCP cannot
+shadow the native `github` group. Skills use the same policy through their
+`skills_NAME` tools. Disabled tools are filtered before discovery and dispatch,
+including calls that name them directly or wrap them in `call-tool`.
+
+`toolPolicy.automatic` defaults to true. It uses a recent window of 128 concrete
+executions, promotes at most four extra tools with three or more calls, and
+ranks by frequency then recency. Explicit choices are excluded from learning.
+Lifetime counts shown beside each tool and group are independent of that
+window, and persist across launches. No model call is needed to tune exposure.
+The SDK's raw requests retain native exposure unless the host passes an agent
+profile; profile constructors and missing JSON fields default to hybrid.
+
+The design follows the per-tool and per-server deferred-loading pattern in
+[Anthropic's tool-search design](https://www.anthropic.com/engineering/advanced-tool-use).
+The MCP [tools specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)
+provides server tool discovery; pmai applies exposure and disable policies at
+the host boundary. Validation and approval use the concrete tool in all modes.
+The bounded usage heuristic is pmai's implementation choice and has regression
+coverage for promotion, demotion, manual overrides, and persistence.

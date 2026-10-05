@@ -39,14 +39,10 @@ public struct AgentToolPolicy: Codable, Equatable, Sendable {
     in catalog: [ToolGroupDefinition],
     enabled: Bool,
     useToolProxy: Bool,
-    exposedTools: Set<String>? = nil,
-    automaticallyExposed: Set<String> = []
+    exposedTools: Set<String>? = nil
   ) -> AgentToolMode {
     if let mode = override(for: name, in: catalog) { return mode }
     guard enabled else { return .disabled }
-    if automatic && useToolProxy && exposedTools == nil && automaticallyExposed.contains(name) {
-      return .direct
-    }
     return Self.defaultMode(for: name, useToolProxy: useToolProxy, exposedTools: exposedTools)
   }
 

@@ -1,8 +1,12 @@
 import Foundation
-#if canImport(Darwin)
-  import Darwin
+#if canImport(Android)
+  import Android
+#elseif canImport(Musl)
+  import Musl
 #elseif canImport(Glibc)
   import Glibc
+#elseif canImport(Darwin)
+  import Darwin
 #endif
 
 /// Lifetime counters are for display. A bounded recent window drives exposure
@@ -66,11 +70,12 @@ public actor AgentToolUsageStore {
       usage.record(name)
       return usage
     }
+    var recorded = false
     do {
       try FileManager.default.createDirectory(
         at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-      #if canImport(Darwin) || canImport(Glibc)
-        let descriptor = open(url.path + ".lock", O_CREAT | O_RDWR, mode_t(0o600))
+      #if !os(Windows)
+        let descriptor = open(url.path + ".lock", O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0o600)
         guard descriptor >= 0 else { throw POSIXError(.EIO) }
         defer { _ = close(descriptor) }
         guard flock(descriptor, LOCK_EX) == 0 else { throw POSIXError(.EIO) }
@@ -80,12 +85,14 @@ public actor AgentToolUsageStore {
         let saved = try? JSONDecoder().decode(AgentToolUsage.self, from: data)
       { usage = saved }
       usage.record(name)
+      recorded = true
       let encoder = JSONEncoder()
       encoder.outputFormatting = [.sortedKeys]
       try encoder.encode(usage).write(to: url, options: .atomic)
       lastPersistenceError = nil
     } catch {
       // A telemetry failure must not fail the requested tool call.
+      if !recorded { usage.record(name) }
       lastPersistenceError = error.localizedDescription
     }
     return usage

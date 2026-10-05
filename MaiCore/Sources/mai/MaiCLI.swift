@@ -4520,6 +4520,8 @@ struct MaiCLI {
     }
     switch action {
     case "", "list":
+      let usage = await runtime.toolUsageSnapshot()
+      let groups = await runtime.availableToolGroups()
       let configured = configuration?.mcpServers ?? []
       let connected = Dictionary(uniqueKeysWithValues: catalogs.map { ($0.serverID, $0) })
       if configured.isEmpty, catalogs.isEmpty {
@@ -4539,12 +4541,16 @@ struct MaiCLI {
         } else {
           state = "not connected"
         }
-        await terminal.line("\(server.id) — \(transport) [\(state)]")
+        let count = groups.first { $0.sourceID == "mcp" && $0.id == server.id }
+          .map { usage.count(for: $0) } ?? 0
+        await terminal.line("\(server.id) — \(transport) [\(state); \(count) calls]")
       }
       let configuredIDs = Set(configured.map(\.id))
       for catalog in catalogs where !configuredIDs.contains(catalog.serverID) {
+        let count = groups.first { $0.sourceID == "mcp" && $0.id == catalog.serverID }
+          .map { usage.count(for: $0) } ?? 0
         await terminal.line(
-          "\(catalog.serverID) — \(catalog.tools.count) tools, \(catalog.resources.count) resources, MCP \(catalog.protocolVersion) [connected]"
+          "\(catalog.serverID) — \(catalog.tools.count) tools, \(catalog.resources.count) resources, MCP \(catalog.protocolVersion) [connected; \(count) calls]"
         )
       }
 
@@ -4575,7 +4581,7 @@ struct MaiCLI {
         configuration = draft
         catalogs.append(catalog)
         await terminal.line(
-          "Added and connected stdio MCP '\(server.id)'; enabled all \(addedTools.count) tools for every agent."
+          "Added and connected stdio MCP '\(server.id)'; \(addedTools.count) tools available under mcp/\(server.id); /tools selects per-agent exposure."
         )
       } catch {
         await terminal.line("error: \(error.localizedDescription)", to: .standardError)
@@ -4612,7 +4618,7 @@ struct MaiCLI {
         configuration = draft
         catalogs.append(catalog)
         await terminal.line(
-          "Enabled and connected MCP '\(id)'; enabled all \(addedTools.count) tools for every agent."
+          "Enabled and connected MCP '\(id)'; \(addedTools.count) tools available under mcp/\(id); /tools selects per-agent exposure."
         )
       } catch {
         await terminal.line("error: \(error.localizedDescription)", to: .standardError)
@@ -7258,17 +7264,21 @@ struct MaiCLI {
 
     func apply(to definition: inout AgentDefinition) {
       if replaces {
-        definition.toolGroupNames = Set(added.map(\.id))
+        definition.toolPolicy.groups = [:]
+        definition.toolPolicy.tools = [:]
+        definition.toolGroupNames = Set(added.map { $0.sourceID == "mcp" ? $0.catalogID : $0.id })
         definition.toolNames = added.reduce(into: Set<String>()) { $0.formUnion($1.toolNames) }
         return
       }
       for group in removed {
         definition.toolGroupNames.remove(group.id)
         definition.toolNames.subtract(group.toolNames)
+        definition.setToolGroupMode(.disabled, for: group)
       }
       for group in added {
         definition.toolGroupNames.insert(group.id)
         definition.toolNames.formUnion(group.toolNames)
+        definition.setToolGroupMode(nil, for: group)
       }
     }
   }
@@ -7738,9 +7748,12 @@ struct MaiCLI {
       case .tool(let name):
         if action == "enable" || action == "on" {
           definition.toolNames.insert(name)
-          definition.setToolMode(AgentToolPolicy.defaultMode(
-            for: name, useToolProxy: definition.useToolProxy,
-            exposedTools: definition.proxyExposedTools), for: name)
+          definition.setToolMode(nil, for: name)
+          if definition.toolMode(for: name, in: groups) == .disabled {
+            definition.setToolMode(AgentToolPolicy.defaultMode(
+              for: name, useToolProxy: definition.useToolProxy,
+              exposedTools: definition.proxyExposedTools), for: name)
+          }
         } else {
           let mode: AgentToolMode? = action == "inherit" ? nil
             : action == "direct" ? .direct : action == "proxy" ? .proxy : .disabled
@@ -7751,6 +7764,9 @@ struct MaiCLI {
           definition.toolGroupNames.insert(group.sourceID == "mcp" ? group.catalogID : group.id)
           definition.toolNames.formUnion(group.toolNames)
           definition.setToolGroupMode(nil, for: group)
+          if group.sourceID == "mcp", definition.toolPolicy.groups["mcp"] == .disabled {
+            definition.setToolGroupMode(definition.useToolProxy ? .proxy : .direct, for: group)
+          }
         } else {
           let mode: AgentToolMode? = action == "inherit" ? nil
             : action == "direct" ? .direct : action == "proxy" ? .proxy : .disabled
@@ -7768,7 +7784,9 @@ struct MaiCLI {
       return
     }
     if case .tool(let name) = selection {
-      guard action == "show", let tool = tools.first(where: { $0.name == name }) else {
+      guard action == "show", let tool = (tools + AgentProcessTools.definitions(
+        offering: [], delegating: true, planFirst: configuration?.use.plan ?? true))
+        .first(where: { $0.name == name }) else {
         await terminal.line(toolHelp)
         return
       }
@@ -8078,8 +8096,7 @@ struct MaiCLI {
       let state =
         !skill.isModelInvocable
         ? "not offered to the model"
-        : isSkillEnabled(skill, profile: session.profile)
-          ? "enabled for \(agentID)" : "disabled for \(agentID)"
+        : "\((modes[skill.toolName] ?? .disabled).rawValue) for \(agentID)"
       await terminal.line("\(skill.name): \(skill.description)")
       await terminal.line("File: \(skill.fileURL.path)")
       await terminal.line("Tool: \(skill.toolName) (\(state); \(usage.counts[skill.toolName, default: 0]) calls)")
@@ -8268,6 +8285,7 @@ struct MaiCLI {
         try await runtime.register(agent: agent, replacingExisting: true)
       }
       configuration = draft
+      _ = try await toolGroupCatalog(runtime: runtime, plugins: plugins, configuration: draft)
       await terminal.line("Saved \(group.id).\(option).")
     } catch {
       await terminal.line("error: \(error.localizedDescription)", to: .standardError)
@@ -8793,7 +8811,7 @@ struct MaiCLI {
       return
     }
     // on (or hybrid) keeps the common tools native and proxies the rest;
-    // all hides every tool behind list-tools and call-tool.
+    // all proxies every inherited tool; explicit modes are preserved.
     let value: String
     switch parts.count == 2 ? parts[1].lowercased() : "" {
     case "all":
@@ -11320,7 +11338,8 @@ struct MaiCLI {
       "/set tool.", "/set tool.calling automatic", "/set tool.calling native",
       "/set tool.calling text", "/set tool.calling xml", "/set tool.calling json",
       "/set tool.systemone true", "/set tool.systemone false",
-      "/set tool.proxy on", "/set tool.proxy off",
+      "/set tool.proxy on", "/set tool.proxy off", "/set tool.proxy all",
+      "/set tool.proxy hybrid", "/set tool.auto on", "/set tool.auto off",
       "/set ui.title ", "/set ui.title none", "/set ui.editor ", "/set ui.editor none",
       "/set ui.bgline rgb:024", "/set ui.bgline none",
       "/set ui.fgprompt yellow", "/version", "/last", "/skills", "/skill",
@@ -11423,6 +11442,7 @@ struct MaiCLI {
       if skill.isModelInvocable {
         values.append("/skills enable \(skill.name)")
         values.append("/skills disable \(skill.name)")
+        for mode in ["direct", "proxy", "inherit"] { values.append("/skills \(mode) \(skill.name)") }
       }
     }
     let catalog = configuration?.promptCatalog(skills: skills) ?? PromptCatalog(skills: skills)
@@ -11450,10 +11470,21 @@ struct MaiCLI {
     for level in ReasoningEffort.names {
       values.append("/set effort \(level)")
     }
+    groupNames.formUnion(["mcp", "skills"])
+    groupNames.formUnion((configuration?.mcpServers ?? []).map { "mcp/" + $0.id })
+    let toolNames = Set(workspace.chats.flatMap(\.primaryAgent.toolNames))
+      .union((configuration?.agents ?? []).flatMap(\.toolNames))
+      .union(skills.filter(\.isModelInvocable).map(\.toolName))
+    for name in toolNames {
+      for action in ["show", "enable", "direct", "proxy", "disable", "inherit"] {
+        values.append("/tools \(action) tool:\(name)")
+      }
+    }
     for group in groupNames {
       values.append("/tools show \(group)")
       values.append("/tools enable \(group)")
       values.append("/tools disable \(group)")
+      for mode in ["direct", "proxy", "inherit"] { values.append("/tools \(mode) \(group)") }
       values.append("/tools set \(group) ")
     }
     return Array(Set(values))
@@ -11786,7 +11817,8 @@ struct MaiCLI {
       /set tool.                   List the tool calling settings
       /set tool.calling MODE       Use automatic/native tools, or text/XML/JSON emulation
       /set tool.systemone BOOL     Route tools via the System One /model-tool provider (default false)
-      /set tool.proxy BOOL         Show models only the shared list-tools and call-tool pair (on/off)
+      /set tool.proxy MODE         Default exposure: on/hybrid (common tools direct), all, or off
+      /set tool.auto BOOL          Automatically expose frequently used tools (default on)
       /set delegation MODE         off: runs every tool itself; subagent: may also hand work to a child
       /set limits.                 List the tool, turn, and subagent limits
       /set limits.maxToolCalls N   Tool calls allowed per run
@@ -11898,6 +11930,8 @@ struct MaiCLI {
       /mcp list
       /mcp enable ID
       /mcp disable ID
+      /mcp tools ID            Show a connected server's tools and counters
+      /mcp direct|proxy|inherit ID[/TOOL]  Set per-agent exposure
       /mcp add COMMAND [ARG ...]
       /mcp add [--name ID] [--env KEY=VALUE] [--cwd PATH] [--timeout SECONDS]
                [--prefix PREFIX] [--approval MODE] -- COMMAND [ARG ...]
@@ -11905,7 +11939,8 @@ struct MaiCLI {
     MODE is automatic, confirm, or dangerous. Quotes and backslash escapes are
     supported. Without --name, the command's basename becomes the server name.
     The server is connected immediately, saved in the normal mcpServers
-    configuration, and all of its tools are enabled for every agent.
+    configuration. Its tools are available through the hybrid proxy by default;
+    /tools disable mcp/ID or /tools disable PREFIX::TOOL disables them per agent.
 
     Examples:
       /mcp add r2mcp
@@ -12011,10 +12046,11 @@ struct MaiCLI {
     skills_NAME tool the model may call to get the instructions, once it is
     enabled for the agent.
 
-      /skills                    List skills with colored enabled/disabled status
+      /skills                    List skills with direct/proxy/disabled status and calls
       /skills show NAME          Print a skill's file, tool state, and instructions
       /skills enable NAME|all    Offer a skill (or every skill) to the current agent
       /skills disable NAME|all   Disable a skill (or every skill) for this agent
+      /skills direct|proxy|inherit NAME|all  Choose exposure or restore inheritance
       /skills prompt NAME [TEXT] Send an enabled skill's instructions, then TEXT
       /skills path               Print the directories scanned
       /skills reload             Rescan the directories (every /skills command does)
@@ -12129,14 +12165,32 @@ struct MaiCLI {
     """
 
   private static let toolHelp = """
-    Tool group commands:
-      /tools list                    List logical tool groups
-      /tools show GROUP              What the group is for, each tool with its parameters, and its settings
-      /tools enable|disable GROUP    Change the current agent's allowed groups
+    Tool selection commands:
+      /tools list                    List groups with exposure states and call counters
+      /tools show GROUP|TOOL         Show effective states, counters, schemas, and settings
+      /tools enable GROUP|TOOL       Enable using the current exposure default
+      /tools direct GROUP|TOOL       Offer schemas directly
+      /tools proxy GROUP|TOOL        Keep available through list-tools/call-tool
+      /tools disable GROUP|TOOL      Remove from discovery and execution
+      /tools inherit GROUP|TOOL      Remove an override; resume group/default behavior
       /tools set GROUP OPTION VALUE  Configure a tool group and reload its tools
       /tools unset GROUP OPTION      Restore an option's default
 
+    Exact tool overrides win over groups and survive new tools and restarts.
+    Selectors: github, github/pr, github_pr, skills/review, mcp/SERVER,
+    mcp/SERVER/TOOL, or PREFIX::TOOL. Use group: or tool: to disambiguate.
+    /set tool.auto off disables learned exposure. Calls persist in the home
+    tool-usage.json; up to four frequently used tools join the six common ones.
+
     Examples:
+      /tools proxy github
+      /tools direct github/pr
+      /tools direct github/issue
+      /tools disable github/ci_log
+      /tools proxy mcp
+      /tools direct mcp/myserver/search
+      /skills proxy all
+      /skills direct review
       /tools enable github
       /tools set github githubAPIKeyEnvironment GITHUB_TOKEN
       /tools set mastodon mastodonInstance mastodon.social

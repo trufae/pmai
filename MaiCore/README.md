@@ -770,15 +770,17 @@ choice. Gemma's `<|channel>thought` / `<channel|>` delimiters are
 normalized alongside `<think>` by the same stream parser. Unknown providers can
 still use explicit `options.additional` fields without frontend changes.
 
-Native tools are presented as plugin-defined capability groups instead of one
-checkbox per provider-visible function. `/tools` lists the groups, `/tools
-enable|disable GROUP` changes the active agent, and `/tools show GROUP` says
+Tools have three states: **direct** (their schema is listed), **proxy**
+(available through discovery), and **disabled** (unavailable). `/tools` lists
+plugin-defined groups with state totals and call counters; `/tools
+show GROUP|TOOL` says
 what the group is for and prints every tool with its description, how it is
 approved, and its parameters, then the group's settings — the same schema the
 model receives, readable. `/tools set GROUP OPTION VALUE` persists
 typed group settings and reloads the source; for example, Mastodon's instance,
 API-key environment variable, and write permission are configured this way.
-Visual mode renders the same descriptors as checkboxes and typed fields. Group
+Visual mode offers group and individual direct/proxy/disabled/inherit selectors
+with call counters, alongside typed source settings. Group
 selections live on each `AgentDefinition`, while source credentials and options
 live on `ConfiguredToolSource`, so every host uses the same configuration and
 plugin API. Older native plugins without group metadata are grouped by their
@@ -994,7 +996,9 @@ its task, then perform the steps and honor its final-answer format. The `skills`
 group holds them all: `/tools enable skills` (or naming
 `skills` in an agent's `toolGroupNames`) offers every skill, present and
 future, while `/skills enable NAME` and `/skills disable NAME` change one
-skill at a time and persist in the agent's allow-list like any tool. The
+skill at a time. Disabling a member preserves group membership, so new skills
+still inherit the group's policy. `/skills direct|proxy|inherit NAME|all` sets
+its exposure; exact skill settings override the group, like any tool. The
 tools run without approval, and every call reads the file afresh, so editing
 a skill takes effect at once. A skill whose front matter says
 `disable-model-invocation: true` is never offered as a tool.
@@ -1189,14 +1193,66 @@ MCP support, including its subprocess factory and public transport types, is
 compiled out on iOS. The iOS app continues to support Streamable HTTP only.
 
 The example MCP entry is disabled so the example remains safe to inspect. Set
-an HTTP URL or stdio command and enable it to expose all discovered tools. Set
-`useToolProxy` on an agent to keep only the common tools (`files_read`,
-`files_grep`, `files_patch`, `files_write`, `files_list`, `run_shell`) as native
-schemas and put the rest behind MaiCore's `list-tools` and `call-tool`, whose
-description names every hidden tool. `proxyExposedTools` chooses another set of
-native tools, and an empty set hides them all; `/set tool.proxy on|all|off`
-does the same at the prompt. `doc/proxy.md` has the measurements behind the
-default.
+an HTTP URL or stdio command and enable it to connect its discovered tools.
+The hybrid proxy is the default for agent profiles, including old profiles
+that omitted `useToolProxy`; an explicit `false` remains respected. Common
+file/shell tools (`files_read`, `files_grep`, `files_patch`, `files_write`,
+`files_list`, `run_shell`) are direct and other enabled tools use `list-tools`
+and `call-tool`. Raw `AgentRequest` SDK callers retain their native default;
+hosts pass the profile's policy. `proxyExposedTools` remains supported as an
+explicit fixed native set (an empty set means pure proxy).
+
+Set **each tool or group** with `/tools direct|proxy|disable|inherit TARGET`.
+Individual overrides win over groups; group changes preserve those overrides.
+`inherit` removes an override and returns to the allowlist/group/default.
+`enable` adds a tool or group using the current default exposure. Tool policies
+change availability and presentation; approvals still use the concrete tool.
+Connected MCP servers default to available, but the same per-agent policy can
+disable a server or a single tool. Qualified server groups use `mcp/SERVER`;
+individual tools use their exact `PREFIX::NAME` or `mcp/SERVER/NAME`.
+
+```text
+/tools proxy github
+/tools direct github/pr
+/tools direct github/issue
+/tools disable github/ci_log
+/tools proxy mcp
+/tools direct mcp/myserver/search
+/tools disable myserver::delete
+/skills proxy all
+/skills direct review
+```
+
+Automatic exposure is enabled by default (`/set tool.auto on|off`, or
+`toolPolicy.automatic`). It promotes up to four inherited proxy tools after
+at least three calls in the most recent 128 executed calls. Ranking uses
+frequency, then recency. As workflows change, infrequently used tools return
+to the proxy. The six common tools remain direct. Explicit tool/group modes
+and `proxyExposedTools` always win; automatic exposure never enables a disabled
+tool. `/set tool.proxy on|hybrid|all|off` changes the inherited default without
+clearing per-tool policies.
+
+Counters accumulate under the concrete name, including MCP and skill tools,
+regardless of whether the call was direct or proxied. Invalid, disabled,
+denied, and discovery calls do not count. Lifetime counts and the recent name
+window persist in `$PMAI_HOME/tool-usage.json` (normally `~/.pmai`), shared
+across projects; group counts sum their current members. Arguments and results
+are not stored there. Both `/tools show` and the visual Tools tab show counts.
+
+The per-agent configuration for two direct GitHub tools is:
+
+```json
+{
+  "useToolProxy": true,
+  "toolPolicy": {
+    "automatic": true,
+    "groups": {"github": "proxy", "mcp": "proxy", "skills": "proxy"},
+    "tools": {"github_pr": "direct", "github_issue": "direct", "github_ci_log": "disabled"}
+  }
+}
+```
+
+`doc/proxy.md` has the measurements behind the hybrid default.
 
 Agents can force MaiCore's emulated tool loop with `toolCallingStrategy` set to
 `text`, `xml`, or `json`. These modes send tool instructions as messages, parse

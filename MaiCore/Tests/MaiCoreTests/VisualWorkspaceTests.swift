@@ -263,16 +263,27 @@ func workspaceConfiguresToolGroups() async throws {
   #expect(conversation.profile.toolGroupNames.contains("github"))
   #expect(Set(MaiGitHubTool.toolNames).isSubset(of: conversation.profile.toolNames))
 
+  workspace.setToolGroupMode(.proxy, group: github, for: conversation)
+  workspace.setToolMode(.direct, name: "github_pr", for: conversation)
+  workspace.setToolMode(.disabled, name: "github_ci_log", for: conversation)
+  workspace.setAutomaticToolExposure(false, for: conversation)
+  #expect(workspace.toolMode("github_pr", for: conversation) == .direct)
+  #expect(workspace.toolMode("github_issue", for: conversation) == .proxy)
+  #expect(workspace.toolMode("github_ci_log", for: conversation) == .disabled)
+  #expect(conversation.request().toolPolicy == conversation.profile.toolPolicy)
+  #expect(conversation.request().proxyExposedTools == conversation.profile.proxyExposedTools)
   let mastodon = try #require(workspace.toolGroups.first { $0.id == "mastodon" })
   workspace.selectedTab = .tools
   let rendered = RenderOnce.render(
-    VisualRootView(workspace: workspace).frame(height: 70),
+    VisualRootView(workspace: workspace).frame(height: 110),
     width: 150,
     environment: ["NO_COLOR": "1"],
     isStdoutTTY: false)
   #expect(rendered.contains("GitHub (12)"))
   #expect(rendered.contains("Mastodon (1)"))
   #expect(rendered.contains("Agents (4)"))
+  #expect(rendered.contains("0 calls"))
+  #expect(rendered.contains("Automatically expose frequently used tools"))
   #expect(rendered.contains("Allow posting and replying"))
 
   var options = workspace.configuredToolGroupOptions(mastodon)
@@ -288,6 +299,9 @@ func workspaceConfiguresToolGroups() async throws {
   #expect(persistedSource.options["mastodonWriteEnabled"] == .bool(true))
   #expect(persisted.agents.first?.toolGroupNames.contains("agents") == true)
   #expect(persisted.agents.first?.toolGroupNames.contains("github") == true)
+  #expect(persisted.agents.first?.toolPolicy.tools["github_pr"] == .direct)
+  #expect(persisted.agents.first?.toolPolicy.tools["github_ci_log"] == .disabled)
+  #expect(persisted.agents.first?.toolPolicy.automatic == false)
 }
 
 @Test("Approvals raised during a run surface in the workspace and resolve the runtime")

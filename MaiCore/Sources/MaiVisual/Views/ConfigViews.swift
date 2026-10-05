@@ -355,22 +355,24 @@ private struct ToolGroupRow: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      Picker(
-        "\(group.displayName) (\(group.toolNames.count)) · \(workspace.toolUsage.count(for: group)) calls",
-        selection: Binding(
+      HStack(spacing: 1) {
+        Text("\(group.displayName) (\(group.toolNames.count)) · \(workspace.toolUsage.count(for: group)) calls")
+        Picker("", selection: Binding(
           get: {
             (conversation.profile.toolPolicy.groups[group.catalogID]
               ?? (group.sourceID == "mcp" ? nil : conversation.profile.toolPolicy.groups[group.id]))?
               .rawValue ?? "inherit"
           },
           set: { workspace.setToolGroupMode(AgentToolMode(rawValue: $0), group: group, for: conversation) }))
-      {
-        Text("Inherit").tag("inherit")
-        Text("Direct").tag("direct")
-        Text("Proxy").tag("proxy")
-        Text("Disabled").tag("disabled")
+        {
+          Text("Inherit").tag("inherit")
+          Text("Direct").tag("direct")
+          Text("Proxy").tag("proxy")
+          Text("Disabled").tag("disabled")
+        }
+        .pickerStyle(.segmented)
+        Button(showsTools ? "Hide" : "Tools") { showsTools.toggle() }
       }
-      Button(showsTools ? "Hide individual tools" : "Show individual tools") { showsTools.toggle() }
       if showsTools {
         ForEach(group.toolNames.sorted(), id: \.self) { name in
           Picker(
@@ -384,6 +386,7 @@ private struct ToolGroupRow: View {
             Text("Proxy").tag("proxy")
             Text("Disabled").tag("disabled")
           }
+          .pickerStyle(.segmented)
         }
       }
       if !group.description.isEmpty {

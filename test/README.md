@@ -375,3 +375,8 @@ Raw logs and checks are in these ignored directories:
 - `test/results/20261001-codex-qwen38/` — local skill catalog present
 - `test/results/20261001-claude-qwen38-xhigh/` — minimal `--bare` variant
 - `test/results/20261001-claude-qwen38/` — rejected default effort
+
+`python3 test/repl-tool-policy-smoke.py MaiCore/.build/debug/pmai` verifies the
+hybrid default, mixed GitHub members, MCP server/member overrides with custom
+prefixes, skill inheritance, persistent counters, automatic promotion, and
+manual/automatic settings through the actual CLI against local fixtures.

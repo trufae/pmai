@@ -3710,3 +3710,102 @@ func systemOneApprovalInvalid() async throws {
     try await provider.complete(SmartToolApproval.request(review: review, model: "tev1"))
   }
 }
+
+
+@Test("Mixed exposure enforces disabled tools through direct names and proxy envelopes")
+func mixedToolPolicyExecution() async throws {
+  let provider = ScriptedProvider(responses: [
+    ProviderResponse(message: AgentMessage(role: .assistant, content: [
+      .toolCall(ToolCall(id: "list", name: ToolProxy.listName,
+        arguments: .object(["keywords": .string("github")]))),
+      .toolCall(ToolCall(id: "blocked-direct", name: "github_ci_log", arguments: .object([:]))),
+      .toolCall(ToolCall(id: "blocked-proxy", name: ToolProxy.callName,
+        arguments: .object(["name": .string("github_ci_log"), "arguments": .object([:])]))),
+      .toolCall(ToolCall(id: "pr", name: "github_pr", arguments: .object([:]))),
+      .toolCall(ToolCall(id: "issue", name: ToolProxy.callName,
+        arguments: .object(["name": .string("github_issue"), "arguments": .object([:])]))),
+    ]), stopReason: .toolCall),
+    ProviderResponse(message: .assistant("done"), stopReason: .stop),
+  ])
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  for name in ["github_pr", "github_issue", "github_ci_log"] {
+    try await runtime.register(tool: ClosureTool(definition: ToolDefinition(
+      name: name, description: name, annotations: ToolAnnotations(approval: .automatic))) { _, _ in
+        #expect(name != "github_ci_log")
+        return ToolOutput(text: name + " ran")
+      })
+  }
+  let result = try await runtime.run(AgentRequest(
+    provider: "scripted", messages: [.user("review")], toolGroupNames: ["github"],
+    useToolProxy: false,
+    toolPolicy: .init(groups: ["github": .proxy],
+                      tools: ["github_pr": .direct, "github_ci_log": .disabled])))
+  let request = try #require(await provider.requests.first)
+  #expect(Set(request.tools.map(\.name)) == ["github_pr", ToolProxy.listName, ToolProxy.callName])
+  #expect(!request.tools.map(\.description).joined().contains("github_ci_log"))
+  let outputs = result.transcript.flatMap(\.toolResults)
+  #expect(outputs.first { $0.callID == "blocked-direct" }?.isError == true)
+  #expect(outputs.first { $0.callID == "blocked-proxy" }?.isError == true)
+  #expect(outputs.first { $0.callID == "list" }?.text.contains("github_ci_log") == false)
+  #expect(outputs.first { $0.callID == "issue" }?.text == "github_issue ran")
+  let usage = await runtime.toolUsageSnapshot()
+  #expect(usage.counts == ["github_pr": 1, "github_issue": 1])
+}
+
+@Test("MCP server and member policy applies to discovery, execution, and restricted child scopes")
+func mcpToolPolicyExecution() async throws {
+  let provider = ScriptedProvider(responses: [
+    ProviderResponse(message: AgentMessage(role: .assistant, content: [
+      .toolCall(ToolCall(id: "blocked", name: ToolProxy.callName,
+        arguments: .object(["name": .string("r2mcp::disassemble"), "arguments": .object([:])]))),
+    ]), stopReason: .toolCall),
+    ProviderResponse(message: .assistant("done"), stopReason: .stop),
+    ProviderResponse(message: .assistant("restricted"), stopReason: .stop),
+  ])
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  try await runtime.register(mcp: FixtureMCPSource())
+  var request = AgentRequest(
+    provider: "scripted", messages: [.user("analyze")], toolGroupNames: [],
+    toolPolicy: .init(groups: ["mcp": .disabled, "mcp/r2mcp": .proxy],
+                     tools: ["r2mcp::analyze": .direct, "r2mcp::disassemble": .disabled]))
+  let result = try await runtime.run(request)
+  #expect(result.transcript.flatMap(\.toolResults).first?.isError == true)
+  #expect(await provider.requests.first?.tools.map(\.name) == ["r2mcp::analyze"])
+  #expect(await runtime.toolUsageSnapshot().counts.isEmpty)
+  request.restrictedToolNames = []
+  _ = try await runtime.run(request)
+  #expect(await provider.requests.last?.tools.isEmpty == true)
+  let groups = await runtime.availableToolGroups()
+  #expect(groups.contains { $0.catalogID == "mcp/r2mcp" && $0.toolNames.count == 2 })
+}
+
+@Test("Proxy calls accumulate under the real tool and promote it on later model turns")
+func learnedToolExposureRuntime() async throws {
+  var replies: [ProviderResponse] = []
+  for index in 0..<3 {
+    replies.append(ProviderResponse(message: AgentMessage(role: .assistant, content: [
+      .toolCall(ToolCall(id: "call-\(index)", name: ToolProxy.callName,
+        arguments: .object(["name": .string("github_pr"), "arguments": .object([:])]))),
+    ]), stopReason: .toolCall))
+    replies.append(ProviderResponse(message: .assistant("done"), stopReason: .stop))
+  }
+  replies.append(ProviderResponse(message: .assistant("manual proxy"), stopReason: .stop))
+  let provider = ScriptedProvider(responses: replies)
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  try await runtime.register(tool: ClosureTool(definition: ToolDefinition(
+    name: "github_pr", description: "Read a PR", annotations: ToolAnnotations(approval: .automatic)))
+    { _, _ in ToolOutput(text: "PR") })
+  var request = AgentRequest(
+    provider: "scripted", messages: [.user("read")], toolNames: ["github_pr"], useToolProxy: true)
+  for _ in 0..<3 { _ = try await runtime.run(request) }
+  let requests = await provider.requests
+  #expect(requests.first?.tools.map(\.name) == [ToolProxy.listName, ToolProxy.callName])
+  #expect(requests.last?.tools.map(\.name) == ["github_pr"])
+  #expect(await runtime.toolUsageSnapshot().counts["github_pr"] == 3)
+  request.toolPolicy.tools["github_pr"] = .proxy
+  _ = try await runtime.run(request)
+  #expect(await provider.requests.last?.tools.map(\.name) == [ToolProxy.listName, ToolProxy.callName])
+}

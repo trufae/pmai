@@ -1116,6 +1116,7 @@ public struct AgentRequest: Sendable {
   public var limits: AgentRunLimits
   public var stream: Bool
   public var toolCallingStrategy: ToolCallingStrategy
+  /// Raw requests keep native SDK behavior; hosts pass the profile's hybrid default.
   public var useToolProxy: Bool
   public var useSystemOne: Bool
   public var proxyExposedTools: Set<String>?
@@ -1143,7 +1144,7 @@ public struct AgentRequest: Sendable {
     limits: AgentRunLimits = .init(),
     stream: Bool = true,
     toolCallingStrategy: ToolCallingStrategy = .automatic,
-    useToolProxy: Bool = true,
+    useToolProxy: Bool = false,
     useSystemOne: Bool = false,
     proxyExposedTools: Set<String>? = nil,
     toolPolicy: AgentToolPolicy = .init(),

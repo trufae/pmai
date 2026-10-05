@@ -31,7 +31,8 @@ public enum ToolProxy {
     exposing exposed: Set<String>? = nil
   ) -> [ToolDefinition] {
     let hidden = hiddenDefinitions(in: catalog, exposing: exposed)
-    let visible = catalog.filter { !hidden.contains($0) }
+    let hiddenNames = Set(hidden.map(\.name))
+    let visible = catalog.filter { !hiddenNames.contains($0.name) }
     guard !hidden.isEmpty else { return visible }
     return visible + [listDefinition(for: hidden), callDefinition]
   }

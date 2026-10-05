@@ -2048,12 +2048,13 @@ public actor AgentRuntime {
       template: delegationTemplate)
     // A child works in the session of the chat that started it, so a
     // per-session header carries the same value for the whole tree.
-    var childRequest = self.request(
+    var scopedChildRequest = self.request(
       for: definition, messages: [.user(prompt)], sessionID: request.sessionID)
-    childRequest.restrictedToolNames = start.tools
+    scopedChildRequest.restrictedToolNames = start.tools
     if start.agent == nil, let inherited = request.restrictedToolNames {
-      childRequest.restrictedToolNames = start.tools.map { $0.intersection(inherited) } ?? inherited
+      scopedChildRequest.restrictedToolNames = start.tools.map { $0.intersection(inherited) } ?? inherited
     }
+    let childRequest = scopedChildRequest
     // Limits belong to an agent, not to its whole delegation tree. A child
     // receives a fresh allowance from its own definition while its parent
     // retains control over how many children it may start and how deep they
