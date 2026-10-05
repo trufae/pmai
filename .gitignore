@@ -1,4 +1,5 @@
 *.DS_Store
+PocketMaiAndroid/*.apk
 .build/
 build/
 DerivedData/

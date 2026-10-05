@@ -626,6 +626,7 @@ public actor AgentRuntime {
     var transcript = request.messages
     let activeTaskID = await supervisor.beginActiveTask(in: transcript, for: pid)
     var toolContext = AgentToolResultContext(messages: request.context == .tools ? transcript : [])
+    var smartContext = AgentSmartContext()
     var totalUsage: TokenUsage?
     /// What the provider counted on the last call, for the autocompact
     /// estimate. Cleared when a summary changes the transcript's shape.
@@ -937,17 +938,24 @@ public actor AgentRuntime {
       let promptContext = AgentPromptContext(messages: inference.messages, activeTaskID: activeTaskID)
       var providerMessages: [AgentMessage]
       if request.context == .smart {
-        await supervisor.note(pid, activity: "preparing context")
-        do {
-          let brief = try await compactText(
-            prompt: AgentSmartContextPrompt.render(
-              messages: promptContext.conversation, template: smartContextTemplate),
-            request: request, budget: budget, context: context, pid: pid,
-            totalUsage: &totalUsage, emit: emit)
-          providerMessages = promptContext.messages(brief: brief)
-        } catch is RunDeadlineExceeded {
-          return await pause(await budget.timeInterruption)
+        if let evidence = smartContext.pending(in: promptContext, activeTaskID: activeTaskID) {
+          await supervisor.note(pid, activity: "preparing context")
+          do {
+            let brief = try await compactText(
+              prompt: AgentSmartContext.prompt(
+                for: evidence, in: promptContext, template: smartContextTemplate),
+              request: request, budget: budget, context: context, pid: pid,
+              totalUsage: &totalUsage, emit: emit)
+            smartContext.store(brief, for: evidence)
+          } catch is RunDeadlineExceeded {
+            return await pause(await budget.timeInterruption)
+          } catch is CancellationError {
+            throw CancellationError()
+          } catch {
+            await emit(.compactionFailed(context, error.localizedDescription))
+          }
         }
+        providerMessages = smartContext.messages(from: promptContext)
       } else {
         providerMessages = promptContext.messages()
       }

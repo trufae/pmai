@@ -4,7 +4,7 @@ import Testing
 @testable import MaiCore
 
 @Test(
-  "Smart context is rebuilt from the full transcript after every tool turn",
+  "Small smart tasks keep full evidence without any context-generation calls",
   arguments: [false, true])
 func smartContextToolTurns(textProtocol: Bool) async throws {
   let call = ToolCall(id: "read-1", name: "read", arguments: .object([:]))
@@ -54,7 +54,7 @@ func smartContextToolTurns(textProtocol: Bool) async throws {
       retry: .none, autocompact: .init(tokens: 0), context: .smart, sessionID: "same-session"))
   #expect(result.response.text == "Fixed.")
   #expect(result.modelTurns == 2 && result.toolCalls == 1)
-  #expect(result.usage?.totalTokens == 80)
+  #expect(result.usage?.totalTokens == 30)
   #expect(Array(result.transcript.prefix(original.count)) == original)
   #expect(result.transcript.flatMap(\.toolResults).first?.text == evidence)
   #expect(!result.transcript.contains { $0.text.contains("working brief") })
@@ -62,27 +62,62 @@ func smartContextToolTurns(textProtocol: Bool) async throws {
   try #require(requests.count == 2)
   #expect(
     requests.map { $0.messages.filter { $0.role == .user }.map(\.text) }
-      == [["First working brief", "Keep the API stable"], ["Second working brief", "Keep the API stable"]])
+      == Array(repeating: ["Fix the failing test", "Keep the API stable"], count: 2))
   #expect(
     requests.allSatisfy { request in
-      request.messages.filter { $0.role != .system && $0.role != .developer }.count == 2
-        && request.messages.contains(original[1])
+      request.messages.contains(original[1])
         && request.messages.contains { $0.role == .system && $0.text.contains(original[0].text) }
         && request.model == "frontier" && request.sessionID == "same-session"
     })
   #expect(requests.allSatisfy { $0.tools.isEmpty == textProtocol })
   let preparations = await compact.requests
-  try #require(preparations.count == 2)
-  #expect(preparations.allSatisfy { $0.model == "tiny" && $0.tools.isEmpty && !$0.stream })
-  let next = preparations[1].messages.map(\.text).joined(separator: "\n")
-  #expect(next.contains("SMART TEMPLATE") && !next.contains("DURABLE TEMPLATE"))
-  #expect(next.contains(evidence) && next.contains("tail-status"))
-  #expect(next.contains("Earlier finding") && next.contains("Keep the API stable"))
-  #expect(next.contains("tool call") && next.contains("tool result"))
-  #expect(!next.contains("First working brief"))
-  #expect(!next.contains("Keep all safety constraints") && !next.contains("Developer rule"))
-  #expect(!next.contains("Tools are available through") && !next.contains("parameter schema"))
-  #expect(await stats.totals().count == 2)
+  #expect(preparations.isEmpty)
+  #expect(requests[1].messages.flatMap(\.toolResults).first?.text == evidence)
+  #expect(requests[1].messages.flatMap(\.toolResults).first?.structuredContent == .object(["status": .string("tail-status")]))
+  #expect(await stats.totals().count == 1)
+}
+
+@Test("Large smart history is summarized once; new source code and tool pairs stay verbatim")
+func smartContextLargeHistory() async throws {
+  let call = ToolCall(id: "read", name: "read", arguments: .object([:]))
+  let evidence = "EXACT CODE: if (!v) return false;"
+  let primary = SmartContextProvider(id: "primary", responses: [
+    .init(message: AgentMessage(role: .assistant, content: [.toolCall(call)])),
+    .init(message: .assistant("Concrete finding")),
+  ])
+  let compact = SmartContextProvider(id: "compact", responses: [
+    .init(message: .assistant("Earlier evidence brief")),
+  ])
+  let runtime = try await smartRuntime(primary, compact)
+  await runtime.configureSmartContext(prompt: "SMART TEMPLATE\n{{transcript}}")
+  try await runtime.register(tool: ClosureTool(definition: .init(
+    name: "read", description: "Read code", annotations: .init(approval: .automatic))) { _, _ in
+    ToolOutput(text: evidence)
+  })
+  let original: [AgentMessage] = [
+    .system("STATIC RULE"), .developer("DEVELOPER RULE"),
+    .user("Earlier goal"), .assistant(String(repeating: "Earlier evidence.\n", count: 5_000)),
+    .user("Find bugs; do not edit files"),
+  ]
+  let result = try await runtime.run(AgentRequest(
+    provider: "primary", model: "frontier", messages: original, toolNames: ["read"],
+    retry: .none, autocompact: .init(tokens: 0), context: .smart))
+  #expect(result.response.text == "Concrete finding")
+  #expect(Array(result.transcript.prefix(original.count)) == original)
+  let preparations = await compact.requests
+  try #require(preparations.count == 1)
+  #expect(preparations[0].model == "tiny" && preparations[0].tools.isEmpty && !preparations[0].stream)
+  let prompt = preparations[0].messages.map(\.text).joined(separator: "\n")
+  #expect(prompt.contains("SMART TEMPLATE") && prompt.contains(original[3].text))
+  #expect(prompt.contains(original[4].text) && !prompt.contains(evidence))
+  #expect(!prompt.contains("STATIC RULE") && !prompt.contains("DEVELOPER RULE"))
+  let requests = await primary.requests
+  try #require(requests.count == 2)
+  #expect(requests.allSatisfy { $0.messages.contains(original[4]) })
+  #expect(requests.allSatisfy { $0.messages.contains { $0.text.contains("Earlier evidence brief") } })
+  #expect(!requests[0].messages.contains(original[3]))
+  #expect(requests[1].messages.flatMap(\.toolCalls) == [call])
+  #expect(requests[1].messages.flatMap(\.toolResults).first?.text == evidence)
 }
 
 @Test("Smart context still compacts the full growing transcript")
@@ -103,10 +138,7 @@ func smartContextAutocompaction() async throws {
   let compact = SmartContextProvider(
     id: "compact",
     responses: [
-      .init(message: .assistant("brief one")),
-      .init(message: .assistant("brief two")),
       .init(message: .assistant("durable summary")),
-      .init(message: .assistant("brief three")),
     ])
   let runtime = try await smartRuntime(primary, compact)
   try await runtime.register(
@@ -121,12 +153,62 @@ func smartContextAutocompaction() async throws {
       provider: "primary", messages: original, toolNames: ["read"], retry: .none,
       autocompact: .init(tokens: 500), context: .smart))
   let preparations = await compact.requests
-  try #require(preparations.count == 4)
-  #expect(preparations[2].messages.last?.text.contains("Compact the transcript") == true)
-  #expect(preparations[3].messages.last?.text.contains("durable summary") == true)
+  try #require(preparations.count == 1)
+  #expect(preparations[0].messages.last?.text.contains("Compact the transcript") == true)
   #expect(result.transcript.contains { $0.text.contains("durable summary") })
   #expect(result.transcript.contains(original[0]))
   #expect(!result.transcript.contains { $0.text == "brief one" || $0.text == "brief two" })
+}
+
+@Test("A large newest tool result reaches the acting model without summarization")
+func smartContextLargeNewestResult() async throws {
+  let call = ToolCall(id: "read", name: "read", arguments: .object([:]))
+  let evidence = String(repeating: "source code\n", count: 8_000) + "EXACT TAIL"
+  let primary = SmartContextProvider(id: "primary", responses: [
+    .init(message: AgentMessage(role: .assistant, content: [.toolCall(call)])),
+    .init(message: .assistant("Reviewed")),
+  ])
+  let compact = SmartContextProvider(id: "compact", responses: [])
+  let runtime = try await smartRuntime(primary, compact)
+  try await runtime.register(tool: ClosureTool(definition: .init(
+    name: "read", description: "Read", annotations: .init(approval: .automatic))) { _, _ in
+    ToolOutput(text: evidence)
+  })
+  _ = try await runtime.run(AgentRequest(
+    provider: "primary", messages: [.user("Review source")], toolNames: ["read"],
+    retry: .none, autocompact: .init(tokens: 0), context: .smart))
+  #expect(await compact.requests.isEmpty)
+  #expect(await primary.requests.last?.messages.flatMap(\.toolResults).first?.text == evidence)
+}
+
+@Test("Queued corrections invalidate a cached smart brief and retain exact task and tool evidence")
+func smartContextQueuedCorrection() async throws {
+  let call = ToolCall(id: "read", name: "read", arguments: .object([:]))
+  let primary = SmartContextProvider(id: "primary", responses: [
+    .init(message: AgentMessage(role: .assistant, content: [.toolCall(call)])),
+    .init(message: .assistant("Corrected answer")),
+  ])
+  let compact = SmartContextProvider(id: "compact", responses: [
+    .init(message: .assistant("Stale brief")), .init(message: .assistant("Corrected brief")),
+  ])
+  let runtime = try await smartRuntime(primary, compact)
+  let supervisor = runtime.supervisor
+  let correction = AgentMessage.user("Focus on memory safety instead")
+  try await runtime.register(tool: ClosureTool(definition: .init(
+    name: "read", description: "Read", annotations: .init(approval: .automatic))) { _, context in
+    await supervisor.post(correction, to: try #require(context.run.pid))
+    return ToolOutput(text: "Exact new code")
+  })
+  let task = AgentMessage.user("Review the requested code")
+  _ = try await runtime.run(AgentRequest(
+    provider: "primary", messages: [.user("Old task"), .assistant(String(repeating: "old ", count: 20_000)), task],
+    toolNames: ["read"], retry: .none, autocompact: .init(tokens: 0), context: .smart))
+  #expect(await compact.requests.count == 2)
+  let next = try #require(await primary.requests.last)
+  #expect(next.messages.contains(task) && next.messages.contains(correction))
+  #expect(!next.messages.contains { $0.text.contains("Stale brief") })
+  #expect(next.messages.contains { $0.text.contains("Corrected brief") })
+  #expect(next.messages.flatMap(\.toolResults).first?.text == "Exact new code")
 }
 
 @Test("Smart preparation respects token limits before calling the primary")
@@ -138,7 +220,7 @@ func smartContextTokenBudget() async throws {
       .init(message: .assistant("brief"), usage: TokenUsage(inputTokens: 100, outputTokens: 10))
     ])
   let runtime = try await smartRuntime(primary, compact)
-  let original = [AgentMessage.user("Do the work")]
+  let original = [AgentMessage.user("Earlier goal"), .assistant(String(repeating: "old ", count: 20_000)), .user("Do the work")]
   let result = try await runtime.run(
     AgentRequest(
       provider: "primary", messages: original, limits: AgentRunLimits(maxTotalTokens: 100),
@@ -151,23 +233,30 @@ func smartContextTokenBudget() async throws {
 }
 
 @Test(
-  "An empty or failed smart preparation never sends full history to the primary",
+  "An empty or failed smart preparation keeps evidence and still answers",
   arguments: [false, true])
 func smartContextFailure(empty: Bool) async throws {
-  let primary = SmartContextProvider(id: "primary", responses: [])
+  let call = ToolCall(id: "read", name: "read", arguments: .object([:]))
+  let primary = SmartContextProvider(id: "primary", responses: [
+    .init(message: AgentMessage(role: .assistant, content: [.toolCall(call)])),
+    .init(message: .assistant("Done")),
+  ])
   let compact = SmartContextProvider(
     id: "compact", responses: empty ? [.init(message: .assistant("  "))] : [])
   let runtime = try await smartRuntime(primary, compact)
-  await #expect(throws: (any Error).self) {
-    try await runtime.run(
-      AgentRequest(
-        provider: "primary", messages: [.user("Work")],
-        retry: .none, context: .smart))
-  }
-  #expect(await primary.requests.isEmpty)
+  try await runtime.register(tool: ClosureTool(definition: .init(
+    name: "read", description: "Read", annotations: .init(approval: .automatic))) { _, _ in
+    ToolOutput(text: "new evidence")
+  })
+  let original = [AgentMessage.user("Earlier goal"), .assistant(String(repeating: "old ", count: 20_000)), .user("Work")]
+  let result = try await runtime.run(AgentRequest(
+    provider: "primary", messages: original, toolNames: ["read"],
+    retry: .none, autocompact: .init(tokens: 0), context: .smart))
+  #expect(result.response.text == "Done")
+  #expect(await primary.requests.count == 2)
+  #expect(await primary.requests.allSatisfy { $0.messages.contains(original[1]) })
   #expect(await compact.requests.count == 1)
-  let process = try #require(await runtime.supervisor.processes().first)
-  #expect(await runtime.supervisor.transcript(process.pid).map(\.text) == ["Work"])
+  #expect(Array(result.transcript.prefix(original.count)) == original)
 }
 
 @Test("Smart context preserves binary evidence and excludes hidden reasoning")
@@ -273,7 +362,7 @@ func smartContextSkills(textProtocol: Bool, proxied: Bool) async throws {
     return !input.contains(skill.body) && !input.contains(MaiSkillTools.promptSection)
       && !input.contains("Tools are available through")
   })
-  #expect(preparations[1].messages.last?.text.contains("input.txt") == true)
+  #expect(preparations.isEmpty)
 }
 
 @Test("Smart context keeps an explicit skill prompt and its arguments verbatim")

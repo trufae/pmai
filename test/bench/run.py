@@ -243,8 +243,8 @@ def main():
     parser.add_argument("--run-id")
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument("--system", help="file with agent instructions replacing the default")
-    parser.add_argument("--context", default="cache", choices=["cache", "size"],
-                        help="context mode of the agent: cache keeps every message, size prunes read files")
+    parser.add_argument("--context", default="cache", choices=["cache", "size", "smart", "tools"],
+                        help="context mode: full history, old-file pruning, adaptive briefs, or old-tool summaries")
     parser.add_argument("--plan", default="on", choices=["on", "off"],
                         help="use.plan: ask an agent with children to plan a multi-step request first")
     parser.add_argument("--repeat", type=int, default=1,

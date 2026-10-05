@@ -873,8 +873,8 @@ public struct AgentRetryPolicy: Codable, Equatable, Sendable {
 /// replaces the bodies of files read in earlier turns with a one-line
 /// reference before each model call, at the price of invalidating the cache
 /// from that message on.
-/// `smart` builds a fresh working context with the compact model before each
-/// conversation call while retaining the transcript for normal compaction.
+/// `smart` summarizes older exchanges once the working context grows, keeping
+/// recent evidence verbatim and retaining the transcript for normal compaction.
 /// `tools` summarizes only older tool results in a disposable model context.
 public enum AgentContextMode: String, Codable, Equatable, Sendable {
   case cache

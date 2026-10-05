@@ -4,7 +4,7 @@ import Foundation
 public enum AgentSmartContextPrompt {
   public static let template = """
     Build the working context for the assistant's next turn on the current task.
-    The assistant will receive your output as its working context, alongside its original system/developer instructions, available tools, and full active skill instructions in a separate instruction section. The exact current user task and skill-loading receipts are retained separately. It cannot see the rest of the conversation below.
+    Summarize earlier conversation evidence. The assistant receives your brief alongside recent exchanges verbatim, its original system/developer instructions, available tools, and full active skill instructions in a separate instruction section. The exact current user task and skill-loading receipts are retained separately. It cannot see the older evidence below except through your brief.
 
     Output only a self-contained task brief, not an answer to the user. Include:
     - The current user request, earlier goals still in progress, corrections, constraints, preferences, and required response format. Preserve exact wording when it matters.
@@ -80,5 +80,68 @@ public enum AgentSmartContextPrompt {
     case .toolResult(let result): return result.content.flatMap(binaryAttachments)
     default: return []
     }
+  }
+}
+
+/// Keep a small working conversation intact. Once it grows, summarize older
+/// exchanges and reuse that brief until enough new evidence accumulates.
+/// In particular, a fresh tool result must reach the acting model verbatim.
+struct AgentSmartContext {
+  static let thresholdTokens = 16_000
+  static let recentTokens = 8_000
+
+  private var summarized: [AgentMessage] = []
+  private var summary: AgentMessage?
+  private var attempted: [AgentMessage] = []
+  private var task: AgentMessage?
+
+  mutating func pending(in context: AgentPromptContext, activeTaskID: String?) -> [AgentMessage]? {
+    let latestTask = context.conversation.last { $0.role == .user }
+    let ids = Set(summarized.map(\.id))
+    // A queued correction, transcript edit, or durable compaction can make
+    // an earlier task brief stale. Never reuse it against changed evidence.
+    if task != latestTask || context.conversation.filter({ ids.contains($0.id) }) != summarized {
+      summarized = []
+      summary = nil
+      attempted = []
+      task = latestTask
+    }
+    guard AgentAutocompaction.estimatedTokens(
+      of: messages(from: context), lastUsage: nil) >= Self.thresholdTokens,
+      let selection = AgentAutocompaction.selection(
+        in: context.conversation, preservingRecentTokens: Self.recentTokens,
+        activeTaskID: activeTaskID)
+    else { return nil }
+    let selected = Set(selection)
+    let evidence = context.conversation.filter { selected.contains($0.id) }
+    guard evidence != attempted else { return nil }
+    // A failed reduction is optional and is not retried every loop boundary.
+    attempted = evidence
+    return evidence
+  }
+
+  mutating func store(_ brief: String, for evidence: [AgentMessage]) {
+    let attachments = evidence.flatMap { $0.content.flatMap(AgentSmartContextPrompt.binaryAttachments) }
+    let replacement = AgentMessage(role: .user, content: [.text("Earlier task context:\n" + brief)] + attachments)
+    guard AgentTranscriptEditor.characterCount(of: replacement)
+      < AgentTranscriptEditor.characterCount(of: evidence) else { return }
+    summarized = evidence
+    summary = replacement
+  }
+
+  func messages(from context: AgentPromptContext) -> [AgentMessage] {
+    guard let summary else { return context.messages() }
+    let ids = Set(summarized.map(\.id))
+    return context.instructions + [summary] + context.conversation.filter { !ids.contains($0.id) }
+  }
+
+  /// The exact task gives the summarizer relevance without consuming or
+  /// replacing the recent code/results the primary model still needs to see.
+  static func prompt(
+    for evidence: [AgentMessage], in context: AgentPromptContext, template: String?
+  ) -> String {
+    let ids = Set(evidence.map(\.id)).union(context.preservedConversation.map(\.id))
+    return AgentSmartContextPrompt.render(
+      messages: context.conversation.filter { ids.contains($0.id) }, template: template)
   }
 }

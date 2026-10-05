@@ -39,7 +39,7 @@ let package = Package(
     .executable(name: "pmai", targets: ["MaiCLI"]),
   ],
   dependencies: [
-    .package(url: "https://github.com/SwiftTUI/swift-tui", .upToNextMinor(from: "0.15.1")),
+    .package(url: "https://github.com/SwiftTUI/swift-tui", exact: "0.13.3"),
     .package(url: "https://github.com/apple/swift-nio", from: "2.81.0"),
   ],
   targets: [

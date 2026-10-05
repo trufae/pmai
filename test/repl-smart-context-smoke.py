@@ -78,14 +78,10 @@ def main():
             saved = json.loads(config.read_text())
             assert saved['agents'][0]['context'] == 'smart', saved
             assert saved['prompts']['smart'] == 'CUSTOM SMART\n{{transcript}}', saved
-            assert [request['model'] for request in requests] == ['tiny', 'large'], requests
-            assert requests[0]['messages'][-1]['content'].startswith('CUSTOM SMART'), requests[0]
-            assert 'Fix the parser' in requests[0]['messages'][-1]['content'], requests[0]
-            assert not requests[0].get('tools'), requests[0]
-            conversation = [m for m in requests[1]['messages'] if m['role'] not in ('system', 'developer')]
-            assert conversation == [{'role': 'user', 'content': 'WORKING BRIEF\n\nFix the parser'}], conversation
-            assert 'ORIGINAL RULES' not in str(requests[0]['messages']), requests[0]
-            assert any('ORIGINAL RULES' in m['content'] for m in requests[1]['messages']), requests[1]
+            assert [request['model'] for request in requests] == ['large'], requests
+            conversation = [m for m in requests[0]['messages'] if m['role'] not in ('system', 'developer')]
+            assert conversation == [{'role': 'user', 'content': 'Fix the parser'}], conversation
+            assert any('ORIGINAL RULES' in m['content'] for m in requests[0]['messages']), requests[0]
 
             chat_file = next((root / '.pmai/chats').glob('*.json'))
             chat = json.loads(chat_file.read_text())
@@ -93,11 +89,24 @@ def main():
             assert 'MAIN ANSWER' in json.dumps(chat['messages']), chat
             assert 'WORKING BRIEF' not in json.dumps(chat['messages']), chat
             run(['Now add tests'], resume=True)
-            assert [r['model'] for r in requests] == ['tiny', 'large', 'tiny', 'large'], requests
-            next_prompt = requests[2]['messages'][-1]['content']
+            assert [r['model'] for r in requests] == ['large', 'large'], requests
+            next_prompt = str(requests[1]['messages'])
             for text in ('Fix the parser', 'MAIN ANSWER', 'Now add tests'):
                 assert text in next_prompt, next_prompt
             assert 'WORKING BRIEF' not in next_prompt, next_prompt
+            # Large earlier tasks need a brief, but the next exact request
+            # stays outside it. Small tool loops never pay this round trip.
+            run(['Earlier constraints: ' + 'evidence ' * 9000], resume=True)
+            run(['Now review the parser'], resume=True)
+            assert [r['model'] for r in requests] == ['large', 'large', 'large', 'tiny', 'large']
+            preparation = requests[-2]
+            assert preparation['messages'][-1]['content'].startswith('CUSTOM SMART')
+            assert 'Earlier constraints' in preparation['messages'][-1]['content']
+            assert 'Now review the parser' in preparation['messages'][-1]['content']
+            assert not preparation.get('tools')
+            assert 'ORIGINAL RULES' not in str(preparation['messages'])
+            assert 'WORKING BRIEF' in str(requests[-1]['messages'])
+            assert 'Now review the parser' in str(requests[-1]['messages'])
             output = run(['/set ctx.strategy=cache', '/set ctx.context'], resume=True)
             assert 'ctx.context = cache' in output, output
             assert json.loads(config.read_text())['agents'][0]['context'] == 'cache'

@@ -648,13 +648,18 @@ cursor position and history search. It does not clear the conversation.
 `Ctrl+Z` suspends pmai with the terminal restored; run `fg` in the shell to
 resume the same input or active run.
 
-`/set ctx.context=smart` (config key `context: "smart"`) uses the `/model-compact`
-model before every conversation-model turn, including turns after tool calls.
-It builds a fresh task brief from conversation evidence, including tool
-arguments, complete text and structured results, files, and child-agent findings.
+`/set ctx.context=smart` (config key `context: "smart"`) keeps small working
+conversations intact. Once the working context reaches about 16k estimated
+tokens, it uses `/model-compact` to summarize older exchanges, keeping about
+8k recent tokens and the newest complete tool exchange verbatim. Newly read
+code and tool results reach the acting model directly instead of through a
+lossy brief. The brief is reused until enough new evidence accumulates; queued
+corrections, changed evidence, and transcript edits invalidate stale briefs.
+Earlier evidence includes tool arguments, complete text and structured results,
+files, and child-agent findings.
 System/developer instructions, active skill bodies, and loaded proxy tool catalogs
 are excluded from the brief-generation input. The conversation model receives
-the brief alongside the exact current user task and skill-loading receipts.
+the brief alongside recent exchanges, the exact current user task, and skill-loading receipts.
 Skills invoked for the current user turn, including `$NAME` and `/skills prompt`,
 and proxy catalogs loaded by `list-tools` reach the model verbatim in separate
 instruction sections. Their steps, arguments, resource directories, output formats,
@@ -678,9 +683,10 @@ Exact instruction delivery does not guarantee that a particular model follows
 the skill's workflow or output format.
 Smart mode uses its own `prompts.smart` template, editable with `/edit smart`
 or `/edit prompt smart`; it must contain `{{transcript}}`.
-Each turn adds a compact-model call, whose usage counts toward statistics and
-token/time limits. If no compact model is assigned, the current model is used.
-A failed or empty context-generation response stops the run with history retained.
+Only needed reductions add compact-model calls; their usage counts toward
+statistics and token/time limits. If no compact model is assigned, the current
+model is used. A failed or empty brief keeps the evidence available and lets the
+run continue; that same reduction is not retried at every tool step.
 `ctx.strategy` remains an alias for `ctx.context`; both accept `cache`, `size`,
 and `smart`.
 

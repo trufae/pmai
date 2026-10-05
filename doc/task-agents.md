@@ -91,11 +91,15 @@ Remote agents can share a provider while using different models. An empty model 
 Compaction sends the compaction template and selected transcript to the assigned agent with its prompt and reasoning settings, with tools disabled. Both manual and automatic compaction use the assignment. A failed summary leaves the existing conversation intact. With no assignment, the current model and reasoning settings are used.
 
 `/set ctx.context=smart` also uses the compact assignment, with a separate
-`prompts.smart` template (`/edit smart`). Before each conversation turn it selects
-task-relevant context from the full transcript, including complete tool outputs,
-and sends one working-context message alongside the original system/developer
-instructions. The saved transcript keeps growing and still autocompacts normally.
-Preparation calls count toward token/time budgets and usage statistics.
+`prompts.smart` template (`/edit smart`). When the working context reaches about
+16k estimated tokens, it selects older evidence for a reusable brief, retaining
+about 8k recent tokens and the newest complete exchange verbatim. Earlier
+evidence includes complete tool outputs. The brief travels alongside recent
+exchanges and the original system/developer instructions. Small tasks need no
+preparation calls. Failed reductions retain the evidence without repeatedly
+retrying the same reduction. The saved transcript keeps growing and still
+autocompacts normally. Preparation calls count toward token/time budgets and
+usage statistics.
 
 `/set ctx.strategy tools` uses the compact assignment to summarize only large
 tool results (at least 4,000 characters), after a conversation model has seen
