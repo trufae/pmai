@@ -11736,8 +11736,8 @@ struct MaiCLI {
     /stop                  Interrupt the current turn and keep its queue; /continue resumes it
     /theme                 List, apply, or save terminal themes (/help theme)
     /todo                  Show, add to, tick off, or edit this project's todo list
-    /vdb                   Index and query local documentation and source code
     /tools                 List logical tool groups for the current agent
+    /vdb                   Index and query local documentation and source code
     /version               Print the pmai version
     \(visualHelp)
     Input: Shift+Enter adds a line (Alt+Enter or Ctrl+J where the terminal sends Enter for it)
