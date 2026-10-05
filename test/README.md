@@ -6,17 +6,21 @@ model call so the runs can be studied for wasted turns and tokens.
 Session persistence regression checks use temporary projects and configurations:
 
     swift build --package-path MaiCore --product pmai
+    python3 test/repl-defaults-smoke.py MaiCore/.build/debug/pmai
     python3 test/repl-resume-smoke.py MaiCore/.build/debug/pmai
     python3 test/repl-resume-state-smoke.py MaiCore/.build/debug/pmai
     python3 test/repl-resume-routing-smoke.py MaiCore/.build/debug/pmai
     python3 test/repl-export-smoke.py MaiCore/.build/debug/pmai
     python3 test/provider-routing-smoke.py MaiCore/.build/debug/pmai
 
+The defaults check starts with a clean user home and verifies saved model,
+provider, and settings across restarts and projects, precedence over stale
+environment variables, and temporary command-line overrides.
 The state check covers provider/task snapshots, removed definitions, chat
 switching, and saved subagent trees. The routing check starts a local mock HTTP
 provider and verifies actual requests, credential rotation, one-shot history,
 and recovery after terminating a process during nested work.
-The provider check verifies qualified environment/flag models against a local
+The provider check verifies qualified bootstrap environment/flag models against a local
 HTTP server, URL and credential precedence, provider editor changes, and
 renaming connections with task references and chat resume.
 

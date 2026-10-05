@@ -103,11 +103,11 @@ path.write_text(json.dumps(provider))
             ambient = {'PMAI_BASE_URL': f'{base}/wrong/v1', 'PMAI_API_KEY': 'wrong-key',
                        'REMOTE_KEY': 'environment-key'}
 
-            def run(commands=(), args=(), env=None, error=False):
+            def run(commands=(), args=(), env=None, error=False, ambient_defaults=True):
                 result = subprocess.run(
                     [binary, '--config', str(config), '--home', str(root / 'home'),
                      '--no-stream', '--no-markdown', *args],
-                    cwd=root, env=environment | ambient | (env or {}),
+                    cwd=root, env=environment | (ambient if ambient_defaults else {}) | (env or {}),
                     input='\n'.join([*commands, '/exit', '']),
                     capture_output=True, text=True, timeout=30)
                 output = result.stdout + result.stderr
@@ -123,13 +123,21 @@ path.write_text(json.dumps(provider))
                 assert headers.get('Authorization') == (None if key is None else 'Bearer ' + key), headers
                 assert request['model'] == model, request
 
-            # Flags and all environment model aliases split provider::model.
+            # Flags split provider::model. Environment aliases only bootstrap unsaved profiles.
             run(args=['--model', 'remote::org/model:tag', 'Flag selection.'])
             check_request('/remote/v1', 'file-key')
             assert requests[-1][1]['x-provider'] == 'remote'
+            bootstrap_config = root / 'bootstrap.json'
+            bootstrap = json.loads(config.read_text())
+            bootstrap.update(agents=[], taskAgents={})
+            bootstrap.pop('defaultAgent', None)
+            bootstrap_config.write_text(json.dumps(bootstrap))
             for alias in ('PMAI_MODEL', 'MAI_MODEL', 'OPENAI_MODEL'):
-                run(args=['Environment selection.'], env={alias: 'remote::org/model:tag'})
+                run(args=['--config', str(bootstrap_config), 'Environment bootstrap.'],
+                    env={alias: 'remote::org/model:tag'})
                 check_request('/remote/v1', 'file-key')
+                run(args=['Saved selection.'], env={alias: 'remote::org/model:tag'})
+                check_request('/local/v1', 'local-key', 'main-model')
             run(args=['--model', 'remote::org/model::', 'Preserve remaining model syntax.'])
             check_request('/remote/v1', 'file-key', 'org/model::')
             run(args=['--model', 'envkey::org/model:tag', 'Provider environment key.'])
@@ -163,7 +171,7 @@ path.write_text(json.dumps(provider))
             check_request('/remote/v1', None)
             run(args=['--provider', 'local', 'Explicit provider.'],
                 env={'PMAI_MODEL': 'remote::org/model:tag'})
-            check_request('/local/v1', 'local-key')
+            check_request('/local/v1', 'local-key', 'main-model')
             for selector in ('::model', 'remote::', 'missing::model'):
                 run(args=['--model', selector, 'Invalid selection.'], error=True)
 
@@ -194,6 +202,8 @@ path.write_text(json.dumps(provider))
                           if p['id'] == 'remote')
             assert remote['defaultModel'] == 'remote-default' and 'baseUrL' not in remote
             run(['/provider use remote', 'Provider default model.'])
+            check_request('/edited/v1', 'file-key', 'remote-default')
+            run(args=['Saved connection without environment variables.'], ambient_defaults=False)
             check_request('/edited/v1', 'file-key', 'remote-default')
             run(args=['--provider', 'remote', 'Provider flag default model.'])
             check_request('/edited/v1', 'file-key', 'remote-default')

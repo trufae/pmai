@@ -33,7 +33,7 @@ provider settings are `PMAI_PROVIDER`, `PMAI_MODEL`, `PMAI_BASE_URL`, and
 compatibility. `PMAI_API_KEY_FILE` names a file holding the key instead, read
 at startup with its trailing newline dropped, so the secret never sits in the
 environment where every child process could read it; it cannot be combined
-with `PMAI_API_KEY`. Model/provider variables select defaults for new chats;
+with `PMAI_API_KEY`. Model/provider variables bootstrap the first saved agent;
 `PMAI_MODEL`, `MAI_MODEL`, and `OPENAI_MODEL` also accept `PROVIDER::MODEL`.
 A configured provider's URL and credential sources take precedence over ambient
 URL/key variables. Those variables supply missing settings or the initial ad-hoc
@@ -43,6 +43,20 @@ and identifies a different persisted URL when an explicit flag overrides it.
 Export `PMAI_API_KEY=` to suppress legacy key fallbacks for an ad-hoc connection;
 use `--api-key ''` to suppress a configured provider's credentials for this run.
 Keep `env.sh` local because it can contain credentials.
+
+You can configure pmai entirely from the REPL without environment variables:
+
+```text
+/provider add local http://127.0.0.1:11434/v1
+/provider use local
+/model qwen3:8b
+```
+
+These choices survive restarts and become the defaults for new chats and runs,
+even if the shell still exports older model/provider values. For a remote
+connection, add `--api-key-file /path/to/key` to `/provider add`, or set its
+credentials with `/edit provider ID`. Settings save to the active `--config`
+file, `./pmai.json`, or `~/.config/pmai/config.json` by default.
 
 Install a release build system-wide with `make repl-install`. The Linux
 release archives come in two flavours: `pmai-linux-<arch>.zip` links against
@@ -349,7 +363,8 @@ PocketMai folder colors always were.
 `--resume`) reopens one; `-r` without a selector reopens the most recently
 updated chat. Resuming or switching to a saved chat restores its provider,
 model, reasoning options, instructions, run limits, and tool settings.
-Environment model/provider defaults apply to new chats. Explicit flags such
+Saved agent model/provider settings apply to new chats; environment defaults
+bootstrap installations without saved agents. Explicit flags such
 as `--model`, `--effort`, and `--max-turns` override only the chat being opened.
 Chats snapshot their provider definitions (including effective launch-time
 base URLs, headers and options), task-model assignments, and named subagent
@@ -390,7 +405,8 @@ saves a reusable agent in one line from a model, comma-separated tool groups,
 and a named system prompt; `/agent tools|model|prompt|provider ID VALUE` change
 one saved agent, `/agent remove ID` drops one, and `/edit agent [ID]` opens one
 as JSON. `/provider`, `/model`, and `/set tool.proxy` save changes back to the
-current chat's agent in the shared configuration.
+current chat's agent in the shared configuration. Selecting a provider or model
+also makes that agent the default for new chats and runs.
 
 Use `/edit provider [ID]` to change a provider's `baseURL`, `defaultModel`,
 credentials, headers, timeout, or options. The provider is replaced in the live

@@ -102,9 +102,9 @@ def main():
         assert 'Chat: hello::chosen' in output, output
         assert_restored(retained_path, retained)
 
-        # A fresh launch uses environment defaults without changing saved chats.
+        # A fresh launch uses saved defaults without changing saved chats.
         output = run(['/model', '/baseurl'], env=aliases[0])
-        assert 'Chat: alternate::env-model' in output, output
+        assert 'Chat: alternate::different' in output, output
         assert "Base URL for 'alternate': http://env.example/v1" in output, output
         assert_restored(retained_path, retained)
         assert latest_path.read_bytes() == latest_bytes
@@ -157,7 +157,7 @@ def main():
 
         # With no saved chat, -r falls back to the usual new-chat defaults.
         output = run(['/model'], ['-r', '--state', str(root / 'empty')], aliases[0])
-        assert 'Chat: alternate::env-model' in output, output
+        assert 'Chat: alternate::different' in output, output
 
         # Saving defaults on resume persists the restored profile, not the startup defaults.
         run(args=['-r', 'retained', '--effort', 'high', '--save-defaults'], env=aliases[0])

@@ -1897,12 +1897,16 @@ struct MaiCLI {
     options: CLIOptions,
     environment: [String: String]
   ) throws -> SessionProfile {
+    // Environment defaults bootstrap an installation. Once an agent is saved,
+    // its selections survive restarts even when the shell still exports old defaults.
+    let defaultsEnvironment = configuration?.agents.isEmpty == false ? [:] : environment
     let providerOverride =
       options.providerOverride
-      ?? environmentValue(["PMAI_PROVIDER", "MAI_PROVIDER"], in: environment).map {
+      ?? environmentValue(["PMAI_PROVIDER", "MAI_PROVIDER"], in: defaultsEnvironment).map {
         ProviderID($0)
       }
-    let modelDefault = environmentValue(["PMAI_MODEL", "MAI_MODEL", "OPENAI_MODEL"], in: environment)
+    let modelDefault = environmentValue(
+      ["PMAI_MODEL", "MAI_MODEL", "OPENAI_MODEL"], in: defaultsEnvironment)
     var profile: SessionProfile
     if let configuration, !configuration.agents.isEmpty {
       let selectedID =
@@ -6135,6 +6139,7 @@ struct MaiCLI {
         definition.provider = selection.provider
         definition.model = selection.model
         draft.upsertAgent(definition)
+        draft.defaultAgent = definition.id
         if !chatOnly {
           for task in AgentTask.allCases {
             try draft.assignTask(
@@ -6143,7 +6148,7 @@ struct MaiCLI {
         }
         chatDefinition = definition
         let scope = chatOnly ? "agent \(definition.id)" : "chat and all tasks"
-        message = "Model: \(selection.provider)::\(selection.model) (saved for \(scope))"
+        message = "Model: \(selection.provider)::\(selection.model) (saved for \(scope)) · default for new chats"
       }
       try draft.save(to: URL(fileURLWithPath: configurationPath))
       for agent in draft.agents
@@ -6308,10 +6313,12 @@ struct MaiCLI {
       session: session,
       configuration: &configuration,
       configurationPath: configurationPath,
+      makeDefault: true,
       runtime: runtime,
       terminal: terminal)
     if saved {
-      await terminal.line("Provider: \(id) (saved for agent \(session.profile.agentID))")
+      await terminal.line(
+        "Provider: \(id) (saved for agent \(session.profile.agentID)) · default for new chats")
     }
   }
 
@@ -7560,6 +7567,7 @@ struct MaiCLI {
     session: REPLSession,
     configuration: inout MaiConfiguration?,
     configurationPath: String?,
+    makeDefault: Bool = false,
     runtime: AgentRuntime,
     terminal: TerminalWriter
   ) async -> Bool {
@@ -7567,6 +7575,7 @@ struct MaiCLI {
       session.profile.agentDefinition,
       configuration: &configuration,
       configurationPath: configurationPath,
+      makeDefault: makeDefault,
       runtime: runtime,
       terminal: terminal)
   }
@@ -7579,6 +7588,7 @@ struct MaiCLI {
     _ definition: AgentDefinition,
     configuration: inout MaiConfiguration?,
     configurationPath: String?,
+    makeDefault: Bool = false,
     runtime: AgentRuntime,
     terminal: TerminalWriter
   ) async -> Bool {
@@ -7587,6 +7597,7 @@ struct MaiCLI {
       return false
     }
     let changed = draft.upsertAgent(definition)
+    if makeDefault { draft.defaultAgent = definition.id }
     do {
       try draft.save(to: URL(fileURLWithPath: configurationPath))
       for agent in draft.agents where changed.contains(agent.id) {
@@ -11673,7 +11684,7 @@ struct MaiCLI {
   private static let providerHelp = """
     /provider                         Show the current connection
     /providers                        List connections and their effective URLs
-    /provider [use] ID                Select and save this agent's provider
+    /provider [use] ID                Save this agent's provider and default for new chats
     /provider add ID URL [--api-key-file PATH] [--kind systemone]
     /provider rename [OLD] NEW        Rename a connection and update configured agents
     /edit provider [ID]               Edit its URL, default model, credentials, headers, and options
@@ -12158,6 +12169,9 @@ struct MaiCLI {
         PMAI_MODEL also accepts PROVIDER::MODEL. Configured provider URLs and
         credentials take precedence over ambient variables; explicit --base-url
         and --api-key flags override the selected connection for this run.
+        Model/provider variables bootstrap installations without saved agents.
+        /model and /provider use save defaults for future chats and runs;
+        saved agent selections take precedence over environment defaults.
 
       Resuming a chat:
         Saved model/provider and agent settings take precedence over environment
