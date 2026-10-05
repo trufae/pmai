@@ -68,6 +68,16 @@ if [ ! -d "$sdk_root/swift-resources" ]; then
 fi
 
 export PMAI_NO_VISUAL=1
+# Preserve timestamps for unchanged libraries so Gradle can reuse native
+# packaging outputs on a no-op Swift build.
+copy_library() {
+  local library=$1
+  local output="$destination/$(basename "$library")"
+  if ! cmp -s "$library" "$output"; then
+    cp "$library" "$output"
+  fi
+}
+
 for abi in $abis; do
   case "$abi" in
     arm64-v8a) architecture=aarch64 ;;
@@ -75,7 +85,7 @@ for abi in $abis; do
     *) echo "Unsupported ABI: $abi" >&2; exit 1 ;;
   esac
   triple="$architecture-unknown-linux-android28"
-  args=(--package-path "$app_dir" --build-system native --disable-sandbox
+  args=(--package-path "$app_dir" --build-system native --disable-sandbox --disable-index-store
     --swift-sdk "$swift_sdk" --triple "$triple" -c "$configuration" "${sdk_options[@]}"
     -Xlinker "-L$sdk_root/swift-resources/usr/lib/swift_static-$architecture/android")
   "$swift_command" build "${args[@]}" --product SwiftAndroidApp
@@ -86,10 +96,10 @@ for abi in $abis; do
     case "$(basename "$library")" in
       libTesting.so|libXCTest.so|lib_Testing*.so) continue ;;
     esac
-    cp "$library" "$destination/"
+    copy_library "$library"
   done
   ndk_library=("$ANDROID_NDK_HOME"/toolchains/llvm/prebuilt/*/sysroot/usr/lib/"$architecture-linux-android/libc++_shared.so")
-  cp "${ndk_library[0]}" "$destination/"
+  copy_library "${ndk_library[0]}"
   for library in "$destination/"*.so; do
     if [ "$(od -An -tx1 -N4 "$library" | tr -d '[:space:]')" != 7f454c46 ]; then
       echo "Invalid native library copy: $library. Retry after other Swift builds finish." >&2
@@ -100,7 +110,7 @@ done
 
 # The dependency pins the Gradle version compatible with its plugins.
 gradle_command=${GRADLE:-$app_dir/.deps/AndroidSwiftUI/gradlew}
-"$gradle_command" -p "$app_dir" :app:clean "$gradle_task"
+"$gradle_command" -p "$app_dir" "$gradle_task"
 apk_path="$app_dir/app/build/outputs/apk/$configuration/$apk_name"
 if [ ! -f "$apk_path" ]; then
   echo "Expected APK was not generated: $apk_path" >&2

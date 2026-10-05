@@ -5,8 +5,11 @@ provider setup, model discovery/manual selection, named system prompts,
 streaming chat with cancellation, and saved conversations.
 
 The screens render as native Android Jetpack Compose/Material 3 controls,
-including text fields, buttons, menus and bottom navigation. They are not a
-WebView or iOS widgets. This first version has a deliberately basic layout.
+including a top app bar, an icon navigation bar, radio lists, dialogs, text
+fields and buttons. They are not a WebView or iOS widgets. The chat composer
+stays pinned above the navigation bar and errors appear as alert dialogs.
+The window theme follows the system light/dark setting; the Compose content
+stays light until AndroidSwiftUI's host supplies a dark Material scheme.
 The APK bundles the same `icon-1024.png` from the iOS AppIcon asset catalog;
 Gradle copies it at build time, keeping one source of truth for both apps.
 
@@ -60,6 +63,10 @@ native libraries in the staging directory. Set
 `SWIFT_SDKS_PATH` for a custom SDK install directory, or
 `SWIFT_ANDROID_SDK_ROOT` to the artifact bundle's `swift-android` directory.
 `GRADLE` can override the wrapper command.
+
+Repeated builds reuse Swift compilation and Gradle task outputs, skip editor
+indexing, and leave unchanged native libraries in place. Run
+`make -C PocketMaiAndroid clean` explicitly when you need to clean APK outputs.
 
 Output: `app/build/outputs/apk/debug/app-debug.apk`. Install and launch:
 

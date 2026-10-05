@@ -9,7 +9,7 @@ export SWIFT ADB JAVA_HOME ANDROID_HOME ANDROID_SDK_ROOT ANDROID_NDK_HOME ANDROI
 export SWIFT_SDKS_PATH SWIFT_ANDROID_SDK_ROOT SWIFT_ANDROID_SDK GRADLE ANDROID_ABIS CONFIGURATION
 export PMAI_ANDROID_KEYSTORE PMAI_ANDROID_KEY_ALIAS PMAI_ANDROID_STORE_PASSWORD PMAI_ANDROID_KEY_PASSWORD
 
-.PHONY: all apk release test install
+.PHONY: all apk release test install clean
 all: apk
 
 apk:
@@ -21,8 +21,12 @@ release:
 test:
 	set -e; source scripts/environment.sh; \
 		sh scripts/bootstrap.sh; \
-		"$$SWIFT" test --package-path ../MaiCore --filter portable; \
-		PMAI_NO_VISUAL=1 "$$SWIFT" test --build-system native --disable-sandbox
+		"$$SWIFT" test --package-path ../MaiCore --disable-index-store --filter portable; \
+		PMAI_NO_VISUAL=1 "$$SWIFT" test --build-system native --disable-sandbox --disable-index-store
+
+clean:
+	set -e; source scripts/environment.sh; \
+		"$${GRADLE:-.deps/AndroidSwiftUI/gradlew}" -p . :app:clean
 
 install: apk
 	@if [[ "$(APK)" == *-unsigned.apk ]]; then \
