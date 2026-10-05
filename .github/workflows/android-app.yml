@@ -1,0 +1,56 @@
+name: Android app
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: android-app-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  SWIFT_VERSION: "6.4.0"
+  PMAI_NO_VISUAL: "1"
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: SwiftyLab/setup-swift@v1.14.1
+        with:
+          swift-version: swift-${{ env.SWIFT_VERSION }}-RELEASE
+          check-latest: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Install Android build tools and NDK 30
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          curl -fL -o "$RUNNER_TEMP/android-ndk.zip" https://dl.google.com/android/repository/android-ndk-r30-linux.zip
+          unzip -q "$RUNNER_TEMP/android-ndk.zip" -d "$RUNNER_TEMP"
+          echo "ANDROID_NDK_HOME=$RUNNER_TEMP/android-ndk-r30" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$RUNNER_TEMP/android-ndk-r30" >> "$GITHUB_ENV"
+      - name: Install and configure Swift Android SDK
+        run: |
+          swift sdk install \
+            "https://download.swift.org/swift-${SWIFT_VERSION}-release/android-sdk/swift-${SWIFT_VERSION}-RELEASE/swift-${SWIFT_VERSION}-RELEASE_android.artifactbundle.tar.gz" \
+            --checksum 21fb555122a3d801ad943d48df7ebffdd8824de61c25c180bb792d3edaee0b43
+          swiftpm_root="${XDG_CONFIG_HOME:+$XDG_CONFIG_HOME/swiftpm}"
+          bash "${swiftpm_root:-$HOME/.swiftpm}/swift-sdks/swift-${SWIFT_VERSION}-RELEASE_android.artifactbundle/swift-android/scripts/setup-android-sdk.sh"
+      - name: Test portable Swift screens
+        run: |
+          sh PocketMaiAndroid/scripts/bootstrap.sh
+          swift test --package-path PocketMaiAndroid --build-system native --disable-sandbox
+      - name: Build APK for device and emulator
+        env:
+          ANDROID_ABIS: "arm64-v8a x86_64"
+        run: make android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PocketMai-Android-debug
+          path: PocketMaiAndroid/app/build/outputs/apk/debug/app-debug.apk

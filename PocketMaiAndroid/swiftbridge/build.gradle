@@ -1,0 +1,20 @@
+// Compile only the UI dependency's generated bindings/runtime. There is no
+// app-authored Java or Kotlin bridge surface.
+plugins { id 'java-library' }
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+def swiftCommand = System.getenv('SWIFT') ?: 'swift'
+def generated = rootProject.file('.build/plugins/outputs/androidswiftui/BridgeExport/destination/JExtractSwiftPlugin/src/generated/java')
+tasks.register('jextract', Exec) {
+    workingDir rootDir
+    environment 'JAVA_HOME', System.getProperty('java.home')
+    commandLine swiftCommand, 'build', '--build-system', 'native', '--target', 'BridgeExport', '--disable-sandbox'
+    outputs.dir generated
+}
+sourceSets.main {
+    java.srcDirs rootProject.file('.build/checkouts/swift-java/SwiftKitCore/src/main/java'), generated
+    resources.srcDir rootProject.file('.build/checkouts/swift-java/SwiftKitCore/src/main/resources')
+}
+tasks.named('compileJava') { dependsOn 'jextract' }

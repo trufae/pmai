@@ -1,0 +1,4 @@
+.deps/
+.gradle/
+local.properties
+app/src/main/jniLibs/

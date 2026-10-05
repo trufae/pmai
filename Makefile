@@ -18,8 +18,15 @@ APP_BUNDLE ?=
 BINDIR ?= $(HOME)/.local/bin
 
 .PHONY: all build test list run uninstall repl repl-install repl-uninstall repl-musl plugin-fixture fmt clean check-shared-tooling aitest-build
+.PHONY: android android-test
 
 all: build
+
+android:
+	$(MAKE) -C PocketMaiAndroid
+
+android-test:
+	$(MAKE) -C PocketMaiAndroid test
 
 build:
 	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration $(CONFIG) -destination '$(DESTINATION)' -derivedDataPath $(DERIVED_DATA) $(XCODE_PACKAGE_FLAGS) CODE_SIGNING_ALLOWED=NO build

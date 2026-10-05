@@ -1,0 +1,14 @@
+pluginManagement {
+    repositories { google(); mavenCentral(); gradlePluginPortal() }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories { google(); mavenCentral() }
+    versionCatalogs {
+        libs { from(files('.deps/AndroidSwiftUI/gradle/libs.versions.toml')) }
+    }
+}
+rootProject.name = 'PocketMaiAndroid'
+include ':app', ':composeui', ':androidbridge', ':swiftbridge'
+project(':composeui').projectDir = file('.deps/AndroidSwiftUI/composeui')
+project(':androidbridge').projectDir = file('.deps/AndroidSwiftUI/androidbridge')

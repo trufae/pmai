@@ -1,0 +1,31 @@
+diff --git a/Sources/ComposeUI/BridgeRuntime.swift b/Sources/ComposeUI/BridgeRuntime.swift
+--- a/Sources/ComposeUI/BridgeRuntime.swift
++++ b/Sources/ComposeUI/BridgeRuntime.swift
+@@ -49,7 +49,7 @@ public final class BridgeRuntime {
+         guard !needsRender else { return }
+         needsRender = true
+         scheduler { [weak self] in
+-            guard let self else { return }
++            guard let self, self.needsRender else { return }
+             self.needsRender = false
+             self.push()
+         }
+@@ -74,7 +74,17 @@ public final class BridgeRuntime {
+     public func invokeBool(_ id: Int64, _ value: Bool) { host.callbacks.invokeBool(id, value) }
+     public func invokeDouble(_ id: Int64, _ value: Double) { host.callbacks.invokeDouble(id, value) }
+     public func invokeInt(_ id: Int64, _ value: Int) { host.callbacks.invokeInt(id, value) }
+-    public func invokeString(_ id: Int64, _ value: String) { host.callbacks.invokeString(id, value) }
++    public func invokeString(_ id: Int64, _ value: String) {
++        host.callbacks.invokeString(id, value)
++        // Text controls reconcile local edits against the Swift tree. Publish
++        // their acknowledgement before returning to Compose, otherwise its
++        // immediate recomposition can restore a stale value and lose typing.
++        // The callback has finished and this JNI frame has the app class loader.
++        if needsRender {
++            needsRender = false
++            push()
++        }
++    }
+ 
+     /// Resolves a lazy row and materializes it for the interpreter. Runs during
+     /// Compose composition — a pure read.

@@ -25,6 +25,7 @@ let package = Package(
   products: [
     .library(name: "MaiCore", targets: ["MaiCore"]),
     .library(name: "MaiOpenAI", targets: ["MaiOpenAI"]),
+    .library(name: "MaiChat", targets: ["MaiChat"]),
     .library(name: "MaiMCP", targets: ["MaiMCP"]),
     .library(name: "MaiStandardTools", targets: ["MaiStandardTools"]),
     .library(name: "MaiVisionOCR", targets: ["MaiVisionOCR"]),
@@ -45,6 +46,7 @@ let package = Package(
     .target(name: "MaiCore"),
     .target(name: "MaiMarkdown"),
     .target(name: "MaiOpenAI", dependencies: ["MaiCore"]),
+    .target(name: "MaiChat", dependencies: ["MaiCore", "MaiOpenAI"]),
     .target(name: "MaiACP", dependencies: ["MaiCore"]),
     .target(name: "MaiACPGateway", dependencies: [
       "MaiACP", "MaiCore",
@@ -86,6 +88,9 @@ let package = Package(
         .linkedLibrary("crypto", .when(platforms: [.android])),
         .linkedLibrary("z", .when(platforms: [.android])),
       ]),
+    .testTarget(
+      name: "MaiChatTests",
+      dependencies: ["MaiChat", "MaiCore"]),
     .testTarget(
       name: "MaiCoreTests",
       dependencies: [

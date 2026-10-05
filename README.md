@@ -99,6 +99,11 @@ debugger attachment or to run in the Simulator.
 
 ## Releases
 
+A basic [Android app](PocketMaiAndroid/README.md) is also available from source:
+provider setup, model listing, system prompts, streaming chat, and saved history.
+Its application code and UI are Swift, using MaiCore and the AndroidSwiftUI
+runtime. Build it with `make android` using the matching Swift 6.4 Android SDK.
+
 Ready to use from the [AppStore](https://apps.apple.com/es/app/pocketmai/id6764296742)
 
 But you may find the ipa and source zips in the [Release](https://github.com/trufae/pocketmai/releases) page.

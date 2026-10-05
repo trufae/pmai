@@ -1,0 +1,49 @@
+plugins { alias(libs.plugins.android.application) }
+
+def bundledIcon = layout.buildDirectory.dir('generated/ios-icon')
+def syncIosIcon = tasks.register('syncIosIcon', Copy) {
+    from rootProject.file('../PocketMai/Assets.xcassets/AppIcon.appiconset/icon-1024.png')
+    into bundledIcon.map { it.dir('drawable-nodpi') }
+    rename { 'ic_launcher.png' }
+}
+
+android {
+    namespace 'org.mai.pocketmai'
+    compileSdk 35
+    sourceSets.main.res.srcDir bundledIcon
+    // Use the same NDK as Swift so Gradle can strip packaged debug symbols.
+    def ndkHome = System.getenv('ANDROID_NDK_HOME') ?: System.getenv('ANDROID_NDK_ROOT')
+    if (ndkHome) {
+        ndkPath ndkHome
+        ndkVersion new Properties().with { properties ->
+            file("$ndkHome/source.properties").withInputStream { properties.load(it) }
+            properties.getProperty('Pkg.Revision')
+        }
+    }
+    defaultConfig {
+        applicationId 'org.mai.pocketmai'
+        minSdk 28
+        targetSdk 35
+        versionCode 1
+        versionName '0.1.0'
+        ndk { abiFilters 'arm64-v8a', 'x86_64' }
+    }
+    buildTypes {
+        release { minifyEnabled false }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    packaging {
+        jniLibs { useLegacyPackaging true }
+        resources { excludes += ['/META-INF/AL2.0', '/META-INF/LGPL2.1'] }
+    }
+}
+
+tasks.named('preBuild') { dependsOn syncIosIcon }
+
+dependencies {
+    implementation project(':composeui')
+    implementation project(':androidbridge')
+}
