@@ -1,5 +1,18 @@
 plugins { alias(libs.plugins.android.application) }
 
+def releaseSigning = [
+    'PMAI_ANDROID_KEYSTORE', 'PMAI_ANDROID_KEY_ALIAS',
+    'PMAI_ANDROID_STORE_PASSWORD', 'PMAI_ANDROID_KEY_PASSWORD'
+].collectEntries { name -> [(name): System.getenv(name)] }
+def hasReleaseSigning = releaseSigning.values().any { it }
+def androidAbis = (System.getenv('ANDROID_ABIS') ?: 'arm64-v8a').tokenize()
+if (hasReleaseSigning) {
+    def missing = releaseSigning.findAll { name, value -> !value }.keySet()
+    if (missing) {
+        throw new GradleException("Release signing requires: ${missing.join(', ')}")
+    }
+}
+
 def bundledIcon = layout.buildDirectory.dir('generated/ios-icon')
 def syncIosIcon = tasks.register('syncIosIcon', Copy) {
     from rootProject.file('../PocketMai/Assets.xcassets/AppIcon.appiconset/icon-1024.png')
@@ -26,10 +39,24 @@ android {
         targetSdk 35
         versionCode 1
         versionName '0.1.0'
-        ndk { abiFilters 'arm64-v8a', 'x86_64' }
+        // Exclude leftover libraries for ABIs not rebuilt in this invocation.
+        ndk { abiFilters(*androidAbis) }
+    }
+    signingConfigs {
+        if (hasReleaseSigning) {
+            release {
+                storeFile rootProject.file(releaseSigning.PMAI_ANDROID_KEYSTORE)
+                storePassword releaseSigning.PMAI_ANDROID_STORE_PASSWORD
+                keyAlias releaseSigning.PMAI_ANDROID_KEY_ALIAS
+                keyPassword releaseSigning.PMAI_ANDROID_KEY_PASSWORD
+            }
+        }
     }
     buildTypes {
-        release { minifyEnabled false }
+        release {
+            minifyEnabled false
+            if (hasReleaseSigning) { signingConfig signingConfigs.release }
+        }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

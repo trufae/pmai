@@ -1,11 +1,41 @@
 #!/bin/bash
 set -euo pipefail
 app_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-source "$app_dir/scripts/environment.sh"
-swift_command=$SWIFT
 configuration=${CONFIGURATION:-debug}
 abis=${ANDROID_ABIS:-arm64-v8a}
+export ANDROID_ABIS="$abis"
 
+case "$configuration" in
+  debug) gradle_task=:app:assembleDebug; apk_name=app-debug.apk ;;
+  release) gradle_task=:app:assembleRelease; apk_name=app-release-unsigned.apk ;;
+  *) echo "Unsupported CONFIGURATION: $configuration (use debug or release)." >&2; exit 1 ;;
+esac
+
+signing_variables=(PMAI_ANDROID_KEYSTORE PMAI_ANDROID_KEY_ALIAS PMAI_ANDROID_STORE_PASSWORD PMAI_ANDROID_KEY_PASSWORD)
+signing_requested=false
+for variable in "${signing_variables[@]}"; do
+  if [ -n "${!variable:-}" ]; then signing_requested=true; fi
+done
+if "$signing_requested"; then
+  for variable in "${signing_variables[@]}"; do
+    if [ -z "${!variable:-}" ]; then
+      echo "Release signing requires $variable; see README.md." >&2
+      exit 1
+    fi
+  done
+  case "$PMAI_ANDROID_KEYSTORE" in
+    /*) ;;
+    *) export PMAI_ANDROID_KEYSTORE="$app_dir/$PMAI_ANDROID_KEYSTORE" ;;
+  esac
+  if [ ! -f "$PMAI_ANDROID_KEYSTORE" ]; then
+    echo "Release signing keystore not found; check PMAI_ANDROID_KEYSTORE." >&2
+    exit 1
+  fi
+  if [ "$configuration" = release ]; then apk_name=app-release.apk; fi
+fi
+
+source "$app_dir/scripts/environment.sh"
+swift_command=$SWIFT
 : "${ANDROID_HOME:?Android SDK not found; install it with Android Studio or set ANDROID_HOME}"
 : "${ANDROID_NDK_HOME:?Android NDK 30 not found; install it with Android Studio or set ANDROID_NDK_HOME}"
 
@@ -70,5 +100,13 @@ done
 
 # The dependency pins the Gradle version compatible with its plugins.
 gradle_command=${GRADLE:-$app_dir/.deps/AndroidSwiftUI/gradlew}
-"$gradle_command" -p "$app_dir" :app:clean :app:assembleDebug
-echo "APK: $app_dir/app/build/outputs/apk/debug/app-debug.apk"
+"$gradle_command" -p "$app_dir" :app:clean "$gradle_task"
+apk_path="$app_dir/app/build/outputs/apk/$configuration/$apk_name"
+if [ ! -f "$apk_path" ]; then
+  echo "Expected APK was not generated: $apk_path" >&2
+  exit 1
+fi
+echo "APK: $apk_path"
+if [ "$configuration" = release ] && ! "$signing_requested"; then
+  echo "Unsigned release APK: configure PMAI_ANDROID_KEYSTORE and signing credentials before installing (see README.md)."
+fi

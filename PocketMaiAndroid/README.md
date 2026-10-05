@@ -54,7 +54,9 @@ cache. No path exports are needed for those installations. `JAVA_HOME`,
 custom installations; the SDK/NDK `*_ROOT` aliases are also accepted.
 
 The script builds arm64 by default and uses the UI dependency's pinned Gradle
-wrapper. Set `ANDROID_ABIS='arm64-v8a x86_64'` for both supported ABIs. Set
+wrapper. Set `ANDROID_ABIS='arm64-v8a x86_64'` for both supported ABIs.
+Only the requested ABIs are packaged, even if an earlier build left other
+native libraries in the staging directory. Set
 `SWIFT_SDKS_PATH` for a custom SDK install directory, or
 `SWIFT_ANDROID_SDK_ROOT` to the artifact bundle's `swift-android` directory.
 `GRADLE` can override the wrapper command.
@@ -65,6 +67,49 @@ Output: `app/build/outputs/apk/debug/app-debug.apk`. Install and launch:
 adb install -r PocketMaiAndroid/app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n org.mai.pocketmai/com.pureswift.swiftandroid.SwiftUIActivity
 ```
+
+## Release APK
+
+Inside `PocketMaiAndroid/`:
+
+```sh
+make release
+```
+
+This compiles Swift with release optimizations and packages Android's
+non-debuggable release variant. Without signing credentials, the output is
+`app/build/outputs/apk/release/app-release-unsigned.apk`; it cannot be installed
+until signed. `make CONFIGURATION=release` is equivalent. Plain `make` still
+builds the debug APK.
+
+Release builds can spend several minutes optimizing the renderer and SwiftPM
+build tools.
+
+To produce an installable release APK, create or reuse your own
+[Android signing keystore](https://developer.android.com/studio/publish/app-signing)
+and set these environment variables before running `make release`:
+
+```sh
+export PMAI_ANDROID_KEYSTORE=/absolute/path/to/pocketmai-release.jks
+export PMAI_ANDROID_KEY_ALIAS=pocketmai
+read -rsp 'Keystore password: ' PMAI_ANDROID_STORE_PASSWORD; echo
+read -rsp 'Key password: ' PMAI_ANDROID_KEY_PASSWORD; echo
+export PMAI_ANDROID_STORE_PASSWORD PMAI_ANDROID_KEY_PASSWORD
+make release
+unset PMAI_ANDROID_STORE_PASSWORD PMAI_ANDROID_KEY_PASSWORD
+```
+
+The password prompts above use Bash. All four variables are required when
+signing is requested. Relative keystore paths resolve from `PocketMaiAndroid/`.
+Keep the keystore outside the repository, back it up securely, and use the
+same key for future updates. Do not pass passwords as Make command-line
+arguments or commit them to files.
+
+Signed output: `app/build/outputs/apk/release/app-release.apk`. To build and
+install with the signing variables still exported, use
+`make CONFIGURATION=release install`. A release signed with your own key cannot
+replace a debug-key installation; uninstalling the old app erases its settings
+and chats.
 
 ## Use
 
