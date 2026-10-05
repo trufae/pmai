@@ -119,6 +119,7 @@ def main():
             assert seed.returncode == 0, seed.stderr
             chat_file = next((root / '.pmai/chats').glob('*.json'))
             chat = json.loads(chat_file.read_text())
+            seed_messages = chat['messages'][:]
             # A saved structured tool result made each old status tick re-encode the whole value.
             chat['messages'].append({'id': 'tool', 'role': 'tool', 'content': [{
                 'toolResult': {'_0': {'callID': 'fixture', 'isError': False, 'content': [],
@@ -297,7 +298,6 @@ def main():
                 wait_for('draft-after-compaction-preserved')
                 send('\n')
                 wait_for('✓ took')
-                print('PASS manual compaction: prompt, cancellation, and preserved draft', flush=True)
                 send('/exit\n')
                 # macOS terminal restoration waits for pending PTY output to drain.
                 deadline = time.monotonic() + 10
@@ -306,8 +306,16 @@ def main():
                     read_for(.05)
                 assert process.returncode == 0, (process.returncode, output.decode(errors='replace'))
                 messages = json.loads(chat_file.read_text())['messages']
-                assert [m['content'][0]['text']['_0'] for m in messages if m['role'] == 'user'] == [
-                    'draft-after-compaction-preserved']
+                user_texts = [m['content'][0]['text']['_0'] for m in messages if m['role'] == 'user']
+                # Compaction keeps the latest request and stores its summary as conversation evidence.
+                assert user_texts == [
+                    'Summary of earlier parts of this conversation, written by the assistant to save context:\n\nanswer',
+                    'seed', 'draft-after-compaction-preserved'], user_texts
+                for message in seed_messages:
+                    if message['role'] in ('system', 'developer', 'user'):
+                        assert message in messages, message
+                assert not any(m['id'] == 'tool' for m in messages), 'Compaction kept the old tool result'
+                print('PASS manual compaction: cancellation, summary, retained task, and saved draft', flush=True)
             finally:
                 release.set()
                 catalog_release.set()
