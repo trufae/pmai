@@ -13,6 +13,9 @@ public struct MaiFileWorkspaceConfiguration: Equatable, Sendable {
   public var followsProcessWorkingDirectory: Bool
   public var isSecurityScoped: Bool
   public var hiddenRootEntryNames: Set<String>
+  /// Extra paths the host approved for this conversation. Directories permit
+  /// their descendants; files permit that one resolved file only.
+  public var additionalAllowedURLs: [URL]
 
   public init(
     rootURL: URL,
@@ -21,7 +24,8 @@ public struct MaiFileWorkspaceConfiguration: Equatable, Sendable {
     writeEnabled: Bool = true,
     followsProcessWorkingDirectory: Bool = false,
     isSecurityScoped: Bool = false,
-    hiddenRootEntryNames: Set<String> = []
+    hiddenRootEntryNames: Set<String> = [],
+    additionalAllowedURLs: [URL] = []
   ) {
     self.rootURL = rootURL.standardizedFileURL
     self.temporaryDirectoryURL =
@@ -33,6 +37,7 @@ public struct MaiFileWorkspaceConfiguration: Equatable, Sendable {
     self.followsProcessWorkingDirectory = followsProcessWorkingDirectory
     self.isSecurityScoped = isSecurityScoped
     self.hiddenRootEntryNames = hiddenRootEntryNames
+    self.additionalAllowedURLs = additionalAllowedURLs.map(\.standardizedFileURL)
   }
 }
 
@@ -95,9 +100,10 @@ public struct MaiFileWorkspaceTool: AgentTool {
       ? AgentExecutionScope.directory : configuration.rootURL
     return .init(
       workingDirectory: root.path,
-      allowedPaths: [root.path, configuration.temporaryDirectoryURL.path],
+      allowedPaths: [root.path, configuration.temporaryDirectoryURL.path]
+        + configuration.additionalAllowedURLs.map(\.path),
       sandbox:
-        "File paths are checked by the Files tool against its workspace and temporary directory, including symlinks. Write enabled: \(configuration.writeEnabled). Approval never bypasses those checks."
+        "File paths are checked by the Files tool against its workspace, approved paths, and temporary directory, including symlinks. Write enabled: \(configuration.writeEnabled). Approval never bypasses those checks."
     )
   }
 
@@ -487,6 +493,8 @@ private struct MaiFileWorkspace: Sendable {
 
   let configuration: MaiFileWorkspaceConfiguration
   let rootURL: URL
+  let additionalDirectoryURLs: [URL]
+  let additionalFileURLs: Set<URL>
 
   init(configuration: MaiFileWorkspaceConfiguration) throws {
     let configuredRoot =
@@ -504,6 +512,22 @@ private struct MaiFileWorkspace: Sendable {
     }
     self.configuration = configuration
     rootURL = configuredRoot.resolvingSymlinksInPath().standardizedFileURL
+    var directories: [URL] = []
+    var files = Set<URL>()
+    for url in configuration.additionalAllowedURLs {
+      let resolved = url.resolvingSymlinksInPath().standardizedFileURL
+      var isDirectory: ObjCBool = false
+      guard FileManager.default.fileExists(atPath: resolved.path, isDirectory: &isDirectory) else {
+        throw MaiFileWorkspaceError.invalidRoot(resolved.path)
+      }
+      if isDirectory.boolValue {
+        directories.append(resolved)
+      } else {
+        files.insert(resolved)
+      }
+    }
+    additionalDirectoryURLs = directories
+    additionalFileURLs = files
   }
 
   /// Returns whether the given URL is inside the workspace root or the configured
@@ -511,7 +535,9 @@ private struct MaiFileWorkspace: Sendable {
   /// remain valid while links that escape are rejected.
   private func isAllowed(_ url: URL) -> Bool {
     let resolved = url.resolvingSymlinksInPath().standardizedFileURL
-    return isInside(resolved, directory: rootURL)
+    return isInsideOrEqual(resolved, directory: rootURL)
+      || additionalDirectoryURLs.contains { isInsideOrEqual(resolved, directory: $0) }
+      || additionalFileURLs.contains(resolved)
       || isInside(resolved, directory: configuration.temporaryDirectoryURL)
       || resolved.path == rootURL.path
       || resolved.path == configuration.temporaryDirectoryURL.path
@@ -1438,7 +1464,7 @@ private struct MaiFileWorkspace: Sendable {
         .standardizedFileURL
     }
     guard isInside(candidate) else { throw MaiFileWorkspaceError.outsideWorkspace(rawPath) }
-    guard allowRoot || candidate.path != rootURL.path else {
+    guard allowRoot || !isWorkspaceRoot(candidate) else {
       throw MaiFileWorkspaceError.rootNotAllowed
     }
     if FileManager.default.fileExists(atPath: candidate.path) {
@@ -1449,7 +1475,7 @@ private struct MaiFileWorkspace: Sendable {
     guard !mustExist else { throw MaiFileWorkspaceError.notFound(displayPath(rawPath)) }
 
     var ancestor = candidate.deletingLastPathComponent()
-    while ancestor.path != rootURL.path, !FileManager.default.fileExists(atPath: ancestor.path) {
+    while !isWorkspaceRoot(ancestor), !FileManager.default.fileExists(atPath: ancestor.path) {
       ancestor.deleteLastPathComponent()
     }
     let resolvedAncestor = ancestor.resolvingSymlinksInPath().standardizedFileURL
@@ -1634,6 +1660,15 @@ private struct MaiFileWorkspace: Sendable {
     return childPath.hasPrefix(parentPath + "/")
   }
 
+  private func isInsideOrEqual(_ url: URL, directory: URL) -> Bool {
+    url.standardizedFileURL.path == directory.standardizedFileURL.path || isInside(url, directory: directory)
+  }
+
+  private func isWorkspaceRoot(_ url: URL) -> Bool {
+    let resolved = url.resolvingSymlinksInPath().standardizedFileURL
+    return resolved == rootURL || additionalDirectoryURLs.contains(resolved)
+  }
+
   private func isInHiddenRootEntry(_ url: URL) -> Bool {
     guard let relative = path(relativeTo: rootURL, child: url),
       let first = relative.split(separator: "/").first
@@ -1702,7 +1737,9 @@ private struct MaiFileWorkspace: Sendable {
   }
 
   private func isInside(_ url: URL) -> Bool {
-    url.path == rootURL.path || url.path.hasPrefix(rootURL.path + "/")
+    isInsideOrEqual(url, directory: rootURL)
+      || additionalDirectoryURLs.contains { isInsideOrEqual(url, directory: $0) }
+      || additionalFileURLs.contains(url.resolvingSymlinksInPath().standardizedFileURL)
   }
 
   private func relativePath(_ url: URL) -> String {
@@ -1710,6 +1747,12 @@ private struct MaiFileWorkspace: Sendable {
     if resolvedPath == rootURL.path { return "." }
     if resolvedPath.hasPrefix(rootURL.path + "/") {
       return String(resolvedPath.dropFirst(rootURL.path.count + 1))
+    }
+    if additionalDirectoryURLs.contains(where: { isInsideOrEqual(url, directory: $0) }) {
+      return url.path
+    }
+    if additionalFileURLs.contains(url.resolvingSymlinksInPath().standardizedFileURL) {
+      return url.path
     }
     let lexicalRoot = configuration.rootURL.standardizedFileURL.path
     let lexicalPath = url.standardizedFileURL.path

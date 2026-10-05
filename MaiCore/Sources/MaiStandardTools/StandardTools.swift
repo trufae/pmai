@@ -22,7 +22,12 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
 
   public init() {}
 
-  public func makeTools(context: PluginFactoryContext) async throws -> [any AgentTool] {
+  /// The Files tools can retain the workspace while a host adds explicitly
+  /// approved external paths for one conversation.
+  public static func fileWorkspaceConfiguration(
+    context: PluginFactoryContext,
+    additionalAllowedURLs: [URL] = []
+  ) -> MaiFileWorkspaceConfiguration {
     let configuredFilesRoot =
       context.options["filesRoot"]?.stringValue
       ?? context.environment["PMAI_FILES_ROOT"]
@@ -34,11 +39,16 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
         default: FileManager.default.currentDirectoryPath)
     )
     .expandingTildeInPath
-    let fileConfiguration = MaiFileWorkspaceConfiguration(
+    return MaiFileWorkspaceConfiguration(
       rootURL: URL(fileURLWithPath: filesRoot),
       displayName: context.options["filesDisplayName"]?.stringValue,
       writeEnabled: context.options["filesWriteEnabled"]?.boolValue ?? true,
-      followsProcessWorkingDirectory: followsWorkingDirectory)
+      followsProcessWorkingDirectory: followsWorkingDirectory,
+      additionalAllowedURLs: additionalAllowedURLs)
+  }
+
+  public func makeTools(context: PluginFactoryContext) async throws -> [any AgentTool] {
+    let fileConfiguration = Self.fileWorkspaceConfiguration(context: context)
     let webSearchProvider =
       context.options["webSearchProvider"]?.stringValue
       .flatMap(MaiWebSearchProvider.init(rawValue:)) ?? .exa

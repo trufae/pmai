@@ -4,6 +4,33 @@ import Testing
 @testable import MaiCore
 @testable import MaiStandardTools
 
+@Test("Files tools allow only explicitly approved external files and folders")
+func fileWorkspaceToolsAllowApprovedExternalPaths() async throws {
+  let base = FileManager.default.temporaryDirectory
+    .appendingPathComponent("mai-files-approved-\(UUID().uuidString)", isDirectory: true)
+  let root = base.appendingPathComponent("workspace", isDirectory: true)
+  let external = base.appendingPathComponent("external", isDirectory: true)
+  let exact = base.appendingPathComponent("exact.txt")
+  let denied = base.appendingPathComponent("denied.txt")
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  try FileManager.default.createDirectory(at: external, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: base) }
+  try Data("folder access".utf8).write(to: external.appendingPathComponent("inside.txt"))
+  try Data("file access".utf8).write(to: exact)
+  try Data("private".utf8).write(to: denied)
+
+  let tools = MaiFileWorkspaceTool.makeTools(configuration: .init(
+    rootURL: root, additionalAllowedURLs: [external, exact]))
+  let read = tool(tools, .read)
+  let folderFile = try await call(read, ["path": .string(external.appendingPathComponent("inside.txt").path)])
+  #expect(folderFile.text == "folder access")
+  let exactFile = try await call(read, ["path": .string(exact.path)])
+  #expect(exactFile.text == "file access")
+  let outside = try await call(read, ["path": .string(denied.path)])
+  #expect(outside.isError)
+  #expect(outside.text.contains("outside the configured workspace"))
+}
+
 @Test("Shared Files tools manage a root-scoped text workspace")
 func fileWorkspaceToolsManageFiles() async throws {
   let root = FileManager.default.temporaryDirectory

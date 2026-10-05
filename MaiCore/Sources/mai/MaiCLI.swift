@@ -1054,8 +1054,35 @@ private actor TerminalApprovalHandler: ApprovalHandler {
     guard approvalMode == .ask else {
       return .deny(reason: "Smart approval must be evaluated by the runtime.")
     }
+    return try await interactiveDecision(request)
+  }
+
+  /// A path explicitly named in the person's prompt needs approval before it
+  /// is added to the Files tool's host-enforced scope. Smart tool approval
+  /// cannot widen a sandbox, so it asks the person here too.
+  func decidePromptPathAccess(_ url: URL) async throws -> Bool {
+    if approvalMode == .yolo { return true }
+    let arguments: JSONValue = .object(["path": .string(url.path)])
+    let request = ApprovalRequest(
+      run: AgentEventContext(runID: UUID(), parentRunID: nil, agentID: "path-access", depth: 0),
+      tool: ToolDefinition(
+        name: "files_allow_path",
+        description: "Allow the Files tools to access an external path named in the prompt.",
+        annotations: .init(readOnly: false, approval: .confirm)),
+      call: ToolCall(id: UUID().uuidString, name: "files_allow_path", arguments: arguments))
+    // The REPL is synchronously preparing a turn here, so routing through its
+    // normal approval event would wait for an event loop that is not running.
+    if case .approve = try directTerminalDecision(request) { return true }
+    return false
+  }
+
+  private func interactiveDecision(_ request: ApprovalRequest) async throws -> ApprovalDecision {
     if let delegate { return try await delegate.decide(request) }
     if let prompter { return try await prompter(request) }
+    return try directTerminalDecision(request)
+  }
+
+  private func directTerminalDecision(_ request: ApprovalRequest) throws -> ApprovalDecision {
     guard isatty(STDIN_FILENO) != 0 else {
       return .deny(reason: "Interactive approval requires a terminal.")
     }
@@ -1091,6 +1118,14 @@ private actor TerminalApprovalHandler: ApprovalHandler {
       return .deny(reason: "Denied by user.")
     }
   }
+}
+
+private actor PromptFileAccess {
+  private var approvedURLs: [URL] = []
+
+  func contains(_ url: URL) -> Bool { approvedURLs.contains(url) }
+  func add(_ url: URL) { if !approvedURLs.contains(url) { approvedURLs.append(url) } }
+  func all() -> [URL] { approvedURLs }
 }
 
 @main
@@ -1195,6 +1230,7 @@ struct MaiCLI {
       // bounded default can evict a parent before its subtree is saved.
       let runtime = AgentRuntime(
         approvalHandler: approvalHandler, supervisor: AgentSupervisor(finishedRetention: .max))
+      let promptFileAccess = PromptFileAccess()
       if await approvalHandler.isDebugEnabled() {
         do {
           await runtime.configureDebugLog(
@@ -1431,6 +1467,10 @@ struct MaiCLI {
           runtime: runtime,
           process: &oneShotProcess,
           terminal: terminal,
+          promptFileAccess: promptFileAccess,
+          approvalHandler: approvalHandler,
+          configuration: configuration,
+          environment: environment,
           checkpoint: { chat in
             workspace.upsert(chat, selecting: true)
             try store.commit(&workspace)
@@ -1471,6 +1511,7 @@ struct MaiCLI {
         catalogs: setup.catalogs,
         visual: visual,
         pmaiBridge: pmaiBridge,
+        promptFileAccess: promptFileAccess,
         terminal: terminal)
     } catch {
       FileHandle.standardError.write(Data("error: \(error.localizedDescription)\n".utf8))
@@ -2100,6 +2141,7 @@ struct MaiCLI {
     catalogs: [MCPServerCatalog],
     visual: VisualBridge,
     pmaiBridge: PmaiCommandBridge,
+    promptFileAccess: PromptFileAccess,
     terminal: TerminalWriter
   ) async {
     var configuration = configuration
@@ -2517,6 +2559,14 @@ struct MaiCLI {
     /// texts just typed. The turn runs in its own task; the loop hears about
     /// its end as an event.
     func startTurn(_ texts: [String], ignoringQueue: Bool = false) async {
+      for text in texts {
+        guard await preparePromptFileAccess(
+          for: text, runtime: runtime, configuration: configuration,
+          environment: ProcessInfo.processInfo.environment,
+          promptFileAccess: promptFileAccess, approvalHandler: visual.approvalHandler,
+          terminal: terminal)
+        else { return }
+      }
       let pid = await mainProcess()
       let held =
         ignoringQueue
@@ -3665,14 +3715,125 @@ struct MaiCLI {
     }
   }
 
+  /// Finds explicit filesystem paths only. Bare words are deliberately not
+  /// treated as paths: an access grant must come from an unambiguous absolute,
+  /// home-relative, or dot-relative reference in the person's prompt.
+  private static func promptPaths(in text: String, relativeTo directory: URL) -> [URL] {
+    let pattern = #"(?:^|(?<=[\s\"'`]))((?:/|~\/|\.\.?/)[^\s\"'`<>|]+)"#
+    guard let expression = try? NSRegularExpression(pattern: pattern) else { return [] }
+    let range = NSRange(text.startIndex..., in: text)
+    var seen = Set<URL>()
+    return expression.matches(in: text, range: range).compactMap { match in
+      guard let captured = Range(match.range(at: 1), in: text) else { return nil }
+      let raw = text[captured].trimmingCharacters(in: CharacterSet(charactersIn: ",.;:!?)]}"))
+      guard !raw.isEmpty else { return nil }
+      let path = NSString(string: String(raw)).expandingTildeInPath
+      let url = (path.hasPrefix("/")
+        ? URL(fileURLWithPath: path)
+        : directory.appendingPathComponent(path))
+        .standardizedFileURL.resolvingSymlinksInPath()
+      var isDirectory: ObjCBool = false
+      guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+        FileManager.default.isReadableFile(atPath: url.path), !seen.contains(url)
+      else { return nil }
+      seen.insert(url)
+      return url
+    }
+  }
+
+  private static func path(_ child: URL, isInside parent: URL) -> Bool {
+    let child = child.standardizedFileURL.path
+    let parent = parent.standardizedFileURL.path
+    return child == parent || child.hasPrefix(parent + "/")
+  }
+
+  private static func refreshFileTools(
+    runtime: AgentRuntime,
+    configuration: MaiConfiguration?,
+    environment: [String: String],
+    approvedURLs: [URL]
+  ) async throws {
+    let source = configuration?.toolSources.first {
+      $0.enabled && $0.kind == MaiStandardToolsPlugin.factoryKind
+    }
+    let context = source?.context(environment: environment)
+      ?? PluginFactoryContext(id: "standard-tools", environment: environment)
+    let fileConfiguration = MaiStandardToolFactory.fileWorkspaceConfiguration(
+      context: context, additionalAllowedURLs: approvedURLs)
+    for tool in MaiFileWorkspaceTool.makeTools(configuration: fileConfiguration) {
+      try await runtime.register(tool: tool, replacingExisting: true)
+    }
+  }
+
+  /// Adds verified external prompt paths to the Files tool's allowlist before
+  /// a turn begins. yolo accepts the explicit reference; ask and smart require
+  /// a terminal confirmation because a model review cannot expand a sandbox.
+  private static func preparePromptFileAccess(
+    for text: String,
+    runtime: AgentRuntime,
+    configuration: MaiConfiguration?,
+    environment: [String: String],
+    promptFileAccess: PromptFileAccess,
+    approvalHandler: TerminalApprovalHandler,
+    terminal: TerminalWriter
+  ) async -> Bool {
+    let source = configuration?.toolSources.first {
+      $0.enabled && $0.kind == MaiStandardToolsPlugin.factoryKind
+    }
+    let context = source?.context(environment: environment)
+      ?? PluginFactoryContext(id: "standard-tools", environment: environment)
+    let fileConfiguration = MaiStandardToolFactory.fileWorkspaceConfiguration(context: context)
+    let workspace = (fileConfiguration.followsProcessWorkingDirectory
+      ? AgentExecutionScope.directory : fileConfiguration.rootURL)
+      .standardizedFileURL.resolvingSymlinksInPath()
+    let paths = promptPaths(in: text, relativeTo: workspace)
+      .filter { !path($0, isInside: workspace) }
+    var changed = false
+    for url in paths where !(await promptFileAccess.contains(url)) {
+      do {
+        guard try await approvalHandler.decidePromptPathAccess(url) else {
+          await terminal.note("External path access was not granted: \(url.path)", tone: .warning)
+          return false
+        }
+      } catch is CancellationError {
+        return false
+      } catch {
+        await terminal.note("Could not approve external path access: \(error.localizedDescription)", tone: .warning)
+        return false
+      }
+      await promptFileAccess.add(url)
+      changed = true
+    }
+    guard changed else { return true }
+    do {
+      let approved = await promptFileAccess.all()
+      try await refreshFileTools(
+        runtime: runtime, configuration: configuration, environment: environment,
+        approvedURLs: approved)
+      await terminal.note("Files may access: \(paths.map(\.path).joined(separator: ", "))")
+      return true
+    } catch {
+      await terminal.note("Could not update file access: \(error.localizedDescription)", tone: .warning)
+      return false
+    }
+  }
+
   @MainActor private static func submit(
     _ text: String,
     session: inout REPLSession,
     runtime: AgentRuntime,
     process: inout AgentPID?,
     terminal: TerminalWriter,
+    promptFileAccess: PromptFileAccess,
+    approvalHandler: TerminalApprovalHandler,
+    configuration: MaiConfiguration?,
+    environment: [String: String],
     checkpoint: (AgentChat) throws -> Void = { _ in }
   ) async -> Bool {
+    guard await preparePromptFileAccess(
+      for: text, runtime: runtime, configuration: configuration, environment: environment,
+      promptFileAccess: promptFileAccess, approvalHandler: approvalHandler, terminal: terminal)
+    else { return false }
     var content: [ContentPart] = [.text(text)]
     content.append(contentsOf: session.pendingContent)
     session.pendingContent.removeAll()
