@@ -1691,6 +1691,15 @@ struct SettingsView: View {
       )
       .font(.caption)
       .foregroundStyle(.secondary)
+    case .vdb:
+      Toggle(
+        "Enable workspace access",
+        isOn: settingsBinding(\.toolSettings.filesWorkspaceAccessEnabled))
+      Text(
+        "Indexes documents and source code in this chat's working folder for local search. Ask to index a file or folder, then ask questions about it. Results include source paths and line ranges. The index persists in the working folder and works offline, even with a single document. Ask to reindex after changing files."
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
     case .files:
       Toggle(
         "Enable Files tools",

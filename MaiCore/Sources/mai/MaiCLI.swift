@@ -663,11 +663,12 @@ struct SessionProfile: Sendable {
         MaiWeatherTool.name,
         MaiWebSearchTool.name,
         MaiWebFetchTool.name,
+        MaiVectorDatabaseTool.name,
         MaiMastodonTool.name,
       ] + MaiFileWorkspaceTool.toolNames + MaiRunTool.toolNames + MaiGitHubTool.toolNames
         + MaiTodoTools.toolNames + MaiContextTools.toolNames)
     toolGroupNames = [
-      "datetime", "calc", "files", "run", "weather", "web", "mastodon", "github", "todo",
+      "datetime", "calc", "files", "run", "weather", "web", "mastodon", "github", "todo", "vdb",
       "context", MaiSkillTools.groupID,
     ]
     subagentNames = []
@@ -3767,6 +3768,8 @@ struct MaiCLI {
     for tool in MaiFileWorkspaceTool.makeTools(configuration: fileConfiguration) {
       try await runtime.register(tool: tool, replacingExisting: true)
     }
+    try await runtime.register(
+      tool: MaiVectorDatabaseTool(configuration: fileConfiguration), replacingExisting: true)
   }
 
   /// Adds verified external prompt paths to the Files tool's allowlist before
@@ -4138,6 +4141,8 @@ struct MaiCLI {
         await terminal.line(memoryHelp)
       case "todo", "/todo":
         await terminal.line(todoHelp)
+      case "vdb", "/vdb":
+        await terminal.line(vdbHelp)
       case "prompt", "prompts", "/prompt", "/prompts":
         await terminal.line(promptHelp)
       case "agents", "agent", "/agents", "/agent":
@@ -4234,6 +4239,9 @@ struct MaiCLI {
       await handleBTWCommand(argument, session: session, runtime: runtime, terminal: terminal)
     case "/todo":
       await handleTodoCommand(argument, todo: visual.todo, terminal: terminal)
+    case "/vdb":
+      await handleVectorDatabaseCommand(
+        argument, configuration: configuration, environment: ProcessInfo.processInfo.environment, terminal: terminal)
     case "/skills", "/skill":
       await handleSkillsCommand(
         argument,
@@ -4753,6 +4761,39 @@ struct MaiCLI {
     if names.contains(requested) { return requested }
     let matches = names.filter { $0.caseInsensitiveCompare(requested) == .orderedSame }
     return matches.count == 1 ? matches[0] : nil
+  }
+
+  private static func handleVectorDatabaseCommand(
+    _ argument: String, configuration: MaiConfiguration?, environment: [String: String],
+    terminal: TerminalWriter
+  ) async {
+    let fields = argument.split(maxSplits: 1, whereSeparator: \Character.isWhitespace).map(String.init)
+    let action = fields.first?.lowercased() ?? "status"
+    let rest = fields.count > 1 ? fields[1] : ""
+    var args: [String: JSONValue] = ["action": .string(action)]
+    switch action {
+    case "query": args["query"] = .string(rest)
+    case "index", "remove": args["path"] = .string(rest.isEmpty && action == "index" ? "." : rest)
+    case "status", "clear":
+      guard rest.isEmpty else { await terminal.line(vdbHelp); return }
+    default: await terminal.line(vdbHelp); return
+    }
+    let source = configuration?.toolSources.first {
+      $0.enabled && $0.kind == MaiStandardToolsPlugin.factoryKind
+    }
+    let context = source?.context(environment: environment)
+      ?? PluginFactoryContext(id: "standard-tools", environment: environment)
+    let tool = MaiVectorDatabaseTool(
+      configuration: MaiStandardToolFactory.fileWorkspaceConfiguration(context: context))
+    do {
+      let result = try await tool.call(
+        arguments: .object(args),
+        context: ToolExecutionContext(
+          run: AgentEventContext(runID: UUID(), parentRunID: nil, agentID: "repl", depth: 0), modelTurn: 0))
+      await terminal.line(result.text)
+    } catch {
+      await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+    }
   }
 
   /// `/todo` in full: the same list the `todo_*` tools drive, for the person
@@ -11233,6 +11274,7 @@ struct MaiCLI {
       "/memory scope project", "/memory scope all", "/edit memory", "/edit memory-prompt",
       "/help todo", "/todo", "/todo add ", "/todo done ", "/todo edit", "/todo sweep",
       "/todo clear", "/todo path",
+      "/help vdb", "/vdb", "/vdb index ", "/vdb query ", "/vdb status", "/vdb remove ", "/vdb clear",
       "/set limits.", "/set limits.maxToolCalls ", "/set limits.maxModelTurns ",
       "/set limits.maxSubagents ", "/set limits.maxSeconds ", "/set limits.maxTotalTokens ",
       "/set retry.attempts ", "/set retry.delay ", "/set ctx.strategy ", "/set ctx.compact ",
@@ -11368,7 +11410,7 @@ struct MaiCLI {
     }) == true {
       groupNames.formUnion(
         [
-          "datetime", "calc", "files", "run", "weather", "web", "mastodon", "github",
+          "datetime", "calc", "files", "run", "weather", "web", "mastodon", "github", "vdb",
           "todo", "context",
         ])
     }
@@ -11542,12 +11584,13 @@ struct MaiCLI {
               MaiWeatherTool.name,
               MaiWebSearchTool.name,
               MaiWebFetchTool.name,
+              MaiVectorDatabaseTool.name,
               MaiMastodonTool.name,
             ] + MaiFileWorkspaceTool.toolNames + MaiRunTool.toolNames + MaiGitHubTool.toolNames
               + MaiTodoTools.toolNames + MaiContextTools.toolNames),
           toolGroupNames: [
             "datetime", "calc", "files", "run", "weather", "web", "mastodon",
-            "github", "todo", "context",
+            "github", "todo", "context", "vdb",
           ],
           subagentNames: ["researcher"],
           limits: AgentRunLimits()),
@@ -11629,6 +11672,7 @@ struct MaiCLI {
     /stop                  Interrupt the current turn and keep its queue; /continue resumes it
     /theme                 List, apply, or save terminal themes (/help theme)
     /todo                  Show, add to, tick off, or edit this project's todo list
+    /vdb                   Index and query local documentation and source code
     /tools                 List logical tool groups for the current agent
     /version               Print the pmai version
     \(visualHelp)
@@ -11891,6 +11935,20 @@ struct MaiCLI {
     are chats_list, chats_search, chats_read, and chats_read_document; enable
     them for an agent with /tools enable chats. Edit the learning prompt with
     /edit memory-prompt.
+    """
+
+  private static let vdbHelp = """
+    Index local documentation and source code for retrieval. The index is kept
+    in the Files workspace at .pmai/vdb.json and survives restarts.
+
+      /vdb index [PATH]       Index a file/folder (default: workspace); refresh changes
+      /vdb query TEXT         Retrieve passages with source paths and line ranges
+      /vdb status             Show source/chunk counts and the index path
+      /vdb remove PATH        Remove one indexed file/folder, preserving source files
+      /vdb clear              Reset the whole index, preserving source files
+
+    The local sparse-vector/BM25 search works offline with one or many documents.
+    Reindex after editing sources. Enable the model's tool with /tools enable vdb.
     """
 
   private static let todoHelp = """

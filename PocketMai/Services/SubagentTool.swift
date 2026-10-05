@@ -193,7 +193,7 @@ enum SubagentTool {
     child.isPinned = false
 
     let workspace =
-      child.toolsEnabled && child.enabledTools.contains(.files)
+      child.toolsEnabled && !child.enabledTools.isDisjoint(with: [.files, .vdb])
       ? FileWorkspaceTool.workspaceName(for: child, settings: childSettings) : ""
     let prompt = AgentDelegationPrompt.render(
       start.brief, agent: agentID, workingDirectory: workspace)

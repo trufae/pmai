@@ -448,7 +448,7 @@ public struct MaiFileWorkspaceTool: AgentTool {
   }
 }
 
-private struct MaiFileWorkspace: Sendable {
+struct MaiFileWorkspace: Sendable {
   private enum RepositoryKind: String {
     case git
     case mercurial
@@ -1483,6 +1483,49 @@ private struct MaiFileWorkspace: Sendable {
       throw MaiFileWorkspaceError.outsideWorkspace(rawPath)
     }
     return candidate
+  }
+
+  // VDB uses the same path checks and source traversal as the Files tools.
+  func vectorPath(_ path: String, mustExist: Bool = true) throws -> URL {
+    let url = try resolve(path, allowRoot: true, mustExist: mustExist)
+    guard !isInHiddenRootEntry(url) else { throw MaiFileWorkspaceError.outsideWorkspace(path) }
+    return url
+  }
+
+  func vectorSource(_ url: URL) -> String { relativePath(url) }
+
+  func vectorIndexURL() throws -> URL {
+    let url = try resolve(MaiVectorDatabaseStore.relativePath, allowRoot: false, mustExist: false)
+    guard isInside(url, directory: rootURL) else {
+      throw MaiFileWorkspaceError.outsideWorkspace(MaiVectorDatabaseStore.relativePath)
+    }
+    return url
+  }
+
+  func vectorFiles(at target: URL) async throws -> [URL] {
+    var directory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: target.path, isDirectory: &directory) else {
+      throw MaiFileWorkspaceError.notFound(relativePath(target))
+    }
+    if !directory.boolValue { return [target] }
+    let maximum = 2000
+    if let entries = try await versionControlledEntries(at: target, includeDirectories: false, limit: maximum + 1) {
+      guard !entries.truncated, entries.entries.count <= maximum else {
+        throw MaiVectorDatabaseError.invalidIndex("index at most 2,000 files at a time; select a smaller folder")
+      }
+      return try entries.entries.map { try vectorPath($0.0.path) }.sorted { $0.path < $1.path }
+    }
+    var files: [URL] = []
+    var visited = 0
+    try enumerateFiles(at: target) { url, values, _ in
+      visited += 1
+      guard visited <= 20_000, files.count < maximum || values.isDirectory == true else {
+        throw MaiVectorDatabaseError.invalidIndex("index at most 2,000 files at a time; select a smaller folder")
+      }
+      if values.isRegularFile == true { files.append(try vectorPath(url.path)) }
+      return true
+    }
+    return files.sorted { $0.path < $1.path }
   }
 
   private func enumerateFiles(

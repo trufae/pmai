@@ -919,6 +919,62 @@ tools too.
 /todo path                 print where the file lives
 ```
 
+### Local documentation and source retrieval
+
+`vdb` indexes files in the Files workspace and returns relevant passages for
+RAG with their source path, 1-based line range, and ranking score. Both pmai and
+PocketMai use MaiCore's Swift engine and the same `MaiStandardTools` tool.
+
+```
+/vdb index docs
+/vdb index Sources
+/vdb query how are refresh tokens renewed?
+/vdb status
+/tools enable vdb
+/vdb remove docs/old-guide.md
+/vdb clear
+```
+
+The model calls `vdb` with `{"action":"index","path":"docs"}`, then
+`{"query":"refresh token","limit":5}`. An optional query `path` restricts
+retrieval to a file or folder; `max_bytes` bounds the total passage text. In
+PocketMai, enable **Local documentation** and workspace access in its tool
+settings. It uses the chat's selected working folder, or FilesData by default,
+including security-scoped folders from Files and iCloud Drive. It is available
+in Airplane Mode. Selecting Files tools separately is optional.
+
+Snapshots persist in `.pmai/vdb.json`. Reindexing a file replaces its passages;
+reindexing a folder refreshes changed files and removes sources no longer in
+that folder. Failed imports are reported and their previous snapshots retained.
+Remove and clear only change the index. A read-only Files workspace permits
+queries and status but disallows index changes. Traversal skips hidden and
+generated directories and honors Git/Mercurial ignores where those programs are
+available. Index one folder at a time when it exceeds 2,000 files. The complete
+index is bounded to 20,000 passages and 64 MB.
+
+Source files, extensionless text, Markdown, and supported document attachments
+(DOCX, PDF, EPUB, JSON) use the shared document importer. Passages contain up to
+2,400 characters with a small line overlap; long lines are split too. For
+converted documents, line ranges address the converted text. UTF-8 result
+budgets preserve complete characters and mark truncated passages explicitly.
+
+The default retrieval is local **sparse TF-IDF cosine plus BM25**, with an
+inverted index of actual terms. There is no hashing into a small fixed vector,
+no KD-tree, and no model download. Queries never change corpus statistics;
+source updates rebuild weights together, so insertion order cannot leave old
+vectors with incompatible weights. Smoothed frequencies keep common terms
+useful even in a single-document collection. Tokenization preserves code
+identifiers and also splits camel case, acronyms, and underscores. Unrelated
+queries return no passages. This is lexical retrieval: synonyms without shared
+terms require a trained embedding model.
+
+Hosts that have such a model can inject a `MaiVectorEmbeddingProvider` into
+`MaiVectorDatabaseTool` to add exact dense cosine retrieval. Embeddings are
+batched and persisted with the provider's identifier. Every passage and query
+must use the same model and dimension; errors never silently fall back to
+another vector space. Clear the index before changing providers. The built-in
+CLI and iOS configuration use the local sparse mode by default.
+
 ### Skills
 
 A skill is a folder holding a `SKILL.md`: front matter giving a `name` and a

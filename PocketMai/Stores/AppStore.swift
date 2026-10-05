@@ -612,7 +612,7 @@ final class AppStore: ObservableObject {
 
   /// Which of the three working folder choices the chat currently sits on.
   func workingFolderMode(for conversation: Conversation) -> ConversationWorkingFolderMode {
-    guard conversation.enabledTools.contains(.files) else { return .disabled }
+    guard !conversation.enabledTools.isDisjoint(with: [.files, .vdb]) else { return .disabled }
     return conversation.workingFolder == nil ? .inherited : .custom
   }
 

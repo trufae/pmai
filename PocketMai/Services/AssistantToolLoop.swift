@@ -1,5 +1,6 @@
 import Foundation
 import MaiCore
+import MaiStandardTools
 
 @MainActor
 enum AssistantToolLoop {
@@ -1156,7 +1157,7 @@ enum AssistantToolLoop {
         ?? ToolProxy.definitions.first { $0.name == reviewedCall.name }
       guard let definition else { return .denied("Cannot identify the tool for approval.") }
       let root: URL
-      if reviewedCall.name.hasPrefix("files_") {
+      if reviewedCall.name.hasPrefix("files_") || reviewedCall.name == MaiVectorDatabaseTool.name {
         root = try FileWorkspaceTool.context(for: conversation, settings: settings).context.rootURL
       } else {
         root =

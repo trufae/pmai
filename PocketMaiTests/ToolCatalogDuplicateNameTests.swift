@@ -10,6 +10,22 @@ import XCTest
 /// The catalog now keeps the first definition per name — built-ins, then
 /// servers in settings order — matching dispatch resolution order.
 final class ToolCatalogDuplicateNameTests: XCTestCase {
+  @MainActor
+  func testVectorDatabaseCatalogUsesWorkspaceAccessAndWorksOffline() {
+    var settings = AppSettings()
+    settings.airplaneModeEnabled = true
+    var conversation = Conversation()
+    conversation.toolsEnabled = true
+    conversation.enabledTools = [.vdb]
+    XCTAssertFalse(BuiltInToolCatalog.definitions(for: conversation, settings: settings)
+      .contains { $0.name == MaiVectorDatabaseTool.name })
+    settings.toolSettings.filesWorkspaceAccessEnabled = true
+    let definitions = BuiltInToolCatalog.definitions(for: conversation, settings: settings)
+    XCTAssertEqual(definitions.map(\.name), [MaiVectorDatabaseTool.name])
+    XCTAssertTrue(BuiltInToolID.vdb.isCallableTool)
+    XCTAssertFalse(BuiltInToolID.vdb.isDisabledInAirplaneMode)
+  }
+
   func testSharedCalculatorPluginExecutes() async {
     let result = await PocketMaiPluginHost.shared.callStandardTool(
       name: MaiCalculatorTool.name,

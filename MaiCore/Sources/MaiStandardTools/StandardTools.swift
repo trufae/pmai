@@ -88,6 +88,7 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
               "ollamaAPIKey", environmentOption: "ollamaAPIKeyEnvironment",
               defaultEnvironment: "OLLAMA_API_KEY"))),
         MaiWebFetchTool(),
+        MaiVectorDatabaseTool(configuration: fileConfiguration),
         MaiMastodonTool(
           configuration: MaiMastodonConfiguration(
             instance: context.string(
@@ -152,6 +153,14 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
             kind: .boolean,
             defaultValue: .bool(true)),
         ]),
+      ToolGroupDefinition(
+        id: "vdb",
+        displayName: "Local documentation",
+        description:
+          "Index documentation and source code in the Files workspace, then retrieve relevant passages "
+          + "with vdb for RAG. Works offline with small or large collections. The index persists in "
+          + ".pmai/vdb.json; reindex a folder to refresh changed and deleted files. Source files are never changed.",
+        toolNames: [MaiVectorDatabaseTool.name]),
       ToolGroupDefinition(
         id: "run",
         displayName: "Run",

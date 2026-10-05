@@ -583,6 +583,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
   case calculator
   case textToSpeech
   case files
+  case vdb
   case calendar
   case clipboard
   case alarms
@@ -605,7 +606,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
     case .datetime, .language, .location, .memory:
       return true
     case .weather, .webSearch, .todo, .calculator, .textToSpeech, .files, .calendar, .clipboard,
-      .alarms, .webxdc, .github, .mastodon, .browser:
+      .alarms, .webxdc, .github, .mastodon, .browser, .vdb:
       return false
     }
   }
@@ -613,7 +614,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
   var isCallableTool: Bool {
     switch self {
     case .weather, .webSearch, .todo, .calculator, .textToSpeech, .files, .calendar, .clipboard,
-      .alarms, .webxdc, .github, .mastodon, .browser:
+      .alarms, .webxdc, .github, .mastodon, .browser, .vdb:
       return true
     case .datetime, .language, .location, .memory:
       return false
@@ -631,6 +632,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
     case .calculator: "Calculator"
     case .textToSpeech: "Text to Speech"
     case .files: "Files"
+    case .vdb: "Local documentation"
     case .calendar: "Calendar"
     case .clipboard: "Clipboard"
     case .alarms: "Alarms"
@@ -653,6 +655,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
     case .calculator: "function"
     case .textToSpeech: "speaker.wave.2"
     case .files: "folder"
+    case .vdb: "books.vertical"
     case .calendar: "calendar"
     case .clipboard: "doc.on.clipboard"
     case .alarms: "alarm"
@@ -669,7 +672,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
     case .weather, .webSearch, .github, .mastodon, .browser:
       return true
     case .datetime, .language, .location, .todo, .calculator, .textToSpeech, .files, .calendar,
-      .clipboard, .alarms, .webxdc, .memory:
+      .clipboard, .alarms, .webxdc, .memory, .vdb:
       return false
     }
   }

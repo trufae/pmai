@@ -34,6 +34,26 @@ enum BuiltInToolCatalog {
       return await PocketMaiPluginHost.shared.callStandardTool(
         name: call.name,
         arguments: call.argumentValues)
+    case MaiVectorDatabaseTool.name:
+      guard conversation.toolsEnabled, conversation.enabledTools.contains(.vdb),
+        store.settings.toolSettings.filesWorkspaceAccessEnabled else {
+        return "Error: enable Local documentation and Files workspace access to use vdb."
+      }
+      do {
+        let resolved = try FileWorkspaceTool.context(for: conversation, settings: store.settings)
+        if let bookmark = resolved.refreshedBookmarkData {
+          store.refreshWorkingFolderBookmark(conversationID: conversation.id, bookmarkData: bookmark)
+        }
+        let workspace = resolved.context
+        return await PocketMaiPluginHost.shared.call(
+          tool: MaiVectorDatabaseTool(configuration: MaiFileWorkspaceConfiguration(
+            rootURL: workspace.rootURL, displayName: workspace.displayName,
+            isSecurityScoped: workspace.isSecurityScoped,
+            hiddenRootEntryNames: workspace.hidesModelsFolder ? ["Models"] : [])),
+          arguments: call.argumentValues)
+      } catch {
+        return "Error: the working folder is no longer accessible. Select it again from the chat's + menu."
+      }
     case MaiWebSearchTool.name:
       guard !store.settings.airplaneModeEnabled else {
         return "Error: web search is disabled while Airplane Mode is enabled."
@@ -186,6 +206,8 @@ enum BuiltInToolCatalog {
       return FileWorkspaceTool.definitions(
         workspaceName: FileWorkspaceTool.workspaceName(for: conversation, settings: settings),
         includeAdvancedTools: settings.toolSettings.filesAdvancedToolsEnabled)
+    case .vdb:
+      return settings.toolSettings.filesWorkspaceAccessEnabled ? [MaiVectorDatabaseTool.toolDefinition] : []
     case .calendar:
       return CalendarTool.definitions(settings: settings.toolSettings)
     case .clipboard:
