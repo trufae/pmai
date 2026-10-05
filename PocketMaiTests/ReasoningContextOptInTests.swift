@@ -32,6 +32,23 @@ final class ReasoningContextOptInTests: XCTestCase {
     XCTAssertEqual(messages.first?.reasoning, "")
   }
 
+  func testOmittedAssistantResponsesKeepTheirTurnBoundary() {
+    let message = ChatMessage(role: .assistant, text: assistantText)
+    let messages = PromptComposer.openAIHistoryMessages(
+      from: message,
+      includeAssistantResponses: false,
+      echoReasoningContent: false)
+
+    XCTAssertEqual(messages.map(\.role), [.assistant])
+    XCTAssertEqual(messages.map(\.text), ["(redacted)"])
+
+    var settings = AppSettings()
+    settings.includeAssistantResponsesInContext = false
+    let entries = PromptComposer.contextTranscriptEntries(from: message, settings: settings)
+    XCTAssertEqual(entries.map(\.displayName), [ChatRole.assistant.displayName])
+    XCTAssertEqual(entries.map(\.content), ["(redacted)"])
+  }
+
   func testAssistantHistoryKeepsReasoningWhenOptedIn() {
     let message = ChatMessage(role: .assistant, text: assistantText)
     let messages = PromptComposer.openAIHistoryMessages(

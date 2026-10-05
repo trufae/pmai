@@ -750,7 +750,13 @@ enum PromptComposer {
         AgentMessage(role: .user, content: wrappedToolRunContent(section.content))
       }
 
-    guard includeAssistantResponses else { return messages }
+    guard includeAssistantResponses else {
+      // Keep the conversation turn well-formed without revealing its content.
+      // Consecutive user messages can otherwise be treated as one request by
+      // chat templates and smaller OpenAI-compatible models.
+      messages.append(AgentMessage(role: .assistant, content: "(redacted)"))
+      return messages
+    }
 
     // Endpoints taking reasoning in their own field get it there, everybody else
     // gets it inlined, and only when the user opted reasoning into the context.
@@ -875,7 +881,11 @@ enum PromptComposer {
           content: wrappedToolRunContent(section.content))
       }
 
-    guard includeAssistantResponses else { return entries }
+    guard includeAssistantResponses else {
+      entries.append(
+        TranscriptEntry(displayName: ChatRole.assistant.displayName, content: "(redacted)"))
+      return entries
+    }
 
     let visible = rendered.visibleText.trimmingCharacters(in: .whitespacesAndNewlines)
     let reasoning = includeReasoning ? reasoningText(in: rendered) : ""

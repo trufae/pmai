@@ -543,6 +543,13 @@ struct SettingsView: View {
     Toggle(
       "Include assistant responses",
       isOn: settingsBinding(\.includeAssistantResponsesInContext))
+    if !store.settings.includeAssistantResponsesInContext {
+      Text(
+        "Previous assistant replies are replaced with “(redacted)” context markers. Chats may become repetitive or confusing."
+      )
+      .font(.caption)
+      .foregroundStyle(.orange)
+    }
     Toggle(
       "Include reasoning content",
       isOn: settingsBinding(\.includeReasoningContentInContext))
