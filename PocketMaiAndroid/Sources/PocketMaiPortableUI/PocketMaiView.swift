@@ -202,7 +202,7 @@ public struct PocketMaiView: @preconcurrency View {
   }
 
   private func assistantText(_ text: String) -> some View {
-    Text(text)
+    MarkdownText(text)
       .padding(EdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4))
       .frame(maxWidth: .infinity, alignment: .leading)
   }

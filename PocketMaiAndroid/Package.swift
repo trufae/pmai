@@ -22,6 +22,7 @@ let package = Package(
       dependencies: [
         .product(name: "MaiChat", package: "MaiCore"),
         .product(name: "MaiCore", package: "MaiCore"),
+        .product(name: "MaiMarkdown", package: "MaiCore"),
         .product(
           name: "SwiftUICore", package: "SwiftUICore",
           condition: .when(platforms: [.macOS, .linux, .android])),

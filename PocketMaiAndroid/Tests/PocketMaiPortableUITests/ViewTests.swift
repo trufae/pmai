@@ -1,6 +1,6 @@
 import Foundation
 import MaiChat
-import PocketMaiPortableUI
+@testable import PocketMaiPortableUI
 import SwiftUICore
 import Testing
 
@@ -63,4 +63,54 @@ func portableScreensRenderAndCallbacksEditState() throws {
   #expect(nodes.contains { $0.props["text"] == .string("System prompts") })
   try open(3)
   #expect(nodes.contains { $0.props["text"] == .string("No saved chats") })
+}
+
+@Test @MainActor
+func markdownRepliesRenderAsBlocks() throws {
+  let markdown = """
+    # Title
+
+    Use **bold** and *italic* text, see [the docs](https://example.com/docs) or https://ollama.com.
+
+    **Entirely bold**
+
+    - first
+    - second
+
+    1. one
+
+    > quoted
+
+    ```swift
+    let x = 1
+    ```
+
+    | Name | Size |
+    |------|------|
+    | a | 1 |
+
+    ---
+    """
+  let nodes = flatten(ViewHost(MarkdownText(markdown)).evaluate())
+  func text(_ value: String) -> RenderNode? {
+    nodes.first { $0.type == "Text" && $0.props["text"] == .string(value) }
+  }
+  func font(_ node: RenderNode?) -> [String: PropValue]? {
+    node?.modifiers.first { $0.kind == "font" }?.args
+  }
+
+  #expect(font(text("Title"))?["size"] == .double(24))
+  #expect(font(text("Title"))?["weight"] == .string("bold"))
+  // Inline markers are removed; a mixed paragraph stays in the body font.
+  let paragraph = text("Use bold and italic text, see the docs or https://ollama.com.")
+  #expect(font(paragraph)?["weight"] == nil)
+  #expect(font(text("Entirely bold"))?["weight"] == .string("bold"))
+  let links = nodes.filter { $0.type == "Link" }.map { $0.props["url"] }
+  #expect(links == [.string("https://example.com/docs"), .string("https://ollama.com")])
+  #expect(text("↗ the docs") != nil)
+  #expect(text("•") != nil && text("first") != nil && text("1.") != nil)
+  #expect(text("quoted") != nil)
+  #expect(text("let x = 1") != nil && text("swift") != nil)
+  #expect(text("Name") != nil && text("a") != nil)
+  #expect(nodes.contains { $0.type == "Divider" })
 }

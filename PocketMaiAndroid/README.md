@@ -137,8 +137,12 @@ Chat files use MaiCore's `AgentChat` JSON format. Corrupt files are reported
 and retained. Reopening a chat restores its original prompt, even after
 editing the template.
 
-This version displays plain text and uses basic single-line input controls
-(multiline prompt text is stored verbatim). It runs replies while the process
+Replies are parsed with MaiCore's `MaiMarkdown`: headings, lists, quotes, code
+blocks, tables and rules get their own layout. AndroidSwiftUI's `Text` holds a
+single plain string, so inline emphasis is shown without its markers (a fully
+bold or italic paragraph keeps the style) and links follow their paragraph as
+tappable rows. Input controls are single-line (multiline prompt text is stored
+verbatim). It runs replies while the process
 is alive, including activity recreation, and has no background service.
 It does not offer tools, MCP, attachments, voice, OCR, or local models.
 

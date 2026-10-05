@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The window behind the Compose content, the system bars and the launch
+         screen. values-night switches it with the system theme. -->
+    <style name="Theme.PocketMai" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
