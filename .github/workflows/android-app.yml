@@ -28,6 +28,8 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
       - name: Install Android build tools and NDK 30
         run: |
           sdkmanager "platforms;android-35" "build-tools;35.0.0"
