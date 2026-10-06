@@ -90,7 +90,7 @@ Remote agents can share a provider while using different models. An empty model 
 
 Compaction sends the compaction template and selected transcript to the assigned agent with its prompt and reasoning settings, with tools disabled. Both manual and automatic compaction use the assignment. A failed summary leaves the existing conversation intact. With no assignment, the current model and reasoning settings are used.
 
-`/set ctx.context=smart` also uses the compact assignment, with a separate
+`/set ctx.strategy=smart` also uses the compact assignment, with a separate
 `prompts.smart` template (`/edit smart`). When the working context reaches about
 16k estimated tokens, it selects older evidence for a reusable brief, retaining
 about 8k recent tokens and the newest complete exchange verbatim. Earlier

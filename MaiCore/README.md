@@ -648,7 +648,7 @@ cursor position and history search. It does not clear the conversation.
 `Ctrl+Z` suspends pmai with the terminal restored; run `fg` in the shell to
 resume the same input or active run.
 
-`/set ctx.context=smart` (config key `context: "smart"`) keeps small working
+`/set ctx.strategy=smart` (config key `context: "smart"`) keeps small working
 conversations intact. Once the working context reaches about 16k estimated
 tokens, it uses `/model-compact` to summarize older exchanges, keeping about
 8k recent tokens and the newest complete tool exchange verbatim. Newly read
@@ -687,8 +687,7 @@ Only needed reductions add compact-model calls; their usage counts toward
 statistics and token/time limits. If no compact model is assigned, the current
 model is used. A failed or empty brief keeps the evidence available and lets the
 run continue; that same reduction is not retried at every tool step.
-`ctx.strategy` remains an alias for `ctx.context`; both accept `cache`, `size`,
-and `smart`.
+`ctx.strategy` accepts `cache`, `size`, `smart`, and `tools`.
 
 `/set ctx.strategy size` (config key `context`, default `cache`) turns on the cheap
 half of that: before every model call the runtime replaces the body of any file

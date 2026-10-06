@@ -33,7 +33,7 @@ so syntax highlighting and JSON checking work without configuration.
 | `/edit agent [ID]` | One saved agent as JSON: provider, model, tools, limits, prompt name, delegation, retry, autocompact. Current agent when omitted. | Immediately; the current chat picks up its own agent's changes. |
 | `/edit provider [ID]` | One configured provider as JSON: base URL, default model, key source, headers, timeout, options. Current provider when omitted. | Immediately; the provider is rebuilt in the running session. |
 | `/edit compact` | The template `/chat compact` and autocompact render. | Immediately. |
-| `/edit smart` or `/edit prompt smart` | The per-turn working-context template for `ctx.context=smart`, using the compact model. | Immediately. |
+| `/edit smart` or `/edit prompt smart` | The per-turn working-context template for `ctx.strategy=smart`, using the compact model. | Immediately. |
 | `/edit prompt recap` | The embedded recap template: short goals, actions/results, and pending tasks with emoji labels. Must keep `{{transcript}}`; clearing it restores the default. | Immediately. |
 | `/edit prompt compact` | The generated compact agent's system prompt (formerly `task-compact`). | Immediately. |
 | `/edit prompt tool` | The generated tool agent's system prompt (formerly `task-tool`). | Immediately. |

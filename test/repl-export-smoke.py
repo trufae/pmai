@@ -49,7 +49,8 @@ def main():
         ]
         path.write_text(json.dumps(chat))
         output = run(['/set export.', '/help export', '/export md clean.md',
-                      '/export json full.json', '/set export.tools on',
+                      '/export json full.json', '/set ctx.strategy tools',
+                      '/export debug debug.json', '/set export.tools on',
                       '/export md tools.md', '/set export.thinking on',
                       '/export md both.md'], args=['-r', chat['id']])
         assert 'export.tools = off' in output, output
@@ -63,6 +64,9 @@ def main():
             assert ('Tool result' in text) == tools, text
             assert ('Private thought' in text) == thinking, text
         assert json.loads((root / 'full.json').read_text())['chat']['messages'] == chat['messages']
+        settings = json.loads((root / 'debug.json').read_text())['debug']['settings']
+        assert settings['ctx.strategy'] == 'tools', settings
+        assert 'ctx.context' not in settings, settings
         assert json.loads(config.read_text())['documentExport'] == {
             'includeToolCalls': True, 'includeThinking': True}
 

@@ -204,7 +204,7 @@ configuration, and clearing it in the editor restores the default.
 | template | used by | must contain | edit with |
 |---|---|---|---|
 | `compact` | `/chat compact`, and autocompact (`/set ctx.compact N`) with a built-in focus on the task in hand | `{{transcript}}` (`{{focus}}` optional) | `/edit compact` |
-| `smart` | `/set ctx.context smart`: summarize older evidence when the working context grows, using the compact model while keeping recent exchanges verbatim and saved history intact | `{{transcript}}` | `/edit smart` or `/edit prompt smart` |
+| `smart` | `/set ctx.strategy smart`: summarize older evidence when the working context grows, using the compact model while keeping recent exchanges verbatim and saved history intact | `{{transcript}}` | `/edit smart` or `/edit prompt smart` |
 | `recap` | `/chat recap`: short goals, actions/results, and pending tasks with emoji labels; uses the compact model and keeps history unchanged | `{{transcript}}` | `/edit prompt recap` |
 | `delegation` | the brief a child agent receives | `{{task}}` (`{{context}}`, `{{output}}`, `{{agent}}`, `{{cwd}}` optional) | `/edit delegation` |
 | `worker` | the derived `<agent>.worker` instructions | — | `/edit worker` |

@@ -63,6 +63,7 @@ def main():
         assert retained['primaryAgent']['model'] == 'chosen', retained
         assert retained['primaryAgent']['limits']['maxToolCalls'] == 7, retained
         assert retained['primaryAgent']['autocompact']['preserveRecentTokens'] == 4000, retained
+        assert retained['primaryAgent']['context'] == 'size', retained
 
         run(['/chat rename latest', '/model alternate::different',
              '/set effort low', '/set limits.maxToolCalls 19',
@@ -92,6 +93,8 @@ def main():
             assert 'Chat: hello::chosen' in output, output
             assert 'limits.maxToolCalls = 7' in output, output
             assert 'ctx.recent = 4000' in output, output
+            assert 'ctx.strategy = size\n' in output, output
+            assert 'ctx.context' not in output, output
             assert "Base URL for 'hello': http://saved.example/v1" in output, output
             assert 'runtime override' not in output, output
             assert_restored(retained_path, retained)

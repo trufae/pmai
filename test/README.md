@@ -113,7 +113,7 @@ state to check model routing, prompt edits, and history preservation:
 
     python3 test/repl-recap-smoke.py MaiCore/.build/debug/pmai
 
-The smart-context smoke test checks `ctx.context=smart`, skipped reductions for
+The smart-context smoke test checks `ctx.strategy=smart`, skipped reductions for
 small tasks, compact-model routing for large history, prompt editing, and saved
 history across resumed turns:
 

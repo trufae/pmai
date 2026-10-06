@@ -71,9 +71,13 @@ def main():
                 assert result.returncode == 0 and 'error:' not in output, output
                 return output
 
-            output = run(['/model-compact local::tiny', '/set ctx.context=smart',
-                          '/set ctx.strategy', '/edit prompt smart', 'Fix the parser'])
+            output = run(['/model-compact local::tiny', '/set ctx.strategy=smart',
+                          '/set ctx.strategy', '/set', '/help set',
+                          '/edit prompt smart', 'Fix the parser'])
             assert 'ctx.strategy = smart' in output, output
+            assert 'ctx.strategy = smart\n' in output, output
+            assert '/set ctx.strategy <cache|size|smart|tools>' in output, output
+            assert 'ctx.context' not in output and 'ctx.strategy alias' not in output, output
             assert 'Smart prompt saved' in output, output
             saved = json.loads(config.read_text())
             assert saved['agents'][0]['context'] == 'smart', saved
@@ -107,9 +111,17 @@ def main():
             assert 'ORIGINAL RULES' not in str(preparation['messages'])
             assert 'WORKING BRIEF' in str(requests[-1]['messages'])
             assert 'Now review the parser' in str(requests[-1]['messages'])
-            output = run(['/set ctx.strategy=cache', '/set ctx.context'], resume=True)
-            assert 'ctx.context = cache' in output, output
+            output = run(['/set ctx.strategy=cache', '/set ctx.strategy'], resume=True)
+            assert 'ctx.strategy = cache' in output, output
             assert json.loads(config.read_text())['agents'][0]['context'] == 'cache'
+            saved_config = config.read_bytes()
+            output = run(['/set ctx.strategy invalid', '/set ctx.context smart',
+                          '/set ctx.strategy'], resume=True)
+            assert 'Usage: /set ctx.strategy <cache|size|smart|tools>' in output, output
+            assert "Unknown setting 'ctx.context'." in output, output
+            assert 'ctx.context' not in output.split('Available settings:', 1)[1], output
+            assert 'ctx.strategy = cache' in output, output
+            assert config.read_bytes() == saved_config, 'invalid settings changed the configuration'
     finally:
         server.shutdown()
         server.server_close()

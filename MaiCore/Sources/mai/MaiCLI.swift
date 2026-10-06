@@ -8618,7 +8618,7 @@ struct MaiCLI {
         terminal: terminal)
       return
     }
-    if contextModeKeys.contains(key) {
+    if key == "ctx.strategy" {
       await setContextMode(
         parts: parts,
         session: &session,
@@ -8646,7 +8646,7 @@ struct MaiCLI {
         || levelKeys.contains(key) || textKeys.contains(key)
     else {
       await terminal.line(
-        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, effort, tool.aproval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.context, ctx.strategy, \((textKeys + themeKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), export.tools, export.thinking, use.agentsmd, use.plan"
+        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, effort, tool.aproval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.strategy, \((textKeys + themeKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), export.tools, export.thinking, use.agentsmd, use.plan"
       )
       return
     }
@@ -8765,8 +8765,6 @@ struct MaiCLI {
     "tool.proxy", "tools.proxy", "toolproxy", "usetoolproxy",
   ]
 
-  private static let contextModeKeys: Set<String> = ["ctx.context", "ctx.strategy"]
-
   private static func listToolSettings(_ profile: SessionProfile, terminal: TerminalWriter) async {
     await terminal.line("tool.calling = \(profile.toolCallingStrategy.rawValue)")
     await terminal.line("tool.proxy = \(toolProxySetting(profile))")
@@ -8846,7 +8844,7 @@ struct MaiCLI {
     }
   }
 
-  /// Both context-setting spellings persist the same agent context mode.
+  /// `ctx.strategy` persists the agent's context mode.
   private static func setContextMode(
     parts: [String],
     session: inout REPLSession,
@@ -8953,7 +8951,7 @@ struct MaiCLI {
     await terminal.line("retry.delay = \(durationSetting(profile.retry.delaySeconds))")
     await terminal.line("ctx.compact = \(autocompactSetting(profile.autocompact))")
     await terminal.line("ctx.recent = \(profile.autocompact.preserveRecentTokens.map(String.init) ?? "auto")")
-    await terminal.line("ctx.context = \(profile.context.rawValue) (ctx.strategy alias)")
+    await terminal.line("ctx.strategy = \(profile.context.rawValue)")
   }
 
   private static func durationSetting(_ seconds: Double) -> String {
@@ -9421,7 +9419,6 @@ struct MaiCLI {
           "retry.delay": durationSetting(profile.retry.delaySeconds),
           "ctx.compact": autocompactSetting(profile.autocompact),
           "ctx.recent": profile.autocompact.preserveRecentTokens.map(String.init) ?? "auto",
-          "ctx.context": profile.context.rawValue,
           "ctx.strategy": profile.context.rawValue,
         ],
         subagents: chat.subagents)
@@ -11328,12 +11325,11 @@ struct MaiCLI {
       "/help vdb", "/vdb", "/vdb index ", "/vdb query ", "/vdb status", "/vdb remove ", "/vdb clear",
       "/set limits.", "/set limits.maxToolCalls ", "/set limits.maxModelTurns ",
       "/set limits.maxSubagents ", "/set limits.maxSeconds ", "/set limits.maxTotalTokens ",
-      "/set retry.attempts ", "/set retry.delay ", "/set ctx.strategy ", "/set ctx.compact ",
+      "/set retry.attempts ", "/set retry.delay ", "/set ctx.compact ",
       "/set ctx.compact off",
       "/set ctx.recent ", "/set ctx.recent auto",
-      "/set ctx.context ", "/set ctx.context cache", "/set ctx.context size", "/set ctx.context smart",
-      "/set ctx.context tools", "/set ctx.strategy tools",
-      "/set ctx.strategy cache", "/set ctx.strategy size", "/set ctx.strategy smart",
+      "/set ctx.strategy ", "/set ctx.strategy cache", "/set ctx.strategy size", "/set ctx.strategy smart",
+      "/set ctx.strategy tools",
       "/continue", "/stop",
       "/set tool.", "/set tool.calling automatic", "/set tool.calling native",
       "/set tool.calling text", "/set tool.calling xml", "/set tool.calling json",
@@ -11831,8 +11827,7 @@ struct MaiCLI {
       /set retry.delay SECONDS     Wait before each retry (default 5)
       /set ctx.compact <off|N|Nk>  Prompt to prune tool output or summarize older context at ~N tokens
       /set ctx.recent <auto|N|Nk>  Recent tokens kept verbatim when summarizing (auto: up to 8k)
-      /set ctx.context <cache|size|smart|tools>  Keep history, prune reads, build a brief, or summarize old tool results
-      /set ctx.strategy <cache|size|smart|tools>  Alias for ctx.context
+      /set ctx.strategy <cache|size|smart|tools>  Keep history, prune reads, build a brief, or summarize old tool results
       /set export.                 List document export settings
       /set export.tools BOOL       Include tool calls and results in documents (default off)
       /set export.thinking BOOL    Include thinking blocks in documents (default off)
