@@ -1,5 +1,6 @@
 // swift-tools-version: 6.0
 import PackageDescription
+import Foundation
 
 // The `/visual` workspace needs swift-tui, which only builds against Darwin
 // and Glibc. Android already leaves it out through the platform condition;
@@ -8,8 +9,56 @@ import PackageDescription
 let visualEnabled = Context.environment["PMAI_NO_VISUAL"] == nil
 var cliDependencies: [Target.Dependency] = [
   "MaiCore", "MaiMCP", "MaiOpenAI", "MaiPluginHost", "MaiStandardTools", "MaiVisionOCR",
-  "MaiDocuments", "MaiMarkdown", "MaiACP", "MaiACPGateway",
+  "MaiDocuments", "MaiMarkdown", "MaiACP", "MaiACPGateway", "MaiLocalProviders",
 ]
+var localProviderDependencies: [Target.Dependency] = ["MaiCore"]
+var localProviderSwiftSettings: [SwiftSetting] = []
+var packageDependencies: [Package.Dependency] = [
+  .package(url: "https://github.com/SwiftTUI/swift-tui", exact: "0.13.3"),
+  .package(url: "https://github.com/apple/swift-nio", from: "2.81.0"),
+]
+#if os(macOS)
+  // Optional Foundation Models APIs follow the SDK, including when using a newer Swift toolchain.
+  let sdkVersionProcess = Process()
+  let sdkVersionOutput = Pipe()
+  sdkVersionProcess.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+  sdkVersionProcess.arguments = ["--sdk", Context.environment["SDKROOT"] ?? "macosx", "--show-sdk-version"]
+  sdkVersionProcess.standardOutput = sdkVersionOutput
+  sdkVersionProcess.standardError = FileHandle.nullDevice
+  if (try? sdkVersionProcess.run()) != nil {
+    let version = String(decoding: sdkVersionOutput.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+      .trimmingCharacters(in: .whitespacesAndNewlines).split(separator: ".").compactMap { Int($0) }
+    sdkVersionProcess.waitUntilExit()
+    if let major = version.first {
+      if major > 26 || major == 26 && (version.dropFirst().first ?? 0) >= 4 {
+        localProviderSwiftSettings.append(.define("PMAI_FOUNDATION_MODELS_26_4"))
+      }
+      if major >= 27 { localProviderSwiftSettings.append(.define("PMAI_FOUNDATION_MODELS_27")) }
+    }
+  }
+  if Context.environment["PMAI_NO_MLX"] == nil {
+    var mlxPlatforms: [Platform] = [.iOS]
+    #if arch(arm64)
+      mlxPlatforms.append(.macOS)
+    #endif
+    packageDependencies += [
+      .package(url: "https://github.com/ml-explore/mlx-swift", exact: "0.31.6"),
+      .package(url: "https://github.com/ml-explore/mlx-swift-lm", exact: "3.31.4"),
+      .package(url: "https://github.com/DePasqualeOrg/swift-hf-api-mlx", exact: "0.2.0"),
+      .package(url: "https://github.com/DePasqualeOrg/swift-tokenizers-mlx", exact: "0.3.0"),
+      // These adapters use the Swift APIs shipped by PocketMai, before the Rust API migration.
+      .package(url: "https://github.com/DePasqualeOrg/swift-hf-api", exact: "0.3.2"),
+      .package(url: "https://github.com/DePasqualeOrg/swift-tokenizers", exact: "0.5.0"),
+    ]
+    localProviderDependencies += [
+      .product(name: "MLX", package: "mlx-swift", condition: .when(platforms: mlxPlatforms)),
+      .product(name: "MLXLLM", package: "mlx-swift-lm", condition: .when(platforms: mlxPlatforms)),
+      .product(name: "MLXLMCommon", package: "mlx-swift-lm", condition: .when(platforms: mlxPlatforms)),
+      .product(name: "MLXLMHFAPI", package: "swift-hf-api-mlx", condition: .when(platforms: mlxPlatforms)),
+      .product(name: "MLXLMTokenizers", package: "swift-tokenizers-mlx", condition: .when(platforms: mlxPlatforms)),
+    ]
+  }
+#endif
 var cliSwiftSettings: [SwiftSetting] = []
 if visualEnabled {
   cliDependencies.append(.target(name: "MaiVisual", condition: .when(platforms: [.macOS, .linux])))
@@ -25,6 +74,7 @@ let package = Package(
   products: [
     .library(name: "MaiCore", targets: ["MaiCore"]),
     .library(name: "MaiOpenAI", targets: ["MaiOpenAI"]),
+    .library(name: "MaiLocalProviders", targets: ["MaiLocalProviders"]),
     .library(name: "MaiChat", targets: ["MaiChat"]),
     .library(name: "MaiMCP", targets: ["MaiMCP"]),
     .library(name: "MaiStandardTools", targets: ["MaiStandardTools"]),
@@ -38,14 +88,12 @@ let package = Package(
     .library(name: "MaiFixturePlugin", type: .dynamic, targets: ["MaiFixturePlugin"]),
     .executable(name: "pmai", targets: ["MaiCLI"]),
   ],
-  dependencies: [
-    .package(url: "https://github.com/SwiftTUI/swift-tui", exact: "0.13.3"),
-    .package(url: "https://github.com/apple/swift-nio", from: "2.81.0"),
-  ],
+  dependencies: packageDependencies,
   targets: [
     .target(name: "MaiCore"),
     .target(name: "MaiMarkdown"),
     .target(name: "MaiOpenAI", dependencies: ["MaiCore"]),
+    .target(name: "MaiLocalProviders", dependencies: localProviderDependencies, swiftSettings: localProviderSwiftSettings),
     .target(name: "MaiChat", dependencies: ["MaiCore", "MaiOpenAI"]),
     .target(name: "MaiACP", dependencies: ["MaiCore"]),
     .target(name: "MaiACPGateway", dependencies: [
@@ -95,7 +143,7 @@ let package = Package(
       name: "MaiCoreTests",
       dependencies: [
         "MaiCore", "MaiMCP", "MaiOpenAI", "MaiPluginHost", "MaiStandardTools", "MaiVisionOCR",
-        "MaiVisual", "MaiDocuments", "MaiMarkdown", "MaiACP",
+        "MaiVisual", "MaiDocuments", "MaiMarkdown", "MaiACP", "MaiLocalProviders",
         .product(name: "SwiftTUIRuntime", package: "swift-tui"),
         .product(name: "SwiftTUICLI", package: "swift-tui"),
       ]),

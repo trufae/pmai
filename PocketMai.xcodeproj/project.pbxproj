@@ -16,6 +16,7 @@
 		A10000000000000000000006 /* BeautifulMermaid in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000016 /* BeautifulMermaid */; };
 		A20000000000000000000001 /* MaiCore in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000011 /* MaiCore */; };
 		A20000000000000000000002 /* MaiOpenAI in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000012 /* MaiOpenAI */; };
+		A20000000000000000000007 /* MaiLocalProviders in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000017 /* MaiLocalProviders */; };
 		A20000000000000000000003 /* MaiMCP in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000013 /* MaiMCP */; };
 		A20000000000000000000004 /* MaiStandardTools in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000014 /* MaiStandardTools */; };
 		A20000000000000000000005 /* MaiDocuments in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000015 /* MaiDocuments */; };
@@ -142,6 +143,7 @@
 			files = (
 				A20000000000000000000001 /* MaiCore in Frameworks */,
 				A20000000000000000000002 /* MaiOpenAI in Frameworks */,
+				A20000000000000000000007 /* MaiLocalProviders in Frameworks */,
 				A20000000000000000000003 /* MaiMCP in Frameworks */,
 				A20000000000000000000004 /* MaiStandardTools in Frameworks */,
 				A20000000000000000000005 /* MaiDocuments in Frameworks */,
@@ -230,6 +232,7 @@
 			packageProductDependencies = (
 				A20000000000000000000011 /* MaiCore */,
 				A20000000000000000000012 /* MaiOpenAI */,
+				A20000000000000000000017 /* MaiLocalProviders */,
 				A20000000000000000000013 /* MaiMCP */,
 				A20000000000000000000014 /* MaiStandardTools */,
 				A20000000000000000000015 /* MaiDocuments */,
@@ -942,6 +945,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A20000000000000000000021 /* XCLocalSwiftPackageReference "MaiCore" */;
 			productName = MaiACP;
+		};
+		A20000000000000000000017 /* MaiLocalProviders */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A20000000000000000000021 /* XCLocalSwiftPackageReference "MaiCore" */;
+			productName = MaiLocalProviders;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

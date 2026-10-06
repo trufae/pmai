@@ -4,6 +4,7 @@ import MaiCore
 import MaiDocuments
 import MaiMCP
 import MaiMarkdown
+import MaiLocalProviders
 import MaiOpenAI
 import MaiPluginHost
 import MaiStandardTools
@@ -1210,6 +1211,11 @@ struct MaiCLI {
       var configuration = loaded?.configuration
       if var existing = configuration {
         var changed = existing.associateSystemPrompts()
+        for provider in MaiLocalProvidersPlugin.defaultProviders
+        where !existing.providers.contains(where: { $0.id == provider.id }) {
+          existing.providers.append(provider)
+          changed = true
+        }
         if !existing.toolSources.contains(where: {
           $0.kind == MaiStandardToolsPlugin.factoryKind
         }) {
@@ -1249,6 +1255,7 @@ struct MaiCLI {
       try await plugins.install(MaiCoreBuiltinsPlugin(), origin: "built-in")
       try await plugins.install(MaiMCPPlugin(), origin: "built-in")
       try await plugins.install(MaiOpenAIPlugin(), origin: "built-in")
+      try await plugins.install(MaiLocalProvidersPlugin(), origin: "built-in")
       try await plugins.install(MaiACPPlugin(), origin: "built-in")
       do {
         try await plugins.install(MaiVisionOCRPlugin(), origin: "built-in")
@@ -1836,7 +1843,7 @@ struct MaiCLI {
       var providerBaseURLs: [String: URL] = [:]
       for configuredProvider in configuration.providers {
         var provider = configuredProvider
-        if provider.id == selectedProvider.rawValue {
+        if provider.id == selectedProvider.rawValue, ![.apple, .mlx].contains(provider.kind) {
           provider.baseURL = try resolvedBaseURL(provider.baseURL)
           let hasCredentials =
             provider.apiKey != nil
@@ -1879,10 +1886,15 @@ struct MaiCLI {
 
     let hello = ConfiguredProvider(id: "hello", kind: .hello)
     try await runtime.register(plugins.makeProvider(from: hello, environment: environment))
+    let localProviders = MaiLocalProvidersPlugin.defaultProviders
+    for provider in localProviders {
+      try await runtime.register(plugins.makeProvider(from: provider, environment: environment))
+    }
     let baseURL = try resolvedBaseURL(nil) ?? URL(string: "http://127.0.0.1:11434/v1")!
     let apiKeyOverride = try options.apiKeyOverride ?? environmentAPIKey(in: environment)
     let openAI = ConfiguredProvider(
-      id: selectedProvider.rawValue,
+      id: localProviders.contains(where: { $0.id == selectedProvider.rawValue })
+        ? ProviderID.openAI.rawValue : selectedProvider.rawValue,
       kind: .openAICompatible,
       baseURL: baseURL,
       apiKey: apiKeyOverride)
@@ -1899,7 +1911,7 @@ struct MaiCLI {
     }
     return RuntimeSetup(
       catalogs: [],
-      implicitProviders: [hello, draft],
+      implicitProviders: [hello, draft] + localProviders,
       providerBaseURLs: [openAI.id: baseURL])
   }
 
@@ -1944,7 +1956,7 @@ struct MaiCLI {
     }
     options.applyOverrides(to: &profile)
     if options.modelOverride == nil, modelDefault == nil,
-      let defaultModel = configuration?.providers.first(where: {
+      let defaultModel = (configuration?.providers ?? MaiLocalProvidersPlugin.defaultProviders).first(where: {
         $0.id == profile.provider.rawValue
       })?.defaultModel?.trimmingCharacters(in: .whitespacesAndNewlines),
       !defaultModel.isEmpty, providerOverride != nil || profile.model.isEmpty
@@ -4218,7 +4230,10 @@ struct MaiCLI {
           ?? configuration?.providers.first { $0.id == provider.id.rawValue }?.baseURL)
           .map { " — \($0.absoluteString)" } ?? ""
         let defaultModel = provider.defaultModel.map { " — default model \($0)" } ?? ""
-        await terminal.line("\(selected) \(provider.id) — \(provider.displayName)\(baseURL)\(defaultModel)")
+        let kind = configuration?.providers.first { $0.id == provider.id.rawValue }?.kind
+        let availability = kind.flatMap { MaiLocalProvidersPlugin.availabilityMessage(for: $0) }
+          .map { " — unavailable: \($0)" } ?? ""
+        await terminal.line("\(selected) \(provider.id) — \(provider.displayName)\(baseURL)\(defaultModel)\(availability)")
       }
     case "/plugins":
       for plugin in await plugins.installedPlugins() {
@@ -6260,7 +6275,7 @@ struct MaiCLI {
         }
       }
       await terminal.line(
-        "Use /provider add ID URL, /provider rename [OLD] NEW, or /edit provider [ID] for the URL, keys, and headers."
+        "Use /help provider for local Apple/MLX setup, /provider add ID URL for remote connections, or /edit provider [ID] for options."
       )
       return
     }
@@ -6305,27 +6320,47 @@ struct MaiCLI {
     }
 
     if fields[0] == "add" {
-      let flags = Array(fields.dropFirst(3))
-      var kind = ConfiguredProviderKind.openAICompatible
+      guard fields.count >= 2 else {
+        await terminal.line(providerHelp)
+        return
+      }
+      var offset = 2
+      var url: URL?
+      if fields.count > offset, !fields[offset].hasPrefix("--") {
+        guard let parsed = URL(string: fields[offset]),
+          ["http", "https"].contains(parsed.scheme?.lowercased() ?? ""), parsed.host != nil
+        else {
+          await terminal.line("Usage: /provider add ID [BASE_URL] [--kind apple|mlx|openAICompatible|systemone] [--model MODEL] [--api-key-file PATH]")
+          return
+        }
+        url = parsed
+        offset += 1
+      }
+      let flags = Array(fields.dropFirst(offset))
+      var kind: ConfiguredProviderKind = url == nil && ["apple", "mlx"].contains(fields[1])
+        ? ConfiguredProviderKind(fields[1]) : .openAICompatible
       var keyFile: String?
+      var model: String?
       var validFlags = flags.count.isMultiple(of: 2)
       if validFlags {
         for index in stride(from: 0, to: flags.count, by: 2) {
           switch flags[index] {
-          case "--kind" where ["systemone", "openAICompatible"].contains(flags[index + 1]):
-            kind = ConfiguredProviderKind(flags[index + 1])
+          case "--kind":
+            let value = flags[index + 1]
+            kind = value.lowercased() == "openaicompatible" ? .openAICompatible
+              : ConfiguredProviderKind(value.lowercased())
           case "--api-key-file": keyFile = flags[index + 1]
+          case "--model": model = flags[index + 1]
           default: validFlags = false
           }
         }
       }
-      guard fields.count >= 3, validFlags,
-        let url = URL(string: fields[2]),
-        ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
-        url.host != nil, var draft = configuration, let configurationPath
+      let local = [.apple, .mlx].contains(kind)
+      guard validFlags, local ? url == nil : url != nil,
+        var draft = configuration, let configurationPath
       else {
         await terminal.line(
-          "Usage: /provider add ID BASE_URL [--kind systemone] [--api-key-file PATH]")
+          "Usage: /provider add ID [BASE_URL] [--kind apple|mlx|openAICompatible|systemone] [--model MODEL] [--api-key-file PATH] (Apple/MLX use no URL)")
         return
       }
       guard !draft.providers.contains(where: { $0.id == fields[1] }) else {
@@ -6335,6 +6370,8 @@ struct MaiCLI {
       }
       let provider = ConfiguredProvider(
         id: fields[1], kind: kind, baseURL: url,
+        defaultModel: model ?? (kind == .apple ? AppleProvider.modelID
+          : kind == .mlx ? MLXProvider.defaultModelID : nil),
         apiKeyFile: keyFile)
       do {
         let instance = try await plugins.makeProvider(
@@ -11348,6 +11385,8 @@ struct MaiCLI {
       "/set ui.toolResultLines all", "/set ui.toolResultLines relevant", "/set ui.toolResultLines ",
       "/cwd", "/pwd", "/cd ", "/plugins",
       "/providers", "/models ", "/provider ", "/provider add ", "/provider rename ",
+      "/provider use apple", "/provider use mlx", "/provider add local-apple --kind apple",
+      "/provider add local-mlx --kind mlx", "/help provider",
       "/help provider",
       "/model ", "/model-chat ",
       "/model-compact ", "/model-tool ", "/model-aproval ", "/agent default ", "/agent effort ",
@@ -11721,7 +11760,7 @@ struct MaiCLI {
     /prompt                Manage named system prompts; /help prompt lists commands
     /prompts               List every prompt and skill; $NAME [TEXT] sends one (/help prompt)
     /provider ID           Select a provider
-    /provider add ID URL [--api-key-file PATH]  Save a provider connection
+    /provider add ID [URL] [--kind KIND]  Save a local or remote provider; /help provider
     /provider rename [OLD] NEW  Rename a provider and update its agents
     /providers             List registered providers
     /queue                 List, push, pop, or drop messages waiting for an agent
@@ -11787,11 +11826,23 @@ struct MaiCLI {
 
   private static let providerHelp = """
     /provider                         Show the current connection
-    /providers                        List connections and their effective URLs
+    /providers                        List providers, local availability, and effective URLs
     /provider [use] ID                Save this agent's provider and default for new chats
     /provider add ID URL [--api-key-file PATH] [--kind systemone]
+    /provider add ID --kind apple     Apple Intelligence; no URL or API key
+    /provider add ID --kind mlx [--model org/model]  MLX on Apple silicon; no URL
     /provider rename [OLD] NEW        Rename a connection and update configured agents
     /edit provider [ID]               Edit its URL, default model, credentials, headers, and options
+
+    On macOS, apple and mlx are included automatically. Select them with:
+      /provider use apple            Uses Apple's on-device model
+      /provider use mlx              Uses the default MLX model
+      /model mlx::org/model          Choose an MLX-ready Hugging Face repo or local directory
+      /models apple                  Check Apple Intelligence readiness
+      /models mlx                    List suggested MLX models
+    Apple requires macOS 26+ with Apple Intelligence enabled in System Settings.
+    MLX requires Apple silicon. The first request downloads the chosen model;
+    later requests reuse the Hugging Face cache. HF_TOKEN supports gated models.
 
     In that editor, apiKeyEnvironment is an exported variable's name;
     apiKeyFile is a path, and apiKey saves the key directly in the config file.

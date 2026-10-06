@@ -2,6 +2,7 @@ import Foundation
 import FoundationModels
 import MaiCore
 import MaiOpenAI
+import MaiLocalProviders
 
 enum LongRunningOperationDecision: Sendable {
   case interrupt
@@ -905,38 +906,11 @@ enum PromptComposer {
   }
 }
 
-enum AppleFoundationAvailabilityKind: Equatable, Sendable {
-  case checking
-  case available
-  case deviceNotEligible
-  case appleIntelligenceNotEnabled
-  case modelNotReady
-  case unavailable
-}
+typealias AppleFoundationAvailabilityKind = AppleProviderAvailabilityKind
+typealias AppleFoundationAvailabilityReport = AppleProviderAvailability
 
-struct AppleFoundationAvailabilityReport: Equatable, Sendable {
-  let kind: AppleFoundationAvailabilityKind
-  let detail: String
-
-  static let checking = AppleFoundationAvailabilityReport(
-    kind: .checking,
-    detail: "Checking Apple Intelligence availability."
-  )
-
-  var unavailableMessage: String? {
-    switch kind {
-    case .checking:
-      return nil
-    case .available:
-      return nil
-    default:
-      return detail
-    }
-  }
-
-  var isAvailable: Bool {
-    kind == .available
-  }
+extension AppleProviderAvailability {
+  static let checking = Self(kind: .checking, detail: "Checking Apple Intelligence availability.")
 
   var providerListSubtitle: String {
     switch kind {
@@ -968,319 +942,49 @@ struct AppleFoundationAvailabilityReport: Equatable, Sendable {
 }
 
 enum AppleFoundationProvider {
-  private static let unsupportedOSMessage =
-    "Apple Foundation Models require iOS 26 or later. \(LocalMLXAvailability.current.alternativeProviderSuggestion)"
-
-  static var availabilityReport: AppleFoundationAvailabilityReport {
-    availabilityReport(deviceOnly: false)
-  }
-
+  static var availabilityReport: AppleFoundationAvailabilityReport { availabilityReport(deviceOnly: false) }
   static func availabilityReport(deviceOnly: Bool) -> AppleFoundationAvailabilityReport {
-    guard #available(iOS 26.0, *) else {
-      return AppleFoundationAvailabilityReport(
-        kind: .unavailable,
-        detail: unsupportedOSMessage)
-    }
-    return availabilityReportOnSupportedOS(deviceOnly: deviceOnly)
+    AppleProvider.availabilityReport(deviceOnly: deviceOnly)
   }
-
-  @available(iOS 26.0, *)
-  private static func availabilityReportOnSupportedOS(deviceOnly: Bool)
-    -> AppleFoundationAvailabilityReport
-  {
-    switch systemModel(deviceOnly: deviceOnly).availability {
-    case .available:
-      return AppleFoundationAvailabilityReport(
-        kind: .available,
-        detail: deviceOnly
-          ? "Apple Intelligence is available through the on-device Foundation Models framework."
-          : "Apple Intelligence is supported and enabled."
-      )
-    case .unavailable(let reason):
-      return report(for: reason)
-    }
-  }
-
-  static var unavailableMessage: String? {
-    unavailableMessage(deviceOnly: false)
-  }
-
+  static var unavailableMessage: String? { unavailableMessage(deviceOnly: false) }
   static func unavailableMessage(deviceOnly: Bool) -> String? {
     availabilityReport(deviceOnly: deviceOnly).unavailableMessage
   }
-
-  static var availabilitySummary: String {
-    availabilityReport.unavailableMessage ?? "Apple Foundation Models are ready."
-  }
+  static var availabilitySummary: String { availabilityReport.unavailableMessage ?? "Apple Foundation Models are ready." }
 
   static func complete(
-    request: ChatCompletionRequest,
-    onUpdate: @escaping @MainActor (String) -> Void
+    request: ChatCompletionRequest, onUpdate: @escaping @MainActor (String) -> Void
   ) async throws -> String {
-    guard #available(iOS 26.0, *) else {
-      throw ChatProviderError.appleModelUnavailable(unsupportedOSMessage)
-    }
+    let provider = AppleProvider(deviceOnly: request.settings.airplaneModeEnabled)
+    let input = PromptComposer.appleInput(request: request)
+    let accumulator = await MainActor.run { CoreProviderEventAccumulator(onUpdate: onUpdate) }
+    let response: ProviderResponse
     if case .followUpSuggestions(let count) = request.oneShotResponseFormat {
-      return try await completeFollowUpSuggestionsOnSupportedOS(
-        prompt: request.conversation.messages.last?.text ?? "",
-        count: count,
-        request: request)
+      response = try await provider.completeSuggestions(
+        prompt: request.conversation.messages.last?.text ?? "", count: count)
+    } else {
+      response = try await provider.complete(input: input, stream: request.conversation.usesStreaming) {
+        await accumulator.consume($0)
+      }
     }
-    return try await completeOnSupportedOS(request: request, onUpdate: onUpdate)
-  }
-
-  @available(iOS 26.0, *)
-  private static func completeFollowUpSuggestionsOnSupportedOS(
-    prompt: String,
-    count: Int,
-    request: ChatCompletionRequest
-  ) async throws -> String {
-    let deviceOnly = request.settings.airplaneModeEnabled
-    if let unavailableMessage = unavailableMessage(deviceOnly: deviceOnly) {
-      throw ChatProviderError.appleModelUnavailable(unavailableMessage)
-    }
-
-    let itemSchema = DynamicGenerationSchema(
-      type: String.self,
-      guides: [])
-    let optionsSchema = DynamicGenerationSchema(
-      arrayOf: itemSchema,
-      minimumElements: count,
-      maximumElements: count)
-    let rootSchema = DynamicGenerationSchema(
-      name: "FollowUpSuggestions",
-      description: "Short messages the user can send next.",
-      properties: [
-        DynamicGenerationSchema.Property(
-          name: "options",
-          description: "Distinct follow-up messages written in the user's voice.",
-          schema: optionsSchema)
-      ])
-    let schema = try GenerationSchema(root: rootSchema, dependencies: [])
-    let instructions =
-      "Generate only the requested follow-up suggestions. Keep them concise and distinct."
-    let session = LanguageModelSession(
-      model: systemModel(deviceOnly: deviceOnly), instructions: instructions)
-    let timing = StreamTimingObservation()
-    let response = try await session.respond(
-      to: prompt,
-      schema: schema,
-      options: GenerationOptions(maximumResponseTokens: 240))
-    let content = response.content.jsonString
-    await recordUsage(
-      request: request, response: response,
-      promptCharacterCount: instructions.count + prompt.count,
-      outputCharacterCount: content.count, timing: timing)
+    let (content, timing) = try await accumulator.finish(response: response)
+    let stats = GenerationStats.measured(
+      providerLabel: "Apple Intelligence", modelID: AppleProvider.modelID, usage: response.usage,
+      estimatedInputTokens: GenerationStats.estimatedTokenCount(forCharacterCount: input.characterCount),
+      outputCharacterCount: content.count, timing: timing, userInputTokens: request.userInputTokens)
+    await UsageStatsStore.record(stats, assistantMessageID: request.assistantMessageID)
     return content
   }
 
   @available(iOS 26.0, *)
-  private static func completeOnSupportedOS(
-    request: ChatCompletionRequest,
-    onUpdate: @escaping @MainActor (String) -> Void
-  ) async throws -> String {
-    let deviceOnly = request.settings.airplaneModeEnabled
-    if let unavailableMessage = unavailableMessage(deviceOnly: deviceOnly) {
-      throw ChatProviderError.appleModelUnavailable(unavailableMessage)
-    }
-
-    var input = PromptComposer.appleInput(request: request)
-    guard !input.prompt.isEmpty else { throw ChatProviderError.emptyResponse }
-    let model = systemModel(deviceOnly: deviceOnly)
-    var maximumResponseTokens = 1_200
-    #if PMAI_FOUNDATION_MODELS_26_4
-      if #available(iOS 26.4, *) {
-        // Counting can fail independently of generation; typed overflow recovery remains available.
-        let available = try? await input.trimToFit(
-          contextSize: model.contextSize, reservingTokens: maximumResponseTokens
-        ) { input in
-          let entries =
-            Array(transcript(for: input)) + [
-              Transcript.Entry.prompt(.init(segments: [.text(.init(content: input.prompt))]))
-            ]
-          return try await model.tokenCount(for: entries)
-        }
-        if let available {
-          guard available > 0 else {
-            throw ChatProviderError.providerRequestFailed(
-              "Apple Intelligence context is full even without older history. Shorten the current request, context, or tool results.")
-          }
-          maximumResponseTokens = min(maximumResponseTokens, available)
-        }
-      }
-    #endif
-    var attempts = 0
-    while true {
-      try Task.checkCancellation()
-      do {
-        return try await respond(
-          request: request, input: input, model: model,
-          maximumResponseTokens: maximumResponseTokens, onUpdate: onUpdate)
-      } catch {
-        guard attempts < 3, isContextOverflowError(error),
-          input.trimForRetry(lastAttempt: attempts == 2)
-        else { throw error }
-        attempts += 1
-        await onUpdate("")
-      }
-    }
-  }
-
-  @available(iOS 26.0, *)
-  private static func respond(
-    request: ChatCompletionRequest, input: AppleConversationInput, model: SystemLanguageModel,
-    maximumResponseTokens: Int,
-    onUpdate: @escaping @MainActor (String) -> Void
-  ) async throws -> String {
-    let session = LanguageModelSession(
-      model: model, transcript: transcript(for: input))
-    let prompt = input.prompt
-    let options = GenerationOptions(maximumResponseTokens: maximumResponseTokens)
-    var timing = StreamTimingObservation()
-    let response: LanguageModelSession.Response<String>
-    if request.conversation.usesStreaming {
-      var latest = ""
-      var lastEmit = Date(timeIntervalSince1970: 0)
-      let throttleInterval: TimeInterval = 0.04
-      let stream = session.streamResponse(to: prompt, options: options)
-      for try await partial in stream {
-        let now = Date()
-        if partial.content != latest, !partial.content.isEmpty { timing.noteTokenChunk(at: now) }
-        latest = partial.content
-        if now.timeIntervalSince(lastEmit) >= throttleInterval {
-          lastEmit = now
-          await onUpdate(latest)
-        }
-      }
-      response = try await stream.collect()
-    } else {
-      response = try await session.respond(to: prompt, options: options)
-    }
-    await recordUsage(
-      request: request, response: response, promptCharacterCount: input.characterCount,
-      outputCharacterCount: response.content.count, timing: timing)
-    await onUpdate(response.content)
-    return response.content
-  }
-
-  @available(iOS 26.0, *)
-  static func transcript(for input: AppleConversationInput) -> Transcript {
-    let entries = input.messages.dropLast(input.prompt.isEmpty ? 0 : 1).map {
-      message -> Transcript.Entry in
-      let segments: [Transcript.Segment] = [.text(.init(content: message.text))]
-      switch message.role {
-      case .system, .developer:
-        return .instructions(.init(segments: segments, toolDefinitions: []))
-      case .assistant:
-        return .response(.init(assetIDs: [], segments: segments))
-      case .user, .tool:
-        return .prompt(.init(segments: segments))
-      }
-    }
-    return Transcript(entries: entries)
-  }
-
-  @available(iOS 26.0, *)
-  private static func recordUsage<Content: Generable>(
-    request: ChatCompletionRequest,
-    response: LanguageModelSession.Response<Content>,
-    promptCharacterCount: Int,
-    outputCharacterCount: Int,
-    timing: StreamTimingObservation
-  ) async {
-    var usage: TokenUsage?
-    #if PMAI_FOUNDATION_MODELS_27
-      if #available(iOS 27.0, *) { usage = tokenUsage(response.usage) }
-    #endif
-    let stats = GenerationStats.measured(
-      providerLabel: "Apple Intelligence", modelID: "on-device", usage: usage,
-      estimatedInputTokens: GenerationStats.estimatedTokenCount(
-        forCharacterCount: promptCharacterCount),
-      outputCharacterCount: outputCharacterCount, timing: timing,
-      userInputTokens: request.userInputTokens)
-    await UsageStatsStore.record(stats, assistantMessageID: request.assistantMessageID)
-  }
+  static func transcript(for input: AppleConversationInput) -> Transcript { AppleProvider.transcript(for: input) }
 
   #if PMAI_FOUNDATION_MODELS_27
     @available(iOS 27.0, *)
-    static func tokenUsage(_ usage: LanguageModelSession.Usage) -> TokenUsage {
-      TokenUsage(
-        inputTokens: usage.input.totalTokenCount, outputTokens: usage.output.totalTokenCount,
-        cachedTokens: usage.input.cachedTokenCount,
-        reasoningTokens: usage.output.reasoningTokenCount)
-    }
+    static func tokenUsage(_ usage: LanguageModelSession.Usage) -> TokenUsage { AppleProvider.tokenUsage(usage) }
   #endif
 
-  @available(iOS 26.0, *)
-  private static func systemModel(deviceOnly: Bool) -> SystemLanguageModel {
-    guard deviceOnly else { return .default }
-    return SystemLanguageModel(useCase: .general, guardrails: .default)
-  }
-
-  @available(iOS 26.0, *)
-  private static func message(
-    for reason: SystemLanguageModel.Availability.UnavailableReason
-  ) -> String {
-    switch reason {
-    case .deviceNotEligible:
-      return
-        "Apple Intelligence is not available on this device. \(LocalMLXAvailability.current.alternativeProviderSuggestion)"
-    case .appleIntelligenceNotEnabled:
-      return
-        "Apple Intelligence is not enabled on this device. \(LocalMLXAvailability.current.alternativeProviderSuggestion)"
-    case .modelNotReady:
-      return
-        "the local model is not ready yet. Keep the device online until the model finishes downloading, or switch providers."
-    @unknown default:
-      return "the local model is not available on this device."
-    }
-  }
-
-  @available(iOS 26.0, *)
-  private static func report(
-    for reason: SystemLanguageModel.Availability.UnavailableReason
-  ) -> AppleFoundationAvailabilityReport {
-    switch reason {
-    case .deviceNotEligible:
-      return AppleFoundationAvailabilityReport(
-        kind: .deviceNotEligible,
-        detail: message(for: reason)
-      )
-    case .appleIntelligenceNotEnabled:
-      return AppleFoundationAvailabilityReport(
-        kind: .appleIntelligenceNotEnabled,
-        detail: message(for: reason)
-      )
-    case .modelNotReady:
-      return AppleFoundationAvailabilityReport(
-        kind: .modelNotReady,
-        detail: message(for: reason)
-      )
-    @unknown default:
-      return AppleFoundationAvailabilityReport(
-        kind: .unavailable,
-        detail: message(for: reason)
-      )
-    }
-  }
-
-  @available(iOS 26.0, *)
-  static func isContextOverflowError(_ error: Error) -> Bool {
-    #if PMAI_FOUNDATION_MODELS_27
-      if #available(iOS 27.0, *), let modelError = error as? LanguageModelError,
-        case .contextSizeExceeded = modelError
-      {
-        return true
-      }
-    #endif
-    guard let generation = error as? LanguageModelSession.GenerationError else {
-      return false
-    }
-    if case .exceededContextWindowSize = generation {
-      return true
-    }
-    return false
-  }
+  static func isContextOverflowError(_ error: Error) -> Bool { AppleProvider.isContextOverflowError(error) }
 }
 
 enum OpenAICompatibleProvider {
@@ -1405,19 +1109,7 @@ enum OpenAICompatibleProvider {
         throw mapCoreError(error)
       }
 
-      let toolCallText = response.message.toolCalls.map { call in
-        AgentTooling.makeNativeToolCall(
-          id: call.id,
-          name: call.name,
-          rawArguments: call.arguments.compactJSONString
-        ).textBlock
-      }.filter { !$0.isEmpty }.joined(separator: "\n")
-      let body = ReasoningText.render(response.message.content)
-      let content = toolCallText.isEmpty ? body : "\(body)\n\n\(toolCallText)"
-      guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-        throw ChatProviderError.emptyResponse
-      }
-      let timing = await accumulator.finish(with: content)
+      let (content, timing) = try await accumulator.finish(response: response)
       await recordUsage(
         context: usageContext,
         usage: response.usage,
@@ -1508,51 +1200,6 @@ enum OpenAICompatibleProvider {
     var fallbackInputTokenEstimate: Int
   }
 
-  @MainActor
-  private final class CoreProviderEventAccumulator {
-    private let onUpdate: @MainActor (String) -> Void
-    private var output = ReasoningText()
-    private var timing = StreamTimingObservation(requestStart: Date())
-    private var lastEmit = Date(timeIntervalSince1970: 0)
-    private var dirty = false
-
-    init(onUpdate: @escaping @MainActor (String) -> Void) {
-      self.onUpdate = onUpdate
-    }
-
-    func consume(_ event: MaiCore.ProviderEvent) {
-      switch event {
-      case .textDelta(let delta):
-        output.append(.text(delta))
-        dirty = true
-        timing.noteTokenChunk()
-      case .reasoningDelta(let delta):
-        output.append(.reasoning(delta))
-        dirty = true
-        timing.noteTokenChunk()
-      case .toolCallDelta:
-        timing.noteTokenChunk()
-      case .usage:
-        break
-      }
-      let now = Date()
-      if dirty, now.timeIntervalSince(lastEmit) >= 0.04 {
-        dirty = false
-        lastEmit = now
-        onUpdate(output.rendered)
-      }
-    }
-
-    func finish(with finalContent: String) -> StreamTimingObservation {
-      if dirty
-        || output.rendered
-          != finalContent
-      {
-        onUpdate(finalContent)
-      }
-      return timing
-    }
-  }
 
   private static func recordUsage(
     context: UsageRecordingContext,
@@ -1577,4 +1224,62 @@ enum OpenAICompatibleProvider {
     await UsageStatsStore.record(stats, assistantMessageID: context.assistantMessageID)
   }
 
+}
+
+@MainActor
+final class CoreProviderEventAccumulator {
+  private let onUpdate: @MainActor (String) -> Void
+  private var output = ReasoningText()
+  private var timing = StreamTimingObservation(requestStart: Date())
+  private var lastEmit = Date(timeIntervalSince1970: 0)
+  private var dirty = false
+
+  init(onUpdate: @escaping @MainActor (String) -> Void) {
+    self.onUpdate = onUpdate
+  }
+
+  func consume(_ event: MaiCore.ProviderEvent) {
+    switch event {
+    case .textDelta(let delta):
+      output.append(.text(delta))
+      dirty = true
+      timing.noteTokenChunk()
+    case .reasoningDelta(let delta):
+      output.append(.reasoning(delta))
+      dirty = true
+      timing.noteTokenChunk()
+    case .toolCallDelta:
+      timing.noteTokenChunk()
+    case .usage:
+      break
+    }
+    let now = Date()
+    if dirty, now.timeIntervalSince(lastEmit) >= 0.04 {
+      dirty = false
+      lastEmit = now
+      onUpdate(output.rendered)
+    }
+  }
+
+  func finish(with finalContent: String) -> StreamTimingObservation {
+    if dirty
+      || output.rendered
+        != finalContent
+    {
+      onUpdate(finalContent)
+    }
+    return timing
+  }
+
+  func finish(response: ProviderResponse) throws -> (String, StreamTimingObservation) {
+    let calls = response.message.toolCalls.map {
+      AgentTooling.makeNativeToolCall(id: $0.id, name: $0.name, rawArguments: $0.arguments.compactJSONString).textBlock
+    }.filter { !$0.isEmpty }.joined(separator: "\n")
+    let body = ReasoningText.render(response.message.content)
+    let content = calls.isEmpty ? body : body + "\n\n" + calls
+    guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      throw ChatProviderError.emptyResponse
+    }
+    return (content, finish(with: content))
+  }
 }

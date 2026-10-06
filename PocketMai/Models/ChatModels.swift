@@ -1,5 +1,6 @@
 import Foundation
 import MaiCore
+import MaiLocalProviders
 import MaiStandardTools
 
 enum ChatRole: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -3060,7 +3061,7 @@ struct AppSettings: Codable, Equatable, Sendable {
   static let currentStockPromptsVersion = 4
   static let recentChatLanguageLimit = 3
   static let appleDefaultModelID = ""
-  static let localMLXDefaultModelID = "LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit"
+  static let localMLXDefaultModelID = MLXModels.defaultModelID
   static let defaultTools: Set<BuiltInToolID> = []
   static let defaultMCPServers: Set<UUID> = []
   static let defaultMCPTools: Set<String> = []

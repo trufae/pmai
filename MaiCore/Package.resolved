@@ -1,6 +1,24 @@
 {
-  "originHash" : "579e906ca20441653c8ed83e2dff044e73242a61572d60af58e432520a139265",
+  "originHash" : "47fa7f5c4b965735d4ad668cf4946fb7290b3ad13aca2d7deccf8b523782ee41",
   "pins" : [
+    {
+      "identity" : "mlx-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ml-explore/mlx-swift",
+      "state" : {
+        "revision" : "0bb916c67f4b9e5c682cbe02a42c701c93ab5021",
+        "version" : "0.31.6"
+      }
+    },
+    {
+      "identity" : "mlx-swift-lm",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ml-explore/mlx-swift-lm",
+      "state" : {
+        "revision" : "bd4b7434e6bdb588c7ef55706ff8904cb7fd4c57",
+        "version" : "3.31.4"
+      }
+    },
     {
       "identity" : "swift-argument-parser",
       "kind" : "remoteSourceControl",
@@ -8,6 +26,15 @@
       "state" : {
         "revision" : "6a52f3251125d74daf04fcbd5e6f08a75d074382",
         "version" : "1.8.2"
+      }
+    },
+    {
+      "identity" : "swift-asn1",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-asn1.git",
+      "state" : {
+        "revision" : "3b6410f7dee09eb33cdd26260c5fd47fda19b0e2",
+        "version" : "1.7.3"
       }
     },
     {
@@ -38,12 +65,75 @@
       }
     },
     {
+      "identity" : "swift-crypto",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-crypto",
+      "state" : {
+        "revision" : "da9d28d69ebe3894b18376c8f2395c2f37b8448f",
+        "version" : "4.5.2"
+      }
+    },
+    {
+      "identity" : "swift-filelock",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/DePasqualeOrg/swift-filelock",
+      "state" : {
+        "revision" : "3894dbeea7593724b847f7cff32a3e2b162b70a0",
+        "version" : "0.1.1"
+      }
+    },
+    {
+      "identity" : "swift-hf-api",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/DePasqualeOrg/swift-hf-api",
+      "state" : {
+        "revision" : "985a673cbe2be9b61e1cbcbf062083ae6d648a8d",
+        "version" : "0.3.2"
+      }
+    },
+    {
+      "identity" : "swift-hf-api-mlx",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/DePasqualeOrg/swift-hf-api-mlx",
+      "state" : {
+        "revision" : "83189f677280b85e22dd7fa11d12d97b245a2013",
+        "version" : "0.2.0"
+      }
+    },
+    {
       "identity" : "swift-nio",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio",
       "state" : {
         "revision" : "21de5f08c1a166a6dd293d0e587ad977bf8dac5d",
         "version" : "2.103.0"
+      }
+    },
+    {
+      "identity" : "swift-numerics",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-numerics",
+      "state" : {
+        "revision" : "0c0290ff6b24942dadb83a929ffaaa1481df04a2",
+        "version" : "1.1.1"
+      }
+    },
+    {
+      "identity" : "swift-sse",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/DePasqualeOrg/swift-sse",
+      "state" : {
+        "revision" : "c8e3f1a5d4cdf708c891bae1f2a975519627b65c",
+        "version" : "0.1.0"
+      }
+    },
+    {
+      "identity" : "swift-syntax",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-syntax.git",
+      "state" : {
+        "revision" : "79e4b74a295b6eb74a8b585e3a39d29e70c1dbd1",
+        "version" : "603.0.2"
       }
     },
     {
@@ -56,12 +146,39 @@
       }
     },
     {
+      "identity" : "swift-tokenizers",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/DePasqualeOrg/swift-tokenizers.git",
+      "state" : {
+        "revision" : "9cb02e836c1d8782a36ea02e7c437697ceff2ab8",
+        "version" : "0.5.0"
+      }
+    },
+    {
+      "identity" : "swift-tokenizers-mlx",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/DePasqualeOrg/swift-tokenizers-mlx",
+      "state" : {
+        "revision" : "6fb48051a8b7e36707725d3ef2f876d6ed860250",
+        "version" : "0.3.0"
+      }
+    },
+    {
       "identity" : "swift-tui",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/SwiftTUI/swift-tui",
       "state" : {
         "revision" : "c0319890ae5e12828d37cd657c62169bcdbf9cca",
         "version" : "0.13.3"
+      }
+    },
+    {
+      "identity" : "swift-xet",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/DePasqualeOrg/swift-xet",
+      "state" : {
+        "revision" : "4395b0900c1d45614d323b9ba1109cd46dc1c1d7",
+        "version" : "0.2.0"
       }
     }
   ],

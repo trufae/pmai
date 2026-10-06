@@ -1,34 +1,10 @@
 import Foundation
-import Metal
 
-/// Check Metal without initializing MLX: unsupported GPUs can abort inside its runtime.
-enum LocalMLXAvailability: Equatable, Sendable {
-  case available
-  case simulator
-  case metalUnavailable
-  case unsupportedGPU(String)
+import MaiLocalProviders
 
-  static let current: Self = {
-    #if targetEnvironment(simulator)
-      return .simulator
-    #else
-      let device = MTLCreateSystemDefaultDevice()
-      return evaluate(
-        isSimulator: false, gpuName: device?.name,
-        supportsApple7: device?.supportsFamily(.apple7) == true)
-    #endif
-  }()
+typealias LocalMLXAvailability = MLXAvailability
 
-  static func evaluate(isSimulator: Bool, gpuName: String?, supportsApple7: Bool) -> Self {
-    if isSimulator { return .simulator }
-    guard let gpuName else { return .metalUnavailable }
-    // MLX's SIMD-group matrix operations require Apple GPU family 7 (A14/M1) or later.
-    // https://developer.apple.com/metal/Metal-Feature-Set-Tables.pdf
-    return supportsApple7 ? .available : .unsupportedGPU(gpuName)
-  }
-
-  var isAvailable: Bool { self == .available }
-
+extension MLXAvailability {
   static let requirements =
     "MLX requires an A14 Bionic or newer chip (iPhone 12 or later, or iPhone SE 3rd generation), "
     + "or an iPad with an A14 or newer A-series chip, or an M-series chip."

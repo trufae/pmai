@@ -236,6 +236,11 @@ if [ "$platform" = android ]; then
   chmod 755 "$wrapper"
   mv -f "$wrapper" "$target"
 else
+  shader=$(dirname "$binary")/default.metallib
+  if [ -f "$shader" ]; then
+    cp "$shader" "$install_dir/default.metallib.new"
+    mv -f "$install_dir/default.metallib.new" "$install_dir/default.metallib"
+  fi
   cp "$binary" "$target.new"
   chmod 755 "$target.new"
   mv -f "$target.new" "$target"
