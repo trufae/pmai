@@ -71,7 +71,7 @@ jobs:
           bin_dir="$(swift build "${args[@]}" --show-bin-path)"
           python3 sys/build-mlx-metal.py --bin-dir "$bin_dir"
           cp "$bin_dir/pmai" pmai
-          if [ -f "$bin_dir/default.metallib" ]; then cp "$bin_dir/default.metallib" .; fi
+          if [ -f "$bin_dir/mlx.metallib" ]; then cp "$bin_dir/mlx.metallib" .; fi
           strip ${{ runner.os == 'Linux' && '-s' || '-x' }} pmai
 
       - name: Exercise Linux release HTTP error handling
@@ -82,7 +82,7 @@ jobs:
         run: |
           asset="pmai-${{ matrix.target }}.zip"
           zip -j "$asset" ./pmai
-          if [ -f ./default.metallib ]; then zip -j "$asset" ./default.metallib; fi
+          if [ -f ./mlx.metallib ]; then zip -j "$asset" ./mlx.metallib; fi
           unzip -l "$asset"
 
       - name: Upload CLI artifact

@@ -5,13 +5,22 @@ model call so the runs can be studied for wasted turns and tokens.
 
 Session persistence regression checks use temporary projects and configurations:
 
-    swift build --package-path MaiCore --product pmai
+    make repl-build
     python3 test/repl-defaults-smoke.py MaiCore/.build/debug/pmai
     python3 test/repl-resume-smoke.py MaiCore/.build/debug/pmai
     python3 test/repl-resume-state-smoke.py MaiCore/.build/debug/pmai
     python3 test/repl-resume-routing-smoke.py MaiCore/.build/debug/pmai
     python3 test/repl-export-smoke.py MaiCore/.build/debug/pmai
     python3 test/provider-routing-smoke.py MaiCore/.build/debug/pmai
+
+Interactive `run_shell` handoffs have a terminal regression check:
+
+    python3 test/repl-interactive-run-smoke.py MaiCore/.build/debug/pmai
+
+It edits a file in Vim, preserves a partially typed prompt, checks terminal
+input and output stay out of model results, and exercises Ctrl+C, explicit
+timeouts, working directories, arguments, one-shot runs, and piped-session
+errors. It uses a local fixture provider and requires Vim on `PATH`.
 
 The defaults check starts with a clean user home and verifies saved model,
 provider, and settings across restarts and projects, precedence over stale
@@ -23,6 +32,25 @@ and recovery after terminating a process during nested work.
 The provider check verifies qualified bootstrap environment/flag models against a local
 HTTP server, URL and credential precedence, provider editor changes, and
 renaming connections with task references and chat resume.
+
+Native provider checks cover URL-free setup, defaults, persistence, renaming,
+and isolation from remote URL/key settings, without downloading model data:
+
+    python3 test/repl-local-providers-smoke.py MaiCore/.build/debug/pmai
+    swift test --package-path MaiCore --filter LocalProviderTests
+
+The shared Swift tests also check tool-result preservation, model/hardware
+validation, and serialization of failing MLX loads. The iOS Apple conversation
+and MLX provider/cache tests verify the app's adapters and explicit-download policy.
+On a supported Mac, exercise actual native inference from an isolated working
+directory with:
+
+    python3 test/repl-local-providers-live.py MaiCore/.build/debug/pmai --provider apple
+    python3 test/repl-local-providers-live.py MaiCore/.build/debug/pmai --provider mlx
+
+The MLX live check downloads `mlx-community/LFM2-350M-MLX` into
+`/tmp/pmai-local-provider-models` by default; `--model` and `--cache` override it.
+The Apple check requires Apple Intelligence enabled and its model ready.
 
 Skill/context regressions use a local fixture provider that deliberately returns
 an incomplete smart brief, so instruction preservation is checked independently

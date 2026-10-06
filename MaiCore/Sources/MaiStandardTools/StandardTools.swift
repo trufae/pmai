@@ -168,7 +168,8 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
           "Run programs on this computer: run_shell executes a shell command line or script with the "
           + "configured shell and returns its output and exit status, killing it after the default "
           + "timeout unless the call sets one. Use it for builds, tests, git, and anything a person "
-          + "would type in a terminal.",
+          + "would type in a terminal. For vim, pagers, or REPLs the person will use, set "
+          + "interactive=true to hand over the CLI terminal until they exit.",
         toolNames: Set(MaiRunTool.toolNames),
         options: [
           .init(

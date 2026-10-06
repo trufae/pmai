@@ -162,12 +162,12 @@ public actor MLXProvider: ChatProvider {
       onGenerationInfo: @Sendable @escaping (GenerateCompletionInfo) async -> Void
     ) async throws -> ProviderResponse {
       #if os(macOS)
-      let executable = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
-      let library = executable.deletingLastPathComponent().appendingPathComponent("default.metallib")
-      guard FileManager.default.fileExists(atPath: library.path) else {
-        throw LocalProviderError("MLX Metal shaders are missing beside pmai. Run make repl-build or reinstall the macOS arm64 release, including default.metallib.")
-      }
-      _ = try MTLCreateSystemDefaultDevice()?.makeLibrary(URL: library)
+        let executable = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
+        let library = executable.deletingLastPathComponent().appendingPathComponent("mlx.metallib")
+        guard FileManager.default.fileExists(atPath: library.path) else {
+          throw LocalProviderError("MLX Metal shaders are missing beside pmai. Run make repl-build or reinstall the macOS arm64 release, including mlx.metallib.")
+        }
+        _ = try MTLCreateSystemDefaultDevice()?.makeLibrary(URL: library)
       #endif
       let model = request.model.isEmpty ? descriptor.defaultModel! : request.model
       try await loadModel(modelID: model)
@@ -197,7 +197,7 @@ public actor MLXProvider: ChatProvider {
       ) { context, userInput in
         let input = try await context.processor.prepare(input: userInput)
         guard input.text.tokens.size + min(maxTokens, 512) <= maxKVSize else {
-          throw LocalProviderError("MLX context is full. Use /chat compact or shorten the prompt.")
+          throw LocalProviderError("MLX context length exceeded. Compact the conversation or shorten the prompt.")
         }
         let iterator = try TokenIterator(input: input, model: context.model, parameters: parameters)
         return MLXLMCommon.generateTask(

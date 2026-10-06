@@ -24,9 +24,11 @@ def main():
         raise SystemExit('MLX shaders are missing; run swift build before building the Metal library.')
     destination = Path(args.bin_dir).resolve()
     destination.mkdir(parents=True, exist_ok=True)
-    library = destination / 'default.metallib'
+    # MLX resolves mlx.metallib relative to the executable, independently of cwd.
+    library = destination / 'mlx.metallib'
     stamp = destination / '.pmai-mlx-metal.sha256'
-    flags = ['-std=metal3.1', '-fno-fast-math', '-mmacosx-version-min=15.0', '-I', str(sources)]
+    flags = ['-std=metal3.1', '-fno-fast-math', '-Wno-c++17-extensions',
+             '-Wno-c++20-extensions', '-mmacosx-version-min=15.0', '-I', str(sources)]
     sdk_version = subprocess.check_output(['xcrun', '--sdk', 'macosx', '--show-sdk-version'])
     digest = hashlib.sha256(sdk_version + repr(flags).encode())
     for path in sorted(sources.rglob('*')):

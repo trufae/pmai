@@ -5,9 +5,11 @@ Task-specific models are configured through saved agents in both pmai and iOS. S
 
 MaiCore is the provider-neutral agent runtime shared by the `pmai` command-line
 client and PocketMai. Concrete integrations are separate products:
-`MaiOpenAI`, `MaiMCP`, and `MaiVisionOCR`. `MaiVisual` adds the SwiftTUI
-terminal workspace used by the CLI's `/visual` command and is the package's only
-external dependency; PocketMai does not link it. Each registers through the same plugin
+`MaiOpenAI`, `MaiLocalProviders`, `MaiMCP`, and `MaiVisionOCR`.
+`MaiLocalProviders` owns the Apple Foundation Models and MLX engines used by
+both hosts, including availability checks, streaming, and model loading.
+`MaiVisual` adds the SwiftTUI terminal workspace used by the CLI's `/visual`
+command; PocketMai does not link it. Each registers through the same plugin
 API available to third-party providers. Together they support structured
 message content, multimodal requests, native tool calls, approvals, MCP
 Streamable HTTP servers, CLI-only stdio MCP processes, and bounded child agents.
@@ -57,6 +59,43 @@ even if the shell still exports older model/provider values. For a remote
 connection, add `--api-key-file /path/to/key` to `/provider add`, or set its
 credentials with `/edit provider ID`. Settings save to the active `--config`
 file, `./pmai.json`, or `~/.config/pmai/config.json` by default.
+
+On macOS, `apple` and `mlx` are registered automatically, including when upgrading
+an existing configuration. `/providers` shows their availability and setup guidance.
+They run natively and need no server URL or OpenAI key:
+
+```text
+/providers
+/model apple::on-device
+/model mlx::LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit
+```
+
+Choose either `/model` command to save it as the default. `/provider use apple`
+or `/provider use mlx` selects that provider's default model. To create a named
+configuration with its own default model, use:
+
+```text
+/provider add private-apple --kind apple
+/provider add small-mlx --kind mlx --model mlx-community/LFM2-350M-MLX
+/provider use small-mlx
+```
+
+Apple requires macOS 26 or later with Apple Intelligence enabled in
+**System Settings → Apple Intelligence & Siri** and its model download complete.
+MLX requires an Apple silicon Mac. Its first inference downloads the selected
+MLX-ready Hugging Face repository; later requests reuse the cache. `HF_HOME` and
+`HF_HUB_CACHE` choose the cache location, and `HF_TOKEN` supplies authentication
+for gated models. You can also select an absolute local model directory with
+`/model mlx::/path/to/model`. `/models mlx` lists the presets without downloading
+weights. Remote URL and API-key overrides do not apply to these native providers;
+MLX authentication can instead be set on its own provider with `/edit provider ID`.
+
+`make repl-build` and `make repl-install` compile and package the MLX Metal shaders
+as `mlx.metallib` beside `pmai`, so inference works from any directory. When building
+with plain SwiftPM, also run `python3 sys/build-mlx-metal.py --bin-dir PATH`, using
+the path from `swift build --package-path MaiCore --show-bin-path`. Xcode handles
+the iOS Metal resources. `PMAI_NO_MLX=1` builds the CLI without MLX dependencies;
+Apple and remote providers remain available.
 
 Install a release build system-wide with `make repl-install`. The Linux
 release archives come in two flavours: `pmai-linux-<arch>.zip` links against
@@ -1162,10 +1201,20 @@ one schema to pay for on every call rather than four. The text is taken from
 `command` or `script` interchangeably, since models mix the two up. Every call
 may pass `args`, `stdin`, `cwd`, `timeout_seconds`, and `output`. Commands run
 with color disabled and ANSI sequences are stripped from returned text.
+For programs the person will operate, such as `vim`, `nano`, `less`, or a
+language REPL, pass `interactive: true`, for example
+`{"command":"vim notes.md","interactive":true}`. The CLI pauses its input
+reader and hands over the terminal until the program exits, preserving any
+unfinished prompt. The model receives the exit status; terminal input and
+output stay out of the conversation. Interactive runs preserve the terminal
+environment and have no default timeout; an explicit `timeout_seconds` still
+applies. Omit `stdin` and `output` in this mode. It requires a foreground CLI
+terminal and is unavailable in piped/server sessions or while `/visual` owns
+the terminal.
 `output: "auto"` (the default) returns small output but saves any stream larger
 than 24 KB to a temporary file and reports its path; use `inline` to drop the
 excess, `file` to save both streams immediately, or `none` to suppress them.
-The process is killed after the timeout
+Captured runs are killed after the timeout
 (`runTimeoutSeconds`, default 60), and `Ctrl+C` terminates it. The tool is
 marked dangerous, so it follows the `dangerous` approval setting, and the group
 is absent on iOS. Use `/tools disable run` to remove it from an agent.

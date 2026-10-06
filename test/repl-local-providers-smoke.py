@@ -22,9 +22,10 @@ def main():
             'memory': {'enabled': False},
         }))
 
-        def run(commands, args=(), env=None, allow_errors=False):
+        def run(commands, args=(), env=None, allow_errors=False, config_path=config):
+            config_args = ['--config', str(config_path)] if config_path is not None else []
             result = subprocess.run(
-                [binary, '--config', str(config), '--home', str(root / 'home'),
+                [binary, *config_args, '--home', str(root / 'home'),
                  '--no-markdown', '--no-stream', *args],
                 cwd=root, env=environment | {'HF_HOME': str(root / 'hf')} | (env or {}),
                 input='\n'.join([*commands, '/exit', '']), text=True,
@@ -48,6 +49,15 @@ def main():
             output = run(['/provider use mlx', '/model-chat', '/models mlx'], allow_errors=True)
             assert 'Chat: mlx::LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit' in output, output
             assert 'Unknown provider' not in output, output
+            for provider, model in (('apple', 'on-device'),
+                                    ('mlx', 'LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit')):
+                output = run(
+                    ['/provider', '/model-chat'], args=['--provider', provider],
+                    config_path=None,
+                    env={'HOME': str(root / f'fresh-{provider}'),
+                         'OPENAI_BASE_URL': 'not-a-url',
+                         'PMAI_API_KEY_FILE': str(root / 'missing-remote-key')})
+                assert f'Chat: {provider}::{model}' in output, output
 
         run(['/provider add personal-apple --kind apple',
              '/provider add personal-mlx --kind mlx --model mlx-community/LFM2-350M-MLX',

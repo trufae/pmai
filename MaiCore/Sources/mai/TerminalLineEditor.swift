@@ -179,6 +179,7 @@ private final class ClassicEditorSurface: LineEditorSurface {
 /// terminal cannot tell Shift+Enter apart) breaks the line, a paste keeps its
 /// newlines, and Enter submits the whole text.
 final class TerminalLineEditor {
+  let inputGate = TerminalInputGate()
   private struct ReverseSearchState {
     var query: [UInt8] = []
     var matchIndex: Int?
@@ -1103,14 +1104,21 @@ final class TerminalLineEditor {
   /// The next byte of input, from what the surface read ahead first; with a
   /// timeout, nil when nothing arrives in time.
   private func readByte(timeoutMilliseconds: Int32? = nil) -> UInt8? {
-    if typeahead.isEmpty, let surface { typeahead = surface.pendingInput() }
-    if !typeahead.isEmpty { return typeahead.removeFirst() }
-    if let timeoutMilliseconds {
-      var descriptor = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
-      guard poll(&descriptor, 1, timeoutMilliseconds) > 0 else { return nil }
+    let deadline = timeoutMilliseconds.map { Date().addingTimeInterval(Double($0) / 1000) }
+    while true {
+      let result: (byte: UInt8?, done: Bool) = inputGate.read {
+        if typeahead.isEmpty, let surface { typeahead = surface.pendingInput() }
+        if !typeahead.isEmpty { return (typeahead.removeFirst(), true) }
+        let remaining = deadline.map { max(0, Int32($0.timeIntervalSinceNow * 1000)) } ?? 50
+        var descriptor = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
+        let ready = poll(&descriptor, 1, min(50, remaining))
+        if ready < 0 { return (nil, errno != EINTR) }
+        if ready == 0 { return (nil, deadline.map { Date() >= $0 } ?? false) }
+        var byte: UInt8 = 0
+        return (read(STDIN_FILENO, &byte, 1) == 1 ? byte : nil, true)
+      }
+      if result.done { return result.byte }
     }
-    var byte: UInt8 = 0
-    return read(STDIN_FILENO, &byte, 1) == 1 ? byte : nil
   }
 
   // MARK: - Lines

@@ -1,10 +1,7 @@
 import Foundation
 import MaiCore
 import MaiLocalProviders
-import MLXLLM
 import MLXLMCommon
-import MLXLMHFAPI
-import MLXLMTokenizers
 
 typealias LocalMLXModels = MLXModels
 
@@ -15,7 +12,6 @@ enum LocalMLXError: LocalizedError {
   case noDownloadedModels
   case noModelSelected
   case emptyPrompt
-  case contextLengthExceeded(tokenCount: Int)
 
   var errorDescription: String? {
     switch self {
@@ -37,10 +33,6 @@ enum LocalMLXError: LocalizedError {
       return "Choose a downloaded MLX model before using MLX."
     case .emptyPrompt:
       return "Enter a prompt before generating."
-    case .contextLengthExceeded(let count):
-      return
-        "MLX context length exceeded: the prompt is \(count) tokens. "
-        + "Reduce the context window size in Settings or start a shorter conversation."
     }
   }
 }

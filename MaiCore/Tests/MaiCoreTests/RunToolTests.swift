@@ -256,6 +256,23 @@ private func shell(_ tools: [MaiRunTool]) -> MaiRunTool {
   tools[0]
 }
 
+@Test("Interactive run requests require a terminal host and reject redirected IO")
+func runInteractiveRequiresTerminalHost() async throws {
+  let tool = MaiRunTool(configuration: MaiRunConfiguration(), terminalHost: MaiRunTerminalHost())
+  let missing = try await call(tool, ["command": .string("true"), "interactive": .bool(true)])
+  #expect(missing.isError)
+  #expect(missing.text.contains("no terminal to hand over"))
+  for extra in [["stdin": JSONValue.string("keys")], ["output": JSONValue.string("file")]] {
+    let output = try await call(tool, ["command": .string("true"), "interactive": .bool(true)]
+      .merging(extra) { _, new in new })
+    #expect(output.isError)
+    #expect(output.text.contains("omit stdin and output"))
+  }
+  // A host without terminal integration still supports the ordinary pipe path.
+  let captured = try await call(tool, ["command": .string("printf captured"), "interactive": .bool(false)])
+  #expect(captured.text == "captured")
+}
+
 private func call(
   _ tool: MaiRunTool,
   _ arguments: [String: JSONValue]

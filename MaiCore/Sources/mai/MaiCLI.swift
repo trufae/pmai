@@ -1460,6 +1460,8 @@ struct MaiCLI {
       }
       defer { Task { await PmaiCommandHost.shared.install(runner: nil) } }
       if let prompt = options.initialPrompt {
+        await installInteractiveRunHost()
+        defer { Task { await MaiRunTerminalHost.shared.install(runner: nil) } }
         if configuration?.use.agentsmd == .ask || configuration?.use.agentsmd == .maybe {
           let directory = AgentExecutionScope.directory
           let approved = await askForAgentsMarkdown(
@@ -1890,11 +1892,13 @@ struct MaiCLI {
     for provider in localProviders {
       try await runtime.register(plugins.makeProvider(from: provider, environment: environment))
     }
-    let baseURL = try resolvedBaseURL(nil) ?? URL(string: "http://127.0.0.1:11434/v1")!
-    let apiKeyOverride = try options.apiKeyOverride ?? environmentAPIKey(in: environment)
+    let selectedLocalProvider = localProviders.contains { $0.id == selectedProvider.rawValue }
+    let baseURL = try (selectedLocalProvider ? nil : resolvedBaseURL(nil))
+      ?? URL(string: "http://127.0.0.1:11434/v1")!
+    let apiKeyOverride = try selectedLocalProvider ? nil
+      : (options.apiKeyOverride ?? environmentAPIKey(in: environment))
     let openAI = ConfiguredProvider(
-      id: localProviders.contains(where: { $0.id == selectedProvider.rawValue })
-        ? ProviderID.openAI.rawValue : selectedProvider.rawValue,
+      id: selectedLocalProvider ? ProviderID.openAI.rawValue : selectedProvider.rawValue,
       kind: .openAICompatible,
       baseURL: baseURL,
       apiKey: apiKeyOverride)
@@ -2235,6 +2239,7 @@ struct MaiCLI {
       TerminalScreen.install(screen)
       editor.install(surface: screen)
       await terminal.attach(screen: screen)
+      await installInteractiveRunHost(screen: screen, inputGate: editor.inputGate)
       await visual.approvalHandler.setPrompter { request in
         // Stream iteration wakes when the waiting agent's task is cancelled.
         let (decisions, pending) = AsyncThrowingStream<ApprovalDecision, any Error>.makeStream()
@@ -3665,6 +3670,7 @@ struct MaiCLI {
     }
 
     loop.beginExit()
+    await MaiRunTerminalHost.shared.install(runner: nil)
     reader.stop()
     visual.modelCatalog.cancel()
     supervisorFeed.cancel()
@@ -11621,7 +11627,7 @@ struct MaiCLI {
           kind: .openAICompatible,
           baseURL: URL(string: "https://api.openai.com/v1"),
           apiKeyEnvironment: "OPENAI_API_KEY"),
-      ],
+      ] + MaiLocalProvidersPlugin.defaultProviders,
       toolSources: [
         ConfiguredToolSource(
           id: "standard-tools",

@@ -20,6 +20,16 @@ Add connections once, then refer to them by ID. OpenAI-compatible local servers 
 
 Use `/edit provider ID` for the URL, default model, credentials, headers, and backend options. Other agents sharing that provider use the updated connection. A provider's `defaultModel` is selected by `/provider use ID` and fills an empty agent model; an explicit model takes precedence.
 
+On macOS, Apple and MLX are built-in native providers. `/providers` reports
+availability; select `/model apple::on-device` or
+`/model mlx::LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit`. Neither needs a URL or an
+OpenAI key. Apple uses the model enabled in System Settings; MLX downloads an
+MLX-ready Hugging Face model on first use and caches it. Named configurations use
+`/provider add NAME --kind apple` or
+`/provider add NAME --kind mlx --model org/model`. See the
+[native setup instructions](../MaiCore/README.md) for requirements, caching,
+authentication, and building the CLI's Metal resource.
+
 Create an agent by copying the current one, then edit the fields you need:
 
 ```text
@@ -83,6 +93,10 @@ Task assignments use explicit task flags, then saved assignments, then the curre
 3. Under **Task agents** in Manage Agents, choose **Compaction**, **Tool decisions**, and **Tool approval** independently. Select **Current conversation agent** to clear an assignment.
 
 Changes save automatically and survive restarting the app. Task choices do not change when you select another main agent. Removing an assigned agent clears its task assignments. Native provider/settings backups include the agent definitions and task defaults.
+
+The iOS app and macOS CLI share the `MaiLocalProviders` Apple and MLX engines.
+The app keeps its download controls, cache management, and UI guidance around
+those engines; new MLX downloads still require the explicit Settings action.
 
 Remote agents can share a provider while using different models. An empty model override retains the provider's default model for compatibility with existing settings. Connection URLs and credentials belong to the shared provider; editing one affects every agent using it.
 

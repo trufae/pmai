@@ -58,9 +58,11 @@ public struct MaiRunTool: AgentTool {
 
   public let configuration: MaiRunConfiguration
   public let definition: ToolDefinition
+  private let terminalHost: MaiRunTerminalHost
 
-  public init(configuration: MaiRunConfiguration) {
+  public init(configuration: MaiRunConfiguration, terminalHost: MaiRunTerminalHost = .shared) {
     self.configuration = configuration
+    self.terminalHost = terminalHost
     definition = Self.definition(configuration: configuration)
   }
 
@@ -109,15 +111,18 @@ public struct MaiRunTool: AgentTool {
     }
 
     private func execute(_ arguments: [String: JSONValue]) async throws -> ToolOutput {
+      let interactive = arguments["interactive"]?.boolValue ?? false
       var environment = ProcessInfo.processInfo.environment
       // Pipes are not terminals, but many CLIs honour one of these even when
       // output is redirected.  Keep output plain before applying the final
       // ANSI scrubber below.
-      environment["NO_COLOR"] = "1"
-      environment["CLICOLOR"] = "0"
-      environment["CLICOLOR_FORCE"] = "0"
-      environment["FORCE_COLOR"] = "0"
-      environment["TERM"] = "dumb"
+      if !interactive {
+        environment["NO_COLOR"] = "1"
+        environment["CLICOLOR"] = "0"
+        environment["CLICOLOR_FORCE"] = "0"
+        environment["FORCE_COLOR"] = "0"
+        environment["TERM"] = "dumb"
+      }
       let launcher = try MaiHostProcess.resolve(configuration.shell, environment: environment)
       let workingDirectory = try Self.workingDirectory(arguments["cwd"]?.stringValue)
       let timeout = min(
@@ -127,11 +132,23 @@ public struct MaiRunTool: AgentTool {
       let stdin = arguments["stdin"]?.stringValue
       let script = try Self.requiredText(arguments, key: "script", alias: "command")
       let outputMode = try Self.outputMode(arguments["output"]?.stringValue)
+      if interactive, stdin != nil || outputMode != .automatic {
+        throw MaiRunToolError.interactiveIO
+      }
       let scriptURL = try Self.writeScript(script, extension: "sh")
       defer { try? FileManager.default.removeItem(at: scriptURL) }
       var extraArguments = [scriptURL.path]
       if let args = arguments["args"]?.arrayValue {
         extraArguments += args.map { $0.stringValue ?? $0.compactJSONString }
+      }
+
+      if interactive {
+        let outcome = try await MaiHostProcess.runInteractive(
+          executable: launcher.executable, arguments: launcher.arguments + extraArguments,
+          workingDirectory: workingDirectory, environment: environment,
+          timeout: arguments["timeout_seconds"] == nil ? nil : timeout, host: terminalHost)
+        return Self.output(
+          for: outcome, timeout: timeout, workingDirectory: workingDirectory, interactive: true)
       }
 
       let outcome = try await MaiHostProcess.run(
@@ -157,13 +174,17 @@ public struct MaiRunTool: AgentTool {
     private static func output(
       for outcome: MaiHostProcessOutcome,
       timeout: TimeInterval,
-      workingDirectory: URL
+      workingDirectory: URL,
+      interactive: Bool = false
     ) -> ToolOutput {
       let stdout = stripANSI(String(decoding: outcome.stdout, as: UTF8.self))
         .trimmingCharacters(in: .newlines)
       let stderr = stripANSI(String(decoding: outcome.stderr, as: UTF8.self))
         .trimmingCharacters(in: .newlines)
       var sections: [String] = []
+      if interactive {
+        sections.append("[interactive program returned; terminal input and output were not captured]")
+      }
       if !stdout.isEmpty { sections.append(stdout) }
       if outcome.stdoutDropped > 0 {
         sections.append("[stdout truncated: \(outcome.stdoutDropped) more bytes not shown]")
@@ -181,7 +202,7 @@ public struct MaiRunTool: AgentTool {
       }
       if outcome.timedOut {
         sections.append("[timed out after \(Int(timeout)) seconds; the process was killed]")
-      } else if outcome.exitCode != 0 {
+      } else if interactive || outcome.exitCode != 0 {
         sections.append("[exit code \(outcome.exitCode)]")
       }
       if sections.isEmpty { sections.append("(no output; exit code 0)") }
@@ -305,12 +326,17 @@ public struct MaiRunTool: AgentTool {
       "items": .object(["type": .string("string")]),
       "description": .string("JSON array of positional arguments passed to script as $1, $2, … . Put the shell code in script, not in args; these are not shell options such as -c or -lc."),
     ])
-    properties["stdin"] = stringProperty("Text piped to standard input.")
+    properties["stdin"] = stringProperty("Text piped to standard input. Omit for interactive runs, where the person types directly.")
+    properties["interactive"] = .object([
+      "type": .string("boolean"),
+      "description": .string(
+        "Hand the terminal to the person for vim, nano, less, REPLs, or other interactive programs. Default false. Waits until they exit, then returns the exit status; terminal input/output is not captured. Requires a CLI terminal. Omit stdin and output."),
+    ])
     properties["cwd"] = stringProperty("Working directory. Default: the current directory.")
     properties["timeout_seconds"] = .object([
       "type": .string("number"),
       "description": .string(
-        "Seconds before the process is killed, 1-\(Int(MaiRunConfiguration.maximumTimeout)). Default: \(Int(configuration.defaultTimeout))."),
+        "Seconds before the process is killed, 1-\(Int(MaiRunConfiguration.maximumTimeout)). Default: \(Int(configuration.defaultTimeout)) for captured runs; interactive runs have no timeout unless explicitly set."),
     ])
     properties["output"] = .object([
       "type": .string("string"),
@@ -321,7 +347,7 @@ public struct MaiRunTool: AgentTool {
     return ToolDefinition(
       name: name,
       description:
-        "Run a shell command line or script with '\(configuration.shell)' from the current directory and return its stdout, stderr, and exit code. Commands run with colors disabled; returned text has ANSI escape sequences removed.",
+        "Run a shell command line or script with '\(configuration.shell)' from the current directory. Normally captures stdout, stderr, and exit code with colors/ANSI escapes removed. Supports interactive programs: when the person asks to open vim or another terminal program, set interactive=true to hand them the terminal, then continue after they exit. Example: {\"command\":\"vim notes.md\",\"interactive\":true}.",
       inputSchema: objectSchema(properties: properties, required: []),
       annotations: ToolAnnotations(
         readOnly: false,
@@ -342,6 +368,9 @@ enum MaiRunToolError: LocalizedError {
   case scriptWriteFailed(String)
   case interpreterNotFound(String)
   case invalidOutputMode(String)
+  case noTerminal
+  case terminalBusy
+  case interactiveIO
 
   var errorDescription: String? {
     switch self {
@@ -352,6 +381,9 @@ enum MaiRunToolError: LocalizedError {
     case .interpreterNotFound(let name):
       "Interpreter '\(name)' was not found in PATH; configure the Run group with its full path."
     case .invalidOutputMode(let mode): "Unknown output mode '\(mode)'; use auto, inline, file, or none."
+    case .noTerminal: "Interactive runs require an available CLI terminal on stdin and stdout. This host has no terminal to hand over."
+    case .terminalBusy: "Another program currently owns the terminal. Retry after it exits."
+    case .interactiveIO: "Interactive runs use the person's terminal directly; omit stdin and output."
     }
   }
 }
@@ -435,6 +467,68 @@ enum MaiRunToolError: LocalizedError {
       }
     }
 
+    static func runInteractive(
+      executable: URL, arguments: [String], workingDirectory: URL,
+      environment: [String: String], timeout: TimeInterval?, host: MaiRunTerminalHost
+    ) async throws -> MaiHostProcessOutcome {
+      let session = ProcessSession(
+        executable: executable, arguments: arguments, workingDirectory: workingDirectory,
+        environment: environment, hasInput: false, outputLimit: 0, outputMode: .none,
+        interactive: true)
+      return try await withTaskCancellationHandler {
+        try Task.checkCancellation()
+        try await host.run {
+          guard isatty(STDIN_FILENO) != 0, isatty(STDOUT_FILENO) != 0 else {
+            throw MaiRunToolError.noTerminal
+          }
+          let foreground = tcgetpgrp(STDIN_FILENO)
+          guard foreground > 0, foreground == getpgrp() else {
+            throw MaiRunToolError.noTerminal
+          }
+          var cooked = termios()
+          guard tcgetattr(STDIN_FILENO, &cooked) == 0 else { throw MaiRunToolError.noTerminal }
+          defer {
+            _ = setForegroundGroup(foreground)
+            _ = tcsetattr(STDIN_FILENO, TCSANOW, &cooked)
+          }
+          try session.start()
+          // Foundation starts a separate process group. A child that tried
+          // reading before this handoff may already be stopped by SIGTTIN.
+          if setForegroundGroup(session.pid) != 0, session.isRunning {
+            let error = NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+            session.stop(timedOut: false)
+            session.waitBlocking()
+            throw error
+          }
+          _ = kill(-session.pid, SIGCONT)
+          let watchdog = timeout.map { seconds in
+            Task {
+              try await Task.sleep(for: .seconds(seconds))
+              session.stop(timedOut: true)
+            }
+          }
+          defer { watchdog?.cancel() }
+          session.waitBlocking()
+        }
+        try Task.checkCancellation()
+        return try session.outcome
+      } onCancel: {
+        session.stop(timedOut: false)
+      }
+    }
+
+    /// Restoring pmai's foreground group happens while it is in the
+    /// background. Block SIGTTOU on this thread for that one ioctl.
+    private static func setForegroundGroup(_ pid: Int32) -> Int32 {
+      var mask = sigset_t()
+      var previous = sigset_t()
+      sigemptyset(&mask)
+      sigaddset(&mask, SIGTTOU)
+      pthread_sigmask(SIG_BLOCK, &mask, &previous)
+      defer { pthread_sigmask(SIG_SETMASK, &previous, nil) }
+      return tcsetpgrp(STDIN_FILENO, pid)
+    }
+
     /// Owns the non-Sendable `Process` and pipes; every mutation goes through `lock`.
     private final class ProcessSession: @unchecked Sendable {
       private let lock = NSLock()
@@ -443,6 +537,8 @@ enum MaiRunToolError: LocalizedError {
       private let stderrPipe = Pipe()
       private let readerQueue = DispatchQueue(label: "pmai.run.output", qos: .utility)
       private let readersClosed = DispatchGroup()
+      private let completion = DispatchGroup()
+      private let interactive: Bool
       private var stdoutSource: DispatchSourceRead?
       private var stderrSource: DispatchSourceRead?
       private var readError: NSError?
@@ -474,8 +570,11 @@ enum MaiRunToolError: LocalizedError {
         environment: [String: String],
         hasInput: Bool,
         outputLimit: Int,
-        outputMode: MaiRunTool.OutputMode
+        outputMode: MaiRunTool.OutputMode,
+        interactive: Bool = false
       ) {
+        self.interactive = interactive
+        completion.enter()
         self.outputLimit = outputLimit
         self.outputMode = outputMode
         stdinPipe = hasInput ? Pipe() : nil
@@ -483,10 +582,17 @@ enum MaiRunToolError: LocalizedError {
         process.arguments = arguments
         process.currentDirectoryURL = workingDirectory
         process.environment = environment
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-        process.standardInput = stdinPipe ?? FileHandle.nullDevice
+        process.standardOutput = interactive ? FileHandle.standardOutput : stdoutPipe
+        process.standardError = interactive ? FileHandle.standardError : stderrPipe
+        process.standardInput = interactive ? FileHandle.standardInput : stdinPipe ?? FileHandle.nullDevice
+        stdoutClosed = interactive
+        stderrClosed = interactive
       }
+
+      var pid: Int32 { lock.withLock { process.processIdentifier } }
+      var isRunning: Bool { lock.withLock { process.isRunning } }
+
+      func waitBlocking() { completion.wait() }
 
       var outcome: MaiHostProcessOutcome {
         get throws {
@@ -510,8 +616,10 @@ enum MaiRunToolError: LocalizedError {
         do {
           try lock.withLock {
             guard !stopping else { throw CancellationError() }
-            stdoutSource = try monitor(stdoutPipe.fileHandleForReading, isStderr: false)
-            stderrSource = try monitor(stderrPipe.fileHandleForReading, isStderr: true)
+            if !interactive {
+              stdoutSource = try monitor(stdoutPipe.fileHandleForReading, isStderr: false)
+              stderrSource = try monitor(stderrPipe.fileHandleForReading, isStderr: true)
+            }
             process.terminationHandler = { [weak self] _ in self?.markExited() }
             try process.run()
           }
@@ -701,6 +809,7 @@ enum MaiRunToolError: LocalizedError {
             defer { self.continuation = nil }
             return self.continuation
           }
+          completion.leave()
           continuation?.resume()
         }
       }

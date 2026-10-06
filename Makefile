@@ -118,8 +118,8 @@ repl-install:
 	python3 sys/build-mlx-metal.py --bin-dir "$$($(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) -c release --show-bin-path)"
 	mkdir -p $(BINDIR)
 	cp -f "$$($(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) -c release --show-bin-path)/pmai" $(BINDIR)/pmai
-	@shader="$$($(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) -c release --show-bin-path)/default.metallib"; \
-		if [ -f "$$shader" ]; then cp -f "$$shader" "$(BINDIR)/default.metallib"; fi
+	@shader="$$($(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) -c release --show-bin-path)/mlx.metallib"; \
+		if [ -f "$$shader" ]; then cp -f "$$shader" "$(BINDIR)/mlx.metallib"; fi
 	chmod 755 $(BINDIR)/pmai
 	$(STRIP) $(BINDIR)/pmai
 

@@ -151,12 +151,26 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   /// Steps aside for another program that needs the tty, then comes back with
   /// the same status and input on screen.
-  func suspendTerminal(_ action: () -> Void) {
-    lock.withLock {
+  func suspendTerminal(_ action: () throws -> Void) rethrows {
+    try lock.withLock {
       let wasActive = active
       if wasActive { deactivateLocked() }
-      action()
-      if wasActive { activateLocked() }
+      defer { if wasActive { activateLocked() } }
+      try action()
+    }
+  }
+
+  /// Tool handoffs must not interrupt /visual, which owns its own reader.
+  func handOverTerminal(_ action: () throws -> Void) throws {
+    try lock.withLock {
+      guard active else {
+        throw NSError(domain: "pmai.terminal", code: 1, userInfo: [
+          NSLocalizedDescriptionKey: "The terminal is currently owned by another interface. Return to the pmai prompt before running an interactive program."
+        ])
+      }
+      deactivateLocked()
+      defer { activateLocked() }
+      try action()
     }
   }
 
