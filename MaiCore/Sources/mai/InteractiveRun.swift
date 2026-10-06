@@ -18,8 +18,7 @@ func installInteractiveRunHost(
               try operation()
             }
           }
-          if let inputGate { try inputGate.withSuspendedInput(run) }
-          else { try run() }
+          if let inputGate { try inputGate.withSuspendedInput(run) } else { try run() }
           reply.resume()
         } catch {
           reply.resume(throwing: error)

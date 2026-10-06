@@ -37,11 +37,14 @@ Native provider checks cover URL-free setup, defaults, persistence, renaming,
 and isolation from remote URL/key settings, without downloading model data:
 
     python3 test/repl-local-providers-smoke.py MaiCore/.build/debug/pmai
+    python3 test/installer-smoke.py
     swift test --package-path MaiCore --filter LocalProviderTests
 
 The shared Swift tests also check tool-result preservation, model/hardware
 validation, and serialization of failing MLX loads. The iOS Apple conversation
 and MLX provider/cache tests verify the app's adapters and explicit-download policy.
+The installer check uses checksummed local archives to verify installation with
+and without the colocated MLX resource.
 On a supported Mac, exercise actual native inference from an isolated working
 directory with:
 
@@ -50,7 +53,8 @@ directory with:
 
 The MLX live check downloads `mlx-community/LFM2-350M-MLX` into
 `/tmp/pmai-local-provider-models` by default; `--model` and `--cache` override it.
-The Apple check requires Apple Intelligence enabled and its model ready.
+Add `--stream` to check streaming output. The Apple check requires Apple
+Intelligence enabled and its model ready.
 
 Skill/context regressions use a local fixture provider that deliberately returns
 an incomplete smart brief, so instruction preservation is checked independently

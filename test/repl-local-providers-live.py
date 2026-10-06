@@ -14,6 +14,7 @@ def main():
     parser.add_argument('--provider', required=True, choices=['apple', 'mlx'])
     parser.add_argument('--model')
     parser.add_argument('--cache', default='/tmp/pmai-local-provider-models')
+    parser.add_argument('--stream', action='store_true', help='exercise streaming responses')
     args = parser.parse_args()
     binary = str(Path(args.binary).resolve())
     model = args.model or ('on-device' if args.provider == 'apple' else 'mlx-community/LFM2-350M-MLX')
@@ -33,7 +34,7 @@ def main():
         }))
         result = subprocess.run(
             [binary, '--config', str(config), '--home', str(root / 'home'),
-             '--no-markdown', '--no-stream', '--max-tool-calls', '0',
+             '--no-markdown', *([] if args.stream else ['--no-stream']), '--max-tool-calls', '0',
              'What is 2 plus 2? Answer with one digit.'],
             cwd=root, env=environment, text=True, capture_output=True, timeout=300)
         print(result.stdout, end='')
@@ -41,7 +42,7 @@ def main():
         assert result.returncode == 0, f'{args.provider} exited {result.returncode}'
         assert 'error:' not in result.stdout + result.stderr
         assert '4' in result.stdout, result.stdout
-        print(f'PASS native {args.provider} inference: {model}')
+        print(f'PASS native {args.provider} inference ({"streaming" if args.stream else "non-streaming"}): {model}')
 
 
 if __name__ == '__main__':

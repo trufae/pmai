@@ -151,12 +151,12 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   /// Steps aside for another program that needs the tty, then comes back with
   /// the same status and input on screen.
-  func suspendTerminal(_ action: () throws -> Void) rethrows {
-    try lock.withLock {
+  func suspendTerminal(_ action: () -> Void) {
+    lock.withLock {
       let wasActive = active
       if wasActive { deactivateLocked() }
-      defer { if wasActive { activateLocked() } }
-      try action()
+      action()
+      if wasActive { activateLocked() }
     }
   }
 
