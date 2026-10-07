@@ -56,6 +56,11 @@ The MLX live check downloads `mlx-community/LFM2-350M-MLX` into
 Add `--stream` to check streaming output. The Apple check requires Apple
 Intelligence enabled and its model ready.
 
+Verification on 2026-10-06 passed native Apple and MLX inference in both streaming
+and non-streaming modes on macOS, the CLI setup and installer checks, 543 shared
+Swift tests, and 17 selected iOS simulator provider tests. CLI and iOS builds
+passed, as did a separate `MaiLocalProviders` build with `PMAI_NO_MLX=1`.
+
 Skill/context regressions use a local fixture provider that deliberately returns
 an incomplete smart brief, so instruction preservation is checked independently
 of the model's summarization quality:

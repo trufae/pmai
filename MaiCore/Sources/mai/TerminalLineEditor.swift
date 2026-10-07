@@ -11,7 +11,7 @@ import MaiCore
   import Darwin
 #endif
 
-/// Completion suffixes and the option currently applied to the input line.
+/// Completion words and the option currently applied to the input line.
 struct CompletionMenu: Equatable {
   var options: [String]
   var selected: Int
@@ -797,7 +797,13 @@ final class TerminalLineEditor {
     }
 
     let line = completionQuery ?? String(decoding: bytes, as: UTF8.self)
-    let matches = Set(candidates.filter { $0.hasPrefix(line) }).sorted()
+    // Complete only the current word: arguments become candidates after a
+    // separating space, even when a full command line supplied the candidate.
+    let matches = Set(candidates.compactMap { candidate -> String? in
+      guard candidate.hasPrefix(line) else { return nil }
+      let match = line + candidate.dropFirst(line.count).prefix { !$0.isWhitespace }
+      return match.last?.isWhitespace == false ? match : nil
+    }).sorted()
     if let menu = completionMenu, !completionMatches.isEmpty, matches == completionMatches {
       let applied = (menu.selected + 1) % completionMatches.count
       bytes = Array(completionMatches[applied].utf8)
@@ -823,11 +829,13 @@ final class TerminalLineEditor {
       return
     }
 
-    let prefix = commonPrefix(matches)
+    let wordStart = line.lastIndex(where: \.isWhitespace).map { line.index(after: $0) }
+      ?? line.startIndex
+    let prefixCount = line.distance(from: line.startIndex, to: wordStart)
     completionQuery = line
     completionMatches = matches
     completionMenu = CompletionMenu(
-      options: matches.map { String($0.dropFirst(prefix.count)) },
+      options: matches.map { String($0.dropFirst(prefixCount)) },
       selected: 0)
     bytes = Array(matches[0].utf8)
     cursor = bytes.count
@@ -1224,14 +1232,6 @@ final class TerminalLineEditor {
 
   private func isWhitespace(_ bytes: ArraySlice<UInt8>) -> Bool {
     String(decoding: bytes, as: UTF8.self).allSatisfy(\.isWhitespace)
-  }
-
-  private func commonPrefix(_ values: [String]) -> String {
-    guard var prefix = values.first else { return "" }
-    for value in values.dropFirst() {
-      while !value.hasPrefix(prefix), !prefix.isEmpty { prefix.removeLast() }
-    }
-    return prefix
   }
 
   // MARK: - History

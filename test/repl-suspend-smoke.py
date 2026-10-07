@@ -75,6 +75,32 @@ def main():
             job_pid = os.tcgetpgrp(master)
             assert job_pid != pid, 'pmai must have its own foreground process group'
 
+            # Finish the current word before offering its arguments. Commands
+            # inferred from longer candidates must appear only once in the menu.
+            for prefix, options in (
+                ('/model', ('/model', '/model-aproval', '/model-chat', '/model-compact',
+                            '/model-tool', '/models', '/model')),
+                ('/provider', ('/provider', '/providers', '/provider')),
+                ('/edit memory', ('memory', 'memory-prompt', 'memory')),
+            ):
+                send(prefix.encode())
+                for option in options:
+                    send(b'\t')
+                    wait_for(f'\x1b[97;44m{option}\x1b[0m')
+                send(b'\x03')
+                wait_for('Nothing to cancel.')
+            send(b'/model \t')
+            wait_for('hello\x1b[0m')
+            send(b'\x03')
+            wait_for('Nothing to cancel.')
+            send(b'/mcp\t')
+            wait_for('/mcp \x1b[0m')
+            send(b'\t')
+            wait_for('\x1b[97;44madd\x1b[0m')
+            send(b'\x03')
+            wait_for('Nothing to cancel.')
+            print('PASS: command and argument completion respects word boundaries')
+
             # Every Tab applies the highlighted item, including items which
             # were offscreen. Enter must submit that item, and editing resets
             # the menu instead of retaining the old completion candidates.
@@ -89,19 +115,21 @@ def main():
             wait_for('\x1b[97;44mautomatic\x1b[0m')
             send(b'\x7f\t\r')
             wait_for('Set tool.calling = automatic')
-            send(b'/provider use \t')
+            send(b'/provider use o\t')
             wait_for('/provider use offline')
             send(b'\t')
             wait_for('/provider use other')
             send(b'\r')
             wait_for('Provider: other (saved for agent smoke)')
             send(b'/edit provider\t')
+            wait_for('/edit provider \x1b[0m')
+            send(b'o\t')
             wait_for('/edit provider offline')
             send(b'\t')
             wait_for('/edit provider other')
             send(b'\x03')
             wait_for('Nothing to cancel.')
-            send(b'/edit provider \t')
+            send(b'/edit provider o\t')
             wait_for('/edit provider offline')
             send(b'\x03')
             wait_for('Nothing to cancel.')
