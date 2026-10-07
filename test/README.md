@@ -26,7 +26,10 @@ The defaults check starts with a clean user home and verifies saved model,
 provider, and settings across restarts and projects, precedence over stale
 environment variables, and temporary command-line overrides.
 The state check covers provider/task snapshots, removed definitions, chat
-switching, and saved subagent trees. The routing check starts a local mock HTTP
+switching, and saved subagent trees. It also checks `/jobs` and `/job`,
+definition-only `/agents` and `/agent` listings, compatibility aliases, transcript
+inspection, and durable clearing. The defaults check covers definition aliases
+and job command help and usage errors. The routing check starts a local mock HTTP
 provider and verifies actual requests, credential rotation, one-shot history,
 and recovery after terminating a process during nested work.
 The provider check verifies qualified bootstrap environment/flag models against a local

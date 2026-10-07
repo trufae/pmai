@@ -44,7 +44,7 @@ public actor AgentRuntime {
   var usageStats: ModelUsageStore?
   var debugLog: AgentDebugLog?
 
-  /// The process table every run reports into. Hosts read it for `/agents`,
+  /// The process table every run reports into. Hosts read it for `/jobs`,
   /// follow its events for notifications, and stop subtrees through it.
   public nonisolated let supervisor: AgentSupervisor
 

@@ -67,7 +67,7 @@ struct SubagentsBar: View {
 }
 
 /// The child agents of one chat, parents before their children, with the
-/// controls pmai offers through `/agents`: stop, pause, resume, a message
+/// controls pmai offers through `/jobs`: stop, pause, resume, a message
 /// for the next turn, and the transcript.
 struct SubagentProcessesSheet: View {
   let store: AppStore

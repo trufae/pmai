@@ -139,6 +139,9 @@ for line in sys.stdin:
             assert 'skills_alpha [direct; 3 calls]' in output, output
             assert 'skills_beta [disabled; 0 calls]' in output, output
             assert 'skills_gamma [proxy; 0 calls]' in output, output
+            assert 'alpha (enabled) [project; 3 calls]\n  Review alpha' in output, output
+            assert 'beta (disabled) [project; 0 calls]\n  Review beta' in output, output
+            assert 'gamma (proxied) [project; 0 calls]\n  Review gamma' in output, output
 
             # Automatic choice is reversible and cannot undo a manual proxy pin.
             output, calls = run(['/skills proxy alpha', 'Pinned'], [final])

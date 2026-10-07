@@ -735,7 +735,7 @@ struct REPLSession: Sendable {
   /// The agents this chat's runs started, with their transcripts, as saved
   /// with the chat. The REPL brings them up to date from the supervisor as
   /// runs end and puts them back in the process table when the chat is
-  /// reopened, so `/agents tree` and `/agents log` outlive the session.
+  /// reopened, so `/jobs tree` and `/jobs log` outlive the session.
   var subagents: [AgentProcessRecord]
   var runtimeConfiguration: AgentChatConfiguration?
   #if PMAI_HAS_VISUAL
@@ -1237,7 +1237,7 @@ struct MaiCLI {
         projectSettingsURL: home.storageDirectory(for: project).appendingPathComponent(
           "settings.json"),
         mode: options.approvalMode)
-      // Chat history owns these records until /agents clear. The runtime's
+      // Chat history owns these records until /jobs clear. The runtime's
       // bounded default can evict a parent before its subtree is saved.
       let runtime = AgentRuntime(
         approvalHandler: approvalHandler, supervisor: AgentSupervisor(finishedRetention: .max))
@@ -2384,7 +2384,7 @@ struct MaiCLI {
         prompt = "pmai@*> "
       } else if case .agent(let pid) = loop.focus {
         // The prompt names the process a line goes to: a focused child, or the
-        // chat's own once it has run, so its pid is at hand for /agents commands.
+        // chat's own once it has run, so its pid is at hand for /jobs commands.
         prompt = "pmai#\(pid.rawValue)> "
       } else if let pid = chatProcessIDs[session.id] {
         prompt = "pmai#\(pid.rawValue)> "
@@ -2519,7 +2519,7 @@ struct MaiCLI {
     }
 
     /// Puts the agents saved with the chat at the prompt back in the process
-    /// table, once per chat and session, so `/agents tree` and `/agents log`
+    /// table, once per chat and session, so `/jobs tree` and `/jobs log`
     /// show what earlier runs started before the chat's next turn.
     func restoreSavedSubagents() async {
       guard restoredChatIDs.insert(session.id).inserted, !session.subagents.isEmpty else {
@@ -2532,12 +2532,12 @@ struct MaiCLI {
       await runtime.supervisor.complete(pid)
       guard !restored.isEmpty else { return }
       await terminal.line(
-        "\(restored.count) agent\(restored.count == 1 ? "" : "s") from earlier runs of this chat: /agents tree lists them, /agents log PID reads one, /agents clear drops them."
+        "\(restored.count) agent\(restored.count == 1 ? "" : "s") from earlier runs of this chat: /jobs tree lists them, /jobs log PID reads one, /jobs clear drops them."
       )
     }
 
     /// Drops the agents saved with the chat at the prompt that the process
-    /// table no longer holds, after `/agents clear`. Answers how many went.
+    /// table no longer holds, after `/jobs clear`. Answers how many went.
     func dropForgottenSubagents() async -> Int {
       let known = Set(await runtime.supervisor.processes().map(\.runID))
       var dropped = session.subagents.count
@@ -2756,7 +2756,7 @@ struct MaiCLI {
             "The turn running in '\(before.title)' finishes there; its reply lands in that chat.")
         } else {
           await terminal.note(
-            "The turn running in '\(before.title)' goes on without its chat; /agents log \(turn.pid.rawValue) will show its reply, Ctrl+C cancels it."
+            "The turn running in '\(before.title)' goes on without its chat; /jobs log \(turn.pid.rawValue) will show its reply, Ctrl+C cancels it."
           )
         }
         return
@@ -2815,7 +2815,7 @@ struct MaiCLI {
           "queued (\(waiting) waiting): it joins the conversation at the next model turn · /queue")
       case .agent(let pid):
         guard let info = await runtime.supervisor.info(pid) else {
-          await terminal.note("No agent #\(pid.rawValue). /agents tree lists the running ones.")
+          await terminal.note("No agent #\(pid.rawValue). /jobs tree lists the running ones.")
           return
         }
         if pid == chatProcessIDs[session.id] {
@@ -2826,7 +2826,7 @@ struct MaiCLI {
         // when that chat is idle. Never redirect it to the focused chat.
         guard info.depth == 0 || !info.state.isTerminal else {
           await terminal.note(
-            "agent#\(pid.rawValue) (\(info.agentID)) has finished; /agents log \(pid.rawValue) shows what it did."
+            "agent#\(pid.rawValue) (\(info.agentID)) has finished; /jobs log \(pid.rawValue) shows what it did."
           )
           if loop.focus == .agent(pid) { loop.focus = .main }
           return
@@ -2835,7 +2835,7 @@ struct MaiCLI {
         let waiting = await runtime.supervisor.queuedMessages(for: pid).count
         let when =
           await runtime.supervisor.isPaused(pid)
-          ? "it is paused, so /agents continue \(pid.rawValue) delivers it"
+          ? "it is paused, so /jobs continue \(pid.rawValue) delivers it"
           : "delivered at its next model turn"
         await terminal.note(
           "queued for agent#\(pid.rawValue) (\(info.agentID)) (\(waiting) waiting): \(when)"
@@ -2942,15 +2942,15 @@ struct MaiCLI {
         switch loop.focus {
         case .main:
           await terminal.line(
-            "Messages go to this chat. /agents focus PID sends them to a running agent.")
+            "Messages go to this chat. /jobs focus PID sends them to a running agent.")
         case .agent(let pid):
           await terminal.line(
-            "Messages go to agent#\(pid.rawValue). /agents focus main returns to the chat.")
+            "Messages go to agent#\(pid.rawValue). /jobs focus main returns to the chat.")
         }
         return
       }
       guard let target = focusTarget(trimmed) else {
-        await terminal.line("Usage: /agents focus <PID|main>")
+        await terminal.line("Usage: /jobs focus <PID|main>")
         return
       }
       switch target {
@@ -2962,14 +2962,14 @@ struct MaiCLI {
             : "Messages go to this chat again.")
       case .agent(let pid):
         guard let info = await runtime.supervisor.info(pid) else {
-          await terminal.line("No agent #\(pid.rawValue). /agents tree lists the running ones.")
+          await terminal.line("No agent #\(pid.rawValue). /jobs tree lists the running ones.")
           return
         }
         guard info.depth > 0, !info.state.isTerminal else {
           await terminal.line(
             info.depth == 0
-              ? "agent#\(pid.rawValue) is this chat; /agents focus main is the same thing."
-              : "agent#\(pid.rawValue) (\(info.agentID)) has finished; pick a running one from /agents tree."
+              ? "agent#\(pid.rawValue) is this chat; /jobs focus main is the same thing."
+              : "agent#\(pid.rawValue) (\(info.agentID)) has finished; pick a running one from /jobs tree."
           )
           return
         }
@@ -2977,7 +2977,7 @@ struct MaiCLI {
         await terminal.line(
           configuration?.ui.broadcast == true
             ? "Focus saved: agent#\(pid.rawValue). Broadcast is on; @\(pid.rawValue) TEXT addresses this agent."
-            : "Messages go to agent#\(pid.rawValue) (\(info.agentID)) until /agents focus main; @main TEXT still reaches the chat."
+            : "Messages go to agent#\(pid.rawValue) (\(info.agentID)) until /jobs focus main; @main TEXT still reaches the chat."
         )
       }
     }
@@ -3122,15 +3122,16 @@ struct MaiCLI {
             await releaseIfIdle(workspace: workspace)
             continue
           }
-          if name == "/agents" || name == "/agent",
-            argument == "focus" || argument.hasPrefix("focus ")
-          {
-            await handleFocus(String(argument.dropFirst("focus".count)))
+          let jobArgument = jobsArgument(for: name, argument: argument)
+          let jobFields =
+            jobArgument?.split(maxSplits: 1, whereSeparator: \Character.isWhitespace) ?? []
+          if jobFields.first?.lowercased() == "focus" {
+            await handleFocus(jobFields.count > 1 ? String(jobFields[1]) : "")
             await refreshStatus()
             await releaseIfIdle(workspace: workspace)
             continue
           }
-          if name == "/agents" || name == "/agent", argument.lowercased() == "clear" {
+          if jobFields.count == 1, jobFields.first?.lowercased() == "clear" {
             let cleared = Set(await runtime.supervisor.clearFinished())
             // A chat whose idle process went with them gets a fresh one at
             // its next turn; nothing it said is lost, the session has it.
@@ -3146,11 +3147,11 @@ struct MaiCLI {
               switch (cleared.count, dropped) {
               case (0, 0): "No finished agents to clear."
               case (let count, 0):
-                "Cleared \(count) finished agent\(count == 1 ? "" : "s"); /agents tree lists what still runs."
+                "Cleared \(count) finished agent\(count == 1 ? "" : "s"); /jobs tree lists what still runs."
               case (0, let dropped):
                 "Dropped \(dropped) agent\(dropped == 1 ? "" : "s") saved with this chat."
               case (let count, let dropped):
-                "Cleared \(count) finished agent\(count == 1 ? "" : "s") and dropped \(dropped) saved with this chat; /agents tree lists what still runs."
+                "Cleared \(count) finished agent\(count == 1 ? "" : "s") and dropped \(dropped) saved with this chat; /jobs tree lists what still runs."
               }
             await terminal.line(summary)
             await refreshStatus()
@@ -3226,7 +3227,7 @@ struct MaiCLI {
             await releaseIfIdle(workspace: workspace)
             continue
           }
-          if name == "/skills" || name == "/skill", let request = skillPromptRequest(argument) {
+          if name == "/skills", let request = skillPromptRequest(argument) {
             if request.name.isEmpty {
               await terminal.line("Usage: /skills prompt NAME [TEXT]   (/skills lists the names)")
             } else if let skill = visual.skills.catalog.skill(named: request.name) {
@@ -3532,7 +3533,7 @@ struct MaiCLI {
           if let elsewhere {
             took += " · saved in '\(elsewhere)'"
           } else if !settled {
-            took += " · its chat was closed; /agents log \(turn.pid.rawValue) shows the reply"
+            took += " · its chat was closed; /jobs log \(turn.pid.rawValue) shows the reply"
           }
           if let paused {
             await terminal.note("⏸ \(took) · \(paused.summary)", tone: .warning)
@@ -3745,7 +3746,7 @@ struct MaiCLI {
         }
       await terminal.line(
         "agent \(process.pid) (\(process.agentID)) \(verb): "
-          + "\(process.attention?.summary ?? "")  ·  /agents log \(process.pid.rawValue)")
+          + "\(process.attention?.summary ?? "")  ·  /jobs log \(process.pid.rawValue)")
     }
   }
 
@@ -4143,6 +4144,10 @@ struct MaiCLI {
   ) async -> Bool {
     let parts = input.split(maxSplits: 1, whereSeparator: \Character.isWhitespace).map(String.init)
     let argument = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+    if let argument = jobsArgument(for: parts[0], argument: argument) {
+      await handleJobsCommand(argument, runtime: runtime, terminal: terminal)
+      return false
+    }
     let previousProviders = configuration?.providers
     let previousURLs = visual.providerBaseURLs.snapshot()
     defer {
@@ -4178,6 +4183,8 @@ struct MaiCLI {
         await terminal.line(promptHelp)
       case "agents", "agent", "/agents", "/agent":
         await terminal.line(agentsHelp)
+      case "jobs", "job", "/jobs", "/job":
+        await terminal.line(jobsHelp)
       case "mcp", "/mcp":
         await terminal.line(mcpCommandHelp)
       case "chat", "/chat":
@@ -4198,11 +4205,11 @@ struct MaiCLI {
         await terminal.line(copyHelp)
       case "stats", "/stats":
         await terminal.line(statsHelp)
-      case "skills", "skill", "/skills", "/skill":
+      case "skills", "/skills":
         await terminal.line(skillsHelp)
       default:
         await terminal.line(
-          "Unknown help topic '\(argument)'. Try /help, or /help set, theme, memory, todo, prompts, agents, mcp, chat, edit, tools, skills, queue, export, import, copy, or stats."
+          "Unknown help topic '\(argument)'. Try /help, or /help set, theme, memory, todo, prompts, agents, jobs, mcp, chat, edit, tools, skills, queue, export, import, copy, or stats."
         )
       }
     case "/cwd", "/pwd":
@@ -4276,7 +4283,7 @@ struct MaiCLI {
     case "/vdb":
       await handleVectorDatabaseCommand(
         argument, configuration: configuration, environment: ProcessInfo.processInfo.environment, terminal: terminal)
-    case "/skills", "/skill":
+    case "/skills":
       await handleSkillsCommand(
         argument,
         session: &session,
@@ -4379,17 +4386,7 @@ struct MaiCLI {
       await handleModelCommand(
         "-tool " + argument, session: &session, runtime: runtime, configuration: &configuration,
         configurationPath: visual.configurationPath, terminal: terminal)
-    case "/agents":
-      await handleAgentsCommand(
-        argument,
-        session: &session,
-        runtime: runtime,
-        plugins: plugins,
-        configuration: &configuration,
-        configurationPath: visual.configurationPath,
-        providerBaseURLs: visual.providerBaseURLs,
-        terminal: terminal)
-    case "/agent":
+    case "/agents", "/agent":
       await handleAgentCommand(
         argument,
         session: &session,
@@ -4397,7 +4394,7 @@ struct MaiCLI {
         plugins: plugins,
         configuration: &configuration,
         configurationPath: visual.configurationPath,
-        providerBaseURLs: visual.providerBaseURLs.snapshot(),
+        providerBaseURLs: visual.providerBaseURLs,
         terminal: terminal)
     case "/tools":
       await handleToolsCommand(
@@ -6462,211 +6459,6 @@ struct MaiCLI {
     await terminal.line("Change baseURL with /edit provider \(editID).")
   }
 
-  /// `/agents` covers both halves of the model: the definitions people switch
-  /// between, and the processes started from them.
-  private static func handleAgentsCommand(
-    _ argument: String,
-    session: inout REPLSession,
-    runtime: AgentRuntime,
-    plugins: PluginRegistry,
-    configuration: inout MaiConfiguration?,
-    configurationPath: String?,
-    providerBaseURLs: ProviderBaseURLStore,
-    terminal: TerminalWriter
-  ) async {
-    let fields = argument.split(maxSplits: 2, whereSeparator: \Character.isWhitespace).map(
-      String.init)
-    let action = fields.first?.lowercased() ?? ""
-
-    switch action {
-    case "", "list":
-      await listAgentDefinitions(
-        session: session,
-        runtime: runtime,
-        configuration: configuration,
-        providerBaseURLs: providerBaseURLs,
-        terminal: terminal)
-      if action.isEmpty {
-        let lines = await agentTreeLines(runtime: runtime)
-        if !lines.isEmpty {
-          await terminal.line("")
-          await terminal.line(lines.joined(separator: "\n"))
-        }
-      }
-
-    case "enable", "disable":
-      guard fields.count >= 2 else {
-        await terminal.line("Usage: /agents \(action) ID")
-        return
-      }
-      await setAgentEnabled(
-        fields[1],
-        enabled: action == "enable",
-        session: &session,
-        runtime: runtime,
-        configuration: &configuration,
-        configurationPath: configurationPath,
-        terminal: terminal)
-
-    case "describe":
-      guard fields.count >= 2 else {
-        await terminal.line("Usage: /agents describe ID [TEXT]")
-        return
-      }
-      await describeAgent(
-        fields[1],
-        text: fields.count > 2 ? fields[2] : nil,
-        session: &session,
-        runtime: runtime,
-        configuration: &configuration,
-        configurationPath: configurationPath,
-        terminal: terminal)
-
-    case "use", "show", "add", "new", "create", "acp", "tools", "model", "prompt", "provider",
-      "remove", "rm", "delete", "del":
-      await handleAgentCommand(
-        argument,
-        session: &session,
-        runtime: runtime,
-        plugins: plugins,
-        configuration: &configuration,
-        configurationPath: configurationPath,
-        providerBaseURLs: providerBaseURLs.snapshot(),
-        terminal: terminal)
-
-    default:
-      if await !handleProcessCommand(argument, runtime: runtime, terminal: terminal) {
-        await terminal.line(agentsHelp)
-      }
-    }
-  }
-
-  /// The `/agents` subcommands that act on a running process rather than on
-  /// a definition; `/agent` accepts them too, and they stay usable while a
-  /// turn runs. `focus` is not here because it lives in the REPL loop's state.
-  private static let processActions: Set<String> = [
-    "tree", "ps", "log", "kill", "stop", "pause", "suspend", "continue", "cont", "resume",
-    "clear",
-  ]
-
-  static func isProcessCommand(_ argument: String) -> Bool {
-    let action = argument.split(maxSplits: 1, whereSeparator: \Character.isWhitespace).first
-    return action.map { processActions.contains($0.lowercased()) } ?? false
-  }
-
-  /// Runs one process subcommand. Answers false when the argument is not one,
-  /// so the caller can fall back to its own handling.
-  private static func handleProcessCommand(
-    _ argument: String,
-    runtime: AgentRuntime,
-    terminal: TerminalWriter
-  ) async -> Bool {
-    let fields = argument.split(maxSplits: 2, whereSeparator: \Character.isWhitespace).map(
-      String.init)
-    let action = fields.first?.lowercased() ?? ""
-    guard processActions.contains(action) else { return false }
-
-    switch action {
-    case "tree", "ps":
-      let lines = await agentTreeLines(runtime: runtime)
-      await terminal.line(lines.isEmpty ? "No agents are running." : lines.joined(separator: "\n"))
-
-    case "clear":
-      // The REPL loop handles this itself so its chat pids follow; this is
-      // the path from visual mode, which holds no pids.
-      let cleared = await runtime.supervisor.clearFinished()
-      await terminal.line(
-        cleared.isEmpty
-          ? "No finished agents to clear."
-          : "Cleared \(cleared.count) finished agent\(cleared.count == 1 ? "" : "s").")
-
-    case "log":
-      guard fields.count >= 2, let pid = AgentPID(text: fields[1]) else {
-        await terminal.line("Usage: /agents log PID")
-        return true
-      }
-      let messages = await runtime.supervisor.transcript(pid)
-      guard !messages.isEmpty else {
-        let known = await runtime.supervisor.info(pid) != nil
-        await terminal.line(
-          known ? "\(pid) has not produced a transcript yet." : "No agent \(pid).")
-        return true
-      }
-      var lines: [String] = []
-      for (index, message) in messages.enumerated() {
-        lines.append("## [\(index + 1)] \(message.role.rawValue.capitalized)")
-        lines.append(message.content.map { renderFullContent($0) }.joined(separator: "\n"))
-      }
-      await terminal.line(lines.joined(separator: "\n"))
-
-    case "kill":
-      guard fields.count >= 2, let pid = AgentPID(text: fields[1]) else {
-        await terminal.line("Usage: /agents kill PID [REASON]")
-        return true
-      }
-      guard await runtime.supervisor.info(pid) != nil else {
-        await terminal.line("No agent \(pid).")
-        return true
-      }
-      let reason = fields.count > 2 ? fields[2] : "Stopped from the REPL"
-      let stopped = await runtime.supervisor.stop(pid, reason: reason)
-      await terminal.line(
-        "Stopped \(stopped.map(\.description).joined(separator: ", ")).")
-
-    case "stop", "pause", "suspend":
-      guard fields.count == 2, let pid = AgentPID(text: fields[1]) else {
-        await terminal.line("Usage: /agents stop PID")
-        return true
-      }
-      guard let info = await runtime.supervisor.info(pid) else {
-        await terminal.line("No agent \(pid).")
-        return true
-      }
-      guard info.depth > 0 else {
-        await terminal.line("\(pid) is this chat; Ctrl+C cancels its turn.")
-        return true
-      }
-      guard !info.state.isTerminal else {
-        await terminal.line(
-          "\(pid) (\(info.agentID)) has finished; /agents log \(pid.rawValue) shows what it did.")
-        return true
-      }
-      let held = await runtime.supervisor.pause(pid)
-      guard !held.isEmpty else {
-        await terminal.line(
-          "\(pid) (\(info.agentID)) is already paused; /agents continue \(pid.rawValue) lets it go on."
-        )
-        return true
-      }
-      await terminal.line(
-        "Paused \(held.map(\.description).joined(separator: ", ")): it finishes the step it is in, then waits. Messages queued meanwhile are read when /agents continue \(pid.rawValue) lets it go on."
-      )
-
-    case "continue", "cont", "resume":
-      guard fields.count == 2, let pid = AgentPID(text: fields[1]) else {
-        await terminal.line("Usage: /agents continue PID")
-        return true
-      }
-      guard let info = await runtime.supervisor.info(pid) else {
-        await terminal.line("No agent \(pid).")
-        return true
-      }
-      let released = await runtime.supervisor.resume(pid)
-      guard !released.isEmpty else {
-        await terminal.line(
-          info.state.isTerminal
-            ? "\(pid) (\(info.agentID)) has finished; /agents log \(pid.rawValue) shows what it did."
-            : "\(pid) (\(info.agentID)) is not paused.")
-        return true
-      }
-      await terminal.line("Continued \(released.map(\.description).joined(separator: ", ")).")
-
-    default:
-      return false
-    }
-    return true
-  }
-
   private static func listAgentDefinitions(
     session: REPLSession,
     runtime: AgentRuntime,
@@ -6701,24 +6493,6 @@ struct MaiCLI {
         await terminal.line("    \(displayed.description)")
       }
     }
-  }
-
-  private static func agentTreeLines(runtime: AgentRuntime) async -> [String] {
-    let tree = await runtime.supervisor.tree()
-    guard !tree.isEmpty else { return [] }
-    return ["Running agents:"] + tree.lines() + [agentTreeTotal(tree)]
-  }
-
-  /// One row summing what the whole tree has spent so far. Tokens are every
-  /// model call's input and output added up, the way a provider bills them,
-  /// formatted like the rows above it.
-  static func agentTreeTotal(_ tree: AgentProcessTree) -> String {
-    let turns = tree.processes.reduce(0) { $0 + $1.modelTurns }
-    let tools = tree.processes.reduce(0) { $0 + $1.toolCalls }
-    let tokens = tree.processes.reduce(0) { $0 + ($1.usage?.totalTokens ?? 0) }
-    let estimated = tree.processes.contains { $0.usage?.isEstimated == true }
-    return
-      "Total: \(turns) turn\(turns == 1 ? "" : "s"), \(tools) tool\(tools == 1 ? "" : "s"), \(ModelUsageFormat.tokens(tokens, estimated: estimated))"
   }
 
   private static func setAgentEnabled(
@@ -6895,8 +6669,7 @@ struct MaiCLI {
     }
   }
 
-  /// `/agent` in full: switch the chat's agent, or create and maintain saved
-  /// definitions with one line each. Process subcommands are accepted too.
+  /// Saved definitions: /agent and /agents use the same handler.
   private static func handleAgentCommand(
     _ argument: String,
     session: inout REPLSession,
@@ -6904,25 +6677,11 @@ struct MaiCLI {
     plugins: PluginRegistry,
     configuration: inout MaiConfiguration?,
     configurationPath: String?,
-    providerBaseURLs: [String: URL],
+    providerBaseURLs: ProviderBaseURLStore,
     terminal: TerminalWriter
   ) async {
     let words = argument.split(whereSeparator: \Character.isWhitespace).map(String.init)
-    guard let action = words.first?.lowercased() else {
-      await showAgent(
-        session.profile.agentID,
-        session: session,
-        configuration: configuration,
-        providerBaseURLs: providerBaseURLs,
-        terminal: terminal)
-      await terminal.line(
-        "Usage: /agent [use] ID · /agent add NAME MODEL GROUPS PROMPT · /help agents")
-      return
-    }
-
-    if await handleProcessCommand(argument, runtime: runtime, terminal: terminal) {
-      return
-    }
+    let action = words.first?.lowercased() ?? ""
 
     if action == "acp" {
       let fields = argument.split(maxSplits: 5, whereSeparator: \Character.isWhitespace).map(
@@ -6939,6 +6698,45 @@ struct MaiCLI {
     }
 
     switch action {
+    case "", "list":
+      guard words.count <= 1 else {
+        await terminal.line("Usage: /agents [list]")
+        return
+      }
+      await listAgentDefinitions(
+        session: session, runtime: runtime, configuration: configuration,
+        providerBaseURLs: providerBaseURLs, terminal: terminal)
+
+    case "enable", "disable":
+      guard words.count == 2 else {
+        await terminal.line("Usage: /agents \(action) ID")
+        return
+      }
+      await setAgentEnabled(
+        words[1],
+        enabled: action == "enable",
+        session: &session,
+        runtime: runtime,
+        configuration: &configuration,
+        configurationPath: configurationPath,
+        terminal: terminal)
+
+    case "describe":
+      let fields = argument.split(maxSplits: 2, whereSeparator: \Character.isWhitespace).map(
+        String.init)
+      guard fields.count >= 2 else {
+        await terminal.line("Usage: /agents describe ID [TEXT]")
+        return
+      }
+      await describeAgent(
+        words[1],
+        text: fields.count > 2 ? fields[2] : nil,
+        session: &session,
+        runtime: runtime,
+        configuration: &configuration,
+        configurationPath: configurationPath,
+        terminal: terminal)
+
     case "default":
       guard words.count == 2, var draft = configuration, let configurationPath,
         let agent = draft.agents.first(where: { $0.id == words[1] }), agent.isEnabled
@@ -6999,7 +6797,7 @@ struct MaiCLI {
         words.count > 1 ? words[1] : session.profile.agentID,
         session: session,
         configuration: configuration,
-        providerBaseURLs: providerBaseURLs,
+        providerBaseURLs: providerBaseURLs.snapshot(),
         terminal: terminal)
 
     case "tools":
@@ -7765,7 +7563,8 @@ struct MaiCLI {
     if action == "list" || fields.isEmpty {
       await terminal.line("Tool proxy default: \(toolProxySetting(session.profile)); automatic exposure: \(session.profile.toolPolicy.automatic ? "on" : "off"). Per-tool overrides take precedence.")
       for group in groups {
-        let label = group.sourceID == "mcp" ? group.catalogID : group.id
+        let label = await terminal.paint(
+          group.sourceID == "mcp" ? group.catalogID : group.id, bold: true)
         let modes = group.toolNames.map {
           (modesByName[$0] ?? .disabled).rawValue
         }
@@ -7834,8 +7633,11 @@ struct MaiCLI {
         return
       }
       let mode = modesByName[name] ?? .disabled
-      await terminal.line("\(name) [\(mode.rawValue); \(usage.counts[name, default: 0]) calls]")
-      for line in ToolGroupHelp.lines(for: tool) { await terminal.line(line) }
+      let boldName = await terminal.paint(name, bold: true)
+      await terminal.line("\(boldName) [\(mode.rawValue); \(usage.counts[name, default: 0]) calls]")
+      for line in ToolGroupHelp.lines(for: tool, paint: { text, style in
+        style == .tool ? boldName : text
+      }) { await terminal.line(line) }
       return
     }
     guard case .group(let group) = selection else { return }
@@ -7869,7 +7671,8 @@ struct MaiCLI {
       }
       for name in group.toolNames.sorted() {
         let mode = modesByName[name] ?? .disabled
-        await terminal.line("  \(name) [\(mode.rawValue); \(usage.counts[name, default: 0]) calls]")
+        let boldName = await terminal.paint(name, bold: true)
+        await terminal.line("  \(boldName) [\(mode.rawValue); \(usage.counts[name, default: 0]) calls]")
       }
       let helpLines = ToolGroupHelp.lines(for: group, tools: tools) { text, style in
         switch style {
@@ -8120,15 +7923,21 @@ struct MaiCLI {
       }
       let ui = configuration?.ui ?? .init()
       for skill in catalog.skills {
-        let enabled = isSkillEnabled(skill, profile: session.profile)
-        let status = !skill.isModelInvocable ? "not callable" : (modes[skill.toolName] ?? .disabled).rawValue
+        let mode = modes[skill.toolName] ?? .disabled
+        let status = switch (skill.isModelInvocable, mode) {
+        case (false, _): "not callable"
+        case (true, .direct): "enabled"
+        case (true, .proxy): "proxied"
+        case (true, .disabled): "disabled"
+        }
         let color =
           !skill.isModelInvocable
-          ? ui.warningForeground : enabled ? ui.successForeground : ui.errorForeground
-        let label = await terminal.paint(
-          "[\(status)]".padding(toLength: 14, withPad: " ", startingAt: 0), color: color)
+          ? ui.warningForeground : mode == .disabled ? ui.errorForeground : ui.successForeground
+        let label = await terminal.paint("(\(status))", color: color)
+        let name = await terminal.paint(skill.name, bold: true)
         let source = skill.rootURL.path == skills.userDirectory.path ? "user" : "project"
-        await terminal.line("\(label) \(skill.name) — \(skill.description) [\(source); \(usage.counts[skill.toolName, default: 0]) calls]")
+        await terminal.line("\(name) \(label) [\(source); \(usage.counts[skill.toolName, default: 0]) calls]")
+        await terminal.line("  " + skill.description.replacingOccurrences(of: "\n", with: "\n  "))
       }
       await terminal.line(
         "Statuses apply to agent \(agentID). /skills enable NAME enables a skill; /skills prompt NAME [TEXT] sends an enabled skill now."
@@ -10739,7 +10548,7 @@ struct MaiCLI {
       lines.append(
         "Agents:   \(chat.subagents.count) started by its runs"
           + (running > 0 ? ", \(running) still running when last saved" : "")
-          + " (/agents tree lists them)")
+          + " (/jobs tree lists them)")
     }
     return lines.joined(separator: "\n")
   }
@@ -11063,7 +10872,7 @@ struct MaiCLI {
     }
   }
 
-  private static func renderFullContent(
+  static func renderFullContent(
     _ part: ContentPart,
     renderText: (String) -> String = { $0 }
   ) -> String {
@@ -11396,7 +11205,7 @@ struct MaiCLI {
       "/set export.", "/set export.tools on", "/set export.tools off",
       "/set export.thinking on", "/set export.thinking off",
       "/btw ",
-      "/help memory", "/help agents", "/help chat", "/help edit", "/help tools",
+      "/help memory", "/help agents", "/help jobs", "/help chat", "/help edit", "/help tools",
       "/agent acp list", "/agent acp add ", "/agents acp list",
       "/memory", "/memory edit", "/memory learn", "/memory learn --all", "/memory add ",
       "/memory clear", "/memory on", "/memory off", "/memory scope none",
@@ -11419,7 +11228,7 @@ struct MaiCLI {
       "/set tool.proxy hybrid", "/set tool.auto on", "/set tool.auto off",
       "/set ui.title ", "/set ui.title none", "/set ui.editor ", "/set ui.editor none",
       "/theme color bgline rgb:024", "/theme color bgline none",
-      "/theme color fgprompt yellow", "/version", "/last", "/skills", "/skill",
+      "/theme color fgprompt yellow", "/version", "/last", "/skills",
       "/theme color fgcolor none", "/theme color bgcolor none", "/theme color bgprompt none",
       "/theme color fgtoolresult yellow", "/set use.", "/set use.agentsmd on",
       "/set use.agentsmd off",
@@ -11441,8 +11250,11 @@ struct MaiCLI {
       "/prompt list", "/prompt show ", "/prompt add ", "/prompt set ", "/prompt edit ",
       "/prompt rm ", "/prompt use ", "/help prompts", "/prompts list", "/prompts show ",
       "/prompts add ", "/prompts edit ", "/prompts rm ", "/edit user ", "/edit system ",
-      "/agents", "/agents tree", "/agents clear", "/agents log ", "/agents kill ", "/agents focus ",
-      "/agents focus main", "/queue", "/queue push ", "/queue pop", "/queue drop",
+      "/agent", "/agents", "/agents list", "/agents describe ", "/agents enable ",
+      "/agents disable ",
+      "/job", "/jobs", "/jobs tree", "/jobs stop ", "/jobs continue ", "/jobs clear", "/jobs log ",
+      "/jobs kill ", "/jobs focus ",
+      "/jobs focus main", "/queue", "/queue push ", "/queue pop", "/queue drop",
       "/help queue", "/help export", "/help import", "/export archive ", "/import ",
       "/export markdown ", "/export html ", "/export json ", "/export debug ",
       "/stats", "/stats ranking", "/stats speed", "/stats time", "/stats efficiency",
@@ -11771,11 +11583,12 @@ struct MaiCLI {
   }()
 
   private static let replHelp = """
-    /agent                 Select or edit this chat's agent; /help agent lists commands
+    /agent                 Alias for /agents
     /agent add NAME       Copy this agent's settings into a new saved agent
     /agent default ID     Save the default agent for new chats and runs
     /agent effort ID LEVEL  Set an agent's reasoning effort
-    /agents                Manage agent definitions and running agents; /help agents lists commands
+    /agents                List or edit saved agent definitions; /help agents lists commands
+    /jobs                  Manage running and saved processes; /help jobs lists commands
     /attach [MODE] PATH    Attach a document/source file; HTML asks for source, markdown, or copy
     /attach clear          Drop the attachments queued for the next message
     /btw PROMPT            Ask in a fresh context without changing this chat
@@ -12007,8 +11820,8 @@ struct MaiCLI {
     -r without a selector reopens the most recently updated chat. Chats
     belong to the project rooted at the start directory; /project shows it.
     A chat is saved with the agents its runs started and their transcripts:
-    reopening it lists them under /agents tree, /agents log PID reads one,
-    /chat info counts them, and /agents clear drops them from the chat.
+    reopening it lists them under /jobs tree, /jobs log PID reads one,
+    /chat info counts them, and /jobs clear drops them from the chat.
     """
 
   private static let projectHelp = """
@@ -12145,7 +11958,7 @@ struct MaiCLI {
     skills_NAME tool the model may call to get the instructions, once it is
     enabled for the agent.
 
-      /skills                    List skills with direct/proxy/disabled status and calls
+      /skills                    List skills with enabled/proxied/disabled status and calls
       /skills show NAME          Print a skill's file, tool state, and instructions
       /skills enable NAME|all    Offer a skill (or every skill) to the current agent
       /skills disable NAME|all   Disable a skill (or every skill) for this agent
@@ -12203,14 +12016,12 @@ struct MaiCLI {
     """
 
   private static let agentsHelp = """
-    Agent commands. A definition is a saved setup — provider, model, system
-    prompt, tools, and limits — that you switch between; a process is one run
-    started from a definition, addressed by its pid.
+    Agent definitions (/agent is an alias). A definition is a saved setup —
+    provider, model, system prompt, tools, and limits — that you switch between.
+    /jobs manages the processes started from these definitions.
 
-      /agents                    List definitions, then the running process tree
-      /agents list               Definitions only
-      /agents tree               The running process tree only
-      /agents clear              Forget finished processes, and drop the ones saved with this chat
+      /agents                    List saved definitions
+      /agents list               Same as /agents
       /agents use ID             Switch this chat to a definition
       /agents show [ID]          Show one definition in full
       /agents describe ID TEXT   Set the one-line purpose a model reads to pick it
@@ -12241,26 +12052,10 @@ struct MaiCLI {
 
     A definition's tools are its own, whatever its depth in the tree: give a
     subagent its groups the same way. Named prompts are managed with /prompt.
-      /agents log PID            Print a running, finished, or saved agent's own transcript
-      /agents stop PID           Pause an agent and everything it started at their next step
-      /agents continue PID       Let a paused agent go on; queued messages reach it then
-      /agents kill PID [REASON]  End an agent and everything it started
-      /agents focus PID|main     Send what you type to one running agent, or back to the chat
-
-    While agents run, what you type is queued for them and read at their next
-    model turn: /queue lists it, @PID TEXT addresses one agent once, and
-    @2,3 TEXT or @2 @3 TEXT sends the same message to several; @* TEXT reaches
-    every active process, including the running main chat and paused agents.
-    @@ TEXT and bare @ TEXT are aliases for @* TEXT.
-    @ alone prints usage help.
-    Idle chats and finished agents are skipped. /set ui.broadcast on makes
-    unaddressed messages use @*; off restores the focus. Agent output prints
-    in blocks prefixed agent#PID; /set ui.subagents picks how much.
-
-    An agent always has the tools its definition allows, at any depth of the
-    tree. /set delegation subagent also lets it hand bulky work to a child with
-    the same tools, so only the answer lands here. /set limits.maxSubagents and
-    /set limits.maxSubagentDepth bound the tree.
+    /help jobs explains process control, focus, queued messages, and tree states.
+    /set delegation subagent lets an agent hand tool work to a child with the
+    same tools. /set limits.maxSubagents and /set limits.maxSubagentDepth bound
+    the process tree.
     """
 
   private static let toolHelp = """

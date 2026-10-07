@@ -85,7 +85,7 @@ public struct PmaiCommandPolicy: Equatable, Sendable {
   public static let defaultBlockedCommands = "exit quit clear visual image attach"
   /// Commands that answer with what they are rather than changing it.
   public static let defaultReadOnlyCommands =
-    "help set models providers tools mcp mcps agents agent theme prompts skills memory todo stats version cwd"
+    "help set models providers tools mcp mcps agents agent jobs job theme prompts skills memory todo stats version cwd"
 
   public var blockedCommands: String
   public var readOnly: Bool
@@ -234,7 +234,7 @@ public struct MaiPmaiRunTool: AgentTool {
         + "this installation: /set for settings (effort, limits, tool approval, colors), /models "
         + "and /model for the model, /providers and /provider for chat providers and their base "
         + "URLs, /tools for which tools an agent may call, /mcp to list, add or enable MCP servers, "
-        + "/theme to list, apply, save or customize a color theme, /agents for agents and subagents, /stats "
+        + "/theme to list, apply, save or customize a color theme, /agents for saved definitions, /jobs for processes, /stats "
         + "for token use. Example: pmai_run with command \"/set tool.aproval smart\". Changes are "
         + "saved and take effect from the next turn, so run one that changes something only after "
         + "the person has asked for it. pmai_help gives a command's exact syntax. " + scope,
@@ -285,7 +285,7 @@ public struct MaiPmaiHelpTool: AgentTool {
       description:
         "Help for pmai's own slash commands, the same text `/help TOPIC` prints at the prompt. "
         + "With no topic it lists every command; with a topic it gives that command's syntax — "
-        + "set, theme, tools, mcp, agents, prompts, skills, memory, todo, chat, edit, queue, "
+        + "set, theme, tools, mcp, agents, jobs, prompts, skills, memory, todo, chat, edit, queue, "
         + "export, import, copy, stats. Call this before pmai_run whenever the arguments are "
         + "unclear; it changes nothing.",
       inputSchema: .object([

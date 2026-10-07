@@ -42,7 +42,7 @@ public struct AgentChat: StoredChat, Equatable {
   /// The session this chat presents to providers; see `ChatSession`.
   public var sessionID: String
   /// The agents this chat's runs started, parents before children, each
-  /// with its own transcript: what `/agents tree` and `/agents log` show
+  /// with its own transcript: what `/jobs tree` and `/jobs log` show
   /// once the chat is resumed, and what the debug export carries. Hosts
   /// bring these up to date from the supervisor as runs end.
   public var subagents: [AgentProcessRecord]

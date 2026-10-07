@@ -127,7 +127,9 @@ func pmaiRunBlocksByNameOnly() async throws {
 func pmaiRunReadOnly() async throws {
   let host = await host { line in "ran \(line)" }
   let policy = PmaiCommandPolicy(readOnly: true)
-  for command in ["/set", "/mcp list", "/tools list", "/theme list", "/help", "/stats"] {
+  for command in [
+    "/set", "/mcp list", "/tools list", "/theme list", "/help", "/stats", "/jobs", "/job tree",
+  ] {
     #expect(allows(policy, command))
   }
   #expect(refusedIs(policy, "/model gpt-5", .notReadOnly("model")))

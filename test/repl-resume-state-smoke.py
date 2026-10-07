@@ -139,17 +139,36 @@ def main():
         by_id = {r['runID']: r for r in restored}
         assert all(r.get('parentRunID') == parent_id for r in restored if r['runID'] != parent_id)
         assert all(r['parent'] == by_id[parent_id]['pid'] for r in restored if r['runID'] != parent_id)
-        output = run(['/agents tree', '/agents log 3', '/chat use fresh-chat',
-                      '/chat use durable', '/agents tree'], ['-r', 'durable'])
+        output = run(['/jobs tree', '/jobs log 3', '/chat use fresh-chat',
+                      '/chat use durable', '/jobs tree'], ['-r', 'durable'])
         assert '48 agents from earlier runs' in output, output
         for index in range(48):
             assert f'old-worker-{index}' in output, output
         assert len(json.loads(saved_path.read_text())['subagents']) == 48
 
+        # Listings separate definitions from durable processes; both canonical
+        # spellings and the explicit old runtime commands still reach the tree.
+        for command in ('/agents', '/agent', '/agents list', '/agent list'):
+            output = run([command], ['-r', 'durable'])
+            assert 'old-worker-' not in output and 'Jobs:' not in output, output
+            assert 'Total:' not in output, output
+        for command in ('/jobs', '/job', '/jobs tree', '/job ps', '/agents tree', '/agent tree'):
+            output = run([command], ['-r', 'durable'])
+            assert 'Jobs:' in output and 'Total:' in output, output
+            for index in range(48):
+                assert f'old-worker-{index}' in output, output
+        for command in ('/jobs log 3', '/job log #3', '/agents log 3', '/agent log 3'):
+            output = run([command], ['-r', 'durable'])
+            assert '## [2] User\nA saved conversation.' in output, output
+        for command in ('/jobs log 3 extra', '/job clear extra'):
+            output = run([command], ['-r', 'durable'])
+            assert 'Usage: /jobs' in output, output
+            assert len(json.loads(saved_path.read_text())['subagents']) == 48
+
         # Clearing while focused elsewhere also clears the visited chat's saved records.
-        run(['/chat use fresh-chat', '/agents clear'], ['-r', 'durable'])
+        run(['/chat use fresh-chat', '/job clear'], ['-r', 'durable'])
         assert json.loads(saved_path.read_text())['subagents'] == []
-        output = run(['/agents tree'], ['-r', 'durable'])
+        output = run(['/jobs tree'], ['-r', 'durable'])
         assert 'old-worker-' not in output, output
         print('PASS complete resume: effective URLs, provider settings, task models, removed '
               'definitions, chat switching, one-shot restoration, 48-agent tree, and clearing')

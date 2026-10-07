@@ -28,7 +28,7 @@ public struct AgentQueuedMessage: Equatable, Sendable, Identifiable {
 /// The process table for one session: which agents are running, how they are
 /// related, what they are waiting for, and how to stop them.
 ///
-/// `AgentRuntime` writes to it as runs progress; hosts read it for `/agents`,
+/// `AgentRuntime` writes to it as runs progress; hosts read it for `/jobs`,
 /// follow `events` for notifications, and call `stop` to kill a subtree.
 /// Nothing here is persisted — pids are session-scoped by design. A host that
 /// wants a chat's agents back after a restart saves `records(under:)` with
@@ -85,7 +85,7 @@ public actor AgentSupervisor {
     processes().filter(\.needsAttention)
   }
 
-  /// The child's own conversation, for `/agents log`. Empty until it produces
+  /// The child's own conversation, for `/jobs log`. Empty until it produces
   /// one; a finished process keeps the transcript it ended with.
   public func transcript(_ pid: AgentPID) -> [AgentMessage] {
     entries[pid]?.transcript ?? []

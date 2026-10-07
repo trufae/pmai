@@ -151,13 +151,19 @@ def main():
                         assert process.poll() is None, (process.returncode, output)
                         if select.select([master], [], [], .1)[0]:
                             output.extend(os.read(master, 65536))
+                    # Configuration listings stay separate even during a run.
                     send('/agents')
+                    listing = wait_for('worker — worker')
+                    assert 'Total:' not in listing and 'Jobs:' not in listing, listing
+                    send('/jobs')
                     pids = check_tree('run')
                     assert len(pids) == max_depth + 1, pids
                     main_pid, first, second, leaf = pids
                     if mode.endswith('background'):
-                        send(f'/agents stop {first}')
+                        send(f'/jobs stop {first}')
                         wait_for('then waits.')
+                        send('/jobs tree')
+                        check_tree('paused')
                     recipients = pids if mode.endswith('blocking') else pids[1:]
                     aliases = 'main,chat,0,' if mode.endswith('blocking') else ''
                     expected = [(pid, 'queued note') for pid in recipients]
@@ -174,7 +180,7 @@ def main():
                         send(f'{prefix}@{first} @{second}')
                         wait_for('A message is required')
                     check_queue(expected)
-                    send(f'/agents focus {second}')
+                    send(f'/job FOCUS {second}')
                     wait_for(f'Messages go to agent#{second}')
                     send(f'@{first} @#{second} @agent#{leaf} @{first} direct note')
                     wait_for(f'queued for agent#{leaf}')
@@ -199,7 +205,7 @@ def main():
                     expected += [(pid, 'wildcard queued note') for pid in pids]
                     set_broadcast(True)
                     wait_for('pmai@*>')
-                    send('/agents focus')
+                    send('/job FOCUS')
                     wait_for('Messages go to every active agent.')
                     send('default broadcast note')
                     wait_for(f'queued for agent#{leaf}')
@@ -223,7 +229,7 @@ def main():
                         wait_for('Continued ')
                     release_leaf.set()
                     wait_for('✓ took')
-                    send('/agents tree')
+                    send('/job tree')
                     check_tree('done')
                     assert {depth for depth, _ in requests} == set(range(max_depth + 1)), requests
                     for depth, request in requests:

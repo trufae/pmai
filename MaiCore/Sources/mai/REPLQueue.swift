@@ -81,19 +81,19 @@ extension MaiCLI {
       }
     }
     guard !pids.isEmpty else {
-      throw REPLMessageError(message: "No active agents. /agents tree lists the processes.")
+      throw REPLMessageError(message: "No active agents. /jobs tree lists the processes.")
     }
     var seen: Set<AgentPID> = []
     return try pids.compactMap { pid in
       guard seen.insert(pid).inserted else { return nil }
       guard let info = processes[pid] else {
         throw REPLMessageError(
-          message: "No agent #\(pid.rawValue). /agents tree lists the running ones.")
+          message: "No agent #\(pid.rawValue). /jobs tree lists the running ones.")
       }
       guard info.depth == 0 || !info.state.isTerminal else {
         throw REPLMessageError(
           message:
-            "agent#\(pid.rawValue) (\(info.agentID)) has finished; /agents log \(pid.rawValue) shows what it did."
+            "agent#\(pid.rawValue) (\(info.agentID)) has finished; /jobs log \(pid.rawValue) shows what it did."
         )
       }
       return info
@@ -221,7 +221,7 @@ extension MaiCLI {
 
     @PID TEXT sends one message to a running agent. @2,3 TEXT or @2 @3 TEXT
     sends one copy to each recipient without changing focus; @main includes
-    the chat. /agents tree lists PIDs. Unknown or finished child recipients
+    the chat. /jobs tree lists PIDs. Unknown or finished child recipients
     reject the list; repeated PIDs receive only one copy.
     @* TEXT reaches every active process in this session, including the running
     main chat, paused agents, and children waiting for a slot. It skips idle
@@ -231,7 +231,7 @@ extension MaiCLI {
     /set ui.broadcast on makes unaddressed messages (also /queue push TEXT)
     use @* by default; off restores the current focus. Explicit @addresses
     override this saved setting. Use @main TEXT to start an idle chat.
-    /agents focus PID selects the target used when ui.broadcast is off.
+    /jobs focus PID selects the target used when ui.broadcast is off.
     """
 }
 

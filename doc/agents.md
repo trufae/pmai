@@ -31,7 +31,7 @@ mess.
 | Identity | a string id (`researcher`) | a **pid** (`#4`) |
 | Lives in | `pmai.json` under `agents` | the `AgentSupervisor`, for one session |
 | Carries | description, provider, model, prompt, tools, limits | state, parent, transcript, usage, attention |
-| Listed by | `/agents list` | `/agents tree` |
+| Listed by | `/agents list` | `/jobs tree` |
 
 A definition is also the unit people switch between: rather than changing
 provider, then model, then system prompt, then the tool set one command at a
@@ -51,7 +51,7 @@ Both are edited from every host: `/agents describe ID TEXT` and
 same `MaiConfiguration` file the iOS app reads.
 
 The process analogy is not decoration. `agent_start` is fork+exec, `agent_stop`
-is kill, `/agents tree` is pstree, and a pid is short enough to type. One
+is kill, `/jobs tree` is pstree, and a pid is short enough to type. One
 definition can back many concurrent processes; a process always names the
 definition it was started from.
 
@@ -94,7 +94,7 @@ makes a tree, not a two-level parent/child split:
 Depth is bounded by `limits.maxSubagentDepth` (default 5, with the main agent
 at depth 0). Unnamed workers inherit the ability to delegate unless their
 `tools` subset excludes the agent tools; named agents need their own `agents`
-tool group enabled. `/agents` and `/agents tree` show the full hierarchy.
+tool group enabled. `/jobs` shows the full process hierarchy; `/agents` lists definitions.
 
 The turn, tool, token, and time budgets belong to one agent, not to its whole
 tree: every child receives a fresh `RunBudget` from its own definition, so a
@@ -197,13 +197,13 @@ before `/chat` and every other command, at exit, and after a one-shot run.
 with fresh pids, once per chat and session, without ever running them: a
 process that was still running when it was saved is listed as `killed` with
 "its run ended with the session that started it" as its reason. From there
-they are ordinary finished processes. `/agents tree` lists them, `/agents log
+they are ordinary finished processes. `/jobs tree` lists them, `/jobs log
 PID` and `agent_status` with `log` read their transcripts, `agent_result`
 explains that the answer is in the transcript rather than waiting, and `/chat
 info` counts them. pmai restores them as soon as a chat is opened — at start
 with `-r`, or on `/chat use` — and says so.
 
-Records are purged two ways. `/agents clear` forgets the finished processes
+Records are purged two ways. `/jobs clear` forgets the finished processes
 and drops every record of the chat at the prompt that the table no longer
 holds, so what stays in the file is what the tree still shows. `/clear` and
 `/chat clear` drop them with the conversation, and forget the finished
@@ -366,7 +366,7 @@ The supervisor keeps one **attention** slot per pid:
 
 Approvals set the slot *before* the approval handler is consulted and clear it
 after, so a process blocked on a synchronous prompt still shows as
-`approval?` in `/agents tree`.
+`approve?` in `/jobs tree`.
 
 Hosts observe `AgentSupervisor.events`, an `AsyncStream<AgentSupervisorEvent>`.
 pmai prints a line when a background process raises attention; PocketMai can
@@ -390,7 +390,7 @@ editable until they are read: `discardLastQueuedMessage`, `discardQueuedMessage(
 and `clearQueuedMessages` back `/queue pop` and `/queue drop`, and
 `AgentProcessInfo.queuedMessages` shows the count in a listing.
 
-In the interactive CLI, use the process IDs from `/agents tree` to steer
+In the interactive CLI, use the process IDs from `/jobs tree` to steer
 several agents at once without changing focus:
 
 ```text
@@ -403,7 +403,7 @@ several agents at once without changing focus:
 
 Each selected process receives its own copy at its next model turn. These
 addresses work at any depth in the agent tree, including paused agents (which
-read their queue after `/agents continue PID`) and children waiting for a slot.
+read their queue after `/jobs continue PID`) and children waiting for a slot.
 `@#2` and `@agent#2` are aliases for `@2`; `@main`, `@chat`, and `@0` address
 the current chat. Repeated IDs or aliases receive only one copy. The CLI
 checks the whole recipient list first: an unknown PID, a finished child, a
@@ -439,26 +439,39 @@ forwards only depth-0 events to the editor.
 
 ## Commands
 
+`/agents` and `/agent` manage definitions; `/jobs` and `/job` manage processes.
+The former `/agents` and `/agent` runtime subcommands remain compatibility
+aliases. `/help agents` and `/help jobs` document each command family.
+
+The tree includes running, queued, paused, finished, and restored records.
+Existing state labels (`run`, `paused`, `queued`, `done`, `failed`, `killed`,
+`stopped`, `approve?`, `input?`, and `blocked`) remain unchanged. Pausing a child
+holds it and its descendants after their current step; killing requests
+cancellation, rather than sending SIGKILL. The main chat cannot be paused with
+`/jobs stop`; Ctrl+C cancels its active turn. Restored jobs are historical and
+can be inspected or cleared, but cannot be resumed.
+
 ```
-/agents                       definitions, and the live process tree
-/agents list                  definitions only
-/agents tree                  just the tree; `tok` adds up every model call's input and output,
+/agents                       saved definitions only (/agent is an alias)
+/agents list                  same as /agents
+/jobs                         running and saved process tree (/job is an alias)
+/jobs tree                    same as /jobs; `tok` adds up every model call's input and output,
                               as a provider bills them, and `~` marks counts estimated from text
                               length because the provider reported none
 /agents use ID                switch this chat to a setup
 /agents describe ID TEXT      set the purpose a model reads when picking
-/agents enable|disable ID      park a setup without deleting it
+/agents enable|disable ID     park a setup without deleting it
 /agent add NAME MODEL GROUPS PROMPT   save a setup in one line (see doc/prompts.md)
 /agent tools|model|prompt|provider ID VALUE   change one saved setup
 /agent remove ID              drop a setup; subagent lists and the default follow
 /edit agent [ID]              edit a setup as JSON in $EDITOR
-/agents log PID               that process's transcript, saved ones included
-/agents stop PID              pause a process and everything under it at their next step
-/agents continue PID          let a paused process go on; queued messages reach it then
-/agents kill PID [REASON]     end a process and everything under it
-/agents clear                 forget finished processes, and drop the ones saved with
+/jobs log PID                 that process's transcript, saved ones included
+/jobs stop PID                pause a process and everything under it at their next step
+/jobs continue PID            let a paused process go on; queued messages reach it then
+/jobs kill PID [REASON]       cancel a process and everything under it
+/jobs clear                   forget finished processes, and drop the ones saved with
                               this chat; the tree keeps only running ones
-/agents focus PID|main        send what you type to one process, or back to the chat
+/jobs focus [PID|main]        show or change where input goes (this chat or one process)
 @PID TEXT                     one message to one process, focus unchanged
 @2,3 TEXT or @2 @3 TEXT       one copy of the same message to each process
 @* TEXT                       one copy to every active process in this session

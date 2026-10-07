@@ -162,7 +162,7 @@ def main():
                     process.stdin.close()
                     release_nested.set()
                     hold_nested.clear()
-            run(['/agents tree'], ['-r', 'routed'])
+            run(['/jobs tree'], ['-r', 'routed'])
             resumed = json.loads(saved_path.read_text())
             assert len(resumed['subagents']) == 6
             assert all(r['state'] in ('completed', 'cancelled') for r in resumed['subagents'])

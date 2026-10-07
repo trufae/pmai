@@ -74,12 +74,14 @@ actor TerminalWriter {
   /// than a pipe or a captured surface such as the visual workspace.
   var paintsOutput: Bool { colorsOutput }
 
-  /// Wraps a piece of stdout text in a color, or returns it untouched where
+  /// Styles a piece of stdout text, or returns it untouched where
   /// escapes would show as noise.
-  func paint(_ text: String, color: String?) -> String {
-    guard colorsOutput, let color, let code = TerminalLineEditor.foregroundColorCode(color)
-    else { return text }
-    return "\u{1B}[\(code)m\(text)\u{1B}[0m"
+  func paint(_ text: String, color: String? = nil, bold: Bool = false) -> String {
+    guard colorsOutput else { return text }
+    let codes = [bold ? "1" : nil, color.flatMap(TerminalLineEditor.foregroundColorCode)]
+      .compactMap { $0 }
+    guard !codes.isEmpty else { return text }
+    return "\u{1B}[\(codes.joined(separator: ";"))m\(text)\u{1B}[0m"
   }
 
   func drainCaptured() -> String {

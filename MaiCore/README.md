@@ -416,8 +416,8 @@ without a setup snapshot fall back to the current configuration and acquire a
 snapshot when saved; endpoints never recorded by an older version cannot be
 recovered. Switching between different setups waits until active agents finish.
 A chat is saved with the agents its runs started and their
-transcripts, so a reopened chat lists them under `/agents tree`, `/agents log
-PID` reads one, and `/agents clear` drops them (see `doc/agents.md`). This also
+transcripts, so a reopened chat lists them under `/jobs tree`, `/jobs log
+PID` reads one, and `/jobs clear` drops them (see `doc/agents.md`). This also
 works for one-shot resumes. Finished agents retain their transcripts; agents
 left running or paused by a previous process appear as cancelled history and
 are never silently relaunched. The CLI retains the complete saved tree until
@@ -480,7 +480,7 @@ PocketMai; its existing conversation packs and older pmai JSON chat exports
 also remain importable.
 `@PID TEXT` sends one message to a running child agent. `@2,3,4 TEXT` or
 `@2 @3 @4 TEXT` sends the same message to several agents without changing
-focus; `/agents tree` lists their process IDs. Each receives one copy at its
+focus; `/jobs tree` lists their process IDs. Each receives one copy at its
 next model turn, including paused agents after they resume. Repeated IDs are
 deduplicated, and an unknown or finished child recipient rejects the list.
 `/queue push @2,3,4 TEXT` uses the same addresses without starting a turn;
@@ -493,7 +493,7 @@ broadcast by default; explicit `@` addresses override it. The prompt shows
 `pmai@*>` while enabled. The setting survives restarts; `/set ui.broadcast off`
 (the default) restores delivery to the focused agent. When no agents are
 active, `@main TEXT` still starts a chat turn.
-`/agents focus PID` chooses one agent until `/agents focus main`. When a tool asks for
+`/jobs focus PID` chooses one agent until `/jobs focus main`. When a tool asks for
 approval the question is printed above the prompt and answered with `y`, `a`,
 `n`, `e`, or `c` at the same prompt; any other line stays an ordinary message
 and the question keeps waiting. Piped input keeps the one-line-at-a-time REPL,
@@ -506,9 +506,9 @@ Child agents print as they work, in blocks rather than character by character,
 every line prefixed with the child's pid (`agent#3 │ …`, `agent#3 → tool …`,
 `agent#3 ↲ done …`) so two children working at once stay apart. `ui.subagents`
 picks how much: `all` (replies and tool calls), `tools` (tool calls only),
-`stats` (one line per model turn), or `none`. Every `/agents` row says how
+`stats` (one line per model turn), or `none`. Every `/jobs` row says how
 long its run has been going (`5 turns · 2 tools · 2.1k tok · 1m4s`), and
-`/agents tree` ends with a `Total:` row summing the turns, tools, and tokens
+`/jobs tree` ends with a `Total:` row summing the turns, tools, and tokens
 of the whole tree. When a turn ends the REPL prints `✓ took 5s` in cyan, or
 `✗ took 5s` in red when it failed or was cancelled.
 
@@ -1075,16 +1075,21 @@ deleting it. `/agents` lists them; `/agents describe ID TEXT` and
 `/agents enable|disable ID` maintain them. Visual mode edits the same fields on
 its Agents tab.
 
-A running instance of a definition is a process with a **pid**. `/agents tree`
-draws them, `/agents log PID` prints one agent's own transcript,
-`/agents stop PID` pauses it and everything under it at their next step, and
-`/agents continue PID` lets them go on; messages queued for a paused agent are
-read when it continues. `/agents kill PID` ends it and everything under it.
+A running instance of a definition is a process with a **pid**. `/jobs` (or
+`/jobs tree`) draws them, `/jobs log PID` prints one agent's own transcript,
+`/jobs stop PID` pauses it and everything under it at their next step, and
+`/jobs continue PID` lets them go on; messages queued for a paused agent are
+read when it continues. `/jobs kill PID` cancels it and everything under it.
+`/job` aliases `/jobs`, and `/agent` aliases `/agents`. Bare `/agent` and
+`/agents` list definitions only. The former `/agents tree|log|stop|continue|kill|focus|clear`
+commands still work as compatibility aliases; `/help jobs` describes process control.
+Pausing waits at runtime boundaries; killing requests cancellation rather than
+sending an operating-system signal.
 Any agent that is allowed
 subagents can start more, so the result is a tree, bounded by
 `limits.maxSubagentDepth` and `limits.maxSubagents` across the whole tree. A
 child started when every slot is busy is not refused: it is registered as
-`queued`, shows as such in `/agents tree`, and starts by itself, in order, when
+`queued`, shows as such in `/jobs tree`, and starts by itself, in order, when
 a sibling ends; `agent_start` with `wait` false says `Queued researcher as #5`,
 and a blocking start simply waits its turn. A child that hits a run limit
 comes back to its parent as an error carrying whatever it said last, and the

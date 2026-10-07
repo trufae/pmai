@@ -1229,7 +1229,7 @@ public struct AgentEventContext: Codable, Equatable, Sendable {
   public var agentID: String
   public var depth: Int
   /// The supervisor's short identifier for this run, so hosts can tie an event
-  /// to the row `/agents` shows. Nil for runs started outside a supervisor.
+  /// to the row `/jobs` shows. Nil for runs started outside a supervisor.
   public var pid: AgentPID?
 
   public init(

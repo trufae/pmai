@@ -77,6 +77,43 @@ def main():
         assert 'Chat: local::chat-model' in output, output
         assert 'Current provider: local' in output, output
 
+        # Singular and plural aliases share all definition commands.
+        run(['/agents effort secondary medium',
+             '/agent describe secondary A smaller model for routine work.',
+             '/agent disable main', '/agents enable main'])
+        definitions = {a['id']: a for a in json.loads(config.read_text())['agents']}
+        assert definitions['secondary']['options']['reasoningEffort'] == 'medium', definitions
+        assert definitions['secondary']['description'] == 'A smaller model for routine work.'
+        assert definitions['main'].get('enabled', True)
+        for command in ('/agents', '/agent', '/agents list', '/agent list'):
+            listing = run([command])
+            assert 'secondary —' in listing and 'main —' in listing, listing
+            assert 'Jobs:' not in listing and 'Total:' not in listing, listing
+        for command in ('/help agents', '/help agent'):
+            help_text = run([command])
+            assert '/jobs manages the processes' in help_text, help_text
+            assert '/help jobs explains process control' in help_text, help_text
+        for command in ('/help jobs', '/help job', '/help /jobs', '/help /job'):
+            help_text = run([command])
+            assert 'Job commands (/job is an alias)' in help_text, help_text
+            assert '/jobs stop PID' in help_text and 'requests cancellation' in help_text
+        for command, expected in (
+                ('/jobs unknown', 'Job commands'), ('/jobs log', 'Usage: /jobs log PID'),
+                ('/job stop bad', 'Usage: /jobs stop PID'),
+                ('/jobs continue', 'Usage: /jobs continue PID'),
+                ('/jobs kill', 'Usage: /jobs kill PID'),
+                ('/jobs tree extra', 'Usage: /jobs [tree]'),
+                ('/jobs clear extra', 'Usage: /jobs clear')):
+            assert expected in run([command]), (command, expected)
+
+        # The removed /skill alias must neither run a command nor invoke a prompt.
+        for command in ('/skill', '/skill prompt missing input.txt'):
+            output = run([command])
+            assert 'Unknown command. Type /help.' in output, output
+        assert "Unknown help topic 'skill'" in run(['/help skill'])
+        help_text = run(['/help skills'])
+        assert '/skills prompt NAME [TEXT]' in help_text, help_text
+
         # Environment defaults can still bootstrap an installation once.
         bootstrap_home = root / 'bootstrap-user'
         bootstrap_home.mkdir()

@@ -244,7 +244,7 @@ def main():
                         approval = wait_for("wants to run confirm tool 'files_write'")
                         if prompt == 'background':
                             pid = re.search(r'agent#(\d+) wants', approval)[1]
-                            send(f'/agents focus {pid}\n')
+                            send(f'/jobs focus {pid}\n')
                             wait_for(f'Messages go to agent#{pid}')
                         if 'edit-' in choice:
                             send('e\n')
@@ -253,7 +253,7 @@ def main():
                         if action in ('interrupt', 'kill'):
                             if action == 'kill':
                                 pid = re.search(r'agent#(\d+) wants', approval)[1]
-                                send(f'/agents kill {pid}\n')
+                                send(f'/jobs kill {pid}\n')
                                 assert user_texts() == ['subagent']
                                 wait_for('✓ took')
                             else:

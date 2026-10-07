@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import pty
+import re
 import select
 import struct
 import subprocess
@@ -60,7 +61,10 @@ def main():
                 'toolSources': [{'id': 'standard', 'kind': 'standard-tools',
                                  'options': {'tools': ['files_read']}}],
                 'agents': [{'id': 'smoke', 'provider': 'smoke', 'model': 'smoke',
-                            'toolNames': ['files_read'], 'toolGroupNames': [],
+                            'toolNames': ['files_read'], 'toolGroupNames': ['skills'],
+                            'toolPolicy': {'tools': {'skills_alpha': 'direct',
+                                                     'skills_beta': 'disabled',
+                                                     'skills_gamma': 'proxy'}},
                             'retry': {'attempts': 0}}],
                 'approvals': {'mode': 'yolo'},
                 'memory': {'enabled': False}, 'use': {'plan': False},
@@ -71,6 +75,13 @@ def main():
                        'fgdiffheader': '#9abcde', 'fgthinking': '#abcdef',
                        'fgselection': '#bcdef0', 'bgselection': '#cdef01'},
             }))
+            for name in ('alpha', 'beta', 'gamma', 'manual'):
+                folder = root / '.pmai/skills' / name
+                folder.mkdir(parents=True)
+                front_matter = 'disable-model-invocation: true\n' if name == 'manual' else ''
+                (folder / 'SKILL.md').write_text(
+                    f'---\nname: {name}\ndescription: |\n  Review {name}.\n'
+                    f'  Preserve exact instructions.\n{front_matter}---\nRead the code.\n')
             (root / 'diff.txt').write_text(
                 '--- a/sample\n+++ b/sample\n@@ -1,3 +1,3 @@\n'
                 '-old\n+new\n +context\n -context\n')
@@ -147,6 +158,25 @@ def main():
                 output = run('/theme use missing', 'show colors', **options)
                 assert '\x1b[' not in output, output
                 assert 'colors smoke done' in output and '+new' in output, output
+
+            # Names are bold, status follows in parentheses, and every line
+            # of the skill description is indented. Pipes and NO_COLOR stay plain.
+            for options in ({}, {'terminal': False}, {'extra_env': {'NO_COLOR': '1'}},
+                            {'extra_env': {'TERM': 'dumb'}}):
+                output = run('/skills', '/tools', '/tools show files',
+                             '/tools show files_read', **options)
+                plain = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', output).replace('\r', '')
+                for name, status in (('alpha', 'enabled'), ('beta', 'disabled'),
+                                     ('gamma', 'proxied'), ('manual', 'not callable')):
+                    assert (f'{name} ({status}) [project; 0 calls]\n'
+                            f'  Review {name}.\n  Preserve exact instructions.') in plain, plain
+                if not options:
+                    for name in ('alpha', 'beta', 'gamma', 'manual', 'files', 'files_read'):
+                        assert f'\x1b[1m{name}\x1b[0m' in output, output
+                    assert '  \x1b[1mfiles_read\x1b[0m [direct;' in output, output
+                    assert '\x1b[1mfiles_read\x1b[0m  [read-only' in output, output
+                else:
+                    assert '\x1b[' not in output, output
 
             # Exercise the actual completion menu, including live setting updates.
             master, slave = pty.openpty()
