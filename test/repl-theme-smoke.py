@@ -49,10 +49,22 @@ def main():
         colors = ('fgtoolcall', 'fgerror', 'fgwarning', 'fgsuccess', 'fginfo', 'fgthinking',
                   'fgdiffadd', 'bgdiffadd', 'fgdiffdel', 'bgdiffdel', 'fgdiffheader',
                   'fgselection', 'bgselection')
-        listing = run('/set ui.', '/help set')
-        for key in colors:
-            assert f'ui.{key} = {original[key]}' in listing, listing
-            assert f'/set ui.{key} COLOR' in listing, listing
+        theme_colors = ('bgline', 'fgcolor', 'bgcolor', 'fgprompt', 'bgprompt', 'fgtoolresult', *colors)
+        before = config.read_bytes()
+        listing = run('/theme color', '/help theme')
+        assert config.read_bytes() == before, 'listing must not change the configuration'
+        for key in theme_colors:
+            assert f'{key} = {original[key] or "none"}' in listing, listing
+            assert f'/theme color {key} COLOR' in listing, listing
+        assert 'bold = off' in listing, listing
+        settings = run('/set', '/set ui.', '/help set', '/set unknown-setting')
+        for key in (*theme_colors, 'bold'):
+            assert f'ui.{key}' not in settings, settings
+        assert 'ui.markdown' in settings and 'ui.editor' in settings, settings
+        redirected = run('/set ui.fgerror cyan', '/set ui.bold on')
+        assert 'Use /theme color fgerror [VALUE].' in redirected, redirected
+        assert 'Use /theme color bold [VALUE].' in redirected, redirected
+        assert config.read_bytes() == before, 'old color commands must only give guidance'
         for name in ('slime', 'light', 'ember', 'pink', 'orange', 'sky'):
             output = run(f'/theme use {name}')
             assert f"Applied theme '{name}'." in output, output
@@ -66,50 +78,63 @@ def main():
         run('/theme use light', '/theme save mine')
         light = ui()
         saved = (themes / 'mine').read_text()
-        assert len(saved.splitlines()) == 20 and '/set ui.bold off' in saved, saved
+        assert len(saved.splitlines()) == 20 and '/theme color bold off' in saved, saved
         assert 'ui.title' not in saved
         for key in colors:
-            assert f'/set ui.{key} {light[key]}' in saved, saved
+            assert f'/theme color {key} {light[key]}' in saved, saved
         run('/theme use slime', '/theme use mine')
         assert ui() == light, 'saved themes must round-trip'
         assert 'mine' in run('/theme list').splitlines()
 
         run('/theme use default')
         before = config.read_bytes()
-        output = run('/set ui.fgcolor', theme='mine')
-        assert f"ui.fgcolor = {light['fgcolor']}" in output, output
+        output = run('/theme color fgcolor', theme='mine')
+        assert f"fgcolor = {light['fgcolor']}" in output, output
         assert config.read_bytes() == before, 'startup override must not save itself'
-        assert 'ui.bgline = rgb:eee' in run('/set ui.bgline', theme='light')
-        assert 'ui.bold = on' in run('/set ui.bold', theme='slime')
+        assert 'bgline = rgb:eee' in run('/theme color bgline', theme='light')
+        assert 'bold = on' in run('/theme color bold', theme='slime')
 
         (themes / 'custom').write_text(
-            '# Partial theme\n\n/set UI.FGCOLOR=#123456\n/set ui.bold YES\n')
+            '# Partial theme\n\n/theme color FGCOLOR=#123456\n/theme color bold YES\n')
         run('/theme use custom')
         assert ui()['fgcolor'] == '#123456' and ui()['bold'] is True
         assert ui()['bgline'] == original['bgline']
-        (themes / 'slime').write_text('/set ui.fgcolor blue\n')
-        assert 'ui.fgcolor = blue' in run('/set ui.fgcolor', theme='slime')
+        # Existing saved themes remain readable, including case and equals syntax.
+        (themes / 'slime').write_text('/set UI.FGCOLOR=blue\n/set ui.bold YES\n')
+        assert 'fgcolor = blue' in run('/theme color fgcolor', theme='slime')
+        assert 'bold = on' in run('/theme color bold', theme='slime')
 
-        for key in colors:
-            run(f'/set ui.{key} #123456')
+        for key in theme_colors:
+            run(f'/theme color {key.upper()}=#123456')
             assert ui()[key] == '#123456', ui()
-            run(f'/set ui.{key} none')
+            run(f'/theme color {key} none')
             assert ui()[key] == '', ui()
         run('/theme save plain')
         run('/theme use sky', '/theme use plain')
-        assert all(ui()[key] == '' for key in colors), ui()
+        assert all(ui()[key] == '' for key in theme_colors), ui()
 
         before = config.read_bytes()
-        for invalid in ('/set ui.bgline bad-color', '/set ui.bold maybe',
-                        '/set ui.broadcast on', '!touch forbidden', '/set ui.fgcolor',
-                        '/set ui.fgerror bad-color', '/set ui.bgdiffadd bad-color'):
-            (themes / 'broken').write_text('/set ui.fgcolor red\n' + invalid + '\n')
-            output = run('/theme use broken', '/set ui.fgcolor')
+        for invalid in ('/theme color fgerror bad-color', '/theme color bold maybe',
+                        '/theme color unknown red', '/theme color fgerror cyan extra'):
+            output = run(invalid)
+            assert 'error:' in output or 'Unknown theme color' in output or 'Usage:' in output, output
+            assert config.read_bytes() == before, 'invalid settings must not change the configuration'
+
+        run('/theme color fgcolor #123456')
+
+        before = config.read_bytes()
+        for invalid in ('/theme color bgline bad-color', '/theme color bold maybe',
+                        '/theme color broadcast on', '/set ui.broadcast on', '!touch forbidden',
+                        '/theme color fgcolor', '/theme use default',
+                        '/set ui.fgerror bad-color', '/set fgerror cyan',
+                        '/theme color fgerror bad-color', '/theme color bgdiffadd bad-color'):
+            (themes / 'broken').write_text('/theme color fgcolor red\n' + invalid + '\n')
+            output = run('/theme use broken', '/theme color fgcolor')
             assert "Theme 'broken', line 2:" in output, output
-            assert 'ui.fgcolor = #123456' in output, output
+            assert 'fgcolor = #123456' in output, output
             assert config.read_bytes() == before, 'invalid themes must not apply partially'
-        output = run('/set ui.fgcolor', theme='broken')
-        assert 'warning:' in output and 'ui.fgcolor = #123456' in output, output
+        output = run('/theme color fgcolor', theme='broken')
+        assert 'warning:' in output and 'fgcolor = #123456' in output, output
         for name in ('missing', '../escape', '/tmp/escape'):
             output = run(f'/theme use {name}')
             assert 'error:' in output and config.read_bytes() == before, output
@@ -117,9 +142,9 @@ def main():
         assert 'error:' in run('/theme save ../escape')
         assert not (home / 'escape').exists()
 
-        run('/set ui.fgcolor cyan', '/set ui.bold false', '/theme save mine')
-        assert '/set ui.fgcolor cyan' in (themes / 'mine').read_text()
-        assert '/set ui.bold off' in (themes / 'mine').read_text()
+        run('/theme color fgcolor cyan', '/theme color bold false', '/theme save mine')
+        assert '/theme color fgcolor cyan' in (themes / 'mine').read_text()
+        assert '/theme color bold off' in (themes / 'mine').read_text()
         alternate = root / 'alternate'
         run('/theme save relocated', flags=('--home', str(alternate)))
         assert (alternate / 'themes' / 'relocated').exists()

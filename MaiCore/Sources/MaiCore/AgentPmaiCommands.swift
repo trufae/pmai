@@ -234,7 +234,7 @@ public struct MaiPmaiRunTool: AgentTool {
         + "this installation: /set for settings (effort, limits, tool approval, colors), /models "
         + "and /model for the model, /providers and /provider for chat providers and their base "
         + "URLs, /tools for which tools an agent may call, /mcp to list, add or enable MCP servers, "
-        + "/theme to list, apply or save a color theme, /agents for agents and subagents, /stats "
+        + "/theme to list, apply, save or customize a color theme, /agents for agents and subagents, /stats "
         + "for token use. Example: pmai_run with command \"/set tool.aproval smart\". Changes are "
         + "saved and take effect from the next turn, so run one that changes something only after "
         + "the person has asked for it. pmai_help gives a command's exact syntax. " + scope,

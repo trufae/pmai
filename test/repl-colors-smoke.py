@@ -136,9 +136,9 @@ def main():
                 '\x1b[38;2;171;205;239mThinking…',
             ):
                 assert fragment in output, (fragment, output)
-            output = run('/set ui.fgerror cyan', '/theme use missing',
+            output = run('/theme color fgerror cyan', '/theme use missing',
                          '/theme use pink', '/theme use missing',
-                         '/set ui.fgerror none', '/theme use missing')
+                         '/theme color fgerror none', '/theme use missing')
             assert '\x1b[36merror:' in output, output
             assert '\x1b[38;2;255;119;119merror:' in output, output
             assert "pmai> error: Unknown theme 'missing'." in output, output
@@ -167,9 +167,12 @@ def main():
 
             try:
                 wait_for('pmai> ')
+                os.write(master, b'/theme color fgerr\tcyan\r')
+                wait_for('Set theme color fgerror = cyan.')
+                wait_for('pmai> ')
                 for key, value in (('fgselection', '#bcdef0'), ('bgselection', '#cdef01')):
-                    os.write(master, f'/set ui.{key} {value}\r'.encode())
-                    wait_for(f'Set ui.{key} = {value}.')
+                    os.write(master, f'/theme color {key} {value}\r'.encode())
+                    wait_for(f'Set theme color {key} = {value}.')
                     wait_for('pmai> ')
                 os.write(master, b'/theme use \t')
                 wait_for('\x1b[38;2;188;222;240;48;2;205;239;1m')
@@ -177,11 +180,11 @@ def main():
                 wait_for('Nothing to cancel.')
                 wait_for('pmai> ')
                 for key in ('fgselection', 'bgselection'):
-                    os.write(master, f'/set ui.{key} none\r'.encode())
-                    wait_for(f'Set ui.{key} = none.')
+                    os.write(master, f'/theme color {key} none\r'.encode())
+                    wait_for(f'Set theme color {key} = none.')
                     wait_for('pmai> ')
                 os.write(master, b'/theme use \t')
-                wait_for('\x1b[7m↵')
+                wait_for('\x1b[7mdefault')
                 os.write(master, b'\x03')
                 wait_for('Nothing to cancel.')
                 wait_for('pmai> ')

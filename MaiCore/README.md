@@ -549,55 +549,60 @@ contain prompts, tool output, and other private data.
 `default` preserves the original styling, `slime` is green, `light` suits
 white-background terminals, `ember` uses warm colors, and `pink`, `orange`, and
 `sky` provide pink, orange, and blue palettes. `/theme use slime`
-applies and saves all the theme's UI colors and `ui.bold` together.
+applies and saves all the theme's colors and bold setting together.
 Set `PMAI_THEME=light` in your environment to apply a theme at startup over
 the configured styling; startup selection alone does not write the configuration.
 
-After tweaking colors with `/set`, `/theme save mine` writes the current
+`/theme color` lists every theme setting, and `/theme color fgerror` shows one.
+Use `/theme color fgerror bright-red` or `/theme color fgerror=bright-red` to change
+and save it. `/theme color bold on` enables bold input. These colors and bold
+are managed entirely by `/theme`; `/set` contains behavior settings.
+
+After tweaking colors with `/theme color`, `/theme save mine` writes the current
 colors and bold setting to `~/.pmai/themes/mine`, replacing that file if it
 exists. `PMAI_HOME` or `--home` relocates the themes directory. Files are plain
-scripts with one `/set` per line; for example:
+scripts with one `/theme color` per line; for example:
 
 ```text
 # ~/.pmai/themes/mine
-/set ui.bgline rgb:eee
-/set ui.fgcolor rgb:222
-/set ui.fgprompt rgb:046
-/set ui.bold off
+/theme color bgline rgb:eee
+/theme color fgcolor rgb:222
+/theme color fgprompt rgb:046
+/theme color bold off
 ```
 
 Use `/theme use mine` or `PMAI_THEME=mine` to load it. User files take
 precedence over built-ins of the same name. Themes accept all the color settings
-listed below and `ui.bold`; omitted settings keep their current values. Blank
+listed below and `bold`; omitted settings keep their current values. Blank
 lines and `#` comment lines are ignored, and invalid scripts leave the UI unchanged.
-Old configuration files and saved themes remain valid.
+Old configuration files and saved themes using `/set ui.COLOR VALUE` remain valid.
 
 | Settings | REPL output |
 | --- | --- |
-| `ui.bgline` | Input/status-line background |
-| `ui.fgcolor`, `ui.bgcolor` | Input text |
-| `ui.fgprompt`, `ui.bgprompt` | Prompt |
-| `ui.fgtoolcall`, `ui.fgtoolresult` | Tool calls and successful results |
-| `ui.fgerror` | Errors and failed tool results |
-| `ui.fgwarning` | Warnings, retries, interruptions, and approval requests |
-| `ui.fgsuccess` | Successful run status |
-| `ui.fginfo` | Context notices and tool-help headings |
-| `ui.fgthinking` | Thinking previews and full reasoning text |
-| `ui.fgdiffadd`, `ui.bgdiffadd` | Added lines in tool-output diffs |
-| `ui.fgdiffdel`, `ui.bgdiffdel` | Removed lines in tool-output diffs |
-| `ui.fgdiffheader` | Diff file and hunk headers |
-| `ui.fgselection`, `ui.bgselection` | Selected TAB completion |
+| `bgline` | Input/status-line background |
+| `fgcolor`, `bgcolor` | Input text |
+| `fgprompt`, `bgprompt` | Prompt |
+| `fgtoolcall`, `fgtoolresult` | Tool calls and successful results |
+| `fgerror` | Errors and failed tool results |
+| `fgwarning` | Warnings, retries, interruptions, and approval requests |
+| `fgsuccess` | Successful run status |
+| `fginfo` | Context notices and tool-help headings |
+| `fgthinking` | Thinking previews and full reasoning text |
+| `fgdiffadd`, `bgdiffadd` | Added lines in tool-output diffs |
+| `fgdiffdel`, `bgdiffdel` | Removed lines in tool-output diffs |
+| `fgdiffheader` | Diff file and hunk headers |
+| `fgselection`, `bgselection` | Selected TAB completion |
 
 Colors apply immediately to main and child agent output. For example,
-`/set ui.fgerror bright-red` changes error text, and `/set ui.bgdiffadd none`
+`/theme color fgerror bright-red` changes error text, and `/theme color bgdiffadd none`
 removes the background from added diff lines. `/theme save mine` saves these
 choices along with the prompt and input colors. TAB selection falls back to
 reverse video when both selection colors are `none` or colors are disabled.
 Colored output respects `NO_COLOR`, `TERM=dumb`, and redirected output.
 
-`/set ui.` lists the persisted terminal styling options. All color settings accept
-named ANSI colors, `rgb:RGB`, `#RRGGBB`, or `none`, while `ui.bold`, `ui.markdown`, and `ui.broadcast` accept `on`
-or `off`. `ui.toolResultLines` accepts `all`, `relevant`, or a line count (the default is
+All theme colors accept named ANSI colors, `rgb:RGB`, `#RRGGBB`, or `none`.
+`/set ui.` lists persisted terminal behavior settings. `ui.markdown` and
+`ui.broadcast` accept `on` or `off`. `ui.toolResultLines` accepts `all`, `relevant`, or a line count (the default is
 `all`; `0` restores the compact status-only display). Use
 `/set ui.toolResultLines relevant` to show complete file-edit results and errors,
 while keeping routine results such as reads and searches to three leading lines.

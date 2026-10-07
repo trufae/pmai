@@ -121,8 +121,9 @@ task finished. The complete post-fix live matrix remains unverified.
 
 ## Running
 
-The offline theme smoke test checks built-ins, custom scripts, saving, startup
-overrides, and invalid input without changing your configuration:
+The offline theme smoke test checks `/theme color` listing, queries, edits, and
+validation, built-ins, saved scripts (including the older `/set ui.COLOR` format),
+startup overrides, and isolation from `/set`, without changing your configuration:
 
     python3 test/repl-theme-smoke.py MaiCore/.build/debug/pmai
 

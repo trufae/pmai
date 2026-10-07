@@ -1,7 +1,7 @@
 import Foundation
 import MaiCore
 
-/// Themes are batches of the same appearance settings accepted by `/set`.
+/// Themes are batches of the appearance settings accepted by `/theme color`.
 enum TerminalTheme {
   static let builtins: [String: ConfiguredTerminalUI] = [
     "default": .init(),
@@ -63,17 +63,26 @@ enum TerminalTheme {
 
   static var colors: [(String, WritableKeyPath<ConfiguredTerminalUI, String>)] {
     [
-      ("ui.bgline", \.backgroundLine), ("ui.fgcolor", \.foreground),
-      ("ui.bgcolor", \.background), ("ui.fgprompt", \.promptForeground),
-      ("ui.bgprompt", \.promptBackground), ("ui.fgtoolresult", \.toolResultForeground),
-      ("ui.fgtoolcall", \.toolCallForeground), ("ui.fgerror", \.errorForeground),
-      ("ui.fgwarning", \.warningForeground), ("ui.fgsuccess", \.successForeground),
-      ("ui.fginfo", \.infoForeground), ("ui.fgthinking", \.thinkingForeground),
-      ("ui.fgdiffadd", \.diffAddedForeground), ("ui.bgdiffadd", \.diffAddedBackground),
-      ("ui.fgdiffdel", \.diffRemovedForeground), ("ui.bgdiffdel", \.diffRemovedBackground),
-      ("ui.fgdiffheader", \.diffHeaderForeground),
-      ("ui.fgselection", \.selectionForeground), ("ui.bgselection", \.selectionBackground),
+      ("bgline", \.backgroundLine), ("fgcolor", \.foreground),
+      ("bgcolor", \.background), ("fgprompt", \.promptForeground),
+      ("bgprompt", \.promptBackground), ("fgtoolresult", \.toolResultForeground),
+      ("fgtoolcall", \.toolCallForeground), ("fgerror", \.errorForeground),
+      ("fgwarning", \.warningForeground), ("fgsuccess", \.successForeground),
+      ("fginfo", \.infoForeground), ("fgthinking", \.thinkingForeground),
+      ("fgdiffadd", \.diffAddedForeground), ("bgdiffadd", \.diffAddedBackground),
+      ("fgdiffdel", \.diffRemovedForeground), ("bgdiffdel", \.diffRemovedBackground),
+      ("fgdiffheader", \.diffHeaderForeground),
+      ("fgselection", \.selectionForeground), ("bgselection", \.selectionBackground),
     ]
+  }
+
+  static var keys: [String] { colors.map(\.0) + ["bold"] }
+
+  static func value(_ key: String, in ui: ConfiguredTerminalUI) -> String? {
+    if key == "bold" { return ui.bold ? "on" : "off" }
+    guard let (_, path) = colors.first(where: { $0.0 == key }) else { return nil }
+    let color = ui[keyPath: path]
+    return color.isEmpty ? "none" : color
   }
 
   struct Invalid: LocalizedError {
@@ -82,11 +91,11 @@ enum TerminalTheme {
   }
 
   static func set(_ key: String, value: String, in ui: inout ConfiguredTerminalUI) throws {
-    if key == "ui.bold" {
+    if key == "bold" {
       switch value.lowercased() {
       case "1", "true", "yes", "on": ui.bold = true
       case "0", "false", "no", "off": ui.bold = false
-      default: throw Invalid(message: "Usage: /set ui.bold <on|off>")
+      default: throw Invalid(message: "Usage: /theme color bold <on|off>")
       }
     } else if let (_, path) = colors.first(where: { $0.0 == key }) {
       guard let color = TerminalLineEditor.normalizedColor(value) else {
@@ -95,14 +104,14 @@ enum TerminalTheme {
       }
       ui[keyPath: path] = color
     } else {
-      throw Invalid(message: "Themes accept UI colors and ui.bold only: '\(key)'.")
+      throw Invalid(message: "Unknown theme color '\(key)'. Use /theme color to list settings.")
     }
   }
 
   static func script(_ ui: ConfiguredTerminalUI) -> String {
     (colors.map { key, path in
-      "/set \(key) \(ui[keyPath: path].isEmpty ? "none" : ui[keyPath: path])"
-    } + ["/set ui.bold \(ui.bold ? "on" : "off")"]).joined(separator: "\n") + "\n"
+      "/theme color \(key) \(ui[keyPath: path].isEmpty ? "none" : ui[keyPath: path])"
+    } + ["/theme color bold \(ui.bold ? "on" : "off")"]).joined(separator: "\n") + "\n"
   }
 
   static func validName(_ name: String) -> Bool {
@@ -151,10 +160,16 @@ enum TerminalTheme {
       let parts = line.replacingOccurrences(of: "=", with: " ")
         .split(whereSeparator: \.isWhitespace).map(String.init)
       do {
-        guard parts.count == 3, parts[0] == "/set" else {
-          throw Invalid(message: "Expected /set ui.SETTING VALUE.")
+        if parts.count == 4, parts[0] == "/theme", parts[1].lowercased() == "color" {
+          try set(parts[2].lowercased(), value: parts[3], in: &result)
+        } else if parts.count == 3, parts[0] == "/set",
+          parts[1].lowercased().hasPrefix("ui.")
+        {
+          // Saved themes from before /theme color retain their original spelling.
+          try set(String(parts[1].lowercased().dropFirst(3)), value: parts[2], in: &result)
+        } else {
+          throw Invalid(message: "Expected /theme color SETTING VALUE.")
         }
-        try set(parts[1].lowercased(), value: parts[2], in: &result)
       } catch {
         throw Invalid(message: "Theme '\(name)', line \(index + 1): \(error.localizedDescription)")
       }
