@@ -70,6 +70,12 @@ public enum AgentProcessTools {
   ) -> [ToolDefinition] {
     let offered = agents.sorted { $0.id < $1.id }
     var startProperties: [String: JSONValue] = [
+      "title": .object([
+        "type": .string("string"),
+        "description": .string(
+          "Short title explaining why this child is running, shown in /jobs and agent_status. Defaults to a summary of task."
+        ),
+      ]),
       "context": .object([
         "type": .string("string"),
         "description": .string(
@@ -238,6 +244,8 @@ public enum AgentProcessTools {
     public var brief: AgentTaskBrief
     /// The agent named, trimmed; nil or empty asks for a derived worker.
     public var agent: String?
+    /// An optional short title for process listings, independent of the brief.
+    public var title: String?
     /// The subset of tools asked for, when any.
     public var tools: Set<String>?
     /// Whether the parent waits for the answer. `agent_launch` was always
@@ -245,13 +253,19 @@ public enum AgentProcessTools {
     public var wait: Bool
 
     public init(
-      brief: AgentTaskBrief, agent: String? = nil, tools: Set<String>? = nil, wait: Bool
+      brief: AgentTaskBrief, agent: String? = nil, title: String? = nil,
+      tools: Set<String>? = nil, wait: Bool
     ) {
       self.brief = brief
       self.agent = agent
+      let title = title.map { AgentProcessInfo.oneLine($0, limit: 60) }
+      self.title = title?.isEmpty == false ? title : nil
       self.tools = tools
       self.wait = wait
     }
+
+    /// What the job shows, with the task summary as the default title.
+    public var headline: String { title ?? brief.headline }
 
     /// Nil when there is no task to hand out.
     public init?(arguments: [String: JSONValue], toolName: String = startToolName) {
@@ -263,6 +277,7 @@ public enum AgentProcessTools {
       self.init(
         brief: brief,
         agent: agent?.isEmpty == false ? agent : nil,
+        title: arguments["title"]?.stringValue,
         tools: arguments["tools"]?.arrayValue.map { Set($0.compactMap(\.stringValue)) },
         wait: arguments["wait"]?.coercedBoolValue ?? (toolName != legacyLaunchToolName))
     }
@@ -771,6 +786,7 @@ public enum AgentProcessTools {
       "turns": .integer(info.modelTurns),
       "tools": .integer(info.toolCalls),
     ]
+    if !info.task.isEmpty { value["title"] = .string(info.task) }
     if let tokens = info.usage?.totalTokens { value["tokens"] = .integer(tokens) }
     if let failure = info.failure { value["error"] = .string(failure) }
     if let attention = info.attention { value["attention"] = .string(attention.summary) }

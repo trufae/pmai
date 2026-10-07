@@ -1118,8 +1118,10 @@ func tokenBudget() async throws {
   #expect(result.usage?.totalTokens == 6)
 }
 
-@Test("Subagents run with isolated transcripts and shared bounded lifecycle")
-func subagentRun() async throws {
+@Test(
+  "Subagents keep job titles separate from their isolated task briefs",
+  arguments: [AgentRuntime.agentStartToolName, AgentRuntime.subagentToolName])
+func subagentRun(toolName: String) async throws {
   let provider = ScriptedProvider(responses: [
     ProviderResponse(
       message: AgentMessage(
@@ -1128,10 +1130,12 @@ func subagentRun() async throws {
           .toolCall(
             ToolCall(
               id: "spawn-1",
-              name: AgentRuntime.subagentToolName,
+              name: toolName,
               arguments: .object([
                 "agent": .string("researcher"),
+                "title": .string("Research the answer"),
                 "task": .string("Find the answer"),
+                "output": .string("One concise answer"),
               ])))
         ]),
       stopReason: .toolCall),
@@ -1177,6 +1181,14 @@ func subagentRun() async throws {
   #expect(brief.contains("Find the answer"))
   #expect(brief.contains("## Task"))
   #expect(!brief.contains("{{task}}"))
+  #expect(!brief.contains("Research the answer"))
+  let tree = await runtime.supervisor.tree()
+  let child = try #require(tree.processes.first { $0.depth == 1 })
+  #expect(child.task == "Research the answer")
+  #expect(child.state == .completed)
+  #expect(child.summaryLine.contains("Research the answer"))
+  let pid = try #require(child.parent)
+  #expect(await runtime.supervisor.records(under: pid).first?.task == "Research the answer")
 }
 
 @Test("A background child reports to the turn that started it, and later turns still own it")
@@ -2101,7 +2113,9 @@ func enabledAgentGroupStartsWorker() async throws {
     provider: "scripted", model: "fixture", messages: [.user("delegate")],
     toolGroupNames: [AgentRuntime.agentToolGroup.id]))
   #expect(result.transcript.flatMap(\.toolResults).map(\.text) == ["Child answer"])
-  #expect(await runtime.supervisor.processes().contains { $0.depth == 1 })
+  let child = try #require(await runtime.supervisor.processes().first { $0.depth == 1 })
+  #expect(child.task == "Compute")
+  #expect(child.summaryLine.contains("Compute"))
 }
 
 @Test("A child budget of zero keeps management tools and explains why start is refused")

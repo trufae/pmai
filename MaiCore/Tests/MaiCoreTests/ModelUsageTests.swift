@@ -482,6 +482,23 @@ func processSummaryShowsElapsedTime() {
   #expect(starting.summaryLine == "#4 new  [start]")
 }
 
+@Test("Job titles stay visible alongside activity, attention, and failure")
+func processSummaryShowsTitle() {
+  var info = AgentProcessInfo(
+    pid: 3, runID: UUID(), agentID: "coder", task: "Find\n the parser",
+    state: .running, startedAt: start, activity: "reading Parser.swift")
+  #expect(
+    info.summaryLine(at: start.addingTimeInterval(1))
+      == "#3 coder  [run]  Find the parser  1s — reading Parser.swift")
+  info.attention = .input("Which parser?")
+  #expect(info.summaryLine.contains("Find the parser"))
+  #expect(info.summaryLine.hasSuffix("— Which parser?"))
+  info.attention = nil
+  info.failure = "Read failed"
+  #expect(info.summaryLine.contains("Find the parser"))
+  #expect(info.summaryLine.hasSuffix("— Read failed"))
+}
+
 @Test("Efficiency is tokens per second in use per request, ranked like the other metrics")
 func efficiencyScoreAndRanking() throws {
   var ledger = ModelUsageLedger()

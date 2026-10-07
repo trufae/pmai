@@ -1107,7 +1107,9 @@ or not) to show its work.
 Subagents are disabled by default: enable the `agents` tool group and set the
 agent's `limits.maxSubagents` above zero. `agent_start` takes a three-part brief
 — `context`, `task`, and `output` — plus an optional `agent`, and waits for the
-answer unless `wait` is false.
+answer unless `wait` is false. An optional `title` explains why the child is
+running in `/jobs` and `agent_status`; it defaults to a summary of `task` and
+is saved with the job. The title stays visible alongside the current activity.
 `agent_status` lists the caller's children without waiting, `agent_result`
 collects a background answer, and `agent_stop` kills a subtree. A caller may
 only address pids inside its own subtree. The retired `spawn_agent` and

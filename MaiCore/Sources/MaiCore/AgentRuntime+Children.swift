@@ -92,7 +92,7 @@ extension AgentRuntime {
       parent: parent.pid,
       agentID: definition.id,
       displayName: definition.displayName,
-      task: start.brief.headline,
+      task: start.headline,
       depth: childDepth,
       limit: request.limits.maxSubagents)
     // Registered, so the reply's next start may register after it.

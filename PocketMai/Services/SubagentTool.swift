@@ -215,7 +215,7 @@ enum SubagentTool {
       parent: caller,
       agentID: agentID,
       displayName: displayName,
-      task: start.brief.headline,
+      task: start.headline,
       depth: depth,
       limit: maxConcurrentChildren)
     child.title = "\(displayName) \(pid)"

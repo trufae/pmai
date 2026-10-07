@@ -70,6 +70,8 @@ func processToolDefinitions() throws {
   #expect(!description.contains("general worker"))
   #expect(start.description.contains("Agents: coder, researcher"))
   #expect(start.parameters.filter(\.required).map(\.name) == ["output", "task"])
+  let title = try #require(start.parameters.first { $0.name == "title" })
+  #expect(!title.required)
 
   let delegating = AgentProcessTools.definitions(offering: [], delegating: true)
   let worker = try #require(delegating.first)
@@ -88,11 +90,14 @@ func startArguments() throws {
       "task": .string("Read it"),
       "output": .string("One line"),
       "agent": .string(" researcher "),
+      "title": .string("  Inspect\n the file  "),
       "tools": .array([.string("read"), .string("missing")]),
       "wait": .bool(false),
     ]))
   #expect(full.brief == AgentTaskBrief(context: "Paths found.", task: "Read it", output: "One line"))
   #expect(full.agent == "researcher")
+  #expect(full.title == "Inspect the file")
+  #expect(full.headline == "Inspect the file")
   #expect(full.wait == false)
   #expect(full.narrowed(["read", "write"]) == ["read"])
   // A request naming none of the tools keeps them all rather than none.
@@ -104,12 +109,31 @@ func startArguments() throws {
       toolName: AgentProcessTools.legacyLaunchToolName))
   #expect(legacy.brief.task == "Find it")
   #expect(legacy.agent == nil)
+  #expect(legacy.title == nil)
+  #expect(legacy.headline == "Find it")
   #expect(legacy.wait == false)
   let spawn = try #require(
     AgentProcessTools.StartArguments(
       arguments: ["task": .string("Find it")],
       toolName: AgentProcessTools.legacySpawnToolName))
   #expect(spawn.wait == true)
+}
+
+@Test("Job titles default to the task and stay within one short line")
+func startArgumentTitleFallbacks() throws {
+  for title: JSONValue in [.null, .string(" \n\t "), .integer(42)] {
+    let start = try #require(
+      AgentProcessTools.StartArguments(arguments: [
+        "task": .string("Read\n the file"), "title": title,
+      ]))
+    #expect(start.title == nil)
+    #expect(start.headline == "Read the file")
+  }
+  let start = AgentProcessTools.StartArguments(
+    brief: AgentTaskBrief(task: "Full instructions"),
+    title: String(repeating: "x", count: 100), wait: true)
+  #expect(start.headline == String(repeating: "x", count: 59) + "…")
+  #expect(start.brief.task == "Full instructions")
 }
 
 @Test("A host runs a child on a bare supervisor and reads it back through status and result")
@@ -143,6 +167,10 @@ func hostRunsChild() async throws {
     arguments: [:], callID: "c2", caller: parent, supervisor: supervisor)
   #expect(listed.structuredContent?.objectValue?["count"] == .integer(1))
   #expect(listed.text.contains("worker"))
+  #expect(listed.text.contains("Read it"))
+  #expect(
+    listed.structuredContent?.objectValue?["agents"]?.arrayValue?.first?.objectValue?["title"]
+      == .string("Read it"))
   let stranger = await supervisor.register(
     runID: UUID(), parent: nil, agentID: "other", task: "", depth: 0)
   let notYours = await AgentProcessTools.result(
@@ -195,6 +223,7 @@ func queuedChildAndStop() async throws {
   #expect(second.queued)
   #expect(await recorder.announcements == [false])
   #expect(await supervisor.info(second.pid)?.state == .queued)
+  #expect(await supervisor.info(second.pid)?.summaryLine.contains("two") == true)
   let queuedText = AgentProcessTools.startedResult(
     callID: "c1", pid: second.pid, agentID: "worker", queued: true, slots: 1)
   #expect(queuedText.text.hasPrefix("Queued worker as \(second.pid): all 1 subagent slot is busy"))

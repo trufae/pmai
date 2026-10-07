@@ -55,6 +55,13 @@ is kill, `/jobs tree` is pstree, and a pid is short enough to type. One
 definition can back many concurrent processes; a process always names the
 definition it was started from.
 
+`agent_start` accepts an optional `title` explaining why that child is running,
+for example `"title": "Find the parser"`. `/jobs` and `agent_status` show it
+alongside the state and current activity. Without a title, or with a blank one,
+they use a summary of `task`. Titles are collapsed to one line of at most 60
+characters and saved with the job, so reopened chats keep them. The child's
+instructions still come from `context`, `task`, and `output`.
+
 ## Hosts without the runtime
 
 The family is not tied to `AgentRuntime`. `AgentProcessTools` holds the four

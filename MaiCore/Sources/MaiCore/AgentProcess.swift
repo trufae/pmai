@@ -147,7 +147,7 @@ public struct AgentProcessInfo: Equatable, Sendable, Identifiable {
   /// The definition this process was started from.
   public var agentID: String
   public var displayName: String
-  /// A one-line summary of the brief, for listings.
+  /// The job title, defaulting to a one-line summary of the brief, for listings.
   public var task: String
   public var state: AgentProcessState
   public var attention: AgentAttention?
@@ -227,13 +227,15 @@ public struct AgentProcessInfo: Equatable, Sendable, Identifiable {
     max(0, (finishedAt ?? now).timeIntervalSince(runStartedAt))
   }
 
-  /// `#3 coder  run  5 turns · 2 tools · 2.1k tok · 1m4s — reading Parser.swift`
+  /// `#3 coder  [run]  Find the parser  5 turns · 2 tools · 2.1k tok · 1m4s — reading Parser.swift`
   public var summaryLine: String {
     summaryLine(at: Date())
   }
 
   public func summaryLine(at now: Date) -> String {
     var line = "\(pid) \(agentID)  [\(state.shortLabel)]"
+    let title = Self.oneLine(task, limit: 60)
+    if !title.isEmpty { line += "  \(title)" }
     var facts: [String] = []
     if modelTurns > 0 { facts.append("\(modelTurns) turn\(modelTurns == 1 ? "" : "s")") }
     if toolCalls > 0 { facts.append("\(toolCalls) tool\(toolCalls == 1 ? "" : "s")") }

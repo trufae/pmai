@@ -128,7 +128,9 @@ final class StubChatEndpoint: URLProtocol {
     if prompt.contains("## Task") {
       return completion(content: "Child answer")
     }
-    return toolCalls([("call_1", ["task": "Say hi", "output": "Two words"])])
+    return toolCalls([
+      ("call_1", ["title": "Check greeting", "task": "Say hi", "output": "Two words"])
+    ])
   }
 
   static func completion(content: String) -> [String: Any] {
@@ -333,6 +335,7 @@ final class SubagentEndToEndTests: XCTestCase {
     let childMessages = childRequest["messages"] as? [[String: Any]] ?? []
     let childPrompt = childMessages.last { $0["role"] as? String == "user" }?["content"] as? String
     XCTAssertTrue(childPrompt?.contains("## Task\n\nSay hi") == true, childPrompt ?? "")
+    XCTAssertFalse(childPrompt?.contains("Check greeting") == true)
     XCTAssertTrue(childPrompt?.contains("running as agent 'Main.worker'") == true)
     let childSystem =
       childMessages.first { $0["role"] as? String == "system" }?["content"] as? String
@@ -354,7 +357,7 @@ final class SubagentEndToEndTests: XCTestCase {
     XCTAssertEqual(child.state, .completed)
     XCTAssertTrue(child.isCollected)
     XCTAssertEqual(child.depth, 1)
-    XCTAssertEqual(child.task, "Say hi")
+    XCTAssertEqual(child.task, "Check greeting")
     XCTAssertEqual(child.modelTurns, 1)
     let transcript = await store.agentTranscript(child.pid)
     XCTAssertEqual(transcript.map(\.role), [.user, .assistant])

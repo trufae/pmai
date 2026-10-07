@@ -41,6 +41,10 @@ class Provider(BaseHTTPRequestHandler):
         elif not results:
             arguments = {'task': f'level {depth + 1}', 'output': 'One line.',
                          'wait': request['model'].endswith('blocking')}
+            if depth == 0:
+                arguments['title'] = 'Review level 1'
+            elif depth == 2:
+                arguments['title'] = ' \n\t '
             if request['model'].startswith('named'):
                 arguments['agent'] = 'worker'
             message = {'role': 'assistant', 'content': None, 'tool_calls': [{
@@ -109,7 +113,8 @@ def main():
                     for depth in range(1, max_depth + 1):
                         name = 'worker' if mode.startswith('named') else 'worker' + '.worker' * depth
                         prefix = '    ' * (depth - 1) + '└── '
-                        assert re.search(rf'(?m)^{prefix}#\d+ {re.escape(name)}\s+\[{state}\]', tree), tree
+                        title = 'Review level 1' if depth == 1 else f'level {depth}'
+                        assert re.search(rf'(?m)^{prefix}#\d+ {re.escape(name)}\s+\[{state}\]\s+{title}', tree), tree
                     return re.findall(r'#(\d+) \S+\s+\[', tree)
 
                 def check_queue(expected):

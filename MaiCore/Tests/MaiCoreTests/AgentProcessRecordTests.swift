@@ -136,6 +136,9 @@ func restoreRecordsUnderChat() async throws {
   #expect(restoredParent.parent == chat)
   #expect(restoredWorker.parent == pids[0])
   #expect(restoredParent.depth == 1 && restoredWorker.depth == 2)
+  #expect(restoredParent.task == "find the parser")
+  #expect(restoredWorker.task == "read Parser.swift")
+  #expect(tree.lines().contains { $0.contains("read Parser.swift") })
   #expect(restoredParent.runID == parentRunID)
   // A process that was running when it was saved is not running now.
   #expect(restoredParent.state == .cancelled)
@@ -152,6 +155,7 @@ func restoreRecordsUnderChat() async throws {
   let status = await AgentProcessTools.status(
     arguments: ["tree": .bool(true)], callID: "s", caller: chat, supervisor: supervisor)
   #expect(status.structuredContent?.objectValue?["count"] == .integer(2))
+  #expect(status.text.contains("find the parser"))
   let log = await AgentProcessTools.status(
     arguments: ["pid": .string(String(pids[1].rawValue)), "log": .bool(true)],
     callID: "l", caller: chat, supervisor: supervisor)
