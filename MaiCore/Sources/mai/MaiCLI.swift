@@ -11588,7 +11588,6 @@ struct MaiCLI {
     /agent default ID     Save the default agent for new chats and runs
     /agent effort ID LEVEL  Set an agent's reasoning effort
     /agents                List or edit saved agent definitions; /help agents lists commands
-    /jobs                  Manage running and saved processes; /help jobs lists commands
     /attach [MODE] PATH    Attach a document/source file; HTML asks for source, markdown, or copy
     /attach clear          Drop the attachments queued for the next message
     /btw PROMPT            Ask in a fresh context without changing this chat
@@ -11605,6 +11604,7 @@ struct MaiCLI {
     /help [COMMAND]        Show commands or help for one command
     /image MODE PATH       Attach at tiny/small/medium/big/full size, or OCR to Markdown
     /import PATH           Merge a PocketMai/pmai archive into settings, skills, and chats
+    /jobs                  Manage running and saved processes; /help jobs lists commands
     /mcp                   Manage MCP servers; /help mcp lists commands
     /memory                Show, edit, learn, or scope this project's durable memory
     /model [PROVIDER::]MODEL  Select and save a model for chat and all tasks
