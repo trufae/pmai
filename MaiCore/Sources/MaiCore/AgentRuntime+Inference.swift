@@ -177,6 +177,50 @@ extension AgentRuntime {
     }
   }
 
+  func callProvider(_ turn: ModelTurn, state: inout RunState) async throws -> ProviderCall? {
+    let context = state.context
+    let emit = state.emit
+    state.modelTurns += 1
+    await emit(.modelStarted(context, turn: state.modelTurns))
+    await supervisor.note(
+      state.pid, modelTurns: state.modelTurns, activity: "thinking",
+      contextSize: AgentContextSize(messages: turn.request.messages))
+    let repairsEmptyReply =
+      state.toolCalls > 0 && state.modelTurns < state.request.limits.maxModelTurns
+    do {
+      return try await complete(
+        turn.request, with: turn.provider, retry: turn.retry, budget: state.budget,
+        context: context, pid: state.pid, retriesEmptyReply: !repairsEmptyReply, emit: emit
+      ) { event in
+        if turn.selectingTools {
+          switch event {
+          case .textDelta, .reasoningDelta: return
+          default: break
+          }
+        }
+        if turn.usesTextToolProtocol, case .textDelta = event { return }
+        await emit(.provider(context, event))
+      }
+    } catch let error as any ProviderToolCallError
+      where error.toolCallRepairMessage != nil && !turn.definitions.isEmpty
+      && !turn.toolBudgetExhausted
+    {
+      state.recordRepair(error.toolCallRepairMessage!)
+      await supervisor.note(state.pid, transcript: state.transcript)
+      return nil
+    } catch is ProviderEmptyResponseError where repairsEmptyReply {
+      // A model that answers a tool result with nothing at all is told what
+      // is expected of it, as after a malformed call; retrying the same
+      // request twice and then failing the whole run threw the work away.
+      var feedback = AgentToolLoopPolicy.repairFeedbackAfterToolResult(
+        mode: turn.textToolMode ?? .native)
+      if state.request.usesToolProxy { feedback += "\n" + ToolProxy.repairHint }
+      state.recordRepair(feedback)
+      await supervisor.note(state.pid, transcript: state.transcript)
+      return nil
+    }
+  }
+
   /// Waits under the live retry policy. Changing retry.delay may shorten,
   /// lengthen or remove a delay already in progress, and lowering the attempt
   /// count stops a pending retry without an artificial wait.

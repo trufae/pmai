@@ -3,6 +3,101 @@ import Testing
 
 @testable import MaiCore
 
+@Test("Interleaved runs on one runtime keep transcripts, usage and allowances independent")
+func interleavedRunsKeepTheirOwnState() async throws {
+  let provider = InterleavedRunProvider()
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  try await runtime.register(tool: echoTool())
+  async let first = runtime.run(
+    AgentRequest(
+      agentID: "first", provider: provider.descriptor.id, messages: [.user("first task")],
+      toolNames: ["echo"], limits: AgentRunLimits(maxModelTurns: 1), retry: .none,
+      sessionID: "first"))
+  async let second = runtime.run(
+    AgentRequest(
+      agentID: "second", provider: provider.descriptor.id, messages: [.user("second task")],
+      toolNames: ["echo"], limits: AgentRunLimits(maxModelTurns: 3), retry: .none,
+      sessionID: "second"))
+  let (paused, finished) = try await (first, second)
+  #expect(paused.interruption == .modelTurns(limit: 1))
+  #expect(paused.modelTurns == 1 && paused.toolCalls == 1)
+  #expect(paused.usage?.totalTokens == 10)
+  #expect(finished.interruption == nil && finished.response.text == "second finished")
+  #expect(finished.modelTurns == 2 && finished.toolCalls == 1)
+  #expect(finished.usage?.totalTokens == 40)
+  for (result, id) in [(paused, "first"), (finished, "second")] {
+    #expect(result.transcript.filter { $0.role == .user }.map(\.text) == ["\(id) task"])
+    #expect(result.transcript.flatMap(\.toolResults).map(\.text) == ["echo: \(id)"])
+  }
+}
+
+@Test("A settings change during one sequential tool applies to the next call in that reply")
+func sequentialToolBatchRefreshesSettings() async throws {
+  let provider = RecoveryProvider(responses: [
+    ProviderResponse(
+      message: AgentMessage(
+        role: .assistant,
+        content: [
+          .toolCall(ToolCall(id: "change", name: "change", arguments: .object([:]))),
+          .toolCall(
+            ToolCall(id: "echo", name: "echo", arguments: .object(["text": .string("blocked")]))),
+        ]), stopReason: .toolCall),
+    textReply("finished"),
+  ])
+  let runtime = AgentRuntime()
+  let request = AgentRequest(
+    provider: "recovery", messages: [.user("work")], toolNames: ["change", "echo"], retry: .none)
+  try await runtime.register(provider)
+  try await runtime.register(tool: echoTool())
+  try await runtime.register(
+    tool: ClosureTool(
+      definition: ToolDefinition(
+        name: "change", description: "Change settings",
+        annotations: ToolAnnotations(approval: .automatic))
+    ) { _, context in
+      var updated = request
+      updated.toolNames = ["change"]
+      let pid = try #require(context.run.pid)
+      #expect(await runtime.reconfigure(pid, with: updated))
+      return ToolOutput(text: "settings changed")
+    })
+  let result = try await runtime.run(request)
+  let outputs = result.transcript.flatMap(\.toolResults)
+  #expect(outputs.map(\.callID) == ["change", "echo"])
+  #expect(outputs[0].text == "settings changed" && !outputs[0].isError)
+  #expect(outputs[1].isError && outputs[1].text.contains("not available to this agent"))
+  #expect(result.toolCalls == 2 && result.response.text == "finished")
+  let next = try #require(await provider.requests.last)
+  #expect(next.tools.map(\.name) == ["change"])
+}
+
+private actor InterleavedRunProvider: ChatProvider {
+  nonisolated let descriptor = ProviderDescriptor(
+    id: "interleaved", displayName: "Interleaved fixture", capabilities: [.nativeToolCalling])
+  private var started: Set<String> = []
+
+  func complete(_ request: ProviderRequest, emit: @escaping ProviderEventHandler) async throws
+    -> ProviderResponse
+  {
+    let id = request.sessionID ?? "missing"
+    var response: ProviderResponse
+    if started.insert(id).inserted {
+      let deadline = ContinuousClock.now + .seconds(2)
+      while started.count < 2 {
+        guard ContinuousClock.now < deadline else { throw RecoveryTestError.timedOut }
+        try await Task.sleep(for: .milliseconds(5))
+      }
+      response = echoCall(id)
+    } else {
+      response = textReply("\(id) finished")
+    }
+    response.usage = TokenUsage(
+      inputTokens: 1, outputTokens: 1, totalTokens: id == "first" ? 10 : 20)
+    return response
+  }
+}
+
 // Long tasks used to die with "Agent run exceeded its model turns limit" and
 // lose everything the run had done. These tests pin down the replacement: a
 // limit pauses the run at a turn boundary with a transcript that can be run
@@ -313,10 +408,12 @@ func autocompactFoldsOlderMessages() async throws {
 func autocompactSelection() {
   let user = AgentMessage.user("hello")
   let tail = echoCall("c1").message
-  let toolResult = AgentMessage(role: .tool, content: [.toolResult(ToolResult(callID: "c1", text: "x"))])
+  let toolResult = AgentMessage(
+    role: .tool, content: [.toolResult(ToolResult(callID: "c1", text: "x"))])
   #expect(AgentAutocompaction.selection(in: [.system("sys"), user, tail, toolResult]) == nil)
   let older = echoCall("c0").message
-  let olderResult = AgentMessage(role: .tool, content: [.toolResult(ToolResult(callID: "c0", text: "y"))])
+  let olderResult = AgentMessage(
+    role: .tool, content: [.toolResult(ToolResult(callID: "c0", text: "y"))])
   let selection = AgentAutocompaction.selection(
     in: [.system("sys"), user, older, olderResult, tail, toolResult], preservingRecentTokens: 0)
   #expect(selection == [older.id, olderResult.id])
@@ -341,7 +438,9 @@ func unansweredToolCallsAreSettled() {
   #expect(result?.isError == true)
   #expect(result?.text == "Error: not executed; the run was cancelled.")
   // A transcript that ends cleanly is left alone.
-  #expect(AgentTranscriptEditor.answeringUnansweredToolCalls(in: Array(cut.prefix(3)), reason: "x") == Array(cut.prefix(3)))
+  #expect(
+    AgentTranscriptEditor.answeringUnansweredToolCalls(in: Array(cut.prefix(3)), reason: "x")
+      == Array(cut.prefix(3)))
 }
 
 @Test("Run limits, retry, and autocompact settings survive the configuration file")
@@ -370,7 +469,8 @@ func recoverySettingsRoundTrip() throws {
   #expect(definition.toolCallingStrategy == .automatic)
   #expect(AgentRequest(provider: "p", model: "m", messages: []).toolCallingStrategy == .automatic)
   let explicit = try JSONDecoder().decode(
-    AgentDefinition.self, from: Data(#"{"id":"a","provider":"p","toolCallingStrategy":"native"}"#.utf8))
+    AgentDefinition.self,
+    from: Data(#"{"id":"a","provider":"p","toolCallingStrategy":"native"}"#.utf8))
   #expect(explicit.toolCallingStrategy == .native)
   #expect(AgentRunLimits(maxSeconds: 0).maxSeconds == nil)
   #expect(AgentProcessState.queued.shortLabel == "queued")

@@ -28,7 +28,7 @@ extension AgentRuntime {
         if let interruption = await budget.claimModelTurn() {
           return .deny(reason: "Approval review cannot run: \(interruption).")
         }
-        await budget.noteApprovalTurn(for: pid)
+        await budget.noteApprovalTurn()
         let providerRequest = SmartToolApproval.request(
           review: review, model: inference.model,
           options: inference.options, sessionID: request.sessionID,
@@ -38,7 +38,7 @@ extension AgentRuntime {
           budget: budget, context: approval.run, pid: pid, emit: emit
         ) { _ in }
         let usage = call.usage(for: providerRequest.messages)
-        await budget.recordApproval(usage, for: pid)
+        await budget.recordApproval(usage)
         await recordModelCall(call, provider: provider.descriptor.id, request: providerRequest)
         return SmartToolApproval.decision(call.response, arguments: approval.call.arguments)
       }
@@ -60,14 +60,12 @@ extension AgentRuntime {
     _ call: ToolCall,
     definitions: [ToolDefinition],
     request: AgentRequest,
-    context: AgentEventContext,
-    modelTurn: Int,
-    suggestedOutputBytes: Int?,
-    depth: Int,
+    execution: ToolExecutionContext,
     budget: RunBudget,
     launched: @escaping @Sendable () -> Void = {},
     emit: @escaping AgentEventHandler
   ) async throws -> ToolResult {
+    let context = execution.run
     // A proxied model that names a hidden tool directly still gets it run:
     // the proxy saves tokens, it is not a permission boundary.
     var resolvedCall: ToolCall
@@ -137,12 +135,7 @@ extension AgentRuntime {
         definition: definition)
     {
       await emit(.toolStarted(context, resolvedCall))
-      let result = ToolResult(
-        callID: resolvedCall.id,
-        text: "Error: \(validationError).",
-        isError: true)
-      await emit(.toolFinished(context, result))
-      return result
+      return await fail(resolvedCall, "\(validationError).", parent: context, emit: emit)
     }
 
     let approvedCall: ToolCall
@@ -174,12 +167,7 @@ extension AgentRuntime {
         approvedCall = ToolCall(
           id: resolvedCall.id, name: resolvedCall.name, arguments: arguments)
       case .deny(let reason):
-        let result = ToolResult(
-          callID: call.id,
-          text: "Error: tool call denied. \(reason)",
-          isError: true)
-        await emit(.toolFinished(context, result))
-        return result
+        return await fail(call, "tool call denied. \(reason)", parent: context, emit: emit)
       case .cancelRun:
         throw CancellationError()
       }
@@ -190,12 +178,9 @@ extension AgentRuntime {
         arguments: approvedCall.arguments,
         definition: definition)
     {
-      let result = ToolResult(
-        callID: approvedCall.id,
-        text: "Error: approved arguments are invalid: \(validationError).",
-        isError: true)
-      await emit(.toolFinished(context, result))
-      return result
+      return await fail(
+        approvedCall, "approved arguments are invalid: \(validationError).",
+        parent: context, emit: emit)
     }
     if observeProjectInstructions(
       approvedCall, request: request, context: context), !definition.annotations.readOnly
@@ -230,8 +215,7 @@ extension AgentRuntime {
         legacyName: resolvedCall.name,
         request: request,
         parent: context,
-        depth: depth,
-        budget: budget,
+        depth: context.depth,
         launched: launched,
         emit: emit)
     case Self.agentStatusToolName:
@@ -256,8 +240,7 @@ extension AgentRuntime {
       do {
         let output = try await tool.call(
           arguments: approvedCall.arguments,
-          context: ToolExecutionContext(
-            run: context, modelTurn: modelTurn, suggestedOutputBytes: suggestedOutputBytes))
+          context: execution)
         result = ToolResult(
           callID: approvedCall.id,
           content: output.content,
@@ -285,4 +268,166 @@ extension AgentRuntime {
     await emit(.toolFinished(parent, result))
     return result
   }
+  func executeToolBatch(_ calls: [ToolCall], state: inout RunState) async throws {
+    let context = state.context
+    let depth = context.depth
+    let pid = state.pid
+    let budget = state.budget
+    let emit = state.emit
+    // The reply's calls run in order, except that a call to a concurrent
+    // tool — the agent family, or any tool that says so — is started and
+    // left running while the calls after it start, so children started in
+    // one reply work side by side and a blocking start never holds back
+    // the rest. The results join the transcript in call order once the
+    // last of them is in.
+    let modelTurn = state.modelTurns
+    let usedTokens = AgentAutocompaction.estimatedTokens(
+      of: state.contextMessages,
+      lastUsage: state.lastUsage, lastUsageMessageCount: state.lastUsageMessageCount)
+    var results = [ToolResult?](repeating: nil, count: calls.count)
+    var changesState = [Bool](repeating: false, count: calls.count)
+    try await withThrowingTaskGroup(of: (Int, ToolResult).self) { group in
+      for (index, call) in calls.enumerated() {
+        try Task.checkCancellation()
+        try await holdWhilePaused(pid)
+        // A prior sequential tool may have taken minutes. Refresh again for
+        // every call so commands typed while it ran affect the next one.
+        state.request = currentRequest(state.request, for: pid)
+        await budget.update(limits: state.request.limits)
+        let callRequest = state.request
+        let suggestedOutputBytes = ToolExecutionContext.suggestedOutputBytes(
+          contextTokens: callRequest.autocompact.tokens, usedTokens: usedTokens,
+          toolCalls: calls.count)
+        let execution = ToolExecutionContext(
+          run: context, modelTurn: modelTurn, suggestedOutputBytes: suggestedOutputBytes)
+        let callDefinitions = try visibleDefinitions(for: callRequest, depth: depth)
+        let name = AgentProcessTools.canonicalName(call.name)
+        let pollable = AgentProcessTools.reservedToolNames.contains(name)
+        changesState[index] =
+          !pollable
+          && callDefinitions.contains { $0.name == name && !$0.annotations.readOnly }
+        if await budget.deadlinePassed {
+          // Out of time between two calls: the rest are answered rather
+          // than run, so the transcript stays sendable and the pause at
+          // the top of the loop is clean.
+          await emit(.toolStarted(context, call))
+          let result = AgentProcessTools.failure(
+            callID: call.id,
+            "the run's time limit was reached before this call ran; it was not executed.")
+          await emit(.toolFinished(context, result))
+          results[index] = result
+          continue
+        }
+        guard state.toolCalls < callRequest.limits.maxToolCalls,
+          await budget.allowsToolCall(used: state.toolCalls)
+        else {
+          let result = AgentProcessTools.failure(
+            callID: call.id,
+            "the tool call budget for this run (\(callRequest.limits.maxToolCalls)) is exhausted; this call was not executed. Answer with the information already gathered."
+          )
+          await emit(.toolFinished(context, result))
+          results[index] = result
+          continue
+        }
+        state.toolCalls += 1
+        await supervisor.note(pid, toolCalls: state.toolCalls, activity: call.name)
+        // Repeating a call is often right — the directory changed, a file
+        // was written, a child is being polled — so only a call that keeps
+        // coming back with the same arguments is stopped, and never one of
+        // the agent tools, which exist to be polled.
+        let key = ToolCallKey(call)
+        let repeats = state.repeatedCalls[key, default: 0]
+        guard pollable || repeats < Self.maximumIdenticalCalls else {
+          state.repeatGuardTripped = true
+          await emit(.toolStarted(context, call))
+          let result = AgentProcessTools.failure(
+            callID: call.id,
+            "this exact call has already run \(repeats) times with the same arguments; change them, or answer with what you have."
+          )
+          await emit(.toolFinished(context, result))
+          results[index] = result
+          continue
+        }
+        state.repeatedCalls[key] = repeats + 1
+        if callDefinitions.contains(where: { $0.name == name && $0.annotations.concurrent }) {
+          let gate = LaunchGate()
+          group.addTask {
+            defer { gate.open() }
+            return (
+              index,
+              try await self.execute(
+                call,
+                definitions: callDefinitions,
+                request: callRequest,
+                execution: execution,
+                budget: budget,
+                launched: { gate.open() },
+                emit: emit)
+            )
+          }
+          // The next call starts once this one is under way, so children
+          // started together get their pids, and their slots, in call order.
+          await gate.wait()
+        } else {
+          results[index] = try await execute(
+            call,
+            definitions: callDefinitions,
+            request: callRequest,
+            execution: execution,
+            budget: budget,
+            emit: emit)
+        }
+      }
+      for try await (index, result) in group {
+        results[index] = result
+      }
+    }
+    for (index, call) in calls.enumerated() {
+      guard let result = results[index] else { continue }
+      state.transcript.append(AgentMessage(role: .tool, content: [.toolResult(result)]))
+      // A call that changed something makes repeating an earlier call
+      // reasonable again — the tests run after each fix are the common
+      // case — so every other call's identical-call count starts over.
+      if !result.isError, changesState[index] {
+        let own = ToolCallKey(call)
+        state.repeatedCalls = state.repeatedCalls.filter { $0.key == own }
+      }
+    }
+    await supervisor.note(
+      pid, transcript: state.transcript,
+      contextSize: AgentContextSize(messages: state.contextMessages))
+  }
+
+  /// A one-shot signal a concurrent call gives once it is under way — a
+  /// child registered, a tool called — so the reply's next call can start.
+  /// `wait` returns at once when the signal was already given, and the call's
+  /// end gives it too, so an early error never holds the reply up.
+  private final class LaunchGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var opened = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func open() {
+      lock.lock()
+      opened = true
+      let resumed = waiters
+      waiters = []
+      lock.unlock()
+      for waiter in resumed { waiter.resume() }
+    }
+
+    func wait() async {
+      await withCheckedContinuation { continuation in
+        lock.lock()
+        if opened {
+          lock.unlock()
+          continuation.resume()
+        } else {
+          waiters.append(continuation)
+          lock.unlock()
+        }
+      }
+    }
+  }
+
 }

@@ -6,15 +6,12 @@ import Foundation
 actor RunBudget {
   private var limits: AgentRunLimits
   private var modelTurns = 0
-  private var toolCalls = 0
-  private var approvalUsageByProcess: [AgentPID: TokenUsage] = [:]
-  private var approvalTurnsByProcess: [AgentPID: Int] = [:]
+  private(set) var approvalUsage: TokenUsage?
+  private(set) var approvalTurns = 0
 
-  func approvalUsage(for pid: AgentPID) -> TokenUsage? { approvalUsageByProcess[pid] }
-  func approvalTurns(for pid: AgentPID) -> Int { approvalTurnsByProcess[pid, default: 0] }
-  func noteApprovalTurn(for pid: AgentPID) { approvalTurnsByProcess[pid, default: 0] += 1 }
-  func recordApproval(_ usage: TokenUsage, for pid: AgentPID) {
-    approvalUsageByProcess[pid] = approvalUsageByProcess[pid].merging(usage)
+  func noteApprovalTurn() { approvalTurns += 1 }
+  func recordApproval(_ usage: TokenUsage) {
+    approvalUsage = approvalUsage.merging(usage)
     tokens += max(0, usage.totalTokens)
   }
   private var tokens = 0
@@ -53,10 +50,8 @@ actor RunBudget {
     return nil
   }
 
-  func claimToolCall() -> Bool {
-    guard toolCalls < limits.maxToolCalls else { return false }
-    toolCalls += 1
-    return true
+  func allowsToolCall(used: Int) -> Bool {
+    used < limits.maxToolCalls
   }
 
   func record(tokens newTokens: Int) {

@@ -12,7 +12,6 @@ extension AgentRuntime {
     request: AgentRequest,
     parent: AgentEventContext,
     depth: Int,
-    budget: RunBudget,
     launched: @escaping @Sendable () -> Void = {},
     emit: @escaping AgentEventHandler
   ) async -> ToolResult {
