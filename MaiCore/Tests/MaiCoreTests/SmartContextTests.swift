@@ -302,9 +302,14 @@ func smartContextConfiguration() async throws {
 }
 
 @Test(
-  "Smart context forwards invoked skill instructions verbatim after later tools",
-  arguments: [false, true], [false, true])
-func smartContextSkills(textProtocol: Bool, proxied: Bool) async throws {
+  "Every context and protocol forwards direct and proxied skill instructions after later tools",
+  arguments: [AgentContextMode.cache, .size, .smart, .tools].flatMap { context in
+    [ToolCallingStrategy.native, .json, .xml, .text].flatMap { strategy in
+      [false, true].map { (context, strategy, $0) }
+    }
+  })
+func smartContextSkills(fixture: (AgentContextMode, ToolCallingStrategy, Bool)) async throws {
+  let (context, strategy, proxied) = fixture
   let skill = AgentSkill(
     name: "stamp", description: "Make a stamp",
     directoryURL: URL(fileURLWithPath: "/tmp/skills/stamp"),
@@ -317,11 +322,27 @@ func smartContextSkills(textProtocol: Bool, proxied: Bool) async throws {
   let primary = SmartContextProvider(
     id: "primary",
     responses: [load, read].map { call in
-      ProviderResponse(
-        message: textProtocol
-          ? .assistant(
-            "{\"tool\":\"\(call.name)\",\"arguments\":\(call.arguments.compactJSONString)}")
-          : AgentMessage(role: .assistant, content: [.toolCall(call)]))
+      let arguments = call.arguments.objectValue ?? [:]
+      let fields = arguments.sorted { $0.key < $1.key }.map { key, value in
+        (key, value.stringValue ?? value.compactJSONString)
+      }
+      let message: AgentMessage
+      switch strategy {
+      case .native, .automatic:
+        message = AgentMessage(role: .assistant, content: [.toolCall(call)])
+      case .json:
+        message = .assistant(
+          "{\"tool\":\"\(call.name)\",\"arguments\":\(call.arguments.compactJSONString)}")
+      case .xml:
+        message = .assistant(
+          "<tool_call name=\"\(call.name)\">"
+            + fields.map { "<arg name=\"\($0.0)\">\(AgentTooling.xmlEscapedAttribute($0.1))</arg>" }.joined()
+            + "</tool_call>")
+      case .text:
+        message = .assistant("TOOL_CALL\ntool: \(call.name)\n"
+          + fields.map { "\($0.0): \($0.1)" }.joined(separator: "\n") + "\nEND_TOOL_CALL")
+      }
+      return ProviderResponse(message: message)
     } + [.init(message: .assistant("STAMP SAVED"))])
   let compact = SmartContextProvider(
     id: "compact",
@@ -340,9 +361,10 @@ func smartContextSkills(textProtocol: Bool, proxied: Bool) async throws {
   let result = try await runtime.run(
     AgentRequest(
       provider: "primary", messages: [.user("Produce a checked stamp")],
-      toolNames: [skill.toolName, "read"], toolCallingStrategy: textProtocol ? .json : .native,
+      toolNames: [skill.toolName, "read"], toolCallingStrategy: strategy,
       useToolProxy: proxied,
-      retry: .none, autocompact: .init(tokens: 0), context: .smart))
+      retry: .none, autocompact: .init(tokens: 0), context: context))
+  #expect(result.response.text == "STAMP SAVED")
   #expect(result.toolCalls == 2)
   let requests = await primary.requests
   try #require(requests.count == 3)
@@ -351,6 +373,9 @@ func smartContextSkills(textProtocol: Bool, proxied: Bool) async throws {
       request.messages.contains { $0.text.contains(skill.prompt(arguments: "input.txt")) }
     })
   #expect(!requests[0].messages.contains { $0.text.contains(skill.body) })
+  #expect(requests.allSatisfy { request in
+    request.messages.contains { $0.role == .user && $0.text.contains("Produce a checked stamp") }
+  })
   #expect(result.transcript.flatMap(\.toolResults).first?.text.contains(skill.body) == true)
   #expect(requests.dropFirst().allSatisfy { request in
     let bodies = request.messages.filter { $0.text.contains(skill.body) }

@@ -2,6 +2,7 @@
 """Exercise compaction decisions and slash commands through an offline REPL PTY."""
 import fcntl
 import json
+from smoke import expect_pty
 import os
 from pathlib import Path
 import pty
@@ -41,14 +42,7 @@ def main():
         output = bytearray()
 
         def wait_for(text, timeout=15):
-            needle = text.encode()
-            end = time.monotonic() + timeout
-            while needle not in output:
-                assert time.monotonic() < end, (text, output.decode(errors='replace'))
-                assert process.poll() is None, (process.returncode, output)
-                if select.select([master], [], [], .05)[0]:
-                    output.extend(os.read(master, 65536))
-            del output[:output.index(needle) + len(needle)]
+            return expect_pty(master, process, output, text, timeout)
 
         def send(text):
             output.clear()

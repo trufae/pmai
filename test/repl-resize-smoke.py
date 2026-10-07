@@ -2,11 +2,11 @@
 """Check fixed REPL rows with SIGWINCH both delivered and deliberately delayed."""
 import fcntl
 import json
+from smoke import read_pty, expect_pty
 import os
 from pathlib import Path
 import pty
 import re
-import select
 import signal
 import struct
 import subprocess
@@ -29,7 +29,7 @@ def width(text):
                for c in text)
 
 
-def check_rows(data, rows, columns, input_rows=1):
+def check_rows(data, rows, columns, input_rows=1, thinking_rows=0):
     text = data.decode()
     moves = list(MOVE.finditer(text))
     assert moves, repr(text)
@@ -40,11 +40,13 @@ def check_rows(data, rows, columns, input_rows=1):
         end = moves[i + 1].start() if i + 1 < len(moves) else len(text)
         content = CSI.sub('', text[move.end():end]).replace('\x1b7', '').replace('\x1b8', '')
         if content:
-            assert row >= rows - input_rows, (row, repr(content))
+            assert row >= rows - input_rows - thinking_rows, (row, repr(content))
             assert column - 1 + width(content) <= columns - 1, (columns, repr(content))
             painted.add(row)
     assert rows - input_rows in painted, ('missing status/menu row', repr(text))
     assert rows in painted, ('missing input row', repr(text))
+    if thinking_rows:
+        assert rows - input_rows - thinking_rows in painted, ('missing thinking row', repr(text))
     return text
 
 
@@ -83,26 +85,11 @@ def exercise(binary, server, started, release):
 
         def read_for(seconds):
             data = bytearray()
-            deadline = time.monotonic() + seconds
-            while time.monotonic() < deadline:
-                if select.select([master], [], [], min(.05, max(0, deadline - time.monotonic())))[0]:
-                    try:
-                        chunk = os.read(master, 65536)
-                    except OSError:
-                        break
-                    if not chunk:
-                        break
-                    data.extend(chunk)
+            read_pty(master, data, seconds)
             return bytes(data)
 
         def wait_for(needle):
-            needle = needle.encode()
-            deadline = time.monotonic() + 10
-            while needle not in pending:
-                assert process.poll() is None, (process.returncode, pending)
-                assert time.monotonic() < deadline, (needle, pending.decode(errors='replace'))
-                pending.extend(read_for(.05))
-            del pending[:pending.index(needle) + len(needle)]
+            return expect_pty(master, process, pending, needle, 10)
 
         def drain():
             pending.clear()
@@ -167,7 +154,7 @@ def exercise(binary, server, started, release):
                 resize(rows, columns)
                 # No signal or input: both the spinner and elapsed-time update
                 # must adopt the size on their own, including the cached prompt.
-                check_rows(read_for(1.25), rows, columns)
+                check_rows(read_for(1.25), rows, columns, thinking_rows=1)
             release.set()
             wait_for('Reply: animate')
             wait_for('✓ took')

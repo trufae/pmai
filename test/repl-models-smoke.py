@@ -2,11 +2,11 @@
 """Check model completion, compaction input, and idle REPL work over real HTTP."""
 import fcntl
 import json
+from smoke import JSONProvider, read_pty, expect_pty
 import os
 from pathlib import Path
 import pty
 import queue
-import select
 import struct
 import subprocess
 import sys
@@ -14,7 +14,7 @@ import tempfile
 import termios
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 
 
 requests = queue.Queue()
@@ -28,25 +28,14 @@ catalog = {
 }
 
 
-class Provider(BaseHTTPRequestHandler):
+class Provider(JSONProvider):
     protocol_version = 'HTTP/1.1'
-
-    def log_message(self, *_):
-        pass
 
     def handle(self):
         try:
             super().handle()
         except (BrokenPipeError, ConnectionResetError):
             pass
-
-    def respond(self, payload, status=200):
-        body = json.dumps(payload).encode()
-        self.send_response(status)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
 
     def do_GET(self):
         requests.put((self.path, self.headers.get('Accept'), self.headers.get('Authorization')))
@@ -103,7 +92,11 @@ def main():
                                    ('native', '/native'), ('unavailable', '/unavailable'),
                                    ('stalled', '/stalled'), ('lazy', '/lazy'), ('drip', '/drip')]
             ]
-            providers[-1]['timeout'] = 1
+            # The provider unit test pins the default 15-second catalog cap.
+            # Exercise stalled and drip deadlines here without waiting for that cap.
+            for provider in providers:
+                if provider['id'] in ('drip', 'stalled'):
+                    provider['timeout'] = 1
             config = root / 'config.json'
             config.write_text(json.dumps({
                 'version': 1, 'defaultAgent': 'test', 'providers': providers,
@@ -135,25 +128,10 @@ def main():
             output = bytearray()
 
             def read_for(seconds):
-                end = time.monotonic() + seconds
-                while time.monotonic() < end:
-                    if select.select([master], [], [], max(0, end - time.monotonic()))[0]:
-                        try:
-                            chunk = os.read(master, 65536)
-                        except OSError:
-                            break
-                        if not chunk:
-                            break
-                        output.extend(chunk)
+                return read_pty(master, output, seconds)
 
             def wait_for(text, timeout=8):
-                end = time.monotonic() + timeout
-                needle = text.encode()
-                while needle not in output:
-                    assert time.monotonic() < end, (text, output.decode(errors='replace'))
-                    assert process.poll() is None, (process.returncode, output)
-                    read_for(.05)
-                del output[:output.index(needle) + len(needle)]
+                return expect_pty(master, process, output, text, timeout)
 
             def send(text):
                 output.clear()
@@ -262,7 +240,7 @@ def main():
                 send('/models unavailable\n')
                 wait_for('Loading model')
                 assert next_request()[0] == '/unavailable/models'
-                for provider, timeout in [('drip', 1), ('stalled', 15)]:
+                for provider, timeout in [('drip', 1), ('stalled', 1)]:
                     send(f'/models {provider}\n')
                     assert next_request()[0] == f'/{provider}/models'
                     wait_for(f'timed out after {timeout}s', timeout=timeout + 5)

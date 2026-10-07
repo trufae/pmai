@@ -30,9 +30,20 @@ APP_BUNDLE ?=
 BINDIR ?= $(HOME)/.local/bin
 
 .PHONY: all build test list run uninstall repl repl-build repl-install repl-uninstall repl-musl plugin-fixture fmt clean check-shared-tooling aitest-build
-.PHONY: android android-test
+.PHONY: android android-test test-core test-unit test-cli
+TEST_PROFILE ?= full
+TEST_ARGS ?=
 
 all: build
+
+test-core:
+	python3 test/run-tests.py core $(TEST_ARGS)
+
+test-unit:
+	python3 test/run-tests.py unit $(TEST_ARGS)
+
+test-cli:
+	python3 test/run-tests.py $(TEST_PROFILE) $(TEST_ARGS)
 
 android:
 	$(MAKE) -C PocketMaiAndroid
@@ -144,7 +155,7 @@ check-shared-tooling:
 	test "$$(readlink aitest/Sources/aitest/AgentTooling.swift)" = "../../../Shared/AgentTooling.swift"
 
 aitest-build: check-shared-tooling
-	$(SWIFT) build --package-path aitest $(SWIFT_BUILD_FLAGS)
+	PMAI_TEST_PROFILE=core $(SWIFT) build --package-path aitest $(SWIFT_BUILD_FLAGS)
 
 clean:
 	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration $(CONFIG) -derivedDataPath $(DERIVED_DATA) clean

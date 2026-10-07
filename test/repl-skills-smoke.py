@@ -1,32 +1,20 @@
 #!/usr/bin/env python3
 """Deterministic CLI skill checks, including deliberately lossy smart briefs."""
 import json
+from smoke import JSONProvider, clean_environment, run_repl
 from html import escape
-import os
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 
 requests = []
 answers = []
 BODY = 'EXACT SKILL STEPS: read input.txt; answer ALPHA DONE; task=$ARGUMENTS'
 
 
-class Provider(BaseHTTPRequestHandler):
-    def log_message(self, *_):
-        pass
-
-    def respond(self, payload):
-        body = json.dumps(payload).encode()
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
+class Provider(JSONProvider):
     def do_GET(self):
         self.respond({'data': [{'id': 'main'}, {'id': 'compact'}]})
 
@@ -55,8 +43,7 @@ def call(name, arguments, protocol):
 
 def main():
     binary = str(Path(sys.argv[1]).resolve())
-    env = {k: v for k, v in os.environ.items() if not k.startswith(('PMAI_', 'MAI_', 'OPENAI_'))
-           and k.lower() not in ('http_proxy', 'https_proxy', 'all_proxy')}
+    env = clean_environment()
     env['NO_PROXY'] = '127.0.0.1,localhost'
     server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -83,39 +70,42 @@ def main():
             def run(commands, responses):
                 requests.clear()
                 answers[:] = responses
-                result = subprocess.run([binary, '--config', str(config), '--home', str(root / 'home'),
-                    '--no-stream', '--no-markdown'], cwd=root, env=dict(env, PWD=str(root)),
-                    input='\n'.join(commands + ['/exit', '']), text=True, capture_output=True, timeout=30)
-                output = result.stdout + result.stderr
-                assert result.returncode == 0 and 'error:' not in output, output
+                output = run_repl([binary, '--config', str(config), '--home', str(root / 'home'),
+                    '--no-stream', '--no-markdown'], commands,
+                    cwd=root, env=dict(env, PWD=str(root)), timeout=30)
                 assert not answers, answers
                 return [r for r in requests if r['model'] == 'main']
 
             final = {'role': 'assistant', 'content': 'ALPHA DONE'}
-            for mode in ('cache', 'size', 'smart', 'tools'):
-                for protocol in ('native', 'json', 'xml', 'text'):
-                    for proxied in (False, True):
-                        base['agents'][0].update(context=mode, toolCallingStrategy=protocol, useToolProxy=proxied)
-                        config.write_text(json.dumps(base))
-                        load_name = 'call-tool' if proxied else 'skills_alpha'
-                        load_args = {'name': 'skills_alpha', 'arguments': {'arguments': 'input.txt'}} if proxied else {'arguments': 'input.txt'}
-                        primary = run(['/model-compact local::compact', 'Use alpha for input.txt'], [
-                            call(load_name, load_args, protocol),
-                            call('files_read', {'path': 'input.txt'}, protocol), final])
-                        assert len(primary) == 3, primary
-                        expected = BODY.replace('$ARGUMENTS', 'input.txt')
-                        for request in primary[1:]:
-                            loaded = [m for m in request['messages'] if expected in str(m.get('content'))]
-                            assert len(loaded) == 1 and loaded[0]['role'] == 'system', request
-                        if mode == 'smart':
-                            assert not any(r['model'] == 'compact' for r in requests), requests
-                            assert all(any('Use alpha for input.txt' in str(m.get('content'))
-                                           for m in r['messages'] if m['role'] == 'user') for r in primary)
-                            for request in requests:
-                                if request['model'] == 'compact':
-                                    evidence = str(request['messages'])
-                                    assert 'EXACT SKILL STEPS' not in evidence and 'Rules' not in evidence, request
-                                    assert 'Tools are available through' not in evidence, request
+            # The complete 32-case matrix runs in SmartContextTests without CLI startup.
+            # Keep both exposure paths for every protocol and context at the CLI boundary.
+            modes = ('cache', 'size', 'smart', 'tools')
+            protocols = ('native', 'json', 'xml', 'text')
+            cases = ([(mode, protocol) for mode in modes for protocol in protocols]
+                     if '--exhaustive' in sys.argv[2:] else list(zip(modes, protocols)))
+            for mode, protocol in cases:
+                for proxied in (False, True):
+                    base['agents'][0].update(context=mode, toolCallingStrategy=protocol, useToolProxy=proxied)
+                    config.write_text(json.dumps(base))
+                    load_name = 'call-tool' if proxied else 'skills_alpha'
+                    load_args = {'name': 'skills_alpha', 'arguments': {'arguments': 'input.txt'}} if proxied else {'arguments': 'input.txt'}
+                    primary = run(['/model-compact local::compact', 'Use alpha for input.txt'], [
+                        call(load_name, load_args, protocol),
+                        call('files_read', {'path': 'input.txt'}, protocol), final])
+                    assert len(primary) == 3, primary
+                    expected = BODY.replace('$ARGUMENTS', 'input.txt')
+                    for request in primary[1:]:
+                        loaded = [m for m in request['messages'] if expected in str(m.get('content'))]
+                        assert len(loaded) == 1 and loaded[0]['role'] == 'system', request
+                    if mode == 'smart':
+                        assert not any(r['model'] == 'compact' for r in requests), requests
+                        assert all(any('Use alpha for input.txt' in str(m.get('content'))
+                                       for m in r['messages'] if m['role'] == 'user') for r in primary)
+                        for request in requests:
+                            if request['model'] == 'compact':
+                                evidence = str(request['messages'])
+                                assert 'EXACT SKILL STEPS' not in evidence and 'Rules' not in evidence, request
+                                assert 'Tools are available through' not in evidence, request
             base['agents'][0].update(context='smart', toolCallingStrategy='native', useToolProxy=False)
             for command in ('$alpha input.txt', '/skills prompt alpha input.txt'):
                 config.write_text(json.dumps(base))
@@ -139,7 +129,8 @@ def main():
     finally:
         server.shutdown()
         server.server_close()
-    print('skills CLI smoke passed: 32 protocol/context/proxy cases, 2 explicit prompts, 2 disable cases')
+    print(f'skills CLI smoke passed: {len(cases) * 2} protocol/context/proxy cases, '
+          '2 explicit prompts, 2 disable cases')
 
 
 if __name__ == '__main__':

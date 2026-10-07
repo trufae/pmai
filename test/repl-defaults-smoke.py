@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """Check persistent REPL defaults from a clean home without provider variables."""
 import json
-import os
+import re
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
+from smoke import clean_environment, run_repl
 
 
 def main():
     binary = str(Path(sys.argv[1]).resolve())
-    environment = {key: value for key, value in os.environ.items()
-                   if not key.startswith(('PMAI_', 'MAI_', 'OPENAI_'))}
+    environment = clean_environment()
     with tempfile.TemporaryDirectory(prefix='pmai-defaults-') as directory:
         root = Path(directory)
         user_home = root / 'user'
@@ -22,15 +21,11 @@ def main():
         key_file = root / 'key'
         key_file.write_text('saved-key\n')
 
-        def run(commands=(), args=(), env=None, cwd=project, home=user_home):
-            result = subprocess.run(
+        def run(commands=(), args=(), env=None, cwd=project, home=user_home, split=False):
+            return run_repl(
                 [binary, '--no-stream', '--no-markdown', *args],
-                cwd=cwd, env=environment | {'HOME': str(home)} | (env or {}),
-                input='\n'.join([*commands, '/exit', '']),
-                capture_output=True, text=True, timeout=30)
-            output = result.stdout + result.stderr
-            assert result.returncode == 0 and 'error:' not in output, output
-            return output
+                commands, cwd=cwd, env=environment | {'HOME': str(home)} | (env or {}),
+                split=split)
 
         run([f'/provider add local http://127.0.0.1:11434/v1 --api-key-file {key_file}',
              '/provider use local', '/model org/saved:latest', '/set effort low',
@@ -85,33 +80,33 @@ def main():
         assert definitions['secondary']['options']['reasoningEffort'] == 'medium', definitions
         assert definitions['secondary']['description'] == 'A smaller model for routine work.'
         assert definitions['main'].get('enabled', True)
-        for command in ('/agents', '/agent', '/agents list', '/agent list'):
-            listing = run([command])
+        for listing in run(('/agents', '/agent', '/agents list', '/agent list'), split=True):
             assert 'secondary —' in listing and 'main —' in listing, listing
             assert 'Jobs:' not in listing and 'Total:' not in listing, listing
-        for command in ('/help agents', '/help agent'):
-            help_text = run([command])
+        for help_text in run(('/help agents', '/help agent'), split=True):
             assert '/jobs manages the processes' in help_text, help_text
             assert '/help jobs explains process control' in help_text, help_text
-        for command in ('/help jobs', '/help job', '/help /jobs', '/help /job'):
-            help_text = run([command])
+        for help_text in run(('/help jobs', '/help job', '/help /jobs', '/help /job'), split=True):
             assert 'Job commands (/job is an alias)' in help_text, help_text
             assert '/jobs stop PID' in help_text and 'requests cancellation' in help_text
-        for command, expected in (
+        usage = (
                 ('/jobs unknown', 'Job commands'), ('/jobs log', 'Usage: /jobs log PID'),
                 ('/job stop bad', 'Usage: /jobs stop PID'),
                 ('/jobs continue', 'Usage: /jobs continue PID'),
                 ('/jobs kill', 'Usage: /jobs kill PID'),
                 ('/jobs tree extra', 'Usage: /jobs [tree]'),
-                ('/jobs clear extra', 'Usage: /jobs clear')):
-            assert expected in run([command]), (command, expected)
+                ('/jobs clear extra', 'Usage: /jobs clear'))
+        for (command, expected), output in zip(usage, run([c for c, _ in usage], split=True)):
+            assert expected in output, (command, expected, output)
 
         # The removed /skill alias must neither run a command nor invoke a prompt.
-        for command in ('/skill', '/skill prompt missing input.txt'):
-            output = run([command])
+        for output in run(('/skill', '/skill prompt missing input.txt'), split=True):
             assert 'Unknown command. Type /help.' in output, output
-        assert "Unknown help topic 'skill'" in run(['/help skill'])
-        help_text = run(['/help skills'])
+        unknown, commands, help_text = run(('/help skill', '/help', '/help skills'), split=True)
+        assert "Unknown help topic 'skill'" in unknown, unknown
+        names = re.findall(r'(?m)^(/[a-z]+)\b', commands)
+        assert len(names) > 20 and names == sorted(names), names
+        assert '/stop' in names and '/retry' not in names, names
         assert '/skills prompt NAME [TEXT]' in help_text, help_text
 
         # Environment defaults can still bootstrap an installation once.

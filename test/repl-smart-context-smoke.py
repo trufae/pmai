@@ -1,30 +1,18 @@
 #!/usr/bin/env python3
 """Check smart context routing, prompt editing, and retained history over local HTTP."""
 import json
-import os
+from smoke import JSONProvider, clean_environment, run_repl
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 
 
 requests = []
 
 
-class Provider(BaseHTTPRequestHandler):
-    def log_message(self, *_):
-        pass
-
-    def respond(self, payload):
-        body = json.dumps(payload).encode()
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
+class Provider(JSONProvider):
     def do_GET(self):
         self.respond({'data': [{'id': 'large'}, {'id': 'tiny'}]})
 
@@ -38,8 +26,7 @@ class Provider(BaseHTTPRequestHandler):
 
 def main():
     binary = str(Path(sys.argv[1]).resolve())
-    environment = {key: value for key, value in os.environ.items()
-                   if not key.startswith(('PMAI_', 'MAI_', 'OPENAI_'))}
+    environment = clean_environment()
     environment['NO_PROXY'] = '127.0.0.1,localhost'
     server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -62,14 +49,9 @@ def main():
             environment['EDITOR'] = f'{sys.executable} {editor}'
 
             def run(commands, resume=False):
-                result = subprocess.run(
-                    [binary, '--config', str(config), '--home', str(root / 'home'),
-                     '--no-stream', '--no-markdown', *(['--resume'] if resume else [])],
-                    input='\n'.join([*commands, '/exit', '']), cwd=root, env=environment,
-                    text=True, capture_output=True, timeout=30)
-                output = result.stdout + result.stderr
-                assert result.returncode == 0 and 'error:' not in output, output
-                return output
+                return run_repl([binary, '--config', str(config), '--home', str(root / 'home'),
+                     '--no-stream', '--no-markdown', *(['--resume'] if resume else [])], commands,
+                    cwd=root, env=environment, timeout=30)
 
             output = run(['/model-compact local::tiny', '/set ctx.strategy=smart',
                           '/set ctx.strategy', '/set', '/help set',

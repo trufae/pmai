@@ -2,6 +2,10 @@
 import PackageDescription
 import Foundation
 
+// The core profile omits executable and platform dependency graphs entirely;
+// --filter only selects tests after SwiftPM has built every test target.
+let testProfile = Context.environment["PMAI_TEST_PROFILE"]
+let focusedTests = testProfile == "core" || testProfile == "chat"
 // The `/visual` workspace needs swift-tui, which only builds against Darwin
 // and Glibc. Android already leaves it out through the platform condition;
 // PMAI_NO_VISUAL=1 does the same for builds SwiftPM still calls Linux, such
@@ -36,7 +40,7 @@ var packageDependencies: [Package.Dependency] = [
       if major >= 27 { localProviderSwiftSettings.append(.define("PMAI_FOUNDATION_MODELS_27")) }
     }
   }
-  if Context.environment["PMAI_NO_MLX"] == nil {
+  if !focusedTests && Context.environment["PMAI_NO_MLX"] == nil {
     var mlxPlatforms: [Platform] = [.iOS]
     #if arch(arm64)
       mlxPlatforms.append(.macOS)
@@ -141,10 +145,31 @@ let package = Package(
       dependencies: ["MaiChat", "MaiCore"]),
     .testTarget(
       name: "MaiCoreTests",
+      dependencies: ["MaiCore", "MaiTestSupport"]),
+    .target(name: "MaiTestSupport", dependencies: ["MaiCore"], path: "Tests/Support"),
+    .testTarget(name: "MaiOpenAITests", dependencies: ["MaiCore", "MaiOpenAI", "MaiTestSupport"]),
+    .testTarget(name: "MaiMCPTests", dependencies: ["MaiCore", "MaiMCP", "MaiTestSupport"]),
+    .testTarget(name: "MaiStandardToolsTests", dependencies: ["MaiCore", "MaiStandardTools"]),
+    .testTarget(name: "MaiDocumentsTests", dependencies: ["MaiCore", "MaiDocuments", "MaiMarkdown"]),
+    .testTarget(name: "MaiMarkdownTests", dependencies: ["MaiMarkdown"]),
+    .testTarget(name: "MaiACPTests", dependencies: ["MaiCore", "MaiACP"]),
+    .testTarget(name: "MaiLocalProvidersTests", dependencies: ["MaiCore", "MaiLocalProviders"]),
+    .testTarget(name: "MaiPluginTests", dependencies: [
+      "MaiCore", "MaiMCP", "MaiPluginHost", "MaiStandardTools", "MaiVisionOCR",
+    ]),
+    .testTarget(
+      name: "MaiVisualTests",
       dependencies: [
-        "MaiCore", "MaiMCP", "MaiOpenAI", "MaiPluginHost", "MaiStandardTools", "MaiVisionOCR",
-        "MaiVisual", "MaiDocuments", "MaiMarkdown", "MaiACP", "MaiLocalProviders",
+        "MaiCore", "MaiStandardTools", "MaiVisual",
         .product(name: "SwiftTUIRuntime", package: "swift-tui"),
         .product(name: "SwiftTUICLI", package: "swift-tui"),
       ]),
   ])
+
+if focusedTests {
+  let names = testProfile == "core" ? ["MaiCore", "MaiCoreTests", "MaiTestSupport"]
+    : ["MaiCore", "MaiOpenAI", "MaiChat", "MaiChatTests"]
+  package.products = package.products.filter { $0.name == (testProfile == "core" ? "MaiCore" : "MaiChat") }
+  package.dependencies = []
+  package.targets = package.targets.filter { names.contains($0.name) }
+}

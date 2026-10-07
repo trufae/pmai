@@ -1,4 +1,24 @@
-# pmai coding-workflow benchmark
+# pmai tests and coding-workflow benchmark
+
+## Deterministic suites
+
+`make test-core` builds only MaiCore and its tests, without resolving UI, server,
+or inference dependencies. `python3 test/run-tests.py chat` does the same for
+the portable chat layer. Both use separate build directories. `make test-unit`
+runs all module-owned Swift targets; shared parsing and document-indexing cases
+run here instead of booting the iOS app. `make test` runs the iOS-specific suite.
+
+`make test-cli` builds once, runs the Swift suite, all 29 self-contained smoke
+scripts, and benchmark-accounting unit tests. Use `TEST_ARGS="--jobs 2"` for
+bounded smoke concurrency. After a full build, `TEST_ARGS="--skip-build"`
+reuses the prepared binaries. `TEST_PROFILE=smoke`, `terminal`, or `platform`
+selects a smaller CLI suite; the runner rejects unassigned smoke scripts.
+
+The remaining two smoke scripts require external fixtures:
+`python3 test/run-tests.py external --tailcat /path/to/tailcat --ghostty /path/to/ghostty-web`.
+Live-provider checks and coding benchmarks remain explicit commands below.
+Every smoke script also remains independently runnable. `smoke.py` shares only
+environment isolation, REPL response delimiters, PTY waits, and HTTP responses.
 
 Sample coding tasks that pmai should solve, plus a harness that records every
 model call so the runs can be studied for wasted turns and tokens.
@@ -72,8 +92,10 @@ of the model's summarization quality:
     python3 test/repl-smart-context-smoke.py MaiCore/.build/debug/pmai
     python3 test/repl-tool-context-smoke.py MaiCore/.build/debug/pmai
 
-The skill smoke checks native, JSON, XML, and text calls, with and without the
-tool proxy, in `cache`, `size`, `smart`, and `tools` modes. It checks exact
+The skill smoke checks eight representative protocol/context/proxy combinations.
+The runtime suite owns all 32 combinations of native, JSON, XML, and text calls,
+tool-proxy settings, and `cache`, `size`, `smart`, and `tools` modes. Add
+`--exhaustive` to the skill smoke to repeat that matrix through the CLI. It checks exact
 instructions in separate system sections and exact task arguments after later tool calls, `$NAME`,
 `/skills prompt`, and disabling a single skill while keeping the others enabled.
 It also checks that smart-summary requests exclude static instructions, tool

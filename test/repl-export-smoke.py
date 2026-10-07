@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Check document export defaults and saved opt-ins with the offline provider."""
 import json
-import os
+from smoke import clean_environment, run_repl
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 import uuid
@@ -11,8 +10,7 @@ import uuid
 
 def main():
     binary = str(Path(sys.argv[1]).resolve())
-    environment = {k: v for k, v in os.environ.items()
-                   if not k.startswith(('PMAI_', 'MAI_', 'OPENAI_'))}
+    environment = clean_environment()
     with tempfile.TemporaryDirectory(prefix='pmai-export-') as directory:
         root = Path(directory)
         config = root / 'config.json'
@@ -23,15 +21,9 @@ def main():
         }))
 
         def run(commands=(), args=()):
-            result = subprocess.run(
-                [binary, '--config', str(config), '--home', str(root / 'home'),
-                 '--no-markdown', *args], cwd=root, env=environment,
-                input='\n'.join([*commands, '/exit', '']), capture_output=True,
-                text=True, timeout=30)
-            output = result.stdout + result.stderr
-            assert result.returncode == 0, output
-            assert 'error:' not in output, output
-            return output
+            return run_repl([binary, '--config', str(config), '--home', str(root / 'home'),
+                 '--no-markdown', *args], commands,
+                cwd=root, env=environment, timeout=30)
 
         run(args=['Question'])
         path = next((root / '.pmai/chats').glob('*.json'))

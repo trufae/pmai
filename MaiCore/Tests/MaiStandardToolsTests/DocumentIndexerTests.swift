@@ -1,6 +1,5 @@
 import XCTest
 
-@testable import PocketMai
 @testable import MaiStandardTools
 
 final class DocumentIndexerTests: XCTestCase {

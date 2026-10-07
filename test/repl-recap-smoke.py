@@ -2,6 +2,7 @@
 """Check recap routing, prompt editing, and unchanged chat state over local HTTP."""
 import fcntl
 import json
+from smoke import expect_pty, JSONProvider
 import os
 from pathlib import Path
 import pty
@@ -13,7 +14,7 @@ import tempfile
 import termios
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 
 
 requests = []
@@ -22,21 +23,7 @@ recap_started = threading.Event()
 recap_release = threading.Event()
 
 
-class Provider(BaseHTTPRequestHandler):
-    def log_message(self, *_):
-        pass
-
-    def respond(self, payload, status=200):
-        body = json.dumps(payload).encode()
-        self.send_response(status)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        try:
-            self.wfile.write(body)
-        except (BrokenPipeError, ConnectionResetError):
-            pass
-
+class Provider(JSONProvider):
     def do_GET(self):
         self.respond({'data': [{'id': 'large'}, {'id': 'tiny'}]})
 
@@ -71,14 +58,7 @@ def check_terminal(command, root, environment):
     output = bytearray()
 
     def wait_for(text):
-        needle = text.encode()
-        end = time.monotonic() + 10
-        while needle not in output:
-            assert time.monotonic() < end, (text, output.decode(errors='replace'))
-            assert process.poll() is None, process.returncode
-            if select.select([master], [], [], .05)[0]:
-                output.extend(os.read(master, 65536))
-        del output[:output.index(needle) + len(needle)]
+        return expect_pty(master, process, output, text, 10)
 
     def send(text):
         output.clear()

@@ -1,31 +1,19 @@
 #!/usr/bin/env python3
 """Exercise mixed native/MCP/skill policy and learned exposure through the CLI."""
 import json
-import os
+from smoke import JSONProvider, clean_environment, run_repl
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 
 
 requests = []
 answers = []
 
 
-class Provider(BaseHTTPRequestHandler):
-    def log_message(self, *_):
-        pass
-
-    def respond(self, payload):
-        body = json.dumps(payload).encode()
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
+class Provider(JSONProvider):
     def do_GET(self):
         self.respond({'data': [{'id': 'main'}]})
 
@@ -45,9 +33,7 @@ def call(name, arguments):
 
 def main():
     binary = str(Path(sys.argv[1]).resolve())
-    env = {k: v for k, v in os.environ.items()
-           if not k.startswith(('PMAI_', 'MAI_', 'OPENAI_'))
-           and k.lower() not in ('http_proxy', 'https_proxy', 'all_proxy')}
+    env = clean_environment()
     env.update(NO_PROXY='127.0.0.1,localhost', NO_COLOR='1')
     server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -99,11 +85,9 @@ for line in sys.stdin:
             def run(commands, responses):
                 requests.clear()
                 answers[:] = responses
-                result = subprocess.run([binary, '--config', str(config), '--home', str(root / 'home'),
-                    '--no-stream', '--no-markdown'], cwd=root, env=dict(env, PWD=str(root)),
-                    input='\n'.join(commands + ['/exit', '']), text=True, capture_output=True, timeout=40)
-                output = result.stdout + result.stderr
-                assert result.returncode == 0 and 'error:' not in output, output
+                output = run_repl([binary, '--config', str(config), '--home', str(root / 'home'),
+                    '--no-stream', '--no-markdown'], commands,
+                    cwd=root, env=dict(env, PWD=str(root)), timeout=40)
                 assert not answers, answers
                 return output, list(requests)
 

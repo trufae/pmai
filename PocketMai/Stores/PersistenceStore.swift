@@ -298,9 +298,10 @@ final class PersistenceStore: @unchecked Sendable {
 
   /// Deletes only conversation files named by an explicit, confirmed user action.
   /// Quarantined files are deliberately excluded and have their own confirmation flow.
-  func deleteConversationFiles(ids: Set<UUID>) {
-    guard !ids.isEmpty else { return }
+  func deleteConversationFiles(ids: Set<UUID>, completion: (@Sendable () -> Void)? = nil) {
+    guard !ids.isEmpty else { completion?(); return }
     writeQueue.async { [weak self] in
+      defer { completion?() }
       guard let self else { return }
       self.prepareForAccess()
       let candidates = [
@@ -671,7 +672,10 @@ final class PersistenceStore: @unchecked Sendable {
   /// conversations that never received a message earn no file, unless they
   /// are named in `retaining`, which the app uses for chats holding an unsent
   /// draft or a reply in progress.
-  func saveConversations(_ conversations: [Conversation], retaining retained: Set<UUID> = []) {
+  func saveConversations(
+    _ conversations: [Conversation], retaining retained: Set<UUID> = [],
+    completion: (@Sendable () -> Void)? = nil
+  ) {
     let snapshot = conversations
     let delay = debounce
     writeQueue.async { [weak self] in
@@ -684,6 +688,7 @@ final class PersistenceStore: @unchecked Sendable {
       let iCloudConversations = snapshot.filter { $0.folderID == ConversationFolder.iCloudID }
       self.pendingConversations?.cancel()
       let item = DispatchWorkItem { [weak self] in
+        defer { completion?() }
         guard let self else { return }
         let localChanged = localConversations.filter {
           self.persistedConversationsByID[$0.id] != $0
@@ -720,7 +725,8 @@ final class PersistenceStore: @unchecked Sendable {
   func saveLoadedConversations(
     _ conversations: [Conversation],
     summaries: [ConversationSummary],
-    retaining retained: Set<UUID> = []
+    retaining retained: Set<UUID> = [],
+    completion: (@Sendable () -> Void)? = nil
   ) {
     let conversationSnapshot = conversations
     let summarySnapshot = summaries
@@ -739,6 +745,7 @@ final class PersistenceStore: @unchecked Sendable {
 
       self.pendingConversations?.cancel()
       let item = DispatchWorkItem { [weak self] in
+        defer { completion?() }
         guard let self else { return }
         let persistedLocal = self.persistConversations(
           localConversations,

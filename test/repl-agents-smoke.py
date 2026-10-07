@@ -2,6 +2,7 @@
 """Check recursive agents, trees and addressed queues against a local provider."""
 import fcntl
 import json
+from smoke import expect_pty
 import os
 from pathlib import Path
 import pty
@@ -100,16 +101,7 @@ def main():
                     os.write(master, (text + '\r').encode())
 
                 def wait_for(text):
-                    deadline = time.monotonic() + 15
-                    needle = text.encode()
-                    while needle not in output:
-                        assert time.monotonic() < deadline, (mode, text, output.decode(errors='replace'))
-                        assert process.poll() is None, (process.returncode, output)
-                        if select.select([master], [], [], .1)[0]:
-                            output.extend(os.read(master, 65536))
-                    end = output.index(needle) + len(needle)
-                    captured = bytes(output[:end]).decode(errors='replace')
-                    del output[:end]
+                    captured = expect_pty(master, process, output, text, 15)
                     return re.sub(r'\x1b(?:\[[0-?]*[ -/]*[@-~]|[78])', '', captured).replace('\r', '')
 
                 def check_tree(state):

@@ -21,7 +21,7 @@ release:
 test:
 	set -e; source scripts/environment.sh; \
 		sh scripts/bootstrap.sh; \
-		"$$SWIFT" test --package-path ../MaiCore --disable-index-store --filter portable; \
+		SWIFT="$$SWIFT" python3 ../test/run-tests.py chat; \
 		PMAI_NO_VISUAL=1 "$$SWIFT" test --build-system native --disable-sandbox --disable-index-store
 
 clean:

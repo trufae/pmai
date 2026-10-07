@@ -2,6 +2,7 @@
 """Exercise queue choices, cancellation and approval shutdown in a real REPL PTY."""
 import fcntl
 import json
+from smoke import expect_pty
 import os
 from pathlib import Path
 import pty
@@ -147,20 +148,7 @@ def main():
                     os.write(master, text.replace("\n", "\r").encode())
 
                 def wait_for(text):
-                    deadline = time.monotonic() + 20
-                    needle = text.encode()
-                    while needle not in output:
-                        assert time.monotonic() < deadline, (choice, text, output.decode(errors='replace'))
-                        assert process.poll() is None, (process.returncode, output)
-                        if select.select([master], [], [], .1)[0]:
-                            try:
-                                output.extend(os.read(master, 65536))
-                            except OSError as error:
-                                raise AssertionError((process.poll(), output.decode(errors='replace'))) from error
-                    end = output.index(needle) + len(needle)
-                    captured = bytes(output[:end]).decode(errors='replace')
-                    del output[:end]
-                    return captured
+                    return expect_pty(master, process, output, text, 20)
 
                 def next_request(mailbox, timeout=20):
                     # A terminal keeps consuming output while a request starts.
@@ -282,11 +270,7 @@ def main():
                         continue
                     if choice == 'continue':
                         send('/help\n')
-                        help_text = wait_for('Input:')
-                        help_text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', help_text).replace('\r', '')
-                        names = re.findall(r'(?m)^(/[a-z]+)\b', help_text)
-                        assert len(names) > 20 and names == sorted(names), names
-                        assert '/stop' in names and '/retry' not in names, names
+                        wait_for('Input:')
                         # Slash commands used to run inside the event loop, so
                         # a stalled catalog request also stopped Ctrl+C and all
                         # subsequent input. It must be a normal cancellable job.

@@ -2,6 +2,7 @@
 """Check tool-result summaries and live context sizes in a real REPL PTY."""
 import fcntl
 import json
+from smoke import JSONProvider
 import os
 from pathlib import Path
 import pty
@@ -15,7 +16,7 @@ import tempfile
 import termios
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import ThreadingHTTPServer
 
 
 calls = queue.Queue()
@@ -24,18 +25,7 @@ primary_requests = []
 gates = []
 
 
-class Provider(BaseHTTPRequestHandler):
-    def log_message(self, *_):
-        pass
-
-    def respond(self, payload):
-        body = json.dumps(payload).encode()
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
+class Provider(JSONProvider):
     def do_GET(self):
         self.respond({'data': [{'id': 'large'}, {'id': 'tiny'}]})
 

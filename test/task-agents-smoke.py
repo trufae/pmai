@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """Exercise saved task assignments and CLI-only overrides without a model server."""
 import json
-import os
+from smoke import clean_environment, run_repl
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 
 
 def main():
     binary = str(Path(sys.argv[1]).resolve())
-    environment = {key: value for key, value in os.environ.items()
-                   if not key.startswith(('PMAI_', 'MAI_', 'OPENAI_'))}
+    environment = clean_environment()
     with tempfile.TemporaryDirectory(prefix='pmai-task-agents-') as directory:
         root = Path(directory)
         config = root / 'pmai.json'
@@ -22,15 +20,9 @@ def main():
         }))
 
         def run(commands=(), args=()):
-            result = subprocess.run(
-                [binary, '--config', str(config), '--home', str(root / 'home'),
-                 '--no-stream', '--no-markdown', *args],
-                cwd=root, env=environment, input='\n'.join([*commands, '/exit', '']),
-                capture_output=True, text=True, timeout=30)
-            output = result.stdout + result.stderr
-            assert result.returncode == 0, output
-            assert 'error:' not in output, output
-            return output
+            return run_repl([binary, '--config', str(config), '--home', str(root / 'home'),
+                 '--no-stream', '--no-markdown', *args], commands,
+                cwd=root, env=environment, timeout=30)
 
         run(['/provider add local http://127.0.0.1:11434/v1',
              '/agent add cheap', '/agent model cheap local::org/small:latest',

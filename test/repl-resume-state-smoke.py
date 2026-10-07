@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
 """Regression checks for the complete chat setup and durable subagent tree."""
 import json
-import os
 from pathlib import Path
-import subprocess
 import sys
 import tempfile
 import uuid
+from smoke import clean_environment, run_repl
 
 
 def main():
     binary = str(Path(sys.argv[1]).resolve())
-    environment = {key: value for key, value in os.environ.items()
-                   if not key.startswith(('PMAI_', 'MAI_', 'OPENAI_'))}
+    environment = clean_environment()
     with tempfile.TemporaryDirectory(prefix='pmai-resume-state-') as directory:
         root = Path(directory)
         config = root / 'config.json'
@@ -34,16 +32,11 @@ def main():
             'use': {'plan': False},
         }))
 
-        def run(commands=(), args=(), env=None):
-            result = subprocess.run(
+        def run(commands=(), args=(), env=None, split=False):
+            return run_repl(
                 [binary, '--config', str(config), '--home', str(root / 'home'),
                  '--no-markdown', '--no-stream', *args],
-                cwd=root, env=environment | (env or {}),
-                input='\n'.join([*commands, '/exit', '']),
-                capture_output=True, text=True, timeout=30)
-            output = result.stdout + result.stderr
-            assert result.returncode == 0 and 'error:' not in output, output
-            return output
+                commands, cwd=root, env=environment | (env or {}), split=split)
 
         def chat_file(title):
             return next(path for path in (root / '.pmai/chats').glob('*.json')
@@ -148,20 +141,20 @@ def main():
 
         # Listings separate definitions from durable processes; both canonical
         # spellings and the explicit old runtime commands still reach the tree.
-        for command in ('/agents', '/agent', '/agents list', '/agent list'):
-            output = run([command], ['-r', 'durable'])
+        for output in run(('/agents', '/agent', '/agents list', '/agent list'),
+                          ['-r', 'durable'], split=True):
             assert 'old-worker-' not in output and 'Jobs:' not in output, output
             assert 'Total:' not in output, output
-        for command in ('/jobs', '/job', '/jobs tree', '/job ps', '/agents tree', '/agent tree'):
-            output = run([command], ['-r', 'durable'])
+        for output in run(('/jobs', '/job', '/jobs tree', '/job ps', '/agents tree', '/agent tree'),
+                          ['-r', 'durable'], split=True):
             assert 'Jobs:' in output and 'Total:' in output, output
             for index in range(48):
                 assert f'old-worker-{index}' in output, output
-        for command in ('/jobs log 3', '/job log #3', '/agents log 3', '/agent log 3'):
-            output = run([command], ['-r', 'durable'])
+        for output in run(('/jobs log 3', '/job log #3', '/agents log 3', '/agent log 3'),
+                          ['-r', 'durable'], split=True):
             assert '## [2] User\nA saved conversation.' in output, output
-        for command in ('/jobs log 3 extra', '/job clear extra'):
-            output = run([command], ['-r', 'durable'])
+        for output in run(('/jobs log 3 extra', '/job clear extra'),
+                          ['-r', 'durable'], split=True):
             assert 'Usage: /jobs' in output, output
             assert len(json.loads(saved_path.read_text())['subagents']) == 48
 

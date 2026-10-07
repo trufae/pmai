@@ -18,9 +18,9 @@ final class ConversationPersistenceRulesTests: XCTestCase {
   }
 
   /// Conversation writes are debounced on a background queue.
-  private func waitForWrites() {
+  private func waitForWrites(_ write: (XCTestExpectation) -> Void) {
     let done = expectation(description: "debounced write")
-    DispatchQueue.global().asyncAfter(deadline: .now() + 1.2) { done.fulfill() }
+    write(done)
     wait(for: [done], timeout: 5)
   }
 
@@ -79,8 +79,9 @@ final class ConversationPersistenceRulesTests: XCTestCase {
     XCTAssertTrue(drafted.isDisposable)
 
     let store = PersistenceStore(localBaseURL: baseURL)
-    store.saveConversations([used, placeholder, drafted], retaining: [drafted.id])
-    waitForWrites()
+    waitForWrites { done in
+      store.saveConversations([used, placeholder, drafted], retaining: [drafted.id]) { done.fulfill() }
+    }
 
     XCTAssertTrue(fileExists(in: baseURL, id: used.id))
     XCTAssertFalse(fileExists(in: baseURL, id: placeholder.id), "an untouched chat earns no file")
@@ -114,10 +115,10 @@ final class ConversationPersistenceRulesTests: XCTestCase {
     XCTAssertEqual(try indexedIDs(in: baseURL), [legacyPlaceholder.id.uuidString])
     XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
 
-    store.saveConversations(loaded)
-    waitForWrites()
-    store.saveLoadedConversations(loaded, summaries: loaded.map(ConversationSummary.init))
-    waitForWrites()
+    waitForWrites { done in store.saveConversations(loaded) { done.fulfill() } }
+    waitForWrites { done in
+      store.saveLoadedConversations(loaded, summaries: loaded.map(ConversationSummary.init)) { done.fulfill() }
+    }
 
     XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
     XCTAssertEqual(try indexedIDs(in: baseURL), [legacyPlaceholder.id.uuidString])
@@ -134,13 +135,11 @@ final class ConversationPersistenceRulesTests: XCTestCase {
     let first = makeConversation(messages: [ChatMessage(role: .user, text: "first")])
     let second = makeConversation(messages: [ChatMessage(role: .user, text: "second")])
     let store = PersistenceStore(localBaseURL: baseURL)
-    store.saveConversations([first, second])
-    waitForWrites()
+    waitForWrites { done in store.saveConversations([first, second]) { done.fulfill() } }
     XCTAssertTrue(fileExists(in: baseURL, id: first.id))
     XCTAssertTrue(fileExists(in: baseURL, id: second.id))
 
-    store.deleteConversationFiles(ids: [first.id])
-    waitForWrites()
+    waitForWrites { done in store.deleteConversationFiles(ids: [first.id]) { done.fulfill() } }
     XCTAssertFalse(fileExists(in: baseURL, id: first.id))
     XCTAssertTrue(fileExists(in: baseURL, id: second.id))
     XCTAssertEqual(

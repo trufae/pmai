@@ -92,7 +92,8 @@ final class ReasoningRenderBufferTests: XCTestCase {
 
   @MainActor
   func testExpandedReasoningScrollsWithinBoundedFrame() async throws {
-    try await checkExpandedLayout(text: String(repeating: "A reasoning line.\n", count: 200)) {
+    // Enough content to exceed two frames; huge streaming buffers are checked above.
+    try await checkExpandedLayout(text: String(repeating: "A reasoning line.\n", count: 48)) {
       scrollView in
       XCTAssertEqual(scrollView.bounds.height, 240, accuracy: 1)
       XCTAssertGreaterThan(scrollView.contentSize.height, scrollView.bounds.height * 2)
@@ -131,15 +132,20 @@ final class ReasoningRenderBufferTests: XCTestCase {
     window.rootViewController = host
     window.isHidden = false
     defer { window.isHidden = true }
-    host.view.layoutIfNeeded()
-    // Allow SwiftUI's geometry preference to size short content on the next pass.
-    try await Task.sleep(for: .milliseconds(200))
-    host.view.layoutIfNeeded()
-
     func scrollView(in view: UIView) -> UIScrollView? {
       if let scroll = view as? UIScrollView { return scroll }
       return view.subviews.lazy.compactMap { scrollView(in: $0) }.first
     }
-    check(try XCTUnwrap(scrollView(in: host.view)))
+    // Wait for the geometry preference, rather than sleeping after every layout.
+    let deadline = ContinuousClock.now + .seconds(5)
+    var scroll: UIScrollView?
+    repeat {
+      host.view.layoutIfNeeded()
+      scroll = scrollView(in: host.view)
+      if let scroll, scroll.contentSize.height > 0,
+        abs(scroll.bounds.height - min(240, scroll.contentSize.height)) < 1 { break }
+      try await Task.sleep(for: .milliseconds(10))
+    } while ContinuousClock.now < deadline
+    check(try XCTUnwrap(scroll))
   }
 }

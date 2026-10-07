@@ -40,11 +40,26 @@ jobs:
           check-latest: true
 
       - name: Show Swift version
-        run: swift --version
+        id: swift-cache
+        run: |
+          swift --version | tee "$RUNNER_TEMP/swift-cache.txt"
+          if [ "$RUNNER_OS" = macOS ]; then
+            xcodebuild -version >> "$RUNNER_TEMP/swift-cache.txt"
+            xcrun --sdk macosx --show-sdk-version >> "$RUNNER_TEMP/swift-cache.txt"
+          fi
+          echo "id=$(shasum -a 256 "$RUNNER_TEMP/swift-cache.txt" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+
+      - name: Reuse Swift build outputs
+        uses: actions/cache@v6
+        with:
+          path: MaiCore/.build
+          key: swift-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-cache.outputs.id }}-${{ hashFiles('MaiCore/Package.swift', 'MaiCore/Package.resolved') }}-${{ hashFiles('MaiCore/Sources/**', 'MaiCore/Tests/**') }}
+          restore-keys: |
+            swift-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-cache.outputs.id }}-${{ hashFiles('MaiCore/Package.swift', 'MaiCore/Package.resolved') }}-
 
       - name: Test MaiCore
         if: matrix.name == 'macOS'
-        run: swift test --package-path MaiCore --disable-index-store
+        run: python3 test/run-tests.py unit
 
       # Reuse the debug objects built by swift test on macOS.
       - name: Build debug CLI
@@ -52,14 +67,8 @@ jobs:
           swift build --package-path MaiCore --disable-index-store --product pmai
           cp "$(swift build --package-path MaiCore --show-bin-path)/pmai" pmai
 
-      - name: Test CLI updates and installer
-        run: python3 test/update-smoke.py ./pmai
-
-      - name: Test paged web fetch over HTTP
-        run: python3 test/web-fetch-smoke.py ./pmai
-
-      - name: Test project approval persistence
-        run: python3 test/project-approval-smoke.py ./pmai
+      - name: Test platform compatibility and CLI defaults
+        run: python3 test/run-tests.py platform --skip-build --binary ./pmai --jobs 2
 
       - name: Test REPL queue choices
         if: matrix.name == 'Linux x64'
@@ -68,16 +77,6 @@ jobs:
       - name: Test recursive agents and REPL trees
         if: matrix.name == 'Linux x64'
         run: python3 test/repl-agents-smoke.py ./pmai
-
-      - name: Test REPL suspend and resume
-        run: python3 test/repl-suspend-smoke.py ./pmai
-
-      - name: Test model discovery and idle REPL
-        run: python3 test/repl-models-smoke.py ./pmai
-
-      - name: Exercise HTTP error handling
-        if: runner.os == 'Linux'
-        run: python3 test/linux-network-smoke.py ./pmai
 
   static-cli:
     name: CLI (Linux static ${{ matrix.name }})
@@ -318,11 +317,27 @@ jobs:
           fi
 
       - name: Show Xcode and macOS versions
+        id: ios-cache
         run: |
           sw_vers
           xcodebuild -version
           swift --version
           uname -m
+          {
+            swift --version
+            xcodebuild -version
+            xcrun --sdk iphonesimulator --show-sdk-version
+          } > "$RUNNER_TEMP/ios-cache.txt"
+          echo "id=$(shasum -a 256 "$RUNNER_TEMP/ios-cache.txt" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+
+      - name: Reuse iOS dependencies and compiler cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            aitest/.build
+            build/DerivedData/SourcePackages
+            build/DerivedData/CompilationCache.noindex
+          key: ios-${{ runner.arch }}-${{ steps.ios-cache.outputs.id }}-${{ hashFiles('**/Package.resolved', 'MaiCore/Package.swift') }}
 
       - name: List available iOS Simulator runtimes
         run: xcrun simctl list runtimes
