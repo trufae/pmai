@@ -3,8 +3,8 @@ import MaiCore
 import MaiDocuments
 
 /// Configuration for the portable Files tool group. Every path supplied by a
-/// model is interpreted relative to `rootURL` and cannot escape it through
-/// `..`, absolute paths, or symbolic links.
+/// model is interpreted relative to `rootURL`; external access requires a
+/// host-approved path or policy, including for symbolic links.
 public struct MaiFileWorkspaceConfiguration: Equatable, Sendable {
   public var rootURL: URL
   public var temporaryDirectoryURL: URL
@@ -16,6 +16,10 @@ public struct MaiFileWorkspaceConfiguration: Equatable, Sendable {
   /// Extra paths the host approved for this conversation. Directories permit
   /// their descendants; files permit that one resolved file only.
   public var additionalAllowedURLs: [URL]
+  /// Optional live, host-owned policy shared by all Files tools and child agents.
+  public var pathAccessPolicy: MaiFileAccessPolicy?
+  var confirmedPathURLs: [URL] = []
+  var confirmedPolicyRevision: Int?
 
   public init(
     rootURL: URL,
@@ -25,7 +29,8 @@ public struct MaiFileWorkspaceConfiguration: Equatable, Sendable {
     followsProcessWorkingDirectory: Bool = false,
     isSecurityScoped: Bool = false,
     hiddenRootEntryNames: Set<String> = [],
-    additionalAllowedURLs: [URL] = []
+    additionalAllowedURLs: [URL] = [],
+    pathAccessPolicy: MaiFileAccessPolicy? = nil
   ) {
     self.rootURL = rootURL.standardizedFileURL
     self.temporaryDirectoryURL =
@@ -38,6 +43,7 @@ public struct MaiFileWorkspaceConfiguration: Equatable, Sendable {
     self.isSecurityScoped = isSecurityScoped
     self.hiddenRootEntryNames = hiddenRootEntryNames
     self.additionalAllowedURLs = additionalAllowedURLs.map(\.standardizedFileURL)
+    self.pathAccessPolicy = pathAccessPolicy
   }
 }
 
@@ -100,10 +106,17 @@ public struct MaiFileWorkspaceTool: AgentTool {
       ? AgentExecutionScope.directory : configuration.rootURL
     return .init(
       workingDirectory: root.path,
-      allowedPaths: [root.path, configuration.temporaryDirectoryURL.path]
-        + configuration.additionalAllowedURLs.map(\.path),
+      allowedPaths: [root.path] + configuration.additionalAllowedURLs.map(\.path)
+        + (configuration.pathAccessPolicy?.snapshot().rules.filter { $0.access == .allow }.map {
+          $0.url.path
+        } ?? []),
       sandbox:
-        "File paths are checked by the Files tool against its workspace, approved paths, and temporary directory, including symlinks. Write enabled: \(configuration.writeEnabled). Approval never bypasses those checks."
+        "File paths are checked by the Files tool against its workspace and approved paths, including symlinks. Write enabled: \(configuration.writeEnabled). Approval never bypasses those checks."
+        + (configuration.pathAccessPolicy.map { policy in
+          let state = policy.snapshot()
+          return " Outside paths: \(state.outside.rawValue). Path rules: "
+            + state.rules.map { "\($0.access.rawValue) \($0.url.path)" }.joined(separator: ", ")
+        } ?? "")
     )
   }
 
@@ -122,7 +135,17 @@ public struct MaiFileWorkspaceTool: AgentTool {
     #endif
     do {
       try Task.checkCancellation()
-      let workspace = try MaiFileWorkspace(configuration: configuration)
+      var path = arguments["path"]?.stringValue ?? "."
+      if operation == .list, let split = MaiGlob.splitPath(path) { path = split.directory }
+      var paths = [path]
+      if operation == .rename, let destination = arguments["new_path"]?.stringValue {
+        paths.append(destination)
+      }
+      let authorized = try await configuration.authorizing(
+        paths: paths, operation: operation.rawValue,
+        recursive: [.list, .find, .grep].contains(operation),
+        mutatingTree: [.rename, .delete].contains(operation))
+      let workspace = try MaiFileWorkspace(configuration: authorized)
       switch operation {
       case .list:
         return try workspace.list(arguments)
@@ -530,20 +553,6 @@ struct MaiFileWorkspace: Sendable {
     additionalFileURLs = files
   }
 
-  /// Returns whether the given URL is inside the workspace root or the configured
-  /// temporary directory, after resolving symlinks so links inside either root
-  /// remain valid while links that escape are rejected.
-  private func isAllowed(_ url: URL) -> Bool {
-    let resolved = url.resolvingSymlinksInPath().standardizedFileURL
-    return isInsideOrEqual(resolved, directory: rootURL)
-      || additionalDirectoryURLs.contains { isInsideOrEqual(resolved, directory: $0) }
-      || additionalFileURLs.contains(resolved)
-      || isInside(resolved, directory: configuration.temporaryDirectoryURL)
-      || resolved.path == rootURL.path
-      || resolved.path == configuration.temporaryDirectoryURL.path
-  }
-
-
   func list(_ arguments: [String: JSONValue]) throws -> ToolOutput {
     var rawPath = arguments["path"]?.stringValue ?? ""
     var glob: MaiGlob?
@@ -566,9 +575,11 @@ struct MaiFileWorkspace: Sendable {
     }
     let entries = try FileManager.default.contentsOfDirectory(
       at: directory,
-      includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey, .isSymbolicLinkKey],
+      includingPropertiesForKeys: configuration.pathAccessPolicy == nil
+        ? [.fileSizeKey, .isDirectoryKey, .isSymbolicLinkKey] : [],
       options: [.skipsHiddenFiles]
     )
+    .filter { isInside($0) }
     .filter {
       directory.path != rootURL.path
         || !configuration.hiddenRootEntryNames.contains($0.lastPathComponent)
@@ -1226,6 +1237,7 @@ struct MaiFileWorkspace: Sendable {
     let rawPath = try requiredPath(arguments, key: "path")
     let destination = try resolve(rawPath, allowRoot: false, mustExist: false)
     if arguments["create_directory"]?.coercedBoolValue == true {
+      try requireCreatedParentsAllowed(destination)
       try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
       return mutationOutput("Created directory \(displayPath(rawPath))", path: rawPath)
     }
@@ -1242,6 +1254,7 @@ struct MaiFileWorkspace: Sendable {
     {
       throw MaiFileWorkspaceError.notFile(displayPath(rawPath))
     }
+    try requireCreatedParentsAllowed(destination.deletingLastPathComponent())
     try FileManager.default.createDirectory(
       at: destination.deletingLastPathComponent(),
       withIntermediateDirectories: true)
@@ -1304,6 +1317,16 @@ struct MaiFileWorkspace: Sendable {
       "Renamed \(displayPath(rawPath)) to \(displayPath(newPath))",
       path: newPath,
       extra: ["previousPath": .string(displayPath(rawPath))])
+  }
+
+  private func requireCreatedParentsAllowed(_ directory: URL) throws {
+    var ancestor = directory
+    while !FileManager.default.fileExists(atPath: ancestor.path) {
+      guard isInside(ancestor) else { throw MaiFileWorkspaceError.outsideWorkspace(ancestor.path) }
+      let parent = ancestor.deletingLastPathComponent()
+      guard parent != ancestor else { break }
+      ancestor = parent
+    }
   }
 
   func delete(_ arguments: [String: JSONValue]) throws -> ToolOutput {
@@ -1479,10 +1502,15 @@ struct MaiFileWorkspace: Sendable {
       ancestor.deleteLastPathComponent()
     }
     let resolvedAncestor = ancestor.resolvingSymlinksInPath().standardizedFileURL
-    guard isInside(resolvedAncestor) else {
+    // An exact file grant need not grant its parent. Check the reconstructed
+    // destination after resolving the existing ancestor's symlinks instead.
+    let suffix = candidate.path.dropFirst(ancestor.path == "/" ? 1 : ancestor.path.count + 1)
+    let resolvedDestination = resolvedAncestor.appendingPathComponent(String(suffix))
+      .standardizedFileURL
+    guard isInside(resolvedDestination) else {
       throw MaiFileWorkspaceError.outsideWorkspace(rawPath)
     }
-    return candidate
+    return resolvedDestination
   }
 
   // VDB uses the same path checks and source traversal as the Files tools.
@@ -1547,13 +1575,18 @@ struct MaiFileWorkspace: Sendable {
     guard
       let enumerator = FileManager.default.enumerator(
         at: directory,
-        includingPropertiesForKeys: Array(Self.searchResourceKeys),
+        includingPropertiesForKeys: configuration.pathAccessPolicy == nil
+          ? Array(Self.searchResourceKeys) : [],
         options: [.skipsHiddenFiles, .skipsPackageDescendants])
     else {
       throw MaiFileWorkspaceError.notDirectory(relativePath(directory))
     }
     while let url = enumerator.nextObject() as? URL {
       try Task.checkCancellation()
+      guard isInside(url) else {
+        enumerator.skipDescendants()
+        continue
+      }
       let values = try url.resourceValues(forKeys: Self.searchResourceKeys)
       if shouldExcludeFromSourceSearch(url, values: values, below: directory) {
         if values.isDirectory == true { enumerator.skipDescendants() }
@@ -1584,6 +1617,15 @@ struct MaiFileWorkspace: Sendable {
     includeDirectories: Bool,
     limit: Int
   ) async throws -> VersionControlledEntries? {
+    // VCS enumeration can inspect paths before our per-entry checks. A filtered
+    // filesystem walk prunes protected subtrees before visiting their contents.
+    if configuration.pathAccessPolicy?.snapshot().rules.contains(where: {
+      $0.access != .allow
+        && ($0.contains(directory) || MaiFileAccessPolicy.contains($0.url, in: directory))
+    }) == true
+    {
+      return nil
+    }
     #if os(macOS) || os(Linux)
       guard let repository = repository(containing: directory) else { return nil }
       let environment = ProcessInfo.processInfo.environment
@@ -1792,7 +1834,8 @@ struct MaiFileWorkspace: Sendable {
   }
 
   private func isInside(_ url: URL) -> Bool {
-    isInsideOrEqual(url, directory: rootURL)
+    if configuration.pathAccessPolicy != nil { return configuration.permits(url) }
+    return isInsideOrEqual(url, directory: rootURL)
       || additionalDirectoryURLs.contains { isInsideOrEqual(url, directory: $0) }
       || additionalFileURLs.contains(url.resolvingSymlinksInPath().standardizedFileURL)
   }
@@ -1809,6 +1852,7 @@ struct MaiFileWorkspace: Sendable {
     if additionalFileURLs.contains(url.resolvingSymlinksInPath().standardizedFileURL) {
       return url.path
     }
+    if configuration.pathAccessPolicy != nil { return resolvedPath }
     let lexicalRoot = configuration.rootURL.standardizedFileURL.path
     let lexicalPath = url.standardizedFileURL.path
     if lexicalPath == lexicalRoot { return "." }

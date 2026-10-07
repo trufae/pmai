@@ -78,7 +78,11 @@ public struct MaiVectorDatabaseTool: AgentTool {
       try Task.checkCancellation()
       let args = arguments.objectValue ?? [:]
       let action = args["action"]?.stringValue ?? (args["query"] == nil ? "status" : "query")
-      let workspace = try MaiFileWorkspace(configuration: configuration)
+      let authorized = try await configuration.authorizing(
+        paths: [args["path"]?.stringValue ?? ".", MaiVectorDatabaseStore.relativePath],
+        operation: context.run.agentID == "repl" ? "/vdb" : "vdb \(action)",
+        recursive: action == "index" || action == "query")
+      let workspace = try MaiFileWorkspace(configuration: authorized)
       let url = try workspace.vectorIndexURL()
       switch action {
       case "index":

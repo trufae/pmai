@@ -420,6 +420,7 @@ private final class ProviderBaseURLStore: @unchecked Sendable {
 
 private struct VisualBridge: Sendable {
   var approvalHandler: TerminalApprovalHandler
+  var promptFileAccess: PromptFileAccess
   var configurationPath: String?
   var implicitProviders: [ConfiguredProvider]
   var providerBaseURLs: ProviderBaseURLStore
@@ -1063,22 +1064,31 @@ private actor TerminalApprovalHandler: ApprovalHandler {
     return try await interactiveDecision(request)
   }
 
-  /// A path explicitly named in the person's prompt needs approval before it
-  /// is added to the Files tool's host-enforced scope. Smart tool approval
-  /// cannot widen a sandbox, so it asks the person here too.
-  func decidePromptPathAccess(_ url: URL) async throws -> Bool {
-    if approvalMode == .yolo { return true }
-    let arguments: JSONValue = .object(["path": .string(url.path)])
+  /// Required policy prompts need a person even in yolo mode. Explicit prompt
+  /// paths retain normal approval when no outside policy has been configured.
+  func decidePromptPathAccess(
+    _ url: URL, operation: String = "prompt", preparingTurn: Bool = true,
+    forceConfirmation: Bool = false
+  )
+    async throws -> Bool
+  {
+    if !forceConfirmation && approvalMode == .yolo { return true }
+    let arguments: JSONValue = .object(["path": .string(url.path), "operation": .string(operation)])
     let request = ApprovalRequest(
       run: AgentEventContext(runID: UUID(), parentRunID: nil, agentID: "path-access", depth: 0),
       tool: ToolDefinition(
-        name: "files_allow_path",
-        description: "Allow the Files tools to access an external path named in the prompt.",
+        name: "files_path_access",
+        description: preparingTurn
+          ? "Grant the Files tools access to this prompt path for the CLI session; /path manages the grant."
+          : "Allow \(operation) to access this path once under /path policy.",
         annotations: .init(readOnly: false, approval: .confirm)),
-      call: ToolCall(id: UUID().uuidString, name: "files_allow_path", arguments: arguments))
+      call: ToolCall(id: UUID().uuidString, name: "files_path_access", arguments: arguments))
     // The REPL is synchronously preparing a turn here, so routing through its
     // normal approval event would wait for an event loop that is not running.
-    if case .approve = try directTerminalDecision(request) { return true }
+    let decision =
+      try await (preparingTurn ? directTerminalDecision(request) : interactiveDecision(request))
+    if case .approve(let approved) = decision { return approved == arguments }
+    if case .cancelRun = decision { throw CancellationError() }
     return false
   }
 
@@ -1101,7 +1111,9 @@ private actor TerminalApprovalHandler: ApprovalHandler {
       ui: ConfiguredTerminalUI(backgroundLine: "", promptForeground: "yellow"))
     guard
       let answer = editor.readLine(
-        prompt: "[y]es/[a]lways/[n]o/[e]dit/[c]ancel run: ", completions: [])?
+        prompt: request.tool.name == "files_path_access"
+          ? "[y]es/[n]o/[c]ancel run (/path manages ongoing access): "
+          : "[y]es/[a]lways/[n]o/[e]dit/[c]ancel run: ", completions: [])?
         .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     else { return .deny(reason: "No approval response.") }
     if editor.wasInterrupted { throw CancellationError() }
@@ -1109,7 +1121,7 @@ private actor TerminalApprovalHandler: ApprovalHandler {
     case "y", "yes":
       return .approve(arguments: request.call.arguments)
     case "a", "always":
-      approvalMode = .yolo
+      if request.tool.name != "files_path_access" { approvalMode = .yolo }
       return .approve(arguments: request.call.arguments)
     case "e", "edit":
       FileHandle.standardError.write(Data("Replacement JSON arguments: ".utf8))
@@ -1128,10 +1140,19 @@ private actor TerminalApprovalHandler: ApprovalHandler {
 
 private actor PromptFileAccess {
   private var approvedURLs: [URL] = []
+  nonisolated let policy: MaiFileAccessPolicy
+
+  init(approvalHandler: TerminalApprovalHandler) {
+    policy = MaiFileAccessPolicy(outside: .deny) { url, operation in
+      try await approvalHandler.decidePromptPathAccess(
+        url, operation: operation, preparingTurn: operation == "/vdb", forceConfirmation: true)
+    }
+  }
 
   func contains(_ url: URL) -> Bool { approvedURLs.contains(url) }
   func add(_ url: URL) { if !approvedURLs.contains(url) { approvedURLs.append(url) } }
   func all() -> [URL] { approvedURLs }
+  func remove(_ url: URL) { approvedURLs.removeAll { $0 == url } }
 }
 
 @main
@@ -1241,7 +1262,7 @@ struct MaiCLI {
       // bounded default can evict a parent before its subtree is saved.
       let runtime = AgentRuntime(
         approvalHandler: approvalHandler, supervisor: AgentSupervisor(finishedRetention: .max))
-      let promptFileAccess = PromptFileAccess()
+      let promptFileAccess = PromptFileAccess(approvalHandler: approvalHandler)
       if await approvalHandler.isDebugEnabled() {
         do {
           await runtime.configureDebugLog(
@@ -1265,7 +1286,12 @@ struct MaiCLI {
         FileHandle.standardError.write(
           Data("warning: OCR plugin unavailable: \(error.localizedDescription)\n".utf8))
       }
-      try await plugins.install(MaiStandardToolsPlugin(), origin: "built-in")
+      try await plugins.install(MaiStandardToolsPlugin(configureFiles: { files in
+        var files = files
+        files.pathAccessPolicy = promptFileAccess.policy
+        files.additionalAllowedURLs = await promptFileAccess.all()
+        return files
+      }), origin: "built-in")
       let nativePluginHost = NativePluginHost()
       try await loadNativePlugins(
         options: options,
@@ -1403,6 +1429,7 @@ struct MaiCLI {
       // either of them runs reaches the same session, configuration and themes.
       let visual = VisualBridge(
         approvalHandler: approvalHandler,
+        promptFileAccess: promptFileAccess,
         configurationPath: configurationPath,
         implicitProviders: setup.implicitProviders,
         providerBaseURLs: ProviderBaseURLStore(setup.providerBaseURLs),
@@ -2889,9 +2916,12 @@ struct MaiCLI {
         waiting.reply.resume(with: .approve(arguments: waiting.request.call.arguments))
         await terminal.note("approved \(tool)")
       case "a", "always":
-        await visual.approvalHandler.setApprovalMode(.yolo)
+        if tool != "files_path_access" { await visual.approvalHandler.setApprovalMode(.yolo) }
         waiting.reply.resume(with: .approve(arguments: waiting.request.call.arguments))
-        await terminal.note("approved \(tool); tool.aproval = yolo for this session")
+        await terminal.note(
+          tool == "files_path_access"
+            ? "approved this access; /path allow PATH grants ongoing access"
+            : "approved \(tool); tool.aproval = yolo for this session")
       case "n", "no":
         waiting.reply.resume(with: .deny(reason: "Denied by user."))
         await terminal.note("denied \(tool)")
@@ -2915,12 +2945,12 @@ struct MaiCLI {
     /// appears blocked on decisions made under the old value.
     func releasePendingApprovalsIfUnattended() async {
       guard await visual.approvalHandler.permitsUnattendedExecution() else { return }
-      if let editing = loop.editingApproval {
+      if let editing = loop.editingApproval, editing.request.tool.name != "files_path_access" {
         editing.reply.resume(with: .approve(arguments: editing.request.call.arguments))
         loop.editingApproval = nil
       }
-      let pending = loop.approvals
-      loop.approvals.removeAll()
+      let pending = loop.approvals.filter { $0.request.tool.name != "files_path_access" }
+      loop.approvals.removeAll { $0.request.tool.name != "files_path_access" }
       for approval in pending {
         approval.reply.resume(with: .approve(arguments: approval.request.call.arguments))
       }
@@ -3602,7 +3632,9 @@ struct MaiCLI {
       case .approval(let request, let reply):
         if loop.exiting {
           reply.fail(CancellationError())
-        } else if await visual.approvalHandler.permitsUnattendedExecution() {
+        } else if request.tool.name != "files_path_access",
+          await visual.approvalHandler.permitsUnattendedExecution()
+        {
           reply.resume(with: .approve(arguments: request.call.arguments))
         } else {
           loop.approvals.append((request, reply))
@@ -3776,25 +3808,22 @@ struct MaiCLI {
     }
   }
 
-  private static func path(_ child: URL, isInside parent: URL) -> Bool {
-    let child = child.standardizedFileURL.path
-    let parent = parent.standardizedFileURL.path
-    return child == parent || child.hasPrefix(parent + "/")
-  }
-
   private static func refreshFileTools(
     runtime: AgentRuntime,
     configuration: MaiConfiguration?,
     environment: [String: String],
-    approvedURLs: [URL]
+    approvedURLs: [URL],
+    policy: MaiFileAccessPolicy
   ) async throws {
     let source = configuration?.toolSources.first {
       $0.enabled && $0.kind == MaiStandardToolsPlugin.factoryKind
     }
     let context = source?.context(environment: environment)
       ?? PluginFactoryContext(id: "standard-tools", environment: environment)
-    let fileConfiguration = MaiStandardToolFactory.fileWorkspaceConfiguration(
+    guard source != nil || configuration == nil else { return }
+    var fileConfiguration = MaiStandardToolFactory.fileWorkspaceConfiguration(
       context: context, additionalAllowedURLs: approvedURLs)
+    fileConfiguration.pathAccessPolicy = policy
     for tool in MaiFileWorkspaceTool.makeTools(configuration: fileConfiguration) {
       try await runtime.register(tool: tool, replacingExisting: true)
     }
@@ -3802,9 +3831,114 @@ struct MaiCLI {
       tool: MaiVectorDatabaseTool(configuration: fileConfiguration), replacingExisting: true)
   }
 
+  private static func handlePathCommand(
+    _ argument: String,
+    runtime: AgentRuntime,
+    configuration: MaiConfiguration?,
+    access: PromptFileAccess,
+    terminal: TerminalWriter
+  ) async {
+    let parts = argument.split(maxSplits: 1, whereSeparator: \Character.isWhitespace).map(
+      String.init)
+    let command = parts.first?.lowercased() ?? "list"
+    var value = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+    if value.count >= 2, let first = value.first, let last = value.last,
+      (first == "\"" && last == "\"") || (first == "'" && last == "'")
+    {
+      value = String(value.dropFirst().dropLast())
+    }
+    let environment = ProcessInfo.processInfo.environment
+    let source = configuration?.toolSources.first {
+      $0.enabled && $0.kind == MaiStandardToolsPlugin.factoryKind
+    }
+    let context =
+      source?.context(environment: environment)
+      ?? PluginFactoryContext(id: "standard-tools", environment: environment)
+    var files = MaiStandardToolFactory.fileWorkspaceConfiguration(
+      context: context, additionalAllowedURLs: await access.all())
+    files.pathAccessPolicy = access.policy
+    let state = access.policy.snapshot()
+    switch command {
+    case "list", "ls":
+      await terminal.line("Files path policy (CLI session; directories include descendants):")
+      await terminal.line("Current directory: \(FileManager.default.currentDirectoryPath)")
+      let root = files.effectiveRootURL
+      await terminal.line(
+        "\(access.policy.access(to: root, insideWorkspace: true).rawValue) \(root.path) [Files workspace\(files.followsProcessWorkingDirectory ? "; follows /cd" : "; fixed root")]"
+      )
+      for url in files.additionalAllowedURLs {
+        let policy = access.policy.access(to: url, insideWorkspace: true)
+        await terminal.line("\(policy.rawValue) \(url.path) [granted from prompt]")
+      }
+      for rule in state.rules.sorted(by: { $0.url.path < $1.url.path }) {
+        await terminal.line(
+          "\(rule.access.rawValue) \(rule.url.path) [\(rule.descendants ? "directory/subtree" : "file") rule]"
+        )
+      }
+      await terminal.line(
+        "Outside allowed paths: \(state.outside.rawValue). Deny rules override ask and allow rules; ask requires confirmation on each call, even in yolo mode."
+      )
+      if !state.outsideConfigured {
+        await terminal.line("Explicit prompt paths may add grants using tool approval; /path outside deny disables automatic additions.")
+      }
+      await terminal.line(
+        "These checks cover Files and vdb tools. Shell commands and other tools retain their own permissions. /help path lists policy commands."
+      )
+    case "help":
+      await terminal.line(pathHelp)
+    case "outside":
+      guard let policy = MaiFileAccessPolicy.Access(rawValue: value.lowercased()), policy != .allow
+      else {
+        await terminal.line("Usage: /path outside ask|deny")
+        return
+      }
+      access.policy.setOutside(policy)
+      await terminal.note("Files access outside allowed paths: \(policy.rawValue)")
+    case "allow", "add", "deny", "reject", "ask", "prompt", "remove", "rm", "revoke":
+      guard !value.isEmpty else {
+        await terminal.line("Usage: /path \(command) PATH")
+        return
+      }
+      let expanded = NSString(string: value).expandingTildeInPath
+      let url =
+        (expanded.hasPrefix("/")
+        ? URL(fileURLWithPath: expanded)
+        : files.effectiveRootURL.appendingPathComponent(expanded))
+        .standardizedFileURL.resolvingSymlinksInPath()
+      if ["remove", "rm", "revoke"].contains(command) {
+        access.policy.remove(url)
+        await access.remove(url)
+        await terminal.note(
+          "Removed explicit Files rule/grant for \(url.path). Parent grants and the workspace still apply; /path deny PATH blocks access."
+        )
+      } else {
+        let policy: MaiFileAccessPolicy.Access =
+          ["allow", "add"].contains(command)
+          ? .allow
+          : ["deny", "reject"].contains(command) ? .deny : .ask
+        var directory: ObjCBool = false
+        _ = FileManager.default.fileExists(atPath: url.path, isDirectory: &directory)
+        access.policy.set(
+          .init(
+            url: url, access: policy,
+            descendants: policy == .deny || directory.boolValue || value.hasSuffix("/")))
+        await terminal.note("Files policy: \(policy.rawValue) \(url.path)")
+      }
+      do {
+        try await refreshFileTools(
+          runtime: runtime, configuration: configuration, environment: environment,
+          approvedURLs: await access.all(), policy: access.policy)
+      } catch {
+        await terminal.note(
+          "Could not refresh Files tools: \(error.localizedDescription)", tone: .warning)
+      }
+    default:
+      await terminal.line("Unknown /path subcommand '\(command)'.\n\(pathHelp)")
+    }
+  }
+
   /// Adds verified external prompt paths to the Files tool's allowlist before
-  /// a turn begins. yolo accepts the explicit reference; ask and smart require
-  /// a terminal confirmation because a model review cannot expand a sandbox.
+  /// a turn begins. Path policy remains independent of general tool approval.
   private static func preparePromptFileAccess(
     for text: String,
     runtime: AgentRuntime,
@@ -3823,12 +3957,31 @@ struct MaiCLI {
     let workspace = (fileConfiguration.followsProcessWorkingDirectory
       ? AgentExecutionScope.directory : fileConfiguration.rootURL)
       .standardizedFileURL.resolvingSymlinksInPath()
+    var scopedConfiguration = fileConfiguration
+    scopedConfiguration.additionalAllowedURLs = await promptFileAccess.all()
     let paths = promptPaths(in: text, relativeTo: workspace)
-      .filter { !path($0, isInside: workspace) }
     var changed = false
     for url in paths where !(await promptFileAccess.contains(url)) {
+      let access = promptFileAccess.policy.access(
+        to: url, insideWorkspace: scopedConfiguration.containsAllowedPath(url))
+      if access == .allow { continue }
+      let state = promptFileAccess.policy.snapshot()
+      if access == .deny && (state.outsideConfigured || state.rules.contains(where: {
+        $0.access == .deny && $0.contains(url)
+      })) {
+        await terminal.note("Files access denied by /path policy: \(url.path)", tone: .warning)
+        continue
+      }
+      // An ask rule is per access. Naming it in a prompt never turns it into
+      // an ongoing grant; the actual Files call will request confirmation.
+      if state.rules.contains(where: {
+        $0.access == .ask && $0.contains(url)
+      }) {
+        continue
+      }
       do {
-        guard try await approvalHandler.decidePromptPathAccess(url) else {
+        guard try await approvalHandler.decidePromptPathAccess(
+          url, forceConfirmation: state.outsideConfigured && state.outside == .ask) else {
           await terminal.note("External path access was not granted: \(url.path)", tone: .warning)
           return false
         }
@@ -3846,8 +3999,10 @@ struct MaiCLI {
       let approved = await promptFileAccess.all()
       try await refreshFileTools(
         runtime: runtime, configuration: configuration, environment: environment,
-        approvedURLs: approved)
-      await terminal.note("Files may access: \(paths.map(\.path).joined(separator: ", "))")
+        approvedURLs: approved, policy: promptFileAccess.policy)
+      await terminal.note(
+        "Files may access: \(approved.map(\.path).joined(separator: ", ")). Use /path to review, deny, or require prompts for these paths."
+      )
       return true
     } catch {
       await terminal.note("Could not update file access: \(error.localizedDescription)", tone: .warning)
@@ -4104,6 +4259,27 @@ struct MaiCLI {
     ocrProvider: any OCRProvider,
     visual: VisualBridge
   ) async throws -> String {
+    let command = line.split(maxSplits: 1, whereSeparator: \Character.isWhitespace).map(String.init)
+    if command.first == "/cd" {
+      return
+        "Only the person at the REPL can change the working directory and implicit Files workspace."
+    }
+    if command.first == "/tools", command.count > 1 {
+      let options = command[1].split(whereSeparator: \Character.isWhitespace)
+      if options.count >= 3, ["set", "config", "unset"].contains(String(options[0])),
+        options[2] == "filesRoot"
+      {
+        return
+          "Only the person at the REPL can change the Files workspace; /path shows its permissions."
+      }
+    }
+    if command.first == "/path", command.count > 1,
+      !["list", "ls", "help"].contains(
+        command[1].trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+    {
+      return
+        "Only the person at the REPL can change /path policy. /path lists the current permissions."
+    }
     guard let state = bridge.begin() else { throw PmaiCommandError.noSession }
     var session = state.session
     var configuration = state.configuration
@@ -4207,6 +4383,8 @@ struct MaiCLI {
         await terminal.line(statsHelp)
       case "skills", "/skills":
         await terminal.line(skillsHelp)
+      case "path", "/path":
+        await terminal.line(pathHelp)
       default:
         await terminal.line(
           "Unknown help topic '\(argument)'. Try /help, or /help set, theme, memory, todo, prompts, agents, jobs, mcp, chat, edit, tools, skills, queue, export, import, copy, or stats."
@@ -4214,6 +4392,10 @@ struct MaiCLI {
       }
     case "/cwd", "/pwd":
       await terminal.line(FileManager.default.currentDirectoryPath)
+    case "/path":
+      await handlePathCommand(
+        argument, runtime: runtime, configuration: configuration,
+        access: visual.promptFileAccess, terminal: terminal)
     case "/cd":
       await changeWorkingDirectory(argument, terminal: terminal)
     case "/nothink":
@@ -4282,7 +4464,8 @@ struct MaiCLI {
       await handleTodoCommand(argument, todo: visual.todo, terminal: terminal)
     case "/vdb":
       await handleVectorDatabaseCommand(
-        argument, configuration: configuration, environment: ProcessInfo.processInfo.environment, terminal: terminal)
+        argument, configuration: configuration, environment: ProcessInfo.processInfo.environment,
+        access: visual.promptFileAccess, terminal: terminal)
     case "/skills":
       await handleSkillsCommand(
         argument,
@@ -4811,7 +4994,7 @@ struct MaiCLI {
 
   private static func handleVectorDatabaseCommand(
     _ argument: String, configuration: MaiConfiguration?, environment: [String: String],
-    terminal: TerminalWriter
+    access: PromptFileAccess, terminal: TerminalWriter
   ) async {
     let fields = argument.split(maxSplits: 1, whereSeparator: \Character.isWhitespace).map(String.init)
     let action = fields.first?.lowercased() ?? "status"
@@ -4821,16 +5004,23 @@ struct MaiCLI {
     case "query": args["query"] = .string(rest)
     case "index", "remove": args["path"] = .string(rest.isEmpty && action == "index" ? "." : rest)
     case "status", "clear":
-      guard rest.isEmpty else { await terminal.line(vdbHelp); return }
-    default: await terminal.line(vdbHelp); return
+      guard rest.isEmpty else {
+        await terminal.line(vdbHelp)
+        return
+      }
+    default:
+      await terminal.line(vdbHelp)
+      return
     }
     let source = configuration?.toolSources.first {
       $0.enabled && $0.kind == MaiStandardToolsPlugin.factoryKind
     }
     let context = source?.context(environment: environment)
       ?? PluginFactoryContext(id: "standard-tools", environment: environment)
-    let tool = MaiVectorDatabaseTool(
-      configuration: MaiStandardToolFactory.fileWorkspaceConfiguration(context: context))
+    var files = MaiStandardToolFactory.fileWorkspaceConfiguration(
+      context: context, additionalAllowedURLs: await access.all())
+    files.pathAccessPolicy = access.policy
+    let tool = MaiVectorDatabaseTool(configuration: files)
     do {
       let result = try await tool.call(
         arguments: .object(args),
@@ -10003,7 +10193,9 @@ struct MaiCLI {
             ocrProvider: ocrProvider,
             visual: visual)
         })
-      let approvals = VisualApprovalHandler {
+      let approvals = VisualApprovalHandler(requiresConfirmation: {
+        $0.tool.name == "files_path_access"
+      }) {
         await visual.approvalHandler.setApprovalMode(.yolo)
       }
       await visual.approvalHandler.setDelegate(approvals)
@@ -11239,6 +11431,8 @@ struct MaiCLI {
       "/set ui.broadcast on", "/set ui.broadcast off",
       "/set ui.toolResultLines all", "/set ui.toolResultLines relevant", "/set ui.toolResultLines ",
       "/cwd", "/pwd", "/cd ", "/plugins",
+      "/path", "/path list", "/path allow ", "/path deny ", "/path ask ",
+      "/path remove ", "/path outside ask", "/path outside deny", "/help path",
       "/providers", "/models ", "/provider ", "/provider add ", "/provider rename ",
       "/provider use apple", "/provider use mlx", "/provider add local-apple --kind apple",
       "/provider add local-mlx --kind mlx", "/help provider",
@@ -11582,6 +11776,26 @@ struct MaiCLI {
     #endif
   }()
 
+  private static let pathHelp = """
+    /path                  Show current directory, Files workspace, grants, and rules
+    /path allow PATH       Allow a file or directory (alias: add)
+    /path deny PATH        Reject access, including inside allowed directories
+    /path ask PATH         Require confirmation for every access (alias: prompt)
+    /path remove PATH      Remove an explicit rule/grant; parent permissions still apply
+    /path outside ask|deny Prompt or reject paths outside the allowed scope (default: deny)
+
+    Paths resolve relative to the Files workspace; ~, absolute paths, and quoted
+    paths with spaces work. Existing directories cover descendants. Add a trailing
+    / for a new directory. Deny overrides ask and allow; ask overrides allow.
+    Rules last for this CLI session and apply to Files and vdb, including child
+    agents. Required path prompts remain active in yolo mode; without a terminal
+    they are rejected. Only the person at the REPL can change these policies.
+    Explicit prompt paths use normal tool approval to add a session grant and
+    print a /path hint. Setting outside deny blocks these automatic additions;
+    outside ask requires confirmation. /path ask PATH prompts on every access.
+    Shell commands and other tools retain their own permissions.
+    """
+
   private static let replHelp = """
     /agent                 Alias for /agents
     /agent add NAME       Copy this agent's settings into a new saved agent
@@ -11614,6 +11828,7 @@ struct MaiCLI {
     /model-tool [NAME]    Select a tool-decision agent/model; omit NAME to clear
     /models [PROVIDER]     List models and refresh /model Tab completion
     /nothink               Disable reasoning where the model supports it
+    /path                  Show or change Files sandbox paths and access policies
     /plugins               List statically and dynamically loaded plugins
     /project               Show, list, rename, or tint the project (the start directory)
     /prompt                Manage named system prompts; /help prompt lists commands

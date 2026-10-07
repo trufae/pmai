@@ -129,6 +129,7 @@ func pmaiRunReadOnly() async throws {
   let policy = PmaiCommandPolicy(readOnly: true)
   for command in [
     "/set", "/mcp list", "/tools list", "/theme list", "/help", "/stats", "/jobs", "/job tree",
+    "/path", "/pwd",
   ] {
     #expect(allows(policy, command))
   }

@@ -1204,6 +1204,31 @@ launched. An explicit `filesRoot` remains fixed. Paths are relative to that
 directory, and an absolute path is accepted as long as it lies inside it, so a
 model can reuse a path a shell command printed; a path error names the directory
 so the model can correct itself.
+
+`/path` lists the current directory, effective Files workspace, external paths
+granted from prompts, and access rules. The workspace is allowed by default.
+Use `/path allow PATH` (or `add`) for an additional file or directory,
+`/path deny PATH` to block a path even inside the workspace, and
+`/path ask PATH` to require confirmation each time it is accessed.
+`/path remove PATH` removes an explicit rule or grant; inherited workspace and
+parent permissions still apply. Denials override prompts and grants, and prompts
+override grants. Directories include descendants; file grants cover just that
+file. Relative paths resolve from the Files workspace, and quoted paths support
+spaces. A trailing `/` marks a directory that does not yet exist.
+
+`/path outside ask|deny` controls paths outside the allowed scope (default: deny).
+Path prompts require a person even in `yolo` mode; unattended calls are rejected.
+Paths explicitly named in prompts retain normal tool approval: `yolo` adds them
+automatically, while `ask` and `smart` ask the person. Each addition prints a
+`/path` hint so the grant can be reviewed, denied, or changed to ask. Setting
+`outside deny` blocks these automatic additions; `outside ask` requires a person.
+Rules last for the CLI session, apply to Files and `vdb` tools including child
+agents, and check resolved symlink targets. Searches omit denied subtrees, and
+directory moves or deletions cannot bypass a protected descendant. Models can
+inspect `/path` through `pmai_run`, but cannot change its policies or the Files
+workspace. These are tool-level checks: `run_shell` and other tools retain their
+own permissions. `/help path` lists the commands.
+
 The `run` group is one tool, `run_shell`, which executes code on this computer
 with the privileges of the `pmai` process: the command line or script is saved
 to a temporary file and run with the configured shell (`runShell`; a name looked

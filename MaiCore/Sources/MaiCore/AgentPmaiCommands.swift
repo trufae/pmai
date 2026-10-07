@@ -85,7 +85,7 @@ public struct PmaiCommandPolicy: Equatable, Sendable {
   public static let defaultBlockedCommands = "exit quit clear visual image attach"
   /// Commands that answer with what they are rather than changing it.
   public static let defaultReadOnlyCommands =
-    "help set models providers tools mcp mcps agents agent jobs job theme prompts skills memory todo stats version cwd"
+    "help set models providers tools mcp mcps agents agent jobs job theme prompts skills memory todo stats version cwd pwd path"
 
   public var blockedCommands: String
   public var readOnly: Bool

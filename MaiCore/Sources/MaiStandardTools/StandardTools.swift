@@ -10,17 +10,28 @@ public struct MaiStandardToolsPlugin: MaiPlugin {
     version: "1.0.0",
     capabilities: [.agentTool])
 
-  public init() {}
+  private let configureFiles: MaiStandardToolFactory.FileConfiguration?
+
+  public init(configureFiles: MaiStandardToolFactory.FileConfiguration? = nil) {
+    self.configureFiles = configureFiles
+  }
 
   public func register(in registry: PluginRegistry) async throws {
-    try await registry.register(toolFactory: MaiStandardToolFactory(), from: manifest.id)
+    try await registry.register(
+      toolFactory: MaiStandardToolFactory(configureFiles: configureFiles), from: manifest.id)
   }
 }
 
 public struct MaiStandardToolFactory: ConfiguredToolFactory {
   public let kind = MaiStandardToolsPlugin.factoryKind
+  /// A host can retain its live Files policy when tools are rebuilt from settings.
+  public typealias FileConfiguration =
+    @Sendable (MaiFileWorkspaceConfiguration) async -> MaiFileWorkspaceConfiguration
+  private let configureFiles: FileConfiguration?
 
-  public init() {}
+  public init(configureFiles: FileConfiguration? = nil) {
+    self.configureFiles = configureFiles
+  }
 
   /// The Files tools can retain the workspace while a host adds explicitly
   /// approved external paths for one conversation.
@@ -48,7 +59,8 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
   }
 
   public func makeTools(context: PluginFactoryContext) async throws -> [any AgentTool] {
-    let fileConfiguration = Self.fileWorkspaceConfiguration(context: context)
+    var fileConfiguration = Self.fileWorkspaceConfiguration(context: context)
+    if let configureFiles { fileConfiguration = await configureFiles(fileConfiguration) }
     let webSearchProvider =
       context.options["webSearchProvider"]?.stringValue
       .flatMap(MaiWebSearchProvider.init(rawValue:)) ?? .exa

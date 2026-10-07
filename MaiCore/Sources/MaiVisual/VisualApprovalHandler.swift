@@ -17,14 +17,25 @@ public actor VisualApprovalHandler: ApprovalHandler {
 
   private var compactionPresenter: (@Sendable (PendingCompaction) async -> Void)?
   private var compactionDismiss: (@Sendable (UUID) async -> Void)?
-  private var compactions: [UUID: AsyncThrowingStream<AutocompactionDecision, any Error>.Continuation] = [:]
+  private var compactions:
+    [UUID: AsyncThrowingStream<AutocompactionDecision, any Error>.Continuation] = [:]
 
   private var presenter: (@Sendable (Pending) async -> Void)?
   private var continuations: [UUID: CheckedContinuation<ApprovalDecision, any Error>] = [:]
   private let onAlwaysApprove: @Sendable () async -> Void
+  private let requiresConfirmation: @Sendable (ApprovalRequest) -> Bool
   private var alwaysApproves = false
 
   public init(onAlwaysApprove: @escaping @Sendable () async -> Void = {}) {
+    self.requiresConfirmation = { _ in false }
+    self.onAlwaysApprove = onAlwaysApprove
+  }
+
+  public init(
+    requiresConfirmation: @escaping @Sendable (ApprovalRequest) -> Bool,
+    onAlwaysApprove: @escaping @Sendable () async -> Void = {}
+  ) {
+    self.requiresConfirmation = requiresConfirmation
     self.onAlwaysApprove = onAlwaysApprove
   }
 
@@ -56,7 +67,9 @@ public actor VisualApprovalHandler: ApprovalHandler {
     compactionDismiss = dismiss
   }
 
-  public func decideCompaction(_ request: AutocompactionRequest) async throws -> AutocompactionDecision {
+  public func decideCompaction(_ request: AutocompactionRequest) async throws
+    -> AutocompactionDecision
+  {
     guard let compactionPresenter else { return .cancelRun }
     let dismiss = compactionDismiss
     let pending = PendingCompaction(id: UUID(), request: request)
@@ -84,7 +97,7 @@ public actor VisualApprovalHandler: ApprovalHandler {
   }
 
   public func decide(_ request: ApprovalRequest) async throws -> ApprovalDecision {
-    if alwaysApproves {
+    if alwaysApproves && !requiresConfirmation(request) {
       return .approve(arguments: request.call.arguments)
     }
     guard let presenter else {
