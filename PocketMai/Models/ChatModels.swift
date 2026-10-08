@@ -592,6 +592,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
   case github
   case mastodon
   case browser
+  case context
   case memory
 
   var id: String { rawValue }
@@ -607,7 +608,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
     case .datetime, .language, .location, .memory:
       return true
     case .weather, .webSearch, .todo, .calculator, .textToSpeech, .files, .calendar, .clipboard,
-      .alarms, .webxdc, .github, .mastodon, .browser, .vdb:
+      .alarms, .webxdc, .github, .mastodon, .browser, .vdb, .context:
       return false
     }
   }
@@ -615,7 +616,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
   var isCallableTool: Bool {
     switch self {
     case .weather, .webSearch, .todo, .calculator, .textToSpeech, .files, .calendar, .clipboard,
-      .alarms, .webxdc, .github, .mastodon, .browser, .vdb:
+      .alarms, .webxdc, .github, .mastodon, .browser, .vdb, .context:
       return true
     case .datetime, .language, .location, .memory:
       return false
@@ -641,6 +642,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
     case .github: "GitHub"
     case .mastodon: "Mastodon"
     case .browser: "Browser"
+    case .context: "Context"
     case .memory: "Memory"
     }
   }
@@ -664,6 +666,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
     case .github: "arrow.triangle.branch"
     case .mastodon: "bubble.left.and.bubble.right"
     case .browser: "safari"
+    case .context: "bubble.left.and.text.bubble.right"
     case .memory: "brain"
     }
   }
@@ -673,7 +676,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
     case .weather, .webSearch, .github, .mastodon, .browser:
       return true
     case .datetime, .language, .location, .todo, .calculator, .textToSpeech, .files, .calendar,
-      .clipboard, .alarms, .webxdc, .memory, .vdb:
+      .clipboard, .alarms, .webxdc, .memory, .vdb, .context:
       return false
     }
   }
@@ -2739,7 +2742,7 @@ extension VoiceSettings {
   }
 }
 
-/// Which other chats the memory tools may list, search, and read.
+/// Which other chats the Context tools may list, search, and read.
 enum ConversationSearchScope: String, Codable, CaseIterable, Identifiable, Sendable {
   case none
   case currentFolder

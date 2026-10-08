@@ -1847,8 +1847,9 @@ struct SettingsView: View {
       )
       .font(.caption)
       .foregroundStyle(.secondary)
+    case .context:
       Picker(
-        "Search other chats",
+        "Chat access",
         selection: settingsBinding(\.toolSettings.conversationSearchScope)
       ) {
         ForEach(ConversationSearchScope.allCases) { scope in
@@ -1856,7 +1857,7 @@ struct SettingsView: View {
         }
       }
       Text(
-        "When the Memory tool is enabled, lets the assistant call tools to list, search, and read other chats and their attached documents as a source of information. None keeps chats private; Current Folder limits it to chats in the same folder; All Folders covers every chat on this device. Each call asks for confirmation."
+        "Lets the assistant list, search, and read saved chats and their attached documents when Context is selected in the chat's tool picker. None disables access; Current Folder allows other chats in the same conversation folder; All Folders allows chats across conversation folders."
       )
       .font(.caption)
       .foregroundStyle(.secondary)

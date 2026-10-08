@@ -12,9 +12,7 @@ enum BuiltInToolCatalog {
   ) -> [ToolDefinition] {
     BuiltInToolID.allCases.flatMap { id -> [ToolDefinition] in
       guard conversation.enabledTools.contains(id) else { return [] }
-      // Memory is a context source, but it also carries the callable chats_*
-      // tools when a conversation search scope is configured.
-      guard id.isCallableTool || id == .memory else { return [] }
+      guard id.isCallableTool else { return [] }
       guard !(settings.airplaneModeEnabled && id.isDisabledInAirplaneMode) else {
         return []
       }
@@ -134,7 +132,7 @@ enum BuiltInToolCatalog {
       }
       return await BrowserTool.execute(name: name, arguments: call.argumentValues, store: store)
     case let name where ConversationSearchTool.toolNames.contains(name):
-      return ConversationSearchTool.execute(
+      return await ConversationSearchTool.execute(
         name: name,
         arguments: call.argumentValues,
         conversation: conversation,
@@ -187,7 +185,7 @@ enum BuiltInToolCatalog {
     settings: AppSettings
   ) -> [ToolDefinition] {
     switch id {
-    case .datetime, .language, .location:
+    case .datetime, .language, .location, .memory:
       return []
     case .weather:
       return [MaiWeatherTool.toolDefinition]
@@ -222,7 +220,7 @@ enum BuiltInToolCatalog {
       return [MaiMastodonTool.toolDefinition]
     case .browser:
       return BrowserTool.definitions
-    case .memory:
+    case .context:
       guard settings.toolSettings.conversationSearchScope != .none else { return [] }
       return ConversationSearchTool.definitions
     }

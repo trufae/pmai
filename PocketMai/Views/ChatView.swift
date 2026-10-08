@@ -5408,6 +5408,21 @@ private struct ToolPickerPopover: View {
           .buttonStyle(.plain)
           .disabled(store.settings.airplaneModeEnabled && tool.isDisabledInAirplaneMode)
           .opacity(store.settings.airplaneModeEnabled && tool.isDisabledInAirplaneMode ? 0.5 : 1)
+          if tool == .context, isBuiltInToolEnabled(tool) {
+            Picker("Chat access", selection: conversationSearchScopeBinding) {
+              ForEach(ConversationSearchScope.allCases) { scope in
+                Text(scope.displayName).tag(scope)
+              }
+            }
+            .pickerStyle(.menu)
+            .padding(.leading, 38)
+            .padding(.trailing, 12)
+            Text("Read other saved chats. This access setting applies to all chats with Context enabled.")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .padding(.leading, 38)
+              .padding(.trailing, 12)
+          }
         }
 
         if !store.settings.mcpServers.isEmpty {
@@ -5584,6 +5599,15 @@ private struct ToolPickerPopover: View {
   }
 
   // MARK: - Native tool helpers
+
+  private var conversationSearchScopeBinding: Binding<ConversationSearchScope> {
+    Binding {
+      store.settings.toolSettings.conversationSearchScope
+    } set: { scope in
+      store.settings.toolSettings.conversationSearchScope = scope
+      store.saveSettings()
+    }
+  }
 
   private func isBuiltInToolEnabled(_ tool: BuiltInToolID) -> Bool {
     store.currentConversation?.enabledTools.contains(tool) ?? false

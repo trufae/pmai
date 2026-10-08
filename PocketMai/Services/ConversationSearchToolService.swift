@@ -28,7 +28,7 @@ extension MemoryChat {
 /// Memory tools that let the assistant use other chats on this device as a
 /// source of information. The tools themselves live in MaiCore and are shared
 /// with pmai; this decides which chats they may reach, from the
-/// ConversationSearchScope picked in the Memory tool settings.
+/// ConversationSearchScope picked in the Context tool settings.
 @MainActor
 enum ConversationSearchTool {
   static let toolNames = MaiMemoryTools.toolNames
@@ -39,15 +39,28 @@ enum ConversationSearchTool {
     arguments: [String: AgentToolArgumentValue],
     conversation: Conversation,
     store: AppStore
-  ) -> String {
+  ) async -> String {
+    guard conversation.toolsEnabled, conversation.enabledTools.contains(.context) else {
+      return "Error: enable the Context tool for this chat to read other chats."
+    }
+    guard store.settings.toolSettings.conversationSearchScope != .none else {
+      return "Error: access to other chats is disabled in the Context tool settings."
+    }
+    await store.loadStoredConversationsForSearch()
+    // Loading yields to the UI: apply the latest tool selection and access
+    // scope in case the user changed them while saved chats were being read.
+    let current = store.conversation(withID: conversation.id) ?? conversation
+    guard current.toolsEnabled, current.enabledTools.contains(.context) else {
+      return "Error: the Context tool is disabled for this chat."
+    }
     let scope = store.settings.toolSettings.conversationSearchScope
     guard scope != .none else {
-      return "Error: access to other chats is disabled in the Memory tool settings."
+      return "Error: access to other chats is disabled in the Context tool settings."
     }
     return MaiMemoryTools.execute(
       name: name,
       arguments: arguments,
-      chats: reachableChats(scope: scope, current: conversation, store: store))
+      chats: reachableChats(scope: scope, current: current, store: store))
   }
 
   /// Other chats visible to the tools: never the current chat itself, and only
