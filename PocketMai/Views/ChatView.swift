@@ -269,6 +269,21 @@ struct ChatView: View {
           chatTitle
         }
         ToolbarItem(placement: .topBarTrailing) {
+          if let session = store.browserSession {
+            BrowserToolbarButton(session: session) {
+              store.closeBrowserSession()
+            }
+          } else if store.closedBrowserURL != nil {
+            Button {
+              store.reopenBrowserSession()
+            } label: {
+              Image(systemName: "safari")
+            }
+            .accessibilityLabel("Reopen browser")
+            .help("Reopen the last browser page")
+          }
+        }
+        ToolbarItem(placement: .topBarTrailing) {
           trailingMenu
         }
       }
@@ -283,11 +298,9 @@ struct ChatView: View {
   @ViewBuilder
   private var browserCardOverlay: some View {
     if let session = store.browserSession {
-      BrowserPiPCard(session: session) {
+      BrowserPresentationOverlay(session: session) {
         store.closeBrowserSession()
       }
-      .padding(.trailing, 12)
-      .padding(.bottom, 12)
     }
   }
 

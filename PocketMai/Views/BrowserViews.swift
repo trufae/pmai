@@ -19,7 +19,7 @@ struct BrowserWebViewHost: UIViewRepresentable {
     // Exactly one host owns the page at a time: the expanded view while it is
     // open, the card otherwise. The other host leaves the view alone so they
     // do not keep stealing it from each other on every re-render.
-    guard interactive == isExpanded else { return }
+    guard !session.isClosed, interactive == isExpanded else { return }
     view.adopt(session.webView, viewportSize: session.viewportSize, interactive: interactive)
   }
 
@@ -67,17 +67,128 @@ final class BrowserHostView: UIView {
   }
 }
 
-/// The picture-in-picture card: a live, scaled-down view of the page that can
-/// be dragged around the chat. Tapping it opens the page full size.
-struct BrowserPiPCard: View {
+/// Stays mounted even when the card is minimized, keeping the fullscreen
+/// presenter independent of the card's visibility and the selected chat.
+struct BrowserPresentationOverlay: View {
   @ObservedObject var session: BrowserSession
   let onClose: () -> Void
 
-  @State private var dragTranslation: CGSize = .zero
-  @State private var restingOffset: CGSize = .zero
+  var body: some View {
+    GeometryReader { proxy in
+      ZStack(alignment: .bottomTrailing) {
+        if session.presentation != .minimized {
+          BrowserPiPCard(session: session, availableSize: proxy.size, onClose: onClose)
+            .padding(12)
+        }
+      }
+      .frame(width: proxy.size.width, height: proxy.size.height, alignment: .bottomTrailing)
+    }
+    .fullScreenCover(isPresented: expandedBinding) {
+      BrowserExpandedView(session: session)
+    }
+  }
 
-  private let cardSize = CGSize(width: 150, height: 232)
+  private var expandedBinding: Binding<Bool> {
+    Binding {
+      session.isExpanded
+    } set: { expanded in
+      if expanded {
+        session.presentation = .expanded
+      } else if session.isExpanded {
+        session.presentation = .pictureInPicture
+      }
+    }
+  }
+}
+
+/// A persistent toolbar entry, including while the page is minimized.
+struct BrowserToolbarButton: View {
+  @ObservedObject var session: BrowserSession
+  let onClose: () -> Void
+  @State private var showingCloseConfirmation = false
+
+  var body: some View {
+    Button {
+      withAnimation(.snappy) {
+        session.presentation = session.presentation == .minimized ? .pictureInPicture : .minimized
+      }
+    } label: {
+      Image(systemName: "safari")
+    }
+    .accessibilityLabel(session.presentation == .minimized ? "Reopen browser" : "Minimize browser")
+    .help(session.displayHost)
+    .contextMenu {
+      Button("Show Picture in Picture", systemImage: "pip") {
+        session.presentation = .pictureInPicture
+      }
+      Button("Expand Browser", systemImage: "arrow.up.left.and.arrow.down.right") {
+        session.presentation = .expanded
+      }
+      Button("Minimize to Toolbar", systemImage: "minus") {
+        session.presentation = .minimized
+      }
+      Button("Close Browser…", systemImage: "xmark", role: .destructive) {
+        showingCloseConfirmation = true
+      }
+    }
+    .modifier(BrowserCloseConfirmation(isPresented: $showingCloseConfirmation, onClose: onClose))
+  }
+}
+
+private struct BrowserCloseConfirmation: ViewModifier {
+  @Binding var isPresented: Bool
+  let onClose: () -> Void
+
+  func body(content: Content) -> some View {
+    content.alert("Close browser?", isPresented: $isPresented) {
+      Button("Cancel", role: .cancel) {}
+      Button("Close Browser", role: .destructive, action: onClose)
+    } message: {
+      Text(
+        "This will end the current browser session. You can reopen the last page from the chat toolbar."
+      )
+    }
+  }
+}
+
+/// The live preview can be dragged and pinched between three sizes. Its
+/// position and size are retained by the session when the card disappears.
+struct BrowserPiPCard: View {
+  @ObservedObject var session: BrowserSession
+  let availableSize: CGSize
+  let onClose: () -> Void
+
+  @GestureState private var dragTranslation: CGSize = .zero
+  @GestureState private var magnification: CGFloat = 1
+  @State private var showingCloseConfirmation = false
+
   private let captionHeight: CGFloat = 26
+
+  private var cardSize: CGSize {
+    let width = min(max(session.pipSize.width * magnification, 150), 280)
+    let aspectRatio = session.viewportSize.height / session.viewportSize.width
+    let fittedWidth = max(
+      1,
+      min(
+        width, availableSize.width - 24,
+        (availableSize.height - 24 - captionHeight) / aspectRatio))
+    return CGSize(width: fittedWidth, height: fittedWidth * aspectRatio + captionHeight)
+  }
+
+  private var offset: CGSize {
+    Self.clampedOffset(
+      CGSize(
+        width: session.pipOffset.width + dragTranslation.width,
+        height: session.pipOffset.height + dragTranslation.height),
+      cardSize: cardSize, availableSize: availableSize)
+  }
+
+  /// Offsets are relative to the bottom-right corner of the available area.
+  static func clampedOffset(_ offset: CGSize, cardSize: CGSize, availableSize: CGSize) -> CGSize {
+    CGSize(
+      width: min(0, max(offset.width, -max(0, availableSize.width - cardSize.width - 24))),
+      height: min(0, max(offset.height, -max(0, availableSize.height - cardSize.height - 24))))
+  }
 
   var body: some View {
     VStack(spacing: 0) {
@@ -114,47 +225,74 @@ struct BrowserPiPCard: View {
     )
     .shadow(color: .black.opacity(0.22), radius: 10, y: 4)
     .overlay(alignment: .topTrailing) {
-      Button(action: onClose) {
-        Image(systemName: "xmark.circle.fill")
-          .font(.title3)
-          .symbolRenderingMode(.palette)
-          .foregroundStyle(.white, .black.opacity(0.55))
+      HStack(spacing: 6) {
+        Button {
+          withAnimation(.snappy) { session.presentation = .minimized }
+        } label: {
+          Image(systemName: "minus.circle.fill")
+        }
+        .accessibilityLabel("Minimize browser to toolbar")
+        Button {
+          showingCloseConfirmation = true
+        } label: {
+          Image(systemName: "xmark.circle.fill")
+        }
+        .accessibilityLabel("Close browser")
       }
+      .font(.title3)
+      .symbolRenderingMode(.palette)
+      .foregroundStyle(.white, .black.opacity(0.55))
       .buttonStyle(.plain)
-      .padding(4)
-      .accessibilityLabel("Close browser")
+      .padding(6)
     }
     .contentShape(Rectangle())
     .onTapGesture {
-      session.isExpanded = true
+      session.presentation = .expanded
     }
-    .offset(
-      x: restingOffset.width + dragTranslation.width,
-      y: restingOffset.height + dragTranslation.height
-    )
+    .offset(x: offset.width, y: offset.height)
     .gesture(
       DragGesture(minimumDistance: 6)
-        .onChanged { value in
-          dragTranslation = value.translation
+        .updating($dragTranslation) { value, translation, _ in
+          translation = value.translation
         }
         .onEnded { value in
-          restingOffset.width += value.translation.width
-          restingOffset.height += value.translation.height
-          dragTranslation = .zero
+          session.pipOffset = Self.clampedOffset(
+            CGSize(
+              width: session.pipOffset.width + value.translation.width,
+              height: session.pipOffset.height + value.translation.height),
+            cardSize: cardSize, availableSize: availableSize)
         }
     )
-    .fullScreenCover(isPresented: $session.isExpanded) {
-      BrowserExpandedView(session: session, onClose: onClose)
+    .simultaneousGesture(
+      MagnifyGesture()
+        .updating($magnification) { value, magnification, _ in
+          magnification = value.magnification
+        }
+        .onEnded { value in
+          withAnimation(.snappy) {
+            session.pipSize = session.pipSize.resized(for: value.magnification)
+          }
+        }
+    )
+    .modifier(BrowserCloseConfirmation(isPresented: $showingCloseConfirmation, onClose: onClose))
+    .accessibilityAction(named: "Increase preview size") {
+      session.pipSize = session.pipSize.resized(for: 1.3)
+    }
+    .accessibilityAction(named: "Decrease preview size") {
+      session.pipSize = session.pipSize.resized(for: 0.7)
+    }
+    .accessibilityAction(named: "Minimize to toolbar") {
+      session.presentation = .minimized
     }
     .accessibilityElement(children: .contain)
-    .accessibilityLabel("Browser preview of \(session.displayHost). Tap to expand.")
+    .accessibilityLabel(
+      "Browser preview of \(session.displayHost). Tap to expand, pinch to resize.")
   }
 }
 
 /// Full-size, hand-operated presentation of the page.
 struct BrowserExpandedView: View {
   @ObservedObject var session: BrowserSession
-  let onClose: () -> Void
 
   @Environment(\.dismiss) private var dismiss
   @State private var addressText = ""
@@ -172,6 +310,7 @@ struct BrowserExpandedView: View {
         .toolbar {
           ToolbarItem(placement: .topBarLeading) {
             Button {
+              session.presentation = .pictureInPicture
               dismiss()
             } label: {
               Label("Minimize", systemImage: "pip.exit")
@@ -179,17 +318,14 @@ struct BrowserExpandedView: View {
             .help("Back to the small card")
           }
           ToolbarItem(placement: .topBarTrailing) {
-            Button(role: .destructive) {
+            Button {
+              session.presentation = .pictureInPicture
               dismiss()
-              // Let the cover finish dismissing before the card that presents it goes away.
-              Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(400))
-                onClose()
-              }
             } label: {
               Label("Close", systemImage: "xmark")
             }
-            .help("Close the browser")
+            .accessibilityLabel("Return browser to picture in picture")
+            .help("Back to the small card")
           }
         }
     }

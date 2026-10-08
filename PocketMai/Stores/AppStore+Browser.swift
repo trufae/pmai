@@ -2,19 +2,35 @@ import UIKit
 
 extension AppStore {
   /// The single in-app browser page, created on the first tool call and kept
-  /// until the user closes the card.
+  /// until the user confirms closing the browser. Minimizing keeps the page alive.
   func ensureBrowserSession() -> BrowserSession {
     if let browserSession {
       return browserSession
     }
     let session = BrowserSession(viewportSize: Self.browserViewportSize())
     browserSession = session
+    closedBrowserURL = nil
     return session
   }
 
   func closeBrowserSession() {
-    browserSession?.tearDown()
+    guard let session = browserSession else { return }
+    closedBrowserURL =
+      session.webView.url ?? session.lastNavigationURL ?? URL(string: "about:blank")
+    session.tearDown()
     browserSession = nil
+  }
+
+  func reopenBrowserSession() {
+    if let session = browserSession {
+      session.presentation = .pictureInPicture
+      return
+    }
+    let url = closedBrowserURL
+    let session = ensureBrowserSession()
+    if let url {
+      Task { await session.load(url) }
+    }
   }
 
   /// A phone-sized page regardless of how small the card is drawn. The height

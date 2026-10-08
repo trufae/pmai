@@ -11,6 +11,40 @@ import WebKit
 /// element refs, and the screenshot coordinates the model works with stable.
 @MainActor
 final class BrowserSession: NSObject, ObservableObject {
+  enum Presentation {
+    case minimized
+    case pictureInPicture
+    case expanded
+  }
+
+  enum PiPSize: Int, CaseIterable {
+    case small, medium, large
+
+    var width: CGFloat {
+      switch self {
+      case .small: 150
+      case .medium: 210
+      case .large: 280
+      }
+    }
+
+    func resized(for magnification: CGFloat) -> Self {
+      guard magnification.isFinite else { return self }
+      let targetWidth = width * magnification
+      let nearest =
+        Self.allCases.min {
+          abs($0.width - targetWidth) < abs($1.width - targetWidth)
+        } ?? self
+      if magnification > 1.15 {
+        return Self(rawValue: min(Self.large.rawValue, max(rawValue + 1, nearest.rawValue))) ?? self
+      }
+      if magnification < 0.85 {
+        return Self(rawValue: max(Self.small.rawValue, min(rawValue - 1, nearest.rawValue))) ?? self
+      }
+      return self
+    }
+  }
+
   static let loadTimeout: TimeInterval = 25
   private static let settleDelay: Duration = .milliseconds(350)
   private static let pollInterval: Duration = .milliseconds(150)
@@ -23,8 +57,14 @@ final class BrowserSession: NSObject, ObservableObject {
   @Published private(set) var isLoading = false
   @Published private(set) var canGoBack = false
   @Published private(set) var canGoForward = false
-  /// The expanded, hand-operated presentation is open.
-  @Published var isExpanded = false
+  /// Presentation belongs to the page, so changing chats never loses it.
+  @Published var presentation: Presentation = .pictureInPicture
+  @Published var pipSize: PiPSize = .small
+  @Published var pipOffset: CGSize = .zero
+  private(set) var isClosed = false
+  private(set) var lastNavigationURL: URL?
+
+  var isExpanded: Bool { presentation == .expanded }
   /// What the model last did with the page, shown under the card.
   @Published private(set) var lastActivity = ""
 
@@ -68,6 +108,8 @@ final class BrowserSession: NSObject, ObservableObject {
   }
 
   func tearDown() {
+    isClosed = true
+    presentation = .minimized
     observations.removeAll()
     webView.stopLoading()
     webView.navigationDelegate = nil
@@ -89,6 +131,8 @@ final class BrowserSession: NSObject, ObservableObject {
   /// Starts loading `url` and returns once the navigation settles or the
   /// timeout passes. The tool reports whatever the page shows at that point.
   func load(_ url: URL) async {
+    guard !isClosed else { return }
+    lastNavigationURL = url
     pendingLoadError = nil
     webView.load(URLRequest(url: url, timeoutInterval: Self.loadTimeout))
     await waitForLoad()
@@ -100,26 +144,28 @@ final class BrowserSession: NSObject, ObservableObject {
   }
 
   func goBack() async {
-    guard webView.canGoBack else { return }
+    guard !isClosed, webView.canGoBack else { return }
     webView.goBack()
     await waitForLoad()
   }
 
   func goForward() {
-    guard webView.canGoForward else { return }
+    guard !isClosed, webView.canGoForward else { return }
     webView.goForward()
   }
 
   func reload() {
+    guard !isClosed else { return }
     webView.reload()
   }
 
   /// A click may start a navigation a tick later, so this first gives the page
   /// a moment, then waits for any load in flight, then lets the DOM settle.
   func waitForLoad(timeout: TimeInterval = loadTimeout) async {
+    guard !isClosed else { return }
     try? await Task.sleep(for: Self.settleDelay)
     let deadline = Date().addingTimeInterval(timeout)
-    while webView.isLoading, Date() < deadline {
+    while !isClosed, webView.isLoading, Date() < deadline {
       try? await Task.sleep(for: Self.pollInterval)
     }
     try? await Task.sleep(for: Self.settleDelay)
@@ -145,6 +191,7 @@ final class BrowserSession: NSObject, ObservableObject {
   /// Runs `body` as an async function body inside the page with the shared
   /// `__pm` helpers in scope, and returns its result as text.
   func call(_ body: String, arguments: [String: Any] = [:]) async -> String {
+    guard !isClosed else { return "Error: the browser was closed by the user." }
     do {
       let result = try await webView.callAsyncJavaScript(
         BrowserPageScript.helpers + "\n" + body,
@@ -158,6 +205,7 @@ final class BrowserSession: NSObject, ObservableObject {
   }
 
   func snapshot() async throws -> UIImage {
+    guard !isClosed else { throw CancellationError() }
     let configuration = WKSnapshotConfiguration()
     configuration.afterScreenUpdates = true
     return try await webView.takeSnapshot(configuration: configuration)
@@ -222,9 +270,15 @@ extension BrowserSession: WKNavigationDelegate {
     _ webView: WKWebView,
     decidePolicyFor navigationAction: WKNavigationAction
   ) async -> WKNavigationActionPolicy {
-    guard let scheme = navigationAction.request.url?.scheme?.lowercased() else { return .cancel }
+    guard !isClosed, let url = navigationAction.request.url,
+      let scheme = url.scheme?.lowercased()
+    else { return .cancel }
     // Custom schemes would bounce the user into other apps mid-task.
-    return ["http", "https", "about", "blob", "data"].contains(scheme) ? .allow : .cancel
+    guard ["http", "https", "about", "blob", "data"].contains(scheme) else { return .cancel }
+    if navigationAction.targetFrame?.isMainFrame != false {
+      lastNavigationURL = url
+    }
+    return .allow
   }
 
   func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
