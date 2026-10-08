@@ -25,6 +25,7 @@ struct SidebarView: View {
   @State private var pendingDeletion: PendingConversationDeletion?
   @State private var showingFolderManager = false
   @State private var showingGallery = false
+  @State private var showingAppsPanel = false
   @State private var showingRemoteAgents = false
   @State private var showingMoveDestinationDialog = false
   @State private var keyboardOverlap: CGFloat = 0
@@ -122,6 +123,10 @@ struct SidebarView: View {
       GalleryView()
         .environmentObject(store)
         .environmentObject(TTSPlayer.shared)
+    }
+    .sheet(isPresented: $showingAppsPanel) {
+      WebXDCAppsPanel()
+        .environmentObject(store)
     }
     .sheet(isPresented: $showingRemoteAgents) {
       NavigationStack {
@@ -516,6 +521,11 @@ struct SidebarView: View {
         showingGallery = true
       } label: {
         Label("Gallery", systemImage: "photo.on.rectangle.angled")
+      }
+      Button {
+        showingAppsPanel = true
+      } label: {
+        Label("Apps", systemImage: "square.grid.2x2")
       }
       Divider()
       Button {

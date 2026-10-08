@@ -330,7 +330,6 @@ struct SettingsView: View {
   @ObservedObject var storeObservation: AppStoreViewObservation
   @Environment(\.dismiss) private var dismiss
   @State private var showingToolFileImporter = false
-  @State private var showingAppsPanel = false
   @State private var newTodoTitle = ""
   @State private var showingClearMemoryConfirmation = false
   @State private var showingBackgroundVoiceConfirmation = false
@@ -446,16 +445,6 @@ struct SettingsView: View {
           .help(store.settings.airplaneModeEnabled ? "Go online" : "Go offline")
         }
 
-        ToolbarItem(placement: .cancellationAction) {
-          Button {
-            showingAppsPanel = true
-          } label: {
-            Label("Apps", systemImage: "square.grid.2x2")
-          }
-          .accessibilityLabel("Manage webxdc apps")
-          .help("Manage apps")
-        }
-
         ToolbarItem(placement: .confirmationAction) {
           Button("Done") { saveAndDismiss() }
         }
@@ -493,10 +482,6 @@ struct SettingsView: View {
           .onDisappear {
             Task { await refreshCorruptedConversationCount() }
           }
-      }
-      .sheet(isPresented: $showingAppsPanel) {
-        WebXDCAppsPanel()
-          .environmentObject(store)
       }
       .fileImporter(
         isPresented: $showingToolFileImporter,
@@ -1744,7 +1729,7 @@ struct SettingsView: View {
       .foregroundStyle(.secondary)
     case .webxdc:
       Text(
-        "Lets the assistant create, edit, and roll back webxdc mini apps (HTML/CSS/JS) stored on this device. Every change makes a numbered revision. Safe defaults keep apps offline and deny device resources; changing runtime options applies to newly opened app sessions. Manage apps from the grid button in the Settings toolbar."
+        "Lets the assistant create, edit, and roll back webxdc mini apps (HTML/CSS/JS) stored on this device. Every change makes a numbered revision. Safe defaults keep apps offline and deny device resources; changing runtime options applies to newly opened app sessions. Manage apps from Apps in the folders menu."
       )
       .font(.caption)
       .foregroundStyle(.secondary)

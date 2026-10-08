@@ -1400,7 +1400,7 @@ struct WebXDCAppLauncherSheet: View {
       List {
         if apps.isEmpty {
           Text(
-            "No apps available. Enable the WebXDC Apps tool and ask the assistant to create one, or import a .xdc from Settings > Apps."
+            "No apps available. Enable the WebXDC Apps tool and ask the assistant to create one, or import a .xdc from Apps in the folders menu."
           )
           .foregroundStyle(.secondary)
         }
