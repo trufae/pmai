@@ -347,7 +347,6 @@ struct SettingsView: View {
   var body: some View {
     NavigationStack(path: $navigationPath) {
       Form {
-        agentsSection
         providerSection
         appearanceSection
         toolsSection
@@ -648,26 +647,21 @@ struct SettingsView: View {
     .font(.caption).foregroundStyle(.secondary)
   }
 
-  private var agentsSection: some View {
-    Section {
-      NavigationLink {
-        RemoteAgentsView()
+  @ViewBuilder
+  private var agentsContent: some View {
+    NavigationLink {
+      RemoteAgentsView()
+    } label: {
+      Label("Remote Agents", systemImage: "network")
+    }
+    NavigationLink {
+      AgentManagerView(store: store, storeObservation: storeObservation)
+    } label: {
+      LabeledContent {
+        Text(store.settings.selectedAgent.name)
       } label: {
-        Label("Remote Agents", systemImage: "network")
+        Label("Manage Agents", systemImage: "person.2")
       }
-      NavigationLink {
-        AgentManagerView(store: store, storeObservation: storeObservation)
-      } label: {
-        LabeledContent {
-          Text(store.settings.selectedAgent.name)
-        } label: {
-          Label("Manage Agents", systemImage: "person.2")
-        }
-      }
-    } footer: {
-      Text(
-        "Select the default agent for new chats, edit each agent’s model and reasoning, and assign compaction and tool decisions in Manage Agents. Provider connections and prompt libraries are shared."
-      )
     }
   }
 
@@ -678,6 +672,8 @@ struct SettingsView: View {
       } label: {
         Label("Providers", systemImage: "network")
       }
+
+      agentsContent
 
       SettingsLazyDisclosureGroup {
         promptContent
