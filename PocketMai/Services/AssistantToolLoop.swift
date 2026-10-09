@@ -75,6 +75,7 @@ enum AssistantToolLoop {
       skillInstructions.keys.sorted().compactMap { skillInstructions[$0] }.joined(separator: "\n\n")
     }
 
+    @MainActor
     mutating func retainSkills(from results: [CallResult]) {
       for result in results where isSuccessfulToolResult(result.result) {
         let name = result.call.name == ToolProxy.callName

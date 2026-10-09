@@ -184,7 +184,7 @@ public enum ToolProxy {
   }
 
   /// Also used when identifying a concrete call in a saved proxy exchange.
-  static func requestedToolName(in arguments: [String: AgentToolArgumentValue]) -> String {
+  public static func requestedToolName(in arguments: [String: AgentToolArgumentValue]) -> String {
     let outer =
       arguments["name"]?.stringValue ?? arguments["tool_name"]?.stringValue
       ?? arguments["tool"]?.stringValue ?? ""
