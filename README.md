@@ -92,7 +92,8 @@ make fmt                 # swift-format the sources
 ```
 
 The CLI and iOS app reuse `MaiLocalProviders` for Apple Intelligence and MLX.
-On macOS, run `/providers`, then `/model apple::on-device` or
+On macOS, add a native provider with `/provider add apple --kind apple` or
+`/provider add mlx --kind mlx`, then `/model apple::on-device` or
 `/model mlx::LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit`; no server URL is needed.
 `make repl-build` includes the CLI's MLX Metal resource. See
 [native provider setup](MaiCore/README.md) for requirements and configuration.

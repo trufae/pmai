@@ -306,7 +306,7 @@ private enum CLIError: LocalizedError {
       "\(option) expects a non-negative integer, got '\(value)'."
     case .configNotFound(let path): "Configuration file not found: \(path)"
     case .noEditor: "No editor found. Set EDITOR or install vim, nano, or notepad in PATH."
-    case .noProvider: "No provider is configured."
+    case .noProvider: "No provider is configured. Start pmai and type /about for setup commands."
     case .invalidImage(let path): "Unable to load image: \(path)"
     case .isDirectory(let path): "\(path) is a folder; give a file name."
     case .missingFolder(let path): "The folder \(path) does not exist; create it first."
@@ -1249,11 +1249,6 @@ struct MaiCLI {
       var configuration = loaded?.configuration
       if var existing = configuration {
         var changed = existing.associateSystemPrompts()
-        for provider in MaiLocalProvidersPlugin.defaultProviders
-        where !existing.providers.contains(where: { $0.id == provider.id }) {
-          existing.providers.append(provider)
-          changed = true
-        }
         if !existing.toolSources.contains(where: {
           $0.kind == MaiStandardToolsPlugin.factoryKind
         }) {
@@ -1376,20 +1371,20 @@ struct MaiCLI {
         selectedProvider: profile.provider,
         resumingChat: restored.resumed,
         environment: environment)
-      if configuration == nil {
-        var created = MaiConfiguration(
-          defaultAgent: profile.agentID,
-          providers: setup.implicitProviders,
-          toolSources: [
-            ConfiguredToolSource(
-              id: "standard-tools",
-              kind: MaiStandardToolsPlugin.factoryKind)
-          ],
-          agents: [profile.agentDefinition])
-        created.associateSystemPrompts()
+      if configuration == nil
+        || configuration?.providers.isEmpty == true && !setup.implicitProviders.isEmpty
+      {
+        var created = configuration ?? initialConfiguration()
+        created.providers = setup.implicitProviders
+        if !created.providers.isEmpty {
+          created.defaultAgent = profile.agentID
+          created.upsertAgent(profile.agentDefinition)
+        }
         try created.save(to: URL(fileURLWithPath: configurationPath))
         configuration = created
-        profile = SessionProfile(definition: created.agents[0])
+        if let definition = created.agents.first {
+          profile = SessionProfile(definition: definition)
+        }
         var chat = workspace.selectedChat!
         chat.primaryAgent = profile.agentDefinition
         workspace.upsert(chat)
@@ -1504,6 +1499,7 @@ struct MaiCLI {
       }
       defer { Task { await PmaiCommandHost.shared.install(runner: nil) } }
       if let prompt = options.initialPrompt {
+        guard !profile.provider.rawValue.isEmpty else { throw CLIError.noProvider }
         await installInteractiveRunHost()
         defer { Task { await MaiRunTerminalHost.shared.install(runner: nil) } }
         if configuration?.use.agentsmd == .ask || configuration?.use.agentsmd == .maybe {
@@ -1885,35 +1881,61 @@ struct MaiCLI {
       return url
     }
 
-    if let configuration {
-      var providerBaseURLs: [String: URL] = [:]
-      for configuredProvider in configuration.providers {
-        var provider = configuredProvider
-        if provider.id == selectedProvider.rawValue, ![.apple, .mlx].contains(provider.kind) {
-          provider.baseURL = try resolvedBaseURL(provider.baseURL)
-          let hasCredentials =
-            provider.apiKey != nil
-            || !(provider.apiKeyEnvironment ?? "").isEmpty
-            || !(provider.apiKeyFile ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-          let apiKeyOverride =
-            try options.apiKeyOverride
-            ?? (hasCredentials ? nil : environmentAPIKey(in: environment))
-          if let apiKeyOverride {
-            provider.apiKey = apiKeyOverride
-            provider.apiKeyEnvironment = nil
-            provider.apiKeyFile = nil
-          }
-        }
-        providerBaseURLs[provider.id] = provider.baseURL
-        try await runtime.register(
-          plugins.makeProvider(from: provider, environment: environment))
+    var providers = configuration?.providers ?? []
+    var implicitProviders: [ConfiguredProvider] = []
+    // An explicit flag or environment setting can still bootstrap a connection.
+    // An unconfigured launch leaves the list empty until /provider add.
+    if providers.isEmpty, !selectedProvider.rawValue.isEmpty {
+      let provider: ConfiguredProvider
+      if selectedProvider == .hello {
+        provider = ConfiguredProvider(id: "hello", kind: .hello)
+      } else if let local = MaiLocalProvidersPlugin.defaultProviders.first(where: {
+        $0.id == selectedProvider.rawValue
+      }) {
+        provider = local
+      } else {
+        provider = ConfiguredProvider(
+          id: selectedProvider.rawValue, kind: .openAICompatible,
+          baseURL: try resolvedBaseURL(nil) ?? URL(string: "http://127.0.0.1:11434/v1")!,
+          apiKey: try options.apiKeyOverride ?? environmentAPIKey(in: environment))
       }
-      var catalogs: [MCPServerCatalog] = []
+      providers = [provider]
+      var draft = provider
+      if provider.kind == .openAICompatible {
+        draft.apiKey = nil
+        draft.apiKeyEnvironment = environmentName(
+          ["PMAI_API_KEY", "MAI_API_KEY", "OPENAI_API_KEY"], in: environment)
+        draft.apiKeyFile = environment["PMAI_API_KEY_FILE"].flatMap {
+          $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
+        }
+      }
+      implicitProviders = [draft]
+    }
+    var providerBaseURLs: [String: URL] = [:]
+    for var provider in providers {
+      if provider.id == selectedProvider.rawValue, ![.apple, .mlx].contains(provider.kind) {
+        provider.baseURL = try resolvedBaseURL(provider.baseURL)
+        let hasCredentials =
+          provider.apiKey != nil
+          || !(provider.apiKeyEnvironment ?? "").isEmpty
+          || !(provider.apiKeyFile ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let apiKeyOverride =
+          try options.apiKeyOverride
+          ?? (hasCredentials ? nil : environmentAPIKey(in: environment))
+        if let apiKeyOverride {
+          provider.apiKey = apiKeyOverride
+          provider.apiKeyEnvironment = nil
+          provider.apiKeyFile = nil
+        }
+      }
+      providerBaseURLs[provider.id] = provider.baseURL
+      try await runtime.register(plugins.makeProvider(from: provider, environment: environment))
+    }
+    var catalogs: [MCPServerCatalog] = []
+    if let configuration {
       for server in configuration.mcpServers where server.enabled {
         let source = try await plugins.makeMCPToolSource(
-          kind: server.kind,
-          configuration: server,
-          environment: environment)
+          kind: server.kind, configuration: server, environment: environment)
         catalogs.append(try await runtime.register(mcp: source))
       }
       await runtime.configureDelegation(
@@ -1927,40 +1949,9 @@ struct MaiCLI {
         agent.toolNames.formIntersection(knownTools)
         try await runtime.register(agent: agent)
       }
-      return RuntimeSetup(catalogs: catalogs, providerBaseURLs: providerBaseURLs)
-    }
-
-    let hello = ConfiguredProvider(id: "hello", kind: .hello)
-    try await runtime.register(plugins.makeProvider(from: hello, environment: environment))
-    let localProviders = MaiLocalProvidersPlugin.defaultProviders
-    for provider in localProviders {
-      try await runtime.register(plugins.makeProvider(from: provider, environment: environment))
-    }
-    let selectedLocalProvider = localProviders.contains { $0.id == selectedProvider.rawValue }
-    let baseURL = try (selectedLocalProvider ? nil : resolvedBaseURL(nil))
-      ?? URL(string: "http://127.0.0.1:11434/v1")!
-    let apiKeyOverride = try selectedLocalProvider ? nil
-      : (options.apiKeyOverride ?? environmentAPIKey(in: environment))
-    let openAI = ConfiguredProvider(
-      id: selectedLocalProvider ? ProviderID.openAI.rawValue : selectedProvider.rawValue,
-      kind: .openAICompatible,
-      baseURL: baseURL,
-      apiKey: apiKeyOverride)
-    try await runtime.register(plugins.makeProvider(from: openAI, environment: environment))
-    // The visual workspace drafts a configuration from these implicit providers.
-    // It references the API key through its environment variable instead of
-    // copying the secret into a file.
-    var draft = openAI
-    draft.apiKey = nil
-    draft.apiKeyEnvironment = environmentName(
-      ["PMAI_API_KEY", "MAI_API_KEY", "OPENAI_API_KEY"], in: environment)
-    draft.apiKeyFile = environment["PMAI_API_KEY_FILE"].flatMap {
-      $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
     }
     return RuntimeSetup(
-      catalogs: [],
-      implicitProviders: [hello, draft] + localProviders,
-      providerBaseURLs: [openAI.id: baseURL])
+      catalogs: catalogs, implicitProviders: implicitProviders, providerBaseURLs: providerBaseURLs)
   }
 
   private static func selectedProfile(
@@ -1988,9 +1979,20 @@ struct MaiCLI {
       }
       profile = SessionProfile(definition: definition)
     } else {
+      let hasAdHocProvider = options.providerOverride != nil || options.modelOverride != nil
+        || options.baseURLOverride != nil || options.apiKeyOverride != nil
+        || environmentValue([
+          "PMAI_PROVIDER", "MAI_PROVIDER", "PMAI_MODEL", "MAI_MODEL", "OPENAI_MODEL",
+          "PMAI_BASE_URL", "MAI_BASE_URL", "OPENAI_BASE_URL", "PMAI_API_KEY", "MAI_API_KEY",
+          "OPENAI_API_KEY", "PMAI_API_KEY_FILE",
+        ], in: defaultsEnvironment) != nil
+      let provider = providerOverride
+        ?? configuration?.providers.first.map { ProviderID($0.id) }
+        ?? (hasAdHocProvider ? .openAI : ProviderID(""))
       profile = SessionProfile(
-        provider: providerOverride ?? .openAI,
-        model: "gpt-oss:20b",
+        provider: provider,
+        model: configuration?.providers.first(where: { $0.id == provider.rawValue })?.defaultModel
+          ?? (provider.rawValue.isEmpty ? "" : "gpt-oss:20b"),
         instructions: options.systemOverride ?? SystemPrompt.defaultInstructions,
         stream: options.stream)
     }
@@ -2255,7 +2257,11 @@ struct MaiCLI {
     // session: once is enough, and clearing the table must not bring them
     // back.
     var restoredChatIDs: Set<UUID> = []
-    await terminal.line("pmai — MaiCore agent REPL")
+    if configuration?.providers.isEmpty != false {
+      await terminal.line(aboutMessage)
+    } else {
+      await terminal.line("pmai — MaiCore agent REPL")
+    }
     await terminal.line(
       "Project: \(project.displayName) · \(abbreviatedPath(project.workingDirectory)) · /project shows more"
     )
@@ -2635,6 +2641,10 @@ struct MaiCLI {
     /// texts just typed. The turn runs in its own task; the loop hears about
     /// its end as an event.
     func startTurn(_ texts: [String], ignoringQueue: Bool = false) async {
+      guard !session.profile.provider.rawValue.isEmpty else {
+        await terminal.line("No provider selected. Type /about for setup commands.")
+        return
+      }
       for text in texts {
         guard await preparePromptFileAccess(
           for: text, runtime: runtime, configuration: configuration,
@@ -4161,7 +4171,9 @@ struct MaiCLI {
     _ session: REPLSession, contextSize: AgentContextSize? = nil
   ) -> String {
     let profile = session.profile
-    let model = profile.model.isEmpty ? profile.provider.rawValue : profile.model
+    let model = profile.model.isEmpty
+      ? (profile.provider.rawValue.isEmpty ? "no model selected" : profile.provider.rawValue)
+      : profile.model
     return "[\(profile.agentID)] · \(promptContextStatus(session, contextSize: contextSize)) · \(model)"
   }
 
@@ -4356,10 +4368,14 @@ struct MaiCLI {
       return true
     case "/version":
       await terminal.line(version)
+    case "/about":
+      await terminal.line(aboutMessage)
     case "/help":
       switch argument.lowercased() {
       case "":
         await terminal.line(replHelp)
+      case "about", "/about":
+        await terminal.line(aboutMessage)
       case "set", "/set":
         await terminal.line(setHelp)
       case "provider", "providers", "baseurl", "/provider", "/providers", "/baseurl":
@@ -4435,7 +4451,11 @@ struct MaiCLI {
         argument, configuration: &configuration, configurationPath: visual.configurationPath,
         directory: visual.themesDirectory, terminal: terminal)
     case "/providers":
-      for provider in await runtime.availableProviders() {
+      let providers = await runtime.availableProviders()
+      if providers.isEmpty {
+        await terminal.line("No providers configured. Type /about for setup commands.")
+      }
+      for provider in providers {
         let selected = provider.id == session.profile.provider ? "*" : " "
         let baseURL =
           (visual.providerBaseURLs.url(for: provider.id.rawValue)
@@ -6393,7 +6413,9 @@ struct MaiCLI {
   ) async {
     let words = argument.split(whereSeparator: \Character.isWhitespace).map(String.init)
     guard let first = words.first else {
-      await terminal.line("Chat: \(session.profile.provider)::\(session.profile.model)")
+      let selection = session.profile.provider.rawValue.isEmpty
+        ? "no model selected" : "\(session.profile.provider)::\(session.profile.model)"
+      await terminal.line("Chat: \(selection)")
       for task in AgentTask.allCases {
         let id = configuration?.taskAgents[task]
         let agent = configuration?.agents.first { $0.id == id }
@@ -6470,6 +6492,10 @@ struct MaiCLI {
   ) async {
     let fields = argument.split(whereSeparator: \Character.isWhitespace).map(String.init)
     guard !fields.isEmpty else {
+      guard !session.profile.provider.rawValue.isEmpty else {
+        await terminal.line("No provider selected. Type /about for setup commands.")
+        return
+      }
       let configured = configuration?.providers.first {
         $0.id == session.profile.provider.rawValue
       }
@@ -6540,7 +6566,7 @@ struct MaiCLI {
         guard let parsed = URL(string: fields[offset]),
           ["http", "https"].contains(parsed.scheme?.lowercased() ?? ""), parsed.host != nil
         else {
-          await terminal.line("Usage: /provider add ID [BASE_URL] [--kind apple|mlx|openAICompatible|systemone] [--model MODEL] [--api-key-file PATH]")
+          await terminal.line("Usage: /provider add ID [BASE_URL] [--kind apple|mlx|openAICompatible|systemone] [--model MODEL] [--api-key KEY | --api-key-file PATH]")
           return
         }
         url = parsed
@@ -6550,6 +6576,7 @@ struct MaiCLI {
       var kind: ConfiguredProviderKind = url == nil && ["apple", "mlx"].contains(fields[1])
         ? ConfiguredProviderKind(fields[1]) : .openAICompatible
       var keyFile: String?
+      var apiKey: String?
       var model: String?
       var validFlags = flags.count.isMultiple(of: 2)
       if validFlags {
@@ -6560,17 +6587,18 @@ struct MaiCLI {
             kind = value.lowercased() == "openaicompatible" ? .openAICompatible
               : ConfiguredProviderKind(value.lowercased())
           case "--api-key-file": keyFile = flags[index + 1]
+          case "--api-key": apiKey = flags[index + 1]
           case "--model": model = flags[index + 1]
           default: validFlags = false
           }
         }
       }
       let local = [.apple, .mlx].contains(kind)
-      guard validFlags, local ? url == nil : url != nil,
+      guard validFlags, apiKey == nil || keyFile == nil, local ? url == nil : url != nil,
         var draft = configuration, let configurationPath
       else {
         await terminal.line(
-          "Usage: /provider add ID [BASE_URL] [--kind apple|mlx|openAICompatible|systemone] [--model MODEL] [--api-key-file PATH] (Apple/MLX use no URL)")
+          "Usage: /provider add ID [BASE_URL] [--kind apple|mlx|openAICompatible|systemone] [--model MODEL] [--api-key KEY | --api-key-file PATH] (Apple/MLX use no URL)")
         return
       }
       guard !draft.providers.contains(where: { $0.id == fields[1] }) else {
@@ -6582,7 +6610,7 @@ struct MaiCLI {
         id: fields[1], kind: kind, baseURL: url,
         defaultModel: model ?? (kind == .apple ? AppleProvider.modelID
           : kind == .mlx ? MLXProvider.defaultModelID : nil),
-        apiKeyFile: keyFile)
+        apiKey: apiKey, apiKeyFile: keyFile)
       do {
         let instance = try await plugins.makeProvider(
           from: provider, environment: ProcessInfo.processInfo.environment)
@@ -11127,6 +11155,12 @@ struct MaiCLI {
     AgentHome.expandUserPath("~/.config/pmai/config.json", environment: environment)
   }
 
+  private static func initialConfiguration() -> MaiConfiguration {
+    MaiConfiguration(toolSources: [
+      ConfiguredToolSource(id: "standard-tools", kind: MaiStandardToolsPlugin.factoryKind)
+    ])
+  }
+
   private static func editConfiguration(environment: [String: String]) async throws {
     let editor = environment["EDITOR"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     guard let command = editor.isEmpty ? fallbackEditor(environment: environment) : editor else {
@@ -11134,7 +11168,7 @@ struct MaiCLI {
     }
     let url = URL(fileURLWithPath: defaultConfigurationPath(environment: environment))
     if !FileManager.default.fileExists(atPath: url.path) {
-      try sampleConfiguration().save(to: url)
+      try initialConfiguration().save(to: url)
     }
     guard await launchEditor(at: url, command: command, terminal: TerminalWriter()) else {
       exit(1)
@@ -11437,7 +11471,7 @@ struct MaiCLI {
       "/set tool.proxy hybrid", "/set tool.auto on", "/set tool.auto off",
       "/set ui.title ", "/set ui.title none", "/set ui.editor ", "/set ui.editor none",
       "/theme color bgline rgb:024", "/theme color bgline none",
-      "/theme color fgprompt yellow", "/version", "/last", "/skills",
+      "/theme color fgprompt yellow", "/version", "/about", "/help about", "/last", "/skills",
       "/theme color fgcolor none", "/theme color bgcolor none", "/theme color bgprompt none",
       "/theme color fgtoolresult yellow", "/set use.", "/set use.agentsmd on",
       "/set use.agentsmd off",
@@ -11451,7 +11485,7 @@ struct MaiCLI {
       "/path", "/path list", "/path allow ", "/path deny ", "/path ask ",
       "/path remove ", "/path outside ask", "/path outside deny", "/help path",
       "/providers", "/models ", "/provider ", "/provider add ", "/provider rename ",
-      "/provider use apple", "/provider use mlx", "/provider add local-apple --kind apple",
+      "/provider add local-apple --kind apple",
       "/provider add local-mlx --kind mlx", "/help provider",
       "/help provider",
       "/model ", "/model-chat ",
@@ -11813,7 +11847,31 @@ struct MaiCLI {
     Shell commands and other tools retain their own permissions.
     """
 
+  private static let aboutMessage = #"""
+        /\             /\
+       /  \___________/  \
+      /                   \
+     |    \                |     _    ___
+     |     >   ____        |    / \  |_ _|
+     |    /                |   / _ \  | |
+      \___________________/   /_/ \_\|___|
+
+    Welcome to PocketMai! pmai \#(version)
+
+    Add a provider with your API URL and key:
+      /provider add myai https://api.example.com/v1 --api-key YOUR_API_KEY
+      /models myai
+      /model myai::MODEL
+
+    Replace the example URL and YOUR_API_KEY with your provider's settings.
+    Choose MODEL from /models. Your provider and model are saved for future chats.
+    Use --api-key-file PATH instead of --api-key to read the key from a file.
+    Type /help for commands, /help provider for local Apple/MLX setup,
+    or /about to show this message again.
+    """#
+
   private static let replHelp = """
+    /about                 Show the PocketMai logo, version, and provider setup commands
     /agent                 Alias for /agents
     /agent add NAME       Copy this agent's settings into a new saved agent
     /agent default ID     Save the default agent for new chats and runs
@@ -11947,13 +12005,15 @@ struct MaiCLI {
     /provider                         Show the current connection
     /providers                        List providers, local availability, and effective URLs
     /provider [use] ID                Save this agent's provider and default for new chats
-    /provider add ID URL [--api-key-file PATH] [--kind systemone]
+    /provider add ID URL [--api-key KEY | --api-key-file PATH] [--model MODEL] [--kind systemone]
     /provider add ID --kind apple     Apple Intelligence; no URL or API key
     /provider add ID --kind mlx [--model org/model]  MLX on Apple silicon; no URL
     /provider rename [OLD] NEW        Rename a connection and update configured agents
     /edit provider [ID]               Edit its URL, default model, credentials, headers, and options
 
-    On macOS, apple and mlx are included automatically. Select them with:
+    Providers are added explicitly. On macOS, set up native providers with:
+      /provider add apple --kind apple
+      /provider add mlx --kind mlx
       /provider use apple            Uses Apple's on-device model
       /provider use mlx              Uses the default MLX model
       /model mlx::org/model          Choose an MLX-ready Hugging Face repo or local directory

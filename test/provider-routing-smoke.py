@@ -123,6 +123,19 @@ path.write_text(json.dumps(provider))
                 assert headers.get('Authorization') == (None if key is None else 'Bearer ' + key), headers
                 assert request['model'] == model, request
 
+            # The welcome commands turn an empty config into a working keyed connection.
+            fresh_config = root / 'fresh.json'
+            fresh_config.write_text('{}')
+            output = run(['/provider add myai ' + base + '/first/v1 --api-key first-key',
+                          '/models myai', '/model myai::org/model:tag', 'First request.'],
+                         args=['--config', str(fresh_config)], ambient_defaults=False)
+            assert 'Welcome to PocketMai!' in output, output
+            assert 'first-key' not in output, output
+            check_request('/first/v1', 'first-key')
+            assert [p['id'] for p in json.loads(fresh_config.read_text())['providers']] == ['myai']
+            run(args=['--config', str(fresh_config), 'Saved first connection.'], ambient_defaults=False)
+            check_request('/first/v1', 'first-key')
+
             # Flags split provider::model. Environment aliases only bootstrap unsaved profiles.
             run(args=['--model', 'remote::org/model:tag', 'Flag selection.'])
             check_request('/remote/v1', 'file-key')

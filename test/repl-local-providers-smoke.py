@@ -38,7 +38,12 @@ def main():
 
         output = run(['/providers', '/help provider'])
         assert '--kind apple' in output and '--kind mlx' in output, output
+        assert [p['id'] for p in json.loads(config.read_text())['providers']] == ['hello']
+        assert 'apple — Apple Intelligence' not in output, output
+        assert 'mlx — MLX Local' not in output, output
         if sys.platform == 'darwin':
+            output = run(['/provider add apple --kind apple', '/provider add mlx --kind mlx',
+                          '/providers'])
             assert 'apple — Apple Intelligence' in output, output
             assert 'mlx — MLX Local' in output, output
             output = run(['/provider use apple', '/model-chat'])
@@ -58,6 +63,8 @@ def main():
                          'OPENAI_BASE_URL': 'not-a-url',
                          'PMAI_API_KEY_FILE': str(root / 'missing-remote-key')})
                 assert f'Chat: {provider}::{model}' in output, output
+                fresh_config = root / f'fresh-{provider}/.config/pmai/config.json'
+                assert [p['id'] for p in json.loads(fresh_config.read_text())['providers']] == [provider]
 
         run(['/provider add personal-apple --kind apple',
              '/provider add personal-mlx --kind mlx --model mlx-community/LFM2-350M-MLX',

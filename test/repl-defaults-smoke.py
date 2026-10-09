@@ -3,6 +3,7 @@
 import json
 import re
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 from smoke import clean_environment, run_repl
@@ -27,7 +28,52 @@ def main():
                 commands, cwd=cwd, env=environment | {'HOME': str(home)} | (env or {}),
                 split=split)
 
-        run([f'/provider add local http://127.0.0.1:11434/v1 --api-key-file {key_file}',
+        # Empty installs remain empty across restarts; /about repeats the welcome.
+        output = run(['/providers', '/provider', '/model', '/help'])
+        assert 'Welcome to PocketMai!' in output, output
+        assert r'\___________/' in output, output
+        assert '/provider add myai https://api.example.com/v1 --api-key YOUR_API_KEY' in output
+        assert 'No providers configured.' in output, output
+        assert 'No provider selected.' in output, output
+        assert 'Chat: no model selected' in output, output
+        assert '/about' in output, output
+        saved = json.loads(config.read_text())
+        assert saved['providers'] == [] and saved['agents'] == [], saved
+        original = config.read_bytes()
+        welcome, about = run(['/providers', '/about'], split=True)
+        assert 'Welcome to PocketMai!' in welcome and 'Welcome to PocketMai!' in about
+        assert config.read_bytes() == original, 'welcome created providers or agents'
+        output = run(['hello before setup'])
+        assert 'No provider selected. Type /about' in output, output
+        assert config.read_bytes() == original, 'an unconfigured prompt changed settings'
+        result = subprocess.run(
+            [binary, '--no-stream', '--no-markdown', 'hello before setup'],
+            cwd=project, env=environment | {'HOME': str(user_home)},
+            capture_output=True, text=True, timeout=30)
+        assert result.returncode != 0 and 'type /about' in result.stderr, result.stderr
+        assert config.read_bytes() == original, 'an unconfigured one-shot changed settings'
+
+        # The welcome's API-key setup and a default model survive a restart.
+        output = run(['/provider add myai https://api.example.com/v1 '
+                      '--api-key setup-key --model setup-model', '/provider use myai'])
+        assert 'setup-key' not in output, output
+        provider = json.loads(config.read_text())['providers'][0]
+        assert provider['id'] == 'myai' and provider['apiKey'] == 'setup-key', provider
+        assert provider['defaultModel'] == 'setup-model', provider
+        output = run(['/provider', '/model'])
+        assert 'Current provider: myai' in output and 'Chat: myai::setup-model' in output, output
+        assert 'Welcome to PocketMai!' not in output, output
+        original = config.read_bytes()
+        about, help_about = run(['/about', '/help about'], split=True)
+        assert 'Welcome to PocketMai!' in about and 'Welcome to PocketMai!' in help_about
+        assert config.read_bytes() == original, '/about changed settings'
+        output = run([f'/provider add conflict https://api.example.com/v1 '
+                      f'--api-key setup-key --api-key-file {key_file}'])
+        assert 'Usage: /provider add' in output, output
+        assert config.read_bytes() == original, 'conflicting credential flags changed settings'
+
+        run(['/provider add hello http://127.0.0.1:11434/v1 --kind hello',
+             f'/provider add local http://127.0.0.1:11434/v1 --api-key-file {key_file}',
              '/provider use local', '/model org/saved:latest', '/set effort low',
              '/set tool.calling xml'])
         saved = json.loads(config.read_text())
@@ -112,6 +158,7 @@ def main():
         # Environment defaults can still bootstrap an installation once.
         bootstrap_home = root / 'bootstrap-user'
         bootstrap_home.mkdir()
+        assert 'No providers configured.' in run(['/providers'], home=bootstrap_home)
         run(['/model'], env={'PMAI_PROVIDER': 'bootstrap',
                             'PMAI_MODEL': 'bootstrap::initial',
                             'PMAI_BASE_URL': 'http://127.0.0.1:9000/v1'},
@@ -119,6 +166,20 @@ def main():
         output = run(['/model', '/baseurl'], home=bootstrap_home)
         assert 'Chat: bootstrap::initial' in output, output
         assert "Base URL for 'bootstrap': http://127.0.0.1:9000/v1" in output, output
+        bootstrap_config = bootstrap_home / '.config/pmai/config.json'
+        assert [p['id'] for p in json.loads(bootstrap_config.read_text())['providers']] == ['bootstrap']
+
+        # Opening the config editor on a fresh install also starts empty.
+        editor_home = root / 'editor-user'
+        editor_home.mkdir()
+        result = subprocess.run(
+            [binary, '-E'], cwd=project,
+            env=environment | {'HOME': str(editor_home),
+                               'EDITOR': 'cmd /c exit 0' if sys.platform == 'win32' else 'true'},
+            capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, result.stdout + result.stderr
+        edited = json.loads((editor_home / '.config/pmai/config.json').read_text())
+        assert edited['providers'] == [] and edited['agents'] == [], edited
         print('PASS persistent defaults: clean setup, model/provider/settings, environment '
               'precedence, new projects, temporary flags, active agent, and bootstrap')
 

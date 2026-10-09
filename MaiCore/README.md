@@ -26,7 +26,7 @@ text, XML, or JSON calling, and `/set tool.proxy` controls discovery through a p
 Malformed calls receive corrective feedback; three consecutive empty or malformed
 turns withdraw tools and ask for a final answer explaining any unfinished work.
 
-Run the offline REPL from the repository root:
+Run the REPL from the repository root:
 
 ```sh
 make repl
@@ -52,6 +52,19 @@ Keep `env.sh` local because it can contain credentials.
 
 You can configure pmai entirely from the REPL without environment variables:
 
+A fresh installation starts with no providers and shows the PocketMai ASCII
+logo with setup commands. `/about` shows this welcome message again at any time.
+Add a remote provider with its API URL and key, then select a model:
+
+```text
+/provider add myai https://api.example.com/v1 --api-key YOUR_API_KEY
+/models myai
+/model myai::MODEL
+```
+
+Replace the example URL and key with your provider's settings and choose `MODEL`
+from `/models`. For a local OpenAI-compatible server that needs no API key:
+
 ```text
 /provider add local http://127.0.0.1:11434/v1
 /provider use local
@@ -60,15 +73,17 @@ You can configure pmai entirely from the REPL without environment variables:
 
 These choices survive restarts and become the defaults for new chats and runs,
 even if the shell still exports older model/provider values. For a remote
-connection, add `--api-key-file /path/to/key` to `/provider add`, or set its
-credentials with `/edit provider ID`. Settings save to the active `--config`
+connection, use `--api-key KEY` or `--api-key-file /path/to/key` with
+`/provider add`, or set its credentials with `/edit provider ID`.
+Settings save to the active `--config`
 file, `./pmai.json`, or `~/.config/pmai/config.json` by default.
 
-On macOS, `apple` and `mlx` are registered automatically, including when upgrading
-an existing configuration. `/providers` shows their availability and setup guidance.
-They run natively and need no server URL or OpenAI key:
+On macOS, add `apple` and `mlx` explicitly. `/providers` shows the availability
+of configured providers. These run natively and need no server URL or OpenAI key:
 
 ```text
+/provider add apple --kind apple
+/provider add mlx --kind mlx
 /providers
 /model apple::on-device
 /model mlx::LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit
