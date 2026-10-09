@@ -130,4 +130,8 @@ The `pmai` CLI ships there for macOS, Linux, and Android. Linux comes as a
 glibc build and as a fully static `-musl` build that runs on Alpine and other
 musl distributions; `www/install.sh` picks the right one automatically.
 
+Install the bundled [Vim integration](doc/vim.md) with `pmai --vim install`.
+Use `pmai --vim update` to refresh it and `pmai --vim uninstall` to remove it.
+Select lines and press `m` to send them to pmai, review the reply, and apply it.
+
 —pancake

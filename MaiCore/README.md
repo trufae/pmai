@@ -1,5 +1,9 @@
 # MaiCore
 
+`pmai --vim install|update|uninstall` manages the bundled
+[Vim integration](../doc/vim.md) without needing a checkout. Select lines and
+press `m` to choose a prompt, review pmai's reply, and apply it to the buffer.
+
 Task-specific models are configured through saved agents in both pmai and iOS. See [providers, agents, and task defaults](../doc/task-agents.md) for `/model-compact`, `/model-tool`, persistent CLI overrides, and the iOS workflow.
 
 

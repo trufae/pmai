@@ -8,7 +8,7 @@ the portable chat layer. Both use separate build directories. `make test-unit`
 runs all module-owned Swift targets; shared parsing and document-indexing cases
 run here instead of booting the iOS app. `make test` runs the iOS-specific suite.
 
-`make test-cli` builds once, runs the Swift suite, all 30 self-contained smoke
+`make test-cli` builds once, runs the Swift suite, all 31 self-contained smoke
 scripts, and benchmark-accounting unit tests. Use `TEST_ARGS="--jobs 2"` for
 bounded smoke concurrency. After a full build, `TEST_ARGS="--skip-build"`
 reuses the prepared binaries. `TEST_PROFILE=smoke`, `terminal`, or `platform`
@@ -17,6 +17,9 @@ selects a smaller CLI suite; the runner rejects unassigned smoke scripts.
 The remaining two smoke scripts require external fixtures:
 `python3 test/run-tests.py external --tailcat /path/to/tailcat --ghostty /path/to/ghostty-web`.
 Live-provider checks and coding benchmarks remain explicit commands below.
+`python3 test/vim-smoke.py MaiCore/.build/debug/pmai` checks the bundled Vim
+installer from a detached binary and, when Vim is available, transforms selections
+against a local provider. It covers updates, custom prompts, and uninstall.
 Every smoke script also remains independently runnable. `smoke.py` shares only
 environment isolation, REPL response delimiters, PTY waits, and HTTP responses.
 

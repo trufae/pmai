@@ -88,6 +88,8 @@ private struct CLIOptions {
   var printConfig = false
   var editConfig = false
   var update = false
+  var vimAction: VimIntegration.Action?
+  var vimDirectory: String?
   /// List every known project and exit.
   var listProjects = false
   /// List this project's saved chats and exit.
@@ -183,6 +185,14 @@ private struct CLIOptions {
         editConfig = true
       case "-U", "--update":
         update = true
+      case "--vim":
+        let value = try Self.value(after: argument, in: arguments, index: &index)
+        guard let action = VimIntegration.Action(rawValue: value) else {
+          throw CLIError.unknownOption("--vim expects install, update, or uninstall")
+        }
+        vimAction = action
+      case "--vim-dir":
+        vimDirectory = try Self.value(after: argument, in: arguments, index: &index)
       case "--acp-root":
         acpRoot = try Self.value(after: argument, in: arguments, index: &index)
       case "--acp-sessions":
@@ -207,6 +217,9 @@ private struct CLIOptions {
     }
     if !positional.isEmpty { initialPrompt = positional.joined(separator: " ") }
     if readStdin, serve != nil { throw CLIError.stdinServesProtocol }
+    if vimDirectory != nil, vimAction == nil {
+      throw CLIError.unknownOption("--vim-dir requires --vim")
+    }
     if tailcatGateway != nil, serve != .acp { throw CLIError.unknownOption("Tailcat gateway requires --acp") }
   }
 
@@ -1194,6 +1207,10 @@ struct MaiCLI {
       let options = try CLIOptions(
         arguments: Array(commandLineArguments.dropFirst()),
         environment: environment)
+      if let action = options.vimAction {
+        try VimIntegration.run(action, directory: options.vimDirectory, environment: environment)
+        return
+      }
       if options.editConfig {
         try await editConfiguration(environment: environment)
         return
@@ -12407,6 +12424,8 @@ struct MaiCLI {
         --stdin             attach standard input as a text file (git diff | pmai --stdin "review it")
         --system TEXT       override agent instructions
         -U, --update        check for updates and install the latest release
+        --vim ACTION        install, update, or uninstall the bundled Vim integration
+        --vim-dir DIR       Vim runtime directory (default: ~/.vim; ~/vimfiles on Windows)
         -v, --version       print the pmai version
         --tool-aproval MODE yolo, ask, or smart for this run; /set tool.aproval saves the project default
 

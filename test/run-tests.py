@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SMOKE = '''installer project-approval project-debug provider-routing repl-defaults
 repl-export repl-local-providers repl-resume repl-resume-routing
 repl-resume-state repl-skills repl-smart-context repl-tool-policy task-agents
-update web-fetch'''.split()
+update vim web-fetch'''.split()
 TERMINAL = '''repl-agents repl-colors repl-compaction repl-interactive-run repl-models repl-path
 repl-queue repl-recap repl-resize repl-suspend repl-theme repl-tool-context'''.split()
 EXTERNAL = ['repl-reflow', 'tailcat']  # Ghostty and a separately built tailcat binary.
