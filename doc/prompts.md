@@ -211,3 +211,32 @@ configuration, and clearing it in the editor restores the default.
 | `memory` | `/memory learn` | `{{transcript}}` (`{{memory}}`, `{{focus}}` optional) | `/edit memory-prompt` |
 
 See `doc/agents.md` for what the delegation and worker templates do.
+
+## Skills on iOS
+
+Open **Settings → Tools → Skills** to import a folder containing `SKILL.md`,
+inspect its instructions, and enable or disable it for the selected agent.
+Supporting files are copied with the folder. Imported skills live in
+`FilesData/.pmai/skills`; skills in the chat's working folder take precedence
+when Files workspace access is enabled. Use **Reload Skills** after editing
+files externally. A skill with `disable-model-invocation: true` is shown but
+cannot be enabled as a tool.
+
+Each enabled skill is a `skills_NAME` tool, available to ordinary model
+selection, the tool proxy, and System One's smart tool selector. Calling it
+loads its instructions; the other enabled tools perform the work. Enable
+Files tools to read supporting files, and keep those files in the selected
+workspace when using a custom working folder. Loading a skill does not grant
+access to disabled tools or allow shell execution on iOS.
+
+**Skill approval** follows tool approval by default. Choose **Ask** to confirm
+skills even while other tools use yolo, **Yolo** to load them without a prompt,
+or **Smart** to use the configured approval agent. The confirmation sheet lets
+you accept the proposal, cancel it, or pick another enabled skill. Cancel
+rejects the call; Stop interrupts the run. Native call IDs and task arguments
+are preserved when choosing a different skill.
+
+The Tools section of backup/import includes imported skill folders, their
+supporting files, and the selected agent's enable/approval settings. A pmai
+archive containing only skills can also be imported through Tools; enable the
+imported skills from the Skills menu afterward.

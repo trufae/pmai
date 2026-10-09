@@ -24,6 +24,8 @@ struct AgentSettings: Codable, Equatable, Sendable {
   var toolCallingMode: ToolCallingMode = .text
   var maxToolCallsPerTurn: Int = AppSettings.defaultMaxToolCallsPerTurn
   var toolApprovalMode: ToolApprovalMode = .yolo
+  var enabledSkillTools: Set<String> = []
+  var skillApprovalMode: ToolApprovalMode? = nil
   var useToolProxy: Bool = false
   var useSystemOne: Bool = false
   var contextWindowMode: ContextWindowMode = .full
@@ -41,6 +43,7 @@ struct AgentSettings: Codable, Equatable, Sendable {
     case defaultEnabledMCPServers, defaultEnabledMCPTools
     case mcpRequestTimeoutSeconds, llmRequestTimeoutSeconds
     case toolCallingMode, maxToolCallsPerTurn, toolApprovalMode, useToolProxy, useSystemOne
+    case enabledSkillTools, skillApprovalMode
     case contextWindowMode, includeAssistantResponsesInContext, includeReasoningContentInContext
     case mlxMaxKVSize, mlxAutoCompact
   }
@@ -87,6 +90,8 @@ struct AgentSettings: Codable, Equatable, Sendable {
     toolApprovalMode =
       (try? c.decode(ToolApprovalMode.self, forKey: .toolApprovalMode))
       ?? ToolApprovalMode.legacyValue(from: decoder) ?? defaults.toolApprovalMode
+    enabledSkillTools = (try? c.decode(Set<String>.self, forKey: .enabledSkillTools)) ?? []
+    skillApprovalMode = try? c.decode(ToolApprovalMode.self, forKey: .skillApprovalMode)
     useSystemOne = (try? c.decode(Bool.self, forKey: .useSystemOne)) ?? false
     useToolProxy = (try? c.decode(Bool.self, forKey: .useToolProxy)) ?? defaults.useToolProxy
     contextWindowMode =
@@ -176,6 +181,8 @@ extension AppSettings {
       agent.toolCallingMode = toolCallingMode
       agent.maxToolCallsPerTurn = maxToolCallsPerTurn
       agent.toolApprovalMode = toolApprovalMode
+      agent.enabledSkillTools = enabledSkillTools
+      agent.skillApprovalMode = skillApprovalMode
       agent.useToolProxy = useToolProxy
       agent.useSystemOne = useSystemOne
       agent.contextWindowMode = contextWindowMode
@@ -203,6 +210,8 @@ extension AppSettings {
       toolCallingMode = newValue.toolCallingMode
       maxToolCallsPerTurn = newValue.maxToolCallsPerTurn
       toolApprovalMode = newValue.toolApprovalMode
+      enabledSkillTools = newValue.enabledSkillTools
+      skillApprovalMode = newValue.skillApprovalMode
       useToolProxy = newValue.useToolProxy
       useSystemOne = newValue.useSystemOne
       contextWindowMode = newValue.contextWindowMode

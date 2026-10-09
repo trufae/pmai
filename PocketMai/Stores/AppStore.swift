@@ -131,7 +131,9 @@ private struct ResolvedPromptSubmission {
 
 struct ToolCallApprovalRequest: Identifiable {
   let id: UUID
-  let callName: String
+  let call: ParsedToolCall
+  var callName: String { call.name }
+  let skillSelection: SkillToolSelection?
   let originalText: String
   let mode: ToolCallingMode
   let definitions: [ToolDefinition]
@@ -141,7 +143,8 @@ struct ToolCallApprovalRequest: Identifiable {
 
   init(
     id: UUID,
-    callName: String,
+    call: ParsedToolCall,
+    skillSelection: SkillToolSelection?,
     originalText: String,
     mode: ToolCallingMode,
     definitions: [ToolDefinition],
@@ -149,7 +152,8 @@ struct ToolCallApprovalRequest: Identifiable {
     continuation: CheckedContinuation<ToolCallApprovalDecision, Never>
   ) {
     self.id = id
-    self.callName = callName
+    self.call = call
+    self.skillSelection = skillSelection
     self.originalText = originalText
     self.mode = mode
     self.definitions = definitions
@@ -3913,14 +3917,16 @@ final class AppStore: ObservableObject {
     call: ParsedToolCall,
     definitions: [ToolDefinition],
     mode: ToolCallingMode,
-    conversationID: UUID
+    conversationID: UUID,
+    skillSelection: SkillToolSelection? = nil
   ) async -> ToolCallApprovalDecision {
     activityApprovalRequested(conversationID: conversationID, toolName: call.name)
     let decision = await requestToolCallApproval(
       call: call,
       definitions: definitions,
       mode: mode,
-      conversationTitle: conversation(withID: conversationID)?.displayTitle)
+      conversationTitle: conversation(withID: conversationID)?.displayTitle,
+      skillSelection: skillSelection)
     activityApprovalResolved(
       conversationID: conversationID,
       toolName: call.name,
@@ -3932,7 +3938,8 @@ final class AppStore: ObservableObject {
     call: ParsedToolCall,
     definitions: [ToolDefinition],
     mode: ToolCallingMode,
-    conversationTitle: String?
+    conversationTitle: String?,
+    skillSelection: SkillToolSelection? = nil
   ) async -> ToolCallApprovalDecision {
     let normalizedCall = AgentTooling.normalized(call: call, tools: definitions)
     let requestID = UUID()
@@ -3947,7 +3954,8 @@ final class AppStore: ObservableObject {
           }
           let request = ToolCallApprovalRequest(
             id: requestID,
-            callName: normalizedCall.name,
+            call: normalizedCall,
+            skillSelection: skillSelection,
             originalText: originalText,
             mode: mode,
             definitions: definitions,
@@ -3984,6 +3992,15 @@ final class AppStore: ObservableObject {
 
   func cancelToolCallApproval(id: UUID) {
     _ = resolveToolCallApproval(id: id, decision: .cancelled)
+  }
+
+  @discardableResult
+  func approveSkill(id: UUID, toolName: String) -> String? {
+    guard let request = toolCallApprovalRequests.first(where: { $0.id == id }),
+      let call = request.skillSelection?.selecting(toolName)
+    else { return "This skill is no longer available for approval." }
+    resolveToolCallApproval(id: id, decision: .approved(call))
+    return nil
   }
 
   func interruptToolCallApproval(id: UUID) {
@@ -4029,7 +4046,9 @@ final class AppStore: ObservableObject {
     {
       return .failure(error)
     }
-    return .success(normalizedCall)
+    return .success(ParsedToolCall(
+      name: normalizedCall.name, arguments: [:], argumentValues: normalizedCall.argumentValues,
+      rawBlock: normalizedCall.rawBlock, toolCallID: request.call.toolCallID))
   }
 
   private func approvalToolCalls(
@@ -5544,14 +5563,8 @@ final class AppStore: ObservableObject {
     includePictures: Bool = false
   ) async -> URL? {
     let selection = SettingsBackupSelection(scope: scope)
-    if selection.conversations {
-      await loadStoredConversationsForSearch()
-    }
-    let envelope = await makeBackupEnvelope(
-      selection: selection,
-      includeAudio: includeAudio,
-      includePictures: includePictures)
-    return exportSettingsBackupFile(envelope: envelope, filename: backupFilename(scope: scope))
+    return await exportSettingsBackupFile(
+      selection: selection, includeAudio: includeAudio, includePictures: includePictures)
   }
 
   func exportSettingsBackupFile(
@@ -5566,12 +5579,15 @@ final class AppStore: ObservableObject {
     if selection.conversations {
       await loadStoredConversationsForSearch()
     }
-    let envelope = await makeBackupEnvelope(
-      selection: selection,
-      includeAudio: includeAudio,
-      includePictures: includePictures)
-    return exportSettingsBackupFile(
-      envelope: envelope, filename: backupFilename(selection: selection))
+    do {
+      let envelope = try await makeBackupEnvelope(
+        selection: selection, includeAudio: includeAudio, includePictures: includePictures)
+      return exportSettingsBackupFile(
+        envelope: envelope, filename: backupFilename(selection: selection))
+    } catch {
+      errorMessage = "Could not write backup: \(error.localizedDescription)"
+      return nil
+    }
   }
 
   func exportEndpointBackupFile(_ endpoint: OpenAIEndpoint) -> URL? {
@@ -5613,7 +5629,7 @@ final class AppStore: ObservableObject {
     includeAudio: Bool,
     includePictures: Bool
   )
-    async -> SettingsBackupEnvelope
+    async throws -> SettingsBackupEnvelope
   {
     let baseConversations =
       selection.conversations
@@ -5643,6 +5659,9 @@ final class AppStore: ObservableObject {
       settings: portableSettings,
       chats: selection.conversations
         ? (exportedConversations ?? []).map { AgentChat(pocketMai: $0, settings: settings) }
+        : nil,
+      skills: selection.tools
+        ? try SkillTools.catalog(settings: settings).skills.map { try MaiArchiveSkill(skill: $0) }
         : nil)
     return SettingsBackupEnvelope(
       providers: selection.providers ? providersBackup() : nil,
@@ -5723,20 +5742,8 @@ final class AppStore: ObservableObject {
       toolCallingMode: settings.toolCallingMode,
       maxToolCallsPerTurn: settings.maxToolCallsPerTurn,
       toolApprovalMode: settings.toolApprovalMode,
-      useToolProxy: settings.useToolProxy, useSystemOne: settings.useSystemOne)
-  }
-
-  private func backupFilename(scope: SettingsBackupScope) -> String {
-    let stamp = backupTimestamp()
-    let suffix: String
-    switch scope {
-    case .everything: suffix = "everything"
-    case .providers: suffix = "providers"
-    case .prompts: suffix = "prompts"
-    case .tools: suffix = "tools"
-    case .conversations: suffix = "conversations"
-    }
-    return "PocketMai-\(suffix)-\(stamp)"
+      useToolProxy: settings.useToolProxy, useSystemOne: settings.useSystemOne,
+      enabledSkillTools: settings.enabledSkillTools, skillApprovalMode: settings.skillApprovalMode)
   }
 
   private func backupFilename(selection: SettingsBackupSelection) -> String {
@@ -5839,6 +5846,10 @@ final class AppStore: ObservableObject {
       mergePortableMCPServers(imported)
       applied.append("\(imported.count) MCP server\(imported.count == 1 ? "" : "s")")
     }
+    if selection.tools, let skills = archive.skills {
+      for skill in skills { try skill.install(in: SkillTools.directoryURL) }
+      applied.append("\(skills.count) skill\(skills.count == 1 ? "" : "s")")
+    }
     if selection.conversations, let chats = archive.chats {
       var imported = chats.map {
         Conversation(
@@ -5889,6 +5900,7 @@ final class AppStore: ObservableObject {
 
     if selection.tools, let payload = envelope.tools {
       applyToolsBackup(payload)
+      for skill in envelope.portable?.skills ?? [] { try skill.install(in: SkillTools.directoryURL) }
       applied.append("tool settings")
     }
 
@@ -6060,6 +6072,10 @@ final class AppStore: ObservableObject {
     if let mode = payload.toolApprovalMode {
       settings.toolApprovalMode = mode
     }
+    if let tools = payload.enabledSkillTools {
+      settings.enabledSkillTools = tools
+      settings.skillApprovalMode = payload.skillApprovalMode
+    }
     if let routing = payload.useSystemOne { settings.useSystemOne = routing }
     if let proxy = payload.useToolProxy {
       settings.useToolProxy = proxy
@@ -6184,6 +6200,8 @@ final class AppStore: ObservableObject {
     settings.toolSettings = .defaults
     settings.defaultEnabledTools = AppSettings.defaultTools
     settings.defaultEnabledMCPTools = AppSettings.defaultMCPTools
+    settings.enabledSkillTools.removeAll()
+    settings.skillApprovalMode = nil
     saveSettings()
   }
 

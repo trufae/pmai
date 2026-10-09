@@ -205,7 +205,7 @@ struct SettingsImportView: View {
           infoRow("pmai agents", "\(agents.count) (not imported on iOS)")
         }
         if let skills = archive.skills {
-          infoRow("pmai skills", "\(skills.count) (not imported on iOS)")
+          infoRow("Skills", "\(skills.count)")
         }
       }
     } header: {
@@ -435,7 +435,7 @@ struct SettingsImportView: View {
           "\(systemCount) system \(itemLabel(systemCount, singular: "prompt")), \(userCount) user \(itemLabel(userCount, singular: "prompt"))."
       case .tools:
         let count = archive.settings?.mcpServers?.count ?? 0
-        return "\(count) MCP \(itemLabel(count, singular: "server"))."
+        return "\(count) MCP \(itemLabel(count, singular: "server")), \(archive.skills?.count ?? 0) skills."
       case .conversations:
         let count = archive.chats?.count ?? 0
         return "\(count) \(itemLabel(count, singular: "conversation"))."

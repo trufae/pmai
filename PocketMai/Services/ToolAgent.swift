@@ -252,7 +252,7 @@ enum ToolAgentRegistry {
       mcpResources: mcpResources,
       mcpStatuses: mcpStatuses)
     guard settings.useToolProxy && !settings.useSystemOne else { return fullDefinitions }
-    return fullDefinitions.isEmpty ? [] : ToolProxy.definitions
+    return ToolProxy.definitions(for: fullDefinitions, exposing: [])
   }
 
   static func definitions(
@@ -266,6 +266,7 @@ enum ToolAgentRegistry {
     var defs = BuiltInToolCatalog.definitions(
       for: conversation,
       settings: settings)
+    defs += SkillTools.definitions(for: conversation, settings: settings)
     // Tool names must stay unique: duplicates shadow each other at dispatch
     // and trap the by-name lookups. Keep the first definition — built-ins,
     // then servers in settings order — matching executeConcrete's resolution
@@ -282,7 +283,8 @@ enum ToolAgentRegistry {
       for tool in tools {
         let key = MCPToolSelection.key(serverID: server.id, toolName: tool.name)
         guard conversation.enabledMCPTools.contains(key) else { continue }
-        guard takenNames.insert(tool.name).inserted else { continue }
+        guard !MaiSkillTools.isSkillTool(tool.name),
+          takenNames.insert(tool.name).inserted else { continue }
         let description = cleanedToolDescription(
           tool.description,
           fallback: "MCP tool from \(server.name).")
@@ -346,7 +348,7 @@ enum ToolAgentRegistry {
       return AgentTooling.unavailableToolError(name: visibleCall.name)
     }
 
-    if settings.useToolProxy && !fullDefinitions.isEmpty {
+    if settings.useToolProxy && !settings.useSystemOne && !fullDefinitions.isEmpty {
       switch visibleCall.name {
       case ToolProxy.listName:
         return ToolProxy.listTools(
@@ -388,6 +390,9 @@ enum ToolAgentRegistry {
     let normalizedCall = AgentTooling.normalized(call: call, tools: definitions)
     guard AgentTooling.containsDefinition(named: normalizedCall.name, in: definitions) else {
       return AgentTooling.unavailableToolError(name: normalizedCall.name)
+    }
+    if MaiSkillTools.isSkillTool(normalizedCall.name) {
+      return SkillTools.execute(call: normalizedCall, conversation: conversation, settings: settings)
     }
     if SubagentTool.isAgentTool(normalizedCall.name) {
       return await SubagentTool.execute(
