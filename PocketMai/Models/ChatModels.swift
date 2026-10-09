@@ -2279,6 +2279,8 @@ struct SettingsToolsBackup: Codable, Sendable {
   var toolApprovalMode: ToolApprovalMode?
   var useToolProxy: Bool?
   var useSystemOne: Bool? = nil
+  var enabledSkillTools: Set<String>? = nil
+  var skillApprovalMode: ToolApprovalMode? = nil
 }
 
 extension SettingsToolsBackup {
@@ -2300,6 +2302,8 @@ extension SettingsToolsBackup {
       ?? ToolApprovalMode.legacyValue(from: decoder)
     useToolProxy = try c.decodeIfPresent(Bool.self, forKey: .useToolProxy)
     useSystemOne = try c.decodeIfPresent(Bool.self, forKey: .useSystemOne)
+    enabledSkillTools = try c.decodeIfPresent(Set<String>.self, forKey: .enabledSkillTools)
+    skillApprovalMode = try c.decodeIfPresent(ToolApprovalMode.self, forKey: .skillApprovalMode)
   }
 }
 
@@ -2381,7 +2385,7 @@ struct SettingsImportFilePreview: Identifiable, Sendable {
       SettingsBackupSelection(
         providers: archive.settings?.providers != nil,
         prompts: archive.settings?.prompts != nil,
-        tools: archive.settings?.mcpServers != nil,
+        tools: archive.settings?.mcpServers != nil || archive.skills != nil,
         conversations: archive.chats != nil)
     }
   }
@@ -3129,6 +3133,8 @@ struct AppSettings: Codable, Equatable, Sendable {
   var toolCallingMode: ToolCallingMode = .text
   var maxToolCallsPerTurn: Int = AppSettings.defaultMaxToolCallsPerTurn
   var toolApprovalMode: ToolApprovalMode = .yolo
+  var enabledSkillTools: Set<String> = []
+  var skillApprovalMode: ToolApprovalMode? = nil
   var useToolProxy: Bool = false
   var useSystemOne: Bool = false
   var contextWindowMode: ContextWindowMode = .full
@@ -3330,6 +3336,7 @@ struct AppSettings: Codable, Equatable, Sendable {
     case toolSettings, mcpServers, mcpRequestTimeoutSeconds, llmRequestTimeoutSeconds, memory,
       toolCallingMode,
       maxToolCallsPerTurn
+    case enabledSkillTools, skillApprovalMode
     case toolApprovalMode, useToolProxy, useSystemOne, contextWindowMode
     case includeAssistantResponsesInContext, includeReasoningContentInContext
     case followUps, background
@@ -3429,6 +3436,8 @@ struct AppSettings: Codable, Equatable, Sendable {
     toolApprovalMode =
       (try? c.decode(ToolApprovalMode.self, forKey: .toolApprovalMode))
       ?? ToolApprovalMode.legacyValue(from: decoder) ?? .yolo
+    enabledSkillTools = (try? c.decode(Set<String>.self, forKey: .enabledSkillTools)) ?? []
+    skillApprovalMode = try? c.decode(ToolApprovalMode.self, forKey: .skillApprovalMode)
     useSystemOne = (try? c.decode(Bool.self, forKey: .useSystemOne)) ?? false
     useToolProxy =
       (try? c.decode(Bool.self, forKey: .useToolProxy)) ?? migratedFromLegacyProxy

@@ -1516,8 +1516,7 @@ struct SettingsView: View {
       }
 
       SettingsLazyDisclosureGroup {
-        Text("Coming soon")
-          .foregroundStyle(.secondary)
+        SkillsSettingsView()
       } label: {
         Label("Skills", systemImage: "sparkles")
       }

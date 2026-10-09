@@ -1,3 +1,4 @@
+import MaiCore
 import SwiftUI
 import UIKit
 
@@ -599,17 +600,20 @@ private struct ToolCallApprovalView: View {
   @EnvironmentObject private var store: AppStore
   let request: ToolCallApprovalRequest
   @State private var toolCallText: String
+  @State private var selectedSkill: String
   @State private var validationError: String?
 
   init(request: ToolCallApprovalRequest) {
     self.request = request
     _toolCallText = State(initialValue: request.originalText)
+    _selectedSkill = State(initialValue: request.skillSelection?.proposed.name ?? "")
   }
 
   var body: some View {
     NavigationStack {
       VStack(alignment: .leading, spacing: 14) {
-        Label(request.callName, systemImage: "wrench.and.screwdriver")
+        Label(request.skillSelection == nil ? request.callName : "Use a skill for this task?",
+          systemImage: request.skillSelection == nil ? "wrench.and.screwdriver" : "sparkles")
           .font(.headline)
           .lineLimit(2)
         if let conversationTitle = request.conversationTitle {
@@ -618,15 +622,32 @@ private struct ToolCallApprovalView: View {
             .foregroundStyle(.secondary)
             .lineLimit(2)
         }
-        TextEditor(text: $toolCallText)
-          .font(.system(.body, design: .monospaced))
-          .textInputAutocapitalization(.never)
-          .autocorrectionDisabled()
-          .scrollContentBackground(.hidden)
-          .padding(8)
-          .frame(minHeight: 260)
-          .background(Color(uiColor: .secondarySystemGroupedBackground))
-          .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        if let selection = request.skillSelection {
+          Picker("Skill", selection: $selectedSkill) {
+            ForEach(selection.skills, id: \.name) { skill in
+              Text(skill.annotations.title ?? String(skill.name.dropFirst(MaiSkillTools.toolPrefix.count)))
+                .tag(skill.name)
+            }
+          }
+          .pickerStyle(.menu)
+          Text(selection.skills.first(where: { $0.name == selectedSkill })?.description ?? "")
+            .font(.subheadline)
+          if let task = selection.proposed.argumentValues["arguments"]?.stringValue, !task.isEmpty {
+            Text(task)
+              .font(.body)
+              .textSelection(.enabled)
+          }
+        } else {
+          TextEditor(text: $toolCallText)
+            .font(.system(.body, design: .monospaced))
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .scrollContentBackground(.hidden)
+            .padding(8)
+            .frame(minHeight: 260)
+            .background(Color(uiColor: .secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
         if let validationError {
           Text(validationError)
             .font(.footnote)
@@ -635,7 +656,7 @@ private struct ToolCallApprovalView: View {
         Spacer(minLength: 0)
       }
       .padding()
-      .navigationTitle("Confirm Tool Call")
+      .navigationTitle(request.skillSelection == nil ? "Confirm Tool Call" : "Confirm Skill")
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
@@ -644,8 +665,10 @@ private struct ToolCallApprovalView: View {
           }
         }
         ToolbarItem(placement: .confirmationAction) {
-          Button("Run") {
-            validationError = store.approveToolCall(id: request.id, editedText: toolCallText)
+          Button(request.skillSelection == nil ? "Run" : "Accept") {
+            validationError = request.skillSelection == nil
+              ? store.approveToolCall(id: request.id, editedText: toolCallText)
+              : store.approveSkill(id: request.id, toolName: selectedSkill)
           }
         }
         ToolbarItem(placement: .bottomBar) {

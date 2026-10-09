@@ -33,6 +33,8 @@ final class AgentProfileTests: XCTestCase {
     custom.toolCallingMode = ToolCallingMode.allCases.first { $0 != .text } ?? .text
     custom.maxToolCallsPerTurn = 3
     custom.toolApprovalMode = .ask
+    custom.enabledSkillTools = ["skills_review"]
+    custom.skillApprovalMode = .smart
     custom.useToolProxy = true
     custom.useSystemOne = true
     custom.contextWindowMode = ContextWindowMode.allCases.first { $0 != .full } ?? .full

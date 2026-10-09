@@ -69,6 +69,19 @@ enum AssistantToolLoop {
     var debugRoundIndex = 0
     var toolCallCount = 0
     var repairTurnCount = 0
+    var skillInstructions: [String: String] = [:]
+
+    var activeSkillInstructions: String {
+      skillInstructions.keys.sorted().compactMap { skillInstructions[$0] }.joined(separator: "\n\n")
+    }
+
+    mutating func retainSkills(from results: [CallResult]) {
+      for result in results where isSuccessfulToolResult(result.result) {
+        let name = result.call.name == ToolProxy.callName
+          ? ToolProxy.requestedToolName(in: result.call.argumentValues) : result.call.name
+        if MaiSkillTools.isSkillTool(name) { skillInstructions[name] = result.result }
+      }
+    }
 
     mutating func append(_ turnText: String) -> String {
       assistantText = assistantText.isEmpty ? turnText : "\(assistantText)\n\n\(turnText)"
@@ -173,7 +186,8 @@ enum AssistantToolLoop {
         baseContext: baseContext,
         host: host,
         store: store,
-        answering: state.answering)
+        answering: state.answering,
+        skillInstructions: state.activeSkillInstructions)
       let promptMessages = debugPromptMessages(
         conversation: conversation,
         requestState: requestState,
@@ -362,6 +376,7 @@ enum AssistantToolLoop {
         store.saveConversations()
         state.hasSuccessfulToolRun = state.hasSuccessfulToolRun
           || output.results.contains { isSuccessfulToolResult($0.result) }
+        state.retainSkills(from: output.results)
         state.toolCallCount += output.results.count
         state.applyNativeContinuation(
           output.nativeMessages,
@@ -480,7 +495,8 @@ enum AssistantToolLoop {
         baseContext: baseContext,
         host: host,
         store: store,
-        answering: state.answering)
+        answering: state.answering,
+        skillInstructions: state.activeSkillInstructions)
       let response = try await requestModelResponse(
         requestState: requestState,
         state: state,
@@ -548,6 +564,7 @@ enum AssistantToolLoop {
           })
         state.hasSuccessfulToolRun = state.hasSuccessfulToolRun
           || output.results.contains { isSuccessfulToolResult($0.result) }
+        state.retainSkills(from: output.results)
         state.toolCallCount += output.results.count
         state.applyNativeContinuation(
           output.nativeMessages,
@@ -989,27 +1006,28 @@ enum AssistantToolLoop {
     let shouldExecute: Bool
     let approval: ToolCallApprovalDecision
     let approvalSettings = settings(for: host, store: store)
-    switch approvalSettings.toolApprovalMode {
+    let conversation: Conversation?
+    let definitions: [ToolDefinition]
+    switch host {
+    case .live(_, _, let id):
+      conversation = store.conversation(withID: id)
+      definitions = conversation.map {
+        ToolAgentRegistry.definitions(
+          for: $0, settings: approvalSettings, mcpTools: store.mcpTools,
+          mcpResources: store.mcpResources, mcpStatuses: store.mcpStatuses)
+      } ?? []
+    case .isolated(let value, _, let tools, let resources, let statuses, _):
+      conversation = value
+      definitions = ToolAgentRegistry.definitions(
+        for: value, settings: approvalSettings,
+        mcpTools: tools, mcpResources: resources, mcpStatuses: statuses)
+    }
+    let skillSelection = SkillToolSelection(call: normalizedCall, definitions: definitions)
+    let approvalMode = skillSelection == nil ? approvalSettings.toolApprovalMode
+      : approvalSettings.skillApprovalMode ?? approvalSettings.toolApprovalMode
+    switch approvalMode {
     case .yolo: approval = .approved(normalizedCall)
     case .smart:
-      let conversation: Conversation?
-      let definitions: [ToolDefinition]
-      switch host {
-      case .live(_, _, let id):
-        conversation = store.conversation(withID: id)
-        definitions =
-          conversation.map {
-            ToolAgentRegistry.definitions(
-              for: $0, settings: approvalSettings,
-              mcpTools: store.mcpTools, mcpResources: store.mcpResources,
-              mcpStatuses: store.mcpStatuses)
-          } ?? []
-      case .isolated(let value, _, let tools, let resources, let statuses, _):
-        conversation = value
-        definitions = ToolAgentRegistry.definitions(
-          for: value, settings: approvalSettings,
-          mcpTools: tools, mcpResources: resources, mcpStatuses: statuses)
-      }
       if let conversation {
         approval = try await smartApproval(
           call: normalizedCall, conversation: conversation,
@@ -1021,17 +1039,19 @@ enum AssistantToolLoop {
       switch host {
       case .live(_, _, let conversationID):
         approval = await store.requestToolCallApproval(
-        call: normalizedCall,
-        definitions: currentDefinitions,
-        mode: mode,
-        conversationID: conversationID)
-    case .isolated(let conversation, _, _, _, _, _):
-      approval = await store.requestToolCallApproval(
-        call: normalizedCall,
-        definitions: currentDefinitions,
-        mode: mode,
-        conversationTitle: conversation.displayTitle)
-    }
+          call: normalizedCall,
+          definitions: currentDefinitions,
+          mode: mode,
+          conversationID: conversationID,
+          skillSelection: skillSelection)
+      case .isolated(let conversation, _, _, _, _, _):
+        approval = await store.requestToolCallApproval(
+          call: normalizedCall,
+          definitions: currentDefinitions,
+          mode: mode,
+          conversationTitle: conversation.displayTitle,
+          skillSelection: skillSelection)
+      }
     }
     switch approval {
     case .denied(let reason):
@@ -1116,7 +1136,7 @@ enum AssistantToolLoop {
         await ToolAgentRegistry.execute(
           call: executableCall,
           conversation: conversation,
-          settings: settings,
+          settings: SkillTools.applyingLiveSettings(to: settings, from: store.settings),
           store: store)
       }
     }
@@ -1278,7 +1298,7 @@ enum AssistantToolLoop {
       let conversation, let settings, let mcpTools, let mcpResources, let mcpStatuses, _):
       return currentVisibleDefinitions(
         conversation: conversation,
-        settings: settings,
+        settings: SkillTools.applyingLiveSettings(to: settings, from: store.settings),
         mcpTools: mcpTools,
         mcpResources: mcpResources,
         mcpStatuses: mcpStatuses)
@@ -1290,7 +1310,7 @@ enum AssistantToolLoop {
     case .live:
       return store.settings
     case .isolated(_, let settings, _, _, _, _):
-      return settings
+      return SkillTools.applyingLiveSettings(to: settings, from: store.settings)
     }
   }
 
@@ -1299,7 +1319,8 @@ enum AssistantToolLoop {
     baseContext: String,
     host: RunHost,
     store: AppStore,
-    answering: Bool = false
+    answering: Bool = false,
+    skillInstructions: String = ""
   ) async throws -> RequestState {
     var settings = settings(for: host, store: store)
     var visibleDefinitions = answering ? [] : currentVisibleDefinitions(for: host, store: store)
@@ -1358,13 +1379,15 @@ enum AssistantToolLoop {
       : nativeTools == nil
         ? AgentTooling.promptDescription(for: loopDefinitions, mode: activeMode)
         : nativeToolLoopPrompt()
+    let skillPrompt = SkillTools.definitions(for: conversation, settings: settings).isEmpty
+      ? "" : MaiSkillTools.promptSection
     let taskPrompt = taskAgent == nil ? "" : AgentTask.tool.instructions
     let answerPrompt =
       answering
       ? "Use the tool results in the conversation to answer the user's request. No further tools are available for this turn."
       : ""
     let requestContext = [
-      baseContext, taskPrompt, answerPrompt, conversation.provider == .apple ? "" : toolPrompt,
+      baseContext, taskPrompt, answerPrompt, skillPrompt, skillInstructions, conversation.provider == .apple ? "" : toolPrompt,
     ]
     .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
     .filter { !$0.isEmpty }
