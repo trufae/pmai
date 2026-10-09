@@ -234,16 +234,17 @@ public struct AgentSkillCatalog: Equatable, Sendable {
   public var isEmpty: Bool { skills.isEmpty }
 
   /// The skills the model may be offered as tools.
-  public var modelInvocable: [AgentSkill] { skills.filter(\.isModelInvocable) }
+  public var modelInvocable: [AgentSkill] {
+    var seen = Set<String>()
+    return skills.filter { $0.isModelInvocable && seen.insert($0.toolName.lowercased()).inserted }
+  }
 
   /// A skill by its name or by its tool name, ignoring case.
   public func skill(named selector: String) -> AgentSkill? {
     let wanted = selector.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !wanted.isEmpty else { return nil }
-    return skills.first { skill in
-      skill.name.caseInsensitiveCompare(wanted) == .orderedSame
-        || skill.toolName.caseInsensitiveCompare(wanted) == .orderedSame
-    }
+    return skills.first { $0.name.caseInsensitiveCompare(wanted) == .orderedSame }
+      ?? skills.first { $0.toolName.caseInsensitiveCompare(wanted) == .orderedSame }
   }
 
   public static func load(directories: [URL], fileManager: FileManager = .default)
@@ -338,6 +339,7 @@ public enum MaiSkillTools {
           required: false)
       ],
       annotations: ToolAnnotations(
+        title: skill.name,
         readOnly: true, destructive: false, idempotent: true, openWorld: false,
         approval: .automatic))
   }
