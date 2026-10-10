@@ -384,7 +384,7 @@ struct AppearanceSettings: Codable, Equatable, Sendable {
   var theme: AppearanceTheme = .system
   var solidBubbles: SolidBubbleMode = .user
   var liveMarkdown: Bool = true
-  var justifyText: Bool = false
+  var justifyText: Bool = true
   var unwrappedTables: Bool = false
   var hapticsEnabled: Bool = true
 
@@ -433,7 +433,7 @@ struct AppearanceSettings: Codable, Equatable, Sendable {
       solidBubbles = .user
     }
     liveMarkdown = (try? c.decode(Bool.self, forKey: .liveMarkdown)) ?? true
-    justifyText = (try? c.decode(Bool.self, forKey: .justifyText)) ?? false
+    justifyText = (try? c.decode(Bool.self, forKey: .justifyText)) ?? true
     unwrappedTables = (try? c.decode(Bool.self, forKey: .unwrappedTables)) ?? false
     hapticsEnabled = (try? c.decode(Bool.self, forKey: .hapticsEnabled)) ?? true
   }
