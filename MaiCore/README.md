@@ -497,6 +497,10 @@ current chat together with every nested subagent chat and transcript.
 chats without overwriting an existing chat. The same archive is understood by
 PocketMai; its existing conversation packs and older pmai JSON chat exports
 also remain importable.
+PocketMai's chat-title **Share Conversation...** action sends a `.pocketmai`
+file via AirDrop or Mail. Use `/import ~/Downloads/My Chat.pocketmai` to continue
+that conversation in the CLI; no conversion or debug export is needed. The older
+`.pocketmai.json` extension remains supported.
 `@PID TEXT` sends one message to a running child agent. `@2,3,4 TEXT` or
 `@2 @3 @4 TEXT` sends the same message to several agents without changing
 focus; `/jobs tree` lists their process IDs. Each receives one copy at its

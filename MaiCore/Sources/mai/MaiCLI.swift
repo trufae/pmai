@@ -9980,8 +9980,11 @@ struct MaiCLI {
       /import PATH              Merge providers, prompts, MCPs, and agents; install
                                 skills for the current user; add chats to this project
 
-    Standalone .pocketmai.json archives and archives embedded by PocketMai are
-    accepted. Existing settings are replaced only when their stable IDs or prompt
+    PocketMai's Share Conversation files (.pocketmai), standalone .pocketmai.json
+    archives, and archives embedded by PocketMai are accepted.
+    Example: /import ~/Downloads/My Chat.pocketmai
+
+    Existing settings are replaced only when their stable IDs or prompt
     names match; existing chats are never overwritten. Older pmai JSON chat exports
     are accepted too.
     """

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check document export defaults and saved opt-ins with the offline provider."""
+"""Check document exports and PocketMai conversation import with the offline provider."""
 import json
 from smoke import clean_environment, run_repl
 from pathlib import Path
@@ -68,6 +68,36 @@ def main():
         assert (root / 'restored.md').read_text() == (root / 'both.md').read_text()
         thinking = (root / 'thinking.md').read_text()
         assert 'Private thought' in thinking and 'Tool result' not in thinking, thinking
+
+        # PocketMai's Share Conversation uses the existing JSON envelope with
+        # a registered extension. /import must inspect its contents, not suffix.
+        run(['/export archive portable.json'], args=['-r', chat['id']])
+        portable = json.loads((root / 'portable.json').read_text())
+        portable.pop('settings', None)
+        portable.pop('skills', None)
+        envelope = {
+            'format': 'pocketmai.conversation', 'title': 'Shared chat',
+            'model': '', 'provider': 'apple', 'pocketMaiVersion': 'test',
+            'exportedAt': portable['exportedAt'], 'createdAt': chat['createdAt'],
+            'conversation': {
+                'id': chat['id'], 'title': 'Shared chat', 'provider': 'apple',
+                'modelID': '', 'createdAt': chat['createdAt'], 'updatedAt': chat['updatedAt'],
+                'messages': [{'id': str(uuid.uuid4()), 'role': 'user', 'text': 'Legacy question'}],
+            },
+            'portable': portable,
+        }
+        before_config = config.read_text()
+        before_count = len(list((root / '.pmai/chats').glob('*.json')))
+        for extension in ['pocketmai', 'pocketmai.json']:
+            filename = f'Shared Chat.{extension}'
+            (root / filename).write_text(json.dumps(envelope))
+            output = run([f'/import {filename}', '/export json imported.json'])
+            assert 'Imported 1 chat' in output, output
+            imported = json.loads((root / 'imported.json').read_text())['chat']
+            assert imported['messages'] == portable['chats'][0]['messages'], imported
+            assert imported['id'] != chat['id'], imported
+        assert config.read_text() == before_config
+        assert len(list((root / '.pmai/chats').glob('*.json'))) == before_count + 2
     print('REPL document export smoke passed')
 
 
