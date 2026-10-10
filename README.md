@@ -26,8 +26,9 @@ This app, comes after [MAI](https://github.com/trufae/mai), a cli agent with foc
 
 ## Share a conversation between devices
 
-Tap the chat title, then **Share Conversation...**, and choose **AirDrop** or
-**Mail**. This sends a `.pocketmai` conversation file. Open the received file
+Tap the chat title, or long-press a chat in the left sidebar, then choose
+**Share Conversation...** and **AirDrop** or **Mail**. This sends a `.pocketmai`
+conversation file. Open the received file
 with PocketMai, choose its destination folder, and import it to continue chatting.
 On a computer, import the very same file in pmai:
 

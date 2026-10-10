@@ -120,6 +120,25 @@ final class ConversationExportCoordinator: ObservableObject {
   }
 }
 
+struct ConversationShareButton: View {
+  @EnvironmentObject private var store: AppStore
+
+  let conversationID: UUID?
+  @ObservedObject var coordinator: ConversationExportCoordinator
+
+  var body: some View {
+    Button {
+      guard let conversationID else { return }
+      Task { await coordinator.share(format: .json, conversationID: conversationID, store: store) }
+    } label: {
+      Text("Share Conversation...")
+      Text("AirDrop or Mail to another PocketMai")
+      Image(systemName: "square.and.arrow.up")
+    }
+    .disabled(conversationID == nil || coordinator.isExporting)
+  }
+}
+
 struct ConversationExportMenu: View {
   @EnvironmentObject private var store: AppStore
 
@@ -130,7 +149,7 @@ struct ConversationExportMenu: View {
   init(
     conversationID: UUID?,
     coordinator: ConversationExportCoordinator,
-    title: String = "Share / Export"
+    title: String = "Export Other Formats..."
   ) {
     self.conversationID = conversationID
     self.coordinator = coordinator

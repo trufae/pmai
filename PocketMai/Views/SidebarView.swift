@@ -1045,6 +1045,7 @@ struct ConversationSummaryActionsModifier: ViewModifier {
 
     ConversationMoveMenu(store: store, conversation: conversation)
 
+    ConversationShareButton(conversationID: conversation.id, coordinator: exportCoordinator)
     ConversationExportMenu(conversationID: conversation.id, coordinator: exportCoordinator)
 
     Divider()
