@@ -73,6 +73,7 @@ struct ChatView: View {
   @State private var selectedMessageIDs: Set<UUID> = []
   @State private var renameDraft = ""
   @State private var userScrolledAfterLastMessage = false
+  @State private var responseScrollTargets: [UUID: ResponseScrollTarget] = [:]
   @State private var lastStreamingScrollAt: Date?
   @State private var streamingScrollTask: Task<Void, Never>?
   @State private var pendingScrollToMessageID: UUID?
@@ -747,10 +748,7 @@ struct ChatView: View {
                       ?? store.selectedConversationSummary?.createdAt,
                     showUserTimestamp: message.role == .user && message.id != firstUserMessageID,
                     showThinking: store.effectiveShowThinking(for: store.currentConversation),
-                    isWaitingForResponse: isWaitingForResponse(message),
-                    onStreamingTextChange: { _ in
-                      scheduleStreamingScroll(proxy)
-                    }
+                    isWaitingForResponse: isWaitingForResponse(message)
                   )
                 }
                 .onGeometryChange(for: CGRect.self) { geometry in
@@ -889,10 +887,20 @@ struct ChatView: View {
             hasScrollableContent: hasScrollableContent,
             isAtBottom: !hasScrollableContent
               || geometry.visibleRect.maxY >= geometry.contentSize.height - 2)
-        } action: { _, metrics in
+        } action: { old, metrics in
+          if old.contentHeight != metrics.contentHeight, currentChatIsResponding {
+            // Wait for the bubble preferences from this layout before scrolling.
+            DispatchQueue.main.async { scheduleStreamingScroll(proxy) }
+          }
           refreshUserMessageNavigation(
             isAtBottom: metrics.isAtBottom,
             hasScrollableContent: metrics.hasScrollableContent)
+        }
+        .onPreferenceChange(ResponseScrollTargetsKey.self) { targets in
+          responseScrollTargets = targets
+          if currentChatIsResponding {
+            DispatchQueue.main.async { scheduleStreamingScroll(proxy) }
+          }
         }
         .onScrollPhaseChange { _, phase in
           if phase == .interacting {
@@ -930,19 +938,10 @@ struct ChatView: View {
             scrollToBottomAfterLayout(proxy, animated: false)
             return
           }
-          if old.messageID != new.messageID {
+          if old.lastUserMessageID != new.lastUserMessageID {
             userScrolledAfterLastMessage = false
-            scrollToBottomAfterLayout(proxy, animated: true)
-            return
           }
-          guard old.text != new.text,
-            store.settings.appearance.scrollToFollowResponses,
-            !userScrolledAfterLastMessage
-          else { return }
-          DispatchQueue.main.async {
-            guard store.settings.appearance.scrollToFollowResponses else { return }
-            scrollToBottom(proxy, animated: false)
-          }
+          scrollToBottomAfterLayout(proxy, animated: false, followResponse: true)
         }
         .onChange(of: liveVoiceSession.transcript) { _, _ in
           guard !messageFontPinchSession.isActive, !userScrolledAfterLastMessage else { return }
@@ -950,7 +949,7 @@ struct ChatView: View {
         }
         .onChange(of: currentQueuedUserMessageIDs) { _, _ in
           guard !messageFontPinchSession.isActive, !userScrolledAfterLastMessage else { return }
-          scrollToBottomAfterLayout(proxy, animated: true)
+          scrollToBottomAfterLayout(proxy, animated: true, followResponse: true)
         }
         .onChange(of: currentFollowUpPresentationSnapshot) { old, new in
           guard old != new,
@@ -958,7 +957,7 @@ struct ChatView: View {
             !messageFontPinchSession.isActive,
             !userScrolledAfterLastMessage
           else { return }
-          scrollToBottomAfterLayout(proxy, animated: true)
+          scrollToBottomAfterLayout(proxy, animated: true, followResponse: true)
         }
         .onChange(of: pendingScrollToMessageID) { _, target in
           guard !messageFontPinchSession.isActive, let target else { return }
@@ -1364,6 +1363,7 @@ struct ChatView: View {
   private struct LastMessageSnapshot: Equatable {
     var conversationID: UUID?
     var messageID: UUID?
+    var lastUserMessageID: UUID?
     var text: String?
   }
 
@@ -1373,6 +1373,7 @@ struct ChatView: View {
     return LastMessageSnapshot(
       conversationID: convo?.id,
       messageID: last?.id,
+      lastUserMessageID: convo?.messages.last(where: { $0.role == .user })?.id,
       text: last?.presentationText)
   }
 
@@ -1418,11 +1419,33 @@ struct ChatView: View {
     }
   }
 
-  private func scrollToBottomAfterLayout(_ proxy: ScrollViewProxy, animated: Bool) {
+  private func scrollFollowingResponse(_ proxy: ScrollViewProxy, animated: Bool = false) {
+    if let id = store.currentConversation?.messages.last?.id,
+      let target = responseScrollTargets[id]
+    {
+      // ScrollView clamps short answers to the bottom. Once the answer is
+      // taller than the viewport, its beginning stays at the top.
+      if animated {
+        withAnimation(.snappy) { proxy.scrollTo(target, anchor: .top) }
+      } else {
+        proxy.scrollTo(target, anchor: .top)
+      }
+    } else {
+      scrollToBottom(proxy, animated: animated)
+    }
+  }
+
+  private func scrollToBottomAfterLayout(
+    _ proxy: ScrollViewProxy, animated: Bool, followResponse: Bool = false
+  ) {
     guard !userScrolledAfterLastMessage else { return }
     DispatchQueue.main.async {
       guard !userScrolledAfterLastMessage else { return }
-      scrollToBottom(proxy, animated: animated)
+      if followResponse {
+        scrollFollowingResponse(proxy, animated: animated)
+      } else {
+        scrollToBottom(proxy, animated: animated)
+      }
     }
   }
 
@@ -1445,14 +1468,13 @@ struct ChatView: View {
   }
 
   // Streamed text lands ~8×/sec (StreamingTextStore's 0.12s throttle). Scrolling
-  // the whole message list on every snapshot forces a full layout pass each time
+  // the whole message list on every size change forces a full layout pass each time
   // and competes with the composer / any presented UI for the main thread. Cap
   // the auto-scroll cadence and coalesce bursts into a single trailing scroll.
   private static let streamingScrollInterval: TimeInterval = 0.35
 
   private func scheduleStreamingScroll(_ proxy: ScrollViewProxy) {
-    guard store.settings.appearance.scrollToFollowResponses,
-      !messageFontPinchSession.isActive,
+    guard !messageFontPinchSession.isActive,
       !userScrolledAfterLastMessage
     else { return }
     let now = Date()
@@ -1465,17 +1487,16 @@ struct ChatView: View {
         try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
         streamingScrollTask = nil
         guard !Task.isCancelled,
-          store.settings.appearance.scrollToFollowResponses,
           !messageFontPinchSession.isActive,
           !userScrolledAfterLastMessage
         else { return }
         lastStreamingScrollAt = Date()
-        scrollToBottom(proxy, animated: false)
+        scrollFollowingResponse(proxy)
       }
       return
     }
     lastStreamingScrollAt = now
-    scrollToBottom(proxy, animated: false)
+    scrollFollowingResponse(proxy)
   }
 
   private func beginMessageSelection(with id: UUID) {

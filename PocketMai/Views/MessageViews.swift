@@ -111,6 +111,24 @@ private extension Error {
   }
 }
 
+// The trailing prose bubble is the reading limit; a trailing tool/reasoning
+// section leaves the response free to follow progress at the bottom.
+struct ResponseScrollTarget: Hashable {
+  let messageID: UUID
+  let partID: Int
+}
+
+struct ResponseScrollTargetsKey: PreferenceKey {
+  static let defaultValue: [UUID: ResponseScrollTarget] = [:]
+
+  static func reduce(
+    value: inout [UUID: ResponseScrollTarget],
+    nextValue: () -> [UUID: ResponseScrollTarget]
+  ) {
+    value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+  }
+}
+
 struct MessageBubble: View {
   @EnvironmentObject private var streamingTextStore: StreamingTextStore
 
@@ -138,7 +156,6 @@ struct MessageBubble: View {
   var showUserTimestamp: Bool = false
   var showThinking: Bool = false
   var isWaitingForResponse: Bool = false
-  var onStreamingTextChange: ((String) -> Void)? = nil
 
   var body: some View {
     StreamingMessageBubble(
@@ -166,8 +183,7 @@ struct MessageBubble: View {
       conversationCreatedAt: conversationCreatedAt,
       showUserTimestamp: showUserTimestamp,
       showThinking: showThinking,
-      isWaitingForResponse: isWaitingForResponse,
-      onStreamingTextChange: onStreamingTextChange
+      isWaitingForResponse: isWaitingForResponse
     )
   }
 }
@@ -200,7 +216,6 @@ private struct StreamingMessageBubble: View {
   var showUserTimestamp: Bool = false
   var showThinking: Bool = false
   var isWaitingForResponse: Bool = false
-  var onStreamingTextChange: ((String) -> Void)? = nil
 
   var body: some View {
     MessageBubbleContent(
@@ -233,10 +248,6 @@ private struct StreamingMessageBubble: View {
       colorScheme: colorScheme
     )
     .equatable()
-    .onChange(of: streamingText.text) { _, newText in
-      guard let newText else { return }
-      onStreamingTextChange?(newText)
-    }
   }
 }
 
@@ -329,6 +340,7 @@ private struct MessageBubbleContent: View, Equatable {
             actionText: prepared.visibleText,
             includeMessageExtras: index == prepared.firstVisiblePartIndex
           )
+          .id(ResponseScrollTarget(messageID: message.id, partID: part.id))
         case .tool(let partID, let entry, let section):
           ToolCallRow(
             entry: entry,
@@ -387,9 +399,20 @@ private struct MessageBubbleContent: View, Equatable {
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
+    .preference(
+      key: ResponseScrollTargetsKey.self,
+      value: responseScrollTarget(in: prepared).map { [message.id: $0] } ?? [:])
     .frame(maxWidth: 720, alignment: .leading)
     .padding(.leading, isUser ? 36 : 0)
     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+  }
+
+  private func responseScrollTarget(in prepared: PreparedMessageContent) -> ResponseScrollTarget? {
+    guard message.role == .assistant,
+      case .visible(let partID, let text) = prepared.parts.last,
+      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else { return nil }
+    return ResponseScrollTarget(messageID: message.id, partID: partID)
   }
 
   private static func reasoningSize(_ content: String) -> String {
