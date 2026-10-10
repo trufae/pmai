@@ -1225,7 +1225,11 @@ model can reuse a path a shell command printed; a path error names the directory
 so the model can correct itself.
 
 `/path` lists the current directory, effective Files workspace, external paths
-granted from prompts, and access rules. The workspace is allowed by default.
+granted from prompts, and access rules. On first startup, the CLI saves `ask`
+rules for `/etc`, `~/.ssh`, and `~/.config`, plus an `ask` default for hidden
+paths (dotfiles and dot directories, including newly created ones). Existing
+configurations without `fileAccess` settings receive these defaults once.
+The workspace is otherwise allowed by default.
 Use `/path allow PATH` (or `add`) for an additional file or directory,
 `/path deny PATH` to block a path even inside the workspace, and
 `/path ask PATH` to require confirmation each time it is accessed.
@@ -1234,6 +1238,10 @@ parent permissions still apply. Denials override prompts and grants, and prompts
 override grants. Directories include descendants; file grants cover just that
 file. Relative paths resolve from the Files workspace, and quoted paths support
 spaces. A trailing `/` marks a directory that does not yet exist.
+`/path hidden ask|deny|allow` changes the hidden-path default; explicit path
+rules override it, so `/path allow .env` can permit one hidden file. An explicit
+parent grant also covers its hidden descendants. Searches still skip hidden
+entries. Moving or deleting a directory checks its protected hidden descendants.
 
 `/path outside ask|deny` controls paths outside the allowed scope (default: deny).
 Path prompts require a person even in `yolo` mode; unattended calls are rejected.
@@ -1241,8 +1249,10 @@ Paths explicitly named in prompts retain normal tool approval: `yolo` adds them
 automatically, while `ask` and `smart` ask the person. Each addition prints a
 `/path` hint so the grant can be reviewed, denied, or changed to ask. Setting
 `outside deny` blocks these automatic additions; `outside ask` requires a person.
-Rules last for the CLI session, apply to Files and `vdb` tools including child
-agents, and check resolved symlink targets. Searches omit denied subtrees, and
+Rules, the hidden-path default, and the outside policy are saved under
+`fileAccess` in the active configuration and survive restarts. Automatic prompt
+grants remain session-only. The policy applies to Files and `vdb` tools including
+child agents, and checks resolved symlink targets. Searches omit denied subtrees, and
 directory moves or deletions cannot bypass a protected descendant. Models can
 inspect `/path` through `pmai_run`, but cannot change its policies or the Files
 workspace. These are tool-level checks: `run_shell` and other tools retain their

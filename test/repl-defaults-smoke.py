@@ -39,6 +39,10 @@ def main():
         assert '/about' in output, output
         saved = json.loads(config.read_text())
         assert saved['providers'] == [] and saved['agents'] == [], saved
+        assert saved['fileAccess'] == {
+            'hidden': 'ask', 'rules': [
+                {'path': path, 'access': 'ask', 'descendants': True}
+                for path in ['/etc', '~/.ssh', '~/.config']]}, saved
         original = config.read_bytes()
         welcome, about = run(['/providers', '/about'], split=True)
         assert 'Welcome to PocketMai!' in welcome and 'Welcome to PocketMai!' in about
@@ -180,6 +184,7 @@ def main():
         assert result.returncode == 0, result.stdout + result.stderr
         edited = json.loads((editor_home / '.config/pmai/config.json').read_text())
         assert edited['providers'] == [] and edited['agents'] == [], edited
+        assert edited['fileAccess']['hidden'] == 'ask', edited
         print('PASS persistent defaults: clean setup, model/provider/settings, environment '
               'precedence, new projects, temporary flags, active agent, and bootstrap')
 

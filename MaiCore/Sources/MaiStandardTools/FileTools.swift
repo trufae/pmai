@@ -114,7 +114,7 @@ public struct MaiFileWorkspaceTool: AgentTool {
         "File paths are checked by the Files tool against its workspace and approved paths, including symlinks. Write enabled: \(configuration.writeEnabled). Approval never bypasses those checks."
         + (configuration.pathAccessPolicy.map { policy in
           let state = policy.snapshot()
-          return " Outside paths: \(state.outside.rawValue). Path rules: "
+          return " Outside paths: \(state.outside.rawValue). Hidden paths: \(state.hidden.rawValue). Path rules: "
             + state.rules.map { "\($0.access.rawValue) \($0.url.path)" }.joined(separator: ", ")
         } ?? "")
     )
@@ -144,7 +144,8 @@ public struct MaiFileWorkspaceTool: AgentTool {
       let authorized = try await configuration.authorizing(
         paths: paths, operation: operation.rawValue,
         recursive: [.list, .find, .grep].contains(operation),
-        mutatingTree: [.rename, .delete].contains(operation))
+        mutatingTree: [.rename, .delete].contains(operation),
+        movingTo: operation == .rename ? arguments["new_path"]?.stringValue : nil)
       let workspace = try MaiFileWorkspace(configuration: authorized)
       switch operation {
       case .list:
@@ -1476,7 +1477,7 @@ struct MaiFileWorkspace: Sendable {
       // An absolute path is fine as long as it points inside the workspace:
       // models often repeat the directory a shell command just printed.
       candidate =
-        URL(fileURLWithPath: NSString(string: trimmed).expandingTildeInPath)
+        URL(fileURLWithPath: AgentHome.expandUserPath(trimmed))
         .standardizedFileURL
       if !isInside(candidate) {
         candidate = candidate.resolvingSymlinksInPath().standardizedFileURL
@@ -1619,6 +1620,9 @@ struct MaiFileWorkspace: Sendable {
   ) async throws -> VersionControlledEntries? {
     // VCS enumeration can inspect paths before our per-entry checks. A filtered
     // filesystem walk prunes protected subtrees before visiting their contents.
+    if let policy = configuration.pathAccessPolicy, policy.snapshot().hidden != .allow {
+      return nil
+    }
     if configuration.pathAccessPolicy?.snapshot().rules.contains(where: {
       $0.access != .allow
         && ($0.contains(directory) || MaiFileAccessPolicy.contains($0.url, in: directory))

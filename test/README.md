@@ -51,7 +51,8 @@ Files sandbox policy commands and required prompts have their own check:
 
 It covers `/path` grants, denials, repeated asks in yolo mode, unattended
 rejection, fixed and changing workspaces, quoted paths, model command limits,
-tool reconfiguration, and the hint printed when prompt paths are granted.
+tool reconfiguration, startup ask defaults for sensitive and hidden paths,
+saved rules across restarts, and the hint printed when prompt paths are granted.
 
 The defaults check starts with a clean user home and verifies saved model,
 provider, and settings across restarts and projects, precedence over stale

@@ -54,6 +54,22 @@ func configurationPromptDefaults() throws {
   #expect(configuration.prompts == nil)
   #expect(configuration.ui.title.isEmpty)
   #expect(configuration.documentExport == DocumentExportOptions())
+  #expect(configuration.fileAccess == nil)
+}
+
+@Test("Saved file permissions retain overrides and removed startup defaults")
+func configuredFileAccessRoundTrip() throws {
+  let decoder = JSONDecoder()
+  #expect(try decoder.decode(ConfiguredFileAccess.self, from: Data("{}".utf8)) == .init())
+  let settings = try decoder.decode(ConfiguredFileAccess.self, from: Data(
+    #"{"outside":"deny","hidden":"allow","rules":[]}"#.utf8))
+  #expect(settings.rules.isEmpty)
+  let configuration = MaiConfiguration(fileAccess: settings)
+  #expect(try decoder.decode(MaiConfiguration.self,
+    from: configuration.encoded()).fileAccess == settings)
+  #expect(throws: DecodingError.self) {
+    try decoder.decode(ConfiguredFileAccess.self, from: Data(#"{"hidden":"typo"}"#.utf8))
+  }
 }
 
 @Test("Document export options default off and persist independently")

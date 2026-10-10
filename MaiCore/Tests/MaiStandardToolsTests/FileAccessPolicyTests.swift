@@ -81,6 +81,88 @@ func filePathPolicyDenials() async throws {
   #expect(!(try await policyCall(read, ["path": .string("private/secret.txt")])).isError)
 }
 
+@Test("Hidden path defaults prompt for new dotfiles, directories, and symlink aliases")
+func filePathPolicyHiddenDefaults() async throws {
+  let fixture = try PathFixture()
+  defer { fixture.cleanup() }
+  let confirmations = PathConfirmations()
+  let policy = MaiFileAccessPolicy(hidden: .ask) { url, _ in await confirmations.decide(url) }
+  let read = fixture.tool(.read, policy: policy)
+  let hidden = fixture.root.appendingPathComponent(".env")
+  try Data("hidden secret".utf8).write(to: hidden)
+  let directory = fixture.root.appendingPathComponent("private/.credentials")
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  try Data("nested secret".utf8).write(to: directory.appendingPathComponent("key"))
+  try FileManager.default.createSymbolicLink(
+    at: fixture.root.appendingPathComponent("visible-alias"), withDestinationURL: hidden)
+  try FileManager.default.createSymbolicLink(
+    at: fixture.root.appendingPathComponent(".hidden-alias"),
+    withDestinationURL: fixture.root.appendingPathComponent("public.txt"))
+  for path in [".env", ".env", "private/.credentials/key", "visible-alias", ".hidden-alias"] {
+    #expect(!(try await policyCall(read, ["path": .string(path)])).isError)
+  }
+  #expect(await confirmations.urls.count == 5)
+  #expect(!(try await policyCall(
+    fixture.tool(.write, policy: policy),
+    ["path": .string(".new-secret"), "content": .string("new secret")])).isError)
+  #expect(await confirmations.urls.count == 6)
+  policy.set(.init(url: hidden, access: .ask, descendants: false))
+  #expect(!(try await policyCall(
+    fixture.tool(.find, policy: policy), ["query": .string("*")])).isError)
+  #expect(await confirmations.urls.count == 6)
+  await confirmations.reject()
+  let rejected = try await policyCall(read, ["path": .string(".env")])
+  #expect(rejected.isError)
+  #expect(!rejected.text.contains("hidden secret"))
+  policy.set(.init(url: hidden, access: .allow, descendants: false))
+  #expect(!(try await policyCall(read, ["path": .string(".env")])).isError)
+  policy.remove(hidden)
+  policy.setHidden(.deny)
+  #expect((try await policyCall(read, ["path": .string(".env")])).isError)
+}
+
+@Test("Directory mutations authorize hidden descendants, including through visible symlinks")
+func filePathPolicyHiddenTreeMutations() async throws {
+  let fixture = try PathFixture()
+  defer { fixture.cleanup() }
+  let confirmations = PathConfirmations()
+  let policy = MaiFileAccessPolicy(hidden: .ask) { url, _ in await confirmations.decide(url) }
+  let hidden = fixture.secret.appendingPathComponent(".key")
+  try Data("hidden secret".utf8).write(to: hidden)
+  try FileManager.default.createSymbolicLink(
+    at: fixture.root.appendingPathComponent("alias"), withDestinationURL: fixture.secret)
+  await confirmations.reject()
+  for (operation, path) in [(MaiFileWorkspaceTool.Operation.delete, "private"),
+    (.rename, "private"), (.rename, "alias")] {
+    let result = try await policyCall(
+      fixture.tool(operation, policy: policy),
+      ["path": .string(path), "new_path": .string("moved"), "recursive": .bool(true)])
+    #expect(result.isError)
+    #expect(FileManager.default.fileExists(atPath: hidden.path))
+  }
+  #expect(await confirmations.urls.count == 3)
+  policy.set(.init(url: hidden, access: .deny, descendants: false))
+  #expect((try await policyCall(
+    fixture.tool(.rename, policy: policy),
+    ["path": .string("alias"), "new_path": .string("moved")])).isError)
+  #expect(await confirmations.urls.count == 3)
+  policy.remove(hidden)
+  policy.setHidden(.deny)
+  #expect((try await policyCall(
+    fixture.tool(.delete, policy: policy),
+    ["path": .string("private"), "recursive": .bool(true)])).isError)
+  #expect(await confirmations.urls.count == 3)
+  policy.set(.init(url: hidden, access: .allow, descendants: false))
+  #expect((try await policyCall(
+    fixture.tool(.rename, policy: policy),
+    ["path": .string("private"), "new_path": .string("moved")])).isError)
+  policy.setHidden(.allow)
+  #expect(!(try await policyCall(
+    fixture.tool(.rename, policy: policy),
+    ["path": .string("private"), "new_path": .string("moved")])).isError)
+  #expect(FileManager.default.fileExists(atPath: fixture.root.appendingPathComponent("moved/.key").path))
+}
+
 @Test("Directory removal and rename cannot bypass protected descendants or destinations")
 func filePathPolicyTreeMutations() async throws {
   let fixture = try PathFixture()

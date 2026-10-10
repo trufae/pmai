@@ -815,6 +815,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
   public var memory: ConfiguredMemory
   public var ui: ConfiguredTerminalUI
   public var approvals: ConfiguredApprovals
+  public var fileAccess: ConfiguredFileAccess?
   public var use: ConfiguredUse
   public var documentExport: DocumentExportOptions
 
@@ -832,6 +833,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
     memory: ConfiguredMemory = .init(),
     ui: ConfiguredTerminalUI = .init(),
     approvals: ConfiguredApprovals = .init(),
+    fileAccess: ConfiguredFileAccess? = nil,
     use: ConfiguredUse = .init(),
     documentExport: DocumentExportOptions = .init()
   ) {
@@ -848,6 +850,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
     self.memory = memory
     self.ui = ui
     self.approvals = approvals
+    self.fileAccess = fileAccess
     self.use = use
     self.documentExport = documentExport
   }
@@ -856,7 +859,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
     case version, defaultAgent, taskAgents, plugins, providers, toolSources, ocrProviders,
       mcpServers, agents,
       prompts, memory, ui,
-      approvals, use, documentExport
+      approvals, fileAccess, use, documentExport
   }
 
   public init(from decoder: Decoder) throws {
@@ -881,6 +884,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
       ui: try container.decodeIfPresent(ConfiguredTerminalUI.self, forKey: .ui) ?? .init(),
       approvals: try container.decodeIfPresent(ConfiguredApprovals.self, forKey: .approvals)
         ?? .init(),
+      fileAccess: try container.decodeIfPresent(ConfiguredFileAccess.self, forKey: .fileAccess),
       use: try container.decodeIfPresent(ConfiguredUse.self, forKey: .use) ?? .init(),
       documentExport: try container.decodeIfPresent(DocumentExportOptions.self, forKey: .documentExport)
         ?? .init())

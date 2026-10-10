@@ -57,11 +57,15 @@ def main():
     try:
         with tempfile.TemporaryDirectory(prefix='pmai-path-') as directory:
             base = Path(directory).resolve()
+            user_home = base / 'user'
+            user_home.mkdir()
+            env['HOME'] = str(user_home)
             root = base / 'workspace'
             external = base / 'external dir'
             for folder in (root, external, root / 'private'):
                 folder.mkdir()
             (root / 'private/secret.txt').write_text('LOCAL SECRET')
+            (root / '.env').write_text('HIDDEN SECRET')
             (external / 'outside.txt').write_text('EXTERNAL SECRET')
             (base / 'outside.txt').write_text('PROMPT GRANT')
             (root / 'new-cwd').mkdir()
@@ -76,6 +80,7 @@ def main():
                             'retry': {'attempts': 0}, 'autocompact': {'tokens': 0}}],
                 'memory': {'enabled': False}, 'use': {'plan': False, 'agentsmd': 'off'},
                 'approvals': {'mode': 'yolo'}, 'ui': {'toolResultLines': 0}}))
+            original_config = config.read_text()
             command = [binary, '--config', str(config), '--home', str(base / 'home'),
                        '--no-stream', '--no-markdown']
 
@@ -87,8 +92,39 @@ def main():
             assert canonical(f'allow {external}') in canonical(output) and canonical(f'deny {root / "private"}') in canonical(output), output
             assert canonical(f'ask {root}') in canonical(output) and 'Outside allowed paths: deny' in output, output
             assert canonical(f'Current directory: {root / "new-cwd"}') in canonical(output), output
+            assert 'Hidden paths: ask' in output, output
+            settings = json.loads(config.read_text())['fileAccess']
+            assert settings['hidden'] == 'ask' and settings['outside'] == 'deny', settings
+            assert any(rule['path'].endswith('/etc') and rule['access'] == 'ask'
+                       for rule in settings['rules']), settings
+            assert any(rule['path'].endswith('/.ssh') and rule['access'] == 'ask'
+                       for rule in settings['rules']), settings
+            assert any(rule['path'].endswith('/.config') and rule['access'] == 'ask'
+                       for rule in settings['rules']), settings
+
+            # Saved edits survive restarts; removing all defaults does not reseed them.
+            output = run_repl(command, ['/path', '/path hidden deny', '/path remove /etc',
+                '/path remove ~/.ssh', '/path remove ~/.config', '/path remove private'], cwd=root, env=env)
+            assert canonical(f'deny {root / "private"}') in canonical(output), output
+            assert 'Outside allowed paths: deny' in output, output
+            output = run_repl(command, ['/path'], cwd=root, env=env)
+            assert 'Hidden paths: deny' in output, output
+            assert json.loads(config.read_text())['fileAccess']['rules'] == [], config.read_text()
+
+            # Startup defaults require a person even for hidden prompt-named paths in yolo.
+            config.write_text(original_config)
+            for path in ['.env', str(root / '.env'), '/etc/pmai-policy-smoke']:
+                enqueue(call('files_read', path=path))
+            output = run_repl(command, ['Read hidden', 'Inspect ' + str(root / '.env'),
+                'Read system settings'], cwd=root, env=env)
+            tool_messages = [json.dumps(m) for req in requests for m in req['messages'] if m['role'] == 'tool']
+            assert sum('was not approved' in m for m in tool_messages) >= 3, tool_messages
+            assert not any('HIDDEN SECRET' in m for m in tool_messages), tool_messages
+            assert '[granted from prompt]' not in run_repl(command, ['/path'], cwd=root, env=env)
+            requests.clear()
 
             # Noninteractive policy prompts fail closed even with normal tool approval in yolo.
+            config.write_text(original_config)
             enqueue(call('files_read', path='private/secret.txt'))
             enqueue(call('files_read', path=str(external / 'outside.txt')))
             enqueue(call('files_read', path=str(external / 'outside.txt')))
@@ -109,6 +145,7 @@ def main():
             requests.clear()
 
             # Existing explicit-prompt grants in yolo remain automatic, with a teaching hint.
+            config.write_text(original_config)
             enqueue(call('files_read', path=str(base / 'outside.txt')))
             output = run_repl(command, ['Inspect ' + str(base / 'outside.txt'), '/path'], cwd=root, env=env)
             assert 'Use /path to review, deny, or require prompts' in output, output
@@ -126,6 +163,7 @@ def main():
             assert canonical(f'allow {external}') in canonical(output) and 'fixed root' in output, output
 
             # Real terminal: yolo cannot auto-approve asks or release pending path prompts.
+            config.write_text(original_config)
             master, slave = pty.openpty()
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 36, 180, 0, 0))
             process = subprocess.Popen(command, cwd=root, env=env, stdin=slave,
@@ -153,6 +191,15 @@ def main():
                 expect('answer y (yes, this access)')
                 send('n')
                 expect('SECOND FINISHED')
+                assert 'was not approved' in json.dumps(requests[-1]), requests[-1]
+
+                # The default hidden rule also asks on every access.
+                for answer, final in [('y', 'HIDDEN FIRST'), ('n', 'HIDDEN SECOND')]:
+                    enqueue(call('files_read', path='.env'), final)
+                    send('Read hidden')
+                    expect('answer y (yes, this access)')
+                    send(answer)
+                    expect(final)
                 assert 'was not approved' in json.dumps(requests[-1]), requests[-1]
 
                 # Prompt-named external paths get a grant and teach /path.

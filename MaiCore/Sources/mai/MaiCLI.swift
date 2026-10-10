@@ -1155,10 +1155,19 @@ private actor PromptFileAccess {
   private var approvedURLs: [URL] = []
   nonisolated let policy: MaiFileAccessPolicy
 
-  init(approvalHandler: TerminalApprovalHandler) {
-    policy = MaiFileAccessPolicy(outside: .deny) { url, operation in
+  init(
+    approvalHandler: TerminalApprovalHandler, settings: ConfiguredFileAccess,
+    environment: [String: String]
+  ) {
+    policy = MaiFileAccessPolicy(hidden: settings.hidden) { url, operation in
       try await approvalHandler.decidePromptPathAccess(
         url, operation: operation, preparingTurn: operation == "/vdb", forceConfirmation: true)
+    }
+    if let outside = settings.outside { policy.setOutside(outside) }
+    for rule in settings.rules {
+      policy.set(.init(
+        url: URL(fileURLWithPath: AgentHome.expandUserPath(rule.path, environment: environment)),
+        access: rule.access, descendants: rule.descendants))
     }
   }
 
@@ -1249,6 +1258,10 @@ struct MaiCLI {
       var configuration = loaded?.configuration
       if var existing = configuration {
         var changed = existing.associateSystemPrompts()
+        if existing.fileAccess == nil {
+          existing.fileAccess = .init()
+          changed = true
+        }
         if !existing.toolSources.contains(where: {
           $0.kind == MaiStandardToolsPlugin.factoryKind
         }) {
@@ -1274,7 +1287,9 @@ struct MaiCLI {
       // bounded default can evict a parent before its subtree is saved.
       let runtime = AgentRuntime(
         approvalHandler: approvalHandler, supervisor: AgentSupervisor(finishedRetention: .max))
-      let promptFileAccess = PromptFileAccess(approvalHandler: approvalHandler)
+      let promptFileAccess = PromptFileAccess(
+        approvalHandler: approvalHandler, settings: configuration?.fileAccess ?? .init(),
+        environment: environment)
       if await approvalHandler.isDebugEnabled() {
         do {
           await runtime.configureDebugLog(
@@ -3861,7 +3876,8 @@ struct MaiCLI {
   private static func handlePathCommand(
     _ argument: String,
     runtime: AgentRuntime,
-    configuration: MaiConfiguration?,
+    configuration: inout MaiConfiguration?,
+    configurationPath: String?,
     access: PromptFileAccess,
     terminal: TerminalWriter
   ) async {
@@ -3887,7 +3903,7 @@ struct MaiCLI {
     let state = access.policy.snapshot()
     switch command {
     case "list", "ls":
-      await terminal.line("Files path policy (CLI session; directories include descendants):")
+      await terminal.line("Files path policy (saved in configuration; directories include descendants):")
       await terminal.line("Current directory: \(FileManager.default.currentDirectoryPath)")
       let root = files.effectiveRootURL
       await terminal.line(
@@ -3905,14 +3921,24 @@ struct MaiCLI {
       await terminal.line(
         "Outside allowed paths: \(state.outside.rawValue). Deny rules override ask and allow rules; ask requires confirmation on each call, even in yolo mode."
       )
+      await terminal.line("Hidden paths: \(state.hidden.rawValue) (dotfiles and dot directories; explicit rules override this default).")
       if !state.outsideConfigured {
         await terminal.line("Explicit prompt paths may add grants using tool approval; /path outside deny disables automatic additions.")
       }
       await terminal.line(
         "These checks cover Files and vdb tools. Shell commands and other tools retain their own permissions. /help path lists policy commands."
       )
+      return
     case "help":
       await terminal.line(pathHelp)
+      return
+    case "hidden":
+      guard let policy = MaiFileAccessPolicy.Access(rawValue: value.lowercased()) else {
+        await terminal.line("Usage: /path hidden ask|deny|allow")
+        return
+      }
+      access.policy.setHidden(policy)
+      await terminal.note("Files hidden path access: \(policy.rawValue)")
     case "outside":
       guard let policy = MaiFileAccessPolicy.Access(rawValue: value.lowercased()), policy != .allow
       else {
@@ -3926,7 +3952,7 @@ struct MaiCLI {
         await terminal.line("Usage: /path \(command) PATH")
         return
       }
-      let expanded = NSString(string: value).expandingTildeInPath
+      let expanded = AgentHome.expandUserPath(value, environment: environment)
       let url =
         (expanded.hasPrefix("/")
         ? URL(fileURLWithPath: expanded)
@@ -3961,6 +3987,23 @@ struct MaiCLI {
       }
     default:
       await terminal.line("Unknown /path subcommand '\(command)'.\n\(pathHelp)")
+      return
+    }
+    if var draft = configuration, let configurationPath {
+      let state = access.policy.snapshot()
+      draft.fileAccess = .init(
+        outside: state.outsideConfigured ? state.outside : nil, hidden: state.hidden,
+        rules: state.rules.map {
+          .init(path: $0.url.path, access: $0.access, descendants: $0.descendants)
+        })
+      do {
+        try draft.save(to: URL(fileURLWithPath: configurationPath))
+        configuration = draft
+      } catch {
+        await terminal.note(
+          "Path changes apply to this session but could not be saved: \(error.localizedDescription)",
+          tone: .warning)
+      }
     }
   }
 
@@ -3993,17 +4036,20 @@ struct MaiCLI {
         to: url, insideWorkspace: scopedConfiguration.containsAllowedPath(url))
       if access == .allow { continue }
       let state = promptFileAccess.policy.snapshot()
-      if access == .deny && (state.outsideConfigured || state.rules.contains(where: {
-        $0.access == .deny && $0.contains(url)
-      })) {
+      if access == .deny && (state.outsideConfigured
+        || state.hidden == .deny && MaiFileAccessPolicy.isHidden(url)
+        || state.rules.contains(where: {
+          $0.access == .deny && $0.contains(url)
+        })) {
         await terminal.note("Files access denied by /path policy: \(url.path)", tone: .warning)
         continue
       }
       // An ask rule is per access. Naming it in a prompt never turns it into
       // an ongoing grant; the actual Files call will request confirmation.
-      if state.rules.contains(where: {
-        $0.access == .ask && $0.contains(url)
-      }) {
+      if access == .ask && (state.hidden == .ask && MaiFileAccessPolicy.isHidden(url)
+        || state.rules.contains(where: {
+          $0.access == .ask && $0.contains(url)
+        })) {
         continue
       }
       do {
@@ -4427,7 +4473,8 @@ struct MaiCLI {
       await terminal.line(FileManager.default.currentDirectoryPath)
     case "/path":
       await handlePathCommand(
-        argument, runtime: runtime, configuration: configuration,
+        argument, runtime: runtime, configuration: &configuration,
+        configurationPath: visual.configurationPath,
         access: visual.promptFileAccess, terminal: terminal)
     case "/cd":
       await changeWorkingDirectory(argument, terminal: terminal)
@@ -11158,7 +11205,7 @@ struct MaiCLI {
   private static func initialConfiguration() -> MaiConfiguration {
     MaiConfiguration(toolSources: [
       ConfiguredToolSource(id: "standard-tools", kind: MaiStandardToolsPlugin.factoryKind)
-    ])
+    ], fileAccess: .init())
   }
 
   private static func editConfiguration(environment: [String: String]) async throws {
@@ -11484,6 +11531,7 @@ struct MaiCLI {
       "/cwd", "/pwd", "/cd ", "/plugins",
       "/path", "/path list", "/path allow ", "/path deny ", "/path ask ",
       "/path remove ", "/path outside ask", "/path outside deny", "/help path",
+      "/path hidden ask", "/path hidden deny", "/path hidden allow",
       "/providers", "/models ", "/provider ", "/provider add ", "/provider rename ",
       "/provider add local-apple --kind apple",
       "/provider add local-mlx --kind mlx", "/help provider",
@@ -11834,13 +11882,17 @@ struct MaiCLI {
     /path ask PATH         Require confirmation for every access (alias: prompt)
     /path remove PATH      Remove an explicit rule/grant; parent permissions still apply
     /path outside ask|deny Prompt or reject paths outside the allowed scope (default: deny)
+    /path hidden ask|deny|allow Set the default for dotfiles and dot directories (default: ask)
 
     Paths resolve relative to the Files workspace; ~, absolute paths, and quoted
     paths with spaces work. Existing directories cover descendants. Add a trailing
     / for a new directory. Deny overrides ask and allow; ask overrides allow.
-    Rules last for this CLI session and apply to Files and vdb, including child
-    agents. Required path prompts remain active in yolo mode; without a terminal
-    they are rejected. Only the person at the REPL can change these policies.
+    On first startup, /etc, ~/.ssh, ~/.config, and hidden paths default to ask.
+    Rules and /path edits are saved in configuration; prompt grants last for this
+    session. Explicit rules override the hidden-path default. These checks apply
+    to Files and vdb, including child agents. Path prompts remain active in yolo
+    mode; without a terminal they are rejected. Only the person at the REPL can
+    change these policies.
     Explicit prompt paths use normal tool approval to add a session grant and
     print a /path hint. Setting outside deny blocks these automatic additions;
     outside ask requires confirmation. /path ask PATH prompts on every access.
