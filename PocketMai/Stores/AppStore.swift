@@ -4936,7 +4936,8 @@ final class AppStore: ObservableObject {
     sharedImportRequestID &+= 1
   }
 
-  /// Queues a registered `.pocketmai.json` document opened from Files, AirDrop,
+  /// Queues a registered `.pocketmai` document (or a legacy `.pocketmai.json`)
+  /// opened from Files, AirDrop,
   /// Mail, or another application.
   func openConversationImportFile(at url: URL) {
     guard url.isFileURL,
@@ -6386,10 +6387,13 @@ final class AppStoreViewObservation: ObservableObject {
 }
 
 enum ConversationExportFiles {
-  static let fileExtension = MaiArchive.fileExtension
+  // A single extension lets iOS identify the document when receiving a file
+  // through AirDrop or Mail, instead of treating it as generic JSON.
+  static let fileExtension = "pocketmai"
 
   static func isConversationExport(filename: String) -> Bool {
-    filename.lowercased().hasSuffix(".\(fileExtension)")
+    let name = filename.lowercased()
+    return name.hasSuffix(".\(fileExtension)") || name.hasSuffix(".pocketmai.json")
   }
 
   static func url(
