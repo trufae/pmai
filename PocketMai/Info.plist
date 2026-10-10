@@ -14,7 +14,7 @@
 	<array>
 		<dict>
 			<key>CFBundleTypeName</key>
-			<string>Mai Archive</string>
+			<string>PocketMai Conversation</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>LSHandlerRank</key>
@@ -95,15 +95,17 @@
 			<key>UTTypeConformsTo</key>
 			<array>
 				<string>public.json</string>
+				<string>public.content</string>
 			</array>
 			<key>UTTypeDescription</key>
-			<string>Mai Archive</string>
+			<string>PocketMai Conversation</string>
 			<key>UTTypeIdentifier</key>
 			<string>io.github.trufae.mai.conversation</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>
 				<key>public.filename-extension</key>
 				<array>
+					<string>pocketmai</string>
 					<string>pocketmai.json</string>
 				</array>
 				<key>public.mime-type</key>

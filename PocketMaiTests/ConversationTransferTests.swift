@@ -1,6 +1,7 @@
 import Foundation
 import MaiCore
 import MaiDocuments
+import UniformTypeIdentifiers
 import XCTest
 
 @testable import PocketMai
@@ -79,12 +80,56 @@ final class ConversationTransferTests: XCTestCase {
       parentRunID: parentRunID)
   }
 
-  func testConversationExportsUsePocketMaiJSONSuffix() {
-    XCTAssertEqual(ConversationExportFormat.json.fileExtension, "pocketmai.json")
+  func testConversationExportsUseRegisteredSuffixAndAcceptLegacyFiles() {
+    XCTAssertEqual(ConversationExportFormat.json.fileExtension, "pocketmai")
     XCTAssertEqual(ConversationExportFormat.debug.fileExtension, "json")
+    XCTAssertTrue(ConversationExportFiles.isConversationExport(filename: "Chat.POCKETMAI"))
     XCTAssertTrue(
       ConversationExportFiles.isConversationExport(filename: "Two Chats.POCKETMAI.JSON"))
     XCTAssertFalse(ConversationExportFiles.isConversationExport(filename: "ordinary.json"))
+    XCTAssertFalse(ConversationExportFiles.isConversationExport(filename: "Chat.pocketmai.txt"))
+  }
+
+  func testConversationDocumentTypeSupportsAirDrop() throws {
+    let type = try XCTUnwrap(UTType(filenameExtension: ConversationExportFiles.fileExtension))
+    XCTAssertEqual(type.identifier, "io.github.trufae.mai.conversation")
+    XCTAssertTrue(type.conforms(to: .json))
+    XCTAssertTrue(type.conforms(to: .content))
+  }
+
+  @MainActor
+  func testSharedConversationFileOpensInPocketMaiAndDecodesForCLI() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = AppStore(persistence: PersistenceStore(localBaseURL: directory))
+    var original = conversation("Shared-\(UUID().uuidString)", createdAt: 1_700_000_000)
+    original.messages.append(ChatMessage(role: .assistant, text: "The answer"))
+    let exported = await store.exportConversationFile(original, format: .json)
+    let url = try XCTUnwrap(exported)
+    defer { try? FileManager.default.removeItem(at: url) }
+    XCTAssertEqual(url.pathExtension, "pocketmai")
+
+    let data = try Data(contentsOf: url)
+    // This is the same decoder used by CLI /import.
+    let archive = try MaiArchive.decode(from: data)
+    XCTAssertEqual(archive.chats?.first?.title, original.title)
+    XCTAssertEqual(archive.chats?.first?.messages.last?.text, "The answer")
+    XCTAssertNil(archive.settings)
+    XCTAssertNil(archive.skills)
+    let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    XCTAssertNil(object["toolCallingDebug"])
+
+    store.openConversationImportFile(at: url)
+    let pending = try XCTUnwrap(store.pendingConversationImportFiles.first)
+    let preview = try store.previewConversationCollectionImport(pending)
+    XCTAssertEqual(preview.conversations, [original])
+    store.finishConversationImportFile(id: pending.id)
+
+    let legacy = url.deletingPathExtension().appendingPathExtension("pocketmai.json")
+    defer { try? FileManager.default.removeItem(at: legacy) }
+    try data.write(to: legacy)
+    store.openConversationImportFile(at: legacy)
+    XCTAssertEqual(store.pendingConversationImportFiles.first?.data, data)
   }
 
   func testSingleConversationEnvelopeRemainsCompatible() throws {
