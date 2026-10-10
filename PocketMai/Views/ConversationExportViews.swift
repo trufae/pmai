@@ -130,7 +130,7 @@ struct ConversationExportMenu: View {
   init(
     conversationID: UUID?,
     coordinator: ConversationExportCoordinator,
-    title: String = "Export"
+    title: String = "Share / Export"
   ) {
     self.conversationID = conversationID
     self.coordinator = coordinator
@@ -161,15 +161,16 @@ private struct ConversationExportMenuItems: View {
   let onSelect: (ConversationExportFormat) -> Void
 
   var body: some View {
-    Section("Share") {
+    Section("Continue in PocketMai or pmai") {
+      exportButton(.json)
+    }
+    Section("Readable Copy") {
       ForEach(ConversationExportFormat.shareMenuFormats) { format in
         exportButton(format)
       }
     }
-    Section("Data") {
-      ForEach(ConversationExportFormat.dataMenuFormats) { format in
-        exportButton(format)
-      }
+    Section("Troubleshooting") {
+      exportButton(.debug)
     }
   }
 
@@ -344,10 +345,6 @@ private extension ConversationExportFormat {
     [.markdown, .html, .epub, .docx, .audio]
   }
 
-  static var dataMenuFormats: [ConversationExportFormat] {
-    [.json, .debug]
-  }
-
   var exportMenuTitle: String {
     switch self {
     case .markdown: "Markdown (.md)"
@@ -355,8 +352,8 @@ private extension ConversationExportFormat {
     case .epub: "EPUB (.epub)"
     case .docx: "Word (.docx)"
     case .audio: "Audio (.m4a)"
-    case .json: "JSON Archive"
-    case .debug: "Debug JSON"
+    case .json: "PocketMai Conversation (.pocketmai)"
+    case .debug: "Debug Report (.json)"
     }
   }
 }

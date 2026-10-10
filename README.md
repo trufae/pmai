@@ -24,6 +24,26 @@ This app, comes after [MAI](https://github.com/trufae/mai), a cli agent with foc
 - **Share sheet**: send pictures, voice messages and documents to PocketMai from WhatsApp, Telegram, Photos, Files or any other app. Voice messages are transcribed on device by default (Ogg Opus included), documents are converted to text, and pictures ask for their size or for OCR just like when they are attached inside the app.
 - **Background replies**: a Live Activity on the Lock Screen and in the Dynamic Island follows running replies and tool calls, and a local notification tells you when a reply finishes, fails, or needs a tool approval while the app is in the background. An optional "Keep working when locked" mode keeps long replies running after the screen locks.
 
+## Share a conversation between devices
+
+Tap the chat title, then **Share Conversation...**, and choose **AirDrop** or
+**Mail**. This sends a `.pocketmai` conversation file. Open the received file
+with PocketMai, choose its destination folder, and import it to continue chatting.
+On a computer, import the very same file in pmai:
+
+```text
+/import ~/Downloads/My Chat.pocketmai
+```
+
+The file keeps the conversation and its embedded attachments, including tool
+messages and nested subagent chats. It does not add the diagnostic report or
+export your provider credentials. The receiving device uses its own configured
+providers. Older `.pocketmai.json` conversation files remain importable; to send
+to an older PocketMai version, rename the file to end in `.pocketmai.json`.
+
+**Export Other Formats...** offers readable copies such as Markdown, HTML and
+Word. **Debug Report** is for troubleshooting; it is not needed to transfer a chat.
+
 ## Voice privacy
 
 Voice recordings and imported audio stay on device for transcription by default.

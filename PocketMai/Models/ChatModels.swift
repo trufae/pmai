@@ -72,8 +72,8 @@ enum ConversationExportFormat: String, CaseIterable, Identifiable, Sendable {
     switch self {
     case .markdown: "Markdown"
     case .html: "HTML"
-    case .json: "JSON"
-    case .debug: "Debug"
+    case .json: "PocketMai Conversation"
+    case .debug: "Debug Report"
     case .epub: "EPUB"
     case .docx: "Word"
     case .audio: "Audio"
@@ -84,7 +84,7 @@ enum ConversationExportFormat: String, CaseIterable, Identifiable, Sendable {
     switch self {
     case .markdown: "doc.richtext"
     case .html: "chevron.left.forwardslash.chevron.right"
-    case .json: "curlybraces"
+    case .json: "bubble.left.and.bubble.right"
     case .debug: "ladybug"
     case .epub: "book"
     case .docx: "doc.text"
