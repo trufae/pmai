@@ -424,19 +424,12 @@ struct ChatView: View {
         Label("Compact...", systemImage: "rectangle.compress.vertical")
       }
       .disabled(!canCompactCurrentChat)
-      Button {
-        guard let id = store.currentConversation?.id else { return }
-        Task { await exportCoordinator.share(format: .json, conversationID: id, store: store) }
-      } label: {
-        Text("Share Conversation...")
-        Text("AirDrop or Mail to another PocketMai")
-        Image(systemName: "square.and.arrow.up")
-      }
-      .disabled(store.currentConversation == nil || exportCoordinator.isExporting)
+      ConversationShareButton(
+        conversationID: store.currentConversation?.id,
+        coordinator: exportCoordinator)
       ConversationExportMenu(
         conversationID: store.currentConversation?.id,
-        coordinator: exportCoordinator,
-        title: "Export Other Formats...")
+        coordinator: exportCoordinator)
       Divider()
       Button {
         showingProviderModelSheet = true
