@@ -381,14 +381,13 @@ struct ContentView: View {
 struct HistoryPanelDrag {
   let startingDepth: Int
   let panelWidth: CGFloat
-  var direction: CGFloat = 1
 
   func offset(for translation: CGFloat) -> CGFloat {
     // Dragging and settling must share the same adjacent-panel limits, or a
     // long swipe overshoots and then visibly snaps in the opposite direction.
     let minimum = -CGFloat(min(startingDepth, 1)) * panelWidth
     let maximum = CGFloat(min(2 - startingDepth, 1)) * panelWidth
-    return min(max(translation * direction, minimum), maximum)
+    return min(max(translation, minimum), maximum)
   }
 
   func targetDepth(translation: CGFloat, velocity: CGFloat) -> Int {
@@ -488,12 +487,9 @@ private struct HistoryPanelPanBridge: UIViewRepresentable {
       let translation = recognizer.translation(in: view)
       switch recognizer.state {
       case .began:
-        // Folders are the last layer: either horizontal direction returns to
-        // conversations, including the right swipe used to discover folders.
         drag = HistoryPanelDrag(
           startingDepth: drawerDepth,
-          panelWidth: resolvedPanelWidth(for: view.bounds.width),
-          direction: drawerDepth == 2 && recognizer.velocity(in: view).x > 0 ? -1 : 1)
+          panelWidth: resolvedPanelWidth(for: view.bounds.width))
         dismissContextMenus(in: view)
         onChanged(0)
       case .changed:
@@ -537,7 +533,7 @@ private struct HistoryPanelPanBridge: UIViewRepresentable {
         }
         return velocity.x < 0 && isHorizontal
       default:
-        return isHorizontal
+        return velocity.x < 0 && isHorizontal
       }
     }
 

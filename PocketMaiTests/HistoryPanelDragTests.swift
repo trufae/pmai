@@ -26,11 +26,14 @@ final class HistoryPanelDragTests: XCTestCase {
     }
   }
 
-  func testRightSwipeShortcutFromFoldersStillReturnsToConversations() {
-    let drag = HistoryPanelDrag(startingDepth: 2, panelWidth: 390, direction: -1)
-    XCTAssertEqual(drag.offset(for: 100), -100)
-    XCTAssertEqual(drag.offset(for: 600), -390)
-    XCTAssertEqual(drag.targetDepth(translation: 600, velocity: 800), 1)
+  func testRightSwipesFromFoldersDoNothing() {
+    let drag = HistoryPanelDrag(startingDepth: 2, panelWidth: 390)
+    for translation in [CGFloat(0), CGFloat(100), CGFloat(600)] {
+      XCTAssertEqual(drag.offset(for: translation), 0)
+      for velocity in [CGFloat(0), CGFloat(800), CGFloat(3000)] {
+        XCTAssertEqual(drag.targetDepth(translation: translation, velocity: velocity), 2)
+      }
+    }
   }
 
   func testShortFolderSwipeStaysOnFoldersUnlessFlickedLeft() {
