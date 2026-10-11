@@ -83,22 +83,22 @@ extension AgentRuntime {
     }
   }
 
+  @discardableResult
   func recordModelCall(
     _ call: ProviderCall, provider: ProviderID, request: ProviderRequest,
     userMessages: [AgentMessage]? = nil
-  ) async {
-    guard let usageStats else { return }
+  ) async -> ModelCallStats {
     // The user's own words count only on the conversation's first call;
     // compaction, approval and later turns only resend context.
     let userInputTokens = userMessages.map {
       ModelCallStats.estimatedTokenCount(of: Self.trailingUserMessages(in: $0))
     }
-    await usageStats.record(
-      ModelCallStats.measured(
-        providerLabel: provider.rawValue, modelID: request.model,
-        messages: request.messages, response: call.response,
-        timing: call.timing, end: call.ended, userInputTokens: userInputTokens),
-      at: call.ended)
+    let stats = ModelCallStats.measured(
+      providerLabel: provider.rawValue, modelID: request.model,
+      messages: request.messages, response: call.response,
+      timing: call.timing, end: call.ended, userInputTokens: userInputTokens)
+    await usageStats?.record(stats, at: call.ended)
+    return stats
   }
 
   func resolvedModel(_ model: String, for provider: any ChatProvider) -> String {

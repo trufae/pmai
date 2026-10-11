@@ -93,6 +93,9 @@ func siblingsStartedInOneReplyRunTogether() async throws {
   }
 
   #expect(result.response.text == "alpha done together | beta done together")
+  #expect(result.modelStats?.callCount == 2)
+  #expect(result.modelStats?.receivedTextTokens == ModelCallStats.estimatedTokenCount(
+    forCharacterCount: result.response.text.count))
   #expect(result.transcript.flatMap(\.toolResults).map(\.callID) == ["start-alpha", "start-beta"])
   let events = await recorder.events
   let starts = events.indices.filter { if case .childStarted = events[$0] { true } else { false } }

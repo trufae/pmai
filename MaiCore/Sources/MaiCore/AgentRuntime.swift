@@ -252,7 +252,7 @@ public actor AgentRuntime {
       usage: state.totalUsage.merging(await state.budget.approvalUsage),
       stopReason: response?.stopReason ?? .unknown,
       modelTurns: state.modelTurns + (await state.budget.approvalTurns),
-      toolCalls: state.toolCalls, interruption: interruption)
+      toolCalls: state.toolCalls, interruption: interruption, modelStats: state.modelStats)
     await state.emit(.finished(state.context, result))
     return result
   }

@@ -11,7 +11,7 @@ import time
 ROOT = Path(__file__).resolve().parent.parent
 SMOKE = '''installer project-approval project-debug provider-routing repl-defaults
 repl-export repl-local-providers repl-resume repl-resume-routing
-repl-resume-state repl-skills repl-smart-context repl-tool-policy task-agents
+repl-resume-state repl-skills repl-smart-context repl-speed repl-tool-policy task-agents
 update vim web-fetch'''.split()
 TERMINAL = '''repl-agents repl-colors repl-compaction repl-interactive-run repl-models repl-path
 repl-queue repl-recap repl-resize repl-suspend repl-theme repl-tool-context'''.split()

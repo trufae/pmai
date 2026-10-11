@@ -120,13 +120,16 @@ func localCompletionSpeedUsesAnswerText() throws {
 @Test("Merging keeps the first round's first-token latency")
 func mergeKeepsEarliestFirstToken() {
   var first = ModelCallStats(
-    providerLabel: "p", modelID: "m", outputTokens: 10, firstTokenSeconds: 0.9)
+    providerLabel: "p", modelID: "m", outputTokens: 10, generationSeconds: 2,
+    firstTokenSeconds: 0.9)
   let second = ModelCallStats(
-    providerLabel: "p", modelID: "m", outputTokens: 20, firstTokenSeconds: 0.2)
+    providerLabel: "p", modelID: "m", outputTokens: 20, generationSeconds: 8,
+    firstTokenSeconds: 0.2)
   first.merge(second)
   #expect(abs((first.firstTokenSeconds ?? -1) - 0.9) < 0.0001)
   #expect(first.outputTokens == 30)
   #expect(first.callCount == 2)
+  #expect(first.tokensPerSecond == 3)
 
   var missing = ModelCallStats(providerLabel: "p", modelID: "m", outputTokens: 5)
   missing.merge(second)
@@ -310,10 +313,17 @@ func runtimeRecordsProviderCalls() async throws {
   #expect(row.userInputTokens == ModelCallStats.estimatedTokenCount(forCharacterCount: 9))
   #expect(row.outputTokens > 0)
   #expect(row.totalSeconds >= 0)
+  #expect(result.modelStats?.outputTokens == row.outputTokens)
+  #expect(result.modelStats?.generationSeconds == row.generationSeconds)
 
   await runtime.configureUsageStats(nil)
-  _ = try await runtime.run(AgentRequest(provider: .hello, messages: [.user("again")])) { _ in }
+  let next = try await runtime.run(AgentRequest(provider: .hello, messages: [.user("again")])) { _ in }
   #expect(await store.totals().first?.callCount == 1)
+  let stats = try #require(next.modelStats)
+  #expect(stats.callCount == 1)
+  #expect(stats.outputTokens == ModelCallStats.estimatedTokenCount(
+    forCharacterCount: next.response.text.count))
+  #expect(stats.tokensEstimated)
 }
 
 @Test("Reports rank rows by speed and render aligned bars")

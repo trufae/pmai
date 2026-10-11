@@ -532,8 +532,14 @@ picks how much: `all` (replies and tool calls), `tools` (tool calls only),
 `stats` (one line per model turn), or `none`. Every `/jobs` row says how
 long its run has been going (`5 turns · 2 tools · 2.1k tok · 1m4s`), and
 `/jobs tree` ends with a `Total:` row summing the turns, tools, and tokens
-of the whole tree. When a turn ends the REPL prints `✓ took 5s` in cyan, or
-`✗ took 5s` in red when it failed or was cancelled.
+of the whole tree. When a turn ends the REPL prints
+`✓ took 5s and 1.2k tok · avg 42.1 tok/s` in cyan, or `✗ took 5s` in red
+when it failed or was cancelled. Average speed divides received answer tokens
+by generation time across that turn's model calls, excluding tool execution
+and child runs. Stream timing excludes the initial wait and trailing usage
+events; buffered or non-streaming replies use the full request time.
+A `~` marks estimated token rates, and speed is omitted when no answer tokens
+or generation duration are available.
 
 `/stats` ranks every provider:model pair by a combined ranking, then by its
 three measured categories: average output speed, time in use, and efficiency,

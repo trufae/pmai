@@ -14,6 +14,7 @@ extension AgentRuntime {
     var toolContext: AgentToolResultContext
     var smartContext = AgentSmartContext()
     var totalUsage: TokenUsage?
+    var modelStats: ModelCallStats?
     /// Provider usage describes the previous context until an edit changes it.
     var lastUsage: TokenUsage?
     var lastUsageMessageCount = 0

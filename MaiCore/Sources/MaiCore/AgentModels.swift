@@ -1186,6 +1186,9 @@ public struct AgentResult: Equatable, Sendable {
   public var response: AgentMessage
   public var transcript: [AgentMessage]
   public var usage: TokenUsage?
+  /// Combined measurements of this run's response calls. Generation timing
+  /// excludes tool execution and child runs; speed uses received answer text.
+  public var modelStats: ModelCallStats?
   public var stopReason: ProviderStopReason
   public var modelTurns: Int
   public var toolCalls: Int
@@ -1203,7 +1206,8 @@ public struct AgentResult: Equatable, Sendable {
     stopReason: ProviderStopReason,
     modelTurns: Int,
     toolCalls: Int,
-    interruption: AgentRunInterruption? = nil
+    interruption: AgentRunInterruption? = nil,
+    modelStats: ModelCallStats? = nil
   ) {
     self.runID = runID
     self.agentID = agentID
@@ -1211,6 +1215,7 @@ public struct AgentResult: Equatable, Sendable {
     self.response = response
     self.transcript = transcript
     self.usage = usage
+    self.modelStats = modelStats
     self.stopReason = stopReason
     self.modelTurns = modelTurns
     self.toolCalls = toolCalls

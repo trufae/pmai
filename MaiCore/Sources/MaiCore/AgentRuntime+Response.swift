@@ -7,9 +7,14 @@ extension AgentRuntime {
     var providerResponse = call.response
     try Task.checkCancellation()
     if state.request.context == .tools { state.toolContext.didRead(state.transcript) }
-    await recordModelCall(
+    let stats = await recordModelCall(
       call, provider: turn.provider.descriptor.id, request: turn.request,
       userMessages: state.modelTurns == 1 ? state.request.messages : nil)
+    if state.modelStats == nil {
+      state.modelStats = stats
+    } else {
+      state.modelStats?.merge(stats)
+    }
     let usage = call.usage(for: turn.request.messages)
     state.totalUsage = state.totalUsage.merging(usage)
     // Reduced context usage does not describe the full saved transcript.

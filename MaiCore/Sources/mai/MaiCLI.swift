@@ -3559,6 +3559,7 @@ struct MaiCLI {
         let wasInterrupted = turn.map { interruptHandler.deactivate($0.interrupt) } ?? false
         loop.activeTurn = nil
         var succeeded = false
+        var modelStats: ModelCallStats?
         var paused: AgentRunInterruption?
         var kept = 0
         var settled = true
@@ -3568,6 +3569,7 @@ struct MaiCLI {
             settled = settle(result.transcript, from: turn)
           }
           succeeded = true
+          modelStats = result.modelStats
           paused = result.interruption
         case .failure(let error):
           let cancelled = error is CancellationError || wasInterrupted
@@ -3602,6 +3604,9 @@ struct MaiCLI {
           let tokens = subtree.reduce(0) { $0 + ($1.usage?.totalTokens ?? 0) }
           let estimated = subtree.contains { $0.usage?.isEstimated == true }
           took += " and \(ModelUsageFormat.tokens(tokens, estimated: estimated))"
+          if let stats = modelStats, let speed = stats.tokensPerSecond {
+            took += " · avg \(ModelUsageFormat.speed(speed, estimated: stats.visibleOutputTokensEstimated))"
+          }
           if let elsewhere {
             took += " · saved in '\(elsewhere)'"
           } else if !settled {
