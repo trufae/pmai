@@ -250,6 +250,7 @@ private struct StreamingMessageBubble: View {
 
 private struct MessageBubbleContent: View, Equatable {
   @AppStorage("thinkingDisplay") private var thinkingDisplay: ThinkingDisplay = .five
+  @Environment(\.isFullChatScreenshotRendering) private var isFullChatScreenshotRendering
   let message: ChatMessage
   let messageRenderKey: ChatMessageRenderKey
   var streamingOverride: String? = nil
@@ -282,6 +283,7 @@ private struct MessageBubbleContent: View, Equatable {
   @State private var selectedImageAttachment: ChatAttachment?
   @State private var imageSaveNotice: ImageSaveNotice?
   @State private var replyDraft: MessageReplyDraft?
+  @State private var userPreviewSteps: [Int: Int] = [:]
 
   private var isUser: Bool { message.role == .user }
   private var displayText: String { streamingOverride ?? message.presentationText }
@@ -321,16 +323,11 @@ private struct MessageBubbleContent: View, Equatable {
       ForEach(Array(prepared.parts.enumerated()), id: \.element.id) { index, part in
         switch part {
         case .visible(_, let visibleText):
-          let usesMarkdown = usesMarkdown(for: visibleText, canRenderMarkdown: canRenderMarkdown)
-          let markdownBlocks = markdownBlocks(
-            for: visibleText,
-            usesMarkdown: usesMarkdown,
-            partID: part.id)
           bubble(
             visibleText: visibleText,
             rawText: displayText,
-            markdownBlocks: markdownBlocks,
-            usesMarkdown: usesMarkdown,
+            canRenderMarkdown: canRenderMarkdown,
+            partID: part.id,
             visiblePartIndex: prepared.visiblePartIndex(at: index),
             actionText: prepared.visibleText,
             includeMessageExtras: index == prepared.firstVisiblePartIndex
@@ -375,18 +372,11 @@ private struct MessageBubbleContent: View, Equatable {
         }
       }
       if prepared.parts.isEmpty && !prepared.hideBubble {
-        let usesMarkdown = usesMarkdown(
-          for: prepared.visibleText,
-          canRenderMarkdown: canRenderMarkdown)
-        let markdownBlocks = markdownBlocks(
-          for: prepared.visibleText,
-          usesMarkdown: usesMarkdown,
-          partID: 0)
         bubble(
           visibleText: prepared.visibleText,
           rawText: displayText,
-          markdownBlocks: markdownBlocks,
-          usesMarkdown: usesMarkdown,
+          canRenderMarkdown: canRenderMarkdown,
+          partID: 0,
           visiblePartIndex: 0,
           actionText: prepared.visibleText,
           includeMessageExtras: true
@@ -420,8 +410,8 @@ private struct MessageBubbleContent: View, Equatable {
   private func bubble(
     visibleText: String,
     rawText: String,
-    markdownBlocks: [MarkdownBlock],
-    usesMarkdown: Bool,
+    canRenderMarkdown: Bool,
+    partID: Int,
     visiblePartIndex: Int,
     actionText: String? = nil,
     includeMessageExtras: Bool = true
@@ -432,6 +422,20 @@ private struct MessageBubbleContent: View, Equatable {
     let messageFontFamily = appearance.fontFamily(for: message.role)
     let messageText = actionText ?? visibleText
     let hasIncludedExtras = includeMessageExtras && hasDisplayedAttachmentContent
+    let allowsProgressiveReveal =
+      isUser && !isFullChatScreenshotRendering
+      && searchHighlight?.visiblePartIndex != visiblePartIndex
+    let previewSteps = userPreviewSteps[partID, default: 1]
+    let userPreview =
+      allowsProgressiveReveal
+      ? Self.userMessagePreview(visibleText, steps: previewSteps) : nil
+    // Partial messages never parse or lay out the full markdown body.
+    let usesMarkdown =
+      userPreview == nil
+      && usesMarkdown(
+        for: visibleText, canRenderMarkdown: canRenderMarkdown)
+    let markdownBlocks = markdownBlocks(
+      for: visibleText, usesMarkdown: usesMarkdown, partID: partID)
     let bubbleView = VStack(alignment: .leading, spacing: 8) {
       if includeMessageExtras && showsSenderHeader {
         HStack(spacing: 6) {
@@ -459,6 +463,12 @@ private struct MessageBubbleContent: View, Equatable {
             .font(messageFont)
             .foregroundStyle(.secondary)
         }
+      } else if let userPreview {
+        Text(userPreview)
+          .font(messageFont)
+          .lineSpacing(CGFloat(appearance.lineSpacing))
+          .foregroundStyleIfPresent(plainBodyForegroundStyle)
+          .fixedSize(horizontal: false, vertical: true)
       } else if let searchHighlight,
         searchHighlight.visiblePartIndex == visiblePartIndex
       {
@@ -486,6 +496,31 @@ private struct MessageBubbleContent: View, Equatable {
           .lineSpacing(CGFloat(appearance.lineSpacing))
           .foregroundStyleIfPresent(plainBodyForegroundStyle)
           .fixedSize(horizontal: false, vertical: true)
+      }
+      if allowsProgressiveReveal && (userPreview != nil || previewSteps > 1) {
+        HStack(spacing: 16) {
+          if userPreview != nil {
+            Button("Show more..") {
+              withAnimation(.snappy) {
+                userPreviewSteps[partID] = previewSteps + 1
+              }
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+          }
+          if previewSteps > 1 {
+            Button("Show less") {
+              withAnimation(.snappy) {
+                userPreviewSteps[partID] = nil
+              }
+            }
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+          }
+        }
+        .font(.caption)
+        .foregroundStyle(.tint)
+        .buttonStyle(.plain)
       }
       if includeMessageExtras && hasVoiceRecording {
         VoiceRecordingPlaybackButton(message: message)
@@ -580,6 +615,23 @@ private struct MessageBubbleContent: View, Equatable {
     } else {
       bubbleWithSheet
     }
+  }
+
+  /// Each step adds at most 1,000 characters or 12 source lines. Scan only as far
+  /// as requested, even when a prompt contains megabytes of text.
+  private static func userMessagePreview(_ text: String, steps: Int) -> String? {
+    var end = text.startIndex
+    for _ in 0..<steps {
+      var lines = 1
+      for _ in 0..<1_000 {
+        guard end < text.endIndex else { return nil }
+        if text[end].isNewline { lines += 1 }
+        text.formIndex(after: &end)
+        if lines > 12 { break }
+      }
+    }
+    guard end < text.endIndex else { return nil }
+    return text[..<end].trimmingCharacters(in: .whitespacesAndNewlines) + "…"
   }
 
   private func usesMarkdown(for visibleText: String, canRenderMarkdown: Bool) -> Bool {
