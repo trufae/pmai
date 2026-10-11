@@ -612,39 +612,26 @@ struct SettingsView: View {
   }
 
   @ViewBuilder
-  private var toolCallingContent: some View {
+  private var toolOptionsContent: some View {
     Picker("Tool Calling", selection: settingsBinding(\.toolCallingMode)) {
       ForEach(ToolCallingMode.allCases) { mode in
         Text(mode.displayName).tag(mode)
       }
     }
     .pickerStyle(.menu)
-    Text(store.settings.toolCallingMode.summary)
-      .font(.caption)
-      .foregroundStyle(.secondary)
-    Stepper(value: mcpRequestTimeoutBinding, in: AppSettings.mcpRequestTimeoutRange, step: 5) {
-      Text("Tool Call Timeout: \(store.settings.mcpRequestTimeoutSeconds)s")
-    }
-    Text("Applies to MCP tool calls, resource reads, and refreshes.")
-      .font(.caption)
-      .foregroundStyle(.secondary)
-    Stepper(value: settingsBinding(\.maxToolCallsPerTurn), in: AppSettings.maxToolCallsPerTurnRange)
-    {
-      Text("Max Tool Calls: \(store.settings.maxToolCallsPerTurn)")
-    }
-  }
-
-  @ViewBuilder
-  private var toolApprovalContent: some View {
     Picker("Tool approval", selection: settingsBinding(\.toolApprovalMode)) {
       ForEach(ToolApprovalMode.allCases, id: \.rawValue) { mode in
         Text(mode.rawValue).tag(mode)
       }
     }
-    Text(
-      "yolo runs all tools; ask lets you approve or edit each call; smart uses the approval agent selected in Manage Agents, or the current chat model."
-    )
-    .font(.caption).foregroundStyle(.secondary)
+    .pickerStyle(.menu)
+    Stepper(value: mcpRequestTimeoutBinding, in: AppSettings.mcpRequestTimeoutRange, step: 5) {
+      Text("Tool Call Timeout: \(store.settings.mcpRequestTimeoutSeconds)s")
+    }
+    Stepper(value: settingsBinding(\.maxToolCallsPerTurn), in: AppSettings.maxToolCallsPerTurnRange)
+    {
+      Text("Max Tool Calls: \(store.settings.maxToolCallsPerTurn)")
+    }
   }
 
   @ViewBuilder
@@ -1510,8 +1497,7 @@ struct SettingsView: View {
       }
 
       SettingsLazyDisclosureGroup {
-        toolCallingContent
-        toolApprovalContent
+        toolOptionsContent
       } label: {
         Label("Options", systemImage: "slider.horizontal.3")
       }
