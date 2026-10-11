@@ -13,22 +13,129 @@ extension View {
   }
 }
 
+/// Folder navigation behind the conversation list.
+struct ConversationFoldersView: View {
+  @ObservedObject var storeObservation: AppStoreViewObservation
+  let store: AppStore
+  let isShowingBookmarks: Bool
+  let onSelectFolder: (String) -> Void
+  let onSelectBookmarks: () -> Void
+  @State private var showingFolderManager = false
+  @State private var showingGallery = false
+  @State private var showingAppsPanel = false
+
+  var body: some View {
+    let counts = store.conversationSummaries.reduce(into: [String: Int]()) { counts, summary in
+      if summary.hasMessages {
+        counts[summary.folderID, default: 0] += 1
+      }
+    }
+
+    ZStack(alignment: .bottom) {
+      List {
+        ForEach(store.conversationFolders) { folder in
+          let count = counts[folder.id, default: 0]
+          let isSelected = !isShowingBookmarks && store.selectedConversationFolderID == folder.id
+          SidebarFolderRow(
+            title: folder.displayName,
+            subtitle: "\(count) conversation\(count == 1 ? "" : "s")",
+            systemImage: folder.systemImage,
+            iconColor: folder.tint?.swatchColor,
+            isSelected: isSelected
+          ) {
+            onSelectFolder(folder.id)
+          }
+          .disabled(!store.canUseConversationFolder(folder.id))
+          .listRowBackground(SidebarRowBackground(isSelected: isSelected))
+          .listRowSeparator(.hidden)
+        }
+
+        SidebarFolderRow(
+          title: "Bookmarks",
+          subtitle: "\(store.messageBookmarks.count) bookmarked message\(store.messageBookmarks.count == 1 ? "" : "s")",
+          systemImage: "bookmark",
+          isSelected: isShowingBookmarks,
+          action: onSelectBookmarks
+        )
+        .listRowBackground(SidebarRowBackground(isSelected: isShowingBookmarks))
+        .listRowSeparator(.hidden)
+      }
+      .listStyle(.plain)
+      .contentMargins(.horizontal, 16, for: .scrollContent)
+      .scrollContentBackground(.hidden)
+      .safeAreaInset(edge: .top) {
+        Color.clear.frame(height: 64)
+      }
+      .safeAreaInset(edge: .bottom) {
+        Color.clear.frame(height: 80)
+      }
+      .scrollIndicators(.hidden)
+
+      SidebarEdgeFades()
+
+      floatingActions
+    }
+    .sheet(isPresented: $showingFolderManager) {
+      ConversationFolderManagementView()
+        .environmentObject(store)
+    }
+    .sheet(isPresented: $showingGallery) {
+      GalleryView()
+        .environmentObject(store)
+        .environmentObject(TTSPlayer.shared)
+    }
+    .sheet(isPresented: $showingAppsPanel) {
+      WebXDCAppsPanel()
+        .environmentObject(store)
+    }
+  }
+
+  private var floatingActions: some View {
+    GeometryReader { proxy in
+      let compact = proxy.size.width - 36 < 300
+
+      HStack(spacing: compact ? 6 : 10) {
+        FloatingActionPill(
+          title: "Manage...",
+          systemImage: "folder.badge.gearshape",
+          prominent: false,
+          compact: compact
+        ) {
+          showingFolderManager = true
+        }
+        FloatingActionIcon(
+          systemImage: "photo.on.rectangle.angled",
+          accessibilityLabel: "Gallery",
+          compact: compact
+        ) {
+          showingGallery = true
+        }
+        FloatingActionIcon(
+          systemImage: "square.grid.2x2",
+          accessibilityLabel: "Apps",
+          compact: compact
+        ) {
+          showingAppsPanel = true
+        }
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+      .padding(.horizontal, 18)
+      .padding(.bottom, 22)
+    }
+  }
+}
+
 struct SidebarView: View {
   @ObservedObject var storeObservation: AppStoreViewObservation
   let store: AppStore
   @Binding var showingSettings: Bool
   @Binding var isShowingBookmarks: Bool
-  @State private var isSearchActive = false
+  let isVisible: Bool
   @State private var searchText = ""
   @State private var isSelectionMode = false
   @State private var selectedIDs: Set<UUID> = []
   @State private var pendingDeletion: PendingConversationDeletion?
-  @State private var showingFolderManager = false
-  @State private var showingGallery = false
-  @State private var showingAppsPanel = false
-  @State private var showingRemoteAgents = false
   @State private var showingMoveDestinationDialog = false
-  @State private var keyboardOverlap: CGFloat = 0
   @State private var isLoadingBookmarks = false
   @State private var visibleBookmarks: [BookmarkedMessage] = []
   @State private var bookmarksLoadTask: Task<Void, Never>?
@@ -44,13 +151,14 @@ struct SidebarView: View {
   private let floatingActionBottomInset: CGFloat = 22
 
   var body: some View {
-    ZStack(alignment: .bottomTrailing) {
-      sidebarList
-        .safeAreaInset(edge: .bottom) {
-          Color.clear.frame(height: 80 + keyboardOverlap)
-        }
-      sidebarEdgeFades
-      floatingActions
+    GeometryReader { proxy in
+      ZStack {
+        sidebarList
+        SidebarEdgeFades()
+      }
+      .safeAreaInset(edge: .bottom, spacing: 0) {
+        floatingActions(compact: proxy.size.width - floatingActionHorizontalInset * 2 < 300)
+      }
     }
     .conversationDeletionAlert($pendingDeletion) { ids in
       store.deleteConversations(ids)
@@ -79,7 +187,16 @@ struct SidebarView: View {
     .onAppear {
       refreshVisibleConversations()
       if isShowingBookmarks {
-        showBookmarks()
+        loadBookmarks()
+      }
+    }
+    .onChange(of: isShowingBookmarks) { _, isShowing in
+      if isShowing {
+        loadBookmarks()
+      } else {
+        bookmarksLoadTask?.cancel()
+        bookmarksLoadTask = nil
+        isLoadingBookmarks = false
       }
     }
     .onChange(of: store.conversationSummaries) { _, _ in
@@ -92,10 +209,19 @@ struct SidebarView: View {
       refreshVisibleBookmarks()
     }
     .onChange(of: isSearchFieldFocused) { _, focused in
-      if focused {
-        activateSearch()
-      } else if searchText.isEmpty {
-        deactivateSearchIfEmpty()
+      guard focused else { return }
+      Task {
+        await store.loadStoredConversationsForSearch()
+        if isShowingBookmarks {
+          refreshVisibleBookmarks()
+        } else {
+          refreshVisibleConversations()
+        }
+      }
+    }
+    .onChange(of: isVisible) { _, visible in
+      if !visible {
+        isSearchFieldFocused = false
       }
     }
     .onChange(of: store.settings.selectedConversationFolderID) { _, _ in
@@ -108,34 +234,7 @@ struct SidebarView: View {
       bookmarksLoadTask?.cancel()
       bookmarksLoadTask = nil
     }
-    .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) {
-      updateKeyboardOverlap(from: $0)
-    }
-    .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) {
-      updateKeyboardOverlap(from: $0)
-    }
     .modifier(ConversationExportPresentations(coordinator: exportCoordinator))
-    .sheet(isPresented: $showingFolderManager) {
-      ConversationFolderManagementView()
-        .environmentObject(store)
-    }
-    .sheet(isPresented: $showingGallery) {
-      GalleryView()
-        .environmentObject(store)
-        .environmentObject(TTSPlayer.shared)
-    }
-    .sheet(isPresented: $showingAppsPanel) {
-      WebXDCAppsPanel()
-        .environmentObject(store)
-    }
-    .sheet(isPresented: $showingRemoteAgents) {
-      NavigationStack {
-        RemoteAgentsView()
-          .toolbar { ToolbarItem(placement: .cancellationAction) {
-            Button("Done") { showingRemoteAgents = false }
-          } }
-      }
-    }
   }
 
   private func refreshVisibleConversations() {
@@ -197,9 +296,8 @@ struct SidebarView: View {
     }
   }
 
-  private func showBookmarks() {
+  private func loadBookmarks() {
     withAnimation(.snappy) {
-      isShowingBookmarks = true
       isSelectionMode = false
       selectedIDs.removeAll()
     }
@@ -212,16 +310,6 @@ struct SidebarView: View {
       refreshVisibleBookmarks()
       isLoadingBookmarks = false
     }
-  }
-
-  private func showConversationFolder(_ folderID: String) {
-    bookmarksLoadTask?.cancel()
-    bookmarksLoadTask = nil
-    isLoadingBookmarks = false
-    withAnimation(.snappy) {
-      isShowingBookmarks = false
-    }
-    store.selectConversationFolder(folderID)
   }
 
   nonisolated private static func filteredVisibleConversations(
@@ -310,7 +398,9 @@ struct SidebarView: View {
         }
       }
     }
-    .listStyle(.sidebar)
+    .listStyle(.plain)
+    .contentMargins(.horizontal, 16, for: .scrollContent)
+    .scrollContentBackground(.hidden)
     .safeAreaInset(edge: .top) {
       Color.clear.frame(height: 32)
     }
@@ -355,7 +445,9 @@ struct SidebarView: View {
         }
       }
     }
-    .listStyle(.sidebar)
+    .listStyle(.plain)
+    .contentMargins(.horizontal, 16, for: .scrollContent)
+    .scrollContentBackground(.hidden)
     .safeAreaInset(edge: .top) {
       Color.clear.frame(height: 32)
     }
@@ -405,6 +497,8 @@ struct SidebarView: View {
         Label("Unbookmark", systemImage: "bookmark.slash")
       }
     }
+    .listRowBackground(Color(uiColor: .secondarySystemGroupedBackground))
+    .listRowSeparator(.hidden)
   }
 
   private var pinnedConversations: [ConversationSummary] {
@@ -461,17 +555,7 @@ struct SidebarView: View {
         onAfterClone: onDismiss)
     )
     .listRowBackground(SidebarRowBackground(isSelected: isSelected && !isSelectionMode))
-  }
-
-  private var sidebarEdgeFades: some View {
-    VStack(spacing: 0) {
-      SidebarEdgeFade(edge: .top)
-      Spacer(minLength: 0)
-      SidebarEdgeFade(edge: .bottom)
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .ignoresSafeArea(edges: .vertical)
-    .allowsHitTesting(false)
+    .listRowSeparator(.hidden)
   }
 
   private var emptyMessage: String? {
@@ -484,93 +568,25 @@ struct SidebarView: View {
     return "No conversations in \(store.selectedConversationFolder.displayName)."
   }
 
-  private var floatingActions: some View {
-    GeometryReader { proxy in
-      let availableWidth = max(proxy.size.width - floatingActionHorizontalInset * 2, 0)
-      let isCompact = availableWidth < 300
-
-      HStack(spacing: isCompact ? 6 : 10) {
-        if isSelectionMode {
-          selectionFloatingActions(compact: isCompact)
-        } else {
-          defaultFloatingActions(compact: isCompact)
-        }
+  private func floatingActions(compact: Bool) -> some View {
+    HStack(spacing: compact ? 6 : 10) {
+      if isSelectionMode {
+        selectionFloatingActions(compact: compact)
+      } else {
+        defaultFloatingActions(compact: compact)
       }
-      .frame(width: availableWidth)
-      .frame(maxHeight: .infinity, alignment: .bottom)
-      .padding(.horizontal, floatingActionHorizontalInset)
-      .padding(.bottom, floatingActionBottomInset + keyboardOverlap)
-      .animation(.snappy, value: isSearchActive)
     }
+    .frame(minHeight: 56)
+    .animation(.easeInOut(duration: 0.2), value: searchControlsExpanded)
+    .padding(.horizontal, floatingActionHorizontalInset)
+    .padding(.bottom, floatingActionBottomInset)
   }
 
   @ViewBuilder
   private func defaultFloatingActions(compact: Bool) -> some View {
-    Menu {
-      Button("Remote Agents", systemImage: "network") { showingRemoteAgents = true }
-      Button {
-        showBookmarks()
-      } label: {
-        if isShowingBookmarks {
-          Label("Bookmarks", systemImage: "checkmark")
-        } else {
-          Label("Bookmarks", systemImage: "bookmark")
-        }
-      }
-      Button {
-        showingGallery = true
-      } label: {
-        Label("Gallery", systemImage: "photo.on.rectangle.angled")
-      }
-      Button {
-        showingAppsPanel = true
-      } label: {
-        Label("Apps", systemImage: "square.grid.2x2")
-      }
-      Divider()
-      Button {
-        showConversationFolder(ConversationFolder.defaultID)
-      } label: {
-        folderPickerLabel(for: ConversationFolder.defaultFolder)
-      }
-      Button {
-        showConversationFolder(ConversationFolder.iCloudID)
-      } label: {
-        folderPickerLabel(for: ConversationFolder.iCloudFolder)
-      }
-      .disabled(!store.canUseConversationFolder(ConversationFolder.iCloudID))
-      Button {
-        showConversationFolder(ConversationFolder.archivedID)
-      } label: {
-        folderPickerLabel(for: ConversationFolder.archivedFolder)
-      }
-      ForEach(store.customConversationFolders) { folder in
-        Button {
-          showConversationFolder(folder.id)
-        } label: {
-          folderPickerLabel(for: folder)
-        }
-      }
-      Divider()
-      Button {
-        showingFolderManager = true
-      } label: {
-        Label("Manage...", systemImage: "folder.badge.gearshape")
-      }
-    } label: {
-      FloatingActionMenuIcon(
-        systemImage: selectedFolderMenuIcon,
-        isActive: isShowingBookmarks
-          || store.selectedConversationFolderID != ConversationFolder.defaultID,
-        compact: compact)
-    }
-    .menuOrder(.fixed)
-    .buttonStyle(.plain)
-    .accessibilityLabel("Conversation folder")
     FloatingSearchField(
       text: $searchText,
       isFocused: $isSearchFieldFocused,
-      onActivate: activateSearch,
       onCancel: cancelSearch
     )
     if !searchControlsExpanded {
@@ -581,73 +597,17 @@ struct SidebarView: View {
       ) {
         showingSettings = true
       }
-      .transition(.opacity.combined(with: .scale(scale: 0.86)))
+      .transition(.opacity)
     }
-  }
-
-  @ViewBuilder
-  private func folderPickerLabel(for folder: ConversationFolder) -> some View {
-    let isUnavailable = !store.canUseConversationFolder(folder.id)
-    if !isShowingBookmarks && store.selectedConversationFolderID == folder.id {
-      Label(folder.displayName, systemImage: "checkmark")
-        .foregroundStyle(isUnavailable ? Color.secondary : Color.primary)
-    } else {
-      Label(folder.displayName, systemImage: folder.systemImage)
-        .foregroundStyle(isUnavailable ? Color.secondary : Color.primary)
-    }
-  }
-
-  private var selectedFolderMenuIcon: String {
-    if isShowingBookmarks {
-      return "bookmark.fill"
-    }
-    let folder = store.selectedConversationFolder
-    if folder.id == ConversationFolder.iCloudID {
-      return "icloud.fill"
-    }
-    if folder.id == ConversationFolder.archivedID {
-      return "archivebox.fill"
-    }
-    if folder.id == ConversationFolder.defaultID {
-      return "tray"
-    }
-    return "folder.fill"
-  }
-
-  private func activateSearch() {
-    if !isSearchActive {
-      withAnimation(.snappy) {
-        isSearchActive = true
-      }
-      Task {
-        await store.loadStoredConversationsForSearch()
-        if isShowingBookmarks {
-          refreshVisibleBookmarks()
-        } else {
-          refreshVisibleConversations()
-        }
-      }
-    }
-    isSearchFieldFocused = true
   }
 
   private func cancelSearch() {
-    withAnimation(.snappy) {
-      searchText = ""
-      isSearchActive = false
-      isSearchFieldFocused = false
-    }
-  }
-
-  private func deactivateSearchIfEmpty() {
-    guard searchText.isEmpty else { return }
-    withAnimation(.snappy) {
-      isSearchActive = false
-    }
+    searchText = ""
+    isSearchFieldFocused = false
   }
 
   private var searchControlsExpanded: Bool {
-    isSearchActive || isSearchFieldFocused || !searchText.isEmpty
+    isSearchFieldFocused || !searchText.isEmpty
   }
 
   @ViewBuilder
@@ -731,51 +691,6 @@ struct SidebarView: View {
     pendingDeletion = .selected(selectedIDs)
   }
 
-  private func updateKeyboardOverlap(from notification: Notification) {
-    withAnimation(keyboardAnimation(from: notification)) {
-      keyboardOverlap = keyboardOverlap(from: notification)
-    }
-  }
-
-  private func keyboardAnimation(from notification: Notification) -> Animation {
-    let duration =
-      notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
-    let rawCurve =
-      (notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? NSNumber)?
-      .intValue ?? UIView.AnimationCurve.easeInOut.rawValue
-
-    if let curve = UIView.AnimationCurve(rawValue: rawCurve) {
-      switch curve {
-      case .easeInOut:
-        return .easeInOut(duration: duration)
-      case .easeIn:
-        return .easeIn(duration: duration)
-      case .easeOut:
-        return .easeOut(duration: duration)
-      case .linear:
-        return .linear(duration: duration)
-      @unknown default:
-        return .smooth(duration: duration)
-      }
-    }
-    return .smooth(duration: duration)
-  }
-
-  private func keyboardOverlap(from notification: Notification) -> CGFloat {
-    if notification.name == UIResponder.keyboardWillHideNotification {
-      return 0
-    }
-    guard
-      let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
-    else {
-      return 0
-    }
-    let screenMaxY = UIApplication.shared.openSessions
-      .compactMap { ($0.scene as? UIWindowScene)?.screen }
-      .first { $0.bounds.intersects(frame) }?.bounds.maxY
-      ?? frame.maxY
-    return max(0, screenMaxY - frame.minY)
-  }
 }
 
 struct PendingConversationDeletion: Identifiable {
@@ -2125,9 +2040,12 @@ private struct SidebarRowBackground: View {
   }
 }
 
-// Suppresses parent-driven re-invalidation; focused store observation, state, and bindings still update it.
+// Suppresses unrelated parent-driven re-invalidation while allowing visibility
+// changes to dismiss search focus. Store observation, state, and bindings still update it.
 extension SidebarView: Equatable {
-  nonisolated static func == (lhs: Self, rhs: Self) -> Bool { true }
+  nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.isVisible == rhs.isVisible
+  }
 }
 
 struct SidebarPlaneEffect: ViewModifier {
@@ -2174,6 +2092,19 @@ struct SidebarDistanceTone: View {
     let progress = min(max(progress, 0), 1)
     let eased = progress * progress * (3 - 2 * progress)
     return Double(1 - eased)
+  }
+}
+
+private struct SidebarEdgeFades: View {
+  var body: some View {
+    VStack(spacing: 0) {
+      SidebarEdgeFade(edge: .top)
+      Spacer(minLength: 0)
+      SidebarEdgeFade(edge: .bottom)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .ignoresSafeArea(edges: .vertical)
+    .allowsHitTesting(false)
   }
 }
 
@@ -2274,29 +2205,9 @@ struct FloatingActionIcon: View {
   }
 }
 
-private struct FloatingActionMenuIcon: View {
-  let systemImage: String
-  var isActive: Bool = false
-  var compact: Bool = false
-
-  var body: some View {
-    Image(systemName: systemImage)
-      .font((compact ? Font.title3 : Font.title2).weight(.semibold))
-      .foregroundStyle(isActive ? Color.accentColor : Color.primary)
-      .frame(width: compact ? 24 : 28, height: compact ? 24 : 28)
-      .padding(compact ? 12 : 14)
-      .modifier(
-        FloatingGlassSurface(
-          shape: Circle(),
-          tint: isActive ? Color.accentColor.opacity(0.18) : nil))
-      .contentShape(Circle())
-  }
-}
-
 private struct FloatingSearchField: View {
   @Binding var text: String
   let isFocused: FocusState<Bool>.Binding
-  let onActivate: () -> Void
   let onCancel: () -> Void
 
   var body: some View {
@@ -2325,7 +2236,7 @@ private struct FloatingSearchField: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Cancel search")
-        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+        .transition(.opacity)
       }
     }
     .padding(.horizontal, 14)
@@ -2337,15 +2248,9 @@ private struct FloatingSearchField: View {
         tint: nil))
     .contentShape(Capsule())
     .onTapGesture {
-      onActivate()
-    }
-    .onChange(of: isFocused.wrappedValue) { _, focused in
-      if focused {
-        onActivate()
-      }
+      isFocused.wrappedValue = true
     }
     .accessibilityElement(children: .contain)
-    .animation(.snappy, value: showsCancelButton)
   }
 
   private var showsCancelButton: Bool {
@@ -2382,6 +2287,47 @@ struct FloatingActionPill: View {
           tint: prominent ? Color.accentColor.opacity(0.16) : nil))
     }
     .buttonStyle(.plain)
+  }
+}
+
+private struct SidebarFolderRow: View {
+  let title: String
+  let subtitle: String
+  let systemImage: String
+  var iconColor: Color? = nil
+  let isSelected: Bool
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      HStack(spacing: 10) {
+        Image(systemName: systemImage)
+          .font(.subheadline)
+          .foregroundStyle(iconColor ?? Color.secondary)
+          .frame(width: 18)
+        VStack(alignment: .leading, spacing: 4) {
+          Text(title)
+            .font(.body.weight(.medium))
+            .lineLimit(1)
+          Text(subtitle)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(2)
+        }
+        Spacer()
+        if isSelected {
+          Image(systemName: "checkmark")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(Color.accentColor)
+            .accessibilityHidden(true)
+        }
+      }
+      .padding(.vertical, 5)
+      .padding(.trailing, 14)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityValue(isSelected ? "Selected" : "")
   }
 }
 

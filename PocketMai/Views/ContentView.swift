@@ -13,6 +13,8 @@ struct ContentView: View {
   @State private var showingSettings = false
   @State private var showingHistory = false
   @State private var isHistoryPanelMounted = false
+  @State private var showingFolders = false
+  @State private var isFoldersPanelMounted = false
   @State private var historyDragOffset: CGFloat = 0
   @State private var sidebarSelectionGeneration = 0
   @State private var isShowingBookmarksFolder = false
@@ -20,17 +22,44 @@ struct ContentView: View {
   var body: some View {
     GeometryReader { proxy in
       let panelWidth = min(max(proxy.size.width * 0.82, 300), 390)
-      let basePanelOffset = showingHistory ? panelWidth : 0
-      let panelOffset = min(max(basePanelOffset + historyDragOffset, 0), panelWidth)
-      let revealProgress = panelOffset / panelWidth
+      let drawerDepth = showingFolders ? 2 : (showingHistory ? 1 : 0)
+      let basePanelOffset = CGFloat(drawerDepth) * panelWidth
+      let panelOffset = min(max(basePanelOffset + historyDragOffset, 0), panelWidth * 2)
+      let sidebarOffset = max(panelOffset - panelWidth, 0)
+      let revealProgress = min(panelOffset / panelWidth, 1)
 
       ZStack(alignment: .leading) {
+        if isFoldersPanelMounted {
+          ConversationFoldersView(
+            storeObservation: sidebarStoreObservation,
+            store: store,
+            isShowingBookmarks: isShowingBookmarksFolder,
+            onSelectFolder: { folderID in
+              isShowingBookmarksFolder = false
+              store.selectConversationFolder(folderID)
+              setDrawerDepth(1, animation: historyPanelAnimation)
+            },
+            onSelectBookmarks: {
+              isShowingBookmarksFolder = true
+              setDrawerDepth(1, animation: historyPanelAnimation)
+            }
+          )
+          .frame(width: panelWidth)
+          .frame(maxHeight: .infinity)
+          .background { SidebarBlurBackground() }
+          .opacity(panelOffset > panelWidth ? 1 : 0)
+          .allowsHitTesting(panelOffset >= panelWidth * 2)
+          .accessibilityHidden(panelOffset < panelWidth * 2)
+          .zIndex(0)
+        }
+
         if isHistoryPanelMounted {
           SidebarView(
             storeObservation: sidebarStoreObservation,
             store: store,
             showingSettings: $showingSettings,
             isShowingBookmarks: $isShowingBookmarksFolder,
+            isVisible: showingHistory && !showingFolders,
             onSelectConversation: selectConversationFromSidebar,
             onSelectBookmarkedMessage: selectBookmarkedMessageFromSidebar,
             onDismiss: { closeHistoryPanel() }
@@ -42,9 +71,10 @@ struct ContentView: View {
           .background { SidebarBlurBackground() }
           .overlay { SidebarDistanceTone(progress: revealProgress) }
           .opacity(panelOffset > 0 ? 1 : 0)
-          .allowsHitTesting(panelOffset > 0)
-          .accessibilityHidden(panelOffset == 0)
-          .zIndex(0)
+          .allowsHitTesting(panelOffset >= panelWidth && panelOffset < panelWidth * 2)
+          .accessibilityHidden(panelOffset < panelWidth || panelOffset >= panelWidth * 2)
+          .offset(x: sidebarOffset)
+          .zIndex(1)
         }
 
         ZStack {
@@ -82,11 +112,32 @@ struct ContentView: View {
             }
         }
         .offset(x: panelOffset)
-        .zIndex(1)
+        .zIndex(2)
       }
       .background(Color(uiColor: .systemGroupedBackground))
+      .background {
+        HistoryPanelPanBridge(
+          isEnabled: !showingSettings && store.activeToolCallApprovalRequest == nil
+            && store.activeAutocompactionApprovalRequest == nil
+            && store.activeLongRunningOperationTimeoutRequest == nil,
+          drawerDepth: drawerDepth,
+          onChanged: { offset in
+            let nextOffset = min(max(CGFloat(drawerDepth) * panelWidth + offset, 0), panelWidth * 2)
+            if nextOffset > 0 {
+              mountHistoryPanel()
+            }
+            if nextOffset > panelWidth {
+              mountFoldersPanel()
+            }
+            historyDragOffset = offset
+          },
+          onEnded: { depth in
+            setDrawerDepth(depth, animation: historyPanelAnimation)
+          }
+        )
+      }
     }
-    .ignoresSafeArea()
+    .ignoresSafeArea(.container)
     .sheet(isPresented: $showingSettings) {
       SettingsView(store: store, storeObservation: settingsStoreObservation)
         .environmentObject(store)
@@ -147,23 +198,6 @@ struct ContentView: View {
       Text(store.errorMessage ?? "")
     }
     .background(ChatScreenshotServiceInstaller(service: screenshotService))
-    .background {
-      HistoryPanelPanBridge(
-        isEnabled: !showingSettings && store.activeToolCallApprovalRequest == nil
-          && store.activeAutocompactionApprovalRequest == nil
-          && store.activeLongRunningOperationTimeoutRequest == nil,
-        isOpen: showingHistory,
-        onChanged: { offset in
-          if offset > 0 {
-            mountHistoryPanel()
-          }
-          historyDragOffset = offset
-        },
-        onEnded: {
-          setHistoryPanelOpen($0, animation: historyPanelAnimation)
-        }
-      )
-    }
     .onAppear {
       contentStoreObservation.connect(to: store)
       chatStoreObservation.connect(to: store)
@@ -246,36 +280,43 @@ struct ContentView: View {
   }
 
   private func closeHistoryPanel(completion: (() -> Void)? = nil) {
-    setHistoryPanelOpen(false, animation: historyPanelAnimation, completion: completion)
+    setDrawerDepth(0, animation: historyPanelAnimation, completion: completion)
   }
 
   private func toggleHistoryPanel() {
-    setHistoryPanelOpen(!showingHistory, animation: .snappy)
+    setDrawerDepth(showingHistory ? 0 : 1, animation: .snappy)
   }
 
   private var historyPanelAnimation: Animation {
     .interactiveSpring(response: 0.32, dampingFraction: 0.86)
   }
 
-  private func setHistoryPanelOpen(
-    _ isOpen: Bool,
+  private func setDrawerDepth(
+    _ requestedDepth: Int,
     animation: Animation,
     completion: (() -> Void)? = nil
   ) {
-    if isOpen {
+    let depth = min(max(requestedDepth, 0), 2)
+    if depth > 0 {
       mountHistoryPanel()
     }
-    let visibilityChanged = showingHistory != isOpen
+    if depth > 1 {
+      mountFoldersPanel()
+    }
+    let previousDepth = showingFolders ? 2 : (showingHistory ? 1 : 0)
     withAnimation(animation, completionCriteria: .logicallyComplete) {
-      showingHistory = isOpen
+      showingHistory = depth > 0
+      showingFolders = depth > 1
       historyDragOffset = 0
     } completion: {
-      if visibilityChanged {
+      if previousDepth != depth {
         store.sidebarVisibilitySettled()
       }
-      if !isOpen {
-        isHistoryPanelMounted = false
+      if depth < 2 {
+        isFoldersPanelMounted = false
       }
+      // Keep the lazily mounted conversation list alive so closing the drawer
+      // preserves its native scroll offset and search state.
       completion?()
     }
   }
@@ -284,6 +325,11 @@ struct ContentView: View {
     guard !isHistoryPanelMounted else { return }
     sidebarStoreObservation.connect(to: store)
     isHistoryPanelMounted = true
+  }
+
+  private func mountFoldersPanel() {
+    guard !isFoldersPanelMounted else { return }
+    isFoldersPanelMounted = true
   }
 
   private enum ApprovalPresentation: Identifiable {
@@ -334,14 +380,14 @@ struct ContentView: View {
 
 private struct HistoryPanelPanBridge: UIViewRepresentable {
   let isEnabled: Bool
-  let isOpen: Bool
+  let drawerDepth: Int
   let onChanged: (CGFloat) -> Void
-  let onEnded: (Bool) -> Void
+  let onEnded: (Int) -> Void
 
   func makeCoordinator() -> Coordinator {
     Coordinator(
       isEnabled: isEnabled,
-      isOpen: isOpen,
+      drawerDepth: drawerDepth,
       onChanged: onChanged,
       onEnded: onEnded)
   }
@@ -357,7 +403,7 @@ private struct HistoryPanelPanBridge: UIViewRepresentable {
 
   func updateUIView(_ view: HierarchyTrackingView, context: Context) {
     context.coordinator.isEnabled = isEnabled
-    context.coordinator.isOpen = isOpen
+    context.coordinator.drawerDepth = drawerDepth
     context.coordinator.onChanged = onChanged
     context.coordinator.onEnded = onEnded
     context.coordinator.installIfNeeded(from: view)
@@ -372,22 +418,23 @@ private struct HistoryPanelPanBridge: UIViewRepresentable {
     var isEnabled: Bool {
       didSet { panGesture?.isEnabled = isEnabled }
     }
-    var isOpen: Bool
+    var drawerDepth: Int
     var onChanged: (CGFloat) -> Void
-    var onEnded: (Bool) -> Void
+    var onEnded: (Int) -> Void
 
     private weak var installedView: UIView?
     private var panGesture: UIPanGestureRecognizer?
-    private var startedOpen = false
+    private var startedDrawerDepth = 0
+    private var dragDirection: CGFloat = 1
 
     init(
       isEnabled: Bool,
-      isOpen: Bool,
+      drawerDepth: Int,
       onChanged: @escaping (CGFloat) -> Void,
-      onEnded: @escaping (Bool) -> Void
+      onEnded: @escaping (Int) -> Void
     ) {
       self.isEnabled = isEnabled
-      self.isOpen = isOpen
+      self.drawerDepth = drawerDepth
       self.onChanged = onChanged
       self.onEnded = onEnded
     }
@@ -401,7 +448,7 @@ private struct HistoryPanelPanBridge: UIViewRepresentable {
 
       uninstall()
       let gesture = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
-      gesture.cancelsTouchesInView = false
+      gesture.cancelsTouchesInView = true
       gesture.maximumNumberOfTouches = 1
       gesture.delegate = self
       gesture.isEnabled = isEnabled
@@ -421,27 +468,28 @@ private struct HistoryPanelPanBridge: UIViewRepresentable {
     @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
       guard let view = recognizer.view else { return }
       let translation = recognizer.translation(in: view)
-      let directionalTranslation = startedOpen
-        ? min(translation.x, 0)
-        : max(translation.x, 0)
-
       switch recognizer.state {
       case .began:
-        startedOpen = isOpen
+        startedDrawerDepth = drawerDepth
+        // Folders are the last layer: either horizontal direction returns to
+        // conversations, including the right swipe used to discover folders.
+        dragDirection = startedDrawerDepth == 2 && recognizer.velocity(in: view).x > 0 ? -1 : 1
         dismissContextMenus(in: view)
         onChanged(0)
       case .changed:
-        onChanged(directionalTranslation)
+        onChanged(translation.x * dragDirection)
       case .ended:
         let panelWidth = resolvedPanelWidth(for: view.bounds.width)
         let velocity = recognizer.velocity(in: view)
-        let baseOffset = startedOpen ? panelWidth : 0
         let projectedOffset = min(
-          max(baseOffset + directionalTranslation + velocity.x * 0.18, 0),
-          panelWidth)
-        onEnded(projectedOffset > panelWidth * 0.45)
+          max(
+            CGFloat(startedDrawerDepth) * panelWidth
+              + (translation.x + velocity.x * 0.18) * dragDirection,
+            CGFloat(max(startedDrawerDepth - 1, 0)) * panelWidth),
+          CGFloat(min(startedDrawerDepth + 1, 2)) * panelWidth)
+        onEnded(Int((projectedOffset / panelWidth).rounded()))
       case .cancelled, .failed:
-        onEnded(startedOpen)
+        onEnded(startedDrawerDepth)
       default:
         break
       }
@@ -466,11 +514,18 @@ private struct HistoryPanelPanBridge: UIViewRepresentable {
       let velocity = pan.velocity(in: view)
       let startX = location.x - translation.x
       let isHorizontal = abs(velocity.x) > abs(velocity.y) * 1.15
-      if isOpen {
-        let panelWidth = resolvedPanelWidth(for: view.bounds.width)
-        return startX >= panelWidth && velocity.x < 0 && isHorizontal
+      let panelWidth = resolvedPanelWidth(for: view.bounds.width)
+      switch drawerDepth {
+      case 0:
+        return startX <= view.bounds.width / 3 && velocity.x > 0 && isHorizontal
+      case 1:
+        if velocity.x > 0 {
+          return startX <= panelWidth && isHorizontal
+        }
+        return velocity.x < 0 && isHorizontal
+      default:
+        return isHorizontal
       }
-      return startX <= view.bounds.width / 3 && velocity.x > 0 && isHorizontal
     }
 
     func gestureRecognizer(
