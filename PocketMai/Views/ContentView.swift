@@ -101,16 +101,16 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(edges: .top)
-        .clipShape(RoundedRectangle(cornerRadius: panelOffset > 0 ? 28 : 0, style: .continuous))
         .allowsHitTesting(panelOffset == 0)
         .overlay {
-          Color.black.opacity(0.001)
+          Color.black.opacity(0.001 + Double(revealProgress) * 0.25)
             .contentShape(Rectangle())
             .allowsHitTesting(panelOffset > 0)
             .onTapGesture {
               closeHistoryPanel()
             }
         }
+        .clipShape(RoundedRectangle(cornerRadius: panelOffset > 0 ? 28 : 0, style: .continuous))
         .offset(x: panelOffset)
         .zIndex(2)
       }
