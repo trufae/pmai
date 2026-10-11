@@ -328,31 +328,6 @@ enum AppearanceZoomMethod: String, Codable, CaseIterable, Identifiable, Sendable
   }
 }
 
-enum SolidBubbleMode: String, Codable, CaseIterable, Identifiable, Sendable {
-  case user
-  case both
-  case none
-
-  var id: String { rawValue }
-
-  var displayName: String {
-    switch self {
-    case .user: "User"
-    case .both: "Both"
-    case .none: "None"
-    }
-  }
-
-  func includes(_ role: ChatRole) -> Bool {
-    switch (self, role) {
-    case (.both, .user), (.both, .assistant), (.user, .user):
-      true
-    default:
-      false
-    }
-  }
-}
-
 enum AppStartupBehavior: String, Codable, CaseIterable, Identifiable, Sendable {
   case continueChats
   case newChat
@@ -382,7 +357,6 @@ struct AppearanceSettings: Codable, Equatable, Sendable {
   var zoomMethod: AppearanceZoomMethod = .realtime
   var tint: AppearanceTint = .system
   var theme: AppearanceTheme = .system
-  var solidBubbles: SolidBubbleMode = .user
   var liveMarkdown: Bool = true
   var justifyText: Bool = true
   var unwrappedTables: Bool = false
@@ -403,8 +377,7 @@ struct AppearanceSettings: Codable, Equatable, Sendable {
   enum CodingKeys: String, CodingKey {
     case userFontFamily, assistantFontFamily, fontFamily, fontSize, lineSpacing, zoomMethod, tint,
       theme
-    case solidBubbles, solidResponseBubbles, colorizeResponseBubbles, liveMarkdown, justifyText,
-      unwrappedTables
+    case liveMarkdown, justifyText, unwrappedTables
     case hapticsEnabled
   }
 
@@ -422,16 +395,6 @@ struct AppearanceSettings: Codable, Equatable, Sendable {
     zoomMethod = (try? c.decode(AppearanceZoomMethod.self, forKey: .zoomMethod)) ?? .realtime
     tint = (try? c.decode(AppearanceTint.self, forKey: .tint)) ?? .system
     theme = (try? c.decode(AppearanceTheme.self, forKey: .theme)) ?? .system
-    if let decoded = try? c.decode(SolidBubbleMode.self, forKey: .solidBubbles) {
-      solidBubbles = decoded
-    } else if let legacySolidResponses =
-      (try? c.decode(Bool.self, forKey: .solidResponseBubbles))
-      ?? (try? c.decode(Bool.self, forKey: .colorizeResponseBubbles))
-    {
-      solidBubbles = legacySolidResponses ? .both : .user
-    } else {
-      solidBubbles = .user
-    }
     liveMarkdown = (try? c.decode(Bool.self, forKey: .liveMarkdown)) ?? true
     justifyText = (try? c.decode(Bool.self, forKey: .justifyText)) ?? true
     unwrappedTables = (try? c.decode(Bool.self, forKey: .unwrappedTables)) ?? false
@@ -447,7 +410,6 @@ struct AppearanceSettings: Codable, Equatable, Sendable {
     try c.encode(zoomMethod, forKey: .zoomMethod)
     try c.encode(tint, forKey: .tint)
     try c.encode(theme, forKey: .theme)
-    try c.encode(solidBubbles, forKey: .solidBubbles)
     try c.encode(liveMarkdown, forKey: .liveMarkdown)
     try c.encode(justifyText, forKey: .justifyText)
     try c.encode(unwrappedTables, forKey: .unwrappedTables)

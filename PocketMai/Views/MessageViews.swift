@@ -189,8 +189,6 @@ struct MessageBubble: View {
 }
 
 private struct StreamingMessageBubble: View {
-  @Environment(\.colorScheme) private var colorScheme
-
   let message: ChatMessage
   @ObservedObject var streamingText: StreamingText
   let toolSettings: NativeToolSettings
@@ -244,8 +242,7 @@ private struct StreamingMessageBubble: View {
       conversationCreatedAt: conversationCreatedAt,
       showUserTimestamp: showUserTimestamp,
       showThinking: showThinking,
-      isWaitingForResponse: isWaitingForResponse,
-      colorScheme: colorScheme
+      isWaitingForResponse: isWaitingForResponse
     )
     .equatable()
   }
@@ -279,7 +276,6 @@ private struct MessageBubbleContent: View, Equatable {
   var showUserTimestamp: Bool = false
   var showThinking: Bool = false
   var isWaitingForResponse: Bool = false
-  var colorScheme: ColorScheme
   @State private var showingTextSelection = false
   @State private var showingRawTextSelection = false
   @State private var selectedTextAttachment: ChatAttachment?
@@ -312,7 +308,6 @@ private struct MessageBubbleContent: View, Equatable {
       && lhs.showUserTimestamp == rhs.showUserTimestamp
       && lhs.showThinking == rhs.showThinking
       && lhs.isWaitingForResponse == rhs.isWaitingForResponse
-      && lhs.colorScheme == rhs.colorScheme
   }
 
   var body: some View {
@@ -914,84 +909,16 @@ private struct MessageBubbleContent: View, Equatable {
     message.role == .assistant ? markdownBodyColor : nil
   }
 
-  private var backgroundStyle: some ShapeStyle {
-    if message.role == .error {
-      return AnyShapeStyle(.red.opacity(0.14))
-    }
-    if isUser {
-      guard appearance.solidBubbles.includes(.user) else {
-        return AnyShapeStyle(Color.clear)
-      }
-      return MessageBubblePalette.selectedRowBackground()
-    }
-    if message.role == .assistant {
-      guard appearance.solidBubbles.includes(.assistant) else {
-        return AnyShapeStyle(Color.clear)
-      }
-      if colorScheme == .dark {
-        return MessageBubblePalette.accentBackground(
-          tint: appearance.tint,
-          colorScheme: colorScheme,
-          lightOpacity: 0.14,
-          systemDarkOpacity: 0.20)
-      }
-    }
-    return AnyShapeStyle(.regularMaterial)
-  }
-
-}
-
-private enum MessageBubblePalette {
-  static func selectedRowBackground() -> AnyShapeStyle {
-    AnyShapeStyle(Color.accentColor.opacity(0.22))
-  }
-
-  static func accentBackground(
-    tint: AppearanceTint,
-    colorScheme: ColorScheme,
-    lightOpacity: Double,
-    systemDarkOpacity: Double
-  ) -> AnyShapeStyle {
-    guard colorScheme == .dark else {
-      return AnyShapeStyle(Color.accentColor.opacity(lightOpacity))
-    }
-    guard let baseColor = tint.uiColor else {
-      return AnyShapeStyle(Color.accentColor.opacity(systemDarkOpacity))
-    }
-    return AnyShapeStyle(Color(uiColor: darkBubbleColor(from: baseColor)))
-  }
-
-  private static func darkBubbleColor(from color: UIColor) -> UIColor {
-    var hue: CGFloat = 0
-    var saturation: CGFloat = 0
-    var brightness: CGFloat = 0
-    var alpha: CGFloat = 0
-    guard color.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha) else {
-      return UIColor(white: 0.20, alpha: 1)
-    }
-    return UIColor(
-      hue: hue,
-      saturation: min(max(saturation, 0.58), 0.78),
-      brightness: min(max(brightness * 0.48, 0.34), 0.46),
-      alpha: 1)
-  }
-}
-
-extension AppearanceTint {
-  fileprivate var uiColor: UIColor? {
-    switch self {
-    case .system: nil
-    case .blue: UIColor.systemBlue
-    case .purple: UIColor.systemPurple
-    case .pink: UIColor(red: 1.0, green: 0.45, blue: 0.72, alpha: 1)
-    case .red: UIColor.systemRed
-    case .orange: UIColor.systemOrange
-    case .yellow: UIColor.systemYellow
-    case .green: UIColor.systemGreen
-    case .mint: UIColor.systemMint
-    case .teal: UIColor.systemTeal
-    case .cyan: UIColor.systemCyan
-    case .indigo: UIColor.systemIndigo
+  private var backgroundStyle: AnyShapeStyle {
+    switch message.role {
+    case .user:
+      AnyShapeStyle(Color.accentColor.opacity(0.22))
+    case .assistant:
+      AnyShapeStyle(Color.clear)
+    case .error:
+      AnyShapeStyle(.red.opacity(0.14))
+    case .system, .tool:
+      AnyShapeStyle(.regularMaterial)
     }
   }
 }
