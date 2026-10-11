@@ -5,6 +5,17 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
+private extension ToolbarContent {
+  @ToolbarContentBuilder
+  func hidingSharedBackground() -> some ToolbarContent {
+    if #available(iOS 26.0, *) {
+      self.sharedBackgroundVisibility(.hidden)
+    } else {
+      self
+    }
+  }
+}
+
 private struct ConversationTimelineTimestamp: View {
   let label: String
   let date: Date
@@ -259,6 +270,7 @@ struct ChatView: View {
               }
             }
           }
+          .buttonStyle(.plain)
           .accessibilityLabel(
             hasUnreadConversations
               ? "Show conversations, unread messages"
@@ -266,6 +278,7 @@ struct ChatView: View {
           )
           .help("Show conversations")
         }
+        .hidingSharedBackground()
         ToolbarItem(placement: .principal) {
           chatTitle
         }
@@ -287,6 +300,7 @@ struct ChatView: View {
         ToolbarItem(placement: .topBarTrailing) {
           trailingMenu
         }
+        .hidingSharedBackground()
       }
   }
 
@@ -586,6 +600,7 @@ struct ChatView: View {
     } label: {
       Image(systemName: "square.and.pencil")
     }
+    .buttonStyle(.plain)
     .disabled(
       currentConversationIsEmpty || store.selectedConversationIsLoading || isMessageSelectionMode
     )
