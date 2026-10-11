@@ -2426,9 +2426,8 @@ struct MaiCLI {
         facts.append("compact? [y/n/m/x/c]")
       }
       let detail = facts.isEmpty ? "" : " · " + facts.joined(separator: " · ")
-      // The chat title goes last so a narrow terminal truncates it, not the status.
       return (
-        "\(activityMarker) \(currentDirectoryName()) · \(project.displayName) \(promptIdentity(session, contextSize: liveContext))\(detail) · \(session.title)",
+        "\(activityMarker) \(currentDirectoryName()) \(promptIdentity(session, contextSize: liveContext))\(detail)",
         running
       )
     }
@@ -4216,15 +4215,15 @@ struct MaiCLI {
     }
   }
 
-  /// The agent, estimated context, and model a chat runs on. The context is
-  /// deliberately immediately before the model so it stays easy to compare.
+  /// The agent, estimated context, and provider/model a chat runs on. The
+  /// context sits immediately before the model so it stays easy to compare.
   private static func promptIdentity(
     _ session: REPLSession, contextSize: AgentContextSize? = nil
   ) -> String {
     let profile = session.profile
     let model = profile.model.isEmpty
       ? (profile.provider.rawValue.isEmpty ? "no model selected" : profile.provider.rawValue)
-      : profile.model
+      : "\(profile.provider.rawValue)::\(profile.model)"
     return "[\(profile.agentID)] · \(promptContextStatus(session, contextSize: contextSize)) · \(model)"
   }
 
@@ -4260,7 +4259,7 @@ struct MaiCLI {
     _ session: REPLSession, contextSize: AgentContextSize? = nil
   ) -> String {
     let size = contextSize ?? AgentContextSize(messages: session.history.messages)
-    return "\(size.messageCount) msg \(ModelUsageFormat.tokens(size.estimatedTokens, estimated: true))"
+    return "\(ModelUsageFormat.count(size.estimatedTokens))/\(size.messageCount)"
   }
 
   private static func changeWorkingDirectory(_ argument: String, terminal: TerminalWriter) async {

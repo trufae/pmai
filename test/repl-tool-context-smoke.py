@@ -115,11 +115,11 @@ def main():
                     def latest_size():
                         text = re.sub(r'\x1b(?:\[[0-?]*[ -/]*[@-~]|[78])', '',
                                       output.decode(errors='replace'))
-                        sizes = re.findall(r'(\d+) msg ~([\d,.]+)([kmb]?) tok', text)
+                        sizes = re.findall(r' · ([\d,.]+)([kM]?)/(\d+) · local::large', text)
                         if not sizes:
                             return None
-                        messages, number, suffix = sizes[-1]
-                        tokens = float(number.replace(',', '')) * {'': 1, 'k': 1000, 'm': 1e6, 'b': 1e9}[suffix]
+                        number, suffix, messages = sizes[-1]
+                        tokens = float(number.replace(',', '')) * {'': 1, 'k': 1000, 'M': 1e6}[suffix]
                         return int(messages), tokens
 
                     # Provider calls and supervisor redraws arrive on separate

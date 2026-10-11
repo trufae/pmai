@@ -478,9 +478,11 @@ configured provider, change **Base URL**, and choose **Update**. See
 `doc/edit.md` for everything `/edit` reaches.
 
 On a terminal the prompt never goes away: the bottom two rows are reserved for
-a status line (project, agent, what is running, how much is queued) and the
-input line, and everything else scrolls above them. A message typed while a
-turn runs is queued and joins the conversation at the agent's next model turn —
+a status line and the input line, and everything else scrolls above them.
+The status shows the current directory once, the agent, estimated context as
+tokens/messages (`2.8k/7`), and `provider::model`, followed by activity and queue
+details when needed. A message typed while a turn runs is queued and joins the
+conversation at the agent's next model turn —
 after the tool results it is about to read — so a running agent can be steered
 without stopping it. `/queue` lists what is waiting, `/queue push TEXT` adds
 without sending, `/queue pop` drops the newest, and `/queue drop` drops all.
