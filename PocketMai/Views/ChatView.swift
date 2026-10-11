@@ -2007,6 +2007,7 @@ struct ChatView: View {
       placeholder: composerPlaceholder,
       conversationID: store.currentConversation?.id,
       isResponding: currentChatIsResponding,
+      isKeyboardVisible: keyboardOverlap > 0,
       queuedMessagePendingEdit: $queuedMessagePendingEdit,
       liveVoiceSession: liveVoiceSession
     )
@@ -2635,6 +2636,7 @@ private struct ChatComposer: View {
   let placeholder: String
   let conversationID: UUID?
   let isResponding: Bool
+  let isKeyboardVisible: Bool
   @Binding var queuedMessagePendingEdit: QueuedChatMessage?
   @ObservedObject var liveVoiceSession: LiveVoiceSession
   @FocusState private var composerFocused: Bool
@@ -2816,7 +2818,8 @@ private struct ChatComposer: View {
       }
     }
     .padding(.horizontal, 12)
-    .padding(.vertical, 8)
+    .padding(.top, 8)
+    .padding(.bottom, isKeyboardVisible ? 8 : 0)
     .onAppear {
       draftText = store.draftText(for: conversationID)
       if let message = queuedMessagePendingEdit {

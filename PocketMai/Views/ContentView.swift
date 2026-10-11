@@ -378,6 +378,25 @@ struct ContentView: View {
   }
 }
 
+struct HistoryPanelDrag {
+  let startingDepth: Int
+  let panelWidth: CGFloat
+  var direction: CGFloat = 1
+
+  func offset(for translation: CGFloat) -> CGFloat {
+    // Dragging and settling must share the same adjacent-panel limits, or a
+    // long swipe overshoots and then visibly snaps in the opposite direction.
+    let minimum = -CGFloat(min(startingDepth, 1)) * panelWidth
+    let maximum = CGFloat(min(2 - startingDepth, 1)) * panelWidth
+    return min(max(translation * direction, minimum), maximum)
+  }
+
+  func targetDepth(translation: CGFloat, velocity: CGFloat) -> Int {
+    let projectedOffset = offset(for: translation + velocity * 0.18)
+    return Int((CGFloat(startingDepth) + projectedOffset / panelWidth).rounded())
+  }
+}
+
 private struct HistoryPanelPanBridge: UIViewRepresentable {
   let isEnabled: Bool
   let drawerDepth: Int
@@ -424,8 +443,7 @@ private struct HistoryPanelPanBridge: UIViewRepresentable {
 
     private weak var installedView: UIView?
     private var panGesture: UIPanGestureRecognizer?
-    private var startedDrawerDepth = 0
-    private var dragDirection: CGFloat = 1
+    private var drag = HistoryPanelDrag(startingDepth: 0, panelWidth: 300)
 
     init(
       isEnabled: Bool,
@@ -470,26 +488,21 @@ private struct HistoryPanelPanBridge: UIViewRepresentable {
       let translation = recognizer.translation(in: view)
       switch recognizer.state {
       case .began:
-        startedDrawerDepth = drawerDepth
         // Folders are the last layer: either horizontal direction returns to
         // conversations, including the right swipe used to discover folders.
-        dragDirection = startedDrawerDepth == 2 && recognizer.velocity(in: view).x > 0 ? -1 : 1
+        drag = HistoryPanelDrag(
+          startingDepth: drawerDepth,
+          panelWidth: resolvedPanelWidth(for: view.bounds.width),
+          direction: drawerDepth == 2 && recognizer.velocity(in: view).x > 0 ? -1 : 1)
         dismissContextMenus(in: view)
         onChanged(0)
       case .changed:
-        onChanged(translation.x * dragDirection)
+        onChanged(drag.offset(for: translation.x))
       case .ended:
-        let panelWidth = resolvedPanelWidth(for: view.bounds.width)
         let velocity = recognizer.velocity(in: view)
-        let projectedOffset = min(
-          max(
-            CGFloat(startedDrawerDepth) * panelWidth
-              + (translation.x + velocity.x * 0.18) * dragDirection,
-            CGFloat(max(startedDrawerDepth - 1, 0)) * panelWidth),
-          CGFloat(min(startedDrawerDepth + 1, 2)) * panelWidth)
-        onEnded(Int((projectedOffset / panelWidth).rounded()))
+        onEnded(drag.targetDepth(translation: translation.x, velocity: velocity.x))
       case .cancelled, .failed:
-        onEnded(startedDrawerDepth)
+        onEnded(drag.startingDepth)
       default:
         break
       }
