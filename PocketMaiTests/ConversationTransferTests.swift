@@ -94,7 +94,18 @@ final class ConversationTransferTests: XCTestCase {
     let type = try XCTUnwrap(UTType(filenameExtension: ConversationExportFiles.fileExtension))
     XCTAssertEqual(type.identifier, "io.github.trufae.mai.conversation")
     XCTAssertTrue(type.conforms(to: .json))
+    XCTAssertTrue(type.conforms(to: .data))
     XCTAssertTrue(type.conforms(to: .content))
+    XCTAssertEqual(type.preferredMIMEType, "application/vnd.pocketmai+json")
+
+    let documentTypes = try XCTUnwrap(
+      Bundle(for: AppStore.self).object(forInfoDictionaryKey: "CFBundleDocumentTypes")
+        as? [[String: Any]])
+    let handler = try XCTUnwrap(documentTypes.first {
+      ($0["LSItemContentTypes"] as? [String])?.contains(type.identifier) == true
+    })
+    XCTAssertEqual(handler["CFBundleTypeRole"] as? String, "Editor")
+    XCTAssertEqual(handler["LSHandlerRank"] as? String, "Owner")
   }
 
   @MainActor
@@ -103,7 +114,10 @@ final class ConversationTransferTests: XCTestCase {
     defer { try? FileManager.default.removeItem(at: directory) }
     let store = AppStore(persistence: PersistenceStore(localBaseURL: directory))
     var original = conversation("Shared-\(UUID().uuidString)", createdAt: 1_700_000_000)
-    original.messages.append(ChatMessage(role: .assistant, text: "The answer"))
+    original.messages.append(
+      ChatMessage(
+        role: .assistant, text: "The answer",
+        createdAt: Date(timeIntervalSince1970: 1_700_000_001)))
     let exported = await store.exportConversationFile(original, format: .json)
     let url = try XCTUnwrap(exported)
     defer { try? FileManager.default.removeItem(at: url) }

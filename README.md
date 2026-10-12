@@ -27,7 +27,7 @@ This app, comes after [MAI](https://github.com/trufae/mai), a cli agent with foc
 ## Share a conversation between devices
 
 Tap the chat title, or long-press a chat in the left sidebar, then choose
-**Share Conversation...** and **AirDrop** or **Mail**. This sends a `.pocketmai`
+**Share...** and **AirDrop** or **Mail**. This sends a `.pocketmai`
 conversation file. Open the received file
 with PocketMai, choose its destination folder, and import it to continue chatting.
 On a computer, import the very same file in pmai:
@@ -42,7 +42,7 @@ export your provider credentials. The receiving device uses its own configured
 providers. Older `.pocketmai.json` conversation files remain importable; to send
 to an older PocketMai version, rename the file to end in `.pocketmai.json`.
 
-**Export Other Formats...** offers readable copies such as Markdown, HTML and
+**Export...** offers readable copies such as Markdown, HTML and
 Word. **Debug Report** is for troubleshooting; it is not needed to transfer a chat.
 
 ## Voice privacy

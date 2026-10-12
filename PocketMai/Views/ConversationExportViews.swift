@@ -131,9 +131,7 @@ struct ConversationShareButton: View {
       guard let conversationID else { return }
       Task { await coordinator.share(format: .json, conversationID: conversationID, store: store) }
     } label: {
-      Text("Share Conversation...")
-      Text("AirDrop or Mail to another PocketMai")
-      Image(systemName: "square.and.arrow.up")
+      Label("Share...", systemImage: "square.and.arrow.up")
     }
     .disabled(conversationID == nil || coordinator.isExporting)
   }
@@ -149,7 +147,7 @@ struct ConversationExportMenu: View {
   init(
     conversationID: UUID?,
     coordinator: ConversationExportCoordinator,
-    title: String = "Export Other Formats..."
+    title: String = "Export..."
   ) {
     self.conversationID = conversationID
     self.coordinator = coordinator
@@ -180,9 +178,6 @@ private struct ConversationExportMenuItems: View {
   let onSelect: (ConversationExportFormat) -> Void
 
   var body: some View {
-    Section("Continue in PocketMai or pmai") {
-      exportButton(.json)
-    }
     Section("Readable Copy") {
       ForEach(ConversationExportFormat.shareMenuFormats) { format in
         exportButton(format)
@@ -371,7 +366,7 @@ private extension ConversationExportFormat {
     case .epub: "EPUB (.epub)"
     case .docx: "Word (.docx)"
     case .audio: "Audio (.m4a)"
-    case .json: "PocketMai Conversation (.pocketmai)"
+    case .json: "PocketMai (.pocketmai)"
     case .debug: "Debug Report (.json)"
     }
   }
