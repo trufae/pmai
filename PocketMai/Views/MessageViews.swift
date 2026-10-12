@@ -429,13 +429,11 @@ private struct MessageBubbleContent: View, Equatable {
     let userPreview =
       allowsProgressiveReveal
       ? Self.userMessagePreview(visibleText, steps: previewSteps) : nil
-    // Partial messages never parse or lay out the full markdown body.
-    let usesMarkdown =
-      userPreview == nil
-      && usesMarkdown(
-        for: visibleText, canRenderMarkdown: canRenderMarkdown)
+    // Parse and lay out only the revealed prefix of a partial message.
+    let bubbleText = userPreview ?? visibleText
+    let usesMarkdown = usesMarkdown(for: bubbleText, canRenderMarkdown: canRenderMarkdown)
     let markdownBlocks = markdownBlocks(
-      for: visibleText, usesMarkdown: usesMarkdown, partID: partID)
+      for: bubbleText, usesMarkdown: usesMarkdown, partID: partID)
     let bubbleView = VStack(alignment: .leading, spacing: 8) {
       if includeMessageExtras && showsSenderHeader {
         HStack(spacing: 6) {
@@ -463,12 +461,6 @@ private struct MessageBubbleContent: View, Equatable {
             .font(messageFont)
             .foregroundStyle(.secondary)
         }
-      } else if let userPreview {
-        Text(userPreview)
-          .font(messageFont)
-          .lineSpacing(CGFloat(appearance.lineSpacing))
-          .foregroundStyleIfPresent(plainBodyForegroundStyle)
-          .fixedSize(horizontal: false, vertical: true)
       } else if let searchHighlight,
         searchHighlight.visiblePartIndex == visiblePartIndex
       {
@@ -491,7 +483,7 @@ private struct MessageBubbleContent: View, Equatable {
         )
         .fixedSize(horizontal: false, vertical: true)
       } else {
-        Text(visibleText)
+        Text(bubbleText)
           .font(messageFont)
           .lineSpacing(CGFloat(appearance.lineSpacing))
           .foregroundStyleIfPresent(plainBodyForegroundStyle)
@@ -500,7 +492,7 @@ private struct MessageBubbleContent: View, Equatable {
       if allowsProgressiveReveal && (userPreview != nil || previewSteps > 1) {
         HStack(spacing: 16) {
           if userPreview != nil {
-            Button("Show more..") {
+            Button(previewSteps == 1 ? "Show more" : "Show even more") {
               withAnimation(.snappy) {
                 userPreviewSteps[partID] = previewSteps + 1
               }
@@ -509,7 +501,7 @@ private struct MessageBubbleContent: View, Equatable {
             .contentShape(Rectangle())
           }
           if previewSteps > 1 {
-            Button("Show less") {
+            Button("Collapse") {
               withAnimation(.snappy) {
                 userPreviewSteps[partID] = nil
               }
