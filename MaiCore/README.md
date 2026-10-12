@@ -1089,12 +1089,30 @@ relative to the workspace.
 ```
 /skills                    list skills with colored enabled/disabled status
 /skills show NAME          print a skill's file, tool state, and instructions
+/skills add NAME           create a skill in your editor, including its folder and SKILL.md
+/skills add NAME "DESCRIPTION" "PROMPT"  create a skill directly
+/skills edit NAME          edit SKILL.md (same as /edit skill NAME; creates new names)
+/skills import ZIP_OR_FOLDER  import a skill and its supporting files
+/skills remove NAME        delete the skill folder and its supporting files
 /skills enable NAME|all    offer a skill, or every skill, to the current agent
 /skills disable NAME|all   disable a skill (or every skill) for this agent
 /skills prompt NAME [TEXT] send an enabled skill's instructions, then TEXT
 /skills path               print the directories scanned
 /skills reload             rescan the directories (every /skills command does)
 ```
+
+New skills are created in the project and enabled for the current agent.
+Add `--user` before the name or path to use your home skills folder instead.
+Editing and deleting target the visible copy; `--user` or `--project` selects
+a specific copy. Quote names, descriptions, prompts, and paths containing spaces.
+Imports accept a folder or a ZIP containing one skill, either at the archive root
+or inside a containing folder. Existing skills are never overwritten by import.
+Edits preserve supporting files, and the runtime picks up changes immediately.
+
+In PocketMai, open Settings → Tools → Skills to create a skill with a name,
+description, and prompt, or import a ZIP/folder from Files. Tap a skill to edit,
+use its switch to enable it for the selected agent, and use its actions menu to
+delete it. Created and imported skills are enabled automatically.
 
 ### Agents and subagents
 

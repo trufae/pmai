@@ -29,6 +29,7 @@ so syntax highlighting and JSON checking work without configuration.
 | `/edit prompt [NAME]` | The prompt called NAME as Markdown, whether a system prompt or a user prompt; a new name is refused, since the two are different things. Current agent's system prompt when omitted. | Immediately. |
 | `/edit system [NAME]` | A named system prompt; creates it when NAME is new. Current agent's prompt when omitted. | Immediately, in every agent that uses the prompt. |
 | `/edit user NAME` | A user prompt — a message sent with `$NAME`; creates it when NAME is new, starting from the builtin prompt of that name if there is one. | Immediately. |
+| `/edit skill NAME` | A skill's `SKILL.md`; creates its folder when NAME is new. Add `--user` to use your home skills. Same as `/skills edit NAME`. | Immediately; supporting files stay in place and new skills are enabled for the current agent. |
 | `/edit NAME` | The same, for an existing system or user prompt name. | Immediately. |
 | `/edit agent [ID]` | One saved agent as JSON: provider, model, tools, limits, prompt name, delegation, retry, autocompact. Current agent when omitted. | Immediately; the current chat picks up its own agent's changes. |
 | `/edit provider [ID]` | One configured provider as JSON: base URL, default model, key source, headers, timeout, options. Current provider when omitted. | Immediately; the provider is rebuilt in the running session. |
@@ -61,6 +62,18 @@ when no agent uses it. `/edit user` is the long form of
 `/prompts add NAME TEXT`: the text is saved under `prompts.user` and
 `$NAME [TEXT]` sends it; `/prompts rm NAME` drops it. See `doc/prompts.md`
 for how prompts and agents fit.
+
+### Skills
+
+`/skills add NAME` and `/edit skill NAME` open a Markdown draft with YAML name
+and description fields followed by the skill's instructions. Fill in the
+description and prompt, keeping the name unchanged. Saving an unchanged draft
+creates nothing. Existing skills retain their supporting files and extra YAML
+fields. `/skills add NAME "DESCRIPTION" "PROMPT"` creates one without an editor,
+`/skills import ZIP_OR_FOLDER` imports one, and `/skills remove NAME` deletes it.
+Skills are created under the project's `.pmai/skills`; `--user` uses the home
+skills folder. Editing and deletion use the visible copy unless `--user` or
+`--project` selects a specific copy. Quote names and paths containing spaces.
 
 ### Agents
 

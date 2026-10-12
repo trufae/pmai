@@ -4614,6 +4614,7 @@ struct MaiCLI {
         runtime: runtime,
         plugins: plugins,
         memory: visual.memory,
+        skills: visual.skills,
         configuration: &configuration,
         configurationPath: visual.configurationPath,
         providerBaseURLs: visual.providerBaseURLs,
@@ -5598,7 +5599,7 @@ struct MaiCLI {
             case .system: " '\(rest)' is a system prompt: /prompt rm drops one."
             case .builtin:
               " '\(rest)' is a builtin prompt, which stays; a user prompt of that name replaces it."
-            case .skill: " '\(rest)' is a skill: remove its folder (/skills path)."
+            case .skill: " '\(rest)' is a skill: /skills remove NAME deletes it."
             case .user: ""
             }
           } ?? ""
@@ -6027,6 +6028,7 @@ struct MaiCLI {
     runtime: AgentRuntime,
     plugins: PluginRegistry,
     memory: MemoryState,
+    skills: SkillState,
     configuration: inout MaiConfiguration?,
     configurationPath: String?,
     providerBaseURLs: ProviderBaseURLStore,
@@ -6044,6 +6046,12 @@ struct MaiCLI {
       ? "smart" : fields[0].lowercased()
 
     switch action {
+    case "skill", "skills":
+      await handleSkillMutation(
+        "edit", argument: actionArgument, session: &session, runtime: runtime,
+        skills: skills, plugins: plugins, configuration: &configuration,
+        configurationPath: configurationPath, terminal: terminal)
+
     case "soul":
       await handleEditSoulCommand(terminal: terminal)
 
@@ -8102,6 +8110,147 @@ struct MaiCLI {
 
   // MARK: Skills
 
+  private static func handleSkillMutation(
+    _ action: String, argument: String,
+    session: inout REPLSession, runtime: AgentRuntime, skills: SkillState,
+    plugins: PluginRegistry, configuration: inout MaiConfiguration?,
+    configurationPath: String?, terminal: TerminalWriter
+  ) async {
+    do {
+      var words = try shellWords(argument)
+      var scoped = false
+      var root = skills.directories[0]
+      if words.first == "--user" || words.last == "--user" {
+        root = skills.userDirectory
+        scoped = true
+        if words.first == "--user" { words.removeFirst() } else { words.removeLast() }
+      } else if words.first == "--project" || words.last == "--project" {
+        scoped = true
+        if words.first == "--project" { words.removeFirst() } else { words.removeLast() }
+      }
+      guard let name = words.first,
+        (action == "add" ? [1, 3].contains(words.count) : words.count == 1)
+      else {
+        await terminal.line(
+          "Usage: /skills add [--user] NAME [\"DESCRIPTION\" \"PROMPT\"]\n       /skills edit|remove [--user|--project] NAME\n       /skills import [--user] ZIP_OR_FOLDER\n       /edit skill [--user] NAME"
+        )
+        return
+      }
+      let catalog = scoped ? AgentSkillCatalog.load(directories: [root]) : skills.catalog
+      let skill: AgentSkill
+      let created: Bool
+      switch action {
+      case "remove", "rm", "delete":
+        guard let existing = await resolveSkill(name, in: catalog, terminal: terminal) else {
+          return
+        }
+        try AgentSkillManager.remove(existing)
+        let synced = await synchronizeSkillTools(runtime: runtime, state: skills)
+        if !synced.catalog.modelInvocable.contains(where: { $0.toolName == existing.toolName }) {
+          session.profile.toolNames.remove(existing.toolName)
+          session.profile.toolPolicy.tools.removeValue(forKey: existing.toolName)
+          session.touch()
+          if var draft = configuration, let configurationPath {
+            for index in draft.agents.indices {
+              draft.agents[index].toolNames.remove(existing.toolName)
+              draft.agents[index].toolPolicy.tools.removeValue(forKey: existing.toolName)
+            }
+            try draft.save(to: URL(fileURLWithPath: configurationPath))
+            configuration = draft
+            for agent in draft.agents {
+              try await runtime.register(agent: agent, replacingExisting: true)
+            }
+          }
+        }
+        await terminal.line("Deleted skill '\(existing.name)' from \(existing.directoryURL.path).")
+        if let revealed = synced.catalog.skill(named: existing.name) {
+          await terminal.line(
+            "The \(revealed.rootURL.path == skills.userDirectory.path ? "user" : "project") copy is now visible: \(revealed.fileURL.path)."
+          )
+        }
+        return
+
+      case "import":
+        let path = (name as NSString).expandingTildeInPath
+        let url = URL(
+          fileURLWithPath: path,
+          relativeTo: URL(
+            fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        ).standardizedFileURL
+        let archive: MaiArchiveSkill
+        if try url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true {
+          guard let imported = AgentSkill.load(directory: url) else {
+            throw AgentSkillManagerError.invalidSkill
+          }
+          archive = try MaiArchiveSkill(skill: imported)
+        } else {
+          archive = try SkillArchiveImporter.archive(at: url)
+        }
+        skill = try AgentSkillManager.install(archive, in: root)
+        created = true
+
+      default:
+        let existing = catalog.skill(named: name)
+        if action == "add", existing != nil { throw AgentSkillManagerError.alreadyExists(name) }
+        if words.count == 3 {
+          skill = try AgentSkillManager.create(
+            name: name, description: words[1], prompt: words[2], in: root)
+          created = true
+        } else {
+          if existing == nil { try AgentSkillManager.ensureAvailable(name: name, in: root) }
+          let previous =
+            try existing.map { try String(contentsOf: $0.fileURL, encoding: .utf8) }
+            ?? AgentSkillManager.document(name: name, description: "", prompt: "")
+          guard
+            let edited = await editTemporaryText(previous, suffix: "SKILL.md", terminal: terminal)
+          else { return }
+          guard edited != previous else {
+            await terminal.line("Skill unchanged; no files saved.")
+            return
+          }
+          if let existing {
+            skill = try AgentSkillManager.saveDocument(edited, for: existing)
+            created = false
+          } else {
+            let parsed = AgentSkillFrontMatter.parse(edited)
+            guard parsed.fields["name"] == name else { throw AgentSkillManagerError.renamedSkill }
+            guard
+              !(parsed.fields["description"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty
+            else {
+              throw AgentSkillManagerError.missingDescription
+            }
+            skill = try AgentSkillManager.install(
+              .init(
+                name: name,
+                files: [
+                  .init(path: AgentSkill.filename, data: Data(edited.utf8))
+                ]), in: root)
+            created = true
+          }
+        }
+      }
+      let synced = await synchronizeSkillTools(runtime: runtime, state: skills)
+      await terminal.line(
+        "\(action == "import" ? "Imported" : created ? "Created" : "Saved") skill '\(skill.name)' at \(skill.fileURL.path)."
+      )
+      if created,
+        synced.catalog.modelInvocable.contains(where: { $0.directoryURL == skill.directoryURL })
+      {
+        await handleToolsCommand(
+          "enable tool:\(skill.toolName)", session: &session, runtime: runtime,
+          plugins: plugins, configuration: &configuration,
+          configurationPath: configurationPath, terminal: terminal)
+      } else if created, synced.catalog.skill(named: skill.name)?.directoryURL != skill.directoryURL
+      {
+        await terminal.line(
+          "A project skill shadows this copy; /skills show \(skill.name) shows the active skill.")
+      }
+    } catch {
+      await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+    }
+  }
+
   /// Registers a `skills_*` tool for every skill the state can see. Called
   /// at startup, before agents are filtered against the known tool names.
   private static func registerSkillTools(
@@ -8199,11 +8348,18 @@ struct MaiCLI {
     let modes = session.profile.agentDefinition.toolModes(in: groups, usage: usage)
 
     switch action {
+    case "add", "new", "create", "edit", "remove", "rm", "delete", "import":
+      let mutation = ["new", "create"].contains(action) ? "add" : action
+      await handleSkillMutation(
+        mutation, argument: rest, session: &session, runtime: runtime, skills: skills,
+        plugins: plugins, configuration: &configuration,
+        configurationPath: configurationPath, terminal: terminal)
+
     case "", "list", "ls":
       guard !catalog.isEmpty else {
         let places = skills.directories.map { abbreviatedPath($0.path, width: 60) }
         await terminal.line(
-          "No skills. A skill is a folder with a SKILL.md under \(places.joined(separator: " or ")); /help skills explains."
+          "No skills. /skills add NAME creates one; /skills import ZIP_OR_FOLDER imports one. Skills live under \(places.joined(separator: " or ")); /help skills explains."
         )
         return
       }
@@ -11567,7 +11723,8 @@ struct MaiCLI {
       "/agent provider ", "/agent remove ", "/edit agent", "/tools",
       "/skills", "/skills list", "/skills show ", "/skills enable ", "/skills disable ",
       "/skills enable all", "/skills disable all", "/skills prompt ", "/skills path",
-      "/skills reload", "/help skills",
+      "/skills reload", "/skills add ", "/skills edit ", "/skills remove ",
+      "/skills import ", "/edit skill ", "/help skills",
       "/mcp list",
       "/mcp add ", "/mcp enable ", "/mcp disable ",
       "/edit prompt", "/edit compact", "/edit config", "/edit mcps",
@@ -11630,6 +11787,9 @@ struct MaiCLI {
       values.append("/provider use \(provider.id.rawValue)")
     }
     for skill in skills {
+      values.append("/skills edit \(shellQuote(skill.name))")
+      values.append("/skills remove \(shellQuote(skill.name))")
+      values.append("/edit skill \(shellQuote(skill.name))")
       values.append("/skills show \(skill.name)")
       values.append("/skills prompt \(skill.name) ")
       if skill.isModelInvocable {
@@ -11945,7 +12105,7 @@ struct MaiCLI {
     /continue              Resume a stopped or interrupted task, including queued messages
     /copy [N] [PATH]       Copy the last reply, or N messages, to the clipboard or a file
     /cwd                   Print the current working directory
-    /edit TARGET           Edit a prompt, agent, config, MCP list, or message in $EDITOR
+    /edit TARGET           Edit a prompt, skill, agent, config, MCP list, or message in $EDITOR
     /edit input            Write the next message in $EDITOR instead of at the prompt
     /exit                  Exit the REPL
     /export FORMAT [PATH]  Save a portable archive, or this chat as markdown, html, json, debug, epub, or docx
@@ -11974,7 +12134,7 @@ struct MaiCLI {
     /queue                 List, push, pop, or drop messages waiting for an agent
     /reply [WIDTH]         Answer the last reply in $EDITOR with it quoted above (/help reply)
     /set [SETTING VALUE]   Show or change settings; /help set lists them
-    /skills                List, enable, disable, or send skills (/help skills)
+    /skills                Manage, enable, disable, or send skills (/help skills)
     /stats                 Combined ranking, tokens/s, time in use, and efficiency per provider:model, as bars
     /stop                  Interrupt the current turn and keep its queue; /continue resumes it
     /theme                 List, apply, save, or customize terminal themes (/help theme)
@@ -12214,6 +12374,7 @@ struct MaiCLI {
     /edit prompt [NAME]      Edit the prompt called NAME, system or user (current agent's when omitted)
     /edit system [NAME]      Edit/create a named system prompt (current when omitted)
     /edit user NAME          Edit/create a user prompt; a builtin's name starts from its text
+    /edit skill NAME         Edit/create a skill's SKILL.md (add --user for a user skill)
     /edit NAME               Edit an existing system or user prompt
     /edit agent [ID]         Edit a saved agent as JSON (current when omitted)
     /edit provider [ID]      Edit a configured provider as JSON (current when omitted)
@@ -12311,12 +12472,22 @@ struct MaiCLI {
 
       /skills                    List skills with enabled/proxied/disabled status and calls
       /skills show NAME          Print a skill's file, tool state, and instructions
+      /skills add [--user] NAME   Create a skill in the editor, including its folder and SKILL.md
+      /skills add NAME "DESCRIPTION" "PROMPT"  Create without opening the editor
+      /skills edit NAME          Edit SKILL.md (same as /edit skill NAME; creates new names)
+      /skills import [--user] ZIP_OR_FOLDER  Import a skill with supporting files
+      /skills remove NAME        Delete the visible skill folder and its supporting files
       /skills enable NAME|all    Offer a skill (or every skill) to the current agent
       /skills disable NAME|all   Disable a skill (or every skill) for this agent
       /skills direct|proxy|inherit NAME|all  Choose exposure or restore inheritance
       /skills prompt NAME [TEXT] Send an enabled skill's instructions, then TEXT
       /skills path               Print the directories scanned
       /skills reload             Rescan the directories (every /skills command does)
+
+    New skills live in the project by default; --user uses your home skills.
+    Editing and deleting use the visible copy; --user or --project selects a
+    specific copy. Quote names and paths containing spaces. New and imported
+    skills are enabled for the current agent. Imports never overwrite a skill.
 
     /tools enable skills is the same as /skills enable all and also picks up
     skills added later. A skill whose front matter says

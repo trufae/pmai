@@ -42,7 +42,10 @@ public struct AgentSkill: Equatable, Identifiable, Sendable {
 
   public var id: String { name }
 
-  public var fileURL: URL { directoryURL.appendingPathComponent(Self.filename) }
+  public var fileURL: URL {
+    Self.skillFile(in: directoryURL, fileManager: .default)
+      ?? directoryURL.appendingPathComponent(Self.filename)
+  }
 
   /// The tool the model calls to receive these instructions.
   public var toolName: String { MaiSkillTools.toolName(for: name) }
@@ -150,6 +153,8 @@ public enum AgentSkillFrontMatter {
   }
 
   private static func isFence(_ line: String) -> Bool {
+    // Indented fences belong to YAML block scalars, such as a description.
+    guard line.first?.isWhitespace != true else { return false }
     let trimmed = line.trimmingCharacters(in: .whitespaces)
     return trimmed == "---" || trimmed == "..."
   }

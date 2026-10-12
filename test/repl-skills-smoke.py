@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+import zipfile
 from http.server import ThreadingHTTPServer
 
 requests = []
@@ -77,6 +78,56 @@ def main():
                 return [r for r in requests if r['model'] == 'main']
 
             final = {'role': 'assistant', 'content': 'ALPHA DONE'}
+            # Exercise the manager against real files and an editor fixture.
+            editor = root / 'skill-editor.py'
+            editor.write_text('''from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+text = path.read_text()
+if "description: |-\\n  \\n" in text:
+    text = text.replace("description: |-\\n  \\n", "description: Managed in editor\\n")
+    text += "Instructions v1.\\n"
+else:
+    text = text.replace("Instructions v1.", "Instructions v2.")
+    text = text.replace("Managed in editor", "Edited description")
+path.write_text(text)
+''')
+            definition = '---\nname: zipped\ndescription: Imported ZIP\n---\nRead references/guide.md'
+            with zipfile.ZipFile(root / 'skill import.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr('download/SKILL.md', definition)
+                archive.writestr('download/references/guide.md', 'Keep this reference')
+            imported_folder = root / 'folder import'
+            imported_folder.mkdir()
+            (imported_folder / 'SKILL.md').write_text('---\nname: folder-skill\ndescription: Imported folder\n---\nFolder instructions')
+            base['agents'][0]['useToolProxy'] = False
+            config.write_text(json.dumps(base))
+            requests.clear()
+            answers[:] = [final]
+            responses = run_repl([binary, '--config', str(config), '--home', str(root / 'home'),
+                '--no-stream', '--no-markdown'], [
+                '/skills add managed "Summarize notes" "Write bullets"',
+                '/skills show managed',
+                '/skills add --user personal "Personal instructions" "Be concise"',
+                '/skills import "skill import.zip"',
+                '/skills import "folder import"',
+                '/edit skill editable', '/skills edit editable',
+                '/skills show editable', 'Check managed skills',
+                '/skills remove managed', '/skills rm zipped', '/skills delete folder-skill',
+                '/skills remove editable', '/skills remove --user personal',
+            ], cwd=root, env=dict(env, PWD=str(root), EDITOR=f'{sys.executable} "{editor}"'), split=True)
+            assert 'Summarize notes' in responses[1] and 'Write bullets' in responses[1], responses
+            assert 'Edited description' in responses[7] and 'Instructions v2.' in responses[7], responses
+            request = next(r for r in requests if r['model'] == 'main')
+            definitions = {t['function']['name']: t['function']['description'] for t in request['tools']}
+            assert {'skills_managed', 'skills_personal', 'skills_zipped', 'skills_folder-skill', 'skills_editable'} <= definitions.keys(), definitions
+            assert definitions['skills_editable'].startswith('Edited description'), definitions
+            for name in ('managed', 'zipped', 'folder import', 'editable'):
+                assert not (root / '.pmai/skills' / name).exists(), name
+            assert not (root / 'home/skills/personal').exists()
+            saved = json.loads(config.read_text())['agents'][0]
+            assert not any(name in saved.get('toolNames', []) for name in ('skills_managed', 'skills_zipped', 'skills_editable')), saved
+            assert not any(name in saved.get('toolPolicy', {}).get('tools', {}) for name in ('skills_managed', 'skills_zipped', 'skills_editable')), saved
+
             # The complete 32-case matrix runs in SmartContextTests without CLI startup.
             # Keep both exposure paths for every protocol and context at the CLI boundary.
             modes = ('cache', 'size', 'smart', 'tools')
@@ -129,7 +180,7 @@ def main():
     finally:
         server.shutdown()
         server.server_close()
-    print(f'skills CLI smoke passed: {len(cases) * 2} protocol/context/proxy cases, '
+    print(f'skills CLI smoke passed: manager create/edit/import/delete, {len(cases) * 2} protocol/context/proxy cases, '
           '2 explicit prompts, 2 disable cases')
 
 

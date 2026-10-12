@@ -7,10 +7,12 @@ import Foundation
 public struct ZipArchiveEntry: Equatable, Sendable {
   public let path: String
   public let data: Data
+  public let executable: Bool
 
-  public init(path: String, data: Data) {
+  public init(path: String, data: Data, executable: Bool = false) {
     self.path = path
     self.data = data
+    self.executable = executable
   }
 }
 
@@ -18,6 +20,7 @@ public enum ZipArchiveError: LocalizedError, Equatable, Sendable {
   case notAnArchive
   case unsupportedCompression(method: Int, entry: String)
   case corruptEntry(String)
+  case tooLarge
 
   public var errorDescription: String? {
     switch self {
@@ -27,6 +30,8 @@ public enum ZipArchiveError: LocalizedError, Equatable, Sendable {
       "Zip entry '\(entry)' uses unsupported compression method \(method)."
     case .corruptEntry(let entry):
       "Zip entry '\(entry)' could not be decompressed."
+    case .tooLarge:
+      "The zip archive expands beyond the allowed size."
     }
   }
 }
@@ -42,7 +47,9 @@ public enum ZipArchiveReader {
     try entries(in: try Data(contentsOf: url))
   }
 
-  public static func entries(in data: Data) throws -> [ZipArchiveEntry] {
+  public static func entries(in data: Data, maximumUncompressedBytes: Int = 256 * 1024 * 1024)
+    throws -> [ZipArchiveEntry]
+  {
     let bytes = [UInt8](data)
     guard let directoryEnd = findEndOfCentralDirectory(bytes) else {
       throw ZipArchiveError.notAnArchive
@@ -50,10 +57,11 @@ public enum ZipArchiveReader {
     let entryCount = Int(readUInt16(bytes, at: directoryEnd + 10))
     var cursor = Int(readUInt32(bytes, at: directoryEnd + 16))
     var entries: [ZipArchiveEntry] = []
+    var totalSize = 0
 
     for _ in 0..<entryCount {
       guard cursor + 46 <= bytes.count, readUInt32(bytes, at: cursor) == centralHeaderSignature
-      else { break }
+      else { throw ZipArchiveError.corruptEntry("central directory") }
       let method = Int(readUInt16(bytes, at: cursor + 10))
       let compressedSize = Int(readUInt32(bytes, at: cursor + 20))
       let uncompressedSize = Int(readUInt32(bytes, at: cursor + 24))
@@ -61,12 +69,17 @@ public enum ZipArchiveReader {
       let extraLength = Int(readUInt16(bytes, at: cursor + 30))
       let commentLength = Int(readUInt16(bytes, at: cursor + 32))
       let localOffset = Int(readUInt32(bytes, at: cursor + 42))
+      let executable = (readUInt32(bytes, at: cursor + 38) >> 16) & 0o111 != 0
       guard cursor + 46 + nameLength <= bytes.count,
         let name = String(bytes: bytes[cursor + 46..<cursor + 46 + nameLength], encoding: .utf8)
-      else { break }
+      else { throw ZipArchiveError.corruptEntry("entry name") }
       cursor += 46 + nameLength + extraLength + commentLength
 
       guard !name.hasSuffix("/") else { continue }
+      guard uncompressedSize <= maximumUncompressedBytes - totalSize else {
+        throw ZipArchiveError.tooLarge
+      }
+      totalSize += uncompressedSize
       guard localOffset + 30 <= bytes.count,
         readUInt32(bytes, at: localOffset) == localHeaderSignature
       else { throw ZipArchiveError.corruptEntry(name) }
@@ -78,12 +91,13 @@ public enum ZipArchiveReader {
 
       switch method {
       case 0:
-        entries.append(ZipArchiveEntry(path: name, data: raw))
+        guard compressedSize == uncompressedSize else { throw ZipArchiveError.corruptEntry(name) }
+        entries.append(ZipArchiveEntry(path: name, data: raw, executable: executable))
       case 8:
         guard let inflated = inflate(raw, expectedSize: uncompressedSize) else {
           throw ZipArchiveError.corruptEntry(name)
         }
-        entries.append(ZipArchiveEntry(path: name, data: inflated))
+        entries.append(ZipArchiveEntry(path: name, data: inflated, executable: executable))
       default:
         throw ZipArchiveError.unsupportedCompression(method: method, entry: name)
       }

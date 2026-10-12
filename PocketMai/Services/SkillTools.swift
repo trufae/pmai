@@ -1,5 +1,6 @@
 import Foundation
 import MaiCore
+import MaiDocuments
 
 @MainActor
 enum SkillTools {
@@ -59,13 +60,53 @@ enum SkillTools {
     return settings
   }
 
-  static func importFolder(_ url: URL) throws {
+  @discardableResult
+  static func importFolder(_ url: URL) throws -> AgentSkill {
     try WorkingFolderAccess.withAccess(to: url) {
       guard let skill = AgentSkill.load(directory: url) else {
-        throw NSError(domain: "PocketMaiSkills", code: 1,
-          userInfo: [NSLocalizedDescriptionKey: "Select a skill folder containing SKILL.md."])
+        throw AgentSkillManagerError.invalidSkill
       }
-      try MaiArchiveSkill(skill: skill).install(in: directoryURL)
+      return try AgentSkillManager.install(MaiArchiveSkill(skill: skill), in: directoryURL)
     }
+  }
+
+  static func importZip(_ url: URL) throws -> AgentSkill {
+    try WorkingFolderAccess.withAccess(to: url) {
+      try AgentSkillManager.install(SkillArchiveImporter.archive(at: url), in: directoryURL)
+    }
+  }
+
+  static func create(name: String, description: String, prompt: String) throws -> AgentSkill {
+    try AgentSkillManager.create(
+      name: name, description: description, prompt: prompt, in: directoryURL)
+  }
+
+  static func update(
+    _ skill: AgentSkill, description: String, prompt: String,
+    conversation: Conversation?, settings: AppSettings
+  ) throws -> AgentSkill {
+    try withSkillAccess(skill, conversation: conversation, settings: settings) {
+      try AgentSkillManager.update(skill, description: description, prompt: prompt)
+    }
+  }
+
+  static func remove(_ skill: AgentSkill, conversation: Conversation?, settings: AppSettings) throws
+  {
+    try withSkillAccess(skill, conversation: conversation, settings: settings) {
+      try AgentSkillManager.remove(skill)
+    }
+  }
+
+  private static func withSkillAccess<T>(
+    _ skill: AgentSkill, conversation: Conversation?, settings: AppSettings, _ body: () throws -> T
+  ) throws -> T {
+    if skill.rootURL.standardizedFileURL == directoryURL.standardizedFileURL { return try body() }
+    guard let conversation, settings.toolSettings.filesWorkspaceAccessEnabled,
+      let workspace = try? FileWorkspaceTool.context(for: conversation, settings: settings).context,
+      skill.rootURL.standardizedFileURL
+        == workspace.rootURL.appendingPathComponent(".pmai/skills", isDirectory: true)
+        .standardizedFileURL
+    else { throw AgentSkillManagerError.outsideRoot }
+    return try WorkingFolderAccess.withAccess(to: workspace.rootURL, body)
   }
 }

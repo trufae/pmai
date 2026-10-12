@@ -1,5 +1,6 @@
 import Foundation
 import MaiCore
+import MaiDocuments
 import XCTest
 
 @testable import PocketMai
@@ -129,6 +130,55 @@ final class SkillToolsTests: XCTestCase {
     XCTAssertTrue(live.selectAgent(child.selectedAgentID))
     live.enabledSkillTools = []
     XCTAssertTrue(SkillTools.applyingLiveSettings(to: child, from: live).enabledSkillTools.isEmpty)
+  }
+
+  func testCreateEditZipImportAndDeleteSkills() throws {
+    let name = "managed-\(UUID().uuidString)"
+    let created = try SkillTools.create(
+      name: name, description: "Summarize notes", prompt: "Write a short summary.")
+    skills.append(created)
+    store.settings.enabledSkillTools = [created.toolName]
+    var conversation = Conversation()
+    conversation.enabledTools = []
+    XCTAssertTrue(
+      SkillTools.definitions(for: conversation, settings: store.settings).contains {
+        $0.name == created.toolName
+      })
+    let edited = try SkillTools.update(
+      created, description: "Updated description", prompt: "Updated prompt.",
+      conversation: conversation, settings: store.settings)
+    XCTAssertEqual(edited.description, "Updated description")
+    XCTAssertEqual(edited.body, "Updated prompt.")
+    XCTAssertThrowsError(
+      try SkillTools.create(name: name, description: "Duplicate", prompt: "Duplicate"))
+
+    let zipName = "zipped-\(UUID().uuidString)"
+    let zip = temporaryDirectory.appendingPathComponent("skill.zip")
+    try ZipArchiveWriter.write(
+      entries: [
+        (
+          "download/SKILL.md",
+          Data(
+            AgentSkillManager.document(
+              name: zipName, description: "Imported description", prompt: "Read reference.txt"
+            ).utf8)
+        ),
+        ("download/reference.txt", Data("Imported resource".utf8)),
+      ], to: zip)
+    let imported = try SkillTools.importZip(zip)
+    skills.append(imported)
+    XCTAssertEqual(imported.name, zipName)
+    XCTAssertEqual(
+      try String(
+        contentsOf: imported.directoryURL.appendingPathComponent("reference.txt"), encoding: .utf8),
+      "Imported resource")
+    XCTAssertThrowsError(try SkillTools.importZip(zip))
+    try SkillTools.remove(edited, conversation: conversation, settings: store.settings)
+    XCTAssertFalse(
+      SkillTools.definitions(for: conversation, settings: store.settings).contains {
+        $0.name == created.toolName
+      })
+    XCTAssertFalse(FileManager.default.fileExists(atPath: edited.directoryURL.path))
   }
 
   func testSkillApprovalCanReplaceOrCancelDirectAndProxiedCalls() async throws {
