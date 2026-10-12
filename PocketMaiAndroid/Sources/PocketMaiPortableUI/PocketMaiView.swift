@@ -22,6 +22,7 @@ public struct PocketMaiView: @preconcurrency View {
   @State private var promptName = ""
   @State private var promptText = ""
   @State private var editingPromptID: UUID?
+  @AppStorage("appearanceTheme") private var appearanceTheme = "system"
 
   public init(store: PortableChat) { self.store = store }
 
@@ -31,7 +32,7 @@ public struct PocketMaiView: @preconcurrency View {
     var title: String {
       switch self {
       case .chat: "Chat"
-      case .provider: "Provider"
+      case .provider: "Settings"
       case .prompts: "Prompts"
       case .history: "History"
       }
@@ -52,6 +53,14 @@ public struct PocketMaiView: @preconcurrency View {
   private static let subtle = Color(red: 0.5, green: 0.5, blue: 0.55, opacity: 0.12)
   /// Space for the bottom composer row: an outlined field plus its padding.
   private static let composerHeight = 84.0
+
+  private var colorScheme: ColorScheme? {
+    switch appearanceTheme {
+    case "light": .light
+    case "dark": .dark
+    default: nil
+    }
+  }
 
   public var body: some View {
     NavigationStack {
@@ -77,6 +86,7 @@ public struct PocketMaiView: @preconcurrency View {
             set: { if !$0 { store.errorMessage = nil } }),
           message: store.errorMessage)
     }
+    .preferredColorScheme(colorScheme)
   }
 
   private var title: String {
@@ -231,6 +241,13 @@ public struct PocketMaiView: @preconcurrency View {
   private var providerView: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 12) {
+        sectionHeader("Appearance")
+        Picker("App theme", selection: $appearanceTheme) {
+          Text("System").tag("system")
+          Text("Light").tag("light")
+          Text("Dark").tag("dark")
+        }
+        Divider()
         sectionHeader("OpenAI-compatible provider")
         TextField("Base URL (including /v1)", text: $store.baseURL).keyboardType(.URL)
         SecureField("API key (optional for local servers)", text: $store.apiKey)

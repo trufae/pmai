@@ -8,8 +8,9 @@ The screens render as native Android Jetpack Compose/Material 3 controls,
 including a top app bar, an icon navigation bar, radio lists, dialogs, text
 fields and buttons. They are not a WebView or iOS widgets. The chat composer
 stays pinned above the navigation bar and errors appear as alert dialogs.
-The window theme follows the system light/dark setting; the Compose content
-stays light until AndroidSwiftUI's host supplies a dark Material scheme.
+The window and Compose content follow the system light/dark setting. Settings
+also offers a saved System / Light / Dark app theme; switching preserves the
+chat draft and updates Material controls and system bar icon contrast.
 The APK bundles the same `icon-1024.png` from the iOS AppIcon asset catalog;
 Gradle copies it at build time, keeping one source of truth for both apps.
 
@@ -25,8 +26,10 @@ Compose renderer and generated Swift/Java bindings contain Kotlin/Java/JNI;
 this is a Swift application over that runtime, not a JVM-free NativeActivity.
 The framework is pinned by `scripts/bootstrap.sh`, and transitive Swift package
 revisions are pinned in `Package.resolved`.
-Bootstrap applies a small Swift-only renderer fix so rapid typing cannot be
-overwritten by a delayed state acknowledgement. No Kotlin patch is needed.
+Bootstrap applies the Swift input acknowledgement fix and a color-scheme patch
+to the reusable renderer. The latter adds system dark mode and
+`.preferredColorScheme`, and matches
+[AndroidSwiftUI PR #77](https://github.com/PureSwift/AndroidSwiftUI/pull/77).
 
 ## Build
 
@@ -120,7 +123,7 @@ and chats.
 
 ## Use
 
-Open Provider, enter the API base URL (for example `https://api.openai.com/v1`)
+Open Settings, enter the API base URL (for example `https://api.openai.com/v1`)
 and key, then Save provider. List models and select one, or enter a model ID
 manually. Define/select a system prompt under Prompts. Chat sends the selected
 instructions and conversation history through the existing Swift provider.

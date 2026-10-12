@@ -66,6 +66,47 @@ func portableScreensRenderAndCallbacksEditState() throws {
 }
 
 @Test @MainActor
+func portableThemePickerPersistsAndPreservesDraft() throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "pmai-theme-test-\(UUID())")
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  let previousBackend = AppStorageStore.backend
+  defer {
+    AppStorageStore.backend = previousBackend
+    try? FileManager.default.removeItem(at: directory)
+  }
+  AppStorageStore.backend = FileAppStorage(directory: directory.path)
+  let store = try PortableChat(directory: directory)
+  store.draft = "Keep this draft"
+  let host = ViewHost(PocketMaiView(store: store))
+  let initial = host.evaluate()
+  #expect(initial.modifiers.first { $0.kind == "preferredColorScheme" }?.args.isEmpty == true)
+  let settings = try #require(flatten(initial).first {
+    $0.type == "Image" && $0.props["systemName"] == .string("gearshape")
+  })
+  host.callbacks.invokeVoid(try #require(callback(settings, "onTapGesture", "action")))
+
+  for theme in ["dark", "light", "system", "dark"] {
+    let picker = try #require(flatten(host.evaluate()).first {
+      $0.type == "Picker" && $0.props["title"] == .string("App theme")
+    })
+    guard case .int(let id)? = picker.props["onChange"] else {
+      Issue.record("The theme picker has no change callback")
+      return
+    }
+    host.callbacks.invokeString(Int64(id), theme)
+    let tree = host.evaluate()
+    let expected: PropValue? = theme == "system" ? nil : .string(theme)
+    #expect(tree.modifiers.first { $0.kind == "preferredColorScheme" }?.args["colorScheme"] == expected)
+    #expect(store.draft == "Keep this draft")
+  }
+
+  AppStorageStore.backend = FileAppStorage(directory: directory.path)
+  let reloaded = ViewHost(PocketMaiView(store: try PortableChat(directory: directory))).evaluate()
+  #expect(reloaded.modifiers.first { $0.kind == "preferredColorScheme" }?.args["colorScheme"] == .string("dark"))
+}
+
+@Test @MainActor
 func markdownRepliesRenderAsBlocks() throws {
   let markdown = """
     # Title

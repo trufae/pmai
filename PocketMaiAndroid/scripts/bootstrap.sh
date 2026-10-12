@@ -15,12 +15,15 @@ if [ "$actual" != "$revision" ]; then
   fi
   git -C "$framework_dir" checkout --detach "$revision"
 fi
-patch_file="$app_dir/patches/compose-input.patch"
-if git -C "$framework_dir" apply --reverse --check "$patch_file" 2>/dev/null; then
-  : # The pinned Swift-only input acknowledgement fix is already installed.
-elif git -C "$framework_dir" apply --check "$patch_file"; then
-  git -C "$framework_dir" apply "$patch_file"
-else
-  echo "Cannot apply the Swift UI input fix; the dependency has overlapping changes." >&2
-  exit 1
-fi
+# Color scheme support matches upstream PR #77 (commit e1d0382).
+for patch_name in compose-input color-scheme; do
+  patch_file="$app_dir/patches/$patch_name.patch"
+  if git -C "$framework_dir" apply --reverse --check "$patch_file" 2>/dev/null; then
+    : # This pinned renderer fix is already installed.
+  elif git -C "$framework_dir" apply --check "$patch_file"; then
+    git -C "$framework_dir" apply "$patch_file"
+  else
+    echo "Cannot apply the $patch_name fix; the dependency has overlapping changes." >&2
+    exit 1
+  fi
+done
