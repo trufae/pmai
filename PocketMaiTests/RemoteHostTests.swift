@@ -6,6 +6,30 @@ import XCTest
 
 @MainActor
 final class RemoteHostTests: XCTestCase {
+  func testRemoteTranscriptUsesSharedMessageRendering() throws {
+    let conversation = RemoteAgentConversation(
+      cwd: "/work",
+      messages: [
+        .init(role: "user", text: "Question"), .init(role: "thought", text: "Reasoning"),
+        .init(role: "tool", text: "Result", status: "completed"),
+        .init(role: "plan", text: "Next step"),
+        .init(role: "assistant", text: "Answer"),
+      ])
+    let presentation = conversation.presentation
+    XCTAssertEqual(presentation.id, conversation.id)
+    XCTAssertEqual(presentation.messages.map(\.id), conversation.messages.map(\.id))
+    XCTAssertEqual(presentation.messages.first?.role, .user)
+    XCTAssertEqual(presentation.messages.last?.text, "Answer")
+    let reasoning = MessageContentFilter.render(presentation.messages[1].text)
+    XCTAssertEqual(reasoning.hiddenSections.first?.tag, "think")
+    XCTAssertTrue(reasoning.visibleText.isEmpty)
+    let tool = try XCTUnwrap(
+      MessageContentFilter.render(presentation.messages[2].text).hiddenSections.first)
+    XCTAssertEqual(ToolCallParser.parse(tool.content).first?.body, "completed\nResult")
+    let plan = try XCTUnwrap(
+      MessageContentFilter.render(presentation.messages[3].text).hiddenSections.first)
+    XCTAssertEqual(ToolCallParser.parse(plan.content).first?.body, "Next step")
+  }
   private func withStore(
     _ bookmarks: [RemoteAgentBookmark],
     body: (RemoteAgentStore, URL) throws -> Void
@@ -66,6 +90,10 @@ final class RemoteHostTests: XCTestCase {
         reloaded.conversations(for: try XCTUnwrap(reloaded.host(first.id))).first?.messages.first?
           .text, "Continue")
       XCTAssertTrue(reloaded.conversations(for: try XCTUnwrap(reloaded.host(second.id))).isEmpty)
+      store.deleteConversation(chat.id, hostID: first.id)
+      store.updateWorkspace(first.id, snapshot: .init())
+      let deleted = RemoteAgentStore(file: file)
+      XCTAssertTrue(deleted.conversations(for: try XCTUnwrap(deleted.host(first.id))).isEmpty)
     }
   }
 

@@ -175,6 +175,8 @@ struct RemoteFoldersView: View {
 }
 
 struct RemoteConversationsView: View {
+  @EnvironmentObject private var appStore: AppStore
+  @StateObject private var exportCoordinator = ConversationExportCoordinator()
   let hosts: HostNavigationStore
   let onShowFolders: () -> Void
   let onSelectConversation: (UUID) -> Void
@@ -193,11 +195,25 @@ struct RemoteConversationsView: View {
         ) { onSelectConversation(chat.id) }
         .disabled(hosts.selectedHost?.requiresApproval == true || hosts.selectedFolderID == nil)
         .listRowBackground(SidebarRowBackground(isSelected: selected)).listRowSeparator(.hidden)
+        .modifier(
+          ConversationSummaryActionsModifier(
+            store: appStore,
+            conversation: ConversationSummary(conversation: chat.presentation),
+            isEnabled: true, exportCoordinator: exportCoordinator,
+            onSelectForBatch: nil, allowsLocalActions: false,
+            canManage: hosts.selectedHost?.requiresApproval != true
+              && (chat.sessionID == nil
+                || (!appStore.settings.isOffline
+                  && hosts.selectedHost?.workspace?.canManageSessions == true))
+              && !(selected && hosts.activeChat?.busy == true),
+            onRename: { await hosts.manageConversation(chat, title: $0) },
+            onDelete: { _ in Task { await hosts.manageConversation(chat, title: nil) } }))
       }
       if hosts.conversations.isEmpty {
         Text(hosts.loading ? "Loading conversations…" : "No conversations in this folder yet.")
           .font(.callout).foregroundStyle(.secondary)
       }
+      if let error = hosts.error { Text(error).foregroundStyle(.red).font(.callout) }
     }
     .listStyle(.plain).scrollContentBackground(.hidden)
     .contentMargins(.horizontal, 16, for: .scrollContent)

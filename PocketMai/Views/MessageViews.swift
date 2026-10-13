@@ -129,6 +129,20 @@ struct ResponseScrollTargetsKey: PreferenceKey {
   }
 }
 
+struct MessageBubbleActions {
+  var allowsConversationMutation = true
+  var canReply = true
+  var onDelete: (() -> Void)? = nil
+  var onToggleBookmark: (() -> Void)? = nil
+  var onBeginSelection: (() -> Void)? = nil
+  var onEdit: ((String) -> Void)? = nil
+  var onEditAttachment: ((UUID, String) -> Void)? = nil
+  var onTrimFromHere: (() -> Void)? = nil
+  var onRestartFresh: (() -> Void)? = nil
+  var onSpeakFromHere: (() -> Void)? = nil
+  var onReply: ((String) -> Void)? = nil
+}
+
 struct MessageBubble: View {
   @EnvironmentObject private var streamingTextStore: StreamingTextStore
 
@@ -140,18 +154,8 @@ struct MessageBubble: View {
   var renderMarkdown: Bool = true
   var renderImages: Bool = true
   var searchHighlight: MessageSearchMatch? = nil
+  var actions = MessageBubbleActions()
   var isBookmarked: Bool = false
-  var onDelete: (() -> Void)? = nil
-  var onToggleBookmark: (() -> Void)? = nil
-  var onBeginSelection: (() -> Void)? = nil
-  var onEdit: ((String) -> Void)? = nil
-  var onEditAttachment: ((UUID, String) -> Void)? = nil
-  var onResubmit: (() -> Void)? = nil
-  var onTrimFromHere: (() -> Void)? = nil
-  var onRestartFresh: (() -> Void)? = nil
-  var onNewChatWithMessage: (() -> Void)? = nil
-  var onSpeakFromHere: (() -> Void)? = nil
-  var onReply: ((String) -> Void)? = nil
   var conversationCreatedAt: Date? = nil
   var showUserTimestamp: Bool = false
   var showThinking: Bool = false
@@ -168,18 +172,8 @@ struct MessageBubble: View {
       renderMarkdown: renderMarkdown,
       renderImages: renderImages,
       searchHighlight: searchHighlight,
+      actions: actions,
       isBookmarked: isBookmarked,
-      onDelete: onDelete,
-      onToggleBookmark: onToggleBookmark,
-      onBeginSelection: onBeginSelection,
-      onEdit: onEdit,
-      onEditAttachment: onEditAttachment,
-      onResubmit: onResubmit,
-      onTrimFromHere: onTrimFromHere,
-      onRestartFresh: onRestartFresh,
-      onNewChatWithMessage: onNewChatWithMessage,
-      onSpeakFromHere: onSpeakFromHere,
-      onReply: onReply,
       conversationCreatedAt: conversationCreatedAt,
       showUserTimestamp: showUserTimestamp,
       showThinking: showThinking,
@@ -198,18 +192,8 @@ private struct StreamingMessageBubble: View {
   var renderMarkdown: Bool = true
   var renderImages: Bool = true
   var searchHighlight: MessageSearchMatch? = nil
+  var actions = MessageBubbleActions()
   var isBookmarked: Bool = false
-  var onDelete: (() -> Void)? = nil
-  var onToggleBookmark: (() -> Void)? = nil
-  var onBeginSelection: (() -> Void)? = nil
-  var onEdit: ((String) -> Void)? = nil
-  var onEditAttachment: ((UUID, String) -> Void)? = nil
-  var onResubmit: (() -> Void)? = nil
-  var onTrimFromHere: (() -> Void)? = nil
-  var onRestartFresh: (() -> Void)? = nil
-  var onNewChatWithMessage: (() -> Void)? = nil
-  var onSpeakFromHere: (() -> Void)? = nil
-  var onReply: ((String) -> Void)? = nil
   var conversationCreatedAt: Date? = nil
   var showUserTimestamp: Bool = false
   var showThinking: Bool = false
@@ -227,18 +211,8 @@ private struct StreamingMessageBubble: View {
       renderMarkdown: renderMarkdown,
       renderImages: renderImages,
       searchHighlight: searchHighlight,
+      actions: actions,
       isBookmarked: isBookmarked,
-      onDelete: onDelete,
-      onToggleBookmark: onToggleBookmark,
-      onBeginSelection: onBeginSelection,
-      onEdit: onEdit,
-      onEditAttachment: onEditAttachment,
-      onResubmit: onResubmit,
-      onTrimFromHere: onTrimFromHere,
-      onRestartFresh: onRestartFresh,
-      onNewChatWithMessage: onNewChatWithMessage,
-      onSpeakFromHere: onSpeakFromHere,
-      onReply: onReply,
       conversationCreatedAt: conversationCreatedAt,
       showUserTimestamp: showUserTimestamp,
       showThinking: showThinking,
@@ -261,18 +235,8 @@ private struct MessageBubbleContent: View, Equatable {
   var renderMarkdown: Bool = true
   var renderImages: Bool = true
   var searchHighlight: MessageSearchMatch? = nil
+  var actions = MessageBubbleActions()
   var isBookmarked: Bool = false
-  var onDelete: (() -> Void)? = nil
-  var onToggleBookmark: (() -> Void)? = nil
-  var onBeginSelection: (() -> Void)? = nil
-  var onEdit: ((String) -> Void)? = nil
-  var onEditAttachment: ((UUID, String) -> Void)? = nil
-  var onResubmit: (() -> Void)? = nil
-  var onTrimFromHere: (() -> Void)? = nil
-  var onRestartFresh: (() -> Void)? = nil
-  var onNewChatWithMessage: (() -> Void)? = nil
-  var onSpeakFromHere: (() -> Void)? = nil
-  var onReply: ((String) -> Void)? = nil
   var conversationCreatedAt: Date? = nil
   var showUserTimestamp: Bool = false
   var showThinking: Bool = false
@@ -305,6 +269,8 @@ private struct MessageBubbleContent: View, Equatable {
       && lhs.renderMarkdown == rhs.renderMarkdown
       && lhs.renderImages == rhs.renderImages
       && lhs.searchHighlight == rhs.searchHighlight
+      && lhs.actions.allowsConversationMutation == rhs.actions.allowsConversationMutation
+      && lhs.actions.canReply == rhs.actions.canReply
       && lhs.isBookmarked == rhs.isBookmarked
       && lhs.conversationCreatedAt == rhs.conversationCreatedAt
       && lhs.showUserTimestamp == rhs.showUserTimestamp
@@ -545,13 +511,13 @@ private struct MessageBubbleContent: View, Equatable {
         // Only the prose of the message: tool calls and reasoning are edited
         // from their own rows, and are spliced back untouched on save.
         MessageTextSelectionSheet(
-          title: onEdit == nil ? message.role.displayName : "",
+          title: actions.onEdit == nil ? message.role.displayName : "",
           text: messageText,
           appearance: appearance,
           initialFontSize: appearance.fontSize,
           initialLineSpacing: appearance.lineSpacing,
           fontFamily: appearance.fontFamily(for: message.role),
-          isEditable: onEdit != nil,
+          isEditable: actions.onEdit != nil,
           onSave: messageEditAction(rawText: rawText))
       }
       .sheet(isPresented: $showingRawTextSelection) {
@@ -564,8 +530,8 @@ private struct MessageBubbleContent: View, Equatable {
           initialFontSize: appearance.fontSize,
           initialLineSpacing: appearance.lineSpacing,
           fontFamily: appearance.fontFamily(for: message.role),
-          isEditable: onEdit != nil,
-          onSave: onEdit)
+          isEditable: actions.onEdit != nil,
+          onSave: actions.onEdit)
       }
       .sheet(item: $selectedTextAttachment) { attachment in
         MessageTextSelectionSheet(
@@ -575,8 +541,8 @@ private struct MessageBubbleContent: View, Equatable {
           initialFontSize: appearance.fontSize,
           initialLineSpacing: appearance.lineSpacing,
           fontFamily: appearance.fontFamily(for: message.role),
-          isEditable: onEditAttachment != nil,
-          onSave: { text in onEditAttachment?(attachment.id, text) })
+          isEditable: actions.onEditAttachment != nil,
+          onSave: { text in actions.onEditAttachment?(attachment.id, text) })
       }
       .sheet(item: $replyDraft) { draft in
         MessageTextSelectionSheet(
@@ -589,7 +555,7 @@ private struct MessageBubbleContent: View, Equatable {
           isEditable: true,
           saveTitle: "Send",
           saveConfirmation: "Send this reply?",
-          onSave: { text in onReply?(text) })
+          onSave: { text in actions.onReply?(text) })
       }
       .fullScreenCover(item: $selectedImageAttachment) { attachment in
         MessageImageFullscreenLoader(attachment: attachment)
@@ -648,7 +614,7 @@ private struct MessageBubbleContent: View, Equatable {
   /// Applies an edit made on the bubble text back onto the whole message, keeping
   /// the tool and reasoning blocks the bubble does not show.
   private func messageEditAction(rawText: String) -> ((String) -> Void)? {
-    guard let onEdit else { return nil }
+    guard let onEdit = actions.onEdit else { return nil }
     return { edited in
       onEdit(MessageContentFilter.replacingVisibleText(in: rawText, with: edited))
     }
@@ -662,7 +628,9 @@ private struct MessageBubbleContent: View, Equatable {
     partID: Int,
     in prepared: PreparedMessageContent
   ) -> ((String) -> Void)? {
-    guard let onEdit, !isLiveAssistantResponse, !entry.rawBlock.isEmpty else { return nil }
+    guard let onEdit = actions.onEdit, !isLiveAssistantResponse, !entry.rawBlock.isEmpty else {
+      return nil
+    }
     let rawText = displayText
     // A message may repeat an identical block, so edit the occurrence this row
     // was built from rather than the first textual match.
@@ -690,7 +658,9 @@ private struct MessageBubbleContent: View, Equatable {
     partID: Int,
     in prepared: PreparedMessageContent
   ) -> (() -> Void)? {
-    guard let onEdit, !isLiveAssistantResponse, !entry.rawBlock.isEmpty else { return nil }
+    guard let onEdit = actions.onEdit, !isLiveAssistantResponse, !entry.rawBlock.isEmpty else {
+      return nil
+    }
     let rawText = displayText
     let entries = ToolCallParser.parse(section.content)
     if entries.count == 1,
@@ -716,7 +686,7 @@ private struct MessageBubbleContent: View, Equatable {
     partID: Int,
     in prepared: PreparedMessageContent
   ) -> (() -> Void)? {
-    guard let onEdit, !isLiveAssistantResponse,
+    guard let onEdit = actions.onEdit, !isLiveAssistantResponse,
       let edited = removingHiddenSection(
         section, partID: partID, in: prepared, rawText: displayText)
     else { return nil }
@@ -790,63 +760,54 @@ private struct MessageBubbleContent: View, Equatable {
       Divider()
     }
 
-    if let onBeginSelection {
-      Button(action: onBeginSelection) {
-        Label("Select...", systemImage: "checkmark.circle")
-      }
+    if let onBeginSelection = actions.onBeginSelection {
+      Button("Select...", systemImage: "checkmark.circle", action: onBeginSelection)
     }
 
-    if let onToggleBookmark {
-      Button(action: onToggleBookmark) {
-        Label(
-          isBookmarked ? "Unbookmark" : "Bookmark",
-          systemImage: isBookmarked ? "bookmark.slash" : "bookmark")
-      }
+    if let onToggleBookmark = actions.onToggleBookmark {
+      Button(
+        isBookmarked ? "Unbookmark" : "Bookmark",
+        systemImage: isBookmarked ? "bookmark.slash" : "bookmark", action: onToggleBookmark
+      )
+      .disabled(!actions.allowsConversationMutation)
     }
 
     ForEach(Array(imageAttachments.enumerated()), id: \.element.id) { index, attachment in
-      Button {
+      Button(imageSaveMenuTitle(at: index), systemImage: "square.and.arrow.down") {
         saveImageAttachment(attachment)
-      } label: {
-        Label(imageSaveMenuTitle(at: index), systemImage: "square.and.arrow.down")
       }
     }
     if !imageAttachments.isEmpty {
       Divider()
     }
 
-    Button {
+    Button(
+      actions.onEdit == nil ? "View Text" : "Edit Message",
+      systemImage: actions.onEdit == nil ? "text.cursor" : "square.and.pencil"
+    ) {
       showingTextSelection = true
-    } label: {
-      Label(
-        onEdit == nil ? "View Text" : "Edit Message",
-        systemImage: onEdit == nil ? "text.cursor" : "square.and.pencil")
     }
-    Button {
+    Button("Copy Message", systemImage: "doc.on.doc") {
       UIPasteboard.general.string = visibleText
-    } label: {
-      Label("Copy Message", systemImage: "doc.on.doc")
     }
     if rawText != visibleText {
-      Button {
+      Button(
+        actions.onEdit == nil ? "View Raw Message" : "Edit Raw Message",
+        systemImage: "chevron.left.forwardslash.chevron.right"
+      ) {
         showingRawTextSelection = true
-      } label: {
-        Label(
-          onEdit == nil ? "View Raw Message" : "Edit Raw Message",
-          systemImage: "chevron.left.forwardslash.chevron.right")
       }
     }
-    if message.role == .assistant, onReply != nil {
-      Button {
+    if message.role == .assistant, actions.onReply != nil {
+      Button("Reply…", systemImage: "arrowshape.turn.up.left") {
         replyDraft = MessageReplyDraft(text: MarkdownQuote.quote(visibleText) + "\n\n")
-      } label: {
-        Label("Reply…", systemImage: "arrowshape.turn.up.left")
       }
+      .disabled(!actions.canReply)
     }
 
     Divider()
 
-    Button {
+    Button("Speak Message", systemImage: "speaker.wave.2") {
       _ = TextToSpeechTool.speak(
         arguments: ["text": .string(visibleText)],
         settings: toolSettings,
@@ -855,34 +816,29 @@ private struct MessageBubbleContent: View, Equatable {
         role: message.role == .user ? .user : .assistant,
         title: message.role.displayName,
         messageID: message.id)
-    } label: {
-      Label("Speak Message", systemImage: "speaker.wave.2")
     }
 
-    if let onSpeakFromHere {
-      Button(action: onSpeakFromHere) {
-        Label("Speak From Here", systemImage: "speaker.wave.2.fill")
-      }
+    if let onSpeakFromHere = actions.onSpeakFromHere {
+      Button("Speak From Here", systemImage: "speaker.wave.2.fill", action: onSpeakFromHere)
     }
 
     if message.role != .assistant {
-      if let resend = onTrimFromHere ?? (isUser ? onResubmit : nil) {
-        Button(action: resend) {
-          Label("Retry From Here", systemImage: "arrow.clockwise")
-        }
+      if let resend = actions.onTrimFromHere {
+        Button("Retry From Here", systemImage: "arrow.clockwise", action: resend)
+          .disabled(!actions.allowsConversationMutation)
       }
-      if let onRestartFresh {
-        Button(action: onRestartFresh) {
-          Label("Reset Chat From Here", systemImage: "arrow.triangle.2.circlepath")
-        }
+      if let onRestartFresh = actions.onRestartFresh {
+        Button(
+          "Reset Chat From Here", systemImage: "arrow.triangle.2.circlepath", action: onRestartFresh
+        )
+        .disabled(!actions.allowsConversationMutation)
       }
     }
 
-    if let onDelete {
+    if let onDelete = actions.onDelete {
       Divider()
-      Button(role: .destructive, action: onDelete) {
-        Label("Delete Message", systemImage: "trash")
-      }
+      Button("Delete Message", systemImage: "trash", role: .destructive, action: onDelete)
+        .disabled(!actions.allowsConversationMutation)
     }
   }
 

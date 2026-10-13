@@ -155,7 +155,6 @@ private struct FullChatScreenshotView: View {
             appearance: appearance,
             renderMarkdown: renderMarkdown,
             renderImages: renderImages,
-            onDelete: {},
             showThinking: showThinking
           )
         }

@@ -72,6 +72,8 @@ struct ChatView: View {
   }
 
   @ObservedObject var storeObservation: AppStoreViewObservation
+  @State var remoteChat: RemoteAgentChat? = nil
+  @Environment(\.scenePhase) private var scenePhase
   @EnvironmentObject private var ttsPlayer: TTSPlayer
   @State private var showingRenameAlert = false
   @State private var showingProviderModelSheet = false
@@ -108,27 +110,83 @@ struct ChatView: View {
   let store: AppStore
   let renderInvalidationKey: RenderInvalidationKey
   let onShowHistory: () -> Void
+  let onNewChat: () -> Void
+  var onRemoteChatReady: (RemoteAgentChat) -> Void = { _ in }
 
   var body: some View {
     chatViewWithAlerts
+      .sheet(
+        item: Binding(
+          get: { remoteChat?.permissions.first },
+          set: { value in
+            if value == nil, let first = remoteChat?.permissions.first {
+              remoteChat?.answer(first.id, optionID: nil)
+            }
+          })
+      ) { permission in
+        NavigationStack {
+          ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+              Text(permission.title).font(.headline)
+              Text(permission.details).font(.system(.callout, design: .monospaced))
+                .textSelection(.enabled)
+              ForEach(permission.options) { option in
+                Button(option.name) { remoteChat?.answer(permission.id, optionID: option.id) }
+                  .buttonStyle(.borderedProminent)
+                  .tint(option.kind.hasPrefix("reject") ? .red : .accentColor)
+              }
+              Button("Cancel tool request", role: .cancel) {
+                remoteChat?.answer(permission.id, optionID: nil)
+              }
+            }.padding()
+          }
+          .navigationTitle("Remote Tool Permission")
+          .navigationBarTitleDisplayMode(.inline)
+        }
+        .interactiveDismissDisabled()
+      }
+      .task {
+        if let remoteChat { onRemoteChatReady(remoteChat) }
+        if !store.settings.isOffline { remoteChat?.connect() }
+      }
+      .onDisappear { remoteChat?.disconnect() }
+      .onChange(of: scenePhase) { _, phase in
+        if phase == .background { remoteChat?.disconnect() }
+      }
+      .onChange(of: store.settings.isOffline) { _, enabled in
+        if enabled { remoteChat?.disconnect() }
+      }
+  }
+
+  private var currentConversation: Conversation? {
+    remoteChat?.presentation ?? store.currentConversation
+  }
+  private var currentConversationID: UUID? {
+    remoteChat?.conversation.id ?? store.selectedConversationID
+  }
+  private var isLoadingConversation: Bool {
+    remoteChat == nil && store.selectedConversationIsLoading
+  }
+  private var currentConversationSummary: ConversationSummary? {
+    remoteChat == nil ? store.selectedConversationSummary : nil
   }
 
   private var chatViewWithAlerts: some View {
     chatViewWithSheetsAndToolbar
       .onChange(of: store.pendingLaunchAction) { _, action in
-        guard let action else { return }
+        guard remoteChat == nil, let action else { return }
         store.pendingLaunchAction = nil
         Task { await applyLaunchAction(action) }
       }
       .onAppear {
         // Catch a command that was already queued during a cold launch, before
         // onChange started observing.
-        if let action = store.pendingLaunchAction {
+        if remoteChat == nil, let action = store.pendingLaunchAction {
           store.pendingLaunchAction = nil
           Task { await applyLaunchAction(action) }
         }
       }
-      .onChange(of: store.selectedConversationID) { _, _ in
+      .onChange(of: currentConversationID) { _, _ in
         cancelMessageSelection()
         withAnimation(.snappy) { chatSearch.cancel() }
       }
@@ -143,7 +201,7 @@ struct ChatView: View {
         pruneSelectedMessages()
         refreshUserMessageNavigation()
         if chatSearch.isActive {
-          chatSearch.rebuild(messages: store.currentConversation?.messages ?? [])
+          chatSearch.rebuild(messages: currentConversation?.messages ?? [])
         }
       }
       .onChange(of: chatSearch.query) { _, _ in
@@ -161,7 +219,7 @@ struct ChatView: View {
       }
       .alert(
         "Delete this message?",
-        isPresented: deleteMessageConfirmationBinding,
+        isPresented: confirmationBinding($messagePendingDeletion),
         presenting: messagePendingDeletion
       ) { message in
         Button("Cancel", role: .cancel) {
@@ -176,7 +234,7 @@ struct ChatView: View {
       }
       .alert(
         messageBatchPendingDeletion?.title ?? "Delete selected messages?",
-        isPresented: deleteMessageBatchConfirmationBinding,
+        isPresented: confirmationBinding($messageBatchPendingDeletion),
         presenting: messageBatchPendingDeletion
       ) { deletion in
         Button("Cancel", role: .cancel) {
@@ -190,7 +248,7 @@ struct ChatView: View {
       }
       .alert(
         "Retry from here?",
-        isPresented: trimAndResubmitConfirmationBinding,
+        isPresented: confirmationBinding($messagePendingTrimAndResubmit),
         presenting: messagePendingTrimAndResubmit
       ) { message in
         Button("Cancel", role: .cancel) {
@@ -205,7 +263,7 @@ struct ChatView: View {
       }
       .alert(
         "Restart from here?",
-        isPresented: restartFreshConfirmationBinding,
+        isPresented: confirmationBinding($messagePendingRestartFresh),
         presenting: messagePendingRestartFresh
       ) { message in
         Button("Cancel", role: .cancel) {
@@ -244,7 +302,7 @@ struct ChatView: View {
         SubagentProcessesSheet(
           store: store,
           storeObservation: storeObservation,
-          conversationID: store.currentConversation?.id)
+          conversationID: currentConversation?.id)
       }
       .modifier(ConversationExportPresentations(coordinator: exportCoordinator))
   }
@@ -288,11 +346,11 @@ struct ChatView: View {
           chatTitle
         }
         ToolbarItem(placement: .topBarTrailing) {
-          if let session = store.browserSession {
+          if remoteChat == nil, let session = store.browserSession {
             BrowserToolbarButton(session: session) {
               store.closeBrowserSession()
             }
-          } else if store.closedBrowserURL != nil {
+          } else if remoteChat == nil, store.closedBrowserURL != nil {
             Button {
               store.reopenBrowserSession()
             } label: {
@@ -310,14 +368,14 @@ struct ChatView: View {
   }
 
   private var hasUnreadConversations: Bool {
-    store.conversationSummaries.contains(where: \.isUnread)
+    remoteChat == nil && store.conversationSummaries.contains(where: \.isUnread)
   }
 
   /// The browser tool's picture-in-picture card. One page for the whole
   /// app, so it follows the user across conversations.
   @ViewBuilder
   private var browserCardOverlay: some View {
-    if let session = store.browserSession {
+    if remoteChat == nil, let session = store.browserSession {
       BrowserPresentationOverlay(session: session) {
         store.closeBrowserSession()
       }
@@ -351,13 +409,13 @@ struct ChatView: View {
   /// The child agents of the chat on screen, live or finished, so a turn
   /// that delegated work shows what it started.
   private var currentSubagents: [AgentProcessInfo] {
-    store.agentChildren(of: store.currentConversation?.id)
+    remoteChat == nil ? store.agentChildren(of: currentConversation?.id) : []
   }
 
   private var currentWebXDCSession: WebXDCRunningSession? {
-    guard let session = store.activeWebXDCSession,
+    guard remoteChat == nil, let session = store.activeWebXDCSession,
       let conversationID = session.conversationID,
-      conversationID == store.currentConversation?.id
+      conversationID == currentConversation?.id
     else { return nil }
     return session
   }
@@ -413,7 +471,7 @@ struct ChatView: View {
   private var bottomControls: some View {
     if chatSearch.isActive {
       ChatSearchBar(search: $chatSearch)
-    } else if store.selectedConversationIsLoading {
+    } else if isLoadingConversation {
       Color.clear
         .frame(height: 82)
         .transition(.opacity)
@@ -426,40 +484,32 @@ struct ChatView: View {
 
   private var chatTitle: some View {
     Menu {
-      Button {
-        beginRename()
-      } label: {
-        Label("Rename...", systemImage: "pencil")
-      }
-      Button {
-        beginChatSearch()
-      } label: {
-        Label("Search...", systemImage: "magnifyingglass")
-      }
-      .disabled(currentConversationIsEmpty || liveVoiceSession.isActive)
-      Button {
+      Button("Rename...", systemImage: "pencil", action: beginRename)
+        .disabled(remoteChat.map { !$0.canManage || $0.busy || store.settings.isOffline } ?? false)
+      Button("Search...", systemImage: "magnifyingglass", action: beginChatSearch)
+        .disabled(currentConversationIsEmpty || liveVoiceSession.isActive)
+      Button("Compact...", systemImage: "rectangle.compress.vertical") {
         showingCompactSheet = true
-      } label: {
-        Label("Compact...", systemImage: "rectangle.compress.vertical")
       }
       .disabled(!canCompactCurrentChat)
       ConversationShareButton(
-        conversationID: store.currentConversation?.id,
+        conversationID: remoteChat == nil ? currentConversation?.id : nil,
         coordinator: exportCoordinator)
       ConversationExportMenu(
-        conversationID: store.currentConversation?.id,
+        conversationID: remoteChat == nil ? currentConversation?.id : nil,
         coordinator: exportCoordinator)
       Divider()
-      Button {
-        showingProviderModelSheet = true
-      } label: {
-        Label("Chat Settings", systemImage: "slider.horizontal.3")
-      }
+      Button(
+        remoteChat.map { $0.connected ? "Disconnect" : "Connect" } ?? "Chat Settings",
+        systemImage: remoteChat == nil ? "slider.horizontal.3" : "network",
+        action: showChatSettings
+      )
+      .disabled(remoteChat != nil && (store.settings.isOffline || remoteChat?.busy == true))
     } label: {
       VStack(spacing: 1) {
         Text(
-          store.currentConversation?.displayTitle
-            ?? store.selectedConversationSummary?.displayTitle
+          currentConversation?.displayTitle
+            ?? currentConversationSummary?.displayTitle
             ?? "Chat"
         )
         .font(.headline)
@@ -487,17 +537,13 @@ struct ChatView: View {
     }
     .menuStyle(.button)
     .buttonStyle(.plain)
-    .disabled(store.selectedConversationIsLoading)
+    .disabled(isLoadingConversation)
     .accessibilityHint("Tap for chat options")
   }
 
-  private var currentSystemPromptID: UUID? {
-    store.currentConversation?.systemPromptID ?? store.settings.defaultSystemPromptID
-  }
-
   private var systemPromptName: String? {
-    guard let id = currentSystemPromptID,
-      let prompt = store.settings.systemPrompts.first(where: { $0.id == id })
+    let id = currentConversation?.systemPromptID ?? store.settings.defaultSystemPromptID
+    guard let prompt = store.settings.systemPrompts.first(where: { $0.id == id })
     else { return nil }
     return prompt.displayName
   }
@@ -507,16 +553,12 @@ struct ChatView: View {
     return store.settings.isOffline ? "\(systemPromptName) (offline)" : systemPromptName
   }
 
-  private var currentLanguageOverrideIdentifier: String? {
-    store.currentConversation?.effectiveLanguageOverrideIdentifier
-  }
-
   private var currentToolSettings: NativeToolSettings {
-    store.effectiveToolSettings(for: store.currentConversation)
+    store.effectiveToolSettings(for: currentConversation)
   }
 
   private var canCompactCurrentChat: Bool {
-    guard let conversation = store.currentConversation else { return false }
+    guard remoteChat == nil, let conversation = currentConversation else { return false }
     if store.isCompacting || store.isResponding { return false }
     let substantive = conversation.messages.filter { msg in
       msg.role != .error
@@ -525,20 +567,18 @@ struct ChatView: View {
     return substantive.count >= 2
   }
 
-  private var composerPlaceholder: String {
-    "Ask anything..."
-  }
-
   private var currentChatIsResponding: Bool {
-    guard let id = store.currentConversation?.id else { return false }
+    if let remoteChat { return remoteChat.busy }
+    guard let id = currentConversation?.id else { return false }
     return store.isResponding(in: id)
   }
 
   private var providerSubtitle: String {
+    if let remoteChat { return "\(remoteChat.bookmark.name) · \(remoteChat.status)" }
     if store.isCompacting { return "Compacting…" }
-    if store.selectedConversationIsLoading { return "Loading…" }
+    if isLoadingConversation { return "Loading…" }
     if isLoadingCurrentLocalModel { return "Loading local model into memory…" }
-    guard let conversation = store.currentConversation else { return "No conversation" }
+    guard let conversation = currentConversation else { return "No conversation" }
     let providerName = providerLabel(for: conversation)
     let model = conversation.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
     let parts = [providerName, model.isEmpty ? nil : model, systemPromptTitle].compactMap { $0 }
@@ -546,7 +586,7 @@ struct ChatView: View {
   }
 
   private var isLoadingCurrentLocalModel: Bool {
-    guard let id = store.currentConversation?.id else { return false }
+    guard remoteChat == nil, let id = currentConversation?.id else { return false }
     return store.isLoadingLocalModel(in: id)
   }
 
@@ -569,9 +609,7 @@ struct ChatView: View {
   private func providerStatusBanner(_ status: (message: String, systemImage: String, color: Color))
     -> some View
   {
-    Button {
-      showingProviderModelSheet = true
-    } label: {
+    Button(action: showChatSettings) {
       HStack {
         Label(status.message, systemImage: status.systemImage)
           .lineLimit(2)
@@ -586,28 +624,48 @@ struct ChatView: View {
       .background(.ultraThinMaterial)
     }
     .buttonStyle(.plain)
-    .accessibilityHint("Open chat settings to choose a provider")
+    .disabled(remoteChat != nil && (store.settings.isOffline || remoteChat?.busy == true))
+    .accessibilityHint(
+      remoteChat == nil ? "Open chat settings to choose a provider" : "Manage connection")
+  }
+
+  private func showChatSettings() {
+    if let remoteChat {
+      if remoteChat.connected { remoteChat.disconnect() } else { remoteChat.connect() }
+    } else {
+      showingProviderModelSheet = true
+    }
   }
 
   private func beginRename() {
-    renameDraft = store.currentConversation?.displayTitle ?? ""
+    renameDraft = currentConversation?.displayTitle ?? ""
     showingRenameAlert = true
   }
 
   private func renameCurrentConversation() {
-    store.renameCurrentConversation(to: renameDraft)
+    if let remoteChat {
+      let title = renameDraft
+      Task {
+        do { try await remoteChat.manage(title: title) } catch {
+          remoteChat.error = error.localizedDescription
+        }
+      }
+    } else {
+      store.renameCurrentConversation(to: renameDraft)
+    }
     showingRenameAlert = false
   }
 
   private var trailingMenu: some View {
-    Button {
-      store.newConversation()
-    } label: {
+    Button(action: onNewChat) {
       Image(systemName: "square.and.pencil")
     }
     .buttonStyle(.plain)
     .disabled(
-      currentConversationIsEmpty || store.selectedConversationIsLoading || isMessageSelectionMode
+      currentConversationIsEmpty || isLoadingConversation || isMessageSelectionMode
+        || (remoteChat != nil
+          && (remoteChat?.busy == true || store.settings.isOffline
+            || remoteChat?.bookmark.requiresApproval == true))
     )
     .accessibilityLabel("New Chat")
     .help("New Chat")
@@ -615,7 +673,7 @@ struct ChatView: View {
 
   private func speakFromHere(_ message: ChatMessage) {
     guard
-      let conversation = store.currentConversation,
+      let conversation = currentConversation,
       let index = conversation.messages.firstIndex(where: { $0.id == message.id })
     else {
       return
@@ -630,7 +688,7 @@ struct ChatView: View {
 
   private func editMessage(_ message: ChatMessage, text: String) {
     guard
-      let currentText = store.currentConversation?.messages.first(where: { $0.id == message.id })?
+      let currentText = currentConversation?.messages.first(where: { $0.id == message.id })?
         .presentationText,
       currentText != text
     else {
@@ -644,13 +702,13 @@ struct ChatView: View {
       conversation.messages[index].displayText = nil
     }
     if chatSearch.isActive {
-      chatSearch.rebuild(messages: store.currentConversation?.messages ?? [])
+      chatSearch.rebuild(messages: currentConversation?.messages ?? [])
     }
   }
 
   private func editTextAttachment(_ message: ChatMessage, attachmentID: UUID, text: String) {
     guard
-      let currentAttachment = store.currentConversation?.messages.first(where: {
+      let currentAttachment = currentConversation?.messages.first(where: {
         $0.id == message.id
       })?.attachments.first(where: { $0.id == attachmentID }),
       currentAttachment.text != text
@@ -671,18 +729,27 @@ struct ChatView: View {
   }
 
   private var providerStatus: (message: String, systemImage: String, color: Color)? {
-    if store.currentConversation?.provider == .mlx,
+    if let remoteChat {
+      return (
+        remoteChat.error
+          ?? (store.settings.isOffline
+            ? "Turn off Airplane Mode in Settings to connect to a remote agent."
+            : remoteChat.status),
+        "network", remoteChat.error == nil ? .secondary : .red
+      )
+    }
+    if currentConversation?.provider == .mlx,
       let message = LocalMLXAvailability.current.unavailabilityMessage
     {
       return (message, "exclamationmark.triangle", .orange)
     }
-    if let conversation = store.currentConversation, conversation.provider == .openAICompatible,
+    if let conversation = currentConversation, conversation.provider == .openAICompatible,
       OpenAICompatibleProvider.selectedEndpoint(for: conversation, settings: store.settings) == nil,
       !store.settings.isOffline
     {
       return (LocalMLXAvailability.providerSetupSuggestion, "network", .orange)
     }
-    if let conversation = store.currentConversation,
+    if let conversation = currentConversation,
       store.settings.isOffline,
       !conversation.provider.isAirplaneModeEligible
     {
@@ -699,8 +766,8 @@ struct ChatView: View {
     GeometryReader { scrollGeometry in
       ScrollViewReader { proxy in
         ScrollView(.vertical) {
-          let conversation = store.currentConversation
-          let isPreviewingConversation = store.selectedConversationIsLoading && conversation == nil
+          let conversation = currentConversation
+          let isPreviewingConversation = isLoadingConversation && conversation == nil
           let renderedMessages =
             conversation?.messages
             ?? store.selectedConversationPreviewMessages
@@ -710,7 +777,7 @@ struct ChatView: View {
           VStack(spacing: 14) {
             if !renderedMessages.isEmpty,
               let startedAt = conversation?.createdAt
-                ?? store.selectedConversationSummary?.createdAt
+                ?? currentConversationSummary?.createdAt
             {
               ConversationTimelineTimestamp(label: "Chat Started", date: startedAt)
             }
@@ -744,32 +811,33 @@ struct ChatView: View {
                     renderMarkdown: store.settings.renderMarkdownInChat,
                     renderImages: store.settings.renderMarkdownImagesInChat,
                     searchHighlight: searchHighlight,
-                    isBookmarked: conversation.map {
-                      store.isMessageBookmarked(message.id, in: $0.id)
-                    } ?? false,
+                    actions: MessageBubbleActions(
+                      allowsConversationMutation: remoteChat == nil,
+                      canReply: remoteChat == nil
+                        || (remoteChat?.connected == true
+                          && !currentChatIsResponding && !store.settings.isOffline),
                     onDelete: { messagePendingDeletion = message },
                     onToggleBookmark: conversation.map { conversation in
                       { store.toggleMessageBookmark(message, in: conversation.id) }
                     },
                     onBeginSelection: { beginMessageSelection(with: message.id) },
-                    onEdit: { editedText in editMessage(message, text: editedText) },
-                    onEditAttachment: { attachmentID, editedText in
-                      editTextAttachment(message, attachmentID: attachmentID, text: editedText)
-                    },
-                    onResubmit: message.role == .user
-                      ? { Task { await store.resubmit(message) } }
-                      : nil,
+                      onEdit: remoteChat == nil ? { editMessage(message, text: $0) } : nil,
+                      onEditAttachment: remoteChat == nil
+                        ? { attachmentID, editedText in
+                          editTextAttachment(message, attachmentID: attachmentID, text: editedText)
+                        } : nil,
                     onTrimFromHere: { messagePendingTrimAndResubmit = message },
                     onRestartFresh: { messagePendingRestartFresh = message },
-                    onNewChatWithMessage: {
-                      Task { await store.startNewConversation(with: message) }
-                    },
                     onSpeakFromHere: { speakFromHere(message) },
-                    onReply: { reply in sendReply(reply) },
+                      onReply: { reply in sendReply(reply) }),
+                    isBookmarked: conversation.map {
+                      store.isMessageBookmarked(message.id, in: $0.id)
+                    } ?? false,
                     conversationCreatedAt: conversation?.createdAt
-                      ?? store.selectedConversationSummary?.createdAt,
+                      ?? currentConversationSummary?.createdAt,
                     showUserTimestamp: message.role == .user && message.id != firstUserMessageID,
-                    showThinking: store.effectiveShowThinking(for: store.currentConversation),
+                    showThinking: remoteChat != nil
+                      || store.effectiveShowThinking(for: currentConversation),
                     isWaitingForResponse: isWaitingForResponse(message)
                   )
                 }
@@ -790,7 +858,7 @@ struct ChatView: View {
 
                 if !isPreviewingConversation,
                   !isMessageSelectionMode,
-                  store.settings.followUps.isEnabled,
+                  remoteChat == nil, store.settings.followUps.isEnabled,
                   message.role == .assistant,
                   renderedMessages.last?.id == message.id,
                   !currentChatIsResponding,
@@ -830,10 +898,10 @@ struct ChatView: View {
                   appearance: store.settings.appearance,
                   renderMarkdown: store.settings.renderMarkdownInChat,
                   renderImages: store.settings.renderMarkdownImagesInChat,
-                  onDelete: {},
                   conversationCreatedAt: conversation?.createdAt
-                    ?? store.selectedConversationSummary?.createdAt,
-                  showThinking: store.effectiveShowThinking(for: store.currentConversation),
+                    ?? currentConversationSummary?.createdAt,
+                  showThinking: remoteChat != nil
+                    || store.effectiveShowThinking(for: currentConversation),
                   isWaitingForResponse: false
                 )
                 .id(preview.id)
@@ -850,9 +918,9 @@ struct ChatView: View {
               }
             }
             if !renderedMessages.isEmpty,
-              lastUpdatedVisibleConversationID == store.selectedConversationID,
+              lastUpdatedVisibleConversationID == currentConversationID,
               let updatedAt = conversation?.updatedAt
-                ?? store.selectedConversationSummary?.updatedAt
+                ?? currentConversationSummary?.updatedAt
             {
               ConversationTimelineTimestamp(label: "Last Updated", date: updatedAt)
             }
@@ -945,7 +1013,7 @@ struct ChatView: View {
             scrollToRequestedMessage(store.pendingMessageNavigation, proxy: proxy)
           }
         }
-        .onChange(of: store.selectedConversationID) { _, _ in
+        .onChange(of: currentConversationID) { _, _ in
           messageFontPinchSession.resetMetrics()
           userMessageNavigation = UserMessageNavigationState()
           userMessageNavigationDestination = nil
@@ -1207,7 +1275,7 @@ struct ChatView: View {
   }
 
   private var currentUserMessageIDs: [UUID] {
-    (store.currentConversation?.messages
+    (currentConversation?.messages
       ?? store.selectedConversationPreviewMessages)
       .filter { $0.role == .user }
       .map(\.id)
@@ -1242,56 +1310,20 @@ struct ChatView: View {
     userMessageNavigation = newState
   }
 
-  private var deleteMessageConfirmationBinding: Binding<Bool> {
-    Binding {
-      messagePendingDeletion != nil
-    } set: { isPresented in
-      if !isPresented {
-        messagePendingDeletion = nil
-      }
-    }
-  }
-
-  private var deleteMessageBatchConfirmationBinding: Binding<Bool> {
-    Binding {
-      messageBatchPendingDeletion != nil
-    } set: { isPresented in
-      if !isPresented {
-        messageBatchPendingDeletion = nil
-      }
-    }
-  }
-
-  private var trimAndResubmitConfirmationBinding: Binding<Bool> {
-    Binding {
-      messagePendingTrimAndResubmit != nil
-    } set: { isPresented in
-      if !isPresented {
-        messagePendingTrimAndResubmit = nil
-      }
-    }
-  }
-
-  private var restartFreshConfirmationBinding: Binding<Bool> {
-    Binding {
-      messagePendingRestartFresh != nil
-    } set: { isPresented in
-      if !isPresented {
-        messagePendingRestartFresh = nil
-      }
-    }
+  private func confirmationBinding<Item>(_ item: Binding<Item?>) -> Binding<Bool> {
+    Binding(get: { item.wrappedValue != nil }, set: { if !$0 { item.wrappedValue = nil } })
   }
 
   private var currentConversationIsEmpty: Bool {
-    store.currentConversation?.messages.isEmpty ?? true
+    currentConversation?.messages.isEmpty ?? true
   }
 
   private var currentMessageIDs: [UUID] {
-    store.currentConversation?.messages.map(\.id) ?? []
+    currentConversation?.messages.map(\.id) ?? []
   }
 
   private var currentQueuedUserMessages: [QueuedChatMessage] {
-    store.queuedUserMessages(in: store.currentConversation?.id)
+    remoteChat == nil ? store.queuedUserMessages(in: currentConversation?.id) : []
   }
 
   private var currentQueuedUserMessageIDs: [UUID] {
@@ -1305,9 +1337,9 @@ struct ChatView: View {
   }
 
   private var currentFollowUpPresentationSnapshot: FollowUpPresentationSnapshot? {
-    guard store.settings.followUps.isEnabled,
-      let conversationID = store.currentConversation?.id,
-      let lastMessageID = store.currentConversation?.messages.last?.id
+    guard remoteChat == nil, store.settings.followUps.isEnabled,
+      let conversationID = currentConversation?.id,
+      let lastMessageID = currentConversation?.messages.last?.id
     else {
       return nil
     }
@@ -1338,7 +1370,15 @@ struct ChatView: View {
   /// is still responding the reply is queued, exactly like a composer submit.
   private func sendReply(_ text: String) {
     guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-    if let conversationID = store.currentConversation?.id,
+    if let remoteChat {
+      if remoteChat.connected, !remoteChat.busy, !store.settings.isOffline {
+        remoteChat.send(text)
+      } else {
+        store.replaceComposerDraft(with: text, in: remoteChat.conversation.id)
+      }
+      return
+    }
+    if let conversationID = currentConversation?.id,
       store.isResponding(in: conversationID),
       store.enqueueUserMessage(prompt: text, in: conversationID)
     {
@@ -1348,14 +1388,14 @@ struct ChatView: View {
   }
 
   private func cancelQueuedMessage(_ message: QueuedChatMessage) {
-    guard let conversationID = store.currentConversation?.id else { return }
+    guard let conversationID = currentConversation?.id else { return }
     withAnimation(.snappy) {
       store.removeQueuedUserMessage(id: message.id, from: conversationID)
     }
   }
 
   private func editQueuedMessage(_ message: QueuedChatMessage) {
-    guard let conversationID = store.currentConversation?.id,
+    guard let conversationID = currentConversation?.id,
       let message = store.takeQueuedUserMessageForEditing(
         id: message.id,
         from: conversationID)
@@ -1368,27 +1408,27 @@ struct ChatView: View {
   }
 
   private var conversationActivitySnapshot: ConversationActivitySnapshot {
-    let conversationID = store.selectedConversationID
+    let conversationID = currentConversationID
     let updatedAt =
-      store.currentConversation?.id == conversationID
-      ? store.currentConversation?.updatedAt
-      : store.selectedConversationSummary?.updatedAt
+      currentConversation?.id == conversationID
+      ? currentConversation?.updatedAt
+      : currentConversationSummary?.updatedAt
     return ConversationActivitySnapshot(
       conversationID: conversationID,
       updatedAt: updatedAt,
-      isResponding: conversationID.map(store.isResponding(in:)) ?? false)
+      isResponding: currentChatIsResponding)
   }
 
   private func beginChatSearch() {
     cancelMessageSelection()
     userScrolledAfterLastMessage = true
     withAnimation(.snappy) {
-      chatSearch.begin(messages: store.currentConversation?.messages ?? [])
+      chatSearch.begin(messages: currentConversation?.messages ?? [])
     }
   }
 
   private var selectedMessages: [ChatMessage] {
-    store.currentConversation?.messages.filter { selectedMessageIDs.contains($0.id) } ?? []
+    currentConversation?.messages.filter { selectedMessageIDs.contains($0.id) } ?? []
   }
 
   private struct LastMessageSnapshot: Equatable {
@@ -1399,7 +1439,7 @@ struct ChatView: View {
   }
 
   private var lastMessageSnapshot: LastMessageSnapshot {
-    let convo = store.currentConversation
+    let convo = currentConversation
     let last = convo?.messages.last
     return LastMessageSnapshot(
       conversationID: convo?.id,
@@ -1410,7 +1450,7 @@ struct ChatView: View {
 
   private func isWaitingForResponse(_ message: ChatMessage) -> Bool {
     guard currentChatIsResponding, message.role == .assistant else { return false }
-    return store.currentConversation?.messages.last?.id == message.id
+    return currentConversation?.messages.last?.id == message.id
   }
 
   // Applies a launch request from a widget tap or App Intent (Action Button /
@@ -1425,7 +1465,7 @@ struct ChatView: View {
         store.requestComposerFocus()
       }
     case .voice:
-      if store.currentConversation == nil {
+      if currentConversation == nil {
         store.newConversation()
       }
       guard !liveVoiceSession.isActive else { return }
@@ -1434,7 +1474,7 @@ struct ChatView: View {
       await store.selectConversation(id: id)
     case .importSharedContent:
       store.drainSharedInbox()
-      if store.hasQueuedSharedItems, store.currentConversation == nil {
+      if store.hasQueuedSharedItems, currentConversation == nil {
         store.newConversation()
       }
     }
@@ -1457,7 +1497,7 @@ struct ChatView: View {
 
   private func scrollFollowingResponse(_ proxy: ScrollViewProxy, animated: Bool = false) {
     // Returning to the bottom follows the tail, even for a tall response.
-    if !followChatBottom, let id = store.currentConversation?.messages.last?.id,
+    if !followChatBottom, let id = currentConversation?.messages.last?.id,
       let target = responseScrollTargets[id]
     {
       // ScrollView clamps short answers to the bottom. Once the answer is
@@ -1491,7 +1531,7 @@ struct ChatView: View {
     proxy: ScrollViewProxy
   ) {
     guard let request,
-      request.conversationID == store.selectedConversationID,
+      request.conversationID == currentConversationID,
       currentMessageIDs.contains(request.messageID)
     else { return }
     userScrolledAfterLastMessage = true
@@ -1846,7 +1886,7 @@ struct ChatView: View {
     VStack(spacing: 10) {
       ProgressView()
         .controlSize(.regular)
-      Text(store.selectedConversationSummary?.displayTitle ?? "Loading conversation")
+      Text(currentConversationSummary?.displayTitle ?? "Loading conversation")
         .font(.subheadline.weight(.semibold))
         .foregroundStyle(.primary)
         .lineLimit(2)
@@ -1872,44 +1912,26 @@ struct ChatView: View {
 
   private var emptyState: some View {
     GeometryReader { proxy in
-      let suggestions = store.previousConversationSuggestions
+      let suggestions = remoteChat == nil ? store.previousConversationSuggestions : []
       let showsLandscapeSuggestions = renderInvalidationKey.isLandscape && !suggestions.isEmpty
 
-      Group {
-        if showsLandscapeSuggestions {
-          HStack(spacing: 32) {
-            emptyStateBrand
-              .frame(maxWidth: .infinity)
-
-            PreviousConversationSuggestions(
-              store: store,
-              suggestions: suggestions,
-              exportCoordinator: exportCoordinator
-            ) { id in
-              Task { await store.selectConversation(id: id) }
-            }
-            .frame(maxWidth: .infinity)
+      let layout =
+        showsLandscapeSuggestions
+        ? AnyLayout(HStackLayout(spacing: 32)) : AnyLayout(VStackLayout(spacing: 20))
+      layout {
+        emptyStateBrand.frame(maxWidth: showsLandscapeSuggestions ? .infinity : nil)
+        if !suggestions.isEmpty {
+          PreviousConversationSuggestions(
+            store: store, suggestions: suggestions,
+            exportCoordinator: exportCoordinator
+          ) { id in
+            Task { await store.selectConversation(id: id) }
           }
-          .frame(maxWidth: 900)
-          .padding(.horizontal, 24)
-        } else {
-          VStack(spacing: 20) {
-            emptyStateBrand
-
-            if !suggestions.isEmpty {
-              PreviousConversationSuggestions(
-                store: store,
-                suggestions: suggestions,
-                exportCoordinator: exportCoordinator
-              ) { id in
-                Task { await store.selectConversation(id: id) }
-              }
-            }
-          }
-          .frame(maxWidth: 430)
-          .padding(.horizontal, 24)
+          .frame(maxWidth: showsLandscapeSuggestions ? .infinity : nil)
         }
       }
+      .frame(maxWidth: showsLandscapeSuggestions ? 900 : 430)
+      .padding(.horizontal, 24)
       .frame(width: proxy.size.width)
       .position(
         x: proxy.size.width / 2,
@@ -2011,8 +2033,8 @@ struct ChatView: View {
         ) {
           deleteSelectedMessages()
         }
-        .disabled(!hasSelection)
-        .opacity(hasSelection ? 1 : 0.5)
+        .disabled(!hasSelection || remoteChat != nil)
+        .opacity(hasSelection && remoteChat == nil ? 1 : 0.5)
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
       .padding(.horizontal, 18)
@@ -2024,8 +2046,9 @@ struct ChatView: View {
   private var composer: some View {
     ChatComposer(
       store: store,
-      placeholder: composerPlaceholder,
-      conversationID: store.currentConversation?.id,
+      remoteChat: remoteChat,
+      placeholder: "Ask anything...",
+      conversationID: currentConversation?.id,
       isResponding: currentChatIsResponding,
       isKeyboardVisible: keyboardOverlap > 0,
       queuedMessagePendingEdit: $queuedMessagePendingEdit,
@@ -2273,7 +2296,6 @@ private struct PreviousConversationSuggestions: View {
             ConversationSummaryActionsModifier(
               store: store,
               conversation: suggestion,
-              isCurrent: store.selectedConversationID == suggestion.id,
               isEnabled: true,
               exportCoordinator: exportCoordinator)
           )
@@ -2669,6 +2691,7 @@ private struct ChatComposer: View {
   @EnvironmentObject private var ttsPlayer: TTSPlayer
   @Environment(\.scenePhase) private var scenePhase
   let store: AppStore
+  let remoteChat: RemoteAgentChat?
   let placeholder: String
   let conversationID: UUID?
   let isResponding: Bool
@@ -2714,14 +2737,15 @@ private struct ChatComposer: View {
 
   private var canSubmitDraft: Bool {
     !isResponding && hasDraftText
+      && (remoteChat == nil || (remoteChat?.connected == true && !store.settings.isOffline))
   }
 
   private var canQueueDraft: Bool {
-    isResponding && hasDraftText
+    remoteChat == nil && isResponding && hasDraftText
   }
 
   private var shouldShowPromptAutocomplete: Bool {
-    pendingPromptCompletion == nil
+    remoteChat == nil && pendingPromptCompletion == nil
       && draftText.hasPrefix("/")
       && !promptShortcutOptions.isEmpty
       && !isResponding
@@ -2786,9 +2810,10 @@ private struct ChatComposer: View {
   }
 
   private var canAttachImage: Bool {
-    ProviderVisionSupport.supportsImageInput(
-      conversation: store.currentConversation,
-      settings: store.settings)
+    remoteChat == nil
+      && ProviderVisionSupport.supportsImageInput(
+        conversation: store.currentConversation,
+        settings: store.settings)
   }
 
   private var canTakePicture: Bool {
@@ -2864,10 +2889,10 @@ private struct ChatComposer: View {
       }
       // A share that arrived before the composer was on screen, e.g. when the
       // share sheet launched the app.
-      if store.hasQueuedSharedItems { beginSharedImport() }
+      if remoteChat == nil, store.hasQueuedSharedItems { beginSharedImport() }
     }
     .onChange(of: store.sharedImportRequestID) { _, _ in
-      beginSharedImport()
+      if remoteChat == nil { beginSharedImport() }
     }
     .onChange(of: store.draftStorageRevision) { _, _ in
       let storedDraft = store.draftText(for: conversationID)
@@ -3106,7 +3131,8 @@ private struct ChatComposer: View {
         toolMenu
 
         TextField(
-          isResponding ? "Queue a message..." : placeholder, text: draftBinding, axis: .vertical
+          isResponding && remoteChat == nil ? "Queue a message..." : placeholder,
+          text: draftBinding, axis: .vertical
         )
         .textFieldStyle(.plain)
         .lineLimit(1...3)
@@ -3141,7 +3167,7 @@ private struct ChatComposer: View {
             if canQueueDraft {
               queueDraft(in: id)
             } else {
-              store.cancelResponse(in: id)
+              if let remoteChat { remoteChat.disconnect() } else { store.cancelResponse(in: id) }
             }
           } else if canSubmitDraft {
             submitDraft()
@@ -3157,7 +3183,9 @@ private struct ChatComposer: View {
             .contentShape(Circle())
         }
         .adaptiveGlassButtonStyle()
-        .disabled(!isResponding && liveVoiceSession.isActive)
+        .disabled(
+          !isResponding && (liveVoiceSession.isActive || (remoteChat != nil && !canSubmitDraft))
+        )
         .help(trailingActionHelp)
       }
     }
@@ -3213,7 +3241,7 @@ private struct ChatComposer: View {
     if isResponding {
       return canQueueDraft ? "arrow.up.to.line" : "stop.fill"
     }
-    if canSubmitDraft {
+    if canSubmitDraft || remoteChat != nil {
       return "arrow.up"
     }
     return "mic"
@@ -3230,7 +3258,7 @@ private struct ChatComposer: View {
     if isResponding {
       return canQueueDraft ? "Queue message" : "Stop response"
     }
-    if canSubmitDraft {
+    if canSubmitDraft || remoteChat != nil {
       return "Send message"
     }
     return "Start voice conversation"
@@ -3451,6 +3479,10 @@ private struct ChatComposer: View {
     draftText = ""
     pendingAttachments = []
     persistDraftTextNow("", for: submittedConversationID)
+    if let remoteChat {
+      remoteChat.send(submitted)
+      return
+    }
     Task {
       let sent = await store.send(
         prompt: submitted,
@@ -3513,7 +3545,7 @@ private struct ChatComposer: View {
       // until the user types.
       await Task.yield()
       guard !liveVoiceSession.isActive,
-        conversationID == store.currentConversation?.id,
+        conversationID == (remoteChat?.conversation.id ?? store.currentConversation?.id),
         store.composerDraftReplacement?.id == replacement.id
       else {
         return
@@ -3625,95 +3657,40 @@ private struct ChatComposer: View {
         toolMenuRowLabel("Enable Tools", systemImage: "wrench.and.screwdriver")
       }
       .toggleStyle(.switch)
-      .padding(.horizontal, 12)
-      .padding(.vertical, 9)
-
-      Button {
-        openToolPicker()
-      } label: {
-        toolMenuRowLabel(
-          "Select Tools...",
-          systemImage: "checklist",
-          trailingText: "(\(enabledToolSelectionCount))")
-      }
-      .disabled(!toolsEnabled)
-      .opacity(toolsEnabled ? 1 : 0.45)
-      .buttonStyle(.plain)
-      .padding(.horizontal, 12)
-      .padding(.vertical, 9)
-
-      Button {
-        openWorkingFolderMenu()
-      } label: {
-        toolMenuRowLabel(
-          "Working Folder...",
-          systemImage: "folder.badge.gearshape",
-          trailingText: workingFolderMenuText)
-      }
-      .buttonStyle(.plain)
-      .padding(.horizontal, 12)
-      .padding(.vertical, 9)
-
+      .padding(.horizontal, 12).padding(.vertical, 9)
+      toolMenuButton(
+        "Select Tools...", systemImage: "checklist",
+        trailingText: remoteChat == nil ? "(\(enabledToolSelectionCount))" : "Host managed",
+        action: openToolPicker
+      )
+      .disabled(!toolsEnabled).opacity(toolsEnabled ? 1 : 0.45)
+      toolMenuButton(
+        "Working Folder...", systemImage: "folder.badge.gearshape",
+        trailingText: workingFolderMenuText, action: openWorkingFolderMenu)
       Divider()
-
-      Button {
-        openTextFileImporter()
-      } label: {
-        toolMenuRowLabel("Attach Document", systemImage: "doc.text")
-      }
-      .buttonStyle(.plain)
-      .padding(.horizontal, 12)
-      .padding(.vertical, 9)
-
-      Button {
+      toolMenuButton("Attach Document", systemImage: "doc.text", action: openTextFileImporter)
+      toolMenuButton("Record voice", systemImage: "mic.badge.plus") {
         showingToolMenu = false
         liveVoiceSession.startVoiceNoteAttachment(store: store, ttsPlayer: ttsPlayer)
-      } label: {
-        toolMenuRowLabel("Record voice", systemImage: "mic.badge.plus")
       }
-      .buttonStyle(.plain)
-      .padding(.horizontal, 12)
-      .padding(.vertical, 9)
-
-      Button {
+      toolMenuButton("Add images", systemImage: "photo") {
         showingToolMenu = false
         showingImagePicker = true
-      } label: {
-        toolMenuRowLabel("Add images", systemImage: "photo")
       }
-      .disabled(!canAttachImage)
-      .opacity(canAttachImage ? 1 : 0.45)
-      .buttonStyle(.plain)
-      .padding(.horizontal, 12)
-      .padding(.vertical, 9)
-
-      Button {
+      .disabled(!canAttachImage).opacity(canAttachImage ? 1 : 0.45)
+      toolMenuButton("Take picture", systemImage: "camera") {
         showingToolMenu = false
         showingCameraPicker = true
-      } label: {
-        toolMenuRowLabel("Take picture", systemImage: "camera")
       }
-      .disabled(!canTakePicture)
-      .opacity(canTakePicture ? 1 : 0.45)
-      .buttonStyle(.plain)
-      .padding(.horizontal, 12)
-      .padding(.vertical, 9)
-
+      .disabled(!canTakePicture).opacity(canTakePicture ? 1 : 0.45)
       Divider()
-
-      Button {
+      toolMenuButton("Start App", systemImage: "square.grid.2x2") {
         showingToolMenu = false
         showingWebXDCLauncher = true
-      } label: {
-        toolMenuRowLabel("Start App", systemImage: "square.grid.2x2")
       }
-      .buttonStyle(.plain)
-      .padding(.horizontal, 12)
-      .padding(.vertical, 9)
     }
-    .padding(8)
-    .frame(minWidth: 240)
-    .background(.regularMaterial)
+    .padding(8).frame(minWidth: 240).background(.regularMaterial)
+    .disabled(remoteChat != nil)
     .fileImporter(
       isPresented: $showingTextFileImporter,
       allowedContentTypes: Self.documentAttachmentTypes
@@ -3721,6 +3698,17 @@ private struct ChatComposer: View {
       showingToolMenu = false
       importTextAttachment(result)
     }
+  }
+
+  private func toolMenuButton(
+    _ title: String, systemImage: String, trailingText: String? = nil,
+    action: @escaping () -> Void
+  ) -> some View {
+    Button(action: action) {
+      toolMenuRowLabel(title, systemImage: systemImage, trailingText: trailingText)
+        .padding(.horizontal, 12).padding(.vertical, 9)
+    }
+    .buttonStyle(.plain)
   }
 
   /// The three ways a chat can resolve its working folder, shown as a popup
@@ -3845,6 +3833,7 @@ private struct ChatComposer: View {
   }
 
   private var workingFolderMenuText: String? {
+    if let remoteChat { return remoteChat.conversation.cwd }
     guard let conversation = store.currentConversation else { return nil }
     guard workingFolderMode != .disabled else { return "Off" }
     return store.workingFolderDisplayName(for: conversation)
@@ -3861,7 +3850,7 @@ private struct ChatComposer: View {
   }
 
   private var toolsEnabled: Bool {
-    store.currentConversation?.toolsEnabled ?? true
+    remoteChat != nil || (store.currentConversation?.toolsEnabled ?? true)
   }
 
   private var enabledToolSelectionCount: Int {

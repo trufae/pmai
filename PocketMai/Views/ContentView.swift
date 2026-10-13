@@ -122,37 +122,32 @@ struct ContentView: View {
           ChatScreenBackground()
 
           NavigationStack {
-            if let host = hosts.selectedHost {
-              if let conversation = hosts.selectedConversation {
-                RemoteAgentChatView(
-                  bookmark: host, conversation: conversation,
-                  onShowHistory: toggleHistoryPanel, onNewChat: newRemoteConversation
-                )
-                .id(
-                  "\(host.id):\(host.url.absoluteString):\(host.revision?.uuidString ?? ""):\(conversation.id)"
-                )
-              } else {
-                VStack(spacing: 20) {
-                  ContentUnavailableView(
-                    "\(host.name)", systemImage: "network",
-                    description: Text("Choose a folder and conversation, or start a new chat."))
-                  Button("Browse Folders") { setDrawerDepth(2, animation: historyPanelAnimation) }
-                  Button("New Chat", action: newRemoteConversation)
-                    .disabled(host.requiresApproval == true || hosts.selectedFolderID == nil)
-                }
-                .navigationTitle(host.name)
-                .toolbar {
-                  ToolbarItem(placement: .topBarLeading) {
-                    Button(
-                      "Conversations", systemImage: "line.3.horizontal", action: toggleHistoryPanel
-                    )
-                    .labelStyle(.iconOnly)
-                  }
+            if let host = hosts.selectedHost, hosts.selectedConversation == nil {
+              VStack(spacing: 20) {
+                ContentUnavailableView(
+                  "\(host.name)", systemImage: "network",
+                  description: Text("Choose a folder and conversation, or start a new chat."))
+                Button("Browse Folders") { setDrawerDepth(2, animation: historyPanelAnimation) }
+                Button("New Chat", action: newRemoteConversation)
+                  .disabled(host.requiresApproval == true || hosts.selectedFolderID == nil)
+              }
+              .navigationTitle(host.name)
+              .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                  Button(
+                    "Conversations", systemImage: "line.3.horizontal", action: toggleHistoryPanel
+                  )
+                  .labelStyle(.iconOnly)
                 }
               }
             } else {
               ChatView(
                 storeObservation: chatStoreObservation,
+                remoteChat: hosts.selectedHost.flatMap { host in
+                  hosts.selectedConversation.map {
+                    RemoteAgentChat(bookmark: host, conversation: $0)
+                  }
+                },
                 store: store,
                 renderInvalidationKey: ChatView.RenderInvalidationKey(
                   isLandscape: proxy.size.width > proxy.size.height,
@@ -161,11 +156,21 @@ struct ContentView: View {
                   appearance: store.settings.appearance,
                   renderMarkdownInChat: store.settings.renderMarkdownInChat,
                   renderMarkdownImagesInChat: store.settings.renderMarkdownImagesInChat),
-                onShowHistory: {
-                  toggleHistoryPanel()
-                }
+                onShowHistory: toggleHistoryPanel,
+                onNewChat: {
+                  if hosts.selectedHost == nil {
+                    store.newConversation()
+                  } else {
+                    newRemoteConversation()
+                  }
+                },
+                onRemoteChatReady: { hosts.activeChat = $0 }
               )
               .equatable()
+              .id(
+                hosts.selectedHost.map {
+                  "\($0.id):\($0.url):\($0.revision?.uuidString ?? ""):\(hosts.selectedConversationID?.uuidString ?? "")"
+                } ?? "local")
             }
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity)

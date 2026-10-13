@@ -18,6 +18,27 @@ final class HostNavigationStore {
   private var operation: Task<Void, Never>?
   private var client: ACPClient?
   private var generation = 0
+  var activeChat: RemoteAgentChat?
+
+  func manageConversation(_ conversation: RemoteAgentConversation, title: String?) async {
+    guard let host = selectedHost else { return }
+    stopDiscovery()
+    error = nil
+    let chat: RemoteAgentChat
+    if let activeChat, activeChat.conversation.id == conversation.id,
+      activeChat.bookmark.id == host.id
+    {
+      chat = activeChat
+    } else {
+      chat = RemoteAgentChat(bookmark: host, conversation: conversation)
+    }
+    do {
+      try await chat.manage(title: title)
+      if title == nil, selectedHostID == host.id, selectedConversationID == conversation.id {
+        selectedConversationID = nil
+      }
+    } catch { self.error = error.localizedDescription }
+  }
 
   var selectedHost: RemoteAgentBookmark? { remotes.host(selectedHostID) }
   var folders: [ACPWorkspaceFolder] {

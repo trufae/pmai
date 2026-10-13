@@ -24,7 +24,30 @@ struct RemoteAgentConversation: Codable, Identifiable {
   var sessionID: String?
   var title = AgentChat.placeholderTitle
   var updatedAt = Date()
+  var createdAt: Date? = Date()
   var messages: [RemoteAgentMessage] = []
+
+  var presentation: Conversation {
+    var result = Conversation()
+    result.id = self.id
+    result.title = self.title
+    result.createdAt = self.createdAt ?? self.updatedAt
+    result.updatedAt = self.updatedAt
+    result.messages = messages.map { message in
+      var text = message.text
+      if message.role == "thought" { text = "<think>\n\(text)\n</think>" }
+      if message.role == "tool" || message.role == "plan" {
+        text = AgentTooling.makeRunBlock(
+          toolName: message.role == "plan" ? "Plan" : "Remote",
+          argumentsJSON: "{}",
+          result: [message.status, text].compactMap { $0 }.joined(separator: "\n"))
+      }
+      return ChatMessage(
+        id: message.id, role: ChatRole(rawValue: message.role) ?? .assistant, text: text,
+        createdAt: message.createdAt ?? result.createdAt)
+    }
+    return result
+  }
 }
 
 struct RemoteAgentMessage: Codable, Identifiable {
@@ -33,6 +56,7 @@ struct RemoteAgentMessage: Codable, Identifiable {
   var text: String
   var toolID: String?
   var status: String?
+  var createdAt: Date? = Date()
 }
 
 @MainActor @Observable
@@ -161,6 +185,14 @@ final class RemoteAgentStore {
     do { try save() } catch { self.error = error.localizedDescription }
   }
 
+  func deleteConversation(_ id: UUID, hostID: UUID) {
+    guard let index = connections.firstIndex(where: { $0.id == hostID }) else { return }
+    let sessionID = connections[index].conversations?.first { $0.id == id }?.sessionID
+    connections[index].conversations?.removeAll { $0.id == id }
+    connections[index].workspace?.sessions.removeAll { $0.sessionID == sessionID }
+    do { try save() } catch { self.error = error.localizedDescription }
+  }
+
   func host(_ id: UUID?) -> RemoteAgentBookmark? {
     connections.first { $0.id == id }
   }
@@ -279,12 +311,68 @@ final class RemoteAgentChat {
   private var operation: Task<Void, Never>?
   private var permissionReplies: [UUID: CheckedContinuation<String?, Never>] = [:]
   private var generation = 0
+  private var deleted = false
 
   init(bookmark: RemoteAgentBookmark, conversation: RemoteAgentConversation) {
     self.bookmark = bookmark
     self.conversation = conversation
     messages = conversation.messages
     sessionID = conversation.sessionID
+    self.conversation.createdAt = conversation.createdAt ?? conversation.updatedAt
+  }
+
+  var presentation: Conversation {
+    var snapshot = conversation
+    snapshot.messages = messages
+    return snapshot.presentation
+  }
+
+  var canManage: Bool {
+    conversation.sessionID == nil
+      || RemoteAgentStore.shared.host(bookmark.id)?.workspace?.canManageSessions == true
+  }
+
+  func manage(title: String?) async throws {
+    guard !busy, canManage else {
+      throw JSONRPCError.invalidParams("Update the remote pmai to manage chats")
+    }
+    let title = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard title?.isEmpty != true else { return }
+    busy = true
+    defer { busy = false }
+    if let sessionID {
+      let managementClient = try client ?? makeClient()
+      do {
+        try await managementClient.manageSession(sessionID, cwd: conversation.cwd, title: title)
+        if client == nil { await managementClient.disconnect() }
+      } catch {
+        if client == nil { await managementClient.disconnect() }
+        throw error
+      }
+    }
+    if let title {
+      conversation.title = title
+      conversation.updatedAt = Date()
+      persist()
+    } else {
+      deleted = true
+      disconnect()
+      RemoteAgentStore.shared.deleteConversation(conversation.id, hostID: bookmark.id)
+    }
+  }
+
+  private func makeClient() throws -> ACPClient {
+    let generation = generation
+    let token = try RemoteAgentStore.shared.token(for: bookmark.id)
+    return ACPClient(
+      configuration: .init(
+        command: bookmark.name, permission: .reject,
+        remoteWorkingDirectory: conversation.cwd, readClientFiles: false,
+        webSocketURL: bookmark.url, bearerToken: token, sessionID: sessionID),
+      onUpdate: { [weak self] update in await self?.receive(update, generation: generation) },
+      onPermission: { [weak self] request in
+        await self?.requestPermission(request, generation: generation)
+      })
   }
 
   func connect() {
@@ -298,16 +386,7 @@ final class RemoteAgentChat {
       let previous = messages
       do {
         await client?.disconnect()
-        let token = try RemoteAgentStore.shared.token(for: bookmark.id)
-        let client = ACPClient(
-          configuration: .init(
-            command: bookmark.name, permission: .reject,
-            remoteWorkingDirectory: conversation.cwd, readClientFiles: false,
-            webSocketURL: bookmark.url, bearerToken: token, sessionID: sessionID),
-          onUpdate: { [weak self] update in await self?.receive(update, generation: attempt) },
-          onPermission: { [weak self] request in
-            await self?.requestPermission(request, generation: attempt)
-          })
+        let client = try makeClient()
         self.client = client
         messages = []
         let id = try await client.connect()
@@ -460,6 +539,7 @@ final class RemoteAgentChat {
   }
 
   private func persist() {
+    guard !deleted else { return }
     conversation.sessionID = sessionID
     conversation.messages = messages
     RemoteAgentStore.shared.update(bookmark.id, conversation: conversation)
