@@ -557,7 +557,7 @@ final class LiveVoiceSession: ObservableObject {
       role: .assistant,
       title: "Assistant",
       messageID: assistant.id,
-      openAIEndpoints: store.settings.airplaneModeEnabled ? [] : store.settings.openAIEndpoints,
+      openAIEndpoints: store.settings.isOffline ? [] : store.settings.openAIEndpoints,
       skipTechnicalContent: store.settings.conversation.skipTechnicalContentInTTS)
     await waitForSpeechToFinish(ttsPlayer, generation: generation)
     guard generation == sessionGeneration else { return }
@@ -593,7 +593,7 @@ final class LiveVoiceSession: ObservableObject {
     state = .speaking
 
     let voice = store.effectiveToolSettings(for: store.currentConversation).voices.assistant
-    let endpoints = store.settings.airplaneModeEnabled ? [] : store.settings.openAIEndpoints
+    let endpoints = store.settings.isOffline ? [] : store.settings.openAIEndpoints
     var consumed = 0
 
     while generation == sessionGeneration, !Task.isCancelled {

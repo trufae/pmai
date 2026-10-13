@@ -1881,6 +1881,7 @@ struct MaiCLI {
     resumingChat: Bool,
     environment: [String: String]
   ) async throws -> RuntimeSetup {
+    await runtime.configureInternetAccess(.init(airplaneModeEnabled: configuration?.airplane ?? false))
     // Flags deliberately override a connection. Ambient variables only fill
     // missing settings; a named provider owns its endpoint and credentials.
     func resolvedBaseURL(_ configured: URL?) throws -> URL? {
@@ -1951,6 +1952,7 @@ struct MaiCLI {
       for server in configuration.mcpServers where server.enabled {
         let source = try await plugins.makeMCPToolSource(
           kind: server.kind, configuration: server, environment: environment)
+        if !(await runtime.internetAccessPolicy()).allows(source) { continue }
         catalogs.append(try await runtime.register(mcp: source))
       }
       await runtime.configureDelegation(
@@ -2381,6 +2383,7 @@ struct MaiCLI {
 
     func statusLine() async -> (text: String, animating: Bool) {
       var facts: [String] = []
+      if await runtime.internetAccessPolicy().isOffline { facts.append("✈ offline") }
       var liveContext: AgentContextSize?
       if case .agent(let pid) = loop.focus {
         liveContext = await runtime.supervisor.info(pid)?.contextSize
@@ -4496,6 +4499,7 @@ struct MaiCLI {
         approvalHandler: visual.approvalHandler,
         configuration: &configuration,
         configurationPath: visual.configurationPath,
+        catalogs: &catalogs,
         terminal: terminal)
     case "/theme":
       await handleThemeCommand(
@@ -7852,7 +7856,9 @@ struct MaiCLI {
 
     let tools = await runtime.availableTools()
     let usage = await runtime.toolUsageSnapshot()
-    let modesByName = session.profile.agentDefinition.toolModes(in: groups, usage: usage)
+    let internetAccess = await runtime.internetAccessPolicy()
+    let modesByName = internetAccess.restricting(
+      session.profile.agentDefinition.toolModes(in: groups, usage: usage), tools: tools, groups: groups)
     let names = Set(tools.map(\.name)).union(AgentRuntime.agentToolNames)
     if action == "list" || fields.isEmpty {
       await terminal.line("Tool proxy default: \(toolProxySetting(session.profile)); automatic exposure: \(session.profile.toolPolicy.automatic ? "on" : "off"). Per-tool overrides take precedence.")
@@ -8677,6 +8683,7 @@ struct MaiCLI {
     approvalHandler: TerminalApprovalHandler,
     configuration: inout MaiConfiguration?,
     configurationPath: String?,
+    catalogs: inout [MCPServerCatalog],
     terminal: TerminalWriter
   ) async {
     // Recognize old provider URL spellings so they point to the editor rather
@@ -8709,6 +8716,7 @@ struct MaiCLI {
       await terminal.line("tool.aproval = \(await approvalHandler.currentApprovalMode().rawValue)")
       await terminal.line("debug = \(await approvalHandler.isDebugEnabled() ? "true" : "false")")
       await terminal.line("debugfile = \(await approvalHandler.debugLogURL().path)")
+      await terminal.line("airplane = \(await runtime.internetAccessPolicy().airplaneModeEnabled ? "on ✈" : "off")")
       await listLimitSettings(session.profile.limits, terminal: terminal)
       await listRecoverySettings(session.profile, terminal: terminal)
       await listToolSettings(session.profile, terminal: terminal)
@@ -8721,6 +8729,50 @@ struct MaiCLI {
     }
     let key = parts[0].lowercased()
     let displayedKey = key == "ui.toolresultlines" ? "ui.toolResultLines" : key
+    if key == "airplane" {
+      guard parts.count > 1 else {
+        await terminal.line("airplane = \(await runtime.internetAccessPolicy().airplaneModeEnabled ? "on ✈" : "off")")
+        return
+      }
+      guard parts.count == 2 else {
+        await terminal.line("Usage: /set airplane <on|off|toggle>")
+        return
+      }
+      var policy = await runtime.internetAccessPolicy()
+      if parts[1].lowercased() == "toggle" {
+        policy.toggleAirplaneMode()
+      } else if let enabled = booleanSetting(parts[1]) {
+        policy.setAirplaneMode(enabled)
+      } else {
+        await terminal.line("Usage: /set airplane <on|off|toggle>")
+        return
+      }
+      let enabled = policy.airplaneModeEnabled
+      if var draft = configuration, let configurationPath {
+        draft.airplane = enabled
+        do {
+          try draft.save(to: URL(fileURLWithPath: configurationPath))
+          configuration = draft
+        } catch {
+          await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+          return
+        }
+      }
+      await runtime.configureInternetAccess(policy)
+      if !enabled {
+        for server in configuration?.mcpServers ?? [] where server.enabled && !catalogs.contains(where: { $0.serverID == server.id }) {
+          do {
+            let source = try await plugins.makeMCPToolSource(kind: server.kind, configuration: server,
+              environment: ProcessInfo.processInfo.environment)
+            catalogs.append(try await runtime.register(mcp: source))
+          } catch {
+            await terminal.line("warning: MCP '\(server.id)' could not reconnect: \(error.localizedDescription)", to: .standardError)
+          }
+        }
+      }
+      await terminal.line("airplane = \(enabled ? "on ✈ (internet tools disabled)" : "off")")
+      return
+    }
     if key == "export" || key == "export." {
       await listExportSettings(configuration?.documentExport ?? .init(), terminal: terminal)
       return
@@ -8986,7 +9038,7 @@ struct MaiCLI {
         || levelKeys.contains(key) || textKeys.contains(key)
     else {
       await terminal.line(
-        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, effort, tool.aproval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.strategy, \((textKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), export.tools, export.thinking, use.agentsmd, use.plan"
+        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, airplane, effort, tool.aproval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.strategy, \((textKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), export.tools, export.thinking, use.agentsmd, use.plan"
       )
       return
     }
@@ -11672,6 +11724,7 @@ struct MaiCLI {
       "/set tool.", "/set tool.calling automatic", "/set tool.calling native",
       "/set tool.calling text", "/set tool.calling xml", "/set tool.calling json",
       "/set tool.systemone true", "/set tool.systemone false",
+      "/set airplane on", "/set airplane off", "/set airplane toggle",
       "/set tool.proxy on", "/set tool.proxy off", "/set tool.proxy all",
       "/set tool.proxy hybrid", "/set tool.auto on", "/set tool.auto off",
       "/set ui.title ", "/set ui.title none", "/set ui.editor ", "/set ui.editor none",
@@ -12257,6 +12310,7 @@ struct MaiCLI {
       /set tool.                   List the tool calling settings
       /set tool.calling MODE       Use automatic/native tools, or text/XML/JSON emulation
       /set tool.systemone BOOL     Route tools via the System One /model-tool provider (default false)
+      /set airplane on|off|toggle  Pause internet tools; ✈ marks offline mode
       /set tool.proxy MODE         Default exposure: on/hybrid (common tools direct), all, or off
       /set tool.auto BOOL          Automatically expose frequently used tools (default on)
       /set delegation MODE         off: runs every tool itself; subagent: may also hand work to a child

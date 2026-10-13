@@ -18,6 +18,8 @@ public struct ToolAnnotations: Codable, Equatable, Sendable {
   public var destructive: Bool
   public var idempotent: Bool
   public var openWorld: Bool
+  /// The host omits and refuses this tool while internet access is disabled.
+  public var requiresInternet: Bool
   /// An asynchronous tool call: the run starts it and goes on to the next
   /// call of the same reply instead of waiting for it, so every concurrent
   /// call a reply makes runs at once — `agent_start` above all, so several
@@ -37,13 +39,15 @@ public struct ToolAnnotations: Codable, Equatable, Sendable {
     openWorld: Bool = true,
     concurrent: Bool = false,
     approval: ToolApprovalRequirement = .confirm,
-    resultImportance: ToolResultImportance = .normal
+    resultImportance: ToolResultImportance = .normal,
+    requiresInternet: Bool = false
   ) {
     self.title = title
     self.readOnly = readOnly
     self.destructive = destructive
     self.idempotent = idempotent
     self.openWorld = openWorld
+    self.requiresInternet = requiresInternet
     self.concurrent = concurrent
     self.approval = approval
     self.resultImportance = resultImportance
@@ -51,6 +55,7 @@ public struct ToolAnnotations: Codable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case title, readOnly, destructive, idempotent, openWorld, concurrent, approval, resultImportance
+    case requiresInternet
   }
 
   /// Every key is optional on the way in, so annotations written before
@@ -66,8 +71,11 @@ public struct ToolAnnotations: Codable, Equatable, Sendable {
       concurrent: try container.decodeIfPresent(Bool.self, forKey: .concurrent) ?? false,
       approval: try container.decodeIfPresent(ToolApprovalRequirement.self, forKey: .approval)
         ?? .confirm,
-      resultImportance: try container.decodeIfPresent(ToolResultImportance.self, forKey: .resultImportance)
-        ?? .normal)
+      resultImportance: try container.decodeIfPresent(
+        ToolResultImportance.self, forKey: .resultImportance)
+        ?? .normal,
+      requiresInternet: try container.decodeIfPresent(Bool.self, forKey: .requiresInternet) ?? false
+    )
   }
 }
 

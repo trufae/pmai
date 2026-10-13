@@ -104,7 +104,7 @@ public enum MCPStreamableHTTPTransport {
               destructive: destructive,
               idempotent: annotations["idempotentHint"]?.boolValue ?? false,
               openWorld: annotations["openWorldHint"]?.boolValue ?? true,
-              approval: destructive ? .dangerous : server.defaultApproval)))
+              approval: destructive ? .dangerous : server.defaultApproval, requiresInternet: true)))
       }
       cursor = result.objectValue?["nextCursor"]?.stringValue
     } while cursor?.isEmpty == false

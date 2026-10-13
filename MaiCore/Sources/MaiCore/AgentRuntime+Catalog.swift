@@ -46,6 +46,7 @@ extension AgentRuntime {
   struct RegisteredMCP: Sendable {
     var source: any MCPToolSource
     var toolNames: Set<String>
+    var networkRequirement: ToolNetworkRequirement
   }
 
   /// Adds any provider implementation to the runtime by its descriptor ID.
@@ -102,6 +103,7 @@ extension AgentRuntime {
     mcp source: any MCPToolSource,
     replacingExistingTools: Bool = false
   ) async throws -> MCPServerCatalog {
+    guard internetAccess.allows(source) else { throw InternetAccessError.offline }
     let catalog = try await source.connect()
     let agentTools = try await source.agentTools()
     for tool in agentTools {
@@ -109,7 +111,8 @@ extension AgentRuntime {
     }
     registeredMCPs[catalog.serverID] = RegisteredMCP(
       source: source,
-      toolNames: Set(agentTools.map { $0.definition.name }))
+      toolNames: Set(agentTools.map { $0.definition.name }),
+      networkRequirement: source.requiresInternet ? .internet : .offline)
     return catalog
   }
 
@@ -162,7 +165,8 @@ extension AgentRuntime {
       ToolGroupDefinition(
         id: id, sourceID: "mcp", displayName: "MCP " + id,
         description: "Tools supplied by MCP server " + id + ".",
-        toolNames: registration.toolNames)
+        toolNames: registration.toolNames,
+        networkRequirement: registration.networkRequirement)
     }.sorted { $0.catalogID < $1.catalogID }
     let known = Self.builtInToolGroups(for: definitions) + configuredToolGroups + mcpGroups
     return ToolGroupDefinition.catalog(known: known, tools: definitions)
@@ -199,7 +203,7 @@ extension AgentRuntime {
     if let scope = request.restrictedToolNames {
       for name in names where !scope.contains(name) { result[name] = .disabled }
     }
-    return result
+    return internetAccess.restricting(result, tools: availableTools(), groups: groups)
   }
 
   func exposedTools(in definitions: [ToolDefinition], request: AgentRequest) -> Set<String> {

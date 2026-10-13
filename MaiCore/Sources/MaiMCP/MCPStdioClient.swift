@@ -14,6 +14,7 @@
 
   /// An MCP tool source backed by a local subprocess using newline-delimited JSON-RPC.
   public actor MCPStdioClient: MCPToolSource {
+    public nonisolated let requiresInternet = false
     public let configuration: MCPStdioServerConfiguration
     private let transport: MCPStdioTransport
     private var catalog: MCPServerCatalog?
@@ -170,7 +171,8 @@
                 destructive: destructive,
                 idempotent: annotations["idempotentHint"]?.boolValue ?? false,
                 openWorld: annotations["openWorldHint"]?.boolValue ?? true,
-                approval: destructive ? .dangerous : configuration.defaultApproval)))
+                approval: destructive ? .dangerous : configuration.defaultApproval,
+                requiresInternet: annotations["requiresInternet"]?.boolValue ?? false)))
         }
         cursor = result.objectValue?["nextCursor"]?.stringValue
       } while cursor?.isEmpty == false

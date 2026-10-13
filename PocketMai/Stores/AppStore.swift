@@ -218,9 +218,11 @@ final class AppStore: ObservableObject {
   @Published var settings: AppSettings {
     didSet {
       speechTranscriptionPolicy.allowsServerRecognition = settings.appleServerTranscriptionAllowed
+      if oldValue.isOffline != settings.isOffline { handleInternetAvailabilityChange() }
     }
   }
   let speechTranscriptionPolicy = SpeechTranscriptionPolicy()
+  private var networkMonitor: NetworkAvailabilityMonitor?
   @Published var respondingConversationIDs: Set<UUID> = []
   @Published private(set) var loadingLocalModelConversationIDs: Set<UUID> = []
   @Published private(set) var queuedUserMessagesByConversationID: [UUID: [QueuedChatMessage]] = [:]
@@ -504,7 +506,8 @@ final class AppStore: ObservableObject {
 
   init(
     persistence: PersistenceStore = PersistenceStore(),
-    streamingTextStore: StreamingTextStore = StreamingTextStore()
+    streamingTextStore: StreamingTextStore = StreamingTextStore(),
+    monitorNetwork: Bool = true
   ) {
     self.persistence = persistence
     self.streamingTextStore = streamingTextStore
@@ -518,6 +521,45 @@ final class AppStore: ObservableObject {
       self?.handleLaunchCommand(.openConversation(id: conversationID))
     }
     Task { await loadStartupData() }
+    if monitorNetwork {
+      networkMonitor = NetworkAvailabilityMonitor { [weak self] available in
+        Task { @MainActor [weak self] in self?.updateNetworkAvailability(available) }
+      }
+    }
+  }
+
+  func updateNetworkAvailability(_ available: Bool) {
+    guard settings.networkAvailable != available else { return }
+    settings.networkAvailable = available
+  }
+
+  func setAirplaneMode(_ enabled: Bool) {
+    var policy = settings.internetAccessPolicy
+    policy.setAirplaneMode(enabled)
+    settings.airplaneModeEnabled = policy.airplaneModeEnabled
+    saveSettings()
+  }
+
+  func toggleAirplaneMode() {
+    var policy = settings.internetAccessPolicy
+    policy.toggleAirplaneMode()
+    setAirplaneMode(policy.airplaneModeEnabled)
+  }
+
+  private func handleInternetAvailabilityChange() {
+    if settings.isOffline {
+      endpointStatuses.removeAll()
+      endpointModels.removeAll()
+      endpointVoices.removeAll()
+      mcpStatuses.removeAll()
+      mcpCatalogCache.removeAll()
+      endpointModelCache.removeAll()
+      ensureSelectedConversationFolderIsAvailable()
+    } else if hasLoadedPersistedSettings {
+      refreshConfiguredEndpointsInBackground()
+      warmEnabledMCPServersInBackground(for: selectedConversationID)
+    }
+    refreshAppleIntelligenceAvailabilityInBackground()
   }
 
   var currentConversation: Conversation? {
@@ -570,7 +612,7 @@ final class AppStore: ObservableObject {
   }
 
   var iCloudConversationFolderIsAvailable: Bool {
-    !settings.airplaneModeEnabled
+    !settings.isOffline
   }
 
   func canUseConversationFolder(_ folderID: String) -> Bool {
@@ -697,7 +739,7 @@ final class AppStore: ObservableObject {
       guard localMLXIsAvailable else { return effectiveDefaultProviderConfiguration }
       return (.mlx, nil, availableLocalMLXModelID(preferred: modelID) ?? "")
     case .openAICompatible:
-      guard !settings.airplaneModeEnabled,
+      guard !settings.isOffline,
         let endpointID = defaults.endpointID,
         let endpoint = settings.openAIEndpoints.first(where: { $0.id == endpointID && $0.isEnabled }
         )
@@ -1025,7 +1067,7 @@ final class AppStore: ObservableObject {
     guard generation == dataGeneration else { return }
     applyLoadedBookmarks(loadedBookmarks)
 
-    let deviceOnlyApple = settings.airplaneModeEnabled
+    let deviceOnlyApple = settings.isOffline
     let availabilityTask = Task.detached(priority: .utility) {
       AppleFoundationProvider.availabilityReport(deviceOnly: deviceOnlyApple)
     }
@@ -1036,6 +1078,8 @@ final class AppStore: ObservableObject {
 
   private func applyLoadedSettings(_ loadedSettings: AppSettings) {
     guard !hasLoadedPersistedSettings else { return }
+    var loadedSettings = loadedSettings
+    loadedSettings.networkAvailable = settings.networkAvailable
     settings = loadedSettings
     hasLoadedPersistedSettings = true
     applyBackgroundActivitySettings()
@@ -1648,7 +1692,9 @@ final class AppStore: ObservableObject {
     conversationDrafts.removeAll()
     messageBookmarks.removeAll()
     streamingTextStore.removeAll()
+    let networkAvailable = settings.networkAvailable
     settings = .defaults
+    settings.networkAvailable = networkAvailable
     conversations.removeAll()
     conversationSummaries.removeAll()
     refreshRecentConversationSummaries()
@@ -1923,7 +1969,7 @@ final class AppStore: ObservableObject {
 
   func effectiveToolSettings(for conversation: Conversation?) -> NativeToolSettings {
     var toolSettings = settings.toolSettings.applyingLanguageOverride(from: conversation)
-    if settings.airplaneModeEnabled {
+    if settings.isOffline {
       toolSettings.voices.user = toolSettings.voices.user.withoutOnlineProvider()
       toolSettings.voices.assistant = toolSettings.voices.assistant.withoutOnlineProvider()
     }
@@ -3996,7 +4042,7 @@ final class AppStore: ObservableObject {
   }
 
   func refreshAppleIntelligenceAvailability() async {
-    let deviceOnlyApple = settings.airplaneModeEnabled
+    let deviceOnlyApple = settings.isOffline
     let report = await Task.detached(priority: .utility) {
       AppleFoundationProvider.availabilityReport(deviceOnly: deviceOnlyApple)
     }.value
@@ -4018,7 +4064,7 @@ final class AppStore: ObservableObject {
   }
 
   func refreshMCP(_ server: MCPServer, force: Bool = false) async {
-    guard !settings.airplaneModeEnabled else {
+    guard !settings.isOffline else {
       mcpTools[server.id] = nil
       mcpResources[server.id] = nil
       mcpStatuses[server.id] = .failed("Airplane mode is enabled.")
@@ -4103,7 +4149,7 @@ final class AppStore: ObservableObject {
   /// the catalog is warm (and cached) before the user sends the first message.
   /// Cheap to call repeatedly — already-connected servers hit the cache.
   func warmEnabledMCPServersInBackground(for conversationID: UUID?) {
-    guard !settings.airplaneModeEnabled,
+    guard !settings.isOffline,
       let conversationID,
       let conversation = conversation(withID: conversationID),
       conversation.toolsEnabled,
@@ -4123,7 +4169,7 @@ final class AppStore: ObservableObject {
   ) async {
     let settings = effectiveSettings ?? self.settings
     guard conversation.toolsEnabled else { return }
-    guard !settings.airplaneModeEnabled else {
+    guard !settings.isOffline else {
       for server in settings.mcpServers
       where conversation.enabledMCPServers.contains(server.id) {
         mcpTools[server.id] = nil
@@ -4180,7 +4226,7 @@ final class AppStore: ObservableObject {
   }
 
   func refreshEndpoint(_ endpoint: OpenAIEndpoint, force: Bool = false) async {
-    guard !settings.airplaneModeEnabled else {
+    guard !settings.isOffline else {
       endpointStatuses[endpoint.id] = .failed("Airplane mode is enabled.")
       endpointModels[endpoint.id] = nil
       endpointVoices[endpoint.id] = nil
@@ -4239,7 +4285,7 @@ final class AppStore: ObservableObject {
   }
 
   func refreshConfiguredEndpointsInBackground() {
-    guard !settings.airplaneModeEnabled else { return }
+    guard !settings.isOffline else { return }
     let endpoints = settings.openAIEndpoints.filter(\.isEnabled)
     guard !endpoints.isEmpty else { return }
     for endpoint in endpoints {
@@ -5264,7 +5310,7 @@ final class AppStore: ObservableObject {
         settings.mcpRequestTimeoutSeconds),
       toolApprovalMode: settings.toolApprovalMode,
       useToolProxy: settings.useToolProxy,
-      airplaneModeEnabled: settings.airplaneModeEnabled,
+      airplaneModeEnabled: settings.isOffline,
       contextWindowMode: settings.contextWindowMode.rawValue,
       contextWindowMessageLimit: settings.contextWindowMode.messageLimit,
       includeAssistantResponsesInContext: settings.includeAssistantResponsesInContext,

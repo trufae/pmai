@@ -125,6 +125,10 @@ extension AgentRuntime {
     // Use the resolved name for approval and dispatch as well as validation.
     // Retired agent-start names still select their legacy argument format.
     if !isLegacyName { resolvedCall.name = definition.name }
+    guard internetAccess.allows(definition, in: availableToolGroups()) else {
+      return await fail(
+        resolvedCall, "internet tools are disabled while offline.", parent: context, emit: emit)
+    }
     resolvedCall.arguments = ToolSchemaValidator.repairArgumentKeys(
       resolvedCall.arguments, definition: definition)
     resolvedCall.arguments = ToolSchemaValidator.coerceBooleans(
@@ -195,6 +199,11 @@ extension AgentRuntime {
       return result
     }
     await emit(.toolStarted(context, approvedCall))
+    // Approval and event handlers can yield while the user switches modes.
+    guard internetAccess.allows(definition, in: availableToolGroups()) else {
+      return await fail(
+        approvedCall, "internet tools are disabled while offline.", parent: context, emit: emit)
+    }
     if definition.name != ToolProxy.listName,
       tools[definition.name] != nil || Self.agentToolNames.contains(definition.name)
     {
@@ -237,6 +246,10 @@ extension AgentRuntime {
           parent: context, emit: emit)
       }
       launched()
+      guard internetAccess.allows(tool.definition, in: availableToolGroups()) else {
+        return await fail(
+          approvedCall, "internet tools are disabled while offline.", parent: context, emit: emit)
+      }
       do {
         let output = try await tool.call(
           arguments: approvedCall.arguments,

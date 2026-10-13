@@ -1751,7 +1751,7 @@ private struct ConversationFolderDefaultsView: View {
           isSelected: draft.provider == .mlx)
       }
       .disabled(!store.localMLXIsAvailable)
-      if !store.settings.airplaneModeEnabled {
+      if !store.settings.isOffline {
         ForEach(store.settings.openAIEndpoints.filter(\.isEnabled)) { endpoint in
           Button {
             selectProvider(.endpoint(endpoint.id))
@@ -1872,7 +1872,7 @@ private struct ConversationFolderDefaultsView: View {
 
   @ViewBuilder
   private var openAICompatibleModelControls: some View {
-    if store.settings.airplaneModeEnabled {
+    if store.settings.isOffline {
       Text(store.offlineProviderGuidance)
         .foregroundStyle(.secondary)
     } else if let endpoint = selectedEndpoint {
@@ -1924,7 +1924,7 @@ private struct ConversationFolderDefaultsView: View {
       if let message = LocalMLXAvailability.current.unavailabilityMessage { return message }
       return store.localMLXModelIDs.isEmpty ? "Download an MLX model before saving." : nil
     case .openAICompatible:
-      if store.settings.airplaneModeEnabled {
+      if store.settings.isOffline {
         return "Airplane Mode is on. OpenAI-compatible providers cannot be used."
       }
       return selectedEndpoint == nil ? "Choose an enabled endpoint before saving." : nil
@@ -1986,7 +1986,7 @@ private struct ConversationFolderDefaultsView: View {
       draft.endpointID = nil
       draft.modelID = store.availableLocalMLXModelID(preferred: draft.modelID) ?? ""
     case .endpoint(let id):
-      guard !store.settings.airplaneModeEnabled,
+      guard !store.settings.isOffline,
         let endpoint = store.settings.openAIEndpoints.first(where: { $0.id == id && $0.isEnabled })
       else { return }
       draft.provider = .openAICompatible

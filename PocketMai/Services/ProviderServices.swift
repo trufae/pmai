@@ -202,14 +202,14 @@ enum ChatProviderRouter {
     conversation: Conversation, settings: AppSettings,
     mlxAvailability: LocalMLXAvailability = .current
   ) -> String? {
-    if settings.airplaneModeEnabled && !conversation.provider.isAirplaneModeEligible {
+    if settings.isOffline && !conversation.provider.isAirplaneModeEligible {
       return ChatProviderError.providerUnavailableInAirplaneMode(conversation.provider.displayName)
         .errorDescription
     }
     switch conversation.provider {
     case .apple:
       return AppleFoundationProvider.unavailableMessage(
-        deviceOnly: settings.airplaneModeEnabled)
+        deviceOnly: settings.isOffline)
     case .mlx:
       if let message = mlxAvailability.unavailabilityMessage { return message }
       let modelID = LocalMLXProvider.effectiveModelID(
@@ -284,7 +284,7 @@ enum ChatProviderRouter {
     request: ChatCompletionRequest,
     onUpdate: @escaping @MainActor (String) -> Void
   ) async throws -> String {
-    if request.settings.airplaneModeEnabled
+    if request.settings.isOffline
       && !request.conversation.provider.isAirplaneModeEligible
     {
       throw ChatProviderError.providerUnavailableInAirplaneMode(
@@ -412,7 +412,7 @@ enum ProviderVisionSupport {
     case .mlx:
       return false
     case .openAICompatible:
-      guard !settings.airplaneModeEnabled,
+      guard !settings.isOffline,
         let endpoint = OpenAICompatibleProvider.selectedEndpoint(
           for: conversation, settings: settings)
       else {
@@ -955,7 +955,7 @@ enum AppleFoundationProvider {
   static func complete(
     request: ChatCompletionRequest, onUpdate: @escaping @MainActor (String) -> Void
   ) async throws -> String {
-    let provider = AppleProvider(deviceOnly: request.settings.airplaneModeEnabled)
+    let provider = AppleProvider(deviceOnly: request.settings.isOffline)
     let input = PromptComposer.appleInput(request: request)
     let accumulator = await MainActor.run { CoreProviderEventAccumulator(onUpdate: onUpdate) }
     let response: ProviderResponse

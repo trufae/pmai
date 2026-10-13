@@ -38,7 +38,7 @@ public struct MaiWeatherTool: AgentTool {
         description:
           "City, place, or latitude/longitude requested by the user, such as Madrid or 40.4168,-3.7038. Omit for the configured/current location.",
         required: false)
-    ])
+    ], annotations: ToolAnnotations(requiresInternet: true))
 
   public let definition = Self.toolDefinition
   public let configuration: MaiWeatherConfiguration
@@ -480,7 +480,7 @@ public struct MaiWebSearchTool: AgentTool {
         name: "query", type: "string",
         description: "Focused search query without unrelated chat history.",
         required: true)
-    ])
+    ], annotations: ToolAnnotations(requiresInternet: true))
 
   public let definition = Self.toolDefinition
   public let configuration: MaiWebSearchConfiguration

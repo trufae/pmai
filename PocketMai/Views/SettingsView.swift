@@ -432,17 +432,19 @@ struct SettingsView: View {
             toggleAirplaneMode()
           } label: {
             Label(
-              store.settings.airplaneModeEnabled ? "Offline" : "Online",
-              systemImage: store.settings.airplaneModeEnabled
+              store.settings.isOffline ? "Offline" : "Online",
+              systemImage: store.settings.isOffline
                 ? "airplane.circle.fill" : "airplane.circle"
             )
           }
           .accessibilityLabel(
             store.settings.airplaneModeEnabled
-              ? "Offline mode enabled. Tap to go online."
-              : "Online mode enabled. Tap to go offline."
+              ? "Airplane Mode enabled. Tap to allow internet access."
+              : !store.settings.networkAvailable
+                ? "No internet connection. Tap to keep Airplane Mode enabled after reconnecting."
+                : "Online. Tap to enable Airplane Mode."
           )
-          .help(store.settings.airplaneModeEnabled ? "Go online" : "Go offline")
+          .help(store.settings.airplaneModeEnabled ? "Allow internet access" : "Enable Airplane Mode")
         }
 
         ToolbarItem(placement: .confirmationAction) {
@@ -963,9 +965,9 @@ struct SettingsView: View {
           store.saveSettings()
         })
     )
-    .disabled(store.settings.airplaneModeEnabled)
+    .disabled(store.settings.isOffline)
     Text(
-      store.settings.airplaneModeEnabled
+      store.settings.isOffline
         ? "Offline mode requires on-device transcription, even when Apple server transcription is permitted."
         : "Off by default. Allows recordings and imported audio to be sent to Apple if on-device transcription fails or is unavailable. Native iOS Live always stays on device."
     )
@@ -1181,8 +1183,8 @@ struct SettingsView: View {
       NavigationLink(value: SettingsRoute.endpoint(endpoint.id)) {
         endpointRow(endpoint)
       }
-      .disabled(store.settings.airplaneModeEnabled)
-      .opacity(store.settings.airplaneModeEnabled ? 0.5 : 1)
+      .disabled(store.settings.isOffline)
+      .opacity(store.settings.isOffline ? 0.5 : 1)
     }
     .onDelete { offsets in
       pendingDeletion = PendingSettingsDeletion(kind: .endpoint, offsets: offsets)
@@ -1194,9 +1196,9 @@ struct SettingsView: View {
     } label: {
       Label("Add Provider", systemImage: "plus")
     }
-    .disabled(store.settings.airplaneModeEnabled)
+    .disabled(store.settings.isOffline)
     Text(
-      store.settings.airplaneModeEnabled
+      store.settings.isOffline
         ? store.offlineProviderGuidance
         : "OpenAI-compatible providers can be added, edited, or removed. On-device providers depend on this device's hardware."
     )
@@ -1207,7 +1209,7 @@ struct SettingsView: View {
   private var appleIntelligenceProviderRow: some View {
     let report = store.appleAvailabilityReport
     let enabled = store.settings.appleProviderEnabled
-    let deviceOnlyReady = store.settings.airplaneModeEnabled && report.kind == .available
+    let deviceOnlyReady = store.settings.isOffline && report.kind == .available
     return providerStatusRow(
       title: "Apple Intelligence",
       subtitle: enabled
@@ -1325,7 +1327,7 @@ struct SettingsView: View {
           .lineLimit(1)
       }
       Spacer()
-      if store.settings.airplaneModeEnabled {
+      if store.settings.isOffline {
         Text("Offline")
           .font(.caption.weight(.semibold))
           .foregroundStyle(.tertiary)
@@ -1525,7 +1527,7 @@ struct SettingsView: View {
     NativeToolSettingsRow(
       tool: tool,
       isEnabled: store.settings.defaultEnabledTools.contains(tool),
-      isUnavailable: store.settings.airplaneModeEnabled && tool.isDisabledInAirplaneMode,
+      isUnavailable: store.settings.isOffline && tool.isDisabledInAirplaneMode,
       isExpanded: Binding(
         get: { expandedToolOptions.contains(tool) },
         set: { expanded in
@@ -2175,17 +2177,7 @@ struct SettingsView: View {
   }
 
   private func toggleAirplaneMode() {
-    store.settings.airplaneModeEnabled.toggle()
-    if store.settings.airplaneModeEnabled {
-      store.endpointStatuses.removeAll()
-      store.endpointModels.removeAll()
-      store.endpointVoices.removeAll()
-      store.ensureSelectedConversationFolderIsAvailable()
-    } else {
-      store.refreshConfiguredEndpointsInBackground()
-    }
-    store.refreshAppleIntelligenceAvailabilityInBackground()
-    store.saveSettings()
+    store.toggleAirplaneMode()
   }
 
   private func settingsBinding<Value>(_ keyPath: WritableKeyPath<AppSettings, Value>) -> Binding<
@@ -2370,7 +2362,7 @@ struct SettingsView: View {
   }
 
   private func toggleTool(_ tool: BuiltInToolID) {
-    guard !(store.settings.airplaneModeEnabled && tool.isDisabledInAirplaneMode) else {
+    guard !(store.settings.isOffline && tool.isDisabledInAirplaneMode) else {
       showToast("\(tool.displayName) is disabled while Airplane Mode is enabled.")
       return
     }
@@ -2545,12 +2537,12 @@ private struct RoleVoiceSettingsView: View {
           ForEach(openAIVoiceEndpoints) { endpoint in
             Text(endpoint.displayName)
               .tag(VoiceProviderSelection.openAI(endpoint.id))
-              .disabled(store.settings.airplaneModeEnabled)
+              .disabled(store.settings.isOffline)
           }
         }
       } footer: {
         Text(
-          store.settings.airplaneModeEnabled
+          store.settings.isOffline
             ? "Airplane Mode is on. Provider voices are unavailable."
             : "Only OpenAI-compatible providers with discovered /v1/voices are listed.")
       }
@@ -2621,7 +2613,7 @@ private struct RoleVoiceSettingsView: View {
           VoiceTest.toggle(
             role: role,
             voice: effectiveVoice,
-            openAIEndpoints: store.settings.airplaneModeEnabled
+            openAIEndpoints: store.settings.isOffline
               ? [] : store.settings.openAIEndpoints,
             player: ttsPlayer)
         } label: {
@@ -2660,7 +2652,7 @@ private struct RoleVoiceSettingsView: View {
   }
 
   private var effectiveVoice: RoleVoiceSettings {
-    store.settings.airplaneModeEnabled ? voice.withoutOnlineProvider() : voice
+    store.settings.isOffline ? voice.withoutOnlineProvider() : voice
   }
 
   private var showsOpenAIVoiceSettings: Bool {
@@ -2703,7 +2695,7 @@ private struct RoleVoiceSettingsView: View {
   private var providerBinding: Binding<VoiceProviderSelection> {
     Binding(
       get: {
-        guard !store.settings.airplaneModeEnabled else { return .system }
+        guard !store.settings.isOffline else { return .system }
         if voice.provider == .openAICompatible, let id = voice.openAIEndpointID {
           return .openAI(id)
         }
@@ -2715,7 +2707,7 @@ private struct RoleVoiceSettingsView: View {
         case .system:
           copy.provider = .system
         case .openAI(let id):
-          guard !store.settings.airplaneModeEnabled else { return }
+          guard !store.settings.isOffline else { return }
           copy.provider = .openAICompatible
           copy.openAIEndpointID = id
           let voices = store.endpointVoices[id] ?? []
@@ -2750,7 +2742,7 @@ private struct RoleVoiceSettingsView: View {
   }
 
   private var selectedEndpointVoices: [String] {
-    guard !store.settings.airplaneModeEnabled else { return [] }
+    guard !store.settings.isOffline else { return [] }
     guard voice.provider == .openAICompatible,
       let id = voice.openAIEndpointID
     else { return [] }
@@ -2758,7 +2750,7 @@ private struct RoleVoiceSettingsView: View {
   }
 
   private var openAIVoiceEndpoints: [OpenAIEndpoint] {
-    guard !store.settings.airplaneModeEnabled else { return [] }
+    guard !store.settings.isOffline else { return [] }
     return store.settings.openAIEndpoints.filter { endpoint in
       endpoint.isEnabled && !(store.endpointVoices[endpoint.id] ?? []).isEmpty
     }
@@ -2778,7 +2770,7 @@ private struct RoleVoiceSettingsView: View {
 
   private func normalizeProviderVoiceSelection() {
     guard voice.provider == .openAICompatible else { return }
-    guard !store.settings.airplaneModeEnabled else { return }
+    guard !store.settings.isOffline else { return }
     guard !openAIVoiceEndpoints.isEmpty else {
       voice.provider = .system
       voice.openAIEndpointID = nil
@@ -2797,7 +2789,7 @@ private struct RoleVoiceSettingsView: View {
   }
 
   private func refreshSelectedVoiceEndpoint() {
-    guard !store.settings.airplaneModeEnabled else { return }
+    guard !store.settings.isOffline else { return }
     guard let endpoint = selectedOpenAIEndpoint else { return }
     Task { await store.refreshEndpoint(endpoint, force: true) }
   }
@@ -3245,10 +3237,10 @@ private struct EndpointDetailView: View {
             systemImage: isDefaultProvider ? "checkmark.circle" : "star"
           )
         }
-        .disabled(isDefaultProvider || !endpoint.isEnabled || store.settings.airplaneModeEnabled)
+        .disabled(isDefaultProvider || !endpoint.isEnabled || store.settings.isOffline)
       } footer: {
         Text(
-          store.settings.airplaneModeEnabled
+          store.settings.isOffline
             ? "Go online to set this provider as the default."
             : "A friendly name shown in the provider picker. The default provider is used for new chats."
         )

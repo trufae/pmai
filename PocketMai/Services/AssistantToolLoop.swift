@@ -1197,7 +1197,7 @@ enum AssistantToolLoop {
       let specialist = settings.taskConversation(.approval, from: conversation)
       func evaluate(_ selected: Conversation) async throws -> ApprovalDecision {
         if selected.provider == .openAICompatible {
-          guard !settings.airplaneModeEnabled else {
+          guard !settings.isOffline else {
             throw ChatProviderError.providerUnavailableInAirplaneMode("Approval provider")
           }
           guard
@@ -1327,7 +1327,7 @@ enum AssistantToolLoop {
     var visibleDefinitions = answering ? [] : currentVisibleDefinitions(for: host, store: store)
     let routing = settings.useSystemOne && !visibleDefinitions.isEmpty
     if routing {
-      guard !settings.airplaneModeEnabled, settings.taskAgent(.tool) != nil else {
+      guard !settings.isOffline, settings.taskAgent(.tool) != nil else {
         throw ChatProviderError.providerRequestFailed(
           "System One needs an online Tool decisions agent. Select one in Manage Agents.")
       }

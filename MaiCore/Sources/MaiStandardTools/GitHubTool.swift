@@ -200,7 +200,11 @@ public struct MaiGitHubTool: AgentTool {
           name: "job_id", type: "integer",
           description: "GitHub Actions job ID from github_ci_status.", required: true),
       ]),
-  ]
+  ].map { definition in
+    var definition = definition
+    definition.annotations.requiresInternet = true
+    return definition
+  }
 
   public let definition: ToolDefinition
   public let apiKey: String

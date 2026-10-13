@@ -91,6 +91,14 @@ for line in sys.stdin:
                 assert not answers, answers
                 return output, list(requests)
 
+            def agent_settings():
+                agents = json.loads(config.read_text())['agents']
+                for agent in agents:
+                    # Swift Sets do not have a stable JSON array order.
+                    for key in ('toolNames', 'toolGroupNames', 'subagentNames'):
+                        agent[key] = sorted(agent.get(key, []))
+                return agents
+
             output, calls = run([
                 '/tools proxy github', '/tools direct github/pr', '/tools direct github/issue',
                 '/tools disable github/ci_log', '/mcp direct fixture/search',
@@ -152,6 +160,26 @@ for line in sys.stdin:
             assert saved['useToolProxy'] is True
             assert saved['toolPolicy']['groups']['mcp/fixture'] == 'proxy', saved
             assert 'external::search' not in saved['toolPolicy']['tools'], saved
+            # Airplane mode is global and reversible; proxy/direct pins cannot bypass it.
+            profile_before = agent_settings()
+            output, calls = run(['/set airplane on', '/tools show github', 'Offline tools'], [final])
+            assert 'airplane = on ✈' in output, output
+            assert 'github_pr [disabled; 0 calls]' in output, output
+            offered = {t['function']['name'] for t in calls[0]['tools']}
+            assert 'files_read' in offered, offered
+            assert not any(name.startswith(('github_', 'weather', 'web_', 'mastodon')) for name in offered), offered
+            catalog = next(t['function']['description'] for t in calls[0]['tools'] if t['function']['name'] == 'list-tools')
+            assert not any(name in catalog for name in ('github_pr', 'weather', 'web_search', 'mastodon')), catalog
+            assert 'external::read' in catalog, catalog
+            assert json.loads(config.read_text())['airplane'] is True
+            assert agent_settings() == profile_before, (profile_before, agent_settings())
+            output, calls = run(['/set airplane', 'Offline after restart'], [final])
+            assert 'airplane = on ✈' in output, output
+            assert not any(t['function']['name'].startswith('github_') for t in calls[0]['tools']), calls[0]
+            output, calls = run(['/set airplane toggle', 'Online again'], [final])
+            assert 'airplane = off' in output, output
+            assert 'github_pr' in {t['function']['name'] for t in calls[0]['tools']}, calls[0]
+            assert json.loads(config.read_text())['airplane'] is False
     finally:
         server.shutdown()
         server.server_close()

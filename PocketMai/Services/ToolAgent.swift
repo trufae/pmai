@@ -13,7 +13,7 @@ enum BuiltInToolCatalog {
     BuiltInToolID.allCases.flatMap { id -> [ToolDefinition] in
       guard conversation.enabledTools.contains(id) else { return [] }
       guard id.isCallableTool else { return [] }
-      guard !(settings.airplaneModeEnabled && id.isDisabledInAirplaneMode) else {
+      guard !(settings.isOffline && id.isDisabledInAirplaneMode) else {
         return []
       }
       return definitions(for: id, conversation: conversation, settings: settings)
@@ -57,16 +57,10 @@ enum BuiltInToolCatalog {
           "Error: the working folder is no longer accessible. Select it again from the chat's + menu."
       }
     case MaiWebSearchTool.name:
-      guard !store.settings.airplaneModeEnabled else {
-        return "Error: web search is disabled while Airplane Mode is enabled."
-      }
       return await PocketMaiPluginHost.shared.call(
         tool: MaiWebSearchTool(configuration: store.settings.maiWebSearchConfiguration),
         arguments: call.argumentValues)
     case MaiWebFetchTool.name:
-      guard !store.settings.airplaneModeEnabled else {
-        return "Error: web fetch is disabled while Airplane Mode is enabled."
-      }
       return await PocketMaiPluginHost.shared.call(
         tool: MaiWebFetchTool(), arguments: call.argumentValues)
     case TextToSpeechTool.name:
@@ -75,14 +69,15 @@ enum BuiltInToolCatalog {
         settings: store.effectiveToolSettings(for: conversation),
         skipTechnicalContent: store.effectiveConversationSettings(for: conversation)
           .skipTechnicalContentInTTS,
-        openAIEndpoints: store.settings.airplaneModeEnabled ? [] : store.settings.openAIEndpoints)
+        openAIEndpoints: store.settings.isOffline ? [] : store.settings.openAIEndpoints)
     case MaiWeatherTool.name:
-      guard !store.settings.airplaneModeEnabled else {
-        return "Error: weather is disabled while Airplane Mode is enabled."
-      }
       let tool = await PocketMaiNetworkTools.weatherTool(
         arguments: call.argumentValues,
         settings: store.settings.toolSettings, locationService: { store.locationService })
+      // Location lookup can yield while the user switches modes.
+      guard store.settings.internetAccessPolicy.allows(tool.definition) else {
+        return "Error: internet tools are disabled while offline."
+      }
       return await PocketMaiPluginHost.shared.call(
         tool: tool, arguments: call.argumentValues)
     case FileWorkspaceTool.listName, FileWorkspaceTool.findName, FileWorkspaceTool.grepName,
@@ -115,25 +110,16 @@ enum BuiltInToolCatalog {
       return WebXDCTool.execute(
         name: name, arguments: call.argumentValues, hub: store.webxdcHub)
     case let name where MaiGitHubTool.toolNames.contains(name):
-      guard !store.settings.airplaneModeEnabled else {
-        return "Error: GitHub tools are disabled while Airplane Mode is enabled."
-      }
       guard let tool = MaiGitHubTool(name: name, apiKey: store.settings.toolSettings.githubAPIKey)
       else {
         return "Error: GitHub tool '\(name)' is not registered."
       }
       return await PocketMaiPluginHost.shared.call(tool: tool, arguments: call.argumentValues)
     case MaiMastodonTool.name:
-      guard !store.settings.airplaneModeEnabled else {
-        return "Error: Mastodon is disabled while Airplane Mode is enabled."
-      }
       return await PocketMaiPluginHost.shared.call(
         tool: MaiMastodonTool(configuration: store.settings.toolSettings.maiMastodonConfiguration),
         arguments: call.argumentValues)
     case let name where BrowserTool.toolNames.contains(name):
-      guard !store.settings.airplaneModeEnabled else {
-        return "Error: the browser is disabled while Airplane Mode is enabled."
-      }
       return await BrowserTool.execute(name: name, arguments: call.argumentValues, store: store)
     case let name where ConversationSearchTool.toolNames.contains(name):
       return await ConversationSearchTool.execute(
@@ -331,7 +317,6 @@ enum ToolAgentRegistry {
           id: id.rawValue, sourceID: "native", displayName: id.displayName,
           toolNames: Set(tools.map(\.name))),
         enabled: conversation.enabledTools.contains(id) ? Set(tools.map(\.name)) : [],
-        available: !(settings.airplaneModeEnabled && id.isDisabledInAirplaneMode),
         availableNames: availableNames)
     }
     let skillDefinitions = SkillTools.catalog(for: conversation, settings: settings).modelInvocable
@@ -344,7 +329,7 @@ enum ToolAgentRegistry {
       let available =
         server.isEnabled && server.hasValidEndpointURL
         && conversation.enabledMCPServers.contains(server.id)
-        && mcpStatuses[server.id]?.isAvailable == true && !settings.airplaneModeEnabled
+        && mcpStatuses[server.id]?.isAvailable == true
       let tools = (mcpTools[server.id] ?? []).filter { !MaiSkillTools.isSkillTool($0.name) }.map {
         tool in
         var definition = tool
@@ -390,7 +375,8 @@ enum ToolAgentRegistry {
     if !conversation.toolsEnabled {
       modes = modes.mapValues { _ in .disabled }
     }
-    return AgentToolCatalog(groups: groups, tools: definitions, modes: modes)
+    return AgentToolCatalog(groups: groups, tools: definitions, modes: modes,
+      internetAccess: settings.internetAccessPolicy)
   }
 
   private static func cleanedToolDescription(_ text: String, fallback: String) -> String {
@@ -469,8 +455,14 @@ enum ToolAgentRegistry {
     definitions: [ToolDefinition]
   ) async -> String {
     let normalizedCall = AgentTooling.normalized(call: call, tools: definitions)
-    guard AgentTooling.containsDefinition(named: normalizedCall.name, in: definitions) else {
+    guard let definition = definitions.first(where: { $0.name == normalizedCall.name }) else {
       return AgentTooling.unavailableToolError(name: normalizedCall.name)
+    }
+    let executionCatalog = catalog(
+      for: conversation, settings: settings, mcpTools: store.mcpTools,
+      mcpResources: store.mcpResources, mcpStatuses: store.mcpStatuses)
+    guard store.settings.internetAccessPolicy.allows(definition, in: executionCatalog.groups) else {
+      return "Error: internet tools are disabled while offline."
     }
     if MaiSkillTools.isSkillTool(normalizedCall.name) {
       return SkillTools.execute(
@@ -491,9 +483,6 @@ enum ToolAgentRegistry {
         executionConversation.enabledTools.insert(id)
       }
     }
-    let executionCatalog = catalog(
-      for: conversation, settings: settings, mcpTools: store.mcpTools,
-      mcpResources: store.mcpResources, mcpStatuses: store.mcpStatuses)
     if executionCatalog.groups.contains(where: {
       $0.sourceID == "native" && $0.toolNames.contains(normalizedCall.name)
     }),
@@ -528,7 +517,7 @@ enum ToolAgentRegistry {
       && store.mcpStatuses[server.id]?.isAvailable == true
     {
       let tools = store.mcpTools[server.id] ?? []
-      guard tools.contains(where: { $0.name == call.name }) else { continue }
+      guard let definition = tools.first(where: { $0.name == call.name }) else { continue }
       let catalogID = "mcp/\(server.portableID ?? server.id.uuidString.lowercased())"
       guard
         catalog.groups.contains(where: {
@@ -537,6 +526,9 @@ enum ToolAgentRegistry {
       else { continue }
       do {
         let server = try await store.authorizedMCPServer(server)
+        guard store.settings.internetAccessPolicy.allows(
+          definition, in: catalog.groups)
+        else { return "Error: internet tools are disabled while offline." }
         return try await MCPHTTPClient.callTool(
           server: server,
           name: call.name,

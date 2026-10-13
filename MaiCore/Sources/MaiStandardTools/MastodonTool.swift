@@ -62,7 +62,7 @@ public struct MaiMastodonTool: AgentTool {
         description:
           "Optional API key override; otherwise use Mastodon settings. Never include it in a reply.",
         required: false),
-    ])
+    ], annotations: ToolAnnotations(requiresInternet: true))
 
   public let definition = Self.toolDefinition
   public let configuration: MaiMastodonConfiguration

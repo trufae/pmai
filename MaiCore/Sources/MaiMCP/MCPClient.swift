@@ -63,7 +63,7 @@ public actor MCPClient: MCPToolSource {
               readOnly: true,
               idempotent: true,
               openWorld: true,
-              approval: configuration.defaultApproval)),
+              approval: configuration.defaultApproval, requiresInternet: true)),
           client: self))
     }
     return tools

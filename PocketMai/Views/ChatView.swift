@@ -500,7 +500,7 @@ struct ChatView: View {
 
   private var systemPromptTitle: String? {
     guard let systemPromptName else { return nil }
-    return store.settings.airplaneModeEnabled ? "\(systemPromptName) (offline)" : systemPromptName
+    return store.settings.isOffline ? "\(systemPromptName) (offline)" : systemPromptName
   }
 
   private var currentLanguageOverrideIdentifier: String? {
@@ -619,7 +619,7 @@ struct ChatView: View {
     ttsPlayer.speakFromHere(
       messages: Array(conversation.messages[index...]),
       voices: store.effectiveToolSettings(for: conversation).voices,
-      openAIEndpoints: store.settings.airplaneModeEnabled ? [] : store.settings.openAIEndpoints,
+      openAIEndpoints: store.settings.isOffline ? [] : store.settings.openAIEndpoints,
       skipTechnicalContent: store.settings.conversation.skipTechnicalContentInTTS
     )
   }
@@ -674,12 +674,12 @@ struct ChatView: View {
     }
     if let conversation = store.currentConversation, conversation.provider == .openAICompatible,
       OpenAICompatibleProvider.selectedEndpoint(for: conversation, settings: store.settings) == nil,
-      !store.settings.airplaneModeEnabled
+      !store.settings.isOffline
     {
       return (LocalMLXAvailability.providerSetupSuggestion, "network", .orange)
     }
     if let conversation = store.currentConversation,
-      store.settings.airplaneModeEnabled,
+      store.settings.isOffline,
       !conversation.provider.isAirplaneModeEligible
     {
       return (
@@ -732,7 +732,7 @@ struct ChatView: View {
                   MessageBubble(
                     message: message,
                     toolSettings: currentToolSettings,
-                    openAIEndpoints: store.settings.airplaneModeEnabled
+                    openAIEndpoints: store.settings.isOffline
                       ? [] : store.settings.openAIEndpoints,
                     skipTechnicalContentInTTS: store.settings.conversation
                       .skipTechnicalContentInTTS,
@@ -821,7 +821,7 @@ struct ChatView: View {
                 MessageBubble(
                   message: preview,
                   toolSettings: currentToolSettings,
-                  openAIEndpoints: store.settings.airplaneModeEnabled
+                  openAIEndpoints: store.settings.isOffline
                     ? [] : store.settings.openAIEndpoints,
                   appearance: store.settings.appearance,
                   renderMarkdown: store.settings.renderMarkdownInChat,
@@ -5479,8 +5479,8 @@ private struct ToolPickerPopover: View {
             .contentShape(Rectangle())
           }
           .buttonStyle(.plain)
-          .disabled(store.settings.airplaneModeEnabled && tool.isDisabledInAirplaneMode)
-          .opacity(store.settings.airplaneModeEnabled && tool.isDisabledInAirplaneMode ? 0.5 : 1)
+          .disabled(store.settings.isOffline && tool.isDisabledInAirplaneMode)
+          .opacity(store.settings.isOffline && tool.isDisabledInAirplaneMode ? 0.5 : 1)
         }
 
         if !store.settings.mcpServers.isEmpty {
@@ -5664,7 +5664,7 @@ private struct ToolPickerPopover: View {
 
   private func toggleBuiltInTool(_ tool: BuiltInToolID) {
     guard toolsEnabled else { return }
-    guard !(store.settings.airplaneModeEnabled && tool.isDisabledInAirplaneMode) else {
+    guard !(store.settings.isOffline && tool.isDisabledInAirplaneMode) else {
       return
     }
     let nextValue = !isBuiltInToolEnabled(tool)
@@ -5845,7 +5845,7 @@ struct ConversationModelSettingsView: View {
                 Label(store.localMLXIsAvailable ? "MLX Local" : "MLX Local (Unavailable)", systemImage: "cpu")
               }
               .disabled(!store.localMLXIsAvailable)
-              if !store.settings.airplaneModeEnabled {
+              if !store.settings.isOffline {
                 ForEach(store.settings.openAIEndpoints.filter(\.isEnabled)) { endpoint in
                   Button {
                     providerSelectionBinding.wrappedValue = .endpoint(endpoint.id)
@@ -6008,7 +6008,7 @@ struct ConversationModelSettingsView: View {
   }
 
   private var selectedProviderIsBlockedByAirplaneMode: Bool {
-    store.settings.airplaneModeEnabled && !provider.isAirplaneModeEligible
+    store.settings.isOffline && !provider.isAirplaneModeEligible
   }
 
   private var providerMenuTitle: String {
@@ -6134,7 +6134,7 @@ struct ConversationModelSettingsView: View {
     case .mlx:
       return store.localMLXIsAvailable && !store.localMLXModelIDs.isEmpty
     case .openAICompatible:
-      guard !store.settings.airplaneModeEnabled else { return false }
+      guard !store.settings.isOffline else { return false }
       return selectedEndpoint != nil
     }
   }
@@ -6200,7 +6200,7 @@ struct ConversationModelSettingsView: View {
       return "These chat settings already match the app defaults."
     }
     guard let conversation = store.currentConversation else { return "" }
-    if conversation.provider == .openAICompatible && store.settings.airplaneModeEnabled {
+    if conversation.provider == .openAICompatible && store.settings.isOffline {
       return "Airplane Mode is on. OpenAI-compatible providers cannot be used as defaults."
     }
     if conversation.provider == .openAICompatible && selectedEndpoint == nil {
@@ -6236,7 +6236,7 @@ struct ConversationModelSettingsView: View {
         store.settings.localMLXModelID = model
       }
     case .openAICompatible:
-      guard !store.settings.airplaneModeEnabled else { return }
+      guard !store.settings.isOffline else { return }
       guard let endpoint = selectedEndpoint,
         let index = store.settings.openAIEndpoints.firstIndex(where: { $0.id == endpoint.id })
       else { return }
@@ -6361,7 +6361,7 @@ struct ConversationModelSettingsView: View {
             conversation.modelID = selectedMLXModelID ?? ""
             didSaveDefaults = false
           case .endpoint(let id):
-            guard !store.settings.airplaneModeEnabled else {
+            guard !store.settings.isOffline else {
               didSaveDefaults = false
               return
             }

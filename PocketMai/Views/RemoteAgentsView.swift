@@ -168,13 +168,13 @@ private struct RemoteAgentChatView: View {
         Text(chat.status).font(.caption).foregroundStyle(.secondary)
         Spacer()
         if !chat.connected && !chat.busy {
-          Button("Connect") { chat.connect() }.disabled(appStore.settings.airplaneModeEnabled)
+          Button("Connect") { chat.connect() }.disabled(appStore.settings.isOffline)
         }
       }.padding(.horizontal).padding(.vertical, 8)
       if let error = chat.error {
         Text(error).font(.callout).foregroundStyle(.red).padding(.horizontal)
       }
-      if appStore.settings.airplaneModeEnabled {
+      if appStore.settings.isOffline {
         Text("Turn off Airplane Mode in Settings to connect to a remote agent.")
           .font(.callout).foregroundStyle(.secondary).padding(.horizontal)
       }
@@ -233,7 +233,7 @@ private struct RemoteAgentChatView: View {
       ToolbarItem(placement: .topBarTrailing) {
         Menu {
           Button("New Chat", systemImage: "plus") { newChatConfirmation = true }
-            .disabled(chat.busy || appStore.settings.airplaneModeEnabled)
+            .disabled(chat.busy || appStore.settings.isOffline)
           Button("Disconnect", systemImage: "network.slash") { chat.disconnect() }
         } label: {
           Image(systemName: "ellipsis.circle")
@@ -280,7 +280,7 @@ private struct RemoteAgentChatView: View {
     .onChange(of: scenePhase) { _, phase in
       if phase == .background { chat.disconnect() }
     }
-    .onChange(of: appStore.settings.airplaneModeEnabled) { _, enabled in
+    .onChange(of: appStore.settings.isOffline) { _, enabled in
       if enabled { chat.disconnect() }
     }
   }

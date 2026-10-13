@@ -313,6 +313,9 @@ private struct FocusedToolsList: View {
       "\(enabledGroupCount) of \(workspace.toolGroups.count) groups enabled. Each group is saved on agent '\(conversation.profile.id)'."
     )
     .foregroundStyle(.muted)
+    Toggle("✈ Airplane Mode", isOn: Binding(
+      get: { workspace.configuration.airplane },
+      set: { workspace.setAirplaneMode($0) }))
     Toggle(
       "Hybrid tool proxy default",
       isOn: Binding(

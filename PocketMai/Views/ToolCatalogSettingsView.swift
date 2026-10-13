@@ -187,7 +187,8 @@ struct ToolCatalogSettingsView: View {
               "\(group.displayName) · \(catalog.summary(for: group).enabled)/\(group.toolNames.count) enabled"
             )
           } footer: {
-            Text(catalog.summary(for: group).description)
+            Text(catalog.summary(for: group).description
+              + (group.networkRequirement == .internet ? " · Requires internet" : ""))
           }
         }
       }

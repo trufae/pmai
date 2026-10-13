@@ -24,6 +24,23 @@ when the switch is on), while the CLI retains its hybrid default. Explicit
 pins work with either setting. Workspace access, offline mode, the chat's
 master tools switch, and MCP server connections still limit availability.
 
+PocketMai follows system network availability as well as the airplane button
+in Settings. Losing the network pauses internet tools and fills the airplane
+icon; reconnecting restores availability unless the user kept Airplane Mode
+enabled. Network loss is transient and does not overwrite saved tool choices
+or the manual airplane setting.
+
+In pmai, `/set airplane on|off|toggle` controls the same MaiCore policy, and
+`/set airplane` reports the setting. The REPL status shows `✈ offline` while
+it is enabled. The setting is saved as `airplane` in the configuration.
+MaiCore owns `ToolGroupDefinition.networkRequirement` (`offline` or `internet`),
+the standard group defaults, and the toggle and filtering rules. Plugins can
+declare their groups' requirements; a member's `requiresInternet` annotation
+also works in a mixed group. Direct and proxy overrides cannot bypass this
+policy. HTTP MCP requires internet; local stdio MCP remains usable unless an
+individual tool declares that it needs internet. The CLI switch restricts
+tool access; the selected inference provider keeps its existing connection.
+
 ## Mechanism
 
 Without the proxy, every request carries the JSON schema of every enabled tool.

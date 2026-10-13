@@ -1,6 +1,13 @@
 import Foundation
 
 extension AgentRuntime {
+  /// Applies to every live agent, including named and derived children.
+  public func configureInternetAccess(_ policy: InternetAccessPolicy) {
+    internetAccess = policy
+  }
+
+  public func internetAccessPolicy() -> InternetAccessPolicy { internetAccess }
+
   /// A nameless worker inherits its parent's live settings. Named agents keep
   /// their own definition, including when that definition is edited mid-run.
   struct DerivedRun: Sendable {

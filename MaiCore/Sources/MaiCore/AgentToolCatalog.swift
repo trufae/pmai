@@ -8,12 +8,13 @@ public struct AgentToolCatalog: Sendable {
   public var modes: [String: AgentToolMode]
 
   public init(
-    groups: [ToolGroupDefinition], tools: [ToolDefinition], modes: [String: AgentToolMode]
+    groups: [ToolGroupDefinition], tools: [ToolDefinition], modes: [String: AgentToolMode],
+    internetAccess: InternetAccessPolicy = .init()
   ) {
     self.groups = groups
     var seen = Set<String>()
     self.tools = tools.filter { seen.insert($0.name).inserted }
-    self.modes = modes
+    self.modes = internetAccess.restricting(modes, tools: self.tools, groups: groups)
   }
 
   public var enabledDefinitions: [ToolDefinition] {

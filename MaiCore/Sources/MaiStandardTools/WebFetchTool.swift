@@ -147,7 +147,9 @@ public struct MaiWebFetchTool: AgentTool {
       ToolParameterDef(name: "max_bytes", type: "integer", description: "Page size: 4-256000 bytes, or 0 for metadata only. Default: up to 16000, reduced when context is tight.", required: false),
       ToolParameterDef(name: "query", type: "string", description: "Find literal text, case-insensitively, at or after offset and return a page around the first match. Searches the entire remaining source.", required: false),
     ],
-    annotations: ToolAnnotations(readOnly: true, idempotent: true, openWorld: true, approval: .confirm))
+    annotations: ToolAnnotations(
+      readOnly: true, idempotent: true, openWorld: true, approval: .confirm, requiresInternet: true)
+  )
 
   public let definition = Self.toolDefinition
   private let service: MaiWebFetchService
@@ -317,7 +319,11 @@ public actor MaiWebFetchService {
       header += "\nMore content is available: call web_fetch with this source_id and offset \(end), or narrow it with query."
     }
     return ToolOutput(
-      content: [.text(header), .resource(ResourceContent(uri: source.url, name: title, mimeType: "text/plain", text: text))],
+      content: [
+        .text(header),
+        .resource(
+          ResourceContent(uri: source.url, name: title, mimeType: "text/plain", text: text)),
+      ],
       structuredContent: .object([
         "tool": .string(MaiWebFetchTool.name), "source_id": .string(sourceID), "url": .string(source.url),
         "totalBytes": .integer(source.bytes), "offset": .integer(start),

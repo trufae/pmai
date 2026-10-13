@@ -614,13 +614,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
   }
 
   var isDisabledInAirplaneMode: Bool {
-    switch self {
-    case .weather, .webSearch, .github, .mastodon, .browser:
-      return true
-    case .datetime, .language, .location, .todo, .calculator, .textToSpeech, .files, .calendar,
-      .clipboard, .alarms, .webxdc, .memory, .vdb, .context:
-      return false
-    }
+    ToolGroupDefinition.defaultNetworkRequirement(for: rawValue, sourceID: "native") == .internet
   }
 
 }
@@ -3093,6 +3087,12 @@ struct AppSettings: Codable, Equatable, Sendable {
   var renderMarkdownInChat: Bool = true
   var renderMarkdownImagesInChat: Bool = true
   var airplaneModeEnabled: Bool = false
+  /// Live reachability is deliberately excluded from CodingKeys and agent snapshots.
+  var networkAvailable: Bool = true
+  var internetAccessPolicy: InternetAccessPolicy {
+    InternetAccessPolicy(airplaneModeEnabled: airplaneModeEnabled, networkAvailable: networkAvailable)
+  }
+  var isOffline: Bool { internetAccessPolicy.isOffline }
   var allowAppleServerTranscription: Bool = false
   var attachmentImageSize: AttachmentImageSize = .prompt
   var mlxMaxKVSize: MLXKVCacheSize = .auto
@@ -3118,7 +3118,7 @@ struct AppSettings: Codable, Equatable, Sendable {
   init() {}
 
   var appleServerTranscriptionAllowed: Bool {
-    allowAppleServerTranscription && !airplaneModeEnabled
+    allowAppleServerTranscription && !isOffline
   }
 
   static func clampedMCPRequestTimeoutSeconds(_ seconds: Int) -> Int {
@@ -3231,7 +3231,7 @@ struct AppSettings: Codable, Equatable, Sendable {
   }
 
   var defaultProviderConfiguration: (provider: ProviderKind, endpointID: UUID?, modelID: String) {
-    if airplaneModeEnabled && !defaultProvider.isAirplaneModeEligible {
+    if isOffline && !defaultProvider.isAirplaneModeEligible {
       return (.mlx, nil, localMLXModelID)
     }
     switch defaultProvider {
@@ -3258,13 +3258,13 @@ struct AppSettings: Codable, Equatable, Sendable {
     switch preferred.provider {
     case .apple where appleAvailable, .mlx where mlxAvailable:
       return preferred
-    case .openAICompatible where !airplaneModeEnabled:
+    case .openAICompatible where !isOffline:
       return preferred
     default:
       if appleAvailable { return (.apple, nil, appleModelID) }
       if mlxAvailable { return (.mlx, nil, localMLXModelID) }
       // An empty remote selection leads to setup guidance, never an unusable MLX default.
-      let endpoint = airplaneModeEnabled ? nil : defaultOpenAIEndpoint
+      let endpoint = isOffline ? nil : defaultOpenAIEndpoint
       return (.openAICompatible, endpoint?.id, endpoint?.defaultModel ?? "")
     }
   }

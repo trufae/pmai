@@ -379,7 +379,7 @@ struct SubagentProcessDetailView: View {
               MessageBubble(
                 message: message,
                 toolSettings: store.effectiveToolSettings(for: conversation),
-                openAIEndpoints: store.settings.airplaneModeEnabled
+                openAIEndpoints: store.settings.isOffline
                   ? [] : store.settings.openAIEndpoints,
                 skipTechnicalContentInTTS: store.settings.conversation
                   .skipTechnicalContentInTTS,

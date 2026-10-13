@@ -110,6 +110,12 @@ public struct ToolGroupOptionDefinition: Codable, Equatable, Identifiable, Senda
   }
 }
 
+/// Whether a capability needs an internet connection to operate.
+public enum ToolNetworkRequirement: String, Codable, Sendable {
+  case offline
+  case internet
+}
+
 /// One user-facing capability backed by one or more provider-visible tools.
 /// Group IDs are stable configuration identifiers supplied by the plugin.
 public struct ToolGroupDefinition: Codable, Equatable, Sendable {
@@ -119,6 +125,7 @@ public struct ToolGroupDefinition: Codable, Equatable, Sendable {
   public var description: String
   public var toolNames: Set<String>
   public var options: [ToolGroupOptionDefinition]
+  public var networkRequirement: ToolNetworkRequirement
 
   public init(
     id: String,
@@ -126,7 +133,8 @@ public struct ToolGroupDefinition: Codable, Equatable, Sendable {
     displayName: String? = nil,
     description: String = "",
     toolNames: Set<String>,
-    options: [ToolGroupOptionDefinition] = []
+    options: [ToolGroupOptionDefinition] = [],
+    networkRequirement: ToolNetworkRequirement? = nil
   ) {
     self.id = id
     self.sourceID = sourceID
@@ -134,6 +142,32 @@ public struct ToolGroupDefinition: Codable, Equatable, Sendable {
     self.description = description
     self.toolNames = toolNames
     self.options = options
+    self.networkRequirement = networkRequirement ?? Self.defaultNetworkRequirement(for: id, sourceID: sourceID)
+  }
+
+  /// Shared native/CLI defaults. Plugins can declare a different requirement.
+  public static func defaultNetworkRequirement(for id: String, sourceID: String = "") -> ToolNetworkRequirement {
+    if sourceID == "mcp" { return .internet }
+    switch id.lowercased() {
+    case "weather", "web", "websearch", "github", "mastodon", "browser": return .internet
+    default: return .offline
+    }
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case id, sourceID, displayName, description, toolNames, options, networkRequirement
+  }
+
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      id: try c.decode(String.self, forKey: .id),
+      sourceID: try c.decodeIfPresent(String.self, forKey: .sourceID) ?? "",
+      displayName: try c.decodeIfPresent(String.self, forKey: .displayName),
+      description: try c.decodeIfPresent(String.self, forKey: .description) ?? "",
+      toolNames: try c.decode(Set<String>.self, forKey: .toolNames),
+      options: try c.decodeIfPresent([ToolGroupOptionDefinition].self, forKey: .options) ?? [],
+      networkRequirement: try c.decodeIfPresent(ToolNetworkRequirement.self, forKey: .networkRequirement))
   }
 
   public var catalogID: String { sourceID.isEmpty ? id : "\(sourceID)/\(id)" }
@@ -178,7 +212,8 @@ public struct ToolGroupDefinition: Codable, Equatable, Sendable {
         id: id,
         displayName: id.replacingOccurrences(of: "_", with: " ").capitalized,
         description: description,
-        toolNames: names)
+        toolNames: names,
+        networkRequirement: members.allSatisfy { $0.annotations.requiresInternet } ? .internet : nil)
     }.sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
   }
 }
@@ -216,6 +251,7 @@ public enum ToolGroupHelp {
     var lines: [String] = []
     let description = group.description.trimmingCharacters(in: .whitespacesAndNewlines)
     if !description.isEmpty { lines.append(paint(description, .group)) }
+    if group.networkRequirement == .internet { lines.append(paint("Requires internet access.", .note)) }
     let byName = Dictionary(tools.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
     for name in group.toolNames.sorted() {
       lines.append("")
@@ -268,6 +304,7 @@ public enum ToolGroupHelp {
     case .confirm: traits.append("asks approval")
     case .dangerous: traits.append("dangerous, asks approval")
     }
+    if annotations.requiresInternet { traits.append("requires internet") }
     return traits
   }
 
@@ -307,9 +344,15 @@ public protocol ConfiguredOCRProviderFactory: Sendable {
 /// A provider-neutral source of tools discovered from an MCP implementation.
 /// HTTP, stdio, embedded, and future MCP transports can all use this boundary.
 public protocol MCPToolSource: Sendable {
+  /// Local transports can opt out; individual tools may still require internet.
+  var requiresInternet: Bool { get }
   func connect() async throws -> MCPServerCatalog
   func agentTools() async throws -> [any AgentTool]
   func close() async
+}
+
+extension MCPToolSource {
+  public var requiresInternet: Bool { true }
 }
 
 public protocol ConfiguredMCPToolSourceFactory: Sendable {

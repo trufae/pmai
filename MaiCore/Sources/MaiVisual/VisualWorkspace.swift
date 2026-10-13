@@ -200,6 +200,7 @@ public final class VisualWorkspace {
   public var usageReport: ModelUsageReport { ModelUsageReport(usageLedger) }
 
   public func refreshRegistries() async {
+    await runtime.configureInternetAccess(.init(airplaneModeEnabled: configuration.airplane))
     providers = await runtime.availableProviders()
     tools = await runtime.availableTools()
     agents = await runtime.availableAgents()
@@ -672,11 +673,18 @@ public final class VisualWorkspace {
       tools: tools
         + AgentProcessTools.definitions(
           offering: [], delegating: true, planFirst: configuration.use.plan),
-      modes: conversation.profile.toolModes(in: toolGroups, usage: toolUsage))
+      modes: conversation.profile.toolModes(in: toolGroups, usage: toolUsage),
+      internetAccess: .init(airplaneModeEnabled: configuration.airplane))
   }
 
   public func toolMode(_ name: String, for conversation: VisualConversation) -> AgentToolMode {
-    conversation.profile.toolMode(for: name, in: toolGroups, usage: toolUsage)
+    toolCatalog(for: conversation).modes[name] ?? .disabled
+  }
+
+  public func setAirplaneMode(_ enabled: Bool) {
+    configuration.airplane = enabled
+    Task { await runtime.configureInternetAccess(.init(airplaneModeEnabled: enabled)) }
+    do { try saveConfiguration() } catch { status = "error: \(error.localizedDescription)" }
   }
 
   public func setAutomaticToolExposure(_ enabled: Bool, for conversation: VisualConversation) {
