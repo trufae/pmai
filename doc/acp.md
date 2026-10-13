@@ -38,6 +38,12 @@ The mirror image is just as thin: **the ACP server is an adapter over
 
 ## pmai as a server
 
+For phone and CLI clients, run `/remote serve` inside the REPL. It chooses the
+network address, shows a QR, and shares all indexed projects. New clients wait
+until you accept them with `/remote accept`; `--path PATH ...` optionally limits
+the shared directories. `/projects` lists and switches the same project index.
+See [Remote ACP agents](tailcat.md) for pairing and host management.
+
 ```
 pmai --acp     # serve pmai as an ACP agent on stdio (for Zed, JetBrains, …)
 pmai --mcp     # serve pmai as an MCP server: one tool that runs the agent
@@ -108,5 +114,9 @@ files it reasons about; writes are declined.
   before it already lives in the agent's session.
 - **No model schema crosses the boundary.** An ACP agent carries its own tools,
   so MaiCore never offers it a tool definition — tool calling stays remote.
-- **Sessions are not persisted.** Like agent processes, an ACP session is live
-  state tied to a child process; a resumed session would answer a stale prompt.
+- **Host workspace data stays behind a repository.** `ACPWorkspaceRepository`
+  supplies folders and durable chats without coupling `AgentRuntime` to CLI or
+  iOS persistence. The CLI exposes its `AgentHome` projects and saved chats through
+  this adapter. `session/list` discovers them; `session/load` restores history.
+  Persistent ACP session checkpoints retain interruption state and exclusive
+  leases; browsing a host does not create a session. See [Remote ACP agents](tailcat.md).

@@ -9,6 +9,17 @@ import NIOWebSocket
 /// Authenticated WebSocket -> ACP stdio bridge. Each connection owns a child;
 /// the agent owns its sessions and must implement session/load for recovery.
 public enum ACPWebSocketGateway {
+  public struct Pairing: Sendable {
+    public var authorizes: @Sendable (String) -> Bool
+    public var request: @Sendable (String, String, String) async throws -> String
+    public init(
+      authorizes: @escaping @Sendable (String) -> Bool,
+      request: @escaping @Sendable (String, String, String) async throws -> String
+    ) {
+      self.authorizes = authorizes
+      self.request = request
+    }
+  }
   public struct Configuration: Sendable {
     public var host: String
     public var port: Int
@@ -17,10 +28,12 @@ public enum ACPWebSocketGateway {
     public var arguments: [String]
     public var workingDirectory: URL
     public var maximumConnections: Int
+    public var pairing: Pairing?
 
     public init(
       host: String = "127.0.0.1", port: Int = 19283, tokenFile: URL,
-      command: String, arguments: [String], workingDirectory: URL, maximumConnections: Int = 16
+      command: String, arguments: [String], workingDirectory: URL, maximumConnections: Int = 16,
+      pairing: Pairing? = nil
     ) {
       self.host = host
       self.port = port
@@ -29,9 +42,14 @@ public enum ACPWebSocketGateway {
       self.arguments = arguments
       self.workingDirectory = workingDirectory
       self.maximumConnections = maximumConnections
+      self.pairing = pairing
     }
 
     fileprivate func authorizes(_ token: String) -> Bool {
+      invitationMatches(token) || pairing?.authorizes(token) == true
+    }
+
+    fileprivate func invitationMatches(_ token: String) -> Bool {
       guard
         let stored = try? String(contentsOf: tokenFile, encoding: .utf8)
           .trimmingCharacters(in: .whitespacesAndNewlines), stored.utf8.count >= 32
@@ -157,6 +175,7 @@ private final class AgentBridge: ChannelInboundHandler, @unchecked Sendable {
   var heartbeat: RepeatedTask?
   var waitingForPong = false
   var fragmented: Data?
+  var pairingOnly = false
   let outbound = AsyncStream<JSONRPCMessage>.makeStream(bufferingPolicy: .bufferingOldest(256))
 
   init(configuration: ACPWebSocketGateway.Configuration, token: String) {
@@ -165,6 +184,14 @@ private final class AgentBridge: ChannelInboundHandler, @unchecked Sendable {
   }
 
   func handlerAdded(context: ChannelHandlerContext) {
+    guard configuration.authorizes(token) else {
+      context.close(promise: nil)
+      return
+    }
+    if let policy = configuration.pairing, !policy.authorizes(token) {
+      pairingOnly = true
+      return
+    }
     do {
       // Only authenticated upgrades reach this point. The command is fixed by
       // the operator; clients cannot select executables or supply environment.
@@ -264,10 +291,63 @@ private final class AgentBridge: ChannelInboundHandler, @unchecked Sendable {
         context.close(promise: nil)
         return
       }
+      if pairingOnly, let pairing = configuration.pairing {
+        pair(message, policy: pairing, channel: context.channel)
+        return
+      }
       if case .enqueued = outbound.continuation.yield(message) { return }
       context.close(promise: nil)
     default: context.close(promise: nil)
     }
+  }
+
+  private func pair(
+    _ message: JSONRPCMessage, policy: ACPWebSocketGateway.Pairing, channel: Channel
+  ) {
+    guard reader == nil, configuration.invitationMatches(token) else {
+      channel.close(promise: nil)
+      return
+    }
+    guard let id = message.id else {
+      channel.close(promise: nil)
+      return
+    }
+    guard message.method == "_pmai/pair",
+      let clientID = message.params?.objectValue?["clientID"]?.stringValue,
+      let name = message.params?.objectValue?["name"]?.stringValue,
+      !clientID.isEmpty, clientID.count <= 200, !name.isEmpty, name.count <= 200,
+      !name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
+      !clientID.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+    else {
+      let response = JSONRPCMessage.failure(
+        id: id,
+        error: .init(
+          code: JSONRPCError.authRequired,
+          message: "Pairing must be accepted in the serving REPL before connecting."))
+      reader = Task { await Self.reply(response, channel: channel) }
+      return
+    }
+    let source = channel.remoteAddress?.description ?? "remote client"
+    reader = Task {
+      let response: JSONRPCMessage
+      do {
+        let token = try await policy.request(clientID, name, source)
+        response = .response(id: id, result: .object(["token": .string(token)]))
+      } catch {
+        response = .failure(
+          id: id,
+          error: error as? JSONRPCError
+            ?? .init(code: JSONRPCError.authRequired, message: error.localizedDescription))
+      }
+      await Self.reply(response, channel: channel)
+    }
+  }
+
+  private static func reply(_ message: JSONRPCMessage, channel: Channel) async {
+    guard let data = try? JSONEncoder().encode(message) else { return }
+    var buffer = channel.allocator.buffer(capacity: data.count)
+    buffer.writeBytes(data)
+    try? await channel.writeAndFlush(WebSocketFrame(fin: true, opcode: .text, data: buffer)).get()
   }
 
   func channelWritabilityChanged(context: ChannelHandlerContext) {

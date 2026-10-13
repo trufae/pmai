@@ -48,6 +48,10 @@ func acpWebSocketIntegration() async throws {
   let client = ACPClient(
     configuration: configuration,
     onUpdate: { await events.update($0) }, onPermission: { await events.approve($0) })
+  let workspace = try #require(try await client.workspace())
+  #expect(workspace.sessions.map(\.sessionID) == ["fixture-session", "other-session"])
+  #expect(workspace.folders.contains { $0.name == "Empty project" })
+  #expect(workspace.folders.contains { $0.cwd.hasSuffix("/other") })
   let id = try await client.connect()
   #expect(id == "fixture-session")
   _ = try await client.prompt("hello") { await events.event($0) }

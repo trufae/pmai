@@ -13,11 +13,16 @@ public actor ACPProvider: ChatProvider {
   public nonisolated let descriptor: ProviderDescriptor
 
   private let configuration: ACPClient.Configuration
+  private let sessionFile: URL?
+  private let onPermission: (@Sendable (JSONValue) async throws -> String?)?
   /// One live agent per working directory: a prompt from a child run in a
   /// different cwd must not land in the parent's session.
   private var clients: [String: ACPClient] = [:]
 
-  public init(id: ProviderID, displayName: String, configuration: ACPClient.Configuration) {
+  public init(
+    id: ProviderID, displayName: String, configuration: ACPClient.Configuration,
+    sessionFile: URL? = nil, onPermission: (@Sendable (JSONValue) async throws -> String?)? = nil
+  ) {
     self.descriptor = ProviderDescriptor(
       id: id,
       displayName: displayName,
@@ -25,6 +30,8 @@ public actor ACPProvider: ChatProvider {
       // offers them its tool schema — tool calling stays behind the boundary.
       capabilities: [.streaming, .reasoning])
     self.configuration = configuration
+    self.sessionFile = sessionFile
+    self.onPermission = onPermission
   }
 
   public func availableModels() async throws -> [ModelDescriptor] {
@@ -36,13 +43,19 @@ public actor ACPProvider: ChatProvider {
     _ request: ProviderRequest,
     emit: @escaping ProviderEventHandler
   ) async throws -> ProviderResponse {
-    let client = client(
+    let key = clientKey(
       for: configuration.workingDirectory ?? AgentExecutionScope.directory,
       sessionID: request.sessionID ?? AgentExecutionScope.current?.sessionID)
+    let client = try client(
+      key: key, workingDirectory: configuration.workingDirectory ?? AgentExecutionScope.directory)
     // The runtime hands over the whole transcript each turn, but the ACP agent
     // keeps its own session, so only the latest user turn is new to it.
     let text = ACPProvider.latestUserText(request.messages)
     let collector = TextCollector()
+    if sessionFile != nil {
+      let remoteID = try await client.connect()
+      try saveSession(remoteID, key: key)
+    }
     let stopReason = try await client.prompt(text) { event in
       if case .textDelta(let delta) = event { await collector.append(delta) }
       await emit(event)
@@ -59,15 +72,36 @@ public actor ACPProvider: ChatProvider {
     clients.removeAll()
   }
 
-  private func client(for workingDirectory: URL?, sessionID: String?) -> ACPClient {
-    let key =
-      (workingDirectory?.standardizedFileURL.path ?? ".") + "\u{0}" + (sessionID ?? "default")
+  private func clientKey(for workingDirectory: URL?, sessionID: String?) -> String {
+    (workingDirectory?.standardizedFileURL.path ?? ".") + "\u{0}" + (sessionID ?? "default")
+  }
+
+  private func client(key: String, workingDirectory: URL?) throws -> ACPClient {
     if let existing = clients[key] { return existing }
     var configuration = self.configuration
     if configuration.workingDirectory == nil { configuration.workingDirectory = workingDirectory }
-    let client = ACPClient(configuration: configuration)
+    if let sessionFile, FileManager.default.fileExists(atPath: sessionFile.path) {
+      configuration.sessionID = try JSONDecoder().decode(
+        [String: String].self,
+        from: Data(contentsOf: sessionFile))[key]
+    }
+    let client = ACPClient(configuration: configuration, onPermission: onPermission)
     clients[key] = client
     return client
+  }
+
+  private func saveSession(_ id: String, key: String) throws {
+    guard let sessionFile else { return }
+    try ACPStateFiles.createDirectory(sessionFile.deletingLastPathComponent())
+    let lock = try ACPFileLock(url: sessionFile.appendingPathExtension("lock"), wait: true)
+    defer { withExtendedLifetime(lock) {} }
+    var sessions: [String: String] = [:]
+    if FileManager.default.fileExists(atPath: sessionFile.path) {
+      sessions = try JSONDecoder().decode(
+        [String: String].self, from: Data(contentsOf: sessionFile))
+    }
+    sessions[key] = id
+    try ACPStateFiles.write(sessions, to: sessionFile)
   }
 
   /// The last user message, which is the only turn the agent has not seen.
@@ -90,17 +124,20 @@ private actor TextCollector {
 /// Registers the ACP provider factory, so a `kind: "acp"` provider in the
 /// configuration builds an `ACPProvider` like any other backend.
 public struct MaiACPPlugin: MaiPlugin {
+  private let onPermission: (@Sendable (JSONValue, String) async throws -> String?)?
   public let manifest = PluginManifest(
     id: "org.mai.acp",
     displayName: "ACP agent provider",
     version: "1.0.0",
     capabilities: [.chatProvider])
 
-  public init() {}
+  public init(onPermission: (@Sendable (JSONValue, String) async throws -> String?)? = nil) {
+    self.onPermission = onPermission
+  }
 
   public func register(in registry: PluginRegistry) async throws {
     try await registry.register(
-      providerFactory: ACPConfiguredProviderFactory(), from: manifest.id)
+      providerFactory: ACPConfiguredProviderFactory(onPermission: onPermission), from: manifest.id)
   }
 }
 
@@ -111,10 +148,13 @@ public struct MaiACPPlugin: MaiPlugin {
 ///       "options": { "command": "gemini", "args": ["--acp"],
 ///                    "permission": "auto" } }
 public struct ACPConfiguredProviderFactory: ConfiguredProviderFactory {
+  private let onPermission: (@Sendable (JSONValue, String) async throws -> String?)?
   public static let providerKind: ConfiguredProviderKind = "acp"
   public let kind = ACPConfiguredProviderFactory.providerKind
 
-  public init() {}
+  public init(onPermission: (@Sendable (JSONValue, String) async throws -> String?)? = nil) {
+    self.onPermission = onPermission
+  }
 
   public func makeProvider(
     from configuration: ConfiguredProvider,
@@ -149,6 +189,17 @@ public struct ACPConfiguredProviderFactory: ConfiguredProviderFactory {
     let workingDirectory = options["cwd"]?.stringValue.map {
       URL(fileURLWithPath: NSString(string: $0).expandingTildeInPath, isDirectory: true)
     }
+    let tokenFile = options["tokenFile"]?.stringValue.map { URL(fileURLWithPath: $0) }
+    let storedToken = try tokenFile.map {
+      try String(contentsOf: $0, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    let permissionHandler: (@Sendable (JSONValue) async throws -> String?)?
+    if configuration.id.hasPrefix("remote."), let onPermission {
+      let name = configuration.displayName ?? configuration.id
+      permissionHandler = { try await onPermission($0, name) }
+    } else {
+      permissionHandler = nil
+    }
     return ACPProvider(
       id: ProviderID(configuration.id),
       displayName: configuration.displayName ?? configuration.id,
@@ -163,7 +214,9 @@ public struct ACPConfiguredProviderFactory: ConfiguredProviderFactory {
         readClientFiles: options["readClientFiles"]?.boolValue ?? (url == nil),
         webSocketURL: url,
         bearerToken: options["tokenEnv"]?.stringValue.flatMap { environment[$0] }
-          ?? options["token"]?.stringValue))
+          ?? options["token"]?.stringValue ?? storedToken),
+      sessionFile: options["sessionFile"]?.stringValue.map { URL(fileURLWithPath: $0) },
+      onPermission: permissionHandler)
   }
 }
 

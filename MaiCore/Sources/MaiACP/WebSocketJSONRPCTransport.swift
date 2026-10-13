@@ -131,6 +131,7 @@ public struct ACPRemoteConnection: Codable, Equatable, Sendable {
   public var url: URL
   public var token: String
   public var cwd: String
+  public var requiresApproval: Bool?
 
   public init(name: String, url: URL, token: String, cwd: String) throws {
     self.name = name

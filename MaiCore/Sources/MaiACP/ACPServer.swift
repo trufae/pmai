@@ -13,6 +13,12 @@ public actor ACPServer {
     var workingDirectory: URL
     var transcript: [AgentMessage]
     var promptInFlight: Bool?
+    var title: String?
+    var createdAt: Date?
+    var updatedAt: Date?
+    var definition: AgentDefinition?
+    var providerSessionID: String?
+    var indexed: Bool?
   }
 
   private struct Session {
@@ -20,6 +26,7 @@ public actor ACPServer {
     var task: Task<AgentResult, Error>?
     var lease: ACPFileLock?
     var processes: [AgentPID] = []
+    var busy = false
   }
 
   private let runtime: AgentRuntime
@@ -27,8 +34,10 @@ public actor ACPServer {
   private let bridge: ACPPermissionBridge
   private var peer: JSONRPCPeer?
   private var sessions: [String: Session] = [:]
+  private var loadingSessions = Set<String>()
   private let sessionDirectory: URL?
-  private let workspaceRoot: URL?
+  private let workspaceRoots: [URL]?
+  private let workspace: (any ACPWorkspaceRepository)?
   private let authorize: @Sendable () throws -> Void
   private let extensionHandler: @Sendable (String, JSONValue?) throws -> JSONValue?
   private var connected = false
@@ -41,15 +50,20 @@ public actor ACPServer {
   ///   - agent: the definition each session runs.
   public init(
     runtime: AgentRuntime, agent: AgentDefinition, bridge: ACPPermissionBridge,
-    sessionDirectory: URL? = nil, workspaceRoot: URL? = nil,
+    sessionDirectory: URL? = nil, workspaceRoot: URL? = nil, workspaceRoots: [URL]? = nil,
+    workspace: (any ACPWorkspaceRepository)? = nil,
     authorize: @escaping @Sendable () throws -> Void = {},
-    extensionHandler: @escaping @Sendable (String, JSONValue?) throws -> JSONValue? = { _, _ in nil }
+    extensionHandler: @escaping @Sendable (String, JSONValue?) throws -> JSONValue? = { _, _ in nil
+    }
   ) {
     self.runtime = runtime
     self.agent = agent
     self.bridge = bridge
     self.sessionDirectory = sessionDirectory
-    self.workspaceRoot = workspaceRoot?.resolvingSymlinksInPath().standardizedFileURL
+    self.workspaceRoots = (workspaceRoots ?? workspaceRoot.map { [$0] })?.map {
+      $0.resolvingSymlinksInPath().standardizedFileURL
+    }
+    self.workspace = workspace
     self.authorize = authorize
     self.extensionHandler = extensionHandler
   }
@@ -81,7 +95,9 @@ public actor ACPServer {
     connected = false
     monitor.cancel()
     for session in sessions.values {
-      for pid in session.processes { await runtime.supervisor.stop(pid, reason: "ACP disconnected") }
+      for pid in session.processes {
+        await runtime.supervisor.stop(pid, reason: "ACP disconnected")
+      }
     }
     let tasks = sessions.values.compactMap(\.task)
     for task in tasks { task.cancel() }
@@ -108,9 +124,11 @@ public actor ACPServer {
     case ACP.Method.authenticate:
       return .object([:])
     case ACP.Method.sessionNew:
-      return try newSession(params: params)
+      return try await newSession(params: params)
     case ACP.Method.sessionLoad:
       return try await loadSession(params: params)
+    case ACP.Method.sessionList:
+      return try await listSessions(params: params)
     case "ping":
       return .object([:])
     case ACP.Method.sessionPrompt:
@@ -124,7 +142,9 @@ public actor ACPServer {
     guard connected, (try? authorize()) != nil, method == ACP.Method.sessionCancel else { return }
     guard let id = params?.objectValue?["sessionId"]?.stringValue else { return }
     sessions[id]?.task?.cancel()
-    for pid in sessions[id]?.processes ?? [] { await runtime.supervisor.stop(pid, reason: "ACP cancelled") }
+    for pid in sessions[id]?.processes ?? [] {
+      await runtime.supervisor.stop(pid, reason: "ACP cancelled")
+    }
   }
 
   private func initializeResult() -> JSONValue {
@@ -134,7 +154,9 @@ public actor ACPServer {
         "name": .string(ACP.agentName), "version": .string("1.0.0"),
       ]),
       "agentCapabilities": .object([
-        "loadSession": .bool(sessionDirectory != nil),
+        "loadSession": .bool(sessionDirectory != nil || workspace != nil),
+        "sessionCapabilities": .object(
+          sessionDirectory != nil || workspace != nil ? ["list": .object([:])] : [:]),
         "promptCapabilities": .object([
           "image": .bool(false), "audio": .bool(false), "embeddedContext": .bool(true),
         ]),
@@ -160,11 +182,11 @@ public actor ACPServer {
       .resolvingSymlinksInPath().standardizedFileURL
     var isDirectory: ObjCBool = false
     guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
-      isDirectory.boolValue else {
+      isDirectory.boolValue
+    else {
       throw JSONRPCError.invalidParams("cwd does not exist on the worker")
     }
-    if let root = workspaceRoot, url != root,
-      !url.path.hasPrefix(root.path.hasSuffix("/") ? root.path : root.path + "/") {
+    if !canAccess(url) {
       throw JSONRPCError.invalidParams("cwd is outside the served workspace")
     }
     // Do not silently accept client-supplied executables that were never installed.
@@ -174,52 +196,183 @@ public actor ACPServer {
     return url
   }
 
+  private func canAccess(_ url: URL) -> Bool {
+    guard let roots = workspaceRoots else { return true }
+    return roots.contains { root in
+      url == root || url.path.hasPrefix(root.path.hasSuffix("/") ? root.path : root.path + "/")
+    }
+  }
+
+  private func listSessions(params: JSONValue?) async throws -> JSONValue {
+    guard sessionDirectory != nil || workspace != nil else {
+      throw JSONRPCError.methodNotFound(ACP.Method.sessionList)
+    }
+    let filter = params?.objectValue?["cwd"] == nil ? nil : try directory(params: params)
+    func included(_ path: String) -> Bool {
+      let url = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL
+      return canAccess(url) && (filter == nil || url == filter)
+    }
+    var snapshot = try await workspace?.snapshot() ?? ACPWorkspaceSnapshot()
+    // Filter before returning any metadata, including names of empty projects.
+    snapshot.folders = snapshot.folders.filter { included($0.cwd) }
+    for root in workspaceRoots ?? [] where included(root.path) {
+      let hasProject = snapshot.folders.contains {
+        let path = URL(fileURLWithPath: $0.cwd).resolvingSymlinksInPath().standardizedFileURL.path
+        return path == root.path
+          || path.hasPrefix(root.path.hasSuffix("/") ? root.path : root.path + "/")
+      }
+      var isDirectory: ObjCBool = false
+      if !hasProject, FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory),
+        isDirectory.boolValue
+      {
+        snapshot.folders.append(
+          .init(
+            cwd: root.path,
+            name: AgentProject.defaultName(forWorkingDirectory: root.path) ?? root.path))
+      }
+    }
+    var byID = Dictionary(
+      snapshot.sessions.filter { included($0.cwd) }
+        .map { ($0.sessionID, $0) }, uniquingKeysWith: { first, _ in first })
+    if let sessionDirectory,
+      let files = try? FileManager.default.contentsOfDirectory(
+        at: sessionDirectory, includingPropertiesForKeys: nil)
+    {
+      for file in files where file.pathExtension == "json" {
+        guard let data = try? Data(contentsOf: file),
+          let saved = try? JSONDecoder().decode(SavedSession.self, from: data),
+          let uuid = UUID(uuidString: saved.id), uuid.uuidString.lowercased() == saved.id,
+          file.lastPathComponent == saved.id + ".json",
+          saved.agentID == agent.id, included(saved.workingDirectory.path)
+        else { continue }
+        if workspace != nil {
+          if saved.indexed == true {
+            // Forgetting a project must not resurrect it from an ACP checkpoint.
+            guard snapshot.folders.contains(where: { $0.cwd == saved.workingDirectory.path }) else {
+              continue
+            }
+          } else if let migrationLease = try? lease(saved.id) {
+            // Adopt pre-index sessions once without touching another client's
+            // live transcript. Original session IDs and history are retained.
+            if try await workspace?.load(sessionID: saved.id, cwd: saved.workingDirectory.path) != nil {
+              var checkpoint = saved
+              checkpoint.indexed = true
+              try ACPStateFiles.write(checkpoint, to: file)
+              guard snapshot.folders.contains(where: { $0.cwd == saved.workingDirectory.path }) else { continue }
+            } else {
+              try await save(saved)
+            }
+            withExtendedLifetime(migrationLease) {}
+          }
+        }
+        let title =
+          saved.title ?? saved.transcript.first(where: { $0.role == .user })
+          .flatMap { AgentChat.derivedTitle(from: $0.text) } ?? AgentChat.placeholderTitle
+        let info = ACPSessionInfo(
+          sessionID: saved.id, cwd: saved.workingDirectory.path,
+          title: title, updatedAt: saved.updatedAt)
+        if byID[saved.id] == nil { byID[saved.id] = info }
+      }
+    }
+    let infos = byID.values.sorted {
+      if $0.updatedAt != $1.updatedAt {
+        return ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast)
+      }
+      return $0.sessionID < $1.sessionID
+    }
+    for info in infos where !snapshot.folders.contains(where: { $0.cwd == info.cwd }) {
+      snapshot.folders.append(
+        .init(
+          cwd: info.cwd,
+          name: AgentProject.defaultName(forWorkingDirectory: info.cwd) ?? info.cwd))
+    }
+    return .object([
+      "sessions": .array(infos.map(\.json)),
+      "_meta": .object(["pmai": .object(["folders": .array(snapshot.folders.map(\.json))])]),
+    ])
+  }
+
   private func lease(_ id: String) throws -> ACPFileLock? {
     guard let sessionDirectory else { return nil }
     try ACPStateFiles.createDirectory(sessionDirectory)
     return try ACPFileLock(url: sessionDirectory.appendingPathComponent(id + ".lock"))
   }
 
-  private func save(_ session: SavedSession) throws {
-    guard let sessionDirectory else { return }
-    try ACPStateFiles.write(session, to: sessionDirectory.appendingPathComponent(session.id + ".json"))
+  private func save(_ session: SavedSession) async throws {
+    var checkpoint = session
+    checkpoint.title = session.title ?? session.transcript.first(where: { $0.role == .user })
+      .flatMap { AgentChat.derivedTitle(from: $0.text) } ?? AgentChat.placeholderTitle
+    if let workspace {
+      try await workspace.save(
+        .init(
+          info: .init(
+            sessionID: session.id, cwd: session.workingDirectory.path,
+            title: checkpoint.title ?? AgentChat.placeholderTitle, updatedAt: session.updatedAt),
+          agent: session.definition ?? agent, transcript: session.transcript,
+          createdAt: session.createdAt ?? Date(),
+          providerSessionID: session.providerSessionID ?? session.id))
+      checkpoint.indexed = true
+    }
+    if let sessionDirectory {
+      try ACPStateFiles.write(
+        checkpoint, to: sessionDirectory.appendingPathComponent(session.id + ".json"))
+    }
   }
 
-  private func newSession(params: JSONValue?) throws -> JSONValue {
+  private func newSession(params: JSONValue?) async throws -> JSONValue {
     let cwd = try directory(params: params)
     let id = UUID().uuidString.lowercased()
     let saved = SavedSession(
       id: id, agentID: agent.id, workingDirectory: cwd,
-      transcript: AgentChat.initialHistory(for: agent))
+      transcript: AgentChat.initialHistory(for: agent), title: AgentChat.placeholderTitle,
+      createdAt: Date(), updatedAt: Date())
     let lock = try lease(id)
-    try save(saved)
+    try await save(saved)
+    guard connected else { throw JSONRPCTransportError.closed }
     sessions[id] = Session(saved: saved, lease: lock)
     return .object(["sessionId": .string(id)])
   }
 
   private func loadSession(params: JSONValue?) async throws -> JSONValue {
-    guard let sessionDirectory,
-      let id = params?.objectValue?["sessionId"]?.stringValue,
-      let uuid = UUID(uuidString: id), uuid.uuidString.lowercased() == id else {
+    guard let id = params?.objectValue?["sessionId"]?.stringValue,
+      let uuid = UUID(uuidString: id), uuid.uuidString.lowercased() == id
+    else {
       throw JSONRPCError.invalidParams("Unknown sessionId")
     }
     let cwd = try directory(params: params)
-    guard sessions[id]?.task == nil else {
+    guard sessions[id]?.busy != true, loadingSessions.insert(id).inserted else {
       throw JSONRPCError.invalidParams("Session is busy")
     }
+    defer { loadingSessions.remove(id) }
     if sessions[id] == nil {
       let lock = try lease(id)
-      let url = sessionDirectory.appendingPathComponent(id + ".json")
-      guard let data = try? Data(contentsOf: url),
-        var saved = try? JSONDecoder().decode(SavedSession.self, from: data),
-        saved.id == id, saved.agentID == agent.id, saved.workingDirectory == cwd else {
+      let file = sessionDirectory?.appendingPathComponent(id + ".json")
+      let checkpoint = file.flatMap { try? Data(contentsOf: $0) }
+        .flatMap { try? JSONDecoder().decode(SavedSession.self, from: $0) }
+      var restored: SavedSession?
+      if let conversation = try await workspace?.load(sessionID: id, cwd: cwd.path) {
+        restored = SavedSession(
+          id: id, agentID: agent.id, workingDirectory: cwd,
+          transcript: conversation.transcript, promptInFlight: checkpoint?.promptInFlight,
+          title: conversation.info.title, createdAt: conversation.createdAt,
+          updatedAt: conversation.info.updatedAt, definition: conversation.agent,
+          providerSessionID: conversation.providerSessionID)
+      } else {
+        restored = checkpoint
+      }
+      guard var saved = restored, saved.id == id, saved.agentID == agent.id,
+        saved.workingDirectory == cwd
+      else {
         throw JSONRPCError.invalidParams("Session does not belong to this agent and workspace")
       }
+      saved.title = saved.title ?? saved.transcript.first(where: { $0.role == .user })
+        .flatMap { AgentChat.derivedTitle(from: $0.text) }
       if saved.promptInFlight == true {
         saved.transcript.append(.assistant(Self.interruptedPromptNotice))
         saved.promptInFlight = false
-        try save(saved)
+        try await save(saved)
       }
+      guard connected else { throw JSONRPCTransportError.closed }
       sessions[id] = Session(saved: saved, lease: lock)
     }
     guard let session = sessions[id], session.saved.workingDirectory == cwd else {
@@ -230,7 +383,9 @@ public actor ACPServer {
       case .user:
         await update(session: id, kind: .userMessageChunk, text: message.text)
       case .assistant:
-        if !message.text.isEmpty { await update(session: id, kind: .agentMessageChunk, text: message.text) }
+        if !message.text.isEmpty {
+          await update(session: id, kind: .agentMessageChunk, text: message.text)
+        }
         for call in message.toolCalls { await toolUpdate(session: id, call: call) }
       case .tool:
         for result in message.toolResults { await toolFinished(session: id, result: result) }
@@ -244,17 +399,25 @@ public actor ACPServer {
     guard let id = params?.objectValue?["sessionId"]?.stringValue, sessions[id] != nil else {
       throw JSONRPCError.invalidParams("unknown sessionId")
     }
-    guard sessions[id]?.task == nil else {
+    guard sessions[id]?.busy != true, !loadingSessions.contains(id) else {
       throw JSONRPCError.invalidParams("A prompt is already running in this session")
     }
     let text = ACP.promptText(params?.objectValue?["prompt"])
     guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       throw JSONRPCError.invalidParams("prompt is empty")
     }
+    sessions[id]?.busy = true
+    defer { sessions[id]?.busy = false }
     sessions[id]?.saved.transcript.append(.user(text))
+    if AgentChat.isPlaceholderTitle(sessions[id]?.saved.title ?? AgentChat.placeholderTitle) {
+      sessions[id]?.saved.title = AgentChat.derivedTitle(from: text)
+    }
+    sessions[id]?.saved.updatedAt = Date()
     sessions[id]?.saved.promptInFlight = true
-    try save(sessions[id]!.saved)
+    try await save(sessions[id]!.saved)
+    guard connected, sessions[id] != nil else { throw JSONRPCTransportError.closed }
 
+    let agent = sessions[id]?.saved.definition ?? self.agent
     let request = AgentRequest(
       agentID: agent.id,
       provider: agent.provider,
@@ -274,10 +437,11 @@ public actor ACPServer {
       toolPolicy: agent.toolPolicy,
       toolDelegation: agent.toolDelegation,
       retry: agent.retry, autocompact: agent.autocompact, context: agent.context,
-      sessionID: id)
+      sessionID: sessions[id]?.saved.providerSessionID ?? id)
 
     let sessionID = id
-    let scope = AgentExecutionScope(sessionID: id, workingDirectory: sessions[id]!.saved.workingDirectory)
+    let scope = AgentExecutionScope(
+      sessionID: id, workingDirectory: sessions[id]!.saved.workingDirectory)
     let task = Task { [weak self, runtime] in
       try await AgentExecutionScope.$current.withValue(scope) {
         try await runtime.run(request) { [weak self] event in
@@ -290,10 +454,13 @@ public actor ACPServer {
     do {
       let result = try await withTaskCancellationHandler {
         try await task.value
-      } onCancel: { task.cancel() }
+      } onCancel: {
+        task.cancel()
+      }
       sessions[id]?.saved.transcript = result.transcript
       sessions[id]?.saved.promptInFlight = false
-      if let saved = sessions[id]?.saved { try save(saved) }
+      sessions[id]?.saved.updatedAt = Date()
+      if let saved = sessions[id]?.saved { try await save(saved) }
       sessions[id]?.task = nil
       // A limit pauses the run with its transcript kept, so the next prompt
       // carries on; the editor is told which limit it was.
@@ -311,11 +478,11 @@ public actor ACPServer {
       }
       return .object(["stopReason": .string(ACP.StopReason(result.stopReason).rawValue)])
     } catch is CancellationError {
-      try? finishInterruptedPrompt(id)
+      try? await finishInterruptedPrompt(id)
       sessions[id]?.task = nil
       return .object(["stopReason": .string(ACP.StopReason.cancelled.rawValue)])
     } catch {
-      try? finishInterruptedPrompt(id)
+      try? await finishInterruptedPrompt(id)
       sessions[id]?.task = nil
       // A run that never produced text should still tell the editor why.
       await update(session: id, kind: .agentMessageChunk, text: error.localizedDescription)
@@ -326,10 +493,11 @@ public actor ACPServer {
   private static let interruptedPromptNotice =
     "The previous prompt was interrupted. Some tools may already have run and partial output may be missing. Verify the current state before repeating actions."
 
-  private func finishInterruptedPrompt(_ id: String) throws {
+  private func finishInterruptedPrompt(_ id: String) async throws {
     sessions[id]?.saved.transcript.append(.assistant(Self.interruptedPromptNotice))
     sessions[id]?.saved.promptInFlight = false
-    if let saved = sessions[id]?.saved { try save(saved) }
+    sessions[id]?.saved.updatedAt = Date()
+    if let saved = sessions[id]?.saved { try await save(saved) }
   }
 
   // MARK: - Streaming out
@@ -382,16 +550,21 @@ public actor ACPServer {
   }
 
   private func toolFinished(session id: String, result: ToolResult) async {
-    try? peer?.notify(ACP.Method.sessionUpdate, params: .object([
-      "sessionId": .string(id), "update": .object([
-        "sessionUpdate": .string(ACP.Update.toolCallUpdate.rawValue),
-        "toolCallId": .string(result.callID),
-        "status": .string(result.isError ? "failed" : "completed"),
-        "content": .array([.object([
-          "type": .string("content"), "content": ACP.ContentBlock.text(result.text).json
-        ])]),
-      ]),
-    ]))
+    try? peer?.notify(
+      ACP.Method.sessionUpdate,
+      params: .object([
+        "sessionId": .string(id),
+        "update": .object([
+          "sessionUpdate": .string(ACP.Update.toolCallUpdate.rawValue),
+          "toolCallId": .string(result.callID),
+          "status": .string(result.isError ? "failed" : "completed"),
+          "content": .array([
+            .object([
+              "type": .string("content"), "content": ACP.ContentBlock.text(result.text).json,
+            ])
+          ]),
+        ]),
+      ]))
   }
 
   // MARK: - Permission bridge
@@ -456,7 +629,8 @@ public final class ACPPermissionBridge: @unchecked Sendable {
     guard let server = lock.withLock({ server }) else {
       return .deny(reason: "no ACP server is connected")
     }
-    return await server.requestPermission(request, sessionID: AgentExecutionScope.current?.sessionID)
+    return await server.requestPermission(
+      request, sessionID: AgentExecutionScope.current?.sessionID)
   }
 
   private struct Handler: ApprovalHandler {

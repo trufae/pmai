@@ -268,11 +268,13 @@ private actor ACPScriptedProvider: ChatProvider {
   nonisolated let descriptor = ProviderDescriptor(
     id: "scripted", displayName: "Scripted", capabilities: [.streaming, .nativeToolCalling])
   private var responses: [ProviderResponse]
+  private(set) var sessionIDs: [String] = []
   init(responses: [ProviderResponse]) { self.responses = responses }
 
   func complete(
     _ request: ProviderRequest, emit: @escaping ProviderEventHandler
   ) async throws -> ProviderResponse {
+    sessionIDs.append(request.sessionID ?? "")
     let response =
       responses.isEmpty ? ProviderResponse(message: .assistant("")) : responses.removeFirst()
     if !response.message.text.isEmpty { await emit(.textDelta(response.message.text)) }
@@ -284,6 +286,150 @@ private actor ChunkRecorder {
   private var chunks: [String] = []
   func append(_ chunk: String) { chunks.append(chunk) }
   var joined: String { chunks.joined() }
+}
+
+@Test("ACP lists CLI projects and resumes their existing chats within the served root")
+func acpWorkspaceDiscovery() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "acp-workspace-\(UUID())"
+  )
+  .resolvingSymlinksInPath()
+  let served = root.appendingPathComponent("served")
+  let projectURL = served.appendingPathComponent("project")
+  let emptyURL = served.appendingPathComponent("empty")
+  let outsideURL = root.appendingPathComponent("outside")
+  for url in [projectURL, emptyURL, outsideURL] {
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+  }
+  defer { try? FileManager.default.removeItem(at: root) }
+  let home = AgentHome(rootURL: root.appendingPathComponent("home"))
+  let project = try home.openProject(atWorkingDirectory: projectURL)
+  _ = try home.openProject(atWorkingDirectory: emptyURL)
+  let outside = try home.openProject(atWorkingDirectory: outsideURL)
+  let original = AgentDefinition(
+    id: "original", instructions: "Original agent", provider: "scripted", model: "fixture")
+  let chat = AgentChat(
+    title: "Existing CLI chat", primaryAgent: original,
+    messages: [.user("earlier"), .assistant("saved reply")], isArchived: true)
+  try home.chatStore(for: project).save(chat)
+  try home.chatStore(for: outside).save(
+    AgentChat(
+      title: "Private project", primaryAgent: original,
+      messages: [.user("secret")]))
+  let runtime = AgentRuntime()
+  let provider = ACPScriptedProvider(responses: [ProviderResponse(message: .assistant("continued"))])
+  try await runtime.register(provider)
+  let defaultAgent = AgentDefinition(
+    id: "default", instructions: "", provider: "scripted", model: "fixture")
+  let (clientTransport, serverTransport) = PipeTransport.pair()
+  let server = ACPServer(
+    runtime: runtime, agent: defaultAgent, bridge: ACPPermissionBridge(),
+    sessionDirectory: root.appendingPathComponent("sessions"), workspaceRoot: served,
+    workspace: AgentHomeACPWorkspace(home: home))
+  let serving = Task { await server.serve(on: serverTransport) }
+  let recorder = ChunkRecorder()
+  let client = JSONRPCPeer(
+    transport: clientTransport,
+    onNotification: { _, params in
+      await recorder.append(
+        ACP.ContentBlock.text(from: params?.objectValue?["update"]?.objectValue?["content"]))
+    })
+  await client.start()
+  let initialized = try await client.request(
+    "initialize", params: .object(["protocolVersion": .integer(1)]), timeout: 5)
+  #expect(
+    initialized.objectValue?["agentCapabilities"]?.objectValue?["sessionCapabilities"]?
+      .objectValue?["list"] != nil)
+  let listing = try await client.request("session/list", params: .object([:]), timeout: 5)
+  let infos = try #require(listing.objectValue?["sessions"]?.arrayValue)
+  #expect(infos.count == 1)
+  #expect(infos.first?.objectValue?["title"]?.stringValue == "Existing CLI chat")
+  let folders = try #require(
+    listing.objectValue?["_meta"]?.objectValue?["pmai"]?.objectValue?["folders"]?.arrayValue)
+  #expect(
+    Set(folders.compactMap { $0.objectValue?["cwd"]?.stringValue })
+      == Set([projectURL.path, emptyURL.path]))
+  await #expect(throws: JSONRPCError.self) {
+    _ = try await client.request(
+      "session/list", params: .object(["cwd": .string(outsideURL.path)]), timeout: 5)
+  }
+  let id = chat.id.uuidString.lowercased()
+  _ = try await client.request(
+    "session/load",
+    params: .object([
+      "sessionId": .string(id), "cwd": .string(projectURL.path), "mcpServers": .array([]),
+    ]), timeout: 5)
+  #expect(await recorder.joined == "earliersaved reply")
+  _ = try await client.request(
+    "session/prompt",
+    params: .object([
+      "sessionId": .string(id), "prompt": .array([ACP.ContentBlock.text("continue").json]),
+    ]), timeout: 5)
+  let resumed = try #require(try home.chatStore(for: project).loadChat(id: chat.id))
+  #expect(resumed.primaryAgent == original)
+  #expect(resumed.isArchived)
+  #expect(resumed.title == chat.title)
+  #expect(await provider.sessionIDs == [chat.sessionID])
+  #expect(resumed.messages.contains { $0.role == .user && $0.text == "continue" })
+  let created = try await client.request(
+    "session/new", params: .object(["cwd": .string(emptyURL.path)]), timeout: 5)
+  let newID = try #require(created.objectValue?["sessionId"]?.stringValue)
+  _ = try await client.request(
+    "session/prompt",
+    params: .object([
+      "sessionId": .string(newID),
+      "prompt": .array([ACP.ContentBlock.text("New remote work").json]),
+    ]), timeout: 5)
+  let emptyProject = try #require(try home.loadProject(atWorkingDirectory: emptyURL))
+  let uuid = try #require(UUID(uuidString: newID))
+  let newChat = try #require(try home.chatStore(for: emptyProject).loadChat(id: uuid))
+  #expect(newChat.title == "New remote work")
+  #expect(newChat.sessionID == newID)
+  #expect(newChat.messages.contains { $0.role == .user && $0.text == "New remote work" })
+  await client.close()
+  await serving.value
+}
+
+@Test("Legacy ACP sessions join the project index once and forgetting a project hides its checkpoints")
+func acpLegacyWorkspaceMigration() async throws {
+  struct LegacySession: Encodable {
+    var id: String
+    var agentID: String
+    var workingDirectory: URL
+    var transcript: [AgentMessage]
+  }
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent("acp-legacy-\(UUID())")
+    .resolvingSymlinksInPath()
+  defer { try? FileManager.default.removeItem(at: root) }
+  let cwd = root.appendingPathComponent("legacy-project")
+  let directory = root.appendingPathComponent("sessions")
+  try FileManager.default.createDirectory(at: cwd, withIntermediateDirectories: true)
+  try ACPStateFiles.createDirectory(directory)
+  let id = UUID()
+  let history: [AgentMessage] = [.user("Original legacy title"), .assistant("Preserved reply")]
+  try ACPStateFiles.write(LegacySession(id: id.uuidString.lowercased(), agentID: "main",
+    workingDirectory: cwd, transcript: history), to: directory.appendingPathComponent(id.uuidString.lowercased() + ".json"))
+  let home = AgentHome(rootURL: root.appendingPathComponent("home"))
+  let runtime = AgentRuntime()
+  let agent = AgentDefinition(id: "main", instructions: "", provider: .hello, model: "hello")
+  let (transport, worker) = PipeTransport.pair()
+  let server = ACPServer(runtime: runtime, agent: agent, bridge: ACPPermissionBridge(),
+    sessionDirectory: directory, workspace: AgentHomeACPWorkspace(home: home))
+  let serving = Task { await server.serve(on: worker) }
+  let client = JSONRPCPeer(transport: transport)
+  await client.start()
+  _ = try await client.request("initialize", params: .object(["protocolVersion": .integer(1)]), timeout: 5)
+  _ = try await client.request("session/list", timeout: 5)
+  let project = try #require(try home.loadProjectIndex().projects.first)
+  let chat = try #require(try home.chatStore(for: project).loadChat(id: id))
+  #expect(chat.messages == history)
+  #expect(chat.title == "Original legacy title")
+  _ = try home.forgetProject(id: project.id)
+  let listing = try await client.request("session/list", timeout: 5)
+  #expect(listing.objectValue?["sessions"]?.arrayValue?.isEmpty == true)
+  #expect(try home.loadProjectIndex().projects.isEmpty)
+  await client.close()
+  await serving.value
 }
 
 @Test("ACP sessions persist across connections, replay history, and hold exclusive leases")

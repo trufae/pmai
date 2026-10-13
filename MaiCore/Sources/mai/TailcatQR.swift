@@ -7,7 +7,7 @@ import Foundation
 /// Native QR generation on Apple platforms; qrencode provides the same workflow
 /// on Linux/Android. The URI is always printed as a copy/paste fallback.
 enum TailcatQR {
-  static func show(_ text: String, output: URL?) throws {
+  static func show(_ text: String, output: URL?, write: (String) -> Void = { print($0) }) throws {
     #if canImport(CoreImage)
       guard let filter = CIFilter(name: "CIQRCodeGenerator") else { return }
       filter.setValue(Data(text.utf8), forKey: "inputMessage")
@@ -32,7 +32,7 @@ enum TailcatQR {
           case (false, false): line += " "
           }
         }
-        print(line + "\u{1B}[0m")
+        write(line + "\u{1B}[0m")
       }
       if let output {
         let data: Data
@@ -63,7 +63,7 @@ enum TailcatQR {
         return
       }
       let rendered = try TailcatCLI.capture(executable, ["-t", "UTF8"], input: Data(text.utf8))
-      print(rendered)
+      write(rendered)
       if let output {
         _ = try TailcatCLI.capture(executable,
           ["-t", output.pathExtension.lowercased() == "svg" ? "SVG" : "PNG", "-o", output.path],
@@ -74,10 +74,11 @@ enum TailcatQR {
   }
 
   static func read(_ value: String) throws -> String {
-    if value.hasPrefix("pmai-tailcat://") { return value }
+    if value.hasPrefix("pmai-tailcat://") || value.hasPrefix("pmai-acp://") { return value }
     let url = URL(fileURLWithPath: NSString(string: value).expandingTildeInPath)
     if let text = try? String(contentsOf: url, encoding: .utf8),
-      text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("pmai-tailcat://") {
+      (text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("pmai-tailcat://")
+        || text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("pmai-acp://")) {
       return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     #if canImport(CoreImage)

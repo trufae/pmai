@@ -97,6 +97,7 @@ private struct CLIOptions {
   /// Serve one protocol on stdio instead of the REPL.
   var serve: ServeMode?
   var acpRoot: String?
+  var acpPaths: [String] = []
   var acpSessionDirectory: String?
   var tailcatGateway: String?
 
@@ -195,6 +196,8 @@ private struct CLIOptions {
         vimDirectory = try Self.value(after: argument, in: arguments, index: &index)
       case "--acp-root":
         acpRoot = try Self.value(after: argument, in: arguments, index: &index)
+      case "--acp-path":
+        acpPaths.append(try Self.value(after: argument, in: arguments, index: &index))
       case "--acp-sessions":
         acpSessionDirectory = try Self.value(after: argument, in: arguments, index: &index)
       case "--tailcat-gateway":
@@ -962,7 +965,8 @@ private actor TerminalApprovalHandler: ApprovalHandler {
     }
   }
 
-  private let projectSettingsURL: URL
+  private var projectSettingsURL: URL
+  private let defaultApprovalMode: ToolApprovalMode
   private var projectSettings: ProjectSettings
   private var delegate: (any ApprovalHandler)?
   private var approvalMode: ToolApprovalMode
@@ -983,8 +987,20 @@ private actor TerminalApprovalHandler: ApprovalHandler {
         ProjectSettings.self, from: Data(contentsOf: projectSettingsURL))
       : ProjectSettings()
     self.projectSettings = projectSettings
+    self.defaultApprovalMode = mode ?? configuration.mode
     self.approvalMode = mode ?? projectSettings.approvalMode ?? configuration.mode
     self.debugEnabled = projectSettings.debug ?? false
+  }
+
+  /// Adopts the newly opened project's approval and debug settings.
+  func focusProject(_ url: URL) throws {
+    let settings = FileManager.default.fileExists(atPath: url.path)
+      ? try MaiJSONCoding.default.makeDecoder().decode(ProjectSettings.self, from: Data(contentsOf: url))
+      : ProjectSettings()
+    projectSettingsURL = url
+    projectSettings = settings
+    approvalMode = settings.approvalMode ?? defaultApprovalMode
+    debugEnabled = settings.debug ?? false
   }
 
   /// Routes `ask` decisions elsewhere while another surface owns the terminal.
@@ -1075,6 +1091,28 @@ private actor TerminalApprovalHandler: ApprovalHandler {
       return .deny(reason: "Smart approval must be evaluated by the runtime.")
     }
     return try await interactiveDecision(request)
+  }
+
+  func decideRemote(_ params: JSONValue, host: String) async throws -> String? {
+    let tool = params.objectValue?["toolCall"]?.objectValue ?? [:]
+    let name = tool["title"]?.stringValue ?? "Remote tool"
+    let arguments = tool["rawInput"] ?? .object([:])
+    let request = ApprovalRequest(
+      run: .init(runID: UUID(), parentRunID: nil, agentID: host, depth: 0),
+      tool: .init(name: name, description: "Run on \(host)", annotations: .init(approval: .confirm)),
+      call: .init(id: tool["toolCallId"]?.stringValue ?? UUID().uuidString, name: name, arguments: arguments))
+    let decision = approvalMode == .yolo ? ApprovalDecision.approve(arguments: arguments)
+      : try await interactiveDecision(request)
+    if case .cancelRun = decision { throw CancellationError() }
+    let kind: String
+    switch decision {
+    case .approve(let edited): kind = edited == arguments ? "allow" : "reject"
+    default: kind = "reject"
+    }
+    let options = params.objectValue?["options"]?.arrayValue ?? []
+    return (options.first { $0.objectValue?["kind"]?.stringValue == kind + "_once" }
+      ?? options.first { $0.objectValue?["kind"]?.stringValue?.hasPrefix(kind) == true })?
+      .objectValue?["optionId"]?.stringValue
   }
 
   /// Required policy prompts need a person even in yolo mode. Explicit prompt
@@ -1304,7 +1342,9 @@ struct MaiCLI {
       try await plugins.install(MaiMCPPlugin(), origin: "built-in")
       try await plugins.install(MaiOpenAIPlugin(), origin: "built-in")
       try await plugins.install(MaiLocalProvidersPlugin(), origin: "built-in")
-      try await plugins.install(MaiACPPlugin(), origin: "built-in")
+      try await plugins.install(MaiACPPlugin(onPermission: { params, host in
+        try await approvalHandler.decideRemote(params, host: host)
+      }), origin: "built-in")
       do {
         try await plugins.install(MaiVisionOCRPlugin(), origin: "built-in")
       } catch {
@@ -1860,6 +1900,9 @@ struct MaiCLI {
       }
       let server = ACPServer(runtime: runtime, agent: agent, bridge: bridge,
         sessionDirectory: directory, workspaceRoot: root,
+        workspaceRoots: options.tailcatGateway == nil && !options.acpPaths.isEmpty
+          ? options.acpPaths.map { URL(fileURLWithPath: AgentHome.expandUserPath($0), isDirectory: true) } : nil,
+        workspace: AgentHomeACPWorkspace(home: resolvedHome(options: options, environment: environment)),
         authorize: authorize, extensionHandler: extensionHandler)
       FileHandle.standardError.write(
         Data("pmai ACP agent ready (\(agent.id)); waiting for a client on stdio.\n".utf8))
@@ -2241,7 +2284,13 @@ struct MaiCLI {
     var configuration = configuration
     var catalogs = catalogs
     var project = project
+    var store = store
     var session = REPLSession(chat: workspace.selectedChat!)
+    let localProfile = session.profile
+    var remoteReturnChatID: UUID?
+    let executable = TailcatCLI.resolveExecutable(platformCommandLineArguments(environment: ProcessInfo.processInfo.environment)[0])
+      ?? URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.path
+    let remoteServer = RemoteREPLServer(home: home, executable: executable)
     /// Hands the loop's state to `pmai_run`, so a command the model runs
     /// starts from the same session, configuration and MCP catalogs the next
     /// typed command will see.
@@ -3186,6 +3235,148 @@ struct MaiCLI {
           let argument =
             command.count > 1
             ? command[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+          if name == "/remote" {
+            do {
+              let fields = try shellWords(argument)
+              let action = fields.first?.lowercased() ?? "list"
+              let arguments = Array(fields.dropFirst())
+              let hosts = remoteServer.hosts
+              switch action {
+              case "serve":
+                guard !(await runtime.internetAccessPolicy().isOffline) else {
+                  throw JSONRPCError.invalidParams("Turn off Airplane Mode before serving remote clients.")
+                }
+                let draft = configuration ?? MaiConfiguration()
+                let agent = session.profile.agentDefinition
+                let cwd = AgentExecutionScope.directory
+                _ = await runForeground("/remote serve", resumeInput: false) {
+                  do { try await remoteServer.start(arguments, configuration: draft, agent: agent, cwd: cwd, terminal: terminal) }
+                  catch { await terminal.line("error: \(error.localizedDescription)", to: .standardError) }
+                }
+              case "stop":
+                await remoteServer.stop()
+                await terminal.line("Remote server stopped.")
+              case "qr":
+                await remoteServer.showPairing(terminal: terminal)
+              case "status", "list", "ls":
+                await terminal.line(remoteServer.status())
+                for host in try hosts.hosts() {
+                  await terminal.line("\(host.name) · \(host.url.absoluteString) · /remote connect \(shellQuote(host.name))")
+                }
+              case "pair":
+                guard (1...2).contains(arguments.count) else {
+                  throw JSONRPCError.invalidParams("Usage: /remote pair URI_OR_QR_FILE [NAME]")
+                }
+                var profile = try ACPRemoteConnection.parse(TailcatQR.read(arguments[0]))
+                if profile.requiresApproval == true {
+                  let idFile = home.rootURL.appendingPathComponent("client-id.json")
+                  let clientID: String
+                  if FileManager.default.fileExists(atPath: idFile.path) {
+                    clientID = try JSONDecoder().decode(String.self, from: Data(contentsOf: idFile))
+                  } else {
+                    clientID = UUID().uuidString.lowercased()
+                    try ACPStateFiles.write(clientID, to: idFile)
+                  }
+                  let invitation = profile
+                  let pairing = await runForeground("/remote pair", resumeInput: false) {
+                    let client = ACPClient(configuration: .init(command: invitation.name,
+                      webSocketURL: invitation.url, bearerToken: invitation.token))
+                    await terminal.line("Waiting for \(invitation.name) to accept this client with /remote accept…")
+                    do { return Optional(try await client.requestPairing(clientID: clientID, name: ProcessInfo.processInfo.hostName)) }
+                    catch { await client.disconnect(); await terminal.line("error: \(error.localizedDescription)", to: .standardError); return String?.none }
+                  }
+                  guard let token = pairing.value, !pairing.interrupted else {
+                    await releaseIfIdle(workspace: workspace)
+                    continue
+                  }
+                  profile.token = token
+                  profile.requiresApproval = false
+                }
+                let host = try hosts.pair(profile, name: arguments.count == 2 ? arguments[1] : nil)
+                await terminal.line("Paired \(host.name). /remote connect \(shellQuote(host.name)) opens a chat.")
+              case "pending":
+                let waiting = await remoteServer.pendingClients()
+                await terminal.line(waiting.isEmpty ? "No pairing requests are waiting." : waiting.joined(separator: "\n"))
+              case "accept", "reject":
+                guard arguments.count <= 1 else { throw JSONRPCError.invalidParams("Usage: /remote \(action) [CODE]") }
+                await terminal.line(try remoteServer.resolvePairing(arguments.first, allow: action == "accept"))
+              case "clients":
+                for client in try await remoteServer.pairingStore.clients() {
+                  await terminal.line("\(client.id) · \(client.name)")
+                }
+              case "revoke":
+                guard arguments.count == 1 else { throw JSONRPCError.invalidParams("Usage: /remote revoke CLIENT_ID") }
+                try await remoteServer.pairingStore.revoke(id: arguments[0])
+                await terminal.line("Revoked client \(arguments[0]).")
+              case "connect":
+                guard arguments.count == 1 else {
+                  throw JSONRPCError.invalidParams("Usage: /remote connect NAME")
+                }
+                guard loop.activeTurn == nil else {
+                  throw JSONRPCError.invalidParams("Finish or stop the current turn before connecting.")
+                }
+                guard !(await runtime.internetAccessPolicy().isOffline) else {
+                  throw JSONRPCError.invalidParams("Turn off Airplane Mode before connecting.")
+                }
+                let host = try hosts.host(arguments[0])
+                let provider = hosts.provider(for: host)
+                let probe = ACPClient(configuration: .init(command: host.name,
+                  remoteWorkingDirectory: host.cwd, readClientFiles: false, webSocketURL: host.url,
+                  bearerToken: try String(contentsOf: hosts.tokenFile(for: host), encoding: .utf8)))
+                let checked = await runForeground("/remote connect", resumeInput: false) {
+                  do { _ = try await probe.workspace(); await probe.disconnect(); return true }
+                  catch { await probe.disconnect(); await terminal.line("error: \(error.localizedDescription)", to: .standardError); return false }
+                }
+                if checked.value && !checked.interrupted {
+                  guard let configPath = visual.configurationPath else {
+                    throw JSONRPCError.invalidParams("No writable configuration is active")
+                  }
+                  var draft = configuration ?? MaiConfiguration()
+                  draft.providers.removeAll { $0.id == provider.id }
+                  draft.providers.append(provider)
+                  let agent = AgentDefinition(id: host.providerID, displayName: host.name,
+                    description: "Remote pmai on \(host.name)", instructions: "", provider: .init(host.providerID), model: host.providerID)
+                  draft.upsertAgent(agent)
+                  let built = try await plugins.makeProvider(from: provider, environment: ProcessInfo.processInfo.environment)
+                  try draft.save(to: URL(fileURLWithPath: configPath))
+                  try await runtime.register(built, replacingExisting: true)
+                  try await runtime.register(agent: agent, replacingExisting: true)
+                  configuration = draft
+                  visual.modelCatalog.invalidate()
+                  await recordSubagents()
+                  workspace.upsert(session.chat, selecting: true)
+                  if !session.profile.provider.rawValue.hasPrefix("remote.") { remoteReturnChatID = session.id }
+                  session = REPLSession(chat: workspace.startNewChat(primaryAgent: agent))
+                  await saveWorkspace(&workspace, store: store, terminal: terminal)
+                  await terminal.line("Connected to \(host.name). Messages run on that host; /remote disconnect returns to your local chat.")
+                }
+              case "disconnect", "local":
+                guard loop.activeTurn == nil else {
+                  throw JSONRPCError.invalidParams("Finish or stop the current turn before disconnecting.")
+                }
+                workspace.upsert(session.chat, selecting: true)
+                let chat = workspace.chats.first { $0.id == remoteReturnChatID }
+                  ?? workspace.orderedChats.first { !$0.primaryAgent.provider.rawValue.hasPrefix("remote.") }
+                if let chat {
+                  await switchSession(to: chat, session: &session, workspace: &workspace, terminal: terminal)
+                } else {
+                  let agent = configuration?.agents.first { $0.id == configuration?.defaultAgent }
+                    ?? localProfile.agentDefinition
+                  session = REPLSession(chat: workspace.startNewChat(primaryAgent: agent))
+                }
+                remoteReturnChatID = nil
+                await saveWorkspace(&workspace, store: store, terminal: terminal)
+                await terminal.line("Using your local chat.")
+              case "help": await terminal.line(remoteHelp)
+              default: throw JSONRPCError.invalidParams("Unknown /remote command. /help remote lists commands.")
+              }
+            } catch {
+              await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+            }
+            await refreshStatus()
+            await releaseIfIdle(workspace: workspace)
+            continue
+          }
           if name == "/queue" {
             let main = await mainProcess()
             await handleQueueCommand(
@@ -3362,6 +3553,101 @@ struct MaiCLI {
           // Every other command runs now. What it changes and the running
           // turn meet as noteTurnEffects describes, with a note, not a wait.
           let before = REPLCommandSnapshot(session: session)
+          if name == "/projects" {
+            do {
+              let fields = try shellWords(argument)
+              let action = fields.first?.lowercased() ?? "list"
+              let arguments = Array(fields.dropFirst())
+              let index = try home.loadProjectIndex()
+              switch action {
+              case "list", "ls":
+                await terminal.line(projectListing(index, currentID: project.id, now: Date()))
+              case "open", "use", "switch":
+                guard arguments.count == 1 else { throw JSONRPCError.invalidParams("Usage: /projects open INDEX|NAME|PATH") }
+                guard loop.activeTurn == nil, await runtime.supervisor.liveProcesses().isEmpty else {
+                  throw JSONRPCError.invalidParams("Stop running agents before switching projects.")
+                }
+                let selector = arguments[0]
+                let directory = resolveProject(selector, in: index)?.workingDirectory
+                  ?? AgentProject.standardizedPath(AgentHome.expandUserPath(selector))
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: directory, isDirectory: &isDirectory), isDirectory.boolValue else {
+                  throw JSONRPCError.invalidParams("No project or directory matches '\(selector)'. /projects lists them.")
+                }
+                let target = try home.openProject(atWorkingDirectory: URL(fileURLWithPath: directory))
+                if target.id == project.id { await terminal.line("Already in '\(project.displayName)'."); break }
+                let nextStore = home.chatStore(for: target)
+                var nextWorkspace = try nextStore.loadWorkspace()
+                if let chat = nextWorkspace.orderedChats.first(where: { !$0.isArchived }) ?? nextWorkspace.orderedChats.first {
+                  _ = nextWorkspace.selectChat(id: chat.id)
+                } else {
+                  let agent = configuration?.agents.first { $0.id == configuration?.defaultAgent } ?? localProfile.agentDefinition
+                  nextWorkspace.startNewChat(primaryAgent: agent)
+                }
+                await recordSubagents()
+                workspace.upsert(session.chat, selecting: true)
+                try store.commit(&workspace)
+                let previousSession = session
+                let previousWorkspace = workspace
+                session = REPLSession(chat: nextWorkspace.selectedChat!)
+                do {
+                  try await restoreChatConfiguration(previous: previousSession,
+                    isNewChat: nextWorkspace.selectedChat?.isDisposable == true)
+                  guard FileManager.default.changeCurrentDirectoryPath(directory) else {
+                    throw JSONRPCError.invalidParams("Cannot open directory '\(directory)'.")
+                  }
+                  try await visual.approvalHandler.focusProject(home.storageDirectory(for: target).appendingPathComponent("settings.json"))
+                  let debugLog = await visual.approvalHandler.isDebugEnabled()
+                    ? try AgentDebugLog(url: await visual.approvalHandler.debugLogURL()) : nil
+                  await runtime.configureDebugLog(debugLog)
+                } catch {
+                  let attemptedSession = session
+                  session = previousSession
+                  workspace = previousWorkspace
+                  _ = FileManager.default.changeCurrentDirectoryPath(project.workingDirectory)
+                  try? await restoreChatConfiguration(previous: attemptedSession, isNewChat: false)
+                  try? await visual.approvalHandler.focusProject(home.storageDirectory(for: project).appendingPathComponent("settings.json"))
+                  throw error
+                }
+                project = target
+                store = nextStore
+                workspace = nextWorkspace
+                remoteReturnChatID = nil
+                visual.memory.adopt(project: target, settings: configuration?.memory ?? .init())
+                visual.todo.focus(project: target)
+                visual.skills.focus(project: target)
+                await restoreSavedSubagents()
+                await terminal.line("Opened project '\(target.displayName)' · \(target.workingDirectory) · chat '\(session.title)'.")
+              case "rename", "name", "tint", "color", "colour":
+                guard arguments.count >= 2, var target = resolveProject(arguments[0], in: index) else {
+                  throw JSONRPCError.invalidParams("Usage: /projects \(action) INDEX|NAME|PATH VALUE")
+                }
+                let value = arguments.dropFirst().joined(separator: " ")
+                if action == "rename" || action == "name" { target.rename(to: value) }
+                else if ["none", "off", "default", "-"].contains(value.lowercased()) { target.tint = nil }
+                else {
+                  guard let tint = AgentProjectTint(rawValue: value) else { throw JSONRPCError.invalidParams("Use a preset color, #RRGGBB, or none.") }
+                  target.tint = tint
+                }
+                try home.saveProject(target)
+                if target.id == project.id { project = target }
+                await terminal.line("Updated project '\(target.displayName)'.")
+              case "forget":
+                guard arguments.count == 1 else { throw JSONRPCError.invalidParams("Usage: /projects forget INDEX|NAME|PATH") }
+                await handleProjectCommand("forget " + arguments[0], project: &project, home: home, store: store, terminal: terminal)
+              case "info", "show":
+                guard arguments.count == 1, let target = resolveProject(arguments[0], in: index) else {
+                  throw JSONRPCError.invalidParams("Usage: /projects info INDEX|NAME|PATH")
+                }
+                await terminal.line(projectInfo(target, home: home, store: home.chatStore(for: target)))
+              case "help": await terminal.line(projectsHelp)
+              default: throw JSONRPCError.invalidParams("Unknown /projects command. /help projects lists commands.")
+              }
+            } catch { await terminal.line("error: \(error.localizedDescription)", to: .standardError) }
+            await refreshStatus()
+            await releaseIfIdle(workspace: workspace)
+            continue
+          }
           if name == "/project" {
             await handleProjectCommand(
               argument,
@@ -3752,6 +4038,7 @@ struct MaiCLI {
     }
 
     loop.beginExit()
+    await remoteServer.stop()
     await MaiRunTerminalHost.shared.install(runner: nil)
     reader.stop()
     visual.modelCatalog.cancel()
@@ -4342,6 +4629,12 @@ struct MaiCLI {
     visual: VisualBridge
   ) async throws -> String {
     let command = line.split(maxSplits: 1, whereSeparator: \Character.isWhitespace).map(String.init)
+    if command.first == "/remote" {
+      return "Only the person at the REPL can pair, connect, or serve remote hosts. /help remote describes the commands."
+    }
+    if command.first == "/projects" {
+      return "Only the person at the REPL can switch or manage projects. /help projects describes the commands."
+    }
     if command.first == "/cd" {
       return
         "Only the person at the REPL can change the working directory and implicit Files workspace."
@@ -4449,6 +4742,12 @@ struct MaiCLI {
         await terminal.line(jobsHelp)
       case "mcp", "/mcp":
         await terminal.line(mcpCommandHelp)
+      case "remote", "/remote":
+        await terminal.line(remoteHelp)
+      case "projects", "/projects":
+        await terminal.line(projectsHelp)
+      case "project", "/project":
+        await terminal.line(projectHelp)
       case "chat", "/chat":
         await terminal.line(chatHelp)
       case "edit", "/edit":
@@ -4473,11 +4772,15 @@ struct MaiCLI {
         await terminal.line(pathHelp)
       default:
         await terminal.line(
-          "Unknown help topic '\(argument)'. Try /help, or /help set, theme, memory, todo, prompts, agents, jobs, mcp, chat, edit, tools, skills, queue, export, import, copy, or stats."
+          "Unknown help topic '\(argument)'. Try /help, or /help set, theme, memory, todo, prompts, agents, jobs, mcp, remote, projects, chat, edit, tools, skills, queue, export, import, copy, or stats."
         )
       }
     case "/cwd", "/pwd":
       await terminal.line(FileManager.default.currentDirectoryPath)
+    case "/remote":
+      await terminal.line(remoteHelp)
+    case "/projects":
+      await terminal.line(projectsHelp)
     case "/path":
       await handlePathCommand(
         argument, runtime: runtime, configuration: &configuration,
@@ -11707,6 +12010,11 @@ struct MaiCLI {
       "/btw ",
       "/help memory", "/help agents", "/help jobs", "/help chat", "/help edit", "/help tools",
       "/agent acp list", "/agent acp add ", "/agents acp list",
+      "/help remote", "/remote", "/remote serve", "/remote stop", "/remote qr", "/remote status",
+      "/remote list", "/remote pair ", "/remote connect ", "/remote disconnect",
+      "/remote pending", "/remote accept", "/remote reject", "/remote clients", "/remote revoke ",
+      "/help projects", "/projects", "/projects list", "/projects open ", "/projects switch ",
+      "/projects rename ", "/projects tint ", "/projects forget ", "/projects info ",
       "/memory", "/memory edit", "/memory learn", "/memory learn --all", "/memory add ",
       "/memory clear", "/memory on", "/memory off", "/memory scope none",
       "/memory scope project", "/memory scope all", "/edit memory", "/edit memory-prompt",
@@ -12090,6 +12398,32 @@ struct MaiCLI {
     #endif
   }()
 
+  private static let remoteHelp = """
+    /remote serve          Start sharing all indexed pmai projects; prints your address and a pairing QR
+    /remote serve --path PATH ...  Share only these directories and their descendants
+    /remote stop           Stop the server and disconnect its clients
+    /remote qr             Show the running server's pairing QR and connection URI again
+    /remote list            List paired hosts and server status
+    /remote pair PROFILE [NAME]  Save a connection URI, profile text file, or QR image
+    /remote pending        List clients waiting for your approval
+    /remote accept [CODE]  Accept a pairing request; omit CODE when only one is waiting
+    /remote reject [CODE]  Reject a pairing request
+    /remote clients        List accepted clients
+    /remote revoke ID      Revoke an accepted client's access
+    /remote connect NAME   Open a new chat with a paired host's agent
+    /remote disconnect     Return to your local chat
+
+    /remote serve keeps this REPL usable and stops when it exits. Your LAN address,
+    port 19283, current agent, and current directory are selected automatically.
+    All projects in ~/.pmai/projects.json and their saved chats are shared by default.
+    Use --path PATH ... to restrict folders, --port PORT to change the port, --address
+    IP to choose another interface, or --name NAME to choose the advertised host name.
+    Scan the QR in PocketMai → Hosts. On another CLI, pair the URI or QR image once.
+    Accept the client in the serving REPL before it can browse or run agents, then
+    /remote connect NAME. Remote tools use the normal approval flow. /chat use
+    reopens a saved remote chat, restoring its session on the server.
+    """
+
   private static let pathHelp = """
     /path                  Show current directory, Files workspace, grants, and rules
     /path allow PATH       Allow a file or directory (alias: add)
@@ -12172,7 +12506,8 @@ struct MaiCLI {
     /nothink               Disable reasoning where the model supports it
     /path                  Show or change Files sandbox paths and access policies
     /plugins               List statically and dynamically loaded plugins
-    /project               Show, list, rename, or tint the project (the start directory)
+    /project               Show, rename, or tint the current project
+    /projects              List, manage, and switch working directories; /help projects lists commands
     /prompt                Manage named system prompts; /help prompt lists commands
     /prompts               List every prompt and skill; $NAME [TEXT] sends one (/help prompt)
     /provider ID           Select a provider
@@ -12181,6 +12516,7 @@ struct MaiCLI {
     /providers             List registered providers
     /queue                 List, push, pop, or drop messages waiting for an agent
     /reply [WIDTH]         Answer the last reply in $EDITOR with it quoted above (/help reply)
+    /remote                Serve, pair, and connect to remote hosts; /help remote lists commands
     /set [SETTING VALUE]   Show or change settings; /help set lists them
     /skills                Manage, enable, disable, or send skills (/help skills)
     /stats                 Combined ranking, tokens/s, time in use, and efficiency per provider:model, as bars
@@ -12382,6 +12718,21 @@ struct MaiCLI {
     A chat is saved with the agents its runs started and their transcripts:
     reopening it lists them under /jobs tree, /jobs log PID reads one,
     /chat info counts them, and /jobs clear drops them from the chat.
+    """
+
+  private static let projectsHelp = """
+    /projects              List every indexed working directory, recent first
+    /projects open INDEX|NAME|PATH  Switch directory and load its saved conversations (alias: switch)
+    /projects info SELECTOR  Show another project's details and chat counts
+    /projects rename SELECTOR NAME  Rename an indexed project
+    /projects tint SELECTOR COLOR  Change a project's accent color
+    /projects forget SELECTOR  Remove another project from the index; keep its files
+
+    Select by list number, name, path, or ID prefix; quote names and paths with spaces.
+    Opening a new directory registers it in ~/.pmai/projects.json. /remote serve
+    shares this same index by default, and Refresh in PocketMai picks up changes.
+    /project shows the current project's details. /cd changes only the tools'
+    working directory; /projects open also switches the chat workspace and local settings.
     """
 
   private static let projectHelp = """

@@ -1238,6 +1238,8 @@ final class TerminalLineEditor {
 
   private func remember(_ line: String) {
     guard !line.isEmpty else { return }
+    let command = line.split(whereSeparator: \.isWhitespace).prefix(2).map(String.init)
+    if command.count == 2, command[0] == "/remote", command[1].lowercased() == "pair" { return }
     if history.last != line { history.append(line) }
     if history.count > maximumHistory {
       history.removeFirst(history.count - maximumHistory)

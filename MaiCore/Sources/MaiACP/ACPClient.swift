@@ -58,6 +58,7 @@ public actor ACPClient {
   private var sessionID: String?
   private var sessionLoaded = false
   private var supportsLoad = false
+  private var supportsList = false
   private var busy = false
   /// The delta sink for the prompt in flight; only one prompt runs at a time.
   private var activeSink: (@Sendable (ProviderEvent) async -> Void)?
@@ -82,6 +83,98 @@ public actor ACPClient {
   }
 
   public var currentSessionID: String? { sessionID }
+
+  /// Redeems a server's pairing invitation. Invitations cannot initialize ACP
+  /// or access files/chats; the server operator must approve this request.
+  public func requestPairing(clientID: String, name: String) async throws -> String {
+    guard !busy, let url = configuration.webSocketURL else {
+      throw JSONRPCError.invalidParams("Pairing requires an idle WebSocket client")
+    }
+    busy = true
+    defer { busy = false }
+    await disconnect()
+    let transport = try WebSocketJSONRPCTransport(url: url, bearerToken: configuration.bearerToken)
+    let peer = JSONRPCPeer(transport: transport)
+    self.transport = transport
+    self.peer = peer
+    await peer.start()
+    do {
+      let result = try await peer.request(
+        "_pmai/pair",
+        params: .object([
+          "clientID": .string(clientID), "name": .string(name),
+        ]), timeout: 0)
+      guard let token = result.objectValue?["token"]?.stringValue, !token.isEmpty else {
+        throw JSONRPCError.invalidParams("The server did not approve pairing")
+      }
+      await disconnect()
+      return token
+    } catch {
+      await disconnect()
+      throw error
+    }
+  }
+
+  /// Discovers host work without creating a conversation. Nil means the agent
+  /// predates session discovery; callers can still use its configured workspace.
+  public func workspace() async throws -> ACPWorkspaceSnapshot? {
+    guard !busy else { throw JSONRPCError.invalidParams("An ACP operation is already running") }
+    busy = true
+    defer { busy = false }
+    let peer = try await connectedPeer()
+    guard supportsList else { return nil }
+    var snapshot = ACPWorkspaceSnapshot()
+    var cursor: String?
+    var seenCursors = Set<String>()
+    repeat {
+      var params: [String: JSONValue] = [:]
+      if let cursor { params["cursor"] = .string(cursor) }
+      let result = try await peer.request(
+        ACP.Method.sessionList, params: .object(params), timeout: 60)
+      guard let fields = result.objectValue, let sessions = fields["sessions"]?.arrayValue else {
+        throw JSONRPCError.invalidParams("Invalid session/list response")
+      }
+      for value in sessions {
+        guard let entry = value.objectValue,
+          let id = entry["sessionId"]?.stringValue, !id.isEmpty,
+          let cwd = entry["cwd"]?.stringValue, cwd.hasPrefix("/")
+        else { continue }
+        let date = entry["updatedAt"]?.stringValue.flatMap {
+          (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse($0))
+            ?? (try? Date.ISO8601FormatStyle().parse($0))
+        }
+        if !snapshot.sessions.contains(where: { $0.sessionID == id }) {
+          snapshot.sessions.append(
+            .init(
+              sessionID: id, cwd: cwd,
+              title: entry["title"]?.stringValue ?? AgentChat.placeholderTitle, updatedAt: date))
+        }
+      }
+      let folders = fields["_meta"]?.objectValue?["pmai"]?.objectValue?["folders"]?.arrayValue ?? []
+      for value in folders {
+        guard let entry = value.objectValue, let cwd = entry["cwd"]?.stringValue,
+          cwd.hasPrefix("/"), !snapshot.folders.contains(where: { $0.cwd == cwd })
+        else { continue }
+        snapshot.folders.append(
+          .init(
+            cwd: cwd,
+            name: entry["name"]?.stringValue ?? cwd, icon: entry["icon"]?.stringValue,
+            tint: entry["tint"]?.stringValue))
+      }
+      cursor = fields["nextCursor"]?.stringValue
+      if let cursor, !seenCursors.insert(cursor).inserted {
+        throw JSONRPCError.invalidParams("The agent repeated a session list cursor")
+      }
+    } while cursor != nil
+    for session in snapshot.sessions
+    where !snapshot.folders.contains(where: { $0.cwd == session.cwd }) {
+      snapshot.folders.append(
+        .init(
+          cwd: session.cwd,
+          name: AgentProject.defaultName(forWorkingDirectory: session.cwd) ?? session.cwd))
+    }
+    return snapshot
+  }
 
   /// Runs one prompt to completion, streaming assistant and reasoning deltas
   /// through `emit`, and returns the agent's stop reason.
@@ -180,6 +273,9 @@ public actor ACPClient {
       supportsLoad =
         initialized.objectValue?["agentCapabilities"]?.objectValue?["loadSession"]?.boolValue
         == true
+      supportsList =
+        initialized.objectValue?["agentCapabilities"]?.objectValue?["sessionCapabilities"]?
+        .objectValue?["list"]?.objectValue != nil
       guard initialized.objectValue?["protocolVersion"]?.intValue == ACP.protocolVersion else {
         throw JSONRPCError.invalidParams("The agent returned an unsupported ACP protocol version")
       }

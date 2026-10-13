@@ -108,7 +108,7 @@ enum ACPGatewayCLI {
     try await server.value
   }
 
-  private static func loadToken(_ tokenFile: URL) throws -> String {
+  static func loadToken(_ tokenFile: URL) throws -> String {
     try FileManager.default.createDirectory(
       at: tokenFile.deletingLastPathComponent(),
       withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])

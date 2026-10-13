@@ -128,7 +128,18 @@ for line in sys.stdin:
     method = message.get("method")
     params = message.get("params", {})
     if method == "initialize":
-        result = {"protocolVersion": 1, "agentCapabilities": {"loadSession": True}}
+        result = {"protocolVersion": 1, "agentCapabilities": {
+            "loadSession": True, "sessionCapabilities": {"list": {}}}}
+    elif method == "session/list":
+        if params.get("cursor") == "more":
+            result = {"sessions": [{"sessionId": "other-session", "cwd": str(root / "other"),
+                                     "title": "Other conversation"}]}
+        else:
+            result = {"sessions": [{"sessionId": "fixture-session", "cwd": str(root),
+                                     "title": "Existing conversation"}], "nextCursor": "more",
+                      "_meta": {"pmai": {"folders": [
+                          {"cwd": str(root), "name": "Workspace"},
+                          {"cwd": str(root / "empty"), "name": "Empty project"}]}}}
     elif method == "session/new":
         result = {"sessionId": "fixture-session"}
     elif method == "session/load":
