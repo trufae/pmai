@@ -71,6 +71,9 @@ def chats(directory):
 
 
 def run():
+    version = subprocess.run([PMAI, "--version"], env=clean_environment(),
+                             capture_output=True, text=True, check=True).stdout.strip()
+    assert version, "CLI did not report a version"
     with tempfile.TemporaryDirectory(prefix="pmai-remote-repl-") as directory:
         root = Path(directory).resolve()
         home = root / "home"
@@ -203,7 +206,7 @@ def run():
             server.wait("Revoked client test-inspector.")
             WS(port, approved_token, accepted=False)
             server.send("/version")
-            server.wait("1.10.0")
+            server.wait(version)
             print("Optional multi-path restriction and a usable REPL while serving: passed", flush=True)
         finally:
             if client:

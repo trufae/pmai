@@ -9,7 +9,7 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parent.parent
-SMOKE = '''installer project-approval project-debug provider-routing repl-defaults
+SMOKE = '''installer project-approval project-debug projects-repl provider-routing remote-repl repl-defaults
 repl-export repl-local-providers repl-resume repl-resume-routing
 repl-resume-state repl-skills repl-smart-context repl-speed repl-tool-policy task-agents
 update vim web-fetch'''.split()

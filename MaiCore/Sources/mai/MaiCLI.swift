@@ -12536,8 +12536,8 @@ struct MaiCLI {
     /provider rename [OLD] NEW  Rename a provider and update its agents
     /providers             List registered providers
     /queue                 List, push, pop, or drop messages waiting for an agent
-    /reply [WIDTH]         Answer the last reply in $EDITOR with it quoted above (/help reply)
     /remote                Serve, pair, and connect to remote hosts; /help remote lists commands
+    /reply [WIDTH]         Answer the last reply in $EDITOR with it quoted above (/help reply)
     /set [SETTING VALUE]   Show or change settings; /help set lists them
     /skills                Manage, enable, disable, or send skills (/help skills)
     /stats                 Combined ranking, tokens/s, time in use, and efficiency per provider:model, as bars

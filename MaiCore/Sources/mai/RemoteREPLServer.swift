@@ -23,23 +23,33 @@ enum RemoteAddress {
         throw JSONRPCError.internalError("Cannot enumerate network interfaces")
       }
       defer { freeifaddrs(interfaces) }
+      #if canImport(Android)
+        // Android imports these flags as C enum values instead of integers.
+        let upFlag = UInt32(IFF_UP.rawValue)
+        let loopbackFlag = UInt32(IFF_LOOPBACK.rawValue)
+      #else
+        let upFlag = UInt32(IFF_UP)
+        let loopbackFlag = UInt32(IFF_LOOPBACK)
+      #endif
       var candidates: [(Int, String, String)] = []
       var cursor: UnsafeMutablePointer<ifaddrs>? = first
       while let item = cursor {
         defer { cursor = item.pointee.ifa_next }
         let flags = item.pointee.ifa_flags
+        let interfaceName: UnsafeMutablePointer<CChar>? = item.pointee.ifa_name
         guard let address = item.pointee.ifa_addr,
+          let interfaceName,
           Int32(address.pointee.sa_family) == AF_INET,
-          flags & UInt32(IFF_UP) != 0, flags & UInt32(IFF_LOOPBACK) == 0
+          flags & upFlag != 0, flags & loopbackFlag == 0
         else { continue }
         var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
         guard
           getnameinfo(
             address, socklen_t(MemoryLayout<sockaddr_in>.size), &buffer,
-            socklen_t(buffer.count), nil, 0, NI_NUMERICHOST) == 0
+            .init(buffer.count), nil, 0, NI_NUMERICHOST) == 0
         else { continue }
         let ip = String(cString: buffer)
-        let name = String(cString: item.pointee.ifa_name)
+        let name = String(cString: interfaceName)
         guard !ip.hasPrefix("169.254."), !ip.hasPrefix("127.") else { continue }
         let physical = name.hasPrefix("en") || name.hasPrefix("eth") || name.hasPrefix("wl")
         candidates.append((physical ? 0 : 1, name, ip))
