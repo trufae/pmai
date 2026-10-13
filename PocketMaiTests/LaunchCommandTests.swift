@@ -19,13 +19,16 @@ final class LaunchCommandTests: XCTestCase {
     ]
 
     var settings = AppSettings.defaults
-    settings.startupBehavior = .lastConversation
-    settings.lastSelectedConversationID = previousConversation.id
     settings.streamByDefault = false
     settings.defaultEnabledMCPServers = []
     let encoder = JSONEncoder()
     encoder.dateEncodingStrategy = .iso8601
-    try encoder.encode(settings).write(to: baseURL.appendingPathComponent("settings.json"))
+    var legacySettings = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: encoder.encode(settings)) as? [String: Any])
+    legacySettings["startupBehavior"] = "lastConversation"
+    legacySettings["lastSelectedConversationID"] = previousConversation.id.uuidString
+    try JSONSerialization.data(withJSONObject: legacySettings)
+      .write(to: baseURL.appendingPathComponent("settings.json"))
     try encoder.encode(previousConversation).write(
       to: conversationsURL.appendingPathComponent("\(previousConversation.id.uuidString).json"))
   }
@@ -60,7 +63,7 @@ final class LaunchCommandTests: XCTestCase {
     }
   }
 
-  func testWidgetLaunchOverridesLastConversationDuringStartup() async throws {
+  func testWidgetLaunchKeepsFreshConversationDuringStartup() async throws {
     let store = AppStore(persistence: PersistenceStore(localBaseURL: baseURL))
     let placeholderID = try XCTUnwrap(store.currentConversation?.id)
     store.handleLaunchCommand(.newPrompt(text: nil))
@@ -73,12 +76,14 @@ final class LaunchCommandTests: XCTestCase {
     XCTAssertTrue(store.conversationSummaries.contains { $0.id == previousConversation.id })
   }
 
-  func testNormalLaunchStillRestoresLastConversation() async throws {
+  func testNormalLaunchOffersRecentChatsDespiteLegacyPreference() async throws {
     let store = AppStore(persistence: PersistenceStore(localBaseURL: baseURL))
     try await waitForStartup(store)
 
-    XCTAssertEqual(store.currentConversation?.id, previousConversation.id)
-    XCTAssertEqual(store.currentConversation?.messages, previousConversation.messages)
+    let fresh = try XCTUnwrap(store.currentConversation)
+    XCTAssertNotEqual(fresh.id, previousConversation.id)
+    XCTAssertTrue(fresh.messages.isEmpty)
+    XCTAssertEqual(store.previousConversationSuggestions.map(\.id), [previousConversation.id])
     XCTAssertNil(store.pendingLaunchAction)
   }
 

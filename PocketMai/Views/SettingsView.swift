@@ -857,13 +857,6 @@ struct SettingsView: View {
     }
     .pickerStyle(.menu)
 
-    Picker("On Launch", selection: settingsBinding(\.startupBehavior)) {
-      ForEach(AppStartupBehavior.allCases) { behavior in
-        Text(behavior.displayName).tag(behavior)
-      }
-    }
-    .pickerStyle(.menu)
-
     Toggle("Render Markdown", isOn: settingsBinding(\.renderMarkdownInChat))
     Toggle("Live Markdown", isOn: settingsBinding(\.appearance.liveMarkdown))
     Toggle("Render images", isOn: settingsBinding(\.renderMarkdownImagesInChat))
