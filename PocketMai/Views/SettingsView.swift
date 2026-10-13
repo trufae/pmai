@@ -348,7 +348,8 @@ struct SettingsView: View {
   var body: some View {
     NavigationStack(path: $navigationPath) {
       Form {
-        providerSection
+        inferenceSection
+        agentSection
         appearanceSection
         toolsSection
         dangerSection
@@ -655,7 +656,7 @@ struct SettingsView: View {
     }
   }
 
-  private var providerSection: some View {
+  private var inferenceSection: some View {
     Section {
       SettingsLazyDisclosureGroup {
         endpointContent
@@ -663,6 +664,24 @@ struct SettingsView: View {
         Label("Providers", systemImage: "network")
       }
 
+      SettingsLazyDisclosureGroup {
+        openAPIServerContent
+      } label: {
+        Label("OpenAPI Server", systemImage: "server.rack")
+      }
+
+      SettingsLazyDisclosureGroup {
+        advancedOptionsContent
+      } label: {
+        Label("Advanced Options", systemImage: "slider.horizontal.3")
+      }
+    } header: {
+      Text("Inference")
+    }
+  }
+
+  private var agentSection: some View {
+    Section {
       agentsContent
 
       SettingsLazyDisclosureGroup {
@@ -676,26 +695,8 @@ struct SettingsView: View {
       } label: {
         Label("User Prompts", systemImage: "text.quote")
       }
-
-      SettingsLazyDisclosureGroup {
-        advancedOptionsContent
-      } label: {
-        Label("Advanced Options", systemImage: "slider.horizontal.3")
-      }
-
-      SettingsLazyDisclosureGroup {
-        followUpOptionsContent
-      } label: {
-        Label("Follow-up Suggestions", systemImage: "text.bubble.fill")
-      }
-
-      SettingsLazyDisclosureGroup {
-        openAPIServerContent
-      } label: {
-        Label("OpenAPI Server", systemImage: "server.rack")
-      }
     } header: {
-      Text("Inference")
+      Text("Agent")
     }
   }
 
@@ -779,6 +780,12 @@ struct SettingsView: View {
         conversationOptionsContent
       } label: {
         Label("Conversation", systemImage: "mic.badge.plus")
+      }
+
+      SettingsLazyDisclosureGroup {
+        followUpOptionsContent
+      } label: {
+        Label("Follow-up Suggestions", systemImage: "text.bubble.fill")
       }
 
       SettingsLazyDisclosureGroup {

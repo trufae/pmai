@@ -261,7 +261,11 @@ struct ChatView: View {
         ToolbarItem(placement: .topBarLeading) {
           Button(action: onShowHistory) {
             ZStack(alignment: .topTrailing) {
-              Image(systemName: "sidebar.left")
+              VStack(alignment: .leading, spacing: 6) {
+                Capsule().frame(width: 22, height: 2)
+                Capsule().frame(width: 14, height: 2)
+              }
+              .frame(width: 24, height: 22, alignment: .leading)
               if hasUnreadConversations {
                 Circle()
                   .fill(Color.accentColor)
