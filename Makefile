@@ -125,7 +125,8 @@ repl-build:
 	python3 sys/build-mlx-metal.py --bin-dir "$$($(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) --show-bin-path)"
 
 repl-install:
-	$(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) -c release --product pmai
+	$(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) --product pmai
+	# $(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) -c release --product pmai
 	python3 sys/build-mlx-metal.py --bin-dir "$$($(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) -c release --show-bin-path)"
 	mkdir -p $(BINDIR)
 	cp -f "$$($(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) -c release --show-bin-path)/pmai" $(BINDIR)/pmai
