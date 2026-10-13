@@ -482,7 +482,6 @@ final class AppStore: ObservableObject {
   private var activeConversationPublicationKey: ActiveConversationPublicationKey?
   private(set) var hasLoadedPersistedSettings = false
   private var pendingSettingsSave = false
-  private var pendingRememberedConversationIDBeforeSettingsLoad: UUID?
   private var hasLoadedPersistedDrafts = false
   private var pendingDraftSave = false
   private var dirtyDraftIDsBeforeLoad: Set<UUID> = []
@@ -541,7 +540,6 @@ final class AppStore: ObservableObject {
   }
 
   var previousConversationSuggestions: [ConversationSummary] {
-    guard settings.startupBehavior == .continueChats else { return [] }
     let suggestions =
       recentConversationSummaries
       .filter { $0.id != selectedConversationID && $0.hasMessages }
@@ -976,7 +974,7 @@ final class AppStore: ObservableObject {
     launchPlaceholderConversationID = conversation.id
     conversations.insert(conversation, at: 0)
     sortConversations()
-    setSelectedConversationID(conversation.id, remember: false)
+    setSelectedConversationID(conversation.id)
     selectedConversationIDs.removeAll()
   }
 
@@ -1016,8 +1014,7 @@ final class AppStore: ObservableObject {
     guard generation == dataGeneration else { return }
     mergeLoadedSummaries(summaries)
 
-    await loadStartupConversationIfNeeded()
-    guard generation == dataGeneration else { return }
+    launchPlaceholderConversationID = nil
     warmEnabledMCPServersInBackground(for: selectedConversationID)
 
     let loadedDrafts = await draftsTask.value
@@ -1040,10 +1037,6 @@ final class AppStore: ObservableObject {
   private func applyLoadedSettings(_ loadedSettings: AppSettings) {
     guard !hasLoadedPersistedSettings else { return }
     settings = loadedSettings
-    if let pendingRememberedConversationIDBeforeSettingsLoad {
-      settings.lastSelectedConversationID = pendingRememberedConversationIDBeforeSettingsLoad
-      self.pendingRememberedConversationIDBeforeSettingsLoad = nil
-    }
     hasLoadedPersistedSettings = true
     applyBackgroundActivitySettings()
     refreshLaunchPlaceholderDefaultsIfNeeded()
@@ -1114,7 +1107,7 @@ final class AppStore: ObservableObject {
 
     rebuildConversationFromDefaults(at: index)
     if selectedConversationID == placeholderID {
-      setSelectedConversationID(placeholderID, remember: false)
+      setSelectedConversationID(placeholderID)
     }
   }
 
@@ -1132,68 +1125,11 @@ final class AppStore: ObservableObject {
     sortConversations()
   }
 
-  private func loadStartupConversationIfNeeded() async {
-    let placeholderID = launchPlaceholderConversationID
-    launchPlaceholderConversationID = nil
-    guard conversationSelectionGeneration == 0,
-      settings.startupBehavior == .lastConversation,
-      selectedConversationID == placeholderID,
-      startupPlaceholderIsStillDisposable(placeholderID),
-      let id = startupConversationID(excluding: placeholderID)
-    else {
-      return
-    }
-    await ensureConversationLoaded(id)
-    guard conversationSelectionGeneration == 0, conversation(withID: id) != nil else { return }
-    setSelectedConversationID(id)
-    selectedConversationIDs.removeAll()
-    _ = discardDisposableConversation(id: placeholderID)
-  }
-
-  private func startupPlaceholderIsStillDisposable(_ id: UUID?) -> Bool {
-    guard let id,
-      let conversation = conversation(withID: id)
-    else {
-      return true
-    }
-    return isDisposableNewConversation(conversation)
-  }
-
-  private func startupConversationID(excluding excludedID: UUID?) -> UUID? {
-    if let rememberedID = settings.lastSelectedConversationID,
-      let remembered = conversationSummary(withID: rememberedID),
-      isStartupConversationCandidate(remembered, excluding: excludedID, allowArchived: true)
-    {
-      return rememberedID
-    }
-
-    return
-      conversationSummaries
-      .filter { isStartupConversationCandidate($0, excluding: excludedID, allowArchived: false) }
-      .max { lhs, rhs in
-        if lhs.updatedAt != rhs.updatedAt {
-          return lhs.updatedAt < rhs.updatedAt
-        }
-        return lhs.createdAt < rhs.createdAt
-      }?
-      .id
-  }
-
   private func conversationSummary(withID id: UUID) -> ConversationSummary? {
     if let conversation = conversation(withID: id) {
       return ConversationSummary(conversation: conversation)
     }
     return conversationSummaries.first { $0.id == id }
-  }
-
-  private func isStartupConversationCandidate(
-    _ summary: ConversationSummary,
-    excluding excludedID: UUID?,
-    allowArchived: Bool
-  ) -> Bool {
-    summary.id != excludedID
-      && summary.hasMessages
-      && (allowArchived || !summary.isArchived)
   }
 
   private func makeNewConversation() -> Conversation {
@@ -1229,24 +1165,12 @@ final class AppStore: ObservableObject {
     saveConversations()
   }
 
-  private func setSelectedConversationID(_ id: UUID?, remember: Bool = true) {
+  private func setSelectedConversationID(_ id: UUID?) {
     selectedConversationID = id
     if let id {
       updateConversationUnreadState(id: id, isUnread: false)
     }
     publishActiveConversationIfNeeded(force: true)
-    if remember {
-      rememberSelectedConversationID(id)
-    }
-  }
-
-  private func rememberSelectedConversationID(_ id: UUID?) {
-    guard settings.lastSelectedConversationID != id else { return }
-    settings.lastSelectedConversationID = id
-    if !hasLoadedPersistedSettings {
-      pendingRememberedConversationIDBeforeSettingsLoad = id
-    }
-    saveSettings()
   }
 
   private func conversationUsesNewConversationDefaults(_ conversation: Conversation) -> Bool {
@@ -1742,7 +1666,6 @@ final class AppStore: ObservableObject {
     isCompacting = false
     hasLoadedPersistedSettings = true
     pendingSettingsSave = false
-    pendingRememberedConversationIDBeforeSettingsLoad = nil
     hasLoadedPersistedDrafts = true
     pendingDraftSave = false
     dirtyDraftIDsBeforeLoad.removeAll()
@@ -2075,7 +1998,6 @@ final class AppStore: ObservableObject {
     }
 
     errorMessage = nil
-    rememberSelectedConversationID(conversationID)
     await composeUserTurn(
       prompt: resolved.prompt,
       displayText: resolved.displayText,
@@ -3841,7 +3763,7 @@ final class AppStore: ObservableObject {
       return
     }
     rebuildConversationFromDefaults(at: index)
-    setSelectedConversationID(id, remember: false)
+    setSelectedConversationID(id)
   }
 
   var activeLongRunningOperationTimeoutRequest: LongRunningOperationTimeoutRequest? {
@@ -4820,7 +4742,7 @@ final class AppStore: ObservableObject {
     let conversation = makeNewConversation()
     conversations.insert(conversation, at: 0)
     sortConversations()
-    setSelectedConversationID(conversation.id, remember: false)
+    setSelectedConversationID(conversation.id)
     selectedConversationIDs.removeAll()
   }
 

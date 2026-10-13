@@ -328,22 +328,6 @@ enum AppearanceZoomMethod: String, Codable, CaseIterable, Identifiable, Sendable
   }
 }
 
-enum AppStartupBehavior: String, Codable, CaseIterable, Identifiable, Sendable {
-  case continueChats
-  case newChat
-  case lastConversation
-
-  var id: String { rawValue }
-
-  var displayName: String {
-    switch self {
-    case .continueChats: "Continue Chats"
-    case .newChat: "New Chat"
-    case .lastConversation: "Last Conversation"
-    }
-  }
-}
-
 struct AppearanceSettings: Codable, Equatable, Sendable {
   static let fontSizeRange: ClosedRange<Double> = 6...43
   static let fontSizeStep: Double = 0.05
@@ -3113,8 +3097,6 @@ struct AppSettings: Codable, Equatable, Sendable {
   var attachmentImageSize: AttachmentImageSize = .prompt
   var mlxMaxKVSize: MLXKVCacheSize = .auto
   var mlxAutoCompact: Bool = false
-  var startupBehavior: AppStartupBehavior = .continueChats
-  var lastSelectedConversationID: UUID? = nil
   var openAPIServer: OpenAPIServerSettings = OpenAPIServerSettings()
   var recentChatLanguageIdentifiers: [String] = []
   var conversationFolders: [ConversationFolder] = []
@@ -3304,7 +3286,6 @@ struct AppSettings: Codable, Equatable, Sendable {
     case appearance, conversation, documentExport, renderMarkdownInChat, renderMarkdownImagesInChat
     case airplaneModeEnabled, allowAppleServerTranscription, attachmentImageSize
     case mlxMaxKVSize, mlxAutoCompact
-    case startupBehavior, lastSelectedConversationID
     case openAPIServer
     case recentChatLanguageIdentifiers
     case conversationFolders, conversationFolderDefaults, selectedConversationFolderID
@@ -3434,9 +3415,6 @@ struct AppSettings: Codable, Equatable, Sendable {
     mlxMaxKVSize =
       (try? c.decode(MLXKVCacheSize.self, forKey: .mlxMaxKVSize)) ?? .auto
     mlxAutoCompact = (try? c.decode(Bool.self, forKey: .mlxAutoCompact)) ?? false
-    startupBehavior =
-      (try? c.decode(AppStartupBehavior.self, forKey: .startupBehavior)) ?? .continueChats
-    lastSelectedConversationID = try? c.decode(UUID.self, forKey: .lastSelectedConversationID)
     openAPIServer =
       (try? c.decode(OpenAPIServerSettings.self, forKey: .openAPIServer))
       ?? OpenAPIServerSettings()
