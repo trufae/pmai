@@ -4682,6 +4682,7 @@ enum MarkdownInlineSymbols {
         return (rewritten, end + 2)
       }
       if let end = findUnescapedDollar(in: chars, start: index + 1),
+        end + 1 == chars.count || !chars[end + 1].isNumber,
         let rewritten = rewrittenMathContent(String(chars[(index + 1)..<end]))
       {
         return (rewritten, end + 1)
@@ -4699,7 +4700,9 @@ enum MarkdownInlineSymbols {
 
   private static func rewrittenMathContent(_ raw: String) -> String? {
     let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard looksLikeLatexMath(trimmed) else { return nil }
+    // Require tight delimiters for numbers so prices like "$5 $10" stay literal.
+    let isNumber = raw.range(of: #"\A[+-]?[0-9]+(?:[.,][0-9]+)?\z"#, options: .regularExpression) != nil
+    guard isNumber || looksLikeLatexMath(trimmed) else { return nil }
     let rewritten = normalizedLatexMath(trimmed)
     return rewritten.isEmpty ? nil : rewritten
   }
