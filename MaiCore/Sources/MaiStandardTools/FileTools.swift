@@ -1466,12 +1466,14 @@ struct MaiFileWorkspace: Sendable {
     return (newText, endLine - startLine + 1, replacementLines.count, result.count)
   }
 
-  private func resolve(
+  func resolve(
     _ rawPath: String,
     allowRoot: Bool,
-    mustExist: Bool
+    mustExist: Bool,
+    preserveWhitespace: Bool = false
   ) throws -> URL {
-    let trimmed = rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
+    let trimmed =
+      preserveWhitespace ? rawPath : rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
     var candidate: URL
     if trimmed.hasPrefix("/") || trimmed.hasPrefix("~") {
       // An absolute path is fine as long as it points inside the workspace:

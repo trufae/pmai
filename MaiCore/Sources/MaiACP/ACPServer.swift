@@ -1,5 +1,6 @@
 import Foundation
 import MaiCore
+import MaiStandardTools
 
 /// Exposes a MaiCore `AgentRuntime` to any ACP client (Zed, JetBrains, …) over
 /// stdio. It is deliberately thin: `session/prompt` becomes one
@@ -35,6 +36,7 @@ public actor ACPServer {
   private var peer: JSONRPCPeer?
   private var sessions: [String: Session] = [:]
   private var loadingSessions = Set<String>()
+  private var fileSystems: [String: MaiWorkspaceFiles] = [:]
   private let sessionDirectory: URL?
   private let workspaceRoots: [URL]?
   private let workspace: (any ACPWorkspaceRepository)?
@@ -103,6 +105,8 @@ public actor ACPServer {
     for task in tasks { task.cancel() }
     for task in tasks { _ = try? await task.value }
     sessions.removeAll()
+    for fileSystem in fileSystems.values { await fileSystem.close() }
+    fileSystems.removeAll()
     self.peer = nil
   }
 
@@ -131,6 +135,8 @@ public actor ACPServer {
       return try await listSessions(params: params)
     case ACP.Method.sessionManage:
       return try await manageSession(params: params)
+    case ACP.Method.workspaceFiles:
+      return try await workspaceFiles(params: params)
     case "ping":
       return .object([:])
     case ACP.Method.sessionPrompt:
@@ -156,6 +162,7 @@ public actor ACPServer {
         "name": .string(ACP.agentName), "version": .string("1.0.0"),
       ]),
       "agentCapabilities": .object([
+        "_meta": .object(["pmai": .object(["workspaceFiles": .integer(1)])]),
         "loadSession": .bool(sessionDirectory != nil || workspace != nil),
         "sessionCapabilities": .object(
           sessionDirectory != nil || workspace != nil ? ["list": .object([:])] : [:]),
@@ -203,6 +210,27 @@ public actor ACPServer {
     return roots.contains { root in
       url == root || url.path.hasPrefix(root.path.hasSuffix("/") ? root.path : root.path + "/")
     }
+  }
+
+  private func workspaceFiles(params: JSONValue?) async throws -> JSONValue {
+    let cwd = try directory(params: params)
+    guard let body = params?.objectValue?["request"] else {
+      throw JSONRPCError.invalidParams("A filesystem request is required")
+    }
+    let request = try JSONDecoder().decode(
+      WorkspaceFileRequest.self, from: JSONEncoder().encode(body))
+    let files: MaiWorkspaceFiles
+    if let existing = fileSystems[cwd.path] {
+      files = existing
+    } else {
+      guard fileSystems.count < 16 else {
+        throw JSONRPCError.invalidParams("Too many open workspaces")
+      }
+      files = MaiWorkspaceFiles(configuration: .init(rootURL: cwd))
+      fileSystems[cwd.path] = files
+    }
+    let response = try await files.request(request)
+    return try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(response))
   }
 
   private func listSessions(params: JSONValue?) async throws -> JSONValue {

@@ -1,8 +1,67 @@
 import Foundation
 import Testing
+import MaiStandardTools
 
 @testable import MaiACP
 @testable import MaiCore
+
+@Test("ACP browses and transfers worker files without a chat, within the served root")
+func acpWorkspaceFiles() async throws {
+  let base = FileManager.default.temporaryDirectory.appendingPathComponent("acp-browser-\(UUID())")
+  let root = base.appendingPathComponent("project")
+  let outside = base.appendingPathComponent("outside")
+  for folder in [root, outside] {
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+  }
+  defer { try? FileManager.default.removeItem(at: base) }
+  let (transport, workerTransport) = PipeTransport.pair()
+  let server = ACPServer(
+    runtime: AgentRuntime(),
+    agent: .init(id: "files", instructions: "", provider: "unused", model: "unused"),
+    bridge: ACPPermissionBridge(), sessionDirectory: base.appendingPathComponent("sessions"),
+    workspaceRoot: root)
+  let serving = Task { await server.serve(on: workerTransport) }
+  let peer = JSONRPCPeer(transport: transport)
+  await peer.start()
+  let initialized = try await peer.request(
+    ACP.Method.initialize,
+    params: .object(["protocolVersion": .integer(1)]), timeout: 5)
+  #expect(
+    initialized.objectValue?["agentCapabilities"]?.objectValue?["_meta"]?
+      .objectValue?["pmai"]?.objectValue?["workspaceFiles"]?.intValue == 1)
+  func request(_ request: WorkspaceFileRequest, cwd: String? = nil) async throws
+    -> WorkspaceFileResponse
+  {
+    let json = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(request))
+    let response = try await peer.request(
+      ACP.Method.workspaceFiles,
+      params: .object(["cwd": .string(cwd ?? root.path), "request": json]), timeout: 5)
+    return try JSONDecoder().decode(
+      WorkspaceFileResponse.self, from: JSONEncoder().encode(response))
+  }
+  _ = try await request(.init(.mkdir, path: "new"))
+  let bytes = Data([0, 1, 2, 255, 0])
+  let id = try #require(try await request(.init(.uploadBegin, path: "new/file.bin")).transferID)
+  _ = try await request(.init(.uploadChunk, transferID: id, data: bytes))
+  _ = try await request(.init(.uploadFinish, offset: bytes.count, transferID: id))
+  let listing = try #require(try await request(.init(.list, path: "new")).listing)
+  #expect(listing.entries.map(\.name) == ["file.bin"])
+  #expect(try await request(.init(.read, path: "new/file.bin")).chunk?.data == bytes)
+  for path in ["../outside", outside.path] {
+    await #expect(throws: JSONRPCError.self) { _ = try await request(.init(.list, path: path)) }
+  }
+  await #expect(throws: JSONRPCError.self) {
+    _ = try await request(.init(.list), cwd: outside.path)
+  }
+  #expect(!FileManager.default.fileExists(atPath: base.appendingPathComponent("sessions").path))
+  let abandoned = try #require(try await request(.init(.uploadBegin, path: "abandoned")).transferID)
+  await peer.close()
+  await serving.value
+  let temporary = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TMPDIR"] ?? "/tmp")
+  #expect(
+    !FileManager.default.fileExists(
+      atPath: temporary.appendingPathComponent("pmai-upload-\(abandoned)").path))
+}
 
 /// An in-memory transport pair, so two peers can talk without spawning a
 /// process. Whatever one end sends, the other end receives.

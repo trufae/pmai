@@ -1,5 +1,6 @@
 import Foundation
 import MaiCore
+import MaiStandardTools
 
 /// Drives one external ACP agent: starts it, negotiates a session, sends a
 /// prompt, and forwards the streamed reply. It answers the agent's own
@@ -59,6 +60,7 @@ public actor ACPClient {
   private var sessionLoaded = false
   private var supportsLoad = false
   private var supportsList = false
+  private var supportsFiles = false
   private var busy = false
   /// The delta sink for the prompt in flight; only one prompt runs at a time.
   private var activeSink: (@Sendable (ProviderEvent) async -> Void)?
@@ -83,6 +85,24 @@ public actor ACPClient {
   }
 
   public var currentSessionID: String? { sessionID }
+
+  /// Accesses host files without creating a chat or running an agent prompt.
+  public func files(cwd: String, request: WorkspaceFileRequest) async throws
+    -> WorkspaceFileResponse
+  {
+    guard !busy else { throw JSONRPCError.invalidParams("An ACP operation is already running") }
+    busy = true
+    defer { busy = false }
+    let peer = try await connectedPeer()
+    guard supportsFiles else {
+      throw JSONRPCError.invalidParams("Update the remote pmai host to browse and transfer files.")
+    }
+    let body = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(request))
+    let result = try await peer.request(
+      ACP.Method.workspaceFiles,
+      params: .object(["cwd": .string(cwd), "request": body]), timeout: 120)
+    return try JSONDecoder().decode(WorkspaceFileResponse.self, from: JSONEncoder().encode(result))
+  }
 
   /// A title renames a durable session; nil deletes it without creating a new session.
   public func manageSession(_ id: String, cwd: String, title: String?) async throws {
@@ -292,6 +312,9 @@ public actor ACPClient {
       supportsList =
         initialized.objectValue?["agentCapabilities"]?.objectValue?["sessionCapabilities"]?
         .objectValue?["list"]?.objectValue != nil
+      supportsFiles =
+        initialized.objectValue?["agentCapabilities"]?.objectValue?["_meta"]?
+        .objectValue?["pmai"]?.objectValue?["workspaceFiles"]?.intValue == 1
       guard initialized.objectValue?["protocolVersion"]?.intValue == ACP.protocolVersion else {
         throw JSONRPCError.invalidParams("The agent returned an unsupported ACP protocol version")
       }

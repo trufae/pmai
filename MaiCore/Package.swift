@@ -99,7 +99,7 @@ let package = Package(
     .target(name: "MaiOpenAI", dependencies: ["MaiCore"]),
     .target(name: "MaiLocalProviders", dependencies: localProviderDependencies, swiftSettings: localProviderSwiftSettings),
     .target(name: "MaiChat", dependencies: ["MaiCore", "MaiOpenAI"]),
-    .target(name: "MaiACP", dependencies: ["MaiCore"]),
+    .target(name: "MaiACP", dependencies: ["MaiCore", "MaiStandardTools"]),
     .target(name: "MaiACPGateway", dependencies: [
       "MaiACP", "MaiCore",
       .product(name: "NIOCore", package: "swift-nio"),
@@ -152,7 +152,7 @@ let package = Package(
     .testTarget(name: "MaiStandardToolsTests", dependencies: ["MaiCore", "MaiStandardTools"]),
     .testTarget(name: "MaiDocumentsTests", dependencies: ["MaiCore", "MaiDocuments", "MaiMarkdown"]),
     .testTarget(name: "MaiMarkdownTests", dependencies: ["MaiMarkdown"]),
-    .testTarget(name: "MaiACPTests", dependencies: ["MaiCore", "MaiACP"]),
+    .testTarget(name: "MaiACPTests", dependencies: ["MaiCore", "MaiACP", "MaiStandardTools"]),
     .testTarget(name: "MaiLocalProvidersTests", dependencies: ["MaiCore", "MaiLocalProviders"]),
     .testTarget(name: "MaiPluginTests", dependencies: [
       "MaiCore", "MaiMCP", "MaiPluginHost", "MaiStandardTools", "MaiVisionOCR",
