@@ -23,6 +23,7 @@ public struct WorkspaceFileEntry: Codable, Equatable, Identifiable, Sendable {
 public struct WorkspaceFileListing: Codable, Sendable {
   public let root: String
   public let path: String
+  public let writeEnabled: Bool
   public let entries: [WorkspaceFileEntry]
   public let nextOffset: Int?
 }
@@ -146,6 +147,9 @@ public actor MaiWorkspaceFiles {
     let url = try workspace.resolve(
       path, allowRoot: request.operation == .list,
       mustExist: reads, preserveWhitespace: true)
+    guard MaiFileAccessPolicy.contains(url, in: workspace.rootURL) else {
+      throw WorkspaceFileError("The path is outside this workspace.")
+    }
     let root = workspace.rootURL.path
     let relative = url.path == root ? "" : String(url.path.dropFirst(root.count + 1))
     if let first = relative.split(separator: "/").first,
@@ -173,6 +177,7 @@ public actor MaiWorkspaceFiles {
         guard
           !(url.path == root
             && configuration.hiddenRootEntryNames.contains(child.lastPathComponent)),
+          MaiFileAccessPolicy.contains(child.resolvingSymlinksInPath(), in: workspace.rootURL),
           (try? workspace.resolve(
             child.path, allowRoot: false, mustExist: true, preserveWhitespace: true)) != nil,
           let values = try? child.resolvingSymlinksInPath().resourceValues(forKeys: keys),
@@ -192,7 +197,8 @@ public actor MaiWorkspaceFiles {
       let end = start + min(max(request.limit, 1), 500, entries.count - start)
       return .init(
         listing: .init(
-          root: root, path: url.path, entries: Array(entries[start..<end]),
+          root: root, path: url.path, writeEnabled: configuration.writeEnabled,
+          entries: Array(entries[start..<end]),
           nextOffset: end < entries.count ? end : nil))
     case .read:
       guard request.limit > 0, request.limit <= WorkspaceFileRequest.chunkSize else {

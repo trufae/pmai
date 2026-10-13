@@ -14,12 +14,16 @@ func acpWorkspaceFiles() async throws {
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
   }
   defer { try? FileManager.default.removeItem(at: base) }
+  let secret = root.appendingPathComponent("secret")
+  try Data("private".utf8).write(to: secret)
+  let policy = MaiFileAccessPolicy(outside: .allow) { _, _ in false }
+  policy.set(.init(url: secret, access: .deny))
   let (transport, workerTransport) = PipeTransport.pair()
   let server = ACPServer(
     runtime: AgentRuntime(),
     agent: .init(id: "files", instructions: "", provider: "unused", model: "unused"),
     bridge: ACPPermissionBridge(), sessionDirectory: base.appendingPathComponent("sessions"),
-    workspaceRoot: root)
+    workspaceRoot: root, fileConfiguration: .init(rootURL: root, pathAccessPolicy: policy))
   let serving = Task { await server.serve(on: workerTransport) }
   let peer = JSONRPCPeer(transport: transport)
   await peer.start()
@@ -40,6 +44,11 @@ func acpWorkspaceFiles() async throws {
       WorkspaceFileResponse.self, from: JSONEncoder().encode(response))
   }
   _ = try await request(.init(.mkdir, path: "new"))
+  let rootListing = try #require(try await request(.init(.list)).listing)
+  #expect(rootListing.writeEnabled && rootListing.entries.map(\.name) == ["new"])
+  await #expect(throws: JSONRPCError.self) { _ = try await request(.init(.read, path: "secret")) }
+  policy.set(.init(url: root.appendingPathComponent("ask"), access: .ask))
+  await #expect(throws: JSONRPCError.self) { _ = try await request(.init(.mkdir, path: "ask")) }
   let bytes = Data([0, 1, 2, 255, 0])
   let id = try #require(try await request(.init(.uploadBegin, path: "new/file.bin")).transferID)
   _ = try await request(.init(.uploadChunk, transferID: id, data: bytes))

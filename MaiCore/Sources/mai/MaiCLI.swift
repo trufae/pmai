@@ -1533,6 +1533,7 @@ struct MaiCLI {
           runtime: runtime,
           approvalHandler: approvalHandler,
           agent: profile.agentDefinition,
+          configuration: configuration,
           options: options, environment: environment)
         return
       }
@@ -1847,6 +1848,7 @@ struct MaiCLI {
     runtime: AgentRuntime,
     approvalHandler: TerminalApprovalHandler,
     agent: AgentDefinition,
+    configuration: MaiConfiguration?,
     options: CLIOptions,
     environment: [String: String]
   ) async throws {
@@ -1898,11 +1900,30 @@ struct MaiCLI {
           return nil
         }
       }
+      let source = configuration?.toolSources.first {
+        $0.enabled && $0.kind == MaiStandardToolsPlugin.factoryKind
+      }
+      var files = MaiStandardToolFactory.fileWorkspaceConfiguration(
+        context: source?.context(environment: environment)
+          ?? PluginFactoryContext(id: "standard-tools", environment: environment))
+      let access = configuration?.fileAccess ?? .init()
+      // Direct browsing has no agent session to request a tool approval in.
+      // Ask rules remain inaccessible until the host explicitly allows them.
+      let policy = MaiFileAccessPolicy(hidden: access.hidden) { _, _ in false }
+      for rule in access.rules {
+        policy.set(
+          .init(
+            url: URL(
+              fileURLWithPath: AgentHome.expandUserPath(rule.path, environment: environment)),
+            access: rule.access, descendants: rule.descendants))
+      }
+      files.pathAccessPolicy = policy
       let server = ACPServer(runtime: runtime, agent: agent, bridge: bridge,
         sessionDirectory: directory, workspaceRoot: root,
         workspaceRoots: options.tailcatGateway == nil && !options.acpPaths.isEmpty
           ? options.acpPaths.map { URL(fileURLWithPath: AgentHome.expandUserPath($0), isDirectory: true) } : nil,
         workspace: AgentHomeACPWorkspace(home: resolvedHome(options: options, environment: environment)),
+        fileConfiguration: files,
         authorize: authorize, extensionHandler: extensionHandler)
       FileHandle.standardError.write(
         Data("pmai ACP agent ready (\(agent.id)); waiting for a client on stdio.\n".utf8))

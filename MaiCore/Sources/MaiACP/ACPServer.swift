@@ -40,6 +40,7 @@ public actor ACPServer {
   private let sessionDirectory: URL?
   private let workspaceRoots: [URL]?
   private let workspace: (any ACPWorkspaceRepository)?
+  private let fileConfiguration: MaiFileWorkspaceConfiguration?
   private let authorize: @Sendable () throws -> Void
   private let extensionHandler: @Sendable (String, JSONValue?) throws -> JSONValue?
   private var connected = false
@@ -54,6 +55,7 @@ public actor ACPServer {
     runtime: AgentRuntime, agent: AgentDefinition, bridge: ACPPermissionBridge,
     sessionDirectory: URL? = nil, workspaceRoot: URL? = nil, workspaceRoots: [URL]? = nil,
     workspace: (any ACPWorkspaceRepository)? = nil,
+    fileConfiguration: MaiFileWorkspaceConfiguration? = nil,
     authorize: @escaping @Sendable () throws -> Void = {},
     extensionHandler: @escaping @Sendable (String, JSONValue?) throws -> JSONValue? = { _, _ in nil
     }
@@ -66,6 +68,7 @@ public actor ACPServer {
       $0.resolvingSymlinksInPath().standardizedFileURL
     }
     self.workspace = workspace
+    self.fileConfiguration = fileConfiguration
     self.authorize = authorize
     self.extensionHandler = extensionHandler
   }
@@ -226,7 +229,11 @@ public actor ACPServer {
       guard fileSystems.count < 16 else {
         throw JSONRPCError.invalidParams("Too many open workspaces")
       }
-      files = MaiWorkspaceFiles(configuration: .init(rootURL: cwd))
+      var configuration = fileConfiguration ?? .init(rootURL: cwd)
+      configuration.rootURL = cwd
+      configuration.followsProcessWorkingDirectory = false
+      configuration.additionalAllowedURLs = []
+      files = MaiWorkspaceFiles(configuration: configuration)
       fileSystems[cwd.path] = files
     }
     let response = try await files.request(request)

@@ -91,7 +91,8 @@ func workspaceFilesConfinement() async throws {
   try Data("private".utf8).write(to: outside)
   try FileManager.default.createSymbolicLink(
     at: root.appendingPathComponent("escape"), withDestinationURL: base)
-  let files = MaiWorkspaceFiles(configuration: .init(rootURL: root))
+  let policy = MaiFileAccessPolicy(outside: .allow) { _, _ in false }
+  let files = MaiWorkspaceFiles(configuration: .init(rootURL: root, pathAccessPolicy: policy))
   for operation in [WorkspaceFileRequest.Operation.read, .uploadBegin, .mkdir] {
     for path in ["../private.txt", "escape/private.txt"] {
       await #expect(throws: (any Error).self) {
@@ -102,10 +103,17 @@ func workspaceFilesConfinement() async throws {
   let listing = try #require(try await files.request(.init(.list)).listing)
   #expect(listing.entries.isEmpty)
   let readOnly = MaiWorkspaceFiles(configuration: .init(rootURL: root, writeEnabled: false))
+  #expect(try await readOnly.request(.init(.list)).listing?.writeEnabled == false)
   await #expect(throws: WorkspaceFileError.self) {
     _ = try await readOnly.request(.init(.mkdir, path: "new"))
   }
   try Data().write(to: root.appendingPathComponent("small"))
+  policy.set(.init(url: root.appendingPathComponent("small"), access: .deny))
+  #expect(try await files.request(.init(.list)).listing?.entries.isEmpty == true)
+  await #expect(throws: (any Error).self) {
+    _ = try await files.request(.init(.read, path: "small"))
+  }
+  policy.remove(root.appendingPathComponent("small"))
   await #expect(throws: WorkspaceFileError.self) {
     _ = try await files.request(.init(.read, path: "small", limit: -1))
   }
