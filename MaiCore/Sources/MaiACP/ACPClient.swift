@@ -84,6 +84,19 @@ public actor ACPClient {
 
   public var currentSessionID: String? { sessionID }
 
+  /// A title renames a durable session; nil deletes it without creating a new session.
+  public func manageSession(_ id: String, cwd: String, title: String?) async throws {
+    guard !busy else { throw JSONRPCError.invalidParams("Session is busy") }
+    busy = true
+    defer { busy = false }
+    _ = try await connectedPeer().request(
+      ACP.Method.sessionManage,
+      params: .object([
+        "sessionId": .string(id), "cwd": .string(cwd),
+        "title": title.map(JSONValue.string) ?? .null,
+      ]), timeout: 60)
+  }
+
   /// Redeems a server's pairing invitation. Invitations cannot initialize ACP
   /// or access files/chats; the server operator must approve this request.
   public func requestPairing(clientID: String, name: String) async throws -> String {
@@ -134,6 +147,9 @@ public actor ACPClient {
       guard let fields = result.objectValue, let sessions = fields["sessions"]?.arrayValue else {
         throw JSONRPCError.invalidParams("Invalid session/list response")
       }
+      snapshot.canManageSessions =
+        fields["_meta"]?.objectValue?["pmai"]?
+        .objectValue?["canManageSessions"]?.boolValue
       for value in sessions {
         guard let entry = value.objectValue,
           let id = entry["sessionId"]?.stringValue, !id.isEmpty,

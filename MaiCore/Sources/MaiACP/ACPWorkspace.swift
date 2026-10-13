@@ -52,6 +52,7 @@ public struct ACPSessionInfo: Codable, Identifiable, Equatable, Sendable {
 public struct ACPWorkspaceSnapshot: Codable, Equatable, Sendable {
   public var folders: [ACPWorkspaceFolder]
   public var sessions: [ACPSessionInfo]
+  public var canManageSessions: Bool?
 
   public init(folders: [ACPWorkspaceFolder] = [], sessions: [ACPSessionInfo] = []) {
     self.folders = folders
@@ -85,6 +86,13 @@ public protocol ACPWorkspaceRepository: Sendable {
   func snapshot() async throws -> ACPWorkspaceSnapshot
   func load(sessionID: String, cwd: String) async throws -> ACPWorkspaceConversation?
   func save(_ conversation: ACPWorkspaceConversation) async throws
+  func delete(sessionID: String, cwd: String) async throws
+}
+
+extension ACPWorkspaceRepository {
+  public func delete(sessionID: String, cwd: String) async throws {
+    throw JSONRPCError.methodNotFound(ACP.Method.sessionManage)
+  }
 }
 
 /// Exposes the same projects and chats used by the CLI, including chats created
@@ -93,6 +101,13 @@ public struct AgentHomeACPWorkspace: ACPWorkspaceRepository {
   public let home: AgentHome
 
   public init(home: AgentHome) { self.home = home }
+
+  public func delete(sessionID: String, cwd: String) async throws {
+    guard let id = UUID(uuidString: sessionID),
+      let project = try home.loadProject(atWorkingDirectory: URL(fileURLWithPath: cwd))
+    else { throw JSONRPCError.invalidParams("Unknown conversation") }
+    _ = try home.chatStore(for: project).delete(id: id)
+  }
 
   public func snapshot() async throws -> ACPWorkspaceSnapshot {
     let projects = try home.loadProjectIndex().orderedProjects.filter {

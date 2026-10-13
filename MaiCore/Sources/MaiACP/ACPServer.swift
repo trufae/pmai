@@ -129,6 +129,8 @@ public actor ACPServer {
       return try await loadSession(params: params)
     case ACP.Method.sessionList:
       return try await listSessions(params: params)
+    case ACP.Method.sessionManage:
+      return try await manageSession(params: params)
     case "ping":
       return .object([:])
     case ACP.Method.sessionPrompt:
@@ -288,7 +290,11 @@ public actor ACPServer {
     }
     return .object([
       "sessions": .array(infos.map(\.json)),
-      "_meta": .object(["pmai": .object(["folders": .array(snapshot.folders.map(\.json))])]),
+      "_meta": .object([
+        "pmai": .object([
+          "folders": .array(snapshot.folders.map(\.json)), "canManageSessions": .bool(true),
+        ])
+      ])
     ])
   }
 
@@ -333,7 +339,39 @@ public actor ACPServer {
     return .object(["sessionId": .string(id)])
   }
 
-  private func loadSession(params: JSONValue?) async throws -> JSONValue {
+  private func manageSession(params: JSONValue?) async throws -> JSONValue {
+    guard let title = params?.objectValue?["title"],
+      title == .null
+        || title.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    else { throw JSONRPCError.invalidParams("Provide a nonempty title, or null to delete") }
+    let id = params?.objectValue?["sessionId"]?.stringValue ?? ""
+    let wasLoaded = sessions[id] != nil
+    _ = try await loadSession(params: params, replay: false)
+    sessions[id]?.busy = true
+    defer {
+      if wasLoaded { sessions[id]?.busy = false } else { sessions.removeValue(forKey: id) }
+    }
+    guard var saved = sessions[id]?.saved else {
+      throw JSONRPCError.invalidParams("Unknown session")
+    }
+    if title == .null {
+      if let file = sessionDirectory?.appendingPathComponent(id + ".json"),
+        FileManager.default.fileExists(atPath: file.path)
+      {
+        try FileManager.default.removeItem(at: file)
+      }
+      try await workspace?.delete(sessionID: id, cwd: saved.workingDirectory.path)
+      sessions.removeValue(forKey: id)
+    } else {
+      saved.title = title.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+      saved.updatedAt = Date()
+      try await save(saved)
+      sessions[id]?.saved = saved
+    }
+    return .object([:])
+  }
+
+  private func loadSession(params: JSONValue?, replay: Bool = true) async throws -> JSONValue {
     guard let id = params?.objectValue?["sessionId"]?.stringValue,
       let uuid = UUID(uuidString: id), uuid.uuidString.lowercased() == id
     else {
@@ -378,6 +416,7 @@ public actor ACPServer {
     guard let session = sessions[id], session.saved.workingDirectory == cwd else {
       throw JSONRPCError.invalidParams("Session working directory differs")
     }
+    if !replay { return .object([:]) }
     for message in session.saved.transcript {
       switch message.role {
       case .user:

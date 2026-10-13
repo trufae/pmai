@@ -386,6 +386,38 @@ func acpWorkspaceDiscovery() async throws {
   #expect(newChat.title == "New remote work")
   #expect(newChat.sessionID == newID)
   #expect(newChat.messages.contains { $0.role == .user && $0.text == "New remote work" })
+  let management: [String: JSONValue] = [
+    "sessionId": .string(newID), "cwd": .string(emptyURL.path),
+  ]
+  let before = await recorder.joined
+  _ = try await client.request(
+    ACP.Method.sessionManage,
+    params: .object(management.merging(["title": .string("Renamed remotely")]) { _, new in new }),
+    timeout: 5)
+  let renamed = try #require(try home.chatStore(for: emptyProject).loadChat(id: uuid))
+  #expect(renamed.title == "Renamed remotely" && renamed.messages == newChat.messages)
+  #expect(await recorder.joined == before)
+  for fields in [
+    ["title": JSONValue.string(" ")], ["title": .null, "cwd": .string(outsideURL.path)],
+  ] {
+    await #expect(throws: JSONRPCError.self) {
+      _ = try await client.request(
+        ACP.Method.sessionManage,
+        params: .object(management.merging(fields) { _, new in new }), timeout: 5)
+    }
+  }
+  _ = try await client.request(
+    ACP.Method.sessionManage,
+    params: .object(management.merging(["title": .null]) { _, new in new }), timeout: 5)
+  #expect(try home.chatStore(for: emptyProject).loadChat(id: uuid) == nil)
+  #expect(
+    !FileManager.default.fileExists(
+      atPath: root.appendingPathComponent("sessions/\(newID).json").path))
+  let refreshed = try await client.request(ACP.Method.sessionList, params: .object([:]), timeout: 5)
+  #expect(
+    refreshed.objectValue?["sessions"]?.arrayValue?.contains {
+      $0.objectValue?["sessionId"]?.stringValue == newID
+    } == false)
   await client.close()
   await serving.value
 }

@@ -16,6 +16,7 @@ public enum ACP {
     public static let sessionNew = "session/new"
     public static let sessionLoad = "session/load"
     public static let sessionList = "session/list"
+    public static let sessionManage = "_pmai/session/manage"
     public static let sessionPrompt = "session/prompt"
     public static let sessionCancel = "session/cancel"
     public static let sessionUpdate = "session/update"
