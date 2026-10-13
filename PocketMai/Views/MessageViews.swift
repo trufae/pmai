@@ -1625,15 +1625,17 @@ struct MessageTextSelectionSheet: View {
   // offered even for an untouched draft — the reply composer, where the quoted
   // text alone is a valid message.
   let saveConfirmation: String?
-  let onSave: ((String) -> Void)?
+  let onSave: ((String) async throws -> Void)?
   @State private var draftText: String
   @State private var fontSize: Double
-  @State private var showingPreview = false
+  @State private var showingPreview: Bool
   // When true the raw text is shown/edited; when false the derived filtered text
   // is shown read-only. Saving is always tied to the raw draft.
   @State private var showingRaw: Bool
   @State private var shareItem: TextShareItem?
   @State private var showingSaveConfirmation = false
+  @State private var isSaving = false
+  @State private var saveError: String?
 
   private struct TextShareItem: Identifiable {
     let id = UUID()
@@ -1649,9 +1651,10 @@ struct MessageTextSelectionSheet: View {
     initialLineSpacing: Double = AppearanceSettings.defaults.lineSpacing,
     fontFamily: AppearanceFontFamily = .system,
     isEditable: Bool = false,
+    initiallyShowingPreview: Bool = false,
     saveTitle: String = "Save",
     saveConfirmation: String? = nil,
-    onSave: ((String) -> Void)? = nil
+    onSave: ((String) async throws -> Void)? = nil
   ) {
     self.title = title
     self.text = text
@@ -1665,6 +1668,7 @@ struct MessageTextSelectionSheet: View {
     self.onSave = onSave
     _draftText = State(initialValue: text)
     _fontSize = State(initialValue: AppearanceSettings.clampedFontSize(initialFontSize))
+    _showingPreview = State(initialValue: initiallyShowingPreview)
     // Editing starts on the raw text; read-only viewing starts on the cleaner
     // filtered text when one is available.
     _showingRaw = State(initialValue: isEditable || !canFilter)
@@ -1715,6 +1719,7 @@ struct MessageTextSelectionSheet: View {
           )
         }
       }
+      .disabled(isSaving)
       .navigationTitle(title)
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
@@ -1731,15 +1736,6 @@ struct MessageTextSelectionSheet: View {
           }
           ToolbarItem(placement: .topBarTrailing) {
             Button {
-              showingPreview.toggle()
-            } label: {
-              Label(
-                showingPreview ? "Edit" : "Preview",
-                systemImage: showingPreview ? "square.and.pencil" : "eye")
-            }
-          }
-          ToolbarItem(placement: .topBarTrailing) {
-            Button {
               UIPasteboard.general.string = displayedText
             } label: {
               Label("Copy All", systemImage: "doc.on.doc")
@@ -1749,14 +1745,14 @@ struct MessageTextSelectionSheet: View {
             shareButton
           }
           ToolbarItem(placement: .confirmationAction) {
-            Button(saveTitle) {
+            Button(isSaving ? "Saving…" : saveTitle) {
               if saveConfirmation == nil {
                 saveEdits()
               } else {
                 showingSaveConfirmation = true
               }
             }
-            .disabled(saveConfirmation == nil && draftText == text)
+            .disabled(isSaving || (saveConfirmation == nil && draftText == text))
           }
         } else {
           ToolbarItem(placement: .topBarLeading) {
@@ -1780,7 +1776,18 @@ struct MessageTextSelectionSheet: View {
             shareButton
           }
         }
+        ToolbarItem(placement: .topBarTrailing) {
+          Button {
+            showingPreview.toggle()
+          } label: {
+            Label(
+              showingPreview ? (isEditable ? "Edit" : "Source") : "Preview",
+              systemImage: showingPreview ? "square.and.pencil" : "eye")
+          }
+        }
       }
+      .disabled(isSaving)
+      .interactiveDismissDisabled(isSaving)
       .sheet(item: $shareItem) { item in
         ActivityShareSheet(activityItems: item.items)
       }
@@ -1793,6 +1800,14 @@ struct MessageTextSelectionSheet: View {
           commitEdits()
         }
         Button("Cancel", role: .cancel) {}
+      }
+      .alert(
+        "Could Not Save",
+        isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })
+      ) {
+        Button("OK", role: .cancel) { saveError = nil }
+      } message: {
+        Text(saveError ?? "")
       }
     }
   }
@@ -1842,8 +1857,17 @@ struct MessageTextSelectionSheet: View {
   }
 
   private func commitEdits() {
-    onSave?(draftText)
-    dismiss()
+    guard !isSaving else { return }
+    isSaving = true
+    Task {
+      defer { isSaving = false }
+      do {
+        try await onSave?(draftText)
+        dismiss()
+      } catch {
+        saveError = error.localizedDescription
+      }
+    }
   }
 }
 

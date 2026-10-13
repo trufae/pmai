@@ -219,6 +219,8 @@ private struct FileBrowserDirectoryView: View {
       ) { file in
         FileBrowserPreview(
           file: file,
+          browser: browser,
+          appearance: appStore.settings.appearance,
           onDownload: {
             pendingDownload = browser.entries.first { $0.path == file.originalPath }
             browser.clearPreview()
@@ -243,53 +245,119 @@ private struct FileBrowserDirectoryView: View {
 
 private struct FileBrowserPreview: View {
   let file: BrowserFile
+  @ObservedObject var browser: WorkspaceFileBrowser
+  let appearance: AppearanceSettings
   let onDownload: () -> Void
   @Environment(\.dismiss) private var dismiss
+  @State private var content: Content?
+  @State private var loadError: String?
+
+  private enum Content {
+    case text(String)
+    case image(UIImage, Data)
+    case quickLook
+    case binary(String)
+  }
 
   var body: some View {
-    NavigationStack {
-      Group {
-        if !file.isPartial && QLPreviewController.canPreview(file.url as NSURL) {
-          FileQuickLook(url: file.url)
-        } else {
-          ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-              if file.isPartial {
-                Text(
-                  "Showing the beginning of this \(ByteCountFormatter.string(fromByteCount: Int64(file.size), countStyle: .file)) file. Download it for the full contents."
-                )
-                .font(.callout).foregroundStyle(.secondary)
+    Group {
+      switch content {
+      case .text(let text):
+        MessageTextSelectionSheet(
+          title: file.url.lastPathComponent,
+          text: text,
+          appearance: appearance,
+          initialFontSize: appearance.fontSize,
+          initialLineSpacing: appearance.lineSpacing,
+          fontFamily: appearance.fontFamily(for: .user),
+          isEditable: browser.writeEnabled && !file.isPartial,
+          initiallyShowingPreview: ["md", "markdown", "mdown"].contains(
+            file.url.pathExtension.lowercased()),
+          onSave: { text in try await browser.update(file, text: text) })
+      case .image(let image, let data):
+        MessageImageFullscreenView(image: image, imageData: data)
+      default:
+        NavigationStack {
+          Group {
+            switch content {
+            case .quickLook:
+              FileQuickLook(url: file.url)
+            case .binary(let text):
+              ScrollView {
+                Text(text).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
+                  .frame(maxWidth: .infinity, alignment: .leading).padding()
               }
-              Text(previewText).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
-            }.frame(maxWidth: .infinity, alignment: .leading).padding()
+            default:
+              if let loadError {
+                ContentUnavailableView(
+                  "Could Not Preview File", systemImage: "doc", description: Text(loadError))
+              } else {
+                ProgressView("Loading preview…")
+              }
+            }
+          }
+          .navigationTitle(file.url.lastPathComponent).navigationBarTitleDisplayMode(.inline)
+          .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
           }
         }
       }
-      .navigationTitle(file.url.lastPathComponent).navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
-        ToolbarItem(placement: .topBarTrailing) {
+    }
+    .safeAreaInset(edge: .bottom, spacing: 0) {
+      VStack(alignment: .leading, spacing: 12) {
+        if file.isPartial {
+          Text(
+            "Showing the beginning of this \(ByteCountFormatter.string(fromByteCount: Int64(file.size), countStyle: .file)) file. Download it for the full contents."
+          )
+          .font(.callout).foregroundStyle(.secondary)
+        }
+        HStack {
           Button("Copy Path", systemImage: "doc.on.doc") {
             UIPasteboard.general.string = file.originalPath
           }
-        }
-        ToolbarItem(placement: .topBarTrailing) {
+          Spacer()
           Button("Download", systemImage: "arrow.down.doc", action: onDownload)
         }
       }
+      .disabled(browser.isBusy)
+      .padding().background(.bar)
     }
+    .task(id: file.id) { await loadContent() }
   }
 
-  private var previewText: String {
-    guard let handle = try? FileHandle(forReadingFrom: file.url) else {
-      return "Could not read the file."
+  private func loadContent() async {
+    do {
+      let url = file.url
+      let data = try await Task.detached(priority: .userInitiated) {
+        try Data(contentsOf: url)
+      }.value
+      try Task.checkCancellation()
+      let type = UTType(filenameExtension: url.pathExtension)
+      let prefersQuickLook = [UTType.image, .audiovisualContent, .pdf, .rtf].contains { format in
+        type?.conforms(to: format) == true
+      }
+      let canQuickLook = !file.isPartial && QLPreviewController.canPreview(url as NSURL)
+      if !file.isPartial,
+        let image = await AttachmentImageLoader.decodeImageData(data, maxPixelDimension: 4_096)
+      {
+        content = .image(image, data)
+      } else if prefersQuickLook && canQuickLook {
+        content = .quickLook
+      } else if let text = BrowserFile.textContent(data, isPartial: file.isPartial) {
+        content = .text(text)
+      } else if canQuickLook {
+        content = .quickLook
+      } else {
+        content = .binary(
+          data.prefix(4096).enumerated().map { index, byte in
+            (index % 16 == 0 ? String(format: "\n%08x  ", index) : "")
+              + String(format: "%02x ", byte)
+          }.joined())
+      }
+    } catch is CancellationError {
+    } catch {
+      loadError = error.localizedDescription
     }
-    defer { try? handle.close() }
-    let data = (try? handle.read(upToCount: 64 * 1024)) ?? Data()
-    if !data.contains(0), let text = String(data: data, encoding: .utf8) { return text }
-    return data.prefix(4096).enumerated().map { index, byte in
-      (index % 16 == 0 ? String(format: "\n%08x  ", index) : "") + String(format: "%02x ", byte)
-    }.joined()
   }
 }
 

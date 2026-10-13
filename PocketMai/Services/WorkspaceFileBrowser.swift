@@ -74,6 +74,18 @@ struct BrowserFile: Identifiable {
   let originalPath: String
   let size: Int
   let isPartial: Bool
+
+  static func textContent(_ data: Data, isPartial: Bool = false) -> String? {
+    guard !data.contains(0) else { return nil }
+    if let text = String(data: data, encoding: .utf8) { return text }
+    // A bounded preview may end in the middle of a UTF-8 character.
+    if isPartial {
+      for count in 1...min(3, data.count) {
+        if let text = String(data: data.dropLast(count), encoding: .utf8) { return text }
+      }
+    }
+    return nil
+  }
 }
 
 @MainActor
@@ -84,6 +96,7 @@ final class WorkspaceFileBrowser: ObservableObject {
   private var connection: FileBrowserConnection?
   private var temporaryFolders: [URL] = []
   private(set) var operation: Task<Void, Never>?
+  private var saveOperation: Task<Void, Error>?
   @Published private(set) var path: String
   @Published private(set) var root: String
   @Published private(set) var entries: [WorkspaceFileEntry] = []
@@ -150,8 +163,39 @@ final class WorkspaceFileBrowser: ObservableObject {
     }
   }
 
+  func update(_ file: BrowserFile, text: String) async throws {
+    guard !isBusy else {
+      throw WorkspaceFileError("Wait for the current file operation to finish.")
+    }
+    guard writeEnabled else { throw WorkspaceFileError("This workspace is read only.") }
+    guard !file.isPartial else { throw WorkspaceFileError("Partial previews cannot be edited.") }
+    guard preview?.id == file.id else {
+      throw WorkspaceFileError("Open the file again to edit it.")
+    }
+    isBusy = true
+    status = "Saving \(file.url.lastPathComponent)…"
+    let task = Task {
+      try Data(text.utf8).write(to: file.url, options: .atomic)
+      try await self.uploadFile(file.url, destination: file.originalPath, overwrite: true)
+      try? await self.load(self.path)
+    }
+    saveOperation = task
+    defer {
+      saveOperation = nil
+      isBusy = false
+      status = nil
+      progress = nil
+    }
+    try await withTaskCancellationHandler {
+      try await task.value
+    } onCancel: {
+      task.cancel()
+    }
+  }
+
   func cancel() {
     operation?.cancel()
+    saveOperation?.cancel()
     if let connection { Task { await connection.close() } }
     connection = nil
   }
@@ -267,7 +311,7 @@ final class WorkspaceFileBrowser: ObservableObject {
       url: destination, originalPath: entry.path, size: size, isPartial: offset < size)
   }
 
-  private func uploadFile(_ url: URL, overwrite: Bool) async throws {
+  private func uploadFile(_ url: URL, destination: String? = nil, overwrite: Bool) async throws {
     let access = url.startAccessingSecurityScopedResource()
     defer { if access { url.stopAccessingSecurityScopedResource() } }
     let info = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
@@ -276,7 +320,8 @@ final class WorkspaceFileBrowser: ObservableObject {
     }
     let handle = try FileHandle(forReadingFrom: url)
     defer { try? handle.close() }
-    let destination = URL(fileURLWithPath: path).appendingPathComponent(url.lastPathComponent).path
+    let destination =
+      destination ?? URL(fileURLWithPath: path).appendingPathComponent(url.lastPathComponent).path
     let response = try await request(.init(.uploadBegin, path: destination, overwrite: overwrite))
     guard let id = response.transferID, let connection else {
       throw WorkspaceFileError("The host did not start the upload.")
