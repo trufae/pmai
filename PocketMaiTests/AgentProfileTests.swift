@@ -35,6 +35,8 @@ final class AgentProfileTests: XCTestCase {
     custom.toolApprovalMode = .ask
     custom.enabledSkillTools = ["skills_review"]
     custom.skillApprovalMode = .smart
+    custom.toolPolicy = AgentToolPolicy(
+      automatic: false, groups: ["github": .proxy], tools: ["github_pr": .direct])
     custom.useToolProxy = true
     custom.useSystemOne = true
     custom.contextWindowMode = ContextWindowMode.allCases.first { $0 != .full } ?? .full

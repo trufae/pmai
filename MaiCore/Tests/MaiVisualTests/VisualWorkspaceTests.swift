@@ -279,11 +279,20 @@ func workspaceConfiguresToolGroups() async throws {
     width: 150,
     environment: ["NO_COLOR": "1"],
     isStdoutTTY: false)
-  #expect(rendered.contains("GitHub (12)"))
+  #expect(rendered.contains("GitHub (\(github.toolNames.count))"))
   #expect(rendered.contains("Mastodon (1)"))
   #expect(rendered.contains("Agents (4)"))
   #expect(rendered.contains("0 calls"))
   #expect(rendered.contains("Automatically expose frequently used tools"))
+  #expect(rendered.contains("Tool list"))
+  #expect(rendered.contains("1 direct, \(github.toolNames.count - 2) proxy, 1 disabled"))
+  let popup = RenderOnce.render(
+    ToolCatalogSheet(conversation: conversation, workspace: workspace, groupID: github.catalogID),
+    width: 130, environment: ["NO_COLOR": "1"], isStdoutTTY: false)
+  #expect(popup.contains("Filter tools"))
+  #expect(popup.contains("github_ci_log [disabled]"))
+  #expect(popup.contains("github_ci_status [proxy]"))
+  #expect(popup.contains("Inherit"))
   #expect(rendered.contains("Allow posting and replying"))
 
   var options = workspace.configuredToolGroupOptions(mastodon)

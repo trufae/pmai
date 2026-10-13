@@ -9,6 +9,21 @@ the token arithmetic behind it, what the `test/` benchmark measured on
 `MaiCore/README.md` documents the setting; `doc/agents.md` covers subagents,
 the other way MaiCore keeps a transcript small.
 
+PocketMai's **Settings > Tools > Tool list** and `/visual`'s **Tools > Tool list**
+show the discovered groups, member names, descriptions, arguments, and counts
+of Direct, Proxy, and Disabled tools. Each group also has a small button to
+open just its members. These lists and counts come from tool definitions and
+MaiCore's shared policy and catalog types, also used by `/tools` in the REPL.
+
+Members default to **Inherit**: all members of an enabled group follow its
+default exposure. An individual Direct, Proxy, or Disabled choice overrides
+the group. Choosing Inherit removes that override. Saved agent choices and
+disabled groups are preserved; installing the UI does not enable all groups.
+PocketMai retains its existing proxy default (all inherited tools proxied
+when the switch is on), while the CLI retains its hybrid default. Explicit
+pins work with either setting. Workspace access, offline mode, the chat's
+master tools switch, and MCP server connections still limit availability.
+
 ## Mechanism
 
 Without the proxy, every request carries the JSON schema of every enabled tool.

@@ -301,6 +301,8 @@ private struct FocusedToolsList: View {
   @Bindable var conversation: VisualConversation
   let workspace: VisualWorkspace
 
+  @State private var showsToolCatalog = false
+
   private var enabledGroupCount: Int {
     workspace.toolGroups.filter { workspace.isToolGroupEnabled($0, for: conversation) }.count
   }
@@ -323,6 +325,14 @@ private struct FocusedToolsList: View {
         set: { workspace.setAutomaticToolExposure($0, for: conversation) }))
     Text("Individual settings override groups. Inherit follows the hybrid default and usage.")
       .foregroundStyle(.muted)
+    let catalog = workspace.toolCatalog(for: conversation)
+    HStack(spacing: 1) {
+      Text(catalog.summary().description).foregroundStyle(.muted)
+      Button("Tool list") { showsToolCatalog = true }
+    }
+    .sheet("Tool list", isPresented: $showsToolCatalog) {
+      ToolCatalogSheet(conversation: conversation, workspace: workspace)
+    }
     Divider()
     if workspace.toolGroups.isEmpty {
       Text("No tool groups are registered.").foregroundStyle(.muted)
@@ -354,41 +364,37 @@ private struct ToolGroupRow: View {
   }
 
   var body: some View {
+    let catalog = workspace.toolCatalog(for: conversation)
     VStack(alignment: .leading, spacing: 0) {
       HStack(spacing: 1) {
-        Text("\(group.displayName) (\(group.toolNames.count)) · \(workspace.toolUsage.count(for: group)) calls")
-        Picker("", selection: Binding(
-          get: {
-            (conversation.profile.toolPolicy.groups[group.catalogID]
-              ?? (group.sourceID == "mcp" ? nil : conversation.profile.toolPolicy.groups[group.id]))?
-              .rawValue ?? "inherit"
-          },
-          set: { workspace.setToolGroupMode(AgentToolMode(rawValue: $0), group: group, for: conversation) }))
-        {
+        Text("\(group.displayName) (\(group.toolNames.count))")
+        Picker(
+          "",
+          selection: Binding(
+            get: {
+              conversation.profile.toolPolicy.groupMode(for: group)?.rawValue ?? "inherit"
+            },
+            set: {
+              workspace.setToolGroupMode(
+                AgentToolMode(rawValue: $0), group: group, for: conversation)
+            })
+        ) {
           Text("Inherit").tag("inherit")
-          Text("Direct").tag("direct")
-          Text("Proxy").tag("proxy")
-          Text("Disabled").tag("disabled")
+          ForEach(AgentToolMode.allCases, id: \.rawValue) { mode in
+            Text(mode.displayName).tag(mode.rawValue)
+          }
         }
         .pickerStyle(.segmented)
-        Button(showsTools ? "Hide" : "Tools") { showsTools.toggle() }
+        Button("Tools") { showsTools = true }
       }
-      if showsTools {
-        ForEach(group.toolNames.sorted(), id: \.self) { name in
-          Picker(
-            "  \(name) [\(workspace.toolMode(name, for: conversation).rawValue)] · \(workspace.toolUsage.counts[name, default: 0]) calls",
-            selection: Binding(
-              get: { conversation.profile.toolPolicy.tools[name]?.rawValue ?? "inherit" },
-              set: { workspace.setToolMode(AgentToolMode(rawValue: $0), name: name, for: conversation) }))
-          {
-            Text("Inherit").tag("inherit")
-            Text("Direct").tag("direct")
-            Text("Proxy").tag("proxy")
-            Text("Disabled").tag("disabled")
-          }
-          .pickerStyle(.segmented)
+      Text(
+        "  " + catalog.summary(for: group).description
+          + " · \(catalog.summary(for: group).enabled) enabled · \(workspace.toolUsage.count(for: group)) calls"
+      ).foregroundStyle(.muted)
+        .sheet("\(group.displayName) tools", isPresented: $showsTools) {
+          ToolCatalogSheet(
+            conversation: conversation, workspace: workspace, groupID: group.catalogID)
         }
-      }
       if !group.description.isEmpty {
         Text("  \(group.description)")
           .foregroundStyle(.separator)
@@ -476,6 +482,76 @@ private struct ToolGroupRow: View {
       }
       isSaving = false
     }
+  }
+}
+
+/// All rows and their details are generated from the same runtime catalog as /tools.
+struct ToolCatalogSheet: View {
+  @Bindable var conversation: VisualConversation
+  let workspace: VisualWorkspace
+  var groupID: String? = nil
+  @State private var query = ""
+
+  var body: some View {
+    let catalog = workspace.toolCatalog(for: conversation)
+    VStack(alignment: .leading, spacing: 1) {
+      Text("Tools for \(conversation.profile.id) · " + catalog.summary().description).bold()
+      Text(
+        "Inherit follows groups, the proxy default, and usage. Individual choices override groups. Esc closes."
+      )
+      .foregroundStyle(.muted)
+      TextField("Filter tools", text: $query)
+      ScrollView(.vertical) {
+        VStack(alignment: .leading, spacing: 1) {
+          ForEach(
+            catalog.groups.filter { groupID == nil || $0.catalogID == groupID }, id: \.catalogID
+          ) { group in
+            let members = group.toolNames.sorted().filter { name in
+              query.isEmpty || name.localizedCaseInsensitiveContains(query)
+                || group.displayName.localizedCaseInsensitiveContains(query)
+                || catalog.tools.first(where: { $0.name == name })?.description
+                  .localizedCaseInsensitiveContains(query) == true
+            }
+            if !members.isEmpty {
+              Text(
+                "\(group.displayName) (\(group.toolNames.count)) · "
+                  + catalog.summary(for: group).description
+              ).bold()
+              ForEach(members, id: \.self) { name in
+                VStack(alignment: .leading, spacing: 0) {
+                  Picker(
+                    "\(name) [\(catalog.modes[name, default: .disabled].rawValue)] · \(workspace.toolUsage.counts[name, default: 0]) calls",
+                    selection: Binding(
+                      get: { conversation.profile.toolPolicy.tools[name]?.rawValue ?? "inherit" },
+                      set: {
+                        workspace.setToolMode(
+                          AgentToolMode(rawValue: $0), name: name, for: conversation)
+                      })
+                  ) {
+                    Text("Inherit").tag("inherit")
+                    ForEach(AgentToolMode.allCases, id: \.rawValue) { mode in
+                      Text(mode.displayName).tag(mode.rawValue)
+                    }
+                  }
+                  .pickerStyle(.segmented)
+                  if let definition = catalog.tools.first(where: { $0.name == name }) {
+                    Text(definition.description).foregroundStyle(.muted)
+                    ForEach(definition.parameters, id: \.name) { parameter in
+                      Text(
+                        "  \(parameter.name): \(parameter.type)\(parameter.required ? " (required)" : "") — \(parameter.description)"
+                      )
+                      .foregroundStyle(.separator)
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      .frame(height: 20)
+    }
+    .frame(minWidth: 50, maxWidth: 100, alignment: .leading)
   }
 }
 

@@ -743,7 +743,7 @@ struct SettingsView: View {
   }
 
   private var toolProxySummary: String {
-    "Off: every enabled tool is described in each request. On: only `list-tools` and `call-tool` wrappers go to the model — it lists matching tools by keyword, then calls the chosen one. Saves prompt context with many tools, adds one extra round-trip per call. Combines with all tool calling modes."
+    "Off: inherited tools are described in each request. On: inherited tools use list-tools and call-tool. Use Tool list to pin each group or member to Direct, Proxy, or Disabled. Individual choices override groups and the proxy default."
   }
 
   private var appearanceSection: some View {
@@ -1472,6 +1472,7 @@ struct SettingsView: View {
 
   private var toolsSection: some View {
     Section {
+      ToolCatalogSettingsButton()
       SettingsLazyDisclosureGroup {
         contextToolsContent
       } label: {
@@ -1491,6 +1492,7 @@ struct SettingsView: View {
       }
 
       SettingsLazyDisclosureGroup {
+        ToolCatalogSettingsButton(groupID: MaiSkillTools.group(toolNames: []).catalogID)
         SkillsSettingsView()
       } label: {
         Label("Skills", systemImage: "sparkles")
@@ -1555,6 +1557,10 @@ struct SettingsView: View {
         .frame(width: 20)
       Text(tool.displayName)
         .foregroundStyle(.primary)
+      if tool.isCallableTool {
+        Spacer()
+        ToolCatalogSettingsButton(groupID: "native/\(tool.rawValue)")
+      }
     }
   }
 
@@ -1895,6 +1901,7 @@ struct SettingsView: View {
           .lineLimit(1)
       }
       Spacer()
+      ToolCatalogSettingsButton(groupID: "mcp/\(server.portableID ?? server.id.uuidString.lowercased())")
       if !server.isEnabled {
         Text("Off")
           .font(.caption.weight(.semibold))

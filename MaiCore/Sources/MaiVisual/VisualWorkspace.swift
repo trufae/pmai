@@ -666,6 +666,15 @@ public final class VisualWorkspace {
     group.toolNames.contains { toolMode($0, for: conversation) != .disabled }
   }
 
+  public func toolCatalog(for conversation: VisualConversation) -> AgentToolCatalog {
+    AgentToolCatalog(
+      groups: toolGroups,
+      tools: tools
+        + AgentProcessTools.definitions(
+          offering: [], delegating: true, planFirst: configuration.use.plan),
+      modes: conversation.profile.toolModes(in: toolGroups, usage: toolUsage))
+  }
+
   public func toolMode(_ name: String, for conversation: VisualConversation) -> AgentToolMode {
     conversation.profile.toolMode(for: name, in: toolGroups, usage: toolUsage)
   }

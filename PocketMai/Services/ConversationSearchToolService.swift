@@ -50,7 +50,10 @@ enum ConversationSearchTool {
     // Loading yields to the UI: apply the latest tool selection and access
     // scope in case the user changed them while saved chats were being read.
     let current = store.conversation(withID: conversation.id) ?? conversation
-    guard current.toolsEnabled, current.enabledTools.contains(.context) else {
+    guard
+      ToolAgentRegistry.definitions(for: current, settings: store.settings)
+        .contains(where: { $0.name == name })
+    else {
       return "Error: the Context tool is disabled for this chat."
     }
     let scope = store.settings.toolSettings.conversationSearchScope

@@ -11,6 +11,92 @@ import XCTest
 /// The catalog now keeps the first definition per name — built-ins, then
 /// servers in settings order — matching dispatch resolution order.
 final class ToolCatalogDuplicateNameTests: XCTestCase {
+  @MainActor
+  func testMixedExposureKeepsDisabledToolsOutOfBothCatalogs() {
+    var settings = AppSettings()
+    var conversation = Conversation()
+    conversation.enabledTools = [.todo, .calculator]
+    settings.toolPolicy.groups[BuiltInToolID.todo.rawValue] = .proxy
+    settings.toolPolicy.tools[TodoTool.toolNames.first!] = .disabled
+    settings.toolPolicy.tools[MaiCalculatorTool.name] = .direct
+    let catalog = ToolAgentRegistry.catalog(for: conversation, settings: settings)
+    let todo = catalog.groups.first { $0.id == BuiltInToolID.todo.rawValue }!
+    XCTAssertEqual(todo.toolNames, Set(TodoTool.toolNames))
+    XCTAssertEqual(catalog.summary(for: todo).disabled, 1)
+    XCTAssertEqual(catalog.summary(for: todo).proxy, TodoTool.toolNames.count - 1)
+    XCTAssertFalse(catalog.enabledDefinitions.contains { $0.name == TodoTool.toolNames.first! })
+    XCTAssertEqual(
+      Set(catalog.visibleDefinitions.map(\.name)),
+      [MaiCalculatorTool.name, ToolProxy.listName, ToolProxy.callName])
+    settings.useToolProxy = true
+    XCTAssertEqual(
+      Set(ToolAgentRegistry.visibleDefinitions(for: conversation, settings: settings).map(\.name)),
+      [MaiCalculatorTool.name, ToolProxy.listName, ToolProxy.callName])
+    settings.toolPolicy.tools.removeAll()
+    settings.toolPolicy.groups.removeAll()
+    let inherited = ToolAgentRegistry.catalog(for: conversation, settings: settings)
+    XCTAssertEqual(inherited.summary().proxy, TodoTool.toolNames.count + 1)
+    XCTAssertEqual(
+      inherited.summary().disabled, inherited.summary().total - TodoTool.toolNames.count - 1)
+  }
+
+  @MainActor
+  func testPinsCannotBypassOfflineWorkspaceOrMasterSwitch() {
+    var settings = AppSettings()
+    var conversation = Conversation()
+    settings.toolPolicy.groups = ["files": .direct, "github": .direct, "calculator": .proxy]
+    settings.airplaneModeEnabled = true
+    var catalog = ToolAgentRegistry.catalog(for: conversation, settings: settings)
+    let files = catalog.groups.first { $0.id == "files" }!
+    XCTAssertFalse(files.toolNames.isEmpty)
+    XCTAssertEqual(catalog.summary(for: files).enabled, 0)
+    XCTAssertFalse(
+      catalog.enabledDefinitions.contains {
+        $0.name.hasPrefix("files_") || $0.name.hasPrefix("github_")
+      })
+    XCTAssertTrue(catalog.enabledDefinitions.contains { $0.name == MaiCalculatorTool.name })
+    conversation.toolsEnabled = false
+    catalog = ToolAgentRegistry.catalog(for: conversation, settings: settings)
+    XCTAssertTrue(catalog.enabledDefinitions.isEmpty)
+    XCTAssertTrue(catalog.visibleDefinitions.isEmpty)
+  }
+
+  @MainActor
+  func testMixedDirectAndProxyExecuteAndDisabledTargetsAreRejected() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "mixed-tools-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = AppStore(persistence: PersistenceStore(localBaseURL: root))
+    var settings = AppSettings()
+    settings.toolPolicy.tools = [MaiCalculatorTool.name: .proxy]
+    var conversation = Conversation()
+    conversation.enabledTools = [.calculator]
+    let proxied = ParsedToolCall(
+      name: ToolProxy.callName, arguments: [:],
+      argumentValues: [
+        "name": .string(MaiCalculatorTool.name),
+        "arguments": .object(["expression": .string("2+3")]),
+      ],
+      rawBlock: "")
+    let proxyResult = await ToolAgentRegistry.execute(
+      call: proxied, conversation: conversation, settings: settings, store: store)
+    XCTAssertEqual(proxyResult, "5")
+    settings.useToolProxy = true
+    settings.toolPolicy.tools[MaiCalculatorTool.name] = .direct
+    let direct = ParsedToolCall(
+      name: MaiCalculatorTool.name, arguments: ["expression": "3*4"], rawBlock: "")
+    let directResult = await ToolAgentRegistry.execute(
+      call: direct, conversation: conversation, settings: settings, store: store)
+    XCTAssertEqual(directResult, "12")
+    settings.toolPolicy.tools[MaiCalculatorTool.name] = .disabled
+    let deniedDirect = await ToolAgentRegistry.execute(
+      call: direct, conversation: conversation, settings: settings, store: store)
+    let deniedProxy = await ToolAgentRegistry.execute(
+      call: proxied, conversation: conversation, settings: settings, store: store)
+    XCTAssertTrue(deniedDirect.hasPrefix("Error:"))
+    XCTAssertTrue(deniedProxy.hasPrefix("Error:"))
+  }
+
   func testVectorDatabaseIndexesAndQueriesOnIOS() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(
       "ios-vdb-\(UUID().uuidString)")
@@ -114,6 +200,23 @@ final class ToolCatalogDuplicateNameTests: XCTestCase {
     let call = ParsedToolCall(name: "search", arguments: ["query": "x"], rawBlock: "")
     XCTAssertEqual(
       AgentTooling.normalized(call: call, tools: definitions).name, "search")
+  }
+
+  @MainActor
+  func testDisabledServerDoesNotShadowEnabledServerWithSameToolName() {
+    let first = ServerFixture(name: "First", tools: [MCPToolDescriptor(name: "search", description: "Disabled.")])
+    let second = ServerFixture(name: "Second", tools: [MCPToolDescriptor(name: "search", description: "Available.")])
+    var settings = AppSettings()
+    settings.mcpServers = [first.server, second.server]
+    var conversation = Conversation()
+    conversation.enabledMCPServers = [second.server.id]
+    conversation.enabledMCPTools = [MCPToolSelection.key(serverID: second.server.id, toolName: "search")]
+    let catalog = ToolAgentRegistry.catalog(for: conversation, settings: settings,
+      mcpTools: [first.server.id: first.tools, second.server.id: second.tools],
+      mcpStatuses: [first.server.id: .available, second.server.id: .available])
+    XCTAssertEqual(catalog.enabledDefinitions.first { $0.name == "search" }?.description, "Available.")
+    XCTAssertEqual(catalog.groups.first { $0.id == second.server.id.uuidString.lowercased() }?.toolNames, ["search"])
+    XCTAssertEqual(catalog.groups.first { $0.id == first.server.id.uuidString.lowercased() }?.toolNames, [])
   }
 
   @MainActor

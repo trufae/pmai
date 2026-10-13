@@ -1161,7 +1161,7 @@ enum AssistantToolLoop {
       // Evaluate the concrete target behind the proxy, preserving the original
       // envelope for execution only when these exact arguments are approved.
       let reviewedCall: ParsedToolCall
-      if settings.useToolProxy && call.name == ToolProxy.callName {
+      if call.name == ToolProxy.callName {
         guard
           let resolved = ToolProxy.resolveCall(
             arguments: call.argumentValues, definitions: definitions

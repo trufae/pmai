@@ -6,6 +6,8 @@ public enum AgentToolMode: String, Codable, CaseIterable, Sendable {
   case direct
   case proxy
   case disabled
+
+  public var displayName: String { rawValue.capitalized }
 }
 
 /// Per-agent overrides. Exact tool names win over groups; qualified group
@@ -64,6 +66,16 @@ public struct AgentToolPolicy: Codable, Equatable, Sendable {
     return nil
   }
 
+  public func groupMode(for group: ToolGroupDefinition) -> AgentToolMode? {
+    groups[group.catalogID] ?? (group.sourceID == "mcp" ? nil : groups[group.id])
+  }
+
+  public mutating func setGroupMode(_ mode: AgentToolMode?, for group: ToolGroupDefinition) {
+    let key = group.sourceID == "mcp" ? group.catalogID : group.id
+    groups[group.catalogID] = nil
+    groups[key] = mode
+  }
+
   public func modes(
     for names: Set<String>, in catalog: [ToolGroupDefinition], enabledNames: Set<String>,
     useToolProxy: Bool, exposedTools: Set<String>? = nil, usage: AgentToolUsage = .init()
@@ -116,9 +128,7 @@ extension AgentDefinition {
 
   public mutating func setToolGroupMode(_ mode: AgentToolMode?, for group: ToolGroupDefinition) {
     // MCP IDs are qualified so a GitHub server cannot shadow the native group.
-    let key = group.sourceID == "mcp" ? group.catalogID : group.id
-    toolPolicy.groups[group.catalogID] = nil
-    toolPolicy.groups[key] = mode
+    toolPolicy.setGroupMode(mode, for: group)
   }
 }
 

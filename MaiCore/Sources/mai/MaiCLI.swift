@@ -7859,12 +7859,7 @@ struct MaiCLI {
       for group in groups {
         let label = await terminal.paint(
           group.sourceID == "mcp" ? group.catalogID : group.id, bold: true)
-        let modes = group.toolNames.map {
-          (modesByName[$0] ?? .disabled).rawValue
-        }
-        let summary = Set(modes).sorted().map { mode in
-          "\(modes.filter { $0 == mode }.count) \(mode)"
-        }.joined(separator: ", ")
+        let summary = AgentToolModeSummary(names: group.toolNames, modes: modesByName).description
         await terminal.line("\(label) — \(group.displayName) [\(summary); \(usage.count(for: group)) calls]")
       }
       await terminal.line("/tools show GROUP lists each member; /tools direct|proxy|disable|inherit GROUP|TOOL selects its state.")

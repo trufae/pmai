@@ -25,7 +25,11 @@ enum SkillTools {
   static func enabledSkills(for conversation: Conversation, settings: AppSettings) -> [AgentSkill] {
     guard conversation.toolsEnabled else { return [] }
     return catalog(for: conversation, settings: settings).modelInvocable.filter {
-      settings.enabledSkillTools.contains($0.toolName)
+      settings.toolPolicy.mode(
+        for: $0.toolName,
+        in: [MaiSkillTools.group(toolNames: [$0.toolName])],
+        enabled: settings.enabledSkillTools.contains($0.toolName),
+        useToolProxy: settings.useToolProxy, exposedTools: []) != .disabled
     }
   }
 
@@ -57,6 +61,7 @@ enum SkillTools {
     var settings = snapshot
     settings.enabledSkillTools = agent?.enabledSkillTools ?? []
     settings.skillApprovalMode = agent?.skillApprovalMode
+    settings.toolPolicy = agent?.toolPolicy ?? AgentToolPolicy(automatic: false)
     return settings
   }
 

@@ -26,6 +26,7 @@ struct AgentSettings: Codable, Equatable, Sendable {
   var toolApprovalMode: ToolApprovalMode = .yolo
   var enabledSkillTools: Set<String> = []
   var skillApprovalMode: ToolApprovalMode? = nil
+  var toolPolicy = AgentToolPolicy(automatic: false)
   var useToolProxy: Bool = false
   var useSystemOne: Bool = false
   var contextWindowMode: ContextWindowMode = .full
@@ -43,7 +44,7 @@ struct AgentSettings: Codable, Equatable, Sendable {
     case defaultEnabledMCPServers, defaultEnabledMCPTools
     case mcpRequestTimeoutSeconds, llmRequestTimeoutSeconds
     case toolCallingMode, maxToolCallsPerTurn, toolApprovalMode, useToolProxy, useSystemOne
-    case enabledSkillTools, skillApprovalMode
+    case enabledSkillTools, skillApprovalMode, toolPolicy
     case contextWindowMode, includeAssistantResponsesInContext, includeReasoningContentInContext
     case mlxMaxKVSize, mlxAutoCompact
   }
@@ -93,6 +94,7 @@ struct AgentSettings: Codable, Equatable, Sendable {
     enabledSkillTools = (try? c.decode(Set<String>.self, forKey: .enabledSkillTools)) ?? []
     skillApprovalMode = try? c.decode(ToolApprovalMode.self, forKey: .skillApprovalMode)
     useSystemOne = (try? c.decode(Bool.self, forKey: .useSystemOne)) ?? false
+    toolPolicy = (try? c.decode(AgentToolPolicy.self, forKey: .toolPolicy)) ?? defaults.toolPolicy
     useToolProxy = (try? c.decode(Bool.self, forKey: .useToolProxy)) ?? defaults.useToolProxy
     contextWindowMode =
       (try? c.decode(ContextWindowMode.self, forKey: .contextWindowMode))
@@ -183,6 +185,7 @@ extension AppSettings {
       agent.toolApprovalMode = toolApprovalMode
       agent.enabledSkillTools = enabledSkillTools
       agent.skillApprovalMode = skillApprovalMode
+      agent.toolPolicy = toolPolicy
       agent.useToolProxy = useToolProxy
       agent.useSystemOne = useSystemOne
       agent.contextWindowMode = contextWindowMode
@@ -212,6 +215,7 @@ extension AppSettings {
       toolApprovalMode = newValue.toolApprovalMode
       enabledSkillTools = newValue.enabledSkillTools
       skillApprovalMode = newValue.skillApprovalMode
+      toolPolicy = newValue.toolPolicy
       useToolProxy = newValue.useToolProxy
       useSystemOne = newValue.useSystemOne
       contextWindowMode = newValue.contextWindowMode

@@ -34,23 +34,27 @@ enum BuiltInToolCatalog {
         arguments: call.argumentValues)
     case MaiVectorDatabaseTool.name:
       guard conversation.toolsEnabled, conversation.enabledTools.contains(.vdb),
-        store.settings.toolSettings.filesWorkspaceAccessEnabled else {
+        store.settings.toolSettings.filesWorkspaceAccessEnabled
+      else {
         return "Error: enable Local documentation and Files workspace access to use vdb."
       }
       do {
         let resolved = try FileWorkspaceTool.context(for: conversation, settings: store.settings)
         if let bookmark = resolved.refreshedBookmarkData {
-          store.refreshWorkingFolderBookmark(conversationID: conversation.id, bookmarkData: bookmark)
+          store.refreshWorkingFolderBookmark(
+            conversationID: conversation.id, bookmarkData: bookmark)
         }
         let workspace = resolved.context
         return await PocketMaiPluginHost.shared.call(
-          tool: MaiVectorDatabaseTool(configuration: MaiFileWorkspaceConfiguration(
-            rootURL: workspace.rootURL, displayName: workspace.displayName,
-            isSecurityScoped: workspace.isSecurityScoped,
-            hiddenRootEntryNames: workspace.hidesModelsFolder ? ["Models"] : [])),
+          tool: MaiVectorDatabaseTool(
+            configuration: MaiFileWorkspaceConfiguration(
+              rootURL: workspace.rootURL, displayName: workspace.displayName,
+              isSecurityScoped: workspace.isSecurityScoped,
+              hiddenRootEntryNames: workspace.hidesModelsFolder ? ["Models"] : [])),
           arguments: call.argumentValues)
       } catch {
-        return "Error: the working folder is no longer accessible. Select it again from the chat's + menu."
+        return
+          "Error: the working folder is no longer accessible. Select it again from the chat's + menu."
       }
     case MaiWebSearchTool.name:
       guard !store.settings.airplaneModeEnabled else {
@@ -179,10 +183,11 @@ enum BuiltInToolCatalog {
     return "Error: Unknown Files tool."
   }
 
-  private static func definitions(
+  static func definitions(
     for id: BuiltInToolID,
     conversation: Conversation,
-    settings: AppSettings
+    settings: AppSettings,
+    includeUnavailable: Bool = false
   ) -> [ToolDefinition] {
     switch id {
     case .datetime, .language, .location, .memory:
@@ -191,7 +196,7 @@ enum BuiltInToolCatalog {
       return [MaiWeatherTool.toolDefinition]
     case .webSearch:
       return [MaiWebSearchTool.toolDefinition]
-        + (settings.toolSettings.webSearchFetchingEnabled
+        + (includeUnavailable || settings.toolSettings.webSearchFetchingEnabled
           ? [MaiWebFetchTool.toolDefinition] : [])
     case .todo:
       return TodoTool.definitions
@@ -200,14 +205,17 @@ enum BuiltInToolCatalog {
     case .textToSpeech:
       return TextToSpeechTool.definitions
     case .files:
-      guard settings.toolSettings.filesWorkspaceAccessEnabled else { return [] }
+      guard includeUnavailable || settings.toolSettings.filesWorkspaceAccessEnabled else { return [] }
       return FileWorkspaceTool.definitions(
         workspaceName: FileWorkspaceTool.workspaceName(for: conversation, settings: settings),
-        includeAdvancedTools: settings.toolSettings.filesAdvancedToolsEnabled)
+        includeAdvancedTools: includeUnavailable || settings.toolSettings.filesAdvancedToolsEnabled)
     case .vdb:
-      return settings.toolSettings.filesWorkspaceAccessEnabled ? [MaiVectorDatabaseTool.toolDefinition] : []
+      return settings.toolSettings.filesWorkspaceAccessEnabled
+        ? [MaiVectorDatabaseTool.toolDefinition] : []
     case .calendar:
-      return CalendarTool.definitions(settings: settings.toolSettings)
+      var toolSettings = settings.toolSettings
+      if includeUnavailable { toolSettings.calendarEventCreationEnabled = true }
+      return CalendarTool.definitions(settings: toolSettings)
     case .clipboard:
       return ClipboardTool.definitions
     case .alarms:
@@ -221,7 +229,7 @@ enum BuiltInToolCatalog {
     case .browser:
       return BrowserTool.definitions
     case .context:
-      guard settings.toolSettings.conversationSearchScope != .none else { return [] }
+      guard includeUnavailable || settings.toolSettings.conversationSearchScope != .none else { return [] }
       return ConversationSearchTool.definitions
     }
   }
@@ -245,14 +253,10 @@ enum ToolAgentRegistry {
     mcpResources: [UUID: [MCPResourceDescriptor]] = [:],
     mcpStatuses: [UUID: EndpointConnectionState] = [:]
   ) -> [ToolDefinition] {
-    let fullDefinitions = definitions(
-      for: conversation,
-      settings: settings,
-      mcpTools: mcpTools,
-      mcpResources: mcpResources,
-      mcpStatuses: mcpStatuses)
-    guard settings.useToolProxy && !settings.useSystemOne else { return fullDefinitions }
-    return ToolProxy.definitions(for: fullDefinitions, exposing: [])
+    catalog(
+      for: conversation, settings: settings, mcpTools: mcpTools,
+      mcpResources: mcpResources, mcpStatuses: mcpStatuses
+    ).visibleDefinitions
   }
 
   static func definitions(
@@ -262,46 +266,131 @@ enum ToolAgentRegistry {
     mcpResources: [UUID: [MCPResourceDescriptor]] = [:],
     mcpStatuses: [UUID: EndpointConnectionState] = [:]
   ) -> [ToolDefinition] {
-    guard conversation.toolsEnabled else { return [] }
-    var defs = BuiltInToolCatalog.definitions(
-      for: conversation,
-      settings: settings)
-    defs += SkillTools.definitions(for: conversation, settings: settings)
-    // Tool names must stay unique: duplicates shadow each other at dispatch
-    // and trap the by-name lookups. Keep the first definition — built-ins,
-    // then servers in settings order — matching executeConcrete's resolution
-    // order, which also routes mcp_read_resource before any MCP server.
-    var takenNames = Set(defs.map(\.name))
-    takenNames.insert(MCPResourceTool.readName)
-    var enabledResourceServers: [(server: MCPServer, resources: [MCPResourceDescriptor])] = []
-    for server in settings.mcpServers
-    where server.isEnabled && server.hasValidEndpointURL
-      && conversation.enabledMCPServers.contains(server.id)
-      && mcpStatuses[server.id]?.isAvailable == true
-    {
-      let tools = mcpTools[server.id] ?? []
-      for tool in tools {
-        let key = MCPToolSelection.key(serverID: server.id, toolName: tool.name)
-        guard conversation.enabledMCPTools.contains(key) else { continue }
-        guard !MaiSkillTools.isSkillTool(tool.name),
-          takenNames.insert(tool.name).inserted else { continue }
-        let description = cleanedToolDescription(
-          tool.description,
-          fallback: "MCP tool from \(server.name).")
-        var definition = tool
-        definition.description = description
-        defs.append(definition)
+    catalog(
+      for: conversation, settings: settings, mcpTools: mcpTools,
+      mcpResources: mcpResources, mcpStatuses: mcpStatuses
+    ).enabledDefinitions
+  }
+
+  /// Discovery also includes disabled members so Settings can restore them.
+  /// Access settings, offline mode, and MCP server grants remain prerequisites.
+  static func catalog(
+    for conversation: Conversation,
+    settings: AppSettings,
+    mcpTools: [UUID: [MCPToolDescriptor]] = [:],
+    mcpResources: [UUID: [MCPResourceDescriptor]] = [:],
+    mcpStatuses: [UUID: EndpointConnectionState] = [:]
+  ) -> AgentToolCatalog {
+    var groups: [ToolGroupDefinition] = []
+    var definitions: [ToolDefinition] = []
+    var enabledNames = Set<String>()
+    var unavailableNames = Set<String>()
+    var takenNames: Set<String> = [MCPResourceTool.readName]
+    var activeNames = Set<String>()
+    func append(
+      _ tools: [ToolDefinition], group: ToolGroupDefinition, enabled: Set<String>,
+      available: Bool = true, availableNames: Set<String>? = nil
+    ) {
+      var group = group
+      let unique = tools.filter { tool in
+        let active =
+          available && (availableNames?.contains(tool.name) ?? true)
+          && settings.toolPolicy.mode(
+            for: tool.name, in: [group], enabled: enabled.contains(tool.name),
+            useToolProxy: settings.useToolProxy && !settings.useSystemOne, exposedTools: [])
+            != .disabled
+        if takenNames.contains(tool.name) {
+          // A disabled candidate must not shadow a later enabled server's
+          // definition. Otherwise retain discovery/dispatch precedence.
+          guard tool.name != MCPResourceTool.readName, active, !activeNames.contains(tool.name)
+          else { return false }
+          definitions.removeAll { $0.name == tool.name }
+          for index in groups.indices { groups[index].toolNames.remove(tool.name) }
+          enabledNames.remove(tool.name)
+          unavailableNames.remove(tool.name)
+        }
+        takenNames.insert(tool.name)
+        if active { activeNames.insert(tool.name) }
+        return true
       }
-      enabledResourceServers.append((server, mcpResources[server.id] ?? []))
+      group.toolNames = Set(unique.map(\.name))
+      groups.append(group)
+      definitions += unique
+      enabledNames.formUnion(group.toolNames.intersection(enabled))
+      if !available { unavailableNames.formUnion(group.toolNames) }
+      if let availableNames { unavailableNames.formUnion(group.toolNames.subtracting(availableNames)) }
     }
-    if !enabledResourceServers.isEmpty {
-      defs.append(MCPResourceTool.definition(for: enabledResourceServers))
+    for id in BuiltInToolID.allCases where id.isCallableTool {
+      let tools = BuiltInToolCatalog.definitions(
+        for: id, conversation: conversation, settings: settings, includeUnavailable: true)
+      let availableNames = Set(BuiltInToolCatalog.definitions(
+        for: id, conversation: conversation, settings: settings).map(\.name))
+      append(
+        tools,
+        group: ToolGroupDefinition(
+          id: id.rawValue, sourceID: "native", displayName: id.displayName,
+          toolNames: Set(tools.map(\.name))),
+        enabled: conversation.enabledTools.contains(id) ? Set(tools.map(\.name)) : [],
+        available: !(settings.airplaneModeEnabled && id.isDisabledInAirplaneMode),
+        availableNames: availableNames)
     }
-    for definition in SubagentTool.definitions(for: conversation, settings: settings)
-    where takenNames.insert(definition.name).inserted {
-      defs.append(definition)
+    let skillDefinitions = SkillTools.catalog(for: conversation, settings: settings).modelInvocable
+      .map(MaiSkillTools.definition)
+    append(
+      skillDefinitions, group: MaiSkillTools.group(toolNames: Set(skillDefinitions.map(\.name))),
+      enabled: settings.enabledSkillTools)
+    var resourceServers: [(server: MCPServer, resources: [MCPResourceDescriptor])] = []
+    for server in settings.mcpServers {
+      let available =
+        server.isEnabled && server.hasValidEndpointURL
+        && conversation.enabledMCPServers.contains(server.id)
+        && mcpStatuses[server.id]?.isAvailable == true && !settings.airplaneModeEnabled
+      let tools = (mcpTools[server.id] ?? []).filter { !MaiSkillTools.isSkillTool($0.name) }.map {
+        tool in
+        var definition = tool
+        definition.description = cleanedToolDescription(
+          tool.description, fallback: "MCP tool from \(server.name).")
+        return definition
+      }
+      append(
+        tools,
+        group: ToolGroupDefinition(
+          id: server.portableID ?? server.id.uuidString.lowercased(), sourceID: "mcp",
+          displayName: server.name, toolNames: Set(tools.map(\.name))),
+        enabled: Set(
+          tools.filter {
+            conversation.enabledMCPTools.contains(
+              MCPToolSelection.key(serverID: server.id, toolName: $0.name))
+          }.map(\.name)), available: available)
+      if available { resourceServers.append((server, mcpResources[server.id] ?? [])) }
     }
-    return defs
+    if !resourceServers.isEmpty {
+      takenNames.remove(MCPResourceTool.readName)
+      let tool = MCPResourceTool.definition(for: resourceServers)
+      append(
+        [tool],
+        group: ToolGroupDefinition(
+          id: "resources", sourceID: "mcp", displayName: "MCP Resources",
+          toolNames: [tool.name]), enabled: [tool.name])
+    }
+    let agents = SubagentTool.definitions(for: conversation, settings: settings)
+    if !agents.isEmpty {
+      append(
+        agents,
+        group: ToolGroupDefinition(
+          id: "agents", sourceID: "native", displayName: "Agents",
+          toolNames: Set(agents.map(\.name))), enabled: Set(agents.map(\.name)))
+    }
+    // Preserve the app's legacy pure-proxy default. Explicit Direct and Proxy
+    // pins still work with either default and with System One routing.
+    var modes = settings.toolPolicy.modes(
+      for: Set(definitions.map(\.name)), in: groups, enabledNames: enabledNames,
+      useToolProxy: settings.useToolProxy && !settings.useSystemOne, exposedTools: [])
+    for name in unavailableNames { modes[name] = .disabled }
+    if !conversation.toolsEnabled {
+      modes = modes.mapValues { _ in .disabled }
+    }
+    return AgentToolCatalog(groups: groups, tools: definitions, modes: modes)
   }
 
   private static func cleanedToolDescription(_ text: String, fallback: String) -> String {
@@ -331,24 +420,17 @@ enum ToolAgentRegistry {
     store: AppStore
   ) async -> String {
     let settings = settings ?? store.settings
-    let fullDefinitions = ToolAgentRegistry.definitions(
-      for: conversation,
-      settings: settings,
-      mcpTools: store.mcpTools,
-      mcpResources: store.mcpResources,
-      mcpStatuses: store.mcpStatuses)
-    let visibleDefinitions = ToolAgentRegistry.visibleDefinitions(
-      for: conversation,
-      settings: settings,
-      mcpTools: store.mcpTools,
-      mcpResources: store.mcpResources,
-      mcpStatuses: store.mcpStatuses)
+    let toolCatalog = catalog(
+      for: conversation, settings: settings, mcpTools: store.mcpTools,
+      mcpResources: store.mcpResources, mcpStatuses: store.mcpStatuses)
+    let fullDefinitions = toolCatalog.enabledDefinitions
+    let visibleDefinitions = toolCatalog.visibleDefinitions
     let visibleCall = AgentTooling.normalized(call: call, tools: visibleDefinitions)
     guard AgentTooling.containsDefinition(named: visibleCall.name, in: visibleDefinitions) else {
       return AgentTooling.unavailableToolError(name: visibleCall.name)
     }
 
-    if settings.useToolProxy && !settings.useSystemOne && !fullDefinitions.isEmpty {
+    if visibleDefinitions.contains(where: { $0.name == ToolProxy.callName }) {
       switch visibleCall.name {
       case ToolProxy.listName:
         return ToolProxy.listTools(
@@ -367,8 +449,7 @@ enum ToolAgentRegistry {
           store: store,
           definitions: fullDefinitions)
       default:
-        return
-          "Error: proxy mode only exposes '\(ToolProxy.listName)' and '\(ToolProxy.callName)'. Use '\(ToolProxy.callName)' to call enabled tools."
+        break
       }
     }
 
@@ -392,7 +473,8 @@ enum ToolAgentRegistry {
       return AgentTooling.unavailableToolError(name: normalizedCall.name)
     }
     if MaiSkillTools.isSkillTool(normalizedCall.name) {
-      return SkillTools.execute(call: normalizedCall, conversation: conversation, settings: settings)
+      return SkillTools.execute(
+        call: normalizedCall, conversation: conversation, settings: settings)
     }
     if SubagentTool.isAgentTool(normalizedCall.name) {
       return await SubagentTool.execute(
@@ -401,10 +483,24 @@ enum ToolAgentRegistry {
         settings: settings,
         store: store)
     }
-    if let result = await BuiltInToolCatalog.execute(
-      call: normalizedCall,
-      conversation: conversation,
-      store: store)
+    var executionConversation = conversation
+    for id in BuiltInToolID.allCases where id.isCallableTool {
+      if BuiltInToolCatalog.definitions(for: id, conversation: conversation, settings: settings)
+        .contains(where: { $0.name == normalizedCall.name })
+      {
+        executionConversation.enabledTools.insert(id)
+      }
+    }
+    let executionCatalog = catalog(
+      for: conversation, settings: settings, mcpTools: store.mcpTools,
+      mcpResources: store.mcpResources, mcpStatuses: store.mcpStatuses)
+    if executionCatalog.groups.contains(where: {
+      $0.sourceID == "native" && $0.toolNames.contains(normalizedCall.name)
+    }),
+      let result = await BuiltInToolCatalog.execute(
+        call: normalizedCall,
+        conversation: executionConversation,
+        store: store)
     {
       return result
     }
@@ -414,25 +510,31 @@ enum ToolAgentRegistry {
         conversation: conversation,
         store: store)
     }
-    return await dispatchMCP(call: normalizedCall, conversation: conversation, store: store)
+    return await dispatchMCP(
+      call: normalizedCall, conversation: conversation, settings: settings,
+      catalog: executionCatalog, store: store)
   }
 
   private static func dispatchMCP(
     call: ParsedToolCall,
     conversation: Conversation,
+    settings: AppSettings,
+    catalog: AgentToolCatalog,
     store: AppStore
   ) async -> String {
-    for server in store.settings.mcpServers
+    for server in settings.mcpServers
     where server.isEnabled && server.hasValidEndpointURL
       && conversation.enabledMCPServers.contains(server.id)
       && store.mcpStatuses[server.id]?.isAvailable == true
     {
       let tools = store.mcpTools[server.id] ?? []
       guard tools.contains(where: { $0.name == call.name }) else { continue }
-      let key = MCPToolSelection.key(serverID: server.id, toolName: call.name)
-      if !conversation.enabledMCPTools.contains(key) {
-        return "Error: tool '\(call.name)' is disabled for this conversation."
-      }
+      let catalogID = "mcp/\(server.portableID ?? server.id.uuidString.lowercased())"
+      guard
+        catalog.groups.contains(where: {
+          $0.catalogID == catalogID && $0.toolNames.contains(call.name)
+        })
+      else { continue }
       do {
         let server = try await store.authorizedMCPServer(server)
         return try await MCPHTTPClient.callTool(
@@ -620,8 +722,9 @@ enum FileWorkspaceTool {
       configuration: MaiFileWorkspaceConfiguration(
         rootURL: PocketMaiDirectories.filesWorkspaceURL,
         displayName: name),
-      includeAdvancedTools: includeAdvancedTools)
-      .map(\.definition)
+      includeAdvancedTools: includeAdvancedTools
+    )
+    .map(\.definition)
     return definitions
   }
 }

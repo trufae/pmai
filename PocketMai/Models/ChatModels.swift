@@ -2239,6 +2239,7 @@ struct SettingsToolsBackup: Codable, Sendable {
   var useSystemOne: Bool? = nil
   var enabledSkillTools: Set<String>? = nil
   var skillApprovalMode: ToolApprovalMode? = nil
+  var toolPolicy: AgentToolPolicy? = nil
 }
 
 extension SettingsToolsBackup {
@@ -2262,6 +2263,7 @@ extension SettingsToolsBackup {
     useSystemOne = try c.decodeIfPresent(Bool.self, forKey: .useSystemOne)
     enabledSkillTools = try c.decodeIfPresent(Set<String>.self, forKey: .enabledSkillTools)
     skillApprovalMode = try c.decodeIfPresent(ToolApprovalMode.self, forKey: .skillApprovalMode)
+    toolPolicy = try c.decodeIfPresent(AgentToolPolicy.self, forKey: .toolPolicy)
   }
 }
 
@@ -3093,6 +3095,7 @@ struct AppSettings: Codable, Equatable, Sendable {
   var toolApprovalMode: ToolApprovalMode = .yolo
   var enabledSkillTools: Set<String> = []
   var skillApprovalMode: ToolApprovalMode? = nil
+  var toolPolicy = AgentToolPolicy(automatic: false)
   var useToolProxy: Bool = false
   var useSystemOne: Bool = false
   var contextWindowMode: ContextWindowMode = .full
@@ -3294,7 +3297,7 @@ struct AppSettings: Codable, Equatable, Sendable {
     case toolSettings, mcpServers, mcpRequestTimeoutSeconds, llmRequestTimeoutSeconds, memory,
       toolCallingMode,
       maxToolCallsPerTurn
-    case enabledSkillTools, skillApprovalMode
+    case enabledSkillTools, skillApprovalMode, toolPolicy
     case toolApprovalMode, useToolProxy, useSystemOne, contextWindowMode
     case includeAssistantResponsesInContext, includeReasoningContentInContext
     case followUps, background
@@ -3397,6 +3400,9 @@ struct AppSettings: Codable, Equatable, Sendable {
     enabledSkillTools = (try? c.decode(Set<String>.self, forKey: .enabledSkillTools)) ?? []
     skillApprovalMode = try? c.decode(ToolApprovalMode.self, forKey: .skillApprovalMode)
     useSystemOne = (try? c.decode(Bool.self, forKey: .useSystemOne)) ?? false
+    toolPolicy =
+      (try? c.decode(AgentToolPolicy.self, forKey: .toolPolicy))
+      ?? AgentToolPolicy(automatic: false)
     useToolProxy =
       (try? c.decode(Bool.self, forKey: .useToolProxy)) ?? migratedFromLegacyProxy
     contextWindowMode =

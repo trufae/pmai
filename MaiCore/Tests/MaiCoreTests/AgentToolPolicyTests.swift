@@ -6,6 +6,56 @@ import Testing
 private let githubPolicyGroup = ToolGroupDefinition(
   id: "github", sourceID: "standard", toolNames: ["github_pr", "github_issue", "github_ci_log"])
 
+@Test("Catalog lists count effective modes and expose only direct schemas plus the proxy")
+func toolCatalogProjection() {
+  var agent = AgentDefinition(id: "main", provider: "hello", model: "", toolGroupNames: ["github"])
+  agent.setToolGroupMode(.proxy, for: githubPolicyGroup)
+  agent.setToolMode(.direct, for: "github_pr")
+  agent.setToolMode(.disabled, for: "github_ci_log")
+  let tools = githubPolicyGroup.toolNames.sorted().map {
+    ToolDefinition(name: $0, description: $0, parameters: [])
+  }
+  let catalog = AgentToolCatalog(
+    groups: [githubPolicyGroup], tools: tools + tools,
+    modes: agent.toolModes(in: [githubPolicyGroup]))
+  #expect(catalog.tools.count == 3)
+  #expect(
+    catalog.definitions(in: githubPolicyGroup).map(\.name) == githubPolicyGroup.toolNames.sorted())
+  let summary = catalog.summary(for: githubPolicyGroup)
+  #expect(summary.direct == 1)
+  #expect(summary.proxy == 1)
+  #expect(summary.disabled == 1)
+  #expect(summary.enabled == 2)
+  #expect(summary.total == 3)
+  #expect(
+    Set(catalog.visibleDefinitions.map(\.name)) == [
+      "github_pr", ToolProxy.listName, ToolProxy.callName,
+    ])
+  #expect(Set(catalog.enabledDefinitions.map(\.name)) == ["github_pr", "github_issue"])
+}
+
+@Test("Catalog updates when inheritance, group membership, or default exposure changes")
+func toolCatalogInheritance() {
+  var group = githubPolicyGroup
+  group.toolNames.insert("github_new")
+  var agent = AgentDefinition(id: "main", provider: "hello", model: "", toolGroupNames: ["github"])
+  agent.setToolMode(.disabled, for: "github_ci_log")
+  agent.useToolProxy = false
+  let tools = group.toolNames.map { ToolDefinition(name: $0, description: "", parameters: []) }
+  func catalog() -> AgentToolCatalog {
+    AgentToolCatalog(groups: [group], tools: tools, modes: agent.toolModes(in: [group]))
+  }
+  #expect(catalog().summary().direct == 3)
+  #expect(catalog().summary().disabled == 1)
+  agent.setToolGroupMode(.proxy, for: group)
+  #expect(catalog().summary().proxy == 3)
+  agent.setToolMode(nil, for: "github_ci_log")
+  #expect(catalog().summary().proxy == 4)
+  agent.setToolGroupMode(.disabled, for: group)
+  #expect(catalog().enabledDefinitions.isEmpty)
+  #expect(catalog().visibleDefinitions.isEmpty)
+}
+
 @Test("Hybrid and automatic exposure default on, with explicit legacy settings preserved")
 func toolPolicyDefaultsAndPersistence() throws {
   let legacy = Data(#"{"id":"main","provider":"hello","toolNames":["files_read"]}"#.utf8)
@@ -111,7 +161,6 @@ func toolUsagePersistence() async throws {
   #expect(await first.lastPersistenceError == nil)
   #expect(await second.lastPersistenceError == nil)
 }
-
 
 @Test("A counter persistence failure retains in-memory learning without failing tool use")
 func toolUsagePersistenceFailure() async throws {

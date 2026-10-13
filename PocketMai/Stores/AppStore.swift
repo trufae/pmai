@@ -5744,7 +5744,8 @@ final class AppStore: ObservableObject {
       maxToolCallsPerTurn: settings.maxToolCallsPerTurn,
       toolApprovalMode: settings.toolApprovalMode,
       useToolProxy: settings.useToolProxy, useSystemOne: settings.useSystemOne,
-      enabledSkillTools: settings.enabledSkillTools, skillApprovalMode: settings.skillApprovalMode)
+      enabledSkillTools: settings.enabledSkillTools, skillApprovalMode: settings.skillApprovalMode,
+      toolPolicy: settings.toolPolicy)
   }
 
   private func backupFilename(selection: SettingsBackupSelection) -> String {
@@ -6078,6 +6079,7 @@ final class AppStore: ObservableObject {
       settings.skillApprovalMode = payload.skillApprovalMode
     }
     if let routing = payload.useSystemOne { settings.useSystemOne = routing }
+    if let policy = payload.toolPolicy { settings.toolPolicy = policy }
     if let proxy = payload.useToolProxy {
       settings.useToolProxy = proxy
     }
@@ -6203,6 +6205,7 @@ final class AppStore: ObservableObject {
     settings.defaultEnabledMCPTools = AppSettings.defaultMCPTools
     settings.enabledSkillTools.removeAll()
     settings.skillApprovalMode = nil
+    settings.toolPolicy = AgentToolPolicy(automatic: false)
     saveSettings()
   }
 
