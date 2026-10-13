@@ -1811,7 +1811,7 @@ struct SettingsView: View {
         }
       }
       Text(
-        "Lets the assistant list, search, and read saved chats and their attached documents when Context is selected in the chat's tool picker. None disables access; Current Folder allows other chats in the same conversation folder; All Folders allows chats across conversation folders."
+        "Lets the assistant list, search, and read saved chats and their attached documents. This access setting applies to all chats with Context enabled in the chat's tool picker. None disables access; Current Folder allows other chats in the same conversation folder; All Folders allows chats across conversation folders."
       )
       .font(.caption)
       .foregroundStyle(.secondary)
