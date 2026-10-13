@@ -113,6 +113,8 @@ func githubAuthenticatedRequests(token: String) async throws {
       name: name,
       arguments: [
         "repo": .string(token.contains("secret") ? "owner/private" : "owner/public"),
+        "owner": .string(token.contains("secret") ? "private" : "public"),
+        "query": .string(token.contains("secret") ? "user:private" : "user:public"),
         "number": .integer(7), "job_id": .integer(7), "path": .string("README.md"),
         "ref": .string("main"), "sha": .string("abc"),
       ], apiKey: token, session: session)
@@ -127,15 +129,19 @@ private final class GitHubTestProtocol: URLProtocol, @unchecked Sendable {
     let url = request.url!
     #expect(url.host == "api.github.com")
     #expect(request.httpMethod == "GET")
+    let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+      .first { $0.name == "q" }?.value
     #expect(
       request.value(forHTTPHeaderField: "Authorization")
-        == (url.path.contains("/private/") ? "Bearer secret" : nil))
+        == (url.path.contains("/private/") || query == "user:private" ? "Bearer secret" : nil))
     let accept = request.value(forHTTPHeaderField: "Accept") ?? ""
     let body: String
     if accept == "application/vnd.github.diff" || accept == "application/vnd.github.raw+json"
       || url.path.hasSuffix("/logs")
     {
       body = "fixture text"
+    } else if url.path == "/search/repositories" {
+      body = "{\"total_count\":0,\"incomplete_results\":false,\"items\":[]}"
     } else if url.path.hasSuffix("/check-runs") {
       body = "{\"check_runs\":[]}"
     } else if ["7", "abc"].contains(url.lastPathComponent) {

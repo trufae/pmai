@@ -2714,7 +2714,7 @@ enum ConversationSearchScope: String, Codable, CaseIterable, Identifiable, Senda
 
   var displayName: String {
     switch self {
-    case .none: "None"
+    case .none: "Current Chat"
     case .currentFolder: "Current Folder"
     case .allFolders: "All Folders"
     }

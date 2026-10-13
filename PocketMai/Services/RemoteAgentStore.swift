@@ -160,7 +160,7 @@ final class RemoteAgentChat {
     status = "Connecting…"
     generation += 1
     let attempt = generation
-    operation = Task {
+    operation = Task { [self] in
       let previous = messages
       do {
         await client?.disconnect()

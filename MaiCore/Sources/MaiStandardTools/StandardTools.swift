@@ -298,7 +298,7 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
         id: "github",
         displayName: "GitHub",
         description:
-          "Browse GitHub repositories without cloning them: list and read files, commits, pull "
+          "List and search GitHub repositories, and browse them without cloning: read files, commits, pull "
           + "requests with their diffs, issues, releases, and CI runs with their logs. Use it to review "
           + "a change, answer a question about a project, or fetch one file. An optional token enables "
           + "private repositories and higher rate limits; all actions are read-only.",

@@ -1735,7 +1735,7 @@ struct SettingsView: View {
       .foregroundStyle(.secondary)
     case .github:
       Text(
-        "Read GitHub files, commits, pull requests, diffs, issues, releases, and CI results. An optional personal access token enables private repositories, job logs, and higher rate limits. Leave empty for public access. For a fine-grained token, select repositories and grant read access to Contents, Pull requests, Issues, Checks, and Actions as needed. Disabled by default; each call asks for confirmation."
+        "List and search GitHub repositories, and read files, commits, pull requests, diffs, issues, releases, and CI results. An optional personal access token enables private repositories, job logs, and higher rate limits. Leave empty for public access. For a fine-grained token, select repositories and grant read access to Contents, Pull requests, Issues, Checks, and Actions as needed. Disabled by default; each call asks for confirmation."
       )
       .font(.caption)
       .foregroundStyle(.secondary)
@@ -1811,7 +1811,7 @@ struct SettingsView: View {
         }
       }
       Text(
-        "Lets the assistant list, search, and read saved chats and their attached documents. This access setting applies to all chats with Context enabled in the chat's tool picker. None disables access; Current Folder allows other chats in the same conversation folder; All Folders allows chats across conversation folders."
+        "Lets the assistant list, search, and read saved chats and their attached documents. This access setting applies to all chats with Context enabled in the chat's tool picker. Current Chat limits context to this chat; Current Folder allows other chats in the same conversation folder; All Folders allows chats across conversation folders."
       )
       .font(.caption)
       .foregroundStyle(.secondary)

@@ -7,6 +7,8 @@ import MaiCore
 
 /// Read-only GitHub REST tools with optional token authentication.
 public struct MaiGitHubTool: AgentTool {
+  public static let listReposName = "github_list_repos"
+  public static let searchReposName = "github_search_repos"
   public static let listPRsName = "github_list_prs"
   public static let prName = "github_pr"
   public static let prDiffName = "github_pr_diff"
@@ -21,6 +23,7 @@ public struct MaiGitHubTool: AgentTool {
   public static let ciLogName = "github_ci_log"
 
   public static let toolNames: [String] = [
+    listReposName, searchReposName,
     listPRsName, prName, prDiffName, listFilesName, readFileName,
     commitsName, commitName, issuesName, issueName, releasesName, ciStatusName, ciLogName,
   ]
@@ -37,8 +40,42 @@ public struct MaiGitHubTool: AgentTool {
     name: "limit", type: "integer",
     description: "Maximum number of results, 1-30. Default: 10.",
     required: false)
+  private static let pageParameter = ToolParameterDef(
+    name: "page", type: "integer",
+    description: "Result page, starting at 1. Default: 1. Increase to fetch more results.",
+    required: false)
 
   public static let definitions: [ToolDefinition] = [
+    ToolDefinition(
+      name: listReposName,
+      description:
+        "List GitHub repositories for a user or organization, newest updated first. Omit owner to list repositories accessible to the authenticated account (requires a configured token).",
+      parameters: [
+        ToolParameterDef(
+          name: "owner", type: "string",
+          description:
+            "GitHub username or organization name. A username lists public repositories; omit to include the authenticated account's accessible private repositories.",
+          required: false),
+        ToolParameterDef(
+          name: "owner_type", type: "string",
+          description: "Owner type: user or org. Default: user. Use org for an organization.",
+          required: false),
+        limitParameter,
+        pageParameter,
+      ]),
+    ToolDefinition(
+      name: searchReposName,
+      description:
+        "Search GitHub repositories by keywords and GitHub search qualifiers. Returns repository names, links, descriptions, languages, and stars, ordered by best match.",
+      parameters: [
+        ToolParameterDef(
+          name: "query", type: "string",
+          description:
+            "Repository search query, such as radare2, user:trufae, org:radareorg language:C, or topic:swift stars:>100. Private results require a configured token with access.",
+          required: true),
+        limitParameter,
+        pageParameter,
+      ]),
     ToolDefinition(
       name: listPRsName,
       description: "List pull requests of a GitHub repository.",
@@ -191,10 +228,44 @@ public struct MaiGitHubTool: AgentTool {
     apiKey: String = "",
     session: URLSession = .shared
   ) async -> String {
+    let service = GitHubService(apiKey: apiKey, session: session)
+    if name == listReposName || name == searchReposName {
+      let page = numberArgument(arguments, key: "page") ?? 1
+      if arguments["page"] != nil && numberArgument(arguments, key: "page") == nil {
+        return "Error: page must be a positive integer."
+      }
+      if name == searchReposName {
+        let query = (arguments["query"]?.stringValue ?? "")
+          .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return "Error: query is required." }
+        return await service.searchRepositories(
+          query: query, limit: limitArgument(arguments), page: page)
+      }
+      let owner = (arguments["owner"]?.stringValue ?? "")
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      let ownerType = (arguments["owner_type"]?.stringValue ?? "user")
+        .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+      guard ["user", "org"].contains(ownerType) else {
+        return "Error: owner_type must be user or org."
+      }
+      let allowed = CharacterSet(
+        charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")
+      guard owner.unicodeScalars.allSatisfy(allowed.contains) else {
+        return "Error: owner must be a GitHub username or organization name."
+      }
+      if owner.isEmpty {
+        guard ownerType == "user" else { return "Error: owner is required for an organization." }
+        guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+          return
+            "Error: provide owner or configure a GitHub token to list the authenticated account's repositories."
+        }
+      }
+      return await service.listRepositories(
+        owner: owner, ownerType: ownerType, limit: limitArgument(arguments), page: page)
+    }
     guard let repo = repoPath(arguments["repo"]?.stringValue ?? "") else {
       return "Error: repo is required as owner/name, such as torvalds/linux."
     }
-    let service = GitHubService(apiKey: apiKey, session: session)
     switch name {
     case listPRsName:
       return await service.listPullRequests(
@@ -308,6 +379,77 @@ private struct GitHubService {
   private struct RequestError: LocalizedError {
     let message: String
     var errorDescription: String? { message }
+  }
+
+  // MARK: - Repositories
+
+  func listRepositories(owner: String, ownerType: String, limit: Int, page: Int) async -> String {
+    let path =
+      owner.isEmpty ? "/user/repos" : "/\(ownerType == "org" ? "orgs" : "users")/\(owner)/repos"
+    let location = owner.isEmpty ? "the authenticated account" : owner
+    do {
+      let data = try await get(
+        path,
+        query: [
+          URLQueryItem(name: "sort", value: "updated"),
+          URLQueryItem(name: "direction", value: "desc"),
+          URLQueryItem(name: "per_page", value: String(limit)),
+          URLQueryItem(name: "page", value: String(page)),
+        ])
+      guard let items = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+        return "Error: unexpected GitHub response."
+      }
+      if items.isEmpty { return "No repositories found for \(location) (page \(page))." }
+      return "Repositories for \(location) (page \(page), \(items.count) shown):\n"
+        + repositorySummaries(items)
+    } catch {
+      return "Error: \(error.localizedDescription)"
+    }
+  }
+
+  func searchRepositories(query: String, limit: Int, page: Int) async -> String {
+    do {
+      let data = try await get(
+        "/search/repositories",
+        query: [
+          URLQueryItem(name: "q", value: query),
+          URLQueryItem(name: "per_page", value: String(limit)),
+          URLQueryItem(name: "page", value: String(page)),
+        ])
+      guard let result = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let items = result["items"] as? [[String: Any]]
+      else { return "Error: unexpected GitHub response." }
+      let total = intValue(result["total_count"]) ?? items.count
+      var text =
+        "Repository search for '\(query)' (\(total) matches, page \(page), \(items.count) shown):\n"
+        + (items.isEmpty ? "No repositories found on this page." : repositorySummaries(items))
+      if result["incomplete_results"] as? Bool == true {
+        text += "\nGitHub returned incomplete search results."
+      }
+      return text
+    } catch {
+      return "Error: \(error.localizedDescription)"
+    }
+  }
+
+  private func repositorySummaries(_ items: [[String: Any]]) -> String {
+    items.map { repo in
+      let name = stringValue(repo["full_name"]) ?? "?"
+      let url = stringValue(repo["html_url"]) ?? "https://github.com/\(name)"
+      var details = [(repo["private"] as? Bool) == true ? "private" : "public"]
+      if repo["fork"] as? Bool == true { details.append("fork") }
+      if repo["archived"] as? Bool == true { details.append("archived") }
+      if let language = stringValue(repo["language"]) { details.append(language) }
+      details.append("\(intValue(repo["stargazers_count"]) ?? 0) stars")
+      if let branch = stringValue(repo["default_branch"]) {
+        details.append("default branch: \(branch)")
+      }
+      var line = "- [\(name)](\(url)) (\(details.joined(separator: ", ")))"
+      if let description = stringValue(repo["description"]) {
+        line += "\n  " + truncated(description, limit: 500)
+      }
+      return line
+    }.joined(separator: "\n")
   }
 
   // MARK: - Pull requests
@@ -773,6 +915,10 @@ private struct GitHubService {
     components?.path = path
     if !query.isEmpty {
       components?.queryItems = query
+      // Preserve literal plus signs in qualifiers such as language:C++.
+      let encodedQuery = components?.percentEncodedQuery?
+        .replacingOccurrences(of: "+", with: "%2B")
+      components?.percentEncodedQuery = encodedQuery
     }
     guard let url = components?.url else {
       throw RequestError(message: "invalid GitHub API URL.")
