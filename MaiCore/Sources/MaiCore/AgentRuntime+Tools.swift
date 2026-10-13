@@ -95,7 +95,8 @@ extension AgentRuntime {
       (request.usesToolProxy && definitionName == ToolProxy.listName
         ? ToolProxy.listDefinition(
           for: ToolProxy.hiddenDefinitions(
-            in: definitions, exposing: exposedTools(in: definitions, request: request)))
+            in: listedDefinitions(in: definitions, request: request),
+            exposing: exposedTools(in: definitions, request: request)))
         : nil)
       ?? definitions.first(where: { $0.name == definitionName })
       ?? AgentToolNameResolver(tools: definitions).canonicalName(for: definitionName)
@@ -117,7 +118,8 @@ extension AgentRuntime {
       await emit(.toolStarted(context, resolvedCall))
       let result = ToolResult(
         callID: resolvedCall.id,
-        text: AgentTooling.unavailableToolError(name: resolvedCall.name, tools: definitions),
+        text: AgentTooling.unavailableToolError(
+          name: resolvedCall.name, tools: listedDefinitions(in: definitions, request: request)),
         isError: true)
       await emit(.toolFinished(context, result))
       return result
@@ -217,7 +219,8 @@ extension AgentRuntime {
         text: ToolProxy.listTools(
           arguments: approvedCall.arguments.objectValue ?? [:],
           definitions: ToolProxy.hiddenDefinitions(
-            in: definitions, exposing: exposedTools(in: definitions, request: request))))
+            in: listedDefinitions(in: definitions, request: request),
+            exposing: exposedTools(in: definitions, request: request))))
     case Self.agentStartToolName:
       return await startAgent(
         approvedCall,

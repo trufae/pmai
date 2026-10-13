@@ -160,6 +160,42 @@ for line in sys.stdin:
             assert saved['useToolProxy'] is True
             assert saved['toolPolicy']['groups']['mcp/fixture'] == 'proxy', saved
             assert 'external::search' not in saved['toolPolicy']['tools'], saved
+
+            # Hide removes tools from model discovery while keeping known-name calls available.
+            output, calls = run(['/tools hide github/issue', '/skills hide alpha',
+                                 '/mcp hide fixture', '/tools show github/issue', '/skills',
+                                 'Hidden tools'], [final])
+            assert 'github_issue [hidden; 0 calls]' in output, output
+            assert 'alpha (hidden)' in output, output
+            offered = {t['function']['name'] for t in calls[0]['tools']}
+            assert not {'github_issue', 'skills_alpha', 'external_search', 'external_read'} & offered
+            catalog = next(t['function']['description'] for t in calls[0]['tools']
+                           if t['function']['name'] == 'list-tools')
+            assert not any(name + ' (' in catalog for name in
+                           ('github_issue', 'skills_alpha', 'external::search', 'external::read')), catalog
+            saved = json.loads(config.read_text())['agents'][0]['toolPolicy']
+            assert saved['tools']['github_issue'] == 'hidden', saved
+            assert saved['tools']['skills_alpha'] == 'hidden', saved
+            assert saved['groups']['mcp/fixture'] == 'hidden', saved
+            output, calls = run(['Find hidden tools'], [
+                call('list-tools', {'keywords': 'github_issue skills_alpha external'}), final])
+            listings = [m['content'] for m in calls[-1]['messages'] if m['role'] == 'tool']
+            assert listings and not any(name in '\n'.join(listings) for name in
+                ('- github_issue:', '- skills_alpha:', '- external::search:', '- external::read:')), listings
+            output, calls = run(['Call hidden skill'], [
+                call('call-tool', {'name': 'skills_alpha', 'arguments': {}}), final])
+            assert any('Read the code.' in m['content'] for m in calls[-1]['messages']
+                       if m['role'] == 'system'), calls[-1]
+            assert any('Skill instructions loaded by skills_alpha' in m['content']
+                       for m in calls[-1]['messages'] if m['role'] == 'tool'), calls[-1]
+            assert 'skills_alpha' not in {t['function']['name'] for t in calls[-1]['tools']}
+            output, calls = run(['Call hidden MCP tool'], [call('external_search', {}), final])
+            assert any('MCP ran' in m['content'] for m in calls[-1]['messages']
+                       if m['role'] == 'tool'), calls[-1]
+            output, calls = run(['/tools direct github/issue', '/skills inherit alpha',
+                                 '/mcp proxy fixture', 'Restored'], [final])
+            assert 'github_issue' in {t['function']['name'] for t in calls[0]['tools']}
+
             # Airplane mode is global and reversible; proxy/direct pins cannot bypass it.
             profile_before = agent_settings()
             output, calls = run(['/set airplane on', '/tools show github', 'Offline tools'], [final])

@@ -26,15 +26,20 @@ public enum ToolProxy {
   /// The definitions a proxied run offers: the exposed tools as they are,
   /// then list-tools and call-tool for the rest. `exposed` nil means
   /// `defaultExposedNames`; an empty set is the pure proxy.
+  /// Hidden names stay callable through call-tool but never appear in discovery.
   public static func definitions(
     for catalog: [ToolDefinition],
-    exposing exposed: Set<String>? = nil
+    exposing exposed: Set<String>? = nil,
+    hiding hiddenNames: Set<String> = []
   ) -> [ToolDefinition] {
-    let hidden = hiddenDefinitions(in: catalog, exposing: exposed)
-    let hiddenNames = Set(hidden.map(\.name))
-    let visible = catalog.filter { !hiddenNames.contains($0.name) }
-    guard !hidden.isEmpty else { return visible }
-    return visible + [listDefinition(for: hidden), callDefinition]
+    let listed = catalog.filter { !hiddenNames.contains($0.name) }
+    let proxied = hiddenDefinitions(in: listed, exposing: exposed)
+    let proxiedNames = Set(proxied.map(\.name))
+    let visible = listed.filter { !proxiedNames.contains($0.name) }
+    guard !proxied.isEmpty || catalog.contains(where: { hiddenNames.contains($0.name) }) else {
+      return visible
+    }
+    return visible + [listDefinition(for: proxied), callDefinition]
   }
 
   /// The proxy tools without a catalog to describe.
@@ -84,7 +89,7 @@ public enum ToolProxy {
   static let callDefinition = ToolDefinition(
     name: callName,
     description:
-      "Call one of the tools \(listName) describes, by exact name, with JSON arguments; they cannot be called directly. Use \(listName) first when the arguments are unknown.",
+      "Call an available tool by exact name with JSON arguments. Use \(listName) first when the arguments are unknown. Some tools are callable by known name without appearing in \(listName).",
     parameters: [
       ToolParameterDef(
         name: "name",

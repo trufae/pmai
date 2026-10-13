@@ -2425,6 +2425,66 @@ func mixedToolPolicyExecution() async throws {
   #expect(usage.counts == ["github_pr": 1, "github_issue": 1])
 }
 
+@Test("Hidden tools accept known-name calls in every protocol without appearing in discovery",
+  arguments: [ToolCallingMode.native, .text, .xml, .json], [false, true])
+func hiddenToolExecution(mode: ToolCallingMode, proxyDefault: Bool) async throws {
+  let calls = [
+    ToolCall(id: "list", name: ToolProxy.listName,
+      arguments: .object(["keywords": .string("")])),
+    ToolCall(id: "search", name: ToolProxy.listName,
+      arguments: .object(["keywords": .string("secret")])),
+    ToolCall(id: "direct", name: "secret", arguments: .object(["text": .string("direct ran")])),
+    ToolCall(id: "proxy", name: ToolProxy.callName,
+      arguments: .object(["name": .string("secret"),
+        "arguments": .object(["text": .string("proxy ran")])])),
+    ToolCall(id: "invalid", name: "secret", arguments: .object([:])),
+    ToolCall(id: "blocked", name: ToolProxy.callName,
+      arguments: .object(["name": .string("blocked"), "arguments": .object([:])])),
+  ]
+  let message: AgentMessage
+  if mode == .native {
+    message = AgentMessage(role: .assistant, content: calls.map(ContentPart.toolCall))
+  } else {
+    message = .assistant(calls.map { call in
+      AgentTooling.editableToolCallText(for: ParsedToolCall(
+        name: call.name, arguments: [:], argumentValues: call.arguments.objectValue ?? [:],
+        rawBlock: ""), mode: mode)
+    }.joined(separator: "\n"))
+  }
+  let provider = ScriptedProvider(responses: [
+    ProviderResponse(message: message, stopReason: .toolCall),
+    ProviderResponse(message: .assistant("done"), stopReason: .stop),
+  ])
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  try await runtime.register(tool: ClosureTool(definition: ToolDefinition(
+    name: "secret", description: "Secret operation",
+    inputSchema: objectSchema(required: ["text"]),
+    annotations: .init(approval: .automatic))) { arguments, _ in
+      ToolOutput(text: arguments.objectValue?["text"]?.stringValue ?? "")
+    })
+  try await runtime.register(tool: ClosureTool(definition: ToolDefinition(
+    name: "blocked", description: "Blocked operation")) { _, _ in
+      Issue.record("Disabled tool must not execute")
+      return ToolOutput(text: "unexpected")
+    })
+  let result = try await runtime.run(AgentRequest(
+    provider: "scripted", messages: [.user("run known tools")], toolGroupNames: [],
+    toolCallingStrategy: ToolCallingStrategy(rawValue: mode.rawValue)!,
+    useToolProxy: proxyDefault, toolPolicy: .init(tools: ["secret": .hidden, "blocked": .disabled])))
+  let request = try #require(await provider.requests.first)
+  #expect(!request.tools.map(\.name).contains("secret"))
+  #expect(!request.tools.map(\.description).joined().contains("Secret operation"))
+  #expect(!request.messages.map(\.text).joined().contains("Secret operation"))
+  let outputs = result.transcript.flatMap(\.toolResults)
+  #expect(outputs.count == 6)
+  #expect(outputs.contains { $0.text == "direct ran" && !$0.isError })
+  #expect(outputs.contains { $0.text == "proxy ran" && !$0.isError })
+  #expect(outputs.filter(\.isError).count == 2)
+  #expect(outputs.prefix(2).allSatisfy { !$0.text.contains("- secret:") })
+  #expect(await runtime.toolUsageSnapshot().counts == ["secret": 2])
+}
+
 @Test("Proxy calls accumulate under the real tool and promote it on later model turns")
 func learnedToolExposureRuntime() async throws {
   var replies: [ProviderResponse] = []

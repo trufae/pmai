@@ -56,6 +56,57 @@ func toolCatalogInheritance() {
   #expect(catalog().visibleDefinitions.isEmpty)
 }
 
+@Test("Hidden members stay enabled without appearing in schemas or discovery")
+func hiddenToolCatalog() throws {
+  var agent = AgentDefinition(id: "main", provider: "hello", model: "", toolGroupNames: ["github"])
+  agent.setToolGroupMode(.hidden, for: githubPolicyGroup)
+  agent.setToolMode(.direct, for: "github_pr")
+  agent.setToolMode(.disabled, for: "github_ci_log")
+  let tools = githubPolicyGroup.toolNames.map {
+    ToolDefinition(name: $0, description: $0, parameters: [])
+  }
+  let catalog = AgentToolCatalog(
+    groups: [githubPolicyGroup], tools: tools, modes: agent.toolModes(in: [githubPolicyGroup]))
+  #expect(catalog.summary().hidden == 1)
+  #expect(catalog.summary().enabled == 2)
+  #expect(catalog.summary().total == 3)
+  #expect(Set(catalog.enabledDefinitions.map(\.name)) == ["github_pr", "github_issue"])
+  #expect(catalog.listedDefinitions.map(\.name) == ["github_pr"])
+  #expect(Set(catalog.visibleDefinitions.map(\.name)) == [
+    "github_pr", ToolProxy.listName, ToolProxy.callName,
+  ])
+  #expect(!catalog.visibleDefinitions.map(\.description).joined().contains("github_issue"))
+  #expect(!ToolProxy.listTools(
+    arguments: ["keywords": .string("github_issue")],
+    definitions: catalog.listedDefinitions).contains("- github_issue:"))
+  let saved = try JSONDecoder().decode(AgentDefinition.self, from: JSONEncoder().encode(agent))
+  #expect(saved == agent)
+  #expect(AgentRequest(provider: "hello", messages: [], useToolProxy: false,
+    toolPolicy: saved.toolPolicy).usesToolProxy)
+
+  var expanded = githubPolicyGroup
+  expanded.toolNames.insert("github_new")
+  var usage = AgentToolUsage()
+  for _ in 0..<10 { usage.record("github_issue"); usage.record("github_new") }
+  #expect(agent.toolMode(for: "github_new", in: [expanded], usage: usage) == .hidden)
+  #expect(agent.toolMode(for: "github_issue", in: [expanded], usage: usage) == .hidden)
+  agent.setToolMode(nil, for: "github_pr")
+  #expect(agent.toolMode(for: "github_pr", in: [expanded]) == .hidden)
+  agent.setToolGroupMode(nil, for: expanded)
+  #expect(agent.toolMode(for: "github_pr", in: [expanded]) != .hidden)
+}
+
+@Test("A hidden-only catalog still offers a call path without naming its tools")
+func hiddenOnlyToolCatalog() {
+  let catalog = AgentToolCatalog(
+    groups: [], tools: [ToolDefinition(name: "secret", description: "Secret operation")],
+    modes: ["secret": .hidden])
+  #expect(catalog.enabledDefinitions.count == 1)
+  #expect(catalog.listedDefinitions.isEmpty)
+  #expect(catalog.visibleDefinitions.map(\.name) == [ToolProxy.listName, ToolProxy.callName])
+  #expect(!catalog.visibleDefinitions.map(\.description).joined().contains("secret"))
+}
+
 @Test("Hybrid and automatic exposure default on, with explicit legacy settings preserved")
 func toolPolicyDefaultsAndPersistence() throws {
   let legacy = Data(#"{"id":"main","provider":"hello","toolNames":["files_read"]}"#.utf8)

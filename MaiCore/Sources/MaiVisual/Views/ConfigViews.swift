@@ -326,7 +326,7 @@ private struct FocusedToolsList: View {
       isOn: Binding(
         get: { conversation.profile.toolPolicy.automatic },
         set: { workspace.setAutomaticToolExposure($0, for: conversation) }))
-    Text("Individual settings override groups. Inherit follows the hybrid default and usage.")
+    Text("Individual settings override groups. Inherit follows the hybrid default and usage. Hidden tools stay callable by name without being listed.")
       .foregroundStyle(.muted)
     let catalog = workspace.toolCatalog(for: conversation)
     HStack(spacing: 1) {

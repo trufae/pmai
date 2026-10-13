@@ -853,7 +853,7 @@ approved, and its parameters, then the group's settings — the same schema the
 model receives, readable. `/tools set GROUP OPTION VALUE` persists
 typed group settings and reloads the source; for example, Mastodon's instance,
 API-key environment variable, and write permission are configured this way.
-Visual mode offers group and individual direct/proxy/disabled/inherit selectors
+Visual mode offers group and individual direct/proxy/hidden/disabled/inherit selectors
 with call counters, alongside typed source settings. Group
 selections live on each `AgentDefinition`, while source credentials and options
 live on `ConfiguredToolSource`, so every host uses the same configuration and
@@ -1346,7 +1346,7 @@ and `call-tool`. Raw `AgentRequest` SDK callers retain their native default;
 hosts pass the profile's policy. `proxyExposedTools` remains supported as an
 explicit fixed native set (an empty set means pure proxy).
 
-Set **each tool or group** with `/tools direct|proxy|disable|inherit TARGET`.
+Set **each tool or group** with `/tools direct|proxy|hide|disable|inherit TARGET`.
 Individual overrides win over groups; group changes preserve those overrides.
 `inherit` removes an override and returns to the allowlist/group/default.
 `enable` adds a tool or group using the current default exposure. Tool policies
@@ -1355,11 +1355,18 @@ Connected MCP servers default to available, but the same per-agent policy can
 disable a server or a single tool. Qualified server groups use `mcp/SERVER`;
 individual tools use their exact `PREFIX::NAME` or `mcp/SERVER/NAME`.
 
+`hide` keeps a tool available by name while omitting its schema and name from
+model discovery, including `list-tools` searches. Calls by known name, directly
+or through `call-tool`, still use the same validation and approvals. Choose
+**Hidden** in the GUI tool list, or save `"hidden"` in a tool/group policy.
+Hidden tools remain visible in settings so you can change their mode.
+
 ```text
 /tools proxy github
 /tools direct github/pr
 /tools direct github/issue
 /tools disable github/ci_log
+/tools hide github/issue
 /tools proxy mcp
 /tools direct mcp/myserver/search
 /tools disable myserver::delete
@@ -1373,8 +1380,8 @@ at least three calls in the most recent 128 executed calls. Ranking uses
 frequency, then recency. As workflows change, infrequently used tools return
 to the proxy. The six common tools remain direct. Explicit tool/group modes
 and `proxyExposedTools` always win; automatic exposure never enables a disabled
-tool. `/set tool.proxy on|hybrid|all|off` changes the inherited default without
-clearing per-tool policies.
+tool or reveals a hidden tool. `/set tool.proxy on|hybrid|all|off` changes the
+inherited default without clearing per-tool policies.
 
 Counters accumulate under the concrete name, including MCP and skill tools,
 regardless of whether the call was direct or proxied. Invalid, disabled,

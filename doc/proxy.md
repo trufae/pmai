@@ -11,18 +11,25 @@ the other way MaiCore keeps a transcript small.
 
 PocketMai's **Settings > Tools > Tool list** and `/visual`'s **Tools > Tool list**
 show the discovered groups, member names, descriptions, arguments, and counts
-of Direct, Proxy, and Disabled tools. Each group also has a small button to
+of Direct, Proxy, Hidden, and Disabled tools. Each group also has a small button to
 open just its members. These lists and counts come from tool definitions and
 MaiCore's shared policy and catalog types, also used by `/tools` in the REPL.
 
 Members default to **Inherit**: all members of an enabled group follow its
-default exposure. An individual Direct, Proxy, or Disabled choice overrides
+default exposure. An individual Direct, Proxy, Hidden, or Disabled choice overrides
 the group. Choosing Inherit removes that override. Saved agent choices and
 disabled groups are preserved; installing the UI does not enable all groups.
 PocketMai retains its existing proxy default (all inherited tools proxied
 when the switch is on), while the CLI retains its hybrid default. Explicit
 pins work with either setting. Workspace access, offline mode, the chat's
 master tools switch, and MCP server connections still limit availability.
+
+**Hidden** keeps a tool callable by known name while omitting its name and
+schema from model discovery and `list-tools`, even for an exact-name search.
+Use `/tools hide GROUP|TOOL`, `/skills hide NAME|all`, or `/mcp hide ID[/TOOL]`.
+Calls directly by name or through `call-tool` still use the concrete tool's
+validation and approvals. Hidden members remain visible in settings and the
+REPL's administrative lists so their mode can be changed.
 
 PocketMai follows system network availability as well as the airplane button
 in Settings. Losing the network pauses internet tools and fills the airplane
@@ -93,7 +100,7 @@ applied), two runs per mode so the run-to-run noise is visible.
 | current build (17 tools), two runs each | solved | model calls | prompt tokens | completion tokens | median call latency | tool errors |
 |---|---|---|---|---|---|---|
 | native schemas | 12/13, 13/13 | 79, 76 | 215k, 206k | 5.2k, 5.6k | 0.66s, 0.91s | 1, 6 |
-| pure proxy (every tool hidden) | 8/13, 5/13 | 95, 91 | 107k, 73k | 13.3k, 8.4k | 0.85s, 0.80s | 11, 40 |
+| pure proxy (every tool proxied) | 8/13, 5/13 | 95, 91 | 107k, 73k | 13.3k, 8.4k | 0.85s, 0.80s | 11, 40 |
 | hybrid proxy (6 common tools native) | 12/13, 12/13 | 72, 74 | 140k, 143k | 5.6k, 6.3k | 0.84s, 0.74s | 5, 5 |
 
 Wall time: a clean native sweep takes 71–90s for the 13 tasks, a hybrid sweep
@@ -110,7 +117,7 @@ it spent fewer tokens than natively (the rename: 6k against 38k; explaining
 the package: 5k against 18k). Where it failed, it failed cheaply, without
 doing the work:
 
-- **It calls hidden tools by their real names.** Knowing from the `list-tools`
+- **It calls proxied tools by their real names.** Knowing from the `list-tools`
   description that `files_patch` exists, gemma4 emits a `files_patch` call in
   its own syntax. Only `call-tool` is declared, so the server drops the call
   and returns an empty reply; after three of those the model announces that
@@ -131,7 +138,7 @@ doing the work:
 
 1. **The proxy tools did not say what they reach** (`749db0d`): five tasks
    ended with "I do not have access to your file system". The `list-tools`
-   description is now generated from the hidden tools, each with its name and
+   description is now generated from the proxied tools, each with its name and
    the start of its description (`9ffb9e3`), so the model knows what exists
    without paying for the schemas.
 2. **`list-tools` returned everything with all arguments** (`749db0d`): a
@@ -144,8 +151,8 @@ doing the work:
    tools are withdrawn for the next turn and the model asked to answer.
 5. **Empty replies did not end anything either** (`dd85f41`): three in a row
    now withdraw the tools too, and in a proxied run the repair feedback says
-   how to reach a hidden tool through `call-tool` (`9ffb9e3`).
-6. **A hidden tool called by name was refused** ("proxy mode does not expose
+   how to reach a proxied tool through `call-tool` (`9ffb9e3`).
+6. **A proxied tool called by name was refused** ("proxy mode does not expose
    tool"): it now runs (`9ffb9e3`). The proxy saves tokens; the agent's tool
    list is the permission boundary.
 7. **`files_grep` stopped at 100 lines silently** (`cc2e74a`): the proxy runs
@@ -177,13 +184,13 @@ the proxy's: the same tasks fail natively now and then.
   at the same pass rate. The pure proxy is not worth its failure modes on a
   catalog this small.
 - **Never the pure proxy for a coding agent.** Every file write goes through
-  two levels of JSON escaping and every hidden tool is one the model will try
+  two levels of JSON escaping and every proxied tool is one the model will try
   to call by name. Reserve `proxyExposedTools: []` for measurements, or for
   catalogs where nothing is called often enough to deserve a schema.
 
 ## Measuring it yourself
 
-    python3 test/bench/run.py --variant proxy      # every tool hidden
+    python3 test/bench/run.py --variant proxy      # every tool proxied
     python3 test/bench/run.py --variant hybrid     # the default with useToolProxy
     python3 test/bench/compare.py test/results/<run-a> test/results/<run-b>
     python3 test/bench/analyze.py test/results/<run-id> --detail all
@@ -194,7 +201,7 @@ above.
 
 ## Per-tool policy and automatic exposure
 
-`toolPolicy.groups` and `toolPolicy.tools` select `direct`, `proxy`, or
+`toolPolicy.groups` and `toolPolicy.tools` select `direct`, `proxy`, `hidden`, or
 `disabled`. Exact tool names override qualified groups, then short group
 names, then the inherited hybrid default. Native GitHub members can therefore
 be mixed individually; MCP groups use `mcp/SERVER` so a GitHub MCP cannot

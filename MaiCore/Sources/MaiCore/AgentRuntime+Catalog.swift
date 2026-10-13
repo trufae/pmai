@@ -211,6 +211,17 @@ extension AgentRuntime {
     return Set(definitions.filter { modes[$0.name] == .direct }.map(\.name))
   }
 
+  func hiddenTools(for request: AgentRequest) -> Set<String> {
+    Set(toolModes(for: request).compactMap { $0.value == .hidden ? $0.key : nil })
+  }
+
+  func listedDefinitions(
+    in definitions: [ToolDefinition], request: AgentRequest
+  ) -> [ToolDefinition] {
+    let hidden = hiddenTools(for: request)
+    return definitions.filter { !hidden.contains($0.name) }
+  }
+
   static func canDeriveWorker(for request: AgentRequest) -> Bool {
     let enabled =
       request.toolDelegation.delegatesTools

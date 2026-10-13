@@ -201,7 +201,8 @@ public actor AgentRuntime {
         let concreteDefinitions = try visibleDefinitions(for: state.request, depth: depth)
         let definitions = ToolProxy.definitions(
           for: concreteDefinitions,
-          exposing: exposedTools(in: concreteDefinitions, request: state.request))
+          exposing: exposedTools(in: concreteDefinitions, request: state.request),
+          hiding: hiddenTools(for: state.request))
         if state.modelTurns >= state.request.limits.maxModelTurns {
           return await finishRun(
             state, interruption: .modelTurns(limit: state.request.limits.maxModelTurns))
@@ -210,7 +211,8 @@ public actor AgentRuntime {
           return await finishRun(state, interruption: interruption)
         }
         let turn = try await prepareTurn(
-          concreteDefinitions: concreteDefinitions, definitions: definitions, state: &state)
+          concreteDefinitions: listedDefinitions(in: concreteDefinitions, request: state.request),
+          definitions: definitions, state: &state)
         // Context preparation spends tokens too; claim only conversation turns.
         if let interruption = await budget.claimModelTurn() {
           return await finishRun(state, interruption: interruption)

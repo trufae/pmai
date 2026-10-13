@@ -116,7 +116,7 @@ struct ToolCatalogSettingsView: View {
         Section {
           Text("Tools for \(store.settings.selectedAgent.name)")
           Text(
-            "Inherit follows the enabled group and proxy default. Individual choices override groups. Access settings and server connections are still required."
+            "Inherit follows the enabled group and proxy default. Hidden keeps a tool callable by name while omitting it from model schemas and list-tools. Individual choices override groups. Access settings and server connections are still required."
           )
           .font(.caption).foregroundStyle(.secondary)
           Toggle(

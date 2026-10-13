@@ -5128,7 +5128,7 @@ struct MaiCLI {
       maxSplits: 1, whereSeparator: \Character.isWhitespace
     ).map(String.init)
     let action = pieces.first?.lowercased() ?? "list"
-    if ["direct", "proxy", "inherit", "tools"].contains(action), pieces.count == 2 {
+    if ["direct", "proxy", "hide", "inherit", "tools"].contains(action), pieces.count == 2 {
       let selector = "mcp/" + pieces[1]
       await handleToolsCommand(
         "\(action == "tools" ? "show" : action) \(selector)", session: &session,
@@ -8192,7 +8192,7 @@ struct MaiCLI {
         let summary = AgentToolModeSummary(names: group.toolNames, modes: modesByName).description
         await terminal.line("\(label) — \(group.displayName) [\(summary); \(usage.count(for: group)) calls]")
       }
-      await terminal.line("/tools show GROUP lists each member; /tools direct|proxy|disable|inherit GROUP|TOOL selects its state.")
+      await terminal.line("/tools show GROUP lists each member; /tools direct|proxy|hide|disable|inherit GROUP|TOOL selects its state.")
       return
     }
 
@@ -8203,7 +8203,7 @@ struct MaiCLI {
       await terminal.line(toolHelp)
       return
     }
-    if ["enable", "on", "disable", "off", "direct", "proxy", "inherit"].contains(action) {
+    if ["enable", "on", "disable", "off", "direct", "proxy", "hide", "inherit"].contains(action) {
       var definition = session.profile.agentDefinition
       switch selection {
       case .tool(let name):
@@ -8217,7 +8217,8 @@ struct MaiCLI {
           }
         } else {
           let mode: AgentToolMode? = action == "inherit" ? nil
-            : action == "direct" ? .direct : action == "proxy" ? .proxy : .disabled
+            : action == "direct" ? .direct : action == "proxy" ? .proxy
+            : action == "hide" ? .hidden : .disabled
           definition.setToolMode(mode, for: name)
         }
       case .group(let group):
@@ -8230,7 +8231,8 @@ struct MaiCLI {
           }
         } else {
           let mode: AgentToolMode? = action == "inherit" ? nil
-            : action == "direct" ? .direct : action == "proxy" ? .proxy : .disabled
+            : action == "direct" ? .direct : action == "proxy" ? .proxy
+            : action == "hide" ? .hidden : .disabled
           definition.setToolGroupMode(mode, for: group)
         }
       }
@@ -8695,6 +8697,7 @@ struct MaiCLI {
         case (false, _): "not callable"
         case (true, .direct): "enabled"
         case (true, .proxy): "proxied"
+        case (true, .hidden): "hidden"
         case (true, .disabled): "disabled"
         }
         let color =
@@ -8722,7 +8725,7 @@ struct MaiCLI {
       await terminal.line("")
       await terminal.line(skill.body)
 
-    case "enable", "on", "disable", "off", "direct", "proxy", "inherit":
+    case "enable", "on", "disable", "off", "direct", "proxy", "hide", "inherit":
       let selector: String
       if rest.lowercased() == "all" {
         selector = "skills"
@@ -12172,7 +12175,7 @@ struct MaiCLI {
       if skill.isModelInvocable {
         values.append("/skills enable \(skill.name)")
         values.append("/skills disable \(skill.name)")
-        for mode in ["direct", "proxy", "inherit"] { values.append("/skills \(mode) \(skill.name)") }
+        for mode in ["direct", "proxy", "hide", "inherit"] { values.append("/skills \(mode) \(skill.name)") }
       }
     }
     let catalog = configuration?.promptCatalog(skills: skills) ?? PromptCatalog(skills: skills)
@@ -12206,7 +12209,7 @@ struct MaiCLI {
       .union((configuration?.agents ?? []).flatMap(\.toolNames))
       .union(skills.filter(\.isModelInvocable).map(\.toolName))
     for name in toolNames {
-      for action in ["show", "enable", "direct", "proxy", "disable", "inherit"] {
+      for action in ["show", "enable", "direct", "proxy", "hide", "disable", "inherit"] {
         values.append("/tools \(action) tool:\(name)")
       }
     }
@@ -12214,7 +12217,7 @@ struct MaiCLI {
       values.append("/tools show \(group)")
       values.append("/tools enable \(group)")
       values.append("/tools disable \(group)")
-      for mode in ["direct", "proxy", "inherit"] { values.append("/tools \(mode) \(group)") }
+      for mode in ["direct", "proxy", "hide", "inherit"] { values.append("/tools \(mode) \(group)") }
       values.append("/tools set \(group) ")
     }
     return Array(Set(values))
@@ -12775,7 +12778,7 @@ struct MaiCLI {
       /mcp enable ID
       /mcp disable ID
       /mcp tools ID            Show a connected server's tools and counters
-      /mcp direct|proxy|inherit ID[/TOOL]  Set per-agent exposure
+      /mcp direct|proxy|hide|inherit ID[/TOOL]  Set per-agent exposure
       /mcp add COMMAND [ARG ...]
       /mcp add [--name ID] [--env KEY=VALUE] [--cwd PATH] [--timeout SECONDS]
                [--prefix PREFIX] [--approval MODE] -- COMMAND [ARG ...]
@@ -12891,7 +12894,7 @@ struct MaiCLI {
     skills_NAME tool the model may call to get the instructions, once it is
     enabled for the agent.
 
-      /skills                    List skills with enabled/proxied/disabled status and calls
+      /skills                    List skills with enabled/proxied/hidden/disabled status and calls
       /skills show NAME          Print a skill's file, tool state, and instructions
       /skills add [--user] NAME   Create a skill in the editor, including its folder and SKILL.md
       /skills add NAME "DESCRIPTION" "PROMPT"  Create without opening the editor
@@ -12900,7 +12903,7 @@ struct MaiCLI {
       /skills remove NAME        Delete the visible skill folder and its supporting files
       /skills enable NAME|all    Offer a skill (or every skill) to the current agent
       /skills disable NAME|all   Disable a skill (or every skill) for this agent
-      /skills direct|proxy|inherit NAME|all  Choose exposure or restore inheritance
+      /skills direct|proxy|hide|inherit NAME|all  Choose exposure or restore inheritance
       /skills prompt NAME [TEXT] Send an enabled skill's instructions, then TEXT
       /skills path               Print the directories scanned
       /skills reload             Rescan the directories (every /skills command does)
@@ -13008,6 +13011,7 @@ struct MaiCLI {
       /tools enable GROUP|TOOL       Enable using the current exposure default
       /tools direct GROUP|TOOL       Offer schemas directly
       /tools proxy GROUP|TOOL        Keep available through list-tools/call-tool
+      /tools hide GROUP|TOOL         Keep callable by name; omit from schemas and list-tools
       /tools disable GROUP|TOOL      Remove from discovery and execution
       /tools inherit GROUP|TOOL      Remove an override; resume group/default behavior
       /tools set GROUP OPTION VALUE  Configure a tool group and reload its tools

@@ -747,7 +747,7 @@ struct SettingsView: View {
   }
 
   private var toolProxySummary: String {
-    "Off: inherited tools are described in each request. On: inherited tools use list-tools and call-tool. Use Tool list to pin each group or member to Direct, Proxy, or Disabled. Individual choices override groups and the proxy default."
+    "Off: inherited tools are described in each request. On: inherited tools use list-tools and call-tool. Use Tool list to pin each group or member to Direct, Proxy, Hidden, or Disabled. Hidden tools stay callable by name without being listed. Individual choices override groups and the proxy default."
   }
 
   private var appearanceSection: some View {

@@ -21,10 +21,16 @@ public struct AgentToolCatalog: Sendable {
     tools.filter { modes[$0.name, default: .disabled] != .disabled }
   }
 
+  /// Definitions eligible for model discovery; hidden tools remain enabled.
+  public var listedDefinitions: [ToolDefinition] {
+    enabledDefinitions.filter { modes[$0.name] != .hidden }
+  }
+
   public var visibleDefinitions: [ToolDefinition] {
     ToolProxy.definitions(
       for: enabledDefinitions,
-      exposing: Set(modes.compactMap { $0.value == .direct ? $0.key : nil }))
+      exposing: Set(modes.compactMap { $0.value == .direct ? $0.key : nil }),
+      hiding: Set(modes.compactMap { $0.value == .hidden ? $0.key : nil }))
   }
 
   public func definitions(in group: ToolGroupDefinition) -> [ToolDefinition] {
@@ -40,6 +46,7 @@ public struct AgentToolCatalog: Sendable {
 public struct AgentToolModeSummary: Equatable, Sendable {
   public var direct = 0
   public var proxy = 0
+  public var hidden = 0
   public var disabled = 0
 
   public init(names: Set<String>, modes: [String: AgentToolMode]) {
@@ -47,12 +54,15 @@ public struct AgentToolModeSummary: Equatable, Sendable {
       switch modes[name, default: .disabled] {
       case .direct: direct += 1
       case .proxy: proxy += 1
+      case .hidden: hidden += 1
       case .disabled: disabled += 1
       }
     }
   }
 
-  public var enabled: Int { direct + proxy }
+  public var enabled: Int { direct + proxy + hidden }
   public var total: Int { enabled + disabled }
-  public var description: String { "\(direct) direct, \(proxy) proxy, \(disabled) disabled" }
+  public var description: String {
+    "\(direct) direct, \(proxy) proxy, \(hidden) hidden, \(disabled) disabled"
+  }
 }

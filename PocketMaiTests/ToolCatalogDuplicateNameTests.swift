@@ -12,6 +12,45 @@ import XCTest
 /// servers in settings order — matching dispatch resolution order.
 final class ToolCatalogDuplicateNameTests: XCTestCase {
   @MainActor
+  func testHiddenToolsRemainCallableWithoutBeingListed() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "hidden-tools-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = AppStore(persistence: PersistenceStore(localBaseURL: root))
+    var settings = AppSettings()
+    settings.useToolProxy = false
+    settings.toolPolicy.groups[BuiltInToolID.calculator.rawValue] = .hidden
+    var conversation = Conversation()
+    conversation.enabledTools = [.calculator]
+    let catalog = ToolAgentRegistry.catalog(for: conversation, settings: settings)
+    XCTAssertTrue(catalog.enabledDefinitions.contains { $0.name == MaiCalculatorTool.name })
+    XCTAssertTrue(catalog.listedDefinitions.isEmpty)
+    XCTAssertEqual(catalog.summary().hidden, 1)
+    XCTAssertEqual(catalog.visibleDefinitions.map(\.name), [ToolProxy.listName, ToolProxy.callName])
+    XCTAssertFalse(catalog.visibleDefinitions.map(\.description).joined().contains(MaiCalculatorTool.name))
+    let listing = await ToolAgentRegistry.execute(
+      call: ParsedToolCall(name: ToolProxy.listName,
+        arguments: ["keywords": MaiCalculatorTool.name], rawBlock: ""),
+      conversation: conversation, settings: settings, store: store)
+    XCTAssertFalse(listing.contains("- \(MaiCalculatorTool.name):"))
+    let direct = await ToolAgentRegistry.execute(
+      call: ParsedToolCall(name: MaiCalculatorTool.name,
+        arguments: ["expression": "2+3"], rawBlock: ""),
+      conversation: conversation, settings: settings, store: store)
+    XCTAssertEqual(direct, "5")
+    let proxied = await ToolAgentRegistry.execute(
+      call: ParsedToolCall(name: ToolProxy.callName, arguments: [:], argumentValues: [
+        "name": .string(MaiCalculatorTool.name),
+        "arguments": .object(["expression": .string("3*4")]),
+      ], rawBlock: ""), conversation: conversation, settings: settings, store: store)
+    XCTAssertEqual(proxied, "12")
+    conversation.toolsEnabled = false
+    let disabled = ToolAgentRegistry.catalog(for: conversation, settings: settings)
+    XCTAssertTrue(disabled.enabledDefinitions.isEmpty)
+    XCTAssertTrue(disabled.visibleDefinitions.isEmpty)
+  }
+
+  @MainActor
   func testMixedExposureKeepsDisabledToolsOutOfBothCatalogs() {
     var settings = AppSettings()
     var conversation = Conversation()

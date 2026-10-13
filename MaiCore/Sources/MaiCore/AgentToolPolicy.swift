@@ -1,10 +1,12 @@
 import Foundation
 
 /// Presentation and availability are separate from a tool's approval policy.
-/// Direct and proxied tools use the same validation, approvals, and executor.
+/// Direct, proxied, and hidden tools use the same validation, approvals, and executor.
 public enum AgentToolMode: String, Codable, CaseIterable, Sendable {
   case direct
   case proxy
+  /// Callable by name, but omitted from schemas and tool discovery.
+  case hidden
   case disabled
 
   public var displayName: String { rawValue.capitalized }
@@ -134,6 +136,8 @@ extension AgentDefinition {
 
 extension AgentRequest {
   public var usesToolProxy: Bool {
-    useToolProxy || toolPolicy.tools.values.contains(.proxy) || toolPolicy.groups.values.contains(.proxy)
+    useToolProxy
+      || toolPolicy.tools.values.contains { $0 == .proxy || $0 == .hidden }
+      || toolPolicy.groups.values.contains { $0 == .proxy || $0 == .hidden }
   }
 }
