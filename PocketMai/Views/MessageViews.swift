@@ -1629,6 +1629,7 @@ struct MessageTextSelectionSheet: View {
   @State private var draftText: String
   @State private var fontSize: Double
   @State private var showingPreview: Bool
+  @GestureState private var previewMagnification: CGFloat = 1
   // When true the raw text is shown/edited; when false the derived filtered text
   // is shown read-only. Saving is always tied to the raw draft.
   @State private var showingRaw: Bool
@@ -1684,6 +1685,20 @@ struct MessageTextSelectionSheet: View {
     showingRaw ? draftText : MessageContentFilter.render(draftText).visibleText
   }
 
+  private var previewAppearance: AppearanceSettings {
+    var settings = appearance
+    settings.fontSize = magnifiedFontSize(previewMagnification)
+    settings.lineSpacing = lineSpacing
+    return settings
+  }
+
+  private func magnifiedFontSize(_ magnification: CGFloat) -> Double {
+    let rawSize = fontSize * max(Double(magnification), 0.1)
+    let steppedSize =
+      (rawSize / AppearanceSettings.fontSizeStep).rounded() * AppearanceSettings.fontSizeStep
+    return AppearanceSettings.clampedFontSize(steppedSize)
+  }
+
   var body: some View {
     NavigationStack {
       Group {
@@ -1691,7 +1706,7 @@ struct MessageTextSelectionSheet: View {
           ScrollView {
             MarkdownContentView(
               text: displayedText,
-              appearance: appearance,
+              appearance: previewAppearance,
               fontFamily: fontFamily,
               allowsTextSelection: true
             )
@@ -1699,6 +1714,15 @@ struct MessageTextSelectionSheet: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 18)
           }
+          .simultaneousGesture(
+            MagnifyGesture()
+              .updating($previewMagnification) { value, magnification, _ in
+                magnification = value.magnification
+              }
+              .onEnded { value in
+                fontSize = magnifiedFontSize(value.magnification)
+              }
+          )
         } else if isEditable && showingRaw {
           SelectableMessageTextView(
             text: $draftText,
