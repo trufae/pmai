@@ -84,6 +84,7 @@ struct ChatView: View {
   @State private var selectedMessageIDs: Set<UUID> = []
   @State private var renameDraft = ""
   @State private var userScrolledAfterLastMessage = false
+  @State private var followChatBottom = false
   @State private var responseScrollTargets: [UUID: ResponseScrollTarget] = [:]
   @State private var lastStreamingScrollAt: Date?
   @State private var streamingScrollTask: Task<Void, Never>?
@@ -902,8 +903,7 @@ struct ChatView: View {
             viewportMinY: geometry.visibleRect.minY,
             contentHeight: geometry.contentSize.height,
             hasScrollableContent: hasScrollableContent,
-            isAtBottom: !hasScrollableContent
-              || geometry.visibleRect.maxY >= geometry.contentSize.height - 2)
+            isAtBottom: isAtChatBottom(geometry))
         } action: { old, metrics in
           if old.contentHeight != metrics.contentHeight, currentChatIsResponding {
             // Wait for the bubble preferences from this layout before scrolling.
@@ -919,13 +919,20 @@ struct ChatView: View {
             DispatchQueue.main.async { scheduleStreamingScroll(proxy) }
           }
         }
-        .onScrollPhaseChange { _, phase in
+        .onScrollPhaseChange { _, phase, context in
           if phase == .interacting {
             userScrolledAfterLastMessage = true
             userMessageNavigationDestination = nil
             userMessageNavigationHiddenBySwipe = false
           } else if phase == .idle {
             userMessageNavigationDestination = nil
+            if userScrolledAfterLastMessage, !messageFontPinchSession.isActive,
+              isAtChatBottom(context.geometry)
+            {
+              // Resume only after the gesture (including deceleration) finishes.
+              userScrolledAfterLastMessage = false
+              followChatBottom = true
+            }
           }
         }
         .onAppear {
@@ -943,6 +950,7 @@ struct ChatView: View {
           userMessageNavigationIndicatorTask?.cancel()
           userMessageNavigationIndicatorTask = nil
           userScrolledAfterLastMessage = false
+          followChatBottom = false
           streamingScrollTask?.cancel()
           streamingScrollTask = nil
           lastStreamingScrollAt = nil
@@ -952,11 +960,13 @@ struct ChatView: View {
           guard !messageFontPinchSession.isActive else { return }
           if old.conversationID != new.conversationID {
             userScrolledAfterLastMessage = false
+            followChatBottom = false
             scrollToBottomAfterLayout(proxy, animated: false)
             return
           }
           if old.lastUserMessageID != new.lastUserMessageID {
             userScrolledAfterLastMessage = false
+            followChatBottom = false
           }
           scrollToBottomAfterLayout(proxy, animated: false, followResponse: true)
         }
@@ -1426,6 +1436,11 @@ struct ChatView: View {
     }
   }
 
+  private func isAtChatBottom(_ geometry: ScrollGeometry) -> Bool {
+    geometry.contentSize.height <= geometry.containerSize.height + 2
+      || geometry.visibleRect.maxY >= geometry.contentSize.height - 2
+  }
+
   private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
     if animated {
       withAnimation(.snappy) {
@@ -1437,7 +1452,8 @@ struct ChatView: View {
   }
 
   private func scrollFollowingResponse(_ proxy: ScrollViewProxy, animated: Bool = false) {
-    if let id = store.currentConversation?.messages.last?.id,
+    // Returning to the bottom follows the tail, even for a tall response.
+    if !followChatBottom, let id = store.currentConversation?.messages.last?.id,
       let target = responseScrollTargets[id]
     {
       // ScrollView clamps short answers to the bottom. Once the answer is
