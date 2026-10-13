@@ -17,6 +17,7 @@ This app, comes after [MAI](https://github.com/trufae/mai), a cli agent with foc
 
 - **Providers**: Apple Intelligence and MLX on supported devices, plus any OpenAI-compatible API (OpenAI, Ollama, llama.cpp, vLLM, OpenRouter, ...).
 - **Tools**: datetime, location, weather, web search, browser, todo, text-to-speech, files, local documentation (`vdb`), memory — invokable by the model via native tool-calling or a text-protocol fallback.
+- **File manager**: browse local working folders and remote projects, copy paths, preview files, create folders, and upload or download files. Open **Files…** from the chat title menu, or long-press a folder and choose **Browse Files…**. See [file browsing over ACP](doc/acp.md#file-browsing-from-pocketmai).
 - **Browser**: the model can open pages in an in-app WebKit view shown as a picture-in-picture card, read the text, DOM, links, or an on-device text-recognition pass over the screen, click, type, scroll, and run JavaScript. Tap the card to enlarge it and take over by hand for sign-ins and other steps only a person can do.
 - **MCP**: configure remote Streamable HTTP or CLI-local stdio servers and surface them to the model.
 - **Multiple system prompts**, persistent conversations, export to Markdown / HTML / plain text / JSON / ePUB / Word (docx).

@@ -103,6 +103,54 @@ kinds — read, search, fetch, think — and reject the rest; the default). pmai
 answers `fs/read_text_file` from the working directory so an agent can read the
 files it reasons about; writes are declined.
 
+### File browsing from PocketMai
+
+Open **Files…** from a chat's title menu, or long-press a local folder or remote
+project and choose **Browse Files…**. Both locations use the same browser. It
+starts in the chat's working folder or the selected remote project; **Choose
+Local Folder…** opens the system folder picker for another on-device location.
+Navigate folders, filter names, show hidden files, and copy file or folder paths.
+**New Folder** creates a directory; **Upload Files** imports one or more files
+from Files. Existing names require explicit replacement. Long-press a file to
+preview it or choose **Download…**, then pick a destination in Files.
+
+Quick Look previews supported formats. Other files show UTF-8 text or hexadecimal
+bytes. Files larger than 16 MiB preview their first 64 KiB; binary fallback displays
+up to 4 KiB. Download always transfers the complete file. Local browsing works
+offline; remote browsing needs an approved, connected host and Airplane Mode off.
+Browsing uses its own connection and does not create or run a chat.
+
+ACP's standard [filesystem methods](https://github.com/agentclientprotocol/agent-client-protocol/blob/main/docs/protocol/v1/file-system.mdx)
+let the agent access files on the **client**. For a phone accessing the **worker**,
+pmai uses the protocol's [custom method and capability mechanism](https://agentclientprotocol.com/protocol/v1/extensibility).
+The server advertises `agentCapabilities._meta.pmai.workspaceFiles: 1` and
+handles `_pmai/workspace/files` with `{cwd, request}`:
+
+| Operation | Request fields | Response |
+| --- | --- | --- |
+| `list` | `path`, `offset`, `limit`, `showHidden` | `listing`: root, path, writeEnabled, entries, nextOffset |
+| `read` | `path`, `offset`, `limit`, optional `version` | `chunk`: base64 data, size, version |
+| `mkdir` | `path` | Empty result |
+| `uploadBegin` | destination `path`, `overwrite` | `transferID` |
+| `uploadChunk` | `transferID`, sequential `offset`, base64 `data` | acknowledged `bytes` |
+| `uploadFinish` | `transferID`, final `offset` | committed `bytes` |
+| `uploadCancel` | `transferID` | Empty result |
+
+`WorkspaceFileRequest` and `WorkspaceFileResponse` in `MaiStandardTools` define
+the complete Codable payload. Reads and upload chunks are limited to 512 KiB;
+listings return at most 500 entries per page. Download versions detect changes
+between chunks. Uploads use private staging files, publish only after completion,
+and clean up on cancellation or disconnection.
+
+The local and worker services reuse the CLI Files tools' path resolver, including
+symlink checks. The worker validates `cwd` against its served paths, keeps file
+operations inside that project, and honors saved Files access rules and
+`filesWriteEnabled`. Denied paths are omitted from listings. `ask` paths remain
+inaccessible to direct browsing until the host explicitly allows them; browsing
+has no agent session for a tool approval. Read-only listings disable New Folder
+and Upload in the phone interface. Hosts that lack the extension report that
+an updated pmai is required.
+
 ## Design notes
 
 - **One session per working directory.** `ACPProvider` pools an `ACPClient` per

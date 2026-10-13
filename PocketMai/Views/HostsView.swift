@@ -119,6 +119,7 @@ struct RemoteFoldersView: View {
   let onShowHosts: () -> Void
   let onSelectFolder: (String) -> Void
   var isVisible = true
+  var onBrowseFiles: (String) -> Void = { _ in }
   @State private var filter = ""
   @FocusState private var filterFocused: Bool
 
@@ -140,7 +141,13 @@ struct RemoteFoldersView: View {
           onSelectFolder(folder.cwd)
         }
         .listRowBackground(SidebarRowBackground(isSelected: selected)).listRowSeparator(.hidden)
-
+        .contextMenu {
+          Button("Browse Files…", systemImage: "folder") { onBrowseFiles(folder.cwd) }
+            .disabled(hosts.selectedHost?.requiresApproval == true || isOffline)
+          Button("Copy Path", systemImage: "doc.on.doc") {
+            UIPasteboard.general.string = folder.cwd
+          }
+        }
       }
       if hosts.loading {
         ProgressView(hosts.waitingApproval ? "Waiting for server approval…" : "Connecting…")

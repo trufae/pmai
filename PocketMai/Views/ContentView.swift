@@ -11,6 +11,7 @@ struct ContentView: View {
   @StateObject private var sidebarStoreObservation = AppStoreViewObservation(scope: .sidebar)
   @StateObject private var settingsStoreObservation = AppStoreViewObservation(scope: .settings)
   @State private var showingSettings = false
+  @State private var fileBrowserLocation: FileBrowserLocation?
   @State private var showingHistory = false
   @State private var isHistoryPanelMounted = false
   @State private var showingFolders = false
@@ -51,7 +52,8 @@ struct ContentView: View {
                 onSelectFolder: { cwd in
                   hosts.selectFolder(cwd)
                   setDrawerDepth(1, animation: historyPanelAnimation)
-                }, isVisible: showingFolders && !showingHosts)
+                }, isVisible: showingFolders && !showingHosts,
+                onBrowseFiles: { browseFiles(cwd: $0) })
             } else {
               ConversationFoldersView(
                 storeObservation: sidebarStoreObservation,
@@ -66,7 +68,8 @@ struct ContentView: View {
                   isShowingBookmarksFolder = true
                   setDrawerDepth(1, animation: historyPanelAnimation)
                 },
-                onShowHosts: { setDrawerDepth(3, animation: historyPanelAnimation) }
+                onShowHosts: { setDrawerDepth(3, animation: historyPanelAnimation) },
+                onBrowseFiles: { browseFiles(folderID: $0) }
               )
             }
           }
@@ -129,6 +132,7 @@ struct ContentView: View {
                   "\(host.name)", systemImage: "network",
                   description: Text("Choose a folder and conversation, or start a new chat."))
                 Button("Browse Folders") { setDrawerDepth(2, animation: historyPanelAnimation) }
+                Button("Browse Files", systemImage: "folder") { browseFiles() }
               }
               .navigationTitle(host.name)
               .toolbar {
@@ -170,7 +174,8 @@ struct ContentView: View {
                     newRemoteConversation()
                   }
                 },
-                onRemoteChatReady: { hosts.activeChat = $0 }
+                onRemoteChatReady: { hosts.activeChat = $0 },
+                onBrowseFiles: { browseFiles() }
               )
               .equatable()
               .id(
@@ -224,6 +229,9 @@ struct ContentView: View {
     .sheet(isPresented: $showingSettings) {
       SettingsView(store: store, storeObservation: settingsStoreObservation)
         .environmentObject(store)
+    }
+    .sheet(item: $fileBrowserLocation) { location in
+      FileBrowserView(location: location).environmentObject(store)
     }
     .sheet(item: pendingConversationImportFileBinding) { file in
       NavigationStack {
@@ -396,6 +404,19 @@ struct ContentView: View {
   private func newRemoteConversation() {
     guard hosts.newConversation() != nil else { return }
     closeHistoryPanel()
+  }
+
+  private func browseFiles(folderID: String? = nil, cwd: String? = nil) {
+    do {
+      if let host = hosts.selectedHost {
+        fileBrowserLocation = .remote(host, cwd: cwd ?? hosts.selectedFolderID ?? host.cwd)
+      } else {
+        var conversation = store.currentConversation ?? Conversation()
+        if let folderID { conversation.folderID = folderID; conversation.workingFolder = nil }
+        let resolved = try FileWorkspaceTool.context(for: conversation, settings: store.settings)
+        fileBrowserLocation = .local(resolved.context)
+      }
+    } catch { store.errorMessage = error.localizedDescription }
   }
 
   private func toggleHistoryPanel() {

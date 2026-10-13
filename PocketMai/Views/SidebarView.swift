@@ -21,6 +21,7 @@ struct ConversationFoldersView: View {
   let onSelectFolder: (String) -> Void
   let onSelectBookmarks: () -> Void
   let onShowHosts: () -> Void
+  var onBrowseFiles: (String) -> Void = { _ in }
   @State private var showingFolderManager = false
   @State private var showingGallery = false
   @State private var showingAppsPanel = false
@@ -49,6 +50,9 @@ struct ConversationFoldersView: View {
           .disabled(!store.canUseConversationFolder(folder.id))
           .listRowBackground(SidebarRowBackground(isSelected: isSelected))
           .listRowSeparator(.hidden)
+          .contextMenu {
+            Button("Browse Files…", systemImage: "folder") { onBrowseFiles(folder.id) }
+          }
         }
 
         SidebarFolderRow(

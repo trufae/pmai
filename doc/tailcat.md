@@ -140,10 +140,18 @@ connection starts one child process. No child starts for rejected credentials.
    `pmai-acp://connect/...` URI, or enter the gateway URL, token, and remote cwd.
 3. Save and select the host. For `/remote serve`, accept the pending client in
    the serving REPL with `/remote accept`. PocketMai then discovers its folders and conversations.
-   Choose a folder, then open a conversation or choose **New Chat**. Opening a
+   Choose a folder, then open a conversation or use **New Chat** at the top right
+   of the chat window. Opening a
    chat connects automatically and restores its transcript from the host.
 4. Send a prompt. Replies stream into the chat; tools that request permission
    display their arguments and the agent's approval/rejection choices.
+
+The project panel has a **Filter** field with Refresh on its right. The local
+and remote conversation panels share their rows, date groups, and search controls;
+search filters the list in place using titles and locally cached messages.
+Long-press a conversation to rename, delete, or export it. Hosts without chat
+management support disable rename and delete for saved server chats.
+Long-press a project and choose **Browse Files…** to open its file manager.
 
 Long-press a remote host to edit, reconnect, or remove it. Tapping a host in
 **Manage…** opens its editor, including its name, gateway address, and accent color.

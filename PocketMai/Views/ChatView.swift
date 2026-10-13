@@ -112,6 +112,7 @@ struct ChatView: View {
   let onShowHistory: () -> Void
   let onNewChat: () -> Void
   var onRemoteChatReady: (RemoteAgentChat) -> Void = { _ in }
+  var onBrowseFiles: () -> Void = {}
 
   var body: some View {
     chatViewWithAlerts
@@ -498,6 +499,7 @@ struct ChatView: View {
       ConversationExportMenu(
         conversationID: remoteChat == nil ? currentConversation?.id : nil,
         coordinator: exportCoordinator)
+      Button("Files…", systemImage: "folder", action: onBrowseFiles)
       Divider()
       Button(
         remoteChat.map { $0.connected ? "Disconnect" : "Connect" } ?? "Chat Settings",
