@@ -1,29 +1,46 @@
 import AVFoundation
 import MaiACP
+import MaiCore
 import SwiftUI
 import VisionKit
 
 struct RemoteAgentsView: View {
+  var onSelectHost: ((UUID) -> Void)? = nil
   @State private var store = RemoteAgentStore.shared
   @State private var adding = false
+  @State private var editing: RemoteAgentBookmark?
 
   var body: some View {
     List {
       Section {
         ForEach(store.connections) { connection in
-          NavigationLink {
-            RemoteAgentChatView(bookmark: connection)
+          Button {
+            editing = connection
           } label: {
             VStack(alignment: .leading) {
               Text(connection.name)
               Text(connection.url.absoluteString).font(.caption).foregroundStyle(.secondary)
+              Text(connection.cwd).font(.caption).foregroundStyle(.secondary)
+            }
+          }
+          .foregroundStyle(.primary)
+          .contextMenu {
+            Button("Edit Host", systemImage: "pencil") { editing = connection }
+            if let onSelectHost {
+              Button("Reconnect", systemImage: "arrow.clockwise") {
+                store.reconnect(connection.id)
+                onSelectHost(connection.id)
+              }
+            }
+            Button("Remove Host", systemImage: "trash", role: .destructive) {
+              store.remove(connection.id)
             }
           }
         }
         .onDelete { indices in
           for id in indices.map({ store.connections[$0].id }) { store.remove(id) }
         }
-        Button("Add Remote Agent", systemImage: "plus") { adding = true }
+        Button("Add Remote Host", systemImage: "plus") { adding = true }
       } footer: {
         Text(
           "Connect to an ACP WebSocket gateway. The remote agent runs its own tools on its host. Chats and gateway tokens stay on this device."
@@ -31,12 +48,16 @@ struct RemoteAgentsView: View {
       }
       if let error = store.error { Text(error).foregroundStyle(.red) }
     }
-    .navigationTitle("Remote Agents")
-    .sheet(isPresented: $adding) { RemoteAgentConnectionView() }
+    .navigationTitle("Remote Hosts")
+    .sheet(isPresented: $adding) { RemoteAgentConnectionView(onAdded: onSelectHost) }
+    .sheet(item: $editing) { host in RemoteAgentConnectionView(initialHost: host) }
   }
 }
 
-private struct RemoteAgentConnectionView: View {
+struct RemoteAgentConnectionView: View {
+  var onAdded: ((UUID) -> Void)? = nil
+  var scanOnAppear = false
+  var initialHost: RemoteAgentBookmark? = nil
   @Environment(\.dismiss) private var dismiss
   @State private var name = "pmai"
   @State private var address = ""
@@ -45,6 +66,8 @@ private struct RemoteAgentConnectionView: View {
   @State private var uri = ""
   @State private var scanning = false
   @State private var error: String?
+  @State private var accentColor: String?
+  @State private var requiresApproval: Bool?
 
   var body: some View {
     NavigationStack {
@@ -68,6 +91,24 @@ private struct RemoteAgentConnectionView: View {
             .textInputAutocapitalization(.never).autocorrectionDisabled()
           TextField("Absolute workspace on remote host", text: $cwd)
             .textInputAutocapitalization(.never).autocorrectionDisabled()
+          Picker("Accent color", selection: $accentColor) {
+            Text("App default").tag(String?.none)
+            ForEach(AgentProjectTint.presetNames, id: \.self) { name in
+              Text(name.capitalized).tag(Optional(name))
+            }
+            if let accentColor, !AgentProjectTint.presetNames.contains(accentColor) {
+              Text("Custom").tag(Optional(accentColor))
+            }
+          }
+          ColorPicker(
+            "Custom accent",
+            selection: Binding(
+              get: {
+                accentColor.flatMap { ConversationFolderTint(rawIdentifier: $0) }?.color
+                  ?? .accentColor
+              },
+              set: { accentColor = $0.folderTintHex.map { "custom:" + $0 } }),
+            supportsOpacity: false)
         }
         Section {
           if address.lowercased().hasPrefix("ws://") {
@@ -82,7 +123,7 @@ private struct RemoteAgentConnectionView: View {
         }
         if let error { Text(error).foregroundStyle(.red) }
       }
-      .navigationTitle("Add Remote Agent")
+      .navigationTitle(initialHost == nil ? "Add Remote Host" : "Edit Remote Host")
       .toolbar {
         ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
         ToolbarItem(placement: .confirmationAction) { Button("Save") { save() } }
@@ -104,6 +145,19 @@ private struct RemoteAgentConnectionView: View {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { scanning = false } }
           }
         }
+      }
+      .task {
+        if let host = initialHost {
+          name = host.name
+          address = host.url.absoluteString
+          cwd = host.cwd
+          accentColor = host.accentColor
+          requiresApproval = host.requiresApproval
+          do { token = try RemoteAgentStore.shared.token(for: host.id) } catch {
+            self.error = error.localizedDescription
+          }
+        }
+        if scanOnAppear { await scan() }
       }
     }
   }
@@ -130,6 +184,7 @@ private struct RemoteAgentConnectionView: View {
       address = profile.url.absoluteString
       token = profile.token
       cwd = profile.cwd
+      requiresApproval = profile.requiresApproval
       uri = ""
       error = nil
     } catch { self.error = error.localizedDescription }
@@ -141,24 +196,33 @@ private struct RemoteAgentConnectionView: View {
         error = "Enter the gateway's WebSocket URL."
         return
       }
-      let profile = try ACPRemoteConnection(
+      var profile = try ACPRemoteConnection(
         name: name.trimmingCharacters(in: .whitespacesAndNewlines),
         url: url, token: token.trimmingCharacters(in: .whitespacesAndNewlines), cwd: cwd)
-      try RemoteAgentStore.shared.add(profile)
+      profile.requiresApproval = requiresApproval
+      let id = try RemoteAgentStore.shared.add(
+        profile, replacing: initialHost?.id, accentColor: accentColor)
       dismiss()
+      onAdded?(id)
     } catch { self.error = error.localizedDescription }
   }
 }
 
-private struct RemoteAgentChatView: View {
+struct RemoteAgentChatView: View {
   @Environment(\.scenePhase) private var scenePhase
   @EnvironmentObject private var appStore: AppStore
   @State private var chat: RemoteAgentChat
   @State private var draft = ""
-  @State private var newChatConfirmation = false
+  var onShowHistory: (() -> Void)? = nil
+  var onNewChat: (() -> Void)? = nil
 
-  init(bookmark: RemoteAgentBookmark) {
-    _chat = State(initialValue: RemoteAgentChat(bookmark: bookmark))
+  init(
+    bookmark: RemoteAgentBookmark, conversation: RemoteAgentConversation,
+    onShowHistory: (() -> Void)? = nil, onNewChat: (() -> Void)? = nil
+  ) {
+    _chat = State(initialValue: RemoteAgentChat(bookmark: bookmark, conversation: conversation))
+    self.onShowHistory = onShowHistory
+    self.onNewChat = onNewChat
   }
 
   var body: some View {
@@ -193,6 +257,10 @@ private struct RemoteAgentChatView: View {
                   DisclosureGroup(message.role == "tool" ? "Tool details" : "Details") {
                     Text(message.text).textSelection(.enabled).font(.callout)
                   }
+                } else if message.role == "assistant", appStore.settings.renderMarkdownInChat {
+                  MarkdownContentView(
+                    text: message.text, appearance: appStore.settings.appearance,
+                    renderImages: appStore.settings.renderMarkdownImagesInChat)
                 } else {
                   Text(message.text).textSelection(.enabled)
                 }
@@ -211,7 +279,7 @@ private struct RemoteAgentChatView: View {
       }
       Divider()
       HStack(alignment: .bottom) {
-        TextField("Message remote agent", text: $draft, axis: .vertical)
+        TextField("Message", text: $draft, axis: .vertical)
           .lineLimit(1...6).textFieldStyle(.roundedBorder)
         if chat.busy {
           Button("Stop", systemImage: "stop.circle") { chat.disconnect() }
@@ -223,28 +291,31 @@ private struct RemoteAgentChatView: View {
           }
           .labelStyle(.iconOnly).font(.title2)
           .disabled(
-            !chat.connected || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            !chat.connected || appStore.settings.isOffline
+              || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
       }.padding()
     }
-    .navigationTitle(chat.bookmark.name)
+    .navigationTitle(chat.conversation.title)
     .navigationBarTitleDisplayMode(.inline)
     .toolbar {
+      if let onShowHistory {
+        ToolbarItem(placement: .topBarLeading) {
+          Button("Conversations", systemImage: "line.3.horizontal", action: onShowHistory)
+            .labelStyle(.iconOnly)
+        }
+      }
       ToolbarItem(placement: .topBarTrailing) {
         Menu {
-          Button("New Chat", systemImage: "plus") { newChatConfirmation = true }
-            .disabled(chat.busy || appStore.settings.isOffline)
+          if let onNewChat {
+            Button("New Chat", systemImage: "plus", action: onNewChat)
+              .disabled(chat.busy || appStore.settings.isOffline)
+          }
           Button("Disconnect", systemImage: "network.slash") { chat.disconnect() }
         } label: {
           Image(systemName: "ellipsis.circle")
         }
       }
-    }
-    .confirmationDialog(
-      "Start a new remote chat? The current chat will remain on the agent host.",
-      isPresented: $newChatConfirmation, titleVisibility: .visible
-    ) {
-      Button("New Chat") { chat.newChat() }
     }
     .sheet(
       item: Binding(
@@ -277,6 +348,9 @@ private struct RemoteAgentChatView: View {
       .interactiveDismissDisabled()
     }
     .onDisappear { chat.disconnect() }
+    .task {
+      if !appStore.settings.isOffline { chat.connect() }
+    }
     .onChange(of: scenePhase) { _, phase in
       if phase == .background { chat.disconnect() }
     }

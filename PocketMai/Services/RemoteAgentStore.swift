@@ -11,6 +11,20 @@ struct RemoteAgentBookmark: Codable, Identifiable {
   var cwd: String
   var sessionID: String?
   var messages: [RemoteAgentMessage] = []
+  var conversations: [RemoteAgentConversation]?
+  var workspace: ACPWorkspaceSnapshot?
+  var accentColor: String?
+  var requiresApproval: Bool?
+  var revision: UUID?
+}
+
+struct RemoteAgentConversation: Codable, Identifiable {
+  var id = UUID()
+  var cwd: String
+  var sessionID: String?
+  var title = AgentChat.placeholderTitle
+  var updatedAt = Date()
+  var messages: [RemoteAgentMessage] = []
 }
 
 struct RemoteAgentMessage: Codable, Identifiable {
@@ -29,25 +43,37 @@ final class RemoteAgentStore {
   private let file: URL
   private let keychainService = "io.github.trufae.mai.acp-gateway"
 
-  private init() {
-    let directory = FileManager.default.urls(
-      for: .applicationSupportDirectory, in: .userDomainMask)[0]
+  init(file: URL? = nil) {
+    let directory =
+      file?.deletingLastPathComponent()
+      ?? FileManager.default.urls(
+        for: .applicationSupportDirectory, in: .userDomainMask)[0]
       .appendingPathComponent("RemoteAgents", isDirectory: true)
-    file = directory.appendingPathComponent("connections.json")
+    self.file = file ?? directory.appendingPathComponent("connections.json")
     do {
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-      if FileManager.default.fileExists(atPath: file.path) {
+      if FileManager.default.fileExists(atPath: self.file.path) {
         connections = try JSONDecoder().decode(
-          [RemoteAgentBookmark].self, from: Data(contentsOf: file))
+          [RemoteAgentBookmark].self, from: Data(contentsOf: self.file))
+        migrateConnections()
       }
     } catch { self.error = error.localizedDescription }
   }
 
   @discardableResult
-  func add(_ profile: ACPRemoteConnection) throws -> UUID {
+  func add(
+    _ profile: ACPRemoteConnection, replacing hostID: UUID? = nil, accentColor: String? = nil
+  ) throws -> UUID {
     try profile.validate()
     // Reimporting the same endpoint updates its token without losing the chat.
-    let existing = connections.firstIndex { $0.url == profile.url && $0.cwd == profile.cwd }
+    let existing = connections.firstIndex {
+      hostID != nil ? $0.id == hostID : $0.url == profile.url
+    }
+    if let existing,
+      connections.contains(where: { $0.url == profile.url && $0.id != connections[existing].id })
+    {
+      throw JSONRPCError.invalidParams("A host with this gateway URL already exists.")
+    }
     let id = existing.map { connections[$0].id } ?? UUID()
     let query = keychainQuery(id)
     let data = Data(profile.token.utf8)
@@ -62,9 +88,16 @@ final class RemoteAgentStore {
     }
     if let existing {
       connections[existing].name = profile.name
+      connections[existing].cwd = profile.cwd
+      connections[existing].url = profile.url
+      connections[existing].accentColor = accentColor
+      connections[existing].requiresApproval = profile.requiresApproval
+      connections[existing].revision = UUID()
     } else {
       connections.append(
-        RemoteAgentBookmark(id: id, name: profile.name, url: profile.url, cwd: profile.cwd))
+        RemoteAgentBookmark(
+          id: id, name: profile.name, url: profile.url, cwd: profile.cwd, accentColor: accentColor,
+          requiresApproval: profile.requiresApproval))
     }
     try save()
     return id
@@ -82,11 +115,110 @@ final class RemoteAgentStore {
     return token
   }
 
-  func update(_ id: UUID, sessionID: String?, messages: [RemoteAgentMessage]) {
+  func acceptPairing(_ id: UUID, token: String) throws {
     guard let index = connections.firstIndex(where: { $0.id == id }) else { return }
-    connections[index].sessionID = sessionID
-    connections[index].messages = messages
+    try check(
+      SecItemUpdate(
+        keychainQuery(id) as CFDictionary,
+        [kSecValueData: Data(token.utf8)] as CFDictionary))
+    connections[index].requiresApproval = false
+    try save()
+  }
+
+  func update(_ hostID: UUID, conversation: RemoteAgentConversation) {
+    guard let index = connections.firstIndex(where: { $0.id == hostID }) else { return }
+    var chats = connections[index].conversations ?? []
+    if let chatIndex = chats.firstIndex(where: { $0.id == conversation.id }) {
+      chats[chatIndex] = conversation
+    } else {
+      chats.append(conversation)
+    }
+    connections[index].conversations = chats
     do { try save() } catch { self.error = error.localizedDescription }
+  }
+
+  func updateWorkspace(_ hostID: UUID, snapshot: ACPWorkspaceSnapshot) {
+    guard let index = connections.firstIndex(where: { $0.id == hostID }) else { return }
+    connections[index].workspace = snapshot
+    var chats = connections[index].conversations ?? []
+    for session in snapshot.sessions {
+      if let chatIndex = chats.firstIndex(where: { $0.sessionID == session.sessionID }) {
+        if chats[chatIndex].messages.isEmpty
+          || (session.updatedAt ?? .distantPast) >= chats[chatIndex].updatedAt
+        {
+          chats[chatIndex].title = session.title
+          chats[chatIndex].updatedAt = session.updatedAt ?? chats[chatIndex].updatedAt
+        }
+      } else {
+        chats.append(
+          .init(
+            id: UUID(uuidString: session.sessionID) ?? UUID(), cwd: session.cwd,
+            sessionID: session.sessionID, title: session.title,
+            updatedAt: session.updatedAt ?? .distantPast))
+      }
+    }
+    connections[index].conversations = chats
+    do { try save() } catch { self.error = error.localizedDescription }
+  }
+
+  func host(_ id: UUID?) -> RemoteAgentBookmark? {
+    connections.first { $0.id == id }
+  }
+
+  func reconnect(_ id: UUID) {
+    guard let index = connections.firstIndex(where: { $0.id == id }) else { return }
+    connections[index].revision = UUID()
+    do { try save() } catch { self.error = error.localizedDescription }
+  }
+
+  func folders(for host: RemoteAgentBookmark) -> [ACPWorkspaceFolder] {
+    if let workspace = host.workspace { return workspace.folders }
+    var folders: [ACPWorkspaceFolder] = []
+    let paths = [host.cwd] + (host.conversations ?? []).map(\.cwd)
+    for cwd in paths where !folders.contains(where: { $0.cwd == cwd }) {
+      folders.append(
+        .init(cwd: cwd, name: AgentProject.defaultName(forWorkingDirectory: cwd) ?? cwd))
+    }
+    return folders
+  }
+
+  func conversations(for host: RemoteAgentBookmark) -> [RemoteAgentConversation] {
+    (host.conversations ?? []).sorted { $0.updatedAt > $1.updatedAt }
+  }
+
+  @discardableResult
+  func newConversation(hostID: UUID, cwd: String) -> RemoteAgentConversation {
+    let conversation = RemoteAgentConversation(cwd: cwd)
+    update(hostID, conversation: conversation)
+    return conversation
+  }
+
+  private func migrateConnections() {
+    var hosts: [RemoteAgentBookmark] = []
+    for var connection in connections {
+      if connection.conversations == nil {
+        connection.conversations = []
+        if connection.sessionID != nil || !connection.messages.isEmpty {
+          connection.conversations = [
+            .init(
+              id: connection.id, cwd: connection.cwd,
+              sessionID: connection.sessionID,
+              title: connection.messages.first(where: { $0.role == "user" })
+                .flatMap { AgentChat.derivedTitle(from: $0.text) } ?? AgentChat.placeholderTitle,
+              messages: connection.messages)
+          ]
+        }
+        connection.sessionID = nil
+        connection.messages = []
+      }
+      if let index = hosts.firstIndex(where: { $0.url == connection.url }) {
+        hosts[index].conversations =
+          (hosts[index].conversations ?? []) + (connection.conversations ?? [])
+      } else {
+        hosts.append(connection)
+      }
+    }
+    connections = hosts
   }
 
   func remove(_ id: UUID) {
@@ -135,6 +267,7 @@ struct RemoteAgentPermission: Identifiable {
 @MainActor @Observable
 final class RemoteAgentChat {
   let bookmark: RemoteAgentBookmark
+  private(set) var conversation: RemoteAgentConversation
   var messages: [RemoteAgentMessage]
   var status = "Disconnected"
   var error: String?
@@ -147,10 +280,11 @@ final class RemoteAgentChat {
   private var permissionReplies: [UUID: CheckedContinuation<String?, Never>] = [:]
   private var generation = 0
 
-  init(bookmark: RemoteAgentBookmark) {
+  init(bookmark: RemoteAgentBookmark, conversation: RemoteAgentConversation) {
     self.bookmark = bookmark
-    messages = bookmark.messages
-    sessionID = bookmark.sessionID
+    self.conversation = conversation
+    messages = conversation.messages
+    sessionID = conversation.sessionID
   }
 
   func connect() {
@@ -168,7 +302,7 @@ final class RemoteAgentChat {
         let client = ACPClient(
           configuration: .init(
             command: bookmark.name, permission: .reject,
-            remoteWorkingDirectory: bookmark.cwd, readClientFiles: false,
+            remoteWorkingDirectory: conversation.cwd, readClientFiles: false,
             webSocketURL: bookmark.url, bearerToken: token, sessionID: sessionID),
           onUpdate: { [weak self] update in await self?.receive(update, generation: attempt) },
           onPermission: { [weak self] request in
@@ -205,6 +339,10 @@ final class RemoteAgentChat {
     error = nil
     status = "Responding…"
     messages.append(RemoteAgentMessage(role: "user", text: text))
+    conversation.updatedAt = Date()
+    if AgentChat.isPlaceholderTitle(conversation.title) {
+      conversation.title = AgentChat.derivedTitle(from: text) ?? conversation.title
+    }
     persist()
     let attempt = generation
     operation = Task {
@@ -222,6 +360,7 @@ final class RemoteAgentChat {
       cancelPermissions()
       busy = false
       operation = nil
+      conversation.updatedAt = Date()
       persist()
     }
   }
@@ -238,14 +377,6 @@ final class RemoteAgentChat {
     busy = false
     status = "Disconnected"
     persist()
-  }
-
-  func newChat() {
-    disconnect()
-    sessionID = nil
-    messages = []
-    persist()
-    connect()
   }
 
   func answer(_ id: UUID, optionID: String?) {
@@ -329,6 +460,8 @@ final class RemoteAgentChat {
   }
 
   private func persist() {
-    RemoteAgentStore.shared.update(bookmark.id, sessionID: sessionID, messages: messages)
+    conversation.sessionID = sessionID
+    conversation.messages = messages
+    RemoteAgentStore.shared.update(bookmark.id, conversation: conversation)
   }
 }

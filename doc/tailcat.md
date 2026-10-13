@@ -31,7 +31,65 @@ The gateway itself listens for HTTP WebSocket upgrades at `/acp` and does not
 terminate TLS. This implementation provides stdio and WebSocket transports, not
 a separate raw TCP listener.
 
-## Start a gateway without Tailcat
+## Start from the REPL
+
+```text
+/remote serve
+```
+
+This starts an authenticated server in the background, chooses the machine's LAN
+address, and prints a pairing QR. The REPL remains usable; `/remote stop` or
+exiting the REPL stops the listener. By default it exposes every working directory
+in `~/.pmai/projects.json` (or the configured pmai home), with the conversations
+stored in each project's `.pmai/chats`. `/remote qr` shows the invitation again.
+Run `/remote stop` before starting it with different paths or options.
+
+Scan it in PocketMai → Hosts, or pair it from another CLI:
+
+```text
+/remote pair CONNECTION_URI_OR_QR_FILE
+```
+
+The serving REPL displays the client's name, address, and request code. Accept it
+there with `/remote accept` (or `/remote accept CODE` if several requests are
+waiting). `/remote reject` denies it. Until acceptance, the invitation can only
+request pairing: it cannot initialize ACP, read chats, or start an agent process.
+Acceptance issues a separate private credential for that client. The phone stores
+it in Keychain; CLI clients store it in a mode-0600 token file. Reconnection uses
+this credential without asking again. `/remote clients` lists accepted clients;
+`/remote revoke CLIENT_ID` removes their access, including active connections.
+
+After the server accepts a CLI client:
+
+```text
+/remote connect HOST_NAME
+/remote disconnect
+```
+
+Connecting creates a separate local chat backed by the remote agent. The earlier
+local conversation is preserved; disconnect returns to it. Saved remote chats
+can be reopened with `/chat use` or `--resume`, and restore their remote session
+across CLI restarts. Remote tools use the normal REPL approval flow.
+
+Optional path restrictions accept multiple directories:
+
+```text
+/remote serve --path ~/prg/one ~/prg/two
+```
+
+Both discovery and session access are limited to those directories and their
+descendants. Omitting `--path` shares all indexed projects. `--port`, `--address`,
+and `--name` override the defaults when needed.
+
+`/project` describes the current project. `/projects` lists the same shared index;
+`/projects open NAME` switches the working directory and loads its saved chats,
+memory, skills, and local settings. It also accepts paths, list numbers, and ID
+prefixes. `/projects rename SELECTOR NAME`, `/projects tint SELECTOR COLOR`, and
+`/projects forget SELECTOR` manage that index; forgetting leaves chat files intact.
+Opening a previously unseen directory registers it. Refresh the folder panel in
+PocketMai to see changes made from the CLI.
+
+## Start a standalone gateway without Tailcat
 
 Build/install pmai as usual. On the machine that will run the agent:
 
@@ -75,16 +133,37 @@ connection starts one child process. No child starts for rejected credentials.
 
 ## Connect from PocketMai
 
-1. Open **Remote Agents** from the sidebar menu or Settings.
-2. Choose **Add Remote Agent**, then scan the terminal QR (or `gateway.png`), paste the printed
+1. Open the conversation drawer, swipe right to Folders, then right again to **Hosts**.
+   The **Hosts** button above the folders also opens this panel. **Local** is always
+   available and shows this PocketMai app's existing folders and conversations.
+2. Choose **Scan Host QR** or **Add Remote Host**, then scan the terminal QR (or `gateway.png`), paste the printed
    `pmai-acp://connect/...` URI, or enter the gateway URL, token, and remote cwd.
-3. Review the host and workspace, then save. Open the connection and tap **Connect**.
+3. Save and select the host. For `/remote serve`, accept the pending client in
+   the serving REPL with `/remote accept`. PocketMai then discovers its folders and conversations.
+   Choose a folder, then open a conversation or choose **New Chat**. Opening a
+   chat connects automatically and restores its transcript from the host.
 4. Send a prompt. Replies stream into the chat; tools that request permission
    display their arguments and the agent's approval/rejection choices.
 
-The gateway QR contains a **reusable bearer credential**, not an expiring
-Tailcat enrollment invite. Anyone with that profile can control the exposed
-agent. Tokens are stored in the iOS Keychain; local chat records do not contain
+Long-press a remote host to edit, reconnect, or remove it. Tapping a host in
+**Manage…** opens its editor, including its name, gateway address, and accent color.
+The same manager is under
+**Settings → Remote Hosts**. One gateway URL represents one host, which can have
+many folders and conversations. Existing per-workspace connection bookmarks
+are migrated into that host without discarding their conversations.
+
+pmai's ACP server lists the projects in its `AgentHome` index and their saved CLI
+chats, plus persistent ACP sessions. `--acp-root` restricts both discovery and
+session access to that directory and its descendants. To share several projects,
+serve their common parent; the example above shares only one project. Refresh
+the folder panel to pick up work created by other clients. Older ACP agents that
+do not advertise session listing still show their configured workspace and chats
+previously opened on the phone.
+
+`/remote serve` QR codes contain a pairing invitation requiring server approval.
+The standalone `pmai acp-gateway` command is an unattended adapter; its QR contains
+a reusable bearer credential granting access directly. Neither is a Tailcat
+enrollment invite. Tokens are stored in the iOS Keychain; local chat records do not contain
 tokens and are excluded from backup. Deleting a saved connection removes its
 local token and chat record, not the worker's session files.
 
@@ -97,8 +176,30 @@ for them; a worker configured to allow tools automatically will not ask the phon
 Airplane Mode disconnects the session. Tap **Connect** to restore it. A failed
 prompt is never resent automatically because it may already have executed tools.
 Agents that do not support ACP `session/load` require **New Chat** after a
-disconnect. New Chat replaces the phone's saved chat for that connection; it does
-not delete the old session on the agent host.
+disconnect. New Chat creates a separate conversation and keeps earlier chats
+available in their folder.
+
+### Host boundaries
+
+`HostNavigationStore` owns host/folder/conversation selection. `AppStore` owns
+local app conversations; `RemoteAgentStore` owns device-local host bookmarks and
+cached remote transcripts. `ACPClient` owns discovery and session transport.
+`ACPServer` adapts prompts to `AgentRuntime` and delegates durable workspace data
+to `ACPWorkspaceRepository`. The CLI's `AgentHomeACPWorkspace` implementation
+reads and updates the same project/chat files as its local workspace, preserving
+the existing chat's primary agent, title, and archive state.
+
+Discovery uses ACP [`session/list`](https://agentclientprotocol.com/protocol/v1/session-list),
+including cursor pagination on the client.
+The response's `_meta.pmai.folders` contains folder names, icons, and tints so
+empty projects are visible. Other ACP agents can supply standard session metadata;
+PocketMai groups it by cwd. Opening a conversation uses `session/load`, and
+starting a conversation uses `session/new`; browsing alone creates no chat.
+
+This repository boundary can also be implemented by an app host without putting
+its persistence or UI inside the agent runtime. PocketMai currently connects as
+an ACP client; exposing its own folders over an iOS ACP listener is a further
+adapter, separate from the existing local OpenAI/Ollama HTTP API server.
 
 ## Connect from the CLI over WebSocket
 

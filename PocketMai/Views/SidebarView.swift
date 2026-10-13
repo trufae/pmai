@@ -20,6 +20,7 @@ struct ConversationFoldersView: View {
   let isShowingBookmarks: Bool
   let onSelectFolder: (String) -> Void
   let onSelectBookmarks: () -> Void
+  let onShowHosts: () -> Void
   @State private var showingFolderManager = false
   @State private var showingGallery = false
   @State private var showingAppsPanel = false
@@ -64,7 +65,7 @@ struct ConversationFoldersView: View {
       .contentMargins(.horizontal, 16, for: .scrollContent)
       .scrollContentBackground(.hidden)
       .safeAreaInset(edge: .top) {
-        Color.clear.frame(height: 64)
+        HostPanelHeader(title: "Local", backTitle: "Hosts", action: onShowHosts)
       }
       .safeAreaInset(edge: .bottom) {
         Color.clear.frame(height: 80)
@@ -142,6 +143,7 @@ struct SidebarView: View {
   @FocusState private var isSearchFieldFocused: Bool
   let onSelectConversation: (UUID) -> Void
   let onSelectBookmarkedMessage: (UUID, UUID) -> Void
+  let onShowFolders: () -> Void
   let onDismiss: () -> Void
   @State private var visibleConversations: [ConversationSummary] = []
   @State private var visibleConversationsRefreshTask: Task<Void, Never>?
@@ -158,6 +160,10 @@ struct SidebarView: View {
       }
       .safeAreaInset(edge: .bottom, spacing: 0) {
         floatingActions(compact: proxy.size.width - floatingActionHorizontalInset * 2 < 300)
+      }
+      .safeAreaInset(edge: .top, spacing: 0) {
+        HostPanelHeader(title: isShowingBookmarks ? "Bookmarks" : store.selectedConversationFolder.displayName,
+          backTitle: "Folders", action: onShowFolders)
       }
     }
     .conversationDeletionAlert($pendingDeletion) { ids in
@@ -401,9 +407,6 @@ struct SidebarView: View {
     .listStyle(.plain)
     .contentMargins(.horizontal, 16, for: .scrollContent)
     .scrollContentBackground(.hidden)
-    .safeAreaInset(edge: .top) {
-      Color.clear.frame(height: 32)
-    }
     .scrollIndicators(.hidden)
   }
 
@@ -448,9 +451,6 @@ struct SidebarView: View {
     .listStyle(.plain)
     .contentMargins(.horizontal, 16, for: .scrollContent)
     .scrollContentBackground(.hidden)
-    .safeAreaInset(edge: .top) {
-      Color.clear.frame(height: 32)
-    }
     .scrollIndicators(.hidden)
   }
 
@@ -2032,7 +2032,7 @@ private struct ConversationFolderDefaultsView: View {
   }
 }
 
-private struct SidebarRowBackground: View {
+struct SidebarRowBackground: View {
   let isSelected: Bool
 
   var body: some View {
@@ -2290,7 +2290,7 @@ struct FloatingActionPill: View {
   }
 }
 
-private struct SidebarFolderRow: View {
+struct SidebarFolderRow: View {
   let title: String
   let subtitle: String
   let systemImage: String

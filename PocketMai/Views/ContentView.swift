@@ -15,6 +15,9 @@ struct ContentView: View {
   @State private var isHistoryPanelMounted = false
   @State private var showingFolders = false
   @State private var isFoldersPanelMounted = false
+  @State private var showingHosts = false
+  @State private var isHostsPanelMounted = false
+  @State private var hosts = HostNavigationStore()
   @State private var historyDragOffset: CGFloat = 0
   @State private var sidebarSelectionGeneration = 0
   @State private var isShowingBookmarksFolder = false
@@ -22,49 +25,87 @@ struct ContentView: View {
   var body: some View {
     GeometryReader { proxy in
       let panelWidth = min(max(proxy.size.width * 0.82, 300), 390)
-      let drawerDepth = showingFolders ? 2 : (showingHistory ? 1 : 0)
+      let drawerDepth = showingHosts ? 3 : (showingFolders ? 2 : (showingHistory ? 1 : 0))
       let basePanelOffset = CGFloat(drawerDepth) * panelWidth
-      let panelOffset = min(max(basePanelOffset + historyDragOffset, 0), panelWidth * 2)
+      let panelOffset = min(max(basePanelOffset + historyDragOffset, 0), panelWidth * 3)
       let sidebarOffset = max(panelOffset - panelWidth, 0)
+      let foldersOffset = max(panelOffset - panelWidth * 2, 0)
       let revealProgress = min(panelOffset / panelWidth, 1)
 
       ZStack(alignment: .leading) {
+        if isHostsPanelMounted {
+          HostsView(hosts: hosts, onSelectHost: selectHost)
+            .frame(width: panelWidth).frame(maxHeight: .infinity)
+            .background { SidebarBlurBackground() }
+            .opacity(panelOffset > panelWidth * 2 ? 1 : 0)
+            .allowsHitTesting(panelOffset >= panelWidth * 3)
+            .accessibilityHidden(panelOffset < panelWidth * 3)
+            .zIndex(-1)
+        }
         if isFoldersPanelMounted {
-          ConversationFoldersView(
-            storeObservation: sidebarStoreObservation,
-            store: store,
-            isShowingBookmarks: isShowingBookmarksFolder,
-            onSelectFolder: { folderID in
-              isShowingBookmarksFolder = false
-              store.selectConversationFolder(folderID)
-              setDrawerDepth(1, animation: historyPanelAnimation)
-            },
-            onSelectBookmarks: {
-              isShowingBookmarksFolder = true
-              setDrawerDepth(1, animation: historyPanelAnimation)
+          Group {
+            if hosts.selectedHost != nil {
+              RemoteFoldersView(
+                hosts: hosts, isOffline: store.settings.isOffline,
+                onShowHosts: { setDrawerDepth(3, animation: historyPanelAnimation) },
+                onSelectFolder: { cwd in
+                  hosts.selectFolder(cwd)
+                  setDrawerDepth(1, animation: historyPanelAnimation)
+                })
+            } else {
+              ConversationFoldersView(
+                storeObservation: sidebarStoreObservation,
+                store: store,
+                isShowingBookmarks: isShowingBookmarksFolder,
+                onSelectFolder: { folderID in
+                  isShowingBookmarksFolder = false
+                  store.selectConversationFolder(folderID)
+                  setDrawerDepth(1, animation: historyPanelAnimation)
+                },
+                onSelectBookmarks: {
+                  isShowingBookmarksFolder = true
+                  setDrawerDepth(1, animation: historyPanelAnimation)
+                },
+                onShowHosts: { setDrawerDepth(3, animation: historyPanelAnimation) }
+              )
             }
-          )
+          }
           .frame(width: panelWidth)
           .frame(maxHeight: .infinity)
           .background { SidebarBlurBackground() }
           .opacity(panelOffset > panelWidth ? 1 : 0)
-          .allowsHitTesting(panelOffset >= panelWidth * 2)
-          .accessibilityHidden(panelOffset < panelWidth * 2)
+          .allowsHitTesting(panelOffset >= panelWidth * 2 && panelOffset < panelWidth * 3)
+          .accessibilityHidden(panelOffset < panelWidth * 2 || panelOffset >= panelWidth * 3)
+          .offset(x: foldersOffset)
           .zIndex(0)
         }
 
         if isHistoryPanelMounted {
-          SidebarView(
-            storeObservation: sidebarStoreObservation,
-            store: store,
-            showingSettings: $showingSettings,
-            isShowingBookmarks: $isShowingBookmarksFolder,
-            isVisible: showingHistory && !showingFolders,
-            onSelectConversation: selectConversationFromSidebar,
-            onSelectBookmarkedMessage: selectBookmarkedMessageFromSidebar,
-            onDismiss: { closeHistoryPanel() }
-          )
-          .equatable()
+          Group {
+            if hosts.selectedHost != nil {
+              RemoteConversationsView(
+                hosts: hosts,
+                onShowFolders: { setDrawerDepth(2, animation: historyPanelAnimation) },
+                onSelectConversation: { id in
+                  hosts.selectedConversationID = id
+                  closeHistoryPanel()
+                }, onNewChat: newRemoteConversation,
+                onShowSettings: { showingSettings = true })
+            } else {
+              SidebarView(
+                storeObservation: sidebarStoreObservation,
+                store: store,
+                showingSettings: $showingSettings,
+                isShowingBookmarks: $isShowingBookmarksFolder,
+                isVisible: showingHistory && !showingFolders,
+                onSelectConversation: selectConversationFromSidebar,
+                onSelectBookmarkedMessage: selectBookmarkedMessageFromSidebar,
+                onShowFolders: { setDrawerDepth(2, animation: historyPanelAnimation) },
+                onDismiss: { closeHistoryPanel() }
+              )
+              .equatable()
+            }
+          }
           .frame(width: panelWidth)
           .frame(maxHeight: .infinity)
           .modifier(SidebarPlaneEffect(progress: revealProgress))
@@ -81,21 +122,51 @@ struct ContentView: View {
           ChatScreenBackground()
 
           NavigationStack {
-            ChatView(
-              storeObservation: chatStoreObservation,
-              store: store,
-              renderInvalidationKey: ChatView.RenderInvalidationKey(
-                isLandscape: proxy.size.width > proxy.size.height,
-                selectedConversationID: store.selectedConversationID,
-                selectedConversationIsLoading: store.selectedConversationIsLoading,
-                appearance: store.settings.appearance,
-                renderMarkdownInChat: store.settings.renderMarkdownInChat,
-                renderMarkdownImagesInChat: store.settings.renderMarkdownImagesInChat),
-              onShowHistory: {
-                toggleHistoryPanel()
+            if let host = hosts.selectedHost {
+              if let conversation = hosts.selectedConversation {
+                RemoteAgentChatView(
+                  bookmark: host, conversation: conversation,
+                  onShowHistory: toggleHistoryPanel, onNewChat: newRemoteConversation
+                )
+                .id(
+                  "\(host.id):\(host.url.absoluteString):\(host.revision?.uuidString ?? ""):\(conversation.id)"
+                )
+              } else {
+                VStack(spacing: 20) {
+                  ContentUnavailableView(
+                    "\(host.name)", systemImage: "network",
+                    description: Text("Choose a folder and conversation, or start a new chat."))
+                  Button("Browse Folders") { setDrawerDepth(2, animation: historyPanelAnimation) }
+                  Button("New Chat", action: newRemoteConversation)
+                    .disabled(host.requiresApproval == true || hosts.selectedFolderID == nil)
+                }
+                .navigationTitle(host.name)
+                .toolbar {
+                  ToolbarItem(placement: .topBarLeading) {
+                    Button(
+                      "Conversations", systemImage: "line.3.horizontal", action: toggleHistoryPanel
+                    )
+                    .labelStyle(.iconOnly)
+                  }
+                }
               }
-            )
-            .equatable()
+            } else {
+              ChatView(
+                storeObservation: chatStoreObservation,
+                store: store,
+                renderInvalidationKey: ChatView.RenderInvalidationKey(
+                  isLandscape: proxy.size.width > proxy.size.height,
+                  selectedConversationID: store.selectedConversationID,
+                  selectedConversationIsLoading: store.selectedConversationIsLoading,
+                  appearance: store.settings.appearance,
+                  renderMarkdownInChat: store.settings.renderMarkdownInChat,
+                  renderMarkdownImagesInChat: store.settings.renderMarkdownImagesInChat),
+                onShowHistory: {
+                  toggleHistoryPanel()
+                }
+              )
+              .equatable()
+            }
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -122,13 +193,14 @@ struct ContentView: View {
             && store.activeLongRunningOperationTimeoutRequest == nil,
           drawerDepth: drawerDepth,
           onChanged: { offset in
-            let nextOffset = min(max(CGFloat(drawerDepth) * panelWidth + offset, 0), panelWidth * 2)
+            let nextOffset = min(max(CGFloat(drawerDepth) * panelWidth + offset, 0), panelWidth * 3)
             if nextOffset > 0 {
               mountHistoryPanel()
             }
             if nextOffset > panelWidth {
               mountFoldersPanel()
             }
+            if nextOffset > panelWidth * 2 { isHostsPanelMounted = true }
             historyDragOffset = offset
           },
           onEnded: { depth in
@@ -207,14 +279,35 @@ struct ContentView: View {
     }
     .onChange(of: scenePhase) { _, phase in
       store.handleScenePhaseChange(phase)
+      if phase == .background { hosts.stopDiscovery() }
       if phase == .active {
         store.refreshAppleIntelligenceAvailabilityInBackground()
         store.refreshLocalMLXModelsInBackground()
         store.drainPendingSharedLaunchCommand()
       }
     }
-    .tint(store.effectiveTintColor)
-    .accentColor(store.effectiveTintColor)
+    .onChange(of: store.settings.isOffline) { _, enabled in
+      if enabled { hosts.stopDiscovery() }
+    }
+    .onChange(of: hosts.remotes.connections.map(\.id)) { _, ids in
+      if let id = hosts.selectedHostID, !ids.contains(id) {
+        hosts.selectHost(nil, isOffline: store.settings.isOffline)
+      }
+    }
+    .onChange(of: hosts.selectedHost?.revision) { _, _ in
+      if hosts.selectedHost != nil {
+        hosts.stopDiscovery()
+        hosts.refresh(isOffline: store.settings.isOffline)
+      }
+    }
+    .tint(selectedHostTint)
+    .accentColor(selectedHostTint)
+  }
+
+  private var selectedHostTint: Color? {
+    guard let host = hosts.selectedHost else { return store.effectiveTintColor }
+    return host.accentColor.flatMap { ConversationFolderTint(rawIdentifier: $0) }?.color
+      ?? store.settings.appearance.tintColor
   }
 
   private func selectConversationFromSidebar(_ id: UUID) {
@@ -283,6 +376,17 @@ struct ContentView: View {
     setDrawerDepth(0, animation: historyPanelAnimation, completion: completion)
   }
 
+  private func selectHost(_ id: UUID?) {
+    sidebarSelectionGeneration += 1
+    hosts.selectHost(id, isOffline: store.settings.isOffline)
+    setDrawerDepth(2, animation: historyPanelAnimation)
+  }
+
+  private func newRemoteConversation() {
+    guard hosts.newConversation() != nil else { return }
+    closeHistoryPanel()
+  }
+
   private func toggleHistoryPanel() {
     setDrawerDepth(showingHistory ? 0 : 1, animation: .snappy)
   }
@@ -296,17 +400,19 @@ struct ContentView: View {
     animation: Animation,
     completion: (() -> Void)? = nil
   ) {
-    let depth = min(max(requestedDepth, 0), 2)
+    let depth = min(max(requestedDepth, 0), 3)
     if depth > 0 {
       mountHistoryPanel()
     }
     if depth > 1 {
       mountFoldersPanel()
     }
-    let previousDepth = showingFolders ? 2 : (showingHistory ? 1 : 0)
+    if depth > 2 { isHostsPanelMounted = true }
+    let previousDepth = showingHosts ? 3 : (showingFolders ? 2 : (showingHistory ? 1 : 0))
     withAnimation(animation, completionCriteria: .logicallyComplete) {
       showingHistory = depth > 0
       showingFolders = depth > 1
+      showingHosts = depth > 2
       historyDragOffset = 0
     } completion: {
       if previousDepth != depth {
@@ -315,6 +421,7 @@ struct ContentView: View {
       if depth < 2 {
         isFoldersPanelMounted = false
       }
+      if depth < 3 { isHostsPanelMounted = false }
       // Keep the lazily mounted conversation list alive so closing the drawer
       // preserves its native scroll offset and search state.
       completion?()
@@ -386,7 +493,7 @@ struct HistoryPanelDrag {
     // Dragging and settling must share the same adjacent-panel limits, or a
     // long swipe overshoots and then visibly snaps in the opposite direction.
     let minimum = -CGFloat(min(startingDepth, 1)) * panelWidth
-    let maximum = CGFloat(min(2 - startingDepth, 1)) * panelWidth
+    let maximum = CGFloat(min(3 - startingDepth, 1)) * panelWidth
     return min(max(translation, minimum), maximum)
   }
 
@@ -527,7 +634,7 @@ private struct HistoryPanelPanBridge: UIViewRepresentable {
       switch drawerDepth {
       case 0:
         return startX <= view.bounds.width / 3 && velocity.x > 0 && isHorizontal
-      case 1:
+      case 1, 2:
         if velocity.x > 0 {
           return startX <= panelWidth && isHorizontal
         }
@@ -607,8 +714,12 @@ private struct AutocompactionApprovalView: View {
       Form {
         Section {
           Text(request.conversationTitle).font(.headline)
-          Text("This chat has about \(request.estimatedTokens) tokens, above its \(request.threshold)-token compaction threshold.")
-          Text("Compacting replaces older messages with a summary and keeps your latest message. Choose how to continue.")
+          Text(
+            "This chat has about \(request.estimatedTokens) tokens, above its \(request.threshold)-token compaction threshold."
+          )
+          Text(
+            "Compacting replaces older messages with a summary and keeps your latest message. Choose how to continue."
+          )
         }
         Section("Model") {
           Button("Change chat model…") {
@@ -617,12 +728,15 @@ private struct AutocompactionApprovalView: View {
               showingModelSettings = true
             }
           }
-          Picker("Compaction agent", selection: Binding(
-            get: { store.settings.taskAgents.compact ?? "" },
-            set: {
-              store.settings.taskAgents.compact = $0.isEmpty ? nil : $0
-              store.saveSettings()
-            })) {
+          Picker(
+            "Compaction agent",
+            selection: Binding(
+              get: { store.settings.taskAgents.compact ?? "" },
+              set: {
+                store.settings.taskAgents.compact = $0.isEmpty ? nil : $0
+                store.saveSettings()
+              })
+          ) {
             Text("Current conversation agent").tag("")
             ForEach(store.settings.agents) { agent in
               Text(agent.name).tag(agent.id.uuidString.lowercased())
@@ -634,14 +748,17 @@ private struct AutocompactionApprovalView: View {
             store.resolveAutocompactionApproval(id: request.id, decision: .compact)
           }
           Button("Continue without compacting") {
-            store.resolveAutocompactionApproval(id: request.id, decision: .continueWithoutCompacting)
+            store.resolveAutocompactionApproval(
+              id: request.id, decision: .continueWithoutCompacting)
           }
           Button("Stop response", role: .cancel) {
             store.resolveAutocompactionApproval(id: request.id, decision: .cancelRun)
           }
           Button("Clear chat…", role: .destructive) { confirmingClear = true }
         } footer: {
-          Text("Continuing without compaction keeps all messages for this response. The prompt can appear again on your next message.")
+          Text(
+            "Continuing without compaction keeps all messages for this response. The prompt can appear again on your next message."
+          )
         }
       }
       .navigationTitle("Compact this chat?")
@@ -676,10 +793,12 @@ private struct ToolCallApprovalView: View {
   var body: some View {
     NavigationStack {
       VStack(alignment: .leading, spacing: 14) {
-        Label(request.skillSelection == nil ? request.callName : "Use a skill for this task?",
-          systemImage: request.skillSelection == nil ? "wrench.and.screwdriver" : "sparkles")
-          .font(.headline)
-          .lineLimit(2)
+        Label(
+          request.skillSelection == nil ? request.callName : "Use a skill for this task?",
+          systemImage: request.skillSelection == nil ? "wrench.and.screwdriver" : "sparkles"
+        )
+        .font(.headline)
+        .lineLimit(2)
         if let conversationTitle = request.conversationTitle {
           Text(conversationTitle)
             .font(.subheadline)
@@ -689,8 +808,11 @@ private struct ToolCallApprovalView: View {
         if let selection = request.skillSelection {
           Picker("Skill", selection: $selectedSkill) {
             ForEach(selection.skills, id: \.name) { skill in
-              Text(skill.annotations.title ?? String(skill.name.dropFirst(MaiSkillTools.toolPrefix.count)))
-                .tag(skill.name)
+              Text(
+                skill.annotations.title
+                  ?? String(skill.name.dropFirst(MaiSkillTools.toolPrefix.count))
+              )
+              .tag(skill.name)
             }
           }
           .pickerStyle(.menu)
@@ -730,7 +852,8 @@ private struct ToolCallApprovalView: View {
         }
         ToolbarItem(placement: .confirmationAction) {
           Button(request.skillSelection == nil ? "Run" : "Accept") {
-            validationError = request.skillSelection == nil
+            validationError =
+              request.skillSelection == nil
               ? store.approveToolCall(id: request.id, editedText: toolCallText)
               : store.approveSkill(id: request.id, toolName: selectedSkill)
           }

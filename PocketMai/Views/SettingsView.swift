@@ -643,7 +643,7 @@ struct SettingsView: View {
     NavigationLink {
       RemoteAgentsView()
     } label: {
-      Label("Remote Agents", systemImage: "network")
+      Label("Remote Hosts", systemImage: "network")
     }
     NavigationLink {
       AgentManagerView(store: store, storeObservation: storeObservation)
