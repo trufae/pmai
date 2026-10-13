@@ -61,6 +61,12 @@ struct ChatView: View {
     var isAtBottom: Bool
   }
 
+  private struct MessageHistoryLoadKey: Equatable {
+    var conversationID: UUID?
+    var firstMessageID: UUID?
+    var isPreview: Bool
+  }
+
   private enum UserMessageNavigationDirection {
     case previous
     case next
@@ -96,6 +102,9 @@ struct ChatView: View {
   @State private var showingSubagents = false
   @State private var chatSearch = ChatSearchState()
   @State private var messageFontPinchSession = MessageFontPinchSession()
+  @State private var messageRenderWindow = ConversationMessageRenderWindow()
+  @State private var historyScrollSession = ConversationHistoryScrollSession()
+  @State private var messageListIsScrolling = false
   @State private var keyboardOverlap: CGFloat = 0
   @State private var lastUpdatedVisibleConversationID: UUID?
   @State private var queuedMessagePendingEdit: QueuedChatMessage?
@@ -770,14 +779,15 @@ struct ChatView: View {
         ScrollView(.vertical) {
           let conversation = currentConversation
           let isPreviewingConversation = isLoadingConversation && conversation == nil
-          let renderedMessages =
-            conversation?.messages
-            ?? store.selectedConversationPreviewMessages
-          let firstUserMessageID = renderedMessages.first(where: { $0.role == .user })?.id
+          let allMessages = presentationMessages
+          let startIndex = messageRenderWindow.startIndex(
+            in: allMessages, conversationID: currentConversationID)
+          let renderedMessages = allMessages.suffix(from: startIndex)
+          let firstUserMessageID = allMessages.first(where: { $0.role == .user })?.id
           // A single response can be several viewports tall and changes height while streaming.
           // LazyVStack can retain a stale row estimate and scroll past the rendered content.
           VStack(spacing: 14) {
-            if !renderedMessages.isEmpty,
+            if !renderedMessages.isEmpty, startIndex == 0,
               let startedAt = conversation?.createdAt
                 ?? currentConversationSummary?.createdAt
             {
@@ -928,6 +938,10 @@ struct ChatView: View {
             }
             Color.clear
               .frame(height: 1)
+              .background {
+                ConversationHistoryScrollBridge(
+                  session: historyScrollSession, revision: messageRenderWindow.revision)
+              }
           }
           .padding()
           .id(messageListBottomID)
@@ -994,6 +1008,7 @@ struct ChatView: View {
           }
         }
         .onScrollPhaseChange { _, phase, context in
+          messageListIsScrolling = phase != .idle
           if phase == .interacting {
             userScrolledAfterLastMessage = true
             userMessageNavigationDestination = nil
@@ -1015,7 +1030,12 @@ struct ChatView: View {
             scrollToRequestedMessage(store.pendingMessageNavigation, proxy: proxy)
           }
         }
+        .task(id: messageHistoryLoadKey) {
+          await renderOlderMessages(for: messageHistoryLoadKey)
+        }
         .onChange(of: currentConversationID) { _, _ in
+          historyScrollSession.cancel()
+          messageListIsScrolling = false
           messageFontPinchSession.resetMetrics()
           userMessageNavigation = UserMessageNavigationState()
           userMessageNavigationDestination = nil
@@ -1062,8 +1082,11 @@ struct ChatView: View {
         }
         .onChange(of: pendingScrollToMessageID) { _, target in
           guard !messageFontPinchSession.isActive, let target else { return }
-          withAnimation(.snappy) {
-            proxy.scrollTo(target, anchor: .center)
+          prepareMessageNavigation(to: target)
+          DispatchQueue.main.async {
+            withAnimation(.snappy) {
+              proxy.scrollTo(target, anchor: .center)
+            }
           }
           pendingScrollToMessageID = nil
         }
@@ -1076,6 +1099,7 @@ struct ChatView: View {
           else {
             return
           }
+          prepareMessageNavigation(to: target.messageID)
           DispatchQueue.main.async {
             withAnimation(.snappy) {
               proxy.scrollTo(target, anchor: .center)
@@ -1197,15 +1221,22 @@ struct ChatView: View {
   ) -> some View {
     let button = Button {
       guard let destination = userMessageNavigationTarget(for: direction) else { return }
+      if case .message(let id) = destination {
+        prepareMessageNavigation(to: id)
+      } else {
+        historyScrollSession.cancel()
+      }
       userScrolledAfterLastMessage = true
       userMessageNavigationDestination = destination
       showUserMessageNavigationIndicator()
-      withAnimation(.easeOut(duration: 0.16)) {
-        switch destination {
-        case .message(let id):
-          proxy.scrollTo(id, anchor: .top)
-        case .bottom:
-          proxy.scrollTo(messageListBottomID, anchor: .bottom)
+      DispatchQueue.main.async {
+        withAnimation(.easeOut(duration: 0.16)) {
+          switch destination {
+          case .message(let id):
+            proxy.scrollTo(id, anchor: .top)
+          case .bottom:
+            proxy.scrollTo(messageListBottomID, anchor: .bottom)
+          }
         }
       }
     } label: {
@@ -1291,7 +1322,9 @@ struct ChatView: View {
     let scrollable = hasScrollableContent ?? userMessageNavigation.hasScrollableContent
     let userMessageIDs = currentUserMessageIDs
     let alignedTopTolerance: CGFloat = 4
-    var previousID: UUID?
+    let startIndex = messageRenderWindow.startIndex(
+      in: presentationMessages, conversationID: currentConversationID)
+    var previousID = presentationMessages.prefix(startIndex).last(where: { $0.role == .user })?.id
     var nextID: UUID?
 
     for id in userMessageIDs {
@@ -1322,6 +1355,64 @@ struct ChatView: View {
 
   private var currentMessageIDs: [UUID] {
     currentConversation?.messages.map(\.id) ?? []
+  }
+
+  private var presentationMessages: [ChatMessage] {
+    currentConversation?.messages ?? store.selectedConversationPreviewMessages
+  }
+
+  private var messageHistoryLoadKey: MessageHistoryLoadKey {
+    MessageHistoryLoadKey(
+      conversationID: currentConversationID,
+      firstMessageID: presentationMessages.first?.id,
+      isPreview: isLoadingConversation && currentConversation == nil)
+  }
+
+  @MainActor
+  private func renderOlderMessages(for key: MessageHistoryLoadKey) async {
+    guard !Task.isCancelled, messageHistoryLoadKey == key else { return }
+    historyScrollSession.cancel()
+    // Previews already contain a small tail. Do not make their filtered IDs
+    // the render boundary when the complete history replaces them.
+    guard !key.isPreview else { return }
+    messageRenderWindow.reset(in: presentationMessages, conversationID: key.conversationID)
+    // A bookmark or search result can request an older message before loading finishes.
+    if let request = store.pendingMessageNavigation, request.conversationID == key.conversationID {
+      messageRenderWindow.reveal(
+        request.messageID, in: presentationMessages, conversationID: key.conversationID)
+    }
+    if let match = chatSearch.currentMatch {
+      messageRenderWindow.reveal(
+        match.messageID, in: presentationMessages, conversationID: key.conversationID)
+    }
+    while !Task.isCancelled {
+      do {
+        try await Task.sleep(for: .milliseconds(100))
+      } catch {
+        return
+      }
+      guard !Task.isCancelled, messageHistoryLoadKey == key else { return }
+      let messages = presentationMessages
+      guard messageRenderWindow.startIndex(in: messages, conversationID: key.conversationID) > 0
+      else { return }
+      // Give gestures and streaming replies priority over offscreen history.
+      guard !messageListIsScrolling, !messageFontPinchSession.isActive,
+        !currentChatIsResponding,
+        historyScrollSession.prepareForPrepend(revision: messageRenderWindow.revision + 1)
+      else { continue }
+      var transaction = Transaction()
+      transaction.disablesAnimations = true
+      withTransaction(transaction) {
+        _ = messageRenderWindow.revealEarlier(in: messages, conversationID: key.conversationID)
+      }
+    }
+  }
+
+  private func prepareMessageNavigation(to messageID: UUID) {
+    historyScrollSession.cancel()
+    userScrolledAfterLastMessage = true
+    messageRenderWindow.reveal(
+      messageID, in: presentationMessages, conversationID: currentConversationID)
   }
 
   private var currentQueuedUserMessages: [QueuedChatMessage] {
@@ -1536,6 +1627,7 @@ struct ChatView: View {
       request.conversationID == currentConversationID,
       currentMessageIDs.contains(request.messageID)
     else { return }
+    prepareMessageNavigation(to: request.messageID)
     userScrolledAfterLastMessage = true
     userMessageNavigationDestination = nil
     DispatchQueue.main.async {
@@ -1554,6 +1646,7 @@ struct ChatView: View {
 
   private func scheduleStreamingScroll(_ proxy: ScrollViewProxy) {
     guard !messageFontPinchSession.isActive,
+      !historyScrollSession.isRestoring,
       !userScrolledAfterLastMessage
     else { return }
     let now = Date()
@@ -1567,6 +1660,7 @@ struct ChatView: View {
         streamingScrollTask = nil
         guard !Task.isCancelled,
           !messageFontPinchSession.isActive,
+          !historyScrollSession.isRestoring,
           !userScrolledAfterLastMessage
         else { return }
         lastStreamingScrollAt = Date()
