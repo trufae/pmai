@@ -118,10 +118,14 @@ struct RemoteFoldersView: View {
   let isOffline: Bool
   let onShowHosts: () -> Void
   let onSelectFolder: (String) -> Void
+  var isVisible = true
+  @State private var filter = ""
+  @FocusState private var filterFocused: Bool
 
   var body: some View {
     List {
-      ForEach(hosts.folders) { folder in
+      ForEach(hosts.folders.filter { SidebarSearch.matches(filter, in: [$0.name, $0.cwd]) }) {
+        folder in
         let count =
           hosts.selectedHost.map { host in
             hosts.remotes.conversations(for: host).filter { $0.cwd == folder.cwd }.count
@@ -132,9 +136,11 @@ struct RemoteFoldersView: View {
           subtitle: "\(count) conversation\(count == 1 ? "" : "s") · \(folder.cwd)",
           systemImage: folder.icon ?? "folder", iconColor: folderColor(folder), isSelected: selected
         ) {
+          filterFocused = false
           onSelectFolder(folder.cwd)
         }
         .listRowBackground(SidebarRowBackground(isSelected: selected)).listRowSeparator(.hidden)
+
       }
       if hosts.loading {
         ProgressView(hosts.waitingApproval ? "Waiting for server approval…" : "Connecting…")
@@ -153,16 +159,23 @@ struct RemoteFoldersView: View {
     }
     .listStyle(.plain).scrollContentBackground(.hidden)
     .contentMargins(.horizontal, 16, for: .scrollContent)
+    .onChange(of: isVisible) { _, visible in if !visible { filterFocused = false } }
     .safeAreaInset(edge: .top) {
       HostPanelHeader(
         title: hosts.selectedHost?.name ?? "Folders", backTitle: "Hosts", action: onShowHosts)
     }
     .safeAreaInset(edge: .bottom) {
-      FloatingActionPill(
-        title: "Refresh", systemImage: "arrow.clockwise", prominent: false, compact: false
-      ) {
-        hosts.refresh(isOffline: isOffline)
-      }.disabled(hosts.loading || isOffline).padding(.bottom, 24)
+      HStack(spacing: 10) {
+        FloatingSearchField(text: $filter, isFocused: $filterFocused, placeholder: "Filter") {
+          filter = ""
+          filterFocused = false
+        }
+        FloatingActionIcon(
+          systemImage: "arrow.clockwise", accessibilityLabel: "Refresh projects", compact: true
+        ) {
+          hosts.refresh(isOffline: isOffline)
+        }.disabled(hosts.loading || isOffline)
+      }.padding(.horizontal, 18).padding(.bottom, 22)
     }
   }
 
@@ -180,19 +193,51 @@ struct RemoteConversationsView: View {
   let hosts: HostNavigationStore
   let onShowFolders: () -> Void
   let onSelectConversation: (UUID) -> Void
-  let onNewChat: () -> Void
   let onShowSettings: () -> Void
+  var isVisible = true
+  @State private var search = ""
+  @FocusState private var searchFocused: Bool
+
+  private var conversations: [RemoteAgentConversation] {
+    hosts.conversations.filter {
+      SidebarSearch.matches(search, in: [$0.title] + $0.messages.map(\.text))
+    }
+  }
 
   var body: some View {
+    ConversationSidebarPanel(
+      title: hosts.folders.first { $0.cwd == hosts.selectedFolderID }?.name ?? "Conversations",
+      onShowFolders: onShowFolders
+    ) {
+      conversationList
+    } actions: { compact in
+      HStack(spacing: compact ? 6 : 10) {
+        ConversationSearchControls(
+          text: $search, isFocused: $searchFocused, compact: compact,
+          onShowSettings: onShowSettings)
+      }
+    }
+    .onChange(of: isVisible) { _, visible in if !visible { searchFocused = false } }
+  }
+
+  private var conversationList: some View {
     List {
-      ForEach(hosts.conversations) { chat in
+      let chats = conversations
+      ForEach(Array(chats.enumerated()), id: \.element.id) { index, chat in
+        let groupTitle = ConversationDatePresentation.sidebarGroupTitle(for: chat.updatedAt)
+        if index == 0
+          || ConversationDatePresentation.sidebarGroupTitle(for: chats[index - 1].updatedAt)
+            != groupTitle
+        {
+          SidebarConversationGroupHeader(title: groupTitle)
+        }
         let selected = hosts.selectedConversationID == chat.id
-        SidebarFolderRow(
-          title: chat.title,
-          subtitle: chat.messages.last?.text
-            ?? chat.updatedAt.formatted(date: .abbreviated, time: .shortened),
-          systemImage: "bubble.left", isSelected: selected
-        ) { onSelectConversation(chat.id) }
+        ConversationRow(
+          conversation: ConversationSummary(conversation: chat.presentation), isSelected: selected,
+          isResponding: selected && hosts.activeChat?.busy == true
+        ) {
+          searchFocused = false; onSelectConversation(chat.id)
+        }
         .disabled(hosts.selectedHost?.requiresApproval == true || hosts.selectedFolderID == nil)
         .listRowBackground(SidebarRowBackground(isSelected: selected)).listRowSeparator(.hidden)
         .modifier(
@@ -209,29 +254,19 @@ struct RemoteConversationsView: View {
             onRename: { await hosts.manageConversation(chat, title: $0) },
             onDelete: { _ in Task { await hosts.manageConversation(chat, title: nil) } }))
       }
-      if hosts.conversations.isEmpty {
-        Text(hosts.loading ? "Loading conversations…" : "No conversations in this folder yet.")
+      if conversations.isEmpty {
+        Text(
+          hosts.loading
+            ? "Loading conversations…"
+            : (search.isEmpty
+              ? "No conversations in this folder yet." : "No matching conversations.")
+        )
           .font(.callout).foregroundStyle(.secondary)
       }
       if let error = hosts.error { Text(error).foregroundStyle(.red).font(.callout) }
     }
     .listStyle(.plain).scrollContentBackground(.hidden)
     .contentMargins(.horizontal, 16, for: .scrollContent)
-    .safeAreaInset(edge: .top) {
-      HostPanelHeader(
-        title: hosts.folders.first { $0.cwd == hosts.selectedFolderID }?.name ?? "Conversations",
-        backTitle: "Folders", action: onShowFolders)
-    }
-    .safeAreaInset(edge: .bottom) {
-      HStack {
-        FloatingActionPill(
-          title: "New Chat", systemImage: "plus", prominent: true, compact: false, action: onNewChat
-        )
-        .disabled(hosts.selectedHost?.requiresApproval == true || hosts.selectedFolderID == nil)
-        FloatingActionIcon(
-          systemImage: "gearshape", accessibilityLabel: "Settings", compact: false,
-          action: onShowSettings)
-      }.padding(.bottom, 24)
-    }
+    .scrollIndicators(.hidden)
   }
 }

@@ -149,22 +149,15 @@ struct SidebarView: View {
   @State private var visibleConversationsRefreshTask: Task<Void, Never>?
   @State private var visibleConversationsRefreshGeneration = 0
   @StateObject private var exportCoordinator = ConversationExportCoordinator()
-  private let floatingActionHorizontalInset: CGFloat = 18
-  private let floatingActionBottomInset: CGFloat = 22
 
   var body: some View {
-    GeometryReader { proxy in
-      ZStack {
-        sidebarList
-        SidebarEdgeFades()
-      }
-      .safeAreaInset(edge: .bottom, spacing: 0) {
-        floatingActions(compact: proxy.size.width - floatingActionHorizontalInset * 2 < 300)
-      }
-      .safeAreaInset(edge: .top, spacing: 0) {
-        HostPanelHeader(title: isShowingBookmarks ? "Bookmarks" : store.selectedConversationFolder.displayName,
-          backTitle: "Folders", action: onShowFolders)
-      }
+    ConversationSidebarPanel(
+      title: isShowingBookmarks ? "Bookmarks" : store.selectedConversationFolder.displayName,
+      onShowFolders: onShowFolders
+    ) {
+      sidebarList
+    } actions: { compact in
+      floatingActions(compact: compact)
     }
     .conversationDeletionAlert($pendingDeletion) { ids in
       store.deleteConversations(ids)
@@ -577,32 +570,12 @@ struct SidebarView: View {
     }
     .frame(minHeight: 56)
     .animation(.easeInOut(duration: 0.2), value: searchControlsExpanded)
-    .padding(.horizontal, floatingActionHorizontalInset)
-    .padding(.bottom, floatingActionBottomInset)
   }
 
-  @ViewBuilder
   private func defaultFloatingActions(compact: Bool) -> some View {
-    FloatingSearchField(
-      text: $searchText,
-      isFocused: $isSearchFieldFocused,
-      onCancel: cancelSearch
-    )
-    if !searchControlsExpanded {
-      FloatingActionIcon(
-        systemImage: "gearshape",
-        accessibilityLabel: "Settings",
-        compact: compact
-      ) {
-        showingSettings = true
-      }
-      .transition(.opacity)
-    }
-  }
-
-  private func cancelSearch() {
-    searchText = ""
-    isSearchFieldFocused = false
+    ConversationSearchControls(
+      text: $searchText, isFocused: $isSearchFieldFocused,
+      compact: compact, onShowSettings: { showingSettings = true })
   }
 
   private var searchControlsExpanded: Bool {
@@ -755,6 +728,8 @@ private struct SidebarConversationGroup: Identifiable {
   let id: String
   let title: String
   var conversations: [ConversationSummary]
+
+
 }
 
 private struct SidebarBookmarkGroup: Identifiable {
@@ -833,7 +808,7 @@ private struct BookmarkRow: View {
   }
 }
 
-private struct SidebarConversationGroupHeader: View {
+struct SidebarConversationGroupHeader: View {
   let title: String
 
   var body: some View {
@@ -2048,7 +2023,7 @@ struct SidebarDistanceTone: View {
   }
 }
 
-private struct SidebarEdgeFades: View {
+struct SidebarEdgeFades: View {
   var body: some View {
     VStack(spacing: 0) {
       SidebarEdgeFade(edge: .top)
@@ -2158,9 +2133,10 @@ struct FloatingActionIcon: View {
   }
 }
 
-private struct FloatingSearchField: View {
+struct FloatingSearchField: View {
   @Binding var text: String
   let isFocused: FocusState<Bool>.Binding
+  var placeholder = "Search"
   let onCancel: () -> Void
 
   var body: some View {
@@ -2170,7 +2146,7 @@ private struct FloatingSearchField: View {
         .foregroundStyle(.secondary)
         .frame(width: 22, height: 22)
 
-      TextField("Search", text: $text)
+      TextField(placeholder, text: $text)
         .textFieldStyle(.plain)
         .disableAutocorrection(true)
         .textInputAutocapitalization(.never)
@@ -2284,7 +2260,7 @@ struct SidebarFolderRow: View {
   }
 }
 
-private struct ConversationRow: View {
+struct ConversationRow: View {
   let conversation: ConversationSummary
   let isSelected: Bool
   let isResponding: Bool

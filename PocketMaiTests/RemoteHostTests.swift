@@ -6,6 +6,13 @@ import XCTest
 
 @MainActor
 final class RemoteHostTests: XCTestCase {
+  func testSidebarFilteringMatchesNamesPathsAndMessageContentsInPlace() {
+    XCTAssertTrue(SidebarSearch.matches("  cAFE  ", in: ["Café project", "/work/one"]))
+    XCTAssertTrue(SidebarSearch.matches("/work/one", in: ["Project", "/work/one"]))
+    XCTAssertTrue(SidebarSearch.matches("answer", in: ["Unrelated title", "Cached answer text"]))
+    XCTAssertTrue(SidebarSearch.matches(" \n ", in: []))
+    XCTAssertFalse(SidebarSearch.matches("missing", in: ["Title", "Different contents"]))
+  }
   func testRemoteTranscriptUsesSharedMessageRendering() throws {
     let conversation = RemoteAgentConversation(
       cwd: "/work",

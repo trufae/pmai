@@ -51,7 +51,7 @@ struct ContentView: View {
                 onSelectFolder: { cwd in
                   hosts.selectFolder(cwd)
                   setDrawerDepth(1, animation: historyPanelAnimation)
-                })
+                }, isVisible: showingFolders && !showingHosts)
             } else {
               ConversationFoldersView(
                 storeObservation: sidebarStoreObservation,
@@ -89,8 +89,9 @@ struct ContentView: View {
                 onSelectConversation: { id in
                   hosts.selectedConversationID = id
                   closeHistoryPanel()
-                }, onNewChat: newRemoteConversation,
-                onShowSettings: { showingSettings = true })
+                },
+                onShowSettings: { showingSettings = true },
+                isVisible: showingHistory && !showingFolders)
             } else {
               SidebarView(
                 storeObservation: sidebarStoreObservation,
@@ -128,8 +129,6 @@ struct ContentView: View {
                   "\(host.name)", systemImage: "network",
                   description: Text("Choose a folder and conversation, or start a new chat."))
                 Button("Browse Folders") { setDrawerDepth(2, animation: historyPanelAnimation) }
-                Button("New Chat", action: newRemoteConversation)
-                  .disabled(host.requiresApproval == true || hosts.selectedFolderID == nil)
               }
               .navigationTitle(host.name)
               .toolbar {
@@ -138,6 +137,13 @@ struct ContentView: View {
                     "Conversations", systemImage: "line.3.horizontal", action: toggleHistoryPanel
                   )
                   .labelStyle(.iconOnly)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                  Button(
+                    "New Chat", systemImage: "square.and.pencil", action: newRemoteConversation
+                  )
+                  .labelStyle(.iconOnly)
+                  .disabled(host.requiresApproval == true || hosts.selectedFolderID == nil)
                 }
               }
             } else {
