@@ -20,6 +20,7 @@ struct ContentView: View {
   @State private var isHostsPanelMounted = false
   @State private var hosts = HostNavigationStore()
   @State private var historyDragOffset: CGFloat = 0
+  @State private var drawerTransitionGeneration = 0
   @State private var sidebarSelectionGeneration = 0
   @State private var isShowingBookmarksFolder = false
 
@@ -211,6 +212,8 @@ struct ContentView: View {
             && store.activeLongRunningOperationTimeoutRequest == nil,
           drawerDepth: drawerDepth,
           onChanged: { offset in
+            // A new drag can reveal panels before the previous settling animation finishes.
+            drawerTransitionGeneration += 1
             let nextOffset = min(max(CGFloat(drawerDepth) * panelWidth + offset, 0), panelWidth * 3)
             if nextOffset > 0 {
               mountHistoryPanel()
@@ -442,6 +445,8 @@ struct ContentView: View {
     completion: (() -> Void)? = nil
   ) {
     let depth = min(max(requestedDepth, 0), 3)
+    drawerTransitionGeneration += 1
+    let transitionGeneration = drawerTransitionGeneration
     if depth > 0 {
       mountHistoryPanel()
     }
@@ -456,13 +461,17 @@ struct ContentView: View {
       showingHosts = depth > 2
       historyDragOffset = 0
     } completion: {
-      if previousDepth != depth {
-        store.sidebarVisibilitySettled()
+      // Only the latest transition may unmount panels; an older completion can
+      // otherwise remove the folders or hosts panel revealed by a fast swipe.
+      if drawerTransitionGeneration == transitionGeneration {
+        if previousDepth != depth {
+          store.sidebarVisibilitySettled()
+        }
+        if depth < 2 {
+          isFoldersPanelMounted = false
+        }
+        if depth < 3 { isHostsPanelMounted = false }
       }
-      if depth < 2 {
-        isFoldersPanelMounted = false
-      }
-      if depth < 3 { isHostsPanelMounted = false }
       // Keep the lazily mounted conversation list alive so closing the drawer
       // preserves its native scroll offset and search state.
       completion?()
