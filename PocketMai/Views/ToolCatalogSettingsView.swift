@@ -13,6 +13,65 @@ private func settingsToolCatalog(_ store: AppStore) -> AgentToolCatalog {
     mcpResources: store.mcpResources, mcpStatuses: store.mcpStatuses)
 }
 
+/// Keep header actions independent and lay every option out beneath them.
+struct NativeToolSettingsRow<Options: View>: View {
+  let tool: BuiltInToolID
+  let isEnabled: Bool
+  let isUnavailable: Bool
+  @Binding var isExpanded: Bool
+  let toggle: () -> Void
+  @ViewBuilder let options: () -> Options
+
+  @ViewBuilder
+  var body: some View {
+    HStack(spacing: 8) {
+      Button(action: toggle) {
+        Image(systemName: isEnabled ? "checkmark.square.fill" : "square")
+          .imageScale(.large)
+          .foregroundStyle(isEnabled ? Color.accentColor : .secondary)
+      }
+      .buttonStyle(.borderless)
+      .disabled(isUnavailable)
+      .accessibilityLabel("Enable \(tool.displayName)")
+      .accessibilityValue(isEnabled ? "Enabled" : "Disabled")
+
+      Button {
+        withAnimation { isExpanded.toggle() }
+      } label: {
+        HStack(spacing: 6) {
+          Image(systemName: tool.systemImage)
+            .foregroundStyle(.secondary)
+            .frame(width: 20)
+          Text(tool.displayName)
+            .foregroundStyle(.primary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+          Spacer(minLength: 0)
+          Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+        }
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .disabled(isUnavailable)
+      .opacity(isUnavailable ? 0.5 : 1)
+      .accessibilityLabel("\(tool.displayName) options")
+      .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+
+      if tool.isCallableTool {
+        ToolCatalogSettingsButton(groupID: "native/\(tool.rawValue)")
+          .fixedSize(horizontal: true, vertical: false)
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    if isExpanded {
+      options()
+        .disabled(isUnavailable)
+    }
+  }
+}
+
 /// Reused beside each native group and at the top of the tool settings.
 struct ToolCatalogSettingsButton: View {
   @EnvironmentObject private var store: AppStore
@@ -29,13 +88,15 @@ struct ToolCatalogSettingsButton: View {
       if groupID == nil {
         Label("Tool list (\(summary.enabled)/\(summary.total) enabled)", systemImage: "list.bullet")
       } else {
-        Text("\(summary.enabled)/\(summary.total)")
+        Label("\(summary.enabled)/\(summary.total)", systemImage: "list.bullet")
           .font(.caption.monospacedDigit())
       }
     }
     .buttonStyle(.borderless)
+    .labelStyle(.titleAndIcon)
     .accessibilityLabel(groupID == nil ? "Tool list" : "\(group?.displayName ?? "Group") tool list")
     .accessibilityValue("\(summary.enabled) of \(summary.total) enabled")
+    .accessibilityHint("Open tool list and exposure settings")
     .sheet(isPresented: $showingCatalog) {
       ToolCatalogSettingsView(groupID: groupID)
     }

@@ -326,6 +326,7 @@ private struct SettingsLazyDisclosureGroup<Label: View, Content: View>: View {
 
 struct SettingsView: View {
   let store: AppStore
+  @State private var expandedToolOptions: Set<BuiltInToolID> = []
   @AppStorage("thinkingDisplay") private var thinkingDisplay: ThinkingDisplay = .five
   @ObservedObject var storeObservation: AppStoreViewObservation
   @Environment(\.dismiss) private var dismiss
@@ -1528,39 +1529,19 @@ struct SettingsView: View {
   }
 
   private func toolRow(_ tool: BuiltInToolID) -> some View {
-    DisclosureGroup {
+    NativeToolSettingsRow(
+      tool: tool,
+      isEnabled: store.settings.defaultEnabledTools.contains(tool),
+      isUnavailable: store.settings.airplaneModeEnabled && tool.isDisabledInAirplaneMode,
+      isExpanded: Binding(
+        get: { expandedToolOptions.contains(tool) },
+        set: { expanded in
+          if expanded { expandedToolOptions.insert(tool) }
+          else { expandedToolOptions.remove(tool) }
+        }),
+      toggle: { toggleTool(tool) }
+    ) {
       toolOptions(tool)
-    } label: {
-      toolLabel(tool)
-    }
-    .disabled(store.settings.airplaneModeEnabled && tool.isDisabledInAirplaneMode)
-    .opacity(store.settings.airplaneModeEnabled && tool.isDisabledInAirplaneMode ? 0.5 : 1)
-  }
-
-  private func toolLabel(_ tool: BuiltInToolID) -> some View {
-    HStack(spacing: 12) {
-      Button {
-        toggleTool(tool)
-      } label: {
-        Image(
-          systemName: store.settings.defaultEnabledTools.contains(tool)
-            ? "checkmark.square.fill" : "square"
-        )
-        .imageScale(.large)
-        .foregroundStyle(
-          store.settings.defaultEnabledTools.contains(tool) ? Color.accentColor : .secondary
-        )
-      }
-      .buttonStyle(.borderless)
-      Image(systemName: tool.systemImage)
-        .foregroundStyle(.secondary)
-        .frame(width: 20)
-      Text(tool.displayName)
-        .foregroundStyle(.primary)
-      if tool.isCallableTool {
-        Spacer()
-        ToolCatalogSettingsButton(groupID: "native/\(tool.rawValue)")
-      }
     }
   }
 
@@ -1836,8 +1817,11 @@ struct SettingsView: View {
       .font(.caption)
       .foregroundStyle(.secondary)
     ForEach(store.settings.mcpServers) { server in
-      NavigationLink(value: SettingsRoute.mcpServer(server.id)) {
-        mcpRow(server)
+      HStack(spacing: 12) {
+        NavigationLink(value: SettingsRoute.mcpServer(server.id)) {
+          mcpRow(server)
+        }
+        ToolCatalogSettingsButton(groupID: "mcp/\(server.portableID ?? server.id.uuidString.lowercased())")
       }
     }
     .onDelete { offsets in
@@ -1901,7 +1885,6 @@ struct SettingsView: View {
           .lineLimit(1)
       }
       Spacer()
-      ToolCatalogSettingsButton(groupID: "mcp/\(server.portableID ?? server.id.uuidString.lowercased())")
       if !server.isEnabled {
         Text("Off")
           .font(.caption.weight(.semibold))
