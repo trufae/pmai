@@ -2332,7 +2332,7 @@ private struct PreviousConversationSuggestionButton: View {
       }
       .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
-    .buttonStyle(.plain)
+    .buttonStyle(ConversationSuggestionButtonStyle())
     .accessibilityLabel(conversation.displayTitle)
     .accessibilityHint(recencyLabel)
   }
@@ -2340,6 +2340,22 @@ private struct PreviousConversationSuggestionButton: View {
   private var recencyLabel: String {
     let recency = ConversationRecencyLabel.text(for: conversation.updatedAt)
     return "\(recency) in \(folder.displayName)"
+  }
+}
+
+/// A moved touch must not open a chat when a swipe ends inside its card.
+private struct ConversationSuggestionButtonStyle: PrimitiveButtonStyle {
+  @Environment(\.isEnabled) private var isEnabled
+
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .onTapGesture {
+        if isEnabled { configuration.trigger() }
+      }
+      .accessibilityAddTraits(.isButton)
+      .accessibilityAction {
+        if isEnabled { configuration.trigger() }
+      }
   }
 }
 
