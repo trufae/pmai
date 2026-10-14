@@ -177,6 +177,11 @@ final class ConversationFolderTests: XCTestCase {
         }
       }
       let saved = try XCTUnwrap(store.currentConversation)
+      XCTAssertEqual(saved.isPinned, pinned)
+      store.newConversation()
+      XCTAssertNotEqual(store.currentConversation?.id, saved.id)
+      XCTAssertEqual(store.currentConversation?.folderID, saved.folderID)
+      XCTAssertEqual(store.conversation(withID: saved.id), saved)
       store.selectConversationFolder(folder.id)
       store.newConversation()
       XCTAssertNotEqual(store.currentConversation?.id, saved.id)
