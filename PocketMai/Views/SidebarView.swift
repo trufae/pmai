@@ -147,6 +147,7 @@ struct SidebarView: View {
   @FocusState private var isSearchFieldFocused: Bool
   let onSelectConversation: (UUID) -> Void
   let onSelectBookmarkedMessage: (UUID, UUID) -> Void
+  let onNewChat: () -> Void
   let onShowFolders: () -> Void
   let onDismiss: () -> Void
   @State private var visibleConversations: [ConversationSummary] = []
@@ -576,10 +577,17 @@ struct SidebarView: View {
     .animation(.easeInOut(duration: 0.2), value: searchControlsExpanded)
   }
 
+  @ViewBuilder
   private func defaultFloatingActions(compact: Bool) -> some View {
     ConversationSearchControls(
       text: $searchText, isFocused: $isSearchFieldFocused,
       compact: compact, onShowSettings: { showingSettings = true })
+    if !isShowingBookmarks && !searchControlsExpanded {
+      FloatingActionIcon(
+        systemImage: "square.and.pencil",
+        accessibilityLabel: "New Chat in \(store.selectedConversationFolder.displayName)",
+        compact: compact, action: onNewChat)
+    }
   }
 
   private var searchControlsExpanded: Bool {
