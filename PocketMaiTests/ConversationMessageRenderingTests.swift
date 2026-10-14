@@ -100,6 +100,120 @@ final class ConversationMessageRenderingTests: XCTestCase {
     XCTAssertEqual(messages[start...].last?.id, messages.last?.id)
   }
 
+  func testToolPartsLoadFromTheNewestMessageFirstAndKeepTheirBoundaryWhenAppended() {
+    let messages = makeMessages(2)
+    let conversationID = UUID()
+    var window = ConversationMessageRenderWindow()
+    window.reset(in: messages, conversationID: conversationID)
+    for message in messages { window.prepareParts(for: message.id, count: 25) }
+    XCTAssertEqual(window.partStartIndex(for: messages[1].id), 17)
+    XCTAssertEqual(
+      window.messageWithEarlierParts(in: messages, conversationID: conversationID), messages[1].id)
+    window.revealEarlierParts(for: messages[1].id)
+    XCTAssertEqual(window.partStartIndex(for: messages[1].id), 9)
+    window.prepareParts(for: messages[1].id, count: 40)
+    XCTAssertEqual(window.partStartIndex(for: messages[1].id), 9)
+    window.revealEarlierParts(for: messages[1].id)
+    window.revealEarlierParts(for: messages[1].id)
+    XCTAssertEqual(window.partStartIndex(for: messages[1].id), 0)
+    XCTAssertEqual(
+      window.messageWithEarlierParts(in: messages, conversationID: conversationID), messages[0].id)
+    window.reset(in: messages, conversationID: UUID())
+    XCTAssertNil(window.partStartIndex(for: messages[1].id))
+  }
+
+  func testNavigationRevealsHiddenPartsOfAnAlreadyRenderedMessage() {
+    let messages = makeMessages(2)
+    let conversationID = UUID()
+    var window = ConversationMessageRenderWindow()
+    window.reset(in: messages, conversationID: conversationID)
+    window.prepareParts(for: messages[1].id, count: 100)
+    window.reveal(messages[1].id, in: messages, conversationID: conversationID)
+    XCTAssertEqual(window.partStartIndex(for: messages[1].id), 0)
+    XCTAssertNil(window.messageWithEarlierParts(in: messages, conversationID: conversationID))
+  }
+
+  func testSwitchingConversationDoesNotReusePartBoundariesForCopiedMessages() {
+    let messages = makeMessages(2)
+    var window = ConversationMessageRenderWindow()
+    let originalID = UUID()
+    let copyID = UUID()
+    window.reset(in: messages, conversationID: originalID)
+    window.prepareParts(for: messages[1].id, count: 100)
+    window.reveal(messages[1].id, in: messages, conversationID: originalID)
+    XCTAssertNil(window.partStartIndex(for: messages[1].id, conversationID: copyID))
+    window.reveal(messages[1].id, in: messages, conversationID: copyID)
+    XCTAssertEqual(window.conversationID, copyID)
+    XCTAssertEqual(window.partStartIndex(for: messages[1].id, conversationID: copyID), 0)
+  }
+
+  @MainActor
+  func testToolHeavyMessageRendersItsTailFirstAndPreservesTheAnswerWhilePrepending() async throws {
+    try await checkToolPartPrepending(readingEarlierMessage: false)
+  }
+
+  @MainActor
+  func testLoadingToolPartsBelowTheReadingPositionDoesNotMoveTheViewport() async throws {
+    try await checkToolPartPrepending(readingEarlierMessage: true)
+  }
+
+  @MainActor
+  private func checkToolPartPrepending(readingEarlierMessage: Bool) async throws {
+    let tools = (0..<80).map { index in
+      "<tool_run>\nShell tool (step \(index)):\nresult \(index)\n</tool_run>"
+    }.joined(separator: "\n")
+    let message = ChatMessage(role: .assistant, text: tools + "\n\nFinal answer.")
+    let fixture = ToolPartRenderFixture(message: message, hasEarlierMessage: readingEarlierMessage)
+    let host = UIHostingController(rootView: ToolPartRenderTestView(fixture: fixture))
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+    window.rootViewController = host
+    window.isHidden = false
+    defer { window.isHidden = true }
+
+    func findScrollView(in view: UIView) -> UIScrollView? {
+      if let scroll = view as? UIScrollView { return scroll }
+      return view.subviews.lazy.compactMap { findScrollView(in: $0) }.first
+    }
+    func findAnswer(in view: UIView) -> UITextView? {
+      if let text = view as? UITextView, text.text.contains("Final answer.") { return text }
+      return view.subviews.lazy.compactMap { findAnswer(in: $0) }.first
+    }
+    try await waitForLayout(host: host) {
+      findScrollView(in: host.view)?.contentSize.height ?? 0 > 0
+        && findAnswer(in: host.view) != nil
+    }
+    let scroll = try XCTUnwrap(findScrollView(in: host.view))
+    let answer = try XCTUnwrap(findAnswer(in: host.view))
+    XCTAssertLessThan(scroll.contentSize.height, readingEarlierMessage ? 2_000 : 1_000)
+    let minimum = -scroll.adjustedContentInset.top
+    let bottom = max(
+      minimum,
+      scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+    scroll.setContentOffset(CGPoint(x: 0, y: readingEarlierMessage ? 100 : bottom), animated: false)
+    try await Task.sleep(for: .milliseconds(30))
+    let originalOffset = scroll.contentOffset.y
+    let answerViewportY = answer.convert(.zero, to: scroll).y - scroll.contentOffset.y
+
+    while fixture.renderWindow.partStartIndex(for: message.id) ?? 0 > 0 {
+      let height = scroll.contentSize.height
+      let offset = scroll.contentOffset.y
+      XCTAssertTrue(
+        fixture.scrollSession.prepareForPrepend(revision: fixture.renderWindow.revision + 1))
+      fixture.renderWindow.revealEarlierParts(for: message.id)
+      try await waitForLayout(host: host) { !fixture.scrollSession.isRestoring }
+      if readingEarlierMessage {
+        XCTAssertEqual(scroll.contentOffset.y, originalOffset, accuracy: 1)
+      } else {
+        let expected = max(minimum, offset + scroll.contentSize.height - height)
+        XCTAssertEqual(scroll.contentOffset.y, expected, accuracy: 1)
+        XCTAssertEqual(
+          answer.convert(.zero, to: scroll).y - scroll.contentOffset.y,
+          answerViewportY, accuracy: 1)
+      }
+    }
+    XCTAssertGreaterThan(scroll.contentSize.height, 2_500)
+  }
+
   @MainActor
   func testCanceledOrStaleRestoresDoNotOverrideNavigation() {
     let session = ConversationHistoryScrollSession()
@@ -243,5 +357,68 @@ private struct RenderTestView: View {
         .frame(minHeight: geometry.size.height, alignment: .bottom)
       }
     }
+  }
+}
+
+@MainActor
+@Observable
+private final class ToolPartRenderFixture {
+  let message: ChatMessage
+  let hasEarlierMessage: Bool
+  let earlierMessageID = UUID()
+  var renderWindow = ConversationMessageRenderWindow()
+  let scrollSession = ConversationHistoryScrollSession()
+  let streamingTextStore = StreamingTextStore()
+
+  init(message: ChatMessage, hasEarlierMessage: Bool) {
+    self.message = message
+    self.hasEarlierMessage = hasEarlierMessage
+    renderWindow.reset(in: [message], conversationID: UUID())
+    renderWindow.prepareParts(for: message.id, count: MessageRenderCache.partCount(for: message))
+  }
+}
+
+private struct ToolPartRenderTestView: View {
+  let fixture: ToolPartRenderFixture
+
+  var body: some View {
+    GeometryReader { geometry in
+      ScrollView {
+        VStack(spacing: 14) {
+          if fixture.hasEarlierMessage {
+            Text("Earlier message").frame(height: 1_000)
+              .background(alignment: .bottom) {
+                ConversationHistoryScrollBridge(
+                  session: fixture.scrollSession, revision: fixture.renderWindow.revision,
+                  messageID: fixture.earlierMessageID
+                )
+                .frame(height: 1)
+              }
+          }
+          MessageBubble(
+            message: fixture.message,
+            renderedPartStartIndex: fixture.renderWindow.partStartIndex(for: fixture.message.id),
+            toolSettings: .defaults, openAIEndpoints: [], appearance: .defaults,
+            actions: MessageBubbleActions(onEdit: { _ in })
+          )
+          .background(alignment: .bottom) {
+            ConversationHistoryScrollBridge(
+              session: fixture.scrollSession, revision: fixture.renderWindow.revision,
+              messageID: fixture.message.id
+            )
+            .frame(height: 1)
+          }
+          Color.clear.frame(height: 1)
+            .background {
+              ConversationHistoryScrollBridge(
+                session: fixture.scrollSession, revision: fixture.renderWindow.revision)
+            }
+        }
+        .padding()
+        .frame(width: geometry.size.width)
+        .frame(minHeight: geometry.size.height, alignment: .bottom)
+      }
+    }
+    .environmentObject(fixture.streamingTextStore)
   }
 }

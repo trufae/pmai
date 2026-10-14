@@ -64,6 +64,7 @@ struct ChatView: View {
   private struct MessageHistoryLoadKey: Equatable {
     var conversationID: UUID?
     var firstMessageID: UUID?
+    var lastMessageID: UUID?
     var isPreview: Bool
   }
 
@@ -814,6 +815,8 @@ struct ChatView: View {
                 } content: {
                   MessageBubble(
                     message: message,
+                    renderedPartStartIndex: messageRenderWindow.partStartIndex(
+                      for: message.id, conversationID: currentConversationID),
                     toolSettings: currentToolSettings,
                     openAIEndpoints: store.settings.isOffline
                       ? [] : store.settings.openAIEndpoints,
@@ -867,6 +870,13 @@ struct ChatView: View {
                 .allowsHitTesting(!isPreviewingConversation)
                 .opacity(isPreviewingConversation ? 0.82 : 1)
                 .id(message.id)
+                .background(alignment: .bottom) {
+                  ConversationHistoryScrollBridge(
+                    session: historyScrollSession, revision: messageRenderWindow.revision,
+                    messageID: message.id
+                  )
+                  .frame(height: 1)
+                }
 
                 if !isPreviewingConversation,
                   !isMessageSelectionMode,
@@ -954,6 +964,7 @@ struct ChatView: View {
               zoomMethod: store.settings.appearance.zoomMethod,
               baseFontSize: store.settings.appearance.fontSize,
               onBegan: { scrollView, contentPoint in
+                historyScrollSession.cancel()
                 messageFontPinchSession.isActive = true
                 messageFontPinchSession.captureAnchor(in: scrollView, at: contentPoint)
                 store.streamingTextStore.setPublishingSuspended(true)
@@ -972,6 +983,7 @@ struct ChatView: View {
                 store.streamingTextStore.setPublishingSuspended(false)
               },
               onRealtimeChanged: { magnification, scrollView, contentPoint in
+                historyScrollSession.cancel()
                 updateRealtimeMessageFontSize(
                   for: magnification,
                   in: scrollView,
@@ -1010,6 +1022,7 @@ struct ChatView: View {
         .onScrollPhaseChange { _, phase, context in
           messageListIsScrolling = phase != .idle
           if phase == .interacting {
+            historyScrollSession.cancel()
             userScrolledAfterLastMessage = true
             userMessageNavigationDestination = nil
             userMessageNavigationHiddenBySwipe = false
@@ -1365,6 +1378,7 @@ struct ChatView: View {
     MessageHistoryLoadKey(
       conversationID: currentConversationID,
       firstMessageID: presentationMessages.first?.id,
+      lastMessageID: presentationMessages.last?.id,
       isPreview: isLoadingConversation && currentConversation == nil)
   }
 
@@ -1385,6 +1399,7 @@ struct ChatView: View {
       messageRenderWindow.reveal(
         match.messageID, in: presentationMessages, conversationID: key.conversationID)
     }
+    prepareMessageParts(in: presentationMessages)
     while !Task.isCancelled {
       do {
         try await Task.sleep(for: .milliseconds(100))
@@ -1393,7 +1408,10 @@ struct ChatView: View {
       }
       guard !Task.isCancelled, messageHistoryLoadKey == key else { return }
       let messages = presentationMessages
-      guard messageRenderWindow.startIndex(in: messages, conversationID: key.conversationID) > 0
+      let partMessageID = messageRenderWindow.messageWithEarlierParts(
+        in: messages, conversationID: key.conversationID)
+      guard partMessageID != nil
+        || messageRenderWindow.startIndex(in: messages, conversationID: key.conversationID) > 0
       else { return }
       // Give gestures and streaming replies priority over offscreen history.
       guard !messageListIsScrolling, !messageFontPinchSession.isActive,
@@ -1403,8 +1421,24 @@ struct ChatView: View {
       var transaction = Transaction()
       transaction.disablesAnimations = true
       withTransaction(transaction) {
-        _ = messageRenderWindow.revealEarlier(in: messages, conversationID: key.conversationID)
+        if let partMessageID {
+          messageRenderWindow.revealEarlierParts(for: partMessageID)
+        } else {
+          _ = messageRenderWindow.revealEarlier(in: messages, conversationID: key.conversationID)
+          prepareMessageParts(in: messages)
+        }
       }
+    }
+  }
+
+  private func prepareMessageParts(in messages: [ChatMessage]) {
+    let start = messageRenderWindow.startIndex(in: messages, conversationID: currentConversationID)
+    for message in messages.suffix(from: start).reversed()
+    where messageRenderWindow.partStartIndex(for: message.id) == nil {
+      // Keep an active response intact as its tool/prose parts are appended.
+      let count = currentChatIsResponding && message.id == messages.last?.id
+        ? 0 : MessageRenderCache.partCount(for: message)
+      messageRenderWindow.prepareParts(for: message.id, count: count)
     }
   }
 
@@ -1413,6 +1447,7 @@ struct ChatView: View {
     userScrolledAfterLastMessage = true
     messageRenderWindow.reveal(
       messageID, in: presentationMessages, conversationID: currentConversationID)
+    prepareMessageParts(in: presentationMessages)
   }
 
   private var currentQueuedUserMessages: [QueuedChatMessage] {

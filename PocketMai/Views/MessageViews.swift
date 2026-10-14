@@ -147,6 +147,8 @@ struct MessageBubble: View {
   @EnvironmentObject private var streamingTextStore: StreamingTextStore
 
   let message: ChatMessage
+  /// Nil starts at the latest batch; zero renders the complete message.
+  var renderedPartStartIndex: Int? = 0
   let toolSettings: NativeToolSettings
   let openAIEndpoints: [OpenAIEndpoint]
   var skipTechnicalContentInTTS: Bool = true
@@ -164,6 +166,7 @@ struct MessageBubble: View {
   var body: some View {
     StreamingMessageBubble(
       message: message,
+      renderedPartStartIndex: renderedPartStartIndex,
       streamingText: streamingTextStore.textObject(for: message.id),
       toolSettings: toolSettings,
       openAIEndpoints: openAIEndpoints,
@@ -184,6 +187,7 @@ struct MessageBubble: View {
 
 private struct StreamingMessageBubble: View {
   let message: ChatMessage
+  var renderedPartStartIndex: Int? = 0
   @ObservedObject var streamingText: StreamingText
   let toolSettings: NativeToolSettings
   let openAIEndpoints: [OpenAIEndpoint]
@@ -202,6 +206,7 @@ private struct StreamingMessageBubble: View {
   var body: some View {
     MessageBubbleContent(
       message: message,
+      renderedPartStartIndex: renderedPartStartIndex,
       messageRenderKey: ChatMessageRenderKey(message),
       streamingOverride: streamingText.text,
       toolSettings: toolSettings,
@@ -226,6 +231,7 @@ private struct MessageBubbleContent: View, Equatable {
   @AppStorage("thinkingDisplay") private var thinkingDisplay: ThinkingDisplay = .five
   @Environment(\.isFullChatScreenshotRendering) private var isFullChatScreenshotRendering
   let message: ChatMessage
+  var renderedPartStartIndex: Int? = 0
   let messageRenderKey: ChatMessageRenderKey
   var streamingOverride: String? = nil
   let toolSettings: NativeToolSettings
@@ -261,6 +267,7 @@ private struct MessageBubbleContent: View, Equatable {
   /// equality is irrelevant because actions are invoked only from fresh menus.
   nonisolated static func == (lhs: MessageBubbleContent, rhs: MessageBubbleContent) -> Bool {
     lhs.messageRenderKey == rhs.messageRenderKey
+      && lhs.renderedPartStartIndex == rhs.renderedPartStartIndex
       && lhs.streamingOverride == rhs.streamingOverride
       && lhs.toolSettings == rhs.toolSettings
       && lhs.openAIEndpoints == rhs.openAIEndpoints
@@ -284,9 +291,16 @@ private struct MessageBubbleContent: View, Equatable {
       text: displayText
     )
     let canRenderMarkdown = renderMarkdown && (!isStreaming || appearance.liveMarkdown)
+    let tailStart = max(0, prepared.parts.count - ConversationMessageRenderWindow.batchSize)
+    let partStart =
+      isFullChatScreenshotRendering || isLiveAssistantResponse
+      ? 0
+      : min(renderedPartStartIndex ?? tailStart, tailStart)
 
     VStack(alignment: .leading, spacing: 6) {
-      ForEach(Array(prepared.parts.enumerated()), id: \.element.id) { index, part in
+      ForEach(
+        Array(prepared.parts.enumerated().dropFirst(partStart)), id: \.element.id
+      ) { index, part in
         switch part {
         case .visible(_, let visibleText):
           bubble(
@@ -622,7 +636,8 @@ private struct MessageBubbleContent: View, Equatable {
 
   /// Writes an edited tool block back into the message, leaving the prose and the
   /// other tool blocks untouched. Nil while the response streams, when the message
-  /// is not editable, or when the block can no longer be located in the message.
+  /// is not editable. Resolve the block only when saving, not while laying out
+  /// every collapsed tool row in a long response.
   private func toolEditAction(
     for entry: ToolEntry,
     partID: Int,
@@ -632,19 +647,17 @@ private struct MessageBubbleContent: View, Equatable {
       return nil
     }
     let rawText = displayText
-    // A message may repeat an identical block, so edit the occurrence this row
-    // was built from rather than the first textual match.
-    var occurrence = 0
-    for part in prepared.parts {
-      guard case .tool(let id, let other, _) = part else { continue }
-      if id == partID { break }
-      if other.rawBlock == entry.rawBlock { occurrence += 1 }
-    }
-    let block = entry.rawBlock
-    guard let range = Self.range(ofOccurrence: occurrence, of: block, in: rawText) else {
-      return nil
-    }
     return { edited in
+      // Identical calls can repeat; locate the occurrence belonging to this row.
+      var occurrence = 0
+      for part in prepared.parts {
+        guard case .tool(let id, let other, _) = part else { continue }
+        if id == partID { break }
+        if other.rawBlock == entry.rawBlock { occurrence += 1 }
+      }
+      guard let range = Self.range(
+        ofOccurrence: occurrence, of: entry.rawBlock, in: rawText)
+      else { return }
       onEdit(rawText.replacingCharacters(in: range, with: edited))
     }
   }
@@ -662,23 +675,26 @@ private struct MessageBubbleContent: View, Equatable {
       return nil
     }
     let rawText = displayText
-    let entries = ToolCallParser.parse(section.content)
-    if entries.count == 1,
-      let edited = removingHiddenSection(
-        section, partID: partID, in: prepared, rawText: rawText)
-    {
-      return { onEdit(edited) }
-    }
+    return {
+      let entries = ToolCallParser.parse(section.content)
+      if entries.count == 1,
+        let edited = removingHiddenSection(
+          section, partID: partID, in: prepared, rawText: rawText)
+      {
+        onEdit(edited)
+        return
+      }
 
-    var occurrence = 0
-    for part in prepared.parts {
-      guard case .tool(let id, let other, _) = part else { continue }
-      if id == partID { break }
-      if other.rawBlock == entry.rawBlock { occurrence += 1 }
+      var occurrence = 0
+      for part in prepared.parts {
+        guard case .tool(let id, let other, _) = part else { continue }
+        if id == partID { break }
+        if other.rawBlock == entry.rawBlock { occurrence += 1 }
+      }
+      guard let range = Self.range(ofOccurrence: occurrence, of: entry.rawBlock, in: rawText)
+      else { return }
+      onEdit(rawText.replacingCharacters(in: range, with: ""))
     }
-    guard let range = Self.range(ofOccurrence: occurrence, of: entry.rawBlock, in: rawText)
-    else { return nil }
-    return { onEdit(rawText.replacingCharacters(in: range, with: "")) }
   }
 
   private func hiddenSectionDeleteAction(
@@ -686,11 +702,14 @@ private struct MessageBubbleContent: View, Equatable {
     partID: Int,
     in prepared: PreparedMessageContent
   ) -> (() -> Void)? {
-    guard let onEdit = actions.onEdit, !isLiveAssistantResponse,
-      let edited = removingHiddenSection(
-        section, partID: partID, in: prepared, rawText: displayText)
-    else { return nil }
-    return { onEdit(edited) }
+    guard let onEdit = actions.onEdit, !isLiveAssistantResponse else { return nil }
+    let rawText = displayText
+    return {
+      guard let edited = removingHiddenSection(
+        section, partID: partID, in: prepared, rawText: rawText)
+      else { return }
+      onEdit(edited)
+    }
   }
 
   private func removingHiddenSection(
@@ -2255,7 +2274,7 @@ private enum MessageRenderPart: Identifiable {
   }
 }
 
-private enum MessageRenderCache {
+enum MessageRenderCache {
   private struct MarkdownCacheKey: Hashable {
     let messageID: UUID
     let partID: Int
@@ -2288,7 +2307,12 @@ private enum MessageRenderCache {
   @MainActor private static var markdownAccessOrder: [MarkdownCacheKey] = []
 
   @MainActor
-  static func preparedContent(messageID: UUID, text: String) -> PreparedMessageContent {
+  static func partCount(for message: ChatMessage) -> Int {
+    preparedContent(messageID: message.id, text: message.presentationText).parts.count
+  }
+
+  @MainActor
+  fileprivate static func preparedContent(messageID: UUID, text: String) -> PreparedMessageContent {
     if let entry = preparedEntries[messageID], entry.text == text {
       markAccessed(messageID)
       return entry.content
