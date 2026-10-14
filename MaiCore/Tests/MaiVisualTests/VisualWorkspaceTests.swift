@@ -285,7 +285,7 @@ func workspaceConfiguresToolGroups() async throws {
   #expect(rendered.contains("0 calls"))
   #expect(rendered.contains("Automatically expose frequently used tools"))
   #expect(rendered.contains("Tool list"))
-  #expect(rendered.contains("1 direct, \(github.toolNames.count - 2) proxy, 1 disabled"))
+  #expect(rendered.contains("1 direct, \(github.toolNames.count - 2) proxy, 0 hidden, 1 disabled"))
   let popup = RenderOnce.render(
     ToolCatalogSheet(conversation: conversation, workspace: workspace, groupID: github.catalogID),
     width: 130, environment: ["NO_COLOR": "1"], isStdoutTTY: false)
