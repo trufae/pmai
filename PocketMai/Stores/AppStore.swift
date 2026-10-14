@@ -4799,6 +4799,7 @@ final class AppStore: ObservableObject {
     let messageCount: Int
     let lastMessage: ChatMessageRenderKey?
     let title: String
+    let isPinned: Bool
     let provider: ProviderKind
     let modelID: String
     let endpointID: UUID?
@@ -4820,6 +4821,7 @@ final class AppStore: ObservableObject {
       messageCount = conversation.messages.count
       lastMessage = conversation.messages.last.map(ChatMessageRenderKey.init)
       title = conversation.title
+      isPinned = conversation.isPinned
       provider = conversation.provider
       modelID = conversation.modelID
       endpointID = conversation.endpointID
