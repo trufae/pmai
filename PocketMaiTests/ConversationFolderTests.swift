@@ -88,6 +88,113 @@ final class ConversationFolderTests: XCTestCase {
     try await waitUntil { persistence.loadSettings().airplaneModeEnabled }
   }
 
+  func testNewChatUsesSelectedFolderAndItsDefaults() async throws {
+    let previous = try XCTUnwrap(store.currentConversation)
+    let folder = try XCTUnwrap(store.createConversationFolder(named: "Work"))
+    let endpoint = OpenAIEndpoint(
+      name: "Work", baseURL: "http://localhost:11434", defaultModel: "work-model")
+    store.settings.networkAvailable = true
+    store.settings.openAIEndpoints.append(endpoint)
+    store.setConversationFolderDefaults(
+      ConversationFolderDefaults(
+        provider: .openAICompatible, endpointID: endpoint.id, modelID: "work-model"),
+      for: folder.id)
+
+    store.selectConversationFolder(folder.id)
+    XCTAssertEqual(store.currentConversation?.id, previous.id, "Browsing must not move a chat")
+    store.newConversation()
+    let created = try XCTUnwrap(store.currentConversation)
+    XCTAssertNotEqual(created.id, previous.id)
+    XCTAssertEqual(created.folderID, folder.id)
+    XCTAssertEqual(created.provider, .openAICompatible)
+    XCTAssertEqual(created.endpointID, endpoint.id)
+    XCTAssertEqual(created.modelID, "work-model")
+    XCTAssertEqual(store.conversation(withID: previous.id), previous)
+
+    store.updateCurrentConversation {
+      $0.messages = [ChatMessage(role: .user, text: "In Work")]
+    }
+    XCTAssertTrue(
+      store.conversationSummaries.contains { $0.id == created.id && $0.folderID == folder.id })
+    try await waitUntil {
+      persistence.loadConversations().contains { $0.id == created.id && $0.folderID == folder.id }
+    }
+  }
+
+  func testNewChatReplacesEmptyPlaceholderFromAnotherFolder() throws {
+    store.newConversation()
+    let placeholder = try XCTUnwrap(store.currentConversation)
+    store.newConversation()
+    XCTAssertEqual(
+      store.currentConversation?.id, placeholder.id, "Reuse an untouched matching chat")
+
+    let folder = try XCTUnwrap(store.createConversationFolder(named: "Work"))
+    store.selectConversationFolder(folder.id)
+    store.newConversation()
+    let created = try XCTUnwrap(store.currentConversation)
+    XCTAssertNotEqual(created.id, placeholder.id)
+    XCTAssertEqual(created.folderID, folder.id)
+    XCTAssertNil(store.conversation(withID: placeholder.id))
+
+    store.selectConversationFolder(ConversationFolder.defaultID)
+    store.newConversation()
+    XCTAssertEqual(store.currentConversation?.folderID, ConversationFolder.defaultID)
+    XCTAssertNil(store.conversation(withID: created.id))
+  }
+
+  func testNewChatPreservesUnsentDraftInItsOriginalFolder() async throws {
+    store.newConversation()
+    let draft = try XCTUnwrap(store.currentConversation)
+    store.setDraftText("Unsent work", for: draft.id)
+    let folder = try XCTUnwrap(store.createConversationFolder(named: "Work"))
+    store.selectConversationFolder(folder.id)
+    store.newConversation()
+    XCTAssertNotEqual(store.currentConversation?.id, draft.id)
+    XCTAssertEqual(store.currentConversation?.folderID, folder.id)
+    XCTAssertEqual(store.draftText(for: store.selectedConversationID), "")
+    XCTAssertEqual(store.conversation(withID: draft.id)?.folderID, draft.folderID)
+    XCTAssertEqual(store.draftText(for: draft.id), "Unsent work")
+
+    await store.selectConversation(id: draft.id)
+    XCTAssertEqual(store.selectedConversationFolderID, draft.folderID)
+    store.newConversation()
+    XCTAssertNotEqual(
+      store.currentConversation?.id, draft.id, "New Chat also leaves a draft in the same folder")
+    XCTAssertEqual(store.currentConversation?.folderID, draft.folderID)
+    XCTAssertEqual(store.draftText(for: draft.id), "Unsent work")
+  }
+
+  func testNewChatPreservesNamedAndPinnedEmptyChats() throws {
+    let folder = try XCTUnwrap(store.createConversationFolder(named: "Work"))
+    for pinned in [false, true] {
+      store.selectConversationFolder(ConversationFolder.defaultID)
+      store.newConversation()
+      store.updateCurrentConversationSettings {
+        if pinned {
+          $0.isPinned = true
+        } else {
+          $0.title = "Saved empty chat"
+        }
+      }
+      let saved = try XCTUnwrap(store.currentConversation)
+      store.selectConversationFolder(folder.id)
+      store.newConversation()
+      XCTAssertNotEqual(store.currentConversation?.id, saved.id)
+      XCTAssertEqual(store.currentConversation?.folderID, folder.id)
+      XCTAssertEqual(store.conversation(withID: saved.id), saved)
+    }
+  }
+
+  func testNewChatAfterDeletingSelectedFolderUsesDefault() async throws {
+    let folder = try XCTUnwrap(store.createConversationFolder(named: "Work"))
+    store.selectConversationFolder(folder.id)
+    store.newConversation()
+    await store.deleteConversationFolder(id: folder.id)
+    store.newConversation()
+    XCTAssertEqual(store.selectedConversationFolderID, ConversationFolder.defaultID)
+    XCTAssertEqual(store.currentConversation?.folderID, ConversationFolder.defaultID)
+  }
+
   private func waitUntil(
     file: StaticString = #filePath, line: UInt = #line, _ predicate: () -> Bool
   ) async throws {

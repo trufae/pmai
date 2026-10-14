@@ -673,9 +673,9 @@ struct ChatView: View {
     }
     .buttonStyle(.plain)
     .disabled(
-      currentConversationIsEmpty || isLoadingConversation || isMessageSelectionMode
+      isLoadingConversation || isMessageSelectionMode
         || (remoteChat != nil
-          && (remoteChat?.busy == true || store.settings.isOffline
+          && (currentConversationIsEmpty || remoteChat?.busy == true || store.settings.isOffline
             || remoteChat?.bookmark.requiresApproval == true))
     )
     .accessibilityLabel("New Chat")

@@ -995,16 +995,12 @@ final class AppStore: ObservableObject {
   func newConversation() {
     conversationSelectionGeneration += 1
     let inheritedLanguageOverride = currentConversation?.effectiveLanguageOverrideIdentifier
+    // Reuse only an untouched placeholder in the selected folder with its defaults.
     if let current = currentConversation,
-      current.messages.isEmpty
+      isDisposableNewConversation(current),
+      conversationUsesNewConversationDefaults(current)
     {
       selectedConversationIDs.removeAll()
-      if isDisposableNewConversation(current),
-        !conversationUsesNewConversationDefaults(current)
-      {
-        discardSelectedDisposableConversation()
-        createAndSelectNewConversation(languageOverrideIdentifier: inheritedLanguageOverride)
-      }
       return
     }
     discardSelectedDisposableConversation()

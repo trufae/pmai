@@ -60,6 +60,7 @@ struct ContentView: View {
                 store: store,
                 isShowingBookmarks: isShowingBookmarksFolder,
                 onSelectFolder: { folderID in
+                  sidebarSelectionGeneration += 1
                   isShowingBookmarksFolder = false
                   store.selectConversationFolder(folderID)
                   setDrawerDepth(1, animation: historyPanelAnimation)
@@ -104,6 +105,7 @@ struct ContentView: View {
                 isVisible: showingHistory && !showingFolders,
                 onSelectConversation: selectConversationFromSidebar,
                 onSelectBookmarkedMessage: selectBookmarkedMessageFromSidebar,
+                onNewChat: newLocalConversation,
                 onShowFolders: { setDrawerDepth(2, animation: historyPanelAnimation) },
                 onDismiss: { closeHistoryPanel() }
               )
@@ -169,7 +171,7 @@ struct ContentView: View {
                 onShowHistory: toggleHistoryPanel,
                 onNewChat: {
                   if hosts.selectedHost == nil {
-                    store.newConversation()
+                    newLocalConversation()
                   } else {
                     newRemoteConversation()
                   }
@@ -403,6 +405,13 @@ struct ContentView: View {
 
   private func newRemoteConversation() {
     guard hosts.newConversation() != nil else { return }
+    closeHistoryPanel()
+  }
+
+  private func newLocalConversation() {
+    sidebarSelectionGeneration += 1
+    isShowingBookmarksFolder = false
+    store.newConversation()
     closeHistoryPanel()
   }
 
