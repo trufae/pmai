@@ -90,6 +90,30 @@ def main():
         assert 'Chat: renamed-mlx::mlx-community/LFM2-350M-MLX' in output, output
         assert 'Current provider: renamed-mlx' in run(['/provider'], args=['--resume'])
         assert not (root / 'hf').exists(), 'discovery or setup downloaded model data'
+
+        output = run(['/provider add chatgpt --kind chatgpt --model account-model',
+                      '/provider add work --kind chatgpt', '/provider status chatgpt',
+                      '/provider use chatgpt', '/model-chat'],
+                     env={'OPENAI_API_KEY': 'unused-api-key', 'OPENAI_BASE_URL': 'not-a-url'})
+        assert 'ChatGPT is signed out' in output, output
+        assert 'Chat: chatgpt::account-model' in output, output
+        providers = {p['id']: p for p in json.loads(config.read_text())['providers']}
+        assert providers['chatgpt']['kind'] == 'chatgpt', providers
+        assert not providers['chatgpt'].get('baseURL'), providers
+        assert not providers['chatgpt'].get('apiKey'), providers
+        assert providers['chatgpt']['options']['account'] != providers['work']['options']['account']
+        account = providers['chatgpt']['options']['account']
+        run(['/provider rename chatgpt renamed-chatgpt', '/provider status renamed-chatgpt'])
+        providers = {p['id']: p for p in json.loads(config.read_text())['providers']}
+        assert providers['renamed-chatgpt']['options']['account'] == account
+        output = run(['/provider', '/model-chat'],
+                     env={'OPENAI_BASE_URL': 'not-a-url', 'PMAI_API_KEY_FILE': str(root / 'missing-key')})
+        assert 'Current provider: renamed-chatgpt' in output, output
+        assert 'Chat: renamed-chatgpt::account-model' in output, output
+        run(['/provider add canonical http://127.0.0.1:1/v1 --kind openai',
+             '/provider add legacy http://127.0.0.1:1/v1 --kind openAICompatible'])
+        providers = {p['id']: p for p in json.loads(config.read_text())['providers']}
+        assert providers['canonical']['kind'] == providers['legacy']['kind'] == 'openai'
     print('PASS local providers: discovery, URL-free setup, defaults, credentials isolation, rename, and resume')
 
 

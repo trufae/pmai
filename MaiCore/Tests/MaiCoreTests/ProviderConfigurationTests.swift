@@ -3,6 +3,24 @@ import Testing
 
 @testable import MaiCore
 
+@Test("OpenAI provider kinds read legacy JSON and always write openai")
+func providerKindLegacyOpenAI() throws {
+  for name in ["openai", "openAICompatible"] {
+    let data = Data(
+      "{\"id\":\"remote\",\"kind\":\"\(name)\",\"baseURL\":\"https://example.test/v1\"}".utf8)
+    let provider = try JSONDecoder().decode(ConfiguredProvider.self, from: data)
+    #expect(provider.kind == .openAI)
+    #expect(provider.kind.rawValue == "openai")
+    #expect(ConfiguredProviderKind(name) == .openAI)
+    let encoded =
+      try JSONSerialization.jsonObject(with: JSONEncoder().encode(provider)) as? [String: Any]
+    #expect(encoded?["kind"] as? String == "openai")
+  }
+  #expect(ConfiguredProviderKind.openAICompatible == .openAI)
+  #expect(ConfiguredProviderKind("chatgpt").rawValue == "chatgpt")
+  #expect(ConfiguredProviderKind("my-plugin").rawValue == "my-plugin")
+}
+
 @Test("Model selectors preserve model syntax and reject empty components")
 func providerModelSelection() throws {
   let bare = try ModelSelection("org/model:tag", currentProvider: "local")

@@ -1,0 +1,345 @@
+import CryptoExtras
+import Foundation
+import Testing
+
+@testable import MaiCore
+@testable import MaiOpenAI
+@testable import MaiTestSupport
+
+#if canImport(FoundationNetworking)
+  import FoundationNetworking
+#endif
+
+#if !os(Windows)
+  @Suite(.serialized)
+  struct ChatGPTTests {
+    func temporaryStore(_ name: String = "chatgpt") -> ChatGPTCredentialStore {
+      .init(
+        providerID: name,
+        directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+    }
+
+    @Test func registrationUsesDynamicClientAndStableHost() async throws {
+      let store = temporaryStore()
+      defer { try? FileManager.default.removeItem(at: store.directory) }
+      let auth = ChatGPTAuth(session: stubSession())
+      let uri = try #require(URL(string: "http://127.0.0.1:54321/auth/callback"))
+      let first = try await auth.beginSignIn(store: store, redirectURI: uri)
+      let second = try await auth.beginSignIn(store: store, redirectURI: uri)
+      let query = try #require(
+        URLComponents(url: first.authorizationURL, resolvingAgainstBaseURL: false)?.queryItems)
+      let values = Dictionary(uniqueKeysWithValues: query.map { ($0.name, $0.value ?? "") })
+      #expect(values["client_id"] == "dynamic_agent_client")
+      #expect(values["agent_name_hint"] == "pmai")
+      #expect(values["resource"] == "https://api.openai.com/v1")
+      #expect(values["scope"]?.contains("chatgpt.tokens.use.direct") == true)
+      #expect(values["ext_agent_host_id"] == (try store.hostID()))
+      #expect(first.state != second.state)
+      #expect(first.nonce != second.nonce)
+      #expect(first.verifier != second.verifier)
+      #expect(first.verifier.count >= 43)
+      await #expect(throws: ChatGPTError.self) {
+        try await auth.finishSignIn(
+          first,
+          callback: URL(
+            string: uri.absoluteString + "?state=wrong&code=secret&client_id=oaiapp_test")!,
+          store: store)
+      }
+      #expect(try store.load() == nil)
+    }
+
+    @Test func returningRegistrationReusesClientAfterLogout() async throws {
+      let store = temporaryStore()
+      defer { try? FileManager.default.removeItem(at: store.directory) }
+      var saved = ChatGPTCredentials(clientID: "oaiapp_saved")
+      saved.subject = "subject"
+      saved.email = "test@example.test"
+      try store.save(saved)
+      let auth = ChatGPTAuth(session: stubSession())
+      let attempt = try await auth.beginSignIn(
+        store: store,
+        redirectURI: URL(string: "http://127.0.0.1:54321/auth/callback")!)
+      #expect(attempt.authorizationURL.query?.contains("oaiapp_saved") == true)
+      #expect(attempt.authorizationURL.query?.contains("agent_name_hint") == false)
+      #expect(try await auth.signOut(store: store))
+      #expect(try store.load()?.clientID == "oaiapp_saved")
+      #expect(try store.load()?.subject == "subject")
+      let mode =
+        try FileManager.default.attributesOfItem(atPath: store.file.path)[.posixPermissions] as? Int
+      #expect(mode == 0o600)
+    }
+
+    @Test func verifiesSignatureAndEveryIdentityBoundary() throws {
+      let key = try _RSA.Signing.PrivateKey(keySize: .bits2048)
+      let numbers = try key.publicKey.getKeyPrimitives()
+      let jwks: [String: JSONValue] = [
+        "keys": .array([
+          .object([
+            "kid": .string("test"), "kty": .string("RSA"), "alg": .string("RS256"),
+            "n": .string(numbers.modulus.chatGPTBase64URL),
+            "e": .string(numbers.publicExponent.chatGPTBase64URL),
+          ])
+        ])
+      ]
+      let now = Date()
+      let claims: [String: JSONValue] = [
+        "iss": .string(ChatGPTAuth.issuer), "sub": .string("user"),
+        "aud": .string("oaiapp_test"), "nonce": .string("nonce"),
+        "iat": .number(now.timeIntervalSince1970), "exp": .number(now.timeIntervalSince1970 + 3600),
+      ]
+      func token(_ claims: [String: JSONValue], algorithm: String = "RS256") throws -> String {
+        let header = try JSONEncoder().encode(["kid": "test", "alg": algorithm]).chatGPTBase64URL
+        let payload = try JSONEncoder().encode(claims).chatGPTBase64URL
+        let signed = header + "." + payload
+        return signed + "."
+          + (try key.signature(for: Data(signed.utf8), padding: .insecurePKCS1v1_5))
+          .rawRepresentation
+          .chatGPTBase64URL
+      }
+      let valid = try token(claims)
+      #expect(
+        try ChatGPTAuth.verifyIdentity(valid, keys: jwks, clientID: "oaiapp_test", nonce: "nonce")[
+          "sub"] == .string("user"))
+      for (field, value) in [
+        "iss": JSONValue.string("https://attacker.test"), "aud": .string("other"),
+        "nonce": .string("other"), "exp": .integer(0), "sub": .string(""),
+      ] {
+        var bad = claims
+        bad[field] = value
+        #expect(throws: ChatGPTError.self) {
+          try ChatGPTAuth.verifyIdentity(
+            token(bad), keys: jwks, clientID: "oaiapp_test", nonce: "nonce")
+        }
+      }
+      #expect(throws: ChatGPTError.self) {
+        try ChatGPTAuth.verifyIdentity(
+          token(claims, algorithm: "none"), keys: jwks, clientID: "oaiapp_test", nonce: "nonce")
+      }
+      let tampered = String(valid.dropLast(20)) + String(repeating: "A", count: 20)
+      #expect(throws: ChatGPTError.self) {
+        try ChatGPTAuth.verifyIdentity(
+          tampered, keys: jwks, clientID: "oaiapp_test", nonce: "nonce")
+      }
+    }
+
+    @Test func refreshRotatesTokensOnceForConcurrentRequests() async throws {
+      let store = temporaryStore()
+      defer { try? FileManager.default.removeItem(at: store.directory) }
+      var credentials = ChatGPTCredentials(clientID: "oaiapp_saved")
+      credentials.accessToken = "expired"
+      credentials.refreshToken = "old+refresh"
+      credentials.expiresAt = .distantPast
+      credentials.scopes = ["chatgpt.tokens.use.direct"]
+      try store.save(credentials)
+      let recorder = URLRequestRecorder()
+      let calls = MethodRecorder()
+      StubURLProtocol.install(forHost: "auth.openai.com") { request in
+        let body = try requestBodyData(request)
+        recorder.record(request, body: body)
+        calls.record("refresh")
+        #expect(String(decoding: body, as: UTF8.self).contains("old%2Brefresh"))
+        #expect(String(decoding: body, as: UTF8.self).contains("client_id=oaiapp_saved"))
+        return try httpResponse(
+          request, contentType: "application/json",
+          body:
+            #"{"access_token":"new-access","refresh_token":"new-refresh","token_type":"Bearer","expires_in":3600,"scope":"chatgpt.tokens.use.direct"}"#
+        )
+      }
+      defer { StubURLProtocol.reset(host: "auth.openai.com") }
+      let auth = ChatGPTAuth(session: stubSession())
+      async let first = auth.accessToken(store: store)
+      async let second = auth.accessToken(store: store)
+      let tokens = try await [first, second]
+      #expect(tokens == ["new-access", "new-access"])
+      #expect(try store.load()?.refreshToken == "new-refresh")
+      #expect(calls.methods.count == 1)
+    }
+
+    @Test func requestReplaysToolsAndOmitsUnsupportedBillingRouteFields() throws {
+      let tool = ToolDefinition(
+        name: "files::read", description: "Read", inputSchema: objectSchema(required: ["path"]))
+      let request = ProviderRequest(
+        model: "model",
+        messages: [
+          .system("Instructions"), .user("Read"),
+          .init(
+            role: .assistant,
+            content: [
+              .toolCall(
+                .init(id: "call-1", name: tool.name, arguments: .object(["path": .string("a")])))
+            ]),
+          .init(role: .tool, content: [.toolResult(.init(callID: "call-1", text: "File content"))]),
+        ], tools: [tool],
+        options: .init(
+          temperature: 0.5, maxOutputTokens: 10,
+          additional: ["previous_response_id": .string("old"), "temperature": .integer(1)]),
+        stream: false)
+      let body = try ChatGPTProvider.body(request, resolver: .init(tools: request.tools))
+        .objectValue!
+      #expect(body["store"] == .bool(false))
+      #expect(body["stream"] == .bool(true))
+      #expect(body["temperature"] == nil)
+      #expect(body["max_output_tokens"] == nil)
+      #expect(body["previous_response_id"] == nil)
+      #expect(body["input"]?.arrayValue?.first?["role"] == .string("developer"))
+      #expect(
+        body["input"]?.arrayValue?.contains(where: { $0["type"] == .string("function_call_output") }
+        )
+          == true)
+      #expect(body["tools"]?.arrayValue?.first?["type"] == .string("namespace"))
+    }
+
+    @Test func streamRequiresCompletedAndPreservesToolsAndUsage() async throws {
+      let tool = ToolDefinition(
+        name: "files::read", description: "Read", inputSchema: objectSchema(required: []))
+      var parser = ChatGPTResponseStream(resolver: .init(tools: [tool]))
+      let events = ChatGPTEventRecorder()
+      _ = try await parser.feed(#"{"type":"response.output_text.delta","delta":"Hello"}"#) {
+        await events.append($0)
+      }
+      let response = try await parser.feed(
+        #"{"type":"response.completed","response":{"status":"completed","output":[{"type":"function_call","call_id":"c1","name":"files_read","arguments":"{}"}],"usage":{"input_tokens":4,"output_tokens":2,"input_tokens_details":{"cached_tokens":1}}}}"#
+      ) { await events.append($0) }
+      #expect(response?.message.toolCalls.first?.name == "files::read")
+      #expect(response?.stopReason == .toolCall)
+      #expect(response?.usage?.cachedTokens == 1)
+      await #expect(throws: ChatGPTError.self) {
+        try await parser.feed(
+          #"{"type":"response.failed","response":{"error":{"code":"subscription_sharing_usage_limit_exceeded"}}}"#
+        ) { _ in }
+      }
+      await #expect(throws: ChatGPTError.self) {
+        try await parser.feed(#"{"type":"response.incomplete"}"#) { _ in }
+      }
+    }
+
+    @Test func callbackRejectsWrongStateAndCanBeCancelled() async throws {
+      let listener = try ChatGPTCallbackListener()
+      #expect(listener.redirectURI.host == "127.0.0.1")
+      let waiting = Task { try await listener.callback(state: "expected", timeout: 3) }
+      let invalid = URL(string: listener.redirectURI.absoluteString + "?state=wrong&code=no")!
+      let (_, response) = try await URLSession.shared.data(from: invalid)
+      #expect((response as? HTTPURLResponse)?.statusCode == 400)
+      listener.cancel()
+      await #expect(throws: CancellationError.self) { try await waiting.value }
+    }
+
+    @Test func callbackCompletesOnlyForThePendingAttempt() async throws {
+      let listener = try ChatGPTCallbackListener()
+      let waiting = Task { try await listener.callback(state: "expected", timeout: 3) }
+      let valid = URL(
+        string: listener.redirectURI.absoluteString
+          + "?state=expected&code=code&client_id=oaiapp_test")!
+      let (_, response) = try await URLSession.shared.data(from: valid)
+      #expect((response as? HTTPURLResponse)?.statusCode == 200)
+      #expect(try await waiting.value == valid)
+    }
+
+    @Test func signInValidatesIdentityAndGrantBeforeSavingTokens() async throws {
+      let store = temporaryStore()
+      defer { try? FileManager.default.removeItem(at: store.directory) }
+      let auth = ChatGPTAuth(session: stubSession())
+      let attempt = try await auth.beginSignIn(
+        store: store,
+        redirectURI: URL(string: "http://127.0.0.1:54321/auth/callback")!)
+      let key = try _RSA.Signing.PrivateKey(keySize: .bits2048)
+      let numbers = try key.publicKey.getKeyPrimitives()
+      let claims: [String: JSONValue] = [
+        "iss": .string(ChatGPTAuth.issuer), "sub": .string("user"),
+        "aud": .string("oaiapp_test"), "nonce": .string(attempt.nonce),
+        "email": .string("user@example.test"),
+        "iat": .number(Date().timeIntervalSince1970),
+        "exp": .number(Date().timeIntervalSince1970 + 3600),
+      ]
+      let signed =
+        try JSONEncoder().encode(["kid": "test", "alg": "RS256"]).chatGPTBase64URL
+        + "." + JSONEncoder().encode(claims).chatGPTBase64URL
+      let token =
+        signed + "."
+        + (try key.signature(for: Data(signed.utf8), padding: .insecurePKCS1v1_5)).rawRepresentation
+        .chatGPTBase64URL
+      StubURLProtocol.install(forHost: "auth.openai.com") { request in
+        let body: JSONValue
+        if request.url?.path == "/.well-known/jwks.json" {
+          body = .object([
+            "keys": .array([
+              .object([
+                "kid": .string("test"), "kty": .string("RSA"),
+                "n": .string(numbers.modulus.chatGPTBase64URL),
+                "e": .string(numbers.publicExponent.chatGPTBase64URL),
+              ])
+            ])
+          ])
+        } else {
+          let sent = String(decoding: try requestBodyData(request), as: UTF8.self)
+          #expect(sent.contains("client_id=oaiapp_test"))
+          #expect(sent.contains("code_verifier="))
+          #expect(sent.contains("resource="))
+          body = .object([
+            "id_token": .string(token), "access_token": .string("access"),
+            "refresh_token": .string("refresh"), "token_type": .string("Bearer"),
+            "expires_in": .integer(3600), "scope": .string(ChatGPTAuth.scopes),
+          ])
+        }
+        return try httpResponse(
+          request, contentType: "application/json", body: body.compactJSONString)
+      }
+      defer { StubURLProtocol.reset(host: "auth.openai.com") }
+      let callback = URL(
+        string: attempt.redirectURI.absoluteString
+          + "?state=\(attempt.state)&code=code&client_id=oaiapp_test")!
+      let account = try await auth.finishSignIn(attempt, callback: callback, store: store)
+      #expect(account.isSignedIn)
+      #expect(account.subject == "user")
+      #expect(try store.load()?.idToken == token)
+      await #expect(throws: ChatGPTError.self) {
+        try await auth.finishSignIn(attempt, callback: callback, store: store)
+      }
+    }
+
+    @Test func providerUsesSubscriptionTokenAndRejectsTruncatedStreams() async throws {
+      let store = temporaryStore()
+      defer { try? FileManager.default.removeItem(at: store.directory) }
+      var account = ChatGPTCredentials(clientID: "oaiapp_test")
+      account.accessToken = "subscription-token"
+      account.expiresAt = Date().addingTimeInterval(3600)
+      account.scopes = ["chatgpt.tokens.use.direct"]
+      try store.save(account)
+      let recorder = URLRequestRecorder()
+      StubURLProtocol.install(forHost: "api.openai.com") { request in
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer subscription-token")
+        if request.url?.path == "/v1/models" {
+          return try httpResponse(
+            request, contentType: "application/json",
+            body:
+              #"{"models":[{"slug":"available","display_name":"Available","visibility":"list"},{"slug":"hidden","visibility":"hide"}]}"#
+          )
+        }
+        #expect(request.url?.path == "/v1/responses")
+        recorder.record(request, body: try requestBodyData(request))
+        return try httpResponse(
+          request, contentType: "text/event-stream",
+          body:
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
+      }
+      defer { StubURLProtocol.reset(host: "api.openai.com") }
+      let provider = ChatGPTProvider(
+        id: "chatgpt", store: store, auth: ChatGPTAuth(session: stubSession()),
+        session: stubSession()
+      )
+      #expect(try await provider.availableModels().map(\.id) == ["available"])
+      await #expect(throws: ChatGPTError.self) {
+        try await provider.complete(
+          .init(model: "available", messages: [.user("Hi")], stream: false))
+      }
+      let body = try jsonObject(try #require(recorder.body))
+      #expect(body["store"] as? Bool == false)
+      #expect(body["stream"] as? Bool == true)
+    }
+  }
+
+  private actor ChatGPTEventRecorder {
+    var events: [ProviderEvent] = []
+    func append(_ event: ProviderEvent) { events.append(event) }
+  }
+#endif

@@ -167,6 +167,24 @@ provider's shorter configured timeout), independent of the longer inference
 timeout. Ctrl+C cancels `/models` and returns to the prompt. A server still
 loading its model may return HTTP 503; retry after it is ready.
 
+For a ChatGPT subscription, add a provider with `/provider add chatgpt --kind chatgpt`,
+then `/provider login chatgpt` opens browser sign-in. `/models chatgpt` lists the
+account's available models; `/model chatgpt::MODEL` selects one for pmai's own
+agent and tools. No API key, custom endpoint, or Codex installation is needed.
+`/provider status chatgpt` shows the account and usage link; `/provider logout chatgpt`
+revokes the session and clears its local tokens. Add another `chatgpt` provider
+for another account or workspace. Credentials are separate from configuration,
+under the selected home directory's `chatgpt/`, with owner-only permissions.
+The provider uses subscription-authorized Responses streaming, including when
+the REPL display has streaming disabled. Plan limits apply; manage them at
+https://chatgpt.com/settings/usage. It supports text, images, files, and local
+function tools, but does not provide audio or hosted Responses tools.
+Browser sign-in is currently available on POSIX hosts; Windows keeps using
+the other configured providers.
+
+API-key endpoints use the provider kind `openai`. Legacy `openAICompatible`
+records are accepted and written back as `openai` when saved.
+
 Use `/chat list` for a compact indexed history or `/chat log` for the complete
 structured transcript, including attachments, reasoning, tool calls, tool
 results, and structured MCP output. The current in-memory conversation can be
@@ -377,7 +395,7 @@ requires exactly that in `x-opencode-session`:
 ```json
 {
   "id": "opencode",
-  "kind": "openAICompatible",
+  "kind": "openai",
   "baseURL": "https://opencode.ai/zen/go/v1",
   "apiKeyEnvironment": "OPENCODE_API_KEY",
   "headers": ["x-opencode-session: {{session}}"]

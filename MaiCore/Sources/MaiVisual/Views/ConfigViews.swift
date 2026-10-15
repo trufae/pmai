@@ -146,7 +146,7 @@ private struct ProviderFormView: View {
           ? "Register a provider" : "Edit provider"
       ).bold()
       TextField("Identifier", text: $form.id)
-      TextField("Kind (openAICompatible, hello, plugin kind)", text: $form.kind)
+      TextField("Kind (openai, chatgpt, hello, plugin kind)", text: $form.kind)
       TextField("Display name", text: $form.displayName)
       TextField("Base URL, e.g. http://127.0.0.1:11434/v1", text: $form.baseURL)
       TextField("API key environment variable", text: $form.apiKeyEnvironment)

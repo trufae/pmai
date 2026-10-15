@@ -2,15 +2,19 @@ import Foundation
 import MaiCore
 
 public struct MaiOpenAIPlugin: MaiPlugin {
+  private let credentialsDirectory: URL?
   public let manifest = PluginManifest(
     id: "org.mai.openai",
     displayName: "OpenAI-compatible provider",
     version: "1.0.0",
     capabilities: [.chatProvider])
 
-  public init() {}
+  public init(credentialsDirectory: URL? = nil) { self.credentialsDirectory = credentialsDirectory }
 
   public func register(in registry: PluginRegistry) async throws {
+    try await registry.register(
+      providerFactory: ChatGPTConfiguredProviderFactory(credentialsDirectory: credentialsDirectory),
+      from: manifest.id)
     try await registry.register(
       providerFactory: OpenAIConfiguredProviderFactory(),
       from: manifest.id)
@@ -21,7 +25,7 @@ public struct MaiOpenAIPlugin: MaiPlugin {
 }
 
 public struct OpenAIConfiguredProviderFactory: ConfiguredProviderFactory {
-  public let kind = ConfiguredProviderKind.openAICompatible
+  public let kind = ConfiguredProviderKind.openAI
 
   public init() {}
 

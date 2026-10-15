@@ -7,13 +7,15 @@ public struct ConfiguredProviderKind: RawRepresentable, Codable, Hashable, Senda
 {
   public var rawValue: String
 
-  public init(rawValue: String) { self.rawValue = rawValue }
+  public init(rawValue: String) {
+    self.rawValue = rawValue == "openAICompatible" ? "openai" : rawValue
+  }
   public init(_ rawValue: String) { self.init(rawValue: rawValue) }
   public init(stringLiteral value: String) { self.init(value) }
   public var description: String { rawValue }
 
   public init(from decoder: Decoder) throws {
-    rawValue = try decoder.singleValueContainer().decode(String.self)
+    self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
   }
 
   public func encode(to encoder: Encoder) throws {
@@ -22,7 +24,10 @@ public struct ConfiguredProviderKind: RawRepresentable, Codable, Hashable, Senda
   }
 
   public static let hello: ConfiguredProviderKind = "hello"
-  public static let openAICompatible: ConfiguredProviderKind = "openAICompatible"
+  public static let openAI: ConfiguredProviderKind = "openai"
+  /// Source compatibility for hosts using the former provider-kind name.
+  public static let openAICompatible = openAI
+  public static let chatGPT: ConfiguredProviderKind = "chatgpt"
   public static let systemOne: ConfiguredProviderKind = "systemone"
   public static let apple: ConfiguredProviderKind = "apple"
   public static let mlx: ConfiguredProviderKind = "mlx"

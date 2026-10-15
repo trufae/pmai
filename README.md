@@ -15,7 +15,7 @@ This app, comes after [MAI](https://github.com/trufae/mai), a cli agent with foc
 
 ## Features
 
-- **Providers**: Apple Intelligence and MLX on supported devices, plus any OpenAI-compatible API (OpenAI, Ollama, llama.cpp, vLLM, OpenRouter, ...).
+- **Providers**: Apple Intelligence and MLX on supported devices, ChatGPT subscription sign-in, plus any OpenAI-compatible API (OpenAI, Ollama, llama.cpp, vLLM, OpenRouter, ...).
 - **Tools**: datetime, location, weather, web search, browser, todo, text-to-speech, files, local documentation (`vdb`), memory — invokable by the model via native tool-calling or a text-protocol fallback.
 - **File manager**: browse local working folders and remote projects, copy paths, preview files, create folders, and upload or download files. Open **Files…** from the chat title menu, or long-press a folder and choose **Browse Files…**. See [file browsing over ACP](doc/acp.md#file-browsing-from-pocketmai).
 - **Browser**: the model can open pages in an in-app WebKit view shown as a picture-in-picture card, read the text, DOM, links, or an on-device text-recognition pass over the screen, click, type, scroll, and run JavaScript. Tap the card to enlarge it and take over by hand for sign-ins and other steps only a person can do.
@@ -24,6 +24,32 @@ This app, comes after [MAI](https://github.com/trufae/mai), a cli agent with foc
 - **Attachments**: arbitrary text and source files plus HTML, Markdown, Word (docx), EPUB, JSON and PDF. HTML asks whether to keep its source, convert it to Markdown, or copy it to the chat's working folder; Word, EPUB and PDF are converted to Markdown on device (PDFs can also be attached as one image per page, and scanned pages are read with Vision OCR).
 - **Share sheet**: send pictures, voice messages and documents to PocketMai from WhatsApp, Telegram, Photos, Files or any other app. Voice messages are transcribed on device by default (Ogg Opus included), documents are converted to text, and pictures ask for their size or for OCR just like when they are attached inside the app.
 - **Background replies**: a Live Activity on the Lock Screen and in the Dynamic Island follows running replies and tool calls, and a local notification tells you when a reply finishes, fails, or needs a tool approval while the app is in the background. An optional "Keep working when locked" mode keeps long replies running after the screen locks.
+
+## Use your ChatGPT subscription
+
+In iOS Settings → Providers, add a provider, choose **ChatGPT subscription** in
+the API picker, then tap **Continue with ChatGPT**. Select an available model
+after signing in. Add separate providers for different accounts or workspaces.
+
+In the pmai CLI REPL:
+
+```text
+/provider add chatgpt --kind chatgpt
+/provider login chatgpt
+/models chatgpt
+/model chatgpt::MODEL_FROM_THE_LIST
+```
+
+The provider kind is `chatgpt`. API-key connections use `openai`; existing JSON
+using `openAICompatible` still loads and is saved with the new name.
+Eligible requests use your ChatGPT plan through
+the Responses API; no API key or Codex CLI is needed. Plan limits and account
+eligibility apply. [Manage usage](https://chatgpt.com/settings/usage).
+Use `/provider status chatgpt` to inspect the account and `/provider logout chatgpt`
+to sign out. Credentials stay in the iOS device's Keychain or owner-only files
+under `$PMAI_HOME/chatgpt` (`~/.pmai/chatgpt` by default); provider exports do not
+include them. Sign in independently on each device. This provider supports text,
+images, files, and pmai tools; audio and hosted Responses tools are unavailable.
 
 ## Share a conversation between devices
 

@@ -26,7 +26,17 @@ enum ChatRole: String, Codable, CaseIterable, Identifiable, Sendable {
 enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
   case apple
   case mlx
-  case openAICompatible
+  case openAICompatible = "openai"
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.singleValueContainer()
+    let raw = try container.decode(String.self)
+    guard let value = Self(rawValue: raw == "openAICompatible" ? "openai" : raw) else {
+      throw DecodingError.dataCorruptedError(
+        in: container, debugDescription: "Unknown provider '\(raw)'.")
+    }
+    self = value
+  }
 
   var id: String { rawValue }
 
@@ -1905,7 +1915,8 @@ struct ConversationExportEnvelope: Codable, Equatable, Sendable {
   }
 
   var providerDisplayName: String {
-    ProviderKind(rawValue: provider)?.displayName ?? provider
+    ProviderKind(rawValue: provider == "openAICompatible" ? "openai" : provider)?.displayName
+      ?? provider
   }
 
   static var currentPocketMaiVersion: String {
@@ -2606,7 +2617,17 @@ struct MCPServer: Identifiable, Codable, Equatable, Sendable {
 
 enum TTSVoiceProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
   case system
-  case openAICompatible
+  case openAICompatible = "openai"
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.singleValueContainer()
+    let raw = try container.decode(String.self)
+    guard let value = Self(rawValue: raw == "openAICompatible" ? "openai" : raw) else {
+      throw DecodingError.dataCorruptedError(
+        in: container, debugDescription: "Unknown voice provider '\(raw)'.")
+    }
+    self = value
+  }
 
   var id: String { rawValue }
 }

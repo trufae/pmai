@@ -37,6 +37,11 @@ actor PocketMaiPluginHost {
     -> any ChatProvider
   {
     try await prepare()
+    if endpoint.kind == .chatGPT {
+      return ChatGPTProvider(
+        id: ProviderID(endpoint.id.uuidString), displayName: endpoint.displayName,
+        store: ChatGPTCredentialStore(providerID: endpoint.id.uuidString), timeout: requestTimeout)
+    }
     guard let baseURL = URL(string: endpoint.baseURL) else {
       throw ChatProviderError.invalidEndpoint(endpoint.baseURL)
     }

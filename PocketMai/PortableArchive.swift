@@ -23,10 +23,10 @@ extension ConfiguredProvider {
       "oauthAuthorizeURL": endpoint.oauthAuthorizeURL,
       "oauthTokenURL": endpoint.oauthTokenURL,
     ]
-    for (key, value) in strings where !value.isEmpty {
+    for (key, value) in strings where !value.isEmpty && endpoint.kind != .chatGPT {
       options["pocketmai.\(key)"] = .string(value)
     }
-    if let expiry = endpoint.oauthAccessTokenExpiresAt {
+    if let expiry = endpoint.oauthAccessTokenExpiresAt, endpoint.kind != .chatGPT {
       options["pocketmai.oauthAccessTokenExpiresAt"] = .string(
         Date.ISO8601FormatStyle(includingFractionalSeconds: true).format(expiry))
     }
@@ -35,7 +35,7 @@ extension ConfiguredProvider {
       kind: endpoint.kind,
       displayName: endpoint.name,
       baseURL: URL(string: endpoint.baseURL),
-      apiKey: endpoint.apiKey,
+      apiKey: endpoint.kind == .chatGPT ? nil : endpoint.apiKey,
       headers: endpoint.headers,
       options: options)
   }
@@ -43,7 +43,8 @@ extension ConfiguredProvider {
 
 extension OpenAIEndpoint {
   init?(archive provider: ConfiguredProvider) {
-    guard [.openAICompatible, .systemOne].contains(provider.kind), let baseURL = provider.baseURL
+    guard [.openAICompatible, .systemOne, .chatGPT].contains(provider.kind),
+      let baseURL = provider.kind == .chatGPT ? URL(string: "https://api.openai.com/v1") : provider.baseURL
     else { return nil }
     let options = provider.options
     let portableIdentifier = UUID(uuidString: provider.id)
@@ -52,7 +53,7 @@ extension OpenAIEndpoint {
       id: identifier,
       name: provider.displayName ?? provider.id,
       baseURL: baseURL.absoluteString,
-      apiKey: provider.apiKey ?? "",
+      apiKey: provider.kind == .chatGPT ? "" : provider.apiKey ?? "",
       defaultModel: options["pocketmai.defaultModel"]?.stringValue ?? "",
       defaultReasoningLevel: options["pocketmai.reasoning"]?.stringValue
         .flatMap(ReasoningLevel.init(rawValue:)) ?? .automatic,

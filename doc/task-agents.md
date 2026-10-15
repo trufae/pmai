@@ -152,8 +152,8 @@ The shared configuration keeps references rather than copying a second provider/
   "defaultAgent": "main",
   "taskAgents": { "compact": "fast", "tool": "fast" },
   "providers": [
-    { "id": "remote", "kind": "openAICompatible", "baseURL": "https://your-server.example/v1", "defaultModel": "large-model", "apiKeyFile": "~/.config/pmai/key" },
-    { "id": "local", "kind": "openAICompatible", "baseURL": "http://127.0.0.1:11434/v1", "defaultModel": "qwen3:8b" }
+    { "id": "remote", "kind": "openai", "baseURL": "https://your-server.example/v1", "defaultModel": "large-model", "apiKeyFile": "~/.config/pmai/key" },
+    { "id": "local", "kind": "openai", "baseURL": "http://127.0.0.1:11434/v1", "defaultModel": "qwen3:8b" }
   ],
   "agents": [
     { "id": "main", "provider": "remote", "model": "large-model", "instructions": "Help the user.", "options": { "reasoningEffort": "high" } },

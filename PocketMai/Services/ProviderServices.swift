@@ -1020,7 +1020,7 @@ enum OpenAICompatibleProvider {
   }
 
   static func fetchVoices(endpoint: OpenAIEndpoint) async throws -> [String] {
-    guard endpoint.kind != .systemOne else { return [] }
+    guard endpoint.kind != .systemOne, endpoint.kind != .chatGPT else { return [] }
     do {
       return try await coreProvider(endpoint: endpoint).availableVoices()
     } catch {
@@ -1075,7 +1075,7 @@ enum OpenAICompatibleProvider {
       let coreOptions = MaiCore.GenerationOptions(
         reasoningEffort: request.conversation.reasoningLevel.optionValue,
         includeStreamUsage: includeStreamUsage)
-      let provider = try await coreProvider(
+      let provider = try await PocketMaiPluginHost.shared.makeProvider(
         endpoint: endpoint,
         requestTimeout: request.transportTimeoutInterval)
 

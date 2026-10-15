@@ -495,6 +495,11 @@ struct ChatView: View {
 
   private var chatTitle: some View {
     Menu {
+      if currentConversation?.provider == .openAICompatible,
+        let endpointID = currentConversation?.endpointID,
+        store.settings.openAIEndpoints.first(where: { $0.id == endpointID })?.kind == .chatGPT {
+        Link("Manage ChatGPT usage", destination: URL(string: "https://chatgpt.com/settings/usage")!)
+      }
       Button("Rename...", systemImage: "pencil", action: beginRename)
         .disabled(remoteChat.map { !$0.canManage || $0.busy || store.settings.isOffline } ?? false)
       Button("Search...", systemImage: "magnifyingglass", action: beginChatSearch)
@@ -612,6 +617,7 @@ struct ChatView: View {
       let endpoint = conversation.endpointID.flatMap { id in
         store.settings.openAIEndpoints.first(where: { $0.id == id })
       }
+      if endpoint?.kind == .chatGPT { return "Using ChatGPT plan" }
       return endpoint?.displayName
         ?? AgentTooling.firstNonEmpty(URL(string: endpoint?.baseURL ?? "")?.host)
         ?? OpenAIEndpoint.defaultDisplayName
@@ -6185,6 +6191,10 @@ struct ConversationModelSettingsView: View {
       )
       .foregroundStyle(.secondary)
     } else if let endpoint = selectedEndpoint {
+      if endpoint.kind == .chatGPT {
+        Label("Using ChatGPT plan", systemImage: "checkmark.circle")
+        Link("Manage usage", destination: URL(string: "https://chatgpt.com/settings/usage")!)
+      }
       let models = store.endpointModels[endpoint.id] ?? []
       if models.isEmpty {
         TextField("Model", text: modelBinding(default: endpoint.defaultModel))

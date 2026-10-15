@@ -95,7 +95,7 @@ the one-field cases without an editor.
     "defaultModel: the model ID to use when no model is explicitly selected."
   ],
   "id": "opencode",
-  "kind": "openAICompatible",
+  "kind": "openai",
   "baseURL": "https://opencode.ai/zen/go/v1",
   "defaultModel": "some-model-id",
   "apiKey": null,

@@ -413,7 +413,7 @@ private struct PocketMaiConversation: Decodable {
 
   var agentChat: AgentChat {
     let providerID =
-      provider == "openAICompatible"
+      ["openai", "openAICompatible"].contains(provider)
       ? ProviderID(endpointID?.uuidString.lowercased() ?? "openai") : ProviderID(provider)
     let agent = AgentDefinition(
       id: "pocketmai",

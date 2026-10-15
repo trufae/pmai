@@ -18,6 +18,7 @@ var cliDependencies: [Target.Dependency] = [
 var localProviderDependencies: [Target.Dependency] = ["MaiCore"]
 var localProviderSwiftSettings: [SwiftSetting] = []
 var packageDependencies: [Package.Dependency] = [
+  .package(url: "https://github.com/apple/swift-crypto", from: "4.5.2"),
   .package(url: "https://github.com/SwiftTUI/swift-tui", exact: "0.13.3"),
   .package(url: "https://github.com/apple/swift-nio", from: "2.81.0"),
 ]
@@ -96,7 +97,10 @@ let package = Package(
   targets: [
     .target(name: "MaiCore"),
     .target(name: "MaiMarkdown"),
-    .target(name: "MaiOpenAI", dependencies: ["MaiCore"]),
+    .target(name: "MaiOpenAI", dependencies: [
+      "MaiCore", .product(name: "Crypto", package: "swift-crypto"),
+      .product(name: "CryptoExtras", package: "swift-crypto"),
+    ]),
     .target(name: "MaiLocalProviders", dependencies: localProviderDependencies, swiftSettings: localProviderSwiftSettings),
     .target(name: "MaiChat", dependencies: ["MaiCore", "MaiOpenAI"]),
     .target(name: "MaiACP", dependencies: ["MaiCore", "MaiStandardTools"]),
@@ -170,6 +174,6 @@ if focusedTests {
   let names = testProfile == "core" ? ["MaiCore", "MaiCoreTests", "MaiTestSupport"]
     : ["MaiCore", "MaiOpenAI", "MaiChat", "MaiChatTests"]
   package.products = package.products.filter { $0.name == (testProfile == "core" ? "MaiCore" : "MaiChat") }
-  package.dependencies = []
+  package.dependencies = testProfile == "core" ? [] : Array(packageDependencies.prefix(1))
   package.targets = package.targets.filter { names.contains($0.name) }
 }

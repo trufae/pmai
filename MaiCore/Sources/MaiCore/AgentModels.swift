@@ -422,6 +422,9 @@ public struct AgentMessage: Codable, Equatable, Identifiable, Sendable {
   public var id: String
   public var role: AgentRole
   public var content: [ContentPart]
+  /// Opaque protocol items that must accompany a replayed assistant turn.
+  /// Providers own their keys; hosts persist them with the message.
+  public var providerState: [String: JSONValue]? = nil
 
   public init(
     id: String = UUID().uuidString,

@@ -26,20 +26,20 @@
     },
     {
       "id": "openai",
-      "kind": "openAICompatible",
+      "kind": "openai",
       "displayName": "OpenAI",
       "baseURL": "https://api.openai.com/v1",
       "apiKeyEnvironment": "OPENAI_API_KEY"
     },
     {
       "id": "local",
-      "kind": "openAICompatible",
+      "kind": "openai",
       "displayName": "Local OpenAI-compatible server",
       "baseURL": "http://127.0.0.1:8080/v1"
     },
     {
       "id": "opencode",
-      "kind": "openAICompatible",
+      "kind": "openai",
       "displayName": "OpenCode Go",
       "baseURL": "https://opencode.ai/zen/go/v1",
       "apiKeyEnvironment": "OPENCODE_API_KEY",

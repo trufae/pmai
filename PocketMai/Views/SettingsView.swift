@@ -2863,6 +2863,7 @@ private enum EndpointNameResolution {
   }
 
   private static func providerName(for endpoint: OpenAIEndpoint) -> String? {
+    if endpoint.kind == .chatGPT { return "ChatGPT subscription" }
     let baseURL = endpoint.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
     if let preset = providerPreset(forBaseURL: baseURL) {
       return preset.name
@@ -3216,10 +3217,15 @@ private struct EndpointDetailView: View {
 
       Section {
         Picker("API", selection: $endpoint.kind) {
-          Text("OpenAI-compatible").tag(ConfiguredProviderKind.openAICompatible)
+          Text("OpenAI API").tag(ConfiguredProviderKind.openAI)
+          Text("ChatGPT subscription").tag(ConfiguredProviderKind.chatGPT)
           Text("System One (TEV / JEV)").tag(ConfiguredProviderKind.systemOne)
         }
         .onChange(of: endpoint.kind) { _, _ in
+          if endpoint.kind == .chatGPT {
+            endpoint.baseURL = "https://api.openai.com/v1"
+            clearCredentials()
+          }
           endpoint.defaultModel = ""
           store.endpointModels[endpoint.id] = nil
           store.endpointVoices[endpoint.id] = nil
@@ -3231,18 +3237,24 @@ private struct EndpointDetailView: View {
           )
           .font(.caption).foregroundStyle(.secondary)
         }
-        Picker("Provider", selection: providerPresetBinding) {
-          ForEach(endpointProviderPresets, id: \.tag) { preset in
-            Text(preset.name).tag(preset.tag)
+        if endpoint.kind != .chatGPT {
+          Picker("Provider", selection: providerPresetBinding) {
+            ForEach(endpointProviderPresets, id: \.tag) { preset in
+              Text(preset.name).tag(preset.tag)
+            }
+            Text("Custom").tag(customProviderTag)
           }
-          Text("Custom").tag(customProviderTag)
+          .pickerStyle(.menu)
+          TextField("https://api.example.com/v1", text: $endpoint.baseURL)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .keyboardType(.URL)
+          authenticationControls
+        } else {
+          Text("Use your ChatGPT plan").font(.headline)
+          Text("Sign in to use eligible models with your ChatGPT subscription.")
+            .font(.caption).foregroundStyle(.secondary)
         }
-        .pickerStyle(.menu)
-        TextField("https://api.example.com/v1", text: $endpoint.baseURL)
-          .textInputAutocapitalization(.never)
-          .autocorrectionDisabled()
-          .keyboardType(.URL)
-        authenticationControls
         if showsOllamaScanButton {
           Button {
             showOllamaScanner = true
@@ -3264,7 +3276,9 @@ private struct EndpointDetailView: View {
               Text("Testing connection…")
             }
           } else {
-            Label("Test & Refresh Models & Voices", systemImage: "arrow.clockwise")
+            Label(
+              endpoint.kind == .chatGPT ? "Refresh Models" : "Test & Refresh Models & Voices",
+              systemImage: "arrow.clockwise")
           }
         }
         .disabled(isChecking)
@@ -3283,22 +3297,34 @@ private struct EndpointDetailView: View {
         )
       }
 
-      if effectiveAuthMethod == .oauth {
+      if endpoint.kind == .chatGPT {
+        ChatGPTSignInSection(providerID: endpoint.id.uuidString) {
+          savedEndpoint = endpoint
+          if let index = store.settings.openAIEndpoints.firstIndex(where: { $0.id == endpoint.id })
+          {
+            store.settings.openAIEndpoints[index] = endpoint
+            store.saveSettings()
+          }
+          await store.refreshEndpoint(endpoint, force: true)
+        }
+      } else if effectiveAuthMethod == .oauth {
         oauthConfigSection
       }
 
-      Section {
-        TextEditor(text: $headersText)
-          .font(.system(.body, design: .monospaced))
-          .textInputAutocapitalization(.never)
-          .autocorrectionDisabled()
-          .frame(minHeight: 72)
-      } header: {
-        Text("Custom Headers")
-      } footer: {
-        Text(
-          "One header per line as Name: value, sent with every request. \(ProviderHeaders.sessionPlaceholder) becomes the chat's session id, which OpenCode needs in x-opencode-session."
-        )
+      if endpoint.kind != .chatGPT {
+        Section {
+          TextEditor(text: $headersText)
+            .font(.system(.body, design: .monospaced))
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .frame(minHeight: 72)
+        } header: {
+          Text("Custom Headers")
+        } footer: {
+          Text(
+            "One header per line as Name: value, sent with every request. \(ProviderHeaders.sessionPlaceholder) becomes the chat's session id, which OpenCode needs in x-opencode-session."
+          )
+        }
       }
 
       Section {
@@ -3968,6 +3994,7 @@ private struct EndpointDetailView: View {
   }
 
   private func normalizeAuthForSelectedProvider() {
+    guard endpoint.kind != .chatGPT else { return }
     let methods = authMethodsForCurrentProvider
     guard !methods.contains(endpoint.authMethod) else { return }
     clearCredentials()

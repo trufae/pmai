@@ -1363,10 +1363,14 @@ struct MaiCLI {
       let plugins = PluginRegistry()
       try await plugins.install(MaiCoreBuiltinsPlugin(), origin: "built-in")
       try await plugins.install(MaiMCPPlugin(), origin: "built-in")
-      try await plugins.install(MaiOpenAIPlugin(), origin: "built-in")
+      try await plugins.install(
+        MaiOpenAIPlugin(
+          credentialsDirectory:
+            home.rootURL.appendingPathComponent("chatgpt", isDirectory: true)), origin: "built-in")
       try await plugins.install(MaiLocalProvidersPlugin(), origin: "built-in")
-      try await plugins.install(MaiACPPlugin(onPermission: { params, host in
-        try await approvalHandler.decideRemote(params, host: host)
+      try await plugins.install(
+        MaiACPPlugin(onPermission: { params, host in
+          try await approvalHandler.decideRemote(params, host: host)
       }), origin: "built-in")
       do {
         try await plugins.install(MaiVisionOCRPlugin(), origin: "built-in")
@@ -2016,7 +2020,7 @@ struct MaiCLI {
     }
     var providerBaseURLs: [String: URL] = [:]
     for var provider in providers {
-      if provider.id == selectedProvider.rawValue, ![.apple, .mlx].contains(provider.kind) {
+      if provider.id == selectedProvider.rawValue, ![.apple, .mlx, .chatGPT].contains(provider.kind) {
         provider.baseURL = try resolvedBaseURL(provider.baseURL)
         let hasCredentials =
           provider.apiKey != nil
@@ -4979,6 +4983,8 @@ struct MaiCLI {
         configuration: &configuration,
         configurationPath: visual.configurationPath,
         providerBaseURLs: visual.providerBaseURLs,
+        credentialsDirectory: visual.themesDirectory.deletingLastPathComponent()
+          .appendingPathComponent("chatgpt"),
         terminal: terminal)
     case "/baseurl":
       await handleBaseURLCommand(
@@ -7004,9 +7010,25 @@ struct MaiCLI {
     configuration: inout MaiConfiguration?,
     configurationPath: String?,
     providerBaseURLs: ProviderBaseURLStore,
+    credentialsDirectory: URL,
     terminal: TerminalWriter
   ) async {
     let fields = argument.split(whereSeparator: \Character.isWhitespace).map(String.init)
+    if let command = fields.first, ["login", "logout", "status"].contains(command) {
+      let id = fields.count == 2 ? fields[1] : session.profile.provider.rawValue
+      guard fields.count <= 2,
+        let provider = configuration?.providers.first(where: { $0.id == id }),
+        provider.kind == .chatGPT
+      else {
+        await terminal.line(
+          "Usage: /provider \(command) CHATGPT_PROVIDER_ID (add one with /provider add chatgpt --kind chatgpt)"
+        )
+        return
+      }
+      await chatGPTAccountCommand(
+        command, provider: provider, directory: credentialsDirectory, terminal: terminal)
+      return
+    }
     guard !fields.isEmpty else {
       guard !session.profile.provider.rawValue.isEmpty else {
         await terminal.line("No provider selected. Type /about for setup commands.")
@@ -7082,7 +7104,7 @@ struct MaiCLI {
         guard let parsed = URL(string: fields[offset]),
           ["http", "https"].contains(parsed.scheme?.lowercased() ?? ""), parsed.host != nil
         else {
-          await terminal.line("Usage: /provider add ID [BASE_URL] [--kind apple|mlx|openAICompatible|systemone] [--model MODEL] [--api-key KEY | --api-key-file PATH]")
+          await terminal.line("Usage: /provider add ID [BASE_URL] [--kind apple|mlx|chatgpt|openai|systemone] [--model MODEL] [--api-key KEY | --api-key-file PATH]")
           return
         }
         url = parsed
@@ -7110,11 +7132,15 @@ struct MaiCLI {
         }
       }
       let local = [.apple, .mlx].contains(kind)
-      guard validFlags, apiKey == nil || keyFile == nil, local ? url == nil : url != nil,
+      let subscription = kind == .chatGPT
+      guard validFlags, apiKey == nil || keyFile == nil,
+        subscription
+          ? (url == nil && apiKey == nil && keyFile == nil) : (local ? url == nil : url != nil),
         var draft = configuration, let configurationPath
       else {
         await terminal.line(
-          "Usage: /provider add ID [BASE_URL] [--kind apple|mlx|openAICompatible|systemone] [--model MODEL] [--api-key KEY | --api-key-file PATH] (Apple/MLX use no URL)")
+          "Usage: /provider add ID [BASE_URL] [--kind apple|mlx|chatgpt|openai|systemone] [--model MODEL] [--api-key KEY | --api-key-file PATH] (Apple/MLX/ChatGPT use no URL)"
+        )
         return
       }
       guard !draft.providers.contains(where: { $0.id == fields[1] }) else {
@@ -7124,9 +7150,12 @@ struct MaiCLI {
       }
       let provider = ConfiguredProvider(
         id: fields[1], kind: kind, baseURL: url,
-        defaultModel: model ?? (kind == .apple ? AppleProvider.modelID
-          : kind == .mlx ? MLXProvider.defaultModelID : nil),
-        apiKey: apiKey, apiKeyFile: keyFile)
+        defaultModel: model
+          ?? (kind == .apple
+            ? AppleProvider.modelID
+            : kind == .mlx ? MLXProvider.defaultModelID : nil),
+        apiKey: apiKey, apiKeyFile: keyFile,
+        options: subscription ? ["account": .string(UUID().uuidString)] : [:])
       do {
         let instance = try await plugins.makeProvider(
           from: provider, environment: ProcessInfo.processInfo.environment)
@@ -7135,6 +7164,12 @@ struct MaiCLI {
         try await runtime.register(instance)
         configuration = draft
         providerBaseURLs.set(url, for: provider.id)
+        if subscription {
+          await terminal.line(
+            "ChatGPT provider '\(provider.id)' saved. Continue with ChatGPT: /provider login \(provider.id)"
+          )
+          return
+        }
         await terminal.line(
           "Provider '\(provider.id)' saved. /models \(provider.id) lists models; /model \(provider.id)::MODEL selects one."
         )
@@ -8093,7 +8128,8 @@ struct MaiCLI {
       var fields = try JSONSerialization.jsonObject(with: providerData) as! [String: Any]
       fields["_credentialHelp"] = [
         "Help is regenerated from the current provider when this editor opens; it is not saved.",
-        "Keep id unchanged. kind is case-sensitive: openAICompatible, systemone, apple, mlx, hello, or a registered plugin kind.",
+        "Keep id unchanged. kind is case-sensitive: openai, chatgpt, systemone, apple, mlx, hello, or a registered plugin kind. Legacy openAICompatible is accepted as openai.",
+        "chatgpt uses /provider login ID, with no baseURL or API key. Keep options.account unchanged to retain its account registration.",
         "baseURL: the remote API endpoint, such as https://api.openai.com/v1.",
         "defaultModel: the model ID to use when no model is explicitly selected.",
         "Optional fields can be null or removed. Set unused credential fields to null when switching sources.",
@@ -8217,7 +8253,7 @@ struct MaiCLI {
     }
     if case PluginRegistryError.factoryNotRegistered(_, _) = error {
       return error.localizedDescription
-        + " Check kind's spelling and case (for example openAICompatible); custom kinds require their provider plugin to be loaded."
+        + " Check kind's spelling and case (for example openai); custom kinds require their provider plugin to be loaded."
     }
     guard let decoding = error as? DecodingError else { return error.localizedDescription }
     let context: DecodingError.Context
@@ -12272,7 +12308,8 @@ struct MaiCLI {
       "/path hidden ask", "/path hidden deny", "/path hidden allow",
       "/providers", "/models ", "/provider ", "/provider add ", "/provider rename ",
       "/provider add local-apple --kind apple",
-      "/provider add local-mlx --kind mlx", "/help provider",
+      "/provider add local-mlx --kind mlx", "/provider add chatgpt --kind chatgpt",
+      "/provider login ", "/provider logout ", "/provider status ",
       "/help provider",
       "/model ", "/model-chat ",
       "/model-compact ", "/model-tool ", "/model-aproval ", "/agent default ", "/agent effort ",
@@ -12845,6 +12882,10 @@ struct MaiCLI {
     /provider add ID URL [--api-key KEY | --api-key-file PATH] [--model MODEL] [--kind systemone]
     /provider add ID --kind apple     Apple Intelligence; no URL or API key
     /provider add ID --kind mlx [--model org/model]  MLX on Apple silicon; no URL
+    /provider add ID --kind chatgpt   Use a ChatGPT subscription; no URL or API key
+    /provider login [ID]             Continue with ChatGPT in your browser
+    /provider logout [ID]            Sign out and revoke this ChatGPT session
+    /provider status [ID]            Show the ChatGPT account and usage link
     /provider rename [OLD] NEW        Rename a connection and update configured agents
     /edit provider [ID]               Edit its URL, default model, credentials, headers, and options
 
