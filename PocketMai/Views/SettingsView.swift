@@ -695,6 +695,12 @@ struct SettingsView: View {
       } label: {
         Label("User Prompts", systemImage: "text.quote")
       }
+
+      SettingsLazyDisclosureGroup {
+        followUpOptionsContent
+      } label: {
+        Label("Follow-up Suggestions", systemImage: "text.bubble.fill")
+      }
     } header: {
       Text("Agent")
     }
@@ -780,12 +786,6 @@ struct SettingsView: View {
         conversationOptionsContent
       } label: {
         Label("Conversation", systemImage: "mic.badge.plus")
-      }
-
-      SettingsLazyDisclosureGroup {
-        followUpOptionsContent
-      } label: {
-        Label("Follow-up Suggestions", systemImage: "text.bubble.fill")
       }
 
       SettingsLazyDisclosureGroup {
