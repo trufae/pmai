@@ -49,7 +49,7 @@ enum TerminalCommand {
       defer {
         if hasTerminal { _ = tcsetattr(STDIN_FILENO, TCSADRAIN, &cooked) }
       }
-      #if canImport(Darwin)
+      #if canImport(Darwin) || canImport(Android)
         var attributes: posix_spawnattr_t?
       #else
         var attributes = posix_spawnattr_t()
@@ -97,8 +97,10 @@ enum TerminalCommand {
         // A shell can stay in wait() while its editor stops. Stop the entire
         // job so the user's shell regains the tty; `fg` resumes all of it.
         // SIGSTOP also works when libdispatch has SIGTSTP blocked.
+        // Let `fg` send SIGCONT to the whole job. On Linux another thread
+        // can receive our SIGSTOP first, so continuing the child here can
+        // resume it before pmai has finished stopping.
         _ = kill(-getpgrp(), SIGSTOP)
-        _ = kill(child, SIGCONT)
       }
     #endif
   }

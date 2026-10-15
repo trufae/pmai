@@ -54,11 +54,13 @@ android-test:
 build:
 	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration $(CONFIG) -destination '$(DESTINATION)' -derivedDataPath $(DERIVED_DATA) $(XCODE_PACKAGE_FLAGS) $(XCODE_BUILD_FLAGS) $(XCODE_ARCH_FLAGS) CODE_SIGNING_ALLOWED=NO build
 
+# Keychain tests need the Simulator app identity. Ad hoc signing embeds it
+# without requiring a development certificate on CI.
 test:
 	TEST_DESTINATION='$(TEST_DESTINATION)' TEST_RESULT_BUNDLE='$(TEST_RESULT_BUNDLE)' \
 		bash test/run-ios-tests.sh -project '$(PROJECT)' -scheme '$(SCHEME)' \
 		-configuration '$(CONFIG)' -derivedDataPath '$(DERIVED_DATA)' \
-		$(XCODE_PACKAGE_FLAGS) $(XCODE_BUILD_FLAGS) CODE_SIGNING_ALLOWED=NO
+		$(XCODE_PACKAGE_FLAGS) $(XCODE_BUILD_FLAGS) CODE_SIGN_IDENTITY=-
 
 list:
 	xcrun devicectl list devices
