@@ -69,18 +69,9 @@ if 'TEST_EDIT_KEY' in os.environ:
     provider['apiKey'] = os.environ['TEST_EDIT_KEY']
 if 'TEST_EDIT_RETRY' in os.environ:
     state = pathlib.Path(os.environ['TEST_EDIT_RETRY'])
-    if not state.exists():
-        state.write_text('1')
-        provider['baseUrL'] = 'misspelled field'
-    elif state.read_text() == '1':
-        assert provider.pop('baseUrL') == 'misspelled field'
-        assert provider['defaultModel'] == os.environ['TEST_EDIT_DEFAULT_MODEL']
-        state.write_text('2')
-        provider['baseURL'] = 'not-a-url'
-    else:
-        assert provider['baseURL'] == 'not-a-url'
-        provider['baseURL'] = os.environ['TEST_EDIT_URL']
-        state.write_text('3')
+    assert not state.exists(), 'Piped input unexpectedly reopened the editor'
+    state.write_text('1')
+    provider['baseUrL'] = 'misspelled field'
 path.write_text(json.dumps(provider))
 ''')
             config.write_text(json.dumps({
@@ -202,15 +193,22 @@ path.write_text(json.dumps(provider))
             assert next(p for p in saved['providers'] if p['id'] == 'local')['baseURL'] == f'{base}/local/v1'
 
             retry_state = root / 'editor-retries'
+            before = config.read_bytes()
             output = run(['/edit provider remote'],
                          env={'EDITOR': f'python3 {editor}',
                               'TEST_EDIT_URL': f'{base}/edited/v1',
                               'TEST_EDIT_DEFAULT_MODEL': 'remote-default',
                               'TEST_EDIT_RETRY': str(retry_state)}, error=True)
             assert 'Unknown provider field: baseUrL' in output, output
+            assert "Use 'baseURL' instead of 'baseUrL'" in output, output
+            assert retry_state.read_text() == '1', 'piped input must not reopen an invalid editor'
+            assert config.read_bytes() == before, 'invalid piped draft changed configuration'
+            output = run(['/edit provider remote'],
+                         env={'EDITOR': f'python3 {editor}', 'TEST_EDIT_URL': 'not-a-url'}, error=True)
             assert 'baseURL must be an http:// or https:// URL' in output, output
-            assert 'Reopening provider editor' in output, output
-            assert retry_state.read_text() == '3'
+            assert config.read_bytes() == before
+            run(['/edit provider remote'],
+                env={'EDITOR': f'python3 {editor}', 'TEST_EDIT_DEFAULT_MODEL': 'remote-default'})
             remote = next(p for p in json.loads(config.read_text())['providers']
                           if p['id'] == 'remote')
             assert remote['defaultModel'] == 'remote-default' and 'baseUrL' not in remote

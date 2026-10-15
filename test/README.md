@@ -69,6 +69,10 @@ and recovery after terminating a process during nested work.
 The provider check verifies qualified bootstrap environment/flag models against a local
 HTTP server, URL and credential precedence, provider editor changes, and
 renaming connections with task references and chat resume.
+The suspend check also exercises provider editing through a job-controlling
+shell: readable validation errors, field-specific repair hints, Enter before
+retry, retained drafts, cancellation, normal child signals, and repeated
+Ctrl+Z/`fg` with a fixture editor and real Vim when installed.
 
 Native provider checks cover URL-free setup, defaults, persistence, renaming,
 and isolation from remote URL/key settings, without downloading model data:

@@ -387,7 +387,13 @@ requires exactly that in `x-opencode-session`:
 `headerEnvironment` maps a header name to the environment variable holding
 its value. `/edit provider [ID]` opens one configured provider as JSON and
 rebuilds it in the running session when the editor closes, so headers can be
-added without a restart; `/provider` lists the header names it sends.
+added without a restart; `/provider` lists the header names it sends. The editor
+includes current field and credential guidance, which is omitted from saved
+configuration. Invalid edits show a repair suggestion and wait for Enter before
+reopening with the draft intact. Ctrl+C or Ctrl+D at that prompt cancels the
+edit; closing an unchanged invalid draft also cancels it. Piped sessions report
+the error and return without reopening. Ctrl+Z in an editor suspends the whole
+pmai job; use the shell's `fg` to continue editing.
 
 Chats belong to a project, the directory pmai was started in, mirroring the
 chat folders PocketMai keeps with a name, a tint, and a working folder. The

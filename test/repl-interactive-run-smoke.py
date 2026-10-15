@@ -210,6 +210,9 @@ def main():
                     if case != 'oneshot':
                         wait_until(lambda: b'HANDOFF-DONE' in output, 'assistant resumed')
                         if case == 'vim':
+                            # The final text arrives before turnFinished. Enter
+                            # during that gap queues the draft instead of submitting it.
+                            wait_until(lambda: '✓ took'.encode() in output, 'turn completed')
                             send(b'\r')
                             wait_until(lambda: not requests.empty(), 'preserved draft submitted')
                             draft = requests.get_nowait()

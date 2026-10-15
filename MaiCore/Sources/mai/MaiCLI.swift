@@ -324,20 +324,43 @@ private enum ProviderEditorError: LocalizedError {
   case changedID(String)
   case emptyDefaultModel
   case invalidBaseURL(String)
+  case invalidTimeout
 
   var errorDescription: String? {
     switch self {
-    case .invalidJSON(let reason): "Invalid provider JSON: \(reason)"
-    case .expectedObject: "The provider JSON must be an object."
+    case .invalidJSON(let reason):
+      return
+        "Invalid provider JSON: \(reason) Check commas, matching braces, and double-quoted names and strings; JSON does not allow comments."
+    case .expectedObject:
+      return "The provider JSON must be an object enclosed in { }, not an array or a string."
     case .unknownFields(let fields):
-      "Unknown provider field\(fields.count == 1 ? "" : "s"): \(fields.joined(separator: ", ")). Valid fields: id, kind, displayName, baseURL, defaultModel, apiKey, apiKeyEnvironment, apiKeyFile, headers, headerEnvironment, timeout, options. Names are case-sensitive."
-    case .changedID(let id): "Keep the id '\(id)'; /provider rename \(id) NEW renames it."
-    case .emptyDefaultModel: "defaultModel must be a model ID or null."
+      let suggestions = fields.compactMap { field -> String? in
+        guard
+          let match = providerEditorFieldNames.first(where: {
+            $0.lowercased() == field.lowercased()
+          })
+        else { return nil }
+        return "Use '\(match)' instead of '\(field)'."
+      }
+      return
+        "Unknown provider field\(fields.count == 1 ? "" : "s"): \(fields.joined(separator: ", ")). "
+        + suggestions.joined(separator: " ")
+        + " Valid fields: \(providerEditorFieldNames.joined(separator: ", ")). Put provider-specific settings inside options. Names are case-sensitive."
+    case .changedID(let id): return "Keep the id '\(id)'; /provider rename \(id) NEW renames it."
+    case .emptyDefaultModel: return "defaultModel must be a model ID or null."
     case .invalidBaseURL(let value):
-      "baseURL must be an http:// or https:// URL with a host, got '\(value)'."
+      return
+        "baseURL must be an http:// or https:// URL with a host, got '\(value)'. Use the API endpoint, for example https://api.openai.com/v1."
+    case .invalidTimeout:
+      return "timeout must be a positive number of seconds, such as 600, or null."
     }
   }
 }
+
+private let providerEditorFieldNames = [
+  "id", "kind", "displayName", "baseURL", "defaultModel", "apiKey", "apiKeyEnvironment",
+  "apiKeyFile", "headers", "headerEnvironment", "timeout", "options",
+]
 
 private enum MCPCommandError: LocalizedError {
   case missingID
@@ -4085,16 +4108,12 @@ struct MaiCLI {
       await terminal.line("Usage: !COMMAND")
       return
     }
-    var waitStatus: CInt = -1
-    let launch = { waitStatus = trimmed.withCString(posixSystem) }
-    if let screen = TerminalScreen.current {
-      screen.suspendTerminal(launch)
-    } else {
-      launch()
-    }
-    guard waitStatus != -1 else {
+    let waitStatus: Int32
+    do {
+      waitStatus = try TerminalCommand.run(trimmed)
+    } catch {
       await terminal.line(
-        "error: Could not run '\(trimmed)': \(NSError(domain: NSPOSIXErrorDomain, code: Int(errno)).localizedDescription)",
+        "error: Could not run '\(trimmed)': \(error.localizedDescription)",
         to: .standardError)
       return
     }
@@ -6764,16 +6783,12 @@ struct MaiCLI {
     #else
       let shellCommand = "\(command) \(shellQuote(url.path))"
     #endif
-    var waitStatus: CInt = -1
-    let launch = { waitStatus = shellCommand.withCString(posixSystem) }
-    if let screen = TerminalScreen.current {
-      screen.suspendTerminal(launch)
-    } else {
-      launch()
-    }
-    guard waitStatus != -1 else {
+    let waitStatus: Int32
+    do {
+      waitStatus = try TerminalCommand.run(shellCommand)
+    } catch {
       await terminal.line(
-        "error: Could not launch editor '\(command)': \(NSError(domain: NSPOSIXErrorDomain, code: Int(errno)).localizedDescription)",
+        "error: Could not launch editor '\(command)': \(error.localizedDescription)",
         to: .standardError)
       return false
     }
@@ -7963,15 +7978,25 @@ struct MaiCLI {
       let providerData = try encoder.encode(draft.providers[index])
       var fields = try JSONSerialization.jsonObject(with: providerData) as! [String: Any]
       fields["_credentialHelp"] = [
+        "Help is regenerated from the current provider when this editor opens; it is not saved.",
+        "Keep id unchanged. kind is case-sensitive: openAICompatible, systemone, apple, mlx, hello, or a registered plugin kind.",
         "baseURL: the remote API endpoint, such as https://api.openai.com/v1.",
         "defaultModel: the model ID to use when no model is explicitly selected.",
-        "For bearer auth, set one of the three API key fields below.",
+        "Optional fields can be null or removed. Set unused credential fields to null when switching sources.",
         "apiKeyEnvironment: the NAME of an exported variable, such as OPENAI_API_KEY.",
         "apiKeyFile: a path to a file containing the key.",
         "apiKey: the key itself; this saves the secret in the config file.",
+        "Credential precedence: a set environment variable (even empty), then apiKeyFile, then apiKey.",
         "Export variables before starting pmai. For custom auth, use headers or headerEnvironment.",
+        "headers: an object such as {\"X-Tenant\": \"value\"}, or an array of \"X-Tenant: value\" strings; {{session}} expands to the chat session ID.",
+        "headerEnvironment: an object mapping header names to exported variable NAMES; these override headers of the same name.",
+        "timeout: a positive number of seconds, or null for the provider default.",
+        "options: an object containing provider-specific settings; preserve options you still use.",
       ]
-      for key in ["baseURL", "defaultModel", "apiKey", "apiKeyEnvironment", "apiKeyFile"]
+      for key in [
+        "displayName", "baseURL", "defaultModel", "apiKey", "apiKeyEnvironment", "apiKeyFile",
+        "timeout",
+      ]
       where fields[key] == nil {
         fields[key] = NSNull()
       }
@@ -8004,6 +8029,9 @@ struct MaiCLI {
           {
             throw ProviderEditorError.invalidBaseURL(provider.baseURL?.absoluteString ?? "")
           }
+          if let timeout = provider.timeout, !timeout.isFinite || timeout <= 0 {
+            throw ProviderEditorError.invalidTimeout
+          }
           let built = try await plugins.makeProvider(
             from: provider, environment: ProcessInfo.processInfo.environment)
           var candidate = draft
@@ -8013,8 +8041,21 @@ struct MaiCLI {
           break
         } catch {
           await terminal.line(
-            "error: \(providerEditorErrorDescription(error)) Reopening provider editor.",
+            "error: \(providerEditorErrorDescription(error))",
             to: .standardError)
+          // The REPL reader is parked during /edit. Use its terminal surface
+          // for this prompt so Ctrl+C, Ctrl+D and Ctrl+Z keep their usual meaning.
+          guard isatty(STDIN_FILENO) != 0, isatty(STDOUT_FILENO) != 0 else { return }
+          let reader = TerminalLineEditor()
+          reader.install(surface: TerminalScreen.current)
+          guard
+            let answer = reader.readLine(
+              prompt: "Press Enter to reopen the provider editor (Ctrl+C to cancel)> ",
+              completions: [], rememberInput: false), !reader.wasInterrupted, answer.isEmpty
+          else {
+            await terminal.line("Provider edit canceled; the invalid draft was not saved.")
+            return
+          }
           retrying = true
         }
       }
@@ -8039,23 +8080,62 @@ struct MaiCLI {
       throw ProviderEditorError.invalidJSON(error.localizedDescription)
     }
     guard let fields = object as? [String: Any] else { throw ProviderEditorError.expectedObject }
-    let valid: Set<String> = [
-      "_credentialHelp", "id", "kind", "displayName", "baseURL", "defaultModel", "apiKey",
-      "apiKeyEnvironment", "apiKeyFile", "headers", "headerEnvironment", "timeout", "options",
-    ]
+    let valid = Set(providerEditorFieldNames + ["_credentialHelp"])
     let unknown = fields.keys.filter { !valid.contains($0) }.sorted()
     if !unknown.isEmpty { throw ProviderEditorError.unknownFields(unknown) }
   }
 
   private static func providerEditorErrorDescription(_ error: Error) -> String {
+    if let configuration = error as? MaiConfigurationError {
+      let suggestion: String
+      switch configuration {
+      case .providerMissingBaseURL:
+        suggestion = "Set baseURL to the API endpoint, for example https://api.openai.com/v1."
+      case .missingEnvironmentVariable(let name):
+        suggestion =
+          "Export \(name) before starting pmai, or change the corresponding headerEnvironment entry to an exported variable."
+      case .unreadableAPIKeyFile:
+        suggestion =
+          "Check apiKeyFile's path and read permissions, or set apiKeyFile to null and use apiKeyEnvironment or apiKey."
+      default: suggestion = ""
+      }
+      return configuration.localizedDescription + (suggestion.isEmpty ? "" : " " + suggestion)
+    }
+    if case PluginRegistryError.factoryNotRegistered(_, _) = error {
+      return error.localizedDescription
+        + " Check kind's spelling and case (for example openAICompatible); custom kinds require their provider plugin to be loaded."
+    }
     guard let decoding = error as? DecodingError else { return error.localizedDescription }
+    let context: DecodingError.Context
+    let missingKey: String?
     switch decoding {
-    case .typeMismatch(_, let context), .valueNotFound(_, let context),
-      .keyNotFound(_, let context), .dataCorrupted(let context):
-      let field = context.codingPath.map(\.stringValue).joined(separator: ".")
-      return "Invalid value\(field.isEmpty ? "" : " for '\(field)'"): \(context.debugDescription)"
+    case .keyNotFound(let key, let details):
+      context = details
+      missingKey = key.stringValue
+    case .typeMismatch(_, let details), .valueNotFound(_, let details), .dataCorrupted(let details):
+      context = details
+      missingKey = nil
     @unknown default: return error.localizedDescription
     }
+    let path = context.codingPath.map(\.stringValue) + (missingKey.map { [$0] } ?? [])
+    let field = path.joined(separator: ".")
+    let suggestion: String
+    switch path.first {
+    case "headers":
+      suggestion =
+        "Use an object of header names to string values, such as {\"X-Tenant\": \"value\"}, or an array of \"Name: value\" strings."
+    case "headerEnvironment":
+      suggestion =
+        "Use an object mapping header names to environment variable names, such as {\"X-Token\": \"TOKEN\"}."
+    case "options": suggestion = "Use a JSON object for options, such as {}."
+    case "timeout": suggestion = "Use a positive number of seconds, such as 600, or null."
+    case "id", "kind": suggestion = "Keep this required field as a non-empty, double-quoted string."
+    case "baseURL":
+      suggestion = "Use a double-quoted API URL, such as \"https://api.openai.com/v1\"."
+    default: suggestion = "Use a double-quoted string, or null for an unused optional field."
+    }
+    return
+      "Invalid value\(field.isEmpty ? "" : " for '\(field)'"): \(context.debugDescription) \(suggestion)"
   }
 
   private static func showAgent(
