@@ -91,7 +91,13 @@ enum TerminalCommand {
         for pointer in arguments + environment { free(pointer) }
       }
       var child: pid_t = 0
-      try check(posix_spawn(&child, shell, nil, &attributes, arguments, environment))
+      #if canImport(Android)
+        // posix_spawn accepts the nullable handle, unlike the setters above.
+        initialized = attributes
+        try check(posix_spawn(&child, shell, nil, &initialized, arguments, environment))
+      #else
+        try check(posix_spawn(&child, shell, nil, &attributes, arguments, environment))
+      #endif
       var status: Int32 = 0
       while true {
         let waited = waitpid(child, &status, WUNTRACED)
