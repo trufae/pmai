@@ -15,6 +15,7 @@ struct RemoteAgentBookmark: Codable, Identifiable {
   var workspace: ACPWorkspaceSnapshot?
   var accentColor: String?
   var requiresApproval: Bool?
+  var connectionProtocol: ACPRemoteProtocol?
   var revision: UUID?
 }
 
@@ -116,12 +117,13 @@ final class RemoteAgentStore {
       connections[existing].url = profile.url
       connections[existing].accentColor = accentColor
       connections[existing].requiresApproval = profile.requiresApproval
+      connections[existing].connectionProtocol = profile.connectionProtocol
       connections[existing].revision = UUID()
     } else {
       connections.append(
         RemoteAgentBookmark(
           id: id, name: profile.name, url: profile.url, cwd: profile.cwd, accentColor: accentColor,
-          requiresApproval: profile.requiresApproval))
+          requiresApproval: profile.requiresApproval, connectionProtocol: profile.connectionProtocol))
     }
     try save()
     return id

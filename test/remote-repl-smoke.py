@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import signal
 import socket
 import subprocess
 import sys
@@ -32,11 +33,11 @@ def wait_for(check, description, timeout=25):
 
 
 class REPL:
-    def __init__(self, root, home, config, log, arguments=()):
+    def __init__(self, root, home, config, log, arguments=(), environment=None):
         self.path = log
         self.log = log.open("w")
         self.process = subprocess.Popen([PMAI, "--home", str(home), "--config", str(config),
-            "--no-markdown", *arguments], cwd=root, env=clean_environment(), stdin=subprocess.PIPE,
+            "--no-markdown", *arguments], cwd=root, env=environment or clean_environment(), stdin=subprocess.PIPE,
             stdout=self.log, stderr=self.log, text=True)
         self.wait("Type /help")
 
@@ -99,7 +100,7 @@ def run():
         client = None
         try:
             # No paths: every project in the shared index, and each old chat.
-            server.send(f"/remote serve --port {port} --name server")
+            server.send(f"/remote serve --protocol local --port {port} --name server")
             server.wait("Connection profile:")
             uri = (home / "remote-server/connection.txt").read_text().strip()
             profile = json.loads(base64.urlsafe_b64decode(uri.split("/")[-1]))
@@ -110,6 +111,7 @@ def run():
                 pass
             token = profile["token"]
             assert profile["requiresApproval"] is True
+            assert profile["connectionProtocol"] == "local"
             invitation = WS(port, token)
             try:
                 invitation.rpc("initialize", {"protocolVersion": 1})
@@ -261,7 +263,144 @@ def run():
         with socket.socket() as probe:
             assert probe.connect_ex(("127.0.0.1", port)) != 0, "REPL exit left its listener running"
         print("Listener shutdown on REPL exit: passed", flush=True)
+        return lan_address
+
+
+def run_tunnel_modes(lan_address):
+    with tempfile.TemporaryDirectory(prefix="pmai-opentunnel-") as directory:
+        root = Path(directory).resolve()
+        home = root / "home"
+        config = root / "pmai.json"
+        config.write_text(json.dumps({"defaultAgent": "main",
+            "providers": [{"id": "hello", "kind": "hello"}],
+            "agents": [{"id": "main", "provider": "hello", "model": "hello"}]}))
+        bin_dir = root / "bin"
+        bin_dir.mkdir()
+        command = bin_dir / "opentunnel"
+        log = root / "opentunnel.log"
+        state = root / "published"
+        mode = root / "mode"
+        command.write_text(f"#!{sys.executable}\n" + r'''
+import json, os, sys, time
+from pathlib import Path
+args = sys.argv[1:]
+assert args[0] == "--profile" and args[1].startswith("pmai-"), args
+with open(os.environ["OPENTUNNEL_TEST_LOG"], "a") as out:
+    out.write(json.dumps(args) + "\n")
+state = Path(os.environ["OPENTUNNEL_TEST_STATE"])
+mode = Path(os.environ["OPENTUNNEL_TEST_MODE"]).read_text()
+if args[2:4] == ["route", "add"]:
+    assert args[4].startswith("127.0.0.1:") and args[5:] == ["--name", "pmai"], args
+    state.write_text(str(os.getpid()))
+    if mode == "fail":
+        print("fixture provisioning failed")
+        sys.exit(1)
+    if mode == "wait":
+        time.sleep(60)
+    print("https://pmai.fixture.opentunnel.xyz" if mode != "bad-url" else "invalid address")
+elif args[2:] == ["status"]:
+    print("Service: connected (fixture)")
+elif args[2:] == ["down"]:
+    state.unlink(missing_ok=True)
+else:
+    raise AssertionError(args)
+''')
+        command.chmod(0o755)
+        mode.write_text("ready")
+        env = clean_environment()
+        env.update(PATH=str(bin_dir),
+                   OPENTUNNEL_TEST_LOG=str(log), OPENTUNNEL_TEST_STATE=str(state),
+                   OPENTUNNEL_TEST_MODE=str(mode))
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        server = REPL(root, home, config, root / "server.log", environment=env)
+
+        def profile():
+            uri = (home / "remote-server/connection.txt").read_text().strip()
+            return json.loads(base64.urlsafe_b64decode(uri.split("/")[-1]))
+
+        def stopped(count):
+            server.send("/remote stop")
+            wait_for(lambda: server.path.read_text().count("Remote server stopped.") == count, "remote stop")
+
+        try:
+            server.send("/remote serve --protocol iroh")
+            server.wait("Unknown serving protocol")
+            server.send("/remote serve --protocol opentunnel --url ws://example.com/acp")
+            server.wait("OpenTunnel connections require a wss:// gateway URL")
+            server.send("/remote serve --url wss://example.com/other")
+            server.wait("Use a gateway URL ending in /acp")
+            server.send("/remote serve --url wss://example.com/acp --address 127.0.0.1")
+            server.wait("Use either --url or --address")
+            hidden_command = bin_dir / "opentunnel-disabled"
+            command.rename(hidden_command)
+            server.send(f"/remote serve --protocol opentunnel --port {port}")
+            server.wait("OpenTunnel is not installed")
+            hidden_command.rename(command)
+            server.send(f"/remote serve --protocol opentunnel --port {port} --url wss://external.example/acp")
+            server.wait("Connection profile:")
+            invitation = profile()
+            assert invitation["url"] == "wss://external.example/acp", invitation
+            assert invitation["connectionProtocol"] == "opentunnel" and invitation["requiresApproval"]
+            assert not log.exists(), "externally managed tunnel invoked the CLI"
+            pairing = WS(port, invitation["token"])
+            pairing.send({"jsonrpc": "2.0", "id": 1, "method": "_pmai/pair",
+                "params": {"clientID": "tunnel-client", "name": "Tunnel client"}})
+            server.wait("Tunnel client from")
+            server.send("/remote accept")
+            _, reply = pairing.receive()
+            token = json.loads(reply)["result"]["token"]
+            pairing.close()
+            connection = WS(port, token)
+            connection.rpc("initialize", {"protocolVersion": 1})
+            connection.close()
+            with socket.socket() as probe:
+                probe.settimeout(2)
+                assert probe.connect_ex((lan_address, port)) != 0, "OpenTunnel exposed its listener on the LAN"
+            stopped(1)
+            assert not log.exists(), "stopping an external tunnel invoked the CLI"
+
+            server.send(f"/remote serve --protocol opentunnel --port {port}")
+            wait_for(lambda: server.path.read_text().count("Connection profile:") == 2, "managed tunnel startup")
+            assert profile()["url"] == "wss://pmai.fixture.opentunnel.xyz/acp", profile()
+            assert state.exists()
+            first_profile = json.loads(log.read_text().splitlines()[0])[1]
+            stopped(2)
+            assert not state.exists(), "remote stop left the publisher running"
+
+            for failure_mode, error in [("fail", "fixture provisioning failed"),
+                                        ("bad-url", "OpenTunnel did not return a public HTTPS URL")]:
+                mode.write_text(failure_mode)
+                server.send(f"/remote serve --protocol opentunnel --port {port}")
+                server.wait(error)
+                assert not state.exists(), "failed startup left the publisher running"
+                with socket.socket() as probe:
+                    assert probe.connect_ex(("127.0.0.1", port)) != 0, "failed startup left the gateway running"
+
+            mode.write_text("wait")
+            server.send(f"/remote serve --protocol opentunnel --port {port}")
+            wait_for(state.exists, "provisioning starts")
+            server.process.send_signal(signal.SIGINT)
+            wait_for(lambda: not state.exists(), "cancelled provisioning stops publisher")
+            server.send("/remote status")
+            server.wait("Remote server is stopped.")
+            mode.write_text("ready")
+            server.send(f"/remote serve --protocol opentunnel --port {port}")
+            wait_for(lambda: server.path.read_text().count("Connection profile:") == 3, "managed tunnel restart")
+            server.send("/set airplane on")
+            server.wait("airplane = on")
+            wait_for(lambda: not state.exists(), "airplane mode stops publisher")
+            server.send("/set airplane off")
+            server.wait("airplane = off")
+            server.send(f"/remote serve --protocol opentunnel --port {port}")
+            wait_for(lambda: server.path.read_text().count("Connection profile:") == 4, "managed tunnel before exit")
+            assert all(json.loads(line)[1] == first_profile for line in log.read_text().splitlines())
+        finally:
+            server.close()
+        assert not state.exists(), "REPL exit left the publisher running"
+        print("Serving protocols, public pairing profile, isolated publisher lifecycle, failure cleanup, and stable identity: passed", flush=True)
 
 
 if __name__ == "__main__":
-    run()
+    run_tunnel_modes(run())

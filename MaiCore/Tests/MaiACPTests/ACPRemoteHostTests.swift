@@ -28,14 +28,17 @@ func acpRemoteHostPairing() throws {
     "acp-hosts-\(UUID())")
   defer { try? FileManager.default.removeItem(at: directory) }
   let store = ACPRemoteHostStore(directory: directory)
-  let url = try #require(URL(string: "ws://127.0.0.1:19283/acp"))
+  let url = try #require(URL(string: "wss://pmai.tunnel.example/acp"))
   let first = try store.pair(
-    ACPRemoteConnection(name: "Workstation", url: url, token: "first-token", cwd: "/work"))
+    ACPRemoteConnection(name: "Workstation", url: url, token: "first-token", cwd: "/work",
+      connectionProtocol: .opentunnel))
   let second = try store.pair(
-    ACPRemoteConnection(name: "Renamed", url: url, token: "new-token", cwd: "/work/other"))
+    ACPRemoteConnection(name: "Renamed", url: url, token: "new-token", cwd: "/work/other",
+      connectionProtocol: .opentunnel))
   #expect(first.id == second.id)
   #expect(try store.hosts().count == 1)
   #expect(try store.host("renamed") == second)
+  #expect(try store.host("renamed").connectionProtocol == .opentunnel)
   let provider = store.provider(for: second)
   #expect(provider.options["token"] == nil)
   #expect(provider.options["tokenFile"]?.stringValue == store.tokenFile(for: second).path)

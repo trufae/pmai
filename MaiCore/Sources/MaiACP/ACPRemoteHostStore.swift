@@ -8,6 +8,7 @@ public struct ACPRemoteHost: Codable, Identifiable, Equatable, Sendable {
   public var name: String
   public var url: URL
   public var cwd: String
+  public var connectionProtocol: ACPRemoteProtocol?
   public var providerID: String { "remote." + id.uuidString.lowercased() }
 }
 
@@ -65,7 +66,7 @@ public struct ACPRemoteHostStore: Sendable {
     }
     let host = ACPRemoteHost(
       id: existing.map { hosts[$0].id } ?? UUID(), name: name,
-      url: profile.url, cwd: profile.cwd)
+      url: profile.url, cwd: profile.cwd, connectionProtocol: profile.connectionProtocol)
     try Data(profile.token.utf8).write(to: tokenFile(for: host), options: .atomic)
     try FileManager.default.setAttributes(
       [.posixPermissions: 0o600], ofItemAtPath: tokenFile(for: host).path)

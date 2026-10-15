@@ -79,6 +79,8 @@ actor RemoteREPLServer {
   private var failure: String?
   private var generation = 0
   private var lease: ACPFileLock?
+  private var publisher: RemoteOpenTunnel?
+  private var servingTerminal: TerminalWriter?
   private struct PendingClient {
     var clientID: String
     var name: String
@@ -129,11 +131,11 @@ actor RemoteREPLServer {
         }
         continue
       }
-      guard ["--port", "--address", "--name"].contains(key), index + 1 < arguments.count,
-        flags[key] == nil
+      guard ["--protocol", "--port", "--address", "--name", "--url"].contains(key),
+        index + 1 < arguments.count, !arguments[index + 1].hasPrefix("--"), flags[key] == nil
       else {
         throw JSONRPCError.invalidParams(
-          "Usage: /remote serve [--path PATH ...] [--port PORT] [--loopback] [--address IP] [--name NAME]")
+          "Usage: /remote serve [--protocol local|opentunnel] [--path PATH ...] [--port PORT] [--loopback] [--address IP | --url URL] [--name NAME]")
       }
       flags[key] = arguments[index + 1]
       index += 2
@@ -141,10 +143,33 @@ actor RemoteREPLServer {
     guard let port = Int(flags["--port"] ?? "19283"), (1...65535).contains(port) else {
       throw JSONRPCError.invalidParams("Port must be between 1 and 65535")
     }
+    guard let connectionProtocol = ACPRemoteProtocol(rawValue: flags["--protocol"] ?? "local") else {
+      throw JSONRPCError.invalidParams("Unknown serving protocol. Use --protocol local or --protocol opentunnel.")
+    }
+    guard flags["--url"] == nil || flags["--address"] == nil else {
+      throw JSONRPCError.invalidParams("Use either --url or --address to advertise the connection")
+    }
+    guard connectionProtocol != .opentunnel || flags["--address"] == nil else {
+      throw JSONRPCError.invalidParams("OpenTunnel chooses its public address. Use --url for an existing tunnel.")
+    }
+    loopback = loopback || connectionProtocol == .opentunnel
     let bindAddress = loopback ? "127.0.0.1" : "0.0.0.0"
-    let address = try flags["--address"] ?? (loopback ? bindAddress : RemoteAddress.localIPv4())
-    guard let url = URL(string: "ws://\(address):\(port)/acp") else {
-      throw JSONRPCError.invalidParams("Invalid host address")
+    let url: URL
+    if let advertised = flags["--url"] {
+      guard let parsed = URL(string: advertised), parsed.path == "/acp" else {
+        throw JSONRPCError.invalidParams("Use a gateway URL ending in /acp")
+      }
+      try ACPRemoteConnection.validate(url: parsed)
+      guard connectionProtocol != .opentunnel || parsed.scheme?.lowercased() == "wss" else {
+        throw JSONRPCError.invalidParams("OpenTunnel connections require a wss:// gateway URL")
+      }
+      url = parsed
+    } else {
+      let address = try flags["--address"] ?? (loopback ? bindAddress : RemoteAddress.localIPv4())
+      guard let parsed = URL(string: "ws://\(address):\(port)/acp") else {
+        throw JSONRPCError.invalidParams("Invalid host address")
+      }
+      url = parsed
     }
     let directory = home.rootURL.appendingPathComponent("remote-server")
     try ACPStateFiles.createDirectory(directory)
@@ -191,6 +216,8 @@ actor RemoteREPLServer {
       host: bindAddress, port: port,
       tokenFile: tokenFile, command: executable, arguments: childArguments, workingDirectory: cwd,
       pairing: pairing)
+    let tunnel = try connectionProtocol == .opentunnel && flags["--url"] == nil
+      ? RemoteOpenTunnel(directory: directory) : nil
     let (ready, signal) = AsyncStream<Result<Void, any Error>>.makeStream()
     generation += 1
     let attempt = generation
@@ -216,19 +243,39 @@ actor RemoteREPLServer {
       throw error
     }
     lease = serverLease
-    profile = connection
-    await terminal.line(
-      "Serving \(connection.url.absoluteString) · \(paths.isEmpty ? "all indexed projects" : paths.joined(separator: ", "))"
-    )
-    await showPairing(terminal: terminal)
+    publisher = tunnel
+    servingTerminal = terminal
+    do {
+      if let tunnel {
+        await terminal.line("Connecting OpenTunnel; first-time certificate provisioning can take a few minutes…")
+        connection.url = try await tunnel.start(port: port)
+      }
+      try Task.checkCancellation()
+      guard generation == attempt, task != nil else { throw CancellationError() }
+      connection.connectionProtocol = connectionProtocol
+      try connection.validate()
+      profile = connection
+      await terminal.line(
+        "Serving \(connection.url.absoluteString) via \(connectionProtocol.rawValue) · \(paths.isEmpty ? "all indexed projects" : paths.joined(separator: ", "))"
+      )
+      await showPairing(terminal: terminal)
+    } catch {
+      let publisherAlreadyEnded = publisher == nil
+      await stop()
+      // The listener may have failed while the publisher was still starting.
+      if publisherAlreadyEnded, let tunnel { try? await tunnel.stop() }
+      throw error
+    }
   }
 
   private func ended(_ attempt: Int, error: String, terminal: TerminalWriter) async {
     guard generation == attempt else { return }
     task = nil
     profile = nil
-    lease = nil
     failure = error
+    for code in Array(pending.keys) { cancelPairing(code) }
+    await stopPublisher()
+    lease = nil
     await terminal.line("error: Remote server stopped: \(error)", to: .standardError)
   }
 
@@ -258,7 +305,8 @@ actor RemoteREPLServer {
   }
 
   func status() -> String {
-    profile.map { "Serving \($0.url.absoluteString)" } ?? failure.map { "Stopped: \($0)" }
+    profile.map { "Serving \($0.url.absoluteString) via \(($0.connectionProtocol ?? .local).rawValue)" }
+      ?? (task != nil ? "Starting remote server…" : nil) ?? failure.map { "Stopped: \($0)" }
       ?? "Remote server is stopped."
   }
 
@@ -319,6 +367,20 @@ actor RemoteREPLServer {
     for code in Array(pending.keys) { cancelPairing(code) }
     running?.cancel()
     await running?.value
+    await stopPublisher()
     lease = nil
+  }
+
+  private func stopPublisher() async {
+    let tunnel = publisher
+    let terminal = servingTerminal
+    publisher = nil
+    servingTerminal = nil
+    if let tunnel {
+      do { try await tunnel.stop() }
+      catch {
+        await terminal?.line("error: Cannot stop OpenTunnel: \(error.localizedDescription)", to: .standardError)
+      }
+    }
   }
 }

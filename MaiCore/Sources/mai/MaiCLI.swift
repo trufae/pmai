@@ -12229,6 +12229,7 @@ struct MaiCLI {
       "/help memory", "/help agents", "/help jobs", "/help chat", "/help edit", "/help tools",
       "/agent acp list", "/agent acp add ", "/agents acp list",
       "/help remote", "/remote", "/remote serve", "/remote stop", "/remote qr", "/remote status",
+      "/remote serve --protocol local", "/remote serve --protocol opentunnel",
       "/remote list", "/remote pair ", "/remote connect ", "/remote disconnect",
       "/remote pending", "/remote accept", "/remote reject", "/remote clients", "/remote del ",
       "/help projects", "/projects", "/projects list", "/projects open ", "/projects switch ",
@@ -12622,8 +12623,11 @@ struct MaiCLI {
 
   private static let remoteHelp = """
     /remote serve          Start sharing all indexed pmai projects; prints your address and a pairing QR
+    /remote serve --protocol local  Serve directly on your local network (default)
+    /remote serve --protocol opentunnel  Publish an encrypted connection using the opentunnel CLI
     /remote serve --path PATH ...  Share only these directories and their descendants
     /remote serve --loopback  Listen only on 127.0.0.1 for a local tunnel or proxy
+    /remote serve --loopback --url wss://HOST/acp  Advertise an existing tunnel or TLS proxy
     /remote stop           Stop the server and disconnect its clients
     /remote qr             Show the running server's pairing QR and connection URI again
     /remote list            List paired hosts and server status
@@ -12642,6 +12646,11 @@ struct MaiCLI {
     Use --path PATH ... to restrict folders or --port PORT to change the port.
     --loopback binds only to 127.0.0.1 and advertises that address by default.
     --address IP overrides the advertised address without changing the listener.
+    --url ws://HOST:PORT/acp or wss://HOST/acp sets the full URL in the QR/profile.
+    OpenTunnel always listens on loopback. Install opentunnel on the serving host;
+    pmai manages a dedicated tunnel profile and stops it on /remote stop or exit.
+    Its identity is kept for the next run. With --protocol opentunnel --url URL,
+    you manage the tunnel yourself. OpenTunnel URLs must use wss://.
     --name NAME chooses the advertised host name.
     Scan the QR in PocketMai → Hosts. On another CLI, pair the URI or QR image once.
     Accept the client in the serving REPL before it can browse or run agents, then

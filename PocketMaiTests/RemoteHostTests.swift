@@ -7,6 +7,28 @@ import XCTest
 
 @MainActor
 final class RemoteHostTests: XCTestCase {
+  func testOpenTunnelProfileImportAndApprovedCredentialPersist() throws {
+    var profile = try ACPRemoteConnection(
+      name: "Workstation", url: XCTUnwrap(URL(string: "wss://pmai.tunnel.example/acp")),
+      token: "invitation-token", cwd: "/work", connectionProtocol: .opentunnel)
+    profile.requiresApproval = true
+    let imported = try ACPRemoteConnection.parse(profile.uri())
+    try withStore([]) { store, file in
+      let id = try store.add(imported)
+      defer { store.remove(id) }
+      XCTAssertEqual(store.host(id)?.connectionProtocol, .opentunnel)
+      XCTAssertEqual(store.host(id)?.url, profile.url)
+      XCTAssertEqual(store.host(id)?.requiresApproval, true)
+      XCTAssertEqual(try store.token(for: id), "invitation-token")
+      try store.acceptPairing(id, token: "approved-client-token")
+      let reloaded = RemoteAgentStore(file: file)
+      XCTAssertEqual(reloaded.host(id)?.connectionProtocol, .opentunnel)
+      XCTAssertEqual(reloaded.host(id)?.requiresApproval, false)
+      XCTAssertEqual(try reloaded.token(for: id), "approved-client-token")
+      XCTAssertFalse(try String(contentsOf: file, encoding: .utf8).contains("approved-client-token"))
+    }
+  }
+
   func testSidebarFilteringMatchesNamesPathsAndMessageContentsInPlace() {
     XCTAssertTrue(SidebarSearch.matches("  cAFE  ", in: ["Café project", "/work/one"]))
     XCTAssertTrue(SidebarSearch.matches("/work/one", in: ["Project", "/work/one"]))

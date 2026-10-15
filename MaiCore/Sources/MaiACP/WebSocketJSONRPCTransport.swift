@@ -123,8 +123,20 @@ public final class WebSocketJSONRPCTransport: NSObject, JSONRPCTransport,
   ) { completionHandler(nil) }
 }
 
-/// Exported by the gateway for import by the phone. Unlike a Tailcat enrollment
-/// invite, this profile contains a reusable gateway credential.
+/// How an ACP WebSocket gateway is published. The wire protocol remains ACP.
+public enum ACPRemoteProtocol: String, Codable, CaseIterable, Sendable {
+  case local
+  case opentunnel
+
+  public var displayName: String {
+    switch self {
+    case .local: "Local / direct"
+    case .opentunnel: "OpenTunnel"
+    }
+  }
+}
+
+/// A versioned QR/profile shared by CLI and app clients. Old profiles omit connectionProtocol.
 public struct ACPRemoteConnection: Codable, Equatable, Sendable {
   public var version: Int = 1
   public var name: String
@@ -132,17 +144,25 @@ public struct ACPRemoteConnection: Codable, Equatable, Sendable {
   public var token: String
   public var cwd: String
   public var requiresApproval: Bool?
+  public var connectionProtocol: ACPRemoteProtocol?
 
-  public init(name: String, url: URL, token: String, cwd: String) throws {
+  public init(
+    name: String, url: URL, token: String, cwd: String,
+    connectionProtocol: ACPRemoteProtocol? = nil
+  ) throws {
     self.name = name
     self.url = url
     self.token = token
     self.cwd = cwd
+    self.connectionProtocol = connectionProtocol
     try validate()
   }
 
   public func validate() throws {
     try Self.validate(url: url)
+    guard connectionProtocol != .opentunnel || url.scheme?.lowercased() == "wss" else {
+      throw JSONRPCError.invalidParams("OpenTunnel connections require a wss:// gateway URL")
+    }
     guard version == 1, !name.isEmpty, name.count <= 200,
       !token.isEmpty, token.count <= 4096, !token.contains(where: { $0.isWhitespace }),
       cwd.hasPrefix("/"), cwd.count <= 4096

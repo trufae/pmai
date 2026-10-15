@@ -21,6 +21,25 @@ import Testing
   }
 }
 
+@Test("OpenTunnel profiles preserve approval metadata and require encrypted WebSockets")
+func acpOpenTunnelConnectionProfile() throws {
+  var profile = try ACPRemoteConnection(
+    name: "Workstation", url: #require(URL(string: "wss://pmai.tunnel.example/acp")),
+    token: "invitation-token", cwd: "/work", connectionProtocol: .opentunnel)
+  profile.requiresApproval = true
+  #expect(try ACPRemoteConnection.parse(profile.uri()) == profile)
+  profile.url = try #require(URL(string: "ws://pmai.tunnel.example/acp"))
+  #expect(throws: JSONRPCError.self) { try profile.uri() }
+
+  let legacy = Data("""
+    {"version":1,"name":"LAN","url":"ws://192.168.1.2:19283/acp","token":"token","cwd":"/work"}
+    """.utf8)
+  let decoded = try JSONDecoder().decode(ACPRemoteConnection.self, from: legacy)
+  try decoded.validate()
+  #expect(decoded.connectionProtocol == nil)
+  #expect(try ACPRemoteConnection.parse(decoded.uri()) == decoded)
+}
+
 private actor WebSocketEvents {
   var text = ""
   var permissions = 0

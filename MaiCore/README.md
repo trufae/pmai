@@ -896,6 +896,51 @@ list non-MCP tools and child agents they are allowed to use.
 `MaiStandardToolsPlugin` provides date/time, the `calc` calculator,
 network, and workspace-scoped Files tools.
 
+### Remote pmai hosts
+
+In the REPL, `/remote serve --protocol local` shares the host's indexed projects
+and saved chats over its LAN WebSocket gateway. `local` is the default, so
+`/remote serve` keeps the same behavior. Add `--path PATH ...` to restrict the
+shared directories, `--port PORT` to change the listener port, or `--loopback`
+to listen only on `127.0.0.1`.
+
+For encrypted access across firewalls, install the
+[OpenTunnel CLI](https://github.com/anomalyco/opentunnel) on the serving machine,
+then run:
+
+```text
+/remote serve --protocol opentunnel
+```
+
+pmai starts its gateway on loopback, publishes it using a dedicated OpenTunnel
+profile, and prints a pairing QR and `pmai-acp://` connection URI containing the
+public `wss://` address. pmai saves its dedicated profile name in
+`~/.pmai/remote-server/opentunnel-profile.json`; OpenTunnel keeps the identity
+and certificates in its own storage so the URL can be reused. Initial
+certificate provisioning can take a few minutes. `/remote stop`, REPL exit, and
+Airplane Mode stop both the gateway and the managed publisher. The tunnel
+identity remains available for the next run. No OpenTunnel library is linked
+into pmai or PocketMai; only the publishing host needs the external CLI.
+
+On another CLI, use `/remote pair URI_OR_PROFILE_FILE [NAME]`, accept the request
+in the serving REPL with `/remote accept`, then use `/remote connect NAME`.
+In PocketMai on iOS, open Hosts → Add Remote Host and scan the QR or paste its
+connection URI, save it, and select the host. Accept its pairing request in the
+serving REPL. Both clients use individual credentials after approval.
+
+To use a tunnel or TLS proxy you manage separately:
+
+```text
+/remote serve --protocol opentunnel --url wss://YOUR-TUNNEL/acp
+```
+
+This also binds to loopback but leaves the external publisher's lifecycle to
+you. For other proxies, use `--protocol local --loopback --url wss://HOST/acp`.
+`--url` selects the address exported in the QR/profile; `--address IP` selects
+only the advertised host and cannot be combined with `--url`. Plain `ws://`
+connections should be used on trusted private networks. OpenTunnel encrypts
+the public connection; pmai still requires operator-approved pairing.
+
 ### ACP and MCP
 
 pmai speaks the Agent Client Protocol both ways and serves MCP too. `pmai --acp`

@@ -56,7 +56,7 @@ struct RemoteAgentsView: View {
         Button("Add Remote Host", systemImage: "plus") { adding = true }
       } footer: {
         Text(
-          "Connect to an ACP WebSocket gateway. The remote agent runs its own tools on its host. Chats and gateway tokens stay on this device."
+          "Connect to pmai over your local network or OpenTunnel. The remote agent runs its tools on its host. Chats and credentials stay on this device."
         )
       }
       if let error = store.error { Text(error).foregroundStyle(.red) }
@@ -117,6 +117,7 @@ struct RemoteAgentConnectionView: View {
   @State private var error: String?
   @State private var accentColor: String?
   @State private var requiresApproval: Bool?
+  @State private var connectionProtocol: ACPRemoteProtocol = .local
 
   var body: some View {
     NavigationStack {
@@ -154,6 +155,11 @@ struct RemoteAgentConnectionView: View {
           }
         }
         Section("Gateway") {
+          Picker("Connection", selection: $connectionProtocol) {
+            ForEach(ACPRemoteProtocol.allCases, id: \.self) { kind in
+              Text(kind.displayName).tag(kind)
+            }
+          }
           TextField("wss://host/acp", text: $address).keyboardType(.URL)
             .textInputAutocapitalization(.never).autocorrectionDisabled()
           SecureField("Gateway token", text: $token)
@@ -169,7 +175,7 @@ struct RemoteAgentConnectionView: View {
               systemImage: "lock.open")
           }
           Text(
-            "The QR contains a reusable gateway credential. Review the host and workspace before saving. A Tailcat worker invite must first be paired on the gateway host with pmai tailcat pair."
+            "On the host, run /remote serve --protocol local or /remote serve --protocol opentunnel, then scan its QR. Accept pairing there with /remote accept. Review the host and workspace before saving."
           )
           .font(.footnote).foregroundStyle(.secondary)
         }
@@ -205,6 +211,7 @@ struct RemoteAgentConnectionView: View {
           cwd = host.cwd
           accentColor = host.accentColor
           requiresApproval = host.requiresApproval
+          connectionProtocol = host.connectionProtocol ?? .local
           do { token = try RemoteAgentStore.shared.token(for: host.id) } catch {
             self.error = error.localizedDescription
           }
@@ -237,6 +244,7 @@ struct RemoteAgentConnectionView: View {
       token = profile.token
       cwd = profile.cwd
       requiresApproval = profile.requiresApproval
+      connectionProtocol = profile.connectionProtocol ?? .local
       uri = ""
       error = nil
     } catch { self.error = error.localizedDescription }
@@ -250,7 +258,8 @@ struct RemoteAgentConnectionView: View {
       }
       var profile = try ACPRemoteConnection(
         name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-        url: url, token: token.trimmingCharacters(in: .whitespacesAndNewlines), cwd: cwd)
+        url: url, token: token.trimmingCharacters(in: .whitespacesAndNewlines), cwd: cwd,
+        connectionProtocol: connectionProtocol)
       profile.requiresApproval = requiresApproval
       let id = try RemoteAgentStore.shared.add(
         profile, replacing: initialHost?.id, accentColor: accentColor)
