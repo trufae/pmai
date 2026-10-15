@@ -2932,7 +2932,6 @@ struct ConversationImportConfirmationView: View {
   var body: some View {
     NavigationStack {
       Form {
-        importDetailsSection
         conflictSection
         errorSection
         importActionSection
@@ -2944,6 +2943,13 @@ struct ConversationImportConfirmationView: View {
           Button("Cancel") {
             onCancel()
           }
+        }
+        ToolbarItem(placement: .confirmationAction) {
+          Button(preview.conflict == nil ? "Import" : "Import Copy") {
+            errorMessage = onImportAsNew(titleForImport)
+          }
+          .fontWeight(.semibold)
+          .disabled(!canImportAsNew)
         }
       }
     }
@@ -2957,20 +2963,6 @@ struct ConversationImportConfirmationView: View {
         Label(errorMessage, systemImage: "exclamationmark.triangle")
           .foregroundStyle(.red)
       }
-    }
-  }
-
-  private var importDetailsSection: some View {
-    Section {
-      infoRow("Title", preview.envelope.title)
-      infoRow("Provider", preview.envelope.providerDisplayName)
-      infoRow("Model", preview.envelope.model)
-      infoRow("Exported", formattedDate(preview.envelope.exportedAt))
-      infoRow("Created", formattedDate(preview.envelope.createdAt))
-      infoRow("PocketMai", preview.envelope.pocketMaiVersion)
-      infoRow("Messages", "\(preview.conversation.messages.count)")
-    } header: {
-      Text("Contents")
     }
   }
 
@@ -2997,18 +2989,6 @@ struct ConversationImportConfirmationView: View {
       if preview.conflict != nil {
         TextField("New title", text: $title)
           .textInputAutocapitalization(.sentences)
-        Button {
-          errorMessage = onImportAsNew(titleForImport)
-        } label: {
-          Label("Import Renamed Copy", systemImage: "plus.bubble")
-        }
-        .disabled(!canImportAsNew)
-      } else {
-        Button {
-          errorMessage = onImportAsNew(titleForImport)
-        } label: {
-          Label("Import Conversation", systemImage: "square.and.arrow.down")
-        }
       }
 
       if let conflict = preview.conflict, !conflict.contentsMatch {
@@ -3042,25 +3022,6 @@ struct ConversationImportConfirmationView: View {
       return "\"\(conflict.existingTitle)\" has the same conversation contents."
     }
     return "\"\(conflict.existingTitle)\" uses this title with different conversation contents."
-  }
-
-  private func infoRow(_ title: String, _ value: String) -> some View {
-    HStack(alignment: .firstTextBaseline) {
-      Text(title)
-      Spacer(minLength: 12)
-      Text(displayValue(value))
-        .foregroundStyle(.secondary)
-        .multilineTextAlignment(.trailing)
-    }
-  }
-
-  private func displayValue(_ value: String) -> String {
-    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-    return trimmed.isEmpty ? "Not specified" : trimmed
-  }
-
-  private func formattedDate(_ date: Date) -> String {
-    date.formatted(date: .abbreviated, time: .shortened)
   }
 
   private func normalizedTitle(_ title: String) -> String {

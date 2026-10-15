@@ -1,5 +1,54 @@
 import SwiftUI
 
+/// A read-only transcript: importing never needs the live chat's actions or tool UI.
+struct ConversationImportTranscript: View {
+  let conversation: Conversation
+
+  var body: some View {
+    LazyVStack(alignment: .leading, spacing: 20) {
+      Text(conversation.displayTitle)
+        .font(.title2.bold())
+        .accessibilityAddTraits(.isHeader)
+
+      if conversation.messages.isEmpty {
+        Text("No messages in this conversation.")
+          .foregroundStyle(.secondary)
+      }
+
+      ForEach(conversation.messages) { message in
+        let text = ConversationExportContent.messageContent(for: message).visibleText
+        if message.role != .tool, !text.isEmpty || !message.attachments.isEmpty {
+          VStack(alignment: .leading, spacing: 8) {
+            Text(message.role.displayName)
+              .font(.subheadline.weight(.semibold))
+              .foregroundStyle(.secondary)
+            if !text.isEmpty {
+              MarkdownContentView(text: text, renderImages: false)
+            }
+            ForEach(message.attachments) { attachment in
+              HStack {
+                if attachment.kind == .image {
+                  AttachmentImageThumbnail(attachment: attachment, side: 64, cornerRadius: 8)
+                } else {
+                  Image(systemName: "paperclip")
+                }
+                Text(attachment.displayName)
+                  .font(.subheadline)
+                  .foregroundStyle(.secondary)
+              }
+            }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding()
+          .background(
+            message.role == .user ? Color(.secondarySystemBackground) : Color.clear,
+            in: RoundedRectangle(cornerRadius: 16))
+        }
+      }
+    }
+  }
+}
+
 struct ConversationCollectionImportView: View {
   private enum DestinationMode: String, CaseIterable, Identifiable {
     case newFolder
@@ -34,21 +83,6 @@ struct ConversationCollectionImportView: View {
         if let preview {
           contentsSection(preview)
           destinationSection
-          Section {
-            Button {
-              importConversations(preview)
-            } label: {
-              if isImporting {
-                HStack(spacing: 10) {
-                  ProgressView()
-                  Text("Importing...")
-                }
-              } else {
-                Label(importButtonTitle(preview), systemImage: "square.and.arrow.down")
-              }
-            }
-            .disabled(isImporting || !canImport)
-          }
         } else if let errorMessage {
           Section {
             Label(errorMessage, systemImage: "exclamationmark.triangle")
@@ -78,8 +112,26 @@ struct ConversationCollectionImportView: View {
             onFinish()
           }
         }
+        if let preview {
+          ToolbarItem(placement: .confirmationAction) {
+            Button {
+              importConversations(preview)
+            } label: {
+              if isImporting {
+                ProgressView()
+                  .accessibilityLabel("Importing")
+              } else {
+                Text("Import")
+                  .fontWeight(.semibold)
+              }
+            }
+            .disabled(isImporting || !canImport)
+          }
+        }
       }
+      .disabled(isImporting)
     }
+    .interactiveDismissDisabled(isImporting)
     .task(id: file.id) {
       preparePreview()
     }
@@ -88,17 +140,17 @@ struct ConversationCollectionImportView: View {
 
   private func contentsSection(_ preview: ConversationCollectionImportPreview) -> some View {
     Section {
-      infoRow("File", preview.file.filename)
-      infoRow("PocketMai", preview.envelope.pocketMaiVersion)
-      infoRow("Conversations", "\(preview.conversations.count)")
-      ForEach(Array(preview.conversations.indices.prefix(8)), id: \.self) { index in
-        let conversation = preview.conversations[index]
-        Label(conversation.displayTitle, systemImage: "bubble.left")
-          .lineLimit(1)
-      }
-      if preview.conversations.count > 8 {
-        Text("and \(preview.conversations.count - 8) more...")
-          .foregroundStyle(.secondary)
+      ForEach(preview.conversations) { conversation in
+        NavigationLink {
+          ScrollView {
+            ConversationImportTranscript(conversation: conversation)
+              .padding()
+          }
+          .navigationTitle("Preview")
+          .navigationBarTitleDisplayMode(.inline)
+        } label: {
+          Label(conversation.displayTitle, systemImage: "bubble.left")
+        }
       }
     } header: {
       Text("Contents")
@@ -190,21 +242,6 @@ struct ConversationCollectionImportView: View {
         errorMessage = error.localizedDescription
         isImporting = false
       }
-    }
-  }
-
-  private func importButtonTitle(_ preview: ConversationCollectionImportPreview) -> String {
-    let count = preview.conversations.count
-    return "Import \(count) Conversation\(count == 1 ? "" : "s")"
-  }
-
-  private func infoRow(_ title: String, _ value: String) -> some View {
-    HStack(alignment: .firstTextBaseline) {
-      Text(title)
-      Spacer(minLength: 12)
-      Text(value)
-        .foregroundStyle(.secondary)
-        .multilineTextAlignment(.trailing)
     }
   }
 }

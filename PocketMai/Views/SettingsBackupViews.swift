@@ -75,6 +75,8 @@ struct SettingsImportView: View {
   private let onFinish: (() -> Void)?
 
   @State private var showingFileImporter = false
+  @State private var showingJSON = false
+  @State private var isImporting = false
   @State private var importPreview: SettingsImportFilePreview?
   @State private var selectedSections = SettingsBackupSelection()
   @State private var restoreAudio = false
@@ -95,43 +97,30 @@ struct SettingsImportView: View {
   }
 
   var body: some View {
-    Form {
-      Section {
-        Button {
-          errorMessage = nil
-          showingFileImporter = true
-        } label: {
-          HStack {
-            Label(
-              importPreview == nil ? "Choose JSON File" : "Choose Different JSON File",
-              systemImage: "doc.badge.plus"
-            )
-            Spacer(minLength: 0)
+    Group {
+      if let importPreview, case .conversation(let envelope) = importPreview.kind {
+        conversationPreview(envelope)
+      } else {
+        Form {
+          if initialFile == nil {
+            Section {
+              chooseFileButton
+            }
           }
-          .contentShape(Rectangle())
-        }
-      } header: {
-        Text("File")
-      }
-
-      if let importPreview {
-        importInfoSection(importPreview)
-        importContentsSection(importPreview)
-        importOptionsSection(importPreview)
-        Section {
-          Button {
-            importSelected(from: importPreview)
-          } label: {
-            Label("Import Selected", systemImage: "square.and.arrow.down")
+          if let importPreview {
+            importInfoSection(importPreview)
+            importContentsSection(importPreview)
+            importOptionsSection(importPreview)
+            Section {
+              jsonButton
+            }
           }
-          .disabled(selectedSections.intersection(importPreview.availableSelection).isEmpty)
-        }
-      }
-
-      if let errorMessage {
-        Section {
-          Label(errorMessage, systemImage: "exclamationmark.triangle")
-            .foregroundStyle(.red)
+          if let errorMessage {
+            Section {
+              Label(errorMessage, systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.red)
+            }
+          }
         }
       }
     }
@@ -142,6 +131,31 @@ struct SettingsImportView: View {
         ToolbarItem(placement: .cancellationAction) {
           Button("Cancel") { onFinish?() }
         }
+      }
+      if let importPreview {
+        ToolbarItem(placement: .confirmationAction) {
+          Button {
+            importSelected(from: importPreview)
+          } label: {
+            if isImporting {
+              ProgressView()
+                .accessibilityLabel("Importing")
+            } else {
+              Text(importActionTitle)
+                .fontWeight(.semibold)
+            }
+          }
+          .disabled(
+            isImporting || selectedSections.intersection(importPreview.availableSelection).isEmpty)
+        }
+      }
+    }
+    .disabled(isImporting)
+    .interactiveDismissDisabled(isImporting)
+    .sheet(isPresented: $showingJSON) {
+      if let data = importPreview?.sourceData {
+        MessageTextSelectionSheet(
+          title: "JSON", text: String(decoding: data, as: UTF8.self), fontFamily: .monospaced)
       }
     }
     .fileImporter(
@@ -180,6 +194,66 @@ struct SettingsImportView: View {
     .settingsToast($toast, style: .success)
   }
 
+  private var chooseFileButton: some View {
+    Button {
+      errorMessage = nil
+      showingFileImporter = true
+    } label: {
+      Label(
+        importPreview == nil ? "Choose File" : "Choose Different File", systemImage: "doc.badge.plus")
+    }
+  }
+
+  private var jsonButton: some View {
+    Button("View JSON", systemImage: "curlybraces") { showingJSON = true }
+      .disabled(importPreview?.sourceData == nil)
+  }
+
+  private var importActionTitle: String {
+    if let importPreview, case .conversation(let envelope) = importPreview.kind,
+      envelope.exportedConversations.count > 1
+    {
+      return "Continue"
+    }
+    return "Import"
+  }
+
+  private func conversationPreview(_ envelope: ConversationExportEnvelope) -> some View {
+    ScrollView {
+      LazyVStack(alignment: .leading, spacing: 24) {
+        HStack {
+          Text("Conversation Preview")
+            .foregroundStyle(.secondary)
+          Spacer()
+          jsonButton
+        }
+        .font(.subheadline)
+
+        if envelope.exportedConversations.count == 1,
+          envelope.conversation.messages.contains(where: { message in
+            message.attachments.contains { $0.kind == .image }
+          })
+        {
+          Toggle("Import Pictures", isOn: $includePictures)
+        }
+
+        if let errorMessage {
+          Label(errorMessage, systemImage: "exclamationmark.triangle")
+            .foregroundStyle(.red)
+        }
+
+        ForEach(envelope.exportedConversations) { conversation in
+          ConversationImportTranscript(conversation: conversation)
+        }
+
+        if initialFile == nil {
+          chooseFileButton
+        }
+      }
+      .padding()
+    }
+  }
+
   @ViewBuilder
   private func importInfoSection(_ preview: SettingsImportFilePreview) -> some View {
     Section {
@@ -190,15 +264,8 @@ struct SettingsImportView: View {
       switch preview.kind {
       case .backup(let envelope):
         infoRow("Backup format", "\(envelope.version)")
-      case .conversation(let envelope):
-        if envelope.exportedConversations.count == 1 {
-          infoRow("Title", envelope.title)
-          infoRow("Provider", envelope.providerDisplayName)
-          infoRow("Model", envelope.model)
-          infoRow("Messages", "\(envelope.conversation.messages.count)")
-        } else {
-          infoRow("Conversations", "\(envelope.exportedConversations.count)")
-        }
+      case .conversation:
+        EmptyView()
       case .portable(let archive):
         infoRow("Archive format", "\(archive.version)")
         if let agents = archive.settings?.agents {
@@ -340,7 +407,12 @@ struct SettingsImportView: View {
           data: data)
         return
       }
-      Task { await prepareConversationImport(from: envelope) }
+      guard !isImporting else { return }
+      isImporting = true
+      Task {
+        await prepareConversationImport(from: envelope)
+        isImporting = false
+      }
     }
   }
 
@@ -349,7 +421,8 @@ struct SettingsImportView: View {
     let preview = await store.previewConversationImport(
       from: envelope, includePictures: includePictures)
     if preview.conflict == nil {
-      _ = finishConversationImport(preview, resolution: .create(title: preview.envelope.title))
+      errorMessage = finishConversationImport(
+        preview, resolution: .create(title: preview.envelope.title))
     } else {
       pendingConversationImport = preview
     }
