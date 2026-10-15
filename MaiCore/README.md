@@ -1198,6 +1198,11 @@ tool loop in a Swift task — and `AgentRuntime` uses the same code for the
 children it starts, so an agent behaves the same wherever it is started.
 
 In the `pmai` REPL, `/mcp list` shows configured servers and their live state.
+`/mcp info [ID]` shows connection settings, protocol and resource details, and
+the same tool help, exposure modes, and call counts as `/tools show mcp/ID`.
+Omit ID to inspect every server. Disabled servers include saved settings and
+recorded tool call counts. Environment and header values and bearer tokens
+are not printed.
 Add and connect a stdio server without editing JSON using
 `/mcp add COMMAND [ARG ...]`; the command basename becomes its ID. Use
 `/mcp add --name ID [options] -- COMMAND [ARG ...]` when a different ID or

@@ -2,8 +2,9 @@ import Foundation
 
 extension AgentRuntime {
   /// Applies to every live agent, including named and derived children.
-  public func configureInternetAccess(_ policy: InternetAccessPolicy) {
+  public func configureInternetAccess(_ policy: InternetAccessPolicy) async {
     internetAccess = policy
+    for provider in providers.values { await provider.configureInternetAccess(policy) }
   }
 
   public func internetAccessPolicy() -> InternetAccessPolicy { internetAccess }

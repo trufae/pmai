@@ -3313,6 +3313,9 @@ struct MaiCLI {
                 }
                 var profile = try ACPRemoteConnection.parse(TailcatQR.read(arguments[0]))
                 if profile.requiresApproval == true {
+                  guard !(await runtime.internetAccessPolicy().isOffline) else {
+                    throw JSONRPCError.invalidParams("Turn off Airplane Mode before pairing.")
+                  }
                   let idFile = home.rootURL.appendingPathComponent("client-id.json")
                   let clientID: String
                   if FileManager.default.fileExists(atPath: idFile.path) {
@@ -3818,6 +3821,7 @@ struct MaiCLI {
             exits = command.value.exits
             if commandWasInterrupted { await terminal.note("cancelled \(name)") }
           }
+          if await runtime.internetAccessPolicy().isOffline { await remoteServer.stop() }
           if exits {
             loop.exiting = true
             break events
@@ -5191,6 +5195,49 @@ struct MaiCLI {
         )
       }
 
+    case "info":
+      let requestedID = pieces.count == 2 ? pieces[1] : nil
+      guard (requestedID?.split(whereSeparator: \Character.isWhitespace).count ?? 0) <= 1 else {
+        await terminal.line("Usage: /mcp info [ID]")
+        return
+      }
+      let configured = configuration?.mcpServers ?? []
+      let ids = configured.map(\.id)
+        + catalogs.map(\.serverID).filter { id in !configured.contains { $0.id == id } }
+      if let requestedID, !ids.contains(requestedID) {
+        await terminal.line("Unknown MCP server '\(requestedID)'. /mcp list shows them.")
+        return
+      }
+      guard !ids.isEmpty else {
+        await terminal.line("No configured MCP servers.")
+        return
+      }
+      let groups = await runtime.availableToolGroups()
+      let usage = await runtime.toolUsageSnapshot()
+      for (index, id) in (requestedID.map { [$0] } ?? ids).enumerated() {
+        if index > 0 { await terminal.line("") }
+        let server = configured.first { $0.id == id }
+        let catalog = catalogs.first { $0.serverID == id }
+        await terminal.line(await terminal.paint("MCP server: \(id)", bold: true))
+        for line in mcpInfoLines(server: server, catalog: catalog) {
+          await terminal.line(line)
+        }
+        if groups.contains(where: { $0.sourceID == "mcp" && $0.id == id }) {
+          await handleToolsCommand(
+            "show mcp/\(id)", session: &session, runtime: runtime, plugins: plugins,
+            configuration: &configuration, configurationPath: configurationPath, terminal: terminal)
+        } else {
+          let prefix = server.map { mcpNamespace(for: $0) } ?? id
+          let names = Set(usage.counts.keys.filter { $0.hasPrefix("\(prefix)::") })
+          let group = ToolGroupDefinition(
+            id: id, sourceID: "mcp", displayName: id, description: "", toolNames: names)
+          await terminal.line("Tools: unavailable until connected; \(usage.count(for: group)) recorded calls.")
+          for name in names.sorted() {
+            await terminal.line("  \(name) [not connected; \(usage.counts[name, default: 0]) calls]")
+          }
+        }
+      }
+
     case "add":
       guard let rawAddArguments = pieces.dropFirst().first else {
         await terminal.line(mcpCommandHelp)
@@ -5320,6 +5367,43 @@ struct MaiCLI {
     default:
       await terminal.line(mcpCommandHelp)
     }
+  }
+
+  private static func mcpInfoLines(
+    server: ConfiguredMCPServer?, catalog: MCPServerCatalog?
+  ) -> [String] {
+    let state = server?.enabled == false ? "disabled" : catalog == nil ? "not connected" : "connected"
+    var lines = ["State: \(state)"]
+    if let name = server?.displayName ?? catalog?.serverName { lines.append("Name: \(name)") }
+    if let server {
+      lines.append("Transport: \(server.kind)")
+      if let command = server.command {
+        lines.append("Command: \(([command] + server.args).map(shellQuote).joined(separator: " "))")
+        lines.append("Working directory: \(server.cwd ?? FileManager.default.currentDirectoryPath)")
+      }
+      if let url = server.url { lines.append("URL: \(url.absoluteString)") }
+      let timeout = max(1, server.timeout ?? MCPServerConfiguration.defaultTimeout)
+      lines.append("Timeout: \(String(format: "%g", timeout)) seconds")
+      lines.append("Tool prefix: \(mcpNamespace(for: server))")
+      lines.append("Approval: \(server.defaultApproval.rawValue)")
+      if !server.env.isEmpty {
+        lines.append("Environment variables: \(server.env.keys.sorted().joined(separator: ", "))")
+      }
+      let headers = Set(server.headers.keys).union(server.headerEnvironment.keys)
+      if !headers.isEmpty { lines.append("Headers: \(headers.sorted().joined(separator: ", "))") }
+      if let variable = server.bearerTokenEnvironment {
+        lines.append("Bearer token: environment variable \(variable)")
+      } else if server.bearerToken != nil {
+        lines.append("Bearer token: configured")
+      }
+    } else {
+      lines.append("Configuration: runtime only")
+    }
+    if let catalog {
+      lines.append("Protocol: \(catalog.protocolVersion)")
+      lines.append("Resources: \(catalog.resources.count)")
+    }
+    return lines
   }
 
   private static func removeMCPReferences(
@@ -12215,7 +12299,7 @@ struct MaiCLI {
       "/skills enable all", "/skills disable all", "/skills prompt ", "/skills path",
       "/skills reload", "/skills add ", "/skills edit ", "/skills del ",
       "/skills import ", "/edit skill ", "/help skills",
-      "/mcp list",
+      "/mcp list", "/mcp info",
       "/mcp add ", "/mcp enable ", "/mcp disable ",
       "/mcp del ",
       "/edit prompt", "/edit compact", "/edit config", "/edit mcps",
@@ -12315,7 +12399,10 @@ struct MaiCLI {
       values.append("/set effort \(level)")
     }
     groupNames.formUnion(["mcp", "skills"])
-    groupNames.formUnion((configuration?.mcpServers ?? []).map { "mcp/" + $0.id })
+    for server in configuration?.mcpServers ?? [] {
+      groupNames.insert("mcp/" + server.id)
+      values.append("/mcp info \(server.id)")
+    }
     let toolNames = Set(workspace.chats.flatMap(\.primaryAgent.toolNames))
       .union((configuration?.agents ?? []).flatMap(\.toolNames))
       .union(skills.filter(\.isModelInvocable).map(\.toolName))
@@ -12886,6 +12973,7 @@ struct MaiCLI {
   private static let mcpCommandHelp = """
     MCP commands:
       /mcp list                Show configured servers and connection state (default)
+      /mcp info [ID]           Show server details, tool help and call counts; all servers if omitted
       /mcp enable ID           Connect a saved server and enable it at startup
       /mcp disable ID          Disconnect a server and keep its saved configuration disabled
       /mcp del ID              Disconnect a server and delete its saved configuration

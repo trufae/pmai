@@ -22,6 +22,9 @@ public protocol ChatProvider: Sendable {
   /// backend cannot enumerate models.
   func availableModels() async throws -> [ModelDescriptor]
 
+  /// Lets providers with persistent remote connections apply live offline settings.
+  func configureInternetAccess(_ policy: InternetAccessPolicy) async
+
   /// Completes one provider turn. Streaming implementations emit incremental
   /// events while the returned response remains the authoritative final value.
   func complete(
@@ -31,6 +34,8 @@ public protocol ChatProvider: Sendable {
 }
 
 extension ChatProvider {
+  public func configureInternetAccess(_ policy: InternetAccessPolicy) async {}
+
   public func availableModels() async throws -> [ModelDescriptor] { [] }
 
   public func complete(_ request: ProviderRequest) async throws -> ProviderResponse {

@@ -25,6 +25,8 @@ private actor WebSocketEvents {
   var text = ""
   var permissions = 0
   var updates: [JSONValue] = []
+  var disconnections = 0
+  func disconnect() { disconnections += 1 }
   func event(_ event: ProviderEvent) {
     if case .textDelta(let delta) = event { text += delta }
   }
@@ -34,6 +36,66 @@ private actor WebSocketEvents {
     return "allow_once"
   }
 }
+
+@Test("Remote ACP providers obey the runtime's live airplane setting")
+func acpProviderAirplaneMode() async throws {
+  let provider = ACPProvider(
+    id: "remote", displayName: "Remote",
+    configuration: .init(command: "Remote", webSocketURL: URL(string: "ws://127.0.0.1:1/acp")))
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  for policy in [InternetAccessPolicy(airplaneModeEnabled: true), .init(networkAvailable: false)] {
+    await runtime.configureInternetAccess(policy)
+    await #expect(throws: InternetAccessError.self) {
+      _ = try await provider.complete(ProviderRequest(model: "remote", messages: [.user("hello")]))
+    }
+  }
+}
+
+@Test("An offline ACP client cannot connect, discover, pair, or send a prompt")
+func acpClientAirplaneMode() async throws {
+  let client = ACPClient(
+    configuration: .init(command: "Remote", webSocketURL: URL(string: "ws://127.0.0.1:1/acp")))
+  await client.configureInternetAccess(.init(airplaneModeEnabled: true))
+  await #expect(throws: InternetAccessError.self) { _ = try await client.connect() }
+  await #expect(throws: InternetAccessError.self) { _ = try await client.workspace() }
+  await #expect(throws: InternetAccessError.self) {
+    _ = try await client.requestPairing(clientID: "client", name: "Client")
+  }
+  await #expect(throws: InternetAccessError.self) { _ = try await client.prompt("hello") { _ in } }
+  #expect(await client.isConnected == false)
+}
+
+#if os(macOS) || os(Linux)
+  @Test("An idle ACP connection reports a worker disconnect")
+  func acpClientIdleDisconnect() async throws {
+    let events = WebSocketEvents()
+    let script = """
+      import json, sys, time
+      for line in sys.stdin:
+          request = json.loads(line)
+          method = request.get('method')
+          result = {'protocolVersion': 1} if method == 'initialize' else {'sessionId': 'idle'}
+          print(json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'result': result}), flush=True)
+          if method == 'session/new':
+              time.sleep(0.1)
+              break
+      """
+    let client = ACPClient(
+      configuration: .init(command: "/usr/bin/python3", arguments: ["-u", "-c", script]),
+      onDisconnect: { await events.disconnect() })
+    #expect(try await client.connect() == "idle")
+    #expect(await client.isConnected)
+    let deadline = ContinuousClock.now + .seconds(5)
+    while await events.disconnections == 0, ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(await events.disconnections == 1)
+    #expect(await client.isConnected == false)
+    await client.disconnect()
+    #expect(await events.disconnections == 1)
+  }
+#endif
 
 // The smoke script supplies a real gateway running a deterministic ACP agent.
 @Test(.enabled(if: ProcessInfo.processInfo.environment["PMAI_GATEWAY_TEST_URL"] != nil))
@@ -84,5 +146,13 @@ func acpWebSocketIntegration() async throws {
     ProviderRequest(model: "remote", messages: [.user("hello")])
   ) { _ in }
   #expect(reply.message.text == "reply")
+  await provider.configureInternetAccess(.init(airplaneModeEnabled: true))
+  await #expect(throws: InternetAccessError.self) {
+    _ = try await provider.complete(ProviderRequest(model: "remote", messages: [.user("blocked")]))
+  }
+  await provider.configureInternetAccess(.init())
+  let restored = try await provider.complete(
+    ProviderRequest(model: "remote", messages: [.user("online again")]))
+  #expect(restored.message.text == "reply")
   await (provider as? ACPProvider)?.shutdown()
 }

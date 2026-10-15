@@ -123,6 +123,7 @@ extension AgentRuntime {
   ) async throws -> ProviderCall {
     var attempt = 0
     while true {
+      await provider.configureInternetAccess(internetAccess)
       let timing = StreamTimingRecorder()
       await debugLog?.record(
         "model.request", context: context, provider: provider.descriptor.id.rawValue,

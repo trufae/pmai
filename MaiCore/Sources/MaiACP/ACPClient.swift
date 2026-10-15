@@ -55,6 +55,8 @@ public actor ACPClient {
   private var transport: (any JSONRPCTransport)?
   private let onUpdate: (@Sendable (JSONValue) async -> Void)?
   private let onPermission: (@Sendable (JSONValue) async throws -> String?)?
+  private let onDisconnect: (@Sendable () async -> Void)?
+  private var reader: Task<Void, Never>?
   private var peer: JSONRPCPeer?
   private var sessionID: String?
   private var sessionLoaded = false
@@ -62,18 +64,21 @@ public actor ACPClient {
   private var supportsList = false
   private var supportsFiles = false
   private var busy = false
+  private var internetAccess = InternetAccessPolicy()
   /// The delta sink for the prompt in flight; only one prompt runs at a time.
   private var activeSink: (@Sendable (ProviderEvent) async -> Void)?
 
   public init(
     configuration: Configuration,
     onUpdate: (@Sendable (JSONValue) async -> Void)? = nil,
-    onPermission: (@Sendable (JSONValue) async throws -> String?)? = nil
+    onPermission: (@Sendable (JSONValue) async throws -> String?)? = nil,
+    onDisconnect: (@Sendable () async -> Void)? = nil
   ) {
     self.configuration = configuration
     self.sessionID = configuration.sessionID
     self.onUpdate = onUpdate
     self.onPermission = onPermission
+    self.onDisconnect = onDisconnect
   }
 
   /// Connects and creates or restores a session; history arrives through onUpdate.
@@ -85,6 +90,12 @@ public actor ACPClient {
   }
 
   public var currentSessionID: String? { sessionID }
+  public var isConnected: Bool { peer != nil && transport?.isRunning == true }
+
+  public func configureInternetAccess(_ policy: InternetAccessPolicy) async {
+    internetAccess = policy
+    if policy.isOffline, configuration.webSocketURL != nil { await disconnect() }
+  }
 
   /// Accesses host files without creating a chat or running an agent prompt.
   public func files(cwd: String, request: WorkspaceFileRequest) async throws
@@ -126,6 +137,8 @@ public actor ACPClient {
     busy = true
     defer { busy = false }
     await disconnect()
+    try Task.checkCancellation()
+    guard !internetAccess.isOffline else { throw InternetAccessError.offline }
     let transport = try WebSocketJSONRPCTransport(url: url, bearerToken: configuration.bearerToken)
     let peer = JSONRPCPeer(transport: transport)
     self.transport = transport
@@ -252,18 +265,37 @@ public actor ACPClient {
   }
 
   public func disconnect() async {
-    await peer?.close()
-    transport?.close()
+    let previous = peer
+    let transport = transport
     peer = nil
-    transport = nil
+    self.transport = nil
+    reader?.cancel()
+    reader = nil
     sessionLoaded = false
+    transport?.close()
+    await previous?.close()
+  }
+
+  private func connectionClosed(_ peer: JSONRPCPeer) async {
+    guard self.peer === peer else { return }
+    self.peer = nil
+    transport?.close()
+    transport = nil
+    reader = nil
+    sessionLoaded = false
+    await onDisconnect?()
   }
 
   // MARK: - Connection
 
   private func connectedPeer() async throws -> JSONRPCPeer {
+    try Task.checkCancellation()
     if let peer, transport?.isRunning == true { return peer }
     await disconnect()
+    try Task.checkCancellation()
+    guard configuration.webSocketURL == nil || !internetAccess.isOffline else {
+      throw InternetAccessError.offline
+    }
     let transport: any JSONRPCTransport
     if let url = configuration.webSocketURL {
       transport = try WebSocketJSONRPCTransport(url: url, bearerToken: configuration.bearerToken)
@@ -287,9 +319,12 @@ public actor ACPClient {
       onNotification: { [weak self] method, params in
         await self?.handleAgentNotification(method: method, params: params)
       })
-    await peer.start()
     self.transport = transport
     self.peer = peer
+    reader = Task { [weak self] in
+      await peer.run()
+      await self?.connectionClosed(peer)
+    }
     do {
       let initialized = try await peer.request(
         ACP.Method.initialize,

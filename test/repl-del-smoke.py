@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the REPL's del commands and persistent/live MCP removal offline."""
+"""Check REPL deletion commands, MCP details, and persistent/live removal offline."""
 import json
 from pathlib import Path
 import re
@@ -27,7 +27,8 @@ for line in sys.stdin:
                   'serverInfo': {'name': 'fixture', 'version': '1'}}
     elif method == 'tools/list':
         result = {'tools': [{'name': 'echo', 'description': 'Fixture echo',
-                            'inputSchema': {'type': 'object', 'properties': {}}}]}
+                            'inputSchema': {'type': 'object', 'properties': {
+                                'text': {'type': 'string', 'description': 'Text to echo'}}}}]}
     elif method == 'resources/list':
         result = {'resources': [{'uri': 'fixture://notes', 'name': 'Notes'}]}
     else:
@@ -50,8 +51,11 @@ for line in sys.stdin:
             'toolSources': [{'id': 'standard', 'kind': 'standard-tools'}],
             'mcpServers': [
                 {'id': 'fixture', 'command': sys.executable, 'args': [str(mcp)],
+                 'displayName': 'Fixture MCP', 'cwd': str(root), 'timeout': 45,
+                 'env': {'FIXTURE_SECRET': 'environment-secret'},
                  'toolNamePrefix': 'external'},
-                {'id': 'dormant', 'enabled': False, 'url': 'http://127.0.0.1:1/mcp'},
+                {'id': 'dormant', 'enabled': False, 'url': 'http://127.0.0.1:1/mcp',
+                 'headers': {'X-Key': 'header-secret'}, 'bearerToken': 'bearer-secret'},
                 {'id': 'keeper', 'enabled': False, 'command': 'unused'},
             ],
             'agents': [dict(agent, id='main'), dict(agent, id='worker')],
@@ -64,11 +68,38 @@ for line in sys.stdin:
         def run(commands, split=False):
             return run_repl(command, commands, cwd=root, env=env, split=split, timeout=40)
 
+        (root / 'home').mkdir()
+        usage = {'counts': {'external::echo': 4, 'external::resources_read': 2,
+                            'dormant::echo': 3, 'files_read': 8}, 'recent': []}
+        (root / 'home/tool-usage.json').write_text(json.dumps(usage))
         topics = ['mcp', 'path', 'vdb', 'todo', 'prompts', 'agents', 'skills', 'stats',
                   'chat', 'project', 'projects', 'queue', 'remote']
         for topic, output in zip(topics, run(['/help ' + topic for topic in topics], split=True)):
             assert ' del ' in output or ' del\n' in output, (topic, output)
             assert not re.search(r'/\w+ (?:remove|rm|delete|forget|drop|revoke)\b', output), output
+
+        # Info shares tool help and lifetime counters, and works without connecting disabled servers.
+        output = run(['/mcp info fixture', '/tools show mcp/fixture', '/mcp info dormant',
+                      '/mcp info', '/mcp info missing', '/mcp info fixture extra'], split=True)
+        for text in ('MCP server: fixture', 'Name: Fixture MCP', 'State: connected',
+                     'Transport: stdio', 'Command:', str(mcp), f'Working directory: {root}',
+                     'Timeout: 45 seconds', 'Tool prefix: external', 'Approval: confirm',
+                     'Environment variables: FIXTURE_SECRET', 'Protocol: 2025-11-25', 'Resources: 1',
+                     '2 tools, 6 calls', 'external::echo [direct; 4 calls]',
+                     'external::resources_read [direct; 2 calls]', 'Fixture echo', 'Text to echo'):
+            assert text in output[0], (text, output[0])
+        tool_help = output[1][output[1].index('MCP fixture (mcp/fixture)'):].strip()
+        assert tool_help in output[0], (tool_help, output[0])
+        for text in ('State: disabled', 'Transport: streamable-http', 'URL: http://127.0.0.1:1/mcp',
+                     'Timeout: 180 seconds', 'Headers: X-Key', 'Bearer token: configured',
+                     '3 recorded calls', 'dormant::echo [not connected; 3 calls]'):
+            assert text in output[2], (text, output[2])
+        assert all(f'MCP server: {name}' in output[3] for name in ('fixture', 'dormant', 'keeper')), output[3]
+        assert "Unknown MCP server 'missing'" in output[4], output[4]
+        assert 'Usage: /mcp info [ID]' in output[5], output[5]
+        assert not any(secret in '\n'.join(output) for secret in
+                       ('environment-secret', 'header-secret', 'bearer-secret')), output
+        assert json.loads((root / 'home/tool-usage.json').read_text()) == usage
 
         # Old MCP spellings must not delete the saved or connected server.
         run(['/mcp del', '/mcp remove fixture', '/mcp rm fixture', '/mcp delete fixture'])

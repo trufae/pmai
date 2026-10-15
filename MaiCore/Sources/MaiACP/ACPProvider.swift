@@ -18,6 +18,7 @@ public actor ACPProvider: ChatProvider {
   /// One live agent per working directory: a prompt from a child run in a
   /// different cwd must not land in the parent's session.
   private var clients: [String: ACPClient] = [:]
+  private var internetAccess = InternetAccessPolicy()
 
   public init(
     id: ProviderID, displayName: String, configuration: ACPClient.Configuration,
@@ -43,11 +44,15 @@ public actor ACPProvider: ChatProvider {
     _ request: ProviderRequest,
     emit: @escaping ProviderEventHandler
   ) async throws -> ProviderResponse {
+    guard configuration.webSocketURL == nil || !internetAccess.isOffline else {
+      throw InternetAccessError.offline
+    }
     let key = clientKey(
       for: configuration.workingDirectory ?? AgentExecutionScope.directory,
       sessionID: request.sessionID ?? AgentExecutionScope.current?.sessionID)
     let client = try client(
       key: key, workingDirectory: configuration.workingDirectory ?? AgentExecutionScope.directory)
+    await client.configureInternetAccess(internetAccess)
     // The runtime hands over the whole transcript each turn, but the ACP agent
     // keeps its own session, so only the latest user turn is new to it.
     let text = ACPProvider.latestUserText(request.messages)
@@ -68,8 +73,17 @@ public actor ACPProvider: ChatProvider {
   }
 
   public func shutdown() async {
-    for client in clients.values { await client.close() }
+    let previous = Array(clients.values)
     clients.removeAll()
+    for client in previous { await client.close() }
+  }
+
+  public func configureInternetAccess(_ policy: InternetAccessPolicy) async {
+    internetAccess = policy
+    guard configuration.webSocketURL != nil else { return }
+    let current = Array(clients.values)
+    if policy.isOffline { clients.removeAll() }
+    for client in current { await client.configureInternetAccess(policy) }
   }
 
   private func clientKey(for workingDirectory: URL?, sessionID: String?) -> String {

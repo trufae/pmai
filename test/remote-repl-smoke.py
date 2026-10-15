@@ -151,6 +151,13 @@ def run():
             client = REPL(client_dir, client_home, client_config, root / "client.log")
             client.send("/chat rename local")
             wait_for(lambda: any(c["title"] == "local" for c in chats(client_dir).values()), "local chat")
+            client.send("/set airplane on")
+            client.wait("airplane = on")
+            client.send(f'/remote pair "{home / "remote-server/connection.txt"}"')
+            client.wait("Turn off Airplane Mode before pairing.")
+            assert server.path.read_text().count("Pairing request") == 2, "offline pairing opened a connection"
+            client.send("/set airplane off")
+            client.wait("airplane = off")
             client.send(f'/remote pair "{home / "remote-server/connection.txt"}"')
             wait_for(lambda: server.path.read_text().count("Pairing request") == 3, "CLI approval request")
             assert "Paired server." not in client.path.read_text(), "CLI paired before server approval"
@@ -208,6 +215,24 @@ def run():
             server.send("/version")
             server.wait(version)
             print("Optional multi-path restriction and a usable REPL while serving: passed", flush=True)
+
+            active = WS(port, profile["token"])
+            server.send("/set airplane on")
+            server.wait("airplane = on")
+            def listener_stopped():
+                with socket.socket() as probe:
+                    return probe.connect_ex(("127.0.0.1", port)) != 0
+            wait_for(listener_stopped, "airplane mode stops remote serving")
+            try:
+                active.receive()
+                raise AssertionError("airplane mode left an active client connected")
+            except (EOFError, ConnectionResetError):
+                pass
+            finally:
+                active.close()
+            server.send("/remote serve")
+            server.wait("Turn off Airplane Mode before serving remote clients.")
+            print("Airplane mode blocks pairing and serving and closes active remote connections: passed", flush=True)
         finally:
             if client:
                 client.close()
