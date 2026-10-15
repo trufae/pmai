@@ -49,12 +49,20 @@ enum TerminalCommand {
       defer {
         if hasTerminal { _ = tcsetattr(STDIN_FILENO, TCSADRAIN, &cooked) }
       }
-      #if canImport(Darwin) || canImport(Android)
-        var attributes: posix_spawnattr_t?
+      #if canImport(Android)
+        // Bionic's initializer writes an optional handle; its other APIs
+        // require the initialized, non-optional handle.
+        var initialized: posix_spawnattr_t?
+        try check(posix_spawnattr_init(&initialized))
+        guard var attributes = initialized else { throw posixError(ENOMEM) }
       #else
-        var attributes = posix_spawnattr_t()
+        #if canImport(Darwin)
+          var attributes: posix_spawnattr_t?
+        #else
+          var attributes = posix_spawnattr_t()
+        #endif
+        try check(posix_spawnattr_init(&attributes))
       #endif
-      try check(posix_spawnattr_init(&attributes))
       defer { posix_spawnattr_destroy(&attributes) }
 
       var mask = sigset_t()
