@@ -3,13 +3,16 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#a8b9e6">
-    <meta name="description" content="PocketMai is a native iOS AI app and a powerful macOS, Linux, and Android CLI built on the open-source MaiCore framework.">
+    <meta name="theme-color" content="#f3f0e8">
+    <meta name="description" content="Your personal AI agent, from iPhone to terminal. Local voice, remote projects, useful native tools, portable conversations, and control over your models and resources.">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="PocketMai — iOS app and agent CLI">
-    <meta property="og:description" content="PocketMai brings MaiCore to iOS, macOS, Linux, and Android.">
+    <meta property="og:title" content="PocketMai + pmai — your agent, on your terms">
+    <meta property="og:description" content="Talk locally. Work remotely. Build little apps. Take your conversations with you. A native iOS app and a capable agent CLI, built in Swift.">
+    <meta property="og:url" content="https://trufae.github.io/pmai/">
+    <meta property="og:image" content="https://trufae.github.io/pmai/mai-logo.png">
     <meta name="twitter:card" content="summary">
-    <title>PocketMai — iOS app and agent CLI</title>
+    <title>PocketMai + pmai — your agent, on your terms</title>
+    <link rel="canonical" href="https://trufae.github.io/pmai/">
     <link rel="icon" href="icon-192.png" sizes="192x192">
     <link rel="apple-touch-icon" href="icon-192.png">
     <link rel="stylesheet" href="styles.css">
@@ -17,192 +20,107 @@
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
-
     <header class="site-header" data-header>
-      <a class="brand" href="#top" aria-label="PocketMai home">
-        <span class="brand-mark"><img src="mai-logo.png" alt=""></span>
-        <span>PocketMai</span>
-      </a>
-      <button class="menu-button" type="button" aria-expanded="false" aria-controls="site-nav" data-menu-button>
-        <span>Menu</span><i aria-hidden="true"></i>
-      </button>
-      <nav class="site-nav" id="site-nav" aria-label="Main navigation" data-nav>
-        <a href="#why">Why PocketMai</a>
-        <a href="#platforms">Platforms</a>
-        <a href="#local">Local-first</a>
-        <a href="https://www.swift.org/" target="_blank" rel="noreferrer">Swift ↗</a>
-        <a href="https://github.com/trufae/pocketmai" target="_blank" rel="noreferrer">GitHub ↗</a>
-        <a class="nav-download" href="#get">Download ↓</a>
-      </nav>
+      <a class="brand" href="#top" aria-label="PocketMai home"><span class="brand-mark"><img src="mai-logo.png" alt="" width="34" height="34"></span><span>PocketMai<span class="brand-cli"> + pmai</span></span></a>
+      <button class="menu-button" type="button" aria-expanded="false" aria-controls="site-nav" data-menu-button><span>Menu</span><i aria-hidden="true"></i></button>
+      <nav class="site-nav" id="site-nav" aria-label="Main navigation" data-nav><a href="#why">Why pmai</a><a href="#workflow">Phone + terminal</a><a href="#tools">Tools</a><a href="https://github.com/trufae/pmai">GitHub ↗</a><a class="nav-download" href="#get">Get pmai ↓</a></nav>
     </header>
-
     <main id="main">
       <section class="hero section-shell" id="top">
-        <div class="hero-copy reveal">
-          <div class="hero-badges">
-            <p class="eyebrow">PocketMai · open source · powered by MaiCore</p>
-            <a class="swift-top" href="https://www.swift.org/" target="_blank" rel="noreferrer">
-              <img src="swift.svg" alt="Swift programming language"><span>↗</span>
-            </a>
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> Open source. Native Swift. Your choice of model.</p>
+          <h1>Your agent.<br>On <em>your terms.</em></h1>
+          <p class="hero-lede">Talk to it on your iPhone. Put it to work in your terminal. Reach your projects from anywhere. Keep the prompts, tools, models, and permissions in your hands.</p>
+          <div class="hero-actions"><a class="button button-dark" href="#get">Get PocketMai + pmai <span aria-hidden="true">↓</span></a><a class="text-link" href="#why">See what makes it useful <span aria-hidden="true">↗</span></a></div>
+          <p class="hero-note">Local models or your preferred API. Your conversations live with you.</p>
+        </div>
+        <div class="workflow-preview" aria-label="Illustrated example of connecting PocketMai to a remote pmai host">
+          <div class="preview-caption"><span>From your pocket to your projects</span><span>Illustrated workflow</span></div>
+          <div class="terminal-preview">
+            <div class="window-bar"><span class="window-dots" aria-hidden="true">● ● ●</span><span>pmai · workstation</span><span>ACP</span></div>
+            <div class="terminal-content"><p><span class="prompt">❯</span> /remote serve --protocol opentunnel</p><p class="terminal-muted">Gateway on loopback · encrypted public connection</p><p><span class="terminal-success">Pairing request:</span> PocketMai on your iPhone</p><p><span class="prompt">❯</span> /remote accept</p><p class="terminal-muted">Projects, saved chats, and files are ready.</p></div>
           </div>
-          <h1>PocketMai, from phone to shell.</h1>
-          <p class="hero-lede">
-            A native iOS app and an agent CLI for macOS, Linux, and Android.
-            Choose the model, decide which tools it can use, steer every subagent,
-            and keep your conversations on your terms.
-          </p>
-          <a class="source-link" href="https://github.com/trufae/pocketmai" target="_blank" rel="noreferrer">
-            Open source on GitHub <span>↗</span>
-          </a>
-        </div>
-
-        <div class="hero-interfaces reveal" id="platforms">
-          <div class="interface-heading">
-            <p class="kicker">Two interfaces</p>
-            <strong>The same MaiCore engine in the app and the terminal.</strong>
+          <div class="connection-thread" aria-hidden="true"><span></span><b>your approved connection</b><span></span></div>
+          <div class="phone-preview">
+            <div class="phone-heading"><img src="icon-192.png" alt="" width="36" height="36"><div><strong>PocketMai</strong><span>Remote host · your workstation</span></div><span class="status-dot" aria-hidden="true"></span></div>
+            <div class="example-message">Let’s pick up the project I was working on.</div>
+            <div class="project-preview"><span aria-hidden="true">↳</span><div><strong>Your projects. Your conversations.</strong><span>Browse files, continue a chat, run the agent.</span></div></div>
+            <div class="phone-footer"><span>Local chat</span><span class="active">Remote projects</span><span>Files</span></div>
           </div>
-
-          <article class="interface-card ios-interface">
-            <div class="platform-title">
-              <img src="icon-192.png" alt="PocketMai app icon">
-              <div><span>iOS app</span><h2>PocketMai</h2></div>
-            </div>
-            <p>Native conversations, voice, documents, OCR, browser handoff, and background replies.</p>
-            <a href="https://apps.apple.com/es/app/pocketmai/id6764296742">Download on the App Store ↗</a>
-          </article>
-
-          <article class="interface-card cli-interface" id="get">
-            <div class="platform-title">
-              <span class="terminal-mark" aria-hidden="true"><img src="pmai-logo-noai.png" alt=""></span>
-              <div><span>macOS · Linux · Android</span><h2>pmai CLI</h2></div>
-            </div>
-            <p>Terminal-native chat, tools, memory, skills, protocols, and full agent supervision.</p>
-            <div class="command-box">
-              <span class="shell-prompt" aria-hidden="true">$</span>
-              <code id="install-command">curl -fsSL https://raw.githubusercontent.com/trufae/pmai/main/www/install.sh | sh</code>
-              <button class="copy-button" type="button" data-copy aria-label="Copy install command"><span data-copy-label>Copy</span></button>
-            </div>
-            <small>One command for all three platforms · no root · verified download</small>
-            <small>Already installed? Run <code>pmai -U</code> to check for updates and install the latest release.</small>
-          </article>
         </div>
-
-        <div class="platform-line reveal" aria-label="PocketMai platforms">
-          <span>One shared core</span><b>iOS app</b><i></i><b>macOS CLI</b><i></i><b>Linux CLI</b><i></i><b>Android CLI</b>
-        </div>
+        <div class="platform-line"><span>One shared MaiCore engine</span><b>Native iOS</b><i></i><b>macOS + Linux CLI</b><i></i><b>Android preview + CLI</b><a href="https://www.swift.org/" aria-label="Built with Swift"><img src="swift.svg" alt="Swift" width="72"></a></div>
       </section>
-
       <section class="why" id="why">
         <div class="section-shell">
-          <div class="section-heading reveal">
-            <p class="kicker">Why PocketMai</p>
-            <h2>Agents you can inspect, steer, and stop.</h2>
-            <p>See the work, change direction, and set clear boundaries.</p>
-          </div>
-
+          <div class="section-heading"><p class="kicker">The useful differences</p><h2>A personal agent.<br>A lot of possibilities.</h2><p>Native device features, a capable terminal, and conversations you can actually take with you.</p></div>
           <div class="feature-grid">
-            <article class="feature feature-main reveal">
-              <p class="feature-label">Full subagent control</p>
-              <h3>See and steer every subagent.</h3>
-              <p>Follow the whole agent tree and each child’s output, transcript, status, and usage. Send a message, focus one agent, pause and continue it, or stop a branch.</p>
-              <ul>
-                <li>Per-agent model, prompt, and tools</li>
-                <li>Fair queues for busy slots</li>
-                <li>Depth, count, turn, tool, token, and time limits</li>
-              </ul>
-              <div class="command-tags" aria-label="Subagent commands">
-                <code>/jobs tree</code><code>@3 steer this work</code><code>/jobs stop 3</code>
-              </div>
-            </article>
-
-            <article class="feature reveal">
-              <p class="feature-label">Editable context</p>
-              <h3>Change the conversation when you need to.</h3>
-              <p>Edit, undo, trim, archive, search, or compact with a focus. Linked tool calls stay valid.</p>
-            </article>
-
-            <article class="feature reveal">
-              <p class="feature-label">Live steering</p>
-              <h3>Add instructions while it is working.</h3>
-              <p>New guidance joins at the next safe boundary without throwing away progress.</p>
-            </article>
-
-            <article class="feature reveal">
-              <p class="feature-label">Clear permissions</p>
-              <h3>Decide what each tool may do.</h3>
-              <p>Allow once, always allow, edit arguments, deny, or cancel. Each agent sees only what you enabled.</p>
-            </article>
-
-            <article class="feature reveal">
-              <p class="feature-label">Your stack</p>
-              <h3>Use the models you already trust.</h3>
-              <p>Apple Intelligence, OpenAI-compatible providers, local models, skills, plugins, MCP, and ACP.</p>
-            </article>
+            <article class="feature"><p class="feature-label">01 / Local voice · iOS</p><h3>A conversation you can speak.</h3><p>Talk, listen to replies, or attach a voice note. Transcription stays on device by default. Choose a local model and device voice for an offline conversation.</p><p class="feature-detail">Native live transcription needs iOS 26+ and an installed speech model. Your selected model provider receives the resulting chat text.</p></article>
+            <article class="feature feature-lavender"><p class="feature-label">02 / Remote hosts · iOS + CLI</p><h3>Your workstation, in your pocket.</h3><p>Pair with a running pmai host and continue its saved chats, work across projects, and browse or transfer files. Share on your LAN or use encrypted OpenTunnel access across firewalls.</p><a class="inline-link" href="https://github.com/trufae/pmai/blob/main/MaiCore/README.md#remote-pmai-hosts">How remote pairing works ↗</a></article>
+            <article class="feature"><p class="feature-label">03 / Portable conversations</p><h3>Take the whole conversation.</h3><p>Share a <code>.pocketmai</code> file through AirDrop, a local file transfer, or your own storage. Continue in PocketMai or import it in the CLI, with attachments, tool messages, and subagent chats.</p><p class="feature-detail">No internet service is needed to transfer the file. Provider credentials stay behind; the receiving device uses its own models.</p></article>
+            <article class="feature"><p class="feature-label">04 / Documents that leave the chat</p><h3>From a reply to a real document.</h3><p>Export conversations to Word, EPUB, Markdown, HTML, plain text, or JSON. Bring documents back in: read DOCX and EPUB, convert PDFs, or use OCR for scanned pages.</p><div class="format-tags" aria-label="Supported export formats"><span>.docx</span><span>.epub</span><span>.md</span><span>.html</span><span>.json</span></div></article>
+            <article class="feature feature-lavender"><p class="feature-label">05 / Fine-grained control</p><h3>You set the boundaries.</h3><p>Choose tools per agent and per MCP server. Set file and folder rules to allow, ask, or deny. Review or edit tool arguments, control network tools, and set limits on turns, tokens, time, and subagents.</p><a class="inline-link" href="#control">What the controls cover ↗</a></article>
+            <article class="feature"><p class="feature-label">06 / An agent you can shape</p><h3>Your prompts. Your skills. Your team.</h3><p>Write reusable system prompts, create and import skills, and give each agent its own model and tools. Follow the subagent tree, read its work, send guidance, pause it, or stop a branch.</p><p class="feature-detail">Choose separate models for chat, compaction, tool decisions, and approval review.</p></article>
           </div>
         </div>
       </section>
-
-      <section class="local section-shell" id="local">
-        <div class="section-heading reveal">
-          <p class="kicker">Local-first</p>
-          <h2>Local models and offline conversations.</h2>
-          <p>Keep the model, documents, memory, and useful tools close to you.</p>
-        </div>
-
-        <div class="local-grid">
-          <article class="local-card local-lead reveal">
-            <span>Private by architecture</span>
-            <h3>Local conversations are first-class.</h3>
-            <p>With an on-device or local provider selected, normal conversations, project memory, attachments, OCR, and local tools can stay off the internet.</p>
-            <div><b>No cloud account</b><b>No remote transcript</b><b>No connection</b></div>
-          </article>
-
-          <article class="local-card reveal">
-            <span>Local inference</span>
-            <h3>Run the model on your hardware.</h3>
-            <p>Use Apple Intelligence on device, local MLX models on supported iPhones, or connect to Ollama, llama.cpp, and other local endpoints.</p>
-          </article>
-
-          <article class="local-card reveal">
-            <span>Tools for smaller models</span>
-            <h3>Spend context on the task, not tool schemas.</h3>
-            <p>Native calls when available; JSON, XML, and text fallbacks when they are not. The hybrid tool proxy keeps the common tools direct and the long tail compact.</p>
-          </article>
-
-          <article class="local-card reveal">
-            <span>On-device OCR</span>
-            <h3>Read documents without uploading them.</h3>
-            <p>Read images and scanned documents with Apple Vision, or use a local Tesseract installation from the CLI—without uploading the page.</p>
-          </article>
-
-          <article class="local-card reveal">
-            <span>Durable conversations</span>
-            <h3>Your local workspace remembers.</h3>
-            <p>Chats, system prompts, project memory, todos, and context controls remain available locally between sessions.</p>
-          </article>
+      <section class="workflow section-shell" id="workflow">
+        <div class="section-heading"><p class="kicker">Phone + terminal</p><h2>The right interface<br>for the work.</h2><p>Native on the phone. At home in a shell. Connected when you want them to be.</p></div>
+        <div class="workflow-grid">
+          <article class="workflow-card"><span class="card-number">On your phone</span><h3>Use the device in your hand.</h3><p>Speak a question, search the web, read a document, or ask about your calendar. Keep a browser in a floating PiP card and take over for a sign-in. Follow replies and tool activity from the Lock Screen.</p><p class="workflow-caption">Native iOS integrations, with permissions you choose.</p></article>
+          <article class="workflow-card terminal-card"><span class="card-number">In your terminal</span><h3>Keep your coding workflow.</h3><pre><code><span class="prompt">$</span> git diff | pmai --stdin "review this change"
+<span class="prompt">$</span> pmai --vim install
+<span class="prompt">❯</span> /projects
+<span class="prompt">❯</span> /visual</code></pre><p>Pipe in context, run approved shell tools, hand over to interactive programs, or work in a split-pane terminal UI. The bundled Vim integration can review and apply changes to a selection.</p></article>
+          <article class="workflow-card workflow-wide"><div><span class="card-number">Connect your agent ecosystem</span><h3>Bring tools in. Serve an agent out.</h3></div><div><p>Connect MCP servers and drive other ACP agents as providers. Run pmai as an ACP agent for an editor, or expose its configured agent as a tool to another MCP client.</p><div class="command-tags"><code>pmai --acp</code><code>pmai --mcp</code><code>/agent acp list</code></div><p class="workflow-caption">The tool proxy offers direct, deferred, hidden, and disabled modes to control discovery and schema size.</p></div></article>
         </div>
       </section>
-
-      <section class="final-cta">
-        <div class="section-shell reveal">
-          <img src="mai-logo.png" alt="">
-          <div><p class="kicker">Pocket-sized. Mai-ghty capable.</p><h2>App or terminal. Your call.</h2></div>
-          <div class="final-actions">
-            <a href="https://apps.apple.com/es/app/pocketmai/id6764296742">Get the iOS app ↗</a>
-            <a href="#get">Install the CLI ↑</a>
+      <section class="tool-section" id="tools">
+        <div class="section-shell">
+          <div class="section-heading"><p class="kicker">A useful set of tools</p><h2>Small superpowers.<br>Everyday uses.</h2><p>Built-in capabilities and open protocols. Enable the tools you need for each agent.</p></div>
+          <div class="tool-toolbar"><div class="tool-filters" role="group" aria-label="Filter capabilities" data-tool-filters><button type="button" data-filter="all" aria-pressed="true">Everything</button><button type="button" data-filter="everyday" aria-pressed="false">Everyday</button><button type="button" data-filter="build" aria-pressed="false">Build</button><button type="button" data-filter="knowledge" aria-pressed="false">Knowledge</button><button type="button" data-filter="web" aria-pressed="false">Web</button></div><p class="tool-count" aria-live="polite" data-tool-count>16 capabilities</p></div>
+          <div class="tool-grid" data-tool-grid>
+            <article class="tool-card" data-categories="build everyday"><div class="tool-top"><span class="tool-symbol" aria-hidden="true">&lt;/&gt;</span><span>iOS</span></div><h3>Make little apps</h3><p>Create and run WebXDC mini apps with HTML, CSS, and JavaScript. Keep revisions, roll back, and share a <code>.xdc</code> for PocketMai or Delta Chat. The runner blocks network access.</p></article>
+            <article class="tool-card" data-categories="web"><div class="tool-top"><span class="tool-symbol" aria-hidden="true">↗</span><span>iOS</span></div><h3>A browser you can take over</h3><p>Open a PiP WebKit browser. Let the agent read text or the DOM, use OCR, click, type, and scroll. Enlarge the card and take over whenever you need to.</p></article>
+            <article class="tool-card" data-categories="web knowledge"><div class="tool-top"><span class="tool-symbol" aria-hidden="true">⌕</span><span>iOS + CLI</span></div><h3>Search and read the web</h3><p>Search with a configured provider, fetch pages as readable content, and download files. Choose your search service, including a SearXNG instance.</p></article>
+            <article class="tool-card" data-categories="build web"><div class="tool-top"><span class="tool-symbol" aria-hidden="true">⌘</span><span>iOS + CLI</span></div><h3>Look inside GitHub</h3><p>Read repositories, source files, PR diffs, commits, issues, releases, and CI logs. A configured token can grant access to private repositories. Built-in GitHub tools are read-only.</p></article>
+            <article class="tool-card" data-categories="knowledge build"><div class="tool-top"><span class="tool-symbol" aria-hidden="true">≋</span><span>iOS + CLI</span></div><h3>Your local knowledge index</h3><p>Index project docs, source, and supported documents with <code>vdb</code>. Retrieve passages with paths and line references. Default retrieval uses local TF-IDF + BM25, without downloading an embedding model.</p></article>
+            <article class="tool-card" data-categories="knowledge everyday"><div class="tool-top"><span class="tool-symbol" aria-hidden="true">▤</span><span>iOS + CLI</span></div><h3>Work with your files</h3><p>Read, search, write, and patch within your configured workspace. On iOS, browse and preview local or remote files, edit text, and upload or download documents.</p></article>
+            <article class="tool-card" data-categories="everyday"><div class="tool-top"><span class="tool-symbol" aria-hidden="true">▦</span><span>iOS</span></div><h3>Use your calendar</h3><p>Read upcoming events or a date range. Enable event creation separately when you want the assistant to add an event, using native Calendar permissions.</p></article>
+            <article class="tool-card" data-categories="everyday"><div class="tool-top"><span class="tool-symbol" aria-hidden="true">◷</span><span>iOS 26.1+</span></div><h3>Set an actual alarm</h3><p>Ask for a countdown, a one-time alarm, or a repeating weekday alarm through AlarmKit. List or cancel the alarms scheduled by PocketMai.</p></article>
+            <article class="tool-card" data-categories="everyday web"><div class="tool-top"><span class="tool-symbol" aria-hidden="true">☀</span><span>iOS + CLI</span></div><h3>Check the weather</h3><p>Get conditions and forecasts for a configured location. On iOS, opt into device location when it is useful.</p></article>
+            <article class="tool-card" data-categories="web everyday"><div class="tool-top"><span class="tool-symbol" aria-hidden="true">@</span><span>iOS + CLI</span></div><h3>Connect to Mastodon</h3><p>Search posts and read a user’s recent updates on your chosen instance. Posting and replies require you to enable writes and configure credentials.</p></article>
+            <article class="tool-card" data-categories="knowledge"><div class="tool-top"><span class="tool-symbol" aria-hidden="true">Aa</span><span>iOS · macOS CLI</span></div><h3>Read images and scans</h3><p>Extract text locally with Apple Vision. Import scanned pages without uploading them to an OCR service. Other CLI platforms can use an installed Tesseract.</p></article>
+            <article class="tool-card" data-categories="everyday knowledge"><div class="tool-top"><span class="tool-symbol" aria-hidden="true">✓</span><span>iOS + CLI</span></div><h3>Remember the project</h3><p>Keep project memory and persistent todos. Organize saved conversations by workspace, search past chats, and reopen the context you need.</p></article>
+            <article class="tool-card" data-categories="build"><div class="tool-top"><span class="tool-symbol" aria-hidden="true">+</span><span>iOS + CLI</span></div><h3>Add skills and MCP tools</h3><p>Create, edit, and import <code>SKILL.md</code> skills. Connect remote Streamable HTTP MCP servers; the CLI also supports local stdio servers and native plugins.</p></article>
+            <article class="tool-card" data-categories="build"><div class="tool-top"><span class="tool-symbol" aria-hidden="true">↔</span><span>CLI</span></div><h3>Serve and compose agents</h3><p>Use ACP agents as providers or subagents. Serve pmai over ACP or expose its selected agent through MCP, retaining its configured model, tools, and limits.</p></article>
+            <article class="tool-card" data-categories="build"><div class="tool-top"><span class="tool-symbol" aria-hidden="true">⑂</span><span>iOS + CLI</span></div><h3>Supervise the agent tree</h3><p>Inspect subagent transcripts, status, and usage. Give each agent a role, model, and tool set. Steer ongoing work or stop a branch.</p></article>
+            <article class="tool-card" data-categories="build knowledge"><div class="tool-top"><span class="tool-symbol" aria-hidden="true">↶</span><span>iOS + CLI</span></div><h3>Edit the context</h3><p>Edit, undo, trim, search, or compact a conversation with a focus. Use a separate compaction model and keep linked tool-call transactions valid.</p></article>
+          </div>
+          <p class="catalog-note">Platform labels describe PocketMai on iOS and the pmai CLI. The Android app preview has a smaller feature set, detailed below.</p>
+        </div>
+      </section>
+      <section class="control section-shell" id="control">
+        <div class="section-heading"><p class="kicker">Your resources, your rules</p><h2>Make the choices<br>that matter.</h2><p>Choose the model and the tools, then decide how much autonomy to give them.</p></div>
+        <div class="control-grid"><article><h3>Pick your inference.</h3><p>Use Apple Intelligence or MLX on supported Apple hardware, a local Ollama or llama.cpp endpoint, or an OpenAI-compatible API. Each agent can use a different provider.</p></article><article><h3>Grant access deliberately.</h3><p>Set per-resource file rules and per-tool policies, choose manual or model-assisted approval, and edit arguments before execution. Enforce run budgets and turn off internet tools when working offline.</p></article></div>
+        <div class="faq">
+          <details><summary>What can stay offline?</summary><p>With a local model and local tools selected, conversations, project memory, document retrieval, and supported OCR can run without an internet service. On-device speech requires supported, installed language assets. Remote providers, web tools, and remote hosts need their respective connections. The CLI’s airplane setting limits tools; it does not disconnect the selected inference provider.</p></details>
+          <details><summary>How far does the sandbox extend?</summary><p>Files and local document retrieval enforce workspace boundaries, path rules, and resolved symlink checks. iOS also runs within its app sandbox and system-granted resources. CLI shell commands run with the privileges of the pmai process and their own approval rules; file-tool policies are not an OS sandbox for shell commands.</p></details>
+          <details><summary>Can I move a chat without exporting my API keys?</summary><p>Yes. A <code>.pocketmai</code> conversation file includes the conversation and embedded attachments, including tool messages and nested agent chats. It excludes provider credentials and diagnostic reports. Transfer the file without internet using AirDrop or local storage, then continue with the receiving device’s configured provider.</p></details>
+          <details><summary>Are all features available on Android?</summary><p>The Android app is a native chat preview with provider and model setup, custom system prompts, streaming replies, saved conversations, and light/dark themes. Voice, tools, MCP, attachments, OCR, local inference, and remote host navigation are not in that app yet. The separate Android CLI provides the terminal agent feature set.</p></details>
+        </div>
+      </section>
+      <section class="download-section" id="get">
+        <div class="section-shell">
+          <div class="section-heading"><p class="kicker">Get started</p><h2>Pick your pocket.<br>Or your terminal.</h2><p>Open source, built with Swift. Bring the model provider that suits you.</p></div>
+          <div class="download-grid" id="platforms">
+            <article class="download-card ios-download"><img src="icon-192.png" alt="PocketMai app icon" width="56" height="56"><p class="kicker">Native iOS app</p><h3>PocketMai</h3><p>Voice, native tools, documents, WebXDC apps, and remote projects.</p><a class="button button-dark" href="https://apps.apple.com/es/app/pocketmai/id6764296742">Get it on the App Store ↗</a><small>iOS 18+ · some features need a newer OS or supported hardware.</small></article>
+            <article class="download-card cli-download" id="cli-install"><img src="pmai-logo-noai.png" alt="pmai CLI icon" width="56" height="56"><p class="kicker">macOS · Linux · Android</p><h3>pmai CLI</h3><p>A terminal agent with projects, shell tools, skills, MCP, ACP, and Vim integration.</p><div class="command-box"><code id="install-command">curl -fsSL https://raw.githubusercontent.com/trufae/pmai/main/www/install.sh | sh</code><button class="copy-button" type="button" data-copy aria-label="Copy CLI install command"><span data-copy-label>Copy</span></button></div><small>No root needed · checksummed release download.<br>Update an existing installation with <code>pmai -U</code>.</small><a class="inline-link" href="https://github.com/trufae/pmai/blob/main/MaiCore/README.md">CLI guide ↗</a></article>
+            <article class="download-card android-download"><span class="android-mark" aria-hidden="true">APK</span><p class="kicker">Native Android preview</p><h3>PocketMai for Android</h3><p>Provider setup, custom prompts, streaming chat, and saved history. A smaller app, growing with the same Swift core.</p><a class="button button-dark" href="downloads/PocketMai-Android.apk" download>Download Android APK ↓</a><small>Latest successful main-branch development build · arm64 + x86_64. Updating debug builds may require reinstalling.</small><div class="download-links"><a href="downloads/PocketMai-Android.apk.sha256">SHA-256</a><a href="https://github.com/trufae/pmai/blob/main/PocketMaiAndroid/README.md">Android guide ↗</a></div></article>
           </div>
         </div>
       </section>
+      <section class="closing section-shell"><img src="mai-logo.png" alt="" width="76" height="76"><h2>A little pocket.<br>A lot of agency.</h2><a class="text-link" href="https://github.com/trufae/pmai">Explore the source <span aria-hidden="true">↗</span></a></section>
     </main>
-
-    <footer class="site-footer">
-      <div class="footer-brand"><img src="mai-logo.png" alt=""><strong>PocketMai</strong></div>
-      <div class="footer-links">
-        <a href="https://github.com/trufae/pocketmai">GitHub</a>
-        <a href="https://github.com/trufae/pocketmai/releases">Releases</a>
-        <a href="https://github.com/trufae/pocketmai/blob/main/LICENSE.txt">License</a>
-      </div>
-      <p>Open source, built with Swift, powered by MaiCore. <span>© <b data-year>2026</b></span></p>
-    </footer>
+    <footer class="site-footer"><div class="footer-brand"><img src="mai-logo.png" alt="" width="36" height="36"><strong>PocketMai + pmai</strong></div><div class="footer-links"><a href="https://github.com/trufae/pmai">GitHub</a><a href="https://github.com/trufae/pmai/releases">Releases</a><a href="https://github.com/trufae/pmai/blob/main/LICENSE.txt">License</a></div><p>Built in Swift. Powered by MaiCore. <span>© <b data-year>2026</b></span></p></footer>
   </body>
 </html>

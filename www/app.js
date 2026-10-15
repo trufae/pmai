@@ -22,8 +22,26 @@
 
   nav?.querySelectorAll("a").forEach((link) => link.addEventListener("click", closeMenu));
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") closeMenu();
+    if (event.key === "Escape" && menuButton?.getAttribute("aria-expanded") === "true") {
+      closeMenu();
+      menuButton.focus();
+    }
   });
+
+  const filters = document.querySelectorAll("[data-tool-filters] [data-filter]");
+  const cards = document.querySelectorAll("[data-tool-grid] [data-categories]");
+  const toolCount = document.querySelector("[data-tool-count]");
+  filters.forEach((button) => button.addEventListener("click", () => {
+    const category = button.dataset.filter;
+    filters.forEach((filter) => filter.setAttribute("aria-pressed", String(filter === button)));
+    let count = 0;
+    cards.forEach((card) => {
+      const visible = category === "all" || card.dataset.categories.split(" ").includes(category);
+      card.hidden = !visible;
+      if (visible) count += 1;
+    });
+    if (toolCount) toolCount.textContent = `${count} ${count === 1 ? "capability" : "capabilities"}`;
+  }));
 
   const installCommand = document.querySelector("#install-command");
   const copyButton = document.querySelector("[data-copy]");
