@@ -1205,6 +1205,22 @@ options are needed. `/mcp enable ID` and `/mcp disable ID` reconnect or
 disconnect the complete server tool set and persist the state. Run `/mcp` for
 the full option list. The legacy `/mcps` spelling remains a list alias.
 
+MCP requests default to 180 seconds for both stdio and Streamable HTTP. Set
+`timeout` on an entry in `mcpServers`, or pass `--timeout SECONDS` when adding
+it, to override that server's deadline. For slow Mail automation, for example,
+set `"timeout": 300` on the `apple-mail-mcp` entry. Explicit timeouts remain
+unchanged when the default changes. PocketMai's Tool Call Timeout also defaults
+to 180 seconds and offers Continue, Skip, or Interrupt when it expires.
+
+Stdio requests send `notifications/cancelled` on timeout or client cancellation,
+except during initialization. Servers may ignore cancellation. If a request
+times out or its connection fails after sending progress messages or logs,
+the tool result retains that text, marked incomplete and with `isError: true`,
+for the next model turn. Partial output is bounded to 64 KiB per request;
+unfinished JSON frames are not treated as results. Stdio stderr is retained
+as diagnostics. A shortened terminal preview does not shorten the tool result
+sent to the model; `/set ui.toolResultLines all` shows the full result.
+
 `web_fetch` preserves plain text/source code and cleans only HTML. Its default
 page is at most 16,000 UTF-8 bytes; `max_bytes` can request up to 256,000 or
 `0` for metadata only. Downloads are capped at 16 MB while receiving data,

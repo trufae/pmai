@@ -361,7 +361,7 @@ public struct ConfiguredMCPServer: Codable, Equatable, Identifiable, Sendable {
       displayName: displayName,
       url: url,
       headers: resolvedHeaders,
-      timeout: timeout ?? 60,
+      timeout: timeout ?? MCPServerConfiguration.defaultTimeout,
       toolNamePrefix: toolNamePrefix,
       defaultApproval: defaultApproval)
   }
@@ -389,7 +389,7 @@ public struct ConfiguredMCPServer: Codable, Equatable, Identifiable, Sendable {
         args: args,
         environment: childEnvironment,
         workingDirectory: workingDirectory,
-        timeout: timeout ?? 60,
+        timeout: timeout ?? MCPServerConfiguration.defaultTimeout,
         toolNamePrefix: toolNamePrefix,
         defaultApproval: defaultApproval)
     }

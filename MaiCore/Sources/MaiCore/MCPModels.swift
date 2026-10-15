@@ -1,6 +1,8 @@
 import Foundation
 
 public struct MCPServerConfiguration: Codable, Equatable, Identifiable, Sendable {
+  public static let defaultTimeout: TimeInterval = 180
+
   public var id: String
   public var displayName: String
   public var url: URL
@@ -14,7 +16,7 @@ public struct MCPServerConfiguration: Codable, Equatable, Identifiable, Sendable
     displayName: String? = nil,
     url: URL,
     headers: [String: String] = [:],
-    timeout: TimeInterval = 60,
+    timeout: TimeInterval = Self.defaultTimeout,
     toolNamePrefix: String? = nil,
     defaultApproval: ToolApprovalRequirement = .confirm
   ) {
@@ -47,7 +49,7 @@ public struct MCPServerConfiguration: Codable, Equatable, Identifiable, Sendable
       args: [String] = [],
       environment: [String: String] = [:],
       workingDirectory: URL? = nil,
-      timeout: TimeInterval = 60,
+      timeout: TimeInterval = MCPServerConfiguration.defaultTimeout,
       toolNamePrefix: String? = nil,
       defaultApproval: ToolApprovalRequirement = .confirm
     ) {

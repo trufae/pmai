@@ -3010,7 +3010,7 @@ struct AppSettings: Codable, Equatable, Sendable {
   static let defaultTools: Set<BuiltInToolID> = []
   static let defaultMCPServers: Set<UUID> = []
   static let defaultMCPTools: Set<String> = []
-  static let defaultMCPRequestTimeoutSeconds = 60
+  static let defaultMCPRequestTimeoutSeconds = Int(MCPServerConfiguration.defaultTimeout)
   static let mcpRequestTimeoutRange = 5...300
   static let defaultMaxToolCallsPerTurn = 50
   static let maxToolCallsPerTurnRange = 1...100

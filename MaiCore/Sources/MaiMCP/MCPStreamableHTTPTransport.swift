@@ -160,11 +160,16 @@ public enum MCPStreamableHTTPTransport {
     arguments: JSONValue,
     session: URLSession = .shared
   ) async throws -> ToolOutput {
-    let result = try await sendResult(
-      server: server,
-      method: "tools/call",
-      params: ["name": .string(name), "arguments": arguments],
-      session: session)
+    let result: JSONValue
+    do {
+      result = try await sendResult(
+        server: server,
+        method: "tools/call",
+        params: ["name": .string(name), "arguments": arguments],
+        session: session)
+    } catch let error as MCPPartialOutputError {
+      return error.toolOutput
+    }
     let content = try (result.objectValue?["content"]?.arrayValue ?? []).map(mcpContent)
     return ToolOutput(
       content: content.isEmpty ? [.text("(no output)")] : content,
@@ -186,6 +191,9 @@ public enum MCPStreamableHTTPTransport {
   }
 
   public static func isAvailabilityFailure(_ error: Error) -> Bool {
+    if let error = error as? MCPPartialOutputError {
+      return isAvailabilityFailure(error.underlying)
+    }
     if error is URLError {
       return true
     }
@@ -377,8 +385,17 @@ public enum MCPStreamableHTTPTransport {
       request.setValue(sessionID, forHTTPHeaderField: sessionIDHeader)
     }
     request.timeoutInterval = server.timeout
+    let requestID = isNotification ? nil : Int.random(in: 1...Int(Int32.max))
+    var params = params
+    if let requestID, method == "tools/call" || method == "resources/read" {
+      var values = params ?? [:]
+      var meta = values["_meta"]?.objectValue ?? [:]
+      meta["progressToken"] = .integer(requestID)
+      values["_meta"] = .object(meta)
+      params = values
+    }
     let body = JSONRPCRequest(
-      id: isNotification ? nil : Int.random(in: 1...Int(Int32.max)),
+      id: requestID,
       method: method,
       params: params)
     request.httpBody = try JSONEncoder().encode(body)
@@ -468,35 +485,42 @@ public enum MCPStreamableHTTPTransport {
   ) async throws -> Data {
     let deadline = Date().addingTimeInterval(timeout)
     var currentBytes = bytes
-    while true {
-      let remaining = deadline.timeIntervalSinceNow
-      guard remaining > 0 else { throw URLError(.timedOut) }
-      let outcome = try await consumeEventStream(
-        currentBytes,
-        expectedResponseID: expectedResponseID,
-        server: server,
-        sessionID: sessionID,
-        protocolVersion: protocolVersion,
-        timeout: remaining,
-        session: session)
-      switch outcome {
-      case .response(let data):
-        return data
-      case .reconnect(let eventID, let retryMilliseconds):
-        let delay = TimeInterval(retryMilliseconds ?? 1_000) / 1_000
-        let remainingAfterDelay = deadline.timeIntervalSinceNow - delay
-        guard remainingAfterDelay > 0 else { throw URLError(.timedOut) }
-        if delay > 0 {
-          try await Task.sleep(for: .seconds(delay))
-        }
-        currentBytes = try await resumeEventStream(
+    var output = MCPPartialOutput()
+    do {
+      while true {
+        let remaining = deadline.timeIntervalSinceNow
+        guard remaining > 0 else { throw URLError(.timedOut) }
+        let outcome = try await consumeEventStream(
+          currentBytes,
+          expectedResponseID: expectedResponseID,
           server: server,
-          eventID: eventID,
           sessionID: sessionID,
           protocolVersion: protocolVersion,
-          timeout: remainingAfterDelay,
-          session: session)
+          timeout: remaining,
+          session: session,
+          output: &output)
+        switch outcome {
+        case .response(let data):
+          return data
+        case .reconnect(let eventID, let retryMilliseconds):
+          let delay = TimeInterval(retryMilliseconds ?? 1_000) / 1_000
+          let remainingAfterDelay = deadline.timeIntervalSinceNow - delay
+          guard remainingAfterDelay > 0 else { throw URLError(.timedOut) }
+          if delay > 0 {
+            try await Task.sleep(for: .seconds(delay))
+          }
+          currentBytes = try await resumeEventStream(
+            server: server,
+            eventID: eventID,
+            sessionID: sessionID,
+            protocolVersion: protocolVersion,
+            timeout: remainingAfterDelay,
+            session: session)
+        }
       }
+    } catch {
+      try Task.checkCancellation()
+      throw output.preserving(error)
     }
   }
 
@@ -507,14 +531,33 @@ public enum MCPStreamableHTTPTransport {
     sessionID: String?,
     protocolVersion: String,
     timeout: TimeInterval,
-    session: URLSession
+    session: URLSession,
+    output: inout MCPPartialOutput
   ) async throws -> MCPEventStreamOutcome {
     var parser = MCPServerSentEventParser()
+    var line = Data()
+    var afterCarriageReturn = false
     var lastEventID: String?
     var retryMilliseconds: Int?
     do {
-      for try await line in bytes.lines {
-        guard let event = try parser.consume(line: line) else { continue }
+      // AsyncBytes.lines can omit empty lines on Darwin, but SSE uses them
+      // to delimit events. Preserve LF, CRLF, and CR framing explicitly.
+      for try await byte in bytes {
+        if byte == 0x0A, afterCarriageReturn {
+          afterCarriageReturn = false
+          continue
+        }
+        afterCarriageReturn = byte == 0x0D
+        guard byte == 0x0A || byte == 0x0D else {
+          guard line.count < 16 * 1_024 * 1_024 else {
+            throw MCPStreamableHTTPError.responseTooLarge
+          }
+          line.append(byte)
+          continue
+        }
+        let text = String(decoding: line, as: UTF8.self)
+        line.removeAll(keepingCapacity: true)
+        guard let event = try parser.consume(line: text) else { continue }
         if let eventID = event.id { lastEventID = eventID.isEmpty ? nil : eventID }
         if let retry = event.retryMilliseconds { retryMilliseconds = retry }
         if let response = try await processEvent(
@@ -524,10 +567,14 @@ public enum MCPStreamableHTTPTransport {
           sessionID: sessionID,
           protocolVersion: protocolVersion,
           timeout: timeout,
-          session: session)
+          session: session,
+          output: &output)
         {
           return .response(response)
         }
+      }
+      if !line.isEmpty {
+        _ = try parser.consume(line: String(decoding: line, as: UTF8.self))
       }
       if let event = try parser.finish() {
         if let eventID = event.id { lastEventID = eventID.isEmpty ? nil : eventID }
@@ -539,7 +586,8 @@ public enum MCPStreamableHTTPTransport {
           sessionID: sessionID,
           protocolVersion: protocolVersion,
           timeout: timeout,
-          session: session)
+          session: session,
+          output: &output)
         {
           return .response(response)
         }
@@ -565,12 +613,24 @@ public enum MCPStreamableHTTPTransport {
     sessionID: String?,
     protocolVersion: String,
     timeout: TimeInterval,
-    session: URLSession
+    session: URLSession,
+    output: inout MCPPartialOutput
   ) async throws -> Data? {
     if event.isLegacyEndpointEvent {
       throw MCPLegacySSETransportError()
     }
     guard let message = try event.jsonRPCMessage() else { return nil }
+    if let method = message.method, message.id == nil,
+      let envelope = try? JSONDecoder().decode(JSONValue.self, from: Data(event.data.utf8)),
+      let params = envelope.objectValue?["params"]?.objectValue
+    {
+      if method != "notifications/progress"
+        || params["progressToken"] == .integer(expectedResponseID)
+      {
+        output.record(method: method, params: params)
+      }
+      return nil
+    }
     if let method = message.method, let id = message.id {
       try await sendServerRequestResponse(
         server: server,
@@ -818,6 +878,9 @@ public enum MCPStreamableHTTPTransport {
   }
 
   private static func isInvalidSessionID(_ error: Error) -> Bool {
+    if let error = error as? MCPPartialOutputError {
+      return isInvalidSessionID(error.underlying)
+    }
     if let error = error as? MCPHTTPError {
       return error.isInvalidSessionID
     }

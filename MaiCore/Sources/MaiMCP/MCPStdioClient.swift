@@ -124,9 +124,14 @@
     }
 
     public func callTool(name: String, arguments: JSONValue) async throws -> ToolOutput {
-      let result = try await transport.sendResult(
-        method: "tools/call",
-        params: ["name": .string(remoteName(for: name)), "arguments": arguments])
+      let result: JSONValue
+      do {
+        result = try await transport.sendResult(
+          method: "tools/call",
+          params: ["name": .string(remoteName(for: name)), "arguments": arguments])
+      } catch let error as MCPPartialOutputError {
+        return error.toolOutput
+      }
       let content = try (result.objectValue?["content"]?.arrayValue ?? []).map(Self.mcpContent)
       return ToolOutput(
         content: content.isEmpty ? [.text("(no output)")] : content,
@@ -284,6 +289,12 @@
   private actor MCPStdioTransport {
     private static let maximumMessageSize = 16 * 1_024 * 1_024
 
+    private struct PendingRequest {
+      let method: String
+      let continuation: CheckedContinuation<JSONValue, Error>
+      var output = MCPPartialOutput()
+    }
+
     private let configuration: MCPStdioServerConfiguration
     private var process: Process?
     private var inputHandle: FileHandle?
@@ -291,7 +302,7 @@
     private var errorHandle: FileHandle?
     private var outputBuffer = Data()
     private var errorBuffer = Data()
-    private var pending: [Int: CheckedContinuation<JSONValue, Error>] = [:]
+    private var pending: [Int: PendingRequest] = [:]
     private var timeouts: [Int: Task<Void, Never>] = [:]
     private var nextRequestID = 1
     private var generation = 0
@@ -307,16 +318,24 @@
       if let failure { throw failure }
       let id = nextRequestID
       nextRequestID += 1
+      let requestGeneration = generation
       var object: [String: JSONValue] = [
         "jsonrpc": .string("2.0"),
         "id": .integer(id),
         "method": .string(method),
       ]
-      if let params { object["params"] = .object(params) }
+      var params = params ?? [:]
+      // Ask for request-scoped progress so concurrent calls cannot share output.
+      if method == "tools/call" || method == "resources/read" {
+        var meta = params["_meta"]?.objectValue ?? [:]
+        meta["progressToken"] = .integer(id)
+        params["_meta"] = .object(meta)
+      }
+      if !params.isEmpty { object["params"] = .object(params) }
 
       return try await withTaskCancellationHandler {
         try await withCheckedThrowingContinuation { continuation in
-          pending[id] = continuation
+          pending[id] = PendingRequest(method: method, continuation: continuation)
           do {
             try write(.object(object))
           } catch {
@@ -327,11 +346,11 @@
           timeouts[id] = Task { [weak self] in
             try? await Task.sleep(for: .seconds(timeout))
             guard !Task.isCancelled else { return }
-            await self?.requestTimedOut(id: id, method: method)
+            await self?.requestTimedOut(id: id, generation: requestGeneration)
           }
         }
       } onCancel: {
-        Task { [weak self] in await self?.cancelRequest(id: id) }
+        Task { [weak self] in await self?.cancelRequest(id: id, generation: requestGeneration) }
       }
     }
 
@@ -489,7 +508,19 @@
       }
 
       if let method = object["method"]?.stringValue {
-        guard let id = object["id"] else { return }
+        guard let id = object["id"] else {
+          let params = object["params"]?.objectValue ?? [:]
+          if method == "notifications/progress", let id = params["progressToken"]?.intValue {
+            pending[id]?.output.record(method: method, params: params)
+          } else if method == "notifications/message", pending.count == 1,
+            let id = pending.keys.first
+          {
+            // Logging notifications have no request ID; only attribute them
+            // when exactly one request is in flight.
+            pending[id]?.output.record(method: method, params: params)
+          }
+          return
+        }
         var response: [String: JSONValue] = ["jsonrpc": .string("2.0"), "id": id]
         if method == "ping" {
           response["result"] = .object([:])
@@ -542,22 +573,36 @@
         generation: generation)
     }
 
-    private func requestTimedOut(id: Int, method: String) {
-      guard pending[id] != nil else { return }
+    private func requestTimedOut(id: Int, generation: Int) {
+      guard generation == self.generation, let request = pending[id] else { return }
+      notifyCancellation(
+        id: id, reason: "Request timed out after \(configuration.timeout) seconds.")
       finish(
         id: id,
-        result: .failure(MCPStdioTransportError.timedOut(method: method, stderr: stderrSnippet)))
+        result: .failure(
+          MCPStdioTransportError.timedOut(method: request.method, stderr: stderrSnippet)))
     }
 
-    private func cancelRequest(id: Int) {
-      guard pending[id] != nil else { return }
+    private func cancelRequest(id: Int, generation: Int) {
+      guard generation == self.generation, pending[id] != nil else { return }
+      notifyCancellation(id: id, reason: "Request cancelled by the client.")
       finish(id: id, result: .failure(CancellationError()))
     }
 
+    private func notifyCancellation(id: Int, reason: String) {
+      guard pending[id]?.method != "initialize", process?.isRunning == true else { return }
+      try? write(
+        .object([
+          "jsonrpc": .string("2.0"),
+          "method": .string("notifications/cancelled"),
+          "params": .object(["requestId": .integer(id), "reason": .string(reason)]),
+        ]))
+    }
+
     private func finish(id: Int, result: Result<JSONValue, Error>) {
-      guard let continuation = pending.removeValue(forKey: id) else { return }
+      guard let request = pending.removeValue(forKey: id) else { return }
       timeouts.removeValue(forKey: id)?.cancel()
-      continuation.resume(with: result)
+      request.continuation.resume(with: result.mapError { request.output.preserving($0) })
     }
 
     private func fail(with error: Error, generation: Int) {
@@ -569,11 +614,13 @@
     }
 
     private func failPending(with error: Error) {
-      let continuations = pending.values
+      let requests = pending.values
       pending.removeAll()
       for timeout in timeouts.values { timeout.cancel() }
       timeouts.removeAll()
-      for continuation in continuations { continuation.resume(throwing: error) }
+      for request in requests {
+        request.continuation.resume(throwing: request.output.preserving(error))
+      }
     }
 
     private var stderrSnippet: String {
@@ -599,11 +646,11 @@
       case .processExited(let status, let stderr):
         stderr.isEmpty
           ? "MCP process exited with status \(status)."
-          : "MCP process exited with status \(status): \(stderr)"
+          : "MCP process exited with status \(status).\n[stderr diagnostics]\n\(stderr)"
       case .timedOut(let method, let stderr):
         stderr.isEmpty
           ? "MCP stdio request '\(method)' timed out."
-          : "MCP stdio request '\(method)' timed out: \(stderr)"
+          : "MCP stdio request '\(method)' timed out.\n[stderr diagnostics]\n\(stderr)"
       case .invalidMessage(let message):
         message
       case .closed:

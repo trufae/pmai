@@ -9,6 +9,103 @@ import Testing
 
 @testable import MaiTestSupport
 
+@Test("HTTP MCP defaults apply to legacy configuration and preserve explicit timeouts")
+func mcpDefaultTimeoutConfiguration() throws {
+  let url = try #require(URL(string: "https://mcp-timeout.example.test/mcp"))
+  #expect(MCPServerConfiguration(id: "direct", url: url).timeout == 180)
+  var configured = try JSONDecoder().decode(
+    ConfiguredMCPServer.self,
+    from: Data(#"{"id":"legacy","url":"https://mcp-timeout.example.test/mcp"}"#.utf8))
+  #expect(try configured.resolved(environment: [:]).timeout == 180)
+  configured.timeout = 300
+  #expect(try configured.resolved(environment: [:]).timeout == 300)
+}
+
+@Test(
+  "HTTP MCP retains partial progress on failure and returns completed results",
+  arguments: ["timeout", "ended", "complete"])
+func mcpHTTPPartialOutput(scenario: String) async throws {
+  let timesOut = scenario == "timeout"
+  let completes = scenario == "complete"
+  let host = "partial-\(scenario).example.test"
+  StubURLProtocol.install(forHost: host) { request in
+    let body = try jsonObject(try requestBodyData(request))
+    let method = try #require(body["method"] as? String)
+    let id = body["id"] as? Int
+    switch method {
+    case "initialize":
+      return try httpResponse(
+        request, contentType: "application/json",
+        body: rpc(
+          id: id,
+          result: #"{"protocolVersion":"2025-11-25","serverInfo":{"name":"Partial fixture"}}"#))
+    case "notifications/initialized":
+      return try httpResponse(request, status: 202, contentType: "application/json", body: "")
+    case "tools/call":
+      let params = try #require(body["params"] as? [String: Any])
+      let meta = try #require(params["_meta"] as? [String: Any])
+      #expect(meta["progressToken"] as? Int == id)
+      let progress = """
+        data: {"jsonrpc":"2.0","method":"notifications/progress","params":{"progressToken":\(id ?? 0),"progress":1,"message":"Invoice INV-42: EUR 19.00"}}
+
+        data: {"jsonrpc":"2.0","method":"notifications/progress","params":{"progressToken":-1,"progress":1,"message":"unrelated request"}}
+
+        """
+      var stream = (timesOut ? "id: progress-event\nretry: 5000\n" : "") + progress + "\n"
+      if completes {
+        stream += "data: " + rpc(
+          id: id, result: #"{"content":[{"type":"text","text":"completed result"}]}"#) + "\n\n"
+        stream = stream.replacingOccurrences(of: "\n", with: "\r\n")
+      } else if !timesOut {
+        stream = stream.replacingOccurrences(of: "\n", with: "\r")
+      }
+      return try httpResponse(
+        request, contentType: "text/event-stream",
+        body: stream)
+    default:
+      throw TestError.missingResponse
+    }
+  }
+  defer { StubURLProtocol.reset(host: host) }
+  let client = MCPClient(
+    configuration: MCPServerConfiguration(
+      id: host, url: try #require(URL(string: "https://\(host)/mcp")), timeout: 1),
+    session: stubSession())
+  do {
+    let output = try await client.callTool(name: "lookup", arguments: .object([:]))
+    if completes {
+      #expect(!output.isError)
+      #expect(output.text == "completed result")
+      #expect(output.structuredContent == nil)
+      await client.close()
+      return
+    }
+    #expect(output.isError)
+    #expect(output.structuredContent?.objectValue?["partial"] == .bool(true))
+    #expect(output.text.contains("Invoice INV-42: EUR 19.00"))
+    #expect(output.text.contains("Incomplete MCP output"))
+    #expect(!output.text.contains("unrelated request"))
+  } catch {
+    await client.close()
+    throw error
+  }
+  await client.close()
+}
+
+@Test("MCP partial output is bounded and explicit cancellation stays a cancellation")
+func mcpPartialOutputBounds() throws {
+  var output = MCPPartialOutput()
+  output.record(
+    method: "notifications/progress",
+    params: [
+      "message": .string(String(repeating: "invoice ", count: 20_000))
+    ])
+  let failure = try #require(output.preserving(URLError(.timedOut)) as? MCPPartialOutputError)
+  #expect(failure.toolOutput.text.utf8.count < 66_000)
+  #expect(failure.toolOutput.text.contains("partial output truncated"))
+  #expect(output.preserving(CancellationError()) is CancellationError)
+}
+
 @Test("MCP registration enables all server tools and ignores stale tool references")
 func mcpToolsAreEnabledAsAGroup() async throws {
   let provider = ScriptedProvider(responses: [
