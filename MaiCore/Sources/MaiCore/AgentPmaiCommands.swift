@@ -233,7 +233,7 @@ public struct MaiPmaiRunTool: AgentTool {
         + "person types at the pmai prompt, including its leading slash. Use it to read and change "
         + "this installation: /set for settings (effort, limits, tool approval, colors), /models "
         + "and /model for the model, /providers and /provider for chat providers and their base "
-        + "URLs, /tools for which tools an agent may call, /mcp to list, add or enable MCP servers, "
+        + "URLs, /tools for which tools an agent may call, /mcp to list, add, remove, enable or disable MCP servers, "
         + "/theme to list, apply, save or customize a color theme, /agents for saved definitions, /jobs for processes, /stats "
         + "for token use. Example: pmai_run with command \"/set tool.aproval smart\". Changes are "
         + "saved and take effect from the next turn, so run one that changes something only after "

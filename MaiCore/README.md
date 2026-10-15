@@ -170,7 +170,7 @@ loading its model may return HTTP 503; retry after it is ready.
 Use `/chat list` for a compact indexed history or `/chat log` for the complete
 structured transcript, including attachments, reasoning, tool calls, tool
 results, and structured MCP output. The current in-memory conversation can be
-changed at any point with `/chat edit INDEX TEXT`, `/chat remove INDEX`,
+changed at any point with `/chat edit INDEX TEXT`, `/chat del INDEX`,
 `/chat undo [INDEX]`, `/chat trim INDEX`, `/chat compact [FOCUS]`, and `/chat
 clear`. Positive message indexes are 1-based; negative indexes count back from
 the end, so `-1` selects the last message. Compaction accepts optional guidance
@@ -193,13 +193,13 @@ with `TEXT` where its `$ARGUMENTS` stands, or after it; for a system prompt it
 switches the agent to that prompt and then sends `TEXT`. User prompts are
 reusable messages kept under `prompts.user`: `/prompts add NAME TEXT`,
 `/prompts edit NAME` (or `/edit user NAME`), `/prompts show NAME`, and
-`/prompts rm NAME` manage them, and one named like a builtin prompt — `goal`,
+`/prompts del NAME` manage them, and one named like a builtin prompt — `goal`,
 `newapp`, `tldr`, `followup`, shared with the iOS app — replaces it. `/prompt`
 shows the active agent's system prompt and `/prompt NAME` points that agent at
 another one.
 `/prompt add NAME TEXT` creates a prompt from one line, `/prompt edit [NAME]`
 edits or creates one in `$EDITOR`, `/prompt show NAME` prints one, and
-`/prompt rm NAME` drops an unused one. Agents store the association in
+`/prompt del NAME` drops an unused one. Agents store the association in
 `systemPrompt`; several agents may share a prompt, and editing it updates all of
 them. Older inline `instructions` are migrated to a same-named prompt
 automatically. `doc/prompts.md` walks through registering prompts and agents.
@@ -406,7 +406,7 @@ project's chat directory, and `--projects` prints the project list without
 starting the REPL. A directory that cannot be written keeps its files under
 `~/.pmai/projects/<id>/` instead. `/project` shows the open project,
 `/project list` shows them all, `/project name` and `/project tint` set the
-name and the prompt color, and `/project forget` drops an entry from the
+name and the prompt color, and `/project del` drops an entry from the
 list. When the default home is in use, chats found in the pre-project
 `~/.config/pmai/chats.json` are imported into the first project opened
 afterwards and the file is renamed `chats.json.imported`.
@@ -456,7 +456,7 @@ goes to an older chat and `/chat next` to a newer one, wrapping at either end.
 `/chat info` shows when a chat started and was last updated, `/chat archive`
 moves a chat out of the active list (archiving the current chat starts a new
 one), `/chat unarchive` brings it back, and `new`, `rename`, and `close` manage
-chats, while `messages`, `log`, `edit`, `remove`, `undo`, `trim`, and `clear`
+chats, while `messages`, `log`, `edit`, `del`, `undo`, `trim`, and `clear`
 operate on the active transcript. Tab completes commands, chat selectors,
 agents, and providers: one match is typed out, and several open a rotating
 menu on the status line above the prompt instead of printing into the chat.
@@ -467,7 +467,7 @@ Any other key closes it and restores the status line.
 `/agent add NAME MODEL GROUPS PROMPT [PROVIDER [BASE_URL]]`
 saves a reusable agent in one line from a model, comma-separated tool groups,
 and a named system prompt; `/agent tools|model|prompt|provider ID VALUE` change
-one saved agent, `/agent remove ID` drops one, and `/edit agent [ID]` opens one
+one saved agent, `/agent del ID` drops one, and `/edit agent [ID]` opens one
 as JSON. `/provider`, `/model`, and `/set tool.proxy` save changes back to the
 current chat's agent in the shared configuration. Selecting a provider or model
 also makes that agent the default for new chats and runs.
@@ -491,7 +491,7 @@ details when needed. A message typed while a turn runs is queued and joins the
 conversation at the agent's next model turn —
 after the tool results it is about to read — so a running agent can be steered
 without stopping it. `/queue` lists what is waiting, `/queue push TEXT` adds
-without sending, `/queue pop` drops the newest, and `/queue drop` drops all.
+without sending, `/queue pop` drops the newest, and `/queue del` drops all.
 `/export markdown|html|json|debug|epub|docx [PATH]` saves the chat as a file using
 the same writers PocketMai uses (`MaiDocuments`). Tool calls, tool results, and
 thinking are omitted from readable documents by default.
@@ -564,7 +564,7 @@ use and by requests (`tokens / (seconds × requests)`, printed as `tok/s/req`).
 `Ranking` sums each model's position in the three measured categories, so the
 lowest score wins.
 `/stats show PROVIDER[:MODEL]` prints every fact recorded about a model or a
-provider, `/stats rm PROVIDER[:MODEL]` drops one row or a whole provider,
+provider, `/stats del PROVIDER[:MODEL]` drops one row or a whole provider,
 `/stats reset` forgets everything, and `/stats path` prints the file.
 PocketMai's Statistics screen is built on the same `ModelUsageLedger` and
 `ModelUsageReport`, so both hosts rank, color, and describe models alike.
@@ -995,7 +995,7 @@ tools too.
 /todo                      show the list, numbered
 /todo add TEXT             append one pending item
 /todo done NUMBER|TEXT     mark an item done
-/todo remove NUMBER|TEXT   drop an item; the ones after it move up
+/todo del NUMBER|TEXT      drop an item; the ones after it move up
 /todo edit                 edit the list in $EDITOR
 /todo clear                remove every item
 /todo path                 print where the file lives
@@ -1013,7 +1013,7 @@ PocketMai use MaiCore's Swift engine and the same `MaiStandardTools` tool.
 /vdb query how are refresh tokens renewed?
 /vdb status
 /tools enable vdb
-/vdb remove docs/old-guide.md
+/vdb del docs/old-guide.md
 /vdb clear
 ```
 
@@ -1099,7 +1099,7 @@ relative to the workspace.
 /skills add NAME "DESCRIPTION" "PROMPT"  create a skill directly
 /skills edit NAME          edit SKILL.md (same as /edit skill NAME; creates new names)
 /skills import ZIP_OR_FOLDER  import a skill and its supporting files
-/skills remove NAME        delete the skill folder and its supporting files
+/skills del NAME           delete the skill folder and its supporting files
 /skills enable NAME|all    offer a skill, or every skill, to the current agent
 /skills disable NAME|all   disable a skill (or every skill) for this agent
 /skills prompt NAME [TEXT] send an enabled skill's instructions, then TEXT
@@ -1202,8 +1202,10 @@ Add and connect a stdio server without editing JSON using
 `/mcp add COMMAND [ARG ...]`; the command basename becomes its ID. Use
 `/mcp add --name ID [options] -- COMMAND [ARG ...]` when a different ID or
 options are needed. `/mcp enable ID` and `/mcp disable ID` reconnect or
-disconnect the complete server tool set and persist the state. Run `/mcp` for
-the full option list. The legacy `/mcps` spelling remains a list alias.
+disconnect the complete server tool set and persist the state. `/mcp del ID`
+disconnects the server and deletes its saved configuration and per-agent tool
+references. Run `/help mcp` for the full option list. The legacy `/mcps` spelling
+remains a list alias.
 
 MCP requests default to 180 seconds for both stdio and Streamable HTTP. Set
 `timeout` on an entry in `mcpServers`, or pass `--timeout SECONDS` when adding
@@ -1285,7 +1287,7 @@ The workspace is otherwise allowed by default.
 Use `/path allow PATH` (or `add`) for an additional file or directory,
 `/path deny PATH` to block a path even inside the workspace, and
 `/path ask PATH` to require confirmation each time it is accessed.
-`/path remove PATH` removes an explicit rule or grant; inherited workspace and
+`/path del PATH` removes an explicit rule or grant; inherited workspace and
 parent permissions still apply. Denials override prompts and grants, and prompts
 override grants. Directories include descendants; file grants cover just that
 file. Relative paths resolve from the Files workspace, and quoted paths support

@@ -86,7 +86,7 @@ def main():
 
             output = run_repl(command, ['/pwd', '/path', '/help path',
                 '/path allow "../external dir"', '/path deny private', '/path ask .',
-                '/path outside deny', '/path', '/path remove .', '/path remove "../external dir"',
+                '/path outside deny', '/path', '/path del .', '/path del "../external dir"',
                 '/cd new-cwd', '/path'], cwd=root, env=env)
             assert canonical(f'Current directory: {root}') in canonical(output), output
             assert canonical(f'allow {external}') in canonical(output) and canonical(f'deny {root / "private"}') in canonical(output), output
@@ -103,8 +103,8 @@ def main():
                        for rule in settings['rules']), settings
 
             # Saved edits survive restarts; removing all defaults does not reseed them.
-            output = run_repl(command, ['/path', '/path hidden deny', '/path remove /etc',
-                '/path remove ~/.ssh', '/path remove ~/.config', '/path remove private'], cwd=root, env=env)
+            output = run_repl(command, ['/path', '/path hidden deny', '/path del /etc',
+                '/path del ~/.ssh', '/path del ~/.config', '/path del private'], cwd=root, env=env)
             assert canonical(f'deny {root / "private"}') in canonical(output), output
             assert 'Outside allowed paths: deny' in output, output
             output = run_repl(command, ['/path'], cwd=root, env=env)
@@ -213,7 +213,7 @@ def main():
                 expect('GRANT FINISHED')
                 send('/path')
                 expect(f'allow {base / "outside.txt"} [granted from prompt]')
-                send('/path remove ' + str(base / 'outside.txt'))
+                send('/path del ' + str(base / 'outside.txt'))
                 expect('Removed explicit Files rule/grant')
                 send('/exit')
                 deadline = time.monotonic() + 10

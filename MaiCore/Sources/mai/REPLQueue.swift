@@ -112,7 +112,7 @@ extension MaiCLI {
 
   /// `/queue` shows and edits the messages waiting for the next model turn of
   /// any agent: `push` adds one without sending it, `pop` drops the newest,
-  /// `drop` drops them all. A pid narrows `pop` and `drop` to one agent.
+  /// `del` drops them all. A pid narrows `pop` and `del` to one agent.
   static func handleQueueCommand(
     _ argument: String,
     defaultAddress: REPLMessageAddress,
@@ -143,7 +143,7 @@ extension MaiCLI {
         await terminal.line("  \(index + 1). agent#\(entry.pid.rawValue) \(name)\(state)  \(text)")
       }
       await terminal.line(
-        "Each is delivered at its agent's next model turn. /queue pop drops the newest, /queue drop drops all."
+        "Each is delivered at its agent's next model turn. /queue pop drops the newest, /queue del drops all."
       )
 
     case "push", "add":
@@ -179,10 +179,10 @@ extension MaiCLI {
         "Dropped from agent#\(dropped.pid.rawValue): \(AgentProcessInfo.oneLine(dropped.message.text, limit: 100))"
       )
 
-    case "drop", "flush", "clear":
+    case "del":
       let pid = rest.isEmpty ? nil : focusTarget(rest).map { $0.pid(main: main) }
       if !rest.isEmpty, pid == nil {
-        await terminal.line("Usage: /queue drop [PID]")
+        await terminal.line("Usage: /queue del [PID]")
         return
       }
       let dropped = await supervisor.clearQueuedMessages(for: pid)
@@ -213,7 +213,7 @@ extension MaiCLI {
       /queue push @2,3 TEXT  Queue the same TEXT for several agents (also @2 @3)
       /queue push @* TEXT    Queue TEXT for every active agent
       /queue pop [PID]       Drop the newest queued message (of one agent)
-      /queue drop [PID]      Drop every queued message (of one agent)
+      /queue del [PID]      Drop every queued message (of one agent)
 
     Ctrl+C keeps undelivered messages. /continue submits the chat queue.
     If you type a new message with a nonempty queue, choose submit (queue

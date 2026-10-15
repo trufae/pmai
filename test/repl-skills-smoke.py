@@ -112,8 +112,8 @@ path.write_text(text)
                 '/skills import "folder import"',
                 '/edit skill editable', '/skills edit editable',
                 '/skills show editable', 'Check managed skills',
-                '/skills remove managed', '/skills rm zipped', '/skills delete folder-skill',
-                '/skills remove editable', '/skills remove --user personal',
+                '/skills del managed', '/skills del zipped', '/skills del folder-skill',
+                '/skills del editable', '/skills del --user personal',
             ], cwd=root, env=dict(env, PWD=str(root), EDITOR=f'{sys.executable} "{editor}"'), split=True)
             assert 'Summarize notes' in responses[1] and 'Write bullets' in responses[1], responses
             assert 'Edited description' in responses[7] and 'Instructions v2.' in responses[7], responses

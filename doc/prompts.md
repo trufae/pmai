@@ -57,7 +57,7 @@ are moved.
 /prompt show NAME            print one prompt
 /prompt add NAME TEXT        create a prompt from one line (/prompt set NAME TEXT replaces)
 /prompt edit [NAME]          edit or create one in $EDITOR (current agent's when omitted)
-/prompt rm NAME              drop an unused prompt
+/prompt del NAME             drop an unused prompt
 /prompt use NAME             point the current agent at a prompt (/prompt NAME does the same)
 /agent prompt ID NAME        point another saved agent at a prompt
 ```
@@ -101,7 +101,7 @@ MaiCore ships four **builtin prompts** — `goal`, `newapp`, `tldr`, and
 `followup` — that are available without configuration, in pmai and in the
 iOS app alike. A user prompt with the same name replaces the builtin one;
 `/edit user tldr` starts from the builtin text, which is how one is adjusted,
-and `/prompts rm tldr` brings the builtin back.
+and `/prompts del tldr` brings the builtin back.
 
 `$NAME` looks the name up in this order: system prompts, user prompts,
 builtin prompts, then **skills** (`doc`: `/skills`), which are sent whether
@@ -116,10 +116,10 @@ $NAME [TEXT]                 send prompt or skill NAME with TEXT (/prompts NAME 
 /prompts show NAME           print what NAME is or sends
 /prompts add NAME TEXT       create a user prompt from one line (set replaces it)
 /prompts edit NAME           edit or create one in $EDITOR (/edit user NAME is the same)
-/prompts rm NAME             drop a user prompt
+/prompts del NAME            drop a user prompt
 ```
 
-The words `list`, `show`, `add`, `set`, `edit`, `rm`, and `help` are
+The words `list`, `show`, `add`, `set`, `edit`, `del`, and `help` are
 subcommands of `/prompts`, so a prompt with one of those names is sent with
 `/prompts show`-style commands only. A message that must start with `$` can
 be sent inside a `<<EOF` heredoc.
@@ -178,7 +178,7 @@ without clearing the conversation.
 /agent provider ID PROVIDER  move it to a configured provider
 /agents describe ID TEXT     set the purpose a delegating model reads to pick it
 /agents enable|disable ID    park it without deleting it
-/agent remove ID             drop it; subagent lists and the default agent follow
+/agent del ID                drop it; subagent lists and the default agent follow
 /edit agent [ID]             everything else, as JSON in $EDITOR
 ```
 
@@ -190,8 +190,8 @@ the text switches to that prompt; naming a prompt that does not exist creates
 it from the text. Limits, `subagentNames`, delegation, streaming, and
 generation options are edited there too.
 
-`/agent remove` refuses the current chat's agent — switch first — and says
-when the removed agent's prompt is now unused, so `/prompt rm` can follow.
+`/agent del` refuses the current chat's agent — switch first — and says
+when the removed agent's prompt is now unused, so `/prompt del` can follow.
 The live runtime forgets the definition immediately; a run already using it
 finishes with the copy it was given.
 

@@ -35,7 +35,7 @@ def run():
         output = run_repl(command, ["/projects", "/projects open two", "/project", "/chat list", "/memory", "/skills list",
             "/projects rename one First", "/projects tint First mint", "/projects switch First",
             "/project", "/chat list", "/memory", "/skills list", f'/projects open "{new}"', "/chat rename newly opened",
-            "/projects open two", f'/projects forget "{new}"'], cwd=one, env=clean_environment())
+            "/projects open two", f'/projects del "{new}"'], cwd=one, env=clean_environment())
         assert "Opened project 'two'" in output, output
         assert "second project chat" in output, output
         assert "Opened project 'First'" in output, output

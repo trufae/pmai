@@ -177,7 +177,7 @@ def run():
             client = None
             print("Server approval/rejection, CLI pairing, local chat preservation, and remote session recovery across restart: passed", flush=True)
 
-            server.send("/projects forget two")
+            server.send("/projects del two")
             server.wait("Forgot 'two'")
             connection = WS(port, approved_token)
             connection.rpc("initialize", {"protocolVersion": 1})
@@ -202,7 +202,7 @@ def run():
             except AssertionError as error:
                 assert "outside the served workspace" in str(error), error
             connection.close()
-            server.send("/remote revoke test-inspector")
+            server.send("/remote del test-inspector")
             server.wait("Revoked client test-inspector.")
             WS(port, approved_token, accepted=False)
             server.send("/version")

@@ -57,10 +57,10 @@ changes one record, `/agent add` and `/edit config` create new ones.
 `/edit system` is the long form of `/prompt add NAME TEXT`. The prompt is
 saved under `prompts.system` in the configuration and every agent whose
 `systemPrompt` names it starts using the new text at its next turn. Emptying
-the file does not delete the prompt; `/prompt rm NAME` does that, and only
+the file does not delete the prompt; `/prompt del NAME` does that, and only
 when no agent uses it. `/edit user` is the long form of
 `/prompts add NAME TEXT`: the text is saved under `prompts.user` and
-`$NAME [TEXT]` sends it; `/prompts rm NAME` drops it. See `doc/prompts.md`
+`$NAME [TEXT]` sends it; `/prompts del NAME` drops it. See `doc/prompts.md`
 for how prompts and agents fit.
 
 ### Skills
@@ -70,7 +70,7 @@ and description fields followed by the skill's instructions. Fill in the
 description and prompt, keeping the name unchanged. Saving an unchanged draft
 creates nothing. Existing skills retain their supporting files and extra YAML
 fields. `/skills add NAME "DESCRIPTION" "PROMPT"` creates one without an editor,
-`/skills import ZIP_OR_FOLDER` imports one, and `/skills remove NAME` deletes it.
+`/skills import ZIP_OR_FOLDER` imports one, and `/skills del NAME` deletes it.
 Skills are created under the project's `.pmai/skills`; `--user` uses the home
 skills folder. Editing and deletion use the visible copy unless `--user` or
 `--project` selects a specific copy. Quote names and paths containing spaces.
@@ -170,7 +170,7 @@ the exception, because it rebuilds the one provider it edited.
 from the end when negative, so `/edit -1` is the last message. The text
 comes back as the message body and any attachments stay. `/chat edit INDEX
 TEXT` does the same in one line, `/chat messages` shows the indexes, and
-`/chat remove`, `/chat undo`, and `/chat trim` cover deleting rather than
+`/chat del`, `/chat undo`, and `/chat trim` cover deleting rather than
 editing.
 
 ### Writing a message

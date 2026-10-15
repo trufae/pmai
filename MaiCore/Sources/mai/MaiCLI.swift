@@ -3348,8 +3348,8 @@ struct MaiCLI {
                 for client in try await remoteServer.pairingStore.clients() {
                   await terminal.line("\(client.id) · \(client.name)")
                 }
-              case "revoke":
-                guard arguments.count == 1 else { throw JSONRPCError.invalidParams("Usage: /remote revoke CLIENT_ID") }
+              case "del":
+                guard arguments.count == 1 else { throw JSONRPCError.invalidParams("Usage: /remote del CLIENT_ID") }
                 try await remoteServer.pairingStore.revoke(id: arguments[0])
                 await terminal.line("Revoked client \(arguments[0]).")
               case "connect":
@@ -3676,9 +3676,9 @@ struct MaiCLI {
                 try home.saveProject(target)
                 if target.id == project.id { project = target }
                 await terminal.line("Updated project '\(target.displayName)'.")
-              case "forget":
-                guard arguments.count == 1 else { throw JSONRPCError.invalidParams("Usage: /projects forget INDEX|NAME|PATH") }
-                await handleProjectCommand("forget " + arguments[0], project: &project, home: home, store: store, terminal: terminal)
+              case "del":
+                guard arguments.count == 1 else { throw JSONRPCError.invalidParams("Usage: /projects del INDEX|NAME|PATH") }
+                await handleProjectCommand("del " + arguments[0], project: &project, home: home, store: store, terminal: terminal)
               case "info", "show":
                 guard arguments.count == 1, let target = resolveProject(arguments[0], in: index) else {
                   throw JSONRPCError.invalidParams("Usage: /projects info INDEX|NAME|PATH")
@@ -4281,7 +4281,7 @@ struct MaiCLI {
       }
       access.policy.setOutside(policy)
       await terminal.note("Files access outside allowed paths: \(policy.rawValue)")
-    case "allow", "add", "deny", "reject", "ask", "prompt", "remove", "rm", "revoke":
+    case "allow", "add", "deny", "reject", "ask", "prompt", "del":
       guard !value.isEmpty else {
         await terminal.line("Usage: /path \(command) PATH")
         return
@@ -4292,7 +4292,7 @@ struct MaiCLI {
         ? URL(fileURLWithPath: expanded)
         : files.effectiveRootURL.appendingPathComponent(expanded))
         .standardizedFileURL.resolvingSymlinksInPath()
-      if ["remove", "rm", "revoke"].contains(command) {
+      if command == "del" {
         access.policy.remove(url)
         await access.remove(url)
         await terminal.note(
@@ -5261,31 +5261,46 @@ struct MaiCLI {
         await terminal.line("error: \(error.localizedDescription)", to: .standardError)
       }
 
-    case "disable":
+    case "disable", "del":
       guard pieces.count == 2 else {
         await terminal.line(mcpCommandHelp)
         return
       }
+      let removing = action != "disable"
       let id = pieces[1].trimmingCharacters(in: .whitespacesAndNewlines)
-      guard var draft = configuration, let configurationPath,
-        let serverIndex = draft.mcpServers.firstIndex(where: { $0.id == id })
-      else {
+      guard var draft = configuration, let configurationPath else {
+        await terminal.line("error: No writable configuration is active.", to: .standardError)
+        return
+      }
+      guard let serverIndex = draft.mcpServers.firstIndex(where: { $0.id == id }) else {
         await terminal.line("error: MCP server '\(id)' is not configured.", to: .standardError)
         return
       }
-      if !draft.mcpServers[serverIndex].enabled {
+      if !removing, !draft.mcpServers[serverIndex].enabled {
         await terminal.line("MCP server '\(id)' is already disabled.")
         return
       }
       let namespace = mcpNamespace(for: draft.mcpServers[serverIndex])
-      let registeredTools = Set(await runtime.availableTools().map(\.name))
-      let removedTools = registeredTools.filter { $0.hasPrefix("\(namespace)::") }
-      draft.mcpServers[serverIndex].enabled = false
-      for index in draft.agents.indices {
-        draft.agents[index].toolNames.subtract(removedTools)
-      }
+      let removedTools = await runtime.availableToolGroups()
+        .first { $0.sourceID == "mcp" && $0.id == id }?.toolNames ?? []
       var profile = session.profile
-      profile.toolNames.subtract(removedTools)
+      if removing {
+        draft.mcpServers.remove(at: serverIndex)
+        for index in draft.agents.indices {
+          removeMCPReferences(
+            from: &draft.agents[index], serverID: id, namespace: namespace, tools: removedTools)
+        }
+        var definition = profile.agentDefinition
+        removeMCPReferences(
+          from: &definition, serverID: id, namespace: namespace, tools: removedTools)
+        profile = SessionProfile(definition: definition)
+      } else {
+        draft.mcpServers[serverIndex].enabled = false
+        for index in draft.agents.indices {
+          draft.agents[index].toolNames.subtract(removedTools)
+        }
+        profile.toolNames.subtract(removedTools)
+      }
       do {
         try draft.save(to: URL(fileURLWithPath: configurationPath))
         _ = await runtime.unregisterMCP(serverID: id)
@@ -5295,7 +5310,9 @@ struct MaiCLI {
         session.profile = profile
         configuration = draft
         catalogs.removeAll { $0.serverID == id }
-        await terminal.line("Disabled MCP '\(id)' and removed \(removedTools.count) live tools.")
+        session.touch()
+        await terminal.line(
+          "\(removing ? "Removed" : "Disabled") MCP '\(id)' and removed \(removedTools.count) live tools.")
       } catch {
         await terminal.line("error: \(error.localizedDescription)", to: .standardError)
       }
@@ -5303,6 +5320,19 @@ struct MaiCLI {
     default:
       await terminal.line(mcpCommandHelp)
     }
+  }
+
+  private static func removeMCPReferences(
+    from agent: inout AgentDefinition, serverID: String, namespace: String, tools: Set<String>
+  ) {
+    let belongsToServer = { (name: String) in
+      tools.contains(name) || name.hasPrefix("\(namespace)::")
+    }
+    agent.toolNames = agent.toolNames.filter { !belongsToServer($0) }
+    agent.proxyExposedTools = agent.proxyExposedTools.map { $0.filter { !belongsToServer($0) } }
+    agent.toolPolicy.tools = agent.toolPolicy.tools.filter { !belongsToServer($0.key) }
+    agent.toolGroupNames.remove("mcp/\(serverID)")
+    agent.toolPolicy.groups.removeValue(forKey: "mcp/\(serverID)")
   }
 
   private static func mcpNamespace(for server: ConfiguredMCPServer) -> String {
@@ -5435,10 +5465,10 @@ struct MaiCLI {
     let fields = argument.split(maxSplits: 1, whereSeparator: \Character.isWhitespace).map(String.init)
     let action = fields.first?.lowercased() ?? "status"
     let rest = fields.count > 1 ? fields[1] : ""
-    var args: [String: JSONValue] = ["action": .string(action)]
+    var args: [String: JSONValue] = ["action": .string(action == "del" ? "remove" : action)]
     switch action {
     case "query": args["query"] = .string(rest)
-    case "index", "remove": args["path"] = .string(rest.isEmpty && action == "index" ? "." : rest)
+    case "index", "del": args["path"] = .string(rest.isEmpty && action == "index" ? "." : rest)
     case "status", "clear":
       guard rest.isEmpty else {
         await terminal.line(vdbHelp)
@@ -5506,9 +5536,9 @@ struct MaiCLI {
           name: MaiTodoTools.doneName, arguments: ["task": .string(rest)], list: &list))
       await storeTodo(list, in: todo, terminal: terminal)
 
-    case "remove", "rm", "delete", "del":
+    case "del":
       guard !rest.isEmpty else {
-        await terminal.line("Usage: /todo remove NUMBER|TEXT")
+        await terminal.line("Usage: /todo del NUMBER|TEXT")
         return
       }
       guard let index = list.index(matching: rest) else {
@@ -5614,7 +5644,7 @@ struct MaiCLI {
       updated.append(rest)
       await store(updated, in: memory, runtime: runtime, terminal: terminal)
 
-    case "clear", "forget":
+    case "clear":
       await store(AgentMemory(), in: memory, runtime: runtime, terminal: terminal)
 
     case "reload":
@@ -5930,9 +5960,9 @@ struct MaiCLI {
         configurationPath: configurationPath,
         terminal: terminal)
 
-    case "remove", "rm", "delete", "del":
+    case "del":
       guard !rest.isEmpty else {
-        await terminal.line("Usage: /prompts rm NAME")
+        await terminal.line("Usage: /prompts del NAME")
         return .handled
       }
       guard var draft = configuration, let configurationPath else {
@@ -5943,10 +5973,10 @@ struct MaiCLI {
         let hint =
           catalog.entry(named: rest).map {
             switch $0.kind {
-            case .system: " '\(rest)' is a system prompt: /prompt rm drops one."
+            case .system: " '\(rest)' is a system prompt: /prompt del drops one."
             case .builtin:
               " '\(rest)' is a builtin prompt, which stays; a user prompt of that name replaces it."
-            case .skill: " '\(rest)' is a skill: /skills remove NAME deletes it."
+            case .skill: " '\(rest)' is a skill: /skills del NAME deletes it."
             case .user: ""
             }
           } ?? ""
@@ -6127,9 +6157,9 @@ struct MaiCLI {
         configurationPath: configurationPath,
         terminal: terminal)
 
-    case "remove", "rm", "delete", "del":
+    case "del":
       guard !rest.isEmpty else {
-        await terminal.line("Usage: /prompt rm NAME")
+        await terminal.line("Usage: /prompt del NAME")
         return
       }
       guard var draft = configuration, let configurationPath else {
@@ -7553,9 +7583,9 @@ struct MaiCLI {
           "Agent '\(saved.id)' uses system prompt '\(saved.systemPrompt ?? "-")'.")
       }
 
-    case "remove", "rm", "delete", "del":
+    case "del":
       guard words.count == 2 else {
-        await terminal.line("Usage: /agent remove ID")
+        await terminal.line("Usage: /agent del ID")
         return
       }
       await removeAgent(
@@ -7890,7 +7920,7 @@ struct MaiCLI {
       if let prompt = removed.systemPrompt, draft.agentsUsingSystemPrompt(prompt).isEmpty,
         draft.prompts?.system[prompt] != nil
       {
-        notes.append("Its system prompt '\(prompt)' is now unused; /prompt rm \(prompt) drops it.")
+        notes.append("Its system prompt '\(prompt)' is now unused; /prompt del \(prompt) drops it.")
       }
       await terminal.line(notes.joined(separator: " "))
     } catch {
@@ -8539,7 +8569,7 @@ struct MaiCLI {
         (action == "add" ? [1, 3].contains(words.count) : words.count == 1)
       else {
         await terminal.line(
-          "Usage: /skills add [--user] NAME [\"DESCRIPTION\" \"PROMPT\"]\n       /skills edit|remove [--user|--project] NAME\n       /skills import [--user] ZIP_OR_FOLDER\n       /edit skill [--user] NAME"
+          "Usage: /skills add [--user] NAME [\"DESCRIPTION\" \"PROMPT\"]\n       /skills edit|del [--user|--project] NAME\n       /skills import [--user] ZIP_OR_FOLDER\n       /edit skill [--user] NAME"
         )
         return
       }
@@ -8547,7 +8577,7 @@ struct MaiCLI {
       let skill: AgentSkill
       let created: Bool
       switch action {
-      case "remove", "rm", "delete":
+      case "del":
         guard let existing = await resolveSkill(name, in: catalog, terminal: terminal) else {
           return
         }
@@ -8755,7 +8785,7 @@ struct MaiCLI {
     let modes = session.profile.agentDefinition.toolModes(in: groups, usage: usage)
 
     switch action {
-    case "add", "new", "create", "edit", "remove", "rm", "delete", "import":
+    case "add", "new", "create", "edit", "del", "import":
       let mutation = ["new", "create"].contains(action) ? "add" : action
       await handleSkillMutation(
         mutation, argument: rest, session: &session, runtime: runtime, skills: skills,
@@ -10523,9 +10553,9 @@ struct MaiCLI {
     case "reset", "clear":
       await store.reset()
       await terminal.line("Usage statistics reset.")
-    case "rm", "remove", "delete", "forget":
+    case "del":
       guard !target.isEmpty else {
-        await terminal.line("Usage: /stats rm PROVIDER[:MODEL]")
+        await terminal.line("Usage: /stats del PROVIDER[:MODEL]")
         return
       }
       switch await store.remove(matching: target) {
@@ -10554,7 +10584,7 @@ struct MaiCLI {
       /stats                 Rank every provider:model by combined ranking, tokens/s, time in use, and efficiency
       /stats METRIC          One ranking: ranking, speed, time, or efficiency
       /stats show PROVIDER[:MODEL]  Every fact recorded about one model or a whole provider
-      /stats rm PROVIDER[:MODEL]  Drop the statistics of one model or a whole provider
+      /stats del PROVIDER[:MODEL]  Drop the statistics of one model or a whole provider
       /stats reset           Forget every statistic
       /stats path            Print the file the statistics are saved in
     The runtime records tokens (from the provider's usage, or estimated from text
@@ -11133,7 +11163,7 @@ struct MaiCLI {
         workspace.setArchived(false, id: chat.id)
       }
       await terminal.line("Restored '\(chat.displayTitle)' to the active chats.")
-    case "close", "delete":
+    case "close":
       guard parts.count == 2, parts[1].lowercased() == "confirm" else {
         await terminal.line("Closing a chat is permanent. Confirm with: /chat close confirm")
         return
@@ -11158,7 +11188,7 @@ struct MaiCLI {
         recapPrompt: configuration?.prompts?.recap,
         chatProcess: chatProcess,
         terminal: terminal)
-    case "log", "edit", "remove", "rm", "undo", "trim", "compact", "recap", "clear", "help":
+    case "log", "edit", "del", "undo", "trim", "compact", "recap", "clear", "help":
       await handleChatCommand(
         argument,
         session: &session,
@@ -11252,9 +11282,9 @@ struct MaiCLI {
       project.tint = tint
       await saveProject(
         project, home: home, terminal: terminal, success: "Project tint set to \(tint.rawValue).")
-    case "forget":
+    case "del":
       guard !rest.isEmpty else {
-        await terminal.line("Usage: /project forget INDEX|PATH|NAME")
+        await terminal.line("Usage: /project del INDEX|PATH|NAME")
         return
       }
       do {
@@ -11522,9 +11552,9 @@ struct MaiCLI {
       } catch {
         await terminal.line("error: \(error.localizedDescription)", to: .standardError)
       }
-    case "remove", "delete", "rm":
+    case "del":
       guard parts.count >= 2, let index = chatIndex(parts[1], count: session.history.count) else {
-        await terminal.line("Usage: /chat remove INDEX")
+        await terminal.line("Usage: /chat del INDEX")
         return
       }
       await removeChatMessage(at: index, session: &session, terminal: terminal)
@@ -12116,15 +12146,15 @@ struct MaiCLI {
       "/agent acp list", "/agent acp add ", "/agents acp list",
       "/help remote", "/remote", "/remote serve", "/remote stop", "/remote qr", "/remote status",
       "/remote list", "/remote pair ", "/remote connect ", "/remote disconnect",
-      "/remote pending", "/remote accept", "/remote reject", "/remote clients", "/remote revoke ",
+      "/remote pending", "/remote accept", "/remote reject", "/remote clients", "/remote del ",
       "/help projects", "/projects", "/projects list", "/projects open ", "/projects switch ",
-      "/projects rename ", "/projects tint ", "/projects forget ", "/projects info ",
+      "/projects rename ", "/projects tint ", "/projects del ", "/projects info ",
       "/memory", "/memory edit", "/memory learn", "/memory learn --all", "/memory add ",
       "/memory clear", "/memory on", "/memory off", "/memory scope none",
       "/memory scope project", "/memory scope all", "/edit memory", "/edit memory-prompt",
       "/help todo", "/todo", "/todo add ", "/todo done ", "/todo edit", "/todo sweep",
-      "/todo clear", "/todo path",
-      "/help vdb", "/vdb", "/vdb index ", "/vdb query ", "/vdb status", "/vdb remove ", "/vdb clear",
+      "/todo del ", "/todo clear", "/todo path",
+      "/help vdb", "/vdb", "/vdb index ", "/vdb query ", "/vdb status", "/vdb del ", "/vdb clear",
       "/set limits.", "/set limits.maxToolCalls ", "/set limits.maxModelTurns ",
       "/set limits.maxSubagents ", "/set limits.maxSeconds ", "/set limits.maxTotalTokens ",
       "/set retry.attempts ", "/set retry.delay ", "/set ctx.compact ",
@@ -12153,7 +12183,7 @@ struct MaiCLI {
       "/set ui.toolResultLines all", "/set ui.toolResultLines relevant", "/set ui.toolResultLines ",
       "/cwd", "/pwd", "/cd ", "/plugins",
       "/path", "/path list", "/path allow ", "/path deny ", "/path ask ",
-      "/path remove ", "/path outside ask", "/path outside deny", "/help path",
+      "/path del ", "/path outside ask", "/path outside deny", "/help path",
       "/path hidden ask", "/path hidden deny", "/path hidden allow",
       "/providers", "/models ", "/provider ", "/provider add ", "/provider rename ",
       "/provider add local-apple --kind apple",
@@ -12164,29 +12194,30 @@ struct MaiCLI {
       "/prompts",
       "/prompt",
       "/prompt list", "/prompt show ", "/prompt add ", "/prompt set ", "/prompt edit ",
-      "/prompt rm ", "/prompt use ", "/help prompts", "/prompts list", "/prompts show ",
-      "/prompts add ", "/prompts edit ", "/prompts rm ", "/edit user ", "/edit system ",
+      "/prompt del ", "/prompt use ", "/help prompts", "/prompts list", "/prompts show ",
+      "/prompts add ", "/prompts edit ", "/prompts del ", "/edit user ", "/edit system ",
       "/agent", "/agents", "/agents list", "/agents describe ", "/agents enable ",
       "/agents disable ",
       "/job", "/jobs", "/jobs tree", "/jobs stop ", "/jobs continue ", "/jobs clear", "/jobs log ",
       "/jobs kill ", "/jobs focus ",
-      "/jobs focus main", "/queue", "/queue push ", "/queue pop", "/queue drop",
+      "/jobs focus main", "/queue", "/queue push ", "/queue pop", "/queue del",
       "/help queue", "/help export", "/help import", "/export archive ", "/import ",
       "/export markdown ", "/export html ", "/export json ", "/export debug ",
       "/stats", "/stats ranking", "/stats speed", "/stats time", "/stats efficiency",
       "/stats show ",
-      "/stats reset", "/stats rm ", "/stats path", "/help stats",
+      "/stats reset", "/stats del ", "/stats path", "/help stats",
       "/export epub ", "/export docx ", "/set ui.subagents all", "/set ui.subagents tools",
       "/set ui.subagents stats", "/set ui.subagents none",
       "/agent use ",
       "/agent show ", "/agent add ", "/agent tools ", "/agent model ", "/agent prompt ",
-      "/agent provider ", "/agent remove ", "/edit agent", "/tools",
+      "/agent provider ", "/agent del ", "/edit agent", "/tools",
       "/skills", "/skills list", "/skills show ", "/skills enable ", "/skills disable ",
       "/skills enable all", "/skills disable all", "/skills prompt ", "/skills path",
-      "/skills reload", "/skills add ", "/skills edit ", "/skills remove ",
+      "/skills reload", "/skills add ", "/skills edit ", "/skills del ",
       "/skills import ", "/edit skill ", "/help skills",
       "/mcp list",
       "/mcp add ", "/mcp enable ", "/mcp disable ",
+      "/mcp del ",
       "/edit prompt", "/edit compact", "/edit config", "/edit mcps",
       "/edit prompt recap", "/edit smart", "/edit prompt smart",
       "/edit input", "/edit soul",
@@ -12199,9 +12230,9 @@ struct MaiCLI {
       "/chat use ", "/chat next", "/chat previous", "/chat info", "/chat session",
       "/chat session new", "/chat rename ",
       "/chat archive", "/chat unarchive ", "/chat close confirm", "/chat messages",
-      "/chat log", "/chat edit ", "/chat remove ", "/chat undo", "/chat trim ",
+      "/chat log", "/chat edit ", "/chat del ", "/chat undo", "/chat trim ",
       "/chat clear", "/project", "/project info", "/project list", "/project name ",
-      "/project tint ", "/project tint none", "/project forget ",
+      "/project tint ", "/project tint none", "/project del ",
     ]
     for tint in AgentProjectTint.presetNames {
       values.append("/project tint \(tint)")
@@ -12248,7 +12279,7 @@ struct MaiCLI {
     }
     for skill in skills {
       values.append("/skills edit \(shellQuote(skill.name))")
-      values.append("/skills remove \(shellQuote(skill.name))")
+      values.append("/skills del \(shellQuote(skill.name))")
       values.append("/edit skill \(shellQuote(skill.name))")
       values.append("/skills show \(skill.name)")
       values.append("/skills prompt \(skill.name) ")
@@ -12266,7 +12297,7 @@ struct MaiCLI {
     }
     for name in (configuration?.prompts?.user ?? [:]).keys.sorted() {
       values.append("/prompts edit \(name)")
-      values.append("/prompts rm \(name)")
+      values.append("/prompts del \(name)")
       values.append("/edit user \(name)")
     }
     var groupNames = Set(workspace.chats.flatMap(\.primaryAgent.toolGroupNames))
@@ -12513,7 +12544,7 @@ struct MaiCLI {
     /remote accept [CODE]  Accept a pairing request; omit CODE when only one is waiting
     /remote reject [CODE]  Reject a pairing request
     /remote clients        List accepted clients
-    /remote revoke ID      Revoke an accepted client's access
+    /remote del ID         Revoke an accepted client's access
     /remote connect NAME   Open a new chat with a paired host's agent
     /remote disconnect     Return to your local chat
 
@@ -12533,7 +12564,7 @@ struct MaiCLI {
     /path allow PATH       Allow a file or directory (alias: add)
     /path deny PATH        Reject access, including inside allowed directories
     /path ask PATH         Require confirmation for every access (alias: prompt)
-    /path remove PATH      Remove an explicit rule/grant; parent permissions still apply
+    /path del PATH         Remove an explicit rule/grant; parent permissions still apply
     /path outside ask|deny Prompt or reject paths outside the allowed scope (default: deny)
     /path hidden ask|deny|allow Set the default for dotfiles and dot directories (default: ask)
 
@@ -12618,7 +12649,7 @@ struct MaiCLI {
     /provider add ID [URL] [--kind KIND]  Save a local or remote provider; /help provider
     /provider rename [OLD] NEW  Rename a provider and update its agents
     /providers             List registered providers
-    /queue                 List, push, pop, or drop messages waiting for an agent
+    /queue                 List, push, pop, or delete messages waiting for an agent
     /remote                Serve, pair, and connect to remote hosts; /help remote lists commands
     /reply [WIDTH]         Answer the last reply in $EDITOR with it quoted above (/help reply)
     /set [SETTING VALUE]   Show or change settings; /help set lists them
@@ -12804,7 +12835,7 @@ struct MaiCLI {
       /chat messages                Display a compact indexed message list
       /chat log           Display the full structured conversation
       /chat edit INDEX TEXT  Replace a message's text; preserve attachments
-      /chat remove INDEX  Remove a message
+      /chat del INDEX     Remove a message
       /chat undo [INDEX]  Remove the last conversation message or selected message
       /chat trim INDEX    Keep through the selected message; remove newer messages
       /chat compact [FOCUS]  Summarize the chat, prioritizing what FOCUS says to preserve
@@ -12830,7 +12861,7 @@ struct MaiCLI {
     /projects info SELECTOR  Show another project's details and chat counts
     /projects rename SELECTOR NAME  Rename an indexed project
     /projects tint SELECTOR COLOR  Change a project's accent color
-    /projects forget SELECTOR  Remove another project from the index; keep its files
+    /projects del SELECTOR  Remove another project from the index; keep its files
 
     Select by list number, name, path, or ID prefix; quote names and paths with spaces.
     Opening a new directory registers it in ~/.pmai/projects.json. /remote serve
@@ -12845,7 +12876,7 @@ struct MaiCLI {
       /project list            List every project pmai has been started in, recent first
       /project name NAME       Rename the project; the directory name is the default
       /project tint COLOR      Color the prompt: a preset such as mint, or #RRGGBB; none clears it
-      /project forget INDEX|PATH|NAME  Drop another project from the list; its files stay
+      /project del INDEX|PATH|NAME  Drop another project from the list; its files stay
 
     Chats live in .pmai/chats inside the project directory; the list of
     projects lives in ~/.pmai/projects.json (or under $PMAI_HOME). /cd changes
@@ -12854,9 +12885,10 @@ struct MaiCLI {
 
   private static let mcpCommandHelp = """
     MCP commands:
-      /mcp list
-      /mcp enable ID
-      /mcp disable ID
+      /mcp list                Show configured servers and connection state (default)
+      /mcp enable ID           Connect a saved server and enable it at startup
+      /mcp disable ID          Disconnect a server and keep its saved configuration disabled
+      /mcp del ID              Disconnect a server and delete its saved configuration
       /mcp tools ID            Show a connected server's tools and counters
       /mcp direct|proxy|hide|inherit ID[/TOOL]  Set per-agent exposure
       /mcp add COMMAND [ARG ...]
@@ -12940,7 +12972,7 @@ struct MaiCLI {
       /vdb index [PATH]       Index a file/folder (default: workspace); refresh changes
       /vdb query TEXT         Retrieve passages with source paths and line ranges
       /vdb status             Show source/chunk counts and the index path
-      /vdb remove PATH        Remove one indexed file/folder, preserving source files
+      /vdb del PATH           Remove one indexed file/folder, preserving source files
       /vdb clear              Reset the whole index, preserving source files
 
     The local sparse-vector/BM25 search works offline with one or many documents.
@@ -12956,7 +12988,7 @@ struct MaiCLI {
       /todo                      Show the list, numbered
       /todo add TEXT             Append one pending item
       /todo done NUMBER|TEXT     Mark an item done by number or title fragment
-      /todo remove NUMBER|TEXT   Drop an item by number or title fragment
+      /todo del NUMBER|TEXT      Drop an item by number or title fragment
       /todo sweep                Remove every completed item
       /todo edit                 Edit the list in $EDITOR
       /todo clear                Remove every item
@@ -12980,7 +13012,7 @@ struct MaiCLI {
       /skills add NAME "DESCRIPTION" "PROMPT"  Create without opening the editor
       /skills edit NAME          Edit SKILL.md (same as /edit skill NAME; creates new names)
       /skills import [--user] ZIP_OR_FOLDER  Import a skill with supporting files
-      /skills remove NAME        Delete the visible skill folder and its supporting files
+      /skills del NAME           Delete the visible skill folder and its supporting files
       /skills enable NAME|all    Offer a skill (or every skill) to the current agent
       /skills disable NAME|all   Disable a skill (or every skill) for this agent
       /skills direct|proxy|hide|inherit NAME|all  Choose exposure or restore inheritance
@@ -13017,13 +13049,13 @@ struct MaiCLI {
       /prompts show NAME         Print what NAME is or sends
       /prompts add NAME TEXT     Create a user prompt from one line (set replaces it)
       /prompts edit NAME         Edit or create a user prompt in $EDITOR (/edit user NAME too)
-      /prompts rm NAME           Drop a user prompt (a builtin it replaced shows again)
+      /prompts del NAME          Drop a user prompt (a builtin it replaced shows again)
 
       /prompt                    Show the current agent's system prompt
       /prompt show NAME          Print one system prompt
       /prompt add NAME TEXT      Create a system prompt from one line (set replaces it)
       /prompt edit [NAME]        Edit or create one in $EDITOR (current when omitted; /edit system NAME too)
-      /prompt rm NAME            Drop an unused system prompt
+      /prompt del NAME           Drop an unused system prompt
       /prompt use NAME           Point the current agent at a system prompt (/prompt NAME too)
       /agent prompt ID NAME      Point another saved agent at a system prompt
       /edit prompt NAME          Edit NAME, whichever kind of prompt it is
@@ -13073,7 +13105,7 @@ struct MaiCLI {
       /agent model ID MODEL      Change its model (- for the provider default)
       /agent prompt ID PROMPT    Point it at another named system prompt
       /agent provider ID PROVIDER  Move it to a configured provider
-      /agent remove ID           Drop it; subagent lists and the default agent are updated
+      /agent del ID              Drop it; subagent lists and the default agent are updated
       /edit agent [ID]           Edit a definition as JSON in $EDITOR (current when omitted)
 
     A definition's tools are its own, whatever its depth in the tree: give a

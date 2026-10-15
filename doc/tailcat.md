@@ -57,7 +57,7 @@ request pairing: it cannot initialize ACP, read chats, or start an agent process
 Acceptance issues a separate private credential for that client. The phone stores
 it in Keychain; CLI clients store it in a mode-0600 token file. Reconnection uses
 this credential without asking again. `/remote clients` lists accepted clients;
-`/remote revoke CLIENT_ID` removes their access, including active connections.
+`/remote del CLIENT_ID` removes their access, including active connections.
 
 After the server accepts a CLI client:
 
@@ -85,7 +85,7 @@ and `--name` override the defaults when needed.
 `/projects open NAME` switches the working directory and loads its saved chats,
 memory, skills, and local settings. It also accepts paths, list numbers, and ID
 prefixes. `/projects rename SELECTOR NAME`, `/projects tint SELECTOR COLOR`, and
-`/projects forget SELECTOR` manage that index; forgetting leaves chat files intact.
+`/projects del SELECTOR` manage that index; forgetting leaves chat files intact.
 Opening a previously unseen directory registers it. Refresh the folder panel in
 PocketMai to see changes made from the CLI.
 

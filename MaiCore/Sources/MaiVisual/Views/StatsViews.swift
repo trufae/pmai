@@ -28,7 +28,7 @@ struct StatsScreen: View {
           }
           .padding(.top, 1)
           Text(
-            "/stats prints the same table in the REPL; /stats rm PROVIDER[:MODEL] drops one row."
+            "/stats prints the same table in the REPL; /stats del PROVIDER[:MODEL] drops one row."
           )
           .foregroundStyle(.separator)
           .lineLimit(2)

@@ -394,7 +394,7 @@ A chat's own process is registered before its first turn with
 `AgentRuntime.allocateProcess(agentID:)`, so messages can wait for a chat that
 is idle too; pmai folds them into the next turn it starts. Queued messages are
 editable until they are read: `discardLastQueuedMessage`, `discardQueuedMessage(id:)`,
-and `clearQueuedMessages` back `/queue pop` and `/queue drop`, and
+and `clearQueuedMessages` back `/queue pop` and `/queue del`, and
 `AgentProcessInfo.queuedMessages` shows the count in a listing.
 
 In the interactive CLI, use the process IDs from `/jobs tree` to steer
@@ -435,7 +435,7 @@ start a chat turn, or turn broadcast off.
 `/queue push` only queues: it never starts an idle chat. Direct `@main TEXT`
 starts a turn if the chat is idle (asking what to do with any existing queue),
 or joins its inbox while it is running. `/queue` lists pending copies; use
-`/queue pop PID` or `/queue drop PID` to remove a copy from one recipient.
+`/queue pop PID` or `/queue del PID` to remove a copy from one recipient.
 
 Children report through the same event handler as their parent, background or
 not, with their own pid in the context. pmai turns that into blocks prefixed
@@ -470,7 +470,7 @@ can be inspected or cleared, but cannot be resumed.
 /agents enable|disable ID     park a setup without deleting it
 /agent add NAME MODEL GROUPS PROMPT   save a setup in one line (see doc/prompts.md)
 /agent tools|model|prompt|provider ID VALUE   change one saved setup
-/agent remove ID              drop a setup; subagent lists and the default follow
+/agent del ID                 drop a setup; subagent lists and the default follow
 /edit agent [ID]              edit a setup as JSON in $EDITOR
 /jobs log PID                 that process's transcript, saved ones included
 /jobs stop PID                pause a process and everything under it at their next step
@@ -487,7 +487,7 @@ can be inspected or cleared, but cannot be resumed.
 /queue push @* TEXT           queue for every active process
 /set ui.broadcast on|off      default unaddressed messages to @*; saved, default off
 /queue pop [PID]              drop the newest queued message
-/queue drop [PID]             drop them all
+/queue del [PID]              drop them all
 /set ui.subagents LEVEL       all | tools | stats | none
 /tools enable|disable agents  allow or deny this agent the agent_* tool family
 /set delegation off|subagent      whether this agent may hand tool work to a child

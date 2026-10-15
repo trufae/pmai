@@ -49,7 +49,7 @@ def main():
         saved = json.loads(config.read_text())
         assert 'tool' not in saved['taskAgents']
         compact_id = saved['taskAgents']['compact']
-        run([f'/agent remove {compact_id}'])
+        run([f'/agent del {compact_id}'])
         assert json.loads(config.read_text())['taskAgents'] == {}
         run(['/model'], ['--provider', 'another', '--base-url', 'http://localhost:9000/v1',
                          '--model', 'other', '--save-defaults'])
