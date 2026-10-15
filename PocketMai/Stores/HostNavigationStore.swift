@@ -7,7 +7,7 @@ import UIKit
 /// remote state stays in the host repository, so switching never mixes them.
 @MainActor @Observable
 final class HostNavigationStore {
-  let remotes = RemoteAgentStore.shared
+  let remotes: RemoteAgentStore
   private(set) var selectedHostID: UUID?
   var selectedFolderID: String?
   var selectedConversationID: UUID?
@@ -18,10 +18,40 @@ final class HostNavigationStore {
   private var operation: Task<Void, Never>?
   private var client: ACPClient?
   private var generation = 0
+  private(set) var connectedHostID: UUID?
   var activeChat: RemoteAgentChat?
+  private var managementChat: RemoteAgentChat?
 
-  func manageConversation(_ conversation: RemoteAgentConversation, title: String?) async {
+  init(remotes: RemoteAgentStore = .shared) {
+    self.remotes = remotes
+  }
+
+  func isConnected(_ id: UUID) -> Bool {
+    connectedHostID == id || (activeChat?.bookmark.id == id && activeChat?.connected == true)
+  }
+
+  func disconnect(_ id: UUID) {
+    if activeChat?.bookmark.id == id {
+      activeChat?.disconnect()
+      activeChat = nil
+    }
+    if selectedHostID == id { selectHost(nil, isOffline: false) }
+  }
+
+  func suspendConnections() {
+    stopDiscovery()
+    activeChat?.disconnect()
+    managementChat?.disconnect()
+  }
+
+  func manageConversation(
+    _ conversation: RemoteAgentConversation, title: String?, isOffline: @escaping () -> Bool
+  ) async {
     guard let host = selectedHost else { return }
+    guard !isOffline() || conversation.sessionID == nil else {
+      error = "Turn off Airplane Mode in Settings to manage remote conversations."
+      return
+    }
     stopDiscovery()
     error = nil
     let chat: RemoteAgentChat
@@ -30,13 +60,17 @@ final class HostNavigationStore {
     {
       chat = activeChat
     } else {
-      chat = RemoteAgentChat(bookmark: host, conversation: conversation)
+      chat = RemoteAgentChat(
+        bookmark: host, conversation: conversation, store: remotes, isOffline: isOffline)
     }
+    managementChat = chat
+    defer { if managementChat === chat { managementChat = nil } }
     do {
       try await chat.manage(title: title)
       if title == nil, selectedHostID == host.id, selectedConversationID == conversation.id {
         selectedConversationID = nil
       }
+    } catch is CancellationError {
     } catch { self.error = error.localizedDescription }
   }
 
@@ -55,7 +89,8 @@ final class HostNavigationStore {
 
   func selectHost(_ id: UUID?, isOffline: Bool) {
     if selectedHostID != id {
-      stopDiscovery()
+      suspendConnections()
+      activeChat = nil
       selectedHostID = id
       selectedFolderID = remotes.host(id)?.cwd
       selectedConversationID = nil
@@ -70,7 +105,8 @@ final class HostNavigationStore {
   }
 
   func reconnect(_ id: UUID, isOffline: Bool) {
-    stopDiscovery()
+    guard !isOffline else { return }
+    suspendConnections()
     remotes.reconnect(id)
     selectHost(id, isOffline: isOffline)
   }
@@ -86,9 +122,11 @@ final class HostNavigationStore {
   func refresh(isOffline: Bool) {
     guard let host = selectedHost, !loading else { return }
     guard !isOffline else {
+      suspendConnections()
       error = "Turn off Airplane Mode in Settings to refresh this host."
       return
     }
+    stopDiscovery()
     loading = true
     error = nil
     generation += 1
@@ -115,11 +153,14 @@ final class HostNavigationStore {
           configuration: .init(
             command: host.name,
             permission: .reject, remoteWorkingDirectory: host.cwd, readClientFiles: false,
-            webSocketURL: host.url, bearerToken: token))
+            webSocketURL: host.url, bearerToken: token),
+          onDisconnect: { [weak self] in await self?.connectionClosed(attempt: attempt) })
         self.client = client
         let snapshot = try await client.workspace()
-        await client.disconnect()
         guard generation == attempt, !Task.isCancelled else { return }
+        let connected = await client.isConnected
+        guard generation == attempt, !Task.isCancelled else { return }
+        connectedHostID = connected ? host.id : nil
         supportsDiscovery = snapshot != nil
         if let snapshot { remotes.updateWorkspace(host.id, snapshot: snapshot) }
         if !folders.contains(where: { $0.cwd == selectedFolderID }) {
@@ -131,7 +172,6 @@ final class HostNavigationStore {
         await client?.disconnect()
       }
       guard generation == attempt else { return }
-      client = nil
       operation = nil
       loading = false
       waitingApproval = false
@@ -144,8 +184,15 @@ final class HostNavigationStore {
     operation = nil
     let previous = client
     client = nil
+    connectedHostID = nil
     Task { await previous?.disconnect() }
     loading = false
     waitingApproval = false
+  }
+
+  private func connectionClosed(attempt: Int) {
+    guard generation == attempt else { return }
+    connectedHostID = nil
+    if !loading { error = "Disconnected from this host. Reconnect to continue." }
   }
 }

@@ -1,5 +1,6 @@
 import Foundation
 import MaiACP
+import MaiCore
 import XCTest
 
 @testable import PocketMai
@@ -119,5 +120,106 @@ final class RemoteHostTests: XCTestCase {
       XCTAssertEqual(reloaded.revision, updated.revision)
       XCTAssertEqual(reloaded.url, original.url)
     }
+  }
+
+  func testRenamePersistsWithoutChangingConnectionOrCachedChats() throws {
+    let original = RemoteAgentBookmark(
+      name: "Worker", url: try XCTUnwrap(URL(string: "wss://worker.example/acp")), cwd: "/work",
+      conversations: [.init(cwd: "/work", sessionID: "opaque-session", title: "Saved chat")],
+      accentColor: "green", requiresApproval: true)
+    try withStore([original]) { store, file in
+      try store.rename(original.id, to: "  Home server\n")
+      let renamed = try XCTUnwrap(RemoteAgentStore(file: file).host(original.id))
+      XCTAssertEqual(renamed.name, "Home server")
+      XCTAssertEqual(renamed.url, original.url)
+      XCTAssertEqual(renamed.cwd, original.cwd)
+      XCTAssertEqual(renamed.revision, original.revision)
+      XCTAssertEqual(renamed.accentColor, original.accentColor)
+      XCTAssertEqual(renamed.requiresApproval, original.requiresApproval)
+      XCTAssertEqual(renamed.conversations?.first?.sessionID, "opaque-session")
+      for invalid in [" \n ", String(repeating: "a", count: 201)] {
+        XCTAssertThrowsError(try store.rename(original.id, to: invalid))
+      }
+      XCTAssertEqual(store.host(original.id)?.name, "Home server")
+    }
+  }
+
+  func testDisconnectReturnsToLocalAndPreservesRemoteHistory() throws {
+    let original = RemoteAgentBookmark(
+      name: "Worker", url: try XCTUnwrap(URL(string: "wss://worker.example/acp")), cwd: "/work",
+      conversations: [.init(cwd: "/work", messages: [.init(role: "user", text: "Saved")])])
+    try withStore([original]) { store, _ in
+      let hosts = HostNavigationStore(remotes: store)
+      hosts.selectHost(original.id, isOffline: true)
+      let conversation = try XCTUnwrap(store.host(original.id)?.conversations?.first)
+      let chat = RemoteAgentChat(bookmark: original, conversation: conversation, store: store)
+      hosts.activeChat = chat
+      chat.connected = true
+      XCTAssertTrue(hosts.isConnected(original.id))
+      hosts.disconnect(original.id)
+      XCTAssertFalse(hosts.isConnected(original.id))
+      XCTAssertFalse(chat.connected)
+      XCTAssertNil(hosts.selectedHostID)
+      XCTAssertNil(hosts.activeChat)
+      XCTAssertEqual(store.host(original.id)?.conversations?.first?.messages.first?.text, "Saved")
+    }
+  }
+
+  func testOfflineHostSelectionAndReconnectDoNotStartDiscovery() throws {
+    let original = RemoteAgentBookmark(
+      name: "Worker", url: try XCTUnwrap(URL(string: "wss://worker.example/acp")), cwd: "/work")
+    try withStore([original]) { store, _ in
+      let hosts = HostNavigationStore(remotes: store)
+      hosts.selectHost(original.id, isOffline: true)
+      XCTAssertFalse(hosts.loading)
+      XCTAssertFalse(hosts.isConnected(original.id))
+      XCTAssertTrue(hosts.error?.contains("Airplane Mode") == true)
+      hosts.reconnect(original.id, isOffline: true)
+      XCTAssertNil(store.host(original.id)?.revision)
+      XCTAssertFalse(hosts.loading)
+    }
+  }
+
+  func testRemoteChatUsesLiveOfflinePolicyForConnectSendAndManagement() async throws {
+    var workspace = ACPWorkspaceSnapshot()
+    workspace.canManageSessions = true
+    let original = RemoteAgentBookmark(
+      name: "Worker", url: try XCTUnwrap(URL(string: "wss://worker.example/acp")), cwd: "/work",
+      workspace: workspace)
+    var offline = false
+    let chat = RemoteAgentChat(
+      bookmark: original, conversation: .init(cwd: "/work", sessionID: "remote-session"),
+      isOffline: { offline })
+    offline = true
+    chat.connect()
+    XCTAssertFalse(chat.busy)
+    XCTAssertFalse(chat.connected)
+    XCTAssertTrue(chat.error?.contains("Airplane Mode") == true)
+    chat.connected = true
+    chat.send("Must not send")
+    XCTAssertTrue(chat.messages.isEmpty)
+    // The host capability comes from the repository, so test remote management there as well.
+    try await withRemoteManagementStore(original) { store in
+      let managed = RemoteAgentChat(
+        bookmark: original, conversation: .init(cwd: "/work", sessionID: "remote-session"),
+        store: store, isOffline: { offline })
+      do {
+        try await managed.manage(title: "Renamed")
+        XCTFail("Offline management should fail before opening a connection")
+      } catch is MaiCore.InternetAccessError {
+      }
+      XCTAssertFalse(managed.busy)
+    }
+  }
+
+  private func withRemoteManagementStore(
+    _ bookmark: RemoteAgentBookmark, body: (RemoteAgentStore) async throws -> Void
+  ) async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let file = directory.appendingPathComponent("connections.json")
+    try JSONEncoder().encode([bookmark]).write(to: file)
+    try await body(RemoteAgentStore(file: file))
   }
 }

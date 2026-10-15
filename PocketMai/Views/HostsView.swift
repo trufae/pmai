@@ -25,6 +25,7 @@ struct HostsView: View {
   @State private var adding = false
   @State private var scanning = false
   @State private var editing: RemoteAgentBookmark?
+  @State private var renaming: RemoteAgentBookmark?
 
   var body: some View {
     List {
@@ -35,7 +36,11 @@ struct HostsView: View {
           image: "network", id: host.id
         )
         .contextMenu {
+          Button("Rename", systemImage: "character.cursor.ibeam") { renaming = host }
           Button("Edit Host", systemImage: "pencil") { editing = host }
+          if hosts.selectedHostID == host.id || hosts.isConnected(host.id) {
+            Button("Disconnect", systemImage: "network.slash") { hosts.disconnect(host.id) }
+          }
           Button("Reconnect", systemImage: "arrow.clockwise") {
             hosts.reconnect(host.id, isOffline: appStore.settings.isOffline)
             onSelectHost(host.id)
@@ -79,10 +84,13 @@ struct HostsView: View {
     }
     .sheet(isPresented: $managing) {
       NavigationStack {
-        RemoteAgentsView(onSelectHost: { id in
-          managing = false
-          onSelectHost(id)
-        })
+        RemoteAgentsView(
+          hosts: hosts,
+          onSelectHost: { id in
+            managing = false
+            onSelectHost(id)
+          }
+        )
         .toolbar {
           ToolbarItem(placement: .confirmationAction) { Button("Done") { managing = false } }
         }
@@ -96,6 +104,7 @@ struct HostsView: View {
         }, scanOnAppear: scanning)
     }
     .sheet(item: $editing) { host in RemoteAgentConnectionView(initialHost: host) }
+    .sheet(item: $renaming) { host in RemoteHostRenameView(host: host) }
   }
 
   private func row(title: String, subtitle: String, image: String, id: UUID?) -> some View {
@@ -105,7 +114,8 @@ struct HostsView: View {
       iconColor: (hosts.remotes.host(id)?.accentColor).flatMap {
         ConversationFolderTint(rawIdentifier: $0)
       }?.color,
-      isSelected: selected
+      isSelected: selected,
+      isConnected: id.map { !appStore.settings.isOffline && hosts.isConnected($0) }
     ) {
       onSelectHost(id)
     }
@@ -243,7 +253,8 @@ struct RemoteConversationsView: View {
           conversation: ConversationSummary(conversation: chat.presentation), isSelected: selected,
           isResponding: selected && hosts.activeChat?.busy == true
         ) {
-          searchFocused = false; onSelectConversation(chat.id)
+          searchFocused = false
+          onSelectConversation(chat.id)
         }
         .disabled(hosts.selectedHost?.requiresApproval == true || hosts.selectedFolderID == nil)
         .listRowBackground(SidebarRowBackground(isSelected: selected)).listRowSeparator(.hidden)
@@ -258,8 +269,16 @@ struct RemoteConversationsView: View {
                 || (!appStore.settings.isOffline
                   && hosts.selectedHost?.workspace?.canManageSessions == true))
               && !(selected && hosts.activeChat?.busy == true),
-            onRename: { await hosts.manageConversation(chat, title: $0) },
-            onDelete: { _ in Task { await hosts.manageConversation(chat, title: nil) } }))
+            onRename: {
+              await hosts.manageConversation(
+                chat, title: $0, isOffline: { appStore.settings.isOffline })
+            },
+            onDelete: { _ in
+              Task {
+                await hosts.manageConversation(
+                  chat, title: nil, isOffline: { appStore.settings.isOffline })
+              }
+            }))
       }
       if conversations.isEmpty {
         Text(
@@ -268,7 +287,7 @@ struct RemoteConversationsView: View {
             : (search.isEmpty
               ? "No conversations in this folder yet." : "No matching conversations.")
         )
-          .font(.callout).foregroundStyle(.secondary)
+        .font(.callout).foregroundStyle(.secondary)
       }
       if let error = hosts.error { Text(error).foregroundStyle(.red).font(.callout) }
     }

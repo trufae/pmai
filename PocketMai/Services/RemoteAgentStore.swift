@@ -203,6 +203,16 @@ final class RemoteAgentStore {
     do { try save() } catch { self.error = error.localizedDescription }
   }
 
+  func rename(_ id: UUID, to name: String) throws {
+    let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty, name.count <= 200 else {
+      throw JSONRPCError.invalidParams("Enter a host name of 1 to 200 characters.")
+    }
+    guard let index = connections.firstIndex(where: { $0.id == id }) else { return }
+    connections[index].name = name
+    try save()
+  }
+
   func folders(for host: RemoteAgentBookmark) -> [ACPWorkspaceFolder] {
     if let workspace = host.workspace { return workspace.folders }
     var folders: [ACPWorkspaceFolder] = []
@@ -312,10 +322,18 @@ final class RemoteAgentChat {
   private var permissionReplies: [UUID: CheckedContinuation<String?, Never>] = [:]
   private var generation = 0
   private var deleted = false
+  private var connectingHistory: [RemoteAgentMessage]?
+  private let store: RemoteAgentStore
+  private let isOffline: () -> Bool
 
-  init(bookmark: RemoteAgentBookmark, conversation: RemoteAgentConversation) {
+  init(
+    bookmark: RemoteAgentBookmark, conversation: RemoteAgentConversation,
+    store: RemoteAgentStore = .shared, isOffline: @escaping () -> Bool = { false }
+  ) {
     self.bookmark = bookmark
     self.conversation = conversation
+    self.store = store
+    self.isOffline = isOffline
     messages = conversation.messages
     sessionID = conversation.sessionID
     self.conversation.createdAt = conversation.createdAt ?? conversation.updatedAt
@@ -329,7 +347,7 @@ final class RemoteAgentChat {
 
   var canManage: Bool {
     conversation.sessionID == nil
-      || RemoteAgentStore.shared.host(bookmark.id)?.workspace?.canManageSessions == true
+      || store.host(bookmark.id)?.workspace?.canManageSessions == true
   }
 
   func manage(title: String?) async throws {
@@ -340,15 +358,26 @@ final class RemoteAgentChat {
     guard title?.isEmpty != true else { return }
     busy = true
     defer { busy = false }
+    let attempt = generation
     if let sessionID {
+      guard !isOffline() else { throw InternetAccessError.offline }
+      let temporary = client == nil
       let managementClient = try client ?? makeClient()
+      if temporary { client = managementClient }
       do {
         try await managementClient.manageSession(sessionID, cwd: conversation.cwd, title: title)
-        if client == nil { await managementClient.disconnect() }
+        if temporary {
+          if client === managementClient { client = nil }
+          await managementClient.disconnect()
+        }
       } catch {
-        if client == nil { await managementClient.disconnect() }
+        if temporary {
+          if client === managementClient { client = nil }
+          await managementClient.disconnect()
+        }
         throw error
       }
+      guard generation == attempt, !isOffline() else { throw CancellationError() }
     }
     if let title {
       conversation.title = title
@@ -357,13 +386,14 @@ final class RemoteAgentChat {
     } else {
       deleted = true
       disconnect()
-      RemoteAgentStore.shared.deleteConversation(conversation.id, hostID: bookmark.id)
+      store.deleteConversation(conversation.id, hostID: bookmark.id)
     }
   }
 
   private func makeClient() throws -> ACPClient {
+    guard !isOffline() else { throw InternetAccessError.offline }
     let generation = generation
-    let token = try RemoteAgentStore.shared.token(for: bookmark.id)
+    let token = try store.token(for: bookmark.id)
     return ACPClient(
       configuration: .init(
         command: bookmark.name, permission: .reject,
@@ -372,11 +402,18 @@ final class RemoteAgentChat {
       onUpdate: { [weak self] update in await self?.receive(update, generation: generation) },
       onPermission: { [weak self] request in
         await self?.requestPermission(request, generation: generation)
+      },
+      onDisconnect: { [weak self] in
+        await self?.connectionClosed(generation: generation)
       })
   }
 
   func connect() {
-    guard !busy else { return }
+    guard !busy, !connected else { return }
+    guard !isOffline() else {
+      error = "Turn off Airplane Mode in Settings to connect to this host."
+      return
+    }
     busy = true
     error = nil
     status = "Connecting…"
@@ -386,18 +423,23 @@ final class RemoteAgentChat {
       let previous = messages
       do {
         await client?.disconnect()
+        guard generation == attempt, !Task.isCancelled else { return }
         let client = try makeClient()
         self.client = client
+        connectingHistory = previous
         messages = []
         let id = try await client.connect()
         guard generation == attempt else { return }
         sessionID = id
-        connected = true
-        status = "Connected"
+        connected = await client.isConnected
+        guard generation == attempt else { return }
+        connectingHistory = nil
+        status = connected ? "Connected" : "Disconnected"
         persist()
       } catch {
         guard generation == attempt else { return }
         messages = previous
+        connectingHistory = nil
         self.error = error.localizedDescription
         connected = false
         status = "Disconnected"
@@ -411,7 +453,7 @@ final class RemoteAgentChat {
   }
 
   func send(_ text: String) {
-    guard connected, !busy, let client else { return }
+    guard !isOffline(), connected, !busy, let client else { return }
     let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else { return }
     busy = true
@@ -455,7 +497,18 @@ final class RemoteAgentChat {
     connected = false
     busy = false
     status = "Disconnected"
+    if let connectingHistory {
+      messages = connectingHistory
+      self.connectingHistory = nil
+    }
     persist()
+  }
+
+  private func connectionClosed(generation: Int) {
+    guard self.generation == generation else { return }
+    connected = false
+    status = "Disconnected"
+    cancelPermissions()
   }
 
   func answer(_ id: UUID, optionID: String?) {
@@ -542,6 +595,6 @@ final class RemoteAgentChat {
     guard !deleted else { return }
     conversation.sessionID = sessionID
     conversation.messages = messages
-    RemoteAgentStore.shared.update(bookmark.id, conversation: conversation)
+    store.update(bookmark.id, conversation: conversation)
   }
 }

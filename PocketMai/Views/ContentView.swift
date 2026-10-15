@@ -158,7 +158,8 @@ struct ContentView: View {
                 storeObservation: chatStoreObservation,
                 remoteChat: hosts.selectedHost.flatMap { host in
                   hosts.selectedConversation.map {
-                    RemoteAgentChat(bookmark: host, conversation: $0)
+                    RemoteAgentChat(
+                      bookmark: host, conversation: $0, isOffline: { store.settings.isOffline })
                   }
                 },
                 store: store,
@@ -303,7 +304,7 @@ struct ContentView: View {
     }
     .onChange(of: scenePhase) { _, phase in
       store.handleScenePhaseChange(phase)
-      if phase == .background { hosts.stopDiscovery() }
+      if phase == .background { hosts.suspendConnections() }
       if phase == .active {
         store.refreshAppleIntelligenceAvailabilityInBackground()
         store.refreshLocalMLXModelsInBackground()
@@ -311,7 +312,7 @@ struct ContentView: View {
       }
     }
     .onChange(of: store.settings.isOffline) { _, enabled in
-      if enabled { hosts.stopDiscovery() }
+      if enabled { hosts.suspendConnections() }
     }
     .onChange(of: hosts.remotes.connections.map(\.id)) { _, ids in
       if let id = hosts.selectedHostID, !ids.contains(id) {

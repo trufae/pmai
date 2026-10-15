@@ -5,10 +5,13 @@ import SwiftUI
 import VisionKit
 
 struct RemoteAgentsView: View {
+  var hosts: HostNavigationStore? = nil
   var onSelectHost: ((UUID) -> Void)? = nil
+  @EnvironmentObject private var appStore: AppStore
   @State private var store = RemoteAgentStore.shared
   @State private var adding = false
   @State private var editing: RemoteAgentBookmark?
+  @State private var renaming: RemoteAgentBookmark?
 
   var body: some View {
     List {
@@ -25,12 +28,22 @@ struct RemoteAgentsView: View {
           }
           .foregroundStyle(.primary)
           .contextMenu {
+            Button("Rename", systemImage: "character.cursor.ibeam") { renaming = connection }
             Button("Edit Host", systemImage: "pencil") { editing = connection }
+            if let hosts, hosts.selectedHostID == connection.id || hosts.isConnected(connection.id)
+            {
+              Button("Disconnect", systemImage: "network.slash") { hosts.disconnect(connection.id) }
+            }
             if let onSelectHost {
               Button("Reconnect", systemImage: "arrow.clockwise") {
-                store.reconnect(connection.id)
+                if let hosts {
+                  hosts.reconnect(connection.id, isOffline: appStore.settings.isOffline)
+                } else {
+                  store.reconnect(connection.id)
+                }
                 onSelectHost(connection.id)
               }
+              .disabled(appStore.settings.isOffline)
             }
             Button("Remove Host", systemImage: "trash", role: .destructive) {
               store.remove(connection.id)
@@ -51,6 +64,42 @@ struct RemoteAgentsView: View {
     .navigationTitle("Remote Hosts")
     .sheet(isPresented: $adding) { RemoteAgentConnectionView(onAdded: onSelectHost) }
     .sheet(item: $editing) { host in RemoteAgentConnectionView(initialHost: host) }
+    .sheet(item: $renaming) { host in RemoteHostRenameView(host: host) }
+  }
+}
+
+struct RemoteHostRenameView: View {
+  let host: RemoteAgentBookmark
+  @Environment(\.dismiss) private var dismiss
+  @State private var name: String
+  @State private var error: String?
+
+  init(host: RemoteAgentBookmark) {
+    self.host = host
+    _name = State(initialValue: host.name)
+  }
+
+  var body: some View {
+    NavigationStack {
+      Form {
+        TextField("Name", text: $name)
+        if let error { Text(error).foregroundStyle(.red) }
+      }
+      .navigationTitle("Rename Host")
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+        ToolbarItem(placement: .confirmationAction) {
+          Button("Save") {
+            do {
+              try RemoteAgentStore.shared.rename(host.id, to: name)
+              dismiss()
+            } catch { self.error = error.localizedDescription }
+          }
+          .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+      }
+    }
+    .presentationDetents([.medium])
   }
 }
 
@@ -72,25 +121,8 @@ struct RemoteAgentConnectionView: View {
   var body: some View {
     NavigationStack {
       Form {
-        Section("Import connection") {
-          TextField("Paste pmai-acp:// connection URI", text: $uri, axis: .vertical)
-            .textInputAutocapitalization(.never).autocorrectionDisabled().privacySensitive()
-          Button("Read Connection URI") { apply(uri) }
-            .disabled(uri.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-          if DataScannerViewController.isSupported {
-            Button("Scan Gateway QR", systemImage: "qrcode.viewfinder") {
-              Task { await scan() }
-            }
-          }
-        }
-        Section("Gateway") {
+        Section("Appearance") {
           TextField("Name", text: $name)
-          TextField("wss://host/acp", text: $address).keyboardType(.URL)
-            .textInputAutocapitalization(.never).autocorrectionDisabled()
-          SecureField("Gateway token", text: $token)
-            .textInputAutocapitalization(.never).autocorrectionDisabled()
-          TextField("Absolute workspace on remote host", text: $cwd)
-            .textInputAutocapitalization(.never).autocorrectionDisabled()
           Picker("Accent color", selection: $accentColor) {
             Text("App default").tag(String?.none)
             ForEach(AgentProjectTint.presetNames, id: \.self) { name in
@@ -110,6 +142,26 @@ struct RemoteAgentConnectionView: View {
               set: { accentColor = $0.folderTintHex.map { "custom:" + $0 } }),
             supportsOpacity: false)
         }
+        Section("Import connection") {
+          TextField("Paste pmai-acp:// connection URI", text: $uri, axis: .vertical)
+            .textInputAutocapitalization(.never).autocorrectionDisabled().privacySensitive()
+          Button("Read Connection URI") { apply(uri) }
+            .disabled(uri.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+          if DataScannerViewController.isSupported {
+            Button("Scan Gateway QR", systemImage: "qrcode.viewfinder") {
+              Task { await scan() }
+            }
+          }
+        }
+        Section("Gateway") {
+          TextField("wss://host/acp", text: $address).keyboardType(.URL)
+            .textInputAutocapitalization(.never).autocorrectionDisabled()
+          SecureField("Gateway token", text: $token)
+            .textInputAutocapitalization(.never).autocorrectionDisabled()
+          TextField("Absolute workspace on remote host", text: $cwd)
+            .textInputAutocapitalization(.never).autocorrectionDisabled()
+        }
+
         Section {
           if address.lowercased().hasPrefix("ws://") {
             Label(
