@@ -160,6 +160,10 @@ final class ConversationHistoryScrollSession {
       animated: false)
   }
 
+  func stopScrolling() {
+    scrollView?.stopScrollingAndZooming()
+  }
+
   func cancel() {
     viewportY = nil
     pendingRevision = nil

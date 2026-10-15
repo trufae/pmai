@@ -1027,8 +1027,8 @@ struct ChatView: View {
             userMessageNavigationDestination = nil
             userMessageNavigationHiddenBySwipe = false
           } else if phase == .idle {
-            userMessageNavigationDestination = nil
-            if userScrolledAfterLastMessage, !messageFontPinchSession.isActive,
+            if userMessageNavigationDestination == nil,
+              userScrolledAfterLastMessage, !messageFontPinchSession.isActive,
               isAtChatBottom(context.geometry)
             {
               // Resume only after the gesture (including deceleration) finishes.
@@ -1234,6 +1234,10 @@ struct ChatView: View {
   ) -> some View {
     let button = Button {
       guard let destination = userMessageNavigationTarget(for: direction) else { return }
+      let conversationID = currentConversationID
+      streamingScrollTask?.cancel()
+      streamingScrollTask = nil
+      historyScrollSession.stopScrolling()
       if case .message(let id) = destination {
         prepareMessageNavigation(to: id)
       } else {
@@ -1242,12 +1246,20 @@ struct ChatView: View {
       userScrolledAfterLastMessage = true
       userMessageNavigationDestination = destination
       showUserMessageNavigationIndicator()
+      // Let newly revealed history lay out, then jump without inheriting animations.
       DispatchQueue.main.async {
-        withAnimation(.easeOut(duration: 0.16)) {
+        guard currentConversationID == conversationID,
+          userMessageNavigationDestination == destination
+        else { return }
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
           switch destination {
           case .message(let id):
             proxy.scrollTo(id, anchor: .top)
           case .bottom:
+            followChatBottom = true
+            userScrolledAfterLastMessage = false
             proxy.scrollTo(messageListBottomID, anchor: .bottom)
           }
         }
