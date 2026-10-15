@@ -12623,6 +12623,7 @@ struct MaiCLI {
   private static let remoteHelp = """
     /remote serve          Start sharing all indexed pmai projects; prints your address and a pairing QR
     /remote serve --path PATH ...  Share only these directories and their descendants
+    /remote serve --loopback  Listen only on 127.0.0.1 for a local tunnel or proxy
     /remote stop           Stop the server and disconnect its clients
     /remote qr             Show the running server's pairing QR and connection URI again
     /remote list            List paired hosts and server status
@@ -12638,8 +12639,10 @@ struct MaiCLI {
     /remote serve keeps this REPL usable and stops when it exits. Your LAN address,
     port 19283, current agent, and current directory are selected automatically.
     All projects in ~/.pmai/projects.json and their saved chats are shared by default.
-    Use --path PATH ... to restrict folders, --port PORT to change the port, --address
-    IP to choose another interface, or --name NAME to choose the advertised host name.
+    Use --path PATH ... to restrict folders or --port PORT to change the port.
+    --loopback binds only to 127.0.0.1 and advertises that address by default.
+    --address IP overrides the advertised address without changing the listener.
+    --name NAME chooses the advertised host name.
     Scan the QR in PocketMai → Hosts. On another CLI, pair the URI or QR image once.
     Accept the client in the serving REPL before it can browse or run agents, then
     /remote connect NAME. Remote tools use the normal approval flow. /chat use

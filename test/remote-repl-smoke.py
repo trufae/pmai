@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import urlsplit
 
 from smoke import clean_environment
 
@@ -104,6 +105,9 @@ def run():
             profile = json.loads(base64.urlsafe_b64decode(uri.split("/")[-1]))
             assert profile["url"].endswith(f":{port}/acp")
             assert "127.0.0.1" not in profile["url"], "automatic address should be reachable from a phone"
+            lan_address = urlsplit(profile["url"]).hostname
+            with socket.create_connection((lan_address, port), timeout=2):
+                pass
             token = profile["token"]
             assert profile["requiresApproval"] is True
             invitation = WS(port, token)
@@ -197,8 +201,14 @@ def run():
 
             server.send("/remote stop")
             server.wait("Remote server stopped.")
-            server.send(f'/remote serve --path "{projects[1]}" "{projects[2]}" --port {port} --address 127.0.0.1 --name server')
+            server.send(f'/remote serve --path "{projects[1]}" "{projects[2]}" --port {port} --loopback --name server')
             wait_for(lambda: server.path.read_text().count("Connection profile:") == 2, "restricted server startup")
+            uri = (home / "remote-server/connection.txt").read_text().strip()
+            loopback_profile = json.loads(base64.urlsafe_b64decode(uri.split("/")[-1]))
+            assert loopback_profile["url"] == f"ws://127.0.0.1:{port}/acp", loopback_profile
+            with socket.socket() as probe:
+                probe.settimeout(2)
+                assert probe.connect_ex((lan_address, port)) != 0, "loopback listener accepted a LAN connection"
             connection = WS(port, approved_token)
             connection.rpc("initialize", {"protocolVersion": 1})
             listing = connection.rpc("session/list")[0]
@@ -216,7 +226,18 @@ def run():
             server.wait(version)
             print("Optional multi-path restriction and a usable REPL while serving: passed", flush=True)
 
+            server.send("/remote stop")
+            wait_for(lambda: server.path.read_text().count("Remote server stopped.") == 2, "loopback server stop")
+            server.send(f'/remote serve --loopback --address {lan_address} --port {port} --name server')
+            wait_for(lambda: server.path.read_text().count("Connection profile:") == 3, "advertised address override startup")
+            uri = (home / "remote-server/connection.txt").read_text().strip()
+            advertised_profile = json.loads(base64.urlsafe_b64decode(uri.split("/")[-1]))
+            assert advertised_profile["url"] == profile["url"], advertised_profile
+            with socket.socket() as probe:
+                probe.settimeout(2)
+                assert probe.connect_ex((lan_address, port)) != 0, "advertised address override exposed the listener"
             active = WS(port, profile["token"])
+            print("Loopback serving, pairing profile, and advertised address override isolation: passed", flush=True)
             server.send("/set airplane on")
             server.wait("airplane = on")
             def listener_stopped():

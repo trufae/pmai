@@ -108,9 +108,15 @@ actor RemoteREPLServer {
     }
     var flags: [String: String] = [:]
     var paths: [String] = []
+    var loopback = false
     var index = 0
     while index < arguments.count {
       let key = arguments[index]
+      if key == "--loopback", !loopback {
+        loopback = true
+        index += 1
+        continue
+      }
       if key == "--path" || key == "--paths" {
         index += 1
         let start = index
@@ -127,7 +133,7 @@ actor RemoteREPLServer {
         flags[key] == nil
       else {
         throw JSONRPCError.invalidParams(
-          "Usage: /remote serve [--path PATH ...] [--port PORT] [--address IP] [--name NAME]")
+          "Usage: /remote serve [--path PATH ...] [--port PORT] [--loopback] [--address IP] [--name NAME]")
       }
       flags[key] = arguments[index + 1]
       index += 2
@@ -135,7 +141,8 @@ actor RemoteREPLServer {
     guard let port = Int(flags["--port"] ?? "19283"), (1...65535).contains(port) else {
       throw JSONRPCError.invalidParams("Port must be between 1 and 65535")
     }
-    let address = try flags["--address"] ?? RemoteAddress.localIPv4()
+    let bindAddress = loopback ? "127.0.0.1" : "0.0.0.0"
+    let address = try flags["--address"] ?? (loopback ? bindAddress : RemoteAddress.localIPv4())
     guard let url = URL(string: "ws://\(address):\(port)/acp") else {
       throw JSONRPCError.invalidParams("Invalid host address")
     }
@@ -181,7 +188,7 @@ actor RemoteREPLServer {
         return try await self.requestPairing(id: id, name: name, source: source, terminal: terminal)
       })
     let gateway = ACPWebSocketGateway.Configuration(
-      host: "0.0.0.0", port: port,
+      host: bindAddress, port: port,
       tokenFile: tokenFile, command: executable, arguments: childArguments, workingDirectory: cwd,
       pairing: pairing)
     let (ready, signal) = AsyncStream<Result<Void, any Error>>.makeStream()
