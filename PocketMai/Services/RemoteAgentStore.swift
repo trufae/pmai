@@ -19,6 +19,7 @@ struct RemoteAgentBookmark: Codable, Identifiable {
   var revision: UUID?
   var backend: RemoteAgentBackend?
   var pinnedFolderPaths: [String]?
+  var pinnedConversationIDs: [UUID]?
 
   func makeClient(
     token: String, cwd: String, sessionID: String? = nil,
@@ -240,6 +241,10 @@ final class RemoteAgentStore {
     let sessionID = connections[index].conversations?.first { $0.id == id }?.sessionID
     connections[index].conversations?.removeAll { $0.id == id }
     connections[index].workspace?.sessions.removeAll { $0.sessionID == sessionID }
+    connections[index].pinnedConversationIDs?.removeAll { $0 == id }
+    if connections[index].pinnedConversationIDs?.isEmpty == true {
+      connections[index].pinnedConversationIDs = nil
+    }
     do { try save() } catch { self.error = error.localizedDescription }
   }
 
@@ -299,7 +304,27 @@ final class RemoteAgentStore {
   }
 
   func conversations(for host: RemoteAgentBookmark) -> [RemoteAgentConversation] {
-    (host.conversations ?? []).sorted { $0.updatedAt > $1.updatedAt }
+    let pins = Set(host.pinnedConversationIDs ?? [])
+    return (host.conversations ?? []).sorted {
+      if pins.contains($0.id) != pins.contains($1.id) { return pins.contains($0.id) }
+      if $0.updatedAt != $1.updatedAt { return $0.updatedAt > $1.updatedAt }
+      return $0.id.uuidString < $1.id.uuidString
+    }
+  }
+
+  func toggleConversationPin(hostID: UUID, conversationID: UUID) {
+    guard let index = connections.firstIndex(where: { $0.id == hostID }),
+      connections[index].conversations?.contains(where: { $0.id == conversationID }) == true
+    else { return }
+    // Keep device-local pins outside chat snapshots so streaming updates cannot overwrite them.
+    var pins = connections[index].pinnedConversationIDs ?? []
+    if pins.contains(conversationID) {
+      pins.removeAll { $0 == conversationID }
+    } else {
+      pins.append(conversationID)
+    }
+    connections[index].pinnedConversationIDs = pins.isEmpty ? nil : pins
+    do { try save() } catch { self.error = error.localizedDescription }
   }
 
   @discardableResult
@@ -333,6 +358,10 @@ final class RemoteAgentStore {
         for path in connection.pinnedFolderPaths ?? []
         where hosts[index].pinnedFolderPaths?.contains(path) != true {
           hosts[index].pinnedFolderPaths = (hosts[index].pinnedFolderPaths ?? []) + [path]
+        }
+        for id in connection.pinnedConversationIDs ?? []
+        where hosts[index].pinnedConversationIDs?.contains(id) != true {
+          hosts[index].pinnedConversationIDs = (hosts[index].pinnedConversationIDs ?? []) + [id]
         }
       } else {
         hosts.append(connection)

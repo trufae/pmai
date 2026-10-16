@@ -862,6 +862,7 @@ struct ConversationSummaryActionsModifier: ViewModifier {
   var canManage = true
   var onRename: ((String) async -> Void)? = nil
   var onDelete: ((Set<UUID>) -> Void)? = nil
+  var onTogglePin: (() -> Void)? = nil
 
   @State private var pendingDeletion: PendingConversationDeletion?
   @State private var showingRename = false
@@ -901,13 +902,18 @@ struct ConversationSummaryActionsModifier: ViewModifier {
         showingRename = true
       }
       .disabled(!canManage)
-      Group {
-        Button(
-          conversation.isPinned ? "Unpin Conversation" : "Pin to Top",
-          systemImage: conversation.isPinned ? "pin.slash" : "pin"
-        ) {
+      Button(
+        conversation.isPinned ? "Unpin Conversation" : "Pin to Top",
+        systemImage: conversation.isPinned ? "pin.slash" : "pin"
+      ) {
+        if let onTogglePin {
+          onTogglePin()
+        } else {
           Task { await store.togglePin(id: conversation.id) }
         }
+      }
+      .disabled(!allowsLocalActions && onTogglePin == nil)
+      Group {
         Button(
           conversation.isUnread ? "Mark as Read" : "Mark as Unread",
           systemImage: conversation.isUnread ? "envelope.open" : "envelope.badge"
@@ -2351,7 +2357,9 @@ struct ConversationRow: View {
       }
     }
     .buttonStyle(.plain)
-    .accessibilityValue(conversation.isUnread ? "Unread" : "")
+    .accessibilityValue(
+      [conversation.isPinned ? "Pinned" : nil, conversation.isUnread ? "Unread" : nil]
+        .compactMap { $0 }.joined(separator: ", "))
   }
 
   @ViewBuilder

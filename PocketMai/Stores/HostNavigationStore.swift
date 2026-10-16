@@ -136,6 +136,15 @@ final class HostNavigationStore {
     remotes.toggleFolderPin(hostID: selectedHostID, cwd: cwd)
   }
 
+  func isConversationPinned(_ id: UUID) -> Bool {
+    selectedHost?.pinnedConversationIDs?.contains(id) == true
+  }
+
+  func toggleConversationPin(_ id: UUID) {
+    guard let selectedHostID else { return }
+    remotes.toggleConversationPin(hostID: selectedHostID, conversationID: id)
+  }
+
   func reconnect(_ id: UUID, isOffline: Bool) {
     guard !isOffline else { return }
     suspendConnections()

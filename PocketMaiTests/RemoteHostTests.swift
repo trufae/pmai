@@ -18,6 +18,7 @@ final class RemoteHostTests: XCTestCase {
       XCTAssertTrue(store.folders(for: try XCTUnwrap(store.host(id))).isEmpty)
       let chat = store.newConversation(hostID: id, cwd: "/work")
       store.toggleFolderPin(hostID: id, cwd: "/work")
+      store.toggleConversationPin(hostID: id, conversationID: chat.id)
       let replacement = try OpenCodeConnection(
         name: "Workstation", url: url, token: "refreshed-session")
       XCTAssertEqual(try store.add(replacement), id)
@@ -26,6 +27,7 @@ final class RemoteHostTests: XCTestCase {
       XCTAssertEqual(host.backend, .openCode)
       XCTAssertEqual(host.name, "Workstation")
       XCTAssertEqual(host.pinnedFolderPaths, ["/work"])
+      XCTAssertEqual(host.pinnedConversationIDs, [chat.id])
       XCTAssertEqual(try reloaded.token(for: id), "refreshed-session")
       XCTAssertEqual(reloaded.conversations(for: host).first?.id, chat.id)
       XCTAssertFalse(try String(contentsOf: file, encoding: .utf8).contains("refreshed-session"))
@@ -39,6 +41,7 @@ final class RemoteHostTests: XCTestCase {
     let restored = try JSONDecoder().decode(
       RemoteAgentBookmark.self, from: JSONEncoder().encode(host))
     XCTAssertNil(restored.backend)
+    XCTAssertNil(restored.pinnedConversationIDs)
     XCTAssertTrue(try restored.makeClient(token: "test", cwd: "/work") is ACPClient)
   }
 
@@ -71,6 +74,94 @@ final class RemoteHostTests: XCTestCase {
     XCTAssertTrue(SidebarSearch.matches("answer", in: ["Unrelated title", "Cached answer text"]))
     XCTAssertTrue(SidebarSearch.matches(" \n ", in: []))
     XCTAssertFalse(SidebarSearch.matches("missing", in: ["Title", "Different contents"]))
+  }
+
+  func testRemoteConversationPinsPersistOfflineAndStayIsolatedBetweenHostsAndFolders() throws {
+    let oldest = RemoteAgentConversation(
+      cwd: "/work", sessionID: "oldest", updatedAt: Date(timeIntervalSince1970: 100))
+    let newer = RemoteAgentConversation(
+      cwd: "/work", sessionID: "newer", updatedAt: Date(timeIntervalSince1970: 200))
+    let newest = RemoteAgentConversation(
+      cwd: "/work", updatedAt: Date(timeIntervalSince1970: 300))
+    let elsewhere = RemoteAgentConversation(cwd: "/other")
+    let first = RemoteAgentBookmark(
+      name: "ACP", url: try XCTUnwrap(URL(string: "wss://first.example/acp")), cwd: "/work",
+      conversations: [oldest, newer, newest, elsewhere])
+    let second = RemoteAgentBookmark(
+      name: "OpenCode", url: try XCTUnwrap(URL(string: "https://second.example")), cwd: "/work",
+      conversations: [oldest, newer, newest], backend: .openCode)
+    try withStore([first, second]) { store, file in
+      let hosts = HostNavigationStore(remotes: store)
+      hosts.selectHost(first.id, isOffline: true)
+      hosts.selectedConversationID = newest.id
+      XCTAssertEqual(hosts.conversations.map(\.id), [newest.id, newer.id, oldest.id])
+      hosts.toggleConversationPin(oldest.id)
+      hosts.toggleConversationPin(newer.id)
+      hosts.toggleConversationPin(elsewhere.id)
+      XCTAssertTrue(hosts.isConversationPinned(oldest.id))
+      XCTAssertEqual(hosts.conversations.map(\.id), [newer.id, oldest.id, newest.id])
+      XCTAssertEqual(hosts.selectedConversationID, newest.id)
+      XCTAssertEqual(hosts.selectedFolderID, "/work")
+      XCTAssertFalse(hosts.loading)
+      XCTAssertNil(store.host(first.id)?.revision)
+      XCTAssertEqual(
+        store.host(first.id)?.conversations?.map(\.updatedAt),
+        first.conversations?.map(\.updatedAt))
+      hosts.toggleConversationPin(UUID())
+      XCTAssertEqual(
+        store.host(first.id)?.pinnedConversationIDs, [oldest.id, newer.id, elsewhere.id])
+
+      hosts.selectFolder("/other")
+      XCTAssertEqual(hosts.conversations.map(\.id), [elsewhere.id])
+      hosts.selectHost(second.id, isOffline: true)
+      XCTAssertFalse(hosts.isConversationPinned(oldest.id))
+      hosts.toggleConversationPin(newest.id)
+      let restored = RemoteAgentStore(file: file)
+      XCTAssertEqual(
+        restored.host(first.id)?.pinnedConversationIDs,
+        [oldest.id, newer.id, elsewhere.id])
+      XCTAssertEqual(restored.host(second.id)?.pinnedConversationIDs, [newest.id])
+      let navigation = HostNavigationStore(remotes: restored)
+      navigation.selectHost(first.id, isOffline: true)
+      XCTAssertEqual(navigation.conversations.map(\.id), [newer.id, oldest.id, newest.id])
+      navigation.toggleConversationPin(oldest.id)
+      navigation.toggleConversationPin(elsewhere.id)
+      restored.deleteConversation(newer.id, hostID: first.id)
+      let deleted = RemoteAgentStore(file: file)
+      XCTAssertNil(deleted.host(first.id)?.pinnedConversationIDs)
+      XCTAssertEqual(deleted.host(second.id)?.pinnedConversationIDs, [newest.id])
+      XCTAssertEqual(navigation.conversations.map(\.id), [newest.id, oldest.id])
+    }
+  }
+
+  func testRemoteConversationPinsSurviveDiscoveryReconnectAndActiveChatUpdates() throws {
+    let original = RemoteAgentBookmark(
+      name: "Worker", url: try XCTUnwrap(URL(string: "wss://worker.example/acp")), cwd: "/work")
+    try withStore([original]) { store, file in
+      let session = ACPSessionInfo(
+        sessionID: "opaque-session", cwd: "/work", title: "Original",
+        updatedAt: Date(timeIntervalSince1970: 100))
+      store.updateWorkspace(original.id, snapshot: .init(sessions: [session]))
+      let host = try XCTUnwrap(store.host(original.id))
+      var activeSnapshot = try XCTUnwrap(host.conversations?.first)
+      store.toggleConversationPin(hostID: original.id, conversationID: activeSnapshot.id)
+      var refreshed = session
+      refreshed.title = "Renamed"
+      refreshed.updatedAt = Date(timeIntervalSince1970: 200)
+      store.updateWorkspace(original.id, snapshot: .init(sessions: [refreshed]))
+      store.reconnect(original.id)
+      XCTAssertEqual(store.host(original.id)?.conversations?.first?.id, activeSnapshot.id)
+      XCTAssertEqual(store.host(original.id)?.conversations?.first?.title, "Renamed")
+      activeSnapshot.messages = [.init(role: "assistant", text: "Streaming response")]
+      store.update(original.id, conversation: activeSnapshot)
+      XCTAssertEqual(
+        RemoteAgentStore(file: file).host(original.id)?.pinnedConversationIDs,
+        [activeSnapshot.id])
+      store.toggleConversationPin(hostID: original.id, conversationID: activeSnapshot.id)
+      store.update(original.id, conversation: activeSnapshot)
+      XCTAssertNil(RemoteAgentStore(file: file).host(original.id)?.pinnedConversationIDs)
+      XCTAssertEqual(store.host(original.id)?.conversations?.count, 1)
+    }
   }
 
   func testRemoteFolderPinsPersistOfflineAndStayIsolatedBetweenHosts() throws {
@@ -281,25 +372,29 @@ final class RemoteHostTests: XCTestCase {
 
   func testLegacyWorkspaceConnectionsBecomeOneHostWithoutLosingChats() throws {
     let url = try XCTUnwrap(URL(string: "wss://worker.example/acp"))
-    let first = RemoteAgentBookmark(
+    var first = RemoteAgentBookmark(
       name: "Worker", url: url, cwd: "/work/one",
       sessionID: "one", messages: [.init(role: "user", text: "First conversation")],
       pinnedFolderPaths: ["/work/one"])
-    let second = RemoteAgentBookmark(
+    var second = RemoteAgentBookmark(
       name: "Worker", url: url, cwd: "/work/two",
       sessionID: "two", messages: [.init(role: "user", text: "Second conversation")],
       pinnedFolderPaths: ["/work/two", "/work/one"])
+    first.pinnedConversationIDs = [first.id]
+    second.pinnedConversationIDs = [second.id, first.id]
     try withStore([first, second]) { store, file in
       XCTAssertEqual(store.connections.count, 1)
       let host = try XCTUnwrap(store.connections.first)
       XCTAssertEqual(host.id, first.id)
       XCTAssertEqual(host.pinnedFolderPaths, ["/work/one", "/work/two"])
+      XCTAssertEqual(host.pinnedConversationIDs, [first.id, second.id])
       XCTAssertEqual(Set(store.folders(for: host).map(\.cwd)), Set(["/work/one", "/work/two"]))
       XCTAssertEqual(
         Set(store.conversations(for: host).compactMap(\.sessionID)), Set(["one", "two"]))
       let newChat = store.newConversation(hostID: host.id, cwd: "/work/one")
       let reloaded = RemoteAgentStore(file: file)
       let reloadedHost = try XCTUnwrap(reloaded.connections.first)
+      XCTAssertEqual(reloadedHost.pinnedConversationIDs, [first.id, second.id])
       XCTAssertEqual(reloaded.conversations(for: reloadedHost).count, 3)
       XCTAssertTrue(reloaded.conversations(for: reloadedHost).contains { $0.id == newChat.id })
     }

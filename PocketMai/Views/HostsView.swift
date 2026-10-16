@@ -247,6 +247,17 @@ struct RemoteConversationsView: View {
     }
   }
 
+  private func groupTitle(for chat: RemoteAgentConversation) -> String {
+    hosts.isConversationPinned(chat.id)
+      ? "Pinned" : ConversationDatePresentation.sidebarGroupTitle(for: chat.updatedAt)
+  }
+
+  private func summary(for chat: RemoteAgentConversation) -> ConversationSummary {
+    var summary = ConversationSummary(conversation: chat.presentation)
+    summary.isPinned = hosts.isConversationPinned(chat.id)
+    return summary
+  }
+
   var body: some View {
     ConversationSidebarPanel(
       title: hosts.folders.first { $0.cwd == hosts.selectedFolderID }?.name ?? "Conversations",
@@ -267,16 +278,14 @@ struct RemoteConversationsView: View {
     List {
       let chats = conversations
       ForEach(Array(chats.enumerated()), id: \.element.id) { index, chat in
-        let groupTitle = ConversationDatePresentation.sidebarGroupTitle(for: chat.updatedAt)
-        if index == 0
-          || ConversationDatePresentation.sidebarGroupTitle(for: chats[index - 1].updatedAt)
-            != groupTitle
-        {
-          SidebarConversationGroupHeader(title: groupTitle)
+        let title = groupTitle(for: chat)
+        if index == 0 || groupTitle(for: chats[index - 1]) != title {
+          SidebarConversationGroupHeader(title: title)
         }
         let selected = hosts.selectedConversationID == chat.id
+        let summary = summary(for: chat)
         ConversationRow(
-          conversation: ConversationSummary(conversation: chat.presentation), isSelected: selected,
+          conversation: summary, isSelected: selected,
           isResponding: selected && hosts.activeChat?.busy == true
         ) {
           searchFocused = false
@@ -287,7 +296,7 @@ struct RemoteConversationsView: View {
         .modifier(
           ConversationSummaryActionsModifier(
             store: appStore,
-            conversation: ConversationSummary(conversation: chat.presentation),
+            conversation: summary,
             isEnabled: true, exportCoordinator: exportCoordinator,
             onSelectForBatch: nil, allowsLocalActions: false,
             exportConversation: selected
@@ -306,7 +315,8 @@ struct RemoteConversationsView: View {
                 await hosts.manageConversation(
                   chat, title: nil, isOffline: { appStore.settings.isOffline })
               }
-            }))
+            },
+            onTogglePin: { hosts.toggleConversationPin(chat.id) }))
       }
       if conversations.isEmpty {
         Text(
