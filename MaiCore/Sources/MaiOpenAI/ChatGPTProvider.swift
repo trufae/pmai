@@ -358,6 +358,12 @@ struct ChatGPTResponseStream {
   var requestID: String? = nil
   var text = ""
   var reasoning = ""
+  private var completedItems: [Int: JSONValue] = [:]
+
+  init(resolver: ToolNameResolver, requestID: String? = nil) {
+    self.resolver = resolver
+    self.requestID = requestID
+  }
 
   mutating func feed(_ payload: String, emit: ProviderEventHandler) async throws
     -> ProviderResponse?
@@ -394,6 +400,11 @@ struct ChatGPTResponseStream {
           .init(
             index: root["output_index"]?.intValue ?? 0,
             argumentsFragment: root["delta"]?.stringValue ?? "")))
+    case "response.output_item.done":
+      guard let index = root["output_index"]?.intValue, index >= 0,
+        let item = root["item"], item.objectValue != nil
+      else { throw ChatGPTError.message("ChatGPT returned an invalid completed output item.") }
+      completedItems[index] = item
     case "error", "response.failed":
       throw ChatGPTProvider.failure(
         root["response"]?["error"] ?? root["error"] ?? root, requestID: requestID)
@@ -406,8 +417,13 @@ struct ChatGPTResponseStream {
       )
     case "response.completed":
       guard let response = root["response"], response["status"]?.stringValue == "completed",
-        let output = response["output"]?.arrayValue
+        let terminalOutput = response["output"]?.arrayValue
       else { throw ChatGPTError.message("ChatGPT did not complete the response.") }
+      // Subscription streams may send items only in output_item.done, with an
+      // empty output array in the terminal event. Still require response.completed.
+      let output =
+        terminalOutput.isEmpty
+        ? completedItems.keys.sorted().compactMap { completedItems[$0] } : terminalOutput
       var content: [ContentPart] = []
       for item in output {
         switch item["type"]?.stringValue {

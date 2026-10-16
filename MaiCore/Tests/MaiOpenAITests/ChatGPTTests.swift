@@ -521,25 +521,30 @@ import Testing
       #expect(await events.events == (stream ? [.textDelta("Hello 👋")] : []))
     }
 
-    @Test func providerStreamsAndReplaysToolReasoning() async throws {
+    @Test(arguments: [true, false])
+    func providerStreamsAndReplaysToolReasoning(emptyTerminalOutput: Bool) async throws {
       let store = try signedInStore()
       defer { try? FileManager.default.removeItem(at: store.directory) }
       let tool = ToolDefinition(
         name: "files::read", description: "Read", inputSchema: objectSchema(required: ["path"]))
       let output =
         #"[{"type":"reasoning","id":"rs_1","encrypted_content":"opaque","summary":[{"type":"summary_text","text":"Read file"}]},{"type":"function_call","id":"fc_1","call_id":"call_1","namespace":"pmai","name":"files_read","arguments":"{\"path\":\"a\"}"}]"#
+      let items = try #require(
+        JSONDecoder().decode(JSONValue.self, from: Data(output.utf8)).arrayValue)
       let recorder = URLRequestRecorder()
       StubURLProtocol.install(forHost: "api.openai.com") { request in
         recorder.record(request, body: try requestBodyData(request))
         return try httpResponse(
-          request, contentType: "text/event-stream",
+          request, contentType: emptyTerminalOutput ? nil : "text/event-stream",
           body: [
             #"{"type":"response.created"}"#,
             #"{"type":"response.reasoning_summary_text.delta","delta":"Read file"}"#,
             #"{"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"call_1","namespace":"pmai","name":"files_read"}}"#,
             #"{"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"path\":"}"#,
             #"{"type":"response.function_call_arguments.delta","output_index":1,"delta":"\"a\"}"}"#,
-            "{\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":\(output)}}",
+            "{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":\(items[0].compactJSONString)}",
+            "{\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":\(items[1].compactJSONString)}",
+            "{\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":\(emptyTerminalOutput ? "[]" : output)}}",
           ].map { "data: " + $0 + "\n\n" }.joined())
       }
       defer { StubURLProtocol.reset(host: "api.openai.com") }
@@ -552,6 +557,7 @@ import Testing
       #expect(response.message.reasoning == "Read file")
       #expect(response.message.toolCalls.first?.name == "files::read")
       #expect(response.message.toolCalls.first?.arguments == .object(["path": .string("a")]))
+      #expect(response.message.toolCalls.count == 1)
       let received = await events.events
       #expect(received.contains(.reasoningDelta("Read file")))
       let arguments = received.compactMap { event -> String? in
@@ -577,6 +583,46 @@ import Testing
       #expect(input[1]["encrypted_content"] == .string("opaque"))
       #expect(input[2]["call_id"] == input[3]["call_id"])
       #expect(input[2]["namespace"] == .string("pmai"))
+    }
+
+    @Test func streamKeepsCommentaryAndCompletedCallsInOutputOrder() async throws {
+      let tool = ToolDefinition(
+        name: "files_read", description: "Read", inputSchema: objectSchema(required: []))
+      var parser = ChatGPTResponseStream(resolver: .init(tools: [tool]))
+      let events = ChatGPTEventRecorder()
+      for event in [
+        #"{"type":"response.output_text.delta","delta":"I will read the files."}"#,
+        #"{"type":"response.output_item.done","output_index":2,"item":{"type":"function_call","call_id":"second","name":"files_read","arguments":"{}"}}"#,
+        #"{"type":"response.output_item.done","output_index":0,"item":{"type":"message","role":"assistant","channel":"commentary","content":[{"type":"output_text","text":"I will read the files."}]}}"#,
+        #"{"type":"response.output_item.done","output_index":1,"item":{"type":"function_call","call_id":"first","name":"files_read","arguments":"{}"}}"#,
+      ] {
+        #expect(try await parser.feed(event) { await events.append($0) } == nil)
+      }
+      let response = try #require(
+        try await parser.feed(
+          #"{"type":"response.completed","response":{"status":"completed","output":[],"usage":{"input_tokens":100,"output_tokens":20}}}"#
+        ) { await events.append($0) })
+      #expect(response.stopReason == .toolCall)
+      #expect(response.message.text == "I will read the files.")
+      #expect(response.message.toolCalls.map(\.id) == ["first", "second"])
+      #expect(response.usage?.totalTokens == 120)
+    }
+
+    @Test func providerRejectsCompletedItemWithoutCompletedResponse() async throws {
+      let store = try signedInStore()
+      defer { try? FileManager.default.removeItem(at: store.directory) }
+      StubURLProtocol.install(forHost: "api.openai.com") { request in
+        try httpResponse(
+          request, contentType: nil,
+          body:
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"call_id\":\"call\",\"name\":\"files_read\",\"arguments\":\"{}\"}}\n\n"
+        )
+      }
+      defer { StubURLProtocol.reset(host: "api.openai.com") }
+      let provider = ChatGPTProvider(id: "chatgpt", store: store, session: stubSession())
+      await #expect(throws: ChatGPTError.self) {
+        try await provider.complete(.init(model: "gpt-6.1-sol", messages: [.user("Read a file")]))
+      }
     }
 
     @Test func streamEmitsRefusalsWithoutDuplicatingFinalText() async throws {
