@@ -118,6 +118,101 @@ final class RemoteHostTests: XCTestCase {
     }
   }
 
+  func testFolderSearchOnlyMatchesNames() throws {
+    let host = RemoteAgentBookmark(
+      name: "Worker", url: try XCTUnwrap(URL(string: "https://worker.example")), cwd: "/work/cafe",
+      conversations: [
+        .init(
+          cwd: "/work/cafe", title: "Café discussion",
+          messages: [.init(role: "user", text: "Coffee")])
+      ],
+      workspace: .init(folders: [
+        .init(cwd: "/work/cafe", name: "Notes"), .init(cwd: "/work/project", name: "Café project"),
+      ]), backend: .openCode, pinnedFolderPaths: ["/work/cafe"])
+    try withStore([host]) { store, _ in
+      let navigation = HostNavigationStore(remotes: store)
+      navigation.selectHost(host.id, isOffline: true)
+      XCTAssertEqual(
+        navigation.folders(matching: "  CAFE  ", sortedBy: .name).map(\.cwd), ["/work/project"])
+      XCTAssertTrue(navigation.folders(matching: "/work", sortedBy: .name).isEmpty)
+      XCTAssertTrue(navigation.folders(matching: "discussion", sortedBy: .name).isEmpty)
+      XCTAssertTrue(navigation.folders(matching: "coffee", sortedBy: .name).isEmpty)
+      XCTAssertEqual(navigation.folders(matching: "\n ", sortedBy: .name).count, 2)
+    }
+  }
+
+  func testFolderSortingKeepsPinsFirstAndUnknownDatesLast() throws {
+    let early = Date(timeIntervalSince1970: 100)
+    let late = Date(timeIntervalSince1970: 200)
+    let host = RemoteAgentBookmark(
+      name: "Worker", url: try XCTUnwrap(URL(string: "wss://worker.example/acp")), cwd: "/alpha",
+      workspace: .init(folders: [
+        .init(cwd: "/zeta", name: "Zeta", updatedAt: late),
+        .init(cwd: "/alpha", name: "Alpha"),
+        .init(cwd: "/project10", name: "Project 10", updatedAt: early),
+        .init(cwd: "/project2", name: "Project 2", updatedAt: early),
+        .init(cwd: "/beta", name: "Beta"),
+        .init(cwd: "/pinned1", name: "First", updatedAt: late),
+        .init(cwd: "/pinned2", name: "Second"),
+      ]), pinnedFolderPaths: ["/pinned2", "/pinned1"])
+    try withStore([host]) { store, _ in
+      let navigation = HostNavigationStore(remotes: store)
+      navigation.selectHost(host.id, isOffline: true)
+      XCTAssertEqual(
+        navigation.folders(matching: "", sortedBy: .name).map(\.cwd),
+        [
+          "/pinned2", "/pinned1", "/alpha", "/beta", "/project2", "/project10", "/zeta",
+        ])
+      XCTAssertEqual(
+        navigation.folders(matching: "", sortedBy: .updated).map(\.cwd),
+        [
+          "/pinned2", "/pinned1", "/zeta", "/project2", "/project10", "/alpha", "/beta",
+        ])
+      XCTAssertEqual(
+        navigation.folders(matching: "project", sortedBy: .updated).map(\.cwd),
+        [
+          "/project2", "/project10",
+        ])
+    }
+  }
+
+  func testFolderActivityUsesLatestKnownDatesAcrossRefreshAndReload() throws {
+    let old = Date(timeIntervalSince1970: 100)
+    let recent = Date(timeIntervalSince1970: 200)
+    let latest = Date(timeIntervalSince1970: 300)
+    let snapshot = ACPWorkspaceSnapshot(
+      folders: [
+        .init(cwd: "/metadata", name: "Metadata", updatedAt: latest),
+        .init(cwd: "/session", name: "Session", updatedAt: old),
+        .init(cwd: "/cached", name: "Cached", updatedAt: old),
+        .init(cwd: "/unknown", name: "Unknown"),
+      ],
+      sessions: [
+        .init(sessionID: "one", cwd: "/metadata", title: "One", updatedAt: old),
+        .init(sessionID: "two", cwd: "/session", title: "Two", updatedAt: recent),
+        .init(sessionID: "three", cwd: "/cached", title: "Three", updatedAt: recent),
+        .init(sessionID: "four", cwd: "/unknown", title: "Four"),
+      ])
+    let host = RemoteAgentBookmark(
+      name: "Worker", url: try XCTUnwrap(URL(string: "wss://worker.example/acp")), cwd: "/metadata",
+      conversations: [
+        .init(
+          cwd: "/cached", sessionID: "three", updatedAt: latest,
+          messages: [.init(role: "user", text: "Local update")])
+      ], workspace: snapshot)
+    try withStore([host]) { store, file in
+      XCTAssertEqual(store.folders(for: host).map(\.updatedAt), [latest, recent, latest, nil])
+      store.updateWorkspace(host.id, snapshot: snapshot)
+      store.updateWorkspace(host.id, snapshot: snapshot)
+      let restored = RemoteAgentStore(file: file)
+      let saved = try XCTUnwrap(restored.host(host.id))
+      XCTAssertEqual(restored.folders(for: saved).map(\.updatedAt), [latest, recent, latest, nil])
+      let legacy = try JSONDecoder().decode(
+        ACPWorkspaceFolder.self, from: Data(#"{"cwd":"/legacy","name":"Legacy"}"#.utf8))
+      XCTAssertNil(legacy.updatedAt)
+    }
+  }
+
   func testRemoteFolderPinsKeepTheirOrderAcrossDiscoveryAndReconnect() throws {
     let original = RemoteAgentBookmark(
       name: "Worker", url: try XCTUnwrap(URL(string: "wss://worker.example/acp")), cwd: "/one",

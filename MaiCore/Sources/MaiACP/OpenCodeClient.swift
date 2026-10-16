@@ -53,7 +53,10 @@ public actor OpenCodeClient: RemoteSessionClient {
             name: path == directory
               ? fields["name"]?.stringValue
                 ?? URL(fileURLWithPath: path).lastPathComponent
-              : URL(fileURLWithPath: path).lastPathComponent))
+              : URL(fileURLWithPath: path).lastPathComponent,
+            updatedAt: fields["time"]?.objectValue?["updated"]?.numberValue.map {
+              Date(timeIntervalSince1970: $0 / 1000)
+            }))
       }
     }
     var cursor: String?

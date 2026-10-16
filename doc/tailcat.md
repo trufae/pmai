@@ -146,9 +146,13 @@ connection starts one child process. No child starts for rejected credentials.
 4. Send a prompt. Replies stream into the chat; tools that request permission
    display their arguments and the agent's approval/rejection choices.
 
-The project panel has a **Filter** field with Refresh on its right. The local
-and remote conversation panels share their rows, date groups, and search controls;
-search filters the list in place using titles and locally cached messages.
+The remote project panel filters by folder name only. Beside the filter, **Sort
+folders** chooses **Name** or **Last Updated**, and Refresh reloads projects from
+the host. The sort choice is remembered, with pinned folders always kept first
+in their saved order. Each row shows its latest known update from host project
+metadata or conversation activity; unknown dates are omitted and sort last.
+The local and remote conversation panels share their rows, date groups, and
+search controls; conversation search uses titles and locally cached messages.
 Long-press a conversation to rename, delete, or export it. Hosts without chat
 management support disable rename and delete for saved server chats.
 Long-press a project and choose **Browse Files…** to open its file manager.

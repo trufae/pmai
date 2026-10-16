@@ -131,11 +131,13 @@ struct RemoteFoldersView: View {
   var isVisible = true
   var onBrowseFiles: (String) -> Void = { _ in }
   @State private var filter = ""
+  @AppStorage("remoteFolderSortOrder") private var sortOrder: RemoteFolderSortOrder = .updated
+  @State private var showingSortOptions = false
   @FocusState private var filterFocused: Bool
 
   var body: some View {
     List {
-      ForEach(hosts.folders.filter { SidebarSearch.matches(filter, in: [$0.name, $0.cwd]) }) {
+      ForEach(hosts.folders(matching: filter, sortedBy: sortOrder)) {
         folder in
         let count =
           hosts.selectedHost.map { host in
@@ -148,7 +150,7 @@ struct RemoteFoldersView: View {
           subtitle: "\(count) conversation\(count == 1 ? "" : "s") · \(folder.cwd)",
           systemImage: folder.icon ?? "folder", iconColor: folderColor(folder),
           isSelected: selected,
-          isPinned: pinned
+          isPinned: pinned, updatedAt: folder.updatedAt
         ) {
           filterFocused = false
           onSelectFolder(folder.cwd)
@@ -192,9 +194,24 @@ struct RemoteFoldersView: View {
     }
     .safeAreaInset(edge: .bottom) {
       HStack(spacing: 10) {
-        FloatingSearchField(text: $filter, isFocused: $filterFocused, placeholder: "Filter") {
+        FloatingSearchField(text: $filter, isFocused: $filterFocused, placeholder: "Filter folders")
+        {
           filter = ""
           filterFocused = false
+        }
+        FloatingActionIcon(
+          systemImage: "arrow.up.arrow.down", accessibilityLabel: "Sort folders", compact: true
+        ) {
+          filterFocused = false
+          showingSortOptions = true
+        }
+        .accessibilityValue(sortOrder.title)
+        .confirmationDialog(
+          "Sort folders", isPresented: $showingSortOptions, titleVisibility: .visible
+        ) {
+          ForEach(RemoteFolderSortOrder.allCases) { order in
+            Button(order.title) { sortOrder = order }
+          }
         }
         FloatingActionIcon(
           systemImage: "arrow.clockwise", accessibilityLabel: "Refresh projects", compact: true

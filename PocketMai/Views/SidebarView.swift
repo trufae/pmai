@@ -2240,6 +2240,7 @@ struct SidebarFolderRow: View {
   let isSelected: Bool
   var isConnected: Bool? = nil
   var isPinned = false
+  var updatedAt: Date? = nil
   let action: () -> Void
 
   var body: some View {
@@ -2257,6 +2258,12 @@ struct SidebarFolderRow: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             .lineLimit(2)
+          if let updatedAt {
+            Text("Updated \(ConversationDatePresentation.timestamp(updatedAt))")
+              .font(.caption2)
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+          }
         }
         Spacer()
         if isPinned {

@@ -247,10 +247,7 @@ public actor ACPClient {
           let id = entry["sessionId"]?.stringValue, !id.isEmpty,
           let cwd = entry["cwd"]?.stringValue, cwd.hasPrefix("/")
         else { continue }
-        let date = entry["updatedAt"]?.stringValue.flatMap {
-          (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse($0))
-            ?? (try? Date.ISO8601FormatStyle().parse($0))
-        }
+        let date = Self.parseDate(entry["updatedAt"])
         if !snapshot.sessions.contains(where: { $0.sessionID == id }) {
           snapshot.sessions.append(
             .init(
@@ -267,7 +264,7 @@ public actor ACPClient {
           .init(
             cwd: cwd,
             name: entry["name"]?.stringValue ?? cwd, icon: entry["icon"]?.stringValue,
-            tint: entry["tint"]?.stringValue))
+            tint: entry["tint"]?.stringValue, updatedAt: Self.parseDate(entry["updatedAt"])))
       }
       cursor = fields["nextCursor"]?.stringValue
       if let cursor, !seenCursors.insert(cursor).inserted {
@@ -282,6 +279,13 @@ public actor ACPClient {
           name: AgentProject.defaultName(forWorkingDirectory: session.cwd) ?? session.cwd))
     }
     return snapshot
+  }
+
+  private static func parseDate(_ value: JSONValue?) -> Date? {
+    value?.stringValue.flatMap {
+      (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse($0))
+        ?? (try? Date.ISO8601FormatStyle().parse($0))
+    }
   }
 
   /// Runs one prompt to completion, streaming assistant and reasoning deltas

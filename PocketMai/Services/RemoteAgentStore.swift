@@ -270,6 +270,17 @@ final class RemoteAgentStore {
           .init(cwd: cwd, name: AgentProject.defaultName(forWorkingDirectory: cwd) ?? cwd))
       }
     }
+    var latest: [String: Date] = [:]
+    func record(_ cwd: String, _ date: Date?) {
+      guard let date, date > .distantPast else { return }
+      latest[cwd] = max(latest[cwd] ?? date, date)
+    }
+    for session in host.workspace?.sessions ?? [] { record(session.cwd, session.updatedAt) }
+    for chat in host.conversations ?? [] { record(chat.cwd, chat.updatedAt) }
+    for index in folders.indices {
+      folders[index].updatedAt = [folders[index].updatedAt, latest[folders[index].cwd]]
+        .compactMap { $0 }.max()
+    }
     let pins = host.pinnedFolderPaths ?? []
     return pins.compactMap { path in folders.first { $0.cwd == path } }
       + folders.filter { !pins.contains($0.cwd) }

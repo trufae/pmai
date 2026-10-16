@@ -101,6 +101,31 @@ func acpClientAirplaneMode() async throws {
 }
 
 #if os(macOS) || os(Linux)
+  @Test("ACP discovery reads optional project update times without inventing missing dates")
+  func acpWorkspaceFolderDates() async throws {
+    let script = """
+      import json, sys
+      for line in sys.stdin:
+          request = json.loads(line)
+          if request.get('method') == 'initialize':
+              result = {'protocolVersion': 1, 'agentCapabilities': {'sessionCapabilities': {'list': {}}}}
+          else:
+              result = {'sessions': [], '_meta': {'pmai': {'folders': [
+                  {'cwd': '/plain', 'name': 'Plain', 'updatedAt': '2026-10-16T12:00:00Z'},
+                  {'cwd': '/fraction', 'name': 'Fraction', 'updatedAt': '2026-10-16T12:00:00.500Z'},
+                  {'cwd': '/missing', 'name': 'Missing'},
+                  {'cwd': '/invalid', 'name': 'Invalid', 'updatedAt': 'invalid'}
+              ]}}}
+          print(json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'result': result}), flush=True)
+      """
+    let client = ACPClient(
+      configuration: .init(command: "/usr/bin/python3", arguments: ["-u", "-c", script]))
+    let workspace = try #require(try await client.workspace())
+    let date = try Date.ISO8601FormatStyle().parse("2026-10-16T12:00:00Z")
+    #expect(workspace.folders.map(\.updatedAt) == [date, date.addingTimeInterval(0.5), nil, nil])
+    await client.disconnect()
+  }
+
   @Test("An idle ACP connection reports a worker disconnect")
   func acpClientIdleDisconnect() async throws {
     let events = WebSocketEvents()

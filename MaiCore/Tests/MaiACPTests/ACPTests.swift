@@ -372,7 +372,7 @@ func acpWorkspaceDiscovery() async throws {
   defer { try? FileManager.default.removeItem(at: root) }
   let home = AgentHome(rootURL: root.appendingPathComponent("home"))
   let project = try home.openProject(atWorkingDirectory: projectURL)
-  _ = try home.openProject(atWorkingDirectory: emptyURL)
+  let empty = try home.openProject(atWorkingDirectory: emptyURL)
   let outside = try home.openProject(atWorkingDirectory: outsideURL)
   let original = AgentDefinition(
     id: "original", instructions: "Original agent", provider: "scripted", model: "fixture")
@@ -417,6 +417,13 @@ func acpWorkspaceDiscovery() async throws {
   #expect(
     Set(folders.compactMap { $0.objectValue?["cwd"]?.stringValue })
       == Set([projectURL.path, emptyURL.path]))
+  #expect(
+    folders.first { $0.objectValue?["cwd"]?.stringValue == emptyURL.path }?
+      .objectValue?["updatedAt"]?.stringValue == empty.createdAt.ISO8601Format())
+  #expect(
+    folders.first { $0.objectValue?["cwd"]?.stringValue == projectURL.path }?
+      .objectValue?["updatedAt"]?.stringValue
+      == max(project.createdAt, chat.updatedAt).ISO8601Format())
   await #expect(throws: JSONRPCError.self) {
     _ = try await client.request(
       "session/list", params: .object(["cwd": .string(outsideURL.path)]), timeout: 5)

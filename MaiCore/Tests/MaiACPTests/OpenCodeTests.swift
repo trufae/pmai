@@ -130,7 +130,8 @@ func openCodeNativeSessions() async throws {
     var body: String
     switch (method, path) {
     case ("GET", "/api/project"):
-      body = #"[{"id":"prj_test","canonical":"/work","name":"Project","sandboxes":["/work/tree"]}]"#
+      body =
+        #"[{"id":"prj_test","canonical":"/work","name":"Project","time":{"updated":3000},"sandboxes":["/work/tree"]}]"#
     case ("GET", "/api/session"):
       let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems
       if query?.contains(where: { $0.name == "cursor" && $0.value == "next-page" }) == true {
@@ -176,6 +177,10 @@ func openCodeNativeSessions() async throws {
     onUpdate: { await updates.append($0) })
   let workspace = try #require(try await client.workspace())
   #expect(workspace.folders.map(\.cwd) == ["/work", "/work/tree", "/other"])
+  #expect(
+    workspace.folders.map(\.updatedAt) == [
+      Date(timeIntervalSince1970: 3), Date(timeIntervalSince1970: 3), nil,
+    ])
   #expect(workspace.sessions.map(\.sessionID) == ["ses_existing", "ses_other"])
   #expect(workspace.sessions.first?.updatedAt == Date(timeIntervalSince1970: 1))
   #expect(workspace.canManageSessions == true)

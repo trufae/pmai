@@ -3,6 +3,14 @@ import MaiACP
 import Observation
 import UIKit
 
+enum RemoteFolderSortOrder: String, CaseIterable, Identifiable {
+  case updated
+  case name
+
+  var id: String { rawValue }
+  var title: String { self == .updated ? "Last Updated" : "Name" }
+}
+
 /// Navigation owns host selection. Local chat state stays in AppStore and
 /// remote state stays in the host repository, so switching never mixes them.
 @MainActor @Observable
@@ -77,6 +85,21 @@ final class HostNavigationStore {
   var selectedHost: RemoteAgentBookmark? { remotes.host(selectedHostID) }
   var folders: [ACPWorkspaceFolder] {
     selectedHost.map { remotes.folders(for: $0) } ?? []
+  }
+
+  func folders(matching query: String, sortedBy order: RemoteFolderSortOrder)
+    -> [ACPWorkspaceFolder]
+  {
+    let matching = folders.filter { SidebarSearch.matches(query, in: [$0.name]) }
+    let pinned = matching.filter { isFolderPinned($0.cwd) }
+    let unpinned = matching.filter { !isFolderPinned($0.cwd) }.sorted { left, right in
+      if order == .updated, left.updatedAt != right.updatedAt {
+        return (left.updatedAt ?? .distantPast) > (right.updatedAt ?? .distantPast)
+      }
+      let comparison = left.name.localizedStandardCompare(right.name)
+      return comparison == .orderedSame ? left.cwd < right.cwd : comparison == .orderedAscending
+    }
+    return pinned + unpinned
   }
   var conversations: [RemoteAgentConversation] {
     guard let host = selectedHost else { return [] }

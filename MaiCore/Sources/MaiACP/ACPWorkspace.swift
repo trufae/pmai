@@ -8,18 +8,23 @@ public struct ACPWorkspaceFolder: Codable, Identifiable, Equatable, Sendable {
   public var name: String
   public var icon: String?
   public var tint: String?
+  public var updatedAt: Date?
 
-  public init(cwd: String, name: String, icon: String? = nil, tint: String? = nil) {
+  public init(
+    cwd: String, name: String, icon: String? = nil, tint: String? = nil, updatedAt: Date? = nil
+  ) {
     self.cwd = cwd
     self.name = name
     self.icon = icon
     self.tint = tint
+    self.updatedAt = updatedAt
   }
 
   var json: JSONValue {
     var fields: [String: JSONValue] = ["cwd": .string(cwd), "name": .string(name)]
     if let icon { fields["icon"] = .string(icon) }
     if let tint { fields["tint"] = .string(tint) }
+    if let updatedAt { fields["updatedAt"] = .string(updatedAt.ISO8601Format()) }
     return .object(fields)
   }
 }
@@ -113,14 +118,16 @@ public struct AgentHomeACPWorkspace: ACPWorkspaceRepository {
     let projects = try home.loadProjectIndex().orderedProjects.filter {
       !$0.workingDirectory.isEmpty && $0.workingDirectoryExists
     }
-    let folders = projects.map {
-      ACPWorkspaceFolder(
-        cwd: $0.workingDirectory, name: $0.displayName,
-        icon: $0.icon, tint: $0.tint?.storageIdentifier)
-    }
+    var folders: [ACPWorkspaceFolder] = []
     var sessions: [ACPSessionInfo] = []
     for project in projects {
-      sessions += try home.chatStore(for: project).loadSummaries().map {
+      let summaries = try home.chatStore(for: project).loadSummaries()
+      folders.append(
+        .init(
+          cwd: project.workingDirectory, name: project.displayName,
+          icon: project.icon, tint: project.tint?.storageIdentifier,
+          updatedAt: max(project.createdAt, summaries.map(\.updatedAt).max() ?? project.createdAt)))
+      sessions += summaries.map {
         ACPSessionInfo(
           sessionID: $0.id.uuidString.lowercased(), cwd: project.workingDirectory,
           title: $0.displayTitle, updatedAt: $0.updatedAt)
