@@ -411,9 +411,7 @@ enum ToolAgentRegistry {
       mcpResources: store.mcpResources, mcpStatuses: store.mcpStatuses)
     let fullDefinitions = toolCatalog.enabledDefinitions
     let visibleDefinitions = toolCatalog.visibleDefinitions
-    let callableDefinitions = fullDefinitions + visibleDefinitions.filter { definition in
-      !fullDefinitions.contains { $0.name == definition.name }
-    }
+    let callableDefinitions = toolCatalog.callableDefinitions
     let visibleCall = AgentTooling.normalized(call: call, tools: callableDefinitions)
     guard AgentTooling.containsDefinition(named: visibleCall.name, in: callableDefinitions) else {
       return AgentTooling.unavailableToolError(name: visibleCall.name)

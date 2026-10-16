@@ -10,7 +10,7 @@ private let weatherTool = ToolDefinition(
   ])
 
 @Test("Native repair recognizes rejected LFM envelopes without interpreting examples", arguments: [
-  "<|tool_call_start|>[weather(city='Rome')]<|tool_call_end|>",
+  "<|tool_call_start|>[weather(city='Rome)]<|tool_call_end|>",
   "<think>choose a tool</think>\n<|tool_call_start|>[weather(city='Rome'",
   "<tool_call>{broken}</tool_call>",
 ])
@@ -33,18 +33,21 @@ func nativeEnvelopeExamples(text: String) {
   #expect(AgentToolLoopPolicy.nativeToolCallRepairFeedback(response: text) == nil)
 }
 
-@Test("Text protocols repair LFM envelopes using the selected protocol", arguments: [
-  ToolCallingMode.text, .json, .xml,
+@Test("Every protocol accepts complete LFM envelopes", arguments: [
+  ToolCallingMode.text, .json, .xml, .native,
 ])
 func lfmEnvelopeInTextProtocol(mode: ToolCallingMode) {
   let decision = AgentToolLoopPolicy.evaluate(
     response: "<|tool_call_start|>[weather(city='Rome')]<|tool_call_end|>",
     tools: [weatherTool], mode: mode, remainingToolCalls: 2)
-  guard case .repair(let feedback) = decision else {
-    Issue.record("Expected repair rather than a final answer")
+  guard case .execute(let calls) = decision else {
+    Issue.record("Expected the literal LFM call to execute")
     return
   }
-  #expect(feedback.contains(mode.displayName))
+  #expect(calls.count == 1)
+  #expect(calls.first?.arguments["city"] == "Rome")
+  #expect(AgentToolLoopPolicy.nativeToolCallRepairFeedback(
+    response: "<|tool_call_start|>[weather(city='Rome')]<|tool_call_end|>") == nil)
 }
 
 @Test("Tool-loop policy exposes and resolves the final response tool")

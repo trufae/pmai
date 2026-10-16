@@ -32,6 +32,9 @@ func toolCatalogProjection() {
       "github_pr", ToolProxy.listName, ToolProxy.callName,
     ])
   #expect(Set(catalog.enabledDefinitions.map(\.name)) == ["github_pr", "github_issue"])
+  #expect(Set(catalog.callableDefinitions.map(\.name)) == [
+    "github_pr", "github_issue", ToolProxy.listName, ToolProxy.callName,
+  ])
 }
 
 @Test("Catalog updates when inheritance, group membership, or default exposure changes")
@@ -54,6 +57,7 @@ func toolCatalogInheritance() {
   agent.setToolGroupMode(.disabled, for: group)
   #expect(catalog().enabledDefinitions.isEmpty)
   #expect(catalog().visibleDefinitions.isEmpty)
+  #expect(catalog().callableDefinitions.isEmpty)
 }
 
 @Test("Hidden members stay enabled without appearing in schemas or discovery")

@@ -42,6 +42,7 @@ public enum AgentToolLoopPolicy {
     guard text.hasPrefix("<|tool_call_start|>")
       || text.hasPrefix("<tool_call>") || text.hasPrefix("<tool_call ")
     else { return nil }
+    if !LFMToolCallParser.parseCalls(in: text).isEmpty { return nil }
     return """
       Tool call rejected: the provider returned an unparsed tool-call block. No tools from that response were executed.
       Send one corrected native tool call matching the available tool's schema. Include each required argument by its exact name. Pass argument values directly, without extra wrapping quotes or double escaping. If another tool's result is needed, call that tool first and wait for its result.

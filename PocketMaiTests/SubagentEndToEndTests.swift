@@ -32,16 +32,22 @@ final class StubChatEndpoint: URLProtocol {
 
   nonisolated(unsafe) static var log: [Entry] = []
   nonisolated(unsafe) static var script: Script?
+  nonisolated(unsafe) private static var searches: [String] = []
   private static let lock = NSLock()
 
   static var requests: [[String: Any]] {
     lock.withLock { log.map(\.request) }
   }
 
+  static var searchQueries: [String] {
+    lock.withLock { searches }
+  }
+
   static func install() {
     lock.withLock {
       log = []
       script = nil
+      searches = []
     }
     URLProtocol.registerClass(StubChatEndpoint.self)
   }
@@ -64,6 +70,16 @@ final class StubChatEndpoint: URLProtocol {
   }
 
   override func startLoading() {
+    if request.url?.path == "/search" {
+      let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
+        .queryItems?.first { $0.name == "q" }?.value ?? ""
+      Self.lock.withLock { Self.searches.append(query) }
+      finish(with: ["results": [[
+        "title": "Rizin search fixture", "url": "https://example.test/rizin",
+        "content": "Search result delivered by the test endpoint.",
+      ]]])
+      return
+    }
     if request.url?.path.hasSuffix("/models") == true {
       finish(with: ["object": "list", "data": [["id": "stub"]]])
       return

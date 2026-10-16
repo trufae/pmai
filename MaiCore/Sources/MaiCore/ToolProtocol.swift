@@ -15,6 +15,9 @@ public enum AgentTooling {
     tools: [ToolDefinition],
     mode: ToolCallingMode = .text
   ) -> [ParsedToolCall] {
+    if LFMToolCallParser.hasEnvelope(in: text) {
+      return LFMToolCallParser.parseCalls(in: text)
+    }
     if mode == .text {
       let calls = TextToolCallParser.parseCalls(in: text, tools: tools)
       if !calls.isEmpty { return calls }
@@ -33,7 +36,7 @@ public enum AgentTooling {
   ) -> Bool {
     // LFM2's Pythonic envelope can leak through a server's native parser,
     // including when the model ignores a requested text/JSON/XML protocol.
-    if text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<|tool_call_start|>") {
+    if LFMToolCallParser.hasEnvelope(in: text) {
       return true
     }
     let modes = mode.map { [$0] } ?? [.text, .native]

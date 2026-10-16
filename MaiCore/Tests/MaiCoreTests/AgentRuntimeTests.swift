@@ -929,6 +929,54 @@ func nativeRejectedCallRepairLimit() async throws {
   #expect(result.response.text == "Unable to call the tool.")
 }
 
+@Test("Native LFM content executes once and returns native tool history")
+func nativeLFMContentRecovery() async throws {
+  let provider = ScriptedProvider(responses: [
+    ProviderResponse(
+      message: .assistant("<think>Search</think><|tool_call_start|>[probe(value='rizin')]<|tool_call_end|>"),
+      stopReason: .stop),
+    ProviderResponse(message: .assistant("Found it."), stopReason: .stop),
+  ])
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  try await runtime.register(tool: ClosureTool(definition: ToolDefinition(
+    name: "probe", description: "Probe", parameters: [
+      ToolParameterDef(name: "value", type: "string", description: "Value", required: true),
+    ], annotations: ToolAnnotations(approval: .automatic))) { arguments, _ in
+    #expect(arguments.objectValue?["value"] == .string("rizin"))
+    return ToolOutput(text: "Search result")
+  })
+  let result = try await runtime.run(AgentRequest(
+    provider: "scripted", model: "lfm25", messages: [.user("probe")],
+    toolNames: ["probe"], toolCallingStrategy: .native, retry: .none))
+  #expect(result.response.text == "Found it.")
+  #expect(result.modelTurns == 2 && result.toolCalls == 1)
+  let requests = await provider.requests
+  #expect(requests[1].messages.flatMap(\.toolCalls).map(\.name) == ["probe"])
+  #expect(requests[1].messages.flatMap(\.toolResults).map(\.text) == ["Search result"])
+  #expect(!result.transcript.contains { $0.text.contains("invalid_tool_call") })
+}
+
+@Test("Unmatched proxy discovery offers bounded schemas instead of a dead end")
+func unmatchedProxyDiscovery() {
+  let resolver = AgentToolNameResolver(tools: ToolProxy.definitions)
+  #expect(resolver.apiName(for: ToolProxy.listName) == "list_tools")
+  #expect(resolver.apiName(for: ToolProxy.callName) == "call_tool")
+  #expect(resolver.canonicalName(for: "call_tool") == ToolProxy.callName)
+  let tools = (0..<8).map { index in
+    ToolDefinition(name: "tool_\(index)", description: "Operation", parameters: [
+      ToolParameterDef(name: "query", type: "string", description: "Query", required: true),
+    ])
+  }
+  let result = ToolProxy.listTools(arguments: ["keywords": .string("author of rizin")], definitions: tools)
+  #expect(result.contains("No tool names or capabilities match"))
+  #expect(result.contains("tool_0") && result.contains("query (string, required)"))
+  #expect(result.contains("tool_5") && !result.contains("tool_6"))
+  #expect(result.contains("2 more tools") && result.contains(ToolProxy.callName))
+  let empty = ToolProxy.listTools(arguments: ["keywords": .string("rizin")], definitions: [])
+  #expect(empty == "No enabled tools matching 'rizin'.")
+}
+
 // Empty native turns can also be parser failures before the first tool run.
 @Test("An empty first native turn receives feedback instead of an identical retry")
 func emptyFirstNativeTurnIsRepaired() async throws {

@@ -66,43 +66,51 @@ public enum ToolProxy {
   static func listDefinition(for hidden: [ToolDefinition]) -> ToolDefinition {
     var description =
       "Describe the arguments of the tools reachable through \(callName), by name or keyword."
+    description += " Search for a tool's name or capability, then use \(callName) with its arguments to perform the task."
     if !hidden.isEmpty {
       let shown = hidden.prefix(maximumDescribedTools).map { "\($0.name) (\(blurb($0.description)))" }
       description += " They are: " + shown.joined(separator: "; ")
       if hidden.count > shown.count { description += "; and \(hidden.count - shown.count) more" }
       description += "."
     }
-    return ToolDefinition(
+    var definition = ToolDefinition(
       name: listName,
       description: description,
       parameters: [
         ToolParameterDef(
           name: "keywords",
           type: "string",
-          description: "Space-separated tool, capability, or argument keywords.",
+          description: "Space-separated tool names or capabilities. Put the user's search query in the discovered tool's arguments.",
           required: true)
       ],
       annotations: ToolAnnotations(
         readOnly: true, idempotent: true, openWorld: false, approval: .automatic))
+    // Pythonic native parsers cannot represent a hyphenated function name.
+    definition.providerName = "list_tools"
+    return definition
   }
 
-  static let callDefinition = ToolDefinition(
-    name: callName,
-    description:
-      "Call an available tool by exact name with JSON arguments. Use \(listName) first when the arguments are unknown. Some tools are callable by known name without appearing in \(listName).",
-    parameters: [
-      ToolParameterDef(
-        name: "name",
-        type: "string",
-        description: "Exact tool name.",
-        required: true),
-      ToolParameterDef(
-        name: "arguments",
-        type: "object",
-        description: "JSON object with arguments for the selected tool. Use {} when none.",
-        required: true),
-    ],
-    annotations: ToolAnnotations(approval: .automatic))
+  static let callDefinition: ToolDefinition = {
+    var definition = ToolDefinition(
+      name: callName,
+      description:
+        "Call an available tool by exact name with JSON arguments. Use \(listName) first when the arguments are unknown. Some tools are callable by known name without appearing in \(listName).",
+      parameters: [
+        ToolParameterDef(
+          name: "name",
+          type: "string",
+          description: "Exact tool name.",
+          required: true),
+        ToolParameterDef(
+          name: "arguments",
+          type: "object",
+          description: "JSON object with arguments for the selected tool. Use {} when none.",
+          required: true),
+      ],
+      annotations: ToolAnnotations(approval: .automatic))
+    definition.providerName = "call_tool"
+    return definition
+  }()
 
   /// The first clause of a description, cut to a few words.
   static func blurb(_ description: String) -> String {
@@ -138,7 +146,18 @@ public enum ToolProxy {
       let suffix =
         keywords.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         ? "" : " matching '\(keywords)'"
-      return "No enabled tools\(suffix). Try broader keywords."
+      guard !definitions.isEmpty else { return "No enabled tools\(suffix)." }
+      // Models sometimes search discovery with the user's topic instead of
+      // a capability. Show a bounded catalog so they can progress to a call.
+      let available = definitions.sorted { $0.name < $1.name }.prefix(detailedMatches)
+      var lines = [
+        "No tool names or capabilities match '\(keywords)'. Available tool schemas:",
+      ] + available.map { summary(for: $0) }
+      if definitions.count > available.count {
+        lines.append("\(definitions.count - available.count) more tools available; search by tool name or capability.")
+      }
+      lines.append("Use \(callName) with one of these tool names and its arguments to perform the task.")
+      return lines.joined(separator: "\n")
     }
     var lines = matches.prefix(detailedMatches).map { summary(for: $0.0) }
     let rest = matches.dropFirst(detailedMatches)

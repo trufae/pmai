@@ -713,7 +713,7 @@ enum AssistantToolLoop {
   ) async throws -> Outcome {
     guard !requestState.definitions.isEmpty else { return .final(response) }
 
-    let currentDefinitions = currentVisibleDefinitions(for: host, store: store)
+    let currentDefinitions = currentCatalog(for: host, store: store)?.callableDefinitions ?? []
     let hostDefinitions =
       currentDefinitions.isEmpty ? requestState.definitions : currentDefinitions
     let parseDefinitions = AgentToolLoopPolicy.definitions(includingResponseTool: hostDefinitions)
@@ -994,7 +994,7 @@ enum AssistantToolLoop {
     host: RunHost,
     store: AppStore
   ) async throws -> PreparedToolCall {
-    let currentDefinitions = currentVisibleDefinitions(for: host, store: store)
+    let currentDefinitions = currentCatalog(for: host, store: store)?.callableDefinitions ?? []
     let fallbackCall = AgentTooling.normalized(call: call, tools: parseDefinitions)
     guard let normalizedCall = AgentTooling.availableCall(call, tools: currentDefinitions) else {
       return .answered(
@@ -1082,7 +1082,7 @@ enum AssistantToolLoop {
           result: "Error: tool call skipped because the user queued new instructions."))
     }
 
-    let executionDefinitions = currentVisibleDefinitions(for: host, store: store)
+    let executionDefinitions = currentCatalog(for: host, store: store)?.callableDefinitions ?? []
     guard let executableCall = AgentTooling.availableCall(approvedCall, tools: executionDefinitions)
     else {
       let unavailableCall = AgentTooling.normalized(
@@ -1288,17 +1288,20 @@ enum AssistantToolLoop {
     }
   }
 
-  private static func currentVisibleDefinitions(
+  private static func currentCatalog(
     for host: RunHost,
     store: AppStore
-  ) -> [ToolDefinition] {
+  ) -> AgentToolCatalog? {
     switch host {
     case .live(_, _, let conversationID):
-      return currentVisibleDefinitions(conversationID: conversationID, store: store)
+      guard let conversation = store.conversation(withID: conversationID) else { return nil }
+      return ToolAgentRegistry.catalog(
+        for: conversation, settings: store.settings, mcpTools: store.mcpTools,
+        mcpResources: store.mcpResources, mcpStatuses: store.mcpStatuses)
     case .isolated(
       let conversation, let settings, let mcpTools, let mcpResources, let mcpStatuses, _):
-      return currentVisibleDefinitions(
-        conversation: conversation,
+      return ToolAgentRegistry.catalog(
+        for: conversation,
         settings: SkillTools.applyingLiveSettings(to: settings, from: store.settings),
         mcpTools: mcpTools,
         mcpResources: mcpResources,
@@ -1324,7 +1327,8 @@ enum AssistantToolLoop {
     skillInstructions: String = ""
   ) async throws -> RequestState {
     var settings = settings(for: host, store: store)
-    var visibleDefinitions = answering ? [] : currentVisibleDefinitions(for: host, store: store)
+    var visibleDefinitions =
+      answering ? [] : currentCatalog(for: host, store: store)?.visibleDefinitions ?? []
     let routing = settings.useSystemOne && !visibleDefinitions.isEmpty
     if routing {
       guard !settings.isOffline, settings.taskAgent(.tool) != nil else {
@@ -1407,6 +1411,8 @@ enum AssistantToolLoop {
   private static func nativeToolLoopPrompt() -> String {
     """
     When tools are available, use the provided native tools. After a host tool result, call another host tool if another host tool run is needed. If the result is enough, give the final answer directly. Do not describe a future tool call in prose.
+
+    \(AgentToolLoopPolicy.nativeToolInstructions)
     """
   }
 
@@ -1633,34 +1639,6 @@ enum AssistantToolLoop {
     default:
       return "user"
     }
-  }
-
-  private static func currentVisibleDefinitions(
-    conversationID: UUID,
-    store: AppStore
-  ) -> [ToolDefinition] {
-    guard let conversation = store.conversation(withID: conversationID) else { return [] }
-    return ToolAgentRegistry.visibleDefinitions(
-      for: conversation,
-      settings: store.settings,
-      mcpTools: store.mcpTools,
-      mcpResources: store.mcpResources,
-      mcpStatuses: store.mcpStatuses)
-  }
-
-  private static func currentVisibleDefinitions(
-    conversation: Conversation,
-    settings: AppSettings,
-    mcpTools: [UUID: [MCPToolDescriptor]],
-    mcpResources: [UUID: [MCPResourceDescriptor]],
-    mcpStatuses: [UUID: EndpointConnectionState]
-  ) -> [ToolDefinition] {
-    ToolAgentRegistry.visibleDefinitions(
-      for: conversation,
-      settings: settings,
-      mcpTools: mcpTools,
-      mcpResources: mcpResources,
-      mcpStatuses: mcpStatuses)
   }
 
   private static func shouldRetryHiddenOnlyFinal(

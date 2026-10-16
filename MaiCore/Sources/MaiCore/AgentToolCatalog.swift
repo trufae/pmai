@@ -33,6 +33,13 @@ public struct AgentToolCatalog: Sendable {
       hiding: Set(modes.compactMap { $0.value == .hidden ? $0.key : nil }))
   }
 
+  /// Proxy visibility saves prompt space; it does not disable direct execution.
+  public var callableDefinitions: [ToolDefinition] {
+    let enabled = enabledDefinitions
+    let names = Set(enabled.map(\.name))
+    return enabled + visibleDefinitions.filter { !names.contains($0.name) }
+  }
+
   public func definitions(in group: ToolGroupDefinition) -> [ToolDefinition] {
     tools.filter { group.toolNames.contains($0.name) }.sorted { $0.name < $1.name }
   }

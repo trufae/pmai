@@ -79,13 +79,18 @@ extension AgentRuntime {
         await state.emit(.provider(state.context, .textDelta(content)))
       }
     }
-    if let textToolMode = turn.textToolMode, !turn.toolBudgetExhausted,
+    // Some native endpoints leave valid LFM calls in content. Route these
+    // through the same validation, approval and execution as native calls.
+    let hasLFMEnvelope = LFMToolCallParser.hasEnvelope(
+      in: MessageContentFilter.removingReasoningSections(from: providerResponse.message.text))
+    if turn.textToolMode != nil || hasLFMEnvelope, !turn.toolBudgetExhausted,
+      !turn.definitions.isEmpty,
       providerResponse.message.toolCalls.isEmpty
     {
       let decision = AgentToolLoopPolicy.evaluate(
         response: providerResponse.message.text,
         tools: turn.definitions,
-        mode: textToolMode,
+        mode: turn.textToolMode ?? .native,
         hasToolResults: state.toolCalls > 0,
         remainingToolCalls: state.request.limits.maxToolCalls - state.toolCalls)
       switch decision {
