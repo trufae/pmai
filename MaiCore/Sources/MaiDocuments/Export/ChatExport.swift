@@ -3,6 +3,7 @@ import MaiCore
 
 /// The files a chat can be saved as.
 public enum ChatExportFormat: String, CaseIterable, Sendable {
+  case txt
   case markdown
   case json
   /// The JSON envelope plus what the host knows about how the chat ran.
@@ -13,6 +14,7 @@ public enum ChatExportFormat: String, CaseIterable, Sendable {
 
   public var fileExtension: String {
     switch self {
+    case .txt: "txt"
     case .markdown: "md"
     case .json, .debug: "json"
     case .html: "html"
@@ -23,6 +25,7 @@ public enum ChatExportFormat: String, CaseIterable, Sendable {
 
   public var displayName: String {
     switch self {
+    case .txt: "Plain Text"
     case .markdown: "Markdown"
     case .json: "JSON"
     case .debug: "Debug JSON"
@@ -35,6 +38,7 @@ public enum ChatExportFormat: String, CaseIterable, Sendable {
   /// Accepts what people type: `md`, `word`, `doc`, `debug-json`.
   public init?(argument: String) {
     switch argument.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+    case "txt", "text": self = .txt
     case "markdown", "md": self = .markdown
     case "json": self = .json
     case "debug", "debug-json", "debugjson": self = .debug
@@ -223,6 +227,8 @@ public enum ChatExport {
         includeToolTraffic: options.includeToolCalls, includeThinking: options.includeThinking)
     }
     switch format {
+    case .txt:
+      return Data(TextExport.text(for: exportDocument()).utf8)
     case .markdown:
       return Data(MarkdownExport.text(for: exportDocument()).utf8)
     case .json, .debug:

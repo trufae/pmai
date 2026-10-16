@@ -27,15 +27,48 @@ final class ConversationTransferTests: XCTestCase {
       for thinking in [false, true] {
         let document = ConversationExportContent.exportDocument(
           conversation: chat, options: .init(includeToolCalls: tools, includeThinking: thinking))
-        let markdown = MarkdownExport.text(for: document)
-        XCTAssertTrue(markdown.contains("Answer"))
-        XCTAssertEqual(markdown.contains("Thinking only"), thinking)
-        XCTAssertEqual(markdown.contains("Mixed thought"), thinking)
-        XCTAssertEqual(markdown.contains("Plain tool result"), tools)
-        XCTAssertEqual(markdown.contains("Tool result"), tools)
-        XCTAssertEqual(markdown.contains("Tool call"), tools)
+        for text in [MarkdownExport.text(for: document), TextExport.text(for: document)] {
+          XCTAssertTrue(text.contains("Answer"))
+          XCTAssertEqual(text.contains("Thinking only"), thinking)
+          XCTAssertEqual(text.contains("Mixed thought"), thinking)
+          XCTAssertEqual(text.contains("Plain tool result"), tools)
+          XCTAssertEqual(text.contains("Tool result"), tools)
+          XCTAssertEqual(text.contains("Tool call"), tools)
+        }
       }
     }
+  }
+
+  @MainActor
+  func testPlainTextExportWritesReadableUTF8File() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = AppStore(persistence: PersistenceStore(localBaseURL: directory))
+    var chat = conversation("Text-\(UUID().uuidString)", createdAt: 1_700_000_000)
+    chat.messages = [
+      ChatMessage(role: .user, text: "", attachments: [
+        .image(filename: "photo.png", data: Data(), mimeType: "image/png", width: nil, height: nil)
+      ]),
+      ChatMessage(role: .assistant, text: "<think>Private thought</think>\n\n**Answer**: café 🙂"),
+      ChatMessage(role: .tool, text: "Tool result"),
+    ]
+    let exported = await store.exportConversationFile(chat, format: .txt)
+    let url = try XCTUnwrap(exported)
+    defer { try? FileManager.default.removeItem(at: url) }
+    XCTAssertEqual(url.pathExtension, "txt")
+    let text = try String(contentsOf: url, encoding: .utf8)
+    XCTAssertTrue(text.hasPrefix(chat.title + "\n"))
+    XCTAssertTrue(text.contains("You:\n\nAttached image: photo.png"))
+    XCTAssertTrue(text.contains("Assistant:\n\nAnswer: café 🙂"))
+    XCTAssertFalse(text.contains("**"))
+    XCTAssertFalse(text.contains("Private thought"))
+    XCTAssertFalse(text.contains("Tool result"))
+
+    store.settings.documentExport = .init(includeToolCalls: true, includeThinking: true)
+    let fullExport = await store.exportConversationFile(chat, format: .txt)
+    let fullText = try String(contentsOf: XCTUnwrap(fullExport), encoding: .utf8)
+    XCTAssertTrue(fullText.contains("Reasoning:\nPrivate thought"))
+    XCTAssertTrue(fullText.contains("Tool:\n\nTool result"))
   }
 
   func testDocumentExportSettingsDefaultOffForExistingSettingsAndRoundTrip() throws {

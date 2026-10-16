@@ -68,6 +68,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
 }
 
 enum ConversationExportFormat: String, CaseIterable, Identifiable, Sendable {
+  case txt
   case markdown
   case html
   case epub
@@ -80,6 +81,7 @@ enum ConversationExportFormat: String, CaseIterable, Identifiable, Sendable {
 
   var displayName: String {
     switch self {
+    case .txt: "Plain Text"
     case .markdown: "Markdown"
     case .html: "HTML"
     case .json: "PocketMai Conversation"
@@ -92,6 +94,7 @@ enum ConversationExportFormat: String, CaseIterable, Identifiable, Sendable {
 
   var systemImage: String {
     switch self {
+    case .txt: "doc.plaintext"
     case .markdown: "doc.richtext"
     case .html: "chevron.left.forwardslash.chevron.right"
     case .json: "bubble.left.and.bubble.right"
@@ -104,6 +107,7 @@ enum ConversationExportFormat: String, CaseIterable, Identifiable, Sendable {
 
   var fileExtension: String {
     switch self {
+    case .txt: "txt"
     case .markdown: "md"
     case .html: "html"
     case .json: ConversationExportFiles.fileExtension

@@ -3582,7 +3582,7 @@ final class AppStore: ObservableObject {
     imageSize: AttachmentImageSize = .full
   ) async -> URL? {
     switch format {
-    case .markdown:
+    case .txt, .markdown:
       return writeConversationExport(
         conversation: conversation,
         format: format,
@@ -5205,6 +5205,11 @@ final class AppStore: ObservableObject {
     debugContext: ContextBuilder.Output? = nil
   ) -> String {
     switch format {
+    case .txt:
+      return TextExport.text(
+        for: ConversationExportContent.exportDocument(
+          conversation: conversation,
+          options: settings.documentExport))
     case .markdown:
       return MarkdownExport.text(
         for: ConversationExportContent.exportDocument(

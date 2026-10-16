@@ -50,9 +50,19 @@ func blockParserCoversCommonBlocks() {
   #expect(notes.map(\.text) == ["note"])
 }
 
-@Test("A chat exports to markdown, HTML, EPUB, DOCX and a JSON envelope that decodes back")
+@Test("A chat exports to text, markdown, HTML, EPUB, DOCX and a JSON envelope that decodes back")
 func chatExportsToEveryFormat() throws {
   let chat = sampleChat()
+
+  let text = String(decoding: try ChatExport.data(for: chat, format: .txt), as: UTF8.self)
+  #expect(text.hasPrefix("Export sample\n"))
+  #expect(text.contains("You:\n\nHello there"))
+  #expect(text.contains("Assistant:\n\nDone."))
+  #expect(text.contains("Attached image: dot.gif"))
+  #expect(text.contains("let x = 1"))
+  #expect(text.contains("See a link (https://example.com/)."))
+  #expect(!text.contains("```"))
+  #expect(!text.contains("**"))
 
   let markdown = String(decoding: try ChatExport.data(for: chat, format: .markdown, generator: "pmai"), as: UTF8.self)
   #expect(markdown.hasPrefix("# Export sample\n"))
@@ -163,7 +173,7 @@ func chatExportsToEveryFormat() throws {
 }
 
 @Test("Documents independently opt into tools and thinking in every format",
-  arguments: [ChatExportFormat.markdown, .html, .epub, .docx],
+  arguments: [ChatExportFormat.txt, .markdown, .html, .epub, .docx],
   [DocumentExportOptions(), .init(includeToolCalls: true), .init(includeThinking: true),
    .init(includeToolCalls: true, includeThinking: true)])
 func documentExportContentOptions(format: ChatExportFormat, options: DocumentExportOptions) throws {
@@ -196,6 +206,7 @@ func documentExportContentOptions(format: ChatExportFormat, options: DocumentExp
 func exportNamesAndFormats() {
   var chat = sampleChat()
   chat.title = "Weird: title/name? with \"quotes\""
+  #expect(ChatExport.filename(for: chat, format: .txt) == "Weird title name with quotes.txt")
   #expect(ChatExport.filename(for: chat, format: .markdown) == "Weird title name with quotes.md")
   #expect(ChatExport.filename(for: chat, format: .docx).hasSuffix(".docx"))
   chat.title = "Ends with a period."
@@ -203,10 +214,62 @@ func exportNamesAndFormats() {
   chat.title = ""
   #expect(ChatExport.filename(for: chat, format: .epub) == "New chat.epub")
   #expect(ChatExportFormat(argument: "md") == .markdown)
+  #expect(ChatExportFormat(argument: " TXT ") == .txt)
+  #expect(ChatExportFormat(argument: "text") == .txt)
   #expect(ChatExportFormat(argument: "HTML") == .html)
   #expect(ChatExportFormat(argument: "Word") == .docx)
   #expect(ChatExportFormat(argument: "debug") == .debug)
   #expect(ChatExportFormat(argument: "pdf") == nil)
+}
+
+@Test("Plain-text exports retain code, URLs, Unicode, and structured content without markup")
+func textExportPreservesContent() {
+  let body = """
+    # Résumé 🙂
+    **Bold** and _italic_ with `snake_case`.
+
+    > A ~~deleted~~ quote.
+
+    - One
+    - Two
+    1. First
+    2. Second
+    - [x] Done
+    - [ ] Todo
+
+    ```swift
+    let snake_case = "**literal**"
+      // keep indentation
+    ```
+
+    | Name | Value |
+    | --- | --- |
+    | **Key** | `value` |
+
+    See [a **styled** link](https://example.com/path).
+    ![Diagram](https://example.com/diagram.png)
+
+    [^1]: A note
+    """
+  let text = TextExport.text(for: ExportDocument(title: "Test", entries: [
+    ExportEntry(role: .assistant, reasoning: ["**Think** first"], body: body),
+    ExportEntry(role: .user, body: "  "),
+  ]))
+  #expect(text.contains("Résumé 🙂\n\nBold and italic with snake_case."))
+  #expect(text.contains("A deleted quote."))
+  #expect(text.contains("• One\n• Two"))
+  #expect(text.contains("1. First\n2. Second"))
+  #expect(text.contains("[x] Done\n[ ] Todo"))
+  #expect(text.contains("let snake_case = \"**literal**\"\n  // keep indentation"))
+  #expect(text.contains("Name\tValue\nKey\tvalue"))
+  #expect(text.contains("a styled link (https://example.com/path)"))
+  #expect(text.contains("Diagram (https://example.com/diagram.png)"))
+  #expect(text.contains("[1] A note"))
+  #expect(text.contains("Reasoning:\nThink first"))
+  #expect(!text.contains("You:"))
+  #expect(!text.contains("```"))
+  #expect(!text.contains("\u{1B}"))
+  #expect(text.hasSuffix("\n"))
 }
 
 private func sampleChat() -> AgentChat {

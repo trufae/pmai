@@ -69,7 +69,7 @@ export your provider credentials. The receiving device uses its own configured
 providers. Older `.pocketmai.json` conversation files remain importable; to send
 to an older PocketMai version, rename the file to end in `.pocketmai.json`.
 
-**Export...** offers readable copies such as Markdown, HTML and
+**Export...** offers readable copies such as Plain Text (.txt), Markdown, HTML and
 Word. **Debug Report** is for troubleshooting; it is not needed to transfer a chat.
 
 ## Voice privacy

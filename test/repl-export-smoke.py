@@ -37,24 +37,36 @@ def main():
             message('user', 'text', 'Question'),
             message('assistant', 'reasoning', 'Private thought'),
             message('tool', 'text', 'Tool result'),
-            message('assistant', 'text', 'Answer'),
+            message('assistant', 'text', '**Answer**: café 🙂'),
         ]
         path.write_text(json.dumps(chat))
         output = run(['/set export.', '/help export', '/export md clean.md',
+                      '/export txt foo.txt', '/export txt', '/export txt copies/',
                       '/export json full.json', '/set ctx.strategy tools',
                       '/export debug debug.json', '/set export.tools on',
-                      '/export md tools.md', '/set export.thinking on',
-                      '/export md both.md'], args=['-r', chat['id']])
+                      '/export md tools.md', '/export txt tools.txt', '/set export.thinking on',
+                      '/export md both.md', '/export txt both.txt'], args=['-r', chat['id']])
         assert 'export.tools = off' in output, output
         assert 'export.thinking = off' in output, output
         assert '/set export.thinking on' in output, output
+        assert '/export txt [PATH]' in output, output
+        assert 'Exported Plain Text' in output, output
         for filename, tools, thinking in [('clean.md', False, False),
+                                           ('foo.txt', False, False),
                                            ('tools.md', True, False),
-                                           ('both.md', True, True)]:
+                                           ('tools.txt', True, False),
+                                           ('both.md', True, True),
+                                           ('both.txt', True, True)]:
             text = (root / filename).read_text()
             assert 'Answer' in text, text
             assert ('Tool result' in text) == tools, text
             assert ('Private thought' in text) == thinking, text
+        text = (root / 'foo.txt').read_text()
+        assert 'You:\n\nQuestion' in text and 'Assistant:\n\nAnswer: café 🙂' in text, text
+        assert '**' not in text, text
+        default_text = next((root / 'copies').glob('*.txt'))
+        assert default_text.read_text() == text
+        assert (root / default_text.name).read_text() == text
         assert json.loads((root / 'full.json').read_text())['chat']['messages'] == chat['messages']
         settings = json.loads((root / 'debug.json').read_text())['debug']['settings']
         assert settings['ctx.strategy'] == 'tools', settings

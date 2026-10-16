@@ -331,7 +331,7 @@ sizes or OCR. `/attach clear` drops everything queued. The converters live in
 the `MaiDocuments` module, which PocketMai links as well, so the app, the CLI,
 and its visual mode share one implementation. `MaiDocuments` needs PDFKit for
 PDFs, so PDF conversion is unavailable on Linux while Word, EPUB, JSON, and
-text work everywhere. The same module holds the exporters (`ChatExport`, `MarkdownExport`,
+text work everywhere. The same module holds the exporters (`ChatExport`, `TextExport`, `MarkdownExport`,
 `HTMLExport`, `EPUBExport`, `DOCXExport`): they write from a small `ExportDocument` that each
 host builds from its own chat model, so `/export` here and the share sheet in
 PocketMai produce the same files.
@@ -515,9 +515,11 @@ conversation at the agent's next model turn —
 after the tool results it is about to read — so a running agent can be steered
 without stopping it. `/queue` lists what is waiting, `/queue push TEXT` adds
 without sending, `/queue pop` drops the newest, and `/queue del` drops all.
-`/export markdown|html|json|debug|epub|docx [PATH]` saves the chat as a file using
+`/export txt|markdown|html|json|debug|epub|docx [PATH]` saves the chat as a file using
 the same writers PocketMai uses (`MaiDocuments`). Tool calls, tool results, and
 thinking are omitted from readable documents by default.
+`/export txt foo.txt` writes a UTF-8 plain-text transcript with speaker labels,
+readable text, and link URLs. PocketMai offers the same format as Plain Text (.txt).
 `/set export.tools on` and `/set export.thinking on` opt into each independently;
 `/set export.` lists the saved preferences. JSON and debug exports keep the full chat.
 `debug` adds the tools and settings the chat runs with to the JSON envelope.

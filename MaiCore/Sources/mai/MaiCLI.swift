@@ -10808,6 +10808,7 @@ struct MaiCLI {
 
       /export archive [PATH]    Providers, prompts, MCPs, agents, visible skills,
                                 and this chat (.pocketmai.json)
+      /export txt [PATH]        A plain-text transcript (.txt)
       /export markdown [PATH]   A Markdown transcript (.md)
       /export json [PATH]       The chat as stored, in a JSON envelope (.json)
       /export debug [PATH]      The JSON plus the tools, settings, and every child agent's
@@ -12419,7 +12420,7 @@ struct MaiCLI {
       "/jobs kill ", "/jobs focus ",
       "/jobs focus main", "/queue", "/queue push ", "/queue pop", "/queue del",
       "/help queue", "/help export", "/help import", "/export archive ", "/import ",
-      "/export markdown ", "/export html ", "/export json ", "/export debug ",
+      "/export txt ", "/export markdown ", "/export html ", "/export json ", "/export debug ",
       "/stats", "/stats ranking", "/stats speed", "/stats time", "/stats efficiency",
       "/stats show ",
       "/stats reset", "/stats del ", "/stats path", "/help stats",
@@ -12856,7 +12857,7 @@ struct MaiCLI {
     /edit TARGET           Edit a prompt, skill, agent, config, MCP list, or message in $EDITOR
     /edit input            Write the next message in $EDITOR instead of at the prompt
     /exit                  Exit the REPL
-    /export FORMAT [PATH]  Save a portable archive, or this chat as markdown, html, json, debug, epub, or docx
+    /export FORMAT [PATH]  Save a portable archive, or this chat as txt, markdown, html, json, debug, epub, or docx
     /help [COMMAND]        Show commands or help for one command
     /image MODE PATH       Attach at tiny/small/medium/big/full size, or OCR to Markdown
     /import PATH           Merge a PocketMai/pmai archive into settings, skills, and chats

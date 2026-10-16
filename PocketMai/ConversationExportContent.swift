@@ -771,7 +771,7 @@ enum ConversationExportContent {
 extension ConversationExportContent {
   /// The document the shared writers in MaiDocuments export. With an image
   /// catalog the attached, remote, and rendered images travel along; without
-  /// one only the text does, which is all markdown needs.
+  /// one only the text and attachment names do, for Markdown and plain text.
   static func exportDocument(
     conversation: Conversation,
     options: DocumentExportOptions = .init(),
@@ -783,8 +783,12 @@ extension ConversationExportContent {
       if message.role == .tool && !options.includeToolCalls { continue }
       let content = messageContent(for: message, options: options)
       let attachments = message.attachments.compactMap { attachment -> ExportImage? in
-        guard attachment.kind == .image, let resource = imageCatalog?.resource(for: attachment)
-        else { return nil }
+        guard attachment.kind == .image else { return nil }
+        guard let imageCatalog else {
+          return ExportImage(
+            name: attachment.displayName, mediaType: attachment.mimeType, data: Data())
+        }
+        guard let resource = imageCatalog.resource(for: attachment) else { return nil }
         return ExportImage(
           name: attachment.displayName, mediaType: resource.mediaType, data: resource.data,
           width: resource.width, height: resource.height)
