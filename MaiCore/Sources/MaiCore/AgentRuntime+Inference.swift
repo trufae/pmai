@@ -189,7 +189,8 @@ extension AgentRuntime {
       state.pid, modelTurns: state.modelTurns, activity: "thinking",
       contextSize: AgentContextSize(messages: turn.request.messages))
     let repairsEmptyReply =
-      state.toolCalls > 0 && state.modelTurns < state.request.limits.maxModelTurns
+      (state.toolCalls > 0 || (!turn.definitions.isEmpty && !turn.toolBudgetExhausted))
+      && state.modelTurns < state.request.limits.maxModelTurns
     do {
       return try await complete(
         turn.request, with: turn.provider, retry: turn.retry, budget: state.budget,
@@ -215,8 +216,9 @@ extension AgentRuntime {
       // A model that answers a tool result with nothing at all is told what
       // is expected of it, as after a malformed call; retrying the same
       // request twice and then failing the whole run threw the work away.
-      var feedback = AgentToolLoopPolicy.repairFeedbackAfterToolResult(
-        mode: turn.textToolMode ?? .native)
+      var feedback = state.toolCalls == 0
+        ? AgentToolLoopPolicy.emptyToolCallFeedback
+        : AgentToolLoopPolicy.repairFeedbackAfterToolResult(mode: turn.textToolMode ?? .native)
       if state.request.usesToolProxy { feedback += "\n" + ToolProxy.repairHint }
       state.recordRepair(feedback)
       await supervisor.note(state.pid, transcript: state.transcript)

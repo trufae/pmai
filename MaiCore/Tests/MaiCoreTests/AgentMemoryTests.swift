@@ -235,7 +235,7 @@ func memoryReachesTopLevelRunsOnly() async throws {
 
   let requests = await provider.requests
   let parent = try #require(requests.first)
-  #expect(parent.messages.map(\.role) == [.system, .system, .user])
+  #expect(parent.messages.map(\.role) == [.system, .system, .system, .user])
   #expect(parent.messages[1].text.contains("Prefers Swift."))
   // The stored transcript is untouched: memory is run-scoped context.
   #expect(parent.messages[0].text == "Be terse.")

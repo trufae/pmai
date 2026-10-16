@@ -9,6 +9,50 @@ import Testing
 
 @testable import MaiTestSupport
 
+@Test("Native request schemas serialize in stable key order")
+func openAIStableSchemaOrder() throws {
+  let provider = OpenAICompatibleProvider(
+    configuration: .init(baseURL: URL(string: "https://example.test/v1")!))
+  let request = ProviderRequest(model: "lfm25", messages: [.user("edit")], tools: [
+    ToolDefinition(name: "edit", description: "Edit", parameters: [], inputSchemaJSON: """
+      {"type":"object","properties":{"z":{"type":"string"},"a":{"type":"string"}},"required":["z","a"]}
+      """),
+  ])
+  let body = try #require(provider.makeURLRequest(request, model: request.model).httpBody)
+  let object = try JSONDecoder().decode(JSONValue.self, from: body)
+  let encoder = JSONEncoder()
+  encoder.outputFormatting = [.sortedKeys]
+  #expect(body == (try encoder.encode(object)))
+  #expect(String(decoding: body, as: UTF8.self).contains(#""required":["z","a"]"#))
+}
+
+@Test("Reasoning-only output limits retain usage and finish reason for runtime repair", arguments: [false, true])
+func openAITruncatedReasoning(stream: Bool) async throws {
+  let host = "truncated-\(stream).example.test"
+  StubURLProtocol.install(forHost: host) { request in
+    let payload: [String: JSONValue] = [
+      "choices": .array([.object([
+        stream ? "delta" : "message": .object(["reasoning": .string("Still thinking")]),
+        "finish_reason": .string("length"),
+      ])]),
+      "usage": .object(["prompt_tokens": .integer(10), "completion_tokens": .integer(100)]),
+    ]
+    let json = JSONValue.object(payload).compactJSONString
+    return try httpResponse(request,
+      contentType: stream ? "text/event-stream" : "application/json",
+      body: stream ? "data: \(json)\n\ndata: [DONE]\n\n" : json)
+  }
+  defer { StubURLProtocol.reset(host: host) }
+  let provider = OpenAICompatibleProvider(
+    configuration: .init(baseURL: URL(string: "https://\(host)/v1")!), session: stubSession())
+  let response = try await provider.complete(ProviderRequest(
+    model: "lfm25", messages: [.user("read a file")], stream: stream))
+  #expect(response.message.text.isEmpty)
+  #expect(response.message.reasoning == "Still thinking")
+  #expect(response.stopReason == .length)
+  #expect(response.usage?.outputTokens == 100)
+}
+
 @Test(
   "OpenAI policy errors survive HTTP, SSE and buffered JSON responses",
   arguments: ["http", "sse", "json", "buffered", "code-only", "ordinary"])

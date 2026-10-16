@@ -247,7 +247,12 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     var urlRequest = URLRequest(url: try endpointURL("chat/completions"))
     urlRequest.httpMethod = "POST"
     urlRequest.timeoutInterval = max(1, configuration.requestTimeout)
-    urlRequest.httpBody = try JSONEncoder().encode(JSONValue.object(body))
+    // Local chat templates serialize schemas in received key order. Keep
+    // that prompt prefix stable across turns and launches for cache reuse
+    // and consistent argument examples, especially with small tool models.
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    urlRequest.httpBody = try encoder.encode(JSONValue.object(body))
     applyHeaders(to: &urlRequest, sessionID: request.sessionID)
     urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
     return urlRequest
@@ -380,9 +385,11 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     }
     let payload = choice["message"]?.objectValue ?? choice
     let message = try agentMessage(from: payload, resolver: resolver)
+    let stopReason = ProviderStopReason(choice["finish_reason"]?.stringValue)
     guard
       !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         || !message.toolCalls.isEmpty
+        || (stopReason == .length && !message.reasoning.isEmpty)
     else {
       throw OpenAICompatibleEmptyReply()
     }
@@ -402,7 +409,7 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     return ProviderResponse(
       message: message,
       usage: usage,
-      stopReason: ProviderStopReason(choice["finish_reason"]?.stringValue))
+      stopReason: stopReason)
   }
 
   private func stream(
@@ -556,6 +563,10 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
       }
     }
     guard hasContent || !completedCalls.isEmpty
+      || (stopReason == .length && reasoningStream.parts.contains {
+        if case .reasoning(let text) = $0 { return !text.isEmpty }
+        return false
+      })
     else {
       throw OpenAICompatibleEmptyReply()
     }

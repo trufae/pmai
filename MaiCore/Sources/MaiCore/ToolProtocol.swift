@@ -31,6 +31,11 @@ public enum AgentTooling {
     in text: String,
     mode: ToolCallingMode? = nil
   ) -> Bool {
+    // LFM2's Pythonic envelope can leak through a server's native parser,
+    // including when the model ignores a requested text/JSON/XML protocol.
+    if text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<|tool_call_start|>") {
+      return true
+    }
     let modes = mode.map { [$0] } ?? [.text, .native]
     return modes.contains { mode in
       switch mode {

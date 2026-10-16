@@ -9,6 +9,44 @@ private let weatherTool = ToolDefinition(
     ToolParameterDef(name: "city", type: "string", description: "City", required: true)
   ])
 
+@Test("Native repair recognizes rejected LFM envelopes without interpreting examples", arguments: [
+  "<|tool_call_start|>[weather(city='Rome')]<|tool_call_end|>",
+  "<think>choose a tool</think>\n<|tool_call_start|>[weather(city='Rome'",
+  "<tool_call>{broken}</tool_call>",
+])
+func nativeEnvelopeRepair(text: String) throws {
+  let feedback = try #require(AgentToolLoopPolicy.nativeToolCallRepairFeedback(response: text))
+  #expect(feedback.contains("No tools from that response were executed"))
+  #expect(feedback.contains("native tool call"))
+  #expect(!feedback.contains("TOOL_CALL\n"))
+  #expect(!feedback.contains("choose a tool"))
+}
+
+@Test("Native repair leaves ordinary answers and protocol examples alone", arguments: [
+  "The token <|tool_call_start|> begins an LFM tool call.",
+  "```python\n<|tool_call_start|>[weather(city='Rome')]<|tool_call_end|>\n```",
+  #"{"name":"weather","arguments":{"city":"Rome"}}"#,
+  "[weather(city='Rome')]",
+  "<think><|tool_call_start|>[weather(city='Rome')]</think>Sunny.",
+])
+func nativeEnvelopeExamples(text: String) {
+  #expect(AgentToolLoopPolicy.nativeToolCallRepairFeedback(response: text) == nil)
+}
+
+@Test("Text protocols repair LFM envelopes using the selected protocol", arguments: [
+  ToolCallingMode.text, .json, .xml,
+])
+func lfmEnvelopeInTextProtocol(mode: ToolCallingMode) {
+  let decision = AgentToolLoopPolicy.evaluate(
+    response: "<|tool_call_start|>[weather(city='Rome')]<|tool_call_end|>",
+    tools: [weatherTool], mode: mode, remainingToolCalls: 2)
+  guard case .repair(let feedback) = decision else {
+    Issue.record("Expected repair rather than a final answer")
+    return
+  }
+  #expect(feedback.contains(mode.displayName))
+}
+
 @Test("Tool-loop policy exposes and resolves the final response tool")
 func toolLoopResponseTool() {
   let definitions = AgentToolLoopPolicy.definitions(includingResponseTool: [weatherTool])

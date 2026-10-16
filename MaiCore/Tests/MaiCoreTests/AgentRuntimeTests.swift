@@ -872,6 +872,82 @@ func emptyReplyAfterToolResultIsRepaired() async throws {
   #expect(await provider.requests.count == 3)
 }
 
+@Test("Native tool runs repair unparsed calls and truncated reasoning before executing", arguments: [
+  false, true,
+])
+func nativeRejectedCallRecovery(truncated: Bool) async throws {
+  let rejected = truncated
+    ? ProviderResponse(
+      message: AgentMessage(role: .assistant, content: [.reasoning("Still thinking")]),
+      usage: TokenUsage(inputTokens: 10, outputTokens: 100), stopReason: .length)
+    : ProviderResponse(
+      message: .assistant("<|tool_call_start|>[probe(value='broken)]<|tool_call_end|>"),
+      stopReason: .stop)
+  let provider = ScriptedProvider(responses: [
+    rejected,
+    ProviderResponse(message: AgentMessage(role: .assistant, content: [
+      .toolCall(ToolCall(id: "corrected", name: "probe", arguments: .object([:]))),
+    ]), stopReason: .toolCall),
+    ProviderResponse(message: .assistant("Probed."), stopReason: .stop),
+  ])
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  try await runtime.register(tool: ClosureTool(
+    definition: ToolDefinition(name: "probe", description: "Probe")
+  ) { _, _ in ToolOutput(text: "42") })
+  let result = try await runtime.run(AgentRequest(
+    provider: "scripted", model: "lfm25", messages: [.user("probe")],
+    toolNames: ["probe"], toolCallingStrategy: .native, retry: .none))
+  #expect(result.response.text == "Probed.")
+  #expect(result.modelTurns == 3 && result.toolCalls == 1)
+  #expect(result.transcript.flatMap(\.toolResults).map(\.callID) == ["corrected"])
+  let requests = await provider.requests
+  #expect(requests[1].messages.contains { $0.text.contains("No tools from that response were executed") })
+  #expect(requests[0].messages.contains { $0.text.contains("never use placeholders") })
+  if truncated { #expect((result.usage?.outputTokens ?? 0) >= 100) }
+}
+
+@Test("Repeated unparsed native calls stop repairing at the existing repair limit")
+func nativeRejectedCallRepairLimit() async throws {
+  let rejected = ProviderResponse(
+    message: .assistant("<|tool_call_start|>[probe(]<|tool_call_end|>"), stopReason: .stop)
+  let provider = ScriptedProvider(responses: Array(repeating: rejected, count: 3) + [
+    ProviderResponse(message: .assistant("Unable to call the tool."), stopReason: .stop),
+  ])
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  try await runtime.register(tool: ClosureTool(
+    definition: ToolDefinition(name: "probe", description: "Probe")
+  ) { _, _ in
+    Issue.record("A rejected call must not execute")
+    return ToolOutput(text: "unexpected")
+  })
+  let result = try await runtime.run(AgentRequest(
+    provider: "scripted", messages: [.user("probe")], toolNames: ["probe"], retry: .none))
+  #expect(result.modelTurns == 4 && result.toolCalls == 0)
+  #expect(await provider.requests.last?.tools.isEmpty == true)
+  #expect(result.response.text == "Unable to call the tool.")
+}
+
+// Empty native turns can also be parser failures before the first tool run.
+@Test("An empty first native turn receives feedback instead of an identical retry")
+func emptyFirstNativeTurnIsRepaired() async throws {
+  let provider = ScriptedProvider(responses: [
+    ProviderResponse(message: .assistant("No tool is needed."), stopReason: .stop),
+  ], failures: [0: EmptyReplyFailure()])
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  try await runtime.register(tool: ClosureTool(
+    definition: ToolDefinition(name: "probe", description: "Probe")
+  ) { _, _ in ToolOutput(text: "42") })
+  let result = try await runtime.run(AgentRequest(
+    provider: "scripted", messages: [.user("help")], toolNames: ["probe"], retry: .none))
+  #expect(result.modelTurns == 2 && result.toolCalls == 0)
+  #expect(result.response.text == "No tool is needed.")
+  let requests = await provider.requests
+  #expect(requests[1].messages.contains { $0.text == AgentToolLoopPolicy.emptyToolCallFeedback })
+}
+
 @Test("Three empty replies in a row withdraw the tools and force an answer")
 func repeatedEmptyRepliesWithdrawTools() async throws {
   let provider = ScriptedProvider(

@@ -66,7 +66,7 @@ func projectInstructionsReachRuns() async throws {
 
   let requests = await provider.requests
   let parent = try #require(requests.first)
-  #expect(parent.messages.map(\.role) == [.system, .system, .user])
+  #expect(parent.messages.map(\.role) == [.system, .system, .system, .user])
   #expect(parent.messages[0].text == "Be terse.")
   #expect(parent.messages[1].text.contains("Run make test"))
   // The child works in the same tree, so it gets the same rules.

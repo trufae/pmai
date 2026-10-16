@@ -164,7 +164,10 @@ func modelTurnLimitPausesRun() async throws {
   #expect(await runtime.supervisor.info(pid)?.state == .completed)
   let requests = await provider.requests
   #expect(requests.count == 4)
-  #expect(requests[2].messages.map { $0.id } == paused.transcript.map { $0.id })
+  let resumedMessages = requests[2].messages.filter {
+    $0.text != AgentToolLoopPolicy.nativeToolInstructions
+  }
+  #expect(resumedMessages.map(\.id) == paused.transcript.map(\.id))
 }
 
 @Test("The token budget stops the next model call instead of failing the run")
@@ -432,7 +435,7 @@ func autocompactFoldsOlderMessages() async throws {
   #expect(prompt.contains("This compaction runs automatically"))
   #expect(prompt.contains("[tool call echo"))
   #expect(!prompt.contains("c2"))
-  #expect(requests.last?.messages.count == 4)
+  #expect(requests.last?.messages.count == 5)
   #expect(requests.last?.messages.contains { $0.text.hasSuffix("Compacted state") } == true)
 }
 

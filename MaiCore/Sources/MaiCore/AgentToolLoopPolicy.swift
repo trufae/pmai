@@ -30,6 +30,34 @@ public enum AgentToolLoopDecision: Sendable {
 public enum AgentToolLoopPolicy {
   public static let responseToolName = "respond"
 
+  public static let nativeToolInstructions = """
+    Use the available tools to perform actions, then answer from their results. Only call tools whose arguments are already known. If a call needs another tool's result, wait for that result before calling it; never use placeholders for unseen results. Pass argument values directly, without extra wrapping quotes or double escaping. Omit optional arguments unless needed.
+    """
+
+  /// A native parser can return its rejected call as ordinary assistant text.
+  /// Recognize an actual protocol envelope, not quoted examples or prose about tools.
+  public static func nativeToolCallRepairFeedback(response: String) -> String? {
+    let text = MessageContentFilter.removingReasoningSections(from: response)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard text.hasPrefix("<|tool_call_start|>")
+      || text.hasPrefix("<tool_call>") || text.hasPrefix("<tool_call ")
+    else { return nil }
+    return """
+      Tool call rejected: the provider returned an unparsed tool-call block. No tools from that response were executed.
+      Send one corrected native tool call matching the available tool's schema. Include each required argument by its exact name. Pass argument values directly, without extra wrapping quotes or double escaping. If another tool's result is needed, call that tool first and wait for its result.
+      Rejected call (up to 1000 characters):
+      \(text.prefix(1_000))
+      """
+  }
+
+  public static let truncatedToolCallFeedback = """
+    The previous response reached its output token limit before producing a tool call or an answer. No tools from that response were executed. Keep reasoning brief and call the next needed tool with the available inputs, or answer directly if no tool is needed.
+    """
+
+  public static let emptyToolCallFeedback = """
+    The previous response contained no executable tool call or user-visible answer. No tools from that response were executed. Keep reasoning brief. Call an available tool if needed to complete the task, or give the answer directly.
+    """
+
   public static let responseToolDefinition = ToolDefinition(
     name: responseToolName,
     description:

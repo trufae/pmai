@@ -39,6 +39,28 @@ extension AgentRuntime {
       return nil
     }
 
+    if !turn.definitions.isEmpty, !turn.toolBudgetExhausted,
+      providerResponse.message.toolCalls.isEmpty
+    {
+      let feedback: String?
+      if providerResponse.stopReason == .length,
+        providerResponse.message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      {
+        feedback = AgentToolLoopPolicy.truncatedToolCallFeedback
+      } else if turn.textToolMode == nil {
+        feedback = AgentToolLoopPolicy.nativeToolCallRepairFeedback(
+          response: providerResponse.message.text)
+      } else {
+        feedback = nil
+      }
+      if var feedback {
+        if state.request.usesToolProxy { feedback += "\n" + ToolProxy.repairHint }
+        state.recordRepair(feedback)
+        await supervisor.note(state.pid, transcript: state.transcript)
+        return nil
+      }
+    }
+
     // A server such as Ollama parses the model's own function-call syntax
     // into native tool calls even when the request offered no tools. Those
     // calls are as good as a text block and run below; reading only the text

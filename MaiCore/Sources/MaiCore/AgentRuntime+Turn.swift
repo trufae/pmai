@@ -173,6 +173,8 @@ extension AgentRuntime {
         ? (state.repeatGuardTripped ? Self.repeatedCallPrompt : Self.toolBudgetExhaustedPrompt)
         : textToolPrompt(definitions, mode: textToolMode ?? .text)
       insertSystem(prompt, into: &providerMessages)
+    } else if !definitions.isEmpty && !deciding {
+      insertSystem(AgentToolLoopPolicy.nativeToolInstructions, into: &providerMessages)
     }
     let offersTools = !usesTextToolProtocol && !toolBudgetExhausted
     let providerRequest = ProviderRequest(
