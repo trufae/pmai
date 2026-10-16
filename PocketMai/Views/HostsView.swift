@@ -142,16 +142,23 @@ struct RemoteFoldersView: View {
             hosts.remotes.conversations(for: host).filter { $0.cwd == folder.cwd }.count
           } ?? 0
         let selected = hosts.selectedFolderID == folder.cwd
+        let pinned = hosts.isFolderPinned(folder.cwd)
         SidebarFolderRow(
           title: folder.name,
           subtitle: "\(count) conversation\(count == 1 ? "" : "s") · \(folder.cwd)",
-          systemImage: folder.icon ?? "folder", iconColor: folderColor(folder), isSelected: selected
+          systemImage: folder.icon ?? "folder", iconColor: folderColor(folder),
+          isSelected: selected,
+          isPinned: pinned
         ) {
           filterFocused = false
           onSelectFolder(folder.cwd)
         }
         .listRowBackground(SidebarRowBackground(isSelected: selected)).listRowSeparator(.hidden)
         .contextMenu {
+          Button(pinned ? "Unpin Folder" : "Pin to Top", systemImage: pinned ? "pin.slash" : "pin")
+          {
+            hosts.toggleFolderPin(folder.cwd)
+          }
           Button("Browse Files…", systemImage: "folder") { onBrowseFiles(folder.cwd) }
             .disabled(
               hosts.selectedHost?.requiresApproval == true

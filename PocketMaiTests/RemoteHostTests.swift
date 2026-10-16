@@ -17,6 +17,7 @@ final class RemoteHostTests: XCTestCase {
       XCTAssertEqual(store.host(id)?.requiresApproval, false)
       XCTAssertTrue(store.folders(for: try XCTUnwrap(store.host(id))).isEmpty)
       let chat = store.newConversation(hostID: id, cwd: "/work")
+      store.toggleFolderPin(hostID: id, cwd: "/work")
       let replacement = try OpenCodeConnection(
         name: "Workstation", url: url, token: "refreshed-session")
       XCTAssertEqual(try store.add(replacement), id)
@@ -24,6 +25,7 @@ final class RemoteHostTests: XCTestCase {
       let host = try XCTUnwrap(reloaded.host(id))
       XCTAssertEqual(host.backend, .openCode)
       XCTAssertEqual(host.name, "Workstation")
+      XCTAssertEqual(host.pinnedFolderPaths, ["/work"])
       XCTAssertEqual(try reloaded.token(for: id), "refreshed-session")
       XCTAssertEqual(reloaded.conversations(for: host).first?.id, chat.id)
       XCTAssertFalse(try String(contentsOf: file, encoding: .utf8).contains("refreshed-session"))
@@ -70,6 +72,81 @@ final class RemoteHostTests: XCTestCase {
     XCTAssertTrue(SidebarSearch.matches(" \n ", in: []))
     XCTAssertFalse(SidebarSearch.matches("missing", in: ["Title", "Different contents"]))
   }
+
+  func testRemoteFolderPinsPersistOfflineAndStayIsolatedBetweenHosts() throws {
+    let folders: [ACPWorkspaceFolder] = [
+      .init(cwd: "/one", name: "One"), .init(cwd: "/two", name: "Two"),
+      .init(cwd: "/three", name: "Three"),
+    ]
+    let first = RemoteAgentBookmark(
+      name: "ACP", url: try XCTUnwrap(URL(string: "wss://first.example/acp")), cwd: "/one",
+      conversations: [.init(cwd: "/two"), .init(cwd: "/three")])
+    let second = RemoteAgentBookmark(
+      name: "OpenCode", url: try XCTUnwrap(URL(string: "https://second.example")), cwd: "/one",
+      workspace: .init(folders: folders), backend: .openCode)
+    try withStore([first, second]) { store, file in
+      let hosts = HostNavigationStore(remotes: store)
+      hosts.selectHost(first.id, isOffline: true)
+      XCTAssertEqual(hosts.folders.map(\.cwd), ["/one", "/two", "/three"])
+      XCTAssertFalse(hosts.isFolderPinned("/two"))
+      hosts.toggleFolderPin("/two")
+      hosts.toggleFolderPin("/three")
+      XCTAssertEqual(hosts.folders.map(\.cwd), ["/two", "/three", "/one"])
+      XCTAssertTrue(hosts.isFolderPinned("/two"))
+      XCTAssertEqual(hosts.selectedFolderID, "/one")
+      XCTAssertFalse(hosts.loading)
+      XCTAssertNil(store.host(first.id)?.revision)
+
+      hosts.selectHost(second.id, isOffline: true)
+      XCTAssertFalse(hosts.isFolderPinned("/two"))
+      XCTAssertEqual(hosts.folders.map(\.cwd), ["/one", "/two", "/three"])
+      hosts.toggleFolderPin("/three")
+      XCTAssertEqual(hosts.folders.map(\.cwd), ["/three", "/one", "/two"])
+      let restored = RemoteAgentStore(file: file)
+      XCTAssertEqual(restored.host(first.id)?.pinnedFolderPaths, ["/two", "/three"])
+      XCTAssertEqual(restored.host(second.id)?.pinnedFolderPaths, ["/three"])
+      XCTAssertEqual(
+        restored.folders(for: try XCTUnwrap(restored.host(first.id))).map(\.cwd),
+        ["/two", "/three", "/one"])
+      store.toggleFolderPin(hostID: first.id, cwd: "/two")
+      store.toggleFolderPin(hostID: first.id, cwd: "/three")
+      let unpinned = RemoteAgentStore(file: file)
+      let unpinnedHost = try XCTUnwrap(unpinned.host(first.id))
+      XCTAssertNil(unpinnedHost.pinnedFolderPaths)
+      XCTAssertEqual(unpinned.folders(for: unpinnedHost).map(\.cwd), ["/one", "/two", "/three"])
+      XCTAssertEqual(unpinned.host(second.id)?.pinnedFolderPaths, ["/three"])
+    }
+  }
+
+  func testRemoteFolderPinsKeepTheirOrderAcrossDiscoveryAndReconnect() throws {
+    let original = RemoteAgentBookmark(
+      name: "Worker", url: try XCTUnwrap(URL(string: "wss://worker.example/acp")), cwd: "/one",
+      workspace: .init(folders: [.init(cwd: "/one", name: "One"), .init(cwd: "/two", name: "Two")]))
+    try withStore([original]) { store, file in
+      store.toggleFolderPin(hostID: original.id, cwd: "/two")
+      store.toggleFolderPin(hostID: original.id, cwd: "/one")
+      let renamed = ACPWorkspaceFolder(cwd: "/two", name: "Renamed", icon: "star", tint: "green")
+      store.updateWorkspace(
+        original.id,
+        snapshot: .init(folders: [
+          .init(cwd: "/three", name: "Three"), .init(cwd: "/one", name: "One"), renamed,
+        ]))
+      store.reconnect(original.id)
+      let restored = RemoteAgentStore(file: file)
+      let host = try XCTUnwrap(restored.host(original.id))
+      XCTAssertEqual(restored.folders(for: host).map(\.cwd), ["/two", "/one", "/three"])
+      XCTAssertEqual(restored.folders(for: host).first, renamed)
+      store.updateWorkspace(
+        original.id, snapshot: .init(folders: [.init(cwd: "/one", name: "One")]))
+      XCTAssertEqual(
+        store.folders(for: try XCTUnwrap(store.host(original.id))).map(\.cwd), ["/one"])
+      store.updateWorkspace(
+        original.id, snapshot: .init(folders: [.init(cwd: "/one", name: "One"), renamed]))
+      XCTAssertEqual(
+        store.folders(for: try XCTUnwrap(store.host(original.id))).map(\.cwd), ["/two", "/one"])
+    }
+  }
+
   func testRemoteTranscriptUsesSharedMessageRendering() throws {
     let conversation = RemoteAgentConversation(
       cwd: "/work",
@@ -111,14 +188,17 @@ final class RemoteHostTests: XCTestCase {
     let url = try XCTUnwrap(URL(string: "wss://worker.example/acp"))
     let first = RemoteAgentBookmark(
       name: "Worker", url: url, cwd: "/work/one",
-      sessionID: "one", messages: [.init(role: "user", text: "First conversation")])
+      sessionID: "one", messages: [.init(role: "user", text: "First conversation")],
+      pinnedFolderPaths: ["/work/one"])
     let second = RemoteAgentBookmark(
       name: "Worker", url: url, cwd: "/work/two",
-      sessionID: "two", messages: [.init(role: "user", text: "Second conversation")])
+      sessionID: "two", messages: [.init(role: "user", text: "Second conversation")],
+      pinnedFolderPaths: ["/work/two", "/work/one"])
     try withStore([first, second]) { store, file in
       XCTAssertEqual(store.connections.count, 1)
       let host = try XCTUnwrap(store.connections.first)
       XCTAssertEqual(host.id, first.id)
+      XCTAssertEqual(host.pinnedFolderPaths, ["/work/one", "/work/two"])
       XCTAssertEqual(Set(store.folders(for: host).map(\.cwd)), Set(["/work/one", "/work/two"]))
       XCTAssertEqual(
         Set(store.conversations(for: host).compactMap(\.sessionID)), Set(["one", "two"]))

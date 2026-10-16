@@ -104,6 +104,15 @@ final class HostNavigationStore {
     selectedConversationID = nil
   }
 
+  func isFolderPinned(_ cwd: String) -> Bool {
+    selectedHost?.pinnedFolderPaths?.contains(cwd) == true
+  }
+
+  func toggleFolderPin(_ cwd: String) {
+    guard let selectedHostID else { return }
+    remotes.toggleFolderPin(hostID: selectedHostID, cwd: cwd)
+  }
+
   func reconnect(_ id: UUID, isOffline: Bool) {
     guard !isOffline else { return }
     suspendConnections()

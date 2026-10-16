@@ -152,6 +152,9 @@ search filters the list in place using titles and locally cached messages.
 Long-press a conversation to rename, delete, or export it. Hosts without chat
 management support disable rename and delete for saved server chats.
 Long-press a project and choose **Browse Files…** to open its file manager.
+Choose **Pin to Top** or **Unpin Folder** in the same menu to organize remote
+folders. Pins are saved per host on the phone, work offline, and survive refreshes,
+reconnects, and updates to the saved host.
 
 Open **Chat Settings** in the chat title menu to change the remote session's
 settings. Updated pmai hosts expose provider, model, and reasoning effort over

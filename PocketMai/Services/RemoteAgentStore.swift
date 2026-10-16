@@ -18,6 +18,7 @@ struct RemoteAgentBookmark: Codable, Identifiable {
   var connectionProtocol: ACPRemoteProtocol?
   var revision: UUID?
   var backend: RemoteAgentBackend?
+  var pinnedFolderPaths: [String]?
 
   func makeClient(
     token: String, cwd: String, sessionID: String? = nil,
@@ -261,14 +262,27 @@ final class RemoteAgentStore {
   }
 
   func folders(for host: RemoteAgentBookmark) -> [ACPWorkspaceFolder] {
-    if let workspace = host.workspace { return workspace.folders }
-    var folders: [ACPWorkspaceFolder] = []
-    let paths = [host.cwd] + (host.conversations ?? []).map(\.cwd)
-    for cwd in paths where !cwd.isEmpty && !folders.contains(where: { $0.cwd == cwd }) {
-      folders.append(
-        .init(cwd: cwd, name: AgentProject.defaultName(forWorkingDirectory: cwd) ?? cwd))
+    var folders = host.workspace?.folders ?? []
+    if host.workspace == nil {
+      let paths = [host.cwd] + (host.conversations ?? []).map(\.cwd)
+      for cwd in paths where !cwd.isEmpty && !folders.contains(where: { $0.cwd == cwd }) {
+        folders.append(
+          .init(cwd: cwd, name: AgentProject.defaultName(forWorkingDirectory: cwd) ?? cwd))
+      }
     }
-    return folders
+    let pins = host.pinnedFolderPaths ?? []
+    return pins.compactMap { path in folders.first { $0.cwd == path } }
+      + folders.filter { !pins.contains($0.cwd) }
+  }
+
+  func toggleFolderPin(hostID: UUID, cwd: String) {
+    guard let index = connections.firstIndex(where: { $0.id == hostID }),
+      folders(for: connections[index]).contains(where: { $0.cwd == cwd })
+    else { return }
+    var pins = connections[index].pinnedFolderPaths ?? []
+    if pins.contains(cwd) { pins.removeAll { $0 == cwd } } else { pins.append(cwd) }
+    connections[index].pinnedFolderPaths = pins.isEmpty ? nil : pins
+    do { try save() } catch { self.error = error.localizedDescription }
   }
 
   func conversations(for host: RemoteAgentBookmark) -> [RemoteAgentConversation] {
@@ -303,6 +317,10 @@ final class RemoteAgentStore {
       if let index = hosts.firstIndex(where: { $0.url == connection.url }) {
         hosts[index].conversations =
           (hosts[index].conversations ?? []) + (connection.conversations ?? [])
+        for path in connection.pinnedFolderPaths ?? []
+        where hosts[index].pinnedFolderPaths?.contains(path) != true {
+          hosts[index].pinnedFolderPaths = (hosts[index].pinnedFolderPaths ?? []) + [path]
+        }
       } else {
         hosts.append(connection)
       }
