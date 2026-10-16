@@ -37,6 +37,9 @@ enum FileBrowserLocation: Identifiable {
             isSecurityScoped: context.isSecurityScoped,
             hiddenRootEntryNames: context.hidesModelsFolder ? ["Models"] : [])))
     case .remote(let host, let cwd):
+      guard host.backend != .openCode else {
+        throw WorkspaceFileError("File browsing is not available for OpenCode hosts yet.")
+      }
       guard host.requiresApproval != true else {
         throw WorkspaceFileError("Approve this device on the remote host first.")
       }

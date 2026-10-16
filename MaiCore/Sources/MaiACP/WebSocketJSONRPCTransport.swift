@@ -127,11 +127,13 @@ public final class WebSocketJSONRPCTransport: NSObject, JSONRPCTransport,
 public enum ACPRemoteProtocol: String, Codable, CaseIterable, Sendable {
   case local
   case opentunnel
+  case tailcat
 
   public var displayName: String {
     switch self {
     case .local: "Local / direct"
     case .opentunnel: "OpenTunnel"
+    case .tailcat: "Tailcat (via gateway)"
     }
   }
 }

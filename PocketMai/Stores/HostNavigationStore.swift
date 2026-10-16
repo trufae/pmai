@@ -16,7 +16,7 @@ final class HostNavigationStore {
   private(set) var error: String?
   private(set) var supportsDiscovery = true
   private var operation: Task<Void, Never>?
-  private var client: ACPClient?
+  private var client: (any RemoteSessionClient)?
   private var generation = 0
   private(set) var connectedHostID: UUID?
   var activeChat: RemoteAgentChat?
@@ -149,11 +149,8 @@ final class HostNavigationStore {
           try remotes.acceptPairing(host.id, token: token)
           waitingApproval = false
         }
-        let client = ACPClient(
-          configuration: .init(
-            command: host.name,
-            permission: .reject, remoteWorkingDirectory: host.cwd, readClientFiles: false,
-            webSocketURL: host.url, bearerToken: token),
+        let client = try host.makeClient(
+          token: token, cwd: host.cwd,
           onDisconnect: { [weak self] in await self?.connectionClosed(attempt: attempt) })
         self.client = client
         let snapshot = try await client.workspace()

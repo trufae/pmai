@@ -146,6 +146,10 @@ actor RemoteREPLServer {
     guard let connectionProtocol = ACPRemoteProtocol(rawValue: flags["--protocol"] ?? "local") else {
       throw JSONRPCError.invalidParams("Unknown serving protocol. Use --protocol local or --protocol opentunnel.")
     }
+    guard connectionProtocol != .tailcat else {
+      throw JSONRPCError.invalidParams(
+        "For Tailcat, pair the worker with pmai tailcat pair, then run pmai acp-gateway -- pmai tailcat connect NAME.")
+    }
     guard flags["--url"] == nil || flags["--address"] == nil else {
       throw JSONRPCError.invalidParams("Use either --url or --address to advertise the connection")
     }

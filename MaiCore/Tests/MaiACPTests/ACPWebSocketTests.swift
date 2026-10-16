@@ -31,13 +31,28 @@ func acpOpenTunnelConnectionProfile() throws {
   profile.url = try #require(URL(string: "ws://pmai.tunnel.example/acp"))
   #expect(throws: JSONRPCError.self) { try profile.uri() }
 
-  let legacy = Data("""
+  let legacy = Data(
+    """
     {"version":1,"name":"LAN","url":"ws://192.168.1.2:19283/acp","token":"token","cwd":"/work"}
     """.utf8)
   let decoded = try JSONDecoder().decode(ACPRemoteConnection.self, from: legacy)
   try decoded.validate()
   #expect(decoded.connectionProtocol == nil)
   #expect(try ACPRemoteConnection.parse(decoded.uri()) == decoded)
+}
+
+@Test("Tailcat gateway profiles preserve their transport selection")
+func acpTailcatGatewayProfile() throws {
+  let profile = try ACPRemoteConnection(
+    name: "Tailcat worker", url: #require(URL(string: "wss://gateway.example/acp")),
+    token: "gateway-token", cwd: "/work", connectionProtocol: .tailcat)
+  #expect(try ACPRemoteConnection.parse(profile.uri()) == profile)
+  #expect(ACPRemoteProtocol.allCases.contains(.tailcat))
+  #expect(throws: JSONRPCError.self) {
+    try ACPRemoteConnection(
+      name: "Tailcat worker", url: #require(URL(string: "https://gateway.example/acp")),
+      token: "gateway-token", cwd: "/work", connectionProtocol: .tailcat)
+  }
 }
 
 private actor WebSocketEvents {

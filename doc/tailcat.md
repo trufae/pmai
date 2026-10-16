@@ -175,6 +175,20 @@ enrollment invite. Tokens are stored in the iOS Keychain; local chat records do 
 tokens and are excluded from backup. Deleting a saved connection removes its
 local token and chat record, not the worker's session files.
 
+OpenCode v2 hosts can also be added by running `opencode pair --remote` and
+scanning its QR in **Add Remote Host**, or pasting its HTTPS pairing link into
+**Import connection**. Local links from `opencode pair` work too. PocketMai accepts
+both `/auth/connect/<code>` links and the QR's JSON `{code, urls}` payload, exchanges
+the single-use code for a session token, and stores that token in the Keychain.
+Save the connection, then select its discovered project and conversation.
+Expired or already-used links require a fresh `opencode pair --remote` QR.
+
+OpenCode uses its native HTTP API with Basic authentication, independently of
+pmai's ACP WebSocket transport. Project and conversation discovery, history,
+text prompts, tool results, permission replies, rename, and delete are supported.
+Replies refresh while the host runs. File browsing and OpenCode input forms are
+not currently supported by PocketMai; use the OpenCode app for those features.
+
 The frontend supports text prompts, streamed text/reasoning, tool status and
 results, permissions, and session restoration. It does not offer local file or
 terminal access to the remote agent. Approvals occur when the remote agent asks
@@ -191,7 +205,8 @@ available in their folder.
 
 `HostNavigationStore` owns host/folder/conversation selection. `AppStore` owns
 local app conversations; `RemoteAgentStore` owns device-local host bookmarks and
-cached remote transcripts. `ACPClient` owns discovery and session transport.
+cached remote transcripts. `ACPClient` and `OpenCodeClient` implement the shared
+`RemoteSessionClient` interface for discovery and session transport.
 `ACPServer` adapts prompts to `AgentRuntime` and delegates durable workspace data
 to `ACPWorkspaceRepository`. The CLI's `AgentHomeACPWorkspace` implementation
 reads and updates the same project/chat files as its local workspace, preserving
@@ -296,6 +311,11 @@ workstation`. `connect` is a raw stdio proxy for ACP clients, so it should not b
 used as an interactive terminal. The phone still imports `gateway.png`, not
 `invite.png`. The pair command's `--permission` policy applies when using its
 registered CLI provider; the raw `connect` proxy passes approvals through to iOS.
+
+In PocketMai's host editor, choose **pmai / ACP → Tailcat (via gateway)**.
+The selection includes setup commands and is retained when you import the gateway
+QR and save. Scanning a worker enrollment invite explains how to pair it on the
+gateway computer and obtain the phone-facing QR.
 
 ## Enrollment, revocation, and saved state
 

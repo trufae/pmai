@@ -153,7 +153,9 @@ struct RemoteFoldersView: View {
         .listRowBackground(SidebarRowBackground(isSelected: selected)).listRowSeparator(.hidden)
         .contextMenu {
           Button("Browse Files…", systemImage: "folder") { onBrowseFiles(folder.cwd) }
-            .disabled(hosts.selectedHost?.requiresApproval == true || isOffline)
+            .disabled(
+              hosts.selectedHost?.requiresApproval == true
+                || hosts.selectedHost?.backend == .openCode || isOffline)
           Button("Copy Path", systemImage: "doc.on.doc") {
             UIPasteboard.general.string = folder.cwd
           }

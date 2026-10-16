@@ -17,6 +17,25 @@ struct RemoteAgentBookmark: Codable, Identifiable {
   var requiresApproval: Bool?
   var connectionProtocol: ACPRemoteProtocol?
   var revision: UUID?
+  var backend: RemoteAgentBackend?
+
+  func makeClient(
+    token: String, cwd: String, sessionID: String? = nil,
+    onUpdate: (@Sendable (JSONValue) async -> Void)? = nil,
+    onPermission: (@Sendable (JSONValue) async throws -> String?)? = nil,
+    onDisconnect: (@Sendable () async -> Void)? = nil
+  ) throws -> any RemoteSessionClient {
+    if backend == .openCode {
+      return OpenCodeClient(
+        connection: try .init(name: name, url: url, token: token, cwd: cwd), sessionID: sessionID,
+        onUpdate: onUpdate, onPermission: onPermission)
+    }
+    return ACPClient(
+      configuration: .init(
+        command: name, permission: .reject, remoteWorkingDirectory: cwd, readClientFiles: false,
+        webSocketURL: url, bearerToken: token, sessionID: sessionID),
+      onUpdate: onUpdate, onPermission: onPermission, onDisconnect: onDisconnect)
+  }
 }
 
 struct RemoteAgentConversation: Codable, Identifiable {
@@ -58,6 +77,7 @@ struct RemoteAgentMessage: Codable, Identifiable {
   var toolID: String?
   var status: String?
   var createdAt: Date? = Date()
+  var remoteID: String?
 }
 
 @MainActor @Observable
@@ -90,18 +110,41 @@ final class RemoteAgentStore {
     _ profile: ACPRemoteConnection, replacing hostID: UUID? = nil, accentColor: String? = nil
   ) throws -> UUID {
     try profile.validate()
+    return try add(
+      name: profile.name, url: profile.url, token: profile.token, cwd: profile.cwd,
+      backend: .acp, requiresApproval: profile.requiresApproval,
+      connectionProtocol: profile.connectionProtocol, replacing: hostID, accentColor: accentColor)
+  }
+
+  @discardableResult
+  func add(
+    _ profile: OpenCodeConnection, replacing hostID: UUID? = nil, accentColor: String? = nil
+  ) throws -> UUID {
+    let validated = try OpenCodeConnection(
+      name: profile.name, url: profile.url, token: profile.token, cwd: profile.cwd)
+    return try add(
+      name: validated.name, url: validated.url, token: validated.token, cwd: validated.cwd,
+      backend: .openCode, requiresApproval: false, connectionProtocol: nil,
+      replacing: hostID, accentColor: accentColor)
+  }
+
+  private func add(
+    name: String, url: URL, token: String, cwd: String, backend: RemoteAgentBackend,
+    requiresApproval: Bool?, connectionProtocol: ACPRemoteProtocol?,
+    replacing hostID: UUID?, accentColor: String?
+  ) throws -> UUID {
     // Reimporting the same endpoint updates its token without losing the chat.
     let existing = connections.firstIndex {
-      hostID != nil ? $0.id == hostID : $0.url == profile.url
+      hostID != nil ? $0.id == hostID : $0.url == url
     }
     if let existing,
-      connections.contains(where: { $0.url == profile.url && $0.id != connections[existing].id })
+      connections.contains(where: { $0.url == url && $0.id != connections[existing].id })
     {
       throw JSONRPCError.invalidParams("A host with this gateway URL already exists.")
     }
     let id = existing.map { connections[$0].id } ?? UUID()
     let query = keychainQuery(id)
-    let data = Data(profile.token.utf8)
+    let data = Data(token.utf8)
     let updated = SecItemUpdate(query as CFDictionary, [kSecValueData: data] as CFDictionary)
     if updated == errSecItemNotFound {
       var item = query
@@ -112,18 +155,20 @@ final class RemoteAgentStore {
       try check(updated)
     }
     if let existing {
-      connections[existing].name = profile.name
-      connections[existing].cwd = profile.cwd
-      connections[existing].url = profile.url
+      connections[existing].name = name
+      connections[existing].cwd = cwd
+      connections[existing].url = url
       connections[existing].accentColor = accentColor
-      connections[existing].requiresApproval = profile.requiresApproval
-      connections[existing].connectionProtocol = profile.connectionProtocol
+      connections[existing].requiresApproval = requiresApproval
+      connections[existing].connectionProtocol = connectionProtocol
+      connections[existing].backend = backend
       connections[existing].revision = UUID()
     } else {
       connections.append(
         RemoteAgentBookmark(
-          id: id, name: profile.name, url: profile.url, cwd: profile.cwd, accentColor: accentColor,
-          requiresApproval: profile.requiresApproval, connectionProtocol: profile.connectionProtocol))
+          id: id, name: name, url: url, cwd: cwd, accentColor: accentColor,
+          requiresApproval: requiresApproval, connectionProtocol: connectionProtocol,
+          backend: backend))
     }
     try save()
     return id
@@ -219,7 +264,7 @@ final class RemoteAgentStore {
     if let workspace = host.workspace { return workspace.folders }
     var folders: [ACPWorkspaceFolder] = []
     let paths = [host.cwd] + (host.conversations ?? []).map(\.cwd)
-    for cwd in paths where !folders.contains(where: { $0.cwd == cwd }) {
+    for cwd in paths where !cwd.isEmpty && !folders.contains(where: { $0.cwd == cwd }) {
       folders.append(
         .init(cwd: cwd, name: AgentProject.defaultName(forWorkingDirectory: cwd) ?? cwd))
     }
@@ -319,7 +364,7 @@ final class RemoteAgentChat {
   var connected = false
   var permissions: [RemoteAgentPermission] = []
   private var sessionID: String?
-  private var client: ACPClient?
+  private var client: (any RemoteSessionClient)?
   private var operation: Task<Void, Never>?
   private var permissionReplies: [UUID: CheckedContinuation<String?, Never>] = [:]
   private var generation = 0
@@ -392,15 +437,12 @@ final class RemoteAgentChat {
     }
   }
 
-  private func makeClient() throws -> ACPClient {
+  private func makeClient() throws -> any RemoteSessionClient {
     guard !isOffline() else { throw InternetAccessError.offline }
     let generation = generation
     let token = try store.token(for: bookmark.id)
-    return ACPClient(
-      configuration: .init(
-        command: bookmark.name, permission: .reject,
-        remoteWorkingDirectory: conversation.cwd, readClientFiles: false,
-        webSocketURL: bookmark.url, bearerToken: token, sessionID: sessionID),
+    return try bookmark.makeClient(
+      token: token, cwd: conversation.cwd, sessionID: sessionID,
       onUpdate: { [weak self] update in await self?.receive(update, generation: generation) },
       onPermission: { [weak self] request in
         await self?.requestPermission(request, generation: generation)
@@ -559,6 +601,21 @@ final class RemoteAgentChat {
       let kind = object["sessionUpdate"]?.stringValue
     else { return }
     switch kind {
+    case "_pmai/message_snapshot":
+      let previous = Dictionary(
+        messages.compactMap { message in
+          message.remoteID.map { ($0, message.id) }
+        }, uniquingKeysWith: { first, _ in first })
+      messages = (object["messages"]?.arrayValue ?? []).compactMap { value in
+        guard let fields = value.objectValue, let remoteID = fields["remoteID"]?.stringValue,
+          let role = fields["role"]?.stringValue, let text = fields["text"]?.stringValue
+        else { return nil }
+        return RemoteAgentMessage(
+          id: previous[remoteID] ?? UUID(), role: role, text: text,
+          toolID: fields["toolID"]?.stringValue, status: fields["status"]?.stringValue,
+          createdAt: fields["created"]?.numberValue.map { Date(timeIntervalSince1970: $0 / 1000) },
+          remoteID: remoteID)
+      }
     case "user_message_chunk", "agent_message_chunk", "agent_thought_chunk":
       let role =
         kind == "user_message_chunk"

@@ -136,6 +136,7 @@ struct ContentView: View {
                   description: Text("Choose a folder and conversation, or start a new chat."))
                 Button("Browse Folders") { setDrawerDepth(2, animation: historyPanelAnimation) }
                 Button("Browse Files", systemImage: "folder") { browseFiles() }
+                  .disabled(host.backend == .openCode)
               }
               .navigationTitle(host.name)
               .toolbar {

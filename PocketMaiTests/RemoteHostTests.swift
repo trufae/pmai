@@ -7,6 +7,39 @@ import XCTest
 
 @MainActor
 final class RemoteHostTests: XCTestCase {
+  func testOpenCodeCredentialAndBackendPersistWithoutLosingChatsOnReimport() throws {
+    let url = try XCTUnwrap(URL(string: "https://worker.opentunnel.xyz"))
+    try withStore([]) { store, file in
+      let profile = try OpenCodeConnection(url: url, token: "opencode-session")
+      let id = try store.add(profile)
+      defer { store.remove(id) }
+      XCTAssertEqual(store.host(id)?.backend, .openCode)
+      XCTAssertEqual(store.host(id)?.requiresApproval, false)
+      XCTAssertTrue(store.folders(for: try XCTUnwrap(store.host(id))).isEmpty)
+      let chat = store.newConversation(hostID: id, cwd: "/work")
+      let replacement = try OpenCodeConnection(
+        name: "Workstation", url: url, token: "refreshed-session")
+      XCTAssertEqual(try store.add(replacement), id)
+      let reloaded = RemoteAgentStore(file: file)
+      let host = try XCTUnwrap(reloaded.host(id))
+      XCTAssertEqual(host.backend, .openCode)
+      XCTAssertEqual(host.name, "Workstation")
+      XCTAssertEqual(try reloaded.token(for: id), "refreshed-session")
+      XCTAssertEqual(reloaded.conversations(for: host).first?.id, chat.id)
+      XCTAssertFalse(try String(contentsOf: file, encoding: .utf8).contains("refreshed-session"))
+      XCTAssertTrue(try host.makeClient(token: "test", cwd: "/work") is OpenCodeClient)
+    }
+  }
+
+  func testLegacyHostStillUsesACP() throws {
+    let host = RemoteAgentBookmark(
+      name: "Legacy", url: try XCTUnwrap(URL(string: "wss://host.example/acp")), cwd: "/work")
+    let restored = try JSONDecoder().decode(
+      RemoteAgentBookmark.self, from: JSONEncoder().encode(host))
+    XCTAssertNil(restored.backend)
+    XCTAssertTrue(try restored.makeClient(token: "test", cwd: "/work") is ACPClient)
+  }
+
   func testOpenTunnelProfileImportAndApprovedCredentialPersist() throws {
     var profile = try ACPRemoteConnection(
       name: "Workstation", url: XCTUnwrap(URL(string: "wss://pmai.tunnel.example/acp")),
@@ -25,7 +58,8 @@ final class RemoteHostTests: XCTestCase {
       XCTAssertEqual(reloaded.host(id)?.connectionProtocol, .opentunnel)
       XCTAssertEqual(reloaded.host(id)?.requiresApproval, false)
       XCTAssertEqual(try reloaded.token(for: id), "approved-client-token")
-      XCTAssertFalse(try String(contentsOf: file, encoding: .utf8).contains("approved-client-token"))
+      XCTAssertFalse(
+        try String(contentsOf: file, encoding: .utf8).contains("approved-client-token"))
     }
   }
 
