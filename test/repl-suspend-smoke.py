@@ -254,7 +254,8 @@ elif action == 'fail':
             wait_for("Provider 'other' saved")
             wait_for('and reloaded.')
             saved = next(p for p in json.loads(config.read_text())['providers'] if p['id'] == 'other')
-            assert saved == provider | {'headers': {}, 'headerEnvironment': {}, 'options': {}}
+            # The legacy provider kind is accepted, then saved under its canonical name.
+            assert saved == provider | {'kind': 'openai', 'headers': {}, 'headerEnvironment': {}, 'options': {}}, saved
             print('PASS: provider retry pauses, contextual hints, draft retention, save and Ctrl+Z/fg')
 
             # Ctrl+C and EOF at the error prompt cancel only the invalid edit.

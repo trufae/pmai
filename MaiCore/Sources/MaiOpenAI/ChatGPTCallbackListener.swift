@@ -33,7 +33,7 @@ import Foundation
     private var waiting = false
 
     public init() throws {
-      #if os(Linux) || os(Android)
+      #if canImport(Glibc)
         let fd = socket(AF_INET, Int32(SOCK_STREAM.rawValue), 0)
       #else
         let fd = socket(AF_INET, SOCK_STREAM, 0)
@@ -155,10 +155,11 @@ import Foundation
         "Content-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)"
       let bytes = Array(response.utf8)
       bytes.withUnsafeBytes { pointer in
+        guard let baseAddress = pointer.baseAddress else { return }
         #if os(Linux) || os(Android)
-          _ = send(client, pointer.baseAddress, bytes.count, Int32(MSG_NOSIGNAL))
+          _ = send(client, baseAddress, bytes.count, Int32(MSG_NOSIGNAL))
         #else
-          _ = send(client, pointer.baseAddress, bytes.count, 0)
+          _ = send(client, baseAddress, bytes.count, 0)
         #endif
       }
       return valid ? candidate : nil
