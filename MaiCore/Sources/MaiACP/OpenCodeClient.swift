@@ -8,12 +8,14 @@ import MaiCore
 /// OpenCode v2's native HTTP API. OpenTunnel is only the HTTPS transport;
 /// it does not turn the server into an ACP gateway.
 public actor OpenCodeClient: RemoteSessionClient {
+  public nonisolated var supportsHistoryRewind: Bool { true }
   private let http: OpenCodeHTTP
   private let cwd: String
   private var sessionID: String?
   private var closed = false
   private var prompting = false
   private var configuring = false
+  private var rewinding = false
   private var history: [JSONValue] = []
   public private(set) var isConnected = false
   private let onUpdate: (@Sendable (JSONValue) async -> Void)?
@@ -121,6 +123,57 @@ public actor OpenCodeClient: RemoteSessionClient {
     _ = try await http.request(
       ["api", "session", id], method: title == nil ? "DELETE" : "PATCH",
       body: title.map { .object(["title": .string($0)]) })
+  }
+
+  public func rewind(to messageID: String?) async throws {
+    try checkOpen()
+    guard isConnected, !prompting, !configuring, let id = sessionID else {
+      throw JSONRPCError.invalidParams("Connect to an idle OpenCode session first.")
+    }
+    configuring = true
+    rewinding = true
+    defer {
+      configuring = false
+      rewinding = false
+      if closed { http.close() }
+    }
+    let session = try await http.request(["api", "session", id])
+    guard let info = session.objectValue?["data"]?.objectValue else { throw invalidResponse() }
+    // Moving a pre-existing file revert can restore files even with files:false.
+    guard info["revert"] == nil || info["revert"] == .null else {
+      throw JSONRPCError.invalidParams("Finish or undo the pending revert in OpenCode first.")
+    }
+    // Refresh before choosing the beginning of a reset, including messages that
+    // aren't rendered by the app (compactions and other session events).
+    let messages = try await refreshHistory(id, full: true)
+    guard let boundary = messageID ?? messages.first?.objectValue?["id"]?.stringValue else {
+      return
+    }
+    guard messages.contains(where: { $0.objectValue?["id"]?.stringValue == boundary }) else {
+      throw JSONRPCError.invalidParams("This message is no longer in the OpenCode conversation.")
+    }
+    do {
+      _ = try await http.request(
+        ["api", "session", id, "revert", "stage"], method: "POST",
+        body: .object(["messageID": .string(boundary), "files": .bool(false)]))
+      try checkOpen()
+      _ = try await http.request(["api", "session", id, "revert", "commit"], method: "POST")
+    } catch {
+      // A failed commit must not leave a staged deletion for the next prompt.
+      // Read first: a lost response may mean it already committed successfully.
+      let http = http
+      await Task {
+        let session = try? await http.request(["api", "session", id])
+        if let revert = session?.objectValue?["data"]?.objectValue?["revert"]?.objectValue,
+          revert["messageID"]?.stringValue == boundary,
+          (revert["files"]?.arrayValue ?? []).isEmpty
+        {
+          _ = try? await http.request(["api", "session", id, "revert"], method: "DELETE")
+        }
+      }.value
+      throw error
+    }
+    _ = try await refreshHistory(id, full: true)
   }
 
   public func configurationOptions() async throws -> [RemoteSessionOption] {
@@ -310,7 +363,9 @@ public actor OpenCodeClient: RemoteSessionClient {
     if prompting, let sessionID {
       _ = try? await http.request(["api", "session", sessionID, "interrupt"], method: "POST")
     }
-    http.close()
+    // A cancelled rewind may still need to clear a staged deletion. Keep its
+    // transport alive until that cleanup finishes, then rewind's defer closes it.
+    if !rewinding { http.close() }
   }
 
   private func checkOpen() throws {

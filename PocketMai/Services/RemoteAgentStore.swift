@@ -22,6 +22,7 @@ struct RemoteAgentBookmark: Codable, Identifiable {
 
   func makeClient(
     token: String, cwd: String, sessionID: String? = nil,
+    httpConfiguration: URLSessionConfiguration = .ephemeral,
     onUpdate: (@Sendable (JSONValue) async -> Void)? = nil,
     onPermission: (@Sendable (JSONValue) async throws -> String?)? = nil,
     onDisconnect: (@Sendable () async -> Void)? = nil
@@ -29,6 +30,7 @@ struct RemoteAgentBookmark: Codable, Identifiable {
     if backend == .openCode {
       return OpenCodeClient(
         connection: try .init(name: name, url: url, token: token, cwd: cwd), sessionID: sessionID,
+        configuration: httpConfiguration,
         onUpdate: onUpdate, onPermission: onPermission)
     }
     return ACPClient(
@@ -404,15 +406,18 @@ final class RemoteAgentChat {
   private var connectingHistory: [RemoteAgentMessage]?
   private let store: RemoteAgentStore
   private let isOffline: () -> Bool
+  private let httpConfiguration: URLSessionConfiguration
 
   init(
     bookmark: RemoteAgentBookmark, conversation: RemoteAgentConversation,
-    store: RemoteAgentStore = .shared, isOffline: @escaping () -> Bool = { false }
+    store: RemoteAgentStore = .shared, isOffline: @escaping () -> Bool = { false },
+    httpConfiguration: URLSessionConfiguration = .ephemeral
   ) {
     self.bookmark = bookmark
     self.conversation = conversation
     self.store = store
     self.isOffline = isOffline
+    self.httpConfiguration = httpConfiguration
     messages = conversation.messages
     sessionID = conversation.sessionID
     self.conversation.createdAt = conversation.createdAt ?? conversation.updatedAt
@@ -427,6 +432,36 @@ final class RemoteAgentChat {
   var canManage: Bool {
     conversation.sessionID == nil
       || store.host(bookmark.id)?.workspace?.canManageSessions == true
+  }
+
+  var canSend: Bool { connected && !busy && !isOffline() }
+
+  var supportsHistoryRewind: Bool { client?.supportsHistoryRewind == true }
+
+  func canResubmit(_ messageID: UUID) -> Bool {
+    canSend && sourceMessage(messageID) != nil
+  }
+
+  func canRetry(_ messageID: UUID) -> Bool {
+    canResubmit(messageID) && supportsHistoryRewind
+      && sourceMessage(messageID)?.remoteID != nil
+  }
+
+  func resubmit(_ messageID: UUID) {
+    guard canResubmit(messageID), let message = sourceMessage(messageID) else { return }
+    send(message.text)
+  }
+
+  func retry(_ messageID: UUID, restarting: Bool = false) {
+    guard canRetry(messageID), let message = sourceMessage(messageID) else { return }
+    submit(message.text, rewind: true, boundary: restarting ? nil : message.remoteID)
+  }
+
+  private func sourceMessage(_ id: UUID) -> RemoteAgentMessage? {
+    messages.first {
+      $0.id == id && $0.role == "user"
+        && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
   }
 
   func refreshConfiguration() async {
@@ -513,6 +548,7 @@ final class RemoteAgentChat {
     let token = try store.token(for: bookmark.id)
     return try bookmark.makeClient(
       token: token, cwd: conversation.cwd, sessionID: sessionID,
+      httpConfiguration: httpConfiguration,
       onUpdate: { [weak self] update in await self?.receive(update, generation: generation) },
       onPermission: { [weak self] request in
         await self?.requestPermission(request, generation: generation)
@@ -567,21 +603,28 @@ final class RemoteAgentChat {
   }
 
   func send(_ text: String) {
-    guard !isOffline(), connected, !busy, let client else { return }
+    submit(text)
+  }
+
+  private func submit(_ text: String, rewind: Bool = false, boundary: String? = nil) {
+    guard canSend, let client else { return }
     let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty else { return }
     busy = true
     error = nil
-    status = "Responding…"
-    messages.append(RemoteAgentMessage(role: "user", text: text))
-    conversation.updatedAt = Date()
-    if AgentChat.isPlaceholderTitle(conversation.title) {
-      conversation.title = AgentChat.derivedTitle(from: text) ?? conversation.title
-    }
-    persist()
+    status = rewind ? "Rewinding…" : "Responding…"
+    if !rewind { appendPrompt(text) }
     let attempt = generation
     operation = Task {
       do {
+        if rewind {
+          try await client.rewind(to: boundary)
+          guard generation == attempt else { return }
+          try Task.checkCancellation()
+          guard !isOffline(), connected else { throw CancellationError() }
+          appendPrompt(text)
+          status = "Responding…"
+        }
         let reason = try await client.prompt(text) { _ in }
         guard generation == attempt else { return }
         status = reason == .cancelled ? "Cancelled" : "Connected"
@@ -598,6 +641,15 @@ final class RemoteAgentChat {
       conversation.updatedAt = Date()
       persist()
     }
+  }
+
+  private func appendPrompt(_ text: String) {
+    messages.append(RemoteAgentMessage(role: "user", text: text))
+    conversation.updatedAt = Date()
+    if AgentChat.isPlaceholderTitle(conversation.title) {
+      conversation.title = AgentChat.derivedTitle(from: text) ?? conversation.title
+    }
+    persist()
   }
 
   func disconnect() {

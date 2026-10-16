@@ -132,6 +132,8 @@ struct ResponseScrollTargetsKey: PreferenceKey {
 struct MessageBubbleActions {
   var allowsConversationMutation = true
   var canReply = true
+  var canRetry = true
+  var canResubmit = true
   var onDelete: (() -> Void)? = nil
   var onToggleBookmark: (() -> Void)? = nil
   var onBeginSelection: (() -> Void)? = nil
@@ -139,6 +141,7 @@ struct MessageBubbleActions {
   var onEditAttachment: ((UUID, String) -> Void)? = nil
   var onTrimFromHere: (() -> Void)? = nil
   var onRestartFresh: (() -> Void)? = nil
+  var onResubmit: (() -> Void)? = nil
   var onSpeakFromHere: (() -> Void)? = nil
   var onReply: ((String) -> Void)? = nil
 }
@@ -278,6 +281,11 @@ private struct MessageBubbleContent: View, Equatable {
       && lhs.searchHighlight == rhs.searchHighlight
       && lhs.actions.allowsConversationMutation == rhs.actions.allowsConversationMutation
       && lhs.actions.canReply == rhs.actions.canReply
+      && lhs.actions.canRetry == rhs.actions.canRetry
+      && lhs.actions.canResubmit == rhs.actions.canResubmit
+      && (lhs.actions.onTrimFromHere == nil) == (rhs.actions.onTrimFromHere == nil)
+      && (lhs.actions.onRestartFresh == nil) == (rhs.actions.onRestartFresh == nil)
+      && (lhs.actions.onResubmit == nil) == (rhs.actions.onResubmit == nil)
       && lhs.isBookmarked == rhs.isBookmarked
       && lhs.conversationCreatedAt == rhs.conversationCreatedAt
       && lhs.showUserTimestamp == rhs.showUserTimestamp
@@ -844,14 +852,19 @@ private struct MessageBubbleContent: View, Equatable {
     if message.role != .assistant {
       if let resend = actions.onTrimFromHere {
         Button("Retry From Here", systemImage: "arrow.clockwise", action: resend)
-          .disabled(!actions.allowsConversationMutation)
+          .disabled(!actions.canRetry)
       }
       if let onRestartFresh = actions.onRestartFresh {
         Button(
           "Reset Chat From Here", systemImage: "arrow.triangle.2.circlepath", action: onRestartFresh
         )
-        .disabled(!actions.allowsConversationMutation)
+        .disabled(!actions.canRetry)
       }
+    }
+
+    if message.role == .user, let resubmit = actions.onResubmit {
+      Button("Resubmit Message", systemImage: "paperplane", action: resubmit)
+        .disabled(!actions.canResubmit)
     }
 
     if let onDelete = actions.onDelete {

@@ -266,7 +266,11 @@ struct ChatView: View {
           messagePendingTrimAndResubmit = nil
         }
         Button("Retry From Here", role: .destructive) {
-          Task { await store.trimAndResubmit(from: message) }
+          if let remoteChat {
+            remoteChat.retry(message.id)
+          } else {
+            Task { await store.trimAndResubmit(from: message) }
+          }
           messagePendingTrimAndResubmit = nil
         }
       } message: { _ in
@@ -281,7 +285,11 @@ struct ChatView: View {
           messagePendingRestartFresh = nil
         }
         Button("Restart From Here", role: .destructive) {
-          Task { await store.restartFromScratch(with: message) }
+          if let remoteChat {
+            remoteChat.retry(message.id, restarting: true)
+          } else {
+            Task { await store.restartFromScratch(with: message) }
+          }
           messagePendingRestartFresh = nil
         }
       } message: { _ in
@@ -838,19 +846,24 @@ struct ChatView: View {
                       canReply: remoteChat == nil
                         || (remoteChat?.connected == true
                           && !currentChatIsResponding && !store.settings.isOffline),
-                    onDelete: { messagePendingDeletion = message },
-                    onToggleBookmark: conversation.map { conversation in
-                      { store.toggleMessageBookmark(message, in: conversation.id) }
-                    },
-                    onBeginSelection: { beginMessageSelection(with: message.id) },
+                      canRetry: remoteChat?.canRetry(message.id) ?? true,
+                      canResubmit: remoteChat?.canResubmit(message.id) ?? true,
+                      onDelete: { messagePendingDeletion = message },
+                      onToggleBookmark: conversation.map { conversation in
+                        { store.toggleMessageBookmark(message, in: conversation.id) }
+                      },
+                      onBeginSelection: { beginMessageSelection(with: message.id) },
                       onEdit: remoteChat == nil ? { editMessage(message, text: $0) } : nil,
                       onEditAttachment: remoteChat == nil
                         ? { attachmentID, editedText in
                           editTextAttachment(message, attachmentID: attachmentID, text: editedText)
                         } : nil,
-                    onTrimFromHere: { messagePendingTrimAndResubmit = message },
-                    onRestartFresh: { messagePendingRestartFresh = message },
-                    onSpeakFromHere: { speakFromHere(message) },
+                      onTrimFromHere: remoteChat == nil || remoteChat?.supportsHistoryRewind == true
+                        ? { messagePendingTrimAndResubmit = message } : nil,
+                      onRestartFresh: remoteChat == nil || remoteChat?.supportsHistoryRewind == true
+                        ? { messagePendingRestartFresh = message } : nil,
+                      onResubmit: remoteChat.map { chat in { chat.resubmit(message.id) } },
+                      onSpeakFromHere: { speakFromHere(message) },
                       onReply: { reply in sendReply(reply) }),
                     isBookmarked: conversation.map {
                       store.isMessageBookmarked(message.id, in: $0.id)

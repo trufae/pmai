@@ -115,6 +115,132 @@ private actor OpenCodeUpdates {
   func askedPermission() { permissions += 1 }
 }
 
+@Test(
+  "OpenCode rewinds server history before retrying, resets from the first event, and handles failures",
+  arguments: ["retry", "reset", "stale", "staged", "stageFailure", "commitFailure", "cancel"])
+func openCodeHistoryRewind(_ scenario: String) async throws {
+  let host = "rewind-\(scenario.lowercased()).opencode.test"
+  let methods = MethodRecorder()
+  let updates = OpenCodeUpdates()
+  let stageRelease = DispatchSemaphore(value: 0)
+  let boundary = scenario == "reset" ? "msg_setup" : "msg_second"
+  let original =
+    #"{"data":[{"id":"msg_setup","type":"synthetic"},{"id":"msg_first","type":"user","text":"First"},{"id":"msg_second","type":"user","text":"Second"},{"id":"msg_answer","type":"assistant","content":[{"type":"text","text":"Old answer"}]}]}"#
+  StubURLProtocol.install(forHost: host) { request in
+    let method = request.httpMethod ?? "GET"
+    let path = request.url!.path
+    methods.record(method + " " + path)
+    var status = 200
+    let body: String
+    switch (method, path) {
+    case ("GET", "/api/session/ses_test"):
+      let pending =
+        scenario == "staged"
+        || ((scenario == "commitFailure" || scenario == "cancel")
+          && methods.methods.contains("POST /api/session/ses_test/revert/stage"))
+      body =
+        pending
+        ? #"{"data":{"revert":{"messageID":"msg_second","files":[]}}}"# : #"{"data":{}}"#
+    case ("GET", "/api/session/ses_test/message"), ("GET", "/api/session/ses_test/context"):
+      if methods.methods.contains("POST /api/session/ses_test/prompt") {
+        body =
+          #"{"data":[{"id":"msg_new","type":"user","text":"Second"},{"id":"msg_idle","type":"idle","outcome":"succeeded"}]}"#
+      } else if methods.methods.contains("POST /api/session/ses_test/revert/commit")
+        && scenario != "commitFailure"
+      {
+        body =
+          scenario == "reset"
+          ? #"{"data":[]}"#
+          : #"{"data":[{"id":"msg_setup","type":"synthetic"},{"id":"msg_first","type":"user","text":"First"}]}"#
+      } else {
+        body = original
+      }
+    case ("POST", "/api/session/ses_test/revert/stage"):
+      let input = try JSONDecoder().decode(JSONValue.self, from: requestBodyData(request))
+      #expect(input == .object(["messageID": .string(boundary), "files": .bool(false)]))
+      if scenario == "cancel" { _ = stageRelease.wait(timeout: .now() + 5) }
+      status = scenario == "stageFailure" ? 409 : 200
+      body = "{}"
+    case ("POST", "/api/session/ses_test/revert/commit"):
+      status = scenario == "commitFailure" ? 500 : 200
+      body = ""
+    case ("DELETE", "/api/session/ses_test/revert"):
+      #expect(scenario == "commitFailure" || scenario == "cancel")
+      body = ""
+    case ("POST", "/api/session/ses_test/prompt"):
+      let input = try JSONDecoder().decode(JSONValue.self, from: requestBodyData(request))
+      #expect(input.objectValue?["text"]?.stringValue == "Second")
+      body = #"{"data":{"id":"msg_new"}}"#
+    case ("POST", "/api/experimental/session/ses_test/wait"):
+      body = ""
+    case ("GET", "/api/session/ses_test/permission"):
+      body = #"{"data":[]}"#
+    default:
+      Issue.record("Unexpected request: \(method) \(path)")
+      body = "{}"
+    }
+    return try httpResponse(request, status: status, contentType: "application/json", body: body)
+  }
+  defer { StubURLProtocol.reset(host: host) }
+  let client = OpenCodeClient(
+    connection: try .init(
+      url: #require(URL(string: "https://\(host)")), token: "test", cwd: "/work"),
+    sessionID: "ses_test", configuration: openCodeTestConfiguration(),
+    onUpdate: { await updates.append($0) })
+  #expect(client.supportsHistoryRewind)
+  _ = try await client.connect()
+  let succeeds = scenario == "retry" || scenario == "reset"
+  do {
+    if scenario == "cancel" {
+      let task = Task { try await client.rewind(to: boundary) }
+      for _ in 0..<500 {
+        if methods.methods.contains("POST /api/session/ses_test/revert/stage") { break }
+        try await Task.sleep(for: .milliseconds(1))
+      }
+      #expect(methods.methods.contains("POST /api/session/ses_test/revert/stage"))
+      task.cancel()
+      await client.disconnect()
+      stageRelease.signal()
+      try await task.value
+    } else {
+      try await client.rewind(
+        to: scenario == "reset" ? nil : scenario == "stale" ? "missing" : boundary)
+    }
+    #expect(succeeds)
+    let snapshot = await updates.values.last?.objectValue?["messages"]?.arrayValue ?? []
+    #expect(
+      snapshot.compactMap { $0.objectValue?["text"]?.stringValue }
+        == (scenario == "reset" ? [] : ["First"]))
+    _ = try await client.prompt("Second") { _ in }
+  } catch {
+    #expect(!succeeds)
+  }
+  let mutations = methods.methods.filter { !$0.hasPrefix("GET ") }
+  if succeeds {
+    #expect(
+      mutations.prefix(3) == [
+        "POST /api/session/ses_test/revert/stage", "POST /api/session/ses_test/revert/commit",
+        "POST /api/session/ses_test/prompt",
+      ])
+  } else {
+    #expect(!mutations.contains("POST /api/session/ses_test/prompt"))
+    if scenario == "stale" || scenario == "staged" { #expect(mutations.isEmpty) }
+    if scenario == "stageFailure" { #expect(mutations.count == 1) }
+    if scenario == "commitFailure" || scenario == "cancel" {
+      #expect(mutations.last == "DELETE /api/session/ses_test/revert")
+    }
+    if scenario == "cancel" { #expect(mutations.count == 2) }
+  }
+  await client.disconnect()
+}
+
+@Test("ACP exposes resubmission without claiming to support history rewind")
+func acpHistoryRewindUnsupported() async {
+  let client: any RemoteSessionClient = ACPClient(configuration: .init(command: "unused"))
+  #expect(!client.supportsHistoryRewind)
+  await #expect(throws: JSONRPCError.self) { try await client.rewind(to: "message") }
+}
+
 @Test("OpenCode v2 discovers paged sessions, restores history, sends prompts and manages chats")
 func openCodeNativeSessions() async throws {
   let host = "sessions.opencode.test"

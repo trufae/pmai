@@ -4,6 +4,7 @@ import MaiCore
 /// Operations shared by the app's ACP and OpenCode remote hosts.
 public protocol RemoteSessionClient: AnyObject, Sendable {
   var isConnected: Bool { get async }
+  var supportsHistoryRewind: Bool { get }
   func connect() async throws -> String
   func workspace() async throws -> ACPWorkspaceSnapshot?
   func manageSession(_ id: String, cwd: String, title: String?) async throws
@@ -11,7 +12,18 @@ public protocol RemoteSessionClient: AnyObject, Sendable {
   func setConfigurationOption(id: String, value: JSONValue) async throws -> [RemoteSessionOption]
   func prompt(_ text: String, emit: @escaping @Sendable (ProviderEvent) async -> Void)
     async throws -> ProviderStopReason
+  /// Removes the selected message and everything after it. Nil clears the history.
+  /// This changes conversation history only, without reverting workspace files.
+  func rewind(to messageID: String?) async throws
   func disconnect() async
+}
+
+extension RemoteSessionClient {
+  public var supportsHistoryRewind: Bool { false }
+
+  public func rewind(to messageID: String?) async throws {
+    throw JSONRPCError.invalidParams("This host does not support rewinding conversation history.")
+  }
 }
 
 extension ACPClient: RemoteSessionClient {}
