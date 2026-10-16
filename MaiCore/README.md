@@ -471,6 +471,11 @@ then dates), newest first, with their agent, size, and last-update time, and
 lists archived chats last; `/chat list active` and `/chat list archived` narrow
 it down. `/chat use INDEX|ID|TITLE` switches by list entry; `/chat previous`
 goes to an older chat and `/chat next` to a newer one, wrapping at either end.
+`/chat fork [TITLE]` copies the current conversation and switches to the copy,
+preserving messages, attachments, agent settings, and saved subagent history.
+The fork is an active chat with fresh chat and provider session IDs; its default
+title is the original title followed by `(fork)`. Later messages and edits stay
+in the selected copy, and `/chat use` returns to the original.
 `/chat info` shows when a chat started and was last updated, `/chat archive`
 moves a chat out of the active list (archiving the current chat starts a new
 one), `/chat unarchive` brings it back, and `new`, `rename`, and `close` manage

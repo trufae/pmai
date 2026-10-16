@@ -174,6 +174,20 @@ public struct AgentChat: StoredChat, Equatable {
     touch()
   }
 
+  /// Copies the complete conversation and setup into a new, active chat.
+  /// Saved agent runs remain history; the copy gets its own provider session.
+  public func forked(title: String? = nil, at date: Date = Date()) -> AgentChat {
+    var chat = self
+    chat.id = UUID()
+    chat.sessionID = ChatSession.newID()
+    let title = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    chat.title = title.isEmpty ? "\(displayTitle) (fork)" : title
+    chat.createdAt = date
+    chat.updatedAt = date
+    chat.isArchived = false
+    return chat
+  }
+
   public mutating func touch(at date: Date = Date()) {
     updatedAt = date
   }

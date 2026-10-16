@@ -72,6 +72,53 @@ func agentChatWorkspaceRoundTrip() throws {
   #expect(try AgentChatWorkspace.load(from: url) == workspace)
 }
 
+@Test("Forks preserve structured history and settings with independent chat identities")
+func agentChatFork() {
+  let base = Date(timeIntervalSince1970: 1_700_000_000)
+  let attachment = ContentPart.file(
+    FileContent(name: "notes.txt", mimeType: "text/plain", text: "Saved notes"))
+  var call = AgentMessage(role: .assistant, content: [
+    .reasoning("Read the notes."),
+    .toolCall(ToolCall(id: "read-1", name: "files_read", arguments: .object([:]))),
+  ])
+  call.providerState = ["opaque": .string("replay state")]
+  let source = AgentChat(
+    title: "Work", primaryAgent: chatAgent,
+    messages: [
+      .system("Compacted instructions"),
+      AgentMessage(role: .user, content: [.text("Read this"), attachment]),
+      call,
+      AgentMessage(role: .tool, content: [.toolResult(ToolResult(callID: "read-1", text: "Read"))]),
+    ],
+    pendingContent: [attachment], createdAt: base, updatedAt: base + 1, isArchived: true,
+    subagents: [AgentProcessRecord(
+      process: AgentProcessInfo(
+        pid: 2, parent: 1, runID: UUID(), agentID: "worker", state: .completed,
+        depth: 1, startedAt: base, finishedAt: base + 1),
+      messages: [.assistant("Worker findings")])],
+    runtimeConfiguration: AgentChatConfiguration(configuration: MaiConfiguration(agents: [chatAgent])))
+  var fork = source.forked(at: base + 2)
+  #expect(fork.id != source.id)
+  #expect(fork.sessionID != source.sessionID)
+  #expect(fork.title == "Work (fork)")
+  #expect(fork.createdAt == base + 2 && fork.updatedAt == base + 2)
+  #expect(!fork.isArchived)
+  #expect(fork.primaryAgent == source.primaryAgent)
+  #expect(fork.messages == source.messages)
+  #expect(fork.pendingContent == source.pendingContent)
+  #expect(fork.subagents == source.subagents)
+  #expect(fork.runtimeConfiguration == source.runtimeConfiguration)
+  fork.messages[1].content = [.text("Changed in the fork")]
+  fork.pendingContent.removeAll()
+  fork.primaryAgent.model = "other-model"
+  #expect(source.messages[1].content == [.text("Read this"), attachment])
+  #expect(source.pendingContent == [attachment])
+  #expect(source.primaryAgent == chatAgent)
+  #expect(source.forked(title: " Alternative ").title == "Alternative")
+  #expect(source.forked(title: " \n ").title == "Work (fork)")
+  #expect(!AgentChat(primaryAgent: chatAgent).forked().isDisposable)
+}
+
 @Test("Chats saved before archiving existed decode as active")
 func agentChatDecodesWithoutArchiveFlag() throws {
   let legacy = """

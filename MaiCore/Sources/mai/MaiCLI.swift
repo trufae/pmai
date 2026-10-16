@@ -11275,6 +11275,12 @@ struct MaiCLI {
         title: title.isEmpty ? nil : title)
       session = REPLSession(chat: chat)
       await terminal.line("Started chat '\(chat.displayTitle)' with agent \(profile.agentID).")
+    case "fork":
+      let source = session.chat
+      let chat = source.forked(title: rest)
+      workspace.upsert(chat, selecting: true)
+      session = REPLSession(chat: chat)
+      await terminal.line("Forked '\(source.displayTitle)' into '\(chat.displayTitle)' and switched to it.")
     case "use", "switch", "open":
       guard !rest.isEmpty, let chat = resolveChat(rest, in: workspace) else {
         await terminal.line("Usage: /chat use INDEX|ID|TITLE")
@@ -12437,7 +12443,7 @@ struct MaiCLI {
       "/image ocr ", "/attach ", "/attach source ", "/attach markdown ", "/attach copy ",
       "/attach clear", "/copy", "/help copy", "/reply", "/help reply",
       "/clear", "/chat list",
-      "/chat list active", "/chat list archived", "/chat list all", "/chat new ",
+      "/chat list active", "/chat list archived", "/chat list all", "/chat new ", "/chat fork",
       "/chat use ", "/chat next", "/chat previous", "/chat info", "/chat session",
       "/chat session new", "/chat rename ",
       "/chat archive", "/chat unarchive ", "/chat close confirm", "/chat messages",
@@ -12842,7 +12848,7 @@ struct MaiCLI {
     /attach clear          Drop the attachments queued for the next message
     /btw PROMPT            Ask in a fresh context without changing this chat
     /cd PATH               Change the current working directory
-    /chat                  List, switch, archive, rename, or edit this project's chats
+    /chat                  List, switch, fork, archive, rename, or edit this project's chats
     /clear                 Clear conversation history
     /continue              Resume a stopped or interrupted task, including queued messages
     /copy [N] [PATH]       Copy the last reply, or N messages, to the clipboard or a file
@@ -13054,6 +13060,7 @@ struct MaiCLI {
       /chat list [active|archived|all]  List chats by day, newest first; archived last
       /chat new [TITLE]             Start a fresh chat using the current agent
       /chat new --agent ID [TITLE]  Start a fresh chat using a configured agent
+      /chat fork [TITLE]           Clone the current chat and continue in the copy
       /chat use INDEX|ID|TITLE      Switch to a chat by list index, ID prefix, or title
       /chat next|previous|prev      Cycle newer or older through chats (wraps around)
       /chat info [INDEX|ID|TITLE]   Show a chat's agent, session, size, and timestamps
