@@ -100,6 +100,7 @@ final class ConversationCompatibilityTests: XCTestCase {
           expected.voiceRecordingFilename)
         XCTAssertEqual(conversation.messages.first?.attachments.count, expected.attachmentCount)
         XCTAssertEqual(conversation.isUnread, expected.isUnread)
+        XCTAssertNil(conversation.toolCallingMode)
 
         let encoded = try makeEncoder().encode(conversation)
         XCTAssertEqual(try makeDecoder().decode(Conversation.self, from: encoded), conversation)

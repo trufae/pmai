@@ -272,6 +272,22 @@ final class ConversationTransferTests: XCTestCase {
     XCTAssertEqual(Conversation(archive: legacy, settings: settings).reasoningLevel, .disabled)
   }
 
+  func testToolCallingModeSurvivesStorageAndPortableExport() throws {
+    var settings = AppSettings()
+    settings.toolCallingMode = .native
+    var original = conversation("Tool calling", createdAt: 1_700_000_400)
+    for mode in ToolCallingMode.allCases.map(Optional.some) + [nil] {
+      original.toolCallingMode = mode
+      let restored = try JSONDecoder().decode(
+        Conversation.self, from: JSONEncoder().encode(original))
+      XCTAssertEqual(restored.toolCallingMode, mode)
+      let portable = AgentChat(pocketMai: restored, settings: settings)
+      XCTAssertEqual(portable.primaryAgent.toolCallingStrategy.rawValue, (mode ?? .native).rawValue)
+      XCTAssertEqual(
+        Conversation(archive: portable, settings: settings).toolCallingMode, mode ?? .native)
+    }
+  }
+
   func testPortableConversationRoundTripKeepsNestedSubagentChats() throws {
     let childRunID = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
     var original = conversation("Delegated chat", createdAt: 1_700_000_400)

@@ -1390,6 +1390,8 @@ struct Conversation: Identifiable, Codable, Equatable, Sendable {
   var disabledMCPTools: Set<String> = []
   var reasoningLevel: ReasoningLevel = .automatic
   var showThinking: Bool = false
+  // nil inherits the app-wide tool calling mode.
+  var toolCallingMode: ToolCallingMode? = nil
   // nil inherits the app-wide setting. These overrides are especially useful
   // for local models where tool transcripts consume the KV cache quickly.
   var contextWindowMode: ContextWindowMode? = nil
@@ -1434,6 +1436,7 @@ struct Conversation: Identifiable, Codable, Equatable, Sendable {
     case disabledMCPTools
     case reasoningLevel
     case showThinking
+    case toolCallingMode
     case contextWindowMode
     case mlxMaxKVSize
     case lastContextSignature
@@ -1474,6 +1477,7 @@ struct Conversation: Identifiable, Codable, Equatable, Sendable {
     reasoningLevel =
       (try? container.decode(ReasoningLevel.self, forKey: .reasoningLevel)) ?? .automatic
     showThinking = (try? container.decode(Bool.self, forKey: .showThinking)) ?? false
+    toolCallingMode = try? container.decodeIfPresent(ToolCallingMode.self, forKey: .toolCallingMode)
     contextWindowMode = try? container.decodeIfPresent(
       ContextWindowMode.self, forKey: .contextWindowMode)
     mlxMaxKVSize = try? container.decodeIfPresent(MLXKVCacheSize.self, forKey: .mlxMaxKVSize)
@@ -1514,6 +1518,7 @@ struct Conversation: Identifiable, Codable, Equatable, Sendable {
     try container.encode(disabledMCPTools, forKey: .disabledMCPTools)
     try container.encode(reasoningLevel, forKey: .reasoningLevel)
     try container.encode(showThinking, forKey: .showThinking)
+    try container.encodeIfPresent(toolCallingMode, forKey: .toolCallingMode)
     try container.encodeIfPresent(contextWindowMode, forKey: .contextWindowMode)
     try container.encodeIfPresent(mlxMaxKVSize, forKey: .mlxMaxKVSize)
     try container.encodeIfPresent(lastContextSignature, forKey: .lastContextSignature)

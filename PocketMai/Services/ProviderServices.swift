@@ -546,8 +546,9 @@ enum PromptComposer {
     if request.hasToolCalling {
       if !request.toolPromptInContext { instructions.append(request.toolPrompt) }
       instructions.append(
-        settings.toolCallingMode.textProtocolFallback.appleInstruction(
-          hasToolResults: messages.last?.role == .tool))
+        (request.conversation.toolCallingMode ?? settings.toolCallingMode)
+          .textProtocolFallback.appleInstruction(
+            hasToolResults: messages.last?.role == .tool))
     }
     return AppleConversationInput(
       instructions: instructions.filter { !$0.isEmpty }.joined(separator: "\n\n"),

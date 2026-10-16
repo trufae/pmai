@@ -361,6 +361,7 @@ extension AppSettings {
     result.systemPromptID = profile.defaultSystemPromptID
     result.reasoningLevel = profile.defaultReasoningLevel
     result.usesStreaming = profile.streamByDefault
+    result.toolCallingMode = profile.toolCallingMode
     result.mlxMaxKVSize = profile.mlxMaxKVSize
     return result
   }

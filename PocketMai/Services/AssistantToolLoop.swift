@@ -1327,6 +1327,7 @@ enum AssistantToolLoop {
     skillInstructions: String = ""
   ) async throws -> RequestState {
     var settings = settings(for: host, store: store)
+    settings.toolCallingMode = conversation.toolCallingMode ?? settings.toolCallingMode
     var visibleDefinitions =
       answering ? [] : currentCatalog(for: host, store: store)?.visibleDefinitions ?? []
     let routing = settings.useSystemOne && !visibleDefinitions.isEmpty

@@ -6006,6 +6006,14 @@ struct ConversationModelSettingsView: View {
               }
             }
             providerModelControls
+            Picker("Tool Calling", selection: toolCallingModeBinding) {
+              Text("App Default (\(store.settings.toolCallingMode.displayName))")
+                .tag(ToolCallingMode?.none)
+              ForEach(ToolCallingMode.allCases) { mode in
+                Text(mode.displayName).tag(Optional(mode))
+              }
+            }
+            .pickerStyle(.menu)
           }
 
           folderSection
@@ -6332,6 +6340,8 @@ struct ConversationModelSettingsView: View {
       && conversation.effectiveLanguageOverrideIdentifier == nil
       && conversation.showThinking == store.settings.showThinkingByDefault
       && conversation.usesStreaming == store.settings.streamByDefault
+      && (conversation.toolCallingMode ?? store.settings.toolCallingMode)
+        == store.settings.toolCallingMode
       && conversation.contextWindowMode == nil
       && conversation.mlxMaxKVSize == nil
       && memoryMatches
@@ -6401,6 +6411,9 @@ struct ConversationModelSettingsView: View {
     }
     store.settings.streamByDefault = conversation.usesStreaming
     store.settings.showThinkingByDefault = conversation.showThinking
+    if let toolCallingMode = conversation.toolCallingMode {
+      store.settings.toolCallingMode = toolCallingMode
+    }
     if let contextWindowMode = conversation.contextWindowMode {
       store.settings.contextWindowMode = contextWindowMode
     }
@@ -6433,6 +6446,7 @@ struct ConversationModelSettingsView: View {
       conversation.languageOverrideIdentifier = nil
       conversation.showThinking = store.settings.showThinkingByDefault
       conversation.usesStreaming = store.settings.streamByDefault
+      conversation.toolCallingMode = nil
       conversation.contextWindowMode = nil
       conversation.mlxMaxKVSize = nil
       if store.settings.defaultEnabledTools.contains(.memory) {
@@ -6582,6 +6596,18 @@ struct ConversationModelSettingsView: View {
       set: { usesStreaming in
         store.updateCurrentConversationSettings { conversation in
           conversation.usesStreaming = usesStreaming
+        }
+        didSaveDefaults = false
+      }
+    )
+  }
+
+  private var toolCallingModeBinding: Binding<ToolCallingMode?> {
+    Binding(
+      get: { store.currentConversation?.toolCallingMode },
+      set: { mode in
+        store.updateCurrentConversationSettings { conversation in
+          conversation.toolCallingMode = mode
         }
         didSaveDefaults = false
       }

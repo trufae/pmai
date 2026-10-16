@@ -163,6 +163,7 @@ enum SubagentTool {
       child.disabledMCPTools = conversation.disabledMCPTools
       child.reasoningLevel = conversation.reasoningLevel
       child.usesStreaming = conversation.usesStreaming
+      child.toolCallingMode = conversation.toolCallingMode
       child.contextWindowMode = conversation.contextWindowMode
       child.mlxMaxKVSize = conversation.mlxMaxKVSize
     case .profile(let profile):

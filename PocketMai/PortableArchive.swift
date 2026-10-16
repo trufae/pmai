@@ -156,7 +156,9 @@ extension AgentChat {
       case .openAICompatible:
         ProviderID(conversation.endpointID?.uuidString.lowercased() ?? "openai")
       }
-    let strategy = ToolCallingStrategy(rawValue: settings.toolCallingMode.rawValue) ?? .automatic
+    let strategy =
+      ToolCallingStrategy(
+        rawValue: (conversation.toolCallingMode ?? settings.toolCallingMode).rawValue) ?? .automatic
     let agent = AgentDefinition(
       id: "pocketmai",
       displayName: "PocketMai",
@@ -238,6 +240,7 @@ extension Conversation {
     updatedAt = chat.updatedAt
     modelID = chat.primaryAgent.model
     usesStreaming = chat.primaryAgent.stream
+    toolCallingMode = ToolCallingMode(rawValue: chat.primaryAgent.toolCallingStrategy.rawValue)
     isArchived = chat.isArchived
     sessionID = chat.sessionID
     subagents = chat.subagents

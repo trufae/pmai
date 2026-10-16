@@ -5173,6 +5173,7 @@ final class AppStore: ObservableObject {
       && lhs.disabledMCPTools == rhs.disabledMCPTools
       && lhs.reasoningLevel == rhs.reasoningLevel
       && lhs.showThinking == rhs.showThinking
+      && lhs.toolCallingMode == rhs.toolCallingMode
       && lhs.lastContextSignature == rhs.lastContextSignature
       && lhs.effectiveLanguageOverrideIdentifier == rhs.effectiveLanguageOverrideIdentifier
       && lhs.subagents == rhs.subagents
@@ -5241,6 +5242,7 @@ final class AppStore: ObservableObject {
     for conversation: Conversation,
     context: ContextBuilder.Output?
   ) -> ConversationToolCallingDebug {
+    let toolCallingMode = conversation.toolCallingMode ?? settings.toolCallingMode
     let fullDefinitions = ToolAgentRegistry.definitions(
       for: conversation,
       settings: settings,
@@ -5254,13 +5256,13 @@ final class AppStore: ObservableObject {
       mcpResources: mcpResources,
       mcpStatuses: mcpStatuses)
     let providerNativeToolCalling =
-      settings.toolCallingMode == .native
+      toolCallingMode == .native
       && conversation.provider.supportsNativeToolCalling
       && !visibleDefinitions.isEmpty
     let effectiveMode =
       providerNativeToolCalling
       ? ToolCallingMode.native
-      : settings.toolCallingMode.textProtocolFallback(for: conversation.provider)
+      : toolCallingMode.textProtocolFallback(for: conversation.provider)
     let textToolPrompt =
       providerNativeToolCalling
       ? "" : AgentTooling.promptDescription(for: visibleDefinitions, mode: effectiveMode)
@@ -5293,11 +5295,11 @@ final class AppStore: ObservableObject {
     let storedIterations = debugToolIterations(in: conversation)
 
     return ConversationToolCallingDebug(
-      selectedMode: settings.toolCallingMode.rawValue,
-      selectedModeDisplayName: settings.toolCallingMode.displayName,
+      selectedMode: toolCallingMode.rawValue,
+      selectedModeDisplayName: toolCallingMode.displayName,
       effectiveMode: effectiveMode.rawValue,
       effectiveModeDisplayName: effectiveMode.displayName,
-      textProtocolFallback: settings.toolCallingMode.textProtocolFallback(
+      textProtocolFallback: toolCallingMode.textProtocolFallback(
         for: conversation.provider
       )
       .rawValue,
@@ -5368,10 +5370,11 @@ final class AppStore: ObservableObject {
     conversation: Conversation,
     hasTools: Bool
   ) -> String? {
-    guard settings.toolCallingMode == .native, hasTools else { return nil }
+    let toolCallingMode = conversation.toolCallingMode ?? settings.toolCallingMode
+    guard toolCallingMode == .native, hasTools else { return nil }
     guard !conversation.provider.supportsNativeToolCalling else { return nil }
     return
-      "\(conversation.provider.displayName) uses pmai’s tool executor; using \(settings.toolCallingMode.textProtocolFallback(for: conversation.provider).displayName) text fallback."
+      "\(conversation.provider.displayName) uses pmai’s tool executor; using \(toolCallingMode.textProtocolFallback(for: conversation.provider).displayName) text fallback."
   }
 
   private func debugNativeToolSettings(

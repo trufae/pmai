@@ -97,6 +97,35 @@ final class LFMToolCallingTests: XCTestCase {
     XCTAssertFalse(result.toolRuns.first?.isError ?? true, result.text)
   }
 
+  func testChatToolCallingOverrideControlsRequestsAndCanReturnToDefault() async throws {
+    for mode in ToolCallingMode.allCases {
+      var chat = conversation(mode: mode == .native ? .xml : .native)
+      let defaultMode = store.settings.toolCallingMode
+      for override in [Optional(mode), nil] {
+        StubChatEndpoint.install()
+        chat.toolCallingMode = override
+        StubChatEndpoint.script = { _ in
+          (StubChatEndpoint.completion(content: "No tool needed."), 0)
+        }
+        _ = try await AssistantToolLoop.runIsolated(
+          conversation: chat, settings: store.settings, baseContext: "", store: store)
+        let request = try XCTUnwrap(StubChatEndpoint.requests.first)
+        let effectiveMode = override ?? defaultMode
+        let tools = request["tools"] as? [[String: Any]] ?? []
+        XCTAssertEqual(!tools.isEmpty, effectiveMode == .native)
+        let messages = try JSONSerialization.data(withJSONObject: request["messages"] ?? [])
+        let prompt = String(decoding: messages, as: UTF8.self)
+        switch effectiveMode {
+        case .text: XCTAssertTrue(prompt.contains("TOOL_CALL"))
+        case .xml: XCTAssertTrue(prompt.contains("<tool_call name="))
+        case .json: XCTAssertTrue(prompt.contains("reply with exactly one JSON object"))
+        case .native: break
+        }
+        XCTAssertEqual(store.settings.toolCallingMode, defaultMode)
+      }
+    }
+  }
+
   func testNativeProxyAliasesCompleteDiscoveryAndSearch() async throws {
     let conversation = conversation(mode: .native)
     StubChatEndpoint.script = { _ in

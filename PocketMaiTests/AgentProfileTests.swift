@@ -278,6 +278,7 @@ final class AgentProfileTests: XCTestCase {
     var conversation = Conversation()
     conversation.provider = .apple
     conversation.modelID = "primary"
+    conversation.toolCallingMode = .native
     conversation.enabledTools = []
     conversation.enabledMCPServers = []
     conversation.reasoningLevel = .high
@@ -286,10 +287,12 @@ final class AgentProfileTests: XCTestCase {
     XCTAssertEqual(routed.provider, .openAICompatible)
     XCTAssertEqual(routed.modelID, "agent-specific-model")
     XCTAssertEqual(routed.endpointID, endpointID)
+    XCTAssertEqual(routed.toolCallingMode, fast.settings.toolCallingMode)
     XCTAssertEqual(routed.enabledTools, [])
     XCTAssertEqual(routed.enabledMCPServers, [])
     XCTAssertEqual(routed.messages, conversation.messages)
     XCTAssertEqual(conversation.modelID, "primary")
+    XCTAssertEqual(conversation.toolCallingMode, .native)
     settings.taskAgents.tool = nil
     XCTAssertEqual(settings.taskConversation(.tool, from: conversation), conversation)
   }
