@@ -50,6 +50,11 @@ so syntax highlighting and JSON checking work without configuration.
 | `/edit N` | Message N of this chat as Markdown. | Immediately; attachments are kept. |
 | `/edit MESSAGE_ID` | The same, by the message's full id. | Immediately. |
 
+On iOS, **Settings → Agent → SOUL.md** edits `.pmai/SOUL.md` in PocketMai's
+Files workspace. Saving updates the core personality instructions on the next
+app-run model request; clearing the file removes them. Remote agent hosts use
+their own configuration.
+
 The `id` field of an agent or provider record must stay what it was: `/edit`
 changes one record, `/agent add` and `/edit config` create new ones.
 

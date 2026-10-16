@@ -684,6 +684,12 @@ struct SettingsView: View {
     Section {
       agentsContent
 
+      NavigationLink {
+        AgentSoulEditor()
+      } label: {
+        Label("SOUL.md", systemImage: "person.text.rectangle")
+      }
+
       SettingsLazyDisclosureGroup {
         Toggle("Enable", isOn: settingsBinding(\.redaction.enabled))
         NavigationLink("Edit Entries") {

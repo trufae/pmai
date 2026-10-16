@@ -475,7 +475,9 @@ enum ProviderVisionSupport {
 }
 
 enum PromptComposer {
-  static func systemPrompt(settings: AppSettings, conversation: Conversation) -> String {
+  static func systemPrompt(
+    settings: AppSettings, conversation: Conversation, soul: AgentSoul = AgentSoul()
+  ) -> String {
     let promptID = conversation.systemPromptID ?? settings.defaultSystemPromptID
     let base =
       settings.systemPrompts.first(where: { $0.id == promptID })?.text
@@ -489,6 +491,7 @@ enum PromptComposer {
     }()
 
     var parts = [base]
+    if let instructions = soul.instructions { parts.append(instructions) }
     if let effort = ReasoningEffort.promptSection(
       effort: conversation.reasoningLevel, guidance: nil)
     {
