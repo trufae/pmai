@@ -61,6 +61,7 @@ enum SkillTools {
     var settings = snapshot
     settings.airplaneModeEnabled = live.airplaneModeEnabled
     settings.networkAvailable = live.networkAvailable
+    settings.redaction = live.redaction
     settings.enabledSkillTools = agent?.enabledSkillTools ?? []
     settings.skillApprovalMode = agent?.skillApprovalMode
     settings.toolPolicy = agent?.toolPolicy ?? AgentToolPolicy(automatic: false)

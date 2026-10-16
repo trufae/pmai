@@ -160,6 +160,8 @@ struct ChatCompletionRequest: Sendable {
   var messageLimitOverride: Int? = nil
   var oneShotResponseFormat: OneShotPromptResponseFormat = .text
   var usesInteractiveTimeoutPrompt = false
+  /// Tool arguments stay masked until the tool dispatcher restores them.
+  var preservesRedactionTokens = false
 
   var transportTimeoutInterval: TimeInterval {
     usesInteractiveTimeoutPrompt
@@ -234,6 +236,19 @@ enum ChatProviderRouter {
   static func complete(
     request: ChatCompletionRequest,
     timeoutHandler: LongRunningOperationTimeoutHandler? = nil,
+    onUpdate: @escaping @MainActor (String) -> Void
+  ) async throws -> String {
+    let redactor = try AppRedaction.context(settings: request.settings)
+    return try await ContentRedactor.$current.withValue(redactor) {
+      let result = try await completeWithContext(
+        request: request, timeoutHandler: timeoutHandler, onUpdate: onUpdate)
+      return request.preservesRedactionTokens ? result : AppRedaction.display(result)
+    }
+  }
+
+  private static func completeWithContext(
+    request: ChatCompletionRequest,
+    timeoutHandler: LongRunningOperationTimeoutHandler?,
     onUpdate: @escaping @MainActor (String) -> Void
   ) async throws -> String {
     var current = request
@@ -957,12 +972,16 @@ enum AppleFoundationProvider {
     request: ChatCompletionRequest, onUpdate: @escaping @MainActor (String) -> Void
   ) async throws -> String {
     let provider = AppleProvider(deviceOnly: request.settings.isOffline)
-    let input = PromptComposer.appleInput(request: request)
+    let originalInput = PromptComposer.appleInput(request: request)
+    let input = request.settings.redaction.enabled
+      ? ContentRedactor.current.map { originalInput.redacted(using: $0) } ?? originalInput
+      : originalInput
     let accumulator = await MainActor.run { CoreProviderEventAccumulator(onUpdate: onUpdate) }
     let response: ProviderResponse
     if case .followUpSuggestions(let count) = request.oneShotResponseFormat {
       response = try await provider.completeSuggestions(
-        prompt: request.conversation.messages.last?.text ?? "", count: count)
+        prompt: ContentRedactor.current?.redact(request.conversation.messages.last?.text ?? "")
+          ?? request.conversation.messages.last?.text ?? "", count: count)
     } else {
       response = try await provider.complete(input: input, stream: request.conversation.usesStreaming) {
         await accumulator.consume($0)
@@ -1094,13 +1113,14 @@ enum OpenAICompatibleProvider {
       let response: MaiCore.ProviderResponse
       do {
         response = try await provider.complete(
-          MaiCore.ProviderRequest(
-            model: model,
-            messages: messages,
-            tools: coreTools,
-            options: coreOptions,
-            stream: request.conversation.usesStreaming,
-            sessionID: request.conversation.sessionID)
+          AppRedaction.request(
+            MaiCore.ProviderRequest(
+              model: model,
+              messages: messages,
+              tools: coreTools,
+              options: coreOptions,
+              stream: request.conversation.usesStreaming,
+              sessionID: request.conversation.sessionID), settings: request.settings)
         ) { event in
           await accumulator.consume(event)
         }
@@ -1230,6 +1250,7 @@ enum OpenAICompatibleProvider {
 @MainActor
 final class CoreProviderEventAccumulator {
   private let onUpdate: @MainActor (String) -> Void
+  private let redactor = ContentRedactor.current
   private var output = ReasoningText()
   private var timing = StreamTimingObservation(requestStart: Date())
   private var lastEmit = Date(timeIntervalSince1970: 0)
@@ -1258,7 +1279,7 @@ final class CoreProviderEventAccumulator {
     if dirty, now.timeIntervalSince(lastEmit) >= 0.04 {
       dirty = false
       lastEmit = now
-      onUpdate(output.rendered)
+      onUpdate(redactor?.displayText(output.rendered, complete: false) ?? output.rendered)
     }
   }
 
@@ -1267,7 +1288,7 @@ final class CoreProviderEventAccumulator {
       || output.rendered
         != finalContent
     {
-      onUpdate(finalContent)
+      onUpdate(redactor?.displayText(finalContent) ?? finalContent)
     }
     return timing
   }

@@ -7,7 +7,10 @@ public enum RedactionMode: String, Codable, CaseIterable, Sendable {
 /// A conversation's in-memory replacement table. Originals never enter the
 /// placeholders, and only placeholders issued by this instance can be restored.
 public final class ContentRedactor: @unchecked Sendable {
-  @TaskLocal static var current: ContentRedactor?
+  @TaskLocal public static var current: ContentRedactor?
+
+  public static let placeholderInstructions =
+    "Privacy placeholders beginning __PMAI_ are opaque values. Keep them verbatim in tool arguments and replies; the host restores them for tool execution. Do not guess the hidden originals."
 
   public struct Rule: Sendable {
     public let pattern: String
@@ -81,7 +84,12 @@ public final class ContentRedactor: @unchecked Sendable {
 
   public init(rules: [Rule]) { self.rules = rules }
 
-  func update(rules: [Rule]) { lock.withLock { self.rules = rules } }
+  public func update(rules: [Rule]) { lock.withLock { self.rules = rules } }
+
+  /// Restore a cumulative display snapshot without exposing a partial token.
+  public func displayText(_ text: String, complete: Bool = true) -> String {
+    unredact(complete ? text : String(text.dropLast(pendingTokenLength(in: text))))
+  }
 
   public func redact(_ text: String) -> String {
     var count = 0
@@ -308,7 +316,7 @@ public final class ContentRedactor: @unchecked Sendable {
     }
   }
 
-  func redact(_ request: ProviderRequest) -> (request: ProviderRequest, count: Int) {
+  public func redact(_ request: ProviderRequest) -> (request: ProviderRequest, count: Int) {
     var count = 0
     func text(_ value: String) -> String { redact(value, count: &count) }
     var request = request

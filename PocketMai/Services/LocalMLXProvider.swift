@@ -112,11 +112,14 @@ actor LocalMLXProvider {
     let accumulator = await MainActor.run { CoreProviderEventAccumulator(onUpdate: onUpdate) }
     let metrics = LocalMLXGenerationMetrics()
     let response = try await provider.complete(
-      .init(model: modelID, messages: messages, tools: request.nativeTools ?? [],
-            options: .init(temperature: request.hasToolCalling ? 0.2 : 0.7, maxOutputTokens: 1_200,
-                           reasoningEffort: request.conversation.reasoningLevel.rawValue,
-                           additional: ["mlxMaxKVSize": .integer(maxKVSize)]),
-            stream: request.conversation.usesStreaming),
+      AppRedaction.request(
+        .init(
+          model: modelID, messages: messages, tools: request.nativeTools ?? [],
+          options: .init(
+            temperature: request.hasToolCalling ? 0.2 : 0.7, maxOutputTokens: 1_200,
+            reasoningEffort: request.conversation.reasoningLevel.rawValue,
+            additional: ["mlxMaxKVSize": .integer(maxKVSize)]),
+          stream: request.conversation.usesStreaming), settings: request.settings),
       emit: { await accumulator.consume($0) },
       onGenerationInfo: { await metrics.record($0) })
     let (output, timing) = try await accumulator.finish(response: response)

@@ -2221,6 +2221,7 @@ struct SettingsPromptsBackup: Codable, Sendable {
   var compactPrompt: String?
   var userPrompts: [UserPrompt]? = nil
   var followUps: FollowUpSettings? = nil
+  var redaction: RedactionSettings? = nil
 }
 
 struct SettingsToolsBackup: Codable, Sendable {
@@ -3098,6 +3099,7 @@ struct AppSettings: Codable, Equatable, Sendable {
   var mcpRequestTimeoutSeconds: Int = AppSettings.defaultMCPRequestTimeoutSeconds
   var llmRequestTimeoutSeconds: Int = AppSettings.defaultLLMRequestTimeoutSeconds
   var memory: String = ""
+  var redaction = RedactionSettings()
   var toolCallingMode: ToolCallingMode = .text
   var maxToolCallsPerTurn: Int = AppSettings.defaultMaxToolCallsPerTurn
   var toolApprovalMode: ToolApprovalMode = .yolo
@@ -3312,6 +3314,7 @@ struct AppSettings: Codable, Equatable, Sendable {
     case enabledSkillTools, skillApprovalMode, toolPolicy
     case toolApprovalMode, useToolProxy, useSystemOne, contextWindowMode
     case includeAssistantResponsesInContext, includeReasoningContentInContext
+    case redaction
     case followUps, background
     case appearance, conversation, documentExport, renderMarkdownInChat, renderMarkdownImagesInChat
     case airplaneModeEnabled, allowAppleServerTranscription, attachmentImageSize
@@ -3398,6 +3401,7 @@ struct AppSettings: Codable, Equatable, Sendable {
       (try? c.decode(Int.self, forKey: .llmRequestTimeoutSeconds))
         ?? Self.defaultLLMRequestTimeoutSeconds)
     memory = (try? c.decode(String.self, forKey: .memory)) ?? ""
+    redaction = try c.decodeIfPresent(RedactionSettings.self, forKey: .redaction) ?? .init()
     let storedMode = (try? c.decode(String.self, forKey: .toolCallingMode)) ?? "text"
     let migratedFromLegacyProxy = (storedMode == "proxy")
     toolCallingMode =

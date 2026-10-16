@@ -3075,6 +3075,7 @@ final class AppStore: ObservableObject {
   /// for token-by-token providers, drives the streaming haptics. Add future
   /// per-token handlers here so they share one throttled fan-out.
   func receiveStreamingAssistantText(_ text: String, for id: UUID, vibrate: Bool) {
+    let text = AppRedaction.display(text, complete: false)
     setAssistantMessage(id: id, text: text, role: .assistant, touch: false, streaming: true)
     activityStreamingText(text, messageID: id)
     guard vibrate, settings.appearance.hapticsEnabled else {
@@ -5053,6 +5054,7 @@ final class AppStore: ObservableObject {
   func setAssistantMessage(
     id: UUID, text: String, role: ChatRole, touch: Bool = true, streaming: Bool = false
   ) {
+    let text = AppRedaction.display(text, complete: !streaming)
     if streaming {
       // Token-rate updates land in a side buffer so `conversations` is not
       // republished per token. Bubbles read from this buffer when present.
@@ -5703,7 +5705,7 @@ final class AppStore: ObservableObject {
       defaultSystemPromptID: settings.defaultSystemPromptID,
       compactPrompt: settings.compactPrompt,
       userPrompts: settings.userPrompts,
-      followUps: settings.followUps)
+      followUps: settings.followUps, redaction: settings.redaction)
   }
 
   private func toolsBackup() -> SettingsToolsBackup {
@@ -5997,6 +5999,7 @@ final class AppStore: ObservableObject {
     if let followUps = payload.followUps {
       settings.followUps = followUps
     }
+    if let redaction = payload.redaction { settings.redaction = redaction }
   }
 
   private func mergePortablePrompts(_ imported: ConfiguredPrompts) -> Int {

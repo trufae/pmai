@@ -4,7 +4,7 @@ import Foundation
 public struct AppleConversationInput: Sendable {
   public private(set) var instructions: String
   public private(set) var history: [[AgentMessage]] = []
-  public let prompt: String
+  public private(set) var prompt: String
   private let protectedHistoryTurns: Int
 
   public init(
@@ -64,6 +64,17 @@ public struct AppleConversationInput: Sendable {
   public var characterCount: Int {
     instructions.count + prompt.count
       + history.flatMap { $0 }.reduce(0) { $0 + Self.promptText($1).count }
+  }
+
+  public func redacted(using redactor: ContentRedactor) -> Self {
+    var input = self
+    input.instructions =
+      ContentRedactor.placeholderInstructions + "\n\n" + redactor.redact(instructions)
+    input.prompt = redactor.redact(prompt)
+    input.history = history.map {
+      redactor.redact(ProviderRequest(model: "", messages: $0)).request.messages
+    }
+    return input
   }
 
   @discardableResult

@@ -128,9 +128,7 @@ extension AgentRuntime {
       if redactionMode != .off, let redactor = ContentRedactor.current {
         if !redactionRules.isEmpty {
           outbound.messages.insert(
-            .system(
-              "Privacy placeholders beginning __PMAI_ are opaque values. Keep them verbatim in tool arguments and replies; the host restores them for tool execution. Do not guess the hidden originals."
-            ), at: 0)
+            .system(ContentRedactor.placeholderInstructions), at: 0)
         }
         let filtered = redactor.redact(outbound)
         outbound = filtered.request

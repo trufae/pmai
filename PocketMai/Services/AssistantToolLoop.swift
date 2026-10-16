@@ -154,6 +154,17 @@ enum AssistantToolLoop {
     baseContext: String,
     store: AppStore
   ) async throws {
+    let redactor = try AppRedaction.context(settings: store.settings) ?? ContentRedactor(rules: [])
+    try await ContentRedactor.$current.withValue(redactor) {
+      try await runTurns(
+        conversationID: conversationID, assistantID: assistantID, baseContext: baseContext,
+        store: store)
+    }
+  }
+
+  private static func runTurns(
+    conversationID: UUID, assistantID: UUID, baseContext: String, store: AppStore
+  ) async throws {
     var activeAssistantID = assistantID
     var state = State()
     var didFinish = false
@@ -428,6 +439,25 @@ enum AssistantToolLoop {
     store: AppStore,
     process: AgentPID? = nil
   ) async throws -> IsolatedResult {
+    let redactor = try AppRedaction.context(settings: settings) ?? ContentRedactor(rules: [])
+    return try await ContentRedactor.$current.withValue(redactor) {
+      let result = try await runIsolatedTurns(
+        conversation: initialConversation, settings: settings, baseContext: baseContext,
+        store: store, process: process)
+      return IsolatedResult(
+        text: AppRedaction.display(result.text),
+        toolRuns: result.toolRuns.map {
+          ToolRunDetail(
+            name: $0.name, argumentsJSON: AppRedaction.display($0.argumentsJSON),
+            result: AppRedaction.display($0.result), isError: $0.isError)
+        }, modelTurns: result.modelTurns, conversation: result.conversation)
+    }
+  }
+
+  private static func runIsolatedTurns(
+    conversation initialConversation: Conversation, settings: AppSettings, baseContext: String,
+    store: AppStore, process: AgentPID?
+  ) async throws -> IsolatedResult {
     var conversation = initialConversation
     var assistantID = UUID()
     conversation.messages.append(ChatMessage(id: assistantID, role: .assistant, text: ""))
@@ -630,7 +660,8 @@ enum AssistantToolLoop {
       hasToolCalling: !requestState.definitions.isEmpty,
       toolPrompt: conversation.provider == .apple ? requestState.toolPrompt : tailToolPrompt,
       toolPromptInContext: conversation.provider != .apple
-        && requestState.usesTextProtocol && !requestState.toolPrompt.isEmpty
+        && requestState.usesTextProtocol && !requestState.toolPrompt.isEmpty,
+      preservesRedactionTokens: true
     )
     var latestStreamedResponse = ""
     let response: String
@@ -994,6 +1025,7 @@ enum AssistantToolLoop {
     host: RunHost,
     store: AppStore
   ) async throws -> PreparedToolCall {
+    let call = ToolAgentRegistry.restoredCall(call)
     let currentDefinitions = currentCatalog(for: host, store: store)?.callableDefinitions ?? []
     let fallbackCall = AgentTooling.normalized(call: call, tools: parseDefinitions)
     guard let normalizedCall = AgentTooling.availableCall(call, tools: currentDefinitions) else {
@@ -1223,7 +1255,7 @@ enum AssistantToolLoop {
               conversationTitle: conversation.displayTitle,
               timeoutInterval: TimeInterval(settings.llmRequestTimeoutSeconds)),
             onTimeout: timeoutHandler(store: store)
-          ) { try await provider.complete(request) }
+          ) { try await provider.complete(AppRedaction.request(request, settings: settings)) }
           UsageStatsStore.record(
             GenerationStats.measured(
               providerLabel: endpoint.name,
@@ -1349,11 +1381,13 @@ enum AssistantToolLoop {
         endpoint: endpoint,
         requestTimeout: TimeInterval(settings.llmRequestTimeoutSeconds))
       let decision = try await provider.complete(
-        ProviderRequest(
-          model: specialist.modelID,
-          messages: [.system(baseContext)]
-            + conversation.messages.map { AgentMessage(pocketMai: $0) },
-          tools: visibleDefinitions, stream: false, sessionID: conversation.sessionID))
+        AppRedaction.request(
+          ProviderRequest(
+            model: specialist.modelID,
+            messages: [.system(baseContext)]
+              + conversation.messages.map { AgentMessage(pocketMai: $0) },
+            tools: visibleDefinitions, stream: false, sessionID: conversation.sessionID),
+          settings: settings))
       try Task.checkCancellation()
       switch decision.toolDecision {
       case .tool(let name): visibleDefinitions = visibleDefinitions.filter { $0.name == name }
@@ -1760,7 +1794,7 @@ enum AssistantToolLoop {
     guard let index = conversation.messages.firstIndex(where: { $0.id == id }) else {
       return
     }
-    conversation.messages[index].text = text
+    conversation.messages[index].text = AppRedaction.display(text)
   }
 
   private static func userVisibleResponseText(from text: String) -> String {

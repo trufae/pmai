@@ -685,6 +685,15 @@ struct SettingsView: View {
       agentsContent
 
       SettingsLazyDisclosureGroup {
+        Toggle("Enable", isOn: settingsBinding(\.redaction.enabled))
+        NavigationLink("Edit Entries") {
+          RedactionRulesEditor(rules: settingsBinding(\.redaction.rules))
+        }
+      } label: {
+        Label("Redacted", systemImage: "eye.slash")
+      }
+
+      SettingsLazyDisclosureGroup {
         promptContent
       } label: {
         Label("System Prompts", systemImage: "text.bubble")

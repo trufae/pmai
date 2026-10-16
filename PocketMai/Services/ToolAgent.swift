@@ -232,6 +232,17 @@ enum BuiltInToolCatalog {
 
 @MainActor
 enum ToolAgentRegistry {
+  /// Restore values at the execution boundary, before proxy resolution,
+  /// validation and approval. Provider requests mask them again on the way out.
+  static func restoredCall(_ call: ParsedToolCall) -> ParsedToolCall {
+    guard let redactor = ContentRedactor.current,
+      let arguments = redactor.unredact(.object(call.argumentValues)).objectValue
+    else { return call }
+    return ParsedToolCall(
+      name: call.name, arguments: [:], argumentValues: arguments,
+      rawBlock: call.rawBlock, toolCallID: call.toolCallID, apiName: call.apiName)
+  }
+
   static func visibleDefinitions(
     for conversation: Conversation,
     settings: AppSettings,
@@ -406,6 +417,7 @@ enum ToolAgentRegistry {
     store: AppStore
   ) async -> String {
     let settings = settings ?? store.settings
+    let call = restoredCall(call)
     let toolCatalog = catalog(
       for: conversation, settings: settings, mcpTools: store.mcpTools,
       mcpResources: store.mcpResources, mcpStatuses: store.mcpStatuses)
