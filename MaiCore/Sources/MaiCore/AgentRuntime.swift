@@ -44,6 +44,11 @@ public actor AgentRuntime {
   /// Nil disables usage recording.
   var usageStats: ModelUsageStore?
   var debugLog: AgentDebugLog?
+  var redactionMode: RedactionMode = .off
+  var redactionFile: URL?
+  var redactionRules: [ContentRedactor.Rule] = []
+  var redactionSessions: [String: ContentRedactor] = [:]
+  var redactionWarning: (@Sendable (Int) async -> Void)?
 
   /// The process table every run reports into. Hosts read it for `/jobs`,
   /// follow its events for notifications, and stop subtrees through it.
@@ -107,14 +112,17 @@ public actor AgentRuntime {
         depth: 0)
     }
     do {
-      let result = try await runInternal(
-        request,
-        runID: runID,
-        pid: pid,
-        parentRunID: nil,
-        depth: 0,
-        budget: budget,
-        emit: emit)
+      let redactor = contentRedactor(sessionID: request.sessionID ?? "process:\(pid.rawValue)")
+      let result = try await ContentRedactor.$current.withValue(redactor) {
+        try await runInternal(
+          request,
+          runID: runID,
+          pid: pid,
+          parentRunID: nil,
+          depth: 0,
+          budget: budget,
+          emit: emit)
+      }
       await supervisor.finish(pid, result: result, announce: false)
       return result
     } catch is CancellationError {

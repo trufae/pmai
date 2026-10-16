@@ -162,12 +162,12 @@ actor TerminalWriter {
       }
       if thinkingDisplay != .full { showThinking("") }
     case .provider(let context, .reasoningDelta(let text)) where context.depth == 0:
-      showThinking(redactor?.unredact(text) ?? text)
+      showThinking(text)
     case .provider(let context, .toolCallDelta) where context.depth == 0:
       finishThinking()
     case .provider(let context, .textDelta(let text)) where context.depth == 0:
       finishThinking()
-      let visible = redactor?.unredact(text) ?? text
+      let visible = text
       if var renderer = markdown {
         let output = renderer.feed(visible)
         markdown = renderer
@@ -256,14 +256,14 @@ actor TerminalWriter {
     case .provider(let context, .reasoningDelta(let text)):
       guard let pid = context.pid, subagentOutput == .all else { return }
       if childReasoning[pid] == nil { flushChildText(pid) }
-      childReasoning[pid, default: ""] += redactor?.unredact(text) ?? text
+      childReasoning[pid, default: ""] += text
       if thinkingDisplay != .full {
         childReasoning[pid] = ThinkingPreview.tail(childReasoning[pid] ?? "")
       }
     case .provider(let context, .textDelta(let text)):
       if let pid = context.pid { flushChildReasoning(pid) }
       guard let pid = context.pid, subagentOutput == .all else { return }
-      childText[pid, default: ""] += redactor?.unredact(text) ?? text
+      childText[pid, default: ""] += text
     case .provider(let context, .usage(let usage)):
       guard let pid = context.pid else { return }
       childCallTokens[pid] = usage.totalTokens

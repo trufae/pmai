@@ -131,6 +131,13 @@ extension AgentRuntime {
       return await fail(
         resolvedCall, "internet tools are disabled while offline.", parent: context, emit: emit)
     }
+    // Restore only this conversation's issued placeholders inside execution.
+    // Validation, path policy and human approvals must see the real arguments;
+    // the assistant's call in the transcript remains untouched. Model-based
+    // approval reviews and tool results are redacted at the provider boundary.
+    if let redactor = ContentRedactor.current {
+      resolvedCall.arguments = redactor.unredact(resolvedCall.arguments)
+    }
     resolvedCall.arguments = ToolSchemaValidator.repairArgumentKeys(
       resolvedCall.arguments, definition: definition)
     resolvedCall.arguments = ToolSchemaValidator.coerceBooleans(

@@ -469,3 +469,8 @@ Raw logs and checks are in these ignored directories:
 hybrid default, mixed GitHub members, MCP server/member overrides with custom
 prefixes, skill inheritance, persistent counters, automatic promotion, and
 manual/automatic settings through the actual CLI against local fixtures.
+
+`python3 test/repl-redact-smoke.py MaiCore/.build/debug/pmai` checks `/edit
+redact`, `on|off|warn`, restart persistence, restored tool paths, filtered tool
+results, and locally readable compaction summaries against a loopback provider.
+It uses a temporary pmai home and stops enabled startup on invalid rules.

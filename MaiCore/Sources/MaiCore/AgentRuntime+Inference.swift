@@ -124,17 +124,40 @@ extension AgentRuntime {
   ) async throws -> ProviderCall {
     var attempt = 0
     while true {
+      var outbound = providerRequest
+      if redactionMode != .off, let redactor = ContentRedactor.current {
+        if !redactionRules.isEmpty {
+          outbound.messages.insert(
+            .system(
+              "Privacy placeholders beginning __PMAI_ are opaque values. Keep them verbatim in tool arguments and replies; the host restores them for tool execution. Do not guess the hidden originals."
+            ), at: 0)
+        }
+        let filtered = redactor.redact(outbound)
+        outbound = filtered.request
+        if redactionMode == .warn, filtered.count > 0 {
+          await redactionWarning?(filtered.count)
+        }
+      }
+      let outgoingRequest = outbound
+      let display = ContentRedactor.current.map { RedactionStream($0) }
       await provider.configureInternetAccess(internetAccess)
       let timing = StreamTimingRecorder()
       await debugLog?.record(
         "model.request", context: context, provider: provider.descriptor.id.rawValue,
-        attempt: attempt + 1, value: providerRequest)
+        attempt: attempt + 1, value: outgoingRequest)
       do {
         let response = try await withDeadline(budget) {
-          try await provider.complete(providerRequest) { event in
+          try await provider.complete(outgoingRequest) { event in
             timing.note(event)
-            await onEvent(event)
+            if let display {
+              if let visible = await display.feed(event) { await onEvent(visible) }
+            } else {
+              await onEvent(event)
+            }
           }
+        }
+        if let display {
+          for event in await display.finish() { await onEvent(event) }
         }
         await debugLog?.record(
           "model.response", context: context, provider: provider.descriptor.id.rawValue,

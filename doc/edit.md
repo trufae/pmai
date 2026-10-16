@@ -18,7 +18,7 @@ back when it exits. An editor that exits with a non-zero status, or a file
 saved as anything but UTF-8, cancels the edit and nothing changes. Saving the
 file unchanged is also a no-op.
 
-Every target is written to a temporary file with a suffix that tells the
+Most targets are written to a temporary file with a suffix that tells the
 editor what it is holding (`agent-main.json`, `compact-prompt.md`, and so on),
 so syntax highlighting and JSON checking work without configuration.
 
@@ -39,6 +39,7 @@ so syntax highlighting and JSON checking work without configuration.
 | `/edit prompt compact` | The generated compact agent's system prompt (formerly `task-compact`). | Immediately. |
 | `/edit prompt tool` | The generated tool agent's system prompt (formerly `task-tool`). | Immediately. |
 | `/edit memory` | This project's durable notes (`.pmai/memory.md`). Same as `/memory edit`. | Immediately. |
+| `/edit redact` | Your redaction rules (`~/.pmai/redact.txt`). | Reloaded immediately when redaction is enabled. |
 | `/edit soul` | Your global core personality (`~/.pmai/SOUL.md`); creates the file and its directory if needed. | On the next model request. |
 | `/edit memory-prompt` | The template `/memory learn` sends to the model. | Immediately. |
 | `/edit delegation` | The brief a child agent receives when started. | Immediately. |
@@ -194,3 +195,52 @@ explicit column instead. Leaving the quote untouched sends nothing.
 on the project's memory notes, its todo list, and a named prompt. `/set
 SETTING VALUE` changes a single agent setting without an editor; `/help set`
 lists them.
+
+### Redaction rules
+
+`/edit redact` opens `~/.pmai/redact.txt` directly in your configured editor,
+creating it with private permissions if needed. With `--home` or `PMAI_HOME`,
+it lives in that pmai home instead. Saving valid rules reloads an enabled filter
+immediately. Invalid regexes report their line number and leave the previously
+loaded rules active; startup with an enabled but unreadable or invalid file
+fails instead of sending unfiltered requests.
+
+Use `/set redact on`, `/set redact off`, or `/set redact warn`. The setting is
+saved in the configuration; `off` is the default. `warn` filters exactly like
+`on` and writes a warning with the match count for each affected model request,
+including repeated context. Warnings contain neither matched values nor rules.
+`/set redact` shows the current mode.
+
+Each nonblank line is a case-insensitive substring, or a regular expression if
+it begins with `/`. Lines beginning with `#` are comments. Regexes use ICU syntax;
+the final `/` is optional, and inline flags can override case sensitivity.
+For example:
+
+```text
+# Replace with your own username
+private_username
+# Card-like sequences: tune this to the formats you need
+/\b(?:\d[ -]?){13,19}\b/
+```
+
+An optional `=label` after a keyword or a closing regex delimiter names its
+placeholder, for example `private_username=USER`. Replacements are unique,
+opaque tokens, not a shared `<REDACT>` marker: separate values and original
+capitalization can be restored accurately. Overlapping matches are hidden
+together. Existing path-valued `redact` settings must be changed to `"on"` or
+`"warn"`, with their rules moved into `redact.txt`.
+
+Filtering happens at every model-request boundary, including tools' text and
+structured results, child agents, compaction, and model-based approval reviews.
+The tool engine restores arguments before validation, path checks, and approval;
+the assistant's tool-call record stays redacted during execution. Tool results
+are filtered again before the next model call. Each chat has its own in-memory
+token table, shared with its children; another chat cannot restore its tokens.
+Local history and ordinary tool output remain readable.
+
+This filters text sent to models, not access by tools. Approved tools (including
+network and MCP tools) receive original arguments and retain their existing
+permissions. Binary attachments and encrypted provider state are not inspected;
+use extracted text when those contents need redaction. Labels should describe
+the category, not repeat the private value. The ordinary debug log and saved
+local chats may contain originals; `warn` does not enable debug logging.

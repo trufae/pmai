@@ -824,7 +824,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
   public var use: ConfiguredUse
   public var documentExport: DocumentExportOptions
   public var airplane: Bool
-  public var redact: String?
+  public var redact: RedactionMode
 
   public init(
     version: Int = 1,
@@ -844,7 +844,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
     use: ConfiguredUse = .init(),
     documentExport: DocumentExportOptions = .init(),
     airplane: Bool = false,
-    redact: String? = nil
+    redact: RedactionMode = .off
   ) {
     self.version = version
     self.defaultAgent = defaultAgent
@@ -900,7 +900,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
       documentExport: try container.decodeIfPresent(DocumentExportOptions.self, forKey: .documentExport)
         ?? .init(),
       airplane: try container.decodeIfPresent(Bool.self, forKey: .airplane) ?? false,
-      redact: try container.decodeIfPresent(String.self, forKey: .redact))
+      redact: try container.decodeIfPresent(RedactionMode.self, forKey: .redact) ?? .off)
   }
 
   public static func load(from url: URL) throws -> MaiConfiguration {

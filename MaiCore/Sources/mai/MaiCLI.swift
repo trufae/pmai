@@ -832,7 +832,7 @@ struct REPLSession: Sendable {
       updatedAt: updatedAt,
       isArchived: isArchived,
       sessionID: sessionID,
-      subagents: subagents,
+      subagents: redactor?.unredact(subagents) ?? subagents,
       runtimeConfiguration: runtimeConfiguration)
   }
 
@@ -1555,7 +1555,15 @@ struct MaiCLI {
       await terminal.configureColors(configuration?.ui ?? .init())
       await terminal.configureSubagentOutput(
         configuration?.ui.subagentOutput ?? ConfiguredTerminalUI().subagentOutput)
-      await terminal.configureRedactor(ContentRedactor(path: configuration?.redact))
+      try await runtime.configureRedaction(
+        configuration?.redact ?? .off, file: home.rootURL.appendingPathComponent("redact.txt")
+      ) { count in
+        await terminal.line(
+          "warning: redacted \(count) match\(count == 1 ? "" : "es") before sending to the model.",
+          to: .standardError)
+      }
+      session.redactor = await runtime.contentRedactor(sessionID: session.sessionID)
+      await terminal.configureRedactor(session.redactor)
       configureEditor(configuration?.ui.editor ?? "")
 
       if let mode = options.serve {
@@ -1630,7 +1638,8 @@ struct MaiCLI {
             if !partial.isEmpty {
               session.history.replaceAll(
                 with: AgentTranscriptEditor.answeringUnansweredToolCalls(
-                  in: partial, reason: "The previous run was interrupted."))
+                  in: session.redactor?.unredact(partial) ?? partial,
+                  reason: "The previous run was interrupted."))
             }
           }
         }
@@ -2162,6 +2171,7 @@ struct MaiCLI {
     let kind: REPLTurnKind
     let chatID: UUID?
     let sent: [AgentMessage]
+    let redactor: ContentRedactor?
   }
 
   private struct REPLLoop {
@@ -2452,7 +2462,8 @@ struct MaiCLI {
       await terminal.configureToolResultLines(ui.toolResultLines)
       await terminal.configureColors(ui)
       await terminal.configureSubagentOutput(ui.subagentOutput)
-      await terminal.configureRedactor(ContentRedactor(path: configuration?.redact))
+      session.redactor = await runtime.contentRedactor(sessionID: session.sessionID)
+      await terminal.configureRedactor(session.redactor)
       await terminal.configureTerminalTitle(ui.title)
       configureEditor(ui.editor)
       visual.memory.focus(project: project, chatID: session.id)
@@ -2627,7 +2638,12 @@ struct MaiCLI {
           configuration: configuration, providerBaseURLs: visual.providerBaseURLs.snapshot())
       }
       for (chatID, pid) in chatProcessIDs {
-        let current = await runtime.supervisor.records(under: pid)
+        guard
+          let chat = chatID == session.id
+            ? session.chat : workspace.chats.first(where: { $0.id == chatID })
+        else { continue }
+        let redactor = await runtime.contentRedactor(sessionID: chat.sessionID)
+        let current = redactor.unredact(await runtime.supervisor.records(under: pid))
         if chatID == session.id {
           let records = AgentProcessRecord.merging(
             saved: session.subagents, current: current)
@@ -2743,7 +2759,8 @@ struct MaiCLI {
       activityWasInterrupted = false
       loop.activeTurn = REPLTurn(
         task: task, interrupt: interrupt, started: ContinuousClock.now, pid: pid, kind: kind,
-        chatID: kind == .chat ? session.id : nil, sent: request.messages)
+        chatID: kind == .chat ? session.id : nil, sent: request.messages, redactor: session.redactor
+      )
       Task {
         let outcome: Result<AgentResult, any Error>
         do {
@@ -2790,16 +2807,15 @@ struct MaiCLI {
       await beginTurn(request, process: pid, kind: .chat)
     }
 
-    /// The chat's next run: its whole history under the current profile, with
-    /// any active redaction applied to the messages sent to the model while the
-    /// local transcript is left untouched.
+    /// The chat's whole local history. The runtime redacts every provider
+    /// request, including later tool results, at the inference boundary.
     func chatRequest() -> AgentRequest {
       let profile = session.profile
       return AgentRequest(
         agentID: profile.agentID,
         provider: profile.provider,
         model: profile.model,
-        messages: session.redactor?.redact(session.history.messages) ?? session.history.messages,
+        messages: session.history.messages,
         toolNames: profile.toolNames,
         toolGroupNames: profile.toolGroupNames,
         subagentNames: profile.subagentNames,
@@ -2877,7 +2893,7 @@ struct MaiCLI {
       guard let chatID = turn.chatID, let current = currentMessages(of: chatID) else {
         return false
       }
-      let unredacted = session.redactor?.unredact(transcript) ?? transcript
+      let unredacted = turn.redactor?.unredact(transcript) ?? transcript
       let merged = Self.mergedTranscript(current: current, sent: turn.sent, result: unredacted)
       if chatID == session.id {
         session.history.replaceAll(with: merged)
@@ -2959,7 +2975,8 @@ struct MaiCLI {
     /// messages. It is a real turn so streaming, tools, approvals, and Ctrl+C
     /// work normally, but its transcript never replaces the chat's.
     func startBTW(_ text: String) async {
-      guard let request = btwRequest(text, profile: session.profile) else {
+      guard let request = btwRequest(text, profile: session.profile, sessionID: session.sessionID)
+      else {
         await terminal.line("Usage: /btw PROMPT")
         return
       }
@@ -4465,7 +4482,7 @@ struct MaiCLI {
         agentID: profile.agentID,
         provider: profile.provider,
         model: profile.model,
-        messages: session.redactor?.redact(session.history.messages) ?? session.history.messages,
+        messages: session.history.messages,
         toolNames: profile.toolNames,
         toolGroupNames: profile.toolGroupNames,
         subagentNames: profile.subagentNames,
@@ -4509,7 +4526,9 @@ struct MaiCLI {
   /// Builds the throwaway context used by `/btw`: the active agent's system
   /// prompt plus this one question, with none of the chat's transcript or
   /// pending attachments.
-  private static func btwRequest(_ text: String, profile: SessionProfile) -> AgentRequest? {
+  private static func btwRequest(_ text: String, profile: SessionProfile, sessionID: String)
+    -> AgentRequest?
+  {
     let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !prompt.isEmpty else { return nil }
     var messages = AgentChat.initialHistory(for: profile.agentDefinition)
@@ -4535,19 +4554,7 @@ struct MaiCLI {
       toolDelegation: profile.toolDelegation,
       retry: profile.retry,
       autocompact: profile.autocompact,
-      context: profile.context)
-  }
-
-  /// A side-conversation has its own throwaway messages, but should still honor
-  /// the active redactor so the same trigger words do not leave the machine.
-  private static func redactedBTWRequest(
-    _ text: String, profile: SessionProfile, redactor: ContentRedactor?
-  ) -> AgentRequest? {
-    guard let request = btwRequest(text, profile: profile) else { return nil }
-    guard let redactor else { return request }
-    var redacted = request
-    redacted.messages = redactor.redact(request.messages)
-    return redacted
+      context: profile.context, sessionID: sessionID)
   }
 
   /// Visual mode runs commands in their own task already, so it can await the
@@ -4559,7 +4566,8 @@ struct MaiCLI {
     runtime: AgentRuntime,
     terminal: TerminalWriter
   ) async {
-    guard let request = redactedBTWRequest(text, profile: session.profile, redactor: session.redactor) else {
+    guard let request = btwRequest(text, profile: session.profile, sessionID: session.sessionID)
+    else {
       await terminal.line("Usage: /btw PROMPT")
       return
     }
@@ -5908,8 +5916,10 @@ struct MaiCLI {
     )
     do {
       let result = try await runtime.run(request) { _ in }
-      let learned = MessageContentFilter.promptSafeText(from: result.response.text)
-        .trimmingCharacters(in: .whitespacesAndNewlines)
+      let learned = MessageContentFilter.promptSafeText(
+        from: session.redactor?.unredact(result.response.text) ?? result.response.text
+      )
+      .trimmingCharacters(in: .whitespacesAndNewlines)
       guard !learned.isEmpty else {
         await terminal.line("Nothing durable to remember; memory is unchanged.")
         return
@@ -6544,6 +6554,25 @@ struct MaiCLI {
     case "soul":
       await handleEditSoulCommand(terminal: terminal)
 
+    case "redact":
+      guard actionArgument.isEmpty else {
+        await terminal.line("Usage: /edit redact")
+        return
+      }
+      do {
+        let url = await runtime.redactionRulesURL()
+        try ensureRedactionFile(at: url)
+        guard await launchEditor(at: url, terminal: terminal) else { return }
+        let rules = try ContentRedactor.parse(String(contentsOf: url, encoding: .utf8))
+        try await runtime.configureRedaction(configuration?.redact ?? .off)
+        await terminal.line(
+          "Saved \(rules.count) redaction rule\(rules.count == 1 ? "" : "s") to \(url.path).")
+      } catch {
+        await terminal.line(
+          "error: \(error.localizedDescription) Previous redaction rules remain active.",
+          to: .standardError)
+      }
+
     case "system":
       await editSystemPrompt(
         named: actionArgument.isEmpty
@@ -6792,6 +6821,7 @@ struct MaiCLI {
             replacing: session.profile.instructions,
             session: &session)
         }
+        try await runtime.configureRedaction(editedConfiguration.redact)
         configuration = editedConfiguration
         await terminal.line(
           "Configuration saved. Agent limits and tool-calling strategy were applied; "
@@ -9296,11 +9326,7 @@ struct MaiCLI {
       await terminal.line("debug = \(await approvalHandler.isDebugEnabled() ? "true" : "false")")
       await terminal.line("debugfile = \(await approvalHandler.debugLogURL().path)")
       await terminal.line("airplane = \(await runtime.internetAccessPolicy().airplaneModeEnabled ? "on ✈" : "off")")
-      if let path = configuration?.redact {
-        await terminal.line("redact = \(path)")
-      } else {
-        await terminal.line("redact = off")
-      }
+      await terminal.line("redact = \((configuration?.redact ?? .off).rawValue)")
       await listLimitSettings(session.profile.limits, terminal: terminal)
       await listRecoverySettings(session.profile, terminal: terminal)
       await listToolSettings(session.profile, terminal: terminal)
@@ -9439,61 +9465,31 @@ struct MaiCLI {
       return
     }
     if key == "redact" {
-      // Preserve spaces and '=' in paths, but allow word=replacement to start
-      // only after the "redact" token; a leading '=' is the optional value separator.
-      let remainder = argument.trimmingCharacters(in: .whitespacesAndNewlines)
-        .dropFirst("redact".count)
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-      let rawPath =
-        remainder.hasPrefix("=")
-        ? String(remainder.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
-        : remainder
-      if rawPath.isEmpty {
-        if let path = configuration?.redact {
-          await terminal.line("redact = \(path)")
-        } else {
-          await terminal.line("redact = off")
-        }
+      guard parts.count > 1 else {
+        await terminal.line("redact = \((configuration?.redact ?? .off).rawValue)")
         return
       }
-      if rawPath.lowercased() == "off" {
-        guard var draft = configuration, let configurationPath else {
-          await terminal.line("error: No writable configuration is active.", to: .standardError)
-          return
-        }
-        draft.redact = nil
-        do {
-          try draft.save(to: URL(fileURLWithPath: configurationPath))
-          configuration = draft
-          session.redactor = nil
-          await terminal.configureRedactor(nil)
-          await terminal.line("redact = off")
-        } catch {
-          await terminal.line("error: \(error.localizedDescription)", to: .standardError)
-        }
-        return
-      }
-      let expanded = (rawPath as NSString).expandingTildeInPath
-      guard FileManager.default.fileExists(atPath: expanded) else {
-        await terminal.line("error: redaction file not found: \(expanded)", to: .standardError)
-        return
-      }
-      guard let redactor = ContentRedactor(path: expanded), !redactor.isEmpty else {
-        await terminal.line("error: no redaction rules could be loaded from \(expanded)", to: .standardError)
+      guard parts.count == 2, let mode = RedactionMode(rawValue: parts[1].lowercased()) else {
+        await terminal.line("Usage: /set redact on|off|warn (edit rules with /edit redact)")
         return
       }
       guard var draft = configuration, let configurationPath else {
         await terminal.line("error: No writable configuration is active.", to: .standardError)
         return
       }
-      draft.redact = expanded
       do {
+        let url = await runtime.redactionRulesURL()
+        if mode != .off {
+          try ensureRedactionFile(at: url)
+          _ = try ContentRedactor.parse(String(contentsOf: url, encoding: .utf8))
+        }
+        draft.redact = mode
         try draft.save(to: URL(fileURLWithPath: configurationPath))
+        try await runtime.configureRedaction(mode)
         configuration = draft
-        session.redactor = redactor
-        await terminal.configureRedactor(redactor)
-        await terminal.line(
-          "redact = \(expanded) (\(redactor.rules.count) rule\(redactor.rules.count == 1 ? "" : "s"))")
+        session.redactor = await runtime.contentRedactor(sessionID: session.sessionID)
+        await terminal.configureRedactor(session.redactor)
+        await terminal.line("redact = \(mode.rawValue)")
       } catch {
         await terminal.line("error: \(error.localizedDescription)", to: .standardError)
       }
@@ -10384,6 +10380,7 @@ struct MaiCLI {
     if chat.hasConversation, let process {
       chat.subagents = AgentProcessRecord.merging(
         saved: chat.subagents, current: await runtime.supervisor.records(under: process))
+      chat.subagents = session.redactor?.unredact(chat.subagents) ?? chat.subagents
     }
     if ["archive", "pack", "portable"].contains(first.lowercased()) {
       do {
@@ -11934,11 +11931,14 @@ struct MaiCLI {
     do {
       let compactRequest = try await runtime.taskRequest(.compact, from: request)
       let result = try await runtime.run(compactRequest) { _ in }
+      let reply = result.transcript.last(where: { $0.role == .assistant })?.text ?? ""
       let summary = MessageContentFilter.textWithoutReasoning(
-        from: result.transcript.last(where: { $0.role == .assistant })?.text ?? "")
-        .trimmingCharacters(in: .whitespacesAndNewlines)
+        from: session.redactor?.unredact(reply) ?? reply
+      )
+      .trimmingCharacters(in: .whitespacesAndNewlines)
       guard !summary.isEmpty else {
-        await terminal.line("error: \(action.capitalized) returned an empty summary.", to: .standardError)
+        await terminal.line(
+          "error: \(action.capitalized) returned an empty summary.", to: .standardError)
         return
       }
       if recap {
@@ -12397,7 +12397,7 @@ struct MaiCLI {
       "/set ui.markdown on", "/set ui.markdown off",
       "/set ui.broadcast on", "/set ui.broadcast off",
       "/set ui.toolResultLines all", "/set ui.toolResultLines relevant", "/set ui.toolResultLines ",
-      "/set redact ", "/set redact off",
+      "/set redact on", "/set redact off", "/set redact warn", "/edit redact",
       "/cwd", "/pwd", "/cd ", "/plugins",
       "/path", "/path list", "/path allow ", "/path deny ", "/path ask ",
       "/path del ", "/path outside ask", "/path outside deny", "/help path",
@@ -13044,7 +13044,7 @@ struct MaiCLI {
       /set ui.thinking MODE        Thinking display: status, line, three, five, or full
       /set ui.subagents LEVEL      What child agents print: all, tools, stats, or none
       /set ui.broadcast BOOL       Default unaddressed messages to @* / @@ / bare @ (on/off; default off)
-      /set redact PATH|off       Redact words listed in PATH (one per line, word=repl) before sending to the model
+      /set redact on|off|warn   Filter model requests using ~/.pmai/redact.txt (warn logs counts)
       /set use.agentsmd MODE       Use applicable AGENTS.md files: on, off (default), or ask
                                    (prompts once per working directory in an interactive session)
       /set use.plan BOOL           Ask an agent that can start children to open a request of
@@ -13167,6 +13167,7 @@ struct MaiCLI {
     /edit N|MESSAGE_ID       Edit conversation message N or its full message ID
     /edit input              Write the next message in the editor and send it
     /edit soul               Edit your core personality (lives in ~/.pmai/SOUL.md)
+    /edit redact             Edit ~/.pmai/redact.txt: case-insensitive words or /regex/ rules
 
     The compact, smart, recap, and memory templates must contain {{transcript}}; {{focus}} and
     {{memory}} are optional. The delegation template must contain {{task}};
@@ -13421,6 +13422,24 @@ struct MaiCLI {
       let exitCode = status & 0x7f == 0 ? (status >> 8) & 0xff : 128 + (status & 0x7f)
       exit(exitCode)
     #endif
+  }
+
+  private static func ensureRedactionFile(at url: URL) throws {
+    guard !FileManager.default.fileExists(atPath: url.path) else { return }
+    try FileManager.default.createDirectory(
+      at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    let template = """
+      # One case-insensitive word or /regular expression/ per line.
+      # Optional =label names a unique placeholder; blank lines and # comments are ignored.
+      # Enable with /set redact on or /set redact warn.
+
+      """
+    guard
+      FileManager.default.createFile(
+        atPath: url.path, contents: Data(template.utf8), attributes: [.posixPermissions: 0o600])
+    else {
+      throw CocoaError(.fileWriteUnknown)
+    }
   }
 
   private static func handleEditSoulCommand(terminal: TerminalWriter) async {
