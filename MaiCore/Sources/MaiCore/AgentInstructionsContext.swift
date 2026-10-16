@@ -35,6 +35,8 @@ struct AgentInstructionsContext {
       paths = (cwd.map { [($0, workingDirectory)] } ?? [])
         + scripts.flatMap { Self.shellPaths(in: $0, from: shellDirectory) }
           .map { ($0, shellDirectory) }
+        + (arguments["args"]?.arrayValue?.compactMap(\.stringValue) ?? [])
+        .map { ($0, shellDirectory) }
     } else {
       return nil
     }

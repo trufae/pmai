@@ -32,7 +32,74 @@ func runSystemCapturesOutput(shellCommand: String) async throws {
 
   let missing = try await call(shell(tools), [:])
   #expect(missing.isError)
-  #expect(missing.text.contains("script is required"))
+  #expect(missing.text.contains("Provide script"))
+}
+
+@Test("Run tools accept a command in args and preserve literal argument boundaries")
+func runShellAcceptsArgv() async throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "mai-run-argv-\(UUID())")
+  try FileManager.default.createDirectory(
+    at: directory.appendingPathComponent("sys"), withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let tool = MaiRunTool(configuration: MaiRunConfiguration())
+  let script =
+    "#!/bin/sh\nprintf 'lint:%s\\n' \"$#\"\nif [ \"$#\" -gt 0 ]; then printf '<%s>\\n' \"$@\"; fi"
+  for path in ["sys/lint.sh", "sys/lint with spaces.sh"] {
+    let file = directory.appendingPathComponent(path)
+    try script.write(to: file, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)
+    let output = try await call(
+      tool, ["args": .array([.string(path)]), "cwd": .string(directory.path)])
+    #expect(!output.isError)
+    #expect(output.text == "lint:0")
+
+    let literals = [
+      "", "two words", "'quoted'", "$(touch expanded)", "; touch injected", "*.swift", "-lc",
+    ]
+    let withArguments = try await call(
+      tool,
+      [
+        "args": .array(([path] + literals).map(JSONValue.string)), "cwd": .string(directory.path),
+      ])
+    #expect(!withArguments.isError)
+    #expect(
+      withArguments.text == "lint:\(literals.count)\n"
+        + literals.map { "<\($0)>" }.joined(separator: "\n"))
+    #expect(
+      !FileManager.default.fileExists(atPath: directory.appendingPathComponent("expanded").path))
+    #expect(
+      !FileManager.default.fileExists(atPath: directory.appendingPathComponent("injected").path))
+  }
+  let fromPath = try await call(
+    tool, ["args": .array([.string("printf"), .string("%s"), .string("from PATH")])])
+  #expect(!fromPath.isError)
+  #expect(fromPath.text == "from PATH")
+}
+
+@Test("Explicit scripts keep args positional", arguments: ["script", "command", "commands"])
+func runShellArgvDoesNotOverrideScript(key: String) async throws {
+  let script = JSONValue.string(#"printf '%s\n' "$@""#)
+  let output = try await call(
+    MaiRunTool(configuration: MaiRunConfiguration()),
+    [
+      key: key == "commands" ? .array([script]) : script,
+      "args": .array([.string("not-a-command"), .string("two words"), .string("-lc")]),
+    ])
+  #expect(!output.isError)
+  #expect(output.text == "not-a-command\ntwo words\n-lc")
+}
+
+@Test(
+  "Args-only calls require a nonempty command and string arguments",
+  arguments: [
+    JSONValue.array([]), .array([.string("")]), .array([.string(" \n")]),
+    .array([.integer(1)]), .array([.string("printf"), .bool(true)]), .string("sys/lint.sh"),
+  ])
+func runShellRejectsInvalidArgv(args: JSONValue) async throws {
+  let output = try await call(MaiRunTool(configuration: MaiRunConfiguration()), ["args": args])
+  #expect(output.isError)
+  #expect(output.text.contains("nonempty args array beginning with a command"))
 }
 
 @Test("Run tools pass stdin, arguments, and the working directory to scripts")

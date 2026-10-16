@@ -131,6 +131,16 @@ func scopedAgentsMarkdown() throws {
   let shellSection = shellContext.observe(shell, workingDirectory: root)
   #expect(shellSection?.contains("sub rules") == true)
   #expect(shellSection?.contains("deep rules") == true)
+
+  var argvContext = AgentInstructionsContext(directory: root)
+  let argv = ToolCall(
+    id: "argv", name: "run_shell",
+    arguments: .object([
+      "cwd": .string("sub"), "args": .array([.string("deep/source.swift")]),
+    ]))
+  let argvSection = argvContext.observe(argv, workingDirectory: root)
+  #expect(argvSection?.contains("sub rules") == true)
+  #expect(argvSection?.contains("deep rules") == true)
 }
 
 @Test("A nested write waits until its AGENTS.md reaches the next model turn")

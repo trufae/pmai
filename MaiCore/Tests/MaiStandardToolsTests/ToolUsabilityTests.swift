@@ -65,7 +65,7 @@ func runToolsAcceptAliases() async throws {
   #expect(viaCommands.text == "onetwo")
   let empty = try await usabilityCall(shell, [:])
   #expect(empty.isError)
-  #expect(empty.text.contains("script is required"))
+  #expect(empty.text.contains("Provide script"))
 
   // The schema itself admits both spellings, so the runtime's validation
   // never rejects the call before the tool can read the alias.

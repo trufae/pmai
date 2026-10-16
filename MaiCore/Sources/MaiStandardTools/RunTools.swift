@@ -294,7 +294,8 @@ public struct MaiRunTool: AgentTool {
 
     /// The text to run, under its own name or the aliases models reach for:
     /// `command` and `script` mean the same thing to a shell, and a
-    /// `commands` array is the same script one line at a time.
+    /// `commands` array is the same script one line at a time. Without a
+    /// script, `args` supplies a command and its literal arguments.
     private static func requiredText(
       _ arguments: [String: JSONValue],
       key: String,
@@ -310,6 +311,14 @@ public struct MaiRunTool: AgentTool {
       if let lines = arguments["commands"]?.arrayValue?.compactMap(\.stringValue), !lines.isEmpty {
         return lines.joined(separator: "\n")
       }
+      if let args = arguments["args"]?.arrayValue,
+        let command = args.first?.stringValue,
+        !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        args.allSatisfy({ $0.stringValue != nil })
+      {
+        // Use the existing positional arguments without interpreting them as shell source.
+        return #""$@""#
+      }
       throw MaiRunToolError.missingArgument(key)
     }
   #endif
@@ -324,7 +333,9 @@ public struct MaiRunTool: AgentTool {
     properties["args"] = .object([
       "type": .string("array"),
       "items": .object(["type": .string("string")]),
-      "description": .string("JSON array of positional arguments passed to script as $1, $2, … . Put the shell code in script, not in args; these are not shell options such as -c or -lc."),
+      "description": .string(
+        "With script or command, positional arguments passed as $1, $2, … . Otherwise, a command followed by literal arguments, e.g. [\"sys/lint.sh\"] or [\"git\",\"status\",\"--short\"]. To use shell options such as -c or -lc, include the shell executable first."
+      )
     ])
     properties["stdin"] = stringProperty("Text piped to standard input. Omit for interactive runs, where the person types directly.")
     properties["interactive"] = .object([
@@ -375,7 +386,7 @@ enum MaiRunToolError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .missingArgument(let name):
-      "\(name) is required (command is an alias). Pass shell code as {\"script\":\"echo hello\"}; args is only an array of positional arguments for that script, not shell options or code."
+      "Provide \(name) (command is an alias) or a nonempty args array beginning with a command. Examples: {\"script\":\"echo hello\"} or {\"args\":[\"sys/lint.sh\"]}."
     case .notDirectory(let path): "'\(path)' is not a directory."
     case .scriptWriteFailed(let path): "Could not write the temporary script '\(path)'."
     case .interpreterNotFound(let name):
