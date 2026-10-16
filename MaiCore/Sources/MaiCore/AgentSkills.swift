@@ -95,7 +95,9 @@ public struct AgentSkill: Equatable, Identifiable, Sendable {
       instructions = instructions.replacingOccurrences(of: Self.argumentsPlaceholder, with: extra)
       consumed = true
     }
-    var text = "<skill name=\"\(name)\" directory=\"\(directoryURL.path)\">\n"
+    // Match the resolved path granted by Files, rather than a hidden .pmai symlink.
+    let resourceDirectory = directoryURL.resolvingSymlinksInPath()
+    var text = "<skill name=\"\(name)\" directory=\"\(resourceDirectory.path)\">\n"
     text += "Apply this skill's workflow and required output format to the user's task in the current workspace. Project paths, including AGENTS.md and output files, are relative to the workspace, not the skill directory.\n\n"
     text += instructions
     text += "\n</skill>"

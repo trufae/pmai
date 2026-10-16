@@ -108,7 +108,8 @@ func promptRendering() {
     directoryURL: URL(fileURLWithPath: "/tmp/skills/fix", isDirectory: true),
     body: "Read AGENTS.md and fix the bug. Write report.md.")
   #expect(
-    skill.prompt().hasPrefix("<skill name=\"fix\" directory=\"/tmp/skills/fix\">\n"))
+    skill.prompt().hasPrefix(
+      "<skill name=\"fix\" directory=\"\(skill.directoryURL.resolvingSymlinksInPath().path)\">\n"))
   #expect(skill.prompt().contains("Project paths, including AGENTS.md and output files, are relative to the workspace"))
   #expect(skill.prompt().hasSuffix("Read AGENTS.md and fix the bug. Write report.md.\n</skill>"))
   #expect(skill.prompt(arguments: " in parser.c ").hasSuffix("</skill>\n\nin parser.c"))
@@ -119,6 +120,29 @@ func promptRendering() {
   #expect(rendered.contains("Fix the parser and nothing else."))
   #expect(rendered.hasSuffix("</skill>\n\nSkill invocation arguments:\nthe parser"))
   #expect(templated.prompt().contains("Fix  and nothing else."))
+}
+
+@Test(
+  "Symlinked skills advertise the resolved resource directory while retaining their catalog location"
+)
+func symlinkedSkillPrompt() throws {
+  let files = FileManager.default
+  let root = files.temporaryDirectory.appendingPathComponent("skill-link-\(UUID().uuidString)")
+  defer { try? files.removeItem(at: root) }
+  let source = root.appendingPathComponent("source")
+  try writeSkill(
+    in: source, folder: "review",
+    text: "---\nname: review\ndescription: Review\n---\nRead reference.txt")
+  let catalogRoot = root.appendingPathComponent(".pmai/skills")
+  try files.createDirectory(at: catalogRoot, withIntermediateDirectories: true)
+  let link = catalogRoot.appendingPathComponent("review")
+  let target = source.appendingPathComponent("review").resolvingSymlinksInPath()
+  try files.createSymbolicLink(at: link, withDestinationURL: target)
+  let skill = try #require(AgentSkill.load(directory: link))
+  #expect(skill.prompt().contains("directory=\"\(target.path)\""))
+  #expect(!skill.prompt().contains(".pmai/skills"))
+  #expect(skill.directoryURL == link)
+  #expect(skill.rootURL.path == catalogRoot.path)
 }
 
 @Test(
