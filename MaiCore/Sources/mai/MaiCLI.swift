@@ -778,6 +778,7 @@ struct REPLSession: Sendable {
   /// reopened, so `/jobs tree` and `/jobs log` outlive the session.
   var subagents: [AgentProcessRecord]
   var runtimeConfiguration: AgentChatConfiguration?
+  var redactor: ContentRedactor?
   #if PMAI_HAS_VISUAL
     /// Conversations and panes left behind by the last `/visual` session.
     var visualSnapshot: VisualWorkspaceSnapshot?
@@ -802,6 +803,7 @@ struct REPLSession: Sendable {
     self.updatedAt = updatedAt
     isArchived = false
     subagents = []
+    redactor = nil
   }
 
   init(chat: AgentChat) {
@@ -816,6 +818,7 @@ struct REPLSession: Sendable {
     isArchived = chat.isArchived
     subagents = chat.subagents
     runtimeConfiguration = chat.runtimeConfiguration
+    redactor = nil
   }
 
   var chat: AgentChat {
@@ -1552,6 +1555,7 @@ struct MaiCLI {
       await terminal.configureColors(configuration?.ui ?? .init())
       await terminal.configureSubagentOutput(
         configuration?.ui.subagentOutput ?? ConfiguredTerminalUI().subagentOutput)
+      await terminal.configureRedactor(ContentRedactor(path: configuration?.redact))
       configureEditor(configuration?.ui.editor ?? "")
 
       if let mode = options.serve {
@@ -2448,6 +2452,7 @@ struct MaiCLI {
       await terminal.configureToolResultLines(ui.toolResultLines)
       await terminal.configureColors(ui)
       await terminal.configureSubagentOutput(ui.subagentOutput)
+      await terminal.configureRedactor(ContentRedactor(path: configuration?.redact))
       await terminal.configureTerminalTitle(ui.title)
       configureEditor(ui.editor)
       visual.memory.focus(project: project, chatID: session.id)
@@ -2785,14 +2790,16 @@ struct MaiCLI {
       await beginTurn(request, process: pid, kind: .chat)
     }
 
-    /// The chat's next run: its whole history under the current profile.
+    /// The chat's next run: its whole history under the current profile, with
+    /// any active redaction applied to the messages sent to the model while the
+    /// local transcript is left untouched.
     func chatRequest() -> AgentRequest {
       let profile = session.profile
       return AgentRequest(
         agentID: profile.agentID,
         provider: profile.provider,
         model: profile.model,
-        messages: session.history.messages,
+        messages: session.redactor?.redact(session.history.messages) ?? session.history.messages,
         toolNames: profile.toolNames,
         toolGroupNames: profile.toolGroupNames,
         subagentNames: profile.subagentNames,
@@ -2862,13 +2869,16 @@ struct MaiCLI {
     /// usually the chat at the prompt, but the person may have moved to
     /// another chat or edited this one while the run was going; the reply
     /// still lands where the run began, after any edits made there meanwhile.
+    /// The transcript is unredacted before storage so the local history keeps
+    /// the original words.
     /// Answers false when that chat was closed in the meantime.
     @discardableResult
     func settle(_ transcript: [AgentMessage], from turn: REPLTurn) -> Bool {
       guard let chatID = turn.chatID, let current = currentMessages(of: chatID) else {
         return false
       }
-      let merged = Self.mergedTranscript(current: current, sent: turn.sent, result: transcript)
+      let unredacted = session.redactor?.unredact(transcript) ?? transcript
+      let merged = Self.mergedTranscript(current: current, sent: turn.sent, result: unredacted)
       if chatID == session.id {
         session.history.replaceAll(with: merged)
       } else if var chat = workspace.chats.first(where: { $0.id == chatID }) {
@@ -3920,7 +3930,7 @@ struct MaiCLI {
             }
             await terminal.recoverAfterCancellation()
           } else {
-            await terminal.recoverAfterError(error.localizedDescription)
+            await terminal.recoverAfterError(error)
           }
           // What the run did before it broke off is not thrown away: the
           // supervisor has its transcript, and /continue picks it up.
@@ -4455,7 +4465,7 @@ struct MaiCLI {
         agentID: profile.agentID,
         provider: profile.provider,
         model: profile.model,
-        messages: session.history.messages,
+        messages: session.redactor?.redact(session.history.messages) ?? session.history.messages,
         toolNames: profile.toolNames,
         toolGroupNames: profile.toolGroupNames,
         subagentNames: profile.subagentNames,
@@ -4479,7 +4489,7 @@ struct MaiCLI {
         await terminal.consume(event)
       }
       process = await runtime.supervisor.tree().processes.first { $0.runID == result.runID }?.pid
-      session.history.replaceAll(with: result.transcript)
+      session.history.replaceAll(with: session.redactor?.unredact(result.transcript) ?? result.transcript)
       if let interruption = result.interruption {
         await terminal.note(
           "⏸ \(interruption.summary) · send another message to continue, or raise \(interruption.settingKey)",
@@ -4491,7 +4501,7 @@ struct MaiCLI {
         await terminal.recoverAfterCancellation()
         return false
       }
-      await terminal.recoverAfterError(error.localizedDescription)
+      await terminal.recoverAfterError(error)
       return false
     }
   }
@@ -4528,6 +4538,18 @@ struct MaiCLI {
       context: profile.context)
   }
 
+  /// A side-conversation has its own throwaway messages, but should still honor
+  /// the active redactor so the same trigger words do not leave the machine.
+  private static func redactedBTWRequest(
+    _ text: String, profile: SessionProfile, redactor: ContentRedactor?
+  ) -> AgentRequest? {
+    guard let request = btwRequest(text, profile: profile) else { return nil }
+    guard let redactor else { return request }
+    var redacted = request
+    redacted.messages = redactor.redact(request.messages)
+    return redacted
+  }
+
   /// Visual mode runs commands in their own task already, so it can await the
   /// isolated turn directly. The REPL starts the same request in its event loop
   /// to keep approvals and Ctrl+C responsive.
@@ -4537,7 +4559,7 @@ struct MaiCLI {
     runtime: AgentRuntime,
     terminal: TerminalWriter
   ) async {
-    guard let request = btwRequest(text, profile: session.profile) else {
+    guard let request = redactedBTWRequest(text, profile: session.profile, redactor: session.redactor) else {
       await terminal.line("Usage: /btw PROMPT")
       return
     }
@@ -4549,7 +4571,7 @@ struct MaiCLI {
     } catch is CancellationError {
       await terminal.recoverAfterCancellation()
     } catch {
-      await terminal.recoverAfterError(error.localizedDescription)
+      await terminal.recoverAfterError(error)
     }
   }
 
@@ -9274,6 +9296,11 @@ struct MaiCLI {
       await terminal.line("debug = \(await approvalHandler.isDebugEnabled() ? "true" : "false")")
       await terminal.line("debugfile = \(await approvalHandler.debugLogURL().path)")
       await terminal.line("airplane = \(await runtime.internetAccessPolicy().airplaneModeEnabled ? "on ✈" : "off")")
+      if let path = configuration?.redact {
+        await terminal.line("redact = \(path)")
+      } else {
+        await terminal.line("redact = off")
+      }
       await listLimitSettings(session.profile.limits, terminal: terminal)
       await listRecoverySettings(session.profile, terminal: terminal)
       await listToolSettings(session.profile, terminal: terminal)
@@ -9406,6 +9433,67 @@ struct MaiCLI {
         try await approvalHandler.saveDebugFile(destination)
         if enabled { await runtime.configureDebugLog(log) }
         await terminal.line("debugfile = \(selectedURL.path)")
+      } catch {
+        await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+      }
+      return
+    }
+    if key == "redact" {
+      // Preserve spaces and '=' in paths, but allow word=replacement to start
+      // only after the "redact" token; a leading '=' is the optional value separator.
+      let remainder = argument.trimmingCharacters(in: .whitespacesAndNewlines)
+        .dropFirst("redact".count)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+      let rawPath =
+        remainder.hasPrefix("=")
+        ? String(remainder.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+        : remainder
+      if rawPath.isEmpty {
+        if let path = configuration?.redact {
+          await terminal.line("redact = \(path)")
+        } else {
+          await terminal.line("redact = off")
+        }
+        return
+      }
+      if rawPath.lowercased() == "off" {
+        guard var draft = configuration, let configurationPath else {
+          await terminal.line("error: No writable configuration is active.", to: .standardError)
+          return
+        }
+        draft.redact = nil
+        do {
+          try draft.save(to: URL(fileURLWithPath: configurationPath))
+          configuration = draft
+          session.redactor = nil
+          await terminal.configureRedactor(nil)
+          await terminal.line("redact = off")
+        } catch {
+          await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+        }
+        return
+      }
+      let expanded = (rawPath as NSString).expandingTildeInPath
+      guard FileManager.default.fileExists(atPath: expanded) else {
+        await terminal.line("error: redaction file not found: \(expanded)", to: .standardError)
+        return
+      }
+      guard let redactor = ContentRedactor(path: expanded), !redactor.isEmpty else {
+        await terminal.line("error: no redaction rules could be loaded from \(expanded)", to: .standardError)
+        return
+      }
+      guard var draft = configuration, let configurationPath else {
+        await terminal.line("error: No writable configuration is active.", to: .standardError)
+        return
+      }
+      draft.redact = expanded
+      do {
+        try draft.save(to: URL(fileURLWithPath: configurationPath))
+        configuration = draft
+        session.redactor = redactor
+        await terminal.configureRedactor(redactor)
+        await terminal.line(
+          "redact = \(expanded) (\(redactor.rules.count) rule\(redactor.rules.count == 1 ? "" : "s"))")
       } catch {
         await terminal.line("error: \(error.localizedDescription)", to: .standardError)
       }
@@ -9595,7 +9683,7 @@ struct MaiCLI {
         || levelKeys.contains(key) || textKeys.contains(key)
     else {
       await terminal.line(
-        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, airplane, effort, tool.aproval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.strategy, \((textKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), export.tools, export.thinking, use.agentsmd, use.plan"
+        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, airplane, effort, tool.aproval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.strategy, \((textKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), export.tools, export.thinking, redact, use.agentsmd, use.plan"
       )
       return
     }
@@ -12302,6 +12390,7 @@ struct MaiCLI {
       "/set ui.markdown on", "/set ui.markdown off",
       "/set ui.broadcast on", "/set ui.broadcast off",
       "/set ui.toolResultLines all", "/set ui.toolResultLines relevant", "/set ui.toolResultLines ",
+      "/set redact ", "/set redact off",
       "/cwd", "/pwd", "/cd ", "/plugins",
       "/path", "/path list", "/path allow ", "/path deny ", "/path ask ",
       "/path del ", "/path outside ask", "/path outside deny", "/help path",
@@ -12948,6 +13037,7 @@ struct MaiCLI {
       /set ui.thinking MODE        Thinking display: status, line, three, five, or full
       /set ui.subagents LEVEL      What child agents print: all, tools, stats, or none
       /set ui.broadcast BOOL       Default unaddressed messages to @* / @@ / bare @ (on/off; default off)
+      /set redact PATH|off       Redact words listed in PATH (one per line, word=repl) before sending to the model
       /set use.agentsmd MODE       Use applicable AGENTS.md files: on, off (default), or ask
                                    (prompts once per working directory in an interactive session)
       /set use.plan BOOL           Ask an agent that can start children to open a request of

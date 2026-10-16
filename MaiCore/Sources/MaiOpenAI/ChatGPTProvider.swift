@@ -102,7 +102,8 @@ public final class ChatGPTProvider: ChatProvider, @unchecked Sendable {
             "ChatGPT returned \(contentType ?? "no content type"); expected text/event-stream.")
       }
       var parser = ChatGPTResponseStream(
-        resolver: resolver, requestID: httpResponse?.value(forHTTPHeaderField: "x-request-id"))
+        resolver: resolver, requestID: httpResponse?.value(forHTTPHeaderField: "x-request-id"),
+        statusCode: status)
       var events = ChatGPTEventStream()
       // Some subscription responses omit Content-Type. Validate their events
       // normally, retaining a bounded prefix to diagnose headerless JSON errors.
@@ -333,11 +334,16 @@ public final class ChatGPTProvider: ChatProvider, @unchecked Sendable {
   static func failure(
     _ error: JSONValue?, status: Int? = nil, requestID: String? = nil,
     fallback: String = "ChatGPT request failed."
-  ) -> ChatGPTError {
+  ) -> any Error {
     let code = error?["code"]?.stringValue ?? ""
     var message =
       error?["message"]?.stringValue ?? error?["detail"]?.stringValue
       ?? error?.stringValue ?? fallback
+    if code == "cyber_policy" {
+      return ProviderPolicyError(
+        code: code, message: message, statusCode: status, requestID: requestID,
+        parameter: error?["param"]?.stringValue)
+    }
     if code.contains("usage_limit") {
       message += " Manage ChatGPT plan usage at https://chatgpt.com/settings/usage."
     } else if code == "subscription_sharing_usage_unavailable" {
@@ -349,20 +355,22 @@ public final class ChatGPTProvider: ChatProvider, @unchecked Sendable {
     if let param = error?["param"]?.stringValue { details.append("parameter: \(param)") }
     if let requestID { details.append("request: \(requestID)") }
     if !details.isEmpty { message += " (" + details.joined(separator: "; ") + ")" }
-    return .message(message)
+    return ChatGPTError.message(message)
   }
 }
 
 struct ChatGPTResponseStream {
   let resolver: ToolNameResolver
   var requestID: String? = nil
+  let statusCode: Int?
   var text = ""
   var reasoning = ""
   private var completedItems: [Int: JSONValue] = [:]
 
-  init(resolver: ToolNameResolver, requestID: String? = nil) {
+  init(resolver: ToolNameResolver, requestID: String? = nil, statusCode: Int? = nil) {
     self.resolver = resolver
     self.requestID = requestID
+    self.statusCode = statusCode
   }
 
   mutating func feed(_ payload: String, emit: ProviderEventHandler) async throws
@@ -407,7 +415,8 @@ struct ChatGPTResponseStream {
       completedItems[index] = item
     case "error", "response.failed":
       throw ChatGPTProvider.failure(
-        root["response"]?["error"] ?? root["error"] ?? root, requestID: requestID)
+        root["response"]?["error"] ?? root["error"] ?? root,
+        status: statusCode, requestID: requestID)
     case "response.incomplete":
       let reason = root["response"]?["incomplete_details"]?["reason"]?.stringValue
       throw ChatGPTProvider.failure(

@@ -361,17 +361,19 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
   ) async throws -> ProviderResponse {
     let (data, response) = try await data(for: request)
     try validate(response: response, data: data)
-    return try await decodedResponse(data, resolver: resolver, emit: emit)
+    return try await decodedResponse(
+      data, response: response as? HTTPURLResponse, resolver: resolver, emit: emit)
   }
 
   private func decodedResponse(
     _ data: Data,
+    response: HTTPURLResponse?,
     resolver: ToolNameResolver,
     emit: @escaping ProviderEventHandler
   ) async throws -> ProviderResponse {
     let root = try decodeRoot(data)
-    if let message = providerError(in: root) {
-      throw OpenAICompatibleProviderError.providerFailure(message)
+    if let error = providerError(in: root, response: response) {
+      throw error
     }
     guard let choice = root["choices"]?.arrayValue?.first?.objectValue else {
       throw OpenAICompatibleProviderError.emptyResponse
@@ -438,7 +440,7 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
         guard body.count < 64 * 1_024 else { break }
         body.append(byte)
       }
-      throw httpError(statusCode: http.statusCode, data: body)
+      throw httpError(response: http, data: body)
     }
 
     var hasContent = false
@@ -463,8 +465,8 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
         appendRawLine(String(payload), to: &rawLines, characterCount: &rawCharacterCount)
         continue
       }
-      if let message = providerError(in: root) {
-        throw OpenAICompatibleProviderError.providerFailure(message)
+      if let error = providerError(in: root, response: http) {
+        throw error
       }
       // Some servers attach usage to every chunk, zero or cumulative until
       // the last one. Only the final figures count, announced once below.
@@ -543,10 +545,15 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     if !hasContent,
       completedCalls.isEmpty,
       !rawLines.isEmpty,
-      let data = rawLines.joined(separator: "\n").data(using: .utf8),
-      let fallback = try? await decodedResponse(data, resolver: resolver, emit: emit)
+      let data = rawLines.joined(separator: "\n").data(using: .utf8)
     {
-      return fallback
+      do {
+        return try await decodedResponse(data, response: http, resolver: resolver, emit: emit)
+      } catch let error as ProviderPolicyError {
+        throw error
+      } catch {
+        // Non-JSON stream fragments still count as an empty reply.
+      }
     }
     guard hasContent || !completedCalls.isEmpty
     else {
@@ -831,8 +838,20 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     return value
   }
 
-  private func providerError(in root: [String: JSONValue]) -> String? {
-    root["error"]?.objectValue?["message"]?.stringValue
+  private func providerError(
+    in root: [String: JSONValue], response: HTTPURLResponse?
+  ) -> (any Error)? {
+    guard let error = root["error"]?.objectValue else { return nil }
+    if error["code"]?.stringValue == "cyber_policy" {
+      return ProviderPolicyError(
+        code: "cyber_policy",
+        message: error["message"]?.stringValue
+          ?? "The provider rejected this request under its cybersecurity policy.",
+        statusCode: response?.statusCode,
+        requestID: response?.value(forHTTPHeaderField: "x-request-id"),
+        parameter: error["param"]?.stringValue)
+    }
+    return error["message"]?.stringValue.map { OpenAICompatibleProviderError.providerFailure($0) }
   }
 
   private func data(for request: URLRequest) async throws -> (Data, URLResponse) {
@@ -879,8 +898,8 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
       }
       try validate(response: response, data: data)
       let root = try decodeRoot(data)
-      if let message = providerError(in: root) {
-        throw OpenAICompatibleProviderError.providerFailure(message)
+      if let error = providerError(in: root, response: response as? HTTPURLResponse) {
+        throw error
       }
       return root
     } catch let error as URLError where error.code == .timedOut {
@@ -932,21 +951,23 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
         "The provider returned a non-HTTP response.")
     }
     guard (200..<300).contains(http.statusCode) else {
-      throw httpError(statusCode: http.statusCode, data: data)
+      throw httpError(response: http, data: data)
     }
   }
 
-  private func httpError(statusCode: Int, data: Data) -> OpenAICompatibleProviderError {
+  private func httpError(response: HTTPURLResponse, data: Data) -> any Error {
     if let root = try? JSONDecoder().decode(JSONValue.self, from: data).objectValue,
-      let message = providerError(in: root)
+      let error = providerError(in: root, response: response)
     {
-      return .httpError(statusCode: statusCode, message: message)
+      if error is ProviderPolicyError { return error }
+      return OpenAICompatibleProviderError.httpError(
+        statusCode: response.statusCode, message: error.localizedDescription)
     }
     let body =
       String(data: data, encoding: .utf8)?
       .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    return .httpError(
-      statusCode: statusCode,
+    return OpenAICompatibleProviderError.httpError(
+      statusCode: response.statusCode,
       message: body.isEmpty ? "Request failed." : String(body.prefix(1_000)))
   }
 }

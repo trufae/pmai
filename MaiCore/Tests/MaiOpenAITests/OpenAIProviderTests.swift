@@ -9,6 +9,49 @@ import Testing
 
 @testable import MaiTestSupport
 
+@Test(
+  "OpenAI policy errors survive HTTP, SSE and buffered JSON responses",
+  arguments: ["http", "sse", "json", "buffered", "code-only", "ordinary"])
+func openAIPolicyRejection(mode: String) async throws {
+  let host = "policy-\(mode).example.test"
+  let recorder = URLRequestRecorder()
+  StubURLProtocol.install(forHost: host) { request in
+    recorder.record(request, body: try requestBodyData(request))
+    let payload =
+      mode == "code-only"
+      ? #"{"error":{"code":"cyber_policy"}}"#
+      : mode == "ordinary"
+        ? #"{"error":{"code":"server_error","message":"Details mention cyber_policy"}}"#
+        : #"{"error":{"code":"cyber_policy","message":"Policy rejection"}}"#
+    return try httpResponse(
+      request, status: mode == "http" ? 403 : 200,
+      contentType: mode == "sse" ? "text/event-stream" : "application/json",
+      body: mode == "sse"
+        ? "data: {\"choices\":[{\"delta\":{\"content\":\"Partial\"}}]}\n\ndata: \(payload)\n\n"
+        : payload,
+      headers: ["x-request-id": "req-policy"])
+  }
+  defer { StubURLProtocol.reset(host: host) }
+  let provider = OpenAICompatibleProvider(
+    configuration: .init(baseURL: URL(string: "https://\(host)/v1")!), session: stubSession())
+  do {
+    _ = try await provider.complete(
+      ProviderRequest(
+        model: "test-model", messages: [.user("Review my code")],
+        stream: ["http", "sse", "buffered"].contains(mode)))
+    Issue.record("Expected a provider error")
+  } catch let error as ProviderPolicyError {
+    #expect(mode != "ordinary")
+    #expect(error.code == "cyber_policy")
+    #expect(error.statusCode == (mode == "http" ? 403 : 200))
+    #expect(error.requestID == "req-policy")
+  } catch let error as OpenAICompatibleProviderError {
+    #expect(mode == "ordinary")
+    #expect(error == .providerFailure("Details mention cyber_policy"))
+  }
+  #expect(recorder.request?.url?.host == host)
+}
+
 @Test("OpenAI-compatible tool results carry structured content only when they have no text")
 func openAIStructuredContentOnlyWithoutText() async throws {
   let recorder = URLRequestRecorder()

@@ -14,7 +14,7 @@ repl-del repl-export repl-local-providers repl-resume repl-resume-routing
 repl-resume-state repl-skills repl-smart-context repl-speed repl-tool-policy task-agents
 update vim web-fetch'''.split()
 TERMINAL = '''repl-agents repl-colors repl-compaction repl-interactive-run repl-models repl-path
-repl-queue repl-recap repl-resize repl-suspend repl-theme repl-tool-context'''.split()
+repl-policy repl-queue repl-recap repl-resize repl-suspend repl-theme repl-tool-context'''.split()
 EXTERNAL = ['repl-reflow', 'tailcat']  # Ghostty and a separately built tailcat binary.
 PLATFORM = ['web-fetch'] if os.name == 'nt' else [
     'update', 'web-fetch', 'project-approval', 'repl-defaults', 'repl-suspend', 'repl-models']

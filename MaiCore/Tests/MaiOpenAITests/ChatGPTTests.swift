@@ -263,6 +263,47 @@ import Testing
       }
     }
 
+    @Test func cyberPolicyPreservesHTTPAndStreamingDiagnostics() async throws {
+      let payload =
+        #"{"code":"cyber_policy","message":"Flagged for possible cybersecurity risk.","param":"input"}"#
+      let url = try #require(URL(string: "https://api.openai.com/v1/responses"))
+      let response = try #require(
+        HTTPURLResponse(
+          url: url, statusCode: 403, httpVersion: nil, headerFields: ["x-request-id": "req-http"]))
+      let expected = ProviderPolicyError(
+        code: "cyber_policy", message: "Flagged for possible cybersecurity risk.",
+        statusCode: 403, requestID: "req-http", parameter: "input")
+      #expect(throws: expected) {
+        try ChatGPTProvider.validate(response, data: Data("{\"error\":\(payload)}".utf8))
+      }
+      for event in [
+        "{\"type\":\"error\",\"error\":\(payload)}",
+        "{\"type\":\"response.failed\",\"response\":{\"error\":\(payload)}}",
+        #"{"type":"error","code":"cyber_policy"}"#,
+      ] {
+        var parser = ChatGPTResponseStream(
+          resolver: .init(tools: []), requestID: "req-stream", statusCode: 200)
+        _ = try await parser.feed(#"{"type":"response.output_text.delta","delta":"Partial"}"#) {
+          _ in
+        }
+        do {
+          _ = try await parser.feed(event) { _ in }
+          Issue.record("Expected a policy rejection")
+        } catch let error as ProviderPolicyError {
+          #expect(error.code == "cyber_policy")
+          #expect(error.requestID == "req-stream")
+          #expect(error.statusCode == 200)
+          #expect(error.localizedDescription.contains("code: cyber_policy"))
+        }
+      }
+      let ordinary = ChatGPTProvider.failure(
+        .object([
+          "code": .string("server_error"), "message": .string("Details mention cyber_policy"),
+        ]))
+      #expect(ordinary is ChatGPTError)
+      #expect(!(ordinary is ProviderPolicyError))
+    }
+
     @Test func callbackRejectsWrongStateAndCanBeCancelled() async throws {
       let listener = try ChatGPTCallbackListener()
       #expect(listener.redirectURI.host == "127.0.0.1")

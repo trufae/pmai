@@ -40,6 +40,7 @@ actor TerminalWriter {
   private var subagentOutput = ConfiguredTerminalUI().subagentOutput
   /// Last requested title. A first empty value leaves the shell's title alone.
   private var terminalTitle: String?
+  private var redactor: ContentRedactor?
   private let colorsStatus: Bool
   /// Whether stdout is a color terminal, for command output painted inline.
   private let colorsOutput: Bool
@@ -112,6 +113,10 @@ actor TerminalWriter {
     subagentOutput = level
   }
 
+  func configureRedactor(_ redactor: ContentRedactor?) {
+    self.redactor = redactor
+  }
+
   func configureThinking(_ mode: ThinkingDisplay) {
     finishThinking()
     thinkingDisplay = mode
@@ -157,17 +162,18 @@ actor TerminalWriter {
       }
       if thinkingDisplay != .full { showThinking("") }
     case .provider(let context, .reasoningDelta(let text)) where context.depth == 0:
-      showThinking(text)
+      showThinking(redactor?.unredact(text) ?? text)
     case .provider(let context, .toolCallDelta) where context.depth == 0:
       finishThinking()
     case .provider(let context, .textDelta(let text)) where context.depth == 0:
       finishThinking()
+      let visible = redactor?.unredact(text) ?? text
       if var renderer = markdown {
-        let output = renderer.feed(text)
+        let output = renderer.feed(visible)
         markdown = renderer
         write(output)
       } else {
-        write(text)
+        write(visible)
       }
       wroteRootDelta = true
       rootLineOpen = true
@@ -204,10 +210,11 @@ actor TerminalWriter {
         color: ui.warningForeground)
     case .finished(let context, let result) where context.depth == 0:
       finishThinking()
+      let responseText = redactor?.unredact(result.response.text) ?? result.response.text
       if wroteRootDelta {
         finishReply()
       } else if result.interruption == nil {
-        write(render(result.response.text))
+        write(render(responseText))
       }
       closeRootLine(force: true)
     case .childStarted(let parent, let child):
@@ -249,14 +256,14 @@ actor TerminalWriter {
     case .provider(let context, .reasoningDelta(let text)):
       guard let pid = context.pid, subagentOutput == .all else { return }
       if childReasoning[pid] == nil { flushChildText(pid) }
-      childReasoning[pid, default: ""] += text
+      childReasoning[pid, default: ""] += redactor?.unredact(text) ?? text
       if thinkingDisplay != .full {
         childReasoning[pid] = ThinkingPreview.tail(childReasoning[pid] ?? "")
       }
     case .provider(let context, .textDelta(let text)):
       if let pid = context.pid { flushChildReasoning(pid) }
       guard let pid = context.pid, subagentOutput == .all else { return }
-      childText[pid, default: ""] += text
+      childText[pid, default: ""] += redactor?.unredact(text) ?? text
     case .provider(let context, .usage(let usage)):
       guard let pid = context.pid else { return }
       childCallTokens[pid] = usage.totalTokens
@@ -321,7 +328,8 @@ actor TerminalWriter {
         facts.append(ModelUsageFormat.tokens(usage.totalTokens, estimated: usage.isEstimated))
       }
       let summary = facts.isEmpty ? "" : " · " + facts.joined(separator: " · ")
-      let answer = AgentProcessInfo.oneLine(result.response.text, limit: 120)
+      let answer = AgentProcessInfo.oneLine(
+        redactor?.unredact(result.response.text) ?? result.response.text, limit: 120)
       childBlock(pid, "↲ done\(summary)" + (answer.isEmpty ? "" : ": \(answer)"))
     default:
       break
@@ -359,10 +367,16 @@ actor TerminalWriter {
       color: ui.warningForeground)
   }
 
-  func recoverAfterError(_ message: String) {
+  func recoverAfterError(_ error: any Error) {
     finishReply()
     closeRootLine()
+    let message = redactor?.unredact(error.localizedDescription) ?? error.localizedDescription
     status("error: \(message)", color: ui.errorForeground)
+    if error is ProviderPolicyError {
+      status(
+        "Automatic retries skipped for this policy rejection.",
+        color: ui.warningForeground)
+    }
   }
 
   func recoverAfterCancellation() {

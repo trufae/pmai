@@ -107,9 +107,10 @@ extension AgentRuntime {
   }
 
   /// One provider call under the run's retry policy and deadline. A failure
-  /// that is not a cancellation is repeated after the policy's delay, up to
-  /// its attempts, each announced with `retrying`; the deadline cuts a call
-  /// short with `RunDeadlineExceeded`. Cancellation passes through untouched.
+  /// that is not a cancellation or policy rejection is repeated after the
+  /// policy's delay, up to its attempts, each announced with `retrying`.
+  /// The deadline cuts a call short with `RunDeadlineExceeded`.
+  /// Cancellation passes through untouched.
   func complete(
     _ providerRequest: ProviderRequest,
     with provider: any ChatProvider,
@@ -156,6 +157,7 @@ extension AgentRuntime {
         await debugLog?.record(
           "model.error", context: context, provider: provider.descriptor.id.rawValue,
           attempt: attempt + 1, value: error.localizedDescription)
+        if error is ProviderPolicyError { throw error }
         let delayStarted = ContinuousClock.now
         let policy = liveRequests[pid]?.retry ?? retry
         guard attempt < policy.attempts else { throw error }

@@ -697,6 +697,10 @@ checkpoint and the task continues on its own; the token and time caps always
 stop, since they exist to bound the spend. A model call that fails — a dropped
 connection, a 5xx — is repeated after `retry.delay` seconds up to
 `retry.attempts` times (`↻ retry 1/2 in 5s: …`) before the turn fails.
+An OpenAI `cyber_policy` error stops immediately, including when it arrives during
+streaming. Its message, code, and available HTTP status/request ID are retained.
+Completed tool work and the conversation remain available after the rejection;
+no automatic retry is sent. `/export debug PATH` saves the chat for local review.
 `/set ctx.compact 64k` enables a context action prompt before a model turn
 once the conversation reaches about that many tokens (using the provider's
 count when available). Choose **prune old tool output**, **summarize older

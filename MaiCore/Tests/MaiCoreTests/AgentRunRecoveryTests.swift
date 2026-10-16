@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import MaiCore
+@testable import MaiTestSupport
 
 @Test("Interleaved runs on one runtime keep transcripts, usage and allowances independent")
 func interleavedRunsKeepTheirOwnState() async throws {
@@ -259,6 +260,37 @@ func retryRepeatsFailedCalls() async throws {
         retry: AgentRetryPolicy(attempts: 1, delaySeconds: 0)))
   }
   #expect(await stubborn.requests.count == 2)
+}
+
+@Test("Policy rejections stop without retrying and preserve completed tool work")
+func policyRejectionSkipsRetries() async throws {
+  let rejection = ProviderPolicyError(
+    code: "cyber_policy", message: "Flagged", statusCode: 403, requestID: "req-policy")
+  let provider = ScriptedProvider(
+    responses: [echoCall("c1")], failures: [1: rejection])
+  let recorder = RecoveryEventRecorder()
+  let runtime = AgentRuntime(approvalHandler: AllowAllRecoveryApprovals())
+  try await runtime.register(provider)
+  try await runtime.register(tool: echoTool())
+  let pid = await runtime.allocateProcess(agentID: "review")
+  await #expect(throws: rejection) {
+    try await runtime.run(
+      AgentRequest(
+        provider: "scripted", model: "fixture", messages: [.user("Review my code")],
+        toolNames: ["echo"], retry: AgentRetryPolicy(attempts: 2, delaySeconds: 0)),
+      process: pid
+    ) { await recorder.append($0) }
+  }
+  #expect(await provider.requests.count == 2)
+  #expect(await recorder.events.allSatisfy {
+    if case .retrying = $0 { return false }
+    return true
+  })
+  let info = try #require(await runtime.supervisor.info(pid))
+  #expect(info.state == .failed)
+  #expect(info.failure == rejection.localizedDescription)
+  let transcript = await runtime.supervisor.transcript(pid)
+  #expect(transcript.flatMap(\.toolResults).map(\.callID) == ["c1"])
 }
 
 @Test("A child past the subagent limit waits in the queue and starts when a slot frees up")

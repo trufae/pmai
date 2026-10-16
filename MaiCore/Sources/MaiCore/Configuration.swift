@@ -824,6 +824,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
   public var use: ConfiguredUse
   public var documentExport: DocumentExportOptions
   public var airplane: Bool
+  public var redact: String?
 
   public init(
     version: Int = 1,
@@ -842,7 +843,8 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
     fileAccess: ConfiguredFileAccess? = nil,
     use: ConfiguredUse = .init(),
     documentExport: DocumentExportOptions = .init(),
-    airplane: Bool = false
+    airplane: Bool = false,
+    redact: String? = nil
   ) {
     self.version = version
     self.defaultAgent = defaultAgent
@@ -861,13 +863,14 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
     self.use = use
     self.documentExport = documentExport
     self.airplane = airplane
+    self.redact = redact
   }
 
   private enum CodingKeys: String, CodingKey {
     case version, defaultAgent, taskAgents, plugins, providers, toolSources, ocrProviders,
       mcpServers, agents,
       prompts, memory, ui,
-      approvals, fileAccess, use, documentExport, airplane
+      approvals, fileAccess, use, documentExport, airplane, redact
   }
 
   public init(from decoder: Decoder) throws {
@@ -896,7 +899,8 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
       use: try container.decodeIfPresent(ConfiguredUse.self, forKey: .use) ?? .init(),
       documentExport: try container.decodeIfPresent(DocumentExportOptions.self, forKey: .documentExport)
         ?? .init(),
-      airplane: try container.decodeIfPresent(Bool.self, forKey: .airplane) ?? false)
+      airplane: try container.decodeIfPresent(Bool.self, forKey: .airplane) ?? false,
+      redact: try container.decodeIfPresent(String.self, forKey: .redact))
   }
 
   public static func load(from url: URL) throws -> MaiConfiguration {
