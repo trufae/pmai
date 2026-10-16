@@ -4,6 +4,40 @@ import Testing
 @testable import MaiCore
 @testable import MaiStandardTools
 
+@Test("Files catalogs require an explicit opt-in for line-range edits",
+  arguments: [false, true], [false, true])
+func fileWorkspaceRangeEditingRequiresOptIn(writeEnabled: Bool, includeAdvancedTools: Bool) {
+  let configuration = MaiFileWorkspaceConfiguration(
+    rootURL: FileManager.default.temporaryDirectory, writeEnabled: writeEnabled)
+  let defaults = MaiFileWorkspaceTool.makeTools(
+    configuration: configuration, includeAdvancedTools: includeAdvancedTools)
+  let names = Set(defaults.map(\.operation))
+  #expect(!names.contains(.replaceRange))
+  #expect(names.contains(.readRange) == includeAdvancedTools)
+  #expect(names.contains(.patch) == (writeEnabled && includeAdvancedTools))
+  #expect(names.contains(.setFunction) == (writeEnabled && includeAdvancedTools))
+
+  let optedIn = MaiFileWorkspaceTool.makeTools(
+    configuration: configuration, includeAdvancedTools: includeAdvancedTools,
+    includeLineRangeEdits: true)
+  #expect(optedIn.contains { $0.operation == .replaceRange } == (writeEnabled && includeAdvancedTools))
+}
+
+@Test("The standard Files catalog exposes text and function edits without line-range edits")
+func standardFilesCatalogPrefersMatchedEdits() async throws {
+  let factory = MaiStandardToolFactory()
+  let context = PluginFactoryContext(id: "standard")
+  let tools = try await factory.makeTools(context: context)
+  let group = try #require(
+    try await factory.toolGroups(context: context).first { $0.id == "files" })
+  for names in [Set(tools.map(\.definition.name)), group.toolNames] {
+    #expect(names.contains("files_patch"))
+    #expect(names.contains("files_set_function"))
+    #expect(names.contains("files_read_range"))
+    #expect(!names.contains("files_replace_range"))
+  }
+}
+
 @Test("Files tools allow only explicitly approved external files and folders")
 func fileWorkspaceToolsAllowApprovedExternalPaths() async throws {
   let base = FileManager.default.temporaryDirectory
@@ -42,7 +76,8 @@ func fileWorkspaceToolsManageFiles() async throws {
     rootURL: root,
     displayName: "test-workspace")
   let tools = MaiFileWorkspaceTool.makeTools(configuration: configuration)
-  #expect(Set(tools.map(\.definition.name)) == Set(MaiFileWorkspaceTool.toolNames))
+  #expect(Set(tools.map(\.definition.name)) ==
+    Set(MaiFileWorkspaceTool.toolNames).subtracting(["files_replace_range"]))
   #expect(tool(tools, .delete).definition.annotations.approval == .dangerous)
   #expect(tool(tools, .delete).definition.annotations.destructive)
 
@@ -340,7 +375,8 @@ func fileWorkspaceToolsSupportAdvancedSourceNavigation() async throws {
   defer { try? FileManager.default.removeItem(at: root) }
 
   let tools = MaiFileWorkspaceTool.makeTools(
-    configuration: MaiFileWorkspaceConfiguration(rootURL: root, displayName: "test-workspace"))
+    configuration: MaiFileWorkspaceConfiguration(rootURL: root, displayName: "test-workspace"),
+    includeLineRangeEdits: true)
   _ = try await call(
     tool(tools, .write),
     [

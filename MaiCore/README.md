@@ -1333,8 +1333,12 @@ URL and offset needed to recover them. The active prompt's data is retained.
 The `files` group can list files, find approximate names, grep bounded UTF-8
 content, convert DOCX/PDF/JSON documents, write or append text, create folders,
 rename entries, and delete them. Existing files are edited in place with
-`files_patch` (unique literal or regex replacement) or `files_replace_range`
-(1-based line ranges); both return a unified diff. For large source files,
+`files_patch` (unique literal or regex replacement), which returns a unified diff.
+Prefer literal replacements for small edits, copying enough surrounding text
+from a fresh read to match exactly once. `files_replace_range` is excluded from
+the default catalog; custom hosts can opt in with
+`MaiFileWorkspaceTool.makeTools(..., includeLineRangeEdits: true)`.
+For complete function bodies in large source files,
 `files_get_function` finds a function by name and reports its complete line and
 UTF-8 byte bounds plus a body revision. `files_set_function` uses that revision
 to atomically replace only the body, preserving concurrent edits to other

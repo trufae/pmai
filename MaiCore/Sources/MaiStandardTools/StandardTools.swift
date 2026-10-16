@@ -149,9 +149,10 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
           "Work with the files of one workspace folder, confined to it. files_list and files_find locate "
           + "files, files_grep searches their text, files_read and files_read_range return contents (PDF "
           + "and DOCX as Markdown), files_read_index and files_get_function navigate code by symbol, and "
-          + "files_set_function, files_patch, files_replace_range, and files_write change it; files_rename "
-          + "and files_delete move or remove. Read before editing and prefer the smallest edit that does "
-          + "the job. With file changes disallowed the group is read-only.",
+          + "files_set_function, files_patch, and files_write change it; files_rename and files_delete "
+          + "move or remove. Read before editing. Prefer literal files_patch replacements for small "
+          + "edits, with enough surrounding text to match exactly once; use files_set_function for "
+          + "complete function bodies. With file changes disallowed the group is read-only.",
         toolNames: Set(MaiFileWorkspaceTool.toolNames),
         options: [
           .init(

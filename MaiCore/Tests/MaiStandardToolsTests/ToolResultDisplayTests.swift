@@ -72,7 +72,8 @@ func toolResultImportancePersistence() throws {
 @Test("File mutation definitions opt into complete relevant output")
 func toolResultImportanceForFiles() {
   let tools = MaiFileWorkspaceTool.makeTools(
-    configuration: MaiFileWorkspaceConfiguration(rootURL: URL(fileURLWithPath: "/tmp")))
+    configuration: MaiFileWorkspaceConfiguration(rootURL: URL(fileURLWithPath: "/tmp")),
+    includeLineRangeEdits: true)
   let edits: Set<MaiFileWorkspaceTool.Operation> = [
     .setFunction, .replaceRange, .patch, .write, .rename, .delete,
   ]

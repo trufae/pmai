@@ -88,12 +88,16 @@ public struct MaiFileWorkspaceTool: AgentTool {
     definition = Self.definition(for: operation, workspaceName: configuration.displayName)
   }
 
+  /// Line-range mutations require an explicit host opt-in; normal editing uses
+  /// text matches or revision-checked function bodies instead of line numbers.
   public static func makeTools(
     configuration: MaiFileWorkspaceConfiguration,
-    includeAdvancedTools: Bool = true
+    includeAdvancedTools: Bool = true,
+    includeLineRangeEdits: Bool = false
   ) -> [MaiFileWorkspaceTool] {
     Operation.allCases.compactMap { operation in
       guard includeAdvancedTools || !advancedOperations.contains(operation),
+        includeLineRangeEdits || operation != .replaceRange,
         configuration.writeEnabled || !operation.changesFiles
       else { return nil }
       return MaiFileWorkspaceTool(operation: operation, configuration: configuration)
@@ -386,7 +390,7 @@ public struct MaiFileWorkspaceTool: AgentTool {
       return ToolDefinition(
         name: operation.rawValue,
         description:
-          "Edit a text file by replacing a literal string or regular-expression match; returns a unified diff. Copy find from a fresh read of the same path, preserving whitespace and line endings. JSON-escape find and replace once; do not add extra backslashes before source quotes or newlines. If no match is found, reread that path and correct find before retrying.",
+          "Edit a text file by replacing a literal string or regular-expression match; returns a unified diff. Prefer literal replacement for small edits, with enough surrounding text to match exactly once. Copy find from a fresh read of the same path, preserving whitespace and line endings. JSON-escape find and replace once; do not add extra backslashes before source quotes or newlines. If no match is found, reread that path and correct find before retrying.",
         parameters: [
           path,
           ToolParameterDef(
