@@ -199,6 +199,46 @@ import Testing
       #expect(body["tools"]?.arrayValue?.first?["type"] == .string("namespace"))
     }
 
+    @Test func requestReplaysImageHistoryWithAssistantOutputText() throws {
+      let image = ImageContent(source: .data(Data([1, 2, 3])), mimeType: "image/png")
+      let request = ProviderRequest(
+        model: "gpt-5.6-luna",
+        messages: [
+          .system("Describe pictures"),
+          .init(role: .user, content: [.text("What is this?"), .image(image)]),
+          .init(
+            role: .assistant,
+            content: [
+              .text("A red square"),
+              .file(
+                .init(name: "description.txt", mimeType: "text/plain", text: "Image description")),
+              .resource(.init(uri: "resource:description", text: "Resource description")),
+            ]),
+          .user("What color was it?"),
+        ])
+      let body = try ChatGPTProvider.body(request, resolver: .init(tools: []))
+      let input = try #require(body["input"]?.arrayValue)
+      #expect(input.map { $0["role"]?.stringValue } == ["developer", "user", "assistant", "user"])
+      #expect(input[0]["content"]?.arrayValue?.first?["type"] == .string("input_text"))
+      #expect(
+        input[1]["content"]?.arrayValue == [
+          .object(["type": .string("input_text"), "text": .string("What is this?")]),
+          .object([
+            "type": .string("input_image"), "image_url": .string("data:image/png;base64,AQID"),
+          ]),
+        ])
+      let assistantContent = try #require(input[2]["content"]?.arrayValue)
+      #expect(
+        assistantContent.map { $0["type"]?.stringValue } == [
+          "output_text", "output_text", "output_text",
+        ])
+      #expect(
+        assistantContent.map { $0["text"]?.stringValue } == [
+          "A red square", "Image description", "Resource description",
+        ])
+      #expect(input[3]["content"]?.arrayValue?.first?["type"] == .string("input_text"))
+    }
+
     @Test func streamRequiresCompletedAndPreservesToolsAndUsage() async throws {
       let tool = ToolDefinition(
         name: "files::read", description: "Read", inputSchema: objectSchema(required: []))
@@ -386,6 +426,19 @@ import Testing
     }
 
     @Test(arguments: [
+      (200, nil, #"{"detail":"Direct routing is unavailable"}"#, "Direct routing is unavailable"),
+      (200, nil, "<html>Bad gateway</html>", "no response events"),
+      (200, nil, "", "no response events"),
+      (
+        200, nil,
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n",
+        "stream ended before response.completed"
+      ),
+      (
+        200, nil,
+        "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"App limit reached\"}}}\n\n",
+        "App limit reached"
+      ),
       (
         403, "application/json", #"{"detail":"Region is not supported"}"#, "Region is not supported"
       ),
@@ -423,7 +476,7 @@ import Testing
       ),
     ])
     func providerReportsActionableErrors(
-      status: Int, contentType: String, body: String, expected: String
+      status: Int, contentType: String?, body: String, expected: String
     ) async throws {
       let store = try signedInStore()
       defer { try? FileManager.default.removeItem(at: store.directory) }
@@ -443,6 +496,29 @@ import Testing
         if status != 200 { #expect(error.localizedDescription.contains("HTTP \(status)")) }
       }
       #expect(try store.load()?.isSignedIn == true)
+    }
+
+    @Test(arguments: [true, false])
+    func providerAcceptsCompletedStreamWithoutContentType(stream: Bool) async throws {
+      let store = try signedInStore()
+      defer { try? FileManager.default.removeItem(at: store.directory) }
+      StubURLProtocol.install(forHost: "api.openai.com") { request in
+        try httpResponse(
+          request, contentType: nil,
+          body: "\u{FEFF}: keepalive\r\n\r\n"
+            + "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello 👋\"}\r\n\r\n"
+            + "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello 👋\"}]}]}}"
+        )
+      }
+      defer { StubURLProtocol.reset(host: "api.openai.com") }
+      let provider = ChatGPTProvider(id: "chatgpt", store: store, session: stubSession())
+      let events = ChatGPTEventRecorder()
+      let response = try await provider.complete(
+        .init(model: "gpt-5.6-luna", messages: [.user("Hi")], stream: stream)
+      ) { await events.append($0) }
+      #expect(response.message.text == "Hello 👋")
+      #expect(response.stopReason == .stop)
+      #expect(await events.events == (stream ? [.textDelta("Hello 👋")] : []))
     }
 
     @Test func providerStreamsAndReplaysToolReasoning() async throws {

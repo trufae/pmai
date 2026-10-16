@@ -135,6 +135,7 @@ artifacts in the Release workflow.
 ```sh
 make build               # builds for the iOS Simulator without code signing
 make repl-build          # builds the debug CLI without starting the REPL
+make repl-install        # installs an unoptimized CLI without debug information
 make run                 # installs and launches Xcode's latest signed device build
 make fmt                 # swift-format the sources
 ```
@@ -145,6 +146,8 @@ On macOS, add a native provider with `/provider add apple --kind apple` or
 `/model mlx::LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit`; no server URL is needed.
 `make repl-build` includes the CLI's MLX Metal resource. See
 [native provider setup](MaiCore/README.md) for requirements and configuration.
+`make repl-install` builds incrementally with `-c debug -debug-info-format none`
+and installs that executable and its MLX resource to `~/.local/bin` (or `BINDIR`).
 
 Local builds reuse their existing outputs. Xcode compilation caching is
 enabled, and Make's command-line builds skip editor indexing, coverage

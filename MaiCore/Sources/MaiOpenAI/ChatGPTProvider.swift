@@ -81,9 +81,12 @@ public final class ChatGPTProvider: ChatProvider, @unchecked Sendable {
     #endif
     return try await withTaskCancellationHandler {
       let httpResponse = response as? HTTPURLResponse
-      let contentType = httpResponse?.mimeType?.lowercased()
+      // Read the actual header: Foundation may infer text/plain when it is absent.
+      let contentType = httpResponse?.value(forHTTPHeaderField: "Content-Type")?
+        .components(separatedBy: ";").first?
+        .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
       guard let status = httpResponse?.statusCode, (200..<300).contains(status),
-        contentType == "text/event-stream"
+        contentType == nil || contentType == "" || contentType == "text/event-stream"
       else {
         var data = Data()
         for try await byte in bytes {
@@ -101,22 +104,37 @@ public final class ChatGPTProvider: ChatProvider, @unchecked Sendable {
       var parser = ChatGPTResponseStream(
         resolver: resolver, requestID: httpResponse?.value(forHTTPHeaderField: "x-request-id"))
       var events = ChatGPTEventStream()
+      // Some subscription responses omit Content-Type. Validate their events
+      // normally, retaining a bounded prefix to diagnose headerless JSON errors.
+      var diagnosticPrefix: Data? = contentType == "text/event-stream" ? nil : Data()
       for try await byte in bytes {
         try Task.checkCancellation()
-        if let payload = try events.consume(byte),
-          let result = try await parser.feed(payload, emit: streamEmit)
-        {
+        if let count = diagnosticPrefix?.count, count < 65_536 { diagnosticPrefix?.append(byte) }
+        if let payload = try events.consume(byte) {
+          diagnosticPrefix = nil
+          if let result = try await parser.feed(payload, emit: streamEmit) {
+            ChatGPTReasoningCache.shared.remember(account: store.identity, message: result.message)
+            return result
+          }
+        }
+      }
+      if let payload = try events.finish() {
+        diagnosticPrefix = nil
+        if let result = try await parser.feed(payload, emit: streamEmit) {
           ChatGPTReasoningCache.shared.remember(account: store.identity, message: result.message)
           return result
         }
       }
-      if let payload = try events.finish(),
-        let result = try await parser.feed(payload, emit: streamEmit)
-      {
-        ChatGPTReasoningCache.shared.remember(account: store.identity, message: result.message)
-        return result
+      if let data = diagnosticPrefix {
+        let root = try? JSONDecoder().decode(JSONValue.self, from: data)
+        throw Self.failure(
+          root?["error"] ?? root, status: httpResponse?.statusCode,
+          requestID: httpResponse?.value(forHTTPHeaderField: "x-request-id"),
+          fallback: "ChatGPT returned no response events and no content type. Try again.")
       }
-      throw ChatGPTError.message("ChatGPT stream ended before response.completed. Try again.")
+      throw Self.failure(
+        nil, requestID: httpResponse?.value(forHTTPHeaderField: "x-request-id"),
+        fallback: "ChatGPT stream ended before response.completed. Try again.")
     } onCancel: {
       #if !canImport(FoundationNetworking)
         task.cancel()
@@ -147,6 +165,7 @@ public final class ChatGPTProvider: ChatProvider, @unchecked Sendable {
             ?? message.toolCalls.first.flatMap { reasoning[$0.id] } ?? [])
       }
       var content: [JSONValue] = []
+      let textType = message.role == .assistant ? "output_text" : "input_text"
       func flush() {
         guard !content.isEmpty else { return }
         input.append(
@@ -162,7 +181,7 @@ public final class ChatGPTProvider: ChatProvider, @unchecked Sendable {
           if text.isEmpty { continue }
           content.append(
             .object([
-              "type": .string("input_text"),
+              "type": .string(textType),
               "text": .string(text),
             ]))
         case .image(let image):
@@ -173,7 +192,7 @@ public final class ChatGPTProvider: ChatProvider, @unchecked Sendable {
             ]))
         case .file(let file):
           if let text = file.text {
-            content.append(.object(["type": .string("input_text"), "text": .string(text)]))
+            content.append(.object(["type": .string(textType), "text": .string(text)]))
           } else if let source = file.source {
             var item: [String: JSONValue] = ["type": .string("input_file")]
             switch source {
@@ -186,7 +205,7 @@ public final class ChatGPTProvider: ChatProvider, @unchecked Sendable {
           }
         case .resource(let resource):
           if let text = resource.text {
-            content.append(.object(["type": .string("input_text"), "text": .string(text)]))
+            content.append(.object(["type": .string(textType), "text": .string(text)]))
           }
         case .toolCall(let call):
           flush()

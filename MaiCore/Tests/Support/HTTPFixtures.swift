@@ -44,7 +44,7 @@ func requestBodyData(_ request: URLRequest) throws -> Data {
 func httpResponse(
   _ request: URLRequest,
   status: Int = 200,
-  contentType: String,
+  contentType: String?,
   body: String,
   headers: [String: String] = [:]
 ) throws -> (HTTPURLResponse, Data) {

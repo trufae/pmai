@@ -11,6 +11,8 @@ XCODE_PACKAGE_FLAGS ?= -skipPackagePluginValidation -skipPackageUpdates
 XCODE_BUILD_FLAGS ?= -parallelizeTargets COMPILATION_CACHE_ENABLE_CACHING=YES COMPILER_INDEX_STORE_ENABLE=NO ENABLE_CODE_COVERAGE=NO
 SWIFT ?= swift
 SWIFT_BUILD_FLAGS ?= --disable-index-store
+# Keep installs incremental and unoptimized, without generating debug information.
+REPL_INSTALL_FLAGS = $(SWIFT_BUILD_FLAGS) -c debug -debug-info-format none
 # A generic Simulator destination has no active device, so Xcode otherwise
 # compiles both architectures even with ONLY_ACTIVE_ARCH enabled.
 ifeq ($(CONFIG),Debug)
@@ -127,15 +129,15 @@ repl-build:
 	python3 sys/build-mlx-metal.py --bin-dir "$$($(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) --show-bin-path)"
 
 repl-install:
-	$(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) --product pmai
-	# $(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) -c release --product pmai
-	python3 sys/build-mlx-metal.py --bin-dir "$$($(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) -c release --show-bin-path)"
-	mkdir -p $(BINDIR)
-	cp -f "$$($(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) -c release --show-bin-path)/pmai" $(BINDIR)/pmai
-	@shader="$$($(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) -c release --show-bin-path)/mlx.metallib"; \
-		if [ -f "$$shader" ]; then cp -f "$$shader" "$(BINDIR)/mlx.metallib"; fi
-	chmod 755 $(BINDIR)/pmai
-	$(STRIP) $(BINDIR)/pmai
+	$(SWIFT) build --package-path MaiCore $(REPL_INSTALL_FLAGS) --product pmai
+	@set -e; \
+		bin_dir="$$($(SWIFT) build --package-path MaiCore $(REPL_INSTALL_FLAGS) --show-bin-path)"; \
+		python3 sys/build-mlx-metal.py --bin-dir "$$bin_dir"; \
+		mkdir -p "$(BINDIR)"; \
+		cp -f "$$bin_dir/pmai" "$(BINDIR)/pmai"; \
+		if [ -f "$$bin_dir/mlx.metallib" ]; then cp -f "$$bin_dir/mlx.metallib" "$(BINDIR)/mlx.metallib"; fi; \
+		chmod 755 "$(BINDIR)/pmai"; \
+		$(STRIP) "$(BINDIR)/pmai"
 
 repl-uninstall:
 	rm -f "$(BINDIR)/pmai"
