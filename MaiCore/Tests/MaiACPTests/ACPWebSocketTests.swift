@@ -190,3 +190,94 @@ func acpWebSocketIntegration() async throws {
   #expect(restored.message.text == "reply")
   await (provider as? ACPProvider)?.shutdown()
 }
+
+#if os(macOS) || os(Linux)
+  @Test(
+    "ACP clients consume config options, grouped choices, booleans, updates and restored settings")
+  func acpClientConfigurationOptions() async throws {
+    let script = """
+      import json, sys
+      opts = [{'id':'model','name':'Model','type':'select','currentValue':'a',
+               'options':[{'group':'provider','name':'Provider','options':[{'value':'a','name':'A'},{'value':'b','name':'B'}]}]},
+              {'id':'fast','name':'Fast','type':'boolean','currentValue':False},
+              {'id':'future','name':'Future','type':'future','currentValue':0}]
+      for line in sys.stdin:
+          r = json.loads(line)
+          p = r.get('params', {})
+          m = r.get('method')
+          if m == 'initialize':
+              assert p['clientCapabilities']['session']['configOptions']['boolean'] == {}
+              result = {'protocolVersion':1, 'agentCapabilities':{'loadSession':True}}
+          elif m in ['session/new', 'session/load']:
+              result = {'sessionId':'configured', 'configOptions':opts}
+          elif m == 'session/set_config_option':
+              assert p['sessionId'] == 'configured'
+              if p['configId'] == 'fast': assert p['type'] == 'boolean'
+              for o in opts:
+                  if o['id'] == p['configId']: o['currentValue'] = p['value']
+              result = {'configOptions':opts}
+          elif m == 'session/prompt':
+              opts[0]['currentValue'] = 'b'
+              print(json.dumps({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':'configured','update':{'sessionUpdate':'config_option_update','configOptions':opts}}}), flush=True)
+              result = {'stopReason':'end_turn'}
+          else: result = {}
+          print(json.dumps({'jsonrpc':'2.0','id':r['id'],'result':result}), flush=True)
+      """
+    let client = ACPClient(
+      configuration: .init(command: "/usr/bin/python3", arguments: ["-u", "-c", script]))
+    _ = try await client.connect()
+    let initial = try await client.configurationOptions()
+    #expect(initial.map(\.id) == ["model", "fast"])
+    #expect(initial[0].choices.first?.group == "Provider")
+    #expect(
+      try await client.setConfigurationOption(id: "fast", value: .bool(true))[1].currentValue
+        == .bool(true))
+    await #expect(throws: JSONRPCError.self) {
+      _ = try await client.setConfigurationOption(id: "model", value: .string("bad"))
+    }
+    _ = try await client.prompt("update") { _ in }
+    #expect(try await client.configurationOptions()[0].currentValue == .string("b"))
+    await client.disconnect()
+    _ = try await client.connect()
+    #expect(try await client.configurationOptions()[0].currentValue == .string("a"))
+    await client.disconnect()
+  }
+#endif
+
+#if os(macOS) || os(Linux)
+  @Test(
+    "ACP settings fall back to legacy modes and tolerate agents with no settings",
+    arguments: [true, false])
+  func acpClientLegacyConfiguration(legacy: Bool) async throws {
+    let script = """
+      import json, sys
+      for line in sys.stdin:
+          r = json.loads(line)
+          m = r.get('method')
+          result = {}
+          if m == 'initialize': result = {'protocolVersion':1}
+          if m == 'session/new':
+              result = {'sessionId':'legacy'}
+              if sys.argv[1] == 'yes':
+                  result['modes'] = {'currentModeId':'build', 'availableModes':[{'id':'build','name':'Build'}, {'id':'plan','name':'Plan'}]}
+          if m == 'session/set_mode':
+              assert r['params']['modeId'] == 'plan'
+              assert r['params']['sessionId'] == 'legacy'
+          print(json.dumps({'jsonrpc':'2.0','id':r['id'],'result':result}), flush=True)
+      """
+    let client = ACPClient(
+      configuration: .init(
+        command: "/usr/bin/python3", arguments: ["-u", "-c", script, legacy ? "yes" : "no"]))
+    _ = try await client.connect()
+    let options = try await client.configurationOptions()
+    if legacy {
+      #expect(options.first?.currentValue == .string("build"))
+      #expect(
+        try await client.setConfigurationOption(id: "mode", value: .string("plan")).first?
+          .currentValue == .string("plan"))
+    } else {
+      #expect(options.isEmpty)
+    }
+    await client.disconnect()
+  }
+#endif

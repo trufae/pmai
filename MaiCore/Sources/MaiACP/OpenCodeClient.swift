@@ -13,6 +13,7 @@ public actor OpenCodeClient: RemoteSessionClient {
   private var sessionID: String?
   private var closed = false
   private var prompting = false
+  private var configuring = false
   private var history: [JSONValue] = []
   public private(set) var isConnected = false
   private let onUpdate: (@Sendable (JSONValue) async -> Void)?
@@ -119,11 +120,139 @@ public actor OpenCodeClient: RemoteSessionClient {
       body: title.map { .object(["title": .string($0)]) })
   }
 
+  public func configurationOptions() async throws -> [RemoteSessionOption] {
+    try await loadConfiguration().options
+  }
+
+  public func setConfigurationOption(id: String, value: JSONValue) async throws
+    -> [RemoteSessionOption]
+  {
+    try checkOpen()
+    guard isConnected, !prompting, !configuring, let sessionID else {
+      throw JSONRPCError.invalidParams("Connect to an idle OpenCode session first.")
+    }
+    configuring = true
+    defer { configuring = false }
+    let state = try await loadConfiguration()
+    guard let selected = value.stringValue,
+      state.options.first(where: { $0.id == id })?.accepts(value) == true
+    else {
+      throw JSONRPCError.invalidParams("Choose an available OpenCode setting.")
+    }
+    if state.options.first(where: { $0.id == id })?.currentValue == value { return state.options }
+    if id == "agent" {
+      _ = try await http.request(
+        ["api", "session", sessionID, "agent"], method: "POST",
+        body: .object(["agent": value]))
+    } else {
+      var model = state.model
+      if id == "provider" || id == "model" {
+        let provider = id == "provider" ? selected : model["providerID"]?.stringValue
+        guard
+          let choice = state.models.first(where: {
+            $0["providerID"]?.stringValue == provider
+              && (id == "provider" || $0["id"]?.stringValue == selected)
+          }), let modelID = choice["id"], let providerID = choice["providerID"]
+        else {
+          throw invalidResponse()
+        }
+        model = ["id": modelID, "providerID": providerID]
+      } else if id == "variant" {
+        model["variant"] = selected.isEmpty ? nil : value
+      }
+      _ = try await http.request(
+        ["api", "session", sessionID, "model"], method: "POST",
+        body: .object(["model": .object(model)]))
+    }
+    return try await loadConfiguration().options
+  }
+
+  private struct ConfigurationState {
+    var options: [RemoteSessionOption]
+    var models: [[String: JSONValue]]
+    var model: [String: JSONValue]
+  }
+
+  private func loadConfiguration() async throws -> ConfigurationState {
+    try checkOpen()
+    guard isConnected, let sessionID else {
+      throw JSONRPCError.invalidParams("Connect to OpenCode first.")
+    }
+    let session = try await http.request(["api", "session", sessionID])
+    guard let info = session.objectValue?["data"]?.objectValue,
+      let directory = info["location"]?.objectValue?["directory"]?.stringValue
+    else { throw invalidResponse() }
+    let query = [URLQueryItem(name: "location[directory]", value: directory)]
+    async let catalogRequest = http.request(["api", "model"], query: query)
+    async let agentsRequest = http.request(["api", "agent"], query: query)
+    let (catalog, agentsResponse) = try await (catalogRequest, agentsRequest)
+    guard let entries = catalog.objectValue?["data"]?.arrayValue,
+      let agentEntries = agentsResponse.objectValue?["data"]?.arrayValue
+    else { throw invalidResponse() }
+    let models = entries.compactMap(\.objectValue).filter {
+      $0["enabled"]?.boolValue != false && $0["id"]?.stringValue != nil
+        && $0["providerID"]?.stringValue != nil
+    }
+    var model = info["model"]?.objectValue ?? [:]
+    if model.isEmpty {
+      let fallback = try await http.request(["api", "model", "default"], query: query)
+      if let fields = fallback.objectValue?["data"]?.objectValue,
+        let id = fields["id"], let provider = fields["providerID"]
+      {
+        model = ["id": id, "providerID": provider]
+      }
+    }
+    let provider = model["providerID"]?.stringValue ?? ""
+    let modelID = model["id"]?.stringValue ?? ""
+    var providers = Set<String>()
+    let providerChoices = models.compactMap { fields -> RemoteSessionOption.Choice? in
+      let id = fields["providerID"]!.stringValue!
+      return providers.insert(id).inserted ? .init(id, id) : nil
+    }
+    var options: [RemoteSessionOption] = [
+      .init(
+        id: "provider", name: "Provider", currentValue: .string(provider), choices: providerChoices),
+      .init(
+        id: "model", name: "Model", currentValue: .string(modelID),
+        choices: models.filter {
+          $0["providerID"]?.stringValue == provider
+        }.map { .init($0["id"]!.stringValue!, $0["name"]?.stringValue ?? $0["id"]!.stringValue!) }),
+    ]
+    let activeModel = models.first {
+      $0["id"]?.stringValue == modelID && $0["providerID"]?.stringValue == provider
+    }
+    let variants = (activeModel?["variants"]?.arrayValue ?? []).compactMap {
+      $0.objectValue?["id"]?.stringValue
+    }
+    if !variants.isEmpty || model["variant"]?.stringValue != nil {
+      options.append(
+        .init(
+          id: "variant", name: "Variant", currentValue: model["variant"] ?? .string(""),
+          choices: [.init("", "Default")] + variants.filter { !$0.isEmpty }.map { .init($0, $0) }))
+    }
+    let agents = agentEntries.compactMap(\.objectValue).filter {
+      $0["hidden"]?.boolValue != true && $0["mode"]?.stringValue != "subagent"
+        && $0["id"]?.stringValue != nil
+    }
+    // The agent list puts the server's default primary agent first.
+    if !agents.isEmpty {
+      options.append(
+        .init(
+          id: "agent", name: "Agent",
+          currentValue: info["agent"] ?? agents[0]["id"]!,
+          choices: agents.map {
+            .init($0["id"]!.stringValue!, $0["name"]?.stringValue ?? $0["id"]!.stringValue!)
+          }))
+    }
+    try checkOpen()
+    return ConfigurationState(options: options, models: models, model: model)
+  }
+
   public func prompt(
     _ text: String, emit: @escaping @Sendable (ProviderEvent) async -> Void
   ) async throws -> ProviderStopReason {
     try checkOpen()
-    guard isConnected, !prompting, let id = sessionID else {
+    guard isConnected, !prompting, !configuring, let id = sessionID else {
       throw JSONRPCError.invalidParams("Connect to an idle OpenCode session first.")
     }
     prompting = true

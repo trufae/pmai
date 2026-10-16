@@ -7,6 +7,42 @@ import XCTest
 @testable import PocketMai
 
 final class ConversationTransferTests: XCTestCase {
+  @MainActor
+  func testRemoteChatSharesAndExportsWithoutALocalConversation() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = AppStore(persistence: PersistenceStore(localBaseURL: directory))
+    let remote = RemoteAgentConversation(
+      cwd: "/remote", sessionID: "opencode-session", title: "Remote export",
+      messages: [
+        .init(role: "user", text: "Remote question"),
+        .init(role: "assistant", text: "Remote answer"),
+      ]
+    ).presentation
+    XCTAssertNil(store.conversation(withID: remote.id))
+    let coordinator = ConversationExportCoordinator()
+    for (format, ext) in [
+      (ConversationExportFormat.json, "pocketmai"), (.markdown, "md"), (.debug, "json"),
+    ] {
+      coordinator.exportShareFile = nil
+      await coordinator.share(
+        format: format, conversationID: remote.id, store: store, conversation: remote)
+      let url = try XCTUnwrap(coordinator.exportShareFile?.url)
+      defer { try? FileManager.default.removeItem(at: url) }
+      XCTAssertEqual(url.pathExtension, ext)
+      let data = try Data(contentsOf: url)
+      let text = String(decoding: data, as: UTF8.self)
+      XCTAssertTrue(text.contains("Remote question"))
+      XCTAssertTrue(text.contains("Remote answer"))
+      if format == .json {
+        let archive = try MaiArchive.decode(from: data)
+        XCTAssertEqual(archive.chats?.first?.title, remote.title)
+        XCTAssertEqual(archive.chats?.first?.messages.last?.text, "Remote answer")
+      }
+    }
+    XCTAssertNil(store.conversation(withID: remote.id))
+  }
+
   func testDocumentExportsFilterTechnicalRowsAndKeepVisibleText() {
     var chat = Conversation()
     chat.messages = [

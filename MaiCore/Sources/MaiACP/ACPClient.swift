@@ -60,6 +60,8 @@ public actor ACPClient {
   private var peer: JSONRPCPeer?
   private var sessionID: String?
   private var sessionLoaded = false
+  private var sessionOptions: [RemoteSessionOption] = []
+  private var legacyModes = false
   private var supportsLoad = false
   private var supportsList = false
   private var supportsFiles = false
@@ -90,6 +92,63 @@ public actor ACPClient {
   }
 
   public var currentSessionID: String? { sessionID }
+
+  public func configurationOptions() async throws -> [RemoteSessionOption] {
+    if !sessionLoaded { _ = try await connect() }
+    return sessionOptions
+  }
+
+  public func setConfigurationOption(id: String, value: JSONValue) async throws
+    -> [RemoteSessionOption]
+  {
+    guard !busy, sessionLoaded, let sessionID, let peer,
+      let option = sessionOptions.first(where: { $0.id == id }), option.accepts(value)
+    else {
+      throw JSONRPCError.invalidParams(
+        "Connect to an idle session and choose an available setting.")
+    }
+    busy = true
+    defer { busy = false }
+    if legacyModes {
+      _ = try await peer.request(
+        "session/set_mode",
+        params: .object([
+          "sessionId": .string(sessionID), "modeId": value,
+        ]), timeout: 30)
+      if let index = sessionOptions.firstIndex(where: { $0.id == id }) {
+        sessionOptions[index].currentValue = value
+      }
+    } else {
+      var params: [String: JSONValue] = [
+        "sessionId": .string(sessionID), "configId": .string(id), "value": value,
+      ]
+      if option.isBoolean { params["type"] = .string("boolean") }
+      let result = try await peer.request(
+        ACP.Method.sessionSetConfigOption, params: .object(params), timeout: 30)
+      guard let options = result.objectValue?["configOptions"], options.arrayValue != nil else {
+        throw JSONRPCError.invalidParams("The agent returned no session settings.")
+      }
+      sessionOptions = RemoteSessionOption.parse(options)
+    }
+    return sessionOptions
+  }
+
+  private func readSessionOptions(_ result: JSONValue) {
+    legacyModes = result.objectValue?["configOptions"] == nil
+    sessionOptions = RemoteSessionOption.parse(result.objectValue?["configOptions"])
+    if legacyModes, let modes = result.objectValue?["modes"]?.objectValue,
+      let current = modes["currentModeId"]?.stringValue
+    {
+      sessionOptions = [
+        .init(
+          id: "mode", name: "Mode", category: "mode", currentValue: .string(current),
+          choices: (modes["availableModes"]?.arrayValue ?? []).compactMap {
+            guard let id = $0.objectValue?["id"]?.stringValue else { return nil }
+            return .init(id, $0.objectValue?["name"]?.stringValue ?? id)
+          })
+      ]
+    }
+  }
   public var isConnected: Bool { peer != nil && transport?.isRunning == true }
 
   public func configureInternetAccess(_ policy: InternetAccessPolicy) async {
@@ -338,6 +397,7 @@ public actor ACPClient {
               "readTextFile": .bool(configuration.readClientFiles), "writeTextFile": .bool(false),
             ]),
             "terminal": .bool(false),
+            "session": .object(["configOptions": .object(["boolean": .object([:])])])
           ]),
         ]),
         timeout: 30)
@@ -369,11 +429,12 @@ public actor ACPClient {
       configuration.remoteWorkingDirectory
       ?? configuration.workingDirectory?.path ?? AgentExecutionScope.directory.path
     if let sessionID, supportsLoad {
-      _ = try await peer.request(
+      let result = try await peer.request(
         ACP.Method.sessionLoad,
         params: .object([
           "sessionId": .string(sessionID), "cwd": .string(cwd), "mcpServers": .array([]),
         ]), timeout: 60)
+      readSessionOptions(result)
       sessionLoaded = true
       return sessionID
     }
@@ -389,6 +450,7 @@ public actor ACPClient {
       throw ACPClientError.noSession(configuration.command)
     }
     sessionID = id
+    readSessionOptions(result)
     sessionLoaded = true
     return id
   }
@@ -399,7 +461,23 @@ public actor ACPClient {
     guard method == ACP.Method.sessionUpdate,
       params?.objectValue?["sessionId"]?.stringValue == sessionID
     else { return }
-    if let update = params?.objectValue?["update"] { await onUpdate?(update) }
+    if let update = params?.objectValue?["update"] {
+      if update.objectValue?["sessionUpdate"]?.stringValue == "config_option_update" {
+        readSessionOptions(update)
+      } else if legacyModes,
+        update.objectValue?["sessionUpdate"]?.stringValue == "current_mode_update",
+        let mode = update.objectValue?["currentModeId"]?.stringValue,
+        !sessionOptions.isEmpty
+      {
+        sessionOptions[0].currentValue = .string(mode)
+        await onUpdate?(
+          .object([
+            "sessionUpdate": .string("config_option_update"),
+            "configOptions": .array(sessionOptions.map(\.json)),
+          ]))
+      }
+      await onUpdate?(update)
+    }
     guard let sink = activeSink else { return }
     guard let update = params?.objectValue?["update"]?.objectValue,
       let kind = update["sessionUpdate"]?.stringValue.flatMap(ACP.Update.init)

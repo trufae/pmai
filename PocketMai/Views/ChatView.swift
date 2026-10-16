@@ -302,8 +302,11 @@ struct ChatView: View {
         }
       }
       .sheet(isPresented: $showingProviderModelSheet) {
-        ConversationModelSettingsView()
-          .environmentObject(store)
+        if let remoteChat {
+          RemoteChatSettingsView(chat: remoteChat).environmentObject(store)
+        } else {
+          ConversationModelSettingsView().environmentObject(store)
+        }
       }
       .sheet(isPresented: $showingCompactSheet) {
         CompactChatSheet()
@@ -509,19 +512,22 @@ struct ChatView: View {
       }
       .disabled(!canCompactCurrentChat)
       ConversationShareButton(
-        conversationID: remoteChat == nil ? currentConversation?.id : nil,
+        conversationID: currentConversation?.id,
+        conversation: remoteChat?.presentation,
         coordinator: exportCoordinator)
       ConversationExportMenu(
-        conversationID: remoteChat == nil ? currentConversation?.id : nil,
+        conversationID: currentConversation?.id,
+        conversation: remoteChat?.presentation,
         coordinator: exportCoordinator)
       Button("Files…", systemImage: "folder", action: onBrowseFiles)
       Divider()
-      Button(
-        remoteChat.map { $0.connected ? "Disconnect" : "Connect" } ?? "Chat Settings",
-        systemImage: remoteChat == nil ? "slider.horizontal.3" : "network",
-        action: showChatSettings
-      )
-      .disabled(remoteChat != nil && (store.settings.isOffline || remoteChat?.busy == true))
+      Button("Chat Settings", systemImage: "slider.horizontal.3", action: showChatSettings)
+      if let remoteChat {
+        Button(remoteChat.connected ? "Disconnect" : "Connect", systemImage: "network") {
+          if remoteChat.connected { remoteChat.disconnect() } else { remoteChat.connect() }
+        }
+        .disabled(!remoteChat.connected && (store.settings.isOffline || remoteChat.busy))
+      }
     } label: {
       VStack(spacing: 1) {
         Text(
@@ -643,16 +649,11 @@ struct ChatView: View {
     }
     .buttonStyle(.plain)
     .disabled(remoteChat != nil && (store.settings.isOffline || remoteChat?.busy == true))
-    .accessibilityHint(
-      remoteChat == nil ? "Open chat settings to choose a provider" : "Manage connection")
+    .accessibilityHint("Open chat settings to choose a provider")
   }
 
   private func showChatSettings() {
-    if let remoteChat {
-      if remoteChat.connected { remoteChat.disconnect() } else { remoteChat.connect() }
-    } else {
-      showingProviderModelSheet = true
-    }
+    showingProviderModelSheet = true
   }
 
   private func beginRename() {

@@ -266,6 +266,8 @@ struct RemoteConversationsView: View {
             conversation: ConversationSummary(conversation: chat.presentation),
             isEnabled: true, exportCoordinator: exportCoordinator,
             onSelectForBatch: nil, allowsLocalActions: false,
+            exportConversation: selected
+              ? hosts.activeChat?.presentation ?? chat.presentation : chat.presentation,
             canManage: hosts.selectedHost?.requiresApproval != true
               && (chat.sessionID == nil
                 || (!appStore.settings.isOffline

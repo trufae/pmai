@@ -10,6 +10,7 @@ struct PendingExportImageSizeSelection: Identifiable {
   let id = UUID()
   let format: ConversationExportFormat
   let conversationID: UUID
+  let conversation: Conversation?
 }
 
 @MainActor
@@ -29,14 +30,16 @@ final class ConversationExportCoordinator: ObservableObject {
     format: ConversationExportFormat,
     conversationID: UUID,
     store: AppStore,
-    imageSize: AttachmentImageSize = .full
+    imageSize: AttachmentImageSize = .full,
+    conversation: Conversation? = nil
   ) async {
     guard
       let url = await exportFileURL(
         for: format,
         conversationID: conversationID,
         store: store,
-        imageSize: imageSize)
+        imageSize: imageSize,
+        conversation: conversation)
     else {
       return
     }
@@ -50,18 +53,23 @@ final class ConversationExportCoordinator: ObservableObject {
     exportShareFile = ExportedFile(url: url)
   }
 
-  func shareDocument(format: ConversationExportFormat, conversationID: UUID, store: AppStore) {
+  func shareDocument(
+    format: ConversationExportFormat, conversationID: UUID, store: AppStore,
+    conversation snapshot: Conversation? = nil
+  ) {
     Task { @MainActor in
-      guard let conversation = await store.conversationForExport(id: conversationID) else {
-        return
-      }
+      let loaded = snapshot == nil ? await store.conversationForExport(id: conversationID) : nil
+      guard let conversation = snapshot ?? loaded else { return }
       guard Self.containsImageAttachments(conversation) else {
-        await share(format: format, conversationID: conversationID, store: store, imageSize: .full)
+        await share(
+          format: format, conversationID: conversationID, store: store, imageSize: .full,
+          conversation: snapshot)
         return
       }
       pendingImageSizeSelection = PendingExportImageSizeSelection(
         format: format,
-        conversationID: conversationID)
+        conversationID: conversationID,
+        conversation: snapshot)
     }
   }
 
@@ -69,8 +77,13 @@ final class ConversationExportCoordinator: ObservableObject {
     for format: ConversationExportFormat,
     conversationID: UUID,
     store: AppStore,
-    imageSize: AttachmentImageSize
+    imageSize: AttachmentImageSize,
+    conversation: Conversation?
   ) async -> URL? {
+    if let conversation {
+      if format == .audio { return await exportAudioFile(conversation: conversation, store: store) }
+      return await store.exportConversationFile(conversation, format: format, imageSize: imageSize)
+    }
     switch format {
     case .audio:
       guard let conversation = await store.conversationForExport(id: conversationID) else {
@@ -124,12 +137,16 @@ struct ConversationShareButton: View {
   @EnvironmentObject private var store: AppStore
 
   let conversationID: UUID?
+  var conversation: Conversation? = nil
   @ObservedObject var coordinator: ConversationExportCoordinator
 
   var body: some View {
     Button {
       guard let conversationID else { return }
-      Task { await coordinator.share(format: .json, conversationID: conversationID, store: store) }
+      Task {
+        await coordinator.share(
+          format: .json, conversationID: conversationID, store: store, conversation: conversation)
+      }
     } label: {
       Label("Share...", systemImage: "square.and.arrow.up")
     }
@@ -141,15 +158,18 @@ struct ConversationExportMenu: View {
   @EnvironmentObject private var store: AppStore
 
   let conversationID: UUID?
+  var conversation: Conversation? = nil
   @ObservedObject var coordinator: ConversationExportCoordinator
   let title: String
 
   init(
     conversationID: UUID?,
+    conversation: Conversation? = nil,
     coordinator: ConversationExportCoordinator,
     title: String = "Export..."
   ) {
     self.conversationID = conversationID
+    self.conversation = conversation
     self.coordinator = coordinator
     self.title = title
   }
@@ -159,11 +179,15 @@ struct ConversationExportMenu: View {
       ConversationExportMenuItems(isExporting: coordinator.isExporting) { format in
         guard let conversationID else { return }
         if format == .html || format == .epub || format == .docx {
-          coordinator.shareDocument(format: format, conversationID: conversationID, store: store)
+          coordinator.shareDocument(
+            format: format, conversationID: conversationID, store: store, conversation: conversation
+          )
           return
         }
         Task {
-          await coordinator.share(format: format, conversationID: conversationID, store: store)
+          await coordinator.share(
+            format: format, conversationID: conversationID, store: store, conversation: conversation
+          )
         }
       }
     } label: {
@@ -234,7 +258,8 @@ struct ConversationExportPresentations: ViewModifier {
               format: pending.format,
               conversationID: pending.conversationID,
               store: store,
-              imageSize: size)
+              imageSize: size,
+              conversation: pending.conversation)
           }
         },
         onCancel: {
@@ -354,12 +379,12 @@ struct ActivityShareSheet: UIViewControllerRepresentable {
   func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
-private extension ConversationExportFormat {
-  static var shareMenuFormats: [ConversationExportFormat] {
-    [.txt, .markdown, .html, .epub, .docx, .audio]
+extension ConversationExportFormat {
+  fileprivate static var shareMenuFormats: [ConversationExportFormat] {
+    [.json, .txt, .markdown, .html, .epub, .docx, .audio]
   }
 
-  var exportMenuTitle: String {
+  fileprivate var exportMenuTitle: String {
     switch self {
     case .txt: "Plain Text (.txt)"
     case .markdown: "Markdown (.md)"

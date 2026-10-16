@@ -126,31 +126,6 @@ struct RemoteAgentConnectionView: View {
   var body: some View {
     NavigationStack {
       Form {
-        if initialHost == nil || backend == .openCode {
-          Section("Set up OpenCode") {
-            Text("1. On your computer, open a terminal and run:")
-            HStack {
-              Text("opencode pair --remote").font(.system(.body, design: .monospaced))
-                .textSelection(.enabled)
-              Spacer()
-              Button {
-                UIPasteboard.general.string = "opencode pair --remote"
-              } label: {
-                Image(systemName: "doc.on.doc")
-              }
-              .buttonStyle(.borderless).accessibilityLabel("Copy OpenCode pairing command")
-            }
-            Text("Allow remote access if OpenCode asks, and keep it running on your computer.")
-            Text(
-              "2. Tap Scan Host QR below and scan the QR shown in the terminal. You can also paste the link and tap Read Connection."
-            )
-            Text("3. Tap Save, then choose a project and conversation.")
-            Text(
-              "Pairing links work once and expire after five minutes. Run the command again if you need a fresh QR."
-            )
-            .font(.footnote).foregroundStyle(.secondary)
-          }
-        }
         Section("Appearance") {
           TextField("Name", text: $name)
           Picker("Accent color", selection: $accentColor) {
@@ -189,6 +164,10 @@ struct RemoteAgentConnectionView: View {
           Picker("Server type", selection: $backend) {
             Text("pmai / ACP").tag(RemoteAgentBackend.acp)
             Text("OpenCode").tag(RemoteAgentBackend.openCode)
+          }
+          if backend == .openCode {
+            Text("Run `opencode pair --remote` and scan its QR.")
+              .font(.footnote).foregroundStyle(.secondary)
           }
           if backend == .acp {
             Picker("Connection", selection: $connectionProtocol) {
@@ -241,10 +220,12 @@ struct RemoteAgentConnectionView: View {
               "This connection is unencrypted. Use it only on a trusted private network, or use HTTPS / WSS.",
               systemImage: "lock.open")
           }
-          Text(
-            "For OpenCode, run opencode pair --remote and scan its QR or paste the pairing link. For pmai, run /remote serve --protocol local or /remote serve --protocol opentunnel, scan its QR, then accept with /remote accept."
-          )
-          .font(.footnote).foregroundStyle(.secondary)
+          if backend == .acp {
+            Text(
+              "For pmai, run /remote serve --protocol local or /remote serve --protocol opentunnel, scan its QR, then accept with /remote accept."
+            )
+            .font(.footnote).foregroundStyle(.secondary)
+          }
         }
         if let error { Text(error).foregroundStyle(.red) }
       }

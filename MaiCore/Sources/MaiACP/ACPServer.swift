@@ -36,6 +36,7 @@ public actor ACPServer {
   private var peer: JSONRPCPeer?
   private var sessions: [String: Session] = [:]
   private var loadingSessions = Set<String>()
+  private var modelCatalogs: [ProviderID: [ModelDescriptor]] = [:]
   private var fileSystems: [String: MaiWorkspaceFiles] = [:]
   private let sessionDirectory: URL?
   private let workspaceRoots: [URL]?
@@ -144,6 +145,8 @@ public actor ACPServer {
       return .object([:])
     case ACP.Method.sessionPrompt:
       return try await runPrompt(params: params)
+    case ACP.Method.sessionSetConfigOption:
+      return try await setConfigurationOption(params: params)
     default:
       throw JSONRPCError.methodNotFound(method)
     }
@@ -371,7 +374,8 @@ public actor ACPServer {
     try await save(saved)
     guard connected else { throw JSONRPCTransportError.closed }
     sessions[id] = Session(saved: saved, lease: lock)
-    return .object(["sessionId": .string(id)])
+    let options = await configurationOptions(for: agent)
+    return .object(["sessionId": .string(id), "configOptions": .array(options.map(\.json))])
   }
 
   private func manageSession(params: JSONValue?) async throws -> JSONValue {
@@ -466,7 +470,101 @@ public actor ACPServer {
       default: break
       }
     }
-    return .object([:])
+    let options = await configurationOptions(for: session.saved.definition ?? agent)
+    return .object(["configOptions": .array(options.map(\.json))])
+  }
+
+  private func configurationOptions(for definition: AgentDefinition) async -> [RemoteSessionOption]
+  {
+    let providers = await runtime.availableProviders()
+    var providerChoices = providers.map {
+      RemoteSessionOption.Choice($0.id.rawValue, $0.displayName)
+    }
+    if !providerChoices.contains(where: { $0.id == definition.provider.rawValue }) {
+      providerChoices.append(.init(definition.provider.rawValue, definition.provider.rawValue))
+    }
+    if modelCatalogs[definition.provider] == nil,
+      let models = try? await runtime.availableModels(provider: definition.provider)
+    {
+      modelCatalogs[definition.provider] = models
+    }
+    var models = (modelCatalogs[definition.provider] ?? []).map {
+      RemoteSessionOption.Choice($0.id, $0.displayName)
+    }
+    for model in [
+      providers.first(where: { $0.id == definition.provider })?.defaultModel, definition.model,
+    ].compactMap({ $0 })
+    where !models.contains(where: { $0.id == model }) {
+      models.append(.init(model, model.isEmpty ? "Provider default" : model))
+    }
+    let effort = definition.options.reasoningEffort ?? ReasoningEffort.automatic.rawValue
+    var efforts = ReasoningEffort.allCases.map {
+      RemoteSessionOption.Choice($0.rawValue, $0.displayName)
+    }
+    if !efforts.contains(where: { $0.id == effort }) { efforts.append(.init(effort, effort)) }
+    return [
+      .init(
+        id: "provider", name: "Provider", category: "_provider",
+        currentValue: .string(definition.provider.rawValue), choices: providerChoices),
+      .init(
+        id: "model", name: "Model", category: "model", currentValue: .string(definition.model),
+        choices: models),
+      .init(
+        id: "reasoning", name: "Reasoning", category: "thought_level",
+        currentValue: .string(effort), choices: efforts),
+    ]
+  }
+
+  private func setConfigurationOption(params: JSONValue?) async throws -> JSONValue {
+    guard let fields = params?.objectValue, let id = fields["sessionId"]?.stringValue,
+      let key = fields["configId"]?.stringValue, let value = fields["value"]?.stringValue,
+      var saved = sessions[id]?.saved
+    else { throw JSONRPCError.invalidParams("Unknown session or setting") }
+    guard sessions[id]?.busy != true, !loadingSessions.contains(id) else {
+      throw JSONRPCError.invalidParams("Session is busy")
+    }
+    sessions[id]?.busy = true
+    defer { sessions[id]?.busy = false }
+    var definition = saved.definition ?? agent
+    let available = await configurationOptions(for: definition)
+    guard available.first(where: { $0.id == key })?.accepts(.string(value)) == true else {
+      throw JSONRPCError.invalidParams("Choose an available setting")
+    }
+    switch key {
+    case "provider":
+      if definition.provider.rawValue != value {
+        guard
+          let provider = await runtime.availableProviders().first(where: { $0.id.rawValue == value }
+          )
+        else {
+          throw JSONRPCError.invalidParams("Provider is unavailable")
+        }
+        definition.provider = provider.id
+        if modelCatalogs[provider.id] == nil {
+          modelCatalogs[provider.id] = try? await runtime.availableModels(provider: provider.id)
+        }
+        definition.model = provider.defaultModel ?? modelCatalogs[provider.id]?.first?.id ?? ""
+      }
+    case "model": definition.model = value
+    case "reasoning": definition.options.reasoningEffort = value == "automatic" ? nil : value
+    default: throw JSONRPCError.invalidParams("Unknown setting")
+    }
+    let options = await configurationOptions(for: definition)
+    guard connected, sessions[id] != nil else { throw JSONRPCTransportError.closed }
+    saved.definition = definition
+    saved.updatedAt = Date()
+    try await save(saved)
+    sessions[id]?.saved = saved
+    let json = JSONValue.array(options.map(\.json))
+    try peer?.notify(
+      ACP.Method.sessionUpdate,
+      params: .object([
+        "sessionId": .string(id),
+        "update": .object([
+          "sessionUpdate": .string("config_option_update"), "configOptions": json,
+        ]),
+      ]))
+    return .object(["configOptions": json])
   }
 
   private func runPrompt(params: JSONValue?) async throws -> JSONValue {

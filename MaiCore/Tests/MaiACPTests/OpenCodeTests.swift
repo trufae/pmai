@@ -317,3 +317,111 @@ func openCodeNativeSessions() async throws {
     await client.disconnect()
   }
 #endif
+
+@Test(
+  "OpenCode settings use project catalogs and persist native model, variant and agent references")
+func openCodeSessionSettings() async throws {
+  let host = "settings.opencode.test"
+  let state = OpenCodeSettingsFixture()
+  StubURLProtocol.install(forHost: host) { request in try state.respond(request) }
+  defer { StubURLProtocol.reset(host: host) }
+  let client = OpenCodeClient(
+    connection: try .init(
+      name: "Fixture", url: URL(string: "https://\(host)")!, token: "secret", cwd: "/wrong"),
+    sessionID: "session", configuration: openCodeTestConfiguration())
+  _ = try await client.connect()
+  let initial = try await client.configurationOptions()
+  #expect(initial.first(where: { $0.id == "provider" })?.currentValue == .string("one"))
+  #expect(initial.first(where: { $0.id == "agent" })?.choices.map(\.id) == ["build", "plan"])
+  let changed = try await client.setConfigurationOption(id: "provider", value: .string("two"))
+  #expect(changed.first(where: { $0.id == "model" })?.currentValue == .string("alias"))
+  #expect(changed.first(where: { $0.id == "variant" })?.choices.map(\.id) == ["", "high"])
+  let high = try await client.setConfigurationOption(id: "variant", value: .string("high"))
+  #expect(high.first(where: { $0.id == "variant" })?.currentValue == .string("high"))
+  let unchanged = try await client.setConfigurationOption(id: "model", value: .string("alias"))
+  #expect(unchanged.first(where: { $0.id == "variant" })?.currentValue == .string("high"))
+  let reset = try await client.setConfigurationOption(id: "variant", value: .string(""))
+  #expect(reset.first(where: { $0.id == "variant" })?.currentValue == .string(""))
+  let planned = try await client.setConfigurationOption(id: "agent", value: .string("plan"))
+  #expect(planned.first(where: { $0.id == "agent" })?.currentValue == .string("plan"))
+  await #expect(throws: JSONRPCError.self) {
+    _ = try await client.setConfigurationOption(id: "model", value: .string("underlying-id"))
+  }
+  await client.disconnect()
+}
+
+private final class OpenCodeSettingsFixture: @unchecked Sendable {
+  private let lock = NSLock()
+  private var model: JSONValue?
+  private var agent = "build"
+
+  func respond(_ request: URLRequest) throws -> (HTTPURLResponse, Data) {
+    lock.lock()
+    defer { lock.unlock() }
+    let path = request.url!.path
+    var result: JSONValue = .object([:])
+    if path == "/api/session/session/message" {
+      result = .object(["data": .array([])])
+    } else if path == "/api/session/session/model" || path == "/api/session/session/agent" {
+      #expect(request.httpMethod == "POST")
+      let body = try JSONDecoder().decode(JSONValue.self, from: requestBodyData(request))
+        .objectValue!
+      if let value = body["model"] {
+        model = value
+        #expect(value.objectValue?["id"]?.stringValue == "alias")
+        #expect(value.objectValue?["providerID"]?.stringValue == "two")
+        #expect(Set(value.objectValue!.keys).isSubset(of: ["id", "providerID", "variant"]))
+      }
+      if let value = body["agent"]?.stringValue { agent = value }
+    } else if path == "/api/session/session" {
+      var info: [String: JSONValue] = [
+        "location": .object(["directory": .string("/project with spaces")]),
+        "agent": .string(agent),
+      ]
+      info["model"] = model
+      result = .object(["data": .object(info)])
+    } else {
+      #expect(
+        URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems == [
+          URLQueryItem(name: "location[directory]", value: "/project with spaces")
+        ])
+      let defaultModel = JSONValue.object([
+        "id": .string("a"), "providerID": .string("one"), "name": .string("A"),
+      ])
+      if path == "/api/model/default" {
+        result = .object(["data": defaultModel])
+      } else if path == "/api/model" {
+        result = .object([
+          "data": .array([
+            defaultModel,
+            .object([
+              "id": .string("alias"), "modelID": .string("underlying-id"),
+              "providerID": .string("two"),
+              "name": .string("Second"), "enabled": .bool(true),
+              "variants": .array([.object(["id": .string("high")])]),
+            ]),
+            .object([
+              "id": .string("disabled"), "providerID": .string("two"), "enabled": .bool(false),
+            ]),
+          ])
+        ])
+      } else if path == "/api/agent" {
+        result = .object([
+          "data": .array([
+            .object(["id": .string("build"), "name": .string("Build"), "mode": .string("primary")]),
+            .object(["id": .string("plan"), "name": .string("Plan"), "mode": .string("primary")]),
+            .object(["id": .string("internal"), "mode": .string("subagent")]),
+            .object(["id": .string("hidden"), "hidden": .bool(true)]),
+          ])
+        ])
+      } else {
+        Issue.record("Unexpected request: \(path)")
+      }
+    }
+    return (
+      HTTPURLResponse(
+        url: request.url!, statusCode: 200, httpVersion: nil,
+        headerFields: ["Content-Type": "application/json"])!, try JSONEncoder().encode(result)
+    )
+  }
+}

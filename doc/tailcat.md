@@ -153,6 +153,19 @@ Long-press a conversation to rename, delete, or export it. Hosts without chat
 management support disable rename and delete for saved server chats.
 Long-press a project and choose **Browse Files…** to open its file manager.
 
+Open **Chat Settings** in the chat title menu to change the remote session's
+settings. Updated pmai hosts expose provider, model, and reasoning effort over
+ACP; changes apply to that conversation and persist across reconnects. Other ACP
+agents expose their supported controls through standard
+[session config options](https://agentclientprotocol.com/protocol/v1/session-config-options),
+with legacy session modes supported as a fallback. Connect/Disconnect remains a
+separate menu action.
+
+**Share…** and **Export…** also work for remote conversations, including offline
+cached history. Share creates a `.pocketmai` file; Export offers that format,
+Markdown, JSON debug reports, and the usual document formats. Exports use the
+history currently loaded on the phone.
+
 Long-press a remote host to edit, reconnect, or remove it. Tapping a host in
 **Manage…** opens its editor, including its name, gateway address, and accent color.
 The same manager is under
@@ -186,6 +199,8 @@ Expired or already-used links require a fresh `opencode pair --remote` QR.
 OpenCode uses its native HTTP API with Basic authentication, independently of
 pmai's ACP WebSocket transport. Project and conversation discovery, history,
 text prompts, tool results, permission replies, rename, and delete are supported.
+Chat Settings offers the project's providers, models, model variants, and primary
+agents through OpenCode's native session APIs.
 Replies refresh while the host runs. File browsing and OpenCode input forms are
 not currently supported by PocketMai; use the OpenCode app for those features.
 

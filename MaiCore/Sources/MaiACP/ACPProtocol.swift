@@ -20,6 +20,7 @@ public enum ACP {
     public static let workspaceFiles = "_pmai/workspace/files"
     public static let sessionPrompt = "session/prompt"
     public static let sessionCancel = "session/cancel"
+    public static let sessionSetConfigOption = "session/set_config_option"
     public static let sessionUpdate = "session/update"
     public static let requestPermission = "session/request_permission"
     public static let readTextFile = "fs/read_text_file"

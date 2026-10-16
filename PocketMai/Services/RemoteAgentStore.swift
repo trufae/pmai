@@ -362,6 +362,9 @@ final class RemoteAgentChat {
   var error: String?
   var busy = false
   var connected = false
+  private(set) var configurationOptions: [RemoteSessionOption] = []
+  private(set) var settingsLoading = false
+  private(set) var settingsError: String?
   var permissions: [RemoteAgentPermission] = []
   private var sessionID: String?
   private var client: (any RemoteSessionClient)?
@@ -395,6 +398,44 @@ final class RemoteAgentChat {
   var canManage: Bool {
     conversation.sessionID == nil
       || store.host(bookmark.id)?.workspace?.canManageSessions == true
+  }
+
+  func refreshConfiguration() async {
+    guard connected, !settingsLoading, !isOffline(), let client else { return }
+    settingsLoading = true
+    settingsError = nil
+    let attempt = generation
+    defer { if generation == attempt { settingsLoading = false } }
+    do {
+      let options = try await client.configurationOptions()
+      guard generation == attempt, connected, !Task.isCancelled else { return }
+      configurationOptions = options
+    } catch {
+      if generation == attempt, !(error is CancellationError) {
+        settingsError = error.localizedDescription
+      }
+    }
+  }
+
+  func setConfigurationOption(id: String, value: JSONValue) {
+    guard connected, !busy, !settingsLoading, !isOffline(), let client else { return }
+    busy = true
+    settingsLoading = true
+    settingsError = nil
+    let attempt = generation
+    operation = Task {
+      do {
+        let options = try await client.setConfigurationOption(id: id, value: value)
+        guard generation == attempt else { return }
+        configurationOptions = options
+      } catch {
+        if generation == attempt { settingsError = error.localizedDescription }
+      }
+      guard generation == attempt else { return }
+      busy = false
+      settingsLoading = false
+      operation = nil
+    }
   }
 
   func manage(title: String?) async throws {
@@ -539,6 +580,9 @@ final class RemoteAgentChat {
     self.client = nil
     Task { await client?.disconnect() }
     connected = false
+    configurationOptions = []
+    settingsLoading = false
+    settingsError = nil
     busy = false
     status = "Disconnected"
     if let connectingHistory {
@@ -601,6 +645,9 @@ final class RemoteAgentChat {
       let kind = object["sessionUpdate"]?.stringValue
     else { return }
     switch kind {
+    case "config_option_update":
+      configurationOptions = RemoteSessionOption.parse(object["configOptions"])
+      return
     case "_pmai/message_snapshot":
       let previous = Dictionary(
         messages.compactMap { message in

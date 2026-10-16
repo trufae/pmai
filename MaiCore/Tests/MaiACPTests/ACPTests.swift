@@ -697,3 +697,92 @@ func acpCancellationRecovery() async throws {
   await client.close()
   await serving.value
 }
+
+@Test("ACP session settings change the next request, persist, and stay scoped to one chat")
+func acpSessionConfiguration() async throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "acp-settings-\(UUID())")
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let runtime = AgentRuntime()
+  let first = ACPSettingsProvider(id: "first")
+  let second = ACPSettingsProvider(id: "second")
+  try await runtime.register(first)
+  try await runtime.register(second)
+  let agent = AgentDefinition(id: "main", instructions: "", provider: "first", model: "a")
+  let (transport, worker) = PipeTransport.pair()
+  let server = ACPServer(
+    runtime: runtime, agent: agent, bridge: ACPPermissionBridge(), sessionDirectory: directory)
+  let serving = Task { await server.serve(on: worker) }
+  let client = JSONRPCPeer(transport: transport)
+  await client.start()
+  _ = try await client.request(
+    ACP.Method.initialize, params: .object(["protocolVersion": .integer(1)]), timeout: 5)
+  let created = try await client.request(
+    ACP.Method.sessionNew, params: .object(["cwd": .string("/tmp")]), timeout: 5)
+  let id = try #require(created.objectValue?["sessionId"]?.stringValue)
+  #expect(
+    RemoteSessionOption.parse(created.objectValue?["configOptions"]).map(\.id) == [
+      "provider", "model", "reasoning",
+    ])
+  func set(_ key: String, _ value: String) async throws -> [RemoteSessionOption] {
+    let result = try await client.request(
+      ACP.Method.sessionSetConfigOption,
+      params: .object([
+        "sessionId": .string(id), "configId": .string(key), "value": .string(value),
+      ]), timeout: 5)
+    return RemoteSessionOption.parse(result.objectValue?["configOptions"])
+  }
+  let switched = try await set("provider", "second")
+  #expect(switched.first(where: { $0.id == "model" })?.currentValue == .string("a"))
+  #expect(switched.first(where: { $0.id == "model" })?.choices.map(\.id) == ["a", "b"])
+  _ = try await set("model", "b")
+  _ = try await set("reasoning", "high")
+  await #expect(throws: JSONRPCError.self) { _ = try await set("model", "invented") }
+  await #expect(throws: JSONRPCError.self) { _ = try await set("tools", "all") }
+  _ = try await client.request(
+    ACP.Method.sessionPrompt,
+    params: .object([
+      "sessionId": .string(id), "prompt": .array([ACP.ContentBlock.text("hello").json]),
+    ]), timeout: 5)
+  #expect(await second.requests.last?.model == "b")
+  #expect(await second.requests.last?.options.reasoningEffort == "high")
+  #expect(await first.requests.isEmpty)
+  let another = try await client.request(
+    ACP.Method.sessionNew, params: .object(["cwd": .string("/tmp")]), timeout: 5)
+  #expect(
+    RemoteSessionOption.parse(another.objectValue?["configOptions"]).first?.currentValue
+      == .string("first"))
+  await client.close()
+  await serving.value
+
+  let (transport2, worker2) = PipeTransport.pair()
+  let restored = ACPServer(
+    runtime: runtime, agent: agent, bridge: ACPPermissionBridge(), sessionDirectory: directory)
+  let serving2 = Task { await restored.serve(on: worker2) }
+  let client2 = JSONRPCPeer(transport: transport2)
+  await client2.start()
+  _ = try await client2.request(
+    ACP.Method.initialize, params: .object(["protocolVersion": .integer(1)]), timeout: 5)
+  let loaded = try await client2.request(
+    ACP.Method.sessionLoad,
+    params: .object([
+      "sessionId": .string(id), "cwd": .string("/tmp"),
+    ]), timeout: 5)
+  let options = RemoteSessionOption.parse(loaded.objectValue?["configOptions"])
+  #expect(options.map(\.currentValue) == [.string("second"), .string("b"), .string("high")])
+  await client2.close()
+  await serving2.value
+}
+
+private actor ACPSettingsProvider: ChatProvider {
+  nonisolated let descriptor: ProviderDescriptor
+  private(set) var requests: [ProviderRequest] = []
+  init(id: String) { descriptor = .init(id: ProviderID(id), displayName: id, defaultModel: "a") }
+  func availableModels() -> [ModelDescriptor] { [.init(id: "a"), .init(id: "b")] }
+  func complete(_ request: ProviderRequest, emit: @escaping ProviderEventHandler) async throws
+    -> ProviderResponse
+  {
+    requests.append(request)
+    return ProviderResponse(message: .assistant("configured"))
+  }
+}
