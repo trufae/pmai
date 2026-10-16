@@ -48,7 +48,7 @@ enum RemoteAddress {
             address, socklen_t(MemoryLayout<sockaddr_in>.size), &buffer,
             .init(buffer.count), nil, 0, NI_NUMERICHOST) == 0
         else { continue }
-        let ip = String(cString: buffer)
+        let ip = String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
         let name = String(cString: interfaceName)
         guard !ip.hasPrefix("169.254."), !ip.hasPrefix("127.") else { continue }
         let physical = name.hasPrefix("en") || name.hasPrefix("eth") || name.hasPrefix("wl")
