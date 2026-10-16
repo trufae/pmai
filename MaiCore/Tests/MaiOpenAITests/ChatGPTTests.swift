@@ -19,6 +19,16 @@ import Testing
         directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
     }
 
+    func signedInStore() throws -> ChatGPTCredentialStore {
+      let store = temporaryStore()
+      var account = ChatGPTCredentials(clientID: "oaiapp_test")
+      account.accessToken = "subscription-token"
+      account.expiresAt = Date().addingTimeInterval(3600)
+      account.scopes = ["chatgpt.tokens.use.direct"]
+      try store.save(account)
+      return store
+    }
+
     @Test func registrationUsesDynamicClientAndStableHost() async throws {
       let store = temporaryStore()
       defer { try? FileManager.default.removeItem(at: store.directory) }
@@ -297,14 +307,10 @@ import Testing
       }
     }
 
-    @Test func providerUsesSubscriptionTokenAndRejectsTruncatedStreams() async throws {
-      let store = temporaryStore()
+    @Test(arguments: ["\n\n", "\n\ndata: [DONE]\n\n"])
+    func providerUsesSubscriptionTokenAndRejectsTruncatedStreams(ending: String) async throws {
+      let store = try signedInStore()
       defer { try? FileManager.default.removeItem(at: store.directory) }
-      var account = ChatGPTCredentials(clientID: "oaiapp_test")
-      account.accessToken = "subscription-token"
-      account.expiresAt = Date().addingTimeInterval(3600)
-      account.scopes = ["chatgpt.tokens.use.direct"]
-      try store.save(account)
       let recorder = URLRequestRecorder()
       StubURLProtocol.install(forHost: "api.openai.com") { request in
         #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer subscription-token")
@@ -320,7 +326,7 @@ import Testing
         return try httpResponse(
           request, contentType: "text/event-stream",
           body:
-            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}" + ending)
       }
       defer { StubURLProtocol.reset(host: "api.openai.com") }
       let provider = ChatGPTProvider(
@@ -335,6 +341,179 @@ import Testing
       let body = try jsonObject(try #require(recorder.body))
       #expect(body["store"] as? Bool == false)
       #expect(body["stream"] as? Bool == true)
+    }
+
+    @Test(arguments: ["\n", "\r\n", "\r"], [true, false])
+    func providerConsumesSeparateResponseEvents(newline: String, stream: Bool) async throws {
+      let store = try signedInStore()
+      defer { try? FileManager.default.removeItem(at: store.directory) }
+      StubURLProtocol.install(forHost: "api.openai.com") { request in
+        try httpResponse(
+          request, contentType: "text/event-stream; charset=utf-8",
+          body: [
+            ": keepalive", "",
+            "event: response.created",
+            #"data: {"type":"response.created","response":{"status":"in_progress"}}"#, "",
+            "event: response.output_text.delta",
+            #"data: {"type":"response.output_text.delta","delta":"Hello 👋"}"#, "",
+            "event: response.completed",
+            #"data: {"type":"response.completed","response":{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello 👋"}]}],"usage":{"input_tokens":4,"output_tokens":2}}}"#,
+            "", "data: [DONE]", "", "",
+          ].joined(separator: newline))
+      }
+      defer { StubURLProtocol.reset(host: "api.openai.com") }
+      let provider = ChatGPTProvider(
+        id: "chatgpt", store: store, auth: ChatGPTAuth(session: stubSession()),
+        session: stubSession())
+      let events = ChatGPTEventRecorder()
+      let response = try await provider.complete(
+        .init(model: "gpt-5.6-luna", messages: [.user("Hi")], stream: stream)
+      ) { await events.append($0) }
+      #expect(response.message.text == "Hello 👋")
+      #expect(response.usage?.inputTokens == 4)
+      #expect(response.stopReason == .stop)
+      let received = await events.events
+      let text = received.compactMap { event -> String? in
+        if case .textDelta(let text) = event { return text }
+        return nil
+      }.joined()
+      #expect(text == (stream ? "Hello 👋" : ""))
+      #expect(
+        received.contains {
+          if case .usage = $0 { return true }
+          return false
+        })
+    }
+
+    @Test(arguments: [
+      (
+        403, "application/json", #"{"detail":"Region is not supported"}"#, "Region is not supported"
+      ),
+      (
+        401, "application/json", #"{"detail":"Direct permission was not accepted"}"#,
+        "Direct permission"
+      ),
+      (
+        400, "application/json",
+        #"{"error":{"code":"subscription_sharing_unsupported_capability","param":"tools","message":"Unsupported tool"}}"#,
+        "parameter: tools"
+      ),
+      (
+        429, "application/json",
+        #"{"error":{"code":"subscription_sharing_usage_limit_exceeded","message":"App limit reached"}}"#,
+        "https://chatgpt.com/settings/usage"
+      ),
+      (
+        503, "application/json", #"{"error":{"code":"subscription_sharing_usage_unavailable"}}"#,
+        "Try again later"
+      ),
+      (502, "text/html", "<html>Bad gateway</html>", "HTTP 502"),
+      (200, "application/json", #"{"output":[]}"#, "expected text/event-stream"),
+      (200, "text/event-stream", "data: not-json\n\n", "malformed JSON"),
+      (200, "text/event-stream", "data: {}\n\n", "missing type"),
+      (
+        200, "text/event-stream",
+        "data: {\"type\":\"response.created\"}\n\ndata: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"subscription_sharing_usage_limit_exceeded\",\"message\":\"App limit reached\"}}}\n\n",
+        "App limit reached"
+      ),
+      (
+        200, "text/event-stream",
+        "data: {\"type\":\"response.incomplete\",\"response\":{\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n",
+        "max_output_tokens"
+      ),
+    ])
+    func providerReportsActionableErrors(
+      status: Int, contentType: String, body: String, expected: String
+    ) async throws {
+      let store = try signedInStore()
+      defer { try? FileManager.default.removeItem(at: store.directory) }
+      StubURLProtocol.install(forHost: "api.openai.com") { request in
+        try httpResponse(
+          request, status: status, contentType: contentType, body: body,
+          headers: ["x-request-id": "req-test"])
+      }
+      defer { StubURLProtocol.reset(host: "api.openai.com") }
+      let provider = ChatGPTProvider(id: "chatgpt", store: store, session: stubSession())
+      do {
+        _ = try await provider.complete(.init(model: "model", messages: [.user("Hi")]))
+        Issue.record("Expected request to fail")
+      } catch let error as ChatGPTError {
+        #expect(error.localizedDescription.contains(expected))
+        #expect(error.localizedDescription.contains("req-test"))
+        if status != 200 { #expect(error.localizedDescription.contains("HTTP \(status)")) }
+      }
+      #expect(try store.load()?.isSignedIn == true)
+    }
+
+    @Test func providerStreamsAndReplaysToolReasoning() async throws {
+      let store = try signedInStore()
+      defer { try? FileManager.default.removeItem(at: store.directory) }
+      let tool = ToolDefinition(
+        name: "files::read", description: "Read", inputSchema: objectSchema(required: ["path"]))
+      let output =
+        #"[{"type":"reasoning","id":"rs_1","encrypted_content":"opaque","summary":[{"type":"summary_text","text":"Read file"}]},{"type":"function_call","id":"fc_1","call_id":"call_1","namespace":"pmai","name":"files_read","arguments":"{\"path\":\"a\"}"}]"#
+      let recorder = URLRequestRecorder()
+      StubURLProtocol.install(forHost: "api.openai.com") { request in
+        recorder.record(request, body: try requestBodyData(request))
+        return try httpResponse(
+          request, contentType: "text/event-stream",
+          body: [
+            #"{"type":"response.created"}"#,
+            #"{"type":"response.reasoning_summary_text.delta","delta":"Read file"}"#,
+            #"{"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","call_id":"call_1","namespace":"pmai","name":"files_read"}}"#,
+            #"{"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"path\":"}"#,
+            #"{"type":"response.function_call_arguments.delta","output_index":1,"delta":"\"a\"}"}"#,
+            "{\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":\(output)}}",
+          ].map { "data: " + $0 + "\n\n" }.joined())
+      }
+      defer { StubURLProtocol.reset(host: "api.openai.com") }
+      let provider = ChatGPTProvider(id: "chatgpt", store: store, session: stubSession())
+      let events = ChatGPTEventRecorder()
+      let response = try await provider.complete(
+        .init(model: "model", messages: [.user("Read a")], tools: [tool])
+      ) { await events.append($0) }
+      #expect(response.stopReason == .toolCall)
+      #expect(response.message.reasoning == "Read file")
+      #expect(response.message.toolCalls.first?.name == "files::read")
+      #expect(response.message.toolCalls.first?.arguments == .object(["path": .string("a")]))
+      let received = await events.events
+      #expect(received.contains(.reasoningDelta("Read file")))
+      let arguments = received.compactMap { event -> String? in
+        if case .toolCallDelta(let delta) = event { return delta.argumentsFragment }
+        return nil
+      }.joined()
+      #expect(arguments == #"{"path":"a"}"#)
+
+      // iOS reconstructs messages without providerState. The call-ID cache
+      // must still supply encrypted reasoning before the next tool turn.
+      var reconstructed = response.message
+      reconstructed.providerState = nil
+      let result = AgentMessage(
+        role: .tool, content: [.toolResult(.init(callID: "call_1", text: "File content"))])
+      _ = try await provider.complete(
+        .init(model: "model", messages: [.user("Read a"), reconstructed, result], tools: [tool]))
+      let replay = try JSONDecoder().decode(JSONValue.self, from: #require(recorder.body))
+      let input = try #require(replay["input"]?.arrayValue)
+      #expect(
+        input.map { $0["type"]?.stringValue } == [
+          "message", "reasoning", "function_call", "function_call_output",
+        ])
+      #expect(input[1]["encrypted_content"] == .string("opaque"))
+      #expect(input[2]["call_id"] == input[3]["call_id"])
+      #expect(input[2]["namespace"] == .string("pmai"))
+    }
+
+    @Test func streamEmitsRefusalsWithoutDuplicatingFinalText() async throws {
+      var parser = ChatGPTResponseStream(resolver: .init(tools: []))
+      let events = ChatGPTEventRecorder()
+      _ = try await parser.feed(
+        #"{"type":"response.refusal.delta","delta":"I cannot help with that."}"#
+      ) { await events.append($0) }
+      let response = try await parser.feed(
+        #"{"type":"response.completed","response":{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"refusal","refusal":"I cannot help with that."}]}]}}"#
+      ) { await events.append($0) }
+      #expect(response?.message.text == "I cannot help with that.")
+      #expect(await events.events == [.textDelta("I cannot help with that.")])
     }
   }
 

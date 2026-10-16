@@ -37,8 +37,9 @@ public final class ChatGPTProvider: ChatProvider, @unchecked Sendable {
     let (data, response) = try await session.data(
       for: request, delegate: ProviderRedirectDelegate(originalRequest: request))
     try Self.validate(response, data: data)
-    let root = try JSONDecoder().decode([String: JSONValue].self, from: data)
-    guard let models = root["models"]?.arrayValue else {
+    guard let root = try? JSONDecoder().decode([String: JSONValue].self, from: data),
+      let models = root["models"]?.arrayValue
+    else {
       throw ChatGPTError.message("ChatGPT returned an invalid model catalog.")
     }
     return models.compactMap { value in
@@ -76,9 +77,13 @@ public final class ChatGPTProvider: ChatProvider, @unchecked Sendable {
       for: http, delegate: ProviderRedirectDelegate(originalRequest: http))
     #if !canImport(FoundationNetworking)
       let task = bytes.task
+      defer { task.cancel() }
     #endif
     return try await withTaskCancellationHandler {
-      guard let status = (response as? HTTPURLResponse)?.statusCode, (200..<300).contains(status)
+      let httpResponse = response as? HTTPURLResponse
+      let contentType = httpResponse?.mimeType?.lowercased()
+      guard let status = httpResponse?.statusCode, (200..<300).contains(status),
+        contentType == "text/event-stream"
       else {
         var data = Data()
         for try await byte in bytes {
@@ -86,29 +91,27 @@ public final class ChatGPTProvider: ChatProvider, @unchecked Sendable {
           data.append(byte)
         }
         try Self.validate(response, data: data)
-        throw ChatGPTError.message("ChatGPT returned an invalid response.")
+        let root = try? JSONDecoder().decode(JSONValue.self, from: data)
+        throw Self.failure(
+          root?["error"] ?? root, status: httpResponse?.statusCode,
+          requestID: httpResponse?.value(forHTTPHeaderField: "x-request-id"),
+          fallback:
+            "ChatGPT returned \(contentType ?? "no content type"); expected text/event-stream.")
       }
-      var parser = ChatGPTResponseStream(resolver: resolver)
-      var eventLines: [String] = []
-      for try await line in bytes.lines {
+      var parser = ChatGPTResponseStream(
+        resolver: resolver, requestID: httpResponse?.value(forHTTPHeaderField: "x-request-id"))
+      var events = ChatGPTEventStream()
+      for try await byte in bytes {
         try Task.checkCancellation()
-        if line.isEmpty {
-          if !eventLines.isEmpty {
-            if let result = try await parser.feed(
-              eventLines.joined(separator: "\n"), emit: streamEmit)
-            {
-              ChatGPTReasoningCache.shared.remember(
-                account: store.identity, message: result.message)
-              return result
-            }
-            eventLines.removeAll(keepingCapacity: true)
-          }
-        } else if line.hasPrefix("data:") {
-          eventLines.append(String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces))
+        if let payload = try events.consume(byte),
+          let result = try await parser.feed(payload, emit: streamEmit)
+        {
+          ChatGPTReasoningCache.shared.remember(account: store.identity, message: result.message)
+          return result
         }
       }
-      if !eventLines.isEmpty,
-        let result = try await parser.feed(eventLines.joined(separator: "\n"), emit: streamEmit)
+      if let payload = try events.finish(),
+        let result = try await parser.feed(payload, emit: streamEmit)
       {
         ChatGPTReasoningCache.shared.remember(account: store.identity, message: result.message)
         return result
@@ -297,36 +300,59 @@ public final class ChatGPTProvider: ChatProvider, @unchecked Sendable {
       throw ChatGPTError.message("Expected an HTTP response from ChatGPT.")
     }
     if (200..<300).contains(status) { return }
-    if status == 401 { throw ChatGPTError.signInRequired }
     let root = try? JSONDecoder().decode(JSONValue.self, from: data)
-    throw failure(root?["error"])
+    let fallback =
+      status == 401
+      ? ChatGPTError.signInRequired.localizedDescription
+      : "ChatGPT request failed: \(HTTPURLResponse.localizedString(forStatusCode: status))."
+    throw failure(
+      root?["error"] ?? root, status: status,
+      requestID: (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "x-request-id"),
+      fallback: fallback)
   }
 
-  static func failure(_ error: JSONValue?) -> ChatGPTError {
+  static func failure(
+    _ error: JSONValue?, status: Int? = nil, requestID: String? = nil,
+    fallback: String = "ChatGPT request failed."
+  ) -> ChatGPTError {
     let code = error?["code"]?.stringValue ?? ""
-    if code.contains("usage_limit") || code == "subscription_sharing_usage_unavailable" {
-      return .message(
-        "ChatGPT plan usage is unavailable or its limit was reached. Manage usage at https://chatgpt.com/settings/usage."
-      )
+    var message =
+      error?["message"]?.stringValue ?? error?["detail"]?.stringValue
+      ?? error?.stringValue ?? fallback
+    if code.contains("usage_limit") {
+      message += " Manage ChatGPT plan usage at https://chatgpt.com/settings/usage."
+    } else if code == "subscription_sharing_usage_unavailable" {
+      message += " ChatGPT usage could not be checked. Try again later."
     }
-    return .message(
-      error?["message"]?.stringValue
-        ?? "ChatGPT request failed. Check your plan access and sign in again if needed.")
+    var details: [String] = []
+    if let status { details.append("HTTP \(status)") }
+    if !code.isEmpty { details.append("code: \(code)") }
+    if let param = error?["param"]?.stringValue { details.append("parameter: \(param)") }
+    if let requestID { details.append("request: \(requestID)") }
+    if !details.isEmpty { message += " (" + details.joined(separator: "; ") + ")" }
+    return .message(message)
   }
 }
 
 struct ChatGPTResponseStream {
   let resolver: ToolNameResolver
+  var requestID: String? = nil
   var text = ""
   var reasoning = ""
 
   mutating func feed(_ payload: String, emit: ProviderEventHandler) async throws
     -> ProviderResponse?
   {
-    guard payload != "[DONE]" else { return nil }
-    let root = try JSONDecoder().decode(JSONValue.self, from: Data(payload.utf8))
-    switch root["type"]?.stringValue {
-    case "response.output_text.delta":
+    guard !payload.isEmpty, payload != "[DONE]" else { return nil }
+    guard let root = try? JSONDecoder().decode(JSONValue.self, from: Data(payload.utf8)),
+      let type = root["type"]?.stringValue
+    else {
+      throw ChatGPTProvider.failure(
+        nil, requestID: requestID,
+        fallback: "ChatGPT returned malformed JSON or a missing type in a response event.")
+    }
+    switch type {
+    case "response.output_text.delta", "response.refusal.delta":
       let delta = root["delta"]?.stringValue ?? ""
       text += delta
       await emit(.textDelta(delta))
@@ -350,10 +376,15 @@ struct ChatGPTResponseStream {
             index: root["output_index"]?.intValue ?? 0,
             argumentsFragment: root["delta"]?.stringValue ?? "")))
     case "error", "response.failed":
-      throw ChatGPTProvider.failure(root["response"]?["error"] ?? root["error"] ?? root)
+      throw ChatGPTProvider.failure(
+        root["response"]?["error"] ?? root["error"] ?? root, requestID: requestID)
     case "response.incomplete":
-      throw ChatGPTError.message(
-        "ChatGPT response was incomplete. Try again or reduce the request size.")
+      let reason = root["response"]?["incomplete_details"]?["reason"]?.stringValue
+      throw ChatGPTProvider.failure(
+        nil, requestID: requestID,
+        fallback:
+          "ChatGPT response was incomplete\(reason.map { ": " + $0 } ?? ""). Try again or reduce the request size."
+      )
     case "response.completed":
       guard let response = root["response"], response["status"]?.stringValue == "completed",
         let output = response["output"]?.arrayValue
