@@ -288,9 +288,7 @@ final class RemoteAgentStore {
       folders[index].updatedAt = [folders[index].updatedAt, latest[folders[index].cwd]]
         .compactMap { $0 }.max()
     }
-    let pins = host.pinnedFolderPaths ?? []
-    return pins.compactMap { path in folders.first { $0.cwd == path } }
-      + folders.filter { !pins.contains($0.cwd) }
+    return FolderPinning.ordered(folders, pins: host.pinnedFolderPaths ?? [], id: \.cwd)
   }
 
   func toggleFolderPin(hostID: UUID, cwd: String) {
@@ -298,7 +296,7 @@ final class RemoteAgentStore {
       folders(for: connections[index]).contains(where: { $0.cwd == cwd })
     else { return }
     var pins = connections[index].pinnedFolderPaths ?? []
-    if pins.contains(cwd) { pins.removeAll { $0 == cwd } } else { pins.append(cwd) }
+    FolderPinning.toggle(cwd, in: &pins)
     connections[index].pinnedFolderPaths = pins.isEmpty ? nil : pins
     do { try save() } catch { self.error = error.localizedDescription }
   }

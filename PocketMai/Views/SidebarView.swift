@@ -43,7 +43,8 @@ struct ConversationFoldersView: View {
             subtitle: "\(count) conversation\(count == 1 ? "" : "s")",
             systemImage: folder.systemImage,
             iconColor: folder.tint?.swatchColor,
-            isSelected: isSelected
+            isSelected: isSelected,
+            isPinned: store.isFolderPinned(folder.id)
           ) {
             onSelectFolder(folder.id)
           }
@@ -51,7 +52,10 @@ struct ConversationFoldersView: View {
           .listRowBackground(SidebarRowBackground(isSelected: isSelected))
           .listRowSeparator(.hidden)
           .contextMenu {
-            Button("Browse Files…", systemImage: "folder") { onBrowseFiles(folder.id) }
+            SidebarFolderActions(
+              isPinned: store.isFolderPinned(folder.id),
+              togglePin: { store.toggleFolderPin(folder.id) },
+              browseFiles: { onBrowseFiles(folder.id) })
           }
         }
 
@@ -2235,6 +2239,24 @@ struct FloatingActionPill: View {
           tint: prominent ? Color.accentColor.opacity(0.16) : nil))
     }
     .buttonStyle(.plain)
+  }
+}
+
+struct SidebarFolderActions: View {
+  let isPinned: Bool
+  let togglePin: () -> Void
+  let browseFiles: () -> Void
+  var browseFilesDisabled = false
+  var path: String? = nil
+
+  var body: some View {
+    Button(isPinned ? "Unpin Folder" : "Pin to Top", systemImage: isPinned ? "pin.slash" : "pin",
+      action: togglePin)
+    Button("Browse Files…", systemImage: "folder", action: browseFiles)
+      .disabled(browseFilesDisabled)
+    if let path {
+      Button("Copy Path", systemImage: "doc.on.doc") { UIPasteboard.general.string = path }
+    }
   }
 }
 
