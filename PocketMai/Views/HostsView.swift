@@ -157,17 +157,13 @@ struct RemoteFoldersView: View {
         }
         .listRowBackground(SidebarRowBackground(isSelected: selected)).listRowSeparator(.hidden)
         .contextMenu {
-          Button(pinned ? "Unpin Folder" : "Pin to Top", systemImage: pinned ? "pin.slash" : "pin")
-          {
-            hosts.toggleFolderPin(folder.cwd)
-          }
-          Button("Browse Files…", systemImage: "folder") { onBrowseFiles(folder.cwd) }
-            .disabled(
-              hosts.selectedHost?.requiresApproval == true
-                || hosts.selectedHost?.backend == .openCode || isOffline)
-          Button("Copy Path", systemImage: "doc.on.doc") {
-            UIPasteboard.general.string = folder.cwd
-          }
+          SidebarFolderActions(
+            isPinned: pinned,
+            togglePin: { hosts.toggleFolderPin(folder.cwd) },
+            browseFiles: { onBrowseFiles(folder.cwd) },
+            browseFilesDisabled: hosts.selectedHost?.requiresApproval == true
+              || hosts.selectedHost?.backend == .openCode || isOffline,
+            path: folder.cwd)
         }
       }
       if hosts.loading {

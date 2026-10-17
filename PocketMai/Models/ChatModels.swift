@@ -1141,6 +1141,20 @@ struct ConversationFolderDefaults: Codable, Equatable, Sendable {
   }
 }
 
+/// Shared pin order for local folder IDs and remote workspace paths.
+enum FolderPinning {
+  static func ordered<Folder>(_ folders: [Folder], pins: [String], id: KeyPath<Folder, String>)
+    -> [Folder]
+  {
+    pins.compactMap { pin in folders.first { $0[keyPath: id] == pin } }
+      + folders.filter { !pins.contains($0[keyPath: id]) }
+  }
+
+  static func toggle(_ id: String, in pins: inout [String]) {
+    if pins.contains(id) { pins.removeAll { $0 == id } } else { pins.append(id) }
+  }
+}
+
 struct ConversationFolder: Identifiable, Codable, Equatable, Sendable {
   static let defaultID = "default"
   static let iCloudID = "icloud"
@@ -3132,6 +3146,7 @@ struct AppSettings: Codable, Equatable, Sendable {
   var openAPIServer: OpenAPIServerSettings = OpenAPIServerSettings()
   var recentChatLanguageIdentifiers: [String] = []
   var conversationFolders: [ConversationFolder] = []
+  var pinnedConversationFolderIDs: [String] = []
   var conversationFolderDefaults: [String: ConversationFolderDefaults] = [:]
   var selectedConversationFolderID: String = ConversationFolder.defaultID
   /// Named sets of the agent-scoped settings; see `AgentSettings`. The
@@ -3322,6 +3337,7 @@ struct AppSettings: Codable, Equatable, Sendable {
     case openAPIServer
     case recentChatLanguageIdentifiers
     case conversationFolders, conversationFolderDefaults, selectedConversationFolderID
+    case pinnedConversationFolderIDs
     case agents, selectedAgentID, plansBeforeDelegating, taskAgents, openAIModelID
   }
 
@@ -3463,6 +3479,11 @@ struct AppSettings: Codable, Equatable, Sendable {
       Set(
         [ConversationFolder.defaultID, ConversationFolder.iCloudID, ConversationFolder.archivedID]
           + conversationFolders.map(\.id))
+    var seenFolderPins: Set<String> = []
+    pinnedConversationFolderIDs =
+      ((try? c.decode([String].self, forKey: .pinnedConversationFolderIDs)) ?? []).filter {
+        knownConversationFolderIDs.contains($0) && seenFolderPins.insert($0).inserted
+      }
     selectedConversationFolderID =
       knownConversationFolderIDs.contains(decodedConversationFolderID)
       ? decodedConversationFolderID : ConversationFolder.defaultID

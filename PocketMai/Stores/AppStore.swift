@@ -590,11 +590,20 @@ final class AppStore: ObservableObject {
   }
 
   var conversationFolders: [ConversationFolder] {
-    [
-      ConversationFolder.defaultFolder,
-      ConversationFolder.iCloudFolder,
-      ConversationFolder.archivedFolder,
-    ] + settings.conversationFolders
+    FolderPinning.ordered(
+      [ConversationFolder.defaultFolder, ConversationFolder.iCloudFolder,
+       ConversationFolder.archivedFolder] + settings.conversationFolders,
+      pins: settings.pinnedConversationFolderIDs, id: \.id)
+  }
+
+  func isFolderPinned(_ id: String) -> Bool {
+    settings.pinnedConversationFolderIDs.contains(id)
+  }
+
+  func toggleFolderPin(_ id: String) {
+    guard conversationFolders.contains(where: { $0.id == id }) else { return }
+    FolderPinning.toggle(id, in: &settings.pinnedConversationFolderIDs)
+    saveSettings()
   }
 
   var customConversationFolders: [ConversationFolder] {
@@ -836,6 +845,7 @@ final class AppStore: ObservableObject {
     }
     await loadStoredConversationsForSearch()
     settings.conversationFolders.removeAll { $0.id == id }
+    settings.pinnedConversationFolderIDs.removeAll { $0 == id }
     settings.conversationFolderDefaults.removeValue(forKey: id)
     if settings.selectedConversationFolderID == id {
       settings.selectedConversationFolderID = ConversationFolder.defaultID

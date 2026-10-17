@@ -28,6 +28,51 @@ final class ConversationFolderTests: XCTestCase {
     try await super.tearDown()
   }
 
+  func testFolderPinsPersistInPinOrderAndSurviveRenaming() async throws {
+    let first = try XCTUnwrap(store.createConversationFolder(named: "One"))
+    let second = try XCTUnwrap(store.createConversationFolder(named: "Two"))
+    let originalOrder = store.conversationFolders.map(\.id)
+    let selection = store.selectedConversationFolderID
+    store.toggleFolderPin(second.id)
+    store.toggleFolderPin(first.id)
+    store.toggleFolderPin(ConversationFolder.archivedID)
+    store.toggleFolderPin("missing-folder")
+    let pins = [second.id, first.id, ConversationFolder.archivedID]
+    XCTAssertEqual(store.settings.pinnedConversationFolderIDs, pins)
+    XCTAssertEqual(store.conversationFolders.map(\.id),
+      pins + [ConversationFolder.defaultID, ConversationFolder.iCloudID])
+    XCTAssertEqual(store.selectedConversationFolderID, selection)
+    store.renameConversationFolder(id: second.id, to: "Renamed")
+    XCTAssertTrue(store.isFolderPinned(second.id))
+    XCTAssertEqual(store.conversationFolders.first?.displayName, "Renamed")
+    try await waitUntil { persistence.loadSettings().pinnedConversationFolderIDs == pins }
+    let restored = AppStore(persistence: persistence)
+    try await waitUntil { restored.hasLoadedPersistedSettings }
+    XCTAssertEqual(restored.conversationFolders.map(\.id), store.conversationFolders.map(\.id))
+
+    for id in pins { store.toggleFolderPin(id) }
+    XCTAssertEqual(store.conversationFolders.map(\.id), originalOrder)
+    try await waitUntil { persistence.loadSettings().pinnedConversationFolderIDs.isEmpty }
+    store.toggleFolderPin(second.id)
+    await store.deleteConversationFolder(id: second.id)
+    XCTAssertFalse(store.isFolderPinned(second.id))
+    try await waitUntil {
+      let settings = persistence.loadSettings()
+      return settings.pinnedConversationFolderIDs.isEmpty
+        && !settings.conversationFolders.contains { $0.id == second.id }
+    }
+  }
+
+  func testFolderPinDecodingSupportsOldSettingsAndRemovesStaleDuplicates() throws {
+    let legacy = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
+    XCTAssertTrue(legacy.pinnedConversationFolderIDs.isEmpty)
+    let data = Data(#"{"pinnedConversationFolderIDs":["archived","missing","archived","default"]}"#.utf8)
+    let settings = try JSONDecoder().decode(AppSettings.self, from: data)
+    XCTAssertEqual(settings.pinnedConversationFolderIDs, ["archived", "default"])
+    let roundTrip = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
+    XCTAssertEqual(roundTrip.pinnedConversationFolderIDs, settings.pinnedConversationFolderIDs)
+  }
+
   func testEmptyFoldersPersistAndRemainMoveDestinations() async throws {
     let conversation = try XCTUnwrap(store.currentConversation)
     let folder = try XCTUnwrap(store.createConversationFolder(named: "  Work\n"))
