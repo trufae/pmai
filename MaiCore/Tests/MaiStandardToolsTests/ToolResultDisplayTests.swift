@@ -76,7 +76,7 @@ func toolResultImportanceForFiles() {
     configuration: MaiFileWorkspaceConfiguration(rootURL: URL(fileURLWithPath: "/tmp")),
     includeLineRangeEdits: true)
   let edits: Set<MaiFileWorkspaceTool.Operation> = [
-    .setFunction, .replaceRange, .patch, .write, .rename, .delete,
+    .setFunction, .replaceRange, .patch, .mkdir, .write, .rename, .delete,
   ]
   for tool in tools {
     #expect(tool.definition.annotations.resultImportance ==

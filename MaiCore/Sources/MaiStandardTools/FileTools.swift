@@ -61,6 +61,7 @@ public struct MaiFileWorkspaceTool: AgentTool {
     case readRange = "files_read_range"
     case replaceRange = "files_replace_range"
     case patch = "files_patch"
+    case mkdir = "files_mkdir"
     case write = "files_write"
     case rename = "files_rename"
     case delete = "files_delete"
@@ -69,7 +70,7 @@ public struct MaiFileWorkspaceTool: AgentTool {
       switch self {
       case .list, .find, .grep, .read, .readIndex, .getFunction, .readRange:
         false
-      case .setFunction, .replaceRange, .patch, .write, .rename, .delete: true
+      case .setFunction, .replaceRange, .patch, .mkdir, .write, .rename, .delete: true
       }
     }
   }
@@ -188,6 +189,8 @@ public struct MaiFileWorkspaceTool: AgentTool {
         return try workspace.replaceRange(arguments)
       case .patch:
         return try workspace.patch(arguments)
+      case .mkdir:
+        return try workspace.createDirectory(arguments)
       case .write:
         return try workspace.write(arguments)
       case .rename:
@@ -212,7 +215,10 @@ public struct MaiFileWorkspaceTool: AgentTool {
     for operation: Operation,
     workspaceName: String
   ) -> ToolDefinition {
-    let path = ToolParameterDef(name: "path", type: "string", description: "File path.", required: true)
+    let path = ToolParameterDef(
+      name: "path", type: "string",
+      description: "Exact file or folder path, relative to the working folder or absolute inside it. Wildcards are not expanded.",
+      required: true)
     switch operation {
     case .list:
       return ToolDefinition(
@@ -426,6 +432,14 @@ public struct MaiFileWorkspaceTool: AgentTool {
         annotations: ToolAnnotations(
           readOnly: false, idempotent: false, openWorld: false, approval: .confirm,
           resultImportance: .important))
+    case .mkdir:
+      return ToolDefinition(
+        name: operation.rawValue,
+        description: "Create a folder and any missing parent folders in the working folder. Only path is needed, for example {\"path\":\"notes/reports\"}. Succeeds if the directory already exists; never replaces a file.",
+        parameters: [path],
+        annotations: ToolAnnotations(
+          readOnly: false, idempotent: true, openWorld: false, approval: .confirm,
+          resultImportance: .important))
     case .write:
       return ToolDefinition(
         name: operation.rawValue,
@@ -434,13 +448,13 @@ public struct MaiFileWorkspaceTool: AgentTool {
           + "Use mode: 'create' to create a new file (default, fails if it already exists), "
           + "mode: 'append' to add content to the end, or mode: 'overwrite' to replace the entire contents. "
           + "To edit part of a file, use files_patch instead. "
-          + "Set create_directory: true to create a folder.",
+          + "Use files_mkdir to create folders; create_directory: true is also supported. Missing parent folders are created automatically.",
         parameters: [
           path,
           ToolParameterDef(
             name: "content",
             type: "string",
-            description: "The complete contents, or the text to append. Omit for a folder.",
+            description: "The complete contents, or the text to append. Required for a file; an empty string creates an empty file. Omit only when create_directory is true.",
             required: false),
           ToolParameterDef(
             name: "mode",
@@ -470,13 +484,13 @@ public struct MaiFileWorkspaceTool: AgentTool {
     case .delete:
       return ToolDefinition(
         name: operation.rawValue,
-        description: "Delete a file or folder.",
+        description: "Delete a file of any type (including binary files), a symbolic link, or an empty folder at an exact path. To delete a folder and all its contents, pass recursive=true. Use files_list/files_find to locate paths first; wildcards and lists of paths are not supported. Cannot delete the workspace root. A symbolic link is removed without deleting its target.",
         parameters: [
           path,
           ToolParameterDef(
             name: "recursive",
             type: "boolean",
-            description: "Allow deletion of a non-empty directory. Default: false.",
+            description: "Set true to delete a folder and everything inside it. Not needed for files, symbolic links or empty folders. Default: false.",
             required: false),
         ],
         annotations: ToolAnnotations(
@@ -598,6 +612,10 @@ struct MaiFileWorkspace: Sendable {
         ? [.fileSizeKey, .isDirectoryKey, .isSymbolicLinkKey] : [],
       options: [.skipsHiddenFiles]
     )
+    // Foundation may return /private/var aliases even when directory uses
+    // /var. Rebuild entries from that checked parent, including broken links
+    // whose standardizedFileURL cannot normalize the alias on its own.
+    .map { directory.appendingPathComponent($0.lastPathComponent) }
     .filter { isInside($0) }
     .filter {
       directory.path != rootURL.path
@@ -611,10 +629,12 @@ struct MaiFileWorkspace: Sendable {
     let rows: [JSONValue] = visible.map { entry in
       let values = try? entry.resourceValues(
         forKeys: [.fileSizeKey, .isDirectoryKey, .isSymbolicLinkKey])
+      let isSymbolicLink = values?.isSymbolicLink
+        ?? ((try? FileManager.default.destinationOfSymbolicLink(atPath: entry.path)) != nil)
       return .object([
         "path": .string(relativePath(entry)),
         "kind": .string(
-          values?.isSymbolicLink == true
+          isSymbolicLink
             ? "symlink" : values?.isDirectory == true ? "directory" : "file"),
         "bytes": .integer(values?.fileSize ?? 0),
       ])
@@ -1289,15 +1309,29 @@ struct MaiFileWorkspace: Sendable {
     return .patchMatchCount(expected, actual, displayPath(path), hint)
   }
 
-  func write(_ arguments: [String: JSONValue]) throws -> ToolOutput {
+  func createDirectory(_ arguments: [String: JSONValue]) throws -> ToolOutput {
     try requireWriteAccess()
     let rawPath = try requiredPath(arguments, key: "path")
     let destination = try resolve(rawPath, allowRoot: false, mustExist: false)
-    if arguments["create_directory"]?.coercedBoolValue == true {
-      try requireCreatedParentsAllowed(destination)
-      try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
-      return mutationOutput("Created directory \(displayPath(rawPath))", path: rawPath)
+    var isDirectory: ObjCBool = false
+    if FileManager.default.fileExists(atPath: destination.path, isDirectory: &isDirectory) {
+      guard isDirectory.boolValue else {
+        throw MaiFileWorkspaceError.notDirectory(displayPath(rawPath))
+      }
+      return mutationOutput("Directory already exists: \(displayPath(rawPath))", path: rawPath)
     }
+    try requireCreatedParentsAllowed(destination)
+    try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+    return mutationOutput("Created directory \(displayPath(rawPath))", path: rawPath)
+  }
+
+  func write(_ arguments: [String: JSONValue]) throws -> ToolOutput {
+    try requireWriteAccess()
+    if arguments["create_directory"]?.coercedBoolValue == true {
+      return try createDirectory(arguments)
+    }
+    let rawPath = try requiredPath(arguments, key: "path")
+    let destination = try resolve(rawPath, allowRoot: false, mustExist: false)
     guard let content = arguments["content"]?.stringValue else {
       throw MaiFileWorkspaceError.missingArgument("content")
     }
@@ -1354,7 +1388,7 @@ struct MaiFileWorkspace: Sendable {
     try requireWriteAccess()
     let rawPath = try requiredPath(arguments, key: "path")
     let newPath = try requiredPath(arguments, key: "new_path")
-    let source = try resolve(rawPath, allowRoot: false, mustExist: true)
+    let source = try resolve(rawPath, allowRoot: false, mustExist: true, followFinalSymlink: false)
     let destination = try resolve(newPath, allowRoot: false, mustExist: false)
     guard !FileManager.default.fileExists(atPath: destination.path) else {
       throw MaiFileWorkspaceError.alreadyExists(displayPath(newPath))
@@ -1389,10 +1423,11 @@ struct MaiFileWorkspace: Sendable {
   func delete(_ arguments: [String: JSONValue]) throws -> ToolOutput {
     try requireWriteAccess()
     let rawPath = try requiredPath(arguments, key: "path")
-    let target = try resolve(rawPath, allowRoot: false, mustExist: true)
+    let target = try resolve(rawPath, allowRoot: false, mustExist: true, followFinalSymlink: false)
+    let isSymbolicLink = (try? FileManager.default.destinationOfSymbolicLink(atPath: target.path)) != nil
     var isDirectory: ObjCBool = false
     _ = FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory)
-    if isDirectory.boolValue, arguments["recursive"]?.coercedBoolValue != true {
+    if !isSymbolicLink, isDirectory.boolValue, arguments["recursive"]?.coercedBoolValue != true {
       let entries = try FileManager.default.contentsOfDirectory(atPath: target.path)
       guard entries.isEmpty else {
         throw MaiFileWorkspaceError.recursiveRequired(displayPath(rawPath))
@@ -1526,7 +1561,8 @@ struct MaiFileWorkspace: Sendable {
     _ rawPath: String,
     allowRoot: Bool,
     mustExist: Bool,
-    preserveWhitespace: Bool = false
+    preserveWhitespace: Bool = false,
+    followFinalSymlink: Bool = true
   ) throws -> URL {
     let trimmed =
       preserveWhitespace ? rawPath : rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1538,7 +1574,12 @@ struct MaiFileWorkspace: Sendable {
         URL(fileURLWithPath: AgentHome.expandUserPath(trimmed))
         .standardizedFileURL
       if !isInside(candidate) {
-        candidate = candidate.resolvingSymlinksInPath().standardizedFileURL
+        if !followFinalSymlink {
+          candidate = candidate.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
+            .appendingPathComponent(candidate.lastPathComponent).standardizedFileURL
+        } else {
+          candidate = candidate.resolvingSymlinksInPath().standardizedFileURL
+        }
       }
     } else {
       candidate =
@@ -1546,12 +1587,25 @@ struct MaiFileWorkspace: Sendable {
         .standardizedFileURL
     }
     guard isInside(candidate) else { throw MaiFileWorkspaceError.outsideWorkspace(rawPath) }
+    // Rename/delete operate on the directory entry itself, including dangling
+    // symlinks. Resolve its parents, but never turn unlink into target deletion.
+    if !followFinalSymlink,
+      (try? FileManager.default.destinationOfSymbolicLink(atPath: candidate.path)) != nil
+    {
+      let entry = candidate.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
+        .appendingPathComponent(candidate.lastPathComponent).standardizedFileURL
+      guard isInside(entry) else { throw MaiFileWorkspaceError.outsideWorkspace(rawPath) }
+      return entry
+    }
     guard allowRoot || !isWorkspaceRoot(candidate) else {
       throw MaiFileWorkspaceError.rootNotAllowed
     }
     if FileManager.default.fileExists(atPath: candidate.path) {
       let resolved = candidate.resolvingSymlinksInPath().standardizedFileURL
       guard isInside(resolved) else { throw MaiFileWorkspaceError.outsideWorkspace(rawPath) }
+      guard allowRoot || !isWorkspaceRoot(resolved) else {
+        throw MaiFileWorkspaceError.rootNotAllowed
+      }
       return resolved
     }
     guard !mustExist else { throw MaiFileWorkspaceError.notFound(displayPath(rawPath)) }
@@ -1903,7 +1957,10 @@ struct MaiFileWorkspace: Sendable {
   }
 
   private func relativePath(_ url: URL) -> String {
-    let resolvedPath = url.resolvingSymlinksInPath().standardizedFileURL.path
+    // Listings must name the entry itself so deleting a listed link cannot
+    // accidentally turn into deleting its target.
+    let resolvedPath = url.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
+      .appendingPathComponent(url.lastPathComponent).standardizedFileURL.path
     if resolvedPath == rootURL.path { return "." }
     if resolvedPath.hasPrefix(rootURL.path + "/") {
       return String(resolvedPath.dropFirst(rootURL.path.count + 1))

@@ -1670,7 +1670,7 @@ struct SettingsView: View {
         "Enable Files tools",
         isOn: settingsBinding(\.toolSettings.filesWorkspaceAccessEnabled))
       Text(
-        "The shared callable Files tools can list folders, find approximate file names, grep text, read, write, append, rename, and delete UTF-8 files in the chat's working folder. That is FilesData unless a chat picks a custom folder (for example from iCloud Drive) via the + menu, or a chat folder sets a default working folder in Manage Folders. Writes can create folders. files_read_document also reads Word (.docx) and PDF files as Markdown and JSON files as an indented outline. Downloaded MLX models are visible in the iOS Files app under Models, but unavailable to FilesData tools."
+        "The assistant can create folders, list and find files, read and edit text, rename entries, and delete files of any type in the chat's working folder. Creating nested folders and deleting non-empty folders are supported by the basic tools. The working folder is FilesData unless the chat selects another folder, such as iCloud Drive, from the + menu or inherits one from Manage Folders. Documents can be read as Markdown and images as text using OCR. Downloaded MLX models are visible in the iOS Files app under Models, but unavailable to FilesData tools."
       )
       .font(.caption)
       .foregroundStyle(.secondary)

@@ -136,7 +136,10 @@ extension AgentTooling {
       guard let normalized = normalizeValue(value, for: parameter) else {
         continue
       }
-      if !parameter.required, isDefaultOptionalValue(normalized, for: parameter) {
+      // files_write makes content optional for its legacy mkdir mode, but an
+      // explicitly empty (or whitespace-only) file body is still meaningful.
+      let isFileContent = tool.name == "files_write" && name == "content"
+      if !isFileContent, !parameter.required, isDefaultOptionalValue(normalized, for: parameter) {
         continue
       }
       result[name] = normalized

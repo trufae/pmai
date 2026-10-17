@@ -23,6 +23,7 @@ enum BuiltInToolCatalog {
   static func execute(
     call: ParsedToolCall,
     conversation: Conversation,
+    settings: AppSettings,
     store: AppStore
   ) async -> String? {
     switch call.name {
@@ -80,15 +81,12 @@ enum BuiltInToolCatalog {
       }
       return await PocketMaiPluginHost.shared.call(
         tool: tool, arguments: call.argumentValues)
-    case FileWorkspaceTool.listName, FileWorkspaceTool.findName, FileWorkspaceTool.grepName,
-      FileWorkspaceTool.readName, FileWorkspaceTool.readIndexName,
-      FileWorkspaceTool.readRangeName, FileWorkspaceTool.replaceRangeName,
-      FileWorkspaceTool.patchName,
-      FileWorkspaceTool.writeName, FileWorkspaceTool.renameName, FileWorkspaceTool.deleteName:
+    case let name where MaiFileWorkspaceTool.Operation(rawValue: name) != nil:
       return await executeFileWorkspaceTool(
-        name: call.name,
+        name: name,
         arguments: call.argumentValues,
         conversation: conversation,
+        settings: settings,
         store: store)
     case CalendarTool.readName:
       return await CalendarTool.readEvents(arguments: call.argumentValues)
@@ -136,14 +134,15 @@ enum BuiltInToolCatalog {
     name: String,
     arguments: [String: AgentToolArgumentValue],
     conversation: Conversation,
+    settings: AppSettings,
     store: AppStore
   ) async -> String {
-    guard fileWorkspaceToolsEnabled(conversation: conversation, settings: store.settings) else {
+    guard fileWorkspaceToolsEnabled(conversation: conversation, settings: settings) else {
       return "Error: Files tools are disabled in Files settings."
     }
     let context: FileWorkspaceContext
     do {
-      let resolved = try FileWorkspaceTool.context(for: conversation, settings: store.settings)
+      let resolved = try FileWorkspaceTool.context(for: conversation, settings: settings)
       if let refreshed = resolved.refreshedBookmarkData {
         store.refreshWorkingFolderBookmark(
           conversationID: conversation.id, bookmarkData: refreshed)
@@ -151,7 +150,7 @@ enum BuiltInToolCatalog {
       context = resolved.context
     } catch {
       let workspaceName = FileWorkspaceTool.workspaceName(
-        for: conversation, settings: store.settings)
+        for: conversation, settings: settings)
       return
         "Error: working folder '\(workspaceName)' is no longer accessible. Select it again from the chat's + menu."
     }
@@ -502,6 +501,7 @@ enum ToolAgentRegistry {
       let result = await BuiltInToolCatalog.execute(
         call: normalizedCall,
         conversation: executionConversation,
+        settings: settings,
         store: store)
     {
       return result

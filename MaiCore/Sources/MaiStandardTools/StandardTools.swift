@@ -150,8 +150,9 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
           + "files, files_grep searches their text, files_read returns text with optional Markdown "
           + "conversion for PDF, DOCX, EPUB, HTML and images (OCR). files_read_range reads line ranges, "
           + "files_read_index and files_get_function navigate code by symbol, and "
-          + "files_set_function, files_patch, and files_write change it; files_rename and files_delete "
-          + "move or remove. Read before editing. Prefer literal files_patch replacements for small "
+          + "files_set_function, files_patch, and files_write change it; files_mkdir creates directories "
+          + "including missing parents, files_rename moves entries, and files_delete removes files or "
+          + "directories (recursive=true for non-empty folders). Read before editing. Prefer literal files_patch replacements for small "
           + "edits, with enough surrounding text to match exactly once; use files_set_function for "
           + "complete function bodies. With file changes disallowed the group is read-only.",
         toolNames: Set(MaiFileWorkspaceTool.toolNames),

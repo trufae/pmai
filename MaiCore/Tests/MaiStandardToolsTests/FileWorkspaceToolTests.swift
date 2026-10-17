@@ -16,6 +16,8 @@ func fileWorkspaceRangeEditingRequiresOptIn(writeEnabled: Bool, includeAdvancedT
   #expect(names.contains(.readRange) == includeAdvancedTools)
   #expect(names.contains(.patch) == (writeEnabled && includeAdvancedTools))
   #expect(names.contains(.setFunction) == (writeEnabled && includeAdvancedTools))
+  #expect(names.contains(.mkdir) == writeEnabled)
+  #expect(names.contains(.delete) == writeEnabled)
 
   let optedIn = MaiFileWorkspaceTool.makeTools(
     configuration: configuration, includeAdvancedTools: includeAdvancedTools,
@@ -986,4 +988,98 @@ private func fileReadBody(_ output: ToolOutput) -> String {
     if case .file(let file) = part { return file.text }
     return nil
   }.joined()
+}
+
+@Test("Basic Files tools create directories and preserve empty file contents through normalization")
+func fileWorkspaceDirectoryAndEmptyFileCreation() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let tools = MaiFileWorkspaceTool.makeTools(
+    configuration: .init(rootURL: root), includeAdvancedTools: false)
+  for _ in 0..<2 {
+    let result = try await call(tool(tools, .mkdir), ["path": .string("notes/reports")])
+    #expect(!result.isError)
+  }
+  let legacy = try await call(tool(tools, .write), [
+    "path": .string("legacy/nested"), "create_directory": .bool(true),
+  ])
+  #expect(!legacy.isError)
+  #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("legacy/nested").path))
+
+  for content in ["", " \n\t", "", "ordinary text"] {
+    let write = tool(tools, .write)
+    let normalized = AgentTooling.normalizeArguments([
+      "path": .string("notes/reports/empty.txt"), "content": .string(content),
+      "mode": .string("overwrite"),
+    ], for: write.definition)
+    let result = try await call(write, normalized)
+    #expect(!result.isError)
+    #expect(try Data(contentsOf: root.appendingPathComponent("notes/reports/empty.txt")) == Data(content.utf8))
+  }
+  let collision = try await call(tool(tools, .mkdir), ["path": .string("notes/reports/empty.txt")])
+  #expect(collision.isError)
+  #expect(try String(contentsOf: root.appendingPathComponent("notes/reports/empty.txt"), encoding: .utf8) == "ordinary text")
+}
+
+@Test("Files deletion handles binary files, empty directories and explicit recursive removal")
+func fileWorkspaceDirectoryDeletion() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let tools = MaiFileWorkspaceTool.makeTools(configuration: .init(rootURL: root))
+  _ = try await call(tool(tools, .mkdir), ["path": .string("nested/empty")])
+  let empty = try await call(tool(tools, .delete), ["path": .string("nested/empty")])
+  #expect(!empty.isError)
+  let file = root.appendingPathComponent("nested/binary.dat")
+  let bytes = Data([0x00, 0xFF, 0x80])
+  try bytes.write(to: file)
+  let denied = try await call(tool(tools, .delete), ["path": .string("nested")])
+  #expect(denied.isError)
+  #expect(denied.text.contains("recursive"))
+  #expect(try Data(contentsOf: file) == bytes)
+  let binary = try await call(tool(tools, .delete), ["path": .string("nested/binary.dat")])
+  #expect(!binary.isError)
+  #expect(!FileManager.default.fileExists(atPath: file.path))
+  try bytes.write(to: file)
+  for path in [".", root.path, "../outside"] {
+    let result = try await call(tool(tools, .delete), ["path": .string(path), "recursive": .bool(true)])
+    #expect(result.isError)
+    #expect(try Data(contentsOf: file) == bytes)
+  }
+  let recursive = try await call(tool(tools, .delete), ["path": .string("nested"), "recursive": .bool(true)])
+  #expect(!recursive.isError)
+  #expect(!FileManager.default.fileExists(atPath: file.path))
+}
+
+@Test("Files list, rename and delete operate on symlink entries and preserve their targets")
+func fileWorkspaceSymlinkMutations() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let tools = MaiFileWorkspaceTool.makeTools(configuration: .init(rootURL: root))
+  let file = root.appendingPathComponent("target.txt")
+  try Data("keep".utf8).write(to: file)
+  // Absolute and relative calls, including a link to the workspace root and
+  // a dangling link, must unlink only the requested directory entry.
+  for target in [file, root, root.appendingPathComponent("missing")] {
+    for absolute in [false, true] {
+      let link = root.appendingPathComponent("link")
+      try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+      let listing = try await call(tool(tools, .list), [:])
+      let entries = listing.structuredContent?.objectValue?["entries"]?.arrayValue ?? []
+      #expect(entries.contains { $0.objectValue?["path"] == .string("link") }, "Target: \(target.path), listing: \(listing.text)")
+      let renamed = try await call(tool(tools, .rename), [
+        "path": .string(absolute ? link.path : "link"), "new_path": .string("renamed"),
+      ])
+      #expect(!renamed.isError)
+      #expect(try FileManager.default.destinationOfSymbolicLink(atPath: root.appendingPathComponent("renamed").path) == target.path)
+      let deleted = try await call(tool(tools, .delete), [
+        "path": .string(absolute ? root.appendingPathComponent("renamed").path : "renamed"),
+      ])
+      #expect(!deleted.isError)
+      #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: root.appendingPathComponent("renamed").path)) == nil)
+      #expect(try String(contentsOf: file, encoding: .utf8) == "keep")
+    }
+  }
 }

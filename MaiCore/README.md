@@ -1364,6 +1364,16 @@ path to one directory (including symlink checks), while `filesWriteEnabled`
 removes the mutation tools when disabled. Mutations still go through normal
 confirmation, and deletion is marked dangerous.
 
+`files_mkdir` creates a directory and any missing parents using only `path`,
+for example `{"path":"notes/reports"}`. It succeeds if the directory already
+exists and refuses to replace a file. The legacy
+`files_write` call with `create_directory: true` remains supported. Creating an
+empty file uses `files_write` with `content: ""`.
+`files_delete` removes files of any type or empty folders; pass `recursive: true`
+to remove a folder and its contents. Deleting a symbolic link removes the link,
+including a broken link, while preserving its target. These basic operations
+are available in both iOS and the CLI without enabling advanced file tools.
+
 `files_read` accepts an optional `format` in both the iOS app and the CLI REPL:
 
 - `auto` (default) converts PDF, DOCX and EPUB to Markdown and extracts image
