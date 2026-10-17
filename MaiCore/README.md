@@ -268,8 +268,12 @@ EOF
 `/btw PROMPT` asks the active agent a one-off question in a fresh context. It
 keeps the agent's system prompt, provider, model, tools, settings, and durable
 memory, but receives none of the current chat transcript or queued attachments.
-The answer is shown normally and then discarded, so the current chat is
-unchanged.
+In the interactive REPL it starts immediately, alongside any running turn.
+Its answer appears in a labelled block as soon as the side question finishes;
+it is not added to the current chat. Multiple side questions can run at once.
+Ctrl+C cancels the most recently started run still in progress, then returns
+control to the remaining run. `/jobs kill PID` stops a specific run. Piped
+input remains sequential.
 
 `/copy` puts the last assistant reply on the system clipboard as plain text,
 without reasoning blocks. `/copy N` copies the last `N` conversation messages

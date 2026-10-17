@@ -123,7 +123,8 @@ extension AppStore {
   /// and the user opted in; stops it as soon as either condition goes away.
   func refreshBackgroundKeepAlive(enteringBackground: Bool = false) {
     let inBackground = enteringBackground || UIApplication.shared.applicationState == .background
-    guard settings.background.extendedBackgroundProcessing, isResponding, inBackground else {
+    guard settings.background.extendedBackgroundProcessing,
+      isResponding || !btwTasks.isEmpty, inBackground else {
       backgroundKeepAlive.stop()
       return
     }

@@ -9,7 +9,7 @@ enum REPLEvent: Sendable {
   /// operation. `endedInput` distinguishes a raw Ctrl+C byte from SIGINT.
   case interrupt(REPLInterruptID?, endedInput: Bool)
   case endOfFile
-  case turnFinished(Result<AgentResult, any Error>)
+  case turnFinished(AgentPID, Result<AgentResult, any Error>)
   case approval(ApprovalRequest, REPLApprovalReply)
   case approvalFinished(REPLApprovalReply)
   case compaction(AutocompactionRequest, REPLCompactionReply)

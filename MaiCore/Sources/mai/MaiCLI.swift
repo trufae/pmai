@@ -2172,10 +2172,13 @@ struct MaiCLI {
     let chatID: UUID?
     let sent: [AgentMessage]
     let redactor: ContentRedactor?
+    /// Side questions collect output separately from the chat's stream.
+    let output: TerminalWriter
   }
 
   private struct REPLLoop {
     var activeTurn: REPLTurn?
+    var btwTurns: [AgentPID: REPLTurn] = [:]
     var foregroundCommand: String?
     var focus: REPLMessageTarget = .main
     var approvals: [(request: ApprovalRequest, reply: REPLApprovalReply)] = []
@@ -2186,9 +2189,18 @@ struct MaiCLI {
     var readerParked = true
     var exiting = false
 
+    var hasTurns: Bool { activeTurn != nil || !btwTurns.isEmpty }
+
+    /// Ctrl+C belongs to the most recently started run still in flight.
+    var interruptTurn: REPLTurn? {
+      (Array(btwTurns.values) + [activeTurn].compactMap { $0 })
+        .max { $0.interrupt.rawValue < $1.interrupt.rawValue }
+    }
+
     mutating func beginExit() {
       exiting = true
       activeTurn?.task.cancel()
+      for turn in btwTurns.values { turn.task.cancel() }
       cancelApprovals { _ in true }
       for pending in compactions { pending.reply.fail(CancellationError()) }
       compactions.removeAll()
@@ -2509,10 +2521,12 @@ struct MaiCLI {
       let activityMarker = running ? "●" : "○"
       if let turn = loop.activeTurn {
         let activity = await runtime.supervisor.info(turn.pid)?.activity ?? ""
-        let prefix = turn.kind == .btw ? "btw " : ""
         facts.append(
-          prefix + (activity.isEmpty || activity == "thinking" ? "thinking" : "running \(activity)")
+          activity.isEmpty || activity == "thinking" ? "thinking" : "running \(activity)"
         )
+      }
+      if !loop.btwTurns.isEmpty {
+        facts.append("\(loop.btwTurns.count) btw running")
       }
       if let command = loop.foregroundCommand { facts.append("running \(command)") }
       let children = liveProcesses.filter { $0.depth > 0 }
@@ -2614,7 +2628,7 @@ struct MaiCLI {
     /// On a plain terminal a turn owns the screen, so the next line waits for
     /// it; on the persistent screen the prompt is always open.
     func releaseIfIdle(workspace: AgentChatWorkspace) async {
-      if screen != nil || loop.activeTurn == nil || !loop.compactions.isEmpty {
+      if screen != nil || !loop.hasTurns || !loop.compactions.isEmpty {
         await releaseReader(workspace: workspace)
       }
     }
@@ -2749,18 +2763,32 @@ struct MaiCLI {
         workspace.upsert(session.chat, selecting: true)
         await saveWorkspace(&workspace, store: store, terminal: terminal)
       }
-      await terminal.resetResponse()
+      let output = kind == .btw ? TerminalWriter(capturesOutput: true) : terminal
+      if kind == .btw {
+        let ui = configuration?.ui ?? .init()
+        await output.configureRedactor(session.redactor)
+        await output.configureThinking(ui.thinking)
+        await output.configureToolResultLines(ui.toolResultLines)
+        await output.configureSubagentOutput(ui.subagentOutput)
+      }
+      await output.resetResponse()
       let task = Task {
         try await runtime.run(request, process: pid) { event in
-          await terminal.consume(event)
+          await output.consume(event)
         }
       }
       let interrupt = interruptHandler.activate { task.cancel() }
       activityWasInterrupted = false
-      loop.activeTurn = REPLTurn(
+      let turn = REPLTurn(
         task: task, interrupt: interrupt, started: ContinuousClock.now, pid: pid, kind: kind,
-        chatID: kind == .chat ? session.id : nil, sent: request.messages, redactor: session.redactor
+        chatID: kind == .chat ? session.id : nil, sent: request.messages, redactor: session.redactor,
+        output: output
       )
+      if kind == .btw {
+        loop.btwTurns[pid] = turn
+      } else {
+        loop.activeTurn = turn
+      }
       Task {
         let outcome: Result<AgentResult, any Error>
         do {
@@ -2768,7 +2796,7 @@ struct MaiCLI {
         } catch {
           outcome = .failure(error)
         }
-        continuation.yield(.turnFinished(outcome))
+        continuation.yield(.turnFinished(pid, outcome))
       }
       await refreshStatus()
     }
@@ -2909,7 +2937,7 @@ struct MaiCLI {
     /// the command hands the tty to — an editor, a shell — keeps its own
     /// Ctrl+C instead of ending the run.
     func withTurnInterruptSetAside(_ body: () async -> Void) async {
-      let turn = loop.activeTurn
+      let turn = loop.interruptTurn
       if let turn { interruptHandler.suspend(turn.interrupt) }
       let shield = interruptHandler.activate(reports: false) {}
       await body()
@@ -2925,7 +2953,7 @@ struct MaiCLI {
       resumeInput: Bool = true,
       operation: @escaping @Sendable () async -> Value
     ) async -> (value: Value, interrupted: Bool) {
-      let turn = loop.activeTurn
+      let turn = loop.interruptTurn
       if let turn { interruptHandler.suspend(turn.interrupt) }
       let task = Task { await operation() }
       let interrupt = interruptHandler.activate { task.cancel() }
@@ -2972,8 +3000,8 @@ struct MaiCLI {
     }
 
     /// Runs a one-off prompt with the active profile and no conversation
-    /// messages. It is a real turn so streaming, tools, approvals, and Ctrl+C
-    /// work normally, but its transcript never replaces the chat's.
+    /// messages. Its task runs alongside the chat; its output is collected
+    /// until completion so two root streams do not share rendering state.
     func startBTW(_ text: String) async {
       guard let request = btwRequest(text, profile: session.profile, sessionID: session.sessionID)
       else {
@@ -2982,6 +3010,7 @@ struct MaiCLI {
       }
       let pid = await runtime.allocateProcess(
         agentID: session.profile.agentID, task: "btw: \(text)")
+      await terminal.note("btw#\(pid.rawValue) started · Ctrl+C cancels it; /jobs kill \(pid.rawValue) stops it by ID")
       await beginTurn(request, process: pid, kind: .btw)
     }
 
@@ -3295,7 +3324,7 @@ struct MaiCLI {
           }
         }
         if !heredoc, text.hasPrefix("!") {
-          if loop.activeTurn != nil {
+          if loop.hasTurns {
             await terminal.note("A turn is running; what it prints waits until the command ends.")
           }
           await withTurnInterruptSetAside {
@@ -3390,7 +3419,7 @@ struct MaiCLI {
                 guard arguments.count == 1 else {
                   throw JSONRPCError.invalidParams("Usage: /remote connect NAME")
                 }
-                guard loop.activeTurn == nil else {
+                guard !loop.hasTurns else {
                   throw JSONRPCError.invalidParams("Finish or stop the current turn before connecting.")
                 }
                 guard !(await runtime.internetAccessPolicy().isOffline) else {
@@ -3429,7 +3458,7 @@ struct MaiCLI {
                   await terminal.line("Connected to \(host.name). Messages run on that host; /remote disconnect returns to your local chat.")
                 }
               case "disconnect", "local":
-                guard loop.activeTurn == nil else {
+                guard !loop.hasTurns else {
                   throw JSONRPCError.invalidParams("Finish or stop the current turn before disconnecting.")
                 }
                 workspace.upsert(session.chat, selecting: true)
@@ -3503,7 +3532,7 @@ struct MaiCLI {
           }
           if name == "/exit" || name == "/quit" {
             loop.beginExit()
-            if loop.activeTurn != nil { continue }
+            if loop.hasTurns { continue }
             break events
           }
           if name == "/continue" {
@@ -3609,18 +3638,12 @@ struct MaiCLI {
             continue
           }
           if name == "/btw" {
-            if loop.activeTurn != nil {
-              await terminal.note(
-                "/btw waits for the running turn; Ctrl+C cancels it. Messages typed now are queued."
-              )
-            } else {
-              await startBTW(argument)
-            }
+            await startBTW(argument)
             await releaseIfIdle(workspace: workspace)
             continue
           }
           #if PMAI_HAS_VISUAL
-            if name == "/visual", loop.activeTurn != nil {
+            if name == "/visual", loop.hasTurns {
               await terminal.note(
                 "Visual mode takes the whole screen, so it waits for the running turn; Ctrl+C cancels it."
               )
@@ -3892,7 +3915,8 @@ struct MaiCLI {
         if endedInput { loop.readerParked = true }
         // Reflect Ctrl+C immediately, rather than waiting for a provider or
         // tool cancellation to make its way through the supervisor.
-        activityWasInterrupted = cancelledOperation == loop.activeTurn?.interrupt
+        activityWasInterrupted = !loop.btwTurns.isEmpty ? false
+          : cancelledOperation == loop.activeTurn?.interrupt
         if loop.pendingQueueMessage != nil {
           loop.pendingQueueMessage = nil
           await terminal.note("New message cancelled; the queue is unchanged.")
@@ -3915,16 +3939,24 @@ struct MaiCLI {
       case .endOfFile:
         loop.readerParked = true
         loop.beginExit()
-        if loop.activeTurn != nil { continue }
+        if loop.hasTurns { continue }
         break events
 
-      case .turnFinished(let outcome):
+      case .turnFinished(let pid, let outcome):
         // A pmai_run call may have changed the session's profile, the
         // configuration or the MCP servers while the turn was running.
         await adoptPmaiToolChanges()
-        let turn = loop.activeTurn
+        let turn: REPLTurn?
+        if loop.activeTurn?.pid == pid {
+          turn = loop.activeTurn
+          loop.activeTurn = nil
+        } else {
+          turn = loop.btwTurns.removeValue(forKey: pid)
+        }
         let wasInterrupted = turn.map { interruptHandler.deactivate($0.interrupt) } ?? false
-        loop.activeTurn = nil
+        if let remaining = loop.interruptTurn {
+          interruptHandler.restore(remaining.interrupt) { remaining.task.cancel() }
+        }
         var succeeded = false
         var modelStats: ModelCallStats?
         var paused: AgentRunInterruption?
@@ -3945,9 +3977,9 @@ struct MaiCLI {
               let stopped = Set(await runtime.supervisor.stop(turn.pid, reason: "Cancelled"))
               loop.cancelApprovals { $0.run.pid.map(stopped.contains) ?? false }
             }
-            await terminal.recoverAfterCancellation()
+            await (turn?.output ?? terminal).recoverAfterCancellation()
           } else {
-            await terminal.recoverAfterError(error)
+            await (turn?.output ?? terminal).recoverAfterError(error)
           }
           // What the run did before it broke off is not thrown away: the
           // supervisor has its transcript, and /continue picks it up.
@@ -3964,6 +3996,9 @@ struct MaiCLI {
           elsewhere = workspace.chats.first { $0.id == chatID }?.displayTitle
         }
         if let turn {
+          if turn.kind == .btw {
+            await terminal.btwResponse(await turn.output.drainCaptured(), pid: turn.pid)
+          }
           let prefix = turn.kind == .btw ? "btw " : ""
           var took = "\(prefix)took \(elapsedDescription(since: turn.started))"
           let tree = await runtime.supervisor.tree()
@@ -3996,8 +4031,11 @@ struct MaiCLI {
           }
           await saveWorkspace(&workspace, store: store, terminal: terminal)
         }
-        if loop.exiting { break events }
-        if let turn {
+        if loop.exiting {
+          if loop.hasTurns { continue }
+          break events
+        }
+        if let turn, turn.kind == .chat {
           let waiting: Int
           if let pid = chatProcessIDs[session.id] {
             waiting = await runtime.supervisor.queuedMessages(for: pid).count
@@ -12847,7 +12885,7 @@ struct MaiCLI {
     /agents                List or edit saved agent definitions; /help agents lists commands
     /attach [MODE] PATH    Attach a document/source file; HTML asks for source, markdown, or copy
     /attach clear          Drop the attachments queued for the next message
-    /btw PROMPT            Ask in a fresh context without changing this chat
+    /btw PROMPT            Ask in parallel, in a fresh context, without changing this chat
     /cd PATH               Change the current working directory
     /chat                  List, switch, fork, archive, rename, or edit this project's chats
     /clear                 Clear conversation history

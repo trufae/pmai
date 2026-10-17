@@ -13,7 +13,7 @@ SMOKE = '''installer project-approval project-debug projects-repl provider-routi
 repl-del repl-export repl-fork repl-local-providers repl-redact repl-resume repl-resume-routing
 repl-resume-state repl-skills repl-smart-context repl-speed repl-tool-policy task-agents
 update vim web-fetch'''.split()
-TERMINAL = '''repl-agents repl-colors repl-compaction repl-interactive-run repl-models repl-path
+TERMINAL = '''repl-agents repl-btw repl-colors repl-compaction repl-interactive-run repl-models repl-path
 repl-policy repl-queue repl-recap repl-resize repl-suspend repl-theme repl-tool-context'''.split()
 EXTERNAL = ['repl-reflow', 'tailcat']  # Ghostty and a separately built tailcat binary.
 PLATFORM = ['web-fetch'] if os.name == 'nt' else [

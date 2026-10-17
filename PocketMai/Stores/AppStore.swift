@@ -226,6 +226,8 @@ final class AppStore: ObservableObject {
   @Published var respondingConversationIDs: Set<UUID> = []
   @Published private(set) var loadingLocalModelConversationIDs: Set<UUID> = []
   @Published private(set) var queuedUserMessagesByConversationID: [UUID: [QueuedChatMessage]] = [:]
+  @Published var btwQuestions: [BTWQuestion] = []
+  var btwTasks: [UUID: Task<Void, Never>] = [:]
   @Published private(set) var followUpSuggestionsByConversationID: [UUID: FollowUpSuggestionState] =
     [:]
   @Published private(set) var generatingFollowUpSourceMessageIDsByConversationID: [UUID: UUID] = [:]
@@ -294,6 +296,9 @@ final class AppStore: ObservableObject {
     attachments: [ChatAttachment] = [],
     in conversationID: UUID
   ) -> Bool {
+    if let question = BTWQuestion.prompt(in: rawPrompt) {
+      return startBTW(question, in: conversationID)
+    }
     guard respondingConversationIDs.contains(conversationID),
       indexedConversationIndex(for: conversationID) != nil
     else {
@@ -1643,6 +1648,7 @@ final class AppStore: ObservableObject {
   }
 
   func clearAllConversations() {
+    dismissBTWQuestions()
     let removedIDs = Set(conversationSummaries.map(\.id))
     let removedMessages = voiceRecordingMessages(in: removedIDs)
     if !hasLoadedPersistedConversations {
@@ -1681,6 +1687,7 @@ final class AppStore: ObservableObject {
   }
 
   func factoryReset() {
+    dismissBTWQuestions()
     dataGeneration += 1
     for task in responseTasks.values {
       task.cancel()
@@ -1842,6 +1849,7 @@ final class AppStore: ObservableObject {
     }
     for id in ids {
       abandonResponse(in: id)
+      dismissBTWQuestions(in: id)
       queuedUserMessagesByConversationID[id] = nil
       conversationDrafts.removeValue(forKey: id)
       if !hasLoadedPersistedDrafts {
@@ -2021,6 +2029,11 @@ final class AppStore: ObservableObject {
     attachments: [ChatAttachment] = [],
     promptShortcutSelection: PromptShortcutSelection? = nil
   ) async -> Bool {
+    if promptShortcutSelection == nil, let question = BTWQuestion.prompt(in: rawPrompt) {
+      if currentConversation == nil { newConversation() }
+      guard let conversationID = currentConversation?.id else { return false }
+      return startBTW(question, in: conversationID)
+    }
     let resolved = resolvedPromptSubmission(
       rawPrompt: rawPrompt,
       rawDisplayText: rawDisplayText,
@@ -4788,6 +4801,7 @@ final class AppStore: ObservableObject {
       .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     return !hasDraft
       && !respondingConversationIDs.contains(conversation.id)
+      && !btwQuestions.contains { $0.conversationID == conversation.id }
       && conversation.isDisposable
   }
 
@@ -6302,6 +6316,7 @@ final class AppStoreViewObservation: ObservableObject {
       observe(store.$respondingConversationIDs)
       observe(store.$agentProcesses)
       observe(store.$queuedUserMessagesByConversationID)
+      observe(store.$btwQuestions)
       observe(store.$followUpSuggestionsByConversationID)
       observe(store.$generatingFollowUpSourceMessageIDsByConversationID)
       observe(store.$isCompacting)

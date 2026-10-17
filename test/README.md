@@ -474,3 +474,9 @@ manual/automatic settings through the actual CLI against local fixtures.
 redact`, `on|off|warn`, restart persistence, restored tool paths, filtered tool
 results, and locally readable compaction summaries against a loopback provider.
 It uses a temporary pmai home and stops enabled startup on invalid rules.
+
+`python3 test/repl-btw-smoke.py MaiCore/.build/debug/pmai` holds a streaming
+chat request open while multiple side questions finish out of order. It also
+checks queue routing, cancellation, exit, transcript isolation, and piped input.
+The iOS `BTWTests` exercise the app's provider path while a main reply runs,
+including independent cancellation and fresh context.

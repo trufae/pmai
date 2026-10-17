@@ -789,6 +789,11 @@ struct ChatView: View {
     return nil
   }
 
+  private var currentBTWQuestions: [BTWQuestion] {
+    guard remoteChat == nil else { return [] }
+    return store.btwQuestions.filter { $0.conversationID == currentConversationID }
+  }
+
   private var messages: some View {
     GeometryReader { scrollGeometry in
       ScrollViewReader { proxy in
@@ -813,6 +818,7 @@ struct ChatView: View {
               compactLoadingState
             } else if !isPreviewingConversation && currentConversationIsEmpty
               && liveVoiceSession.previewMessage == nil
+              && currentBTWQuestions.isEmpty
             {
               emptyState
                 .containerRelativeFrame(.vertical)
@@ -957,6 +963,17 @@ struct ChatView: View {
                   )
                   .id(message.id)
                 }
+              }
+            }
+            if !isPreviewingConversation, remoteChat == nil {
+              ForEach(currentBTWQuestions) { question in
+                BTWQuestionCard(
+                  question: question,
+                  appearance: store.settings.appearance,
+                  renderMarkdown: store.settings.renderMarkdownInChat,
+                  renderImages: store.settings.renderMarkdownImagesInChat,
+                  onStop: { store.stopBTW(question.id) },
+                  onDismiss: { store.dismissBTW(question.id) })
               }
             }
             if !renderedMessages.isEmpty,
@@ -1104,6 +1121,10 @@ struct ChatView: View {
         .onChange(of: currentQueuedUserMessageIDs) { _, _ in
           guard !messageFontPinchSession.isActive, !userScrolledAfterLastMessage else { return }
           scrollToBottomAfterLayout(proxy, animated: true, followResponse: true)
+        }
+        .onChange(of: currentBTWQuestions) { _, _ in
+          guard !messageFontPinchSession.isActive, !userScrolledAfterLastMessage else { return }
+          scrollToBottomAfterLayout(proxy, animated: true)
         }
         .onChange(of: currentFollowUpPresentationSnapshot) { old, new in
           guard old != new,
@@ -2837,14 +2858,14 @@ private struct MessageSelectionRow<Content: View>: View {
 }
 
 private struct PromptShortcutMenuOption: Identifiable, Equatable {
-  var selection: PromptShortcutSelection
+  var selection: PromptShortcutSelection?
   var commandName: String
   var displayName: String
   var detail: String
   var systemImage: String
 
   var id: String {
-    "\(selection.kind.rawValue):\(selection.id.uuidString)"
+    selection.map { "\($0.kind.rawValue):\($0.id.uuidString)" } ?? "builtin:\(commandName)"
   }
 }
 
@@ -2899,19 +2920,22 @@ private struct ChatComposer: View {
   }
 
   private var canSubmitDraft: Bool {
-    !isResponding && hasDraftText
+    (!isResponding || isBTW) && hasDraftText
       && (remoteChat == nil || (remoteChat?.connected == true && !store.settings.isOffline))
   }
 
+  private var isBTW: Bool {
+    remoteChat == nil && BTWQuestion.prompt(in: draftText) != nil
+  }
+
   private var canQueueDraft: Bool {
-    remoteChat == nil && isResponding && hasDraftText
+    remoteChat == nil && isResponding && hasDraftText && !isBTW
   }
 
   private var shouldShowPromptAutocomplete: Bool {
     remoteChat == nil && pendingPromptCompletion == nil
       && draftText.hasPrefix("/")
       && !promptShortcutOptions.isEmpty
-      && !isResponding
       && !promptAutocompleteIsSuppressed
   }
 
@@ -2960,7 +2984,12 @@ private struct ChatComposer: View {
         detail: "User prompt",
         systemImage: "text.quote")
     }
-    let options = systemOptions + userOptions
+    let builtin = PromptShortcutMenuOption(
+      selection: nil, commandName: "btw", displayName: "Side question",
+      detail: "Answers in parallel", systemImage: "bubble.left.and.bubble.right")
+    let options = [builtin] + (isResponding ? [] : (systemOptions + userOptions).filter {
+      $0.commandName.lowercased() != "btw"
+    })
     guard let fragment = PromptSlashCommand.fragment(in: draftText),
       !fragment.isEmpty
     else {
@@ -3326,14 +3355,14 @@ private struct ChatComposer: View {
         }
 
         Button {
-          if let id = conversationID, isResponding {
+          if canSubmitDraft {
+            submitDraft()
+          } else if let id = conversationID, isResponding {
             if canQueueDraft {
               queueDraft(in: id)
             } else {
               if let remoteChat { remoteChat.disconnect() } else { store.cancelResponse(in: id) }
             }
-          } else if canSubmitDraft {
-            submitDraft()
           } else {
             liveVoiceSession.start(store: store, ttsPlayer: ttsPlayer)
           }
@@ -3401,6 +3430,7 @@ private struct ChatComposer: View {
   }
 
   private var trailingActionSystemImage: String {
+    if isBTW && canSubmitDraft { return "arrow.up" }
     if isResponding {
       return canQueueDraft ? "arrow.up.to.line" : "stop.fill"
     }
@@ -3411,6 +3441,7 @@ private struct ChatComposer: View {
   }
 
   private var trailingActionColor: Color {
+    if isBTW && canSubmitDraft { return .accentColor }
     if isResponding {
       return canQueueDraft ? .orange : .red
     }
@@ -3418,6 +3449,7 @@ private struct ChatComposer: View {
   }
 
   private var trailingActionHelp: String {
+    if isBTW && canSubmitDraft { return "Ask a side question now" }
     if isResponding {
       return canQueueDraft ? "Queue message" : "Stop response"
     }
@@ -3637,10 +3669,10 @@ private struct ChatComposer: View {
     }
     guard canSubmitDraft else { return }
     let submitted = draftText
-    let submittedAttachments = pendingAttachments
+    let submittedAttachments = isBTW ? [] : pendingAttachments
     let submittedConversationID = conversationID
+    if !isBTW { pendingAttachments = [] }
     draftText = ""
-    pendingAttachments = []
     persistDraftTextNow("", for: submittedConversationID)
     if let remoteChat {
       remoteChat.send(submitted)
@@ -3652,7 +3684,7 @@ private struct ChatComposer: View {
         attachments: submittedAttachments)
       if !sent {
         draftText = submitted
-        pendingAttachments = submittedAttachments
+        if BTWQuestion.prompt(in: submitted) == nil { pendingAttachments = submittedAttachments }
         persistDraftTextNow(submitted, for: submittedConversationID)
       }
     }

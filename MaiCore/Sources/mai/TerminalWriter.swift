@@ -387,6 +387,16 @@ actor TerminalWriter {
 
   func prompt(_ value: String) { write(value) }
 
+  /// Print a side question as one labelled block without resetting the
+  /// main reply's streaming renderer or its delta bookkeeping.
+  func btwResponse(_ text: String, pid: AgentPID) {
+    finishReply()
+    closeRootLine()
+    let body = render(text.trimmingCharacters(in: .whitespacesAndNewlines))
+      .components(separatedBy: "\n").map { "btw#\(pid.rawValue) │ " + $0 }.joined(separator: "\n")
+    write(body + "\n")
+  }
+
   enum Tone {
     case error, warning, success, info
   }
