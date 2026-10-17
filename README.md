@@ -1,30 +1,178 @@
 <p align="center">
-
-[Providers, agents, and task defaults](doc/task-agents.md) explains configuring separate models for compaction and tool decisions in PocketMai and pmai.
-
-  <img src="mai-logo.png" alt="MAI logo" width="300" />
+  <a href="https://trufae.github.io/pmai"><img src="mai-logo.png" alt="PocketMai logo" width="180" /></a>
 </p>
 
-# PocketMai
+# PocketMai + pmai
 
-[![CI](https://github.com/trufae/pocketmai/actions/workflows/ci.yml/badge.svg)](https://github.com/trufae/pocketmai/actions/workflows/ci.yml)
+[Official website](https://trufae.github.io/pmai) · [App Store](https://apps.apple.com/es/app/pocketmai/id6764296742) · [Releases](https://github.com/trufae/pmai/releases) · [CLI guide](MaiCore/README.md)
 
-A native iOS chat client for talking to LLMs — Apple's on-device Foundation Models and any OpenAI-compatible HTTP endpoint.
+**Your models. Your tools. Your workstation in your pocket.**
 
-This app, comes after [MAI](https://github.com/trufae/mai), a cli agent with focus on batch/prompt/cli workflows that also integrates well with VIM editor.
+Install the **pmai CLI** on macOS, Linux, or Android:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/trufae/pmai/main/www/install.sh | sh
+```
+
+No root needed. The installer selects the release for your platform, verifies its
+SHA-256 checksum, and chooses a writable install directory. Update with `pmai -U`.
+Linux releases include glibc and fully static musl builds; the installer detects
+musl automatically. See the [installer](www/install.sh) for custom install paths
+and version selection.
+
+[![CI](https://github.com/trufae/pmai/actions/workflows/ci.yml/badge.svg)](https://github.com/trufae/pmai/actions/workflows/ci.yml)
+
+PocketMai brings a personal AI agent to your phone; pmai brings the same Swift
+engine to your terminal. Talk through an idea, work on a codebase, turn a chat
+into a document, or pick up a workstation project from your phone. Choose local
+inference or a remote provider, give each agent the tools it needs, and keep
+your conversations portable.
+
+Built on [MaiCore](MaiCore/README.md), following
+[MAI](https://github.com/trufae/mai)'s terminal and Vim workflows.
+
+| Interface | What you get | Get it |
+| --- | --- | --- |
+| **PocketMai for iOS** | Native voice, tools, documents, mini apps, and remote projects. iOS 18+; some features require newer iOS or supported hardware. | [App Store](https://apps.apple.com/es/app/pocketmai/id6764296742) |
+| **pmai CLI** | A terminal agent for macOS, Linux, and Android, with shell tools, projects, skills, MCP, ACP, and Vim integration. | Install command above · [Release downloads](https://github.com/trufae/pmai/releases) |
+| **PocketMai for Android** | A native preview with provider/model setup, custom prompts, streaming chat, saved history, and light/dark themes. | [Download APK](https://trufae.github.io/pmai/downloads/PocketMai-Android.apk) · [Android guide](PocketMaiAndroid/README.md) |
+
+The Android app preview has a smaller feature set than iOS: tools, voice,
+attachments, MCP, local inference, and remote host navigation are not available
+there yet. The Android CLI is a separate terminal client.
 
 ## Features
 
-- **Providers**: Apple Intelligence and MLX on supported devices, ChatGPT subscription sign-in, plus any OpenAI-compatible API (OpenAI, Ollama, llama.cpp, vLLM, OpenRouter, ...).
-- **Tools**: datetime, location, weather, web search, browser, todo, text-to-speech, files, local documentation (`vdb`), memory — invokable by the model via native tool-calling or a text-protocol fallback.
-- **File manager**: browse local working folders and remote projects, copy paths, preview files, create folders, and upload or download files. Open **Files…** from the chat title menu, or long-press a folder and choose **Browse Files…**. See [file browsing over ACP](doc/acp.md#file-browsing-from-pocketmai).
-- **Browser**: the model can open pages in an in-app WebKit view shown as a picture-in-picture card, read the text, DOM, links, or an on-device text-recognition pass over the screen, click, type, scroll, and run JavaScript. Tap the card to enlarge it and take over by hand for sign-ins and other steps only a person can do.
-- **MCP**: configure remote Streamable HTTP or CLI-local stdio servers and surface them to the model.
-- **Multiple system prompts**, persistent conversations, export to Markdown / HTML / plain text / JSON / ePUB / Word (docx).
-- **Side questions**: `/btw QUESTION` starts immediately alongside a running reply in the iOS app and interactive CLI. It uses a fresh context with the current profile and tools. In iOS, answers appear in temporary cards with independent Stop and Dismiss controls; chat history and pending attachments stay unchanged.
-- **Attachments**: arbitrary text and source files plus HTML, Markdown, Word (docx), EPUB, JSON and PDF. HTML asks whether to keep its source, convert it to Markdown, or copy it to the chat's working folder; Word, EPUB and PDF are converted to Markdown on device (PDFs can also be attached as one image per page, and scanned pages are read with Vision OCR).
-- **Share sheet**: send pictures, voice messages and documents to PocketMai from WhatsApp, Telegram, Photos, Files or any other app. Voice messages are transcribed on device by default (Ogg Opus included), documents are converted to text, and pictures ask for their size or for OCR just like when they are attached inside the app.
-- **Background replies**: a Live Activity on the Lock Screen and in the Dynamic Island follows running replies and tool calls, and a local notification tells you when a reply finishes, fails, or needs a tool approval while the app is in the background. An optional "Keep working when locked" mode keeps long replies running after the screen locks.
+### Make the agent yours
+
+- **Bring your model.** Use Apple Intelligence or MLX on supported Apple hardware,
+  sign in with a ChatGPT subscription, or connect an OpenAI-compatible API such
+  as OpenAI, Ollama, llama.cpp, vLLM, or OpenRouter. Native tool calling and text,
+  XML, and JSON fallbacks accommodate different providers.
+- **Build your own team.** Save prompts, create or import `SKILL.md` skills, and
+  give agents their own models and tools. Inspect subagent transcripts and usage,
+  send guidance, pause or resume work, and stop a branch. Choose separate models
+  for chat, compaction, tool decisions, and approval review.
+- **Set the boundaries.** Choose tools per agent and MCP server, set file and
+  folder rules to allow, ask, or deny, and review or edit tool arguments before
+  execution. Configure manual or model-assisted approval and limits on turns,
+  tool calls, tokens, elapsed time, and subagents.
+- **Connect your tools and agents.** Add Streamable HTTP MCP servers, plus local
+  stdio servers and native plugins in supported CLI builds. Use ACP agents as
+  providers or subagents, serve pmai to an ACP editor with `pmai --acp`, or expose
+  its configured agent to an MCP client with `pmai --mcp`. The
+  [tool proxy](doc/proxy.md) controls discovery and reduces tool-schema overhead.
+
+### Move between phone and terminal
+
+- **Take your workstation with you.** Pair PocketMai or another pmai CLI with a
+  running host to continue saved chats, switch projects, and browse or transfer
+  files. Connect over your LAN or use encrypted OpenTunnel access across
+  firewalls, with pairing approved on the host.
+- **Stay in your coding flow.** Pipe context into pmai, run shell tools for builds,
+  tests, and Git, or hand the terminal over to an interactive program. Open
+  `/visual` for a split-pane workspace on macOS and glibc Linux. Install the
+  [Vim integration](doc/vim.md) to review and apply changes to a selection.
+- **Keep the whole conversation.** Organize chats by project, search past work,
+  and carry persistent memory and todos forward. Share a `.pocketmai` file with
+  attachments, tool messages, and nested subagent chats, then continue on another
+  device using its own provider credentials.
+- **Shape the context.** Edit, undo, trim, search, or compact a conversation with
+  a focus. Ask `/btw QUESTION` alongside a running reply in iOS or the interactive
+  CLI; it uses a fresh context without changing the main conversation.
+
+### Put it to work
+
+- **Files and local knowledge — iOS + CLI.** Read, search, write, and patch files
+  within your configured workspace. Index documents and source with `vdb` to
+  retrieve passages with file and line references; default retrieval runs locally
+  without an embedding-model download. On iOS, browse, preview, and edit local
+  or remote files, create folders, and upload or download documents.
+- **Research and everyday tools — iOS + CLI.** Search the web, including through
+  your own SearXNG instance, fetch readable pages, and download files. Browse
+  GitHub repositories, PR diffs, issues, releases, and CI logs with read-only
+  tools. Check weather, calculate, or search Mastodon and enable posting when
+  needed.
+- **Documents in, documents out — iOS + CLI.** Import text, source, HTML,
+  Markdown, DOCX, EPUB, JSON, and PDF; export conversations to Word, EPUB,
+  Markdown, HTML, plain text, or JSON. Use local Apple Vision OCR on iOS and
+  macOS, or installed Tesseract on other CLI platforms. On iOS, attach PDF pages
+  as images and read scans with OCR.
+- **Talk naturally — iOS.** Speak a question, listen to replies, or import a
+  voice note, including Ogg Opus. Transcription stays on device by default;
+  choose a local model and device voice for offline conversations. Enable
+  Voiceover for short spoken summaries of finished replies. Native live
+  transcription requires iOS 26+ and an installed speech model. The share sheet
+  accepts pictures, audio, and documents from other apps.
+- **A browser you can take over — iOS.** Let the agent read text, DOM, links, or
+  OCR from a floating WebKit browser, then click, type, scroll, or run JavaScript.
+  Enlarge its picture-in-picture card and take over for sign-ins or any other step.
+- **Make little apps — iOS.** Create and run WebXDC mini apps with HTML, CSS, and
+  JavaScript inside the chat. Keep revisions, roll back changes, and share `.xdc`
+  files for PocketMai or Delta Chat. The runner blocks network access.
+- **Use your device — iOS.** Read your calendar and optionally create events,
+  use device location, and set countdowns or one-time and repeating alarms
+  (iOS 26.1+). Follow replies and tool calls through Lock Screen and Dynamic
+  Island Live Activities, receive background completion and approval
+  notifications, and optionally keep long replies working when the screen locks.
+
+Offline use depends on selecting a local model and local tools; remote providers
+still need a connection. CLI Airplane Mode limits tools, not the inference
+provider. File-tool rules enforce workspace boundaries; CLI shell commands run
+with the pmai process's privileges and their own approval rules.
+
+## Start in the terminal
+
+Run `pmai`, add your provider, and choose a model. For a local Ollama server
+already running with a downloaded model:
+
+```text
+/provider add local http://127.0.0.1:11434/v1
+/models local
+/model local::MODEL_FROM_THE_LIST
+```
+
+The selection is saved for future runs. You can also use
+[ChatGPT sign-in](#use-your-chatgpt-subscription), a remote API, or native
+[Apple Intelligence and MLX providers](MaiCore/README.md).
+
+```sh
+pmai "explain this project"
+git diff | pmai --stdin "review this change"
+pmai --vim install
+```
+
+In Vim, select lines and press `m` to choose a prompt, review the reply, and apply
+it. Use `pmai --vim update` to refresh the integration or `pmai --vim uninstall`
+to remove it. In the REPL, try `/projects`, `/visual`, and `/help`.
+
+## Bring your workstation to your phone
+
+In the host's pmai REPL, share a project on your local network:
+
+```text
+/remote serve --path /path/to/project
+```
+
+In PocketMai, open **Hosts → Add Remote Host**, scan the pairing QR or paste the
+connection URI, save it, and select the host. Accept the request on the host with
+`/remote accept`, then browse its projects, continue a chat, or open its files.
+The serving REPL stays usable; `/remote stop` or exiting it ends the server.
+
+For access across firewalls, install the OpenTunnel CLI on the host and use
+`/remote serve --protocol opentunnel --path /path/to/project`. See
+[remote pmai hosts](MaiCore/README.md#remote-pmai-hosts) for setup and connection
+options, and [file browsing over ACP](doc/acp.md#file-browsing-from-pocketmai).
+
+## Guides
+
+- [CLI setup and command reference](MaiCore/README.md)
+- [Providers, agents, and task defaults](doc/task-agents.md)
+- [Reusable prompts and skills](doc/prompts.md)
+- [Editing configuration and conversation context](doc/edit.md)
+- [ACP and MCP integration](doc/acp.md) · [Tool proxy](doc/proxy.md)
+- [Vim integration](doc/vim.md) · [Android builds](PocketMaiAndroid/README.md)
+- [Voice setup and privacy](#voice-setup-and-privacy) · [Build from source](#build)
 
 ## Use your ChatGPT subscription
 
@@ -73,7 +221,16 @@ to an older PocketMai version, rename the file to end in `.pocketmai.json`.
 **Export...** offers readable copies such as Plain Text (.txt), Markdown, HTML and
 Word. **Debug Report** is for troubleshooting; it is not needed to transfer a chat.
 
-## OpenAI text-to-speech
+## Voice setup and privacy
+
+Use device voices or configure a speech provider independently of your chat
+model. Audio transcription stays on device by default; the resulting chat text
+goes to your selected model provider.
+
+<details>
+<summary>Configure OpenAI or compatible text-to-speech</summary>
+
+### OpenAI text-to-speech
 
 ChatGPT subscription sign-in provides the Responses API connection; it does not
 provide Speech API access. Keep ChatGPT selected for chat and configure a separate
@@ -115,7 +272,12 @@ and the dated `gpt-4o-mini-tts` models on January 6, 2027. See
 [OpenAI's deprecation notice](https://developers.openai.com/api/docs/deprecations#2026-10-01-text-to-speech-models).
 Realtime speech is outside this integration.
 
-## Voice privacy
+</details>
+
+<details>
+<summary>On-device transcription, live voice, and server fallback</summary>
+
+### Voice privacy
 
 Voice recordings and imported audio stay on device for transcription by default.
 Settings > Voices > **Allow Apple Server Transcription** explicitly permits an
@@ -138,7 +300,16 @@ and [`supportsOnDeviceRecognition`](https://developer.apple.com/documentation/sp
 This setting controls audio transcription; sending the resulting text to a chat
 still uses that chat's selected model provider.
 
+</details>
+
 ## Build
+
+Build the iOS app with Xcode, the CLI with SwiftPM through Make, or the native
+Android preview with `make android`. See the [Android guide](PocketMaiAndroid/README.md)
+for its SDK and toolchain setup.
+
+<details>
+<summary>Requirements, build commands, and local inference notes</summary>
 
 Requires Xcode 26+ and an iOS 18+ deployment target. iOS 26-only features
 such as Apple Foundation Models, Native iOS Live speech transcription, and
@@ -162,8 +333,8 @@ an Apple silicon Mac using Designed for iPad. GPU support does not guarantee
 every model fits in memory: start with a small 4-bit model and a short context,
 and keep the app in the foreground while generating.
 
-As of 2026-09-24, the project already resolves the latest stable releases:
-`mlx-swift` 0.31.6 (includes the iOS build fix) and `mlx-swift-lm` 3.31.4.
+The project pins `mlx-swift` 0.31.6 (includes the iOS build fix) and
+`mlx-swift-lm` 3.31.4.
 
 CI and release builds use Swift 6.4.0, including matching Static Linux and
 Android SDKs. The packages keep Swift 6 language mode. SwiftPM now defaults
@@ -210,23 +381,19 @@ bundle. Build in Xcode first after source changes; this preserves Xcode's
 private-key access for code signing. Open `PocketMai.xcodeproj` when you need
 debugger attachment or to run in the Simulator.
 
+</details>
+
 ## Releases
 
-A basic [Android app](PocketMaiAndroid/README.md) is also available from source:
-provider setup, model listing, system prompts, streaming chat, and saved history.
-Its application code and UI are Swift, using MaiCore and the AndroidSwiftUI
-runtime. Build it with `make android` using the matching Swift 6.4 Android SDK.
+Get PocketMai from the [App Store](https://apps.apple.com/es/app/pocketmai/id6764296742).
+The [GitHub releases](https://github.com/trufae/pmai/releases) include the iOS IPA,
+source archives, and pmai CLI binaries for macOS and Linux (arm64 and x64), plus
+Android arm64. Android and static musl CLI builds omit `/visual`; static musl
+builds also omit native plugin loading.
 
-Ready to use from the [AppStore](https://apps.apple.com/es/app/pocketmai/id6764296742)
-
-But you may find the ipa and source zips in the [Release](https://github.com/trufae/pocketmai/releases) page.
-
-The `pmai` CLI ships there for macOS, Linux, and Android. Linux comes as a
-glibc build and as a fully static `-musl` build that runs on Alpine and other
-musl distributions; `www/install.sh` picks the right one automatically.
-
-Install the bundled [Vim integration](doc/vim.md) with `pmai --vim install`.
-Use `pmai --vim update` to refresh it and `pmai --vim uninstall` to remove it.
-Select lines and press `m` to send them to pmai, review the reply, and apply it.
+The website's [Android APK](https://trufae.github.io/pmai/downloads/PocketMai-Android.apk)
+is the latest successful main-branch development build, with arm64 and x86_64
+support. Its [SHA-256 checksum](https://trufae.github.io/pmai/downloads/PocketMai-Android.apk.sha256)
+is published alongside it. Updating debug builds may require reinstalling.
 
 —pancake
