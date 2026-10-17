@@ -257,6 +257,7 @@ final class AppStore: ObservableObject {
   var agentProcessIDs: [UUID: AgentPID] = [:]
   private var followUpTasks: [UUID: Task<Void, Never>] = [:]
   private var followUpTaskTokens: [UUID: UUID] = [:]
+  let voiceover: VoiceoverController
   var responseBackgroundTasks: [UUID: ResponseBackgroundTask] = [:]
   let assistantActivity = AssistantActivityController()
   let backgroundKeepAlive = BackgroundKeepAlive()
@@ -278,6 +279,7 @@ final class AppStore: ObservableObject {
   }
 
   func cancelResponse(in conversationID: UUID) {
+    cancelVoiceover(in: conversationID)
     responseTasks[conversationID]?.cancel()
   }
 
@@ -512,10 +514,12 @@ final class AppStore: ObservableObject {
   init(
     persistence: PersistenceStore = PersistenceStore(),
     streamingTextStore: StreamingTextStore = StreamingTextStore(),
-    monitorNetwork: Bool = true
+    monitorNetwork: Bool = true,
+    voiceover: VoiceoverController = VoiceoverController()
   ) {
     self.persistence = persistence
     self.streamingTextStore = streamingTextStore
+    self.voiceover = voiceover
     settings = .defaults
     conversations = []
     appleAvailabilityReport = .checking
@@ -1240,6 +1244,7 @@ final class AppStore: ObservableObject {
       && conversation.enabledMCPServers == defaults.enabledMCPServers
       && conversation.enabledMCPTools == defaults.enabledMCPTools
       && conversation.usesStreaming == defaults.usesStreaming
+      && conversation.voiceoverEnabled == defaults.voiceoverEnabled
       && conversation.showThinking == defaults.showThinking
       && conversation.reasoningLevel == defaults.reasoningLevel
       && conversation.disabledMCPTools == defaults.disabledMCPTools
@@ -1568,7 +1573,11 @@ final class AppStore: ObservableObject {
 
   func updateCurrentConversation(_ update: (inout Conversation) -> Void) {
     guard let index = currentConversationIndex else { return }
+    let source = conversations[index].messages.last
     update(&conversations[index])
+    if conversations[index].messages.last != source || !conversations[index].voiceoverEnabled {
+      cancelVoiceover(in: conversations[index].id)
+    }
     conversations[index].updatedAt = Date()
     upsertSummary(for: conversations[index])
     saveConversations()
@@ -1579,6 +1588,7 @@ final class AppStore: ObservableObject {
     var conversation = conversations[index]
     update(&conversation)
     conversations[index] = conversation
+    if !conversation.voiceoverEnabled { cancelVoiceover(in: conversation.id) }
     saveConversations()
   }
 
@@ -1637,6 +1647,7 @@ final class AppStore: ObservableObject {
     let conversationID = conversations[index].id
     let removedMessages = conversations[index].messages.filter { ids.contains($0.id) }
     guard !removedMessages.isEmpty else { return }
+    cancelVoiceover(in: conversationID)
     clearStreamingText(for: removedMessages)
     conversations[index].messages.removeAll { ids.contains($0.id) }
     removeBookmarks(for: removedMessages, in: conversationID)
@@ -1648,6 +1659,7 @@ final class AppStore: ObservableObject {
   }
 
   func clearAllConversations() {
+    cancelAllVoiceovers()
     dismissBTWQuestions()
     let removedIDs = Set(conversationSummaries.map(\.id))
     let removedMessages = voiceRecordingMessages(in: removedIDs)
@@ -1687,6 +1699,7 @@ final class AppStore: ObservableObject {
   }
 
   func factoryReset() {
+    cancelAllVoiceovers()
     dismissBTWQuestions()
     dataGeneration += 1
     for task in responseTasks.values {
@@ -1802,6 +1815,7 @@ final class AppStore: ObservableObject {
       conversation.enabledMCPServers = source.enabledMCPServers
       conversation.enabledMCPTools = source.enabledMCPTools
       conversation.usesStreaming = source.usesStreaming
+      conversation.voiceoverEnabled = source.voiceoverEnabled
       conversation.disabledMCPTools = source.disabledMCPTools
       conversation.reasoningLevel = source.reasoningLevel
       conversation.showThinking = source.showThinking
@@ -2862,6 +2876,7 @@ final class AppStore: ObservableObject {
   }
 
   private func dispatchAssistantTurn(conversationID: UUID, context: String) {
+    cancelVoiceover(in: conversationID)
     let responseTaskToken = UUID()
     respondingConversationIDs.insert(conversationID)
     responseTaskTokens[conversationID] = responseTaskToken
@@ -2881,6 +2896,9 @@ final class AppStore: ObservableObject {
           endResponseBackgroundTask(
             for: conversationID, success: responseOutcomes[conversationID] == nil)
           saveConversations()
+          if responseOutcomes[conversationID] == nil, !Task.isCancelled {
+            scheduleVoiceover(for: conversationID)
+          }
           activityTurnFinished(conversationID: conversationID)
           completeAgentProcess(for: conversationID)
         }
@@ -4833,6 +4851,7 @@ final class AppStore: ObservableObject {
     let toolsEnabled: Bool
     let enabledTools: Set<BuiltInToolID>
     let usesStreaming: Bool
+    let voiceoverEnabled: Bool
     let enabledMCPServers: Set<UUID>
     let enabledMCPTools: Set<String>
     let disabledMCPTools: Set<String>
@@ -4855,6 +4874,7 @@ final class AppStore: ObservableObject {
       toolsEnabled = conversation.toolsEnabled
       enabledTools = conversation.enabledTools
       usesStreaming = conversation.usesStreaming
+      voiceoverEnabled = conversation.voiceoverEnabled
       enabledMCPServers = conversation.enabledMCPServers
       enabledMCPTools = conversation.enabledMCPTools
       disabledMCPTools = conversation.disabledMCPTools
@@ -5197,6 +5217,7 @@ final class AppStore: ObservableObject {
       && lhs.enabledMCPServers == rhs.enabledMCPServers
       && lhs.enabledMCPTools == rhs.enabledMCPTools
       && lhs.usesStreaming == rhs.usesStreaming
+      && lhs.voiceoverEnabled == rhs.voiceoverEnabled
       && lhs.disabledMCPTools == rhs.disabledMCPTools
       && lhs.reasoningLevel == rhs.reasoningLevel
       && lhs.showThinking == rhs.showThinking

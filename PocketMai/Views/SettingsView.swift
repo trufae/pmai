@@ -976,7 +976,12 @@ struct SettingsView: View {
     } label: {
       Text("Assistant")
     }
-    Text("Voices are used by Speak Message and the assistant's text-to-speech tool.")
+    NavigationLink {
+      VoiceoverSettingsView(store: store, storeObservation: storeObservation)
+    } label: {
+      Text("Voiceover")
+    }
+    Text("Voices are used by voiceover, Speak Message, and the assistant's text-to-speech tool.")
       .font(.caption)
       .foregroundStyle(.secondary)
 
@@ -4354,7 +4359,7 @@ private enum PromptNameResolution {
   }
 }
 
-private struct SystemPromptDetailView: View {
+struct SystemPromptDetailView: View {
   @EnvironmentObject private var store: AppStore
   @Environment(\.dismiss) private var dismiss
   @FocusState private var isNameFocused: Bool

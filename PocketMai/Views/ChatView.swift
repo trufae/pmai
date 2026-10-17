@@ -6108,6 +6108,7 @@ struct ConversationModelSettingsView: View {
             Toggle("Use memory", isOn: useMemoryBinding)
             Toggle("Stream responses", isOn: streamingBinding)
             Toggle("Suggest follow-ups", isOn: followUpSuggestionsBinding)
+            Toggle("Voiceover", isOn: voiceoverBinding)
           }
         }
       }
@@ -6683,6 +6684,14 @@ struct ConversationModelSettingsView: View {
         didSaveDefaults = false
       }
     )
+  }
+
+  private var voiceoverBinding: Binding<Bool> {
+    Binding(
+      get: { store.currentConversation?.voiceoverEnabled ?? false },
+      set: { enabled in
+        store.updateCurrentConversationSettings { $0.voiceoverEnabled = enabled }
+      })
   }
 
   private var followUpSuggestionsBinding: Binding<Bool> {

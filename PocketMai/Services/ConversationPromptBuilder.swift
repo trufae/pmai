@@ -15,6 +15,7 @@ struct OneShotPromptRequest: Sendable {
   var responseFormat: OneShotPromptResponseFormat = .text
   var reasoningLevel: ReasoningLevel = .automatic
   var systemPromptID: UUID?
+  var systemInstructions: String?
 }
 
 struct CompactConversationRequest: Sendable {
@@ -129,6 +130,7 @@ enum ConversationPromptBuilder {
 
 enum OneShotPromptRunner {
   static func run(_ prompt: OneShotPromptRequest, settings: AppSettings) async throws -> String {
+    var settings = settings
     var oneShot = Conversation()
     oneShot.title = prompt.title
     oneShot.provider = prompt.provider
@@ -136,6 +138,11 @@ enum OneShotPromptRunner {
     oneShot.endpointID = prompt.endpointID
     oneShot.reasoningLevel = prompt.reasoningLevel
     oneShot.systemPromptID = prompt.systemPromptID
+    if let instructions = prompt.systemInstructions {
+      let systemPrompt = SystemPrompt(name: prompt.title, text: instructions)
+      settings.systemPrompts.append(systemPrompt)
+      oneShot.systemPromptID = systemPrompt.id
+    }
     oneShot.toolsEnabled = false
     oneShot.enabledTools = []
     oneShot.usesStreaming = false

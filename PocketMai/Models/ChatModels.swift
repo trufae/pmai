@@ -1398,6 +1398,7 @@ struct Conversation: Identifiable, Codable, Equatable, Sendable {
   var toolsEnabled: Bool = true
   var enabledTools: Set<BuiltInToolID> = AppSettings.defaultTools
   var usesStreaming: Bool = true
+  var voiceoverEnabled: Bool = false
   var isPinned: Bool = false
   var isUnread: Bool = false
   var enabledMCPServers: Set<UUID> = AppSettings.defaultMCPServers
@@ -1444,6 +1445,7 @@ struct Conversation: Identifiable, Codable, Equatable, Sendable {
     case toolsEnabled
     case enabledTools
     case usesStreaming
+    case voiceoverEnabled
     case isPinned
     case isUnread
     case enabledMCPServers
@@ -1481,6 +1483,7 @@ struct Conversation: Identifiable, Codable, Equatable, Sendable {
     enabledTools = BuiltInToolID.knownTools(
       from: try? container.decode([String].self, forKey: .enabledTools))
     usesStreaming = try container.decode(Bool.self, forKey: .usesStreaming)
+    voiceoverEnabled = (try? container.decode(Bool.self, forKey: .voiceoverEnabled)) ?? false
     isPinned = (try? container.decode(Bool.self, forKey: .isPinned)) ?? false
     isUnread = (try? container.decode(Bool.self, forKey: .isUnread)) ?? false
     enabledMCPServers =
@@ -1526,6 +1529,7 @@ struct Conversation: Identifiable, Codable, Equatable, Sendable {
     try container.encode(toolsEnabled, forKey: .toolsEnabled)
     try container.encode(enabledTools, forKey: .enabledTools)
     try container.encode(usesStreaming, forKey: .usesStreaming)
+    try container.encode(voiceoverEnabled, forKey: .voiceoverEnabled)
     try container.encode(isPinned, forKey: .isPinned)
     try container.encode(isUnread, forKey: .isUnread)
     try container.encode(enabledMCPServers, forKey: .enabledMCPServers)

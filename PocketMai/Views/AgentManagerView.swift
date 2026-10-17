@@ -50,7 +50,7 @@ struct AgentManagerView: View {
       Section {
         ForEach(AgentTask.allCases, id: \.rawValue) { task in
           Picker(
-            task == .compact ? "Compaction" : task == .tool ? "Tool decisions" : "Tool approval",
+            taskTitle(task),
             selection: taskBinding(task)
           ) {
             Text("Current conversation agent").tag("")
@@ -58,6 +58,9 @@ struct AgentManagerView: View {
               Text(agent.name).tag(agent.id.uuidString.lowercased())
             }
           }
+        }
+        NavigationLink("Voiceover settings") {
+          VoiceoverSettingsView(store: store, storeObservation: storeObservation)
         }
       } header: {
         Text("Task agents")
@@ -199,6 +202,15 @@ struct AgentManagerView: View {
         store.settings.taskAgents[task] = value.isEmpty ? nil : value
         store.saveSettings()
       })
+  }
+
+  private func taskTitle(_ task: AgentTask) -> String {
+    switch task {
+    case .compact: "Compaction"
+    case .tool: "Tool decisions"
+    case .approval: "Tool approval"
+    case .voiceover: "Voiceover"
+    }
   }
 
   private var planBinding: Binding<Bool> {

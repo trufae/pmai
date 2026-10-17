@@ -234,6 +234,9 @@ final class LiveVoiceSession: ObservableObject {
     silenceTask?.cancel()
     silenceTask = nil
     stopRecognition()
+    if let conversationID = store?.currentConversation?.id {
+      store?.cancelVoiceover(in: conversationID)
+    }
     if cancelResponse, let conversationID = store?.currentConversation?.id {
       store?.cancelResponse(in: conversationID)
     }
@@ -255,6 +258,9 @@ final class LiveVoiceSession: ObservableObject {
 
     let draft = await finalizedDraftTranscript()
     stopRecognition()
+    if let conversationID = store?.currentConversation?.id {
+      store?.cancelVoiceover(in: conversationID)
+    }
     if cancelResponse, let conversationID = store?.currentConversation?.id {
       store?.cancelResponse(in: conversationID)
     }
@@ -519,7 +525,9 @@ final class LiveVoiceSession: ObservableObject {
     previewMessageID = UUID()
     let conversationID = store.currentConversation?.id ?? conversationIDBeforeSend
 
-    if store.settings.conversation.streamTTS, let conversationID {
+    if store.settings.conversation.streamTTS,
+      store.currentConversation?.voiceoverEnabled != true, let conversationID
+    {
       await streamSpeakAssistantResponse(
         conversationID: conversationID,
         priorAssistantIDs: priorAssistantIDs,
@@ -544,6 +552,21 @@ final class LiveVoiceSession: ObservableObject {
     guard generation == sessionGeneration else { return }
 
     isCommittingTurn = false
+    if let conversationID, store.conversation(withID: conversationID)?.voiceoverEnabled == true {
+      await store.voiceover.wait(in: conversationID)
+      guard generation == sessionGeneration else { return }
+      state = .speaking
+      await waitForSpeechToFinish(ttsPlayer, generation: generation)
+      guard generation == sessionGeneration else { return }
+      if let error = ttsPlayer.errorMessage {
+        errorMessage = error
+        state = .paused
+        return
+      }
+      _ = await beginRecognition(
+        displayState: .listening, resetTranscript: true, generation: generation)
+      return
+    }
     guard let assistant = latestSpeakableAssistantMessage(excluding: priorAssistantIDs) else {
       _ = await beginRecognition(
         displayState: .listening,
@@ -721,6 +744,9 @@ final class LiveVoiceSession: ObservableObject {
   }
 
   private func interruptAssistantIfNeeded() {
+    if let conversationID = store?.currentConversation?.id {
+      store?.cancelVoiceover(in: conversationID)
+    }
     if ttsPlayer?.isSpeaking == true {
       ttsPlayer?.stop()
     }

@@ -65,6 +65,7 @@ extension AppStore {
 
   /// A turn that was dropped without finishing (edited, regenerated, deleted).
   func activityTurnAbandoned(conversationID: UUID) {
+    cancelVoiceover(in: conversationID)
     responseOutcomes[conversationID] = nil
     assistantActivity.remove(id: conversationID)
     ResponseNotificationService.shared.clearNotification(.approval, for: conversationID)
