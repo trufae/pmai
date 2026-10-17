@@ -5,7 +5,16 @@ struct NowSpeakingBar: View {
   let onTap: (UUID) -> Void
 
   var body: some View {
-    if ttsPlayer.isSpeaking {
+    if let error = ttsPlayer.errorMessage {
+      HStack {
+        Label(error, systemImage: "exclamationmark.triangle")
+          .font(.caption)
+          .frame(maxWidth: .infinity, alignment: .leading)
+        Button("Dismiss") { ttsPlayer.dismissError() }
+      }
+      .padding(12)
+      .background(.ultraThinMaterial)
+    } else if ttsPlayer.isSpeaking {
       bar
         .transition(.move(edge: .top).combined(with: .opacity))
     }

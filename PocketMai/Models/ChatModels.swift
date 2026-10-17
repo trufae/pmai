@@ -1,6 +1,7 @@
 import Foundation
 import MaiCore
 import MaiLocalProviders
+import MaiOpenAI
 import MaiStandardTools
 
 enum ChatRole: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -1657,6 +1658,7 @@ struct OpenAIEndpoint: Identifiable, Codable, Equatable, Sendable {
   var baseURL: String
   var apiKey: String
   var defaultModel: String
+  var speechModel: String
   var defaultReasoningLevel: ReasoningLevel
   var isEnabled: Bool
   var authMethod: EndpointAuthMethod
@@ -1680,6 +1682,7 @@ struct OpenAIEndpoint: Identifiable, Codable, Equatable, Sendable {
     baseURL: String = "https://api.openai.com/v1",
     apiKey: String = "",
     defaultModel: String = "",
+    speechModel: String? = nil,
     defaultReasoningLevel: ReasoningLevel = .automatic,
     isEnabled: Bool = true,
     authMethod: EndpointAuthMethod = .apiKey,
@@ -1703,6 +1706,7 @@ struct OpenAIEndpoint: Identifiable, Codable, Equatable, Sendable {
     self.baseURL = baseURL
     self.apiKey = apiKey
     self.defaultModel = defaultModel
+    self.speechModel = speechModel ?? ""
     self.defaultReasoningLevel = defaultReasoningLevel
     self.isEnabled = isEnabled
     self.authMethod = authMethod
@@ -1719,7 +1723,8 @@ struct OpenAIEndpoint: Identifiable, Codable, Equatable, Sendable {
   }
 
   enum CodingKeys: String, CodingKey {
-    case id, kind, portableID, name, baseURL, apiKey, defaultModel, defaultReasoningLevel, isEnabled
+    case id, kind, portableID, name, baseURL, apiKey, defaultModel, speechModel,
+      defaultReasoningLevel, isEnabled
     case authMethod, oauthIssuer, oauthClientID, oauthAudience, oauthScope, oauthRedirectURI
     case oauthRefreshToken, oauthAccessTokenExpiresAt
     case oauthAuthorizeURL, oauthTokenURL
@@ -1735,6 +1740,14 @@ struct OpenAIEndpoint: Identifiable, Codable, Equatable, Sendable {
     baseURL = try c.decode(String.self, forKey: .baseURL)
     apiKey = try c.decode(String.self, forKey: .apiKey)
     defaultModel = try c.decode(String.self, forKey: .defaultModel)
+    // Older compatible providers used defaultModel for speech. Freeze that value
+    // during migration; subsequent chat-model edits must not change synthesis.
+    let directOpenAI =
+      kind == .openAICompatible
+      && URL(string: baseURL).map(OpenAISpeech.isDirectEndpoint) == true
+    speechModel =
+      (try? c.decode(String.self, forKey: .speechModel))
+      ?? (directOpenAI ? "" : defaultModel)
     defaultReasoningLevel =
       (try? c.decode(ReasoningLevel.self, forKey: .defaultReasoningLevel)) ?? .automatic
     isEnabled = try c.decode(Bool.self, forKey: .isEnabled)
@@ -1763,6 +1776,7 @@ struct OpenAIEndpoint: Identifiable, Codable, Equatable, Sendable {
     try c.encode(baseURL, forKey: .baseURL)
     try c.encode(apiKey, forKey: .apiKey)
     try c.encode(defaultModel, forKey: .defaultModel)
+    try c.encode(speechModel, forKey: .speechModel)
     try c.encode(defaultReasoningLevel, forKey: .defaultReasoningLevel)
     try c.encode(isEnabled, forKey: .isEnabled)
     try c.encode(authMethod, forKey: .authMethod)
@@ -2432,6 +2446,23 @@ extension SettingsBackupSection {
 
 extension OpenAIEndpoint {
   static let defaultDisplayName = "New Provider"
+
+  var isDirectOpenAI: Bool {
+    kind == .openAICompatible && URL(string: baseURL).map(OpenAISpeech.isDirectEndpoint) == true
+  }
+
+  var effectiveSpeechModel: String {
+    let model = speechModel.trimmingCharacters(in: .whitespacesAndNewlines)
+    return model.isEmpty && isDirectOpenAI ? OpenAISpeech.defaultModel : model
+  }
+
+  func speechVoices(discovered: [String]) -> [String] {
+    isDirectOpenAI ? OpenAISpeech.voices(for: effectiveSpeechModel) : discovered
+  }
+
+  func isSelectableForSpeech(discovered: [String]) -> Bool {
+    isEnabled && kind == .openAICompatible && (isDirectOpenAI || !discovered.isEmpty)
+  }
 
   var displayName: String {
     let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -10,6 +10,7 @@ extension ConfiguredProvider {
     var options: [String: JSONValue] = [
       "pocketmai.enabled": .bool(endpoint.isEnabled),
       "pocketmai.defaultModel": .string(endpoint.defaultModel),
+      "pocketmai.speechModel": .string(endpoint.speechModel),
       "pocketmai.reasoning": .string(endpoint.defaultReasoningLevel.rawValue),
       "pocketmai.authMethod": .string(endpoint.authMethod.rawValue),
     ]
@@ -55,6 +56,7 @@ extension OpenAIEndpoint {
       baseURL: baseURL.absoluteString,
       apiKey: provider.kind == .chatGPT ? "" : provider.apiKey ?? "",
       defaultModel: options["pocketmai.defaultModel"]?.stringValue ?? "",
+      speechModel: options["pocketmai.speechModel"]?.stringValue,
       defaultReasoningLevel: options["pocketmai.reasoning"]?.stringValue
         .flatMap(ReasoningLevel.init(rawValue:)) ?? .automatic,
       isEnabled: options["pocketmai.enabled"]?.boolValue ?? true,
@@ -71,6 +73,9 @@ extension OpenAIEndpoint {
       oauthTokenURL: options.archiveString("oauthTokenURL"),
       headers: provider.headers,
       portableID: portableIdentifier == nil ? provider.id : nil, kind: provider.kind)
+    if options["pocketmai.speechModel"] == nil, !isDirectOpenAI {
+      speechModel = defaultModel
+    }
   }
 }
 

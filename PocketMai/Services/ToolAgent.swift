@@ -938,7 +938,8 @@ enum TextToSpeechTool {
     openAIEndpoints: [OpenAIEndpoint] = [],
     role: VoiceRole = .assistant,
     title: String? = nil,
-    messageID: UUID? = nil
+    messageID: UUID? = nil,
+    player: TTSPlayer = .shared
   ) -> String {
     let text = TTSSpeechTextSanitizer.sanitized(
       arguments["text"]?.stringValue ?? "",
@@ -972,7 +973,7 @@ enum TextToSpeechTool {
       rate: arguments["rate"]?.numberValue ?? roleDefaults.rate,
       pitch: arguments["pitch"]?.numberValue ?? roleDefaults.pitch)
 
-    TTSPlayer.shared.speak(
+    player.speak(
       text: text,
       voice: selectedVoice,
       role: role,
@@ -981,6 +982,7 @@ enum TextToSpeechTool {
       openAIEndpoints: openAIEndpoints,
       skipTechnicalContent: skipTechnicalContent,
       interrupt: interrupt)
+    if let error = player.errorMessage { return "Error: \(error)" }
     return "Speaking \(text.count) character\(text.count == 1 ? "" : "s")."
   }
 }

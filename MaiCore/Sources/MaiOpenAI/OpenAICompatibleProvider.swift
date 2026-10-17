@@ -131,8 +131,11 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     }
   }
 
-  /// Lists voices exposed by OpenAI-compatible `/voices` endpoints.
-  public func availableVoices() async throws -> [String] {
+  /// Direct OpenAI has built-in voices; other providers retain `/voices` discovery.
+  public func availableVoices(model: String = OpenAISpeech.defaultModel) async throws -> [String] {
+    if OpenAISpeech.isDirectEndpoint(configuration.baseURL) {
+      return OpenAISpeech.voices(for: model)
+    }
     let root = try await catalog("voices")
     let voices = (root["data"]?.arrayValue ?? []).compactMap { value in
       value.stringValue
@@ -154,12 +157,39 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     responseFormat: String = "wav",
     model: String? = nil
   ) async throws -> Data {
+    let request = try makeSpeechRequest(
+      input: input, voice: voice, responseFormat: responseFormat, model: model)
+    let (data, response) = try await data(for: request)
+    try validate(response: response, data: data)
+    guard !data.isEmpty else { throw OpenAICompatibleProviderError.emptyResponse }
+    if let root = try? JSONDecoder().decode(JSONValue.self, from: data).objectValue {
+      if let error = providerError(in: root, response: response as? HTTPURLResponse) {
+        throw error
+      }
+      throw OpenAICompatibleProviderError.invalidResponse(
+        "Speech synthesis returned JSON instead of audio.")
+    }
+    return data
+  }
+
+  func makeSpeechRequest(
+    input: String, voice: String, responseFormat: String = "wav", model: String? = nil
+  ) throws -> URLRequest {
+    var model = model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let voice = voice.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !voice.isEmpty else {
+      throw OpenAICompatibleProviderError.invalidResponse("Choose a voice in Settings > Voices.")
+    }
+    if OpenAISpeech.isDirectEndpoint(configuration.baseURL) {
+      if model.isEmpty { model = OpenAISpeech.defaultModel }
+      try OpenAISpeech.validate(voice: voice, model: model)
+    }
     var body: [String: JSONValue] = [
       "input": .string(input),
       "voice": .string(voice),
       "response_format": .string(responseFormat),
     ]
-    if let model, !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+    if !model.isEmpty {
       body["model"] = .string(model)
     }
     var request = URLRequest(url: try endpointURL("audio/speech"))
@@ -170,10 +200,7 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     request.setValue(Self.speechAcceptHeader(responseFormat), forHTTPHeaderField: "Accept")
 
-    let (data, response) = try await data(for: request)
-    try validate(response: response, data: data)
-    guard !data.isEmpty else { throw OpenAICompatibleProviderError.emptyResponse }
-    return data
+    return request
   }
 
   func makeURLRequest(_ request: ProviderRequest, model: String) throws -> URLRequest {
@@ -349,6 +376,11 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
       break
     }
     if path == "/" { path = "" }
+    if endpoint == "audio/speech", path.isEmpty,
+      OpenAISpeech.isDirectEndpoint(configuration.baseURL)
+    {
+      path = "/v1"
+    }
     path += "/\(endpoint)"
     components.path = path.hasPrefix("/") ? path : "/\(path)"
     components.query = nil

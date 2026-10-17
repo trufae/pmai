@@ -1,5 +1,6 @@
 import AVFoundation
 import MaiCore
+import MaiOpenAI
 import Speech
 import SwiftUI
 import UIKit
@@ -2556,6 +2557,11 @@ private struct RoleVoiceSettingsView: View {
       Section {
         Picker("Provider", selection: providerBinding) {
           Text("System").tag(VoiceProviderSelection.system)
+          if let id = voice.openAIEndpointID,
+            !store.settings.openAIEndpoints.contains(where: { $0.id == id })
+          {
+            Text("Unavailable saved provider").tag(VoiceProviderSelection.openAI(id))
+          }
           ForEach(openAIVoiceEndpoints) { endpoint in
             Text(endpoint.displayName)
               .tag(VoiceProviderSelection.openAI(endpoint.id))
@@ -2566,31 +2572,61 @@ private struct RoleVoiceSettingsView: View {
         Text(
           store.settings.isOffline
             ? "Airplane Mode is on. Provider voices are unavailable."
-            : "Only OpenAI-compatible providers with discovered /v1/voices are listed.")
+            : "OpenAI includes built-in voices. Other compatible providers use voice discovery.")
       }
 
       if showsOpenAIVoiceSettings {
         Section {
-          openAIVoicePicker
-          Button {
-            refreshSelectedVoiceEndpoint()
-          } label: {
-            if isRefreshingSelectedVoiceEndpoint {
-              HStack {
-                ProgressView()
-                Text("Refreshing Voices...")
+          TextField(
+            "Speech Model", text: speechModelBinding,
+            prompt: Text(
+              selectedOpenAIEndpoint?.isDirectOpenAI == true
+                ? OpenAISpeech.defaultModel : "Provider default")
+          )
+          .textInputAutocapitalization(.never)
+          .autocorrectionDisabled()
+          if selectedOpenAIEndpoint?.isDirectOpenAI == true {
+            Menu("Choose Speech Model") {
+              ForEach(OpenAISpeech.models, id: \.self) { model in
+                Button(model) { speechModelBinding.wrappedValue = model }
               }
-            } else {
-              Label("Refresh Voices", systemImage: "arrow.clockwise")
             }
           }
-          .disabled(selectedOpenAIEndpoint == nil || isRefreshingSelectedVoiceEndpoint)
         } footer: {
-          if selectedEndpointVoices.isEmpty {
+          Text(
+            "The speech model is shared by voices using this provider and is separate from its chat model."
+          )
+        }
+        Section {
+          openAIVoicePicker
+          if selectedOpenAIEndpoint?.isDirectOpenAI != true {
+            Button {
+              refreshSelectedVoiceEndpoint()
+            } label: {
+              if isRefreshingSelectedVoiceEndpoint {
+                HStack {
+                  ProgressView()
+                  Text("Refreshing Voices...")
+                }
+              } else {
+                Label("Refresh Voices", systemImage: "arrow.clockwise")
+              }
+            }
+            .disabled(selectedOpenAIEndpoint == nil || isRefreshingSelectedVoiceEndpoint)
+          }
+        } footer: {
+          if selectedOpenAIEndpoint?.isDirectOpenAI == true {
+            Text(
+              "OpenAI voices are AI-generated. Test Voice sends a paid synthesis request using your provider credentials."
+            )
+          } else if selectedEndpointVoices.isEmpty {
             Text("Refresh this provider to load voices from /v1/voices.")
           } else {
             Text("Provider voices are requested as WAV audio from /v1/audio/speech.")
           }
+        }
+        if let issue = providerVoiceIssue {
+          Section { Text(issue).foregroundStyle(.red) }
         }
       } else {
         Section {
@@ -2645,6 +2681,12 @@ private struct RoleVoiceSettingsView: View {
             systemImage: isPlaying ? "stop.circle" : "play.circle")
         }
       }
+      if let error = ttsPlayer.errorMessage {
+        Section("Speech Error") {
+          Text(error).foregroundStyle(.red)
+          Button("Dismiss") { ttsPlayer.dismissError() }
+        }
+      }
     }
     .navigationTitle(title)
     .navigationBarTitleDisplayMode(.inline)
@@ -2657,12 +2699,6 @@ private struct RoleVoiceSettingsView: View {
         selectedVoice.language != newLanguage
       else { return }
       voice.voiceIdentifier = ""
-    }
-    .onAppear {
-      normalizeProviderVoiceSelection()
-    }
-    .onChange(of: selectedEndpointVoices) { _, _ in
-      normalizeProviderVoiceSelection()
     }
   }
 
@@ -2732,9 +2768,13 @@ private struct RoleVoiceSettingsView: View {
           guard !store.settings.isOffline else { return }
           copy.provider = .openAICompatible
           copy.openAIEndpointID = id
-          let voices = store.endpointVoices[id] ?? []
-          if !voices.contains(copy.openAIVoice) {
-            copy.openAIVoice = voices.first ?? copy.openAIVoice
+          if copy.openAIVoice.isEmpty,
+            let endpoint = store.settings.openAIEndpoints.first(where: { $0.id == id })
+          {
+            copy.openAIVoice =
+              endpoint.speechVoices(
+                discovered: store.endpointVoices[id] ?? []
+              ).first ?? ""
           }
         }
         voice = copy
@@ -2744,12 +2784,9 @@ private struct RoleVoiceSettingsView: View {
   @ViewBuilder
   private var openAIVoicePicker: some View {
     Picker("Voice", selection: voiceBinding(\.openAIVoice)) {
-      if openAIVoiceOptions.isEmpty {
-        Text("No voices loaded").tag("")
-      } else {
-        ForEach(openAIVoiceOptions, id: \.self) { option in
-          Text(option).tag(option)
-        }
+      Text("Select a voice").tag("")
+      ForEach(openAIVoiceOptions, id: \.self) { option in
+        Text(option).tag(option)
       }
     }
   }
@@ -2768,19 +2805,20 @@ private struct RoleVoiceSettingsView: View {
     guard voice.provider == .openAICompatible,
       let id = voice.openAIEndpointID
     else { return [] }
-    return store.endpointVoices[id] ?? []
+    return selectedOpenAIEndpoint?.speechVoices(discovered: store.endpointVoices[id] ?? []) ?? []
   }
 
   private var openAIVoiceEndpoints: [OpenAIEndpoint] {
     guard !store.settings.isOffline else { return [] }
     return store.settings.openAIEndpoints.filter { endpoint in
-      endpoint.isEnabled && !(store.endpointVoices[endpoint.id] ?? []).isEmpty
+      endpoint.isSelectableForSpeech(discovered: store.endpointVoices[endpoint.id] ?? [])
+        || endpoint.id == voice.openAIEndpointID
     }
   }
 
   private var selectedOpenAIEndpoint: OpenAIEndpoint? {
     guard let id = voice.openAIEndpointID else { return nil }
-    return openAIVoiceEndpoints.first(where: { $0.id == id })
+    return store.settings.openAIEndpoints.first(where: { $0.id == id })
   }
 
   private var isRefreshingSelectedVoiceEndpoint: Bool {
@@ -2790,24 +2828,31 @@ private struct RoleVoiceSettingsView: View {
     return true
   }
 
-  private func normalizeProviderVoiceSelection() {
-    guard voice.provider == .openAICompatible else { return }
-    guard !store.settings.isOffline else { return }
-    guard !openAIVoiceEndpoints.isEmpty else {
-      voice.provider = .system
-      voice.openAIEndpointID = nil
-      return
+  private var speechModelBinding: Binding<String> {
+    Binding(
+      get: { selectedOpenAIEndpoint?.speechModel ?? "" },
+      set: { value in
+        guard
+          let index = store.settings.openAIEndpoints.firstIndex(where: {
+            $0.id == voice.openAIEndpointID
+          })
+        else { return }
+        store.settings.openAIEndpoints[index].speechModel = value
+        store.saveSettings()
+      })
+  }
+
+  private var providerVoiceIssue: String? {
+    guard let endpoint = selectedOpenAIEndpoint, endpoint.isEnabled else {
+      return "The saved voice provider is missing or disabled. Select an enabled provider."
     }
-    if voice.openAIEndpointID == nil
-      || !openAIVoiceEndpoints.contains(where: { $0.id == voice.openAIEndpointID })
-    {
-      voice.openAIEndpointID = openAIVoiceEndpoints.first?.id
+    guard !voice.openAIVoice.isEmpty else { return "Select a voice before speaking." }
+    if endpoint.isDirectOpenAI {
+      do {
+        try OpenAISpeech.validate(voice: voice.openAIVoice, model: endpoint.effectiveSpeechModel)
+      } catch { return error.localizedDescription }
     }
-    guard let id = voice.openAIEndpointID else { return }
-    let voices = store.endpointVoices[id] ?? []
-    if !voices.isEmpty && !voices.contains(voice.openAIVoice) {
-      voice.openAIVoice = voices[0]
-    }
+    return nil
   }
 
   private func refreshSelectedVoiceEndpoint() {

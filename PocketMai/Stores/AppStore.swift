@@ -4251,7 +4251,8 @@ final class AppStore: ObservableObject {
     let models = (try? results.models.get()) ?? []
     let voices = (try? results.voices.get()) ?? []
 
-    if !models.isEmpty || !voices.isEmpty {
+    // Built-in OpenAI voices indicate capability, not successful authentication.
+    if !models.isEmpty || (!endpoint.isDirectOpenAI && !voices.isEmpty) {
       endpointModels[endpoint.id] = models
       endpointVoices[endpoint.id] = voices
       endpointStatuses[endpoint.id] = .available

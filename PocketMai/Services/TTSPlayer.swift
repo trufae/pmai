@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import MaiOpenAI
 import MediaPlayer
 
 @MainActor
@@ -13,6 +14,10 @@ final class TTSPlayer: NSObject, ObservableObject {
   @Published private(set) var currentText: String?
   @Published private(set) var currentTag: String?
   @Published private(set) var currentMessageID: UUID?
+  @Published private(set) var errorMessage: String?
+
+  typealias SpeechSynthesis = @MainActor (OpenAIEndpoint, String, String) async throws -> Data
+  private let synthesizeSpeech: SpeechSynthesis
 
   private lazy var synthesizer: AVSpeechSynthesizer = {
     let synthesizer = AVSpeechSynthesizer()
@@ -31,9 +36,17 @@ final class TTSPlayer: NSObject, ObservableObject {
   private var boostedAudioPlaybackID: UUID?
   private var speechGeneration = 0
 
-  override init() {
+  init(
+    synthesizeSpeech: @escaping SpeechSynthesis = { endpoint, text, voice in
+      try await OpenAICompatibleProvider.synthesizeSpeechAudio(
+        endpoint: endpoint, input: text, voice: voice)
+    }
+  ) {
+    self.synthesizeSpeech = synthesizeSpeech
     super.init()
   }
+
+  func dismissError() { errorMessage = nil }
 
   func speak(
     text: String,
@@ -182,7 +195,19 @@ final class TTSPlayer: NSObject, ObservableObject {
     beginSpeaking(first)
   }
 
-  private func beginSpeaking(_ speech: QueuedSpeech) {
+  private func beginSpeaking(_ requestedSpeech: QueuedSpeech) {
+    var speech = requestedSpeech
+    if speech.voice.provider == .openAICompatible, speech.openAIEndpoint?.isDirectOpenAI == true {
+      let chunks = OpenAISpeech.textChunks(speech.text)
+      speech.text = chunks.first ?? speech.text
+      queuedSpeech.insert(
+        contentsOf: chunks.dropFirst().map { text in
+          var next = requestedSpeech
+          next.text = text
+          return next
+        }, at: 0)
+    }
+    errorMessage = nil
     setupRemoteCommands()
     activateAudioSession()
     speechGeneration += 1
@@ -196,10 +221,17 @@ final class TTSPlayer: NSObject, ObservableObject {
     isPaused = false
     updateNowPlaying()
 
-    if speech.voice.provider == .openAICompatible,
-      let endpoint = speech.openAIEndpoint,
-      !speech.voice.openAIVoice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    {
+    if speech.voice.provider == .openAICompatible {
+      guard let endpoint = speech.openAIEndpoint else {
+        failSpeech(
+          "The selected voice provider is missing or disabled. Choose a provider in Settings > Voices."
+        )
+        return
+      }
+      guard !speech.voice.openAIVoice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        failSpeech("Select a voice in Settings > Voices before speaking.")
+        return
+      }
       beginProviderSpeaking(speech, endpoint: endpoint, generation: speechGeneration)
       return
     }
@@ -259,7 +291,8 @@ final class TTSPlayer: NSObject, ObservableObject {
     boostedAudioGainUnit = gainUnit
     boostedAudioPlaybackID = playbackID
 
-    playerNode.scheduleFile(file, at: nil) { [weak self] in
+    playerNode.scheduleFile(file, at: nil, completionCallbackType: .dataPlayedBack) {
+      [weak self] _ in
       Task { @MainActor in
         guard
           let self,
@@ -271,7 +304,7 @@ final class TTSPlayer: NSObject, ObservableObject {
         self.handleFinished()
       }
     }
-    playerNode.play()
+    if !isPaused { playerNode.play() }
     return true
   }
 
@@ -297,33 +330,32 @@ final class TTSPlayer: NSObject, ObservableObject {
     generation: Int
   ) {
     let voice = speech.voice.openAIVoice.trimmingCharacters(in: .whitespacesAndNewlines)
+    let synthesizeSpeech = self.synthesizeSpeech
     providerSpeechTask = Task { [weak self] in
-      let formats = ["wav"]
-      for format in formats {
-        guard !Task.isCancelled else { return }
-        do {
-          let data = try await OpenAICompatibleProvider.synthesizeSpeechAudio(
-            endpoint: endpoint,
-            input: speech.text,
-            voice: voice,
-            responseFormat: format)
-          try Task.checkCancellation()
-          let didStart = await MainActor.run {
-            self?.playProviderAudio(data, fileExtension: format, generation: generation) ?? false
-          }
-          if didStart { return }
-        } catch is CancellationError {
-          return
-        } catch {
-          continue
-        }
-      }
-
-      await MainActor.run {
+      do {
+        try Task.checkCancellation()
+        let data = try await synthesizeSpeech(endpoint, speech.text, voice)
+        try Task.checkCancellation()
         guard let self, self.speechGeneration == generation else { return }
-        self.handleStopped()
+        if !self.playProviderAudio(data, fileExtension: "wav", generation: generation) {
+          self.failSpeech(
+            "Speech synthesis returned audio that could not be played. Check the provider's WAV output."
+          )
+        }
+      } catch {
+        guard !Task.isCancelled, !(error is CancellationError),
+          let self, self.speechGeneration == generation
+        else { return }
+        self.failSpeech(
+          "\(endpoint.displayName) speech (\(endpoint.effectiveSpeechModel.isEmpty ? "provider default" : endpoint.effectiveSpeechModel), \(voice)): \(error.localizedDescription)"
+        )
       }
     }
+  }
+
+  private func failSpeech(_ message: String) {
+    handleStopped()
+    errorMessage = message
   }
 
   private func playProviderAudio(
@@ -351,7 +383,7 @@ final class TTSPlayer: NSObject, ObservableObject {
       player.delegate = self
       player.volume = 1.0
       player.prepareToPlay()
-      if player.play() {
+      if isPaused || player.play() {
         audioPlayer = player
         providerSpeechTask = nil
         return true
@@ -373,6 +405,11 @@ final class TTSPlayer: NSObject, ObservableObject {
   }
 
   func pause() {
+    if providerSpeechTask != nil && !isPaused {
+      isPaused = true
+      updateNowPlaying()
+      return
+    }
     if let boostedAudioPlayerNode, boostedAudioPlayerNode.isPlaying, !isPaused {
       boostedAudioPlayerNode.pause()
       isPaused = true
@@ -391,6 +428,11 @@ final class TTSPlayer: NSObject, ObservableObject {
 
   func resume() {
     guard isPaused else { return }
+    if providerSpeechTask != nil {
+      isPaused = false
+      updateNowPlaying()
+      return
+    }
     if let boostedAudioPlayerNode {
       boostedAudioPlayerNode.play()
       isPaused = false
@@ -449,6 +491,7 @@ final class TTSPlayer: NSObject, ObservableObject {
   }
 
   private func handleStopped() {
+    speechGeneration += 1
     queuedSpeech.removeAll()
     pendingSpeechAfterCancel = nil
     providerSpeechTask?.cancel()
@@ -644,7 +687,7 @@ final class TTSPlayer: NSObject, ObservableObject {
   }
 
   private struct QueuedSpeech {
-    let text: String
+    var text: String
     let voice: RoleVoiceSettings
     let role: VoiceRole
     let title: String?
@@ -735,11 +778,21 @@ extension TTSPlayer: AVSpeechSynthesizerDelegate {
 
 extension TTSPlayer: AVAudioPlayerDelegate {
   nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-    Task { @MainActor in self.handleFinished() }
+    Task { @MainActor in
+      guard self.audioPlayer === player else { return }
+      if flag {
+        self.handleFinished()
+      } else {
+        self.failSpeech("Audio playback did not finish successfully.")
+      }
+    }
   }
 
   nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
-    Task { @MainActor in self.handleStopped() }
+    Task { @MainActor in
+      guard self.audioPlayer === player else { return }
+      self.failSpeech(error?.localizedDescription ?? "The speech audio could not be decoded.")
+    }
   }
 }
 

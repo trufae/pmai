@@ -526,6 +526,11 @@ final class LiveVoiceSession: ObservableObject {
         generation: generation)
       isCommittingTurn = false
       guard generation == sessionGeneration else { return }
+      if let error = ttsPlayer.errorMessage {
+        errorMessage = error
+        state = .paused
+        return
+      }
       _ = await beginRecognition(
         displayState: .listening,
         resetTranscript: true,
@@ -561,6 +566,11 @@ final class LiveVoiceSession: ObservableObject {
       skipTechnicalContent: store.settings.conversation.skipTechnicalContentInTTS)
     await waitForSpeechToFinish(ttsPlayer, generation: generation)
     guard generation == sessionGeneration else { return }
+    if let error = ttsPlayer.errorMessage {
+      errorMessage = error
+      state = .paused
+      return
+    }
     _ = await beginRecognition(
       displayState: .listening,
       resetTranscript: true,
@@ -594,10 +604,12 @@ final class LiveVoiceSession: ObservableObject {
 
     let voice = store.effectiveToolSettings(for: store.currentConversation).voices.assistant
     let endpoints = store.settings.isOffline ? [] : store.settings.openAIEndpoints
+    ttsPlayer.dismissError()
     var consumed = 0
 
     while generation == sessionGeneration, !Task.isCancelled {
       let visible = currentAssistantVisibleText(id: id)
+      if ttsPlayer.errorMessage != nil { break }
       let stillResponding = store.isResponding(in: conversationID)
 
       if consumed > visible.count {

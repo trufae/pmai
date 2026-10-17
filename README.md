@@ -72,6 +72,35 @@ to an older PocketMai version, rename the file to end in `.pocketmai.json`.
 **Export...** offers readable copies such as Plain Text (.txt), Markdown, HTML and
 Word. **Debug Report** is for troubleshooting; it is not needed to transfer a chat.
 
+## OpenAI text-to-speech
+
+1. Open **Settings > Providers > Add Provider**, choose **OpenAI API**,
+   set the base URL to `https://api.openai.com/v1`, and save your API key using
+   the provider's existing credentials form. Enable the provider.
+2. Open **Settings > Voices > Assistant** (or **User**) and select that provider.
+   Its built-in voices are available immediately, without voice discovery.
+3. Leave **Speech Model** at its `gpt-4o-mini-tts` default, or choose a supported
+   TTS model, then select a **Voice**. The speech model is shared by roles using
+   that provider and is independent of its chat model.
+4. Tap **Test Voice** for a paid preview. **Speak Message**, **Speak From Here**,
+   live conversation replies, and the `speak` tool use these same settings.
+
+Long messages are divided into bounded requests and played through the existing
+speech queue. Pausing while synthesis is pending keeps the returned audio paused.
+
+These are AI-generated voices. OpenAI documents 13 voices for `gpt-4o-mini-tts`;
+`tts-1` and `tts-1-hd` support a smaller set. Unsupported selections show an
+error without switching voices. Compatible servers retain `/voices` discovery
+and custom speech model names; a blank speech model uses their server default.
+Existing compatible-provider configurations keep their previous synthesis model
+when migrated. Airplane Mode retains the existing system-voice behavior.
+See the [official TTS guide](https://developers.openai.com/api/docs/guides/text-to-speech).
+
+As of October 17, 2026, OpenAI has announced retirement of `tts-1`, `tts-1-hd`
+and the dated `gpt-4o-mini-tts` models on January 6, 2027. See
+[OpenAI's deprecation notice](https://developers.openai.com/api/docs/deprecations#2026-10-01-text-to-speech-models).
+Realtime speech is outside this integration.
+
 ## Voice privacy
 
 Voice recordings and imported audio stay on device for transcription by default.

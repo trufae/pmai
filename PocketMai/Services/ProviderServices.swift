@@ -1044,6 +1044,7 @@ enum OpenAICompatibleProvider {
 
   static func fetchVoices(endpoint: OpenAIEndpoint) async throws -> [String] {
     guard endpoint.kind != .systemOne, endpoint.kind != .chatGPT else { return [] }
+    if endpoint.isDirectOpenAI { return endpoint.speechVoices(discovered: []) }
     do {
       return try await coreProvider(endpoint: endpoint).availableVoices()
     } catch {
@@ -1057,7 +1058,7 @@ enum OpenAICompatibleProvider {
     voice: String,
     responseFormat: String = "wav"
   ) async throws -> Data {
-    let model = endpoint.defaultModel.trimmingCharacters(in: .whitespacesAndNewlines)
+    let model = endpoint.effectiveSpeechModel
     do {
       return try await coreProvider(endpoint: endpoint).synthesizeSpeech(
         input: input,
