@@ -230,6 +230,24 @@ private struct StreamingMessageBubble: View {
   }
 }
 
+/// Measure a user bubble's natural width before constraining it to the chat.
+/// Its Markdown and timestamp rows may still expand within that fitted width.
+private struct MessageBubbleLayout: Layout {
+  var fitsContent: Bool
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    guard let content = subviews.first else { return .zero }
+    let width = fitsContent
+      ? min(proposal.width ?? .infinity, content.sizeThatFits(.unspecified).width)
+      : proposal.width
+    return content.sizeThatFits(ProposedViewSize(width: width, height: proposal.height))
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
+  }
+}
+
 private struct MessageBubbleContent: View, Equatable {
   @AppStorage("thinkingDisplay") private var thinkingDisplay: ThinkingDisplay = .five
   @Environment(\.isFullChatScreenshotRendering) private var isFullChatScreenshotRendering
@@ -305,7 +323,7 @@ private struct MessageBubbleContent: View, Equatable {
       ? 0
       : min(renderedPartStartIndex ?? tailStart, tailStart)
 
-    VStack(alignment: .leading, spacing: 6) {
+    VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
       ForEach(
         Array(prepared.parts.enumerated().dropFirst(partStart)), id: \.element.id
       ) { index, part in
@@ -379,11 +397,11 @@ private struct MessageBubbleContent: View, Equatable {
           voice: toolSettings.voices.assistant, openAIEndpoints: openAIEndpoints)
       }
     }
-    .frame(maxWidth: .infinity, alignment: .leading)
+    .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
     .preference(
       key: ResponseScrollTargetsKey.self,
       value: responseScrollTarget(in: prepared).map { [message.id: $0] } ?? [:])
-    .frame(maxWidth: 720, alignment: .leading)
+    .frame(maxWidth: 720, alignment: isUser ? .trailing : .leading)
     .padding(.leading, isUser ? 36 : 0)
     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
   }
@@ -430,7 +448,7 @@ private struct MessageBubbleContent: View, Equatable {
     let usesMarkdown = usesMarkdown(for: bubbleText, canRenderMarkdown: canRenderMarkdown)
     let markdownBlocks = markdownBlocks(
       for: bubbleText, usesMarkdown: usesMarkdown, partID: partID)
-    let bubbleView = VStack(alignment: .leading, spacing: 8) {
+    let bubbleContent = VStack(alignment: .leading, spacing: 8) {
       if includeMessageExtras && showsSenderHeader {
         HStack(spacing: 6) {
           Image(systemName: iconName)
@@ -531,6 +549,9 @@ private struct MessageBubbleContent: View, Equatable {
     }
     .padding(14)
     .frame(maxWidth: .infinity, alignment: .leading)
+    let bubbleView = MessageBubbleLayout(fitsContent: isUser) {
+      bubbleContent
+    }
     .background(backgroundStyle)
     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
     .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -4189,7 +4210,8 @@ private struct JustifiedMarkdownTextView: UIViewRepresentable {
     -> CGSize?
   {
     configure(textView, coordinator: context.coordinator)
-    guard let width = proposal.width, width.isFinite, width > 0 else {
+    let width = proposal.width ?? ceil(textView.attributedText.size().width)
+    guard width.isFinite, width > 0 else {
       return nil
     }
     let height = textView.sizeThatFits(
