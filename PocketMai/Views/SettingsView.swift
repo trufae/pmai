@@ -888,6 +888,14 @@ struct SettingsView: View {
     Toggle("Render images", isOn: settingsBinding(\.renderMarkdownImagesInChat))
     Toggle("Justify Text", isOn: settingsBinding(\.appearance.justifyText))
     Toggle("Unwrapped Tables", isOn: settingsBinding(\.appearance.unwrappedTables))
+    Toggle(
+      "Scroll to follow responses",
+      isOn: settingsBinding(\.appearance.scrollToFollowResponses))
+    Text(
+      "Follows responses to the bottom as they stream. When off, long responses keep their beginning visible. Scrolling manually pauses following."
+    )
+    .font(.caption)
+    .foregroundStyle(.secondary)
   }
 
   @ViewBuilder

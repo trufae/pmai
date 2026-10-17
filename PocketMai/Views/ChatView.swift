@@ -1661,8 +1661,9 @@ struct ChatView: View {
   }
 
   private func scrollFollowingResponse(_ proxy: ScrollViewProxy, animated: Bool = false) {
-    // Returning to the bottom follows the tail, even for a tall response.
-    if !followChatBottom, let id = currentConversation?.messages.last?.id,
+    // The setting or returning to the bottom follows the tail, even for a tall response.
+    if !store.settings.appearance.scrollToFollowResponses, !followChatBottom,
+      let id = currentConversation?.messages.last?.id,
       let target = responseScrollTargets[id]
     {
       // ScrollView clamps short answers to the bottom. Once the answer is

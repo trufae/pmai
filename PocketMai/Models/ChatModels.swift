@@ -359,6 +359,7 @@ struct AppearanceSettings: Codable, Equatable, Sendable {
   var liveMarkdown: Bool = true
   var justifyText: Bool = true
   var unwrappedTables: Bool = false
+  var scrollToFollowResponses: Bool = false
   var hapticsEnabled: Bool = true
 
   static let defaults = AppearanceSettings()
@@ -377,7 +378,7 @@ struct AppearanceSettings: Codable, Equatable, Sendable {
     case userFontFamily, assistantFontFamily, fontFamily, fontSize, lineSpacing, zoomMethod, tint,
       theme
     case liveMarkdown, justifyText, unwrappedTables
-    case hapticsEnabled
+    case scrollToFollowResponses, hapticsEnabled
   }
 
   init(from decoder: Decoder) throws {
@@ -397,6 +398,8 @@ struct AppearanceSettings: Codable, Equatable, Sendable {
     liveMarkdown = (try? c.decode(Bool.self, forKey: .liveMarkdown)) ?? true
     justifyText = (try? c.decode(Bool.self, forKey: .justifyText)) ?? true
     unwrappedTables = (try? c.decode(Bool.self, forKey: .unwrappedTables)) ?? false
+    scrollToFollowResponses =
+      (try? c.decode(Bool.self, forKey: .scrollToFollowResponses)) ?? false
     hapticsEnabled = (try? c.decode(Bool.self, forKey: .hapticsEnabled)) ?? true
   }
 
@@ -412,6 +415,7 @@ struct AppearanceSettings: Codable, Equatable, Sendable {
     try c.encode(liveMarkdown, forKey: .liveMarkdown)
     try c.encode(justifyText, forKey: .justifyText)
     try c.encode(unwrappedTables, forKey: .unwrappedTables)
+    try c.encode(scrollToFollowResponses, forKey: .scrollToFollowResponses)
     try c.encode(hapticsEnabled, forKey: .hapticsEnabled)
   }
 }

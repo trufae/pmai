@@ -12,14 +12,21 @@ final class AppearanceSettingsTests: XCTestCase {
     XCTAssertEqual(decoded.githubAPIKey, "test-token")
   }
 
-  func testLegacyResponseFollowingSettingIsIgnoredAndNotSaved() throws {
+  func testResponseFollowingDefaultsToKeepingResponseBeginningsVisible() throws {
+    let decoded = try JSONDecoder().decode(AppearanceSettings.self, from: Data("{}".utf8))
+    XCTAssertFalse(AppearanceSettings.defaults.scrollToFollowResponses)
+    XCTAssertFalse(decoded.scrollToFollowResponses)
+  }
+
+  func testResponseFollowingSettingIsRestoredAndSaved() throws {
     for enabled in [true, false] {
       let data = Data("{\"scrollToFollowResponses\":\(enabled)}".utf8)
       let decoded = try JSONDecoder().decode(AppearanceSettings.self, from: data)
-      XCTAssertEqual(decoded, .defaults)
+      XCTAssertEqual(decoded.scrollToFollowResponses, enabled)
       let encoded = try JSONEncoder().encode(decoded)
       let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
-      XCTAssertNil(object["scrollToFollowResponses"])
+      XCTAssertEqual(object["scrollToFollowResponses"] as? Bool, enabled)
+      XCTAssertEqual(try JSONDecoder().decode(AppearanceSettings.self, from: encoded), decoded)
     }
   }
 
