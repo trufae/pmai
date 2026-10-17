@@ -14,6 +14,7 @@ func toolResultDisplayConfiguration() throws {
     (#"{"toolResultLines":7}"#, .lines(7)),
     (#"{"toolResultLines":"all"}"#, .all),
     (#"{"toolResultLines":"relevant"}"#, .relevant),
+    (#"{"toolResultLines":"unknown"}"#, .all),
   ]
   for (json, expected) in cases {
     let ui = try JSONDecoder().decode(ConfiguredTerminalUI.self, from: Data(json.utf8))
@@ -29,7 +30,7 @@ func toolResultDisplayConfiguration() throws {
   }
   #expect(throws: DecodingError.self) {
     try JSONDecoder().decode(
-      ConfiguredTerminalUI.self, from: Data(#"{"toolResultLines":"unknown"}"#.utf8))
+      ToolResultDisplay.self, from: Data(#""unknown""#.utf8))
   }
   #expect(ToolResultDisplay(setting: "RELEVANT") == .relevant)
   #expect(ToolResultDisplay(setting: "0") == .lines(0))

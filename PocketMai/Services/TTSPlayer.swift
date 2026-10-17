@@ -778,8 +778,9 @@ extension TTSPlayer: AVSpeechSynthesizerDelegate {
 
 extension TTSPlayer: AVAudioPlayerDelegate {
   nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+    let playerID = ObjectIdentifier(player)
     Task { @MainActor in
-      guard self.audioPlayer === player else { return }
+      guard self.audioPlayer.map(ObjectIdentifier.init) == playerID else { return }
       if flag {
         self.handleFinished()
       } else {
@@ -789,8 +790,9 @@ extension TTSPlayer: AVAudioPlayerDelegate {
   }
 
   nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+    let playerID = ObjectIdentifier(player)
     Task { @MainActor in
-      guard self.audioPlayer === player else { return }
+      guard self.audioPlayer.map(ObjectIdentifier.init) == playerID else { return }
       self.failSpeech(error?.localizedDescription ?? "The speech audio could not be decoded.")
     }
   }
