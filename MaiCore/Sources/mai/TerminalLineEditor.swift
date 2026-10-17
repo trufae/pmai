@@ -196,6 +196,8 @@ final class TerminalLineEditor {
 
   /// One keystroke, or a pasted block, decoded from the terminal's bytes.
   private enum Key {
+    /// An asynchronous prompt change, handled between complete keystrokes.
+    case refreshPrompt
     /// A plain byte: a control character or the first byte of a character.
     case byte(UInt8)
     /// A whole character the terminal reported through an escape sequence.
@@ -214,6 +216,15 @@ final class TerminalLineEditor {
   private let maximumHistory = 500
   private var ui = ConfiguredTerminalUI()
   private(set) var wasInterrupted = false
+  private(set) var submittedPromptID: String?
+  private let promptLock = NSLock()
+  private var publishedPrompt: TerminalPrompt?
+  private var pendingPrompt: TerminalPrompt?
+  // Only the input thread touches the active prompt and saved chat draft.
+  private var activePrompt = TerminalPrompt(text: "")
+  private var tracksPromptUpdates = false
+  private var continuationPrompt: String?
+  private var savedChatDraft: (bytes: [UInt8], cursor: Int)?
   /// A surface that owns the tty for the whole session. While one is
   /// installed the editor neither changes the terminal mode nor draws a
   /// separator; the surface keeps the row and the status line.
@@ -243,14 +254,41 @@ final class TerminalLineEditor {
     persistentSurface = surface
   }
 
+  /// Publish from the event loop; the input thread applies it on its next poll.
+  func updatePrompt(_ prompt: TerminalPrompt) {
+    promptLock.withLock {
+      guard prompt != publishedPrompt else { return }
+      publishedPrompt = prompt
+      pendingPrompt = prompt
+    }
+  }
+
+  private func takePromptUpdate() -> TerminalPrompt? {
+    promptLock.withLock {
+      defer { pendingPrompt = nil }
+      return pendingPrompt
+    }
+  }
+
   func readLine(
     prompt: String,
     completions: [String],
     additionalCompletions: ((String) -> [String])? = nil,
     separator: String? = nil,
-    rememberInput: Bool = true
+    rememberInput: Bool = true,
+    tracksPromptUpdates: Bool = false,
+    continuationPrompt: String? = nil
   ) -> String? {
     wasInterrupted = false
+    submittedPromptID = nil
+    self.tracksPromptUpdates = tracksPromptUpdates
+    self.continuationPrompt = continuationPrompt
+    defer { self.tracksPromptUpdates = false }
+    activePrompt = tracksPromptUpdates ? promptLock.withLock {
+      pendingPrompt = nil
+      return publishedPrompt ?? TerminalPrompt(text: prompt)
+    } : TerminalPrompt(text: prompt)
+    if !activePrompt.isModal, let continuationPrompt { activePrompt.text = continuationPrompt }
     if let persistentSurface {
       surface = persistentSurface
       defer { surface = nil }
@@ -261,7 +299,8 @@ final class TerminalLineEditor {
     guard isatty(STDIN_FILENO) != 0, isatty(STDOUT_FILENO) != 0 else {
       FileHandle.standardOutput.write(Data(prompt.utf8))
       guard let line = Swift.readLine(strippingNewline: true) else { return nil }
-      if rememberInput { remember(line) }
+      submittedPromptID = activePrompt.id
+      if rememberInput && !activePrompt.isModal { remember(line) }
       return line
     }
 
@@ -269,7 +308,8 @@ final class TerminalLineEditor {
     guard tcgetattr(STDIN_FILENO, &original) == 0 else {
       FileHandle.standardOutput.write(Data(prompt.utf8))
       guard let line = Swift.readLine(strippingNewline: true) else { return nil }
-      if rememberInput { remember(line) }
+      submittedPromptID = activePrompt.id
+      if rememberInput && !activePrompt.isModal { remember(line) }
       return line
     }
     var raw = original
@@ -293,8 +333,14 @@ final class TerminalLineEditor {
     separator: String?,
     rememberInput: Bool
   ) -> String? {
+    var prompt = tracksPromptUpdates ? activePrompt.text : prompt
     var bytes: [UInt8] = []
     var cursor = 0
+    if tracksPromptUpdates, !activePrompt.isModal, let saved = savedChatDraft {
+      bytes = saved.bytes
+      cursor = saved.cursor
+      savedChatDraft = nil
+    }
     var historyIndex: Int?
     var draft: [UInt8] = []
     viewTop = 0
@@ -318,6 +364,7 @@ final class TerminalLineEditor {
         redraw(prompt: prompt, bytes: bytes, cursor: cursor)
         return
       }
+      guard !activePrompt.isModal else { return }
       guard
         recallPreviousHistoryEntry(
           bytes: &bytes, cursor: &cursor, historyIndex: &historyIndex, draft: &draft)
@@ -330,6 +377,7 @@ final class TerminalLineEditor {
         redraw(prompt: prompt, bytes: bytes, cursor: cursor)
         return
       }
+      guard !activePrompt.isModal else { return }
       guard
         recallNextHistoryEntry(
           bytes: &bytes, cursor: &cursor, historyIndex: &historyIndex, draft: &draft)
@@ -342,6 +390,28 @@ final class TerminalLineEditor {
       // starts a fresh completion, and the status row comes back.
       if !isTabKey(key) { dismissCompletion() }
       switch key {
+      case .refreshPrompt:
+        guard var updated = takePromptUpdate() else { continue }
+        if !updated.isModal, let continuationPrompt { updated.text = continuationPrompt }
+        guard updated != activePrompt else { continue }
+        if updated.id != activePrompt.id {
+          if !activePrompt.isModal {
+            savedChatDraft = (bytes, cursor)
+          }
+          bytes = []
+          cursor = 0
+          if !updated.isModal, let saved = savedChatDraft {
+            bytes = saved.bytes
+            cursor = saved.cursor
+            savedChatDraft = nil
+          }
+          historyIndex = nil
+          draft = []
+          viewTop = 0
+        }
+        activePrompt = updated
+        prompt = updated.text
+        redraw(prompt: prompt, bytes: bytes, cursor: cursor)
       case .byte(let byte):
         switch byte {
         case 1:  // Ctrl+A: start of the line
@@ -352,6 +422,7 @@ final class TerminalLineEditor {
           redraw(prompt: prompt, bytes: bytes, cursor: cursor)
         case 3:  // Ctrl+C
           wasInterrupted = true
+          submittedPromptID = activePrompt.id
           surface?.cancelInput()
           return ""
         case 4:  // Ctrl+D
@@ -367,7 +438,8 @@ final class TerminalLineEditor {
           redraw(prompt: prompt, bytes: bytes, cursor: cursor)
         case 9:  // Tab
           let query = completionQuery ?? String(decoding: bytes, as: UTF8.self)
-          let candidates = completions + (additionalCompletions?(query) ?? [])
+          let candidates = activePrompt.isModal && !query.hasPrefix("/")
+            ? activePrompt.choices : completions + (additionalCompletions?(query) ?? [])
           complete(
             prompt: prompt,
             bytes: &bytes,
@@ -384,6 +456,7 @@ final class TerminalLineEditor {
         case 16:  // Ctrl+P
           moveToPreviousLine()
         case 18:  // Ctrl+R
+          guard !activePrompt.isModal else { surface?.bell(); continue }
           switch reverseSearch(original: bytes, startingAt: historyIndex) {
           case .accepted(let line, let index, let acceptedCursor):
             if historyIndex == nil, index != nil { draft = bytes }
@@ -392,15 +465,17 @@ final class TerminalLineEditor {
             historyIndex = index
             redraw(prompt: prompt, bytes: bytes, cursor: cursor)
           case .cancelled:
-            redraw(prompt: prompt, bytes: bytes, cursor: cursor)
+            if !hasPromptUpdate { redraw(prompt: prompt, bytes: bytes, cursor: cursor) }
           case .interrupted:
             wasInterrupted = true
+            submittedPromptID = activePrompt.id
             surface?.cancelInput()
             return ""
           case .submitted(let line):
             renderSubmittedLine(prompt: prompt, bytes: line)
             let submitted = String(decoding: line, as: UTF8.self)
-            if rememberInput { remember(submitted) }
+            submittedPromptID = activePrompt.id
+            if rememberInput && !activePrompt.isModal { remember(submitted) }
             return submitted
           case .endOfFile:
             surface?.acceptInput(styled: "")
@@ -420,7 +495,8 @@ final class TerminalLineEditor {
         case 13:  // Enter submits the whole input
           renderSubmittedLine(prompt: prompt, bytes: bytes)
           let line = String(decoding: bytes, as: UTF8.self)
-          if rememberInput { remember(line) }
+          submittedPromptID = activePrompt.id
+          if rememberInput && !activePrompt.isModal { remember(line) }
           return line
         case 127, 8:
           guard cursor > 0 else { continue }
@@ -471,7 +547,9 @@ final class TerminalLineEditor {
   // MARK: - Keys
 
   private func readKey() -> Key? {
-    guard let byte = readByte() else { return nil }
+    guard let byte = readByte(interruptForPrompt: true) else {
+      return hasPromptUpdate ? .refreshPrompt : nil
+    }
     guard byte == 27 else { return .byte(byte) }
     return readEscapeSequence()
   }
@@ -691,6 +769,8 @@ final class TerminalLineEditor {
     while let key = readKey() {
       let selection = reverseSearchSelection(state, original: original)
       switch key {
+      case .refreshPrompt:
+        return .cancelled
       case .byte(let byte):
         switch byte {
         case 1:  // Ctrl+A accepts the match and moves to its beginning.
@@ -878,7 +958,9 @@ final class TerminalLineEditor {
     if cursorLine < viewTop { viewTop = cursorLine }
     if cursorLine >= viewTop + maximumRows { viewTop = cursorLine - maximumRows + 1 }
     viewTop = max(0, min(viewTop, lines.count - maximumRows))
-    let promptStyle = style(foreground: ui.promptForeground, background: ui.promptBackground)
+    let promptStyle = style(
+      foreground: activePrompt.isModal ? ui.warningForeground : ui.promptForeground,
+      background: ui.promptBackground, bold: activePrompt.isModal)
     let inputStyle = style(foreground: ui.foreground, background: ui.background, bold: ui.bold)
     let hasInputBackground = Self.colorCode(ui.background, background: true) != nil
     let indent = String(repeating: " ", count: promptWidth)
@@ -905,7 +987,9 @@ final class TerminalLineEditor {
   /// The prompt and text as they appear once accepted, for the surface to
   /// keep; further lines are indented to the prompt.
   func styledLine(prompt: String, text: String) -> String {
-    let promptStyle = style(foreground: ui.promptForeground, background: ui.promptBackground)
+    let promptStyle = style(
+      foreground: activePrompt.isModal ? ui.warningForeground : ui.promptForeground,
+      background: ui.promptBackground, bold: activePrompt.isModal)
     let inputStyle = style(foreground: ui.foreground, background: ui.background, bold: ui.bold)
     let indent = String(repeating: " ", count: displayWidth(prompt))
     let body = text.split(separator: "\n", omittingEmptySubsequences: false)
@@ -1111,10 +1195,16 @@ final class TerminalLineEditor {
 
   /// The next byte of input, from what the surface read ahead first; with a
   /// timeout, nil when nothing arrives in time.
-  private func readByte(timeoutMilliseconds: Int32? = nil) -> UInt8? {
+  private var hasPromptUpdate: Bool {
+    tracksPromptUpdates && promptLock.withLock { pendingPrompt != nil }
+  }
+
+  private func readByte(timeoutMilliseconds: Int32? = nil, interruptForPrompt: Bool = false) -> UInt8? {
     let deadline = timeoutMilliseconds.map { Date().addingTimeInterval(Double($0) / 1000) }
     while true {
+      if interruptForPrompt && hasPromptUpdate { return nil }
       let result: (byte: UInt8?, done: Bool) = inputGate.read {
+        if interruptForPrompt && hasPromptUpdate { return (nil, true) }
         if typeahead.isEmpty, let surface { typeahead = surface.pendingInput() }
         if !typeahead.isEmpty { return (typeahead.removeFirst(), true) }
         let remaining = deadline.map { max(0, Int32($0.timeIntervalSinceNow * 1000)) } ?? 50
@@ -1122,6 +1212,9 @@ final class TerminalLineEditor {
         let ready = poll(&descriptor, 1, min(50, remaining))
         if ready < 0 { return (nil, errno != EINTR) }
         if ready == 0 { return (nil, deadline.map { Date() >= $0 } ?? false) }
+        // An update may have arrived during poll. Apply it before consuming
+        // the first byte of the answer, leaving that byte in the terminal.
+        if interruptForPrompt && hasPromptUpdate { return (nil, true) }
         var byte: UInt8 = 0
         return (read(STDIN_FILENO, &byte, 1) == 1 ? byte : nil, true)
       }

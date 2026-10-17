@@ -354,10 +354,7 @@ actor TerminalWriter {
     closeRootLine()
     let who = request.run.depth > 0 ? request.run.pid.map { "agent#\($0.rawValue) " } ?? "" : ""
     let kind = request.tool.annotations.approval.rawValue
-    let choices =
-      request.tool.name == "files_path_access"
-      ? "? answer y (yes, this access) · n (no) · c (cancel run); /path allow PATH grants ongoing access"
-      : "? answer y (yes) · a (always) · n (no) · e (edit arguments) · c (cancel run); anything else is a normal message"
+    let choices = "? answer " + REPLModalPrompt.approvalHelp(request) + "; slash commands remain available"
     status(
       """
       ? \(who)wants to run \(kind) tool '\(request.tool.name)'

@@ -43,6 +43,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var columns = 80
   private var ui = ConfiguredTerminalUI()
   private var statusText = ""
+  private var statusNeedsAttention = false
   /// The rotating tab-completion options that take over the status row, or
   /// nil when the row shows `statusText`.
   private var completionMenu: CompletionMenu?
@@ -217,14 +218,16 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   /// Replaces the status line above the input; an unchanged line is not redrawn.
-  func setStatus(_ text: String, animating: Bool = false) {
-    setStatus(text, animating: animating, style: nil)
+  func setStatus(_ text: String, animating: Bool = false, attention: Bool = false) {
+    setStatus(text, animating: animating, style: nil, attention: attention)
   }
 
   /// Replaces the status line and optionally switches the Braille animation style.
-  func setStatus(_ text: String, animating: Bool, style: BrailleAnimator.Style?) {
+  func setStatus(_ text: String, animating: Bool, style: BrailleAnimator.Style?, attention: Bool = false) {
     lock.withLock {
       refreshSize()
+      let attentionChanged = statusNeedsAttention != attention
+      statusNeedsAttention = attention
       let animationChanged = animatingStatus != animating
       animatingStatus = animating
       activityRestarted = animationChanged && animating
@@ -243,7 +246,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         activityRestarted = true
       }
       updateActivityTimer()
-      guard text != statusText || animationChanged || activityRestarted else { return }
+      guard text != statusText || animationChanged || activityRestarted || attentionChanged else { return }
       statusText = text
       activityRestarted = false
       // A tab-completion menu owns the row until it closes; the status is
@@ -466,6 +469,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     if clear { out += Self.clearLine }
     if let menu = completionMenu {
       out += completionMenuRow(menu, width: width, colors: colors)
+    } else if statusNeedsAttention {
+      let warning = colors ? TerminalLineEditor.foregroundColorCode(ui.warningForeground) : nil
+      let codes = ["1", "7"] + [warning].compactMap { $0 }
+      out += "\u{1B}[" + codes.joined(separator: ";") + "m" + content + padding + Self.reset
     } else if let background = TerminalLineEditor.backgroundColorCode(ui.backgroundLine) {
       out += "\u{1B}[\(background)m" + content + padding + Self.reset
     } else {

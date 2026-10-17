@@ -1179,38 +1179,49 @@ private actor TerminalApprovalHandler: ApprovalHandler {
     guard isatty(STDIN_FILENO) != 0 else {
       return .deny(reason: "Interactive approval requires a terminal.")
     }
-    FileHandle.standardError.write(
-      Data(
-        "Approve \(request.tool.annotations.approval.rawValue) tool '\(request.tool.name)'?\nArguments: \(request.call.arguments.compactJSONString)\n"
-          .utf8))
+    let screen = TerminalScreen.current
+    func write(_ text: String) {
+      if let screen { screen.write(text, to: .standardError) }
+      else { FileHandle.standardError.write(Data(text.utf8)) }
+    }
+    write("Approve \(request.tool.annotations.approval.rawValue) tool '\(request.tool.name)'?\nArguments: \(request.call.arguments.compactJSONString)\n")
+    write(REPLModalPrompt.approvalHelp(request) + "\n")
     let editor = TerminalLineEditor()
     editor.configure(
       ui: ConfiguredTerminalUI(backgroundLine: "", promptForeground: "yellow"))
-    guard
-      let answer = editor.readLine(
-        prompt: request.tool.name == "files_path_access"
-          ? "[y]es/[n]o/[c]ancel run (/path manages ongoing access): "
-          : "[y]es/[a]lways/[n]o/[e]dit/[c]ancel run: ", completions: [])?
-        .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    else { return .deny(reason: "No approval response.") }
-    if editor.wasInterrupted { throw CancellationError() }
-    switch answer {
-    case "y", "yes":
-      return .approve(arguments: request.call.arguments)
-    case "a", "always":
-      if request.tool.name != "files_path_access" { approvalMode = .yolo }
-      return .approve(arguments: request.call.arguments)
-    case "e", "edit":
-      FileHandle.standardError.write(Data("Replacement JSON arguments: ".utf8))
-      guard let raw = readLine(), let data = raw.data(using: .utf8),
-        let value = try? JSONDecoder().decode(JSONValue.self, from: data),
-        value.objectValue != nil
-      else { return .deny(reason: "Edited arguments were not a JSON object.") }
-      return .approve(arguments: value)
-    case "c", "cancel":
-      return .cancelRun
-    default:
-      return .deny(reason: "Denied by user.")
+    editor.install(surface: screen)
+    let id = UUID()
+    var editing = false
+    while true {
+      let modal = REPLModalPrompt.approval(request, id: id, editing: editing)
+      screen?.setStatus(modal.status, attention: true)
+      editor.updatePrompt(modal.input)
+      guard let raw = editor.readLine(
+        prompt: modal.input.text, completions: [], rememberInput: false, tracksPromptUpdates: true)
+      else { return .deny(reason: "No approval response.") }
+      if editor.wasInterrupted { throw CancellationError() }
+      if editing {
+        if let data = raw.data(using: .utf8),
+          let value = try? JSONDecoder().decode(JSONValue.self, from: data), value.objectValue != nil
+        {
+          return .approve(arguments: value)
+        }
+        write("Enter a valid JSON object, or Ctrl+C to cancel.\n")
+        continue
+      }
+      switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+      case "y", "yes": return .approve(arguments: request.call.arguments)
+      case "a" where request.tool.name != "files_path_access",
+        "always" where request.tool.name != "files_path_access":
+        approvalMode = .yolo
+        return .approve(arguments: request.call.arguments)
+      case "e" where request.tool.name != "files_path_access",
+        "edit" where request.tool.name != "files_path_access":
+        editing = true
+      case "n", "no": return .deny(reason: "Denied by user.")
+      case "c", "cancel": return .cancelRun
+      default: write("Answer \(modal.input.choices.joined(separator: "/")).\n")
+      }
     }
   }
 }
@@ -2191,6 +2202,20 @@ struct MaiCLI {
 
     var hasTurns: Bool { activeTurn != nil || !btwTurns.isEmpty }
 
+    var modalPrompt: REPLModalPrompt? {
+      if pendingQueueMessage != nil { return .queue }
+      if let editing = editingApproval {
+        return .approval(editing.request, id: editing.reply.id, editing: true)
+      }
+      if let waiting = approvals.first {
+        return .approval(waiting.request, id: waiting.reply.id, editing: false)
+      }
+      if let waiting = compactions.first {
+        return .compaction(waiting.request, id: waiting.reply.id)
+      }
+      return nil
+    }
+
     /// Ctrl+C belongs to the most recently started run still in flight.
     var interruptTurn: REPLTurn? {
       (Array(btwTurns.values) + [activeTurn].compactMap { $0 })
@@ -2507,6 +2532,9 @@ struct MaiCLI {
     }
 
     func statusLine() async -> (text: String, animating: Bool) {
+      if let modal = loop.modalPrompt {
+        return (modal.status, false)
+      }
       var facts: [String] = []
       if await runtime.internetAccessPolicy().isOffline { facts.append("✈ offline") }
       var liveContext: AgentContextSize?
@@ -2547,14 +2575,6 @@ struct MaiCLI {
       } else if case .agent(let pid) = loop.focus {
         facts.append("→ agent#\(pid.rawValue)")
       }
-      if let editing = loop.editingApproval {
-        facts.append("json for \(editing.request.tool.name)?")
-      } else if let waiting = loop.approvals.first {
-        let who = waiting.request.run.pid.map { "agent#\($0.rawValue) " } ?? ""
-        facts.append("approve? \(who)\(waiting.request.tool.name) [y/a/n/e/c]")
-      } else if !loop.compactions.isEmpty {
-        facts.append("compact? [y/n/m/x/c]")
-      }
       let detail = facts.isEmpty ? "" : " · " + facts.joined(separator: " · ")
       return (
         "\(activityMarker) \(currentDirectoryName()) \(promptIdentity(session, contextSize: liveContext))\(detail)",
@@ -2562,19 +2582,10 @@ struct MaiCLI {
       )
     }
 
-    func promptText() -> String {
+    func inputPrompt() -> TerminalPrompt {
+      if let modal = loop.modalPrompt { return modal.input }
       let prompt: String
-      if loop.pendingQueueMessage != nil {
-        prompt = "queue [submit/ignore/clear]> "
-      } else if loop.editingApproval != nil {
-        prompt = "json> "
-      } else if let waiting = loop.approvals.first {
-        let who = waiting.request.run.pid.map { "#\($0.rawValue) " } ?? ""
-        prompt = "approve \(who)\(waiting.request.tool.name)? [y/a/n/e/c] "
-      } else if let waiting = loop.compactions.first {
-        let who = waiting.request.run.pid.map { "#\($0.rawValue) " } ?? ""
-        prompt = "compact \(who)? [y/n/m/x/c] "
-      } else if configuration?.ui.broadcast == true {
+      if configuration?.ui.broadcast == true {
         prompt = "pmai@*> "
       } else if case .agent(let pid) = loop.focus {
         // The prompt names the process a line goes to: a focused child, or the
@@ -2586,14 +2597,15 @@ struct MaiCLI {
         prompt = "pmai> "
       }
       let title = visibleUITitle(configuration?.ui.title ?? "")
-      return title.isEmpty ? prompt : "[\(title)] \(prompt)"
+      return TerminalPrompt(text: title.isEmpty ? prompt : "[\(title)] \(prompt)")
     }
 
     func refreshStatus() async {
       guard let screen else { return }
       visual.modelCatalog.select(session.profile.provider, runtime: runtime)
       let status = await statusLine()
-      screen.setStatus(status.text, animating: status.animating)
+      reader.update(inputPrompt())
+      screen.setStatus(status.text, animating: status.animating, attention: loop.modalPrompt != nil)
     }
 
     /// Lets the input thread read the next line. Settings that the editor
@@ -2611,12 +2623,12 @@ struct MaiCLI {
           runtime: runtime, announced: &announcedAttention, terminal: terminal)
       }
       let status = await statusLine()
-      screen?.setStatus(status.text, animating: status.animating)
+      screen?.setStatus(status.text, animating: status.animating, attention: loop.modalPrompt != nil)
       loop.readerParked = false
       let availableProviders = await runtime.availableProviders()
       reader.resume(
         with: REPLInputReader.Prompt(
-          text: promptText(),
+          presentation: inputPrompt(),
           completions: completionCandidates(
             workspace: workspace, configuration: configuration,
             availableProviders: availableProviders,
@@ -3084,45 +3096,40 @@ struct MaiCLI {
       }
     }
 
-    /// Treats a typed line as the answer to the approval at the head of the
-    /// queue when it reads as one; anything else stays an ordinary line and
-    /// the question keeps waiting.
+    /// A modal owns ordinary input until answered. Slash commands remain available.
     func answerApproval(_ text: String) async -> Bool {
       if let editing = loop.editingApproval {
         // Settings and inspection remain available while an edit prompt is
         // open; only an ordinary line is interpreted as replacement JSON.
         if text.hasPrefix("/") { return false }
-        loop.editingApproval = nil
         if let data = text.data(using: .utf8),
           let value = try? JSONDecoder().decode(JSONValue.self, from: data),
           value.objectValue != nil
         {
+          loop.editingApproval = nil
           editing.reply.resume(with: .approve(arguments: value))
           await terminal.note("approved \(editing.request.tool.name) with the edited arguments")
         } else {
-          editing.reply.resume(with: .deny(reason: "Edited arguments were not a JSON object."))
           await terminal.note(
-            "denied \(editing.request.tool.name): the arguments were not a JSON object")
+            "Enter a valid JSON object for \(editing.request.tool.name), or Ctrl+C to cancel.", tone: .warning)
         }
         return true
       }
       guard let waiting = loop.approvals.first else { return false }
+      if text.hasPrefix("/") { return false }
       let tool = waiting.request.tool.name
       switch text.lowercased() {
       case "y", "yes":
         waiting.reply.resume(with: .approve(arguments: waiting.request.call.arguments))
         await terminal.note("approved \(tool)")
-      case "a", "always":
-        if tool != "files_path_access" { await visual.approvalHandler.setApprovalMode(.yolo) }
+      case "a" where tool != "files_path_access", "always" where tool != "files_path_access":
+        await visual.approvalHandler.setApprovalMode(.yolo)
         waiting.reply.resume(with: .approve(arguments: waiting.request.call.arguments))
-        await terminal.note(
-          tool == "files_path_access"
-            ? "approved this access; /path allow PATH grants ongoing access"
-            : "approved \(tool); tool.aproval = yolo for this session")
+        await terminal.note("approved \(tool); tool.aproval = yolo for this session")
       case "n", "no":
         waiting.reply.resume(with: .deny(reason: "Denied by user."))
         await terminal.note("denied \(tool)")
-      case "e", "edit":
+      case "e" where tool != "files_path_access", "edit" where tool != "files_path_access":
         loop.approvals.removeFirst()
         loop.editingApproval = waiting
         await terminal.note("Type the replacement JSON arguments for \(tool):")
@@ -3131,7 +3138,10 @@ struct MaiCLI {
         waiting.reply.resume(with: .cancelRun)
         await terminal.note("cancelling the run that asked for \(tool)")
       default:
-        return false
+        let prompt = REPLModalPrompt.approval(waiting.request, id: waiting.reply.id, editing: false)
+        await terminal.note(
+          "Answer \(prompt.input.choices.joined(separator: "/")) for \(tool). Slash commands remain available.", tone: .warning)
+        return true
       }
       loop.approvals.removeFirst()
       return true
@@ -3215,9 +3225,14 @@ struct MaiCLI {
 
     events: for await event in events {
       switch event {
-      case .line(let raw, let heredoc):
+      case .line(let raw, let heredoc, let promptID):
         loop.readerParked = true
         let typed = heredoc ? raw : raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !typed.hasPrefix("/"), promptID != loop.modalPrompt?.input.id {
+          await terminal.note("The prompt changed before submission. Please answer the current prompt.", tone: .warning)
+          await releaseIfIdle(workspace: workspace)
+          continue
+        }
         // `$NAME [TEXT]` is the short form of `/prompts NAME [TEXT]`.
         var text =
           !heredoc && typed.hasPrefix("$")
@@ -3924,12 +3939,15 @@ struct MaiCLI {
           // The input or signal path already cancelled exactly the operation
           // that was active when Ctrl+C arrived. Do not let a delayed event
           // cancel whatever became active afterwards.
-        } else if let waiting = loop.approvals.first {
-          loop.approvals.removeFirst()
-          waiting.reply.fail(CancellationError())
         } else if loop.editingApproval != nil {
           loop.editingApproval?.reply.resume(with: .deny(reason: "Edit cancelled."))
           loop.editingApproval = nil
+        } else if let waiting = loop.approvals.first {
+          loop.approvals.removeFirst()
+          waiting.reply.fail(CancellationError())
+        } else if let waiting = loop.compactions.first {
+          loop.compactions.removeFirst()
+          waiting.reply.resume(with: .cancelRun)
         } else if screen != nil {
           await terminal.note("Nothing to cancel. /exit or Ctrl+D quits.")
         }
@@ -4090,6 +4108,7 @@ struct MaiCLI {
           reply.resume(with: .approve(arguments: request.call.arguments))
         } else {
           loop.approvals.append((request, reply))
+          await refreshStatus()
           await terminal.approvalRequest(request)
         }
         await refreshStatus()
@@ -4104,6 +4123,7 @@ struct MaiCLI {
           reply.fail(CancellationError())
         } else {
           loop.compactions.append((request, reply))
+          await refreshStatus()
           await terminal.note(
             "Context limit for \(request.run.agentID): about \(request.estimatedTokens) tokens (threshold \(request.threshold)).",
             tone: .warning)

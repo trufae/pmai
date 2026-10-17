@@ -4,7 +4,7 @@ import MaiCore
 /// What the REPL loop reacts to. Lines come from the input thread; the rest
 /// from turns ending, tools asking for approval, and the process table.
 enum REPLEvent: Sendable {
-  case line(String, heredoc: Bool)
+  case line(String, heredoc: Bool, promptID: String?)
   /// A non-nil ID means the signal/input path already cancelled that exact
   /// operation. `endedInput` distinguishes a raw Ctrl+C byte from SIGINT.
   case interrupt(REPLInterruptID?, endedInput: Bool)
@@ -26,6 +26,7 @@ typealias REPLApprovalReply = REPLReply<ApprovalDecision>
 typealias REPLCompactionReply = REPLReply<AutocompactionDecision>
 
 final class REPLReply<Decision: Sendable>: Sendable {
+  let id = UUID()
   private let continuation: AsyncThrowingStream<Decision, any Error>.Continuation
 
   init(_ continuation: AsyncThrowingStream<Decision, any Error>.Continuation) {
@@ -48,7 +49,7 @@ final class REPLReply<Decision: Sendable>: Sendable {
 /// editor or visual mode has the terminal.
 final class REPLInputReader: @unchecked Sendable {
   struct Prompt: Sendable {
-    var text: String
+    var presentation: TerminalPrompt
     var completions: [String]
     var additionalCompletions: (@Sendable (String) -> [String])? = nil
     /// The line drawn above the prompt on a classic terminal; nil on the
@@ -61,7 +62,7 @@ final class REPLInputReader: @unchecked Sendable {
   private let interrupt: @Sendable () -> Void
   private let gate = DispatchSemaphore(value: 0)
   private let lock = NSLock()
-  private var next = Prompt(text: "pmai> ", completions: [], separator: nil)
+  private var next = Prompt(presentation: TerminalPrompt(text: "pmai> "), completions: [], separator: nil)
   private var stopped = false
 
   init(
@@ -82,8 +83,14 @@ final class REPLInputReader: @unchecked Sendable {
 
   /// Lets the thread read one more line with this prompt.
   func resume(with prompt: Prompt) {
+    update(prompt.presentation)
     lock.withLock { next = prompt }
     gate.signal()
+  }
+
+  /// Changes an already open prompt without releasing another reader.
+  func update(_ prompt: TerminalPrompt) {
+    editor.updatePrompt(prompt)
   }
 
   func stop() {
@@ -98,8 +105,9 @@ final class REPLInputReader: @unchecked Sendable {
       if done { return }
       guard
         let line = editor.readLine(
-          prompt: prompt.text, completions: prompt.completions,
-          additionalCompletions: prompt.additionalCompletions, separator: prompt.separator)
+          prompt: prompt.presentation.text, completions: prompt.completions,
+          additionalCompletions: prompt.additionalCompletions, separator: prompt.separator,
+          tracksPromptUpdates: true)
       else {
         continuation.yield(.endOfFile)
         return
@@ -108,23 +116,39 @@ final class REPLInputReader: @unchecked Sendable {
         interrupt()
         continue
       }
-      guard let delimiter = Self.heredocDelimiter(in: line) else {
-        continuation.yield(.line(line, heredoc: false))
+      let promptID = editor.submittedPromptID
+      guard promptID == nil, let delimiter = Self.heredocDelimiter(in: line) else {
+        continuation.yield(.line(line, heredoc: false, promptID: promptID))
         continue
       }
       var lines: [String] = []
       while true {
-        guard let more = editor.readLine(prompt: "...> ", completions: [], rememberInput: false)
+        guard let more = editor.readLine(
+          prompt: "...> ", completions: [], rememberInput: false,
+          tracksPromptUpdates: true, continuationPrompt: "...> ")
         else {
           continuation.yield(.endOfFile)
           return
         }
         if editor.wasInterrupted {
           interrupt()
+          if editor.submittedPromptID != nil {
+            gate.wait()
+            if lock.withLock({ stopped }) { return }
+            continue
+          }
           break
         }
+        if let promptID = editor.submittedPromptID {
+          // Answer the modal through the event loop, retaining the heredoc
+          // and its current line until the normal prompt resumes.
+          continuation.yield(.line(more, heredoc: false, promptID: promptID))
+          gate.wait()
+          if lock.withLock({ stopped }) { return }
+          continue
+        }
         if more == delimiter {
-          continuation.yield(.line(lines.joined(separator: "\n"), heredoc: true))
+          continuation.yield(.line(lines.joined(separator: "\n"), heredoc: true, promptID: nil))
           break
         }
         lines.append(more)

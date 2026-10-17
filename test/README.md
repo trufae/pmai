@@ -30,6 +30,11 @@ retained diagnostics, and preserved chat history after the failed turn.
 Every smoke script also remains independently runnable. `smoke.py` shares only
 environment isolation, REPL response delimiters, PTY waits, and HTTP responses.
 
+`python3 test/repl-modal-smoke.py MaiCore/.build/debug/pmai` exercises approvals
+arriving during typing, history search, and heredoc input. It checks immediate
+prompt/status updates, answer validation, JSON editing, cancellation, draft and
+cursor restoration, and exclusion of modal replies from input history.
+
 Sample coding tasks that pmai should solve, plus a harness that records every
 model call so the runs can be studied for wasted turns and tokens.
 

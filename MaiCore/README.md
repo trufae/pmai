@@ -236,6 +236,15 @@ default and runs tools without prompting. `ask` prompts to approve, edit the
 arguments, reject, or cancel. `smart` asks a model to allow or block each call.
 The spelling `aproval` is intentional in the setting and command names.
 
+On a terminal, pending approvals, argument edits, context decisions, and queue
+choices take over the input with a labelled prompt and a highlighted status bar.
+The prompt updates as soon as a question arrives, even while you are typing.
+Your unfinished chat message and cursor are restored when the decision is done.
+Tab completes the available answers; approval and context prompts still accept
+slash commands. Invalid answers keep the question open, and modal answers stay
+out of input history. File-access approvals offer only yes, no, and cancel;
+`/path allow PATH` grants ongoing access.
+
 Use `/model-aproval PROVIDER::MODEL` (or a saved agent ID) to select the reviewer;
 `/model-aproval -` restores the conversation model. A System One provider uses
 its `harm` probability; a regular model returns a strict JSON allow/block

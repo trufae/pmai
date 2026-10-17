@@ -180,7 +180,12 @@ def main():
                 expect(f'Files policy: ask {root / "private"}')
                 enqueue(call('files_read', path='private/secret.txt'), 'FIRST FINISHED')
                 send('Read private')
-                expect('answer y (yes, this access)')
+                shown = expect('answer y (yes, this access)')
+                if 'approve [y/n/c]> ' not in shown:
+                    expect('approve [y/n/c]> ')
+                send('a')
+                expect('Answer y/n/c for files_path_access')
+                assert len(requests) == 1, requests
                 send('/set tool.aproval yolo')
                 expect('yolo')
                 assert len(requests) == 1, requests
