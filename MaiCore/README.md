@@ -1344,7 +1344,7 @@ completed prompts can be pruned like file reads, retaining the source ID,
 URL and offset needed to recover them. The active prompt's data is retained.
 
 The `files` group can list files, find approximate names, grep bounded UTF-8
-content, convert DOCX/PDF/JSON documents, write or append text, create folders,
+content, convert documents to readable text, write or append text, create folders,
 rename entries, and delete them. Existing files are edited in place with
 `files_patch` (unique literal or regex replacement), which returns a unified diff.
 Prefer literal replacements for small edits, copying enough surrounding text
@@ -1363,6 +1363,24 @@ patch. `filesRoot` confines every relative
 path to one directory (including symlink checks), while `filesWriteEnabled`
 removes the mutation tools when disabled. Mutations still go through normal
 confirmation, and deletion is marked dangerous.
+
+`files_read` accepts an optional `format` in both the iOS app and the CLI REPL:
+
+- `auto` (default) converts PDF, DOCX and EPUB to Markdown and extracts image
+  text with OCR. HTML, JSON and source files retain their original text.
+- `markdown` detects supported documents by content and filename and also
+  converts HTML to Markdown. Other text, including JSON, stays unchanged.
+- `text` reads the original UTF-8 source without conversion; binary input is
+  rejected.
+
+For example, `{"path":"report.pdf","format":"markdown"}` returns readable
+Markdown in the tool result, and `{"path":"page.html","format":"text"}`
+returns HTML source. Conversion is in memory and never rewrites the file.
+`offset`, `nextOffset`, `totalBytes` and `max_bytes` refer to the returned UTF-8
+text after conversion. Continue with the same path and format. Image OCR uses
+Apple Vision on iOS/macOS and a locally installed Tesseract on other supported
+platforms; PDF conversion requires PDFKit on iOS/macOS. Images yield recognized
+text, not a description of their visual contents.
 
 With the default Files workspace (no explicit `filesRoot`, or `filesRoot: "."`),
 `/cwd` prints the process working directory and `/cd PATH` changes it; the model

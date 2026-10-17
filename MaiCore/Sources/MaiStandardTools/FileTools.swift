@@ -1,6 +1,7 @@
 import Foundation
 import MaiCore
 import MaiDocuments
+import MaiVisionOCR
 
 /// Configuration for the portable Files tool group. Every path supplied by a
 /// model is interpreted relative to `rootURL`; external access requires a
@@ -81,10 +82,15 @@ public struct MaiFileWorkspaceTool: AgentTool {
   public let operation: Operation
   public let configuration: MaiFileWorkspaceConfiguration
   public let definition: ToolDefinition
+  private let ocrProvider: (any OCRProvider)?
 
-  public init(operation: Operation, configuration: MaiFileWorkspaceConfiguration) {
+  public init(
+    operation: Operation, configuration: MaiFileWorkspaceConfiguration,
+    ocrProvider: (any OCRProvider)? = nil
+  ) {
     self.operation = operation
     self.configuration = configuration
+    self.ocrProvider = ocrProvider
     definition = Self.definition(for: operation, workspaceName: configuration.displayName)
   }
 
@@ -93,14 +99,16 @@ public struct MaiFileWorkspaceTool: AgentTool {
   public static func makeTools(
     configuration: MaiFileWorkspaceConfiguration,
     includeAdvancedTools: Bool = true,
-    includeLineRangeEdits: Bool = false
+    includeLineRangeEdits: Bool = false,
+    ocrProvider: (any OCRProvider)? = nil
   ) -> [MaiFileWorkspaceTool] {
     Operation.allCases.compactMap { operation in
       guard includeAdvancedTools || !advancedOperations.contains(operation),
         includeLineRangeEdits || operation != .replaceRange,
         configuration.writeEnabled || !operation.changesFiles
       else { return nil }
-      return MaiFileWorkspaceTool(operation: operation, configuration: configuration)
+      return MaiFileWorkspaceTool(
+        operation: operation, configuration: configuration, ocrProvider: ocrProvider)
     }
   }
 
@@ -159,12 +167,13 @@ public struct MaiFileWorkspaceTool: AgentTool {
       case .grep:
         return try await workspace.grep(arguments)
       case .read:
-        var output = try workspace.read(arguments)
+        var output = try await workspace.read(arguments, ocrProvider: ocrProvider)
         if let page = output.structuredContent?.objectValue,
           page["truncated"]?.boolValue == true, let next = page["nextOffset"]?.intValue {
           let path = page["path"]?.compactJSONString ?? "the same path"
+          let format = arguments["format"].map { ", format \($0.compactJSONString)" } ?? ""
           output.content.append(.text(
-            "[Partial file: more content is available. Continue with files_read path \(path), offset \(next), or use files_grep/files_read_range to narrow the read.]"))
+            "[Partial file: more content is available. Continue with files_read path \(path)\(format), offset \(next). Offsets refer to the returned text.]"))
         }
         return output
       case .readIndex:
@@ -276,9 +285,14 @@ public struct MaiFileWorkspaceTool: AgentTool {
     case .read:
       return ToolDefinition(
         name: operation.rawValue,
-        description: "Read a text file. PDF and DOCX are converted to Markdown. For large files, first use files_grep or files_read_index, then read a range/function; delegate independent extraction tasks when agent_start is available.",
+        description: "Read a file as text. PDF, DOCX and EPUB convert to Markdown; images use OCR. Use format=markdown to convert HTML too, or format=text for original UTF-8 source. Continue long results with offset and the same format. For large source files, use files_grep or files_read_index first, then read a range/function; delegate independent extraction tasks when agent_start is available.",
         parameters: [
           path,
+          ToolParameterDef(
+            name: "format",
+            type: "string",
+            description: "auto (default): convert PDF/DOCX/EPUB and OCR images, keep other text as source. markdown: detect and convert documents, HTML and images to readable Markdown; other text stays unchanged. text: read original UTF-8 source without conversion (binary files are rejected). Conversion happens in memory and never changes the file.",
+            required: false),
           ToolParameterDef(
             name: "max_bytes",
             type: "integer",
@@ -287,7 +301,7 @@ public struct MaiFileWorkspaceTool: AgentTool {
           ToolParameterDef(
             name: "offset",
             type: "integer",
-            description: "Byte offset to continue a long file. Default: 0.",
+            description: "UTF-8 byte offset in the returned text, after conversion if any. Continue using the same format. Default: 0.",
             required: false),
         ],
         annotations: ToolAnnotations(
@@ -897,11 +911,14 @@ struct MaiFileWorkspace: Sendable {
     return ToolOutput(content: [.text(text)], structuredContent: .object(structured))
   }
 
-  /// Formats whose bytes are useless to a model and whose text the document
-  /// importer can produce; everything else is read as UTF-8.
-  private static let convertedExtensions: Set<String> = ["pdf", "docx", "epub"]
+  private enum ReadFormat: String {
+    case auto, markdown, text
+  }
 
-  func read(_ arguments: [String: JSONValue]) throws -> ToolOutput {
+  func read(_ arguments: [String: JSONValue], ocrProvider: (any OCRProvider)?) async throws -> ToolOutput {
+    guard let formatName = (arguments["format"] ?? .string("auto")).stringValue,
+      let format = ReadFormat(rawValue: formatName)
+    else { throw MaiFileWorkspaceError.invalidReadFormat }
     let rawPath = try requiredPath(arguments, key: "path")
     let file = try resolve(rawPath, allowRoot: false, mustExist: true)
     var isDirectory: ObjCBool = false
@@ -910,38 +927,32 @@ struct MaiFileWorkspace: Sendable {
     else {
       throw MaiFileWorkspaceError.notFile(displayPath(rawPath))
     }
-    if Self.convertedExtensions.contains(file.pathExtension.lowercased()) {
-      return try readDocument(rawPath: rawPath, file: file, arguments: arguments)
+    let attachment = try await convertedDocument(at: file, format: format, ocrProvider: ocrProvider)
+    try Task.checkCancellation()
+    let content: FileContent
+    let data: Data
+    if let attachment, case .file(let converted) = attachment.content, let text = converted.text {
+      content = converted
+      data = Data(text.utf8)
+    } else {
+      content = FileContent(name: file.lastPathComponent, mimeType: "text/plain")
+      data = try Data(contentsOf: file, options: [.mappedIfSafe])
     }
-    let data = try Data(contentsOf: file, options: [.mappedIfSafe])
     guard !looksBinary(data) else { throw MaiFileWorkspaceError.binary(displayPath(rawPath)) }
     let window = try textWindow(data, arguments: arguments, path: rawPath)
-    return ToolOutput(
-      content: [
-        .file(
-          FileContent(
-            name: file.lastPathComponent,
-            mimeType: "text/plain",
-            text: window.text))
-      ],
-      structuredContent: .object([
-        "path": .string(displayPath(rawPath)),
-        "totalBytes": .integer(data.count),
-        "offset": .integer(window.offset),
-        "nextOffset": .integer(window.nextOffset),
-        "truncated": .bool(window.nextOffset < data.count),
-      ]))
-  }
-
-  private func readDocument(rawPath: String, file: URL, arguments: [String: JSONValue]) throws
-    -> ToolOutput
-  {
-    let attachment = try DocumentAttachmentImporter.attachment(at: file)
-    guard case .file(let content) = attachment.content, let text = content.text else {
-      throw MaiFileWorkspaceError.invalidUTF8(displayPath(rawPath))
+    var metadata: [String: JSONValue] = [
+      "path": .string(displayPath(rawPath)),
+      "format": .string(format.rawValue),
+      "totalBytes": .integer(data.count),
+      "offset": .integer(window.offset),
+      "nextOffset": .integer(window.nextOffset),
+      "truncated": .bool(window.nextOffset < data.count),
+    ]
+    if let attachment {
+      metadata["name"] = .string(attachment.name)
+      metadata["characters"] = .integer(attachment.characterCount)
+      metadata["conversion"] = attachment.note.map(JSONValue.string) ?? .null
     }
-    let data = Data(text.utf8)
-    let window = try textWindow(data, arguments: arguments, path: rawPath)
     return ToolOutput(
       content: [
         .file(
@@ -950,16 +961,57 @@ struct MaiFileWorkspace: Sendable {
             mimeType: content.mimeType,
             text: window.text))
       ],
-      structuredContent: .object([
-        "path": .string(displayPath(rawPath)),
-        "name": .string(attachment.name),
-        "characters": .integer(attachment.characterCount),
-        "totalBytes": .integer(data.count),
-        "offset": .integer(window.offset),
-        "nextOffset": .integer(window.nextOffset),
-        "truncated": .bool(window.nextOffset < data.count),
-        "conversion": attachment.note.map(JSONValue.string) ?? .null,
-      ]))
+      structuredContent: .object(metadata))
+  }
+
+  private func convertedDocument(
+    at file: URL, format: ReadFormat, ocrProvider: (any OCRProvider)?
+  ) async throws -> DocumentAttachment?
+  {
+    guard format != .text else { return nil }
+    let filename = file.lastPathComponent
+    let kind = DocumentAttachmentImporter.kind(forFilename: filename)
+    guard format == .markdown || [.pdf, .word, .epub, .image].contains(kind) else { return nil }
+    let data = try DocumentAttachmentImporter.data(at: file)
+    switch DocumentAttachmentImporter.kind(for: data, filename: filename) {
+    case .image:
+      let provider: any OCRProvider
+      if let ocrProvider {
+        provider = ocrProvider
+      } else {
+        #if canImport(Vision)
+          provider = VisionOCRProvider()
+        #elseif os(macOS) || os(Linux) || os(Android) || os(Windows)
+          provider = TesseractOCRProvider()
+        #else
+          throw OCRProviderError.unavailable("Image OCR is not available on this platform.")
+        #endif
+      }
+      let mimeTypes = [
+        "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+        "gif": "image/gif", "webp": "image/webp", "heic": "image/heic",
+        "heif": "image/heif", "bmp": "image/bmp", "tif": "image/tiff", "tiff": "image/tiff",
+      ]
+      let content = try await ImageAttachmentImporter.content(
+        data: data, mimeType: mimeTypes[file.pathExtension.lowercased()] ?? "application/octet-stream",
+        filename: filename, mode: .ocr, ocrProvider: provider)
+      try Task.checkCancellation()
+      guard case .file(let converted) = content, let text = converted.text,
+        text.contains(where: { !$0.isWhitespace })
+      else { throw OCRProviderError.noText }
+      guard text.utf8.count <= DocumentAttachmentImporter.maximumTextBytes else {
+        throw DocumentImportError.textTooLarge(limit: DocumentAttachmentImporter.maximumTextBytes)
+      }
+      return DocumentAttachment(
+        name: converted.name, content: content,
+        note: "converted from image to Markdown using OCR", characterCount: text.count)
+    case .pdf, .word, .epub, .html:
+      return try DocumentAttachmentImporter.attachment(
+        data: data, filename: filename, htmlMode: format == .markdown ? .markdown : .source)
+    case .text, .json:
+      // Source and JSON files retain their original text, including whitespace.
+      return nil
+    }
   }
 
   func readIndex(_ arguments: [String: JSONValue]) throws -> ToolOutput {
@@ -1940,6 +1992,7 @@ private enum MaiFileWorkspaceError: LocalizedError {
   case notDirectory(String)
   case binary(String)
   case invalidUTF8(String)
+  case invalidReadFormat
   case alreadyExists(String)
   case fileAlreadyExists(String)
   case recursiveRequired(String)
@@ -1972,6 +2025,7 @@ private enum MaiFileWorkspaceError: LocalizedError {
     case .notDirectory(let path): "'\(path)' is not a folder; files_read reads a file."
     case .binary(let path): "'\(path)' appears to be binary; text files only."
     case .invalidUTF8(let path): "'\(path)' is not valid UTF-8 text."
+    case .invalidReadFormat: "format must be auto, markdown, or text."
     case .alreadyExists(let path): "'\(path)' already exists."
     case .fileAlreadyExists(let path):
       "'\(path)' already exists. Use mode: .append to add to the end, or mode: .overwrite to replace the whole file; use files_patch to edit part of it."

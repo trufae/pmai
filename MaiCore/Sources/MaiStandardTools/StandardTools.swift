@@ -147,8 +147,9 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
         displayName: "Files",
         description:
           "Work with the files of one workspace folder, confined to it. files_list and files_find locate "
-          + "files, files_grep searches their text, files_read and files_read_range return contents (PDF "
-          + "and DOCX as Markdown), files_read_index and files_get_function navigate code by symbol, and "
+          + "files, files_grep searches their text, files_read returns text with optional Markdown "
+          + "conversion for PDF, DOCX, EPUB, HTML and images (OCR). files_read_range reads line ranges, "
+          + "files_read_index and files_get_function navigate code by symbol, and "
           + "files_set_function, files_patch, and files_write change it; files_rename and files_delete "
           + "move or remove. Read before editing. Prefer literal files_patch replacements for small "
           + "edits, with enough surrounding text to match exactly once; use files_set_function for "
