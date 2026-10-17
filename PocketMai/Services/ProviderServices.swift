@@ -1058,6 +1058,9 @@ enum OpenAICompatibleProvider {
     voice: String,
     responseFormat: String = "wav"
   ) async throws -> Data {
+    if let reason = endpoint.speechUnavailableReason {
+      throw ChatProviderError.providerRequestFailed(reason)
+    }
     let model = endpoint.effectiveSpeechModel
     do {
       return try await coreProvider(endpoint: endpoint).synthesizeSpeech(

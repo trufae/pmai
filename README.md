@@ -75,9 +75,17 @@ Word. **Debug Report** is for troubleshooting; it is not needed to transfer a ch
 
 ## OpenAI text-to-speech
 
-1. Open **Settings > Providers > Add Provider**, choose **OpenAI API**,
+ChatGPT subscription sign-in provides the Responses API connection; it does not
+provide Speech API access. Keep ChatGPT selected for chat and configure a separate
+speech provider below. OpenAI speech requires an API key and separate API billing.
+See the [ChatGPT plan endpoint contract](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference).
+
+1. Open **Settings > Voices > Assistant** (or **User**). **Browse Built-in Voices**
+   lists OpenAI voices even before you configure a provider. Tap **Add OpenAI Speech
+   Provider**, or use **Settings > Providers > Add Provider**, choose **OpenAI API**,
    set the base URL to `https://api.openai.com/v1`, and save your API key using
-   the provider's existing credentials form. Enable the provider.
+   the provider's existing credentials form. Enable the provider. Adding it from
+   Voices selects it for that role without changing your chat provider.
 2. Open **Settings > Voices > Assistant** (or **User**) and select that provider.
    Its built-in voices are available immediately, without voice discovery.
 3. Leave **Speech Model** at its `gpt-4o-mini-tts` default, or choose a supported
@@ -91,8 +99,13 @@ speech queue. Pausing while synthesis is pending keeps the returned audio paused
 
 These are AI-generated voices. OpenAI documents 13 voices for `gpt-4o-mini-tts`;
 `tts-1` and `tts-1-hd` support a smaller set. Unsupported selections show an
-error without switching voices. Compatible servers retain `/voices` discovery
-and custom speech model names; a blank speech model uses their server default.
+error without switching voices. Compatible servers are selectable before discovery
+and load `/voices` when selected. **Refresh Voices** reports discovery failures;
+you can also enter a **Voice ID** manually for servers without a voice catalog.
+Switching providers chooses an available voice instead of carrying an unsupported
+voice from the previous provider. Returning from System preserves the saved voice.
+Compatible servers retain custom speech model names; a blank speech model uses
+their server default.
 Existing compatible-provider configurations keep their previous synthesis model
 when migrated. Airplane Mode retains the existing system-voice behavior.
 See the [official TTS guide](https://developers.openai.com/api/docs/guides/text-to-speech).

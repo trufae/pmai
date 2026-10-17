@@ -9,15 +9,86 @@ import XCTest
 final class OpenAISpeechTests: XCTestCase {
   func testDirectOpenAISelectableBeforeDiscoveryAndWithoutCredentials() async throws {
     let endpoint = OpenAIEndpoint(defaultModel: "gpt-chat")
-    XCTAssertTrue(endpoint.isSelectableForSpeech(discovered: []))
+    XCTAssertTrue(endpoint.isSelectableForSpeech)
     let voices = try await OpenAICompatibleProvider.fetchVoices(endpoint: endpoint)
     XCTAssertEqual(voices, OpenAISpeech.voices)
-    XCTAssertFalse(OpenAIEndpoint(isEnabled: false).isSelectableForSpeech(discovered: []))
-    XCTAssertFalse(OpenAIEndpoint(kind: .chatGPT).isSelectableForSpeech(discovered: []))
+    XCTAssertFalse(OpenAIEndpoint(isEnabled: false).isSelectableForSpeech)
+    XCTAssertFalse(OpenAIEndpoint(kind: .chatGPT).isSelectableForSpeech)
+    XCTAssertFalse(OpenAIEndpoint(kind: .systemOne).isSelectableForSpeech)
     let compatible = OpenAIEndpoint(baseURL: "http://localhost:8880/v1")
-    XCTAssertFalse(compatible.isSelectableForSpeech(discovered: []))
-    XCTAssertTrue(compatible.isSelectableForSpeech(discovered: ["custom"]))
+    XCTAssertTrue(compatible.isSelectableForSpeech)
     XCTAssertEqual(compatible.speechVoices(discovered: ["custom"]), ["custom"])
+  }
+
+  func testSwitchingProvidersDoesNotCarryAnUnsupportedVoice() {
+    let compatible = OpenAIEndpoint(baseURL: "http://localhost:8880/v1")
+    let openAI = OpenAIEndpoint()
+    var voice = RoleVoiceSettings()
+    voice.selectSpeechProvider(compatible, discovered: ["custom"])
+    XCTAssertEqual(voice.openAIVoice, "custom")
+    voice.selectSpeechProvider(openAI, discovered: [])
+    XCTAssertEqual(voice.openAIEndpointID, openAI.id)
+    XCTAssertTrue(OpenAISpeech.voices.contains(voice.openAIVoice))
+    voice.openAIVoice = "nova"
+    voice.selectSpeechProvider(compatible, discovered: ["nova", "custom"])
+    XCTAssertEqual(voice.openAIVoice, "nova")
+    voice.selectSpeechProvider(OpenAIEndpoint(baseURL: "http://other.local/v1"), discovered: [])
+    XCTAssertEqual(voice.openAIVoice, "")
+  }
+
+  func testReturningFromSystemAndRefreshingPreservesCustomVoice() {
+    let endpoint = OpenAIEndpoint(baseURL: "http://localhost:8880/v1")
+    var voice = RoleVoiceSettings(
+      provider: .system, openAIEndpointID: endpoint.id, openAIVoice: "manual-voice")
+    voice.selectSpeechProvider(endpoint, discovered: [])
+    XCTAssertEqual(voice.openAIVoice, "manual-voice")
+    voice.selectSpeechProvider(endpoint, discovered: ["different-voice"])
+    XCTAssertEqual(voice.openAIVoice, "manual-voice")
+    voice.openAIVoice = "  "
+    voice.selectSpeechProvider(endpoint, discovered: ["discovered-voice"])
+    XCTAssertEqual(voice.openAIVoice, "discovered-voice")
+  }
+
+  func testUnsupportedAndDisabledProvidersCannotReplaceSelection() {
+    let endpoint = OpenAIEndpoint()
+    var voice = RoleVoiceSettings(
+      provider: .openAICompatible, openAIEndpointID: endpoint.id, openAIVoice: "nova")
+    let original = voice
+    for unavailable in [
+      OpenAIEndpoint(kind: .chatGPT), OpenAIEndpoint(kind: .systemOne),
+      OpenAIEndpoint(isEnabled: false),
+    ] {
+      voice.selectSpeechProvider(unavailable, discovered: ["stale-cached-voice"])
+      XCTAssertEqual(voice, original)
+    }
+    XCTAssertEqual(OpenAIEndpoint(kind: .chatGPT).speechVoices(discovered: ["stale"]), [])
+  }
+
+  func testUnavailableSpeechFailsBeforeSendingARequest() async throws {
+    StubChatEndpoint.install()
+    defer { StubChatEndpoint.uninstall() }
+    let initialRequests = StubChatEndpoint.requests.count
+    for endpoint in [
+      OpenAIEndpoint(baseURL: "http://stub.local/v1", apiKey: "unused", kind: .chatGPT),
+      OpenAIEndpoint(baseURL: "http://stub.local/v1", kind: .systemOne),
+      OpenAIEndpoint(baseURL: "http://stub.local/v1", isEnabled: false),
+      OpenAIEndpoint(),
+    ] {
+      do {
+        _ = try await OpenAICompatibleProvider.synthesizeSpeechAudio(
+          endpoint: endpoint, input: "Hello", voice: "nova")
+        XCTFail("Unavailable providers must not synthesize")
+      } catch {
+        XCTAssertEqual(error.localizedDescription, endpoint.speechUnavailableReason)
+      }
+    }
+    XCTAssertEqual(StubChatEndpoint.requests.count, initialRequests)
+    XCTAssertTrue(
+      OpenAIEndpoint(kind: .chatGPT).speechUnavailableReason?.contains("API key") == true)
+    XCTAssertNil(OpenAIEndpoint(apiKey: "test-key").speechUnavailableReason)
+    XCTAssertNil(
+      OpenAIEndpoint(headers: ["authorization": "Bearer test-key"]).speechUnavailableReason)
+    XCTAssertNil(OpenAIEndpoint(baseURL: "http://localhost:8880/v1").speechUnavailableReason)
   }
 
   func testSpeechModelIsIndependentOfChatModel() throws {

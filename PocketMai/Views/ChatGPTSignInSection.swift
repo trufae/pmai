@@ -60,6 +60,7 @@ struct ChatGPTSignInSection: View {
       Text(
         "Eligible requests use your ChatGPT plan and its usage limits. Add another ChatGPT provider to sign in with a different account or workspace."
       )
+      Text(OpenAIEndpoint.chatGPTSpeechUnavailableMessage)
     }
     .task { do { account = try store.load() } catch { message = error.localizedDescription } }
     .onDisappear {

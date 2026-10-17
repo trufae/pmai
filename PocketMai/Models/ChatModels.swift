@@ -2446,6 +2446,9 @@ extension SettingsBackupSection {
 
 extension OpenAIEndpoint {
   static let defaultDisplayName = "New Provider"
+  static let chatGPTSpeechUnavailableMessage =
+    "ChatGPT subscription sign-in supports chat models, but does not provide Speech API access. "
+    + "To use OpenAI voices, add an OpenAI API provider with an API key and separate API billing."
 
   var isDirectOpenAI: Bool {
     kind == .openAICompatible && URL(string: baseURL).map(OpenAISpeech.isDirectEndpoint) == true
@@ -2457,11 +2460,29 @@ extension OpenAIEndpoint {
   }
 
   func speechVoices(discovered: [String]) -> [String] {
-    isDirectOpenAI ? OpenAISpeech.voices(for: effectiveSpeechModel) : discovered
+    guard kind == .openAICompatible else { return [] }
+    return isDirectOpenAI ? OpenAISpeech.voices(for: effectiveSpeechModel) : discovered
   }
 
-  func isSelectableForSpeech(discovered: [String]) -> Bool {
-    isEnabled && kind == .openAICompatible && (isDirectOpenAI || !discovered.isEmpty)
+  var isSelectableForSpeech: Bool {
+    isEnabled && kind == .openAICompatible
+  }
+
+  var speechUnavailableReason: String? {
+    if kind == .chatGPT { return Self.chatGPTSpeechUnavailableMessage }
+    if kind != .openAICompatible { return "This provider does not support speech synthesis." }
+    if !isEnabled { return "The voice provider is disabled. Enable it in Settings > Providers." }
+    if isDirectOpenAI, authMethod == .apiKey,
+      apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      !effectiveHeaders.contains(where: {
+        $0.key.caseInsensitiveCompare("Authorization") == .orderedSame
+          && !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      })
+    {
+      return
+        "Add an OpenAI API key to this provider in Settings > Providers to use its voices. Speech uses separate API billing."
+    }
+    return nil
   }
 
   var displayName: String {
@@ -2730,6 +2751,21 @@ struct RoleVoiceSettings: Codable, Equatable, Sendable {
   }
 
   static let defaults = RoleVoiceSettings()
+
+  mutating func selectSpeechProvider(_ endpoint: OpenAIEndpoint, discovered: [String]) {
+    guard endpoint.isSelectableForSpeech else { return }
+    let choices = endpoint.speechVoices(discovered: discovered)
+    let current = openAIVoice.trimmingCharacters(in: .whitespacesAndNewlines)
+    // A custom voice belongs to its provider. Keep it when returning from System,
+    // but do not carry it to a different provider that cannot synthesize it.
+    if current.isEmpty || (openAIEndpointID != endpoint.id && !choices.contains(current)) {
+      openAIVoice = choices.first ?? ""
+    } else {
+      openAIVoice = current
+    }
+    provider = .openAICompatible
+    openAIEndpointID = endpoint.id
+  }
 
   func withoutOnlineProvider() -> RoleVoiceSettings {
     guard provider == .openAICompatible else { return self }
