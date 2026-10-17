@@ -153,13 +153,14 @@ func runOtherLanguagesThroughTheShell() async throws {
   #expect(unavailable.text.contains("was not found in PATH"))
 }
 
-@Test("Run tools kill processes that exceed their timeout")
-func runToolsEnforceTimeout() async throws {
+@Test("Run tools kill processes that exceed their timeout",
+  arguments: ["", "trap 'echo finished' TERM; "])
+func runToolsEnforceTimeout(prefix: String) async throws {
   let tools = MaiRunTool.makeTools(configuration: MaiRunConfiguration())
   let started = Date()
   let output = try await call(
     shell(tools),
-    ["command": .string("echo started; sleep 30; echo finished"), "timeout_seconds": .integer(1)])
+    ["command": .string(prefix + "echo started; sleep 30; echo finished"), "timeout_seconds": .integer(1)])
   #expect(Date().timeIntervalSince(started) < 10)
   #expect(output.isError)
   #expect(output.text.contains("started"))
