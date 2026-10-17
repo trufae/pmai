@@ -84,7 +84,6 @@ struct ChatView: View {
   @EnvironmentObject private var ttsPlayer: TTSPlayer
   @State private var showingRenameAlert = false
   @State private var showingProviderModelSheet = false
-  @State private var showingCompactSheet = false
   @State private var messagePendingDeletion: ChatMessage?
   @State private var messageBatchPendingDeletion: PendingMessageBatchDeletion?
   @State private var messagePendingTrimAndResubmit: ChatMessage?
@@ -316,10 +315,6 @@ struct ChatView: View {
           ConversationModelSettingsView().environmentObject(store)
         }
       }
-      .sheet(isPresented: $showingCompactSheet) {
-        CompactChatSheet()
-          .environmentObject(store)
-      }
       .sheet(isPresented: $showingSubagents) {
         SubagentProcessesSheet(
           store: store,
@@ -515,10 +510,6 @@ struct ChatView: View {
         .disabled(remoteChat.map { !$0.canManage || $0.busy || store.settings.isOffline } ?? false)
       Button("Search...", systemImage: "magnifyingglass", action: beginChatSearch)
         .disabled(currentConversationIsEmpty || liveVoiceSession.isActive)
-      Button("Compact...", systemImage: "rectangle.compress.vertical") {
-        showingCompactSheet = true
-      }
-      .disabled(!canCompactCurrentChat)
       ConversationShareButton(
         conversationID: currentConversation?.id,
         conversation: remoteChat?.presentation,
@@ -586,16 +577,6 @@ struct ChatView: View {
 
   private var currentToolSettings: NativeToolSettings {
     store.effectiveToolSettings(for: currentConversation)
-  }
-
-  private var canCompactCurrentChat: Bool {
-    guard remoteChat == nil, let conversation = currentConversation else { return false }
-    if store.isCompacting || store.isResponding { return false }
-    let substantive = conversation.messages.filter { msg in
-      msg.role != .error
-        && !msg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-    return substantive.count >= 2
   }
 
   private var currentChatIsResponding: Bool {
@@ -5982,6 +5963,7 @@ struct ConversationModelSettingsView: View {
   @State private var modelFilter = ""
   @State private var showingNewFolder = false
   @State private var showingFolderManager = false
+  @State private var showingCompactSheet = false
   @State private var newFolderName = ""
   @State private var folderErrorMessage: String?
 
@@ -6113,6 +6095,11 @@ struct ConversationModelSettingsView: View {
               .font(.caption)
               .foregroundStyle(.secondary)
             }
+
+            Button("Compact...", systemImage: "rectangle.compress.vertical") {
+              showingCompactSheet = true
+            }
+            .disabled(!canCompactCurrentChat)
           }
 
           Section {
@@ -6135,6 +6122,10 @@ struct ConversationModelSettingsView: View {
       ConversationFolderManagementView()
         .environmentObject(store)
     }
+    .sheet(isPresented: $showingCompactSheet) {
+      CompactChatSheet()
+        .environmentObject(store)
+    }
     .alert("New Folder", isPresented: $showingNewFolder) {
       TextField("Folder name", text: $newFolderName)
       Button("Cancel", role: .cancel) {}
@@ -6145,6 +6136,16 @@ struct ConversationModelSettingsView: View {
     } message: {
       Text("Create a folder and move this chat into it.")
     }
+  }
+
+  private var canCompactCurrentChat: Bool {
+    guard let conversation = store.currentConversation else { return false }
+    if store.isCompacting || store.isResponding { return false }
+    let substantive = conversation.messages.filter { msg in
+      msg.role != .error
+        && !msg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    return substantive.count >= 2
   }
 
   private var folderSection: some View {
