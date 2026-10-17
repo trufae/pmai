@@ -1097,7 +1097,7 @@ private actor TerminalApprovalHandler: ApprovalHandler {
     while true {
       guard let line = editor.readLine(
         prompt: (request.pruning == nil ? "" : "[p] prune old tool output / ")
-          + "[y] summarize / [n] keep context / [c] stop: ", completions: [])
+          + "[y] summarize / [n] keep context / [x] clear chat and continue / [c] stop: ", completions: [])
       else { return .cancelRun }
       if editor.wasInterrupted { throw CancellationError() }
       switch line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
@@ -1105,6 +1105,7 @@ private actor TerminalApprovalHandler: ApprovalHandler {
       case "p", "prune":
         if request.pruning != nil { return .pruneToolOutput }
       case "n", "no", "continue", "skip": return .continueWithoutCompacting
+      case "x", "clear": return .clearChat
       case "c", "cancel", "stop": return .cancelRun
       default: continue
       }
@@ -3234,7 +3235,7 @@ struct MaiCLI {
           continue
         }
         // `$NAME [TEXT]` is the short form of `/prompts NAME [TEXT]`.
-        var text =
+        let text =
           !heredoc && typed.hasPrefix("$")
           ? ("/prompts " + typed.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
           : typed
@@ -3293,13 +3294,13 @@ struct MaiCLI {
             )
             await releaseIfIdle(workspace: workspace)
             continue
-          case "x", "clear":
+          case "x", "clear", "/chat clear":
             guard waiting.request.run.pid == chatProcessIDs[session.id] else {
               await terminal.line("Switch to the requesting chat before clearing it; c stops this run.")
               await releaseIfIdle(workspace: workspace)
               continue
             }
-            text = "/chat clear"
+            decision = .clearChat
           default:
             if !text.hasPrefix("/") {
               await terminal.line("Choose y (summarize), p (prune available old tool output), n (keep context), m (model), x (clear chat), or c (stop). Slash commands remain available.")
@@ -3309,15 +3310,13 @@ struct MaiCLI {
           }
           if let decision {
             loop.compactions.removeFirst()
+            if decision == .clearChat {
+              await terminal.line("Conversation cleared. Continuing with your latest message.")
+            }
             waiting.reply.resume(with: decision)
             await refreshStatus()
             await releaseIfIdle(workspace: workspace)
             continue
-          }
-          if text == "/chat clear", waiting.request.run.pid == chatProcessIDs[session.id] {
-            loop.compactions.removeFirst()
-            waiting.reply.resume(with: .cancelRun)
-            loop.activeTurn?.task.cancel()
           }
         }
         if !heredoc, text == "@" {
@@ -4132,7 +4131,7 @@ struct MaiCLI {
           }
           await terminal.line(
             (request.pruning == nil ? "" : "[p] prune old tool output · ")
-              + "[y] summarize older context · [n] keep context this response · [m] change model · [x] clear chat · [c] stop\n/model, /model-chat, and /model-compact remain available before deciding."
+              + "[y] summarize older context · [n] keep context this response · [m] change model · [x] clear chat and continue · [c] stop\n/model, /model-chat, and /model-compact remain available before deciding."
           )
         }
         await refreshStatus()

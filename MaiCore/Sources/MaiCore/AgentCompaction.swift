@@ -22,6 +22,8 @@ public struct AutocompactionRequest: Equatable, Sendable {
 public enum AutocompactionDecision: Equatable, Sendable {
   case compact
   case pruneToolOutput
+  /// Clear conversation history, keeping the latest user message, and continue the run.
+  case clearChat
   /// Keep the transcript for the rest of this run, including subsequent tool turns.
   case continueWithoutCompacting
   case cancelRun

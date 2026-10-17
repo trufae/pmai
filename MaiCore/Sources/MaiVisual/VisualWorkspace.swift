@@ -960,14 +960,8 @@ public final class VisualWorkspace {
     presentedCompactionID = pendingCompaction?.id
   }
 
-  public func resolveCompaction(_ decision: AutocompactionDecision, clearChat: Bool = false) {
+  public func resolveCompaction(_ decision: AutocompactionDecision) {
     guard let id = presentedCompactionID else { return }
-    if clearChat, let pid = pendingCompaction?.request.run.pid,
-      let conversation = conversations.first(where: { $0.processID == pid })
-    {
-      conversation.cancelRun()
-      conversation.resetTranscript()
-    }
     dismissCompaction(id)
     Task { await approvals.resolveCompaction(id, with: decision) }
   }

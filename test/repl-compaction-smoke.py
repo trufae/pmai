@@ -15,7 +15,7 @@ import termios
 import time
 
 
-def main():
+def main(clear_action):
     binary = str(Path(sys.argv[1]).resolve())
     environment = {k: v for k, v in os.environ.items()
                    if not k.startswith(('PMAI_', 'MAI_', 'OPENAI_'))}
@@ -71,8 +71,11 @@ def main():
             wait_for('Hello from MaiCore: third')
             send('fourth')
             wait_for('[y] summarize')
-            send('x')
+            send(clear_action)
             wait_for('Conversation cleared.')
+            wait_for('Hello from MaiCore: fourth')
+            wait_for('took')
+            assert b'cancelled' not in output, output
             send('/exit')
             # Drain output while exiting so the PTY cannot block persistence.
             end = time.monotonic() + 10
@@ -84,10 +87,16 @@ def main():
                     except OSError:
                         break
             assert process.wait(timeout=5) == 0
-            for file in (root / '.pmai/chats').glob('*.json'):
+            chats = list((root / '.pmai/chats').glob('*.json'))
+            assert chats
+            for file in chats:
                 messages = json.loads(file.read_text())['messages']
-                assert not any(message['role'] == 'user' for message in messages), messages
-            print('PASS compaction prompt with YOLO: model changes, skip, stop, compact, clear')
+                conversation = [m for m in messages if m['role'] not in ('system', 'developer')]
+                assert [m['role'] for m in conversation] == ['user', 'assistant'], conversation
+                assert conversation[0]['content'] == [{'text': {'_0': 'fourth'}}], conversation
+                assert 'Hello from MaiCore: fourth' in json.dumps(conversation[1]), conversation
+                assert 'OLD-CONTEXT' not in json.dumps(messages), messages
+            print(f'PASS compaction prompt with YOLO: model changes, skip, stop, compact, {clear_action} continues')
         finally:
             if process.poll() is None:
                 process.kill()
@@ -96,4 +105,5 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    for clear_action in ('x', 'clear', '/chat clear'):
+        main(clear_action)

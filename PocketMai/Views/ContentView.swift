@@ -806,7 +806,7 @@ private struct AutocompactionApprovalView: View {
           Button("Stop response", role: .cancel) {
             store.resolveAutocompactionApproval(id: request.id, decision: .cancelRun)
           }
-          Button("Clear chat…", role: .destructive) { confirmingClear = true }
+          Button("Clear chat and continue…", role: .destructive) { confirmingClear = true }
         } footer: {
           Text(
             "Continuing without compaction keeps all messages for this response. The prompt can appear again on your next message."
@@ -818,12 +818,12 @@ private struct AutocompactionApprovalView: View {
         ConversationModelSettingsView().environmentObject(store)
       }
       .alert("Clear this chat?", isPresented: $confirmingClear) {
-        Button("Clear chat", role: .destructive) {
+        Button("Clear chat and continue", role: .destructive) {
           store.clearChatForAutocompaction(id: request.id)
         }
         Button("Cancel", role: .cancel) {}
       } message: {
-        Text("All messages in this chat will be removed and the response will stop.")
+        Text("Earlier messages will be removed. Your latest message and its attachments will start the chat, and the response will continue.")
       }
     }
   }

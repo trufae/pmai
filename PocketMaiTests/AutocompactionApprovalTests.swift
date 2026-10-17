@@ -96,8 +96,8 @@ final class AutocompactionApprovalTests: XCTestCase {
     let other = try XCTUnwrap(store.currentConversation)
     store.clearChatForAutocompaction(id: id)
     let continued = await task.value
-    XCTAssertFalse(continued)
-    XCTAssertEqual(store.conversation(withID: conversation.id)?.messages, [])
+    XCTAssertTrue(continued)
+    XCTAssertEqual(store.conversation(withID: conversation.id)?.messages, [conversation.messages.last!])
     XCTAssertEqual(store.currentConversation?.id, other.id)
     XCTAssertEqual(store.currentConversation?.messages, other.messages)
     XCTAssertTrue(store.autocompactionApprovalRequests.isEmpty)

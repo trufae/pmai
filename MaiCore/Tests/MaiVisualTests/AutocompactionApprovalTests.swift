@@ -145,6 +145,43 @@ func compactionApprovalSkipLastsForRun() async throws {
   #expect(await approval.requests.count == 2)
 }
 
+@Test("Clearing at autocompaction keeps the latest message and continues through tool turns")
+func compactionApprovalClearContinues() async throws {
+  let approval = CompactionApprovalProbe(decision: .clearChat)
+  let call = ToolCall(id: "echo", name: "echo", arguments: .object([:]))
+  let provider = CompactionApprovalProvider(responses: [
+    AgentMessage(role: .assistant, content: [.toolCall(call)]), .assistant("done"),
+  ])
+  let runtime = AgentRuntime(approvalHandler: approval)
+  try await runtime.register(provider)
+  try await runtime.register(tool: ClosureTool(
+    definition: ToolDefinition(name: "echo", description: "Echo", annotations: .init(approval: .automatic))
+  ) { _, _ in ToolOutput(text: "result") })
+  let prompt = AgentMessage(role: .user, content: [
+    .text("Answer this exact question."),
+    .file(.init(name: "notes.txt", mimeType: "text/plain", text: "Keep this attachment.")),
+    .image(.init(source: .data(Data([1, 2, 3])), mimeType: "image/png")),
+  ])
+  let instructions = [compactionHistory[0], AgentMessage(role: .developer, content: "Keep developer instructions.")]
+  let history = instructions + Array(compactionHistory.dropFirst().dropLast())
+    + [.system("Conversation summary (compacted):\nDiscard this old summary."), prompt]
+  let result = try await runtime.run(AgentRequest(
+    provider: provider.descriptor.id, model: "main", messages: history,
+    toolNames: ["echo"], retry: .none, autocompact: .init(tokens: 1)))
+  #expect(await approval.requests.count == 1)
+  #expect(result.response.text == "done")
+  #expect(result.modelTurns == 2)
+  #expect(Array(result.transcript.prefix(instructions.count + 1)) == instructions + [prompt])
+  #expect(result.transcript.filter { $0.role == .user } == [prompt])
+  #expect(result.transcript.flatMap(\.toolResults).map(\.text) == ["result"])
+  let requests = await provider.requests
+  #expect(requests.count == 2)
+  #expect(requests.first?.messages.filter { $0.role == .user } == [prompt])
+  #expect(requests.allSatisfy { request in
+    !request.messages.contains { $0.text.contains("Important old context") || $0.text.contains("Discard this old summary") }
+  })
+}
+
 @Test("Stopping at autocompaction leaves history intact and makes no model call", arguments: [false, true])
 func compactionApprovalCancellation(cancelTask: Bool) async throws {
   let approval = CompactionApprovalProbe()

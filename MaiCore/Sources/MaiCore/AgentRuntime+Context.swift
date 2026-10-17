@@ -204,6 +204,22 @@ extension AgentRuntime {
         switch decision {
         case .cancelRun:
           throw CancellationError()
+        case .clearChat:
+          let previous = state.transcript
+          let latestUser = previous.last { $0.role == .user }
+          state.transcript = previous.filter(AgentPromptContext.isInstruction)
+          if let latestUser { state.transcript.append(latestUser) }
+          state.lastUsage = nil
+          state.smartContext = AgentSmartContext()
+          state.pendingDecision = nil
+          state.usingPrimary = false
+          let report = AgentTranscriptEditReport(
+            removed: previous.count - state.transcript.count,
+            charactersBefore: AgentTranscriptEditor.characterCount(of: previous),
+            charactersAfter: AgentTranscriptEditor.characterCount(of: state.transcript))
+          await state.emit(.transcriptEdited(state.context, report))
+          await supervisor.note(state.pid, transcript: state.transcript)
+          return true
         case .continueWithoutCompacting:
           state.skipAutocompaction = true
           return true

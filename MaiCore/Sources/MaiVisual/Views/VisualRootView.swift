@@ -290,8 +290,8 @@ struct CompactionSheet: View {
       }
       HStack(spacing: 2) {
         Button("Stop to change model") { workspace.stopCompactionToChangeModel() }
-        Button("Clear chat", role: .destructive) {
-          workspace.resolveCompaction(.cancelRun, clearChat: true)
+        Button("Clear chat and continue", role: .destructive) {
+          workspace.resolveCompaction(.clearChat)
         }
         .disabled(!workspace.canClearCompactionChat)
         Button("Stop", role: .cancel) { workspace.resolveCompaction(.cancelRun) }

@@ -2780,6 +2780,9 @@ final class AppStore: ObservableObject {
     }
     switch decision {
     case .cancelRun: return false
+    case .clearChat:
+      clearChatForAutocompaction(conversationID: conversationID)
+      return true
     // Tool-output pruning is offered only by hosts using MaiCore transcripts.
     case .continueWithoutCompacting, .pruneToolOutput: return true
     case .compact: break
@@ -2861,16 +2864,17 @@ final class AppStore: ObservableObject {
   }
 
   func clearChatForAutocompaction(id: UUID) {
-    guard let request = autocompactionApprovalRequests.first(where: { $0.id == id }) else { return }
-    let conversationID = request.conversationID
-    abandonResponse(in: conversationID)
-    resolveAutocompactionApproval(id: id, decision: .cancelRun)
+    resolveAutocompactionApproval(id: id, decision: .clearChat)
+  }
+
+  private func clearChatForAutocompaction(conversationID: UUID) {
     guard let index = indexedConversationIndex(for: conversationID) else { return }
-    let removed = conversations[index].messages
+    let latestUser = conversations[index].messages.last { $0.role == .user }
+    let removed = conversations[index].messages.filter { $0.id != latestUser?.id }
     clearStreamingText(for: removed)
     removeBookmarks(for: removed, in: conversationID)
     clearFollowUpSuggestions(in: conversationID)
-    conversations[index].messages.removeAll()
+    conversations[index].messages = latestUser.map { [$0] } ?? []
     conversations[index].lastContextSignature = nil
     conversations[index].updatedAt = Date()
     upsertSummary(for: conversations[index])
