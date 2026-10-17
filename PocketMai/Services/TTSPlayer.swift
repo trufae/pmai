@@ -48,6 +48,32 @@ final class TTSPlayer: NSObject, ObservableObject {
 
   func dismissError() { errorMessage = nil }
 
+  func isPlayingVoiceover(for messageID: UUID) -> Bool {
+    isPlaying(tag: "voiceover:\(messageID.uuidString)")
+  }
+
+  func speakVoiceover(
+    for message: ChatMessage, voice: RoleVoiceSettings,
+    openAIEndpoints: [OpenAIEndpoint] = []
+  ) {
+    guard message.role == .assistant, let text = message.voiceoverText else { return }
+    speak(
+      text: text, voice: voice, role: .assistant, title: "Voiceover",
+      tag: "voiceover:\(message.id.uuidString)", messageID: message.id,
+      openAIEndpoints: openAIEndpoints)
+  }
+
+  func toggleVoiceoverPlayback(
+    for message: ChatMessage, voice: RoleVoiceSettings,
+    openAIEndpoints: [OpenAIEndpoint] = []
+  ) {
+    if isPlayingVoiceover(for: message.id) {
+      if isPaused { resume() } else { pause() }
+    } else {
+      speakVoiceover(for: message, voice: voice, openAIEndpoints: openAIEndpoints)
+    }
+  }
+
   func speak(
     text: String,
     voice: RoleVoiceSettings,

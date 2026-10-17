@@ -92,7 +92,19 @@ struct ConversationMessageRenderWindow {
   }
 }
 
-/// Compensate only for prepended history, leaving ordinary response scrolling alone.
+struct ConversationScrollViewport: Equatable {
+  let height: CGFloat
+  let isAtBottom: Bool
+
+  init(_ geometry: ScrollGeometry) {
+    height = geometry.containerSize.height
+    isAtBottom =
+      geometry.contentSize.height <= height + 2
+      || geometry.visibleRect.maxY >= geometry.contentSize.height - 2
+  }
+}
+
+/// Preserve the reading position while loading history or resizing the viewport.
 @MainActor
 final class ConversationHistoryScrollSession {
   private struct WeakMarker {
@@ -100,6 +112,8 @@ final class ConversationHistoryScrollSession {
   }
 
   private weak var scrollView: UIScrollView?
+  private var bottomResizeToken: UUID?
+  private var pendingBottomResize = false
   private weak var marker: UIView?
   private var messageMarkers: [UUID: WeakMarker] = [:]
   private weak var restorationMarker: UIView?
@@ -121,6 +135,33 @@ final class ConversationHistoryScrollSession {
         return
       }
       ancestor = view.superview
+    }
+  }
+
+  /// Keyboard and composer resizing should keep a fully visible tail on screen.
+  /// Read the old viewport: after the resize, that same offset is no longer at the bottom.
+  func preserveBottomOnResize(
+    from old: ConversationScrollViewport, to new: ConversationScrollViewport
+  ) {
+    if new.isAtBottom { pendingBottomResize = false }
+    guard old.height > 0, new.height > 0, old.height != new.height,
+      old.isAtBottom || pendingBottomResize,
+      let scroll = scrollView,
+      !isRestoring, !scroll.isTracking, !scroll.isDragging, !scroll.isDecelerating
+    else { return }
+    pendingBottomResize = true
+    let token = UUID()
+    bottomResizeToken = token
+    // Let SwiftUI finish applying its new frame before correcting the offset.
+    DispatchQueue.main.async { [weak self, weak scroll] in
+      guard let self, let scroll, self.scrollView === scroll,
+        self.bottomResizeToken == token, !self.isRestoring,
+        !scroll.isTracking, !scroll.isDragging, !scroll.isDecelerating
+      else { return }
+      let bottom = max(
+        -scroll.adjustedContentInset.top,
+        scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+      scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: bottom), animated: false)
     }
   }
 
@@ -165,6 +206,8 @@ final class ConversationHistoryScrollSession {
   }
 
   func cancel() {
+    bottomResizeToken = nil
+    pendingBottomResize = false
     viewportY = nil
     pendingRevision = nil
     restorationMarker = nil

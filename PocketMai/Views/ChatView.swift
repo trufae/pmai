@@ -58,7 +58,7 @@ struct ChatView: View {
     var viewportMinY: CGFloat
     var contentHeight: CGFloat
     var hasScrollableContent: Bool
-    var isAtBottom: Bool
+    var viewport: ConversationScrollViewport
   }
 
   private struct MessageHistoryLoadKey: Equatable {
@@ -1021,14 +1021,17 @@ struct ChatView: View {
             viewportMinY: geometry.visibleRect.minY,
             contentHeight: geometry.contentSize.height,
             hasScrollableContent: hasScrollableContent,
-            isAtBottom: isAtChatBottom(geometry))
+            viewport: ConversationScrollViewport(geometry))
         } action: { old, metrics in
+          if !messageFontPinchSession.isActive {
+            historyScrollSession.preserveBottomOnResize(from: old.viewport, to: metrics.viewport)
+          }
           if old.contentHeight != metrics.contentHeight, currentChatIsResponding {
             // Wait for the bubble preferences from this layout before scrolling.
             DispatchQueue.main.async { scheduleStreamingScroll(proxy) }
           }
           refreshUserMessageNavigation(
-            isAtBottom: metrics.isAtBottom,
+            isAtBottom: metrics.viewport.isAtBottom,
             hasScrollableContent: metrics.hasScrollableContent)
         }
         .onPreferenceChange(ResponseScrollTargetsKey.self) { targets in

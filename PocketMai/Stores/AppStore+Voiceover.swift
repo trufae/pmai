@@ -17,12 +17,13 @@ extension AppStore {
           && current.messages.last?.id == source.id && current.messages.last?.text == source.text
       },
       speak: { [weak self] text in
-        guard let self, let current = self.conversation(withID: conversationID) else { return }
-        TTSPlayer.shared.speak(
-          text: text,
+        guard let self,
+          let message = self.saveVoiceover(text, for: source, in: conversationID),
+          let current = self.conversation(withID: conversationID)
+        else { return }
+        TTSPlayer.shared.speakVoiceover(
+          for: message,
           voice: self.effectiveToolSettings(for: current).voices.assistant,
-          role: .assistant, title: "Voiceover", tag: Self.voiceoverTag(conversationID),
-          messageID: source.id,
           openAIEndpoints: self.settings.isOffline ? [] : self.settings.openAIEndpoints)
       },
       onError: { [weak self] message in self?.errorMessage = "Voiceover: \(message)" })
@@ -30,7 +31,10 @@ extension AppStore {
 
   func cancelVoiceover(in conversationID: UUID) {
     voiceover.cancel(in: conversationID)
-    if TTSPlayer.shared.currentTag == Self.voiceoverTag(conversationID) {
+    if let messageID = TTSPlayer.shared.currentMessageID,
+      TTSPlayer.shared.isPlayingVoiceover(for: messageID),
+      conversation(withID: conversationID)?.messages.contains(where: { $0.id == messageID }) == true
+    {
       TTSPlayer.shared.stop()
     }
   }
@@ -41,6 +45,4 @@ extension AppStore {
       TTSPlayer.shared.stop()
     }
   }
-
-  private static func voiceoverTag(_ id: UUID) -> String { "voiceover:\(id.uuidString)" }
 }

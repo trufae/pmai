@@ -370,6 +370,14 @@ private struct MessageBubbleContent: View, Equatable {
           includeMessageExtras: true
         )
       }
+      if message.role == .assistant,
+        let summary = message.voiceoverText,
+        !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      {
+        VoiceoverMessageRow(
+          message: message, summary: summary,
+          voice: toolSettings.voices.assistant, openAIEndpoints: openAIEndpoints)
+      }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .preference(
@@ -2636,6 +2644,25 @@ enum MessageRenderCache {
   private static let hiddenClosingTags = hiddenTagNames.map { "</\($0)>" }
 }
 
+private struct VoiceoverMessageRow: View {
+  @EnvironmentObject private var ttsPlayer: TTSPlayer
+  let message: ChatMessage
+  let summary: String
+  let voice: RoleVoiceSettings
+  let openAIEndpoints: [OpenAIEndpoint]
+
+  var body: some View {
+    FoldableMetaSection(
+      title: "Voiceover", systemImage: "speaker.wave.2", content: summary,
+      monospaced: false,
+      onTogglePlayback: {
+        ttsPlayer.toggleVoiceoverPlayback(
+          for: message, voice: voice, openAIEndpoints: openAIEndpoints)
+      },
+      isPlaying: ttsPlayer.isPlayingVoiceover(for: message.id) && !ttsPlayer.isPaused)
+  }
+}
+
 private struct FoldableMetaSection: View {
   let title: String
   let systemImage: String
@@ -2652,6 +2679,8 @@ private struct FoldableMetaSection: View {
   var expandedMaxHeight: CGFloat? = nil
   var isStreaming: Bool = false
   var onDelete: (() -> Void)? = nil
+  var onTogglePlayback: (() -> Void)? = nil
+  var isPlaying: Bool = false
 
   @State private var expanded: Bool = false
   @State private var previewWidth: CGFloat = 280
@@ -2671,7 +2700,9 @@ private struct FoldableMetaSection: View {
     renderImages: Bool = true,
     expandedMaxHeight: CGFloat? = nil,
     isStreaming: Bool = false,
-    onDelete: (() -> Void)? = nil
+    onDelete: (() -> Void)? = nil,
+    onTogglePlayback: (() -> Void)? = nil,
+    isPlaying: Bool = false
   ) {
     self.title = title
     self.systemImage = systemImage
@@ -2688,39 +2719,55 @@ private struct FoldableMetaSection: View {
     self.expandedMaxHeight = expandedMaxHeight
     self.isStreaming = isStreaming
     self.onDelete = onDelete
+    self.onTogglePlayback = onTogglePlayback
+    self.isPlaying = isPlaying
     self._expanded = State(initialValue: initiallyExpanded)
   }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      Button {
-        withAnimation(.snappy(duration: 0.18)) { expanded.toggle() }
-      } label: {
-        HStack(spacing: 8) {
-          Image(systemName: systemImage)
-            .imageScale(.small)
-            .foregroundStyle(.secondary)
-          Text(title)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-          Spacer(minLength: 8)
-          if let detail {
-            Text(detail)
-              .font(.caption2.monospacedDigit())
+      HStack(spacing: 0) {
+        Button {
+          withAnimation(.snappy(duration: 0.18)) { expanded.toggle() }
+        } label: {
+          HStack(spacing: 8) {
+            Image(systemName: systemImage)
+              .imageScale(.small)
+              .foregroundStyle(.secondary)
+            Text(title)
+              .font(.caption.weight(.semibold))
+              .foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            if let detail {
+              Text(detail)
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            }
+            Image(systemName: expanded ? "chevron.down" : "chevron.right")
+              .imageScale(.small)
               .foregroundStyle(.tertiary)
-              .lineLimit(1)
-              .minimumScaleFactor(0.75)
           }
-          Image(systemName: expanded ? "chevron.down" : "chevron.right")
-            .imageScale(.small)
-            .foregroundStyle(.tertiary)
+          .padding(.horizontal, 10)
+          .padding(.vertical, 7)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .contentShape(Rectangle())
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(expanded ? "Collapse" : "Expand") \(title)")
+        if let onTogglePlayback {
+          Button(action: onTogglePlayback) {
+            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+              .font(.caption)
+              .frame(width: 44, height: 32)
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .foregroundStyle(.tint)
+          .accessibilityLabel("\(isPlaying ? "Pause" : "Play") \(title)")
+        }
       }
-      .buttonStyle(.plain)
       if !expanded, let collapsedStatus {
         Divider().opacity(0.4)
         Text(collapsedStatus)

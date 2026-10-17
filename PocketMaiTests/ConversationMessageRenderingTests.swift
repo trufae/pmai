@@ -241,6 +241,53 @@ final class ConversationMessageRenderingTests: XCTestCase {
   }
 
   @MainActor
+  func testKeyboardAndComposerResizingKeepsTheBottomVisible() async throws {
+    try await checkViewportResize(rowHeight: 120, scrollUp: 0)
+  }
+
+  @MainActor
+  func testKeyboardResizingPreservesAnOlderReadingPosition() async throws {
+    try await checkViewportResize(rowHeight: 120, scrollUp: 300)
+  }
+
+  @MainActor
+  func testKeyboardResizingKeepsAShortConversationAtTheBottom() async throws {
+    try await checkViewportResize(rowHeight: 20, scrollUp: 0)
+  }
+
+  @MainActor
+  private func checkViewportResize(rowHeight: CGFloat, scrollUp: CGFloat) async throws {
+    let fixture = RenderFixture(messages: makeMessages(43), rowHeight: rowHeight)
+    fixture.viewportHeight = 700
+    let host = UIHostingController(rootView: RenderTestView(fixture: fixture))
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+    window.rootViewController = host
+    window.isHidden = false
+    defer { window.isHidden = true }
+    func findScrollView(in view: UIView) -> UIScrollView? {
+      (view as? UIScrollView) ?? view.subviews.lazy.compactMap { findScrollView(in: $0) }.first
+    }
+    try await waitForLayout(host: host) {
+      findScrollView(in: host.view)?.contentSize.height ?? 0 > 0
+    }
+    let scroll = try XCTUnwrap(findScrollView(in: host.view))
+    func bottom() -> CGFloat {
+      max(
+        -scroll.adjustedContentInset.top,
+        scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+    }
+    let readingOffset = max(-scroll.adjustedContentInset.top, bottom() - scrollUp)
+    scroll.setContentOffset(CGPoint(x: 0, y: readingOffset), animated: false)
+    for height in [550.0, 360.0, 180.0, 700.0] {
+      fixture.viewportHeight = height
+      try await waitForLayout(host: host) { abs(scroll.bounds.height - height) < 1 }
+      XCTAssertEqual(
+        scroll.contentOffset.y, scrollUp == 0 ? bottom() : readingOffset,
+        accuracy: 2, "Viewport height \(height) must preserve the reading anchor")
+    }
+  }
+
+  @MainActor
   func testPrependingPreservesTheReadingPositionAboveTheBottom() async throws {
     try await checkPrepending(rowHeight: 100, scrollUp: 240)
   }
@@ -320,6 +367,7 @@ final class ConversationMessageRenderingTests: XCTestCase {
 @MainActor
 @Observable
 private final class RenderFixture {
+  var viewportHeight: CGFloat?
   let id = UUID()
   var messages: [ChatMessage]
   let rowHeight: CGFloat
@@ -356,7 +404,13 @@ private struct RenderTestView: View {
         .frame(width: geometry.size.width)
         .frame(minHeight: geometry.size.height, alignment: .bottom)
       }
+      .onScrollGeometryChange(for: ConversationScrollViewport.self) {
+        ConversationScrollViewport($0)
+      } action: { old, new in
+        fixture.scrollSession.preserveBottomOnResize(from: old, to: new)
+      }
     }
+    .frame(height: fixture.viewportHeight)
   }
 }
 

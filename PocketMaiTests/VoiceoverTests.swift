@@ -102,6 +102,7 @@ final class VoiceoverTests: XCTestCase {
     settings.openAIEndpoints = [endpoint]
     settings.memory = "Private memory"
     var chat = conversation()
+    chat.messages[chat.messages.count - 1].voiceoverText = "Saved summary must not be model context"
     chat.provider = .openAICompatible
     chat.endpointID = endpoint.id
     chat.modelID = "small-voice-model"
@@ -114,6 +115,7 @@ final class VoiceoverTests: XCTestCase {
     XCTAssertNil(sent["tools"])
     let messages = try XCTUnwrap(sent["messages"] as? [[String: Any]])
     XCTAssertEqual(messages.count, 2)
+    XCTAssertFalse(String(describing: messages).contains("Saved summary must not be model context"))
     let system = try XCTUnwrap(messages.first?["content"] as? String)
     XCTAssertTrue(system.contains(AgentTask.voiceover.instructions))
     XCTAssertFalse(system.contains(AppSettings.defaultSystemPrompt.text))
@@ -190,6 +192,99 @@ final class VoiceoverTests: XCTestCase {
     await controller.wait(in: chat.id)
     XCTAssertEqual(errors.count, 1)
     XCTAssertEqual(chat.messages.count, 3)
+  }
+
+  func testSavedSummaryRoundTripsAndIsInvalidatedOnlyWhenReplyChanges() throws {
+    var message = ChatMessage(role: .assistant, text: "Detailed response")
+    let before = ChatMessageRenderKey(message)
+    message.voiceoverText = "Short spoken version."
+    XCTAssertNotEqual(before, ChatMessageRenderKey(message))
+    let data = try JSONEncoder().encode(message)
+    XCTAssertEqual(try JSONDecoder().decode(ChatMessage.self, from: data), message)
+    var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    legacy.removeValue(forKey: "voiceoverText")
+    XCTAssertNil(
+      try JSONDecoder().decode(
+        ChatMessage.self, from: JSONSerialization.data(withJSONObject: legacy)
+      ).voiceoverText)
+    message.text = "Detailed response"
+    XCTAssertEqual(message.voiceoverText, "Short spoken version.")
+    message.text = "Edited response"
+    XCTAssertNil(message.voiceoverText)
+  }
+
+  func testGeneratedSummaryIsSavedBeforePlaybackAndSurvivesReloadAndClone() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "voiceover-save-\(UUID())")
+    defer {
+      TTSPlayer.shared.stop()
+      TTSPlayer.shared.dismissError()
+      try? FileManager.default.removeItem(at: root)
+    }
+    let persistence = PersistenceStore(localBaseURL: root)
+    let controller = VoiceoverController { _, _ in "The migration is ready." }
+    let store = AppStore(persistence: persistence, monitorNetwork: false, voiceover: controller)
+    try await waitUntil { store.hasLoadedPersistedSettings }
+    await store.loadStoredConversationsForSearch()
+    // Fail speech immediately, without accessing a device voice or a network service.
+    store.settings.toolSettings.voices.assistant = RoleVoiceSettings(
+      provider: .openAICompatible, openAIEndpointID: UUID(), openAIVoice: "missing")
+    store.updateCurrentConversation {
+      $0.messages = self.conversation().messages
+      $0.voiceoverEnabled = true
+    }
+    let chat = try XCTUnwrap(store.currentConversation)
+    let source = try XCTUnwrap(chat.messages.last)
+    store.scheduleVoiceover(for: chat.id)
+    await controller.wait(in: chat.id)
+    let saved = try XCTUnwrap(store.activeConversation?.messages.last)
+    XCTAssertEqual(saved.voiceoverText, "The migration is ready.")
+    XCTAssertEqual(saved.text, source.text)
+    XCTAssertNotNil(
+      TTSPlayer.shared.errorMessage, "Speech failure must not lose the generated summary")
+    try await waitUntil {
+      persistence.loadConversation(id: chat.id)?.messages.last?.voiceoverText == saved.voiceoverText
+    }
+    store.updateCurrentConversationSettings { $0.voiceoverEnabled = false }
+    XCTAssertEqual(store.currentConversation?.messages.last?.voiceoverText, saved.voiceoverText)
+    store.cloneConversation(try XCTUnwrap(store.currentConversation))
+    XCTAssertEqual(store.currentConversation?.messages.last?.voiceoverText, saved.voiceoverText)
+    XCTAssertNotEqual(store.currentConversation?.messages.last?.id, source.id)
+    store.updateCurrentConversation { $0.messages[$0.messages.count - 1].text = "Changed reply" }
+    XCTAssertNil(store.currentConversation?.messages.last?.voiceoverText)
+  }
+
+  func testReplayUsesSavedSummaryAndSelectedVoiceWithoutGeneratingAgain() async throws {
+    let endpoint = OpenAIEndpoint(defaultModel: "chat", speechModel: "tts-1")
+    let voice = RoleVoiceSettings(
+      provider: .openAICompatible, openAIEndpointID: endpoint.id, openAIVoice: "nova")
+    let message = ChatMessage(
+      role: .assistant, text: "A much longer original reply",
+      voiceoverText: "Here is the short version.")
+    var calls: [(String, String)] = []
+    let player = TTSPlayer { _, text, voice in
+      calls.append((text, voice))
+      throw URLError(.timedOut)
+    }
+    for _ in 0..<2 {
+      player.toggleVoiceoverPlayback(for: message, voice: voice, openAIEndpoints: [endpoint])
+      XCTAssertTrue(player.isPlayingVoiceover(for: message.id))
+      XCTAssertFalse(player.isPlayingVoiceover(for: UUID()))
+      try await waitUntil { !player.isSpeaking }
+    }
+    XCTAssertEqual(calls.map { $0.0 }, Array(repeating: "Here is the short version.", count: 2))
+    XCTAssertEqual(calls.map { $0.1 }, ["nova", "nova"])
+
+    let pending = TTSPlayer { _, _, _ in
+      try await Task.sleep(for: .seconds(30))
+      return Data()
+    }
+    pending.speakVoiceover(for: message, voice: voice, openAIEndpoints: [endpoint])
+    pending.toggleVoiceoverPlayback(for: message, voice: voice, openAIEndpoints: [endpoint])
+    XCTAssertTrue(pending.isPaused)
+    pending.toggleVoiceoverPlayback(for: message, voice: voice, openAIEndpoints: [endpoint])
+    XCTAssertFalse(pending.isPaused)
+    pending.stop()
   }
 
   func testCompletedTurnsScheduleVoiceoverOnlyWhenEnabledAndKeepWrittenReply() async throws {

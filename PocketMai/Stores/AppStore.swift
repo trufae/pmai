@@ -1574,10 +1574,12 @@ final class AppStore: ObservableObject {
   func updateCurrentConversation(_ update: (inout Conversation) -> Void) {
     guard let index = currentConversationIndex else { return }
     let source = conversations[index].messages.last
-    update(&conversations[index])
-    if conversations[index].messages.last != source || !conversations[index].voiceoverEnabled {
+    var conversation = conversations[index]
+    update(&conversation)
+    if conversation.messages.last != source || !conversation.voiceoverEnabled {
       cancelVoiceover(in: conversations[index].id)
     }
+    conversations[index] = conversation
     conversations[index].updatedAt = Date()
     upsertSummary(for: conversations[index])
     saveConversations()
@@ -1974,7 +1976,8 @@ final class AppStore: ObservableObject {
         displayText: $0.displayText,
         createdAt: $0.createdAt,
         voiceRecordingFilename: $0.voiceRecordingFilename,
-        attachments: $0.attachments)
+        attachments: $0.attachments,
+        voiceoverText: $0.voiceoverText)
     }
     cloned.createdAt = now
     cloned.updatedAt = now
@@ -3152,6 +3155,19 @@ final class AppStore: ObservableObject {
 
   func conversationIndex(for id: UUID) -> Int? {
     indexedConversationIndex(for: id)
+  }
+
+  @discardableResult
+  func saveVoiceover(_ text: String, for source: ChatMessage, in conversationID: UUID) -> ChatMessage? {
+    guard let index = indexedConversationIndex(for: conversationID),
+      let messageIndex = conversations[index].messages.firstIndex(where: { $0.id == source.id }),
+      conversations[index].messages[messageIndex].role == .assistant,
+      conversations[index].messages[messageIndex].text == source.text,
+      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else { return nil }
+    conversations[index].messages[messageIndex].voiceoverText = text
+    saveConversations()
+    return conversations[index].messages[messageIndex]
   }
 
   func appendAssistantMessage(to conversationID: UUID) -> UUID? {
@@ -5236,6 +5252,7 @@ final class AppStore: ObservableObject {
         && lhsMessage.displayText == rhsMessage.displayText
         && lhsMessage.createdAt == rhsMessage.createdAt
         && lhsMessage.voiceRecordingFilename == rhsMessage.voiceRecordingFilename
+        && lhsMessage.voiceoverText == rhsMessage.voiceoverText
         && lhsMessage.attachments == rhsMessage.attachments
     }
   }

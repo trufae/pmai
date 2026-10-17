@@ -921,7 +921,13 @@ typealias GenerationStats = ModelCallStats
 struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
   var id: UUID = UUID()
   var role: ChatRole
-  var text: String
+  var text: String {
+    didSet {
+      if text != oldValue { voiceoverText = nil }
+    }
+  }
+  /// A spoken summary of this reply, kept out of the model's conversation context.
+  var voiceoverText: String? = nil
   var displayText: String? = nil
   var createdAt: Date = Date()
   var voiceRecordingFilename: String? = nil
@@ -929,7 +935,7 @@ struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
   var stats: GenerationStats? = nil
 
   enum CodingKeys: String, CodingKey {
-    case id, role, text, displayText, createdAt, voiceRecordingFilename, attachments, stats
+    case id, role, text, voiceoverText, displayText, createdAt, voiceRecordingFilename, attachments, stats
   }
 
   init(
@@ -940,7 +946,8 @@ struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
     createdAt: Date = Date(),
     voiceRecordingFilename: String? = nil,
     attachments: [ChatAttachment] = [],
-    stats: GenerationStats? = nil
+    stats: GenerationStats? = nil,
+    voiceoverText: String? = nil
   ) {
     self.id = id
     self.role = role
@@ -950,6 +957,7 @@ struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
     self.voiceRecordingFilename = voiceRecordingFilename
     self.attachments = attachments
     self.stats = stats
+    self.voiceoverText = voiceoverText
   }
 
   var presentationText: String {
@@ -966,6 +974,7 @@ struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
     id = try c.decode(UUID.self, forKey: .id)
     role = try c.decode(ChatRole.self, forKey: .role)
     text = try c.decode(String.self, forKey: .text)
+    voiceoverText = try? c.decode(String.self, forKey: .voiceoverText)
     displayText = try? c.decode(String.self, forKey: .displayText)
     createdAt = try c.decode(Date.self, forKey: .createdAt)
     voiceRecordingFilename = try? c.decode(String.self, forKey: .voiceRecordingFilename)
@@ -1039,6 +1048,7 @@ struct ChatMessageRenderKey: Equatable, Sendable {
   let displayText: String?
   let createdAt: Date
   let voiceRecordingFilename: String?
+  let voiceoverText: String?
   let attachments: [Attachment]
   let stats: GenerationStats?
 
@@ -1049,6 +1059,7 @@ struct ChatMessageRenderKey: Equatable, Sendable {
     displayText = message.displayText
     createdAt = message.createdAt
     voiceRecordingFilename = message.voiceRecordingFilename
+    voiceoverText = message.voiceoverText
     attachments = message.attachments.map(Attachment.init)
     stats = message.stats
   }

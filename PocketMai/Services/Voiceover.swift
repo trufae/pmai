@@ -29,7 +29,7 @@ enum VoiceoverPromptBuilder {
   }
 }
 
-/// Summaries never enter the chat history. A generation token also protects
+/// Summaries are stored separately from the model's chat history. A generation token also protects
 /// against providers that return after cancellation or after a newer turn.
 @MainActor
 final class VoiceoverController {
