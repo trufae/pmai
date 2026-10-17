@@ -3,6 +3,49 @@ import Testing
 
 @testable import MaiCore
 
+@Test("Obsolete redaction filenames do not prevent loading the configuration")
+func configurationLegacyRedaction() throws {
+  for value in ["safe2.txt", "/tmp/rules", "", "future-mode"] {
+    let data = try JSONSerialization.data(withJSONObject: ["redact": value])
+    let configuration = try JSONDecoder().decode(MaiConfiguration.self, from: data)
+    #expect(configuration.redact == .off)
+    #expect(
+      try JSONDecoder().decode(MaiConfiguration.self, from: configuration.encoded())
+        == configuration)
+  }
+}
+
+@Test("Invalid optional display preferences do not prevent configuration loading")
+func configurationTolerantDisplaySettings() throws {
+  let configuration = try JSONDecoder().decode(
+    MaiConfiguration.self,
+    from: Data(
+      #"""
+      {"ui":{"title":"Keep this", "bold":"obsolete", "thinking":"future-mode", "toolResultLines":{}},
+       "providers":[{"id":"local","kind":"hello"}], "futureSetting":{"enabled":true}}
+      """#.utf8))
+  #expect(configuration.ui.title == "Keep this")
+  #expect(configuration.ui.bold == false)
+  #expect(configuration.ui.thinking == .status)
+  #expect(configuration.ui.toolResultLines == .all)
+  #expect(configuration.providers.map(\.id) == ["local"])
+}
+
+@Test("Invalid required configuration reports the field without echoing its value")
+func configurationErrorPath() throws {
+  let file = FileManager.default.temporaryDirectory.appendingPathComponent("config-\(UUID()).json")
+  try #"{"providers":[{"id":"test","kind":"openai","timeout":"private-value"}]}"#
+    .write(to: file, atomically: true, encoding: .utf8)
+  defer { try? FileManager.default.removeItem(at: file) }
+  do {
+    _ = try MaiConfiguration.load(from: file)
+    Issue.record("Expected an invalid timeout error")
+  } catch {
+    #expect(error.localizedDescription.contains("providers.Index 0.timeout"))
+    #expect(!error.localizedDescription.contains("private-value"))
+  }
+}
+
 @Test("Configurations save atomically and create their parent directory")
 func configurationSaveRoundTrip() throws {
   let root = FileManager.default.temporaryDirectory

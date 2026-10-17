@@ -614,50 +614,53 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.init(
-      title: try container.decodeIfPresent(String.self, forKey: .title) ?? "",
-      backgroundLine: try container.decodeIfPresent(String.self, forKey: .backgroundLine)
+      title: (try? container.decodeIfPresent(String.self, forKey: .title)) ?? "",
+      backgroundLine: (try? container.decodeIfPresent(String.self, forKey: .backgroundLine))
         ?? "rgb:024",
-      foreground: try container.decodeIfPresent(String.self, forKey: .foreground) ?? "",
-      background: try container.decodeIfPresent(String.self, forKey: .background) ?? "",
-      promptForeground: try container.decodeIfPresent(String.self, forKey: .promptForeground)
+      foreground: (try? container.decodeIfPresent(String.self, forKey: .foreground)) ?? "",
+      background: (try? container.decodeIfPresent(String.self, forKey: .background)) ?? "",
+      promptForeground: (try? container.decodeIfPresent(String.self, forKey: .promptForeground))
         ?? "yellow",
-      promptBackground: try container.decodeIfPresent(String.self, forKey: .promptBackground) ?? "",
-      toolResultForeground: try container.decodeIfPresent(
-        String.self, forKey: .toolResultForeground) ?? "yellow",
-      toolCallForeground: try container.decodeIfPresent(
-        String.self, forKey: .toolCallForeground) ?? "green",
-      errorForeground: try container.decodeIfPresent(String.self, forKey: .errorForeground)
+      promptBackground: (try? container.decodeIfPresent(String.self, forKey: .promptBackground))
+        ?? "",
+      toolResultForeground: (try? container.decodeIfPresent(
+        String.self, forKey: .toolResultForeground)) ?? "yellow",
+      toolCallForeground: (try? container.decodeIfPresent(
+        String.self, forKey: .toolCallForeground)) ?? "green",
+      errorForeground: (try? container.decodeIfPresent(String.self, forKey: .errorForeground))
         ?? "red",
-      warningForeground: try container.decodeIfPresent(
-        String.self, forKey: .warningForeground) ?? "yellow",
-      successForeground: try container.decodeIfPresent(
-        String.self, forKey: .successForeground) ?? "cyan",
-      infoForeground: try container.decodeIfPresent(String.self, forKey: .infoForeground)
+      warningForeground: (try? container.decodeIfPresent(
+        String.self, forKey: .warningForeground)) ?? "yellow",
+      successForeground: (try? container.decodeIfPresent(
+        String.self, forKey: .successForeground)) ?? "cyan",
+      infoForeground: (try? container.decodeIfPresent(String.self, forKey: .infoForeground))
         ?? "magenta",
-      thinkingForeground: try container.decodeIfPresent(
-        String.self, forKey: .thinkingForeground) ?? "grey",
-      diffAddedForeground: try container.decodeIfPresent(
-        String.self, forKey: .diffAddedForeground) ?? "#d9f7e3",
-      diffAddedBackground: try container.decodeIfPresent(
-        String.self, forKey: .diffAddedBackground) ?? "#163a24",
-      diffRemovedForeground: try container.decodeIfPresent(
-        String.self, forKey: .diffRemovedForeground) ?? "#ffd9dd",
-      diffRemovedBackground: try container.decodeIfPresent(
-        String.self, forKey: .diffRemovedBackground) ?? "#421f24",
-      diffHeaderForeground: try container.decodeIfPresent(
-        String.self, forKey: .diffHeaderForeground) ?? "cyan",
-      selectionForeground: try container.decodeIfPresent(
-        String.self, forKey: .selectionForeground) ?? "bright-white",
-      selectionBackground: try container.decodeIfPresent(
-        String.self, forKey: .selectionBackground) ?? "blue",
-      bold: try container.decodeIfPresent(Bool.self, forKey: .bold) ?? false,
-      markdown: try container.decodeIfPresent(Bool.self, forKey: .markdown) ?? true,
-      toolResultLines: try container.decodeIfPresent(ToolResultDisplay.self, forKey: .toolResultLines) ?? .all,
-      subagentOutput: try container.decodeIfPresent(
-        SubagentOutputLevel.self, forKey: .subagentOutput) ?? .all,
-      broadcast: try container.decodeIfPresent(Bool.self, forKey: .broadcast) ?? false,
-      thinking: try container.decodeIfPresent(ThinkingDisplay.self, forKey: .thinking) ?? .status,
-      editor: try container.decodeIfPresent(String.self, forKey: .editor) ?? "")
+      thinkingForeground: (try? container.decodeIfPresent(
+        String.self, forKey: .thinkingForeground)) ?? "grey",
+      diffAddedForeground: (try? container.decodeIfPresent(
+        String.self, forKey: .diffAddedForeground)) ?? "#d9f7e3",
+      diffAddedBackground: (try? container.decodeIfPresent(
+        String.self, forKey: .diffAddedBackground)) ?? "#163a24",
+      diffRemovedForeground: (try? container.decodeIfPresent(
+        String.self, forKey: .diffRemovedForeground)) ?? "#ffd9dd",
+      diffRemovedBackground: (try? container.decodeIfPresent(
+        String.self, forKey: .diffRemovedBackground)) ?? "#421f24",
+      diffHeaderForeground: (try? container.decodeIfPresent(
+        String.self, forKey: .diffHeaderForeground)) ?? "cyan",
+      selectionForeground: (try? container.decodeIfPresent(
+        String.self, forKey: .selectionForeground)) ?? "bright-white",
+      selectionBackground: (try? container.decodeIfPresent(
+        String.self, forKey: .selectionBackground)) ?? "blue",
+      bold: (try? container.decodeIfPresent(Bool.self, forKey: .bold)) ?? false,
+      markdown: (try? container.decodeIfPresent(Bool.self, forKey: .markdown)) ?? true,
+      toolResultLines: (try? container.decodeIfPresent(
+        ToolResultDisplay.self, forKey: .toolResultLines)) ?? .all,
+      subagentOutput: (try? container.decodeIfPresent(
+        SubagentOutputLevel.self, forKey: .subagentOutput)) ?? .all,
+      broadcast: (try? container.decodeIfPresent(Bool.self, forKey: .broadcast)) ?? false,
+      thinking: (try? container.decodeIfPresent(ThinkingDisplay.self, forKey: .thinking))
+        ?? .status,
+      editor: (try? container.decodeIfPresent(String.self, forKey: .editor)) ?? "")
   }
 }
 
@@ -892,7 +895,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
       agents: try container.decodeIfPresent([AgentDefinition].self, forKey: .agents) ?? [],
       prompts: try container.decodeIfPresent(ConfiguredPrompts.self, forKey: .prompts),
       memory: try container.decodeIfPresent(ConfiguredMemory.self, forKey: .memory) ?? .init(),
-      ui: try container.decodeIfPresent(ConfiguredTerminalUI.self, forKey: .ui) ?? .init(),
+      ui: (try? container.decodeIfPresent(ConfiguredTerminalUI.self, forKey: .ui)) ?? .init(),
       approvals: try container.decodeIfPresent(ConfiguredApprovals.self, forKey: .approvals)
         ?? .init(),
       fileAccess: try container.decodeIfPresent(ConfiguredFileAccess.self, forKey: .fileAccess),
@@ -900,7 +903,9 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
       documentExport: try container.decodeIfPresent(DocumentExportOptions.self, forKey: .documentExport)
         ?? .init(),
       airplane: try container.decodeIfPresent(Bool.self, forKey: .airplane) ?? false,
-      redact: try container.decodeIfPresent(RedactionMode.self, forKey: .redact) ?? .off)
+      // Older versions stored a rules filename here. Only the fixed redact.txt
+      // file is supported now; obsolete values must not prevent startup.
+      redact: (try? container.decodeIfPresent(RedactionMode.self, forKey: .redact)) ?? .off)
   }
 
   public static func load(from url: URL) throws -> MaiConfiguration {
@@ -911,6 +916,24 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
       return configuration
     } catch let error as MaiConfigurationError {
       throw error
+    } catch let error as DecodingError {
+      let context: DecodingError.Context
+      let reason: String
+      switch error {
+      case .keyNotFound(let key, let details):
+        context = details
+        reason = "Missing required field '\(key.stringValue)'."
+      case .typeMismatch(_, let details), .valueNotFound(_, let details):
+        context = details
+        reason = "Unexpected value type."
+      case .dataCorrupted(let details):
+        context = details
+        reason = "Invalid value or malformed JSON."
+      @unknown default:
+        throw MaiConfigurationError.invalidFile("Invalid JSON configuration.")
+      }
+      let path = context.codingPath.map(\.stringValue).joined(separator: ".")
+      throw MaiConfigurationError.invalidFile("\(path.isEmpty ? "root" : path): \(reason)")
     } catch {
       throw MaiConfigurationError.invalidFile(error.localizedDescription)
     }

@@ -174,9 +174,9 @@ func redactionModesAndReload() async throws {
     let encoded = try JSONEncoder().encode(MaiConfiguration(redact: mode))
     #expect(try JSONDecoder().decode(MaiConfiguration.self, from: encoded).redact == mode)
   }
-  #expect(throws: (any Error).self) {
-    try JSONDecoder().decode(MaiConfiguration.self, from: Data(#"{"redact":"/tmp/rules"}"#.utf8))
-  }
+  let legacy = try JSONDecoder().decode(
+    MaiConfiguration.self, from: Data(#"{"redact":"/tmp/rules"}"#.utf8))
+  #expect(legacy.redact == .off)
   let file = try redactionFile("alice")
   defer { try? FileManager.default.removeItem(at: file) }
   let runtime = AgentRuntime()

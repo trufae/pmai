@@ -59,6 +59,9 @@ file.write_text("alice\\n/\\\\b(?:\\\\d{4}-){3}\\\\d{4}\\\\b/\\n")
                     'autocompact': {'tokens': 0}, 'retry': {'attempts': 0}}],
                 'approvals': {'mode': 'yolo'}, 'memory': {'enabled': False},
                 'use': {'plan': False, 'agentsmd': 'off'},
+                # Released configurations used a filename here. Startup must
+                # ignore it; /edit redact still edits only the fixed rules file.
+                'redact': 'safe2.txt', 'ui': {'thinking': 'obsolete-mode'},
             }))
             command = [binary, '--config', str(config), '--home', str(home),
                 '--no-stream', '--no-markdown']
@@ -77,8 +80,9 @@ file.write_text("alice\\n/\\\\b(?:\\\\d{4}-){3}\\\\d{4}\\\\b/\\n")
                 return {'role': 'assistant', 'content': 'Summary ' + token}
 
             responses[:] = [read_file, final, summary]
-            output = run_repl(command, ['/edit redact', '/set redact warn',
+            output = run_repl(command, ['/set redact', '/edit redact', '/set redact warn',
                 f'Read {secret}', '/chat compact', '/set redact'], cwd=root, env=env)
+            assert 'redact = off' in output, output
             assert len(requests) == 3 and not responses, (requests, output)
             assert '4111-1111-1111-1111' in output, output
             assert output.count('warning: redacted ') == 3, output
