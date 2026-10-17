@@ -14,6 +14,7 @@ let visualEnabled = Context.environment["PMAI_NO_VISUAL"] == nil
 var cliDependencies: [Target.Dependency] = [
   "MaiCore", "MaiMCP", "MaiOpenAI", "MaiPluginHost", "MaiStandardTools", "MaiVisionOCR",
   "MaiDocuments", "MaiMarkdown", "MaiACP", "MaiACPGateway", "MaiLocalProviders",
+  .product(name: "Crypto", package: "swift-crypto"),
 ]
 var localProviderDependencies: [Target.Dependency] = ["MaiCore"]
 var localProviderSwiftSettings: [SwiftSetting] = []

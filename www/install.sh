@@ -164,7 +164,7 @@ release_base="${PMAI_RELEASE_BASE:-$release_base}"
 target="$install_dir/pmai"
 current_version=$("$target" --version 2>/dev/null || true)
 if [ -n "$current_version" ] && [ "${current_version#v}" = "${version#v}" ]; then
-  printf '%s\n' 'No updates available'
+  say "${current_version#v} is up to date (No updates available)"
   exit 0
 fi
 mkdir -p "$install_dir" || die "cannot create install directory: $install_dir"
@@ -185,13 +185,18 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 archive="$temp_dir/$asset"
+if [ -n "$current_version" ]; then
+  say "updating ${current_version#v} → ${version#v}"
+else
+  say "installing ${version#v}"
+fi
 say "downloading $asset"
-if ! curl -fL --retry 2 --connect-timeout 15 "$release_base/$asset" -o "$archive"; then
+if ! curl -fsSL --retry 2 --connect-timeout 15 "$release_base/$asset" -o "$archive"; then
   if [ -n "$asset_fallback" ]; then
     asset=$asset_fallback
     archive="$temp_dir/$asset"
     say "trying universal macOS release"
-    curl -fL --retry 2 --connect-timeout 15 "$release_base/$asset" -o "$archive" ||
+    curl -fsSL --retry 2 --connect-timeout 15 "$release_base/$asset" -o "$archive" ||
       die "no compatible release asset was found"
   else
     die "no compatible release asset was found"
@@ -199,7 +204,7 @@ if ! curl -fL --retry 2 --connect-timeout 15 "$release_base/$asset" -o "$archive
 fi
 
 checksums="$temp_dir/SHA256SUMS"
-curl -fL --retry 2 --connect-timeout 15 "$release_base/SHA256SUMS" -o "$checksums" ||
+curl -fsSL --retry 2 --connect-timeout 15 "$release_base/SHA256SUMS" -o "$checksums" ||
   die "the release checksum file is missing"
 expected=$(awk -v file="$asset" '$2 == file || $2 == "*" file { print $1; exit }' "$checksums")
 [ -n "$expected" ] || die "no checksum was published for $asset"
@@ -247,7 +252,7 @@ else
 fi
 
 "$target" --help >/dev/null 2>&1 || die "pmai was installed but failed its startup check"
-say "installed $platform/$architecture${libc:+ ($libc)} to $target"
+say "installed $platform/$architecture${libc:+ ($libc)} version ${version#v} to $target"
 
 if path_contains "$install_dir"; then
   say "ready — run: pmai"

@@ -24,9 +24,6 @@ import MaiVisionOCR
   import Darwin
 #endif
 
-@_silgen_name("system")
-private func posixSystem(_ command: UnsafePointer<CChar>) -> CInt
-
 /// Swift discovers argv from the initial process stack on ELF targets. The
 /// Play Store build of Termux preserves argv[0], inserts the executable at
 /// argv[1], and starts Android's linker. Bionic skips the preserved argv[0]
@@ -1301,7 +1298,8 @@ struct MaiCLI {
         return
       }
       if options.update {
-        try updateCLI(executable: commandLineArguments[0], environment: environment)
+        try await CLIUpdater.run(
+          currentVersion: version, executable: commandLineArguments[0], environment: environment)
         return
       }
       if options.printConfig {
@@ -13447,39 +13445,6 @@ struct MaiCLI {
       /tools set mastodon mastodonAPIKeyEnvironment MASTODON_API_KEY
       /tools set mastodon mastodonWriteEnabled on
     """
-
-  private static func updateCLI(executable: String, environment: [String: String]) throws {
-    #if os(Windows)
-      throw NSError(
-        domain: "pmai", code: 1,
-        userInfo: [
-          NSLocalizedDescriptionKey: "Automatic updates support macOS, Linux, and Android."
-        ])
-    #else
-      let candidates =
-        executable.contains("/")
-        ? [executable]
-        : (environment["PATH"] ?? "").components(separatedBy: ":").map {
-          URL(fileURLWithPath: $0.isEmpty ? "." : $0).appendingPathComponent(executable).path
-        }
-      guard let path = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) })
-      else { throw CocoaError(.fileNoSuchFile) }
-      let directory =
-        environment["PMAI_INSTALL_DIR"].flatMap { $0.isEmpty ? nil : $0 }
-        ?? URL(fileURLWithPath: path).resolvingSymlinksInPath().deletingLastPathComponent().path
-
-      let command = """
-        installer=$(curl -fsSL https://raw.githubusercontent.com/trufae/pmai/main/www/install.sh) &&
-        PMAI_INSTALL_DIR=\(shellQuote(directory)) sh -c "$installer"
-        """
-
-      let status = command.withCString(posixSystem)
-      guard status != -1 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
-
-      let exitCode = status & 0x7f == 0 ? (status >> 8) & 0xff : 128 + (status & 0x7f)
-      exit(exitCode)
-    #endif
-  }
 
   private static func ensureRedactionFile(at url: URL) throws {
     guard !FileManager.default.fileExists(atPath: url.path) else { return }
