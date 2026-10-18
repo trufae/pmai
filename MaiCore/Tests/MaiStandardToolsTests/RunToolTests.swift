@@ -35,6 +35,71 @@ func runSystemCapturesOutput(shellCommand: String) async throws {
   #expect(missing.text.contains("Provide script"))
 }
 
+@Test("Failing scripts retain stdout diagnostics and exit status",
+  arguments: ["script", "command", "commands", "args"])
+func runShellReportsFailingScript(key: String) async throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+    "mai-run-failure-\(UUID())")
+  try FileManager.default.createDirectory(
+    at: directory.appendingPathComponent("sys"), withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let diagnostic = "libr/core/cmd_cmp.inc.c:1126: error [brace-else] missing space around else/brace -- } else"
+  let file = directory.appendingPathComponent("sys/lint.sh")
+  let fixture = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+    .deletingLastPathComponent().appendingPathComponent("Fixtures/run-failure.sh")
+  try FileManager.default.copyItem(at: fixture, to: file)
+  try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)
+
+  let output = try await call(MaiRunTool(configuration: MaiRunConfiguration()), [
+    key: ["args", "commands"].contains(key) ? .array([.string("sys/lint.sh")]) : .string("sys/lint.sh"),
+    "cwd": .string(directory.path),
+  ])
+  #expect(output.isError)
+  #expect(output.text == "\(diagnostic)\n[exit code 1]")
+  #expect(output.structuredContent?.objectValue?["exitCode"] == .integer(1))
+  #expect(output.structuredContent?.objectValue?["timedOut"] == .bool(false))
+}
+
+@Test("Run tools preserve failures in every output mode",
+  arguments: ["auto", "inline", "file", "none"], [false, true])
+func runShellFailureOutputModes(mode: String, silent: Bool) async throws {
+  let output = try await call(MaiRunTool(configuration: MaiRunConfiguration()), [
+    "script": .string(silent ? "exit 1" : "printf stdout-error; printf stderr-error >&2; exit 1"),
+    "output": .string(mode),
+  ])
+  #expect(output.isError)
+  #expect(output.structuredContent?.objectValue?["exitCode"] == .integer(1))
+  #expect(output.structuredContent?.objectValue?["timedOut"] == .bool(false))
+  #expect(output.text.hasSuffix("[exit code 1]"))
+  let captured = !silent && (mode == "auto" || mode == "inline")
+  #expect(output.text.contains("stdout-error") == captured)
+  #expect(output.text.contains("[stderr]\nstderr-error") == captured)
+  for stream in ["stdout", "stderr"] {
+    let path = output.structuredContent?.objectValue?[stream + "File"]?.stringValue
+    #expect((path != nil) == (!silent && mode == "file"))
+    if let path {
+      defer { try? FileManager.default.removeItem(atPath: path) }
+      #expect(try String(contentsOfFile: path, encoding: .utf8) == "\(stream)-error")
+    }
+  }
+}
+
+@Test("Run tools drain output flushed at exit and wait for the actual exit status",
+  arguments: [
+    "printf stdout-error; printf stderr-error >&2; exit 1",
+    "python3 -c 'import sys; sys.stdout.write(\"stdout-error\"); sys.stderr.write(\"stderr-error\"); sys.exit(1)'",
+    "printf stdout-error; printf stderr-error >&2; exec 1>&- 2>&-; sleep 0.1; exit 1",
+    "(sleep 0.1; printf stdout-error; printf stderr-error >&2) &\nexit 1",
+  ])
+func runShellDrainsFailureOutput(script: String) async throws {
+  let output = try await call(MaiRunTool(configuration: MaiRunConfiguration()), [
+    "script": .string(script),
+  ])
+  #expect(output.isError)
+  #expect(output.text == "stdout-error\n[stderr]\nstderr-error\n[exit code 1]")
+  #expect(output.structuredContent?.objectValue?["exitCode"] == .integer(1))
+}
+
 @Test("Run tools accept a command in args and preserve literal argument boundaries")
 func runShellAcceptsArgv() async throws {
   let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -188,10 +253,12 @@ func runToolsConcurrentPipeCleanup() async throws {
   try await withThrowingTaskGroup(of: Void.self) { group in
     for _ in 0..<8 {
       group.addTask {
-        for _ in 0..<8 {
-          let output = try await call(tool, ["script": .string("printf out; printf err >&2")])
-          #expect(!output.isError)
-          #expect(output.text == "out\n[stderr]\nerr")
+        for index in 0..<8 {
+          let code = index % 2
+          let output = try await call(tool, ["script": .string("printf out; printf err >&2; exit \(code)")])
+          #expect(output.isError == (code != 0))
+          #expect(output.text == "out\n[stderr]\nerr" + (code == 0 ? "" : "\n[exit code 1]"))
+          #expect(output.structuredContent?.objectValue?["exitCode"] == .integer(code))
         }
       }
     }
@@ -230,16 +297,18 @@ func runToolsManageOutput() async throws {
   #expect(silent.text == "(no output; exit code 0)")
 }
 
-@Test("Spilled streams keep the preview and every byte across multiple reads", arguments: [false, true])
-func runToolsSpillMultipleChunks(stderr: Bool) async throws {
+@Test("Spilled streams keep the preview and every byte across multiple reads",
+  arguments: [false, true], [0, 1])
+func runToolsSpillMultipleChunks(stderr: Bool, exitCode: Int) async throws {
   let tool = MaiRunTool(configuration: MaiRunConfiguration(outputLimit: 1_024))
-  let script = "head -c 1024 /dev/zero | tr '\\0' a\nhead -c 150000 /dev/zero | tr '\\0' b\nprintf tail"
+  let script = "head -c 1024 /dev/zero | tr '\\0' a\nhead -c 150000 /dev/zero | tr '\\0' b\nprintf tail\nexit \(exitCode)"
   let output = try await call(tool, ["script": .string((stderr ? "exec 1>&2\n" : "") + script)])
   let stream = stderr ? "stderr" : "stdout"
   let path = try #require(output.structuredContent?.objectValue?[stream + "File"]?.stringValue)
   defer { try? FileManager.default.removeItem(atPath: path) }
   let preview = String(repeating: "a", count: 1_024)
-  #expect(!output.isError)
+  #expect(output.isError == (exitCode != 0))
+  #expect(output.structuredContent?.objectValue?["exitCode"] == .integer(exitCode))
   #expect(output.text.hasPrefix((stderr ? "[stderr]\n" : "") + preview))
   #expect(output.text.contains("[\(stream) truncated: 150004 more bytes not shown]"))
   #expect(!output.text.contains(String(repeating: "b", count: 100)))

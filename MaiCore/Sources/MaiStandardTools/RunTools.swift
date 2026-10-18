@@ -330,6 +330,11 @@ public struct MaiRunTool: AgentTool {
         + "For heredocs, use real newlines and put the closing delimiter alone on its own line: python3 - <<'PY'\nprint('hello')\nPY"
     )
     properties["command"] = stringProperty("Accepted as an alias of script.")
+    properties["commands"] = .object([
+      "type": .string("array"),
+      "items": .object(["type": .string("string")]),
+      "description": .string("Accepted as an alias of script, with one shell script line per item."),
+    ])
     properties["args"] = .object([
       "type": .string("array"),
       "items": .object(["type": .string("string")]),

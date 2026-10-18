@@ -74,6 +74,7 @@ func runToolsAcceptAliases() async throws {
   let properties = try #require(schema["properties"]?.objectValue)
   #expect(properties["command"] != nil)
   #expect(properties["script"] != nil)
+  #expect(properties["commands"] != nil)
 }
 
 @Test("Schema errors name the fields the call had and the fields the tool takes")
