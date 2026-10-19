@@ -89,6 +89,10 @@ actor TerminalWriter {
     return "\u{1B}[\(codes.joined(separator: ";"))m\(text)\u{1B}[0m"
   }
 
+  func paintHeading(_ text: String) -> String {
+    paint(text, color: ui.infoForeground, bold: true)
+  }
+
   func drainCaptured() -> String {
     let text = captured.joined()
     captured.removeAll()

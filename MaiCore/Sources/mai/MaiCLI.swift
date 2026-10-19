@@ -11815,17 +11815,9 @@ struct MaiCLI {
       .trimmingCharacters(in: .whitespacesAndNewlines)
 
     switch action {
-    case "list":
-      await terminal.line(conversationLog(session: session, full: false))
-    case "log":
-      let renderer = await terminal.markdownRenderer
+    case "list", "log":
       await terminal.line(
-        conversationLog(session: session, full: true) { text in
-          guard let renderer else { return text }
-          var rendered = renderer.render(text)
-          while rendered.hasSuffix("\n") { rendered.removeLast() }
-          return rendered
-        })
+        await conversationLog(session: session, full: action == "log", terminal: terminal))
     case "edit":
       guard parts.count == 3, let index = chatIndex(parts[1], count: session.history.count) else {
         await terminal.line("Usage: /chat edit INDEX TEXT")
@@ -12038,15 +12030,25 @@ struct MaiCLI {
   private static func conversationLog(
     session: REPLSession,
     full: Bool,
-    renderText: (String) -> String = { $0 }
-  ) -> String {
+    terminal: TerminalWriter
+  ) async -> String {
     guard !session.history.isEmpty else { return "No conversation messages yet." }
-    var lines = [full ? "# Full conversation log" : "Conversation log:"]
+    let renderer = await terminal.markdownRenderer
+    func renderText(_ text: String) -> String {
+      guard let renderer else { return text }
+      var rendered = renderer.render(text)
+      while rendered.hasSuffix("\n") { rendered.removeLast() }
+      return rendered
+    }
+    var lines = [
+      full ? await terminal.paintHeading("# Full conversation log") : "Conversation log:"
+    ]
     if !full { lines.append("-----------------") }
     for (index, message) in session.history.messages.enumerated() {
       let role = message.role.rawValue.capitalized
       if full {
-        lines.append("\n## [\(index + 1)] \(role) (id: \(message.id))")
+        let heading = await terminal.paintHeading("## [\(index + 1)] \(role) (id: \(message.id))")
+        lines.append("\n" + heading)
         lines.append(
           message.content.map { renderFullContent($0, renderText: renderText) }
             .joined(separator: "\n"))
@@ -12112,13 +12114,16 @@ struct MaiCLI {
       return
         "[resource name=\(resource.name ?? "-") uri=\(resource.uri) mime=\(resource.mimeType ?? "-")]\(resource.text.map { "\n\($0)" } ?? "")"
     case .reasoning(let reasoning):
-      return "[reasoning]\n\(reasoning)"
+      return "[reasoning]\n\(renderText(reasoning))"
     case .toolCall(let call):
       return "[tool call name=\(call.name) id=\(call.id)]\n\(call.arguments.compactJSONString)"
     case .toolResult(let result):
       var value = "[tool result call=\(result.callID) status=\(result.isError ? "error" : "ok")]"
       if !result.content.isEmpty {
-        value += "\n" + result.content.map { renderFullContent($0) }.joined(separator: "\n")
+        value +=
+          "\n"
+          + result.content.map { renderFullContent($0, renderText: renderText) }
+            .joined(separator: "\n")
       }
       if let structured = result.structuredContent {
         value += "\n[structured content]\n\(structured.compactJSONString)"
@@ -13024,7 +13029,7 @@ struct MaiCLI {
       /theme color fgerror COLOR      Errors and failed tool results
       /theme color fgwarning COLOR    Warnings, retries, and approval requests
       /theme color fgsuccess COLOR    Successful run status
-      /theme color fginfo COLOR       Context notices and tool-help headings
+      /theme color fginfo COLOR       Context notices, tool-help headings, and chat-log headers
       /theme color fgthinking COLOR   Thinking text
       /theme color fgdiffadd COLOR    Added diff-line foreground
       /theme color bgdiffadd COLOR    Added diff-line background

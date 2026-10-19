@@ -191,7 +191,9 @@ records are accepted and written back as `openai` when saved.
 
 Use `/chat list` for a compact indexed history or `/chat log` for the complete
 structured transcript, including attachments, reasoning, tool calls, tool
-results, and structured MCP output. The current in-memory conversation can be
+results, and structured MCP output. Message headers are bold in the theme's
+`fginfo` color, and message text, reasoning, and tool-result text use Markdown
+rendering when enabled. The current in-memory conversation can be
 changed at any point with `/chat edit INDEX TEXT`, `/chat del INDEX`,
 `/chat undo [INDEX]`, `/chat trim INDEX`, `/chat compact [FOCUS]`, and `/chat
 clear`. Positive message indexes are 1-based; negative indexes count back from
@@ -665,7 +667,7 @@ Old configuration files and saved themes using `/set ui.COLOR VALUE` remain vali
 | `fgerror` | Errors and failed tool results |
 | `fgwarning` | Warnings, retries, interruptions, and approval requests |
 | `fgsuccess` | Successful run status |
-| `fginfo` | Context notices and tool-help headings |
+| `fginfo` | Context notices, tool-help headings, and chat-log headers |
 | `fgthinking` | Thinking previews and full reasoning text |
 | `fgdiffadd`, `bgdiffadd` | Added lines in tool-output diffs |
 | `fgdiffdel`, `bgdiffdel` | Removed lines in tool-output diffs |
