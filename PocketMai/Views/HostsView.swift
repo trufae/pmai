@@ -30,28 +30,14 @@ struct HostsView: View {
   var body: some View {
     List {
       row(title: "Local", subtitle: "This PocketMai", image: "iphone", id: nil)
-      ForEach(hosts.remotes.connections) { host in
-        row(
-          title: host.name, subtitle: host.url.host ?? host.url.absoluteString,
-          image: "network", id: host.id
-        )
-        .contextMenu {
-          Button("Rename", systemImage: "character.cursor.ibeam") { renaming = host }
-          Button("Edit Host", systemImage: "pencil") { editing = host }
-          if hosts.selectedHostID == host.id || hosts.isConnected(host.id) {
-            Button("Disconnect", systemImage: "network.slash") { hosts.disconnect(host.id) }
-          }
-          Button("Reconnect", systemImage: "arrow.clockwise") {
-            hosts.reconnect(host.id, isOffline: appStore.settings.isOffline)
-            onSelectHost(host.id)
-          }
-          .disabled(appStore.settings.isOffline)
-          Button("Remove Host", systemImage: "trash", role: .destructive) {
-            hosts.remotes.remove(host.id)
-          }
-        }
-      }
+      let online = hosts.remotes.connections.filter { connectionState($0.id) == .connected }
+      let offline = hosts.remotes.connections.filter { connectionState($0.id) != .connected }
+      if !hosts.remotes.connections.isEmpty { groupSeparator }
+      ForEach(online) { host in remoteRow(host) }
+      if !online.isEmpty && !offline.isEmpty { groupSeparator }
+      ForEach(offline) { host in remoteRow(host) }
     }
+    .environment(\.defaultMinListRowHeight, 0)
     .listStyle(.plain).scrollContentBackground(.hidden)
     .contentMargins(.horizontal, 16, for: .scrollContent)
     .safeAreaInset(edge: .top) {
@@ -107,15 +93,51 @@ struct HostsView: View {
     .sheet(item: $renaming) { host in RemoteHostRenameView(host: host) }
   }
 
+  private var groupSeparator: some View {
+    Divider()
+      .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+      .listRowBackground(Color.clear)
+      .listRowSeparator(.hidden)
+      .accessibilityHidden(true)
+  }
+
+  private func connectionState(_ id: UUID) -> HostConnectionState {
+    hosts.connectionState(id, isOffline: appStore.settings.isOffline)
+  }
+
+  private func remoteRow(_ host: RemoteAgentBookmark) -> some View {
+    row(
+      title: host.name, subtitle: host.url.host ?? host.url.absoluteString,
+      image: "network", id: host.id
+    )
+    .contextMenu {
+      Button("Rename", systemImage: "character.cursor.ibeam") { renaming = host }
+      Button("Edit Host", systemImage: "pencil") { editing = host }
+      Divider()
+      if hosts.selectedHostID == host.id || hosts.isConnected(host.id) {
+        Button("Disconnect", systemImage: "network.slash") { hosts.disconnect(host.id) }
+      }
+      Button("Reconnect", systemImage: "arrow.clockwise") {
+        hosts.reconnect(host.id, isOffline: appStore.settings.isOffline)
+        onSelectHost(host.id)
+      }
+      .disabled(appStore.settings.isOffline)
+      Divider()
+      Button("Remove Host", systemImage: "trash", role: .destructive) {
+        hosts.remotes.remove(host.id)
+      }
+    }
+  }
+
   private func row(title: String, subtitle: String, image: String, id: UUID?) -> some View {
     let selected = hosts.selectedHostID == id
+    let state = id.map { connectionState($0) }
+    let iconColor: Color = state == .connected ? .green : state == .failed ? .red : .primary
     return SidebarFolderRow(
       title: title, subtitle: subtitle, systemImage: image,
-      iconColor: (hosts.remotes.host(id)?.accentColor).flatMap {
-        ConversationFolderTint(rawIdentifier: $0)
-      }?.color,
+      iconColor: iconColor,
       isSelected: selected,
-      isConnected: id.map { !appStore.settings.isOffline && hosts.isConnected($0) }
+      connectionStatus: state?.rawValue
     ) {
       onSelectHost(id)
     }

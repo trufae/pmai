@@ -11,6 +11,12 @@ enum RemoteFolderSortOrder: String, CaseIterable, Identifiable {
   var title: String { self == .updated ? "Last Updated" : "Name" }
 }
 
+enum HostConnectionState: String {
+  case connected = "Connected"
+  case failed = "Connection broken"
+  case disconnected = "Not connected"
+}
+
 /// Navigation owns host selection. Local chat state stays in AppStore and
 /// remote state stays in the host repository, so switching never mixes them.
 @MainActor @Observable
@@ -38,12 +44,19 @@ final class HostNavigationStore {
     connectedHostID == id || (activeChat?.bookmark.id == id && activeChat?.connected == true)
   }
 
+  func connectionState(_ id: UUID, isOffline: Bool) -> HostConnectionState {
+    guard !isOffline else { return .disconnected }
+    if isConnected(id) { return .connected }
+    return remotes.failedHostIDs.contains(id) ? .failed : .disconnected
+  }
+
   func disconnect(_ id: UUID) {
     if activeChat?.bookmark.id == id {
       activeChat?.disconnect()
       activeChat = nil
     }
     if selectedHostID == id { selectHost(nil, isOffline: false) }
+    remotes.setConnectionFailed(false, for: id)
   }
 
   func suspendConnections() {
@@ -170,6 +183,7 @@ final class HostNavigationStore {
     stopDiscovery()
     loading = true
     error = nil
+    remotes.setConnectionFailed(false, for: host.id)
     generation += 1
     let attempt = generation
     operation = Task { [weak self] in
@@ -199,6 +213,7 @@ final class HostNavigationStore {
         let connected = await client.isConnected
         guard generation == attempt, !Task.isCancelled else { return }
         connectedHostID = connected ? host.id : nil
+        remotes.setConnectionFailed(!connected, for: host.id)
         supportsDiscovery = snapshot != nil
         if let snapshot { remotes.updateWorkspace(host.id, snapshot: snapshot) }
         if !folders.contains(where: { $0.cwd == selectedFolderID }) {
@@ -207,6 +222,7 @@ final class HostNavigationStore {
       } catch {
         guard generation == attempt else { return }
         self.error = error.localizedDescription
+        remotes.setConnectionFailed(!(error is CancellationError), for: host.id)
         await client?.disconnect()
       }
       guard generation == attempt else { return }
@@ -230,6 +246,7 @@ final class HostNavigationStore {
 
   private func connectionClosed(attempt: Int) {
     guard generation == attempt else { return }
+    if let selectedHostID { remotes.setConnectionFailed(true, for: selectedHostID) }
     connectedHostID = nil
     if !loading { error = "Disconnected from this host. Reconnect to continue." }
   }

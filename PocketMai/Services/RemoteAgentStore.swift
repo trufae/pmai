@@ -88,6 +88,7 @@ struct RemoteAgentMessage: Codable, Identifiable {
 final class RemoteAgentStore {
   static let shared = RemoteAgentStore()
   private(set) var connections: [RemoteAgentBookmark] = []
+  private(set) var failedHostIDs: Set<UUID> = []
   var error: String?
   private let file: URL
   private let keychainService = "io.github.trufae.mai.acp-gateway"
@@ -174,6 +175,7 @@ final class RemoteAgentStore {
           requiresApproval: requiresApproval, connectionProtocol: connectionProtocol,
           backend: backend))
     }
+    setConnectionFailed(false, for: id)
     try save()
     return id
   }
@@ -252,8 +254,17 @@ final class RemoteAgentStore {
     connections.first { $0.id == id }
   }
 
+  func setConnectionFailed(_ failed: Bool, for id: UUID) {
+    if failed {
+      failedHostIDs.insert(id)
+    } else {
+      failedHostIDs.remove(id)
+    }
+  }
+
   func reconnect(_ id: UUID) {
     guard let index = connections.firstIndex(where: { $0.id == id }) else { return }
+    setConnectionFailed(false, for: id)
     connections[index].revision = UUID()
     do { try save() } catch { self.error = error.localizedDescription }
   }
@@ -371,6 +382,7 @@ final class RemoteAgentStore {
   func remove(_ id: UUID) {
     SecItemDelete(keychainQuery(id) as CFDictionary)
     connections.removeAll { $0.id == id }
+    failedHostIDs.remove(id)
     do { try save() } catch { self.error = error.localizedDescription }
   }
 
@@ -594,6 +606,7 @@ final class RemoteAgentChat {
     busy = true
     error = nil
     status = "Connecting…"
+    store.setConnectionFailed(false, for: bookmark.id)
     generation += 1
     let attempt = generation
     operation = Task { [self] in
@@ -610,6 +623,7 @@ final class RemoteAgentChat {
         sessionID = id
         connected = await client.isConnected
         guard generation == attempt else { return }
+        store.setConnectionFailed(!connected, for: bookmark.id)
         connectingHistory = nil
         status = connected ? "Connected" : "Disconnected"
         persist()
@@ -619,6 +633,7 @@ final class RemoteAgentChat {
         connectingHistory = nil
         self.error = error.localizedDescription
         connected = false
+        store.setConnectionFailed(!(error is CancellationError), for: bookmark.id)
         status = "Disconnected"
         await client?.disconnect()
       }
@@ -661,6 +676,7 @@ final class RemoteAgentChat {
         guard generation == attempt else { return }
         self.error = error is CancellationError ? nil : error.localizedDescription
         connected = error is OpenCodeClient.SessionFailure && stillConnected
+        store.setConnectionFailed(!connected && !(error is CancellationError), for: bookmark.id)
         status = connected ? "Session failed" : "Disconnected — reconnect to restore the session"
       }
       guard generation == attempt else { return }
@@ -705,6 +721,7 @@ final class RemoteAgentChat {
   private func connectionClosed(generation: Int) {
     guard self.generation == generation else { return }
     connected = false
+    store.setConnectionFailed(true, for: bookmark.id)
     status = "Disconnected"
     cancelPermissions()
   }

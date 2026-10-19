@@ -482,8 +482,11 @@ final class RemoteHostTests: XCTestCase {
       hosts.activeChat = chat
       chat.connected = true
       XCTAssertTrue(hosts.isConnected(original.id))
+      XCTAssertEqual(hosts.connectionState(original.id, isOffline: false), .connected)
+      XCTAssertEqual(hosts.connectionState(original.id, isOffline: true), .disconnected)
       hosts.disconnect(original.id)
       XCTAssertFalse(hosts.isConnected(original.id))
+      XCTAssertEqual(hosts.connectionState(original.id, isOffline: false), .disconnected)
       XCTAssertFalse(chat.connected)
       XCTAssertNil(hosts.selectedHostID)
       XCTAssertNil(hosts.activeChat)
@@ -499,10 +502,60 @@ final class RemoteHostTests: XCTestCase {
       hosts.selectHost(original.id, isOffline: true)
       XCTAssertFalse(hosts.loading)
       XCTAssertFalse(hosts.isConnected(original.id))
+      XCTAssertEqual(hosts.connectionState(original.id, isOffline: true), .disconnected)
       XCTAssertTrue(hosts.error?.contains("Airplane Mode") == true)
       hosts.reconnect(original.id, isOffline: true)
       XCTAssertNil(store.host(original.id)?.revision)
       XCTAssertFalse(hosts.loading)
+    }
+  }
+
+  func testFailedDiscoveryPersistsUntilReconnectOrExplicitDisconnect() async throws {
+    let original = RemoteAgentBookmark(
+      name: "Worker", url: try XCTUnwrap(URL(string: "wss://worker.example/acp")), cwd: "/work")
+    try await withRemoteManagementStore(original) { store in
+      let hosts = HostNavigationStore(remotes: store)
+      XCTAssertEqual(hosts.connectionState(original.id, isOffline: false), .disconnected)
+      // No credential was stored for this bookmark, so discovery fails before networking.
+      hosts.selectHost(original.id, isOffline: false)
+      for _ in 0..<500 {
+        if !hosts.loading { break }
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      XCTAssertFalse(hosts.loading)
+      XCTAssertNotNil(hosts.error)
+      XCTAssertEqual(hosts.connectionState(original.id, isOffline: false), .failed)
+      XCTAssertEqual(hosts.connectionState(original.id, isOffline: true), .disconnected)
+      hosts.selectHost(nil, isOffline: false)
+      XCTAssertEqual(hosts.connectionState(original.id, isOffline: false), .failed)
+      hosts.reconnect(original.id, isOffline: false)
+      XCTAssertEqual(hosts.connectionState(original.id, isOffline: false), .disconnected)
+      hosts.disconnect(original.id)
+      await Task.yield()
+      XCTAssertEqual(hosts.connectionState(original.id, isOffline: false), .disconnected)
+    }
+  }
+
+  func testFailedChatConnectionSurvivesSuspensionAndClearsOnDisconnect() async throws {
+    let original = RemoteAgentBookmark(
+      name: "Worker", url: try XCTUnwrap(URL(string: "wss://worker.example/acp")), cwd: "/work")
+    try await withRemoteManagementStore(original) { store in
+      let hosts = HostNavigationStore(remotes: store)
+      let chat = RemoteAgentChat(
+        bookmark: original, conversation: .init(cwd: "/work"), store: store)
+      hosts.activeChat = chat
+      chat.connect()
+      for _ in 0..<500 {
+        if !chat.busy { break }
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      XCTAssertFalse(chat.busy)
+      XCTAssertNotNil(chat.error)
+      XCTAssertEqual(hosts.connectionState(original.id, isOffline: false), .failed)
+      hosts.suspendConnections()
+      XCTAssertEqual(hosts.connectionState(original.id, isOffline: false), .failed)
+      hosts.disconnect(original.id)
+      XCTAssertEqual(hosts.connectionState(original.id, isOffline: false), .disconnected)
     }
   }
 

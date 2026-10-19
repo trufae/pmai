@@ -66,7 +66,7 @@ final class RemoteMessageActionTests: XCTestCase {
   }
 
   func testFailedRewindDoesNotTrimCachedHistoryOrSendAPrompt() async throws {
-    try await withChat { chat, _, fixture, _ in
+    try await withChat { chat, store, fixture, _ in
       fixture.rejectRewind()
       let selected = try XCTUnwrap(chat.messages.first { $0.text == "Second" })
       let before = chat.messages.map(\.id)
@@ -74,6 +74,7 @@ final class RemoteMessageActionTests: XCTestCase {
       try await waitForIdle(chat)
       XCTAssertNotNil(chat.error)
       XCTAssertFalse(chat.connected)
+      XCTAssertTrue(store.failedHostIDs.contains(chat.bookmark.id))
       XCTAssertEqual(chat.messages.map(\.id), before)
       XCTAssertTrue(fixture.prompts.isEmpty)
       XCTAssertFalse(fixture.mutations.contains("POST /api/session/ses_test/revert/commit"))
@@ -81,13 +82,14 @@ final class RemoteMessageActionTests: XCTestCase {
   }
 
   func testFailedModelResponseKeepsSettingsAndRetryAvailable() async throws {
-    try await withChat { chat, _, fixture, _ in
+    try await withChat { chat, store, fixture, _ in
       fixture.rejectNextPrompt()
       chat.send("First attempt")
       try await waitForIdle(chat)
       XCTAssertEqual(chat.error, "This API key has expired.")
       XCTAssertEqual(chat.status, "Session failed")
       XCTAssertTrue(chat.connected)
+      XCTAssertFalse(store.failedHostIDs.contains(chat.bookmark.id))
       XCTAssertTrue(chat.canSend)
 
       await chat.refreshConfiguration()

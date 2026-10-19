@@ -30,6 +30,7 @@ struct RemoteAgentsView: View {
           .contextMenu {
             Button("Rename", systemImage: "character.cursor.ibeam") { renaming = connection }
             Button("Edit Host", systemImage: "pencil") { editing = connection }
+            if hosts != nil || onSelectHost != nil { Divider() }
             if let hosts, hosts.selectedHostID == connection.id || hosts.isConnected(connection.id)
             {
               Button("Disconnect", systemImage: "network.slash") { hosts.disconnect(connection.id) }
@@ -45,6 +46,7 @@ struct RemoteAgentsView: View {
               }
               .disabled(appStore.settings.isOffline)
             }
+            Divider()
             Button("Remove Host", systemImage: "trash", role: .destructive) {
               store.remove(connection.id)
             }

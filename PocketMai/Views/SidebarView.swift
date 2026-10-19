@@ -2266,7 +2266,7 @@ struct SidebarFolderRow: View {
   let systemImage: String
   var iconColor: Color? = nil
   let isSelected: Bool
-  var isConnected: Bool? = nil
+  var connectionStatus: String? = nil
   var isPinned = false
   var updatedAt: Date? = nil
   let action: () -> Void
@@ -2300,12 +2300,6 @@ struct SidebarFolderRow: View {
             .foregroundStyle(.secondary)
             .accessibilityHidden(true)
         }
-        if let isConnected {
-          Circle()
-            .fill(isConnected ? Color.green : Color.secondary.opacity(0.4))
-            .frame(width: 8, height: 8)
-            .accessibilityHidden(true)
-        }
         if isSelected {
           Image(systemName: "checkmark")
             .font(.caption.weight(.semibold))
@@ -2321,7 +2315,7 @@ struct SidebarFolderRow: View {
     .accessibilityValue(
       [
         isSelected ? "Selected" : nil, isPinned ? "Pinned" : nil,
-        isConnected.map { $0 ? "Connected" : "Disconnected" },
+        connectionStatus,
       ]
         .compactMap { $0 }.joined(separator: ", "))
   }
