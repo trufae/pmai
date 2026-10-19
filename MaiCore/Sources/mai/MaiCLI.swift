@@ -3042,10 +3042,15 @@ struct MaiCLI {
         await terminal.line("Usage: /btw PROMPT")
         return
       }
-      let pid = await runtime.allocateProcess(
-        agentID: session.profile.agentID, task: "btw: \(text)")
-      await terminal.note("btw#\(pid.rawValue) started · Ctrl+C cancels it; /jobs kill \(pid.rawValue) stops it by ID")
-      await beginTurn(request, process: pid, kind: .btw)
+      do {
+        let request = try await runtime.taskRequest(.btw, from: request)
+        let pid = await runtime.allocateProcess(
+          agentID: request.agentID, task: "btw: \(text)")
+        await terminal.note("btw#\(pid.rawValue) started · Ctrl+C cancels it; /jobs kill \(pid.rawValue) stops it by ID")
+        await beginTurn(request, process: pid, kind: .btw)
+      } catch {
+        await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+      }
     }
 
     /// Sends typed text where it belongs: to the chat as a new turn when it
@@ -4818,6 +4823,7 @@ struct MaiCLI {
     }
     await terminal.resetResponse()
     do {
+      let request = try await runtime.taskRequest(.btw, from: request)
       _ = try await runtime.run(request) { event in
         await terminal.consume(event)
       }
@@ -5289,6 +5295,10 @@ struct MaiCLI {
     case "/model-tool":
       await handleModelCommand(
         "-tool " + argument, session: &session, runtime: runtime, configuration: &configuration,
+        configurationPath: visual.configurationPath, terminal: terminal)
+    case "/model-btw":
+      await handleModelCommand(
+        "-btw " + argument, session: &session, runtime: runtime, configuration: &configuration,
         configurationPath: visual.configurationPath, terminal: terminal)
     case "/agents", "/agent":
       await handleAgentCommand(
@@ -7244,7 +7254,7 @@ struct MaiCLI {
         await terminal.line("\(task.rawValue): \(detail ?? "current agent")")
       }
       await terminal.line(
-        "/model [PROVIDER::]MODEL (all models) · /model-chat [PROVIDER::]MODEL (chat only) · /model-compact [NAME] · /model-tool [NAME] · /model-aproval [NAME] (no name clears)"
+        "/model [PROVIDER::]MODEL (all models) · /model-chat [PROVIDER::]MODEL (chat only) · /model-compact [NAME] · /model-tool [NAME] · /model-aproval [NAME] · /model-btw [NAME] (no name clears)"
       )
       return
     }
@@ -7252,12 +7262,17 @@ struct MaiCLI {
     do {
       var chatDefinition: AgentDefinition?
       let message: String
-      if !chatOnly, ["-compact", "-tool", "-aproval"].contains(first) {
+      if !chatOnly, ["-compact", "-tool", "-aproval", "-btw"].contains(first) {
         guard words.count <= 2 else {
           await terminal.line("Usage: /model \(first) [AGENT|PROVIDER::MODEL|MODEL]")
           return
         }
-        let task: AgentTask = first == "-compact" ? .compact : first == "-tool" ? .tool : .approval
+        let task: AgentTask = switch first {
+        case "-compact": .compact
+        case "-tool": .tool
+        case "-btw": .btw
+        default: .approval
+        }
         try draft.assignTask(
           task, selector: words.count == 2 ? words[1] : nil,
           current: session.profile.agentDefinition)
@@ -7265,7 +7280,7 @@ struct MaiCLI {
       } else {
         guard words.count == 1, !first.hasPrefix("-") else {
           await terminal.line(
-            "Usage: /model [PROVIDER::]MODEL (all models) or /model-chat [PROVIDER::]MODEL (chat only) or /model-compact [NAME] or /model-tool [NAME] or /model-aproval [NAME]"
+            "Usage: /model [PROVIDER::]MODEL (all models) or /model-chat [PROVIDER::]MODEL (chat only) or /model-compact [NAME] or /model-tool [NAME] or /model-aproval [NAME] or /model-btw [NAME]"
           )
           return
         }
@@ -12705,7 +12720,7 @@ struct MaiCLI {
       "/provider login ", "/provider logout ", "/provider status ",
       "/help provider",
       "/model ", "/model-chat ",
-      "/model-compact ", "/model-tool ", "/model-aproval ", "/agent default ", "/agent effort ",
+      "/model-compact ", "/model-tool ", "/model-aproval ", "/model-btw ", "/agent default ", "/agent effort ",
       "/prompts",
       "/prompt",
       "/prompt list", "/prompt show ", "/prompt add ", "/prompt set ", "/prompt edit ",
@@ -12771,6 +12786,7 @@ struct MaiCLI {
       values.append("/model-compact \(agent.id)")
       values.append("/model-tool \(agent.id)")
       values.append("/model-aproval \(agent.id)")
+      values.append("/model-btw \(agent.id)")
       values.append("/chat new --agent \(agent.id) ")
     }
     for name in configuration?.prompts?.system.keys.sorted() ?? [] {
@@ -12782,7 +12798,7 @@ struct MaiCLI {
       values.append("/provider \(provider.id)")
       values.append("/models \(provider.id)")
       for prefix in [
-        "/model ", "/model-chat ", "/model-compact ", "/model-tool ", "/model-aproval ",
+        "/model ", "/model-chat ", "/model-compact ", "/model-tool ", "/model-aproval ", "/model-btw ",
       ] {
         values.append("\(prefix)\(provider.id)::")
       }
@@ -13166,6 +13182,7 @@ struct MaiCLI {
     /model-compact [NAME] Select a compaction agent/model; omit NAME to clear
     /model-aproval [NAME] Select a smart-approval agent/model; omit NAME to use the current chat model
     /model-tool [NAME]    Select a tool-decision agent/model; omit NAME to clear
+    /model-btw [NAME]     Select a side-question agent/model; omit NAME to use the current chat model
     /models [PROVIDER]     List models and refresh /model Tab completion
     /nothink               Disable reasoning where the model supports it
     /path                  Show or change Files sandbox paths and access policies
@@ -13639,11 +13656,12 @@ struct MaiCLI {
       /agent add NAME            Copy the current agent into a new saved definition
       /agent default ID          Save the default for future chats and runs
       /agent effort ID LEVEL     Save an independent reasoning effort
-      /model [PROVIDER::]MODEL  Set the chat, compaction, tool, and approval models
+      /model [PROVIDER::]MODEL  Set the chat and all task models, including side questions
       /model-chat [PROVIDER::]MODEL  Change only this agent's chat model
       /model-compact [NAME]     Assign a compaction agent or model; omit to clear
       /model-aproval [NAME]     Assign a smart-approval agent or model; omit to clear
       /model-tool [NAME]        Assign a tool-decision agent or model; omit to clear
+      /model-btw [NAME]         Assign a side-question agent or model; omit to clear
       /agent add NAME MODEL GROUPS PROMPT [PROVIDER [BASE_URL]]
                                  GROUPS is a,b,c (see /tools) or -; PROMPT names a system
                                  prompt (see /prompts); PROVIDER defaults to this chat's, and

@@ -4,7 +4,7 @@
 [Vim integration](../doc/vim.md) without needing a checkout. Select lines and
 press `m` to choose a prompt, review pmai's reply, and apply it to the buffer.
 
-Task-specific models are configured through saved agents in both pmai and iOS. See [providers, agents, and task defaults](../doc/task-agents.md) for `/model-compact`, `/model-tool`, persistent CLI overrides, and the iOS workflow.
+Task-specific models are configured through saved agents in both pmai and iOS. See [providers, agents, and task defaults](../doc/task-agents.md) for `/model-compact`, `/model-tool`, `/model-btw`, persistent CLI overrides, and the iOS workflow.
 
 
 MaiCore is the provider-neutral agent runtime shared by the `pmai` command-line
@@ -161,8 +161,8 @@ and works even when the existing JSON is invalid.
 
 Inside the REPL, `/models` queries the current provider's model catalog and
 `/models PROVIDER` queries another registered provider without switching the
-session. Use `/model NAME` to select a model for chat, compaction, tool decisions,
-and approval, or `/model-chat NAME` to change only the chat model. Both accept
+session. Use `/model NAME` to select a model for chat and all tasks, including
+side questions, or `/model-chat NAME` to change only the chat model. Both accept
 `PROVIDER::MODEL` and support Tab completion.
 For llama.cpp or llamafile, use an OpenAI-compatible provider with a base URL
 such as `http://127.0.0.1:8080/v1`; omit the API key unless the server requires
@@ -306,9 +306,15 @@ if (ready) {
 EOF
 ```
 
-`/btw PROMPT` asks the active agent a one-off question in a fresh context. It
-keeps the agent's system prompt, provider, model, tools, settings, and durable
-memory, but receives none of the current chat transcript or queued attachments.
+`/btw PROMPT` asks a one-off question in a fresh context. By default it uses the
+active agent's model and settings. `/model-btw [PROVIDER::]MODEL` selects and saves
+a separate model for side questions; a saved agent ID also works. `/model-btw`
+with no argument, `-`, or `default` restores the current chat model. `/model`
+shows the assignment. Side questions retain the active agent's system prompt,
+tools, limits, and durable memory, with the assigned agent's inference settings
+and additional instructions, but receive none of the current chat transcript
+or queued attachments. `/model MODEL` updates this assignment along with all
+other models; `/model-chat MODEL` preserves it.
 In the interactive REPL it starts immediately, alongside any running turn.
 Its answer appears in a labelled block as soon as the side question finishes;
 it is not added to the current chat. Multiple side questions can run at once.

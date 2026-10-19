@@ -105,7 +105,7 @@ elif action == 'fail':
             # Finish the current word before offering its arguments. Commands
             # inferred from longer candidates must appear only once in the menu.
             for prefix, options in (
-                ('/model', ('/model', '/model-aproval', '/model-chat', '/model-compact',
+                ('/model', ('/model', '/model-aproval', '/model-btw', '/model-chat', '/model-compact',
                             '/model-tool', '/models', '/model')),
                 ('/provider', ('/provider', '/providers', '/provider')),
                 ('/edit memory', ('memory', 'memory-prompt', 'memory')),

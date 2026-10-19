@@ -41,8 +41,9 @@ extension AppStore {
       return false
     }
     guard let source = conversation(withID: conversationID) else { return false }
-    let conversation = BTWQuestion.conversation(from: source, prompt: prompt)
     let settings = settings
+    let conversation = settings.taskConversation(
+      .btw, from: BTWQuestion.conversation(from: source, prompt: prompt))
     if let message = ChatProviderRouter.preflightMessage(conversation: conversation, settings: settings) {
       errorMessage = message
       return false

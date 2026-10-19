@@ -29,7 +29,7 @@ class Provider(JSONProvider):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         prompt = body['messages'][-1]['content']
-        requests.put(body)
+        requests.put((self.path, body))
         try:
             if body.get('stream'):
                 self.send_response(200)
@@ -69,8 +69,14 @@ def main():
             config.write_text(json.dumps({
                 'version': 1, 'defaultAgent': 'test',
                 'providers': [{'id': 'test', 'kind': 'openai',
-                               'baseURL': f'http://127.0.0.1:{server.server_port}/v1'}],
+                               'baseURL': f'http://127.0.0.1:{server.server_port}/v1'},
+                              {'id': 'side', 'kind': 'openai',
+                               'baseURL': f'http://127.0.0.1:{server.server_port}/side/v1'}],
                 'agents': [{'id': 'test', 'provider': 'test', 'model': 'test',
+                            'toolNames': [], 'toolGroupNames': [], 'retry': {'attempts': 0}},
+                           {'id': 'quick', 'provider': 'side', 'model': 'named-small',
+                            'instructions': 'Answer briefly.',
+                            'options': {'reasoningEffort': 'low'},
                             'toolNames': [], 'toolGroupNames': [], 'retry': {'attempts': 0}}],
                 'memory': {'enabled': False}, 'use': {'plan': False},
             }))
@@ -88,12 +94,16 @@ def main():
             def send(text):
                 os.write(master, text.replace('\n', '\r').encode())
 
-            def request(prompt, isolated=False):
+            def request(prompt, isolated=False, model='test', provider='test', effort=None):
                 deadline = time.monotonic() + 10
                 while requests.empty():
                     assert time.monotonic() < deadline, output.decode(errors='replace')
                     read_pty(master, output, .05)
-                body = requests.get_nowait()
+                path, body = requests.get_nowait()
+                assert path == ('/side' if provider == 'side' else '') + '/v1/chat/completions', path
+                assert body['model'] == model, body
+                if effort is not None:
+                    assert body.get('reasoning_effort') == effort, body
                 users = [m['content'] for m in body['messages'] if m['role'] == 'user']
                 assert users[-1] == prompt, body
                 if isolated:
@@ -105,9 +115,11 @@ def main():
                 send('main\n')
                 request('main')
                 wait('BEGIN-main')
+                send('/model-btw side::org/small:latest\n')
+                wait('btw: task-btw (saved)')
                 for prompt in ('first', 'second'):
                     send(f'/btw {prompt}\n')
-                    request(prompt, isolated=True)
+                    request(prompt, isolated=True, model='org/small:latest', provider='side')
                 # Both side requests reach the provider while the main stream is held.
                 gates['second'].set()
                 wait('│ END-second')
@@ -125,8 +137,10 @@ def main():
                 wait('✓ took')
 
                 # A chat can start while an idle /btw is still running.
+                send('/model-btw quick\n')
+                wait('btw: quick (saved)')
                 send('/btw cancel-side\n')
-                request('cancel-side', isolated=True)
+                request('cancel-side', isolated=True, model='named-small', provider='side', effort='low')
                 send('next-main\n')
                 request('next-main')
                 wait('END-next-main')
@@ -139,13 +153,13 @@ def main():
                 send('cancel-main\n')
                 request('cancel-main')
                 send('/btw cancel-side\n')
-                request('cancel-side', isolated=True)
+                request('cancel-side', isolated=True, model='named-small', provider='side', effort='low')
                 send('\x03')
                 wait('✗ btw took')
                 send('\x03')
                 wait('✗ took')
                 send('/btw exit-side\n')
-                request('exit-side', isolated=True)
+                request('exit-side', isolated=True, model='named-small', provider='side', effort='low')
                 send('/exit\n')
                 deadline = time.monotonic() + 10
                 while process.poll() is None:
@@ -159,7 +173,16 @@ def main():
                 print('PASS concurrent /btw: streaming, reverse completion, queue, cancellation, exit, history')
                 output = run_repl(command + ['--no-stream'], ['/btw piped'], cwd=root, env=env)
                 assert 'END-piped' in output and '✓ btw took' in output, output
+                request('piped', isolated=True, model='named-small', provider='side', effort='low')
                 print('PASS piped /btw waits for its answer before reading /exit')
+                for clear in ('/model-btw -', '/model-btw default', '/model-btw'):
+                    run_repl(command + ['--no-stream'],
+                             ['/model-btw bare-small', '/btw bare', clear, '/btw fallback'],
+                             cwd=root, env=env)
+                    request('bare', isolated=True, model='bare-small')
+                    request('fallback', isolated=True)
+                    assert 'btw' not in json.loads(config.read_text())['taskAgents']
+                print('PASS /model-btw: provider/model routing, saved agent effort, restart, bare model, reset')
             finally:
                 for gate in gates.values():
                     gate.set()

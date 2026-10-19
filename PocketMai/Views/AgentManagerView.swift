@@ -209,6 +209,7 @@ struct AgentManagerView: View {
     case .compact: "Compaction"
     case .tool: "Tool decisions"
     case .approval: "Tool approval"
+    case .btw: "Side questions"
     case .voiceover: "Voiceover"
     }
   }

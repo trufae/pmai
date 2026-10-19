@@ -213,7 +213,7 @@ def main():
                 wait_for('fresh.gguf — llamacpp')
                 send('/model fre\t\n')
                 wait_for('Model: openai::fresh.gguf')
-                for task in ('compact', 'tool', 'approval'):
+                for task in ('compact', 'tool', 'approval', 'btw'):
                     command = 'aproval' if task == 'approval' else task
                     send(f'/model-{command} fre\t\n')
                     wait_for(f'{task}: task-{task} (saved)')

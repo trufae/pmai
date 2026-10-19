@@ -21,6 +21,7 @@ func taskAgentConfiguration() throws {
   #expect(compact.systemPrompt == "compact")
   #expect(configuration.prompts?.system["compact"] == AgentTask.compact.instructions)
   try configuration.assignTask(.tool, selector: compact.id, current: main)
+  try configuration.assignTask(.btw, selector: compact.id, current: main)
   let decoded = try JSONDecoder().decode(MaiConfiguration.self, from: configuration.encoded())
   #expect(decoded == configuration)
   try decoded.validate()
@@ -109,6 +110,9 @@ func taskAgentShorthandCollision() throws {
 func taskAgentValidation() throws {
   let legacy = try JSONDecoder().decode(MaiConfiguration.self, from: Data("{}".utf8))
   #expect(legacy.taskAgents == TaskAgentAssignments())
+  let older = try JSONDecoder().decode(
+    TaskAgentAssignments.self, from: Data(#"{"compact":"summary"}"#.utf8))
+  #expect(older.btw == nil)
   var configuration = legacy
   configuration.taskAgents.tool = "missing"
   #expect(throws: MaiConfigurationError.unknownAgent("missing")) { try configuration.validate() }
@@ -119,6 +123,42 @@ func taskAgentValidation() throws {
   #expect(throws: MaiConfigurationError.disabledTaskAgent("missing")) {
     try configuration.validate()
   }
+}
+
+@Test("BTW borrows inference settings while retaining the chat's tools, context, and limits")
+func taskAgentBTWRequest() async throws {
+  let runtime = AgentRuntime()
+  try await runtime.register(
+    agent: AgentDefinition(
+      id: "side", instructions: "Answer briefly.", provider: "other", model: "small",
+      toolNames: ["forbidden"], options: GenerationOptions(reasoningEffort: "low"),
+      toolCallingStrategy: .json))
+  await runtime.configureTaskAgents(.init(btw: "side"))
+  let original = AgentRequest(
+    agentID: "main", provider: "primary", model: "large",
+    messages: [.system("Main instructions"), .user("Side question")],
+    toolNames: ["echo"], toolGroupNames: ["files"], subagentNames: ["helper"],
+    options: GenerationOptions(reasoningEffort: "high"), sessionID: "same-session")
+  let request = try await runtime.taskRequest(.btw, from: original)
+  #expect(request.provider == "other")
+  #expect(request.model == "small")
+  #expect(request.options.reasoningEffort == "low")
+  #expect(request.toolCallingStrategy == .json)
+  #expect(request.messages.map(\.role) == [.system, .system, .user])
+  #expect(request.messages.map(\.text) == ["Main instructions", "Answer briefly.", "Side question"])
+  #expect(request.toolNames == original.toolNames)
+  #expect(request.toolGroupNames == original.toolGroupNames)
+  #expect(request.subagentNames == original.subagentNames)
+  #expect(request.toolPolicy == original.toolPolicy)
+  #expect(request.limits == original.limits)
+  #expect(request.agentID == original.agentID)
+  #expect(request.sessionID == original.sessionID)
+  await runtime.configureTaskAgents(.init())
+  let fallback = try await runtime.taskRequest(.btw, from: original)
+  #expect(fallback.provider == original.provider)
+  #expect(fallback.model == original.model)
+  #expect(fallback.messages == original.messages)
+  #expect(fallback.options == original.options)
 }
 
 @Test(

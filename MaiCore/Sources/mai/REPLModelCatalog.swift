@@ -45,7 +45,8 @@ final class REPLModelCatalog: @unchecked Sendable {
   func completions(for line: String, runtime: AgentRuntime) -> [String] {
     guard
       let prefix = [
-        "/model-chat ", "/model-compact ", "/model-tool ", "/model-aproval ", "/model ",
+        "/model-chat ", "/model-compact ", "/model-tool ", "/model-aproval ", "/model-btw ",
+        "/model ",
       ].first(where: {
         line.hasPrefix($0)
       })

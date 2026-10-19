@@ -4,7 +4,7 @@ pmai and PocketMai use three concepts:
 
 - A **provider** is a reusable connection: backend, base URL, credentials, headers, and timeout. Many agents can share it.
 - An **agent** chooses a provider, model, system prompt, reasoning effort, and tool format. It also owns the permissions used when it runs as a conversation agent.
-- A **task assignment** points compaction, tool decisions, or tool approval at a saved agent. An empty assignment uses the current conversation agent. Assignments are installation defaults, independent of which chat is open.
+- A **task assignment** points compaction, tool decisions, tool approval, side questions, or voiceover at a saved agent. An empty assignment uses the current conversation agent. Assignments are installation defaults, independent of which chat is open.
 
 The default conversation agent is selected separately. Changing a task assignment does not switch the conversation's main model.
 
@@ -50,6 +50,7 @@ For a quick alternative model, these create or update ordinary task agents, whic
 ```text
 /model-compact local::qwen3:8b
 /model-tool local::qwen3:8b
+/model-btw local::qwen3:8b
 ```
 
 A selector first matches a saved agent ID. Otherwise it names a model: `PROVIDER::MODEL` chooses both, and a bare model uses the current provider. The separator is deliberately `::`, so model IDs containing `/` or a single `:` keep their meaning.
@@ -59,8 +60,9 @@ A selector first matches a saved agent ID. Otherwise it names a model: `PROVIDER
 /model-compact            # clear the compaction assignment
 /model-tool               # clear the tool assignment
 /model-aproval            # clear the approval assignment
+/model-btw                # use the current chat model for side questions
 /model-tool -             # also clears; "default" does the same
-/model remote::large-model # set chat, compaction, tool decisions, and approval to this model
+/model remote::large-model # set chat and every task, including side questions, to this model
 /model-chat local::qwen3:8b # change only this conversation agent's provider and model
 /agent default main        # save the agent used for future chats and runs
 /agent use fast            # switch this chat to fast; existing command clears its history
@@ -90,7 +92,7 @@ Task assignments use explicit task flags, then saved assignments, then the curre
 
 1. In **Settings → Providers**, add a local or remote connection and configure its URL and authentication. Apple and MLX are available as on-device providers.
 2. In **Settings → Manage Agents**, add an agent; its editor opens without changing the default agent. Use its Edit button to select its provider connection, model, system prompt, reasoning effort, and tool format. Select it in the list to configure its tools and other advanced settings. Selecting an agent also makes it the default for new chats.
-3. Under **Task agents** in Manage Agents, choose **Compaction**, **Tool decisions**, and **Tool approval** independently. Select **Current conversation agent** to clear an assignment.
+3. Under **Task agents** in Manage Agents, choose **Compaction**, **Tool decisions**, **Tool approval**, **Side questions**, and **Voiceover** independently. Select **Current conversation agent** to clear an assignment.
 
 Changes save automatically and survive restarting the app. Task choices do not change when you select another main agent. Removing an assigned agent clears its task assignments. Native provider/settings backups include the agent definitions and task defaults.
 
@@ -101,6 +103,13 @@ those engines; new MLX downloads still require the explicit Settings action.
 Remote agents can share a provider while using different models. An empty model override retains the provider's default model for compatibility with existing settings. Connection URLs and credentials belong to the shared provider; editing one affects every agent using it.
 
 ## Runtime behavior
+
+`/btw` uses the side-question assignment for its provider, model, reasoning, and
+other inference settings while retaining the conversation's tool permissions
+and limits. In pmai, the assigned agent's instructions supplement the active
+agent's system prompt; iOS uses the assigned agent's system prompt. The request
+contains only the side question, without the chat transcript or pending
+attachments. Clearing `/model-btw` restores the current conversation model.
 
 Compaction sends the compaction template and selected transcript to the assigned agent with its prompt and reasoning settings, with tools disabled. Both manual and automatic compaction use the assignment. A failed summary leaves the existing conversation intact. With no assignment, the current model and reasoning settings are used.
 

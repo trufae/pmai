@@ -149,4 +149,22 @@ final class BTWTests: XCTestCase {
     XCTAssertTrue(StubChatEndpoint.requests.isEmpty)
     XCTAssertEqual(store.currentConversation?.messages, history)
   }
+
+  func testAssignedModelOnlyAppliesToSideQuestions() async throws {
+    var agent = store.settings.addAgent(named: "Quick")
+    agent.settings.openAIModelID = "side-model"
+    store.settings.agents[store.settings.agents.count - 1] = agent
+    store.settings.taskAgents.btw = agent.id.uuidString.lowercased()
+    let source = try XCTUnwrap(store.currentConversation)
+    XCTAssertTrue(store.startBTW("custom", in: source.id))
+    try await waitUntil { self.store.btwQuestions.last?.isRunning == false }
+    XCTAssertNil(store.btwQuestions.last?.error)
+    XCTAssertEqual(StubChatEndpoint.requests.last?["model"] as? String, "side-model")
+    XCTAssertEqual(store.currentConversation?.modelID, source.modelID)
+    XCTAssertEqual(store.currentConversation?.messages, source.messages)
+    store.settings.taskAgents.btw = nil
+    XCTAssertTrue(store.startBTW("fallback", in: source.id))
+    try await waitUntil { self.store.btwQuestions.last?.isRunning == false }
+    XCTAssertEqual(StubChatEndpoint.requests.last?["model"] as? String, source.modelID)
+  }
 }
