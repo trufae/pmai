@@ -202,6 +202,15 @@ describing the information the summary should prioritize. Trimming keeps
 messages through the selected index and removes newer ones; linked tool-call
 transactions are kept structurally valid when removing or trimming messages.
 
+`/chat chop` opens a modal prompt at the newest conversation message and shows
+its index, role, and full Markdown text. Enter `n` for the next message, `p` for
+the previous message, `d` to delete it, or `x` to chop everything after it.
+After deletion it selects the next surviving message, or the previous one at
+the end. Changes are saved immediately and use the same linked-tool rules as
+`/chat del` and `/chat trim`. Enter `q` or press Ctrl+C to leave; slash commands
+also leave the prompt. Modal answers are kept out of input history and never
+sent to the model.
+
 `/chat recap` prints a short Markdown recap with emoji labels for goals,
 completed actions and results, and pending work. It uses the compact model
 selected by `/model-compact` (or the current model when unset), and leaves

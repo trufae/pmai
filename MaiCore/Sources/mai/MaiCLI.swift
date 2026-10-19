@@ -2186,6 +2186,12 @@ struct MaiCLI {
     let output: TerminalWriter
   }
 
+  private struct REPLChatChop {
+    let chatID: UUID
+    var messageID: String
+    let interrupt: REPLInterruptID
+  }
+
   private struct REPLLoop {
     var activeTurn: REPLTurn?
     var btwTurns: [AgentPID: REPLTurn] = [:]
@@ -2195,6 +2201,7 @@ struct MaiCLI {
     var editingApproval: (request: ApprovalRequest, reply: REPLApprovalReply)?
     var compactions: [(request: AutocompactionRequest, reply: REPLCompactionReply)] = []
     var pendingQueueMessage: String?
+    var chatChop: REPLChatChop?
     /// True while the input thread waits for the loop before reading again.
     var readerParked = true
     var exiting = false
@@ -2202,6 +2209,9 @@ struct MaiCLI {
     var hasTurns: Bool { activeTurn != nil || !btwTurns.isEmpty }
 
     var modalPrompt: REPLModalPrompt? {
+      if let chop = chatChop {
+        return .chop(id: "\(chop.interrupt.rawValue)-\(chop.messageID)")
+      }
       if pendingQueueMessage != nil { return .queue }
       if let editing = editingApproval {
         return .approval(editing.request, id: editing.reply.id, editing: true)
@@ -2800,6 +2810,7 @@ struct MaiCLI {
       } else {
         loop.activeTurn = turn
       }
+      if let chop = loop.chatChop { interruptHandler.restore(chop.interrupt) {} }
       Task {
         let outcome: Result<AgentResult, any Error>
         do {
@@ -3095,6 +3106,78 @@ struct MaiCLI {
       }
     }
 
+    func closeChatChop() async {
+      guard let chop = loop.chatChop else { return }
+      loop.chatChop = nil
+      _ = interruptHandler.deactivate(chop.interrupt)
+      if let turn = loop.interruptTurn {
+        interruptHandler.restore(turn.interrupt) { turn.task.cancel() }
+      }
+      await terminal.note("Chat chop closed.")
+    }
+
+    func showChatChopMessage() async {
+      guard let chop = loop.chatChop,
+        let index = session.history.index(ofMessageID: chop.messageID)
+      else { return }
+      await terminal.line(
+        await renderChatMessage(
+          session.history[index], index: index, count: session.history.count, terminal: terminal))
+    }
+
+    func answerChatChop(_ text: String) async {
+      guard let chop = loop.chatChop else { return }
+      if ["q", "quit"].contains(text.lowercased()) {
+        await closeChatChop()
+        return
+      }
+      guard chop.chatID == session.id,
+        let index = session.history.index(ofMessageID: chop.messageID)
+      else {
+        await terminal.note("The selected message is no longer in this chat.")
+        await closeChatChop()
+        return
+      }
+      let before = REPLCommandSnapshot(session: session)
+      switch text.lowercased() {
+      case "n", "next", "p", "previous":
+        let next = index + (["n", "next"].contains(text.lowercased()) ? 1 : -1)
+        guard session.history.messages.indices.contains(next) else {
+          await terminal.line(next < 0 ? "Already at the first message." : "Already at the last message.")
+          return
+        }
+        loop.chatChop?.messageID = session.history[next].id
+      case "d", "delete":
+        await removeChatMessage(at: index, session: &session, terminal: terminal)
+      case "x", "chop":
+        await trimChatMessages(through: index, session: &session, terminal: terminal)
+      default:
+        await terminal.line("Choose n (next), p (previous), d (delete), x (chop after), or q (quit).")
+        return
+      }
+      if session.history.messages != before.messages {
+        // Linked tool-message removal can also remove earlier messages. Pick
+        // the next surviving neighbor by ID instead of reusing a shifted index.
+        if session.history.index(ofMessageID: chop.messageID) == nil {
+          let remaining = Set(session.history.messages.map(\.id))
+          let neighbor = before.messages.dropFirst(index + 1).first { remaining.contains($0.id) }
+            ?? before.messages.prefix(index).last { remaining.contains($0.id) }
+          if let neighbor { loop.chatChop?.messageID = neighbor.id }
+        }
+        session.touch()
+        await recordSubagents()
+        workspace.upsert(session.chat, selecting: true)
+        await saveWorkspace(&workspace, store: store, terminal: terminal)
+        await noteTurnEffects(since: before)
+      }
+      if session.history.isEmpty {
+        await terminal.line("No conversation messages left.")
+        await closeChatChop()
+      } else {
+        await showChatChopMessage()
+      }
+    }
+
     /// A modal owns ordinary input until answered. Slash commands remain available.
     func answerApproval(_ text: String) async -> Bool {
       if let editing = loop.editingApproval {
@@ -3234,7 +3317,7 @@ struct MaiCLI {
         }
         // `$NAME [TEXT]` is the short form of `/prompts NAME [TEXT]`.
         let text =
-          !heredoc && typed.hasPrefix("$")
+          !heredoc && loop.chatChop == nil && typed.hasPrefix("$")
           ? ("/prompts " + typed.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
           : typed
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -3245,6 +3328,15 @@ struct MaiCLI {
           // Use the same event as Ctrl+C, including pending queue decisions.
           interruptHandler.requestInterrupt()
           continue
+        }
+        if loop.chatChop != nil {
+          if !heredoc, text.hasPrefix("/") {
+            await closeChatChop()
+          } else {
+            await answerChatChop(text)
+            await releaseIfIdle(workspace: workspace)
+            continue
+          }
         }
         if let pending = loop.pendingQueueMessage {
           switch text.lowercased() {
@@ -3777,6 +3869,23 @@ struct MaiCLI {
             !["compact", "recap"].contains(
               argument.split(whereSeparator: \.isWhitespace).first?.lowercased() ?? "")
           {
+            let fields = argument.split(whereSeparator: \.isWhitespace)
+            if fields.first?.lowercased() == "chop" {
+              if fields.count != 1 {
+                await terminal.line("Usage: /chat chop")
+              } else if let message = session.history.messages.last(where: { $0.role != .system }) {
+                let interrupt = interruptHandler.activate {}
+                loop.chatChop = REPLChatChop(
+                  chatID: session.id, messageID: message.id, interrupt: interrupt)
+                await terminal.line(
+                  "n next · p previous · d delete · x chop everything after this message · q quit\nChanges are saved immediately. Slash commands leave chat chop.")
+                await showChatChopMessage()
+              } else {
+                await terminal.line("No conversation messages to chop.")
+              }
+              await releaseIfIdle(workspace: workspace)
+              continue
+            }
             await recordSubagents()
             workspace.upsert(session.chat, selecting: true)
             let previousSession = session
@@ -3925,6 +4034,12 @@ struct MaiCLI {
 
       case .interrupt(let cancelledOperation, let endedInput):
         if endedInput { loop.readerParked = true }
+        if let chop = loop.chatChop, cancelledOperation == chop.interrupt {
+          await closeChatChop()
+          await refreshStatus()
+          await releaseIfIdle(workspace: workspace)
+          continue
+        }
         // Reflect Ctrl+C immediately, rather than waiting for a provider or
         // tool cancellation to make its way through the supervisor.
         activityWasInterrupted = !loop.btwTurns.isEmpty ? false
@@ -3953,6 +4068,7 @@ struct MaiCLI {
 
       case .endOfFile:
         loop.readerParked = true
+        await closeChatChop()
         loop.beginExit()
         if loop.hasTurns { continue }
         break events
@@ -3972,6 +4088,7 @@ struct MaiCLI {
         if let remaining = loop.interruptTurn {
           interruptHandler.restore(remaining.interrupt) { remaining.task.cancel() }
         }
+        if let chop = loop.chatChop { interruptHandler.restore(chop.interrupt) {} }
         var succeeded = false
         var modelStats: ModelCallStats?
         var paused: AgentRunInterruption?
@@ -11853,18 +11970,9 @@ struct MaiCLI {
         await terminal.line("Usage: /chat trim INDEX")
         return
       }
-      do {
-        let removed = try session.history.trim(through: index)
-        if removed.isEmpty {
-          await terminal.line("Nothing follows message \(index + 1).")
-        } else {
-          await terminal.line(
-            "Trimmed \(removed.count) message\(removed.count == 1 ? "" : "s"); kept through message \(session.history.count)."
-          )
-        }
-      } catch {
-        await terminal.line("error: \(error.localizedDescription)", to: .standardError)
-      }
+      await trimChatMessages(through: index, session: &session, terminal: terminal)
+    case "chop":
+      await terminal.line("Use /chat chop at the REPL prompt to browse and remove messages interactively.")
     case "compact", "recap":
       guard action != "recap" || actionArgument.isEmpty else {
         await terminal.line("Usage: /chat recap")
@@ -11898,6 +12006,25 @@ struct MaiCLI {
       let suffix = removed.count == 1 ? "" : " (including linked tool messages)"
       await terminal.line(
         "Removed \(removed.count) message\(removed.count == 1 ? "" : "s")\(suffix).")
+    } catch {
+      await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+    }
+  }
+
+  private static func trimChatMessages(
+    through index: Int,
+    session: inout REPLSession,
+    terminal: TerminalWriter
+  ) async {
+    do {
+      let removed = try session.history.trim(through: index)
+      if removed.isEmpty {
+        await terminal.line("Nothing follows message \(index + 1).")
+      } else {
+        await terminal.line(
+          "Trimmed \(removed.count) message\(removed.count == 1 ? "" : "s"); kept through message \(session.history.count)."
+        )
+      }
     } catch {
       await terminal.line("error: \(error.localizedDescription)", to: .standardError)
     }
@@ -12033,13 +12160,6 @@ struct MaiCLI {
     terminal: TerminalWriter
   ) async -> String {
     guard !session.history.isEmpty else { return "No conversation messages yet." }
-    let renderer = await terminal.markdownRenderer
-    func renderText(_ text: String) -> String {
-      guard let renderer else { return text }
-      var rendered = renderer.render(text)
-      while rendered.hasSuffix("\n") { rendered.removeLast() }
-      return rendered
-    }
     var lines = [
       full ? await terminal.paintHeading("# Full conversation log") : "Conversation log:"
     ]
@@ -12047,11 +12167,8 @@ struct MaiCLI {
     for (index, message) in session.history.messages.enumerated() {
       let role = message.role.rawValue.capitalized
       if full {
-        let heading = await terminal.paintHeading("## [\(index + 1)] \(role) (id: \(message.id))")
-        lines.append("\n" + heading)
         lines.append(
-          message.content.map { renderFullContent($0, renderText: renderText) }
-            .joined(separator: "\n"))
+          "\n" + (await renderChatMessage(message, index: index, terminal: terminal)))
         lines.append("--------------------")
       } else {
         lines.append("[\(index + 1)] \(role): \(messagePreview(message))")
@@ -12064,6 +12181,27 @@ struct MaiCLI {
       )
     }
     return lines.joined(separator: "\n")
+  }
+
+  private static func renderChatMessage(
+    _ message: AgentMessage,
+    index: Int,
+    count: Int? = nil,
+    terminal: TerminalWriter
+  ) async -> String {
+    let position = "\(index + 1)" + (count.map { "/\($0)" } ?? "")
+    let heading = await terminal.paintHeading(
+      "## [\(position)] \(message.role.rawValue.capitalized) (id: \(message.id))")
+    let renderer = await terminal.markdownRenderer
+    let body = message.content.map { part in
+      renderFullContent(part) { text in
+        guard let renderer else { return text }
+        var rendered = renderer.render(text)
+        while rendered.hasSuffix("\n") { rendered.removeLast() }
+        return rendered
+      }
+    }.joined(separator: "\n")
+    return heading + "\n" + body
   }
 
   private static func messagePreview(_ message: AgentMessage) -> String {
@@ -12528,7 +12666,7 @@ struct MaiCLI {
       "/chat use ", "/chat next", "/chat previous", "/chat info", "/chat session",
       "/chat session new", "/chat rename ",
       "/chat archive", "/chat unarchive ", "/chat close confirm", "/chat messages",
-      "/chat log", "/chat edit ", "/chat del ", "/chat undo", "/chat trim ",
+      "/chat log", "/chat edit ", "/chat del ", "/chat undo", "/chat chop", "/chat trim ",
       "/chat clear", "/project", "/project info", "/project list", "/project name ",
       "/project tint ", "/project tint none", "/project del ",
     ]
@@ -13156,6 +13294,7 @@ struct MaiCLI {
       /chat edit INDEX TEXT  Replace a message's text; preserve attachments
       /chat del INDEX     Remove a message
       /chat undo [INDEX]  Remove the last conversation message or selected message
+      /chat chop          Browse messages interactively to delete or chop newer messages
       /chat trim INDEX    Keep through the selected message; remove newer messages
       /chat compact [FOCUS]  Summarize the chat, prioritizing what FOCUS says to preserve
       /chat recap         Print a short recap using the compact model; keep the history
@@ -13164,6 +13303,10 @@ struct MaiCLI {
     Message indexes are 1-based. Negative indexes count back from the end;
     -1 selects the last message, -2 the second-to-last, and so on.
     Removing a tool call or result also removes its linked tool transaction.
+    /chat chop starts at the newest conversation message: n next, p previous,
+    d delete, x keep through this message, q or Ctrl+C quit. Changes are saved
+    immediately; slash commands leave the prompt. Chopping through an unfinished
+    tool transaction also removes that transaction, as with /chat trim.
     pmai opens a fresh chat on every launch and names it after the first
     message; chats that never received a message are never written. Start
     Start with -l to list saved chats, then -r INDEX|ID|TITLE to reopen one;

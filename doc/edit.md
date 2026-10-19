@@ -176,7 +176,7 @@ the exception, because it rebuilds the one provider it edited.
 from the end when negative, so `/edit -1` is the last message. The text
 comes back as the message body and any attachments stay. `/chat edit INDEX
 TEXT` does the same in one line, `/chat messages` shows the indexes, and
-`/chat del`, `/chat undo`, and `/chat trim` cover deleting rather than
+`/chat del`, `/chat undo`, `/chat chop`, and `/chat trim` cover deleting rather than
 editing.
 
 ### Writing a message

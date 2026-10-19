@@ -97,6 +97,14 @@ def main():
                     line('ask')
                     assert next_request()['messages'][-1]['content'] == 'ask'
                     wait('pmai#')
+                    if action == 'edit':
+                        # Leaving chat chop must not cancel the provider call
+                        # still waiting behind it; approval will arrive below.
+                        line('/chat chop')
+                        wait('chop [n/p/d/x/q]> ')
+                        send('\x03')
+                        wait('Chat chop closed.')
+                        wait('pmai#')
                     if action == 'heredoc':
                         send('<<END\rfirst line\r')
                         wait('...> ')

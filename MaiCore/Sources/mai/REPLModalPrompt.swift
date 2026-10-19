@@ -15,6 +15,7 @@ enum REPLModalPrompt {
   case approval(ApprovalRequest, id: UUID, editing: Bool)
   case compaction(AutocompactionRequest, id: UUID)
   case queue
+  case chop(id: String)
 
   static func approvalHelp(_ request: ApprovalRequest) -> String {
     request.tool.name == "files_path_access"
@@ -35,6 +36,8 @@ enum REPLModalPrompt {
       return TerminalPrompt(text: "compact [\(choices.joined(separator: "/"))]> ", id: "compaction-\(id)", choices: choices)
     case .queue:
       return TerminalPrompt(text: "queue [submit/ignore/clear]> ", id: "queue", choices: ["submit", "ignore", "clear"])
+    case .chop(let id):
+      return TerminalPrompt(text: "chop [n/p/d/x/q]> ", id: "chop-\(id)", choices: ["n", "p", "d", "x", "q"])
     }
   }
 
@@ -47,6 +50,8 @@ enum REPLModalPrompt {
       return "CONTEXT DECISION · \(request.run.agentID) · answer below · Ctrl+C cancels"
     case .queue:
       return "QUEUED MESSAGES · choose below · Ctrl+C cancels new message"
+    case .chop:
+      return "CHAT CHOP · n next · p previous · d delete · x chop after · q / Ctrl+C quit"
     }
   }
 }
