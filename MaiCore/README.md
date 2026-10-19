@@ -879,9 +879,12 @@ only allow lowering effort. These settings persist on the agent. iOS uses the
 same MaiCore enum and request mapping, including `xhigh` and `max`.
 
 `/set ui.thinking status|line|three|five|full` controls presentation independently:
-`status` shows “Thinking…”, `line` keeps the newest line, `three` keeps three
-scrolling rows with a grey gradient, `five` keeps five, and `full` prints all
-reasoning in grey italics. Compact previews occupy transient rows above the REPL prompt and clear
+`status` shows “Thinking…”. In the REPL, `line`, `three`, and `five` show a continuous
+character carousel filling one, three, or five rows: newlines become spaces, and
+the oldest characters slide out as new text arrives. Rows update in place without
+clearing and repainting the prompt. Small terminals reduce the preview height;
+resizing reflows the retained text. `full` prints all reasoning in grey italics.
+Compact previews occupy transient rows above the REPL prompt and clear
 at text/tool boundaries, cancellation and errors. Pipes and captured output use
 a plain status instead of cursor controls; `full` retains plain reasoning there.
 `NO_COLOR` disables styling. The complete reasoning stays in the transcript in

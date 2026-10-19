@@ -26,6 +26,7 @@ actor TerminalWriter {
   private var thinkingPreview = ThinkingPreview()
   private var thinkingActive = false
   private var lastThinkingDraw = Date.distantPast
+  private var thinkingDrawTask: Task<Void, Never>?
   private var childReasoning: [AgentPID: String] = [:]
   private var wroteRootDelta = false
   private var rootLineOpen = false
@@ -524,21 +525,29 @@ actor TerminalWriter {
       thinkingPreview.append(delta)
       let now = Date()
       if now.timeIntervalSince(lastThinkingDraw) >= 0.05 {
-        let lines =
-          thinkingDisplay == .status
-          ? ["Thinking…"]
-          : ThinkingPreview.lines(
-            thinkingPreview.text, count: thinkingDisplay.lineCount,
-            width: screen?.lineWidth ?? 79, measure: TerminalScreen.displayWidth)
-        screen?.setThinking(lines)
-        lastThinkingDraw = now
+        thinkingDrawTask?.cancel()
+        drawThinking()
+      } else if thinkingDrawTask == nil {
+        thinkingDrawTask = Task {
+          try? await Task.sleep(for: .milliseconds(50))
+          guard !Task.isCancelled else { return }
+          drawThinking()
+        }
       }
     }
   }
 
+  private func drawThinking() {
+    thinkingDrawTask = nil
+    screen?.setThinking(thinkingPreview.text, display: thinkingDisplay)
+    lastThinkingDraw = Date()
+  }
+
   private func finishThinking() {
     guard thinkingActive else { return }
-    screen?.setThinking([])
+    thinkingDrawTask?.cancel()
+    thinkingDrawTask = nil
+    screen?.setThinking(nil)
     if thinkingDisplay == .full && !outputEndedLine { write("\n") }
     thinkingActive = false
     thinkingPreview = ThinkingPreview()

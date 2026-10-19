@@ -72,6 +72,43 @@ func thinkingPreviewRows() {
   #expect(!ThinkingPreview.lines("x\u{1B}[2Jy", count: 1, width: 80).joined().contains("\u{1B}"))
 }
 
+@Test("Terminal thinking carousels flatten whitespace and slide by characters")
+func thinkingCarouselRows() {
+  #expect(
+    ThinkingPreview.carouselLines("one\n\n two\r\nthree\tfour", count: 1, width: 40)
+      == ["one two three four"])
+  #expect(ThinkingPreview.carouselLines("abcdefgh", count: 1, width: 5) == ["defgh"])
+  #expect(ThinkingPreview.carouselLines("abcdef", count: 3, width: 4) == ["abcd", "ef"])
+  #expect(
+    ThinkingPreview.carouselLines("abcdefghijklm", count: 3, width: 4)
+      == ["bcde", "fghi", "jklm"])
+  #expect(
+    ThinkingPreview.carouselLines("abcdefghijklmnop", count: 5, width: 3)
+      == ["bcd", "efg", "hij", "klm", "nop"])
+  #expect(ThinkingPreview.carouselLines("abc", count: 0, width: 5).isEmpty)
+  #expect(ThinkingPreview.carouselLines("abc", count: 1, width: 0).isEmpty)
+
+  let measure: (String) -> Int = { $0 == "界" || $0 == "🙂" ? 2 : $0.count }
+  #expect(
+    ThinkingPreview.carouselLines("ab界e\u{301}🙂", count: 1, width: 5, measure: measure)
+      == ["界e\u{301}🙂"])
+  #expect(ThinkingPreview.carouselLines("界🙂", count: 1, width: 1, measure: measure) == [" "])
+  #expect(
+    !ThinkingPreview.carouselLines("x\u{1B}[2Jy\u{7}", count: 1, width: 40)
+      .joined().unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) })
+
+  let text = "one\r\n\n two\tthree 界e\u{301}🙂 four"
+  let expected = ThinkingPreview.carouselLines(text, count: 3, width: 5, measure: measure)
+  for split in 0...text.count {
+    var preview = ThinkingPreview()
+    preview.append(String(text.prefix(split)))
+    preview.append(String(text.dropFirst(split)))
+    #expect(
+      ThinkingPreview.carouselLines(preview.text, count: 3, width: 5, measure: measure)
+        == expected)
+  }
+}
+
 @Test("Gemma thought channels normalize across every chunk boundary")
 func reasoningGemmaChannels() {
   let text = "<|channel>thought\nconsider<channel|>answer"

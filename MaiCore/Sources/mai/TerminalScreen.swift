@@ -48,6 +48,11 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   /// nil when the row shows `statusText`.
   private var completionMenu: CompletionMenu?
   private var thinkingRows: [String] = []
+  private var thinkingText: String?
+  private var thinkingDisplay: ThinkingDisplay = .status
+  private var paintedThinkingRows: [String] = []
+  private var paintedThinkingOrigin = 0
+  private var paintedThinkingWidth = 0
   /// The input as drawn, one styled string per row below the status line.
   private var inputRows = [""]
   private var caretRow = 0
@@ -85,14 +90,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       refreshSize()
       self.ui = ui
       guard active else { return }
+      paintedThinkingRows = []
       drawStatusRow()
       placeCaret()
     }
-  }
-
-  /// Usable columns for one row; the last column stays free so nothing wraps.
-  var lineWidth: Int {
-    lock.withLock { max(1, columns - 1) }
   }
 
   // MARK: - Lifecycle
@@ -125,6 +126,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     raw.c_iflag &= ~tcflag_t(IXON | ICRNL)
     guard tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == 0 else { return }
     active = true
+    paintedThinkingRows = []
     clampInputRows()
     // One newline per reserved row scrolls exactly as much as it takes for
     // the current row to end up inside the region, whatever row it was on.
@@ -263,19 +265,24 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   /// A transient reasoning window above the status and editable prompt.
-  func setThinking(_ lines: [String]) {
+  func setThinking(_ text: String?, display: ThinkingDisplay = .status) {
     lock.withLock {
       refreshSize()
-      let lines = Array(lines.suffix(min(3, rows / 4)))
-      guard lines != thinkingRows else { return }
-      let oldCount = thinkingRows.count
-      thinkingRows = lines
+      let previousRows = thinkingRows
+      thinkingText = text
+      thinkingDisplay = display
+      layoutThinking()
+      guard thinkingRows != previousRows else { return }
       guard active else { return }
-      resizeRegion(
-        inputRows: inputRows.count + oldCount,
-        to: inputRows.count + thinkingRows.count)
-      drawStatusRow()
-      drawInputRows()
+      if thinkingRows.count != previousRows.count {
+        resizeRegion(
+          inputRows: inputRows.count + previousRows.count,
+          to: inputRows.count + thinkingRows.count)
+        drawStatusRow()
+        drawInputRows()
+      } else {
+        drawThinkingRows()
+      }
       placeCaret()
     }
   }
@@ -342,6 +349,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       refreshSize()
       write("\u{1B}[2J" + move(row: 1, column: 1) + Self.saveCursor)
       outputEndedLine = true
+      paintedThinkingRows = []
       drawStatusRow()
       drawInputRows()
       placeCaret()
@@ -435,19 +443,44 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   private func drawStatusRow() {
+    drawThinkingRows()
+    drawStatusLine()
+  }
+
+  private func drawThinkingRows() {
     let width = max(1, columns - 1)
+    let origin = regionBottom + 1
+    if origin != paintedThinkingOrigin || width != paintedThinkingWidth {
+      paintedThinkingRows = []
+    }
     var out = ""
+    var painted: [String] = []
     let colors = ProcessInfo.processInfo.environment["NO_COLOR"] == nil
     for (index, line) in thinkingRows.enumerated() {
-      out += move(row: regionBottom + index + 1, column: 1) + Self.clearLine
+      let content = Self.truncated(line, width: width)
+      let padded =
+        content + String(repeating: " ", count: max(0, width - Self.displayWidth(content)))
+      painted.append(padded)
+      let previous = index < paintedThinkingRows.count ? paintedThinkingRows[index] : ""
+      guard previous != padded else { continue }
+      let prefix = zip(previous, padded).prefix { $0 == $1 }.count
+      let suffix = zip(previous.dropFirst(prefix).reversed(), padded.dropFirst(prefix).reversed())
+        .prefix { $0 == $1 }.count
+      let column = Self.displayWidth(String(padded.prefix(prefix))) + 1
+      out += move(row: origin + index, column: column) + Self.reset
       if colors {
         let code = TerminalLineEditor.foregroundColorCode(ui.thinkingForeground)
         out += "\u{1B}[3" + (code.map { ";" + $0 } ?? "") + "m"
       }
-      out += Self.truncated(line, width: width) + Self.reset
+      // Overwrite only the changed span. Padding removes stale glyphs without
+      // clearing a visible row before its replacement reaches the terminal.
+      out += padded.dropFirst(prefix).dropLast(suffix) + Self.reset
+      if previous.isEmpty { out += "\u{1B}[K" }
     }
+    paintedThinkingRows = painted
+    paintedThinkingOrigin = origin
+    paintedThinkingWidth = width
     writeFixedRows(out)
-    drawStatusLine()
   }
 
   private func drawStatusLine(clear: Bool = true) {
@@ -615,11 +648,29 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   /// Keeps the input area within what the screen allows; the editor draws
   /// it again in full at its next keystroke.
   private func clampInputRows() {
-    thinkingRows = Array(thinkingRows.suffix(min(3, rows / 4)))
+    layoutThinking()
     let maximum = maximumInputRowsLocked
     guard inputRows.count > maximum else { return }
     inputRows = Array(inputRows.suffix(maximum))
     caretRow = min(caretRow, maximum - 1)
+  }
+
+  private func layoutThinking() {
+    guard let thinkingText else {
+      thinkingRows = []
+      return
+    }
+    let count = min(thinkingDisplay.lineCount, rows / 4)
+    guard count > 0 else {
+      thinkingRows = []
+      return
+    }
+    thinkingRows =
+      thinkingDisplay == .status
+      ? ["Thinking…"]
+      : ThinkingPreview.carouselLines(
+        thinkingText, count: count, width: max(1, columns - 1), measure: Self.displayWidth)
+    thinkingRows += Array(repeating: "", count: max(0, count - thinkingRows.count))
   }
 
   private func watchResizes() {
@@ -659,6 +710,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     out += move(row: bottom, column: 1) + Self.saveCursor
     write(out)
     outputEndedLine = true
+    paintedThinkingRows = []
     drawStatusRow()
     drawInputRows()
     placeCaret()
