@@ -682,7 +682,8 @@ Colored output respects `NO_COLOR`, `TERM=dumb`, and redirected output.
 All theme colors accept named ANSI colors, `rgb:RGB`, `#RRGGBB`, or `none`.
 `/set ui.` lists persisted terminal behavior settings. `ui.markdown` and
 `ui.broadcast` accept `on` or `off`. `ui.toolResultLines` accepts `all`, `relevant`, or a line count (the default is
-`all`; `0` restores the compact status-only display). Use
+`all`; `0` prints each completed tool call on one line, with a green `✔` for
+success or a red `✘` for failure, using the theme's tool-call and error colors). Use
 `/set ui.toolResultLines relevant` to show complete file-edit results and errors,
 while keeping routine results such as reads and searches to three leading lines.
 This applies to both main and child agents. The setting persists as

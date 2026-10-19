@@ -147,6 +147,22 @@ def main():
                 '\x1b[38;2;171;205;239mThinking…',
             ):
                 assert fragment in output, (fragment, output)
+            # Compact results keep the arguments and outcome together, including
+            # failures, without leaking result bodies or separate status lines.
+            for options in ({}, {'terminal': False}, {'extra_env': {'NO_COLOR': '1'}},
+                            {'extra_env': {'TERM': 'dumb'}}):
+                output = run('/set ui.toolResultLines 0', 'show colors',
+                             '/set ui.toolResultLines all', **options)
+                plain = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', output)
+                for marker, path in (('✔', 'diff.txt'), ('✔', 'plain.txt'), ('✘', 'missing.txt')):
+                    assert plain.count(f'{marker} files_read {path}\n') == 1, plain
+                assert '→ files_read' not in plain and '← ' not in plain, plain
+                assert '+new' not in plain and '-not a diff' not in plain, plain
+                if not options:
+                    assert '\x1b[38;2;52;86;120m✔ files_read' in output, output
+                    assert '\x1b[38;2;18;52;86m✘ files_read' in output, output
+                else:
+                    assert '\x1b[' not in output, output
             output = run('/theme color fgerror cyan', '/theme use missing',
                          '/theme use pink', '/theme use missing',
                          '/theme color fgerror none', '/theme use missing')

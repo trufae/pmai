@@ -37,6 +37,9 @@ actor TerminalWriter {
   private var markdown: MarkdownTerminalRenderer?
   private var outputEndedLine = true
   private var toolResultLines = ConfiguredTerminalUI().toolResultLines
+  /// Compact calls are printed once their outcome is known. Scope IDs by run
+  /// because different agents can issue the same provider-generated call ID.
+  private var compactToolCalls: [UUID: [String: String]] = [:]
   private var ui = ConfiguredTerminalUI()
   private var subagentOutput = ConfiguredTerminalUI().subagentOutput
   /// Last requested title. A first empty value leaves the shell's title alone.
@@ -181,11 +184,9 @@ actor TerminalWriter {
     case .toolStarted(let context, let call) where context.depth == 0:
       finishReply()
       closeRootLine()
-      status(ToolCallPreview.render(call), color: ui.toolCallForeground)
+      toolStarted(call, context: context)
     case .toolFinished(let context, let result) where context.depth == 0:
-      status(
-        ToolResultPreview.render(result, display: toolResultLines),
-        color: result.isError ? ui.errorForeground : ui.toolResultForeground, diff: true)
+      toolFinished(result, context: context)
     case .userMessage(let context, let message) where context.depth == 0:
       finishReply()
       closeRootLine()
@@ -210,6 +211,7 @@ actor TerminalWriter {
         "↻ retry \(attempt)/\(limit) in \(ModelUsageFormat.duration(delay)): \(error)",
         color: ui.warningForeground)
     case .finished(let context, let result) where context.depth == 0:
+      compactToolCalls[context.runID] = nil
       finishThinking()
       let responseText = redactor?.unredact(result.response.text) ?? result.response.text
       if wroteRootDelta {
@@ -273,15 +275,13 @@ actor TerminalWriter {
       flushChildText(pid)
       childToolCalls[pid, default: 0] += 1
       guard subagentOutput == .all || subagentOutput == .tools else { return }
-      childBlock(pid, ToolCallPreview.render(call), color: ui.toolCallForeground)
+      toolStarted(call, context: context)
     case .toolFinished(let context, let result):
-      guard let pid = context.pid, subagentOutput == .all || subagentOutput == .tools else {
+      guard context.pid != nil, subagentOutput == .all || subagentOutput == .tools else {
+        compactToolCalls[context.runID]?[result.callID] = nil
         return
       }
-      childBlock(
-        pid,
-        ToolResultPreview.render(result, display: toolResultLines),
-        color: result.isError ? ui.errorForeground : ui.toolResultForeground, diff: true)
+      toolFinished(result, context: context)
     case .userMessage(let context, let message):
       guard let pid = context.pid else { return }
       flushChildText(pid)
@@ -310,6 +310,7 @@ actor TerminalWriter {
         pid, "↻ retry \(attempt)/\(limit) in \(ModelUsageFormat.duration(delay)): \(error)",
         color: ui.warningForeground)
     case .finished(let context, let result):
+      compactToolCalls[context.runID] = nil
       guard let pid = context.pid else { return }
       flushChildText(pid)
       childrenEnded.insert(pid)
@@ -340,6 +341,7 @@ actor TerminalWriter {
   /// A child ended without an answer — it failed or was stopped — which the
   /// run itself never reports, so the supervisor's notice is printed instead.
   func processEnded(_ info: AgentProcessInfo) {
+    compactToolCalls[info.runID] = nil
     guard info.depth > 0, !childrenEnded.contains(info.pid) else { return }
     childrenEnded.insert(info.pid)
     flushChildText(info.pid)
@@ -430,6 +432,46 @@ actor TerminalWriter {
     }
     emit(output + "\n", to: handle)
     if handle === FileHandle.standardOutput { outputEndedLine = true }
+  }
+
+  // MARK: - Tool output
+
+  private func toolStarted(_ call: ToolCall, context: AgentEventContext) {
+    let preview = ToolCallPreview.render(call)
+    if toolResultLines == .lines(0) {
+      compactToolCalls[context.runID, default: [:]][call.id] = String(preview.dropFirst(2))
+    } else {
+      toolStatus(preview, context: context, color: ui.toolCallForeground)
+    }
+  }
+
+  private func toolFinished(_ result: ToolResult, context: AgentEventContext) {
+    let call = compactToolCalls[context.runID]?.removeValue(forKey: result.callID)
+    if compactToolCalls[context.runID]?.isEmpty == true {
+      compactToolCalls[context.runID] = nil
+    }
+    // Finish a compact call in the same format even if the display setting
+    // changed while it ran. Some rejected calls arrive without a start event.
+    if call != nil || toolResultLines == .lines(0) {
+      let marker = result.isError ? "✘" : "✔"
+      toolStatus(
+        "\(marker) \(call ?? (result.isError ? "error" : "done"))",
+        context: context, color: result.isError ? ui.errorForeground : ui.toolCallForeground)
+    } else {
+      toolStatus(
+        ToolResultPreview.render(result, display: toolResultLines), context: context,
+        color: result.isError ? ui.errorForeground : ui.toolResultForeground, diff: true)
+    }
+  }
+
+  private func toolStatus(
+    _ text: String, context: AgentEventContext, color: String, diff: Bool = false
+  ) {
+    if context.depth > 0, let pid = context.pid {
+      childBlock(pid, text, color: color, diff: diff)
+    } else {
+      status(text, color: color, diff: diff)
+    }
   }
 
   // MARK: - Child blocks
