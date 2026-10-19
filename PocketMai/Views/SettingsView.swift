@@ -162,20 +162,23 @@ extension OpenAIEndpoint {
 
 private let customProviderTag = "__custom__"
 
+@MainActor
 private enum TTSVoiceCache {
-  static let voices: [AVSpeechSynthesisVoice] = SystemLanguageSupport.textToSpeechVoices.sorted {
-    $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+  static var voices: [AVSpeechSynthesisVoice] {
+    SystemLanguageSupport.textToSpeechVoices.sorted {
+      $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+    }
   }
 
-  static let languages: [String] = SystemLanguageSupport.textToSpeechLanguageIdentifiers
+  static var languages: [String] { SystemLanguageSupport.textToSpeechLanguageIdentifiers }
 
-  static let primaryLanguages: [String] = {
+  static var primaryLanguages: [String] {
     let primaries = Set(languages.compactMap(SystemLanguageSupport.primaryLanguageCode))
     return Array(primaries).sorted {
       primaryLanguageDisplayName($0)
         .localizedCaseInsensitiveCompare(primaryLanguageDisplayName($1)) == .orderedAscending
     }
-  }()
+  }
 
   static func voiceOptions(for language: String) -> [AVSpeechSynthesisVoice] {
     let normalized = SystemLanguageSupport.canonicalLanguageIdentifier(language)

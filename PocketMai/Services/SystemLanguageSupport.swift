@@ -1,23 +1,22 @@
 import AVFoundation
 import Foundation
+import Observation
 import Speech
 
 enum SystemLanguageSupport {
-  private struct Catalog {
+  struct Catalog: Sendable {
     let textToSpeechVoices: [AVSpeechSynthesisVoice]
     let textToSpeechLanguageIdentifiers: [String]
     let speechRecognitionLocaleIdentifiers: [String]
     let chatLanguageIdentifiers: [String]
     let chatLanguageIdentifierSet: Set<String>
-    let displayNames: [String: String]
 
-    init() {
-      let voices = AVSpeechSynthesisVoice.speechVoices()
+    init(voices: [AVSpeechSynthesisVoice], recognitionLocales: [String]) {
       let textToSpeech = SystemLanguageSupport.sortedLanguageIdentifiersUncached(
         voices.map(\.language)
       )
       let speechRecognition = SystemLanguageSupport.sortedLanguageIdentifiersUncached(
-        SFSpeechRecognizer.supportedLocales().map(\.identifier)
+        recognitionLocales
       )
       let speechRecognitionSet = Set(speechRecognition)
       let chat = SystemLanguageSupport.sortedLanguageIdentifiersUncached(
@@ -29,37 +28,66 @@ enum SystemLanguageSupport {
       speechRecognitionLocaleIdentifiers = speechRecognition
       chatLanguageIdentifiers = chat
       chatLanguageIdentifierSet = Set(chat)
-      displayNames = Dictionary(
-        uniqueKeysWithValues: Set(textToSpeech + speechRecognition).map { identifier in
-          (identifier, SystemLanguageSupport.uncachedLanguageDisplayName(identifier))
-        }
-      )
     }
   }
 
-  private static let catalog = Catalog()
+  @MainActor @Observable
+  final class CatalogLoader {
+    private(set) var catalog: Catalog?
+    private var started = false
 
+    func preload(
+      load: @escaping @Sendable () -> Catalog = {
+        Catalog(
+          voices: AVSpeechSynthesisVoice.speechVoices(),
+          recognitionLocales: SFSpeechRecognizer.supportedLocales().map(\.identifier))
+      }
+    ) {
+      guard !started else { return }
+      started = true
+      // These synchronous system APIs can wait on services. Keep them off both
+      // the main actor and Swift's cooperative executor, and never wait in a getter.
+      DispatchQueue.global(qos: .utility).async {
+        let loaded = load()
+        Task { @MainActor in self.catalog = loaded }
+      }
+    }
+  }
+
+  @MainActor private static let loader = CatalogLoader()
+
+  @MainActor private static var catalog: Catalog? {
+    loader.preload()
+    return loader.catalog
+  }
+
+  @MainActor
   static func preload() {
-    _ = catalog
+    loader.preload()
   }
 
+  @MainActor
   static var textToSpeechVoices: [AVSpeechSynthesisVoice] {
-    catalog.textToSpeechVoices
+    catalog?.textToSpeechVoices ?? []
   }
 
+  @MainActor
   static var textToSpeechLanguageIdentifiers: [String] {
-    catalog.textToSpeechLanguageIdentifiers
+    catalog?.textToSpeechLanguageIdentifiers ?? []
   }
 
+  @MainActor
   static var speechRecognitionLocaleIdentifiers: [String] {
-    catalog.speechRecognitionLocaleIdentifiers
+    catalog?.speechRecognitionLocaleIdentifiers ?? []
   }
 
+  @MainActor
   static func chatLanguageIdentifiers(including selected: String? = nil) -> [String] {
+    let catalog = catalog
     guard let selected = normalizedLanguageIdentifier(selected),
-      !catalog.chatLanguageIdentifierSet.contains(selected)
-    else { return catalog.chatLanguageIdentifiers }
-    return sortedLanguageIdentifiers(catalog.chatLanguageIdentifiers + [selected])
+      catalog?.chatLanguageIdentifierSet.contains(selected) != true
+    else { return catalog?.chatLanguageIdentifiers ?? [] }
+    return sortedLanguageIdentifiers((catalog?.chatLanguageIdentifiers ?? []) + [selected])
   }
 
   static func normalizedLanguageIdentifier(_ identifier: String?) -> String? {
@@ -93,8 +121,7 @@ enum SystemLanguageSupport {
   }
 
   static func languageDisplayName(_ identifier: String) -> String {
-    let normalized = canonicalLanguageIdentifier(identifier)
-    return catalog.displayNames[normalized] ?? uncachedLanguageDisplayName(normalized)
+    uncachedLanguageDisplayName(identifier)
   }
 
   static func sortedLanguageIdentifiers(_ identifiers: [String]) -> [String] {
@@ -110,7 +137,8 @@ enum SystemLanguageSupport {
     displayName: (String) -> String
   ) -> [String] {
     let unique = Set(identifiers.map(canonicalLanguageIdentifier).filter { !$0.isEmpty })
-    return unique
+    return
+      unique
       .map { identifier in (identifier, displayName(identifier)) }
       .sorted { lhs, rhs in
         let order = lhs.1.localizedCaseInsensitiveCompare(rhs.1)
