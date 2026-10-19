@@ -77,12 +77,12 @@ actor TerminalWriter {
 
   /// True when `paint` will add color: output goes to a color terminal rather
   /// than a pipe or a captured surface such as the visual workspace.
-  var paintsOutput: Bool { colorsOutput }
+  var paintsOutput: Bool { colorsOutput && REPLRedirection.current == nil }
 
   /// Styles a piece of stdout text, or returns it untouched where
   /// escapes would show as noise.
   func paint(_ text: String, color: String? = nil, bold: Bool = false) -> String {
-    guard colorsOutput else { return text }
+    guard paintsOutput else { return text }
     let codes = [bold ? "1" : nil, color.flatMap(TerminalLineEditor.foregroundColorCode)]
       .compactMap { $0 }
     guard !codes.isEmpty else { return text }
@@ -147,11 +147,13 @@ actor TerminalWriter {
     }
   }
 
-  var markdownRenderer: MarkdownTerminalRenderer? { markdown }
+  var markdownRenderer: MarkdownTerminalRenderer? {
+    REPLRedirection.current == nil ? markdown : nil
+  }
 
   /// Renders a complete text the way replies are rendered.
   func render(_ text: String) -> String {
-    markdown?.render(text) ?? text
+    markdownRenderer?.render(text) ?? text
   }
 
   func resetResponse() {
@@ -176,7 +178,7 @@ actor TerminalWriter {
     case .provider(let context, .textDelta(let text)) where context.depth == 0:
       finishThinking()
       let visible = text
-      if var renderer = markdown {
+      if var renderer = markdownRenderer {
         let output = renderer.feed(visible)
         markdown = renderer
         write(output)
@@ -438,6 +440,13 @@ actor TerminalWriter {
     if handle === FileHandle.standardOutput { outputEndedLine = true }
   }
 
+  /// A completed shell filter's bytes, with no extra newline or styling.
+  func rawOutput(_ data: Data, to handle: FileHandle = .standardOutput) {
+    guard !data.isEmpty else { return }
+    emit(String(decoding: data, as: UTF8.self), to: handle)
+    if handle === FileHandle.standardOutput { outputEndedLine = data.last == 10 }
+  }
+
   // MARK: - Tool output
 
   private func toolStarted(_ call: ToolCall, context: AgentEventContext) {
@@ -542,7 +551,7 @@ actor TerminalWriter {
   /// Writes what the markdown renderer still holds for the current reply.
   private func finishReply() {
     finishThinking()
-    guard var renderer = markdown else { return }
+    guard var renderer = markdownRenderer else { return }
     let output = renderer.flush()
     markdown = renderer
     write(output)
@@ -565,7 +574,7 @@ actor TerminalWriter {
       }
       let text = String(String.UnicodeScalarView(safe))
       write(
-        colorsOutput ? Self.styled(text, foreground: ui.thinkingForeground, italic: true) : text)
+        paintsOutput ? Self.styled(text, foreground: ui.thinkingForeground, italic: true) : text)
       outputEndedLine = text.hasSuffix("\n")
     } else {
       thinkingPreview.append(delta)
@@ -610,6 +619,10 @@ actor TerminalWriter {
   }
 
   private func emit(_ value: String, to handle: FileHandle) {
+    if handle === FileHandle.standardOutput, let redirection = REPLRedirection.current {
+      redirection.write(value)
+      return
+    }
     if let screen {
       screen.write(value, to: handle)
     } else {
@@ -682,7 +695,8 @@ actor TerminalWriter {
   private func closeRootLine(force: Bool = false) {
     // The screen sees every write, including the echo of a submitted line,
     // so it knows better than this actor whether the output row is open.
-    let ended = screen?.outputIsAtLineStart ?? outputEndedLine
+    let ended = REPLRedirection.current != nil ? outputEndedLine
+      : screen?.outputIsAtLineStart ?? outputEndedLine
     if (rootLineOpen || force) && !ended {
       write("\n")
     }

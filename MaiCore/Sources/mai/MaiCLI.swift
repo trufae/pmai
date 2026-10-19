@@ -2184,6 +2184,7 @@ struct MaiCLI {
     let redactor: ContentRedactor?
     /// Side questions collect output separately from the chat's stream.
     let output: TerminalWriter
+    let redirection: REPLRedirection?
   }
 
   private struct REPLChatChop {
@@ -2201,6 +2202,7 @@ struct MaiCLI {
     var editingApproval: (request: ApprovalRequest, reply: REPLApprovalReply)?
     var compactions: [(request: AutocompactionRequest, reply: REPLCompactionReply)] = []
     var pendingQueueMessage: String?
+    var pendingQueueRedirection: REPLRedirection?
     var chatChop: REPLChatChop?
     /// True while the input thread waits for the loop before reading again.
     var readerParked = true
@@ -2777,6 +2779,7 @@ struct MaiCLI {
     }
 
     func beginTurn(_ request: AgentRequest, process pid: AgentPID, kind: REPLTurnKind) async {
+      let redirection = REPLRedirection.current
       shareStateWithPmaiTools()
       if kind == .chat {
         await recordSubagents()
@@ -2784,18 +2787,27 @@ struct MaiCLI {
         workspace.upsert(session.chat, selecting: true)
         await saveWorkspace(&workspace, store: store, terminal: terminal)
       }
-      let output = kind == .btw ? TerminalWriter(capturesOutput: true) : terminal
-      if kind == .btw {
+      let output = redirection != nil ? TerminalWriter()
+        : kind == .btw ? TerminalWriter(capturesOutput: true) : terminal
+      if kind == .btw || redirection != nil {
         let ui = configuration?.ui ?? .init()
         await output.configureRedactor(session.redactor)
         await output.configureThinking(ui.thinking)
         await output.configureToolResultLines(ui.toolResultLines)
         await output.configureSubagentOutput(ui.subagentOutput)
+        if redirection != nil {
+          await output.configureColors(ui)
+          await output.attach(screen: screen)
+        }
       }
       await output.resetResponse()
       let task = Task {
-        try await runtime.run(request, process: pid) { event in
-          await output.consume(event)
+        try await withTaskCancellationHandler {
+          try await runtime.run(request, process: pid) { event in
+            await output.consume(event)
+          }
+        } onCancel: {
+          redirection?.cancel()
         }
       }
       let interrupt = interruptHandler.activate { task.cancel() }
@@ -2803,7 +2815,7 @@ struct MaiCLI {
       let turn = REPLTurn(
         task: task, interrupt: interrupt, started: ContinuousClock.now, pid: pid, kind: kind,
         chatID: kind == .chat ? session.id : nil, sent: request.messages, redactor: session.redactor,
-        output: output
+        output: output, redirection: redirection
       )
       if kind == .btw {
         loop.btwTurns[pid] = turn
@@ -3039,6 +3051,10 @@ struct MaiCLI {
     /// Sends typed text where it belongs: to the chat as a new turn when it
     /// is idle, or into an inbox the running agent reads at its next turn.
     func deliver(_ text: String, to target: REPLMessageTarget) async {
+      if REPLRedirection.current != nil, target != .main || loop.activeTurn != nil {
+        await terminal.note("Redirected prompts need an idle main chat; finish the current turn and use /jobs focus main.", tone: .error)
+        return
+      }
       switch target {
       case .main:
         guard loop.activeTurn != nil else {
@@ -3046,6 +3062,7 @@ struct MaiCLI {
           let count = await runtime.supervisor.queuedMessages(for: pid).count
           if count > 0 {
             loop.pendingQueueMessage = text
+            loop.pendingQueueRedirection = REPLRedirection.current
             await terminal.line(
               "\(count) queued message(s). Submit them before this message, ignore them for this turn, or clear them? [submit/ignore/clear]"
             )
@@ -3305,15 +3322,15 @@ struct MaiCLI {
     reader.start()
     await releaseReader(workspace: workspace)
 
-    events: for await event in events {
+    func handleEvent(_ event: REPLEvent) async -> Bool {
       switch event {
-      case .line(let raw, let heredoc, let promptID):
+      case .line(let raw, let heredoc, let promptID, _):
         loop.readerParked = true
         let typed = heredoc ? raw : raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if !typed.hasPrefix("/"), promptID != loop.modalPrompt?.input.id {
           await terminal.note("The prompt changed before submission. Please answer the current prompt.", tone: .warning)
           await releaseIfIdle(workspace: workspace)
-          continue
+          return false
         }
         // `$NAME [TEXT]` is the short form of `/prompts NAME [TEXT]`.
         let text =
@@ -3322,12 +3339,12 @@ struct MaiCLI {
           : typed
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
           await releaseIfIdle(workspace: workspace)
-          continue
+          return false
         }
         if !heredoc, text == "/stop" {
           // Use the same event as Ctrl+C, including pending queue decisions.
           interruptHandler.requestInterrupt()
-          continue
+          return false
         }
         if loop.chatChop != nil {
           if !heredoc, text.hasPrefix("/") {
@@ -3335,19 +3352,22 @@ struct MaiCLI {
           } else {
             await answerChatChop(text)
             await releaseIfIdle(workspace: workspace)
-            continue
+            return false
           }
         }
         if let pending = loop.pendingQueueMessage {
           switch text.lowercased() {
           case "submit", "s":
             loop.pendingQueueMessage = nil
+            loop.pendingQueueRedirection = nil
             await startTurn([pending])
           case "ignore", "i":
             loop.pendingQueueMessage = nil
+            loop.pendingQueueRedirection = nil
             await startTurn([pending], ignoringQueue: true)
           case "clear", "c":
             loop.pendingQueueMessage = nil
+            loop.pendingQueueRedirection = nil
             let pid = await mainProcess()
             await runtime.supervisor.clearQueuedMessages(for: pid)
             await startTurn([pending])
@@ -3357,12 +3377,12 @@ struct MaiCLI {
             )
           }
           await releaseIfIdle(workspace: workspace)
-          continue
+          return false
         }
         if !heredoc, await answerApproval(text) {
           await refreshStatus()
           await releaseIfIdle(workspace: workspace)
-          continue
+          return false
         }
         if !heredoc, let waiting = loop.compactions.first {
           var decision: AutocompactionDecision?
@@ -3374,7 +3394,7 @@ struct MaiCLI {
             } else {
               await terminal.line("No older tool output can be shortened. Choose y to summarize, n to keep context, or c to stop.")
               await releaseIfIdle(workspace: workspace)
-              continue
+              return false
             }
           case "n", "no", "skip", "continue": decision = .continueWithoutCompacting
           case "c", "cancel", "stop": decision = .cancelRun
@@ -3383,19 +3403,19 @@ struct MaiCLI {
               "Use /model NAME to change all models, /model-chat NAME for chat only, or /model-compact NAME for the summarizer. Then choose y to summarize, p to prune available old tool output, or n to keep context."
             )
             await releaseIfIdle(workspace: workspace)
-            continue
+            return false
           case "x", "clear", "/chat clear":
             guard waiting.request.run.pid == chatProcessIDs[session.id] else {
               await terminal.line("Switch to the requesting chat before clearing it; c stops this run.")
               await releaseIfIdle(workspace: workspace)
-              continue
+              return false
             }
             decision = .clearChat
           default:
             if !text.hasPrefix("/") {
               await terminal.line("Choose y (summarize), p (prune available old tool output), n (keep context), m (model), x (clear chat), or c (stop). Slash commands remain available.")
               await releaseIfIdle(workspace: workspace)
-              continue
+              return false
             }
           }
           if let decision {
@@ -3406,25 +3426,25 @@ struct MaiCLI {
             waiting.reply.resume(with: decision)
             await refreshStatus()
             await releaseIfIdle(workspace: workspace)
-            continue
+            return false
           }
         }
         if !heredoc, text == "@" {
           await terminal.line("Usage: @TEXT or @@ TEXT or @PID TEXT or @2,3 TEXT")
           await releaseIfIdle(workspace: workspace)
-          continue
+          return false
         }
         if !heredoc {
           do {
             if let addressed = try addressedMessage(text) {
               await deliver(addressed.body, to: addressed.targets)
               await releaseIfIdle(workspace: workspace)
-              continue
+              return false
             }
           } catch {
             await terminal.note(error.localizedDescription)
             await releaseIfIdle(workspace: workspace)
-            continue
+            return false
           }
         }
         if !heredoc, text.hasPrefix("!") {
@@ -3435,7 +3455,7 @@ struct MaiCLI {
             await runShellCommand(String(text.dropFirst()), terminal: terminal)
           }
           await releaseIfIdle(workspace: workspace)
-          continue
+          return false
         }
         if !heredoc, text.hasPrefix("/") {
           let command = text.split(maxSplits: 1, whereSeparator: \Character.isWhitespace)
@@ -3498,7 +3518,7 @@ struct MaiCLI {
                   }
                   guard let token = pairing.value, !pairing.interrupted else {
                     await releaseIfIdle(workspace: workspace)
-                    continue
+                    return false
                   }
                   profile.token = token
                   profile.requiresApproval = false
@@ -3586,7 +3606,7 @@ struct MaiCLI {
             }
             await refreshStatus()
             await releaseIfIdle(workspace: workspace)
-            continue
+            return false
           }
           if name == "/queue" {
             let main = await mainProcess()
@@ -3596,7 +3616,7 @@ struct MaiCLI {
               main: main, runtime: runtime, terminal: terminal)
             await refreshStatus()
             await releaseIfIdle(workspace: workspace)
-            continue
+            return false
           }
           let jobArgument = jobsArgument(for: name, argument: argument)
           let jobFields =
@@ -3605,7 +3625,7 @@ struct MaiCLI {
             await handleFocus(jobFields.count > 1 ? String(jobFields[1]) : "")
             await refreshStatus()
             await releaseIfIdle(workspace: workspace)
-            continue
+            return false
           }
           if jobFields.count == 1, jobFields.first?.lowercased() == "clear" {
             let cleared = Set(await runtime.supervisor.clearFinished())
@@ -3632,12 +3652,12 @@ struct MaiCLI {
             await terminal.line(summary)
             await refreshStatus()
             await releaseIfIdle(workspace: workspace)
-            continue
+            return false
           }
           if name == "/exit" || name == "/quit" {
             loop.beginExit()
-            if loop.hasTurns { continue }
-            break events
+            if loop.hasTurns { return false }
+            return true
           }
           if name == "/continue" {
             if loop.activeTurn != nil {
@@ -3646,7 +3666,7 @@ struct MaiCLI {
               await continueTurn()
             }
             await releaseIfIdle(workspace: workspace)
-            continue
+            return false
           }
           if name == "/last" {
             if let lastMessage = session.history.messages.last {
@@ -3661,12 +3681,12 @@ struct MaiCLI {
               await terminal.line("No messages in the chat history.")
             }
             await releaseIfIdle(workspace: workspace)
-            continue
+            return false
           }
           if name == "/version" {
             await terminal.line(MaiCLI.version)
             await releaseIfIdle(workspace: workspace)
-            continue
+            return false
           }
           if name == "/prompts" {
             let before = REPLCommandSnapshot(session: session)
@@ -3701,7 +3721,7 @@ struct MaiCLI {
               if let message { await deliver(message, to: loop.focus) }
             }
             await releaseIfIdle(workspace: workspace)
-            continue
+            return false
           }
           if name == "/skills", let request = skillPromptRequest(argument) {
             if request.name.isEmpty {
@@ -3718,7 +3738,7 @@ struct MaiCLI {
               await terminal.line("Unknown skill '\(request.name)'. /skills lists them.")
             }
             await releaseIfIdle(workspace: workspace)
-            continue
+            return false
           }
           if name == "/edit", argument.lowercased() == "input" {
             // The editor takes the terminal, as it does for /reply.
@@ -3728,7 +3748,7 @@ struct MaiCLI {
             }
             if let message { await deliver(message, to: loop.focus) }
             await releaseIfIdle(workspace: workspace)
-            continue
+            return false
           }
           if name == "/reply" {
             // The editor takes the terminal, so a running turn keeps its
@@ -3739,12 +3759,12 @@ struct MaiCLI {
             }
             if let message { await deliver(message, to: loop.focus) }
             await releaseIfIdle(workspace: workspace)
-            continue
+            return false
           }
           if name == "/btw" {
             await startBTW(argument)
             await releaseIfIdle(workspace: workspace)
-            continue
+            return false
           }
           #if PMAI_HAS_VISUAL
             if name == "/visual", loop.hasTurns {
@@ -3752,7 +3772,7 @@ struct MaiCLI {
                 "Visual mode takes the whole screen, so it waits for the running turn; Ctrl+C cancels it."
               )
               await releaseIfIdle(workspace: workspace)
-              continue
+              return false
             }
           #endif
           // Every other command runs now. What it changes and the running
@@ -3851,7 +3871,7 @@ struct MaiCLI {
             } catch { await terminal.line("error: \(error.localizedDescription)", to: .standardError) }
             await refreshStatus()
             await releaseIfIdle(workspace: workspace)
-            continue
+            return false
           }
           if name == "/project" {
             await handleProjectCommand(
@@ -3861,7 +3881,7 @@ struct MaiCLI {
               store: store,
               terminal: terminal)
             await releaseIfIdle(workspace: workspace)
-            continue
+            return false
           }
           // Summaries use the cancellable command path below, which keeps
           // the input prompt open while the summary request is in flight.
@@ -3884,7 +3904,7 @@ struct MaiCLI {
                 await terminal.line("No conversation messages to chop.")
               }
               await releaseIfIdle(workspace: workspace)
-              continue
+              return false
             }
             await recordSubagents()
             workspace.upsert(session.chat, selecting: true)
@@ -3913,7 +3933,7 @@ struct MaiCLI {
             await saveWorkspace(&workspace, store: store, terminal: terminal)
             await noteTurnEffects(since: before)
             await releaseIfIdle(workspace: workspace)
-            continue
+            return false
           }
           if name == "/import" {
             await recordSubagents()
@@ -3936,7 +3956,7 @@ struct MaiCLI {
             await saveWorkspace(&workspace, store: store, terminal: terminal)
             await noteTurnEffects(since: before)
             await releaseIfIdle(workspace: workspace)
-            continue
+            return false
           }
           await recordSubagents()
           #if PMAI_HAS_VISUAL
@@ -3999,7 +4019,7 @@ struct MaiCLI {
           if await runtime.internetAccessPolicy().isOffline { await remoteServer.stop() }
           if exits {
             loop.exiting = true
-            break events
+            return true
           }
           await recordSubagents()
           await releasePendingApprovalsIfUnattended()
@@ -4023,7 +4043,7 @@ struct MaiCLI {
           // command; that event releases exactly one prompt. Signalling here as
           // well would leave an extra semaphore permit and start two readers.
           if !commandWasInterrupted { await releaseIfIdle(workspace: workspace) }
-          continue
+          return false
         }
         if configuration?.ui.broadcast == true {
           await deliver(text, to: [.active])
@@ -4038,7 +4058,7 @@ struct MaiCLI {
           await closeChatChop()
           await refreshStatus()
           await releaseIfIdle(workspace: workspace)
-          continue
+          return false
         }
         // Reflect Ctrl+C immediately, rather than waiting for a provider or
         // tool cancellation to make its way through the supervisor.
@@ -4046,6 +4066,7 @@ struct MaiCLI {
           : cancelledOperation == loop.activeTurn?.interrupt
         if loop.pendingQueueMessage != nil {
           loop.pendingQueueMessage = nil
+          loop.pendingQueueRedirection = nil
           await terminal.note("New message cancelled; the queue is unchanged.")
         } else if cancelledOperation != nil {
           // The input or signal path already cancelled exactly the operation
@@ -4070,8 +4091,8 @@ struct MaiCLI {
         loop.readerParked = true
         await closeChatChop()
         loop.beginExit()
-        if loop.hasTurns { continue }
-        break events
+        if loop.hasTurns { return false }
+        return true
 
       case .turnFinished(let pid, let outcome):
         // A pmai_run call may have changed the session's profile, the
@@ -4128,7 +4149,7 @@ struct MaiCLI {
           elsewhere = workspace.chats.first { $0.id == chatID }?.displayTitle
         }
         if let turn {
-          if turn.kind == .btw {
+          if turn.kind == .btw, turn.redirection == nil {
             await terminal.btwResponse(await turn.output.drainCaptured(), pid: turn.pid)
           }
           let prefix = turn.kind == .btw ? "btw " : ""
@@ -4164,8 +4185,8 @@ struct MaiCLI {
           await saveWorkspace(&workspace, store: store, terminal: terminal)
         }
         if loop.exiting {
-          if loop.hasTurns { continue }
-          break events
+          if loop.hasTurns { return false }
+          return true
         }
         if let turn, turn.kind == .chat {
           let waiting: Int
@@ -4286,6 +4307,58 @@ struct MaiCLI {
         }
         await refreshStatus()
       }
+      return false
+    }
+
+    for await event in events {
+      var event = event
+      var redirection: REPLRedirection?
+      switch event {
+      case .line(let raw, let heredoc, let promptID, let pasted):
+        let isCommand = raw.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/")
+        redirection = isCommand ? nil : loop.pendingQueueRedirection
+        if !heredoc, isCommand {
+          do {
+            if let syntax = try REPLRedirectSyntax.parse(raw, pasted: pasted) {
+              switch syntax.destination {
+              case .file(let path, let append):
+                let names = try shellWords(path)
+                guard names.count == 1, let name = names.first, !name.isEmpty else {
+                  throw REPLRedirectError("Redirection needs one filename; quote paths containing spaces.")
+                }
+                redirection = try REPLRedirection(path: name, append: append)
+              case .process(let command):
+                redirection = try REPLRedirection(command: command)
+              }
+              event = .line(syntax.input, heredoc: false, promptID: promptID)
+            }
+          } catch {
+            loop.readerParked = true
+            await terminal.note("redirection: \(error.localizedDescription)", tone: .error)
+            await releaseIfIdle(workspace: workspace)
+            continue
+          }
+        }
+      case .turnFinished(let pid, _):
+        redirection = loop.activeTurn?.pid == pid
+          ? loop.activeTurn?.redirection : loop.btwTurns[pid]?.redirection
+      case .interrupt, .endOfFile:
+        redirection = loop.pendingQueueRedirection
+      default: break
+      }
+      let exits = await REPLRedirection.$current.withValue(redirection) {
+        await handleEvent(event)
+      }
+      if let redirection,
+        loop.activeTurn?.redirection !== redirection,
+        !loop.btwTurns.values.contains(where: { $0.redirection === redirection }),
+        loop.pendingQueueRedirection !== redirection || exits
+      {
+        _ = await runForeground("redirection", resumeInput: false) {
+          await redirection.finish(terminal: terminal)
+        }
+      }
+      if exits { break }
     }
 
     loop.beginExit()
@@ -11590,7 +11663,7 @@ struct MaiCLI {
         recapPrompt: configuration?.prompts?.recap,
         chatProcess: chatProcess,
         terminal: terminal)
-    case "log", "edit", "del", "undo", "trim", "compact", "recap", "clear", "help":
+    case "log", "last", "edit", "del", "undo", "trim", "compact", "recap", "clear", "help":
       await handleChatCommand(
         argument,
         session: &session,
@@ -11935,6 +12008,12 @@ struct MaiCLI {
     case "list", "log":
       await terminal.line(
         await conversationLog(session: session, full: action == "log", terminal: terminal))
+    case "last":
+      if let message = session.history.messages.last(where: { $0.role == .assistant && !$0.text.isEmpty }) {
+        await terminal.line(await terminal.render(message.text))
+      } else {
+        await terminal.line("No assistant response in the chat history.")
+      }
     case "edit":
       guard parts.count == 3, let index = chatIndex(parts[1], count: session.history.count) else {
         await terminal.line("Usage: /chat edit INDEX TEXT")
@@ -12666,7 +12745,7 @@ struct MaiCLI {
       "/chat use ", "/chat next", "/chat previous", "/chat info", "/chat session",
       "/chat session new", "/chat rename ",
       "/chat archive", "/chat unarchive ", "/chat close confirm", "/chat messages",
-      "/chat log", "/chat edit ", "/chat del ", "/chat undo", "/chat chop", "/chat trim ",
+      "/chat log", "/chat last", "/chat edit ", "/chat del ", "/chat undo", "/chat chop", "/chat trim ",
       "/chat clear", "/project", "/project info", "/project list", "/project name ",
       "/project tint ", "/project tint none", "/project del ",
     ]
@@ -13117,6 +13196,9 @@ struct MaiCLI {
            <<WORD starts a multiline message ending at WORD alone
            $NAME [TEXT] sends a prompt or skill by name; /prompts lists them
            !COMMAND runs a line in the system shell (interactive programs work)
+           /COMMAND > FILE overwrites; /COMMAND >> FILE appends; /COMMAND | SHELL_COMMAND pipes stdout
+           Examples: /chat log > log.txt · /chat last | grep banana
+           Only slash commands redirect; quoted, escaped, or pasted operators stay literal
            Up/Down or Ctrl+P/N move between lines, then history · Ctrl+R reverse search
            Ctrl+A/E or Home/End beginning/end of the line
            Ctrl+B/F move left/right like the arrow keys
@@ -13291,6 +13373,7 @@ struct MaiCLI {
       /chat close confirm           Permanently close the active chat
       /chat messages                Display a compact indexed message list
       /chat log           Display the full structured conversation
+      /chat last          Display the latest assistant response
       /chat edit INDEX TEXT  Replace a message's text; preserve attachments
       /chat del INDEX     Remove a message
       /chat undo [INDEX]  Remove the last conversation message or selected message

@@ -202,6 +202,23 @@ describing the information the summary should prioritize. Trimming keeps
 messages through the selected index and removes newer ones; linked tool-call
 transactions are kept structurally valid when removing or trimming messages.
 
+`/chat last` prints the latest assistant response. Slash commands support
+stdout redirection: `>` overwrites a file, `>>` appends, and `|` sends the output
+to a shell command. Redirected output is plain text; diagnostics stay on the
+terminal. Quote filenames containing spaces. For example:
+
+```text
+/chat log > log.txt
+/chat last >> "saved replies.txt"
+/chat last | grep banana
+/chat log | grep banana > matches.txt
+```
+
+These operators only apply to slash commands entered at the REPL prompt.
+Ordinary messages and heredocs remain literal. Quoted or backslash-escaped
+operators, and operators received through bracketed paste, are also literal;
+you can paste a command and then type its redirection suffix.
+
 `/chat chop` opens a modal prompt at the newest conversation message and shows
 its index, role, and full Markdown text. Enter `n` for the next message, `p` for
 the previous message, `d` to delete it, or `x` to chop everything after it.

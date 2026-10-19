@@ -217,6 +217,8 @@ final class TerminalLineEditor {
   private var ui = ConfiguredTerminalUI()
   private(set) var wasInterrupted = false
   private(set) var submittedPromptID: String?
+  private(set) var submittedPasteBytes = IndexSet()
+  private var historyPasteBytes: [String: IndexSet] = [:]
   private let promptLock = NSLock()
   private var publishedPrompt: TerminalPrompt?
   private var pendingPrompt: TerminalPrompt?
@@ -224,7 +226,7 @@ final class TerminalLineEditor {
   private var activePrompt = TerminalPrompt(text: "")
   private var tracksPromptUpdates = false
   private var continuationPrompt: String?
-  private var savedChatDraft: (bytes: [UInt8], cursor: Int)?
+  private var savedChatDraft: (bytes: [UInt8], cursor: Int, pasted: IndexSet)?
   /// A surface that owns the tty for the whole session. While one is
   /// installed the editor neither changes the terminal mode nor draws a
   /// separator; the surface keeps the row and the status line.
@@ -281,6 +283,7 @@ final class TerminalLineEditor {
   ) -> String? {
     wasInterrupted = false
     submittedPromptID = nil
+    submittedPasteBytes = []
     self.tracksPromptUpdates = tracksPromptUpdates
     self.continuationPrompt = continuationPrompt
     defer { self.tracksPromptUpdates = false }
@@ -336,13 +339,16 @@ final class TerminalLineEditor {
     var prompt = tracksPromptUpdates ? activePrompt.text : prompt
     var bytes: [UInt8] = []
     var cursor = 0
+    var pasted = IndexSet()
     if tracksPromptUpdates, !activePrompt.isModal, let saved = savedChatDraft {
       bytes = saved.bytes
       cursor = saved.cursor
+      pasted = saved.pasted
       savedChatDraft = nil
     }
     var historyIndex: Int?
     var draft: [UInt8] = []
+    var draftPasted = IndexSet()
     viewTop = 0
     completionMenu = nil
     completionMatches = []
@@ -350,12 +356,28 @@ final class TerminalLineEditor {
     drawSeparator(separator)
     redraw(prompt: prompt, bytes: bytes, cursor: cursor)
 
-    func insert(_ text: [UInt8]) {
+    func insert(_ text: [UInt8], fromPaste: Bool = false) {
       guard !text.isEmpty else { return }
+      pasted.shift(startingAt: cursor, by: text.count)
+      if fromPaste { pasted.insert(integersIn: cursor..<(cursor + text.count)) }
       bytes.insert(contentsOf: text, at: cursor)
       cursor += text.count
       historyIndex = nil
       redraw(prompt: prompt, bytes: bytes, cursor: cursor)
+    }
+
+    func remove(_ range: Range<Int>) {
+      pasted.remove(integersIn: range)
+      pasted.shift(startingAt: range.upperBound, by: -range.count)
+      bytes.removeSubrange(range)
+    }
+
+    func rememberSubmission(_ line: String, pasted: IndexSet) {
+      submittedPasteBytes = pasted
+      if rememberInput && !activePrompt.isModal {
+        remember(line)
+        historyPasteBytes[line] = pasted.isEmpty ? nil : pasted
+      }
     }
 
     /// Up and Down walk the input's lines first and the history at its edges.
@@ -365,10 +387,12 @@ final class TerminalLineEditor {
         return
       }
       guard !activePrompt.isModal else { return }
+      if historyIndex == nil { draftPasted = pasted }
       guard
         recallPreviousHistoryEntry(
           bytes: &bytes, cursor: &cursor, historyIndex: &historyIndex, draft: &draft)
       else { return }
+      pasted = historyPasteBytes[String(decoding: bytes, as: UTF8.self)] ?? []
       redraw(prompt: prompt, bytes: bytes, cursor: cursor)
     }
 
@@ -382,6 +406,8 @@ final class TerminalLineEditor {
         recallNextHistoryEntry(
           bytes: &bytes, cursor: &cursor, historyIndex: &historyIndex, draft: &draft)
       else { return }
+      pasted = historyIndex == nil ? draftPasted
+        : historyPasteBytes[String(decoding: bytes, as: UTF8.self)] ?? []
       redraw(prompt: prompt, bytes: bytes, cursor: cursor)
     }
 
@@ -396,17 +422,20 @@ final class TerminalLineEditor {
         guard updated != activePrompt else { continue }
         if updated.id != activePrompt.id {
           if !activePrompt.isModal {
-            savedChatDraft = (bytes, cursor)
+            savedChatDraft = (bytes, cursor, pasted)
           }
           bytes = []
           cursor = 0
+          pasted = []
           if !updated.isModal, let saved = savedChatDraft {
             bytes = saved.bytes
             cursor = saved.cursor
+            pasted = saved.pasted
             savedChatDraft = nil
           }
           historyIndex = nil
           draft = []
+          draftPasted = []
           viewTop = 0
         }
         activePrompt = updated
@@ -437,6 +466,7 @@ final class TerminalLineEditor {
           cursor = nextCharacterEnd(in: bytes, after: cursor)
           redraw(prompt: prompt, bytes: bytes, cursor: cursor)
         case 9:  // Tab
+          let previousBytes = bytes
           let query = completionQuery ?? String(decoding: bytes, as: UTF8.self)
           let candidates = activePrompt.isModal && !query.hasPrefix("/")
             ? activePrompt.choices : completions + (additionalCompletions?(query) ?? [])
@@ -445,6 +475,14 @@ final class TerminalLineEditor {
             bytes: &bytes,
             cursor: &cursor,
             candidates: candidates)
+          // Completion replaces one range; retain provenance on its unchanged
+          // prefix and suffix, marking only the inserted completion as typed.
+          let prefix = zip(previousBytes, bytes).prefix { $0 == $1 }.count
+          let suffix = zip(previousBytes.dropFirst(prefix).reversed(), bytes.dropFirst(prefix).reversed())
+            .prefix { $0 == $1 }.count
+          let replaced = prefix..<(previousBytes.count - suffix)
+          pasted.remove(integersIn: replaced)
+          pasted.shift(startingAt: replaced.upperBound, by: bytes.count - previousBytes.count)
         case 10:  // Ctrl+J: a line break, for terminals that send Enter for Shift+Enter
           insert([10])
         case 12:  // Ctrl+L
@@ -459,7 +497,8 @@ final class TerminalLineEditor {
           guard !activePrompt.isModal else { surface?.bell(); continue }
           switch reverseSearch(original: bytes, startingAt: historyIndex) {
           case .accepted(let line, let index, let acceptedCursor):
-            if historyIndex == nil, index != nil { draft = bytes }
+            if historyIndex == nil, index != nil { draft = bytes; draftPasted = pasted }
+            if line != bytes { pasted = historyPasteBytes[String(decoding: line, as: UTF8.self)] ?? [] }
             bytes = line
             cursor = acceptedCursor
             historyIndex = index
@@ -475,7 +514,7 @@ final class TerminalLineEditor {
             renderSubmittedLine(prompt: prompt, bytes: line)
             let submitted = String(decoding: line, as: UTF8.self)
             submittedPromptID = activePrompt.id
-            if rememberInput && !activePrompt.isModal { remember(submitted) }
+            rememberSubmission(submitted, pasted: line == bytes ? pasted : historyPasteBytes[submitted] ?? [])
             return submitted
           case .endOfFile:
             surface?.acceptInput(styled: "")
@@ -484,7 +523,7 @@ final class TerminalLineEditor {
         case 23:  // Ctrl+W
           guard cursor > 0 else { continue }
           let start = previousWordStart(in: bytes, before: cursor)
-          bytes.removeSubrange(start..<cursor)
+          remove(start..<cursor)
           cursor = start
           historyIndex = nil
           redraw(prompt: prompt, bytes: bytes, cursor: cursor)
@@ -496,12 +535,12 @@ final class TerminalLineEditor {
           renderSubmittedLine(prompt: prompt, bytes: bytes)
           let line = String(decoding: bytes, as: UTF8.self)
           submittedPromptID = activePrompt.id
-          if rememberInput && !activePrompt.isModal { remember(line) }
+          rememberSubmission(line, pasted: pasted)
           return line
         case 127, 8:
           guard cursor > 0 else { continue }
           let previous = previousCharacterStart(in: bytes, before: cursor)
-          bytes.removeSubrange(previous..<cursor)
+          remove(previous..<cursor)
           cursor = previous
           redraw(prompt: prompt, bytes: bytes, cursor: cursor)
         default:
@@ -513,7 +552,7 @@ final class TerminalLineEditor {
       case .newline:
         insert([10])
       case .paste(let pasted):
-        insert(normalizedPaste(pasted))
+        insert(normalizedPaste(pasted), fromPaste: true)
       case .up:
         moveToPreviousLine()
       case .down:
@@ -533,7 +572,7 @@ final class TerminalLineEditor {
       case .delete:
         guard cursor < bytes.count else { continue }
         let end = nextCharacterEnd(in: bytes, after: cursor)
-        bytes.removeSubrange(cursor..<end)
+        remove(cursor..<end)
         redraw(prompt: prompt, bytes: bytes, cursor: cursor)
       case .ignored:
         continue

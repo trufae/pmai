@@ -4,7 +4,7 @@ import MaiCore
 /// What the REPL loop reacts to. Lines come from the input thread; the rest
 /// from turns ending, tools asking for approval, and the process table.
 enum REPLEvent: Sendable {
-  case line(String, heredoc: Bool, promptID: String?)
+  case line(String, heredoc: Bool, promptID: String?, pasted: IndexSet = [])
   /// A non-nil ID means the signal/input path already cancelled that exact
   /// operation. `endedInput` distinguishes a raw Ctrl+C byte from SIGINT.
   case interrupt(REPLInterruptID?, endedInput: Bool)
@@ -118,7 +118,7 @@ final class REPLInputReader: @unchecked Sendable {
       }
       let promptID = editor.submittedPromptID
       guard promptID == nil, let delimiter = Self.heredocDelimiter(in: line) else {
-        continuation.yield(.line(line, heredoc: false, promptID: promptID))
+        continuation.yield(.line(line, heredoc: false, promptID: promptID, pasted: editor.submittedPasteBytes))
         continue
       }
       var lines: [String] = []
@@ -142,7 +142,7 @@ final class REPLInputReader: @unchecked Sendable {
         if let promptID = editor.submittedPromptID {
           // Answer the modal through the event loop, retaining the heredoc
           // and its current line until the normal prompt resumes.
-          continuation.yield(.line(more, heredoc: false, promptID: promptID))
+          continuation.yield(.line(more, heredoc: false, promptID: promptID, pasted: editor.submittedPasteBytes))
           gate.wait()
           if lock.withLock({ stopped }) { return }
           continue
