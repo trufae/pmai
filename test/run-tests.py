@@ -11,13 +11,13 @@ import time
 ROOT = Path(__file__).resolve().parent.parent
 SMOKE = '''installer project-approval project-debug projects-repl provider-routing remote-repl repl-defaults
 repl-del repl-export repl-fork repl-local-providers repl-redact repl-resume repl-resume-routing
-repl-resume-state repl-skills repl-smart-context repl-speed repl-tool-policy run-shell task-agents
+repl-resume-state repl-skills repl-small-context repl-smart-context repl-speed repl-tool-policy run-shell task-agents
 update vim web-fetch'''.split()
 TERMINAL = '''repl-agents repl-btw repl-colors repl-compaction repl-interactive-run repl-modal repl-models repl-path
 repl-policy repl-queue repl-recap repl-resize repl-suspend repl-theme repl-thinking repl-tool-context'''.split()
 EXTERNAL = ['repl-reflow', 'tailcat']  # Ghostty and a separately built tailcat binary.
 PLATFORM = ['web-fetch'] if os.name == 'nt' else [
-    'update', 'web-fetch', 'project-approval', 'repl-defaults', 'repl-suspend', 'repl-models']
+    'update', 'web-fetch', 'project-approval', 'repl-defaults', 'repl-suspend', 'repl-models', 'repl-small-context']
 if sys.platform.startswith('linux'):
     PLATFORM.append('linux-network')
 
