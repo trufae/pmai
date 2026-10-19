@@ -1,5 +1,4 @@
 import Foundation
-import AudioToolbox
 import UIKit
 
 @MainActor
@@ -31,7 +30,6 @@ final class ResponseHaptics {
   private let streamLightGenerator = UIImpactFeedbackGenerator(style: .light)
   private let streamMediumGenerator = UIImpactFeedbackGenerator(style: .medium)
   private let thinkingGenerator = UIImpactFeedbackGenerator(style: .rigid)
-  private let completionGenerator = UINotificationFeedbackGenerator()
   private let sidebarGenerator = UISelectionFeedbackGenerator()
   private var responseTap = StreamTap(intervalRange: 0.09...0.28, intensityRange: 0.25...0.85)
   private var thinkingTap = StreamTap(intervalRange: 0.18...0.42, intensityRange: 0.12...0.4)
@@ -42,7 +40,6 @@ final class ResponseHaptics {
     streamLightGenerator.prepare()
     streamMediumGenerator.prepare()
     thinkingGenerator.prepare()
-    completionGenerator.prepare()
     sidebarGenerator.prepare()
   }
 
@@ -64,10 +61,7 @@ final class ResponseHaptics {
 
   func responseCompleted() {
     lastVisibleLength = 0
-    completionGenerator.prepare()
-    completionGenerator.notificationOccurred(.success)
-    completionGenerator.prepare()
-    playCompletionVibrationFallback()
+    fire(streamSoftGenerator, intensity: 0.4)
   }
 
   func sidebarVisibilitySettled() {
@@ -91,9 +85,5 @@ final class ResponseHaptics {
     default:
       return streamMediumGenerator
     }
-  }
-
-  private func playCompletionVibrationFallback() {
-    AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
   }
 }
