@@ -5889,7 +5889,7 @@ struct MaiCLI {
 
     switch action {
     case "", "show", "list":
-      await terminal.line(list.listing)
+      await terminal.line(await terminal.renderTodoList(list))
 
     case "add":
       guard !rest.isEmpty else {
@@ -5918,11 +5918,13 @@ struct MaiCLI {
       }
       guard let index = list.index(matching: rest) else {
         await terminal.line(
-          list.isEmpty ? "The todo list is empty." : "No todo matched '\(rest)'.\n\(list.listing)")
+          list.isEmpty
+            ? "The todo list is empty."
+            : "No todo matched '\(rest)'.\n\(await terminal.renderTodoList(list))")
         return
       }
       guard let removed = list.remove(at: index) else { return }
-      await terminal.line("Removed: \(removed.title)\n\(list.listing)")
+      await terminal.line("Removed: \(removed.title)\n\(await terminal.renderTodoList(list))")
       await storeTodo(list, in: todo, terminal: terminal)
 
     case "sweep":

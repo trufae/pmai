@@ -13,6 +13,12 @@ public struct MarkdownLayoutOptions: Equatable, Sendable {
     self.unicode = unicode
     self.linkDestinations = linkDestinations
   }
+
+  /// The checkbox used by Markdown tasks and numbered todo listings.
+  public func taskMarker(checked: Bool) -> String {
+    if unicode { return checked ? "􁁛" : "􀟈" }
+    return checked ? "[x]" : "[ ]"
+  }
 }
 
 /// Turns markdown into styled lines as it arrives. Lines are emitted as soon
@@ -258,12 +264,7 @@ public struct MarkdownStreamLayout: Equatable, Sendable {
     case .ordered(let indent, let label):
       return [.spans([MarkdownSpan(indentation(indent) + label + " ", role: .listMarker)])]
     case .task(let indent, let checked):
-      let box: String
-      if options.unicode {
-        box = checked ? "􁁛" : "􀟈"
-      } else {
-        box = checked ? "[x]" : "[ ]"
-      }
+      let box = options.taskMarker(checked: checked)
       return [
         .spans([MarkdownSpan(indentation(indent) + box + " ", role: .taskMarker(checked: checked))])
       ]

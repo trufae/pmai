@@ -156,6 +156,15 @@ actor TerminalWriter {
     markdownRenderer?.render(text) ?? text
   }
 
+  func renderTodoList(_ list: AgentTodoList) -> String {
+    guard let options = markdownRenderer?.options, !list.isEmpty else { return list.listing }
+    let lines = list.items.enumerated().map { index, item in
+      "\(index + 1). \(options.taskMarker(checked: item.isDone)) \(item.title)"
+    }
+    return "Todo (\(list.pendingCount) pending, \(list.doneCount) done):\n"
+      + lines.joined(separator: "\n")
+  }
+
   func resetResponse() {
     finishThinking()
     wroteRootDelta = false
