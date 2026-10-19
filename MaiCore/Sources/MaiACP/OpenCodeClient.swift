@@ -313,6 +313,7 @@ public actor OpenCodeClient: RemoteSessionClient {
     }
     prompting = true
     defer { prompting = false }
+    let completedHistory: [JSONValue]
     do {
       // Admission returns before execution finishes. Never resend this POST on a
       // network failure: the server may already have accepted and run the prompt.
@@ -335,14 +336,7 @@ public actor OpenCodeClient: RemoteSessionClient {
         defer { group.cancelAll() }
         try await group.next()
       }
-      let history = try await refreshHistory(id, full: true)
-      let idle = history.last { $0.objectValue?["type"]?.stringValue == "idle" }
-      if idle?.objectValue?["outcome"]?.stringValue == "failed" {
-        throw JSONRPCError.internalError(
-          idle?.objectValue?["error"]?.objectValue?["message"]?.stringValue
-            ?? "OpenCode session failed.")
-      }
-      return idle?.objectValue?["outcome"]?.stringValue == "interrupted" ? .cancelled : .stop
+      completedHistory = try await refreshHistory(id, full: true)
     } catch {
       isConnected = false
       if Task.isCancelled {
@@ -355,6 +349,20 @@ public actor OpenCodeClient: RemoteSessionClient {
       }
       throw error
     }
+    // A completed turn can fail at the model provider while host authentication
+    // and the session remain usable. Keep settings and retries available.
+    let idle = completedHistory.last { $0.objectValue?["type"]?.stringValue == "idle" }
+    if idle?.objectValue?["outcome"]?.stringValue == "failed" {
+      throw SessionFailure(
+        errorDescription: idle?.objectValue?["error"]?.objectValue?["message"]?.stringValue
+          ?? "OpenCode session failed.")
+    }
+    return idle?.objectValue?["outcome"]?.stringValue == "interrupted" ? .cancelled : .stop
+  }
+
+  /// The host completed the turn with an error, without losing the connection.
+  public struct SessionFailure: LocalizedError {
+    public let errorDescription: String?
   }
 
   public func disconnect() async {

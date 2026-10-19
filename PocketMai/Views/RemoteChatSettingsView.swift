@@ -21,6 +21,16 @@ struct RemoteChatSettingsView: View {
                 isOn: Binding(
                   get: { option.currentValue.boolValue ?? false },
                   set: { chat.setConfigurationOption(id: option.id, value: .bool($0)) }))
+            } else if chat.bookmark.backend == .openCode, option.id == "model" {
+              NavigationLink {
+                RemoteOpenCodeModelPicker(chat: chat)
+              } label: {
+                let current = option.currentValue.stringValue ?? ""
+                LabeledContent(
+                  option.name,
+                  value: option.choices.first(where: { $0.id == current })?.name
+                    ?? (current.isEmpty ? "Server default" : current))
+              }
             } else {
               Picker(
                 option.name,
@@ -49,6 +59,9 @@ struct RemoteChatSettingsView: View {
         }
         if let error = chat.settingsError ?? chat.error {
           Text(error).foregroundStyle(.red)
+          if chat.connected {
+            Text("The host is still connected.").font(.footnote).foregroundStyle(.secondary)
+          }
         }
       }
       .navigationTitle("Chat Settings")
@@ -56,6 +69,64 @@ struct RemoteChatSettingsView: View {
       .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
       .task(id: chat.connected) { await chat.refreshConfiguration() }
       .refreshable { await chat.refreshConfiguration() }
+    }
+  }
+}
+
+private struct RemoteOpenCodeModelPicker: View {
+  @EnvironmentObject private var store: AppStore
+  @Environment(\.dismiss) private var dismiss
+  @State private var search = ""
+  @FocusState private var searchFocused: Bool
+  let chat: RemoteAgentChat
+
+  private var option: RemoteSessionOption? {
+    chat.configurationOptions.first { $0.id == "model" }
+  }
+
+  var body: some View {
+    let current = option?.currentValue.stringValue ?? ""
+    let choices = option?.choices ?? []
+    let matches = choices.filter { SidebarSearch.matches(search, in: [$0.name]) }
+    let currentName = current.isEmpty ? "Server default" : current
+    let showUnavailableCurrent = !choices.contains { $0.id == current }
+      && SidebarSearch.matches(search, in: [currentName])
+    List {
+      if showUnavailableCurrent {
+        Text(currentName).foregroundStyle(.secondary)
+      }
+      ForEach(matches) { choice in
+        Button {
+          chat.setConfigurationOption(id: "model", value: .string(choice.id))
+          dismiss()
+        } label: {
+          HStack {
+            Text(choice.name).foregroundStyle(.primary)
+            Spacer()
+            if choice.id == current {
+              Image(systemName: "checkmark").foregroundStyle(.tint)
+            }
+          }
+        }
+        .accessibilityAddTraits(choice.id == current ? .isSelected : [])
+        .disabled(!chat.connected || chat.busy || chat.settingsLoading || store.settings.isOffline)
+      }
+    }
+    .overlay {
+      if matches.isEmpty && !showUnavailableCurrent {
+        ContentUnavailableView.search(text: search)
+      }
+    }
+    .navigationTitle(option?.name ?? "Model")
+    .navigationBarTitleDisplayMode(.inline)
+    .scrollDismissesKeyboard(.interactively)
+    .safeAreaInset(edge: .bottom) {
+      FloatingSearchField(text: $search, isFocused: $searchFocused, placeholder: "Filter models") {
+        search = ""
+        searchFocused = false
+      }
+      .padding(.horizontal, 18)
+      .padding(.bottom, 12)
     }
   }
 }

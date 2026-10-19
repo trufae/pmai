@@ -80,6 +80,35 @@ final class RemoteMessageActionTests: XCTestCase {
     }
   }
 
+  func testFailedModelResponseKeepsSettingsAndRetryAvailable() async throws {
+    try await withChat { chat, _, fixture, _ in
+      fixture.rejectNextPrompt()
+      chat.send("First attempt")
+      try await waitForIdle(chat)
+      XCTAssertEqual(chat.error, "This API key has expired.")
+      XCTAssertEqual(chat.status, "Session failed")
+      XCTAssertTrue(chat.connected)
+      XCTAssertTrue(chat.canSend)
+
+      await chat.refreshConfiguration()
+      XCTAssertNil(chat.settingsError)
+      XCTAssertEqual(chat.configurationOptions.first { $0.id == "model" }?.choices.count, 2)
+      chat.setConfigurationOption(id: "model", value: .string("other"))
+      try await waitForIdle(chat)
+      XCTAssertNil(chat.settingsError)
+      XCTAssertEqual(
+        chat.configurationOptions.first { $0.id == "model" }?.currentValue, .string("other"))
+
+      chat.send("Try the other model")
+      try await waitForIdle(chat)
+      XCTAssertNil(chat.error)
+      XCTAssertTrue(chat.connected)
+      XCTAssertEqual(chat.status, "Connected")
+      XCTAssertEqual(fixture.prompts, ["First attempt", "Try the other model"])
+      XCTAssertEqual(chat.messages.last?.text, "New answer")
+    }
+  }
+
   private func waitForIdle(_ chat: RemoteAgentChat) async throws {
     for _ in 0..<500 {
       if !chat.busy { return }
@@ -140,10 +169,13 @@ private final class RemoteActionEndpoint: @unchecked Sendable {
   private var recordedPrompts: [String] = []
   private var recordedMutations: [String] = []
   private var failRewind = false
+  private var failNextPrompt = false
+  private var model = "original"
   var boundaries: [String] { lock.withLock { recordedBoundaries } }
   var prompts: [String] { lock.withLock { recordedPrompts } }
   var mutations: [String] { lock.withLock { recordedMutations } }
   func rejectRewind() { lock.withLock { failRewind = true } }
+  func rejectNextPrompt() { lock.withLock { failNextPrompt = true } }
 
   func respond(_ request: URLRequest) throws -> (Int, Data) {
     try lock.withLock {
@@ -166,7 +198,23 @@ private final class RemoteActionEndpoint: @unchecked Sendable {
       let result: JSONValue
       switch (method, path) {
       case ("GET", "/api/session/ses_test"):
-        result = .object(["data": .object([:])])
+        result = .object([
+          "data": .object([
+            "location": .object(["directory": .string("/work")]),
+            "model": .object(["id": .string(model), "providerID": .string("test")]),
+          ])
+        ])
+      case ("GET", "/api/model"):
+        result = .object([
+          "data": .array(["original", "other"].map {
+            .object(["id": .string($0), "name": .string($0), "providerID": .string("test")])
+          })
+        ])
+      case ("GET", "/api/agent"):
+        result = .object(["data": .array([])])
+      case ("POST", "/api/session/ses_test/model"):
+        model = try XCTUnwrap(input?["model"]?.objectValue?["id"]?.stringValue)
+        result = .null
       case ("GET", "/api/session/ses_test/message"), ("GET", "/api/session/ses_test/context"):
         result = .object(["data": .array(history.map(JSONValue.object))])
       case ("POST", "/api/session/ses_test/revert/stage"):
@@ -185,10 +233,19 @@ private final class RemoteActionEndpoint: @unchecked Sendable {
         history.append([
           "id": .string(UUID().uuidString), "type": .string("user"), "text": .string(text),
         ])
+        if !failNextPrompt {
+          history.append([
+            "id": .string(UUID().uuidString), "type": .string("assistant"),
+            "content": .array([.object(["type": .string("text"), "text": .string("New answer")])]),
+          ])
+        }
         history.append([
-          "id": .string(UUID().uuidString), "type": .string("assistant"),
-          "content": .array([.object(["type": .string("text"), "text": .string("New answer")])]),
+          "id": .string(UUID().uuidString), "type": .string("idle"),
+          "outcome": .string(failNextPrompt ? "failed" : "succeeded"),
+          "error": failNextPrompt
+            ? .object(["message": .string("This API key has expired.")]) : .null,
         ])
+        failNextPrompt = false
         result = .null
       case ("POST", "/api/experimental/session/ses_test/wait"):
         result = .null

@@ -657,9 +657,11 @@ final class RemoteAgentChat {
         status = reason == .cancelled ? "Cancelled" : "Connected"
       } catch {
         guard generation == attempt else { return }
+        let stillConnected = await client.isConnected
+        guard generation == attempt else { return }
         self.error = error is CancellationError ? nil : error.localizedDescription
-        status = "Disconnected — reconnect to restore the session"
-        connected = false
+        connected = error is OpenCodeClient.SessionFailure && stillConnected
+        status = connected ? "Session failed" : "Disconnected — reconnect to restore the session"
       }
       guard generation == attempt else { return }
       cancelPermissions()

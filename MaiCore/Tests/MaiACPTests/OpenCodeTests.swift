@@ -116,6 +116,72 @@ private actor OpenCodeUpdates {
 }
 
 @Test(
+  "OpenCode turn failures preserve the connection; host authentication and network failures do not",
+  arguments: ["provider", "unauthorized", "network"])
+func openCodePromptFailureRecovery(_ scenario: String) async throws {
+  let host = "failure-\(scenario).opencode.test"
+  let methods = MethodRecorder()
+  let promptPath = "/api/session/session/prompt"
+  StubURLProtocol.install(forHost: host) { request in
+    let path = request.url!.path
+    methods.record(path)
+    let attempts = methods.methods.filter { $0 == promptPath }.count
+    let body: String
+    switch path {
+    case promptPath:
+      if scenario == "network" { throw URLError(.networkConnectionLost) }
+      if scenario == "unauthorized" {
+        return try httpResponse(request, status: 401, contentType: "application/json", body: "{}")
+      }
+      body = "{}"
+    case "/api/session/session/message", "/api/session/session/context":
+      body = attempts == 0 ? #"{"data":[]}"# : attempts == 1
+        ? #"{"data":[{"id":"failed","type":"idle","outcome":"failed","error":{"message":"This API key has expired."}}]}"#
+        : #"{"data":[{"id":"failed","type":"idle","outcome":"failed","error":{"message":"This API key has expired."}},{"id":"done","type":"idle","outcome":"succeeded"}]}"#
+    case "/api/experimental/session/session/wait":
+      body = "{}"
+    case "/api/session/session/permission":
+      body = #"{"data":[]}"#
+    case "/api/session/session":
+      body = #"{"data":{"location":{"directory":"/work"},"model":{"id":"model","providerID":"provider"}}}"#
+    case "/api/model":
+      body = #"{"data":[{"id":"model","providerID":"provider"}]}"#
+    case "/api/agent":
+      body = #"{"data":[]}"#
+    default:
+      Issue.record("Unexpected request: \(path)")
+      throw URLError(.unsupportedURL)
+    }
+    return try httpResponse(request, contentType: "application/json", body: body)
+  }
+  defer { StubURLProtocol.reset(host: host) }
+  let client = OpenCodeClient(
+    connection: try .init(url: #require(URL(string: "https://\(host)")), token: "test"),
+    sessionID: "session", configuration: openCodeTestConfiguration())
+  _ = try await client.connect()
+  do {
+    _ = try await client.prompt("First attempt") { _ in }
+    Issue.record("The first prompt must fail")
+  } catch {
+    if scenario == "provider" {
+      #expect(error is OpenCodeClient.SessionFailure)
+      #expect(error.localizedDescription == "This API key has expired.")
+    } else if scenario == "unauthorized" {
+      #expect(error.localizedDescription.contains("Pair this host again"))
+    }
+  }
+  #expect(methods.methods.filter { $0 == promptPath }.count == 1)
+  #expect(await client.isConnected == (scenario == "provider"))
+  if scenario == "provider" {
+    #expect(try await client.configurationOptions().contains { $0.id == "model" })
+    #expect(try await client.prompt("Try again", emit: { _ in }) == .stop)
+    #expect(await client.isConnected)
+    #expect(methods.methods.filter { $0 == promptPath }.count == 2)
+  }
+  await client.disconnect()
+}
+
+@Test(
   "OpenCode rewinds server history before retrying, resets from the first event, and handles failures",
   arguments: ["retry", "reset", "stale", "staged", "stageFailure", "commitFailure", "cancel"])
 func openCodeHistoryRewind(_ scenario: String) async throws {
