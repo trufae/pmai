@@ -281,7 +281,7 @@ func blockRendering() {
   let colored = MarkdownTerminalRenderer.render(source, options: MarkdownLayoutOptions(width: 20))
   #expect(colored.hasPrefix("\u{1B}[95;1mHead\u{1B}[0m\n"))
   #expect(colored.contains("\u{1B}[90;3m│ quote\u{1B}[0m\n"))
-  #expect(colored.contains("\u{1B}[93m☐ \u{1B}[0mtodo\n"))
+  #expect(colored.contains("\u{1B}[93m􀟈 \u{1B}[0mtodo\n"))
   #expect(colored.contains("\u{1B}[93m  1. \u{1B}[0msub\n"))
   #expect(colored.contains("\u{1B}[90m────────────────────\u{1B}[0m\n"))
   #expect(

@@ -260,7 +260,7 @@ public struct MarkdownStreamLayout: Equatable, Sendable {
     case .task(let indent, let checked):
       let box: String
       if options.unicode {
-        box = checked ? "☑" : "☐"
+        box = checked ? "􁁛" : "􀟈"
       } else {
         box = checked ? "[x]" : "[ ]"
       }
