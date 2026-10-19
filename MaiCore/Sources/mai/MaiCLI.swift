@@ -9734,7 +9734,7 @@ struct MaiCLI {
         || levelKeys.contains(key) || textKeys.contains(key)
     else {
       await terminal.line(
-        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, airplane, effort, tool.aproval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.strategy, \((textKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), export.tools, export.thinking, redact, use.agentsmd, use.plan"
+        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, airplane, effort, tool.aproval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.window, ctx.strategy, \((textKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), export.tools, export.thinking, redact, use.agentsmd, use.plan"
       )
       return
     }
@@ -9832,6 +9832,7 @@ struct MaiCLI {
     "retry.delayseconds": "retry.delay",
     "ctx.compact": "ctx.compact",
     "ctx.recent": "ctx.recent",
+    "ctx.window": "ctx.window",
   ]
 
   private static let delegationSettingKeys: Set<String> = [
@@ -10032,6 +10033,8 @@ struct MaiCLI {
     await terminal.line("retry.delay = \(durationSetting(profile.retry.delaySeconds))")
     await terminal.line("ctx.compact = \(autocompactSetting(profile.autocompact))")
     await terminal.line("ctx.recent = \(profile.autocompact.preserveRecentTokens.map(String.init) ?? "auto")")
+    await terminal.line(
+      "ctx.window = \(profile.options.contextWindowTokens.map(String.init) ?? "auto")")
     await terminal.line("ctx.strategy = \(profile.context.rawValue)")
   }
 
@@ -10238,11 +10241,13 @@ struct MaiCLI {
   ) async {
     var retry = session.profile.retry
     var autocompact = session.profile.autocompact
+    var options = session.profile.options
     func current() -> String {
       switch key {
       case "retry.attempts": String(retry.attempts)
       case "retry.delay": durationSetting(retry.delaySeconds)
       case "ctx.recent": autocompact.preserveRecentTokens.map(String.init) ?? "auto"
+      case "ctx.window": options.contextWindowTokens.map(String.init) ?? "auto"
       default: autocompactSetting(autocompact)
       }
     }
@@ -10257,6 +10262,16 @@ struct MaiCLI {
     }
     let raw = parts.count == 2 ? parts[1].lowercased() : ""
     switch key {
+    case "ctx.window":
+      if raw == "auto" {
+        options.contextWindowTokens = nil
+      } else if let tokens = parseTokenCount(raw), tokens > 0 {
+        options.contextWindowTokens = tokens
+      } else {
+        await terminal.line(
+          "Usage: /set ctx.window <auto|N|Nk>  (total model context, including its reply)")
+        return
+      }
     case "ctx.recent":
       if raw == "auto" {
         autocompact.preserveRecentTokens = nil
@@ -10294,6 +10309,7 @@ struct MaiCLI {
     }
     session.profile.retry = retry
     session.profile.autocompact = autocompact
+    session.profile.options = options
     session.touch()
     var notes: [String] = []
     if key == "ctx.compact", autocompact.isEnabled {
@@ -10311,6 +10327,7 @@ struct MaiCLI {
     }
     draft.agents[index].retry = retry
     draft.agents[index].autocompact = autocompact
+    draft.agents[index].options = options
     do {
       try draft.save(to: URL(fileURLWithPath: configurationPath))
       configuration = draft
@@ -10495,6 +10512,7 @@ struct MaiCLI {
           "retry.delay": durationSetting(profile.retry.delaySeconds),
           "ctx.compact": autocompactSetting(profile.autocompact),
           "ctx.recent": profile.autocompact.preserveRecentTokens.map(String.init) ?? "auto",
+          "ctx.window": profile.options.contextWindowTokens.map(String.init) ?? "auto",
           "ctx.strategy": profile.context.rawValue,
         ],
         subagents: chat.subagents)
@@ -11961,16 +11979,12 @@ struct MaiCLI {
     }
     // Compaction shares its template with autocompact; recap has its own
     // reader-facing template while using the same inference settings.
-    let prompt = recap
-      ? AgentRecapPrompt.render(transcript: transcript, template: configuredTemplate)
-      : AgentCompactionPrompt.render(
-        transcript: transcript, focus: focus, template: configuredTemplate)
     let profile = session.profile
     let request = AgentRequest(
       agentID: profile.agentID,
       provider: profile.provider,
       model: profile.model,
-      messages: [.user(prompt)],
+      messages: [],
       toolNames: [],
       subagentNames: [],
       toolChoice: .none,
@@ -11984,9 +11998,14 @@ struct MaiCLI {
       sessionID: session.sessionID)
     await terminal.line(recap ? "Recapping conversation…" : "Compacting conversation…")
     do {
-      let compactRequest = try await runtime.taskRequest(.compact, from: request)
-      let result = try await runtime.run(compactRequest) { _ in }
-      let reply = result.transcript.last(where: { $0.role == .assistant })?.text ?? ""
+      let reply = try await runtime.summarize(
+        transcript, request: request,
+        renderPrompt: { source in
+          recap
+            ? AgentRecapPrompt.render(transcript: source, template: configuredTemplate)
+            : AgentCompactionPrompt.render(
+              transcript: source, focus: focus, template: configuredTemplate)
+        })
       let summary = MessageContentFilter.textWithoutReasoning(
         from: session.redactor?.unredact(reply) ?? reply
       )
@@ -12431,6 +12450,7 @@ struct MaiCLI {
       "/set retry.attempts ", "/set retry.delay ", "/set ctx.compact ",
       "/set ctx.compact off",
       "/set ctx.recent ", "/set ctx.recent auto",
+      "/set ctx.window ", "/set ctx.window auto",
       "/set ctx.strategy ", "/set ctx.strategy cache", "/set ctx.strategy size", "/set ctx.strategy smart",
       "/set ctx.strategy tools",
       "/continue", "/stop",
@@ -13087,6 +13107,7 @@ struct MaiCLI {
       /set retry.delay SECONDS     Wait before each retry (default 5)
       /set ctx.compact <off|N|Nk>  Prompt to prune tool output or summarize older context at ~N tokens
       /set ctx.recent <auto|N|Nk>  Recent tokens kept verbatim when summarizing (auto: up to 8k)
+      /set ctx.window <auto|N|Nk>  Model context size including reply space (e.g. 32768)
       /set ctx.strategy <cache|size|smart|tools>  Keep history, prune reads, build a brief, or summarize old tool results
       /set export.                 List document export settings
       /set export.tools BOOL       Include tool calls and results in documents (default off)

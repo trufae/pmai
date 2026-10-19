@@ -9,6 +9,38 @@ import Testing
 
 @testable import MaiTestSupport
 
+@Test("Context window settings stay in the harness rather than the API body")
+func openAIContextWindowIsLocal() throws {
+  let provider = OpenAICompatibleProvider(
+    configuration: .init(baseURL: URL(string: "https://example.test/v1")!))
+  let request = ProviderRequest(
+    model: "small", messages: [.user("go")],
+    options: .init(maxOutputTokens: 1_024, contextWindowTokens: 32_768))
+  let body = try #require(provider.makeURLRequest(request, model: request.model).httpBody)
+  let object = try JSONDecoder().decode(JSONValue.self, from: body).objectValue
+  #expect(object?["contextWindowTokens"] == nil)
+  #expect(object?["max_tokens"] == .integer(1_024))
+}
+
+@Test("Context error codes survive HTTP and streamed error envelopes", arguments: [false, true])
+func openAIContextLimitError(stream: Bool) async throws {
+  let host = "context-\(stream).example.test"
+  StubURLProtocol.install(forHost: host) { request in
+    let payload = #"{"error":{"code":"context_length_exceeded","message":"Input is too large."}}"#
+    return try httpResponse(
+      request, status: stream ? 200 : 400,
+      contentType: stream ? "text/event-stream" : "application/json",
+      body: stream ? "data: \(payload)\n\n" : payload)
+  }
+  defer { StubURLProtocol.reset(host: host) }
+  let provider = OpenAICompatibleProvider(
+    configuration: .init(baseURL: URL(string: "https://\(host)/v1")!), session: stubSession())
+  await #expect(throws: ProviderContextLimitError.self) {
+    try await provider.complete(
+      ProviderRequest(model: "small", messages: [.user("go")], stream: stream))
+  }
+}
+
 @Test("Native request schemas serialize in stable key order")
 func openAIStableSchemaOrder() throws {
   let provider = OpenAICompatibleProvider(

@@ -45,8 +45,10 @@ extension AgentRuntime {
       if !candidates.isEmpty {
         await supervisor.note(state.pid, activity: "summarizing tool results")
         do {
+          let transcript = state.transcript
           let summaries = try await compactText(
-            prompt: AgentToolResultContext.prompt(for: candidates, in: state.transcript),
+            source: AgentToolResultContext.transcript(for: candidates),
+            render: { AgentToolResultContext.prompt(outputs: $0, in: transcript) },
             state: &state)
           state.toolContext.store(summaries, for: candidates)
         } catch let error where error is CancellationError || error is RunDeadlineExceeded {
@@ -111,9 +113,10 @@ extension AgentRuntime {
       {
         await supervisor.note(state.pid, activity: "preparing state.context")
         do {
+          let template = smartContextTemplate
           let brief = try await compactText(
-            prompt: AgentSmartContext.prompt(
-              for: evidence, in: promptContext, template: smartContextTemplate),
+            source: AgentSmartContext.transcript(for: evidence, in: promptContext),
+            render: { AgentSmartContextPrompt.render(transcript: $0, template: template) },
             state: &state)
           state.smartContext.store(brief, for: evidence)
         } catch let error where error is CancellationError || error is RunDeadlineExceeded {

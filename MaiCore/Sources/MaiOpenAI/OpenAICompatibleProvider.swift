@@ -894,6 +894,12 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
         requestID: response?.value(forHTTPHeaderField: "x-request-id"),
         parameter: error["param"]?.stringValue)
     }
+    if error["code"]?.stringValue == "context_length_exceeded" {
+      let message = error["message"]?.stringValue ?? "The model's context window is full."
+      let diagnostic = OpenAICompatibleProviderError.providerFailure(message)
+      return ProviderContextLimitError.recognize(diagnostic)
+        ?? ProviderContextLimitError(message: message)
+    }
     return error["message"]?.stringValue.map { OpenAICompatibleProviderError.providerFailure($0) }
   }
 
@@ -1002,7 +1008,7 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     if let root = try? JSONDecoder().decode(JSONValue.self, from: data).objectValue,
       let error = providerError(in: root, response: response)
     {
-      if error is ProviderPolicyError { return error }
+      if error is ProviderPolicyError || error is ProviderContextLimitError { return error }
       return OpenAICompatibleProviderError.httpError(
         statusCode: response.statusCode, message: error.localizedDescription)
     }

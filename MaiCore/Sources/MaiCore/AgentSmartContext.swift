@@ -22,9 +22,11 @@ public enum AgentSmartContextPrompt {
     """
 
   public static func render(messages: [AgentMessage], template: String? = nil) -> String {
-    let custom = template?.trimmingCharacters(in: .whitespacesAndNewlines)
-    let source = custom?.isEmpty == false ? custom! : Self.template
-    let transcript = AgentPromptContext(messages: messages).conversation.map { message in
+    render(transcript: transcript(of: messages), template: template)
+  }
+
+  static func transcript(of messages: [AgentMessage]) -> String {
+    AgentPromptContext(messages: messages).conversation.map { message in
       let parts = message.content.map { part in
         if message.role == .assistant, case .text(let text) = part {
           return MessageContentFilter.textWithoutReasoning(from: text)
@@ -33,6 +35,11 @@ public enum AgentSmartContextPrompt {
       }
       return "\(message.role.rawValue):\n" + parts.joined(separator: "\n")
     }.joined(separator: "\n\n---\n\n")
+  }
+
+  static func render(transcript: String, template: String? = nil) -> String {
+    let custom = template?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let source = custom?.isEmpty == false ? custom! : Self.template
     // A host calling the runtime directly cannot accidentally omit the evidence.
     return source.contains(AgentCompactionPrompt.transcriptPlaceholder)
       ? source.replacingOccurrences(
@@ -140,8 +147,13 @@ struct AgentSmartContext {
   static func prompt(
     for evidence: [AgentMessage], in context: AgentPromptContext, template: String?
   ) -> String {
+    AgentSmartContextPrompt.render(
+      transcript: transcript(for: evidence, in: context), template: template)
+  }
+
+  static func transcript(for evidence: [AgentMessage], in context: AgentPromptContext) -> String {
     let ids = Set(evidence.map(\.id)).union(context.preservedConversation.map(\.id))
-    return AgentSmartContextPrompt.render(
-      messages: context.conversation.filter { ids.contains($0.id) }, template: template)
+    return AgentSmartContextPrompt.transcript(
+      of: context.conversation.filter { ids.contains($0.id) })
   }
 }

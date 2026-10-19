@@ -721,6 +721,10 @@ checkpoint and the task continues on its own; the token and time caps always
 stop, since they exist to bound the spend. A model call that fails — a dropped
 connection, a 5xx — is repeated after `retry.delay` seconds up to
 `retry.attempts` times (`↻ retry 1/2 in 5s: …`) before the turn fails.
+Context-limit errors bypass these transport retries. The runtime learns a
+reported window for that provider/model and offers context reduction before
+another chat request. If no smaller transcript can be produced, it stops
+without resending the same oversized request.
 An OpenAI `cyber_policy` error stops immediately, including when it arrives during
 streaming. Its message, code, and available HTTP status/request ID are retained.
 Completed tool work and the conversation remain available after the rejection;
@@ -740,7 +744,7 @@ the prompt offers summarization or keeping the remaining context.
 Summarization replaces older exchanges with a model-written summary focused on
 finishing the current task. The latest user request stays verbatim, together
 with recent complete tool exchanges. By default this tail has a budget of
-one quarter of `autocompact.tokens`, capped at 8,000 tokens. Set the agent's
+one quarter of the effective compaction threshold, capped at 8,000 tokens. Set the agent's
 `autocompact.preserveRecentTokens` (or `/set ctx.recent 4k`) to override it;
 `/set ctx.recent auto` restores the default. Zero keeps only the newest
 exchange and the user request. Tool calls and results stay together, even when
@@ -749,8 +753,28 @@ an estimate for tool output and queued messages added since that call.
 `✂ context: compacted 14 messages into a summary` reports that replacement.
 `/set ctx.compact off` (`autocompact.tokens: 0` in the agent configuration)
 disables the context action prompt entirely. `/set ctx.compact` shows the
-current setting. Context windows differ per model, so the threshold is an
-absolute token count rather than a percentage.
+current setting.
+
+For a small model, set `/set ctx.window 32768` to declare its total context
+window. This persists as `options.contextWindowTokens` on the agent and is
+inherited by derived workers. The runtime reserves reply space and a safety
+margin, lowers the compaction threshold and recent tail to fit, accounts for
+tool schemas and instructions before sending a request, and gives tools
+smaller output budgets. `/set ctx.window auto` clears the explicit setting;
+limits learned from provider errors remain available for the current process.
+Named agents, including a separate `/model-compact` agent, can declare their
+own window in their `options` configuration.
+
+Manual `/chat compact`, `/chat recap`, automatic compaction, and smart/tool
+summaries split oversized input into bounded pieces and consolidate the
+partial summaries. This also handles a single message larger than the model
+window. Each piece retains its summary template and focus; an unknown summary
+model starts with a conservative 32,768-token window and adapts to context
+rejections. All successful calls count toward usage and token/time budgets.
+History is replaced only after the complete summary succeeds; empty,
+truncated, or failed summaries leave it intact. The newest user request and
+protected instructions still stay verbatim, so those alone must fit the chat
+model's window.
 `/set tool.calling text|xml|json` forces message-based tool calling for
 models without native tools; `automatic` prefers native calls and otherwise
 uses JSON, while `native` requires native support. The selected mode is saved

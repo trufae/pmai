@@ -318,8 +318,20 @@ extension AgentRuntime {
         state.request = currentRequest(state.request, for: pid)
         await budget.update(limits: state.request.limits)
         let callRequest = state.request
+        let model =
+          providers[callRequest.provider].map {
+            resolvedModel(callRequest.model, for: $0)
+          } ?? callRequest.model
+        let window = contextWindow(
+          provider: callRequest.provider, model: model, options: callRequest.options)
+        let outputThreshold =
+          window.map {
+            min(
+              callRequest.autocompact.isEnabled ? callRequest.autocompact.tokens : Int.max,
+              Self.inputTokenBudget(window: $0, options: callRequest.options))
+          } ?? callRequest.autocompact.tokens
         let suggestedOutputBytes = ToolExecutionContext.suggestedOutputBytes(
-          contextTokens: callRequest.autocompact.tokens, usedTokens: usedTokens,
+          contextTokens: outputThreshold, usedTokens: usedTokens,
           toolCalls: calls.count)
         let execution = ToolExecutionContext(
           run: context, modelTurn: modelTurn, suggestedOutputBytes: suggestedOutputBytes)

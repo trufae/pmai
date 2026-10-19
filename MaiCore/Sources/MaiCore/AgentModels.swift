@@ -680,6 +680,8 @@ public enum ResponseFormat: Codable, Equatable, Sendable {
 public struct GenerationOptions: Codable, Equatable, Sendable {
   public var temperature: Double?
   public var maxOutputTokens: Int?
+  /// Total model context, including its reply. Harness-only; never sent as an API option.
+  public var contextWindowTokens: Int?
   /// A `ReasoningEffort` name (`automatic`, `disabled`, `minimal` … `max`), which the runtime turns into a
   /// system prompt section and a provider into the fields its API family
   /// understands; or a provider's own value, sent as `reasoning_effort` as it
@@ -694,6 +696,7 @@ public struct GenerationOptions: Codable, Equatable, Sendable {
   public init(
     temperature: Double? = nil,
     maxOutputTokens: Int? = nil,
+    contextWindowTokens: Int? = nil,
     reasoningEffort: String? = nil,
     reasoningGuidance: String? = nil,
     includeStreamUsage: Bool = true,
@@ -701,6 +704,7 @@ public struct GenerationOptions: Codable, Equatable, Sendable {
   ) {
     self.temperature = temperature
     self.maxOutputTokens = maxOutputTokens
+    self.contextWindowTokens = contextWindowTokens.flatMap { $0 > 0 ? $0 : nil }
     self.reasoningEffort = reasoningEffort
     self.reasoningGuidance = reasoningGuidance
     self.includeStreamUsage = includeStreamUsage
@@ -708,7 +712,8 @@ public struct GenerationOptions: Codable, Equatable, Sendable {
   }
 
   private enum CodingKeys: String, CodingKey {
-    case temperature, maxOutputTokens, reasoningEffort, reasoningGuidance, includeStreamUsage
+    case temperature, maxOutputTokens, contextWindowTokens, reasoningEffort, reasoningGuidance,
+      includeStreamUsage
     case additional
   }
 
@@ -717,6 +722,7 @@ public struct GenerationOptions: Codable, Equatable, Sendable {
     self.init(
       temperature: try container.decodeIfPresent(Double.self, forKey: .temperature),
       maxOutputTokens: try container.decodeIfPresent(Int.self, forKey: .maxOutputTokens),
+      contextWindowTokens: try container.decodeIfPresent(Int.self, forKey: .contextWindowTokens),
       reasoningEffort: try container.decodeIfPresent(String.self, forKey: .reasoningEffort),
       reasoningGuidance: try container.decodeIfPresent(String.self, forKey: .reasoningGuidance),
       includeStreamUsage: try container.decodeIfPresent(Bool.self, forKey: .includeStreamUsage)

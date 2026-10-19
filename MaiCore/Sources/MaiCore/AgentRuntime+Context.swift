@@ -49,51 +49,14 @@ extension AgentRuntime {
     let selected = Set(selection)
     let transcript = state.transcript
     let latestUserID = transcript.last(where: { $0.role == .user })?.id
-    let prompt = AgentCompactionPrompt.render(
-      transcript: AgentCompactionPrompt.transcript(
-        of: transcript.filter { selected.contains($0.id) || $0.id == latestUserID }),
-      focus: focus,
-      template: compactionTemplate)
-    return try await compactText(prompt: prompt, state: &state)
-  }
-
-  /// Shared inference plumbing; durable compaction and smart context have
-  /// separate prompts and only durable compaction edits the transcript.
-  func compactText(prompt: String, state: inout RunState) async throws -> String {
-    var base = state.request
-    base.messages = [.user(prompt)]
-    var inference = try taskRequest(.compact, from: base)
-    guard let provider = providers[inference.provider] else {
-      throw AgentRuntimeError.providerNotRegistered(inference.provider)
-    }
-    inference.model = resolvedModel(inference.model, for: provider)
-    var messages = inference.messages
-    if let effort = ReasoningEffort.promptSection(for: inference.options) {
-      insertSystem(effort, into: &messages)
-    }
-    let providerRequest = ProviderRequest(
-      model: inference.model,
-      messages: messages,
-      tools: [],
-      toolChoice: .none,
-      responseFormat: .text,
-      options: inference.options,
-      stream: false,
-      sessionID: state.request.sessionID)
-    let call = try await complete(
-      providerRequest,
-      with: provider, retry: inference.retry, budget: state.budget,
-      context: state.context, pid: state.pid, emit: state.emit
-    ) { _ in }
-    await recordModelCall(call, provider: provider.descriptor.id, request: providerRequest)
-    let usage = call.usage(for: messages)
-    state.totalUsage = state.totalUsage.merging(usage)
-    await supervisor.note(state.pid, usage: state.totalUsage)
-    await state.budget.record(tokens: usage.totalTokens)
-    let text = MessageContentFilter.textWithoutReasoning(from: call.response.message.text)
-      .trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty else { throw CompactionError.emptySummary }
-    return text
+    let source = AgentCompactionPrompt.transcript(
+      of: transcript.filter { selected.contains($0.id) || $0.id == latestUserID })
+    let template = compactionTemplate
+    return try await compactText(
+      source: source,
+      render: {
+        AgentCompactionPrompt.render(transcript: $0, focus: focus, template: template)
+      }, state: &state)
   }
 
   func applyPendingInput(to state: inout RunState) async throws {
@@ -170,18 +133,38 @@ extension AgentRuntime {
   }
 
   /// Returns true when a decision requires another loop boundary.
-  func autocompact(_ state: inout RunState) async throws -> Bool {
+  func autocompact(
+    _ state: inout RunState, requiredThreshold: Int? = nil, preparedTokens: Int? = nil
+  ) async throws -> Bool {
     // A conversation past the agent's autocompact threshold is folded here,
     // before the limits are checked, so a run that pauses next hands its
     // host the smaller transcript too. Tools mode reduces only the model's
     // view of tool output, leaving the conversation itself intact.
     if state.request.autocompact.isEnabled && !state.skipAutocompaction
-      && state.request.context != .tools
+      && (state.request.context != .tools || requiredThreshold != nil)
     {
-      let estimate = state.estimatedTokens
-      if estimate >= state.request.autocompact.tokens,
+      let model =
+        providers[state.request.provider].map {
+          resolvedModel(state.request.model, for: $0)
+        } ?? state.request.model
+      let window = contextWindow(
+        provider: state.request.provider, model: model, options: state.request.options)
+      let windowThreshold = window.map {
+        Self.inputTokenBudget(window: $0, options: state.request.options) * 3 / 4
+      }
+      let threshold = max(
+        1,
+        min(
+          state.request.autocompact.tokens, requiredThreshold ?? windowThreshold ?? Int.max))
+      let estimate = preparedTokens ?? state.estimatedTokens
+      let recentBudget =
+        window != nil || requiredThreshold != nil
+        ? min(state.request.autocompact.recentTokenBudget, threshold / 4)
+        : state.request.autocompact.recentTokenBudget
+      if estimate >= threshold,
         let selection = AgentAutocompaction.selection(
-          in: state.transcript, preservingRecentTokens: state.request.autocompact.recentTokenBudget,
+          in: state.transcript,
+          preservingRecentTokens: recentBudget,
           activeTaskID: state.activeTaskID)
       {
         var prunedTranscript = state.transcript
@@ -193,7 +176,7 @@ extension AgentRuntime {
           decision = try await approvalHandler.decideCompaction(
             AutocompactionRequest(
               run: state.context, estimatedTokens: estimate,
-              threshold: state.request.autocompact.tokens,
+              threshold: threshold,
               pruning: pruning))
           try Task.checkCancellation()
         } catch {
@@ -266,16 +249,6 @@ extension AgentRuntime {
       }
     }
     return false
-  }
-
-  private enum CompactionError: LocalizedError {
-    case emptySummary
-
-    var errorDescription: String? {
-      switch self {
-      case .emptySummary: "the model returned an empty summary"
-      }
-    }
   }
 
   /// Adds a system message after configured instructions and before the

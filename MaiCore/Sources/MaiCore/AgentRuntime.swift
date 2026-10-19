@@ -18,6 +18,8 @@ public actor AgentRuntime {
   /// Covers the tiny interval after a host starts a task but before the run
   /// has installed its request in this actor.
   var pendingReconfigurations: [AgentPID: AgentRequest] = [:]
+  /// Limits learned from rejected requests are scoped to the exact backend and model.
+  var contextWindows: [ProviderID: [String: Int]] = [:]
   var registeredMCPs: [String: RegisteredMCP] = [:]
   var configuredToolGroups: [ToolGroupDefinition] = []
   var internetAccess = InternetAccessPolicy()
@@ -221,6 +223,19 @@ public actor AgentRuntime {
         let turn = try await prepareTurn(
           concreteDefinitions: listedDefinitions(in: concreteDefinitions, request: state.request),
           definitions: definitions, state: &state)
+        if let window = contextWindow(
+          provider: turn.provider.descriptor.id, model: turn.request.model,
+          options: turn.request.options),
+          Self.contextTokens(turn.request)
+            >= Self.inputTokenBudget(window: window, options: turn.request.options),
+          try await autocompact(
+            &state,
+            requiredThreshold: Self.inputTokenBudget(window: window, options: turn.request.options)
+              * 3 / 4,
+            preparedTokens: Self.contextTokens(turn.request))
+        {
+          continue
+        }
         // Context preparation spends tokens too; claim only conversation turns.
         if let interruption = await budget.claimModelTurn() {
           return await finishRun(state, interruption: interruption)
@@ -249,7 +264,7 @@ public actor AgentRuntime {
     }
   }
 
-  private func finishRun(
+  func finishRun(
     _ state: RunState, response: ProviderResponse? = nil,
     interruption: AgentRunInterruption? = nil
   ) async -> AgentResult {

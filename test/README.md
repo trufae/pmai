@@ -207,6 +207,12 @@ state to check model routing, prompt edits, and history preservation:
 
     python3 test/repl-recap-smoke.py MaiCore/.build/debug/pmai
 
+The small-context smoke test compacts a saved chat larger than a hard 32k
+provider window, checks `/set ctx.window` persistence, and verifies that a
+failure partway through chunking preserves the original history:
+
+    python3 test/repl-small-context-smoke.py MaiCore/.build/debug/pmai
+
 The smart-context smoke test checks `ctx.strategy=smart`, skipped reductions for
 small tasks, compact-model routing for large history, prompt editing, and saved
 history across resumed turns:

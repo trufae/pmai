@@ -71,8 +71,11 @@ struct AgentToolResultContext {
   }
 
   static func prompt(for candidates: [Candidate], in messages: [AgentMessage]) -> String {
-    let task = AgentCompactionPrompt.transcript(of: messages.filter { $0.role == .user })
-    let outputs = candidates.enumerated().map { index, candidate in
+    prompt(outputs: transcript(for: candidates), in: messages)
+  }
+
+  static func transcript(for candidates: [Candidate]) -> String {
+    candidates.enumerated().map { index, candidate in
       var evidence: [AgentMessage] = []
       if let call = candidate.call {
         evidence.append(AgentMessage(role: .assistant, content: [.toolCall(call)]))
@@ -82,6 +85,10 @@ struct AgentToolResultContext {
         + AgentSmartContextPrompt.render(
           messages: evidence, template: "{{transcript}}")
     }.joined(separator: "\n\n")
+  }
+
+  static func prompt(outputs: String, in messages: [AgentMessage]) -> String {
+    let task = AgentCompactionPrompt.transcript(of: messages.filter { $0.role == .user })
     return """
       Summarize only the tool results below for continuing the user's task.
       Return a JSON object mapping each result number to its concise summary string, for example {"0":"...","1":"..."}. No Markdown fences or other text.

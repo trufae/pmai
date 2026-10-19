@@ -468,6 +468,7 @@ private func smartRuntime(_ primary: SmartContextProvider, _ compact: SmartConte
   try await runtime.register(
     agent: AgentDefinition(
       id: "summarizer", instructions: "Summarize accurately", provider: "compact", model: "tiny",
+      options: .init(contextWindowTokens: 128_000),
       retry: .none))
   await runtime.configureTaskAgents(.init(compact: "summarizer"))
   return runtime

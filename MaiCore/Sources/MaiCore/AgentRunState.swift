@@ -19,6 +19,7 @@ extension AgentRuntime {
     var lastUsage: TokenUsage?
     var lastUsageMessageCount = 0
     var skipAutocompaction = false
+    var contextRecoveryAttempts = 0
     var modelTurns = 0
     var toolCalls = 0
     /// A specialist hands results to the primary for the remainder of a reply.

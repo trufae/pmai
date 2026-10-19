@@ -179,6 +179,14 @@ extension AgentRuntime {
           "model.error", context: context, provider: provider.descriptor.id.rawValue,
           attempt: attempt + 1, value: error.localizedDescription)
         if error is ProviderPolicyError { throw error }
+        if let overflow = ProviderContextLimitError.recognize(error) {
+          if let window = overflow.contextWindowTokens {
+            let previous = contextWindows[provider.descriptor.id]?[providerRequest.model] ?? window
+            contextWindows[provider.descriptor.id, default: [:]][providerRequest.model] = min(
+              previous, window)
+          }
+          throw overflow
+        }
         let delayStarted = ContinuousClock.now
         let policy = liveRequests[pid]?.retry ?? retry
         guard attempt < policy.attempts else { throw error }
@@ -226,6 +234,22 @@ extension AgentRuntime {
         if turn.usesTextToolProtocol, case .textDelta = event { return }
         await emit(.provider(context, event))
       }
+    } catch let error as ProviderContextLimitError {
+      guard state.contextRecoveryAttempts < 2 else { throw error }
+      state.contextRecoveryAttempts += 1
+      let window = contextWindow(
+        provider: turn.provider.descriptor.id, model: turn.request.model,
+        options: turn.request.options)
+      let threshold =
+        window.map {
+          Self.inputTokenBudget(window: $0, options: turn.request.options) * 3 / 4
+        } ?? max(1, Self.contextTokens(turn.request) / 2)
+      let before = AgentTranscriptEditor.characterCount(of: state.transcript)
+      _ = try await autocompact(
+        &state, requiredThreshold: threshold,
+        preparedTokens: max(threshold, Self.contextTokens(turn.request)))
+      guard AgentTranscriptEditor.characterCount(of: state.transcript) < before else { throw error }
+      return nil
     } catch let error as any ProviderToolCallError
       where error.toolCallRepairMessage != nil && !turn.definitions.isEmpty
       && !turn.toolBudgetExhausted
