@@ -18,7 +18,9 @@ func redactionRules() throws {
   let text = "Alice ALICE alice: 4111-1111-1111-1111 and 5555 5555 5555 4444; account=secret"
   let filtered = redactor.redact(text)
   #expect(!filtered.lowercased().contains("alice"))
-  #expect(!filtered.contains("4111") && !filtered.contains("5555") && !filtered.contains("secret"))
+  // Opaque UUID placeholders can contain four-digit fragments of a card number.
+  #expect(!filtered.contains("4111-1111-1111-1111"))
+  #expect(!filtered.contains("5555 5555 5555 4444") && !filtered.contains("secret"))
   #expect(redactor.unredact(filtered) == text)
   #expect(redactor.redact(text) == filtered)
   #expect(redactor.redact(filtered) == filtered)
@@ -155,7 +157,8 @@ func redactionToolBoundary(variant: String, approval: ToolApprovalMode) async th
   for request in requests {
     let wire = String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
     #expect(!wire.lowercased().contains("alice"))
-    #expect(!wire.contains("4111") && !wire.contains("5555"))
+    #expect(!wire.contains("4111-1111-1111-1111"))
+    #expect(!wire.contains("5555-5555-5555-4444"))
   }
   #expect(result.transcript.flatMap(\.toolCalls).first?.arguments == call.arguments)
   #expect(result.transcript.flatMap(\.toolResults).first?.text.contains("Alice") == true)
