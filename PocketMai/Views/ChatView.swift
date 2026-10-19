@@ -3653,6 +3653,7 @@ private struct ChatComposer: View {
       return
     }
     guard canSubmitDraft else { return }
+    composerFocused = false
     let submitted = draftText
     let submittedAttachments = isBTW ? [] : pendingAttachments
     let submittedConversationID = conversationID
@@ -3677,6 +3678,7 @@ private struct ChatComposer: View {
 
   private func queueDraft(in conversationID: UUID) {
     guard canQueueDraft else { return }
+    composerFocused = false
     let submitted = draftText
     let submittedAttachments = pendingAttachments
     draftText = ""
