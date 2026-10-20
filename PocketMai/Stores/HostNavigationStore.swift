@@ -144,6 +144,14 @@ final class HostNavigationStore {
     selectedHost?.pinnedFolderPaths?.contains(cwd) == true
   }
 
+  func isHostPinned(_ id: UUID) -> Bool {
+    remotes.isHostPinned(id)
+  }
+
+  func toggleHostPin(_ id: UUID) {
+    remotes.toggleHostPin(id)
+  }
+
   func toggleFolderPin(_ cwd: String) {
     guard let selectedHostID else { return }
     remotes.toggleFolderPin(hostID: selectedHostID, cwd: cwd)

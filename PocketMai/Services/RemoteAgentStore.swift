@@ -19,6 +19,7 @@ struct RemoteAgentBookmark: Codable, Identifiable {
   var connectionProtocol: ACPRemoteProtocol?
   var revision: UUID?
   var backend: RemoteAgentBackend?
+  var isPinned: Bool?
   var pinnedFolderPaths: [String]?
   var pinnedConversationIDs: [UUID]?
 
@@ -259,6 +260,16 @@ final class RemoteAgentStore {
     connections.first { $0.id == id }
   }
 
+  func isHostPinned(_ id: UUID) -> Bool {
+    host(id)?.isPinned == true
+  }
+
+  func toggleHostPin(_ id: UUID) {
+    guard let index = connections.firstIndex(where: { $0.id == id }) else { return }
+    connections[index].isPinned = connections[index].isPinned == true ? nil : true
+    do { try save() } catch { self.error = error.localizedDescription }
+  }
+
   func setConnectionFailed(_ failed: Bool, for id: UUID) {
     if failed {
       failedHostIDs.insert(id)
@@ -367,6 +378,7 @@ final class RemoteAgentStore {
         connection.messages = []
       }
       if let index = hosts.firstIndex(where: { $0.url == connection.url }) {
+        if connection.isPinned == true { hosts[index].isPinned = true }
         hosts[index].conversations =
           (hosts[index].conversations ?? []) + (connection.conversations ?? [])
         for path in connection.pinnedFolderPaths ?? []

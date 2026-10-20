@@ -30,12 +30,26 @@ struct HostsView: View {
   var body: some View {
     List {
       row(title: "Local", subtitle: "This PocketMai", image: "iphone", id: nil)
-      let online = hosts.remotes.connections.filter { connectionState($0.id) == .connected }
-      let offline = hosts.remotes.connections.filter { connectionState($0.id) != .connected }
+      let pinned = hosts.remotes.connections.filter { hosts.isHostPinned($0.id) }
+      let online = hosts.remotes.connections.filter {
+        !hosts.isHostPinned($0.id) && connectionState($0.id) == .connected
+      }
+      let offline = hosts.remotes.connections.filter {
+        !hosts.isHostPinned($0.id) && connectionState($0.id) != .connected
+      }
       if !hosts.remotes.connections.isEmpty { groupSeparator }
-      ForEach(online) { host in remoteRow(host) }
-      if !online.isEmpty && !offline.isEmpty { groupSeparator }
-      ForEach(offline) { host in remoteRow(host) }
+      if !pinned.isEmpty {
+        SidebarConversationGroupHeader(title: "Pinned")
+        ForEach(pinned) { host in remoteRow(host) }
+      }
+      if !online.isEmpty {
+        SidebarConversationGroupHeader(title: "Online")
+        ForEach(online) { host in remoteRow(host) }
+      }
+      if !offline.isEmpty {
+        SidebarConversationGroupHeader(title: "Offline")
+        ForEach(offline) { host in remoteRow(host) }
+      }
     }
     .environment(\.defaultMinListRowHeight, 0)
     .listStyle(.plain).scrollContentBackground(.hidden)
@@ -113,6 +127,10 @@ struct HostsView: View {
     .contextMenu {
       Button("Rename", systemImage: "character.cursor.ibeam") { renaming = host }
       Button("Edit Host", systemImage: "pencil") { editing = host }
+      Button(
+        hosts.isHostPinned(host.id) ? "Unpin Host" : "Pin to Top",
+        systemImage: hosts.isHostPinned(host.id) ? "pin.slash" : "pin"
+      ) { hosts.toggleHostPin(host.id) }
       Divider()
       if hosts.selectedHostID == host.id || hosts.isConnected(host.id) {
         Button("Disconnect", systemImage: "network.slash") { hosts.disconnect(host.id) }
@@ -137,7 +155,8 @@ struct HostsView: View {
       title: title, subtitle: subtitle, systemImage: image,
       iconColor: iconColor,
       isSelected: selected,
-      connectionStatus: state?.rawValue
+      connectionStatus: state?.rawValue,
+      isPinned: id.map { hosts.isHostPinned($0) } ?? false
     ) {
       onSelectHost(id)
     }

@@ -45,6 +45,26 @@ final class RemoteHostTests: XCTestCase {
     XCTAssertTrue(try restored.makeClient(token: "test", cwd: "/work") is ACPClient)
   }
 
+  func testHostPinPersistsAndSurvivesReimport() throws {
+    let url = try XCTUnwrap(URL(string: "wss://host.example/acp"))
+    try withStore([]) { store, file in
+      let id = try store.add(
+        ACPRemoteConnection(name: "Host", url: url, token: "token", cwd: "/work"))
+      store.toggleHostPin(id)
+      XCTAssertTrue(store.isHostPinned(id))
+
+      XCTAssertEqual(
+        try store.add(ACPRemoteConnection(name: "Renamed", url: url, token: "token", cwd: "/work")),
+        id)
+      XCTAssertTrue(store.isHostPinned(id))
+
+      let reloaded = RemoteAgentStore(file: file)
+      XCTAssertTrue(reloaded.isHostPinned(id))
+      reloaded.toggleHostPin(id)
+      XCTAssertFalse(reloaded.isHostPinned(id))
+    }
+  }
+
   func testOpenTunnelProfileImportAndApprovedCredentialPersist() throws {
     var profile = try ACPRemoteConnection(
       name: "Workstation", url: XCTUnwrap(URL(string: "wss://pmai.tunnel.example/acp")),
