@@ -139,6 +139,8 @@ public actor ACPServer {
       return try await listSessions(params: params)
     case ACP.Method.sessionManage:
       return try await manageSession(params: params)
+    case ACP.Method.sessionRunTool:
+      return try await runTool(params: params)
     case ACP.Method.workspaceFiles:
       return try await workspaceFiles(params: params)
     case "ping":
@@ -241,6 +243,28 @@ public actor ACPServer {
     }
     let response = try await files.request(request)
     return try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(response))
+  }
+
+  /// Executes the terminal's one explicit `run_shell` call. It deliberately
+  /// does not create a session or add terminal history to a conversation.
+  private func runTool(params: JSONValue?) async throws -> JSONValue {
+    let cwd = try directory(params: params)
+    guard let tool = params?.objectValue?["tool"]?.objectValue,
+      tool["name"]?.stringValue == MaiRunTool.name,
+      var arguments = tool["arguments"]?.objectValue
+    else {
+      throw JSONRPCError.invalidParams("Only an enabled run_shell tool call is supported.")
+    }
+    // The client selects a served project, rather than getting to replace the
+    // run tool's starting directory inside its argument object.
+    arguments["cwd"] = .string(cwd.path)
+    let call = ToolCall(
+      id: UUID().uuidString.lowercased(), name: MaiRunTool.name, arguments: .object(arguments))
+    let scope = AgentExecutionScope(sessionID: "terminal:\(call.id)", workingDirectory: cwd)
+    let result = try await AgentExecutionScope.$current.withValue(scope) {
+      try await runtime.runTool(call, for: agent)
+    }
+    return try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(result))
   }
 
   private func listSessions(params: JSONValue?) async throws -> JSONValue {

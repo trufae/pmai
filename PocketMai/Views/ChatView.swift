@@ -122,6 +122,7 @@ struct ChatView: View {
   let onNewChat: () -> Void
   var onRemoteChatReady: (RemoteAgentChat) -> Void = { _ in }
   var onBrowseFiles: () -> Void = {}
+  var onShowRemoteTerminal: (RemoteAgentBookmark, String) -> Void = { _, _ in }
 
   var body: some View {
     chatViewWithAlerts
@@ -518,7 +519,16 @@ struct ChatView: View {
         conversationID: currentConversation?.id,
         conversation: remoteChat?.presentation,
         coordinator: exportCoordinator)
+      Divider()
       Button("Files…", systemImage: "folder", action: onBrowseFiles)
+      if let remoteChat {
+        Button("Terminal…", systemImage: "terminal") {
+          onShowRemoteTerminal(remoteChat.bookmark, remoteChat.conversation.cwd)
+        }
+        .disabled(
+          remoteChat.bookmark.backend == .openCode || remoteChat.bookmark.requiresApproval == true
+            || store.settings.isOffline)
+      }
       Divider()
       Button("Chat Settings", systemImage: "slider.horizontal.3", action: showChatSettings)
       if let remoteChat {

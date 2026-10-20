@@ -17,6 +17,9 @@ public enum ACP {
     public static let sessionLoad = "session/load"
     public static let sessionList = "session/list"
     public static let sessionManage = "_pmai/session/manage"
+    /// Runs an already-enabled host tool at a workspace path without creating
+    /// or changing a chat session. This is used by PocketMai's remote terminal.
+    public static let sessionRunTool = "_pmai/session/run_tool"
     public static let workspaceFiles = "_pmai/workspace/files"
     public static let sessionPrompt = "session/prompt"
     public static let sessionCancel = "session/cancel"

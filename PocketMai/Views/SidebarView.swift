@@ -2247,14 +2247,22 @@ struct SidebarFolderActions: View {
   let togglePin: () -> Void
   let browseFiles: () -> Void
   var browseFilesDisabled = false
+  var openTerminal: (() -> Void)? = nil
+  var terminalDisabled = false
   var path: String? = nil
 
   var body: some View {
     Button(isPinned ? "Unpin Folder" : "Pin to Top", systemImage: isPinned ? "pin.slash" : "pin",
       action: togglePin)
+    Divider()
     Button("Browse Files…", systemImage: "folder", action: browseFiles)
       .disabled(browseFilesDisabled)
+    if let openTerminal {
+      Button("Open Terminal…", systemImage: "terminal", action: openTerminal)
+        .disabled(terminalDisabled)
+    }
     if let path {
+      Divider()
       Button("Copy Path", systemImage: "doc.on.doc") { UIPasteboard.general.string = path }
     }
   }

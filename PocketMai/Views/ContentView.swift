@@ -13,6 +13,7 @@ struct ContentView: View {
   @StateObject private var settingsStoreObservation = AppStoreViewObservation(scope: .settings)
   @State private var showingSettings = false
   @State private var fileBrowserLocation: FileBrowserLocation?
+  @State private var remoteTerminalLocation: RemoteTerminalLocation?
   @State private var showingHistory = false
   @State private var isHistoryPanelMounted = false
   @State private var showingFolders = false
@@ -55,7 +56,8 @@ struct ContentView: View {
                   hosts.selectFolder(cwd)
                   setDrawerDepth(1, animation: historyPanelAnimation)
                 }, isVisible: showingFolders && !showingHosts,
-                onBrowseFiles: { browseFiles(cwd: $0) })
+                onBrowseFiles: { browseFiles(cwd: $0) },
+                onOpenTerminal: { showRemoteTerminal(cwd: $0) })
             } else {
               ConversationFoldersView(
                 storeObservation: sidebarStoreObservation,
@@ -181,7 +183,8 @@ struct ContentView: View {
                   }
                 },
                 onRemoteChatReady: { hosts.activeChat = $0 },
-                onBrowseFiles: { browseFiles() }
+                onBrowseFiles: { browseFiles() },
+                onShowRemoteTerminal: { host, cwd in showRemoteTerminal(host: host, cwd: cwd) }
               )
               .equatable()
               .id(
@@ -240,6 +243,9 @@ struct ContentView: View {
     }
     .sheet(item: $fileBrowserLocation) { location in
       FileBrowserView(location: location).environmentObject(store)
+    }
+    .sheet(item: $remoteTerminalLocation) { location in
+      RemoteTerminalView(location: location).environmentObject(store)
     }
     .sheet(item: pendingConversationImportFileBinding) { file in
       NavigationStack {
@@ -435,6 +441,23 @@ struct ContentView: View {
         fileBrowserLocation = .local(resolved.context)
       }
     } catch { store.errorMessage = error.localizedDescription }
+  }
+
+  private func showRemoteTerminal(host: RemoteAgentBookmark? = nil, cwd: String? = nil) {
+    guard let host = host ?? hosts.selectedHost else { return }
+    guard host.backend != .openCode else {
+      store.errorMessage = "The remote terminal is not available for OpenCode hosts yet."
+      return
+    }
+    guard host.requiresApproval != true else {
+      store.errorMessage = "Approve this device on the remote host first."
+      return
+    }
+    guard !store.settings.isOffline else {
+      store.errorMessage = "Turn off Airplane Mode in Settings to open a remote terminal."
+      return
+    }
+    remoteTerminalLocation = .init(host: host, cwd: cwd ?? hosts.selectedFolderID ?? host.cwd)
   }
 
   private func toggleHistoryPanel() {

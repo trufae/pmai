@@ -178,6 +178,22 @@ public actor ACPClient {
     return try JSONDecoder().decode(WorkspaceFileResponse.self, from: JSONEncoder().encode(result))
   }
 
+  /// Runs one enabled host tool without opening an ACP chat session. The
+  /// caller chooses `cwd`; the server validates it against its served roots.
+  public func runTool(cwd: String, call: ToolCall) async throws -> ToolResult {
+    guard !busy else { throw JSONRPCError.invalidParams("An ACP operation is already running") }
+    busy = true
+    defer { busy = false }
+    let peer = try await connectedPeer()
+    let result = try await peer.request(
+      ACP.Method.sessionRunTool,
+      params: .object([
+        "cwd": .string(cwd),
+        "tool": .object(["name": .string(call.name), "arguments": call.arguments]),
+      ]), timeout: MaiRunConfiguration.maximumTimeout + 10)
+    return try JSONDecoder().decode(ToolResult.self, from: JSONEncoder().encode(result))
+  }
+
   /// A title renames a durable session; nil deletes it without creating a new session.
   public func manageSession(_ id: String, cwd: String, title: String?) async throws {
     guard !busy else { throw JSONRPCError.invalidParams("Session is busy") }

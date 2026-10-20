@@ -1,6 +1,47 @@
 import Foundation
 
 extension AgentRuntime {
+  /// Runs one enabled host tool at a person's explicit request, without a
+  /// model turn or an approval round trip. Hosts should expose this only from
+  /// deliberate UI actions such as a terminal, never from generated content.
+  public func runTool(_ call: ToolCall, for agent: AgentDefinition) async throws -> ToolResult {
+    let request = request(for: agent, messages: [])
+    let definitions = try visibleDefinitions(for: request)
+    let name = AgentProcessTools.canonicalName(call.name)
+    guard let definition = definitions.first(where: { $0.name == name }),
+      let tool = tools[definition.name]
+    else {
+      return ToolResult(
+        callID: call.id,
+        text: AgentTooling.unavailableToolError(name: call.name, tools: definitions),
+        isError: true)
+    }
+    guard internetAccess.allows(definition, in: availableToolGroups()) else {
+      return ToolResult(
+        callID: call.id, text: "Error: internet tools are disabled while offline.", isError: true)
+    }
+
+    var arguments = ToolSchemaValidator.repairArgumentKeys(call.arguments, definition: definition)
+    arguments = ToolSchemaValidator.coerceBooleans(arguments, schema: definition.inputSchema)
+    if let error = ToolSchemaValidator.validate(arguments: arguments, definition: definition) {
+      return ToolResult(callID: call.id, text: "Error: \(error).", isError: true)
+    }
+
+    await recordToolUse(definition.name)
+    let context = ToolExecutionContext(
+      run: .init(runID: UUID(), parentRunID: nil, agentID: agent.id, depth: 0), modelTurn: 0)
+    do {
+      let output = try await tool.call(arguments: arguments, context: context)
+      return ToolResult(
+        callID: call.id, content: output.content, structuredContent: output.structuredContent,
+        isError: output.isError, importance: definition.annotations.resultImportance)
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch {
+      return ToolResult(callID: call.id, text: "Error: \(error.localizedDescription)", isError: true)
+    }
+  }
+
   private func reviewToolApproval(
     _ approval: ApprovalRequest, request: AgentRequest,
     budget: RunBudget, emit: @escaping AgentEventHandler

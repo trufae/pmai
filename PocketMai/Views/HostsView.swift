@@ -171,6 +171,7 @@ struct RemoteFoldersView: View {
   let onSelectFolder: (String) -> Void
   var isVisible = true
   var onBrowseFiles: (String) -> Void = { _ in }
+  var onOpenTerminal: (String) -> Void = { _ in }
   @State private var filter = ""
   @AppStorage("remoteFolderSortOrder") private var sortOrder: RemoteFolderSortOrder = .updated
   @State private var showingSortOptions = false
@@ -203,6 +204,9 @@ struct RemoteFoldersView: View {
             togglePin: { hosts.toggleFolderPin(folder.cwd) },
             browseFiles: { onBrowseFiles(folder.cwd) },
             browseFilesDisabled: hosts.selectedHost?.requiresApproval == true
+              || hosts.selectedHost?.backend == .openCode || isOffline,
+            openTerminal: { onOpenTerminal(folder.cwd) },
+            terminalDisabled: hosts.selectedHost?.requiresApproval == true
               || hosts.selectedHost?.backend == .openCode || isOffline,
             path: folder.cwd)
         }

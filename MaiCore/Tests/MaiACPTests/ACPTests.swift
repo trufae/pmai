@@ -72,6 +72,45 @@ func acpWorkspaceFiles() async throws {
       atPath: temporary.appendingPathComponent("pmai-upload-\(abandoned)").path))
 }
 
+@Test("ACP runs an enabled shell tool in the selected workspace")
+func acpRunTool() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent("acp-run-tool-\(UUID())")
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+
+  let runtime = AgentRuntime()
+  try await runtime.register(tool: MaiRunTool(configuration: .init()))
+  let (transport, workerTransport) = PipeTransport.pair()
+  let server = ACPServer(
+    runtime: runtime,
+    agent: .init(
+      id: "terminal", instructions: "", provider: "unused", model: "unused",
+      toolNames: [MaiRunTool.name]),
+    bridge: ACPPermissionBridge(), workspaceRoot: root)
+  let serving = Task { await server.serve(on: workerTransport) }
+  let peer = JSONRPCPeer(transport: transport)
+  await peer.start()
+  _ = try await peer.request(
+    ACP.Method.initialize,
+    params: .object(["protocolVersion": .integer(ACP.protocolVersion)]), timeout: 5)
+
+  let response = try await peer.request(
+    ACP.Method.sessionRunTool,
+    params: .object([
+      "cwd": .string(root.path),
+      "tool": .object([
+        "name": .string(MaiRunTool.name),
+        "arguments": .object(["script": .string("printf %s \"$PWD\"")]),
+      ]),
+    ]), timeout: 5)
+  let result = try JSONDecoder().decode(ToolResult.self, from: JSONEncoder().encode(response))
+  #expect(!result.isError)
+  #expect(URL(fileURLWithPath: result.text).lastPathComponent == root.lastPathComponent)
+
+  await peer.close()
+  await serving.value
+}
+
 /// An in-memory transport pair, so two peers can talk without spawning a
 /// process. Whatever one end sends, the other end receives.
 private final class PipeTransport: JSONRPCTransport, @unchecked Sendable {
