@@ -223,8 +223,11 @@ final class TTSPlayer: NSObject, ObservableObject {
 
   private func beginSpeaking(_ requestedSpeech: QueuedSpeech) {
     var speech = requestedSpeech
-    if speech.voice.provider == .openAICompatible, speech.openAIEndpoint?.isDirectOpenAI == true {
-      let chunks = OpenAISpeech.textChunks(speech.text)
+    if speech.voice.provider == .openAICompatible,
+      speech.openAIEndpoint?.isDirectOpenAI == true || speech.openAIEndpoint?.isDirectGroq == true
+    {
+      let chunks = OpenAISpeech.textChunks(
+        speech.text, maximumUTF8Bytes: speech.openAIEndpoint?.isDirectGroq == true ? 200 : 2_000)
       speech.text = chunks.first ?? speech.text
       queuedSpeech.insert(
         contentsOf: chunks.dropFirst().map { text in

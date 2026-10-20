@@ -1044,12 +1044,38 @@ enum OpenAICompatibleProvider {
 
   static func fetchVoices(endpoint: OpenAIEndpoint) async throws -> [String] {
     guard endpoint.kind != .systemOne, endpoint.kind != .chatGPT else { return [] }
-    if endpoint.isDirectOpenAI { return endpoint.speechVoices(discovered: []) }
+    if endpoint.isDirectOpenAI || endpoint.isDirectGroq {
+      return endpoint.speechVoices(discovered: [])
+    }
     do {
       return try await coreProvider(endpoint: endpoint).availableVoices()
     } catch {
       throw mapCoreError(error)
     }
+  }
+
+  static func transcribeAudio(
+    endpoint: OpenAIEndpoint, fileURL: URL, model: String,
+    language: String?
+  ) async throws -> String {
+    if let size = try fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+      size > AudioMultipart.maximumBytes
+    {
+      throw AudioAPIError.invalidRequest("Audio upload exceeds 25 MiB.")
+    }
+    let audio = try Data(contentsOf: fileURL, options: .mappedIfSafe)
+    return try await coreProvider(endpoint: endpoint).transcribeAudio(
+      audio: audio,
+      filename: fileURL.lastPathComponent, model: model, language: language)
+  }
+
+  static func forwardAudio(
+    endpoint: OpenAIEndpoint, path: String, body: Data,
+    contentType: String, streaming: Bool = false
+  ) async throws -> AudioAPIResponse {
+    try await coreProvider(endpoint: endpoint).audioRequest(
+      endpoint: path,
+      body: body, contentType: contentType, streaming: streaming)
   }
 
   static func synthesizeSpeechAudio(

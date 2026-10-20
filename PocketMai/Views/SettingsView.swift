@@ -996,6 +996,35 @@ struct SettingsView: View {
       .font(.caption)
       .foregroundStyle(.secondary)
 
+    Picker("File / Recorded Audio Provider", selection: settingsBinding(\.transcriptionEndpointID))
+    {
+      Text("On-device Apple Speech").tag(Optional<UUID>.none)
+      ForEach(
+        store.settings.openAIEndpoints.filter { $0.isEnabled && $0.kind == .openAICompatible }
+      ) { endpoint in
+        Text(endpoint.displayName).tag(Optional(endpoint.id))
+      }
+    }
+    .disabled(store.settings.isOffline)
+    if let id = store.settings.transcriptionEndpointID {
+      TextField("Transcription Model", text: settingsBinding(\.transcriptionModel))
+        .textInputAutocapitalization(.never).autocorrectionDisabled()
+      if store.settings.openAIEndpoints.first(where: { $0.id == id })?.isDirectGroq == true {
+        Menu("Choose Transcription Model") {
+          ForEach(GroqSpeech.transcriptionModels, id: \.self) { model in
+            Button(model) {
+              store.settings.transcriptionModel = model
+              store.saveSettings()
+            }
+          }
+        }
+      }
+      Text(
+        "Recordings and imported audio are sent to this provider. Voice input records a file before transcription. Airplane Mode blocks provider transcription."
+      )
+      .font(.caption).foregroundStyle(.secondary)
+    }
+
     Toggle(
       "Allow Apple Server Transcription",
       isOn: Binding(
@@ -1053,6 +1082,7 @@ struct SettingsView: View {
       }
     }
     .pickerStyle(.menu)
+    .disabled(store.settings.transcriptionEndpointID != nil)
     .onChange(of: store.settings.conversation.speechRecognitionBackend) { _, backend in
       guard backend != .nativeIOSSpeechTranscriber,
         store.settings.conversation.backgroundVoiceListeningEnabled
@@ -2644,9 +2674,9 @@ private struct RoleVoiceSettingsView: View {
           )
           .textInputAutocapitalization(.never)
           .autocorrectionDisabled()
-          if selectedOpenAIEndpoint?.isDirectOpenAI == true {
+          if let models = selectedSpeechModels, !models.isEmpty {
             Menu("Choose Speech Model") {
-              ForEach(OpenAISpeech.models, id: \.self) { model in
+              ForEach(models, id: \.self) { model in
                 Button(model) { speechModelBinding.wrappedValue = model }
               }
             }
@@ -2893,12 +2923,19 @@ private struct RoleVoiceSettingsView: View {
 
   private var voiceDiscoveryKey: [String] {
     [
+      selectedOpenAIEndpoint?.effectiveSpeechModel ?? "",
       effectiveVoice.provider.rawValue,
       selectedOpenAIEndpoint?.id.uuidString ?? "",
       selectedOpenAIEndpoint?.connectionSignature ?? "",
       String(selectedOpenAIEndpoint?.isEnabled == true),
       String(voiceRefreshGeneration),
     ]
+  }
+
+  private var selectedSpeechModels: [String]? {
+    guard let endpoint = selectedOpenAIEndpoint else { return nil }
+    let available = store.endpointModels[endpoint.id] ?? []
+    return endpoint.availableSpeechModels.filter { available.isEmpty || available.contains($0) }
   }
 
   private var speechModelBinding: Binding<String> {

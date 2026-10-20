@@ -369,7 +369,13 @@ final class LiveVoiceSession: ObservableObject {
   ) throws
     -> LiveSpeechRecognitionEngine
   {
+    if let store { policy.configure(store.settings) }
     if let recognitionEngineFactory { return try recognitionEngineFactory(settings, policy) }
+    if policy.providerEndpoint != nil {
+      return NativeIOSSpeechRecognitionEngine(
+        localeIdentifier: settings.speechRecognitionLanguageIdentifier,
+        silenceTimeoutSeconds: settings.silenceTimeoutSeconds, policy: policy)
+    }
     switch settings.speechRecognitionBackend {
     case .nativeIOSSpeechTranscriber:
       guard #available(iOS 26.0, *) else {

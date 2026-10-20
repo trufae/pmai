@@ -4204,6 +4204,7 @@ private struct ChatComposer: View {
         try? FileManager.default.removeItem(at: staged)
       }
       do {
+        store.speechTranscriptionPolicy.configure(store.settings)
         let transcript = try await AudioTranscriptionService.transcribe(
           fileURL: staged,
           localeIdentifier: localeIdentifier,
@@ -4588,6 +4589,7 @@ private struct ChatComposer: View {
     attachmentConversionMessage = "Transcribing audio..."
     defer { attachmentConversionMessage = nil }
     do {
+      store.speechTranscriptionPolicy.configure(store.settings)
       let transcript = try await AudioTranscriptionService.transcribe(
         fileURL: url,
         localeIdentifier: store.settings.conversation.speechRecognitionLanguageIdentifier,

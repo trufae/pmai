@@ -2473,13 +2473,24 @@ extension OpenAIEndpoint {
     kind == .openAICompatible && URL(string: baseURL).map(OpenAISpeech.isDirectEndpoint) == true
   }
 
+  var isDirectGroq: Bool {
+    kind == .openAICompatible && URL(string: baseURL).map(GroqSpeech.isDirectEndpoint) == true
+  }
+
+  var availableSpeechModels: [String] {
+    isDirectOpenAI ? OpenAISpeech.models : (isDirectGroq ? GroqSpeech.speechModels : [])
+  }
+
   var effectiveSpeechModel: String {
     let model = speechModel.trimmingCharacters(in: .whitespacesAndNewlines)
-    return model.isEmpty && isDirectOpenAI ? OpenAISpeech.defaultModel : model
+    if !model.isEmpty { return model }
+    if isDirectGroq { return GroqSpeech.defaultSpeechModel }
+    return isDirectOpenAI ? OpenAISpeech.defaultModel : model
   }
 
   func speechVoices(discovered: [String]) -> [String] {
     guard kind == .openAICompatible else { return [] }
+    if isDirectGroq { return GroqSpeech.voices(for: effectiveSpeechModel) }
     return isDirectOpenAI ? OpenAISpeech.voices(for: effectiveSpeechModel) : discovered
   }
 
@@ -3225,6 +3236,8 @@ struct AppSettings: Codable, Equatable, Sendable {
     InternetAccessPolicy(airplaneModeEnabled: airplaneModeEnabled, networkAvailable: networkAvailable)
   }
   var isOffline: Bool { internetAccessPolicy.isOffline }
+  var transcriptionEndpointID: UUID?
+  var transcriptionModel: String = ""
   var allowAppleServerTranscription: Bool = false
   var attachmentImageSize: AttachmentImageSize = .prompt
   var mlxMaxKVSize: MLXKVCacheSize = .auto
@@ -3418,6 +3431,7 @@ struct AppSettings: Codable, Equatable, Sendable {
     case redaction
     case followUps, background
     case appearance, conversation, documentExport, renderMarkdownInChat, renderMarkdownImagesInChat
+    case transcriptionEndpointID, transcriptionModel
     case airplaneModeEnabled, allowAppleServerTranscription, attachmentImageSize
     case mlxMaxKVSize, mlxAutoCompact
     case openAPIServer
@@ -3544,6 +3558,8 @@ struct AppSettings: Codable, Equatable, Sendable {
       (try? c.decode(Bool.self, forKey: .renderMarkdownImagesInChat)) ?? true
     airplaneModeEnabled =
       (try? c.decode(Bool.self, forKey: .airplaneModeEnabled)) ?? false
+    transcriptionEndpointID = try? c.decode(UUID.self, forKey: .transcriptionEndpointID)
+    transcriptionModel = (try? c.decode(String.self, forKey: .transcriptionModel)) ?? ""
     allowAppleServerTranscription =
       (try? c.decode(Bool.self, forKey: .allowAppleServerTranscription)) ?? false
     attachmentImageSize =

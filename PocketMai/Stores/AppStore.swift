@@ -2,6 +2,7 @@ import Combine
 import Foundation
 import MaiCore
 import MaiDocuments
+import MaiOpenAI
 import SwiftUI
 import UIKit
 import WidgetKit
@@ -217,7 +218,7 @@ final class AppStore: ObservableObject {
   @Published var selectedConversationIDs: Set<UUID> = []
   @Published var settings: AppSettings {
     didSet {
-      speechTranscriptionPolicy.allowsServerRecognition = settings.appleServerTranscriptionAllowed
+      speechTranscriptionPolicy.configure(settings)
       if oldValue.isOffline != settings.isOffline { handleInternetAvailabilityChange() }
     }
   }
@@ -2187,6 +2188,7 @@ final class AppStore: ObservableObject {
   }
 
   func startOpenAPIServer() {
+    speechTranscriptionPolicy.configure(settings)
     let port = OpenAPIServerSettings.clampedPort(settings.openAPIServer.port)
     if settings.openAPIServer.port != port {
       settings.openAPIServer.port = port
@@ -2259,6 +2261,9 @@ final class AppStore: ObservableObject {
           stream: body.stream ?? true)
         let output = try await completeOpenAPIServerRequest(input)
         return ollamaGenerateResponse(output: output, stream: input.stream)
+      case ("POST", "/v1/audio/speech"), ("POST", "/v1/audio/transcriptions"),
+        ("GET", "/v1/voices"):
+        return try await audioServerResponse(request)
       case ("GET", "/v1/models"):
         return openAIModelsResponse()
       case ("POST", "/v1/chat/completions"):
@@ -2274,6 +2279,13 @@ final class AppStore: ObservableObject {
       default:
         return .error(statusCode: 404, message: "Unsupported endpoint \(request.path).")
       }
+    } catch let error as MaiOpenAI.OpenAICompatibleProviderError {
+      if case .httpError(let statusCode, let message) = error {
+        return .error(statusCode: statusCode, message: message)
+      }
+      return .error(statusCode: 502, message: error.localizedDescription)
+    } catch let error as AudioAPIError {
+      return .error(statusCode: 400, message: error.localizedDescription)
     } catch let error as DecodingError {
       return .error(statusCode: 400, message: "Invalid JSON request: \(error.localizedDescription)")
     } catch let error as OpenAPIServerAppError {
@@ -2525,14 +2537,9 @@ final class AppStore: ObservableObject {
   private func openAIModelsResponse() -> OpenAPIServerHTTPResponse {
     .json([
       "object": "list",
-      "data": [
-        [
-          "id": openAPIServerModelName(),
-          "object": "model",
-          "created": Int(Date().timeIntervalSince1970),
-          "owned_by": "pocketmai",
-        ]
-      ],
+      "data":
+        [["id": openAPIServerModelName(), "object": "model", "owned_by": "pocketmai"]]
+        + audioServerModels(),
     ])
   }
 

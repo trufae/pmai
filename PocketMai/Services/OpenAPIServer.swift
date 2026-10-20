@@ -48,6 +48,7 @@ struct OpenAPIServerHTTPResponse: Sendable {
   var reason: String
   var headers: [String: String]
   var body: Data
+  var stream: AsyncThrowingStream<Data, Error>? = nil
 
   static func json(
     _ object: Any,
@@ -82,15 +83,19 @@ struct OpenAPIServerHTTPResponse: Sendable {
     json(["error": message], statusCode: statusCode)
   }
 
-  func serialized() -> Data {
+  func serialized(chunked: Bool = true) -> Data {
     var responseHeaders = headers
-    responseHeaders["Content-Length"] = "\(body.count)"
+    if stream == nil {
+      responseHeaders["Content-Length"] = "\(body.count)"
+    } else if chunked {
+      responseHeaders["Transfer-Encoding"] = "chunked"
+    }
     responseHeaders["Connection"] = "close"
     responseHeaders["Access-Control-Allow-Origin"] = "*"
     responseHeaders["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
     responseHeaders["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
 
-    var head = "HTTP/1.1 \(statusCode) \(reason)\r\n"
+    var head = "\(chunked ? "HTTP/1.1" : "HTTP/1.0") \(statusCode) \(reason)\r\n"
     for (key, value) in responseHeaders.sorted(by: { $0.key < $1.key }) {
       head += "\(key): \(value)\r\n"
     }
@@ -106,6 +111,11 @@ struct OpenAPIServerHTTPResponse: Sendable {
     case 200: return "OK"
     case 204: return "No Content"
     case 400: return "Bad Request"
+    case 401: return "Unauthorized"
+    case 403: return "Forbidden"
+    case 413: return "Payload Too Large"
+    case 429: return "Too Many Requests"
+    case 502: return "Bad Gateway"
     case 404: return "Not Found"
     case 405: return "Method Not Allowed"
     case 409: return "Conflict"
@@ -246,7 +256,9 @@ private final class OpenAPIServerConnection: @unchecked Sendable {
   private let onFinish: @Sendable (UUID) -> Void
   private var buffer = Data()
   private var didFinish = false
+  private var supportsChunked = true
   private var didCleanup = false
+  private var requestTask: Task<Void, Never>?
 
   init(
     id: UUID,
@@ -276,6 +288,7 @@ private final class OpenAPIServerConnection: @unchecked Sendable {
   }
 
   func cancel() {
+    requestTask?.cancel()
     connection.cancel()
     finish()
   }
@@ -292,15 +305,17 @@ private final class OpenAPIServerConnection: @unchecked Sendable {
       do {
         if let request = try self.parsedRequestIfComplete() {
           self.didFinish = true
-          Task {
+          self.requestTask = Task {
             let response = await self.requestHandler(request)
-            self.send(response)
+            await self.send(response)
           }
           return
         }
       } catch {
         self.didFinish = true
-        self.send(.error(statusCode: 400, message: error.localizedDescription))
+        self.requestTask = Task {
+          await self.send(.error(statusCode: 400, message: error.localizedDescription))
+        }
         return
       }
 
@@ -313,27 +328,57 @@ private final class OpenAPIServerConnection: @unchecked Sendable {
     }
   }
 
-  private func send(_ response: OpenAPIServerHTTPResponse) {
-    let data = response.serialized()
+  private func sendPart(_ data: Data) async throws {
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+      connection.send(
+        content: data,
+        completion: .contentProcessed { error in
+          if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+        })
+    }
+  }
+
+  private func send(_ response: OpenAPIServerHTTPResponse) async {
+    do {
+      try await sendPart(response.serialized(chunked: supportsChunked))
+      if let stream = response.stream {
+        for try await chunk in stream {
+          try Task.checkCancellation()
+          guard !chunk.isEmpty else { continue }
+          if supportsChunked {
+            var framed = Data("\(String(chunk.count, radix: 16))\r\n".utf8)
+            framed.append(chunk)
+            framed.append(Data("\r\n".utf8))
+            try await sendPart(framed)
+          } else {
+            try await sendPart(chunk)
+          }
+        }
+        if supportsChunked { try await sendPart(Data("0\r\n\r\n".utf8)) }
+      }
+    } catch { /* Headers may already be sent; close an interrupted audio stream. */  }
     queue.async { [weak self] in
-      guard let self else { return }
-      self.connection.send(content: data, completion: .contentProcessed { [weak self] _ in
-        self?.connection.cancel()
-        self?.finish()
-      })
+      self?.connection.cancel()
+      self?.finish()
     }
   }
 
   private func finish() {
     guard !didCleanup else { return }
     didCleanup = true
+    requestTask?.cancel()
+    requestTask = nil
     didFinish = true
     onFinish(id)
   }
 
   private func parsedRequestIfComplete() throws -> OpenAPIServerHTTPRequest? {
     let delimiter = Data("\r\n\r\n".utf8)
-    guard let headerRange = buffer.range(of: delimiter) else { return nil }
+    guard buffer.count <= 26 * 1024 * 1024 else { throw OpenAPIServerParseError.invalidRequest }
+    guard let headerRange = buffer.range(of: delimiter) else {
+      guard buffer.count <= 65536 else { throw OpenAPIServerParseError.invalidRequest }
+      return nil
+    }
     let headerData = buffer.subdata(in: 0..<headerRange.lowerBound)
     guard let headerText = String(data: headerData, encoding: .utf8) else {
       throw OpenAPIServerParseError.invalidRequest
@@ -343,10 +388,11 @@ private final class OpenAPIServerConnection: @unchecked Sendable {
       throw OpenAPIServerParseError.invalidRequest
     }
     let requestParts = requestLine.split(separator: " ", maxSplits: 2).map(String.init)
-    guard requestParts.count >= 2 else {
+    guard requestParts.count == 3 else {
       throw OpenAPIServerParseError.invalidRequest
     }
 
+    supportsChunked = requestParts[2] != "HTTP/1.0"
     var headers: [String: String] = [:]
     for line in lines.dropFirst() {
       guard let colon = line.firstIndex(of: ":") else { continue }
@@ -358,7 +404,12 @@ private final class OpenAPIServerConnection: @unchecked Sendable {
       }
     }
 
-    let contentLength = Int(headers["content-length"] ?? "") ?? 0
+    guard headers["transfer-encoding"] == nil,
+      let contentLength = Int(headers["content-length"] ?? "0"),
+      contentLength >= 0, contentLength <= 25 * 1024 * 1024
+    else {
+      throw OpenAPIServerParseError.invalidRequest
+    }
     let bodyStart = headerRange.upperBound
     let bodyEnd = bodyStart + contentLength
     guard buffer.count >= bodyEnd else { return nil }

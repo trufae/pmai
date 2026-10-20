@@ -1,10 +1,53 @@
 import AVFoundation
 import Foundation
+import MaiOpenAI
 import Speech
 import UniformTypeIdentifiers
 
 @MainActor
 final class SpeechTranscriptionPolicy {
+  var providerEndpoint: OpenAIEndpoint?
+  var providerModel = ""
+  var providerRequests: [UUID: Task<String, Error>] = [:]
+  var isOffline = false {
+    didSet { if isOffline { for task in providerRequests.values { task.cancel() } } }
+  }
+
+  func configure(_ settings: AppSettings) {
+    allowsServerRecognition = settings.appleServerTranscriptionAllowed
+    isOffline = settings.isOffline
+    providerEndpoint = settings.transcriptionEndpointID.flatMap { id in
+      settings.openAIEndpoints.first { $0.id == id && $0.isEnabled && $0.kind == .openAICompatible }
+    }
+    providerModel = settings.transcriptionModel
+  }
+
+  func providerTranscript(fileURL: URL, locale: String) async throws -> String? {
+    guard let endpoint = providerEndpoint else { return nil }
+    guard !isOffline else {
+      throw AudioAPIError.invalidRequest("Provider transcription is unavailable in Airplane Mode.")
+    }
+    let chosen = providerModel.trimmingCharacters(in: .whitespacesAndNewlines)
+    let model =
+      chosen.isEmpty
+      ? (endpoint.isDirectGroq ? GroqSpeech.defaultTranscriptionModel : "whisper-1") : chosen
+    let language = locale.replacingOccurrences(of: "_", with: "-").split(separator: "-").first.map(
+      String.init)
+    let id = UUID()
+    let task = Task {
+      try await OpenAICompatibleProvider.transcribeAudio(
+        endpoint: endpoint,
+        fileURL: fileURL, model: model, language: language)
+    }
+    providerRequests[id] = task
+    defer { providerRequests[id] = nil }
+    return try await withTaskCancellationHandler {
+      try await task.value
+    } onCancel: {
+      task.cancel()
+    }
+  }
+
   var allowsServerRecognition = false {
     didSet {
       guard !allowsServerRecognition else { return }
@@ -61,9 +104,15 @@ enum AudioTranscriptionService {
   /// Recognises the speech in `fileURL` and returns the transcript.
   @MainActor
   static func transcribe(
-    fileURL: URL, localeIdentifier: String, policy: SpeechTranscriptionPolicy
+    fileURL: URL, localeIdentifier: String, policy: SpeechTranscriptionPolicy,
+    useProvider: Bool = true
   ) async throws -> String {
     try Task.checkCancellation()
+    if useProvider,
+      let text = try await policy.providerTranscript(fileURL: fileURL, locale: localeIdentifier)
+    {
+      return text
+    }
     let identifier = localeIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
     let locale = identifier.isEmpty ? Locale.current : Locale(identifier: identifier)
     let name = fileURL.lastPathComponent
