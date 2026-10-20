@@ -44,6 +44,12 @@ cursor restoration, and exclusion of modal replies from input history.
 Sample coding tasks that pmai should solve, plus a harness that records every
 model call so the runs can be studied for wasted turns and tokens.
 
+For repeated baseline/candidate comparisons, held-out cases, full evidence
+bundles, and resumable experiments, see [harness refinement](../doc/harness-refinement.md).
+Preview the included example without model calls:
+
+    python3 test/bench/refine.py --spec test/bench/examples/context.json --output test/results/context-study --dry-run
+
 Session persistence regression checks use temporary projects and configurations:
 
     make repl-build
@@ -290,7 +296,7 @@ Provider setup follows the [Codex custom-provider documentation](https://learn.c
 and [Claude gateway configuration](https://code.claude.com/docs/en/llm-gateway-connect).
 Offline accounting checks run with:
 
-    python3 -m unittest discover -s test/bench -p test_proxy.py
+    python3 -m unittest discover -s test/bench -p 'test_*.py'
 
 ## Cases
 

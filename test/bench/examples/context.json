@@ -1,0 +1,9 @@
+{
+  "baseline": {"context": "cache"},
+  "candidates": {
+    "tool-summaries": {"context": "tools"},
+    "smart-context": {"context": "smart"}
+  },
+  "cases": ["02-fix-failing-test", "11-multi-step", "13-big-log"],
+  "holdout": ["03-add-flag", "12-config-edit"]
+}

@@ -90,7 +90,7 @@ def main():
         passed = list(pool.map(run, suites[args.profile]))
     if args.profile == 'full':
         subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'test/bench',
-                        '-p', 'test_proxy.py'], cwd=ROOT, check=True)
+                        '-p', 'test_*.py'], cwd=ROOT, check=True)
         print('External prerequisites: run the external profile for Ghostty and tailcat.', flush=True)
     sys.exit(not all(passed))
 
