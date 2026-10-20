@@ -37,10 +37,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Swift
-        uses: SwiftyLab/setup-swift@v1.14.1
+        uses: SwiftyLab/setup-swift@d60245579ea3836a3f2fa65ebbe1e8891d577c76 # v1.14.2
         with:
           swift-version: swift-${{ env.SWIFT_VERSION }}-RELEASE
           check-latest: true
@@ -89,7 +89,7 @@ jobs:
           unzip -l "$asset"
 
       - name: Upload CLI artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: pmai-${{ matrix.target }}
           path: pmai-${{ matrix.target }}.zip
@@ -115,11 +115,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # The Static Linux SDK must exactly match the host Swift toolchain.
       - name: Set up Swift and Static Linux SDK
-        uses: SwiftyLab/setup-swift@v1.14.1
+        uses: SwiftyLab/setup-swift@d60245579ea3836a3f2fa65ebbe1e8891d577c76 # v1.14.2
         with:
           swift-version: swift-${{ env.SWIFT_VERSION }}-RELEASE
           check-latest: true
@@ -153,7 +153,7 @@ jobs:
           unzip -l "$asset"
 
       - name: Upload CLI artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: pmai-${{ matrix.target }}
           path: pmai-${{ matrix.target }}.zip
@@ -167,10 +167,10 @@ jobs:
       PMAI_FORWIROH_PLATFORM: native
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Swift
-        uses: SwiftyLab/setup-swift@v1.14.1
+        uses: SwiftyLab/setup-swift@d60245579ea3836a3f2fa65ebbe1e8891d577c76 # v1.14.2
         with:
           swift-version: swift-${{ env.SWIFT_VERSION }}-RELEASE
           check-latest: true
@@ -213,7 +213,7 @@ jobs:
           unzip -l pmai-android-arm64.zip
 
       - name: Upload Android CLI artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: pmai-android-arm64
           path: pmai-android-arm64.zip
@@ -224,7 +224,7 @@ jobs:
     runs-on: macos-26
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -240,7 +240,7 @@ jobs:
           xcodebuild -version
 
       - name: Set up Swift
-        uses: SwiftyLab/setup-swift@v1.14.1
+        uses: SwiftyLab/setup-swift@d60245579ea3836a3f2fa65ebbe1e8891d577c76 # v1.14.2
         with:
           swift-version: swift-${{ env.SWIFT_VERSION }}-RELEASE
           check-latest: true
@@ -291,7 +291,7 @@ jobs:
           unzip -tqq "$asset"
 
       - name: Upload IPA artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: pocketmai-ipa
           path: PocketMai-*.ipa
@@ -303,7 +303,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download release artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: release-assets
           pattern: "*"
@@ -315,7 +315,7 @@ jobs:
           sha256sum pmai-*.zip > SHA256SUMS
 
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           name: PocketMai ${{ github.ref_name }}
           generate_release_notes: true
