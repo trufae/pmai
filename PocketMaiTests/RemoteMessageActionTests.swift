@@ -7,6 +7,99 @@ import XCTest
 
 @MainActor
 final class RemoteMessageActionTests: XCTestCase {
+  func testSharedComposerSendsAttachmentsAfterReconnectAndLeavesLocalChatUntouched() async throws {
+    try await withChat { chat, _, fixture, setOffline in
+      try await self.withLocalStore { local in
+        let original = local.currentConversation
+        let session = ChatInputSession(store: local, remoteChat: chat)
+        let attachments: [ChatAttachment] = [
+          .textFile(filename: "notes.txt", text: "Document <content>"),
+          .textFile(filename: "voice.txt", text: "Recorded voice note"),
+        ]
+        chat.disconnect()
+        setOffline(true)
+        let rejected = await session.send(prompt: "Read these", attachments: attachments)
+        XCTAssertFalse(rejected)
+        XCTAssertTrue(fixture.prompts.isEmpty)
+        setOffline(false)
+
+        let sent = await session.send(prompt: "Read these", attachments: attachments)
+        XCTAssertTrue(sent)
+        try await self.waitForIdle(chat)
+        let prompt = try XCTUnwrap(fixture.prompts.first)
+        XCTAssertEqual(fixture.prompts.count, 1)
+        XCTAssertTrue(prompt.hasPrefix("Read these\n\n"))
+        XCTAssertTrue(prompt.contains("filename=\"notes.txt\""))
+        XCTAssertTrue(prompt.contains("Document &lt;content&gt;"))
+        XCTAssertTrue(prompt.contains("Recorded voice note"))
+        XCTAssertEqual(session.conversation?.id, chat.conversation.id)
+        XCTAssertEqual(session.conversation?.messages.last?.text, "New answer")
+        XCTAssertEqual(local.currentConversation, original)
+        chat.messages.append(.init(role: "thought", text: "Private reasoning"))
+        chat.messages.append(.init(role: "tool", text: "Tool output"))
+        XCTAssertEqual(session.assistantMessages.last?.text, "New answer")
+        XCTAssertFalse(session.assistantMessages.contains { $0.text == "Private reasoning" })
+
+        let attachmentOnly = await session.send(prompt: "", attachments: attachments)
+        XCTAssertTrue(attachmentOnly)
+        try await self.waitForIdle(chat)
+        XCTAssertEqual(fixture.prompts.count, 2)
+        XCTAssertEqual(local.currentConversation, original)
+      }
+    }
+  }
+
+  func testLiveVoiceSubmitsToRemoteAndPausesOnRemoteFailure() async throws {
+    for streamTTS in [false, true] {
+      try await withChat { chat, _, fixture, _ in
+        try await self.withLocalStore { local in
+          local.settings.conversation.streamTTS = streamTTS
+          let original = local.currentConversation
+          let engine = ComposerSpeechEngine()
+          let voice = LiveVoiceSession(recognitionEngineFactory: { _, _ in engine })
+          let player = TTSPlayer()
+          defer { voice.stop(cancelResponse: false) }
+          fixture.rejectNextPrompt()
+          voice.start(store: local, ttsPlayer: player, remoteChat: chat)
+          for _ in 0..<500 {
+            if voice.state == .listening { break }
+            try await Task.sleep(for: .milliseconds(10))
+          }
+          XCTAssertEqual(voice.state, .listening)
+          engine.onTranscript?(
+            .init(text: "Use the remote host", isFinal: true, languageIdentifier: "en-US"))
+          for _ in 0..<500 {
+            if voice.state == .paused { break }
+            try await Task.sleep(for: .milliseconds(10))
+          }
+          XCTAssertEqual(voice.state, .paused)
+          XCTAssertEqual(voice.errorMessage, "This API key has expired.")
+          XCTAssertEqual(fixture.prompts.count, 1)
+          XCTAssertTrue(fixture.prompts.first?.contains("Input mode: voice") == true)
+          XCTAssertTrue(fixture.prompts.first?.contains("Use the remote host") == true)
+          XCTAssertEqual(local.currentConversation, original)
+          voice.stop(cancelResponse: true)
+          XCTAssertFalse(chat.connected)
+          XCTAssertEqual(local.currentConversation, original)
+        }
+      }
+    }
+  }
+
+  private func withLocalStore(_ body: @MainActor (AppStore) async throws -> Void) async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = AppStore(persistence: PersistenceStore(localBaseURL: root), monitorNetwork: false)
+    for _ in 0..<500 {
+      if store.hasLoadedPersistedSettings { break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTAssertTrue(store.hasLoadedPersistedSettings)
+    await store.loadStoredConversationsForSearch()
+    store.newConversation()
+    try await body(store)
+  }
+
   func testRetryRestartAndResubmitUseTheRemoteSessionAndPersistItsHistory() async throws {
     try await withChat { chat, store, fixture, setOffline in
       let selected = try XCTUnwrap(chat.messages.first { $0.text == "Second" })
@@ -223,6 +316,17 @@ final class RemoteMessageActionTests: XCTestCase {
     XCTAssertTrue(chat.connected, chat.error ?? "Not connected")
     try await body(chat, store, fixture, { offline = $0 })
   }
+}
+
+@MainActor
+private final class ComposerSpeechEngine: LiveSpeechRecognitionEngine {
+  var onTranscript: ((LiveSpeechRecognitionEvent) -> Void)?
+  var onError: ((Error) -> Void)?
+  let languageIdentifier = "en-US"
+  let recordingFilename: String? = nil
+  func start() async throws {}
+  func finalize() async throws -> LiveSpeechRecognitionEvent? { nil }
+  func stop() {}
 }
 
 private final class RemoteActionEndpoint: @unchecked Sendable {

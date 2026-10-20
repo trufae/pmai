@@ -2909,13 +2909,17 @@ private struct ChatComposer: View {
   @State private var focusComposerAfterTextFieldRefresh = false
   @State private var draftPersistenceTask: Task<Void, Never>?
 
+  private var inputSession: ChatInputSession {
+    ChatInputSession(store: store, remoteChat: remoteChat)
+  }
+
   private var hasDraftText: Bool {
     !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
   }
 
   private var canSubmitDraft: Bool {
-    (!isResponding || isBTW) && hasDraftText
-      && (remoteChat == nil || remoteChat?.canSubmit == true)
+    (!isResponding || isBTW) && (hasDraftText || !pendingAttachments.isEmpty)
+      && inputSession.canSubmit
   }
 
   private var isBTW: Bool {
@@ -2996,10 +3000,7 @@ private struct ChatComposer: View {
   }
 
   private var canAttachImage: Bool {
-    remoteChat == nil
-      && ProviderVisionSupport.supportsImageInput(
-        conversation: store.currentConversation,
-        settings: store.settings)
+    inputSession.supportsImages
   }
 
   private var canTakePicture: Bool {
@@ -3045,7 +3046,7 @@ private struct ChatComposer: View {
       ) { pending in
         Button("Attach HTML Source") { attachHTML(pending, mode: .source) }
         Button("Convert to Markdown") { attachHTML(pending, mode: .markdown) }
-        if store.currentConversation != nil {
+        if remoteChat == nil, store.currentConversation != nil {
           Button("Copy to \(currentWorkspaceName)") { copyHTMLToWorkspace(pending) }
         }
         Button("Cancel", role: .cancel) { dismissHTMLImport() }
@@ -3112,6 +3113,7 @@ private struct ChatComposer: View {
     }
     .onDisappear {
       persistDraftTextNow()
+      if remoteChat != nil { liveVoiceSession.stop(cancelResponse: false) }
     }
     .onChange(of: scenePhase) { _, phase in
       guard phase == .background else { return }
@@ -3355,10 +3357,10 @@ private struct ChatComposer: View {
             if canQueueDraft {
               queueDraft(in: id)
             } else {
-              if let remoteChat { remoteChat.disconnect() } else { store.cancelResponse(in: id) }
+              inputSession.cancelResponse()
             }
           } else {
-            liveVoiceSession.start(store: store, ttsPlayer: ttsPlayer)
+            liveVoiceSession.start(store: store, ttsPlayer: ttsPlayer, remoteChat: remoteChat)
           }
         } label: {
           Image(systemName: trailingActionSystemImage)
@@ -3370,7 +3372,7 @@ private struct ChatComposer: View {
         }
         .adaptiveGlassButtonStyle()
         .disabled(
-          !isResponding && (liveVoiceSession.isActive || (remoteChat != nil && !canSubmitDraft))
+          !isResponding && (liveVoiceSession.isActive || !inputSession.canSubmit)
         )
         .help(trailingActionHelp)
       }
@@ -3428,7 +3430,7 @@ private struct ChatComposer: View {
     if isResponding {
       return canQueueDraft ? "arrow.up.to.line" : "stop.fill"
     }
-    if canSubmitDraft || remoteChat != nil {
+    if hasDraftText || !pendingAttachments.isEmpty {
       return "arrow.up"
     }
     return "mic"
@@ -3447,7 +3449,7 @@ private struct ChatComposer: View {
     if isResponding {
       return canQueueDraft ? "Queue message" : "Stop response"
     }
-    if canSubmitDraft || remoteChat != nil {
+    if hasDraftText || !pendingAttachments.isEmpty {
       return "Send message"
     }
     return "Start voice conversation"
@@ -3664,22 +3666,19 @@ private struct ChatComposer: View {
     guard canSubmitDraft else { return }
     composerFocused = false
     let submitted = draftText
-    let submittedAttachments = isBTW ? [] : pendingAttachments
+    let submittedIsBTW = isBTW
+    let submittedAttachments = submittedIsBTW ? [] : pendingAttachments
     let submittedConversationID = conversationID
-    if !isBTW { pendingAttachments = [] }
+    if !submittedIsBTW { pendingAttachments = [] }
     draftText = ""
     persistDraftTextNow("", for: submittedConversationID)
-    if let remoteChat {
-      remoteChat.send(submitted)
-      return
-    }
     Task {
-      let sent = await store.send(
+      let sent = await inputSession.send(
         prompt: submitted,
         attachments: submittedAttachments)
       if !sent {
         draftText = submitted
-        if BTWQuestion.prompt(in: submitted) == nil { pendingAttachments = submittedAttachments }
+        if !submittedIsBTW { pendingAttachments = submittedAttachments }
         persistDraftTextNow(submitted, for: submittedConversationID)
       }
     }
@@ -3869,11 +3868,12 @@ private struct ChatComposer: View {
         action: openWorkingFolderMenu)
       Divider()
       toolMenuButton(
-        "Attach Document", systemImage: "doc.text", isEnabled: remoteChat == nil,
+        "Attach Document", systemImage: "doc.text",
         action: openTextFileImporter)
-      toolMenuButton("Record voice", systemImage: "mic.badge.plus", isEnabled: remoteChat == nil) {
+      toolMenuButton("Record voice", systemImage: "mic.badge.plus") {
         showingToolMenu = false
-        liveVoiceSession.startVoiceNoteAttachment(store: store, ttsPlayer: ttsPlayer)
+        liveVoiceSession.startVoiceNoteAttachment(
+          store: store, ttsPlayer: ttsPlayer, remoteChat: remoteChat)
       }
       toolMenuButton("Add images", systemImage: "photo", isEnabled: canAttachImage) {
         showingToolMenu = false

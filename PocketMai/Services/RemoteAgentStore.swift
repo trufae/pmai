@@ -750,15 +750,17 @@ final class RemoteAgentChat {
     }
   }
 
-  func send(_ text: String) {
+  @discardableResult
+  func send(_ text: String) -> Bool {
     let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty, canSubmit else { return }
+    guard !text.isEmpty, canSubmit else { return false }
     guard !connected else {
       submit(text)
-      return
+      return true
     }
     pendingPrompt = text
     connect()
+    return true
   }
 
   private func submit(_ text: String, rewind: Bool = false, boundary: String? = nil) {

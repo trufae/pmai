@@ -106,6 +106,21 @@ final class LiveVoiceSession: ObservableObject {
 
   private weak var store: AppStore?
   private weak var ttsPlayer: TTSPlayer?
+  private var remoteChat: RemoteAgentChat?
+  private let recognitionEngineFactory:
+    ((ConversationSettings, SpeechTranscriptionPolicy) throws -> LiveSpeechRecognitionEngine)?
+
+  init(
+    recognitionEngineFactory:
+      ((ConversationSettings, SpeechTranscriptionPolicy) throws -> LiveSpeechRecognitionEngine)? =
+      nil
+  ) {
+    self.recognitionEngineFactory = recognitionEngineFactory
+  }
+
+  private var inputSession: ChatInputSession? {
+    store.map { ChatInputSession(store: $0, remoteChat: remoteChat) }
+  }
   private var engine: LiveSpeechRecognitionEngine?
   private var activityTask: Task<Void, Never>?
   private var silenceTask: Task<Void, Never>?
@@ -159,14 +174,18 @@ final class LiveVoiceSession: ObservableObject {
     }
   }
 
-  func start(store: AppStore, ttsPlayer: TTSPlayer) {
+  func start(store: AppStore, ttsPlayer: TTSPlayer, remoteChat: RemoteAgentChat? = nil) {
+    self.remoteChat = remoteChat
     mode = .conversation
     configure(store: store, ttsPlayer: ttsPlayer)
     ttsPlayer.stop()
     beginListening(resetTranscript: true)
   }
 
-  func startVoiceNoteAttachment(store: AppStore, ttsPlayer: TTSPlayer) {
+  func startVoiceNoteAttachment(
+    store: AppStore, ttsPlayer: TTSPlayer, remoteChat: RemoteAgentChat? = nil
+  ) {
+    self.remoteChat = remoteChat
     mode = .voiceNoteAttachment
     configure(store: store, ttsPlayer: ttsPlayer)
     ttsPlayer.stop()
@@ -210,7 +229,7 @@ final class LiveVoiceSession: ObservableObject {
     }
     errorMessage = nil
     languageIdentifier = Self.configuredLanguageIdentifier(
-      from: store.effectiveConversationSettings(for: store.currentConversation))
+      from: store.effectiveConversationSettings(for: inputSession?.conversation))
     isCommittingTurn = false
     activityTask?.cancel()
     activityTask = Task { @MainActor [weak self] in
@@ -234,12 +253,8 @@ final class LiveVoiceSession: ObservableObject {
     silenceTask?.cancel()
     silenceTask = nil
     stopRecognition()
-    if let conversationID = store?.currentConversation?.id {
-      store?.cancelVoiceover(in: conversationID)
-    }
-    if cancelResponse, let conversationID = store?.currentConversation?.id {
-      store?.cancelResponse(in: conversationID)
-    }
+    inputSession?.cancelVoiceover()
+    if cancelResponse { inputSession?.cancelResponse() }
     ttsPlayer?.stop()
     state = .idle
     mode = .conversation
@@ -258,12 +273,8 @@ final class LiveVoiceSession: ObservableObject {
 
     let draft = await finalizedDraftTranscript()
     stopRecognition()
-    if let conversationID = store?.currentConversation?.id {
-      store?.cancelVoiceover(in: conversationID)
-    }
-    if cancelResponse, let conversationID = store?.currentConversation?.id {
-      store?.cancelResponse(in: conversationID)
-    }
+    inputSession?.cancelVoiceover()
+    if cancelResponse { inputSession?.cancelResponse() }
     ttsPlayer?.stop()
     state = .idle
     mode = .conversation
@@ -314,7 +325,7 @@ final class LiveVoiceSession: ObservableObject {
     }
     state = .requestingPermission
     errorMessage = nil
-    let conversationSettings = store.effectiveConversationSettings(for: store.currentConversation)
+    let conversationSettings = store.effectiveConversationSettings(for: inputSession?.conversation)
     languageIdentifier = Self.configuredLanguageIdentifier(from: conversationSettings)
 
     do {
@@ -358,6 +369,7 @@ final class LiveVoiceSession: ObservableObject {
   ) throws
     -> LiveSpeechRecognitionEngine
   {
+    if let recognitionEngineFactory { return try recognitionEngineFactory(settings, policy) }
     switch settings.speechRecognitionBackend {
     case .nativeIOSSpeechTranscriber:
       guard #available(iOS 26.0, *) else {
@@ -498,14 +510,21 @@ final class LiveVoiceSession: ObservableObject {
     generation: Int
   ) async {
     guard let store, let ttsPlayer else { return }
-    let conversationIDBeforeSend = store.currentConversation?.id
+    guard let inputSession else { return }
+    let conversationIDBeforeSend = inputSession.conversation?.id
     // Capture the set of assistant message IDs that already exist BEFORE we
     // submit the new user turn. `store.send` returns as soon as it has
     // dispatched the assistant turn Task, which has not yet appended its
     // placeholder message — so without this snapshot the "latest assistant
     // message" is the previous turn's reply, and TTS would speak it.
     let priorAssistantIDs = priorAssistantMessageIDs()
-    let sent = await store.send(prompt: prompt, voiceRecordingFilename: voiceRecordingFilename)
+    let sent = await inputSession.send(
+      prompt: prompt, voiceRecordingFilename: voiceRecordingFilename)
+    if remoteChat != nil, let voiceRecordingFilename,
+      let url = PocketMaiDirectories.voiceRecordingURL(filename: voiceRecordingFilename)
+    {
+      try? FileManager.default.removeItem(at: url)
+    }
     guard generation == sessionGeneration else { return }
 
     if !sent {
@@ -514,7 +533,7 @@ final class LiveVoiceSession: ObservableObject {
       {
         try? FileManager.default.removeItem(at: url)
       }
-      errorMessage = store.errorMessage ?? "The voice message could not be sent."
+      errorMessage = inputSession.errorMessage ?? "The voice message could not be sent."
       transcript = visibleTranscript
       state = .paused
       isCommittingTurn = false
@@ -523,10 +542,10 @@ final class LiveVoiceSession: ObservableObject {
 
     transcript = ""
     previewMessageID = UUID()
-    let conversationID = store.currentConversation?.id ?? conversationIDBeforeSend
+    let conversationID = inputSession.conversation?.id ?? conversationIDBeforeSend
 
     if store.settings.conversation.streamTTS,
-      store.currentConversation?.voiceoverEnabled != true, let conversationID
+      !inputSession.usesVoiceover, let conversationID
     {
       await streamSpeakAssistantResponse(
         conversationID: conversationID,
@@ -534,7 +553,7 @@ final class LiveVoiceSession: ObservableObject {
         generation: generation)
       isCommittingTurn = false
       guard generation == sessionGeneration else { return }
-      if let error = ttsPlayer.errorMessage {
+      if let error = remoteChat?.error ?? ttsPlayer.errorMessage {
         errorMessage = error
         state = .paused
         return
@@ -552,7 +571,12 @@ final class LiveVoiceSession: ObservableObject {
     guard generation == sessionGeneration else { return }
 
     isCommittingTurn = false
-    if let conversationID, store.conversation(withID: conversationID)?.voiceoverEnabled == true {
+    if let error = remoteChat?.error {
+      errorMessage = error
+      state = .paused
+      return
+    }
+    if let conversationID, inputSession.usesVoiceover {
       await store.voiceover.wait(in: conversationID)
       guard generation == sessionGeneration else { return }
       state = .speaking
@@ -581,7 +605,7 @@ final class LiveVoiceSession: ObservableObject {
     state = .speaking
     ttsPlayer.speak(
       text: assistant.text,
-      voice: store.effectiveToolSettings(for: store.currentConversation).voices.assistant,
+      voice: store.effectiveToolSettings(for: inputSession.conversation).voices.assistant,
       role: .assistant,
       title: "Assistant",
       messageID: assistant.id,
@@ -613,7 +637,7 @@ final class LiveVoiceSession: ObservableObject {
         assistantID = id
         break
       }
-      if store.isResponding(in: conversationID) == false {
+      if inputSession?.isResponding(in: conversationID) != true {
         break
       }
       try? await Task.sleep(for: .milliseconds(100))
@@ -625,7 +649,7 @@ final class LiveVoiceSession: ObservableObject {
     previewMessageID = UUID()
     state = .speaking
 
-    let voice = store.effectiveToolSettings(for: store.currentConversation).voices.assistant
+    let voice = store.effectiveToolSettings(for: inputSession?.conversation).voices.assistant
     let endpoints = store.settings.isOffline ? [] : store.settings.openAIEndpoints
     ttsPlayer.dismissError()
     var consumed = 0
@@ -633,7 +657,7 @@ final class LiveVoiceSession: ObservableObject {
     while generation == sessionGeneration, !Task.isCancelled {
       let visible = currentAssistantVisibleText(id: id)
       if ttsPlayer.errorMessage != nil { break }
-      let stillResponding = store.isResponding(in: conversationID)
+      let stillResponding = inputSession?.isResponding(in: conversationID) == true
 
       if consumed > visible.count {
         consumed = visible.count
@@ -663,22 +687,21 @@ final class LiveVoiceSession: ObservableObject {
   }
 
   private func priorAssistantMessageIDs() -> Set<UUID> {
-    guard let messages = store?.currentConversation?.messages else { return [] }
-    return Set(messages.lazy.filter { $0.role == .assistant }.map(\.id))
+    Set(inputSession?.assistantMessages.map(\.id) ?? [])
   }
 
   private func currentAssistantMessageID(excluding priorIDs: Set<UUID>) -> UUID? {
-    store?.currentConversation?.messages.reversed().first(where: {
-      $0.role == .assistant && !priorIDs.contains($0.id)
+    inputSession?.assistantMessages.reversed().first(where: {
+      !priorIDs.contains($0.id)
     })?.id
   }
 
   private func currentAssistantVisibleText(id: UUID) -> String {
     guard let store else { return "" }
     let raw: String
-    if let streaming = store.streamingTextStore.currentText(for: id) {
+    if remoteChat == nil, let streaming = store.streamingTextStore.currentText(for: id) {
       raw = streaming
-    } else if let msg = store.currentConversation?.messages.first(where: { $0.id == id }) {
+    } else if let msg = inputSession?.conversation?.messages.first(where: { $0.id == id }) {
       raw = msg.text
     } else {
       raw = ""
@@ -713,7 +736,7 @@ final class LiveVoiceSession: ObservableObject {
 
   private func waitForAssistantResponse(in conversationID: UUID, generation: Int) async {
     while generation == sessionGeneration, !Task.isCancelled {
-      guard store?.isResponding(in: conversationID) == true else { return }
+      guard inputSession?.isResponding(in: conversationID) == true else { return }
       try? await Task.sleep(for: .milliseconds(150))
     }
   }
@@ -727,8 +750,8 @@ final class LiveVoiceSession: ObservableObject {
 
   private func latestSpeakableAssistantMessage(excluding priorIDs: Set<UUID>) -> ChatMessage? {
     guard
-      let message = store?.currentConversation?.messages.reversed().first(where: {
-        $0.role == .assistant && !priorIDs.contains($0.id)
+      let message = inputSession?.assistantMessages.reversed().first(where: {
+        !priorIDs.contains($0.id)
       })
     else {
       return nil
@@ -744,16 +767,12 @@ final class LiveVoiceSession: ObservableObject {
   }
 
   private func interruptAssistantIfNeeded() {
-    if let conversationID = store?.currentConversation?.id {
-      store?.cancelVoiceover(in: conversationID)
-    }
+    inputSession?.cancelVoiceover()
     if ttsPlayer?.isSpeaking == true {
       ttsPlayer?.stop()
     }
-    if let conversationID = store?.currentConversation?.id,
-      store?.isResponding(in: conversationID) == true
-    {
-      store?.cancelResponse(in: conversationID)
+    if let id = inputSession?.conversation?.id, inputSession?.isResponding(in: id) == true {
+      inputSession?.cancelResponse()
     }
   }
 
