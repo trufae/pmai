@@ -146,10 +146,19 @@ public actor OpenCodeClient: RemoteSessionClient {
     // Refresh before choosing the beginning of a reset, including messages that
     // aren't rendered by the app (compactions and other session events).
     let messages = try await refreshHistory(id, full: true)
-    guard let boundary = messageID ?? messages.first?.objectValue?["id"]?.stringValue else {
+    guard let requested = messageID ?? messages.first?.objectValue?["id"]?.stringValue else {
       return
     }
-    guard messages.contains(where: { $0.objectValue?["id"]?.stringValue == boundary }) else {
+    // Assistant content parts have display IDs like "message:0". Revert takes
+    // the enclosing message ID, not the ID of the rendered content part.
+    let exact = messages.first { $0.objectValue?["id"]?.stringValue == requested }
+    let enclosing = exact ?? messages.first { message in
+      guard let fields = message.objectValue, let id = fields["id"]?.stringValue,
+        let content = fields["content"]?.arrayValue
+      else { return false }
+      return content.indices.contains { "\(id):\($0)" == requested }
+    }
+    guard let boundary = enclosing?.objectValue?["id"]?.stringValue else {
       throw JSONRPCError.invalidParams("This message is no longer in the OpenCode conversation.")
     }
     do {

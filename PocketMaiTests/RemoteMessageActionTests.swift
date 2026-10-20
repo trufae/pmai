@@ -144,6 +144,45 @@ final class RemoteMessageActionTests: XCTestCase {
     }
   }
 
+  func testGroupedSettingsApplyEverySelectionAndBlockOverlappingActions() async throws {
+    try await withChat { chat, _, fixture, _ in
+      chat.setConfigurationOptions([
+        (id: "model", value: .string("other")),
+        (id: "model", value: .string("original")),
+      ])
+      XCTAssertTrue(chat.busy)
+      XCTAssertTrue(chat.settingsLoading)
+      chat.send("Do not interleave a prompt")
+      chat.setConfigurationOption(id: "model", value: .string("other"))
+      try await waitForIdle(chat)
+
+      XCTAssertNil(chat.settingsError)
+      XCTAssertFalse(chat.settingsLoading)
+      XCTAssertEqual(fixture.selectedModels, ["other", "original"])
+      XCTAssertTrue(fixture.prompts.isEmpty)
+      XCTAssertEqual(
+        chat.configurationOptions.first { $0.id == "model" }?.currentValue, .string("original"))
+    }
+  }
+
+  func testGroupedSettingsKeepSuccessfulChangesAndStopAfterAnError() async throws {
+    try await withChat { chat, _, fixture, _ in
+      chat.setConfigurationOptions([
+        (id: "model", value: .string("other")),
+        (id: "model", value: .string("missing")),
+        (id: "model", value: .string("original")),
+      ])
+      try await waitForIdle(chat)
+
+      XCTAssertNotNil(chat.settingsError)
+      XCTAssertFalse(chat.settingsLoading)
+      XCTAssertTrue(chat.canSend)
+      XCTAssertEqual(fixture.selectedModels, ["other"])
+      XCTAssertEqual(
+        chat.configurationOptions.first { $0.id == "model" }?.currentValue, .string("other"))
+    }
+  }
+
   private func waitForIdle(_ chat: RemoteAgentChat) async throws {
     for _ in 0..<500 {
       if !chat.busy { return }
@@ -203,12 +242,14 @@ private final class RemoteActionEndpoint: @unchecked Sendable {
   private var recordedBoundaries: [String] = []
   private var recordedPrompts: [String] = []
   private var recordedMutations: [String] = []
+  private var recordedModels: [String] = []
   private var failRewind = false
   private var failNextPrompt = false
   private var model = "original"
   var boundaries: [String] { lock.withLock { recordedBoundaries } }
   var prompts: [String] { lock.withLock { recordedPrompts } }
   var mutations: [String] { lock.withLock { recordedMutations } }
+  var selectedModels: [String] { lock.withLock { recordedModels } }
   func rejectRewind() { lock.withLock { failRewind = true } }
   func rejectNextPrompt() { lock.withLock { failNextPrompt = true } }
 
@@ -249,6 +290,7 @@ private final class RemoteActionEndpoint: @unchecked Sendable {
         result = .object(["data": .array([])])
       case ("POST", "/api/session/ses_test/model"):
         model = try XCTUnwrap(input?["model"]?.objectValue?["id"]?.stringValue)
+        recordedModels.append(model)
         result = .null
       case ("GET", "/api/session/ses_test/message"), ("GET", "/api/session/ses_test/context"):
         result = .object(["data": .array(history.map(JSONValue.object))])

@@ -13,6 +13,89 @@ private func settingsToolCatalog(_ store: AppStore) -> AgentToolCatalog {
     mcpResources: store.mcpResources, mcpStatuses: store.mcpStatuses)
 }
 
+/// The composer and chat settings use the same compact tool picker.
+struct ToolPickerContainer<Content: View>: View {
+  @ViewBuilder var content: () -> Content
+
+  var body: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 4, content: content)
+        .padding(8)
+    }
+    .frame(minWidth: 260, idealWidth: 320, maxWidth: 360, maxHeight: 480)
+    .background(.regularMaterial)
+  }
+}
+
+/// A group can be selected independently of expanding its individual tools.
+struct ToolPickerGroupRow: View {
+  let title: String
+  var detail: String? = nil
+  let systemImage: String
+  var iconColor: Color = .secondary
+  let isEnabled: Bool
+  var isPartiallyEnabled = false
+  let isExpanded: Bool
+  let itemCount: Int
+  var isLoading = false
+  let toggle: () -> Void
+  let expand: () -> Void
+
+  var body: some View {
+    HStack(spacing: 10) {
+      Button(action: toggle) {
+        Image(
+          systemName: isPartiallyEnabled
+            ? "minus.circle.fill"
+            : (isEnabled ? "checkmark.circle.fill" : "circle")
+        )
+        .foregroundStyle(isEnabled || isPartiallyEnabled ? Color.accentColor : .secondary)
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("Enable \(title)")
+      .accessibilityValue(
+        isPartiallyEnabled ? "Partially enabled" : (isEnabled ? "Enabled" : "Disabled"))
+
+      Button(action: expand) {
+        HStack(spacing: 10) {
+          Image(systemName: systemImage)
+            .imageScale(.small)
+            .foregroundStyle(iconColor)
+            .frame(width: 18)
+          VStack(alignment: .leading, spacing: 1) {
+            Text(title).foregroundStyle(.primary).lineLimit(1)
+            if let detail, !detail.isEmpty {
+              Text(detail).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
+          }
+          Spacer(minLength: 0)
+          if itemCount > 0 {
+            Text("\(itemCount)").font(.caption).foregroundStyle(.secondary)
+          }
+          Group {
+            if isLoading {
+              ProgressView().controlSize(.small)
+            } else {
+              Image(
+                systemName: itemCount == 0
+                  ? "arrow.clockwise"
+                  : (isExpanded ? "chevron.down" : "chevron.right")
+              )
+              .imageScale(.small).foregroundStyle(.secondary)
+            }
+          }
+          .frame(width: 24, height: 24)
+        }
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel("\(title) tools")
+      .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+    }
+    .padding(.horizontal, 12).padding(.vertical, 9)
+  }
+}
+
 /// Shared compact selection row for local and remote session tool pickers.
 struct ToolSelectionRow: View {
   let title: String

@@ -607,6 +607,12 @@ final class RemoteAgentChat {
   }
 
   func setConfigurationOption(id: String, value: JSONValue) {
+    setConfigurationOptions([(id: id, value: value)])
+  }
+
+  /// Group selections update every option in order while keeping the picker busy.
+  func setConfigurationOptions(_ updates: [(id: String, value: JSONValue)]) {
+    guard !updates.isEmpty else { return }
     guard connected, !busy, !settingsLoading, !isOffline(), let client else { return }
     busy = true
     settingsLoading = true
@@ -614,11 +620,17 @@ final class RemoteAgentChat {
     let attempt = generation
     operation = Task {
       do {
-        let options = try await client.setConfigurationOption(id: id, value: value)
-        guard generation == attempt else { return }
-        configurationOptions = options
+        for update in updates {
+          guard generation == attempt else { return }
+          guard connected, !Task.isCancelled else { throw CancellationError() }
+          let options = try await client.setConfigurationOption(id: update.id, value: update.value)
+          guard generation == attempt else { return }
+          configurationOptions = options
+        }
       } catch {
-        if generation == attempt { settingsError = error.localizedDescription }
+        if generation == attempt, !(error is CancellationError) {
+          settingsError = error.localizedDescription
+        }
       }
       guard generation == attempt else { return }
       busy = false

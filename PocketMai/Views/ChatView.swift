@@ -2878,7 +2878,7 @@ private struct ChatComposer: View {
   @FocusState private var composerFocused: Bool
   @State private var showingToolMenu = false
   @State private var showingToolPicker = false
-  @State private var showingRemoteToolSettings = false
+  @State private var remoteWorkingFolder: FileBrowserLocation?
   @State private var showingTextFileImporter = false
   @State private var showingWorkingFolderMenu = false
   @State private var showingWorkingFolderImporter = false
@@ -3829,17 +3829,12 @@ private struct ChatComposer: View {
     }
     .popover(isPresented: $showingToolPicker, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom)
     {
-      ToolPickerPopover()
+      ToolPickerPopover(remoteChat: remoteChat)
         .environmentObject(store)
         .presentationCompactAdaptation(.popover)
     }
-    .sheet(isPresented: $showingRemoteToolSettings) {
-      if let remoteChat {
-        NavigationStack {
-          RemoteToolSettingsView(chat: remoteChat)
-        }
-        .environmentObject(store)
-      }
+    .sheet(item: $remoteWorkingFolder) { location in
+      FileBrowserView(location: location).environmentObject(store)
     }
     .popover(
       isPresented: $showingWorkingFolderMenu, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom
@@ -3850,78 +3845,51 @@ private struct ChatComposer: View {
     .help("Tools")
   }
 
-  @ViewBuilder
   private var toolMenuPopover: some View {
-    if let remoteChat {
-      VStack(alignment: .leading, spacing: 4) {
-        if let enabled = remoteChat.remoteToolsEnabled {
-          Toggle(
-            "Enable Tools",
-            isOn: Binding(
-              get: { enabled },
-              set: { remoteChat.setConfigurationOption(id: "tools.enabled", value: .bool($0)) }
-            )
-          )
-          .toggleStyle(.switch)
-          .padding(.horizontal, 12).padding(.vertical, 9)
-        }
-        toolMenuButton(
-          "Select Tools...", systemImage: "checklist",
-          trailingText: remoteChat.remoteToolsEnabled.map { _ in
-            "(\(remoteChat.enabledRemoteToolCount))"
-          }
-        ) {
-          showingToolMenu = false
-          showingRemoteToolSettings = true
-        }
-      }
-      .padding(8).frame(minWidth: 240).background(.regularMaterial)
-      .disabled(remoteChat.busy || remoteChat.settingsLoading || store.settings.isOffline)
-      .task(id: remoteChat.connected) { await remoteChat.refreshConfiguration() }
-    } else {
-      localToolMenuPopover
-    }
-  }
-
-  private var localToolMenuPopover: some View {
     VStack(alignment: .leading, spacing: 4) {
       Toggle(isOn: toolsEnabledBinding) {
         toolMenuRowLabel("Enable Tools", systemImage: "wrench.and.screwdriver")
       }
       .toggleStyle(.switch)
       .padding(.horizontal, 12).padding(.vertical, 9)
+      .disabled(remoteToolSettingsUnavailable)
       toolMenuButton(
         "Select Tools...", systemImage: "checklist",
         trailingText: "(\(enabledToolSelectionCount))",
+        isEnabled: toolsEnabled,
         action: openToolPicker
       )
-      .disabled(!toolsEnabled).opacity(toolsEnabled ? 1 : 0.45)
       toolMenuButton(
         "Working Folder...", systemImage: "folder.badge.gearshape",
-        trailingText: workingFolderMenuText, action: openWorkingFolderMenu)
+        trailingText: workingFolderMenuText,
+        isEnabled: remoteChat.map {
+          $0.bookmark.backend != .openCode && $0.bookmark.requiresApproval != true
+            && !store.settings.isOffline
+        } ?? true,
+        action: openWorkingFolderMenu)
       Divider()
-      toolMenuButton("Attach Document", systemImage: "doc.text", action: openTextFileImporter)
-      toolMenuButton("Record voice", systemImage: "mic.badge.plus") {
+      toolMenuButton(
+        "Attach Document", systemImage: "doc.text", isEnabled: remoteChat == nil,
+        action: openTextFileImporter)
+      toolMenuButton("Record voice", systemImage: "mic.badge.plus", isEnabled: remoteChat == nil) {
         showingToolMenu = false
         liveVoiceSession.startVoiceNoteAttachment(store: store, ttsPlayer: ttsPlayer)
       }
-      toolMenuButton("Add images", systemImage: "photo") {
+      toolMenuButton("Add images", systemImage: "photo", isEnabled: canAttachImage) {
         showingToolMenu = false
         showingImagePicker = true
       }
-      .disabled(!canAttachImage).opacity(canAttachImage ? 1 : 0.45)
-      toolMenuButton("Take picture", systemImage: "camera") {
+      toolMenuButton("Take picture", systemImage: "camera", isEnabled: canTakePicture) {
         showingToolMenu = false
         showingCameraPicker = true
       }
-      .disabled(!canTakePicture).opacity(canTakePicture ? 1 : 0.45)
       Divider()
-      toolMenuButton("Start App", systemImage: "square.grid.2x2") {
+      toolMenuButton("Start App", systemImage: "square.grid.2x2", isEnabled: remoteChat == nil) {
         showingToolMenu = false
         showingWebXDCLauncher = true
       }
     }
-    .padding(8).frame(minWidth: 240).background(.regularMaterial)
+    .padding(8).frame(minWidth: 240, idealWidth: 320, maxWidth: 360).background(.regularMaterial)
     .fileImporter(
       isPresented: $showingTextFileImporter,
       allowedContentTypes: Self.documentAttachmentTypes
@@ -3929,10 +3897,12 @@ private struct ChatComposer: View {
       showingToolMenu = false
       importTextAttachment(result)
     }
+    .task(id: remoteChat?.connected) { await remoteChat?.refreshConfiguration() }
   }
 
   private func toolMenuButton(
     _ title: String, systemImage: String, trailingText: String? = nil,
+    isEnabled: Bool = true,
     action: @escaping () -> Void
   ) -> some View {
     Button(action: action) {
@@ -3940,6 +3910,8 @@ private struct ChatComposer: View {
         .padding(.horizontal, 12).padding(.vertical, 9)
     }
     .buttonStyle(.plain)
+    .disabled(!isEnabled)
+    .opacity(isEnabled ? 1 : 0.45)
   }
 
   /// The three ways a chat can resolve its working folder, shown as a popup
@@ -4028,6 +4000,7 @@ private struct ChatComposer: View {
       if let trailingText {
         Text(trailingText)
           .foregroundStyle(.secondary)
+          .lineLimit(1).truncationMode(.middle)
       }
     }
     .contentShape(Rectangle())
@@ -4041,7 +4014,11 @@ private struct ChatComposer: View {
 
   private func openWorkingFolderMenu() {
     showingToolMenu = false
-    showingWorkingFolderMenu = true
+    if let remoteChat {
+      remoteWorkingFolder = .remote(remoteChat.bookmark, cwd: remoteChat.conversation.cwd)
+    } else {
+      showingWorkingFolderMenu = true
+    }
   }
 
   private func openTextFileImporter() {
@@ -4081,10 +4058,18 @@ private struct ChatComposer: View {
   }
 
   private var toolsEnabled: Bool {
-    remoteChat != nil || (store.currentConversation?.toolsEnabled ?? true)
+    if let remoteChat { return remoteChat.remoteToolsEnabled ?? true }
+    return store.currentConversation?.toolsEnabled ?? true
+  }
+
+  private var remoteToolSettingsUnavailable: Bool {
+    guard let remoteChat else { return false }
+    return !remoteChat.connected || remoteChat.busy || remoteChat.settingsLoading
+      || remoteChat.remoteToolsEnabled == nil || store.settings.isOffline
   }
 
   private var enabledToolSelectionCount: Int {
+    if let remoteChat { return remoteChat.enabledRemoteToolCount }
     let builtInToolCount = BuiltInToolID.allCases.filter {
       $0 != .memory && (store.currentConversation?.enabledTools.contains($0) ?? false)
     }.count
@@ -4104,6 +4089,10 @@ private struct ChatComposer: View {
       get: { toolsEnabled },
       set: { enabled in
         showingToolPicker = false
+        if let remoteChat {
+          remoteChat.setConfigurationOption(id: "tools.enabled", value: .bool(enabled))
+          return
+        }
         store.updateCurrentConversation { conversation in
           conversation.toolsEnabled = enabled
         }
@@ -5676,40 +5665,48 @@ private struct CompactChatSheet: View {
 
 private struct ToolPickerPopover: View {
   @EnvironmentObject private var store: AppStore
+  var remoteChat: RemoteAgentChat? = nil
   @State private var expandedServerIDs: Set<UUID> = []
 
   var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 4) {
-        ForEach(BuiltInToolID.allCases.filter { $0 != .memory }.sorted { $0.displayName < $1.displayName }) { tool in
-          ToolSelectionRow(
-            title: tool.displayName,
-            systemImage: tool.systemImage,
-            isEnabled: isBuiltInToolEnabled(tool),
-            isUnavailable: store.settings.isOffline && tool.isDisabledInAirplaneMode
-          ) {
-            toggleBuiltInTool(tool)
-          }
-        }
+    ToolPickerContainer {
+      if let remoteChat {
+        RemoteToolPickerContent(chat: remoteChat)
+      } else {
+        localTools
+          .disabled(!toolsEnabled)
+          .opacity(toolsEnabled ? 1 : 0.5)
+      }
+    }
+  }
 
-        if !store.settings.mcpServers.isEmpty {
-          Divider().padding(.vertical, 4)
-          Text("MCP Servers")
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 12)
-
-          ForEach(store.settings.mcpServers) { server in
-            mcpServerRow(server)
-          }
+  private var localTools: some View {
+    Group {
+      ForEach(
+        BuiltInToolID.allCases.filter { $0 != .memory }.sorted { $0.displayName < $1.displayName }
+      ) { tool in
+        ToolSelectionRow(
+          title: tool.displayName,
+          systemImage: tool.systemImage,
+          isEnabled: isBuiltInToolEnabled(tool),
+          isUnavailable: store.settings.isOffline && tool.isDisabledInAirplaneMode
+        ) {
+          toggleBuiltInTool(tool)
         }
       }
-      .padding(8)
-      .disabled(!toolsEnabled)
-      .opacity(toolsEnabled ? 1 : 0.5)
+
+      if !store.settings.mcpServers.isEmpty {
+        Divider().padding(.vertical, 4)
+        Text("MCP Servers")
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.secondary)
+          .padding(.horizontal, 12)
+
+        ForEach(store.settings.mcpServers) { server in
+          mcpServerRow(server)
+        }
+      }
     }
-    .frame(minWidth: 260, maxHeight: 480)
-    .background(.regularMaterial)
   }
 
   private var toolsEnabled: Bool {
@@ -5725,41 +5722,14 @@ private struct ToolPickerPopover: View {
     let itemCount = tools.count + resources.count
 
     VStack(alignment: .leading, spacing: 0) {
-      HStack(spacing: 10) {
-        Button {
-          toggleServer(server.id)
-        } label: {
-          Image(systemName: isMCPServerEnabled(server.id) ? "checkmark.circle.fill" : "circle")
-            .foregroundStyle(isMCPServerEnabled(server.id) ? Color.accentColor : Color.secondary)
-        }
-        .buttonStyle(.plain)
-
-        Image(systemName: serverStatusIcon(status))
-          .imageScale(.small)
-          .foregroundStyle(serverStatusColor(status))
-          .frame(width: 16)
-
-        VStack(alignment: .leading, spacing: 1) {
-          Text(server.name.isEmpty ? "Untitled MCP" : server.name)
-            .foregroundStyle(.primary)
-            .lineLimit(1)
-          if let transport = server.transport {
-            Text(transport.displayName)
-              .font(.caption2)
-              .foregroundStyle(.secondary)
-              .lineLimit(1)
-          }
-        }
-
-        Spacer()
-
-        if itemCount > 0 {
-          Text("\(itemCount)")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-
-        Button {
+      ToolPickerGroupRow(
+        title: server.name.isEmpty ? "Untitled MCP" : server.name,
+        detail: server.transport?.displayName,
+        systemImage: serverStatusIcon(status), iconColor: serverStatusColor(status),
+        isEnabled: isMCPServerEnabled(server.id), isExpanded: expanded,
+        itemCount: itemCount, isLoading: isCheckingServer(server.id),
+        toggle: { toggleServer(server.id) },
+        expand: {
           if itemCount == 0 {
             Task { await store.refreshMCP(server, force: true) }
           } else {
@@ -5771,25 +5741,8 @@ private struct ToolPickerPopover: View {
               }
             }
           }
-        } label: {
-          if isCheckingServer(server.id) {
-            ProgressView().controlSize(.small)
-          } else if itemCount == 0 {
-            Image(systemName: "arrow.clockwise")
-              .imageScale(.small)
-              .foregroundStyle(.secondary)
-          } else {
-            Image(systemName: expanded ? "chevron.down" : "chevron.right")
-              .imageScale(.small)
-              .foregroundStyle(.tertiary)
-          }
         }
-        .buttonStyle(.plain)
-        .frame(width: 24, height: 24)
-      }
-      .padding(.horizontal, 12)
-      .padding(.vertical, 9)
-      .contentShape(Rectangle())
+      )
 
       if expanded && itemCount > 0 {
         VStack(alignment: .leading, spacing: 2) {
@@ -5801,31 +5754,13 @@ private struct ToolPickerPopover: View {
               .padding(.trailing, 12)
               .padding(.top, 4)
             ForEach(tools) { tool in
-              Button {
+              ToolSelectionRow(
+                title: tool.name,
+                isEnabled: isMCPToolEnabled(serverID: server.id, toolName: tool.name)
+              ) {
                 toggleMCPTool(serverID: server.id, toolName: tool.name)
-              } label: {
-                HStack(spacing: 8) {
-                  Image(
-                    systemName: isMCPToolEnabled(serverID: server.id, toolName: tool.name)
-                      ? "checkmark.circle.fill" : "circle"
-                  )
-                  .imageScale(.small)
-                  .foregroundStyle(
-                    isMCPToolEnabled(serverID: server.id, toolName: tool.name)
-                      ? Color.accentColor : Color.secondary
-                  )
-                  Text(tool.name)
-                    .font(.callout)
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                  Spacer()
-                }
-                .padding(.leading, 38)
-                .padding(.trailing, 12)
-                .padding(.vertical, 6)
-                .contentShape(Rectangle())
               }
-              .buttonStyle(.plain)
+              .font(.callout).padding(.leading, 26)
             }
           }
           if !resources.isEmpty {

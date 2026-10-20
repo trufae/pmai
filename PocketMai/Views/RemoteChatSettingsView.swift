@@ -88,10 +88,37 @@ struct RemoteChatSettingsView: View {
 }
 
 struct RemoteToolSettingsView: View {
-  @EnvironmentObject private var store: AppStore
   let chat: RemoteAgentChat
 
-  private var toolsEnabled: Bool { chat.remoteToolsEnabled ?? false }
+  var body: some View {
+    ToolPickerContainer {
+      if let enabled = chat.remoteToolsEnabled {
+        Toggle(
+          "Enable Tools",
+          isOn: Binding(
+            get: { enabled },
+            set: { chat.setConfigurationOption(id: "tools.enabled", value: .bool($0)) })
+        )
+        .padding(.horizontal, 12).padding(.vertical, 9)
+        .disabled(!chat.canSend || chat.settingsLoading)
+        Divider()
+      }
+      RemoteToolPickerContent(chat: chat)
+    }
+    .navigationTitle("Select Tools")
+    .navigationBarTitleDisplayMode(.inline)
+  }
+}
+
+/// Remote groups use the same selection and disclosure rows as local MCP servers.
+struct RemoteToolPickerContent: View {
+  @EnvironmentObject private var store: AppStore
+  let chat: RemoteAgentChat
+  @State private var expandedGroups: Set<String> = []
+
+  private var unavailable: Bool {
+    !chat.canSend || chat.settingsLoading || chat.remoteToolsEnabled != true
+  }
 
   private var groups: [(name: String, options: [RemoteSessionOption])] {
     let options = chat.remoteToolOptions.filter { $0.id != "tools.enabled" }
@@ -104,49 +131,73 @@ struct RemoteToolSettingsView: View {
   }
 
   var body: some View {
-    List {
-      if let enabled = chat.remoteToolsEnabled {
-        Section {
-          Toggle(
-            "Enable Tools",
-            isOn: Binding(
-              get: { enabled },
-              set: { chat.setConfigurationOption(id: "tools.enabled", value: .bool($0)) }))
-          Text("Tools run on the remote pmai host and apply only to this chat.")
-            .font(.caption).foregroundStyle(.secondary)
-        }
-      }
+    VStack(alignment: .leading, spacing: 4) {
       ForEach(groups, id: \.name) { group in
-        Section(group.name) {
+        let enabledCount = group.options.filter { $0.currentValue.boolValue == true }.count
+        let expanded = expandedGroups.contains(group.name)
+        ToolPickerGroupRow(
+          title: group.name,
+          systemImage: groupIcon(group.name),
+          isEnabled: enabledCount == group.options.count,
+          isPartiallyEnabled: enabledCount > 0 && enabledCount < group.options.count,
+          isExpanded: expanded, itemCount: group.options.count,
+          toggle: {
+            let enabled = enabledCount != group.options.count
+            chat.setConfigurationOptions(
+              group.options.filter {
+                $0.currentValue.boolValue != enabled
+              }.map { (id: $0.id, value: .bool(enabled)) })
+          },
+          expand: {
+            withAnimation(.snappy) {
+              if expanded {
+                expandedGroups.remove(group.name)
+              } else {
+                expandedGroups.insert(group.name)
+              }
+            }
+          }
+        )
+        .disabled(unavailable).opacity(unavailable ? 0.5 : 1)
+        if expanded {
           ForEach(group.options) { option in
             ToolSelectionRow(
               title: option.name, detail: option.description,
-              isEnabled: option.currentValue.boolValue == true,
-              isUnavailable: !toolsEnabled || chat.busy || chat.settingsLoading
+              isEnabled: option.currentValue.boolValue == true, isUnavailable: unavailable
             ) {
               chat.setConfigurationOption(
                 id: option.id, value: .bool(option.currentValue.boolValue != true))
             }
+            .font(.callout).padding(.leading, 26)
           }
         }
       }
       if chat.settingsLoading {
-        ProgressView()
+        ProgressView().frame(maxWidth: .infinity).padding(12)
+      } else if !chat.connected {
+        Button("Connect", systemImage: "network") { chat.connect() }
+          .padding(12).disabled(chat.busy || store.settings.isOffline)
       } else if chat.remoteToolsEnabled == nil {
-        ContentUnavailableView(
-          "Host-managed tools",
-          systemImage: "wrench.and.screwdriver",
-          description: Text("Update the remote pmai host to choose tools for this chat."))
+        Text("This host manages its own tools. Update pmai to choose tools for this chat.")
+          .font(.callout).foregroundStyle(.secondary).padding(12)
       }
       if let error = chat.settingsError {
-        Text(error).foregroundStyle(.red)
+        Text(error).font(.callout).foregroundStyle(.red).padding(12)
       }
     }
-    .navigationTitle("Select Tools")
-    .navigationBarTitleDisplayMode(.inline)
     .disabled(store.settings.isOffline)
     .task(id: chat.connected) { await chat.refreshConfiguration() }
-    .refreshable { await chat.refreshConfiguration() }
+  }
+
+  private func groupIcon(_ name: String) -> String {
+    if let tool = BuiltInToolID.allCases.first(where: { $0.displayName == name }) {
+      return tool.systemImage
+    }
+    switch name.lowercased() {
+    case "run", "pmai commands": return "terminal"
+    case "agents", "subagents": return "person.2"
+    default: return "wrench.and.screwdriver"
+    }
   }
 }
 
