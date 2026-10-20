@@ -42,7 +42,6 @@ struct RemoteAgentsView: View {
                 } else {
                   store.reconnect(connection.id)
                 }
-                onSelectHost(connection.id)
               }
               .disabled(appStore.settings.isOffline)
             }

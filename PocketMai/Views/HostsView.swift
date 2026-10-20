@@ -137,7 +137,6 @@ struct HostsView: View {
       }
       Button("Reconnect", systemImage: "arrow.clockwise") {
         hosts.reconnect(host.id, isOffline: appStore.settings.isOffline)
-        onSelectHost(host.id)
       }
       .disabled(appStore.settings.isOffline)
       Divider()
