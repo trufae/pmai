@@ -136,6 +136,10 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     if OpenAISpeech.isDirectEndpoint(configuration.baseURL) {
       return OpenAISpeech.voices(for: model)
     }
+    if GroqSpeech.isDirectEndpoint(configuration.baseURL) {
+      return GroqSpeech.voices(
+        for: model == OpenAISpeech.defaultModel ? GroqSpeech.defaultSpeechModel : model)
+    }
     let root = try await catalog("voices")
     let voices = (root["data"]?.arrayValue ?? []).compactMap { value in
       value.stringValue
@@ -184,6 +188,16 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
       if model.isEmpty { model = OpenAISpeech.defaultModel }
       try OpenAISpeech.validate(voice: voice, model: model)
     }
+    if GroqSpeech.isDirectEndpoint(configuration.baseURL) {
+      if model.isEmpty { model = GroqSpeech.defaultSpeechModel }
+      guard GroqSpeech.voices(for: model).contains(voice), input.count <= 200,
+        responseFormat == "wav"
+      else {
+        throw AudioAPIError.invalidRequest(
+          "Groq Orpheus requires a supported voice, WAV output, and at most 200 characters per request."
+        )
+      }
+    }
     var body: [String: JSONValue] = [
       "input": .string(input),
       "voice": .string(voice),
@@ -201,6 +215,90 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     request.setValue(Self.speechAcceptHeader(responseFormat), forHTTPHeaderField: "Accept")
 
     return request
+  }
+
+  /// Shares the configured credentials, custom headers and redirect policy with chat.
+  public func transcribeAudio(
+    audio: Data, filename: String, model: String, language: String? = nil,
+    contentType: String = "application/octet-stream"
+  ) async throws -> String {
+    var parts = [
+      AudioMultipart.Part(name: "model", data: Data(model.utf8)),
+      AudioMultipart.Part(name: "file", filename: filename, contentType: contentType, data: audio),
+      AudioMultipart.Part(name: "response_format", data: Data("json".utf8)),
+    ]
+    if let language, !language.isEmpty {
+      parts.append(.init(name: "language", data: Data(language.utf8)))
+    }
+    let boundary = "pmai-\(UUID().uuidString)"
+    let response = try await audioRequest(
+      endpoint: "audio/transcriptions",
+      body: AudioMultipart(parts: parts).encoded(boundary: boundary),
+      contentType: "multipart/form-data; boundary=\(boundary)")
+    let root = try JSONDecoder().decode(JSONValue.self, from: response.body)
+    guard let text = root.objectValue?["text"]?.stringValue,
+      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else {
+      throw OpenAICompatibleProviderError.invalidResponse("The transcription returned no text.")
+    }
+    return text
+  }
+
+  /// Raw audio forwarding preserves request options and binary provider responses.
+  /// On Apple platforms, speech bytes reach callers as the upstream generates them.
+  public func audioRequest(
+    endpoint: String, body: Data, contentType: String,
+    streaming: Bool = false
+  ) async throws -> AudioAPIResponse {
+    guard ["audio/speech", "audio/transcriptions"].contains(endpoint) else {
+      throw AudioAPIError.invalidRequest("Unsupported audio endpoint.")
+    }
+    var request = URLRequest(url: try endpointURL(endpoint))
+    request.httpMethod = "POST"
+    request.timeoutInterval = max(1, configuration.requestTimeout)
+    request.httpBody = body
+    applyHeaders(to: &request)
+    request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+    #if !canImport(FoundationNetworking)
+      if streaming {
+        let (bytes, response) = try await session.bytes(
+          for: request,
+          delegate: ProviderRedirectDelegate(originalRequest: request))
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+          var errorBody = Data()
+          for try await byte in bytes {
+            errorBody.append(byte)
+            if errorBody.count >= 65536 { break }
+          }
+          try validate(response: response, data: errorBody)
+        }
+        let stream = AsyncThrowingStream<Data, Error> { continuation in
+          let task = Task {
+            do {
+              var chunk = Data()
+              for try await byte in bytes {
+                try Task.checkCancellation()
+                chunk.append(byte)
+                if chunk.count == 8192 {
+                  if case .terminated = continuation.yield(chunk) { return }
+                  chunk.removeAll(keepingCapacity: true)
+                }
+              }
+              if !chunk.isEmpty { continuation.yield(chunk) }
+              continuation.finish()
+            } catch { continuation.finish(throwing: error) }
+          }
+          continuation.onTermination = { _ in task.cancel() }
+        }
+        return AudioAPIResponse(
+          contentType: response.mimeType ?? "application/octet-stream", stream: stream)
+      }
+    #endif
+    let (data, response) = try await data(for: request)
+    try validate(response: response, data: data)
+    guard !data.isEmpty else { throw OpenAICompatibleProviderError.emptyResponse }
+    return AudioAPIResponse(
+      contentType: response.mimeType ?? "application/octet-stream", body: data)
   }
 
   func makeURLRequest(_ request: ProviderRequest, model: String) throws -> URLRequest {
@@ -370,7 +468,9 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
 
     var path = components.path
     while path.count > 1 && path.hasSuffix("/") { path.removeLast() }
-    for suffix in ["/chat/completions", "/audio/speech", "/models", "/voices"]
+    for suffix in [
+      "/chat/completions", "/audio/speech", "/audio/transcriptions", "/models", "/voices",
+    ]
     where path.hasSuffix(suffix) {
       path.removeLast(suffix.count)
       break
