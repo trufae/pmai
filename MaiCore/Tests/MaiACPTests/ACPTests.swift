@@ -731,6 +731,13 @@ func acpSessionConfiguration() async throws {
     RemoteSessionOption.parse(created.objectValue?["configOptions"]).map(\.id) == [
       "provider", "model", "reasoning",
     ])
+  let providerChoices = try #require(
+    RemoteSessionOption.parse(created.objectValue?["configOptions"])
+      .first(where: { $0.id == "provider" })?.choices)
+  #expect(providerChoices.map(\.id) == ["first", "second"])
+  #expect(providerChoices.map(\.name) == [
+    "first · OpenAI-compatible", "second · OpenAI-compatible",
+  ])
   func set(_ key: String, _ value: String) async throws -> [RemoteSessionOption] {
     let result = try await client.request(
       ACP.Method.sessionSetConfigOption,
@@ -784,7 +791,9 @@ func acpSessionConfiguration() async throws {
 private actor ACPSettingsProvider: ChatProvider {
   nonisolated let descriptor: ProviderDescriptor
   private(set) var requests: [ProviderRequest] = []
-  init(id: String) { descriptor = .init(id: ProviderID(id), displayName: id, defaultModel: "a") }
+  init(id: String) {
+    descriptor = .init(id: ProviderID(id), displayName: "OpenAI-compatible", defaultModel: "a")
+  }
   func availableModels() -> [ModelDescriptor] { [.init(id: "a"), .init(id: "b")] }
   func complete(_ request: ProviderRequest, emit: @escaping ProviderEventHandler) async throws
     -> ProviderResponse

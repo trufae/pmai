@@ -477,8 +477,16 @@ public actor ACPServer {
   private func configurationOptions(for definition: AgentDefinition) async -> [RemoteSessionOption]
   {
     let providers = await runtime.availableProviders()
-    var providerChoices = providers.map {
-      RemoteSessionOption.Choice($0.id.rawValue, $0.displayName)
+    let displayNameCounts = Dictionary(grouping: providers, by: \.displayName).mapValues(\.count)
+    var providerChoices = providers.map { provider in
+      let name = provider.displayName
+      // Several configured connections commonly share the factory's generic
+      // label (for example, "OpenAI-compatible"). Include the configured ID
+      // in that case so remote clients can tell those connections apart.
+      let label = displayNameCounts[name, default: 0] > 1
+        ? "\(provider.id.rawValue) · \(name)"
+        : name
+      return RemoteSessionOption.Choice(provider.id.rawValue, label)
     }
     if !providerChoices.contains(where: { $0.id == definition.provider.rawValue }) {
       providerChoices.append(.init(definition.provider.rawValue, definition.provider.rawValue))
