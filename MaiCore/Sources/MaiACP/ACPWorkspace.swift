@@ -161,6 +161,10 @@ public struct AgentHomeACPWorkspace: ACPWorkspaceRepository {
       ?? AgentChat(
         id: id, primaryAgent: conversation.agent, createdAt: conversation.createdAt,
         sessionID: conversation.providerSessionID ?? conversation.info.sessionID)
+    // ACP session settings belong to the chat. Without this assignment an
+    // existing pmai chat retains the provider and model it had before the
+    // remote client changed them, then restores those stale values on reconnect.
+    chat.primaryAgent = conversation.agent
     chat.messages = conversation.transcript
     chat.title = conversation.info.title
     chat.updatedAt = conversation.info.updatedAt ?? Date()

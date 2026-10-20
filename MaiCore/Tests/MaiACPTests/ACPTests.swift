@@ -710,6 +710,9 @@ func acpSessionConfiguration() async throws {
   let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
     "acp-settings-\(UUID())")
   defer { try? FileManager.default.removeItem(at: directory) }
+  let workspaceRoot = directory.appendingPathComponent("workspace")
+  try FileManager.default.createDirectory(at: workspaceRoot, withIntermediateDirectories: true)
+  let home = AgentHome(rootURL: directory.appendingPathComponent("home"))
   let runtime = AgentRuntime()
   let first = ACPSettingsProvider(id: "first")
   let second = ACPSettingsProvider(id: "second")
@@ -718,14 +721,15 @@ func acpSessionConfiguration() async throws {
   let agent = AgentDefinition(id: "main", instructions: "", provider: "first", model: "a")
   let (transport, worker) = PipeTransport.pair()
   let server = ACPServer(
-    runtime: runtime, agent: agent, bridge: ACPPermissionBridge(), sessionDirectory: directory)
+    runtime: runtime, agent: agent, bridge: ACPPermissionBridge(), sessionDirectory: directory,
+    workspaceRoot: workspaceRoot, workspace: AgentHomeACPWorkspace(home: home))
   let serving = Task { await server.serve(on: worker) }
   let client = JSONRPCPeer(transport: transport)
   await client.start()
   _ = try await client.request(
     ACP.Method.initialize, params: .object(["protocolVersion": .integer(1)]), timeout: 5)
   let created = try await client.request(
-    ACP.Method.sessionNew, params: .object(["cwd": .string("/tmp")]), timeout: 5)
+    ACP.Method.sessionNew, params: .object(["cwd": .string(workspaceRoot.path)]), timeout: 5)
   let id = try #require(created.objectValue?["sessionId"]?.stringValue)
   #expect(
     RemoteSessionOption.parse(created.objectValue?["configOptions"]).map(\.id) == [
@@ -762,7 +766,7 @@ func acpSessionConfiguration() async throws {
   #expect(await second.requests.last?.options.reasoningEffort == "high")
   #expect(await first.requests.isEmpty)
   let another = try await client.request(
-    ACP.Method.sessionNew, params: .object(["cwd": .string("/tmp")]), timeout: 5)
+    ACP.Method.sessionNew, params: .object(["cwd": .string(workspaceRoot.path)]), timeout: 5)
   #expect(
     RemoteSessionOption.parse(another.objectValue?["configOptions"]).first?.currentValue
       == .string("first"))
@@ -771,7 +775,8 @@ func acpSessionConfiguration() async throws {
 
   let (transport2, worker2) = PipeTransport.pair()
   let restored = ACPServer(
-    runtime: runtime, agent: agent, bridge: ACPPermissionBridge(), sessionDirectory: directory)
+    runtime: runtime, agent: agent, bridge: ACPPermissionBridge(), sessionDirectory: directory,
+    workspaceRoot: workspaceRoot, workspace: AgentHomeACPWorkspace(home: home))
   let serving2 = Task { await restored.serve(on: worker2) }
   let client2 = JSONRPCPeer(transport: transport2)
   await client2.start()
@@ -780,10 +785,17 @@ func acpSessionConfiguration() async throws {
   let loaded = try await client2.request(
     ACP.Method.sessionLoad,
     params: .object([
-      "sessionId": .string(id), "cwd": .string("/tmp"),
+      "sessionId": .string(id), "cwd": .string(workspaceRoot.path),
     ]), timeout: 5)
   let options = RemoteSessionOption.parse(loaded.objectValue?["configOptions"])
   #expect(options.map(\.currentValue) == [.string("second"), .string("b"), .string("high")])
+  _ = try await client2.request(
+    ACP.Method.sessionPrompt,
+    params: .object([
+      "sessionId": .string(id), "prompt": .array([ACP.ContentBlock.text("again").json]),
+    ]), timeout: 5)
+  #expect(await second.requests.last?.model == "b")
+  #expect(await first.requests.isEmpty)
   await client2.close()
   await serving2.value
 }
