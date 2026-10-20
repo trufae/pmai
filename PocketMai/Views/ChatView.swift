@@ -1009,6 +1009,16 @@ struct ChatView: View {
         }
         .coordinateSpace(name: MessageFontPinchSession.coordinateSpaceName)
         .scrollDismissesKeyboard(.interactively)
+        .contextMenu {
+          if let remoteChat {
+            Button("Terminal…", systemImage: "terminal") {
+              onShowRemoteTerminal(remoteChat.bookmark, remoteChat.conversation.cwd)
+            }
+            .disabled(
+              remoteChat.bookmark.backend == .openCode || remoteChat.bookmark.requiresApproval == true
+                || store.settings.isOffline)
+          }
+        }
         .onScrollGeometryChange(for: MessageListScrollMetrics.self) { geometry in
           let hasScrollableContent = geometry.contentSize.height > geometry.containerSize.height + 2
           return MessageListScrollMetrics(
