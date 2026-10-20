@@ -8,6 +8,12 @@ the portable chat layer. Both use separate build directories. `make test-unit`
 runs all module-owned Swift targets; shared parsing and document-indexing cases
 run here instead of booting the iOS app. `make test` runs the iOS-specific suite.
 
+`python3 test/build-dependencies.py` checks the native and cross-build dependency
+profiles without downloading packages. CI runs it on macOS and Linux to verify
+that Forwiroh declares only its selected artifact and that disabling MLX omits
+the full inference dependency graph. Build and test commands disable SwiftPM
+prefetching so unused pins from another platform are not cloned.
+
 `make test-cli` builds once, runs the Swift suite, all 36 self-contained smoke
 scripts, and benchmark-accounting unit tests. Use `TEST_ARGS="--jobs 2"` for
 bounded smoke concurrency. After a full build, `TEST_ARGS="--skip-build"`

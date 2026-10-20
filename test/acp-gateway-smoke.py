@@ -225,7 +225,7 @@ def run():
                     pass
                 env = dict(os.environ, PMAI_GATEWAY_TEST_URL=f"ws://127.0.0.1:{port}/acp",
                            PMAI_GATEWAY_TEST_TOKEN=credential, PMAI_GATEWAY_TEST_CWD=str(root))
-                subprocess.run(["swift", "test", "--package-path", "MaiCore", "--disable-index-store",
+                subprocess.run(["swift", "test", "--package-path", "MaiCore", "--disable-index-store", "--disable-prefetching",
                     *(["--skip-build"] if os.environ.get("PMAI_TESTS_BUILT") else []),
                     "--filter", "acpWebSocketIntegration"], env=env, check=True,
                     stdout=log, stderr=log, timeout=300)

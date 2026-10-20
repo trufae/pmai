@@ -4,6 +4,8 @@ app_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 configuration=${CONFIGURATION:-debug}
 abis=${ANDROID_ABIS:-arm64-v8a}
 export ANDROID_ABIS="$abis"
+# These describe the Android destination even when SwiftPM runs on a Mac.
+export PMAI_NO_MLX=1 PMAI_FORWIROH_PLATFORM=native
 
 case "$configuration" in
   debug) gradle_task=:app:assembleDebug; apk_name=app-debug.apk ;;
@@ -84,7 +86,7 @@ for abi in $abis; do
     *) echo "Unsupported ABI: $abi" >&2; exit 1 ;;
   esac
   triple="$architecture-unknown-linux-android28"
-  args=(--package-path "$app_dir" --build-system native --disable-sandbox --disable-index-store
+  args=(--package-path "$app_dir" --build-system native --disable-sandbox --disable-index-store --disable-prefetching
     --swift-sdk "$swift_sdk" --triple "$triple" -c "$configuration" "${sdk_options[@]}"
     -Xlinker "-L$sdk_root/swift-resources/usr/lib/swift_static-$architecture/android"
     -Xlinker -z -Xlinker max-page-size=16384)

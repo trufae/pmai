@@ -62,7 +62,10 @@ jobs:
 
       - name: Build release CLI
         run: |
-          args=(--package-path MaiCore -c release --product pmai -Xswiftc -Osize)
+          args=(--package-path MaiCore --disable-prefetching -c release --product pmai -Xswiftc -Osize)
+          if [ "${{ matrix.target }}" = "macos-x64" ]; then
+            export PMAI_NO_MLX=1
+          fi
           if [ "${{ runner.os }}" = "Linux" ]; then
             # Select static Foundation modules during compilation as well as linking.
             args+=(--static-swift-stdlib -Xswiftc -static-stdlib)
@@ -94,6 +97,9 @@ jobs:
 
   musl-cli:
     name: CLI (Linux musl ${{ matrix.name }})
+    env:
+      PMAI_NO_MLX: "1"
+      PMAI_FORWIROH_PLATFORM: native
     strategy:
       fail-fast: false
       matrix:
@@ -124,7 +130,7 @@ jobs:
       - name: Build fully static release CLI
         run: |
           set -eu
-          args=(--package-path MaiCore -c release --swift-sdk ${{ matrix.arch }}-swift-linux-musl -Xswiftc -Osize)
+          args=(--package-path MaiCore --disable-prefetching -c release --swift-sdk ${{ matrix.arch }}-swift-linux-musl -Xswiftc -Osize)
           swift build "${args[@]}" --product pmai
           cp "$(swift build "${args[@]}" --show-bin-path)/pmai" pmai
           strip -s pmai
@@ -156,6 +162,9 @@ jobs:
   android-cli:
     name: CLI (Android arm64)
     runs-on: ubuntu-24.04
+    env:
+      PMAI_NO_MLX: "1"
+      PMAI_FORWIROH_PLATFORM: native
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -186,7 +195,7 @@ jobs:
       # Avoid Swift Build 6.4's Linux planner crash.
       - name: Build Android arm64 release CLI
         run: |
-          args=(--build-system native --package-path MaiCore -c release --disable-index-store
+          args=(--build-system native --package-path MaiCore -c release --disable-index-store --disable-prefetching
             --swift-sdk swift-${SWIFT_VERSION}-RELEASE_android
             --triple aarch64-unknown-linux-android28 --static-swift-stdlib -Xswiftc -Osize)
           swift build "${args[@]}" --product pmai

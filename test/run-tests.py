@@ -44,7 +44,8 @@ def main():
         parser.error(f'Update suite ownership: unlisted={found-known}, missing={known-found}')
     env = os.environ.copy()
     env.pop('PMAI_TEST_PROFILE', None)
-    swift = [env.get('SWIFT', 'swift'), 'test', '--package-path', str(ROOT / 'MaiCore'), '--disable-index-store']
+    swift = [env.get('SWIFT', 'swift'), 'test', '--package-path', str(ROOT / 'MaiCore'),
+             '--disable-index-store', '--disable-prefetching']
     if args.profile in ('core', 'chat'):
         env['PMAI_TEST_PROFILE'] = args.profile
         swift += ['--scratch-path', str(ROOT / 'MaiCore/.build' / (args.profile + '-tests'))]
@@ -63,7 +64,8 @@ def main():
         env['PMAI_TESTS_BUILT'] = '1'
     if not args.skip_build:
         subprocess.run([env.get('SWIFT', 'swift'), 'build', '--package-path', str(ROOT / 'MaiCore'),
-                        '--disable-index-store', '--product', 'pmai'], cwd=ROOT, env=env, check=True)
+                        '--disable-index-store', '--disable-prefetching', '--product', 'pmai'],
+                       cwd=ROOT, env=env, check=True)
     binary = args.binary.resolve()
     if not binary.is_file():
         parser.error(f'CLI binary missing: {binary}')

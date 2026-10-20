@@ -53,9 +53,12 @@ jobs:
         uses: actions/cache@v6
         with:
           path: MaiCore/.build
-          key: swift-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-cache.outputs.id }}-${{ hashFiles('MaiCore/Package.swift', 'MaiCore/Package.resolved') }}-${{ hashFiles('MaiCore/Sources/**', 'MaiCore/Tests/**') }}
+          key: swift-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-cache.outputs.id }}-${{ hashFiles('MaiCore/Package.swift', 'MaiCore/Package.resolved', 'Vendor/Forwiroh/Package.swift', 'Vendor/Forwiroh/Artifacts/manifest.json') }}-${{ hashFiles('MaiCore/Sources/**', 'MaiCore/Tests/**') }}
           restore-keys: |
-            swift-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-cache.outputs.id }}-${{ hashFiles('MaiCore/Package.swift', 'MaiCore/Package.resolved') }}-
+            swift-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-cache.outputs.id }}-${{ hashFiles('MaiCore/Package.swift', 'MaiCore/Package.resolved', 'Vendor/Forwiroh/Package.swift', 'Vendor/Forwiroh/Artifacts/manifest.json') }}-
+
+      - name: Test dependency download profiles
+        run: python3 test/build-dependencies.py
 
       - name: Test MaiCore
         if: matrix.name == 'macOS'
@@ -64,8 +67,9 @@ jobs:
       # Reuse the debug objects built by swift test on macOS.
       - name: Build debug CLI
         run: |
-          swift build --package-path MaiCore --disable-index-store --product pmai
-          cp "$(swift build --package-path MaiCore --show-bin-path)/pmai" pmai
+          args=(--package-path MaiCore --disable-index-store --disable-prefetching)
+          swift build "${args[@]}" --product pmai
+          cp "$(swift build "${args[@]}" --show-bin-path)/pmai" pmai
 
       - name: Test platform compatibility and CLI defaults
         run: python3 test/run-tests.py platform --skip-build --binary ./pmai --jobs 2
@@ -122,7 +126,7 @@ jobs:
         run: |
           # Swift Build also needs static modules while compiling so Foundation
           # emits its CoreFoundation, XML and networking autolink dependencies.
-          args=(--package-path MaiCore --static-swift-stdlib -Xswiftc -static-stdlib)
+          args=(--package-path MaiCore --disable-prefetching --static-swift-stdlib -Xswiftc -static-stdlib)
           swift build "${args[@]}" --disable-index-store --product pmai
           cp "$(swift build "${args[@]}" --show-bin-path)/pmai" pmai
 
@@ -140,6 +144,9 @@ jobs:
 
   musl-cli:
     name: CLI (Linux musl ${{ matrix.name }})
+    env:
+      PMAI_NO_MLX: "1"
+      PMAI_FORWIROH_PLATFORM: native
     strategy:
       fail-fast: false
       matrix:
@@ -170,7 +177,7 @@ jobs:
       # Keep one optimized build to exercise the SDK/runtime without AVX.
       - name: Build fully static CLI
         run: |
-          args=(--package-path MaiCore --swift-sdk ${{ matrix.arch }}-swift-linux-musl ${{ matrix.build-args }})
+          args=(--package-path MaiCore --disable-prefetching --swift-sdk ${{ matrix.arch }}-swift-linux-musl ${{ matrix.build-args }})
           swift build "${args[@]}" --disable-index-store --product pmai
           cp "$(swift build "${args[@]}" --show-bin-path)/pmai" pmai
 
@@ -203,6 +210,9 @@ jobs:
   android-cli:
     name: CLI (Android arm64)
     runs-on: ubuntu-24.04
+    env:
+      PMAI_NO_MLX: "1"
+      PMAI_FORWIROH_PLATFORM: native
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -234,7 +244,7 @@ jobs:
       # Avoid Swift Build 6.4's Linux planner crash and exercise the release flags.
       - name: Build Android arm64 release CLI
         run: |
-          swift build --build-system native --package-path MaiCore -c release --disable-index-store --product pmai \
+          swift build --build-system native --package-path MaiCore -c release --disable-index-store --disable-prefetching --product pmai \
             --swift-sdk swift-${SWIFT_VERSION}-RELEASE_android \
             --triple aarch64-unknown-linux-android28 --static-swift-stdlib -Xswiftc -Osize
 
@@ -258,11 +268,14 @@ jobs:
       - name: Show Swift version
         run: swift --version
 
+      - name: Test dependency download profiles
+        run: python test/build-dependencies.py
+
       - name: Build debug CLI
         run: |
-          swift build --package-path MaiCore --disable-index-store --product pmai
+          swift build --package-path MaiCore --disable-index-store --disable-prefetching --product pmai
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $bin = swift build --package-path MaiCore --show-bin-path
+          $bin = swift build --package-path MaiCore --disable-prefetching --show-bin-path
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item "$bin/pmai.exe" pmai.exe
 
@@ -327,7 +340,7 @@ jobs:
             aitest/.build
             build/DerivedData/SourcePackages
             build/DerivedData/CompilationCache.noindex
-          key: ios-${{ runner.arch }}-${{ steps.ios-cache.outputs.id }}-${{ hashFiles('**/Package.resolved', 'MaiCore/Package.swift') }}
+          key: ios-${{ runner.arch }}-${{ steps.ios-cache.outputs.id }}-${{ hashFiles('**/Package.resolved', 'MaiCore/Package.swift', 'Vendor/Forwiroh/Package.swift', 'Vendor/Forwiroh/Artifacts/manifest.json') }}
 
       - name: List available iOS Simulator runtimes
         run: xcrun simctl list runtimes

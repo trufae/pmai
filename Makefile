@@ -10,7 +10,8 @@ XCODE_PACKAGE_FLAGS ?= -skipPackagePluginValidation -skipPackageUpdates
 # build, test and run so they can reuse compilation outputs.
 XCODE_BUILD_FLAGS ?= -parallelizeTargets COMPILATION_CACHE_ENABLE_CACHING=YES COMPILER_INDEX_STORE_ENABLE=NO ENABLE_CODE_COVERAGE=NO
 SWIFT ?= swift
-SWIFT_BUILD_FLAGS ?= --disable-index-store
+# The shared lockfile also pins Apple-only packages; fetch only the active graph.
+SWIFT_BUILD_FLAGS ?= --disable-index-store --disable-prefetching
 # Keep installs incremental and unoptimized, without generating debug information.
 REPL_INSTALL_FLAGS = $(SWIFT_BUILD_FLAGS) -c debug -debug-info-format none
 # A generic Simulator destination has no active device, so Xcode otherwise
@@ -146,7 +147,7 @@ repl-uninstall:
 # Alpine. Needs the Swift Static Linux SDK matching the toolchain.
 MUSL_ARCH ?= $(shell uname -m)
 repl-musl:
-	$(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) -c release --product pmai \
+	PMAI_NO_MLX=1 PMAI_FORWIROH_PLATFORM=native $(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) -c release --product pmai \
 		--swift-sdk $(MUSL_ARCH)-swift-linux-musl -Xswiftc -Osize
 
 plugin-fixture:

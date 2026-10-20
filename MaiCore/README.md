@@ -114,6 +114,18 @@ the path from `swift build --package-path MaiCore --show-bin-path`. Xcode handle
 the iOS Metal resources. `PMAI_NO_MLX=1` builds the CLI without MLX dependencies;
 Apple and remote providers remain available.
 
+The Make targets and CI pass `--disable-prefetching` so SwiftPM fetches only
+packages in the active dependency graph. The shared `Package.resolved` also
+contains Apple-only MLX pins; without that flag SwiftPM may clone those unused
+repositories on Linux before resolving the graph. Include the flag when invoking
+`swift build`, `swift test`, or `swift package resolve` directly.
+
+For Linux/Android cross-builds from a Mac, also set `PMAI_NO_MLX=1` and
+`PMAI_FORWIROH_PLATFORM=native`. The latter selects Forwiroh's Linux/Android
+artifact bundle without downloading its Apple XCFramework. Native Apple builds
+fetch only the Apple artifact. `make repl-musl` and the Android build script set
+the cross-build environment automatically.
+
 Install a release build system-wide with `make repl-install`. The Linux
 release archives come in two flavours: `pmai-linux-<arch>.zip` links against
 glibc, libstdc++, libcurl, and libxml2, while `pmai-linux-<arch>-musl.zip` is

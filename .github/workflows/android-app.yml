@@ -13,6 +13,8 @@ concurrency:
 
 env:
   SWIFT_VERSION: "6.4.0"
+  PMAI_NO_MLX: "1"
+  PMAI_FORWIROH_PLATFORM: native
 
 jobs:
   apk:
@@ -46,7 +48,7 @@ jobs:
       - name: Test portable Swift screens
         run: |
           sh PocketMaiAndroid/scripts/bootstrap.sh
-          swift test --package-path PocketMaiAndroid --build-system native --disable-sandbox
+          swift test --package-path PocketMaiAndroid --build-system native --disable-sandbox --disable-prefetching
       - name: Build APK for device and emulator
         env:
           ANDROID_ABIS: "arm64-v8a x86_64"

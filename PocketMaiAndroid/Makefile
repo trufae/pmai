@@ -22,7 +22,7 @@ test:
 	set -e; source scripts/environment.sh; \
 		sh scripts/bootstrap.sh; \
 		SWIFT="$$SWIFT" python3 ../test/run-tests.py chat; \
-		"$$SWIFT" test --build-system native --disable-sandbox --disable-index-store
+		PMAI_NO_MLX=1 "$$SWIFT" test --build-system native --disable-sandbox --disable-index-store --disable-prefetching
 
 clean:
 	set -e; source scripts/environment.sh; \

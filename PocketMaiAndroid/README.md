@@ -69,9 +69,12 @@ native libraries in the staging directory. Set
 `SWIFT_ANDROID_SDK_ROOT` to the artifact bundle's `swift-android` directory.
 `GRADLE` can override the wrapper command.
 
-Repeated builds reuse Swift compilation and Gradle task outputs, skip editor
-indexing, and leave unchanged native libraries in place. Run
-`make -C PocketMaiAndroid clean` explicitly when you need to clean APK outputs.
+Builds omit the Apple-only MLX dependency graph, fetch only Forwiroh's native
+artifact, and disable SwiftPM prefetching of unused lockfile entries, including
+when cross-compiling from a Mac. Repeated builds reuse Swift compilation and
+Gradle task outputs, skip editor indexing, and leave unchanged native libraries
+in place. Run `make -C PocketMaiAndroid clean` explicitly when you need to clean
+APK outputs.
 
 Output: `app/build/outputs/apk/debug/app-debug.apk`. Install and launch:
 
@@ -155,8 +158,8 @@ It does not offer tools, MCP, attachments, voice, OCR, or local models.
 
 ```sh
 sh PocketMaiAndroid/scripts/bootstrap.sh
-swift test --package-path MaiCore --filter portable
-swift test --package-path PocketMaiAndroid --build-system native --disable-sandbox
+python3 test/run-tests.py chat
+PMAI_NO_MLX=1 swift test --package-path PocketMaiAndroid --build-system native --disable-sandbox --disable-prefetching
 ```
 
 The core tests cover configuration and prompt persistence, model discovery,
