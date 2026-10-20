@@ -12,9 +12,7 @@ client and PocketMai. Concrete integrations are separate products:
 `MaiOpenAI`, `MaiLocalProviders`, `MaiMCP`, and `MaiVisionOCR`.
 `MaiLocalProviders` owns the Apple Foundation Models and MLX engines used by
 both hosts, including availability checks, streaming, and model loading.
-`MaiVisual` adds the SwiftTUI terminal workspace used by the CLI's `/visual`
-command; PocketMai does not link it. Each registers through the same plugin
-API available to third-party providers. Together they support structured
+Each registers through the same plugin API available to third-party providers. Together they support structured
 message content, multimodal requests, native tool calls, approvals, MCP
 Streamable HTTP servers, CLI-only stdio MCP processes, and bounded child agents.
 
@@ -123,11 +121,8 @@ fully static and runs on musl distributions such as Alpine and on glibc systems
 too old for the regular build. `www/install.sh` picks the static build on musl
 systems automatically; set `PMAI_LIBC=musl` to force it elsewhere. Build the
 static flavour locally with `make repl-musl` once the Swift Static Linux SDK
-matching the toolchain is installed. Like the Android build, the static build
-leaves out the `/visual` workspace because swift-tui does not build against
-musl; `PMAI_NO_VISUAL=1` in the environment of `swift build` selects that
-configuration. Native `--plugin` libraries cannot be loaded by the static build
-either, because static musl executables cannot `dlopen`.
+matching the toolchain is installed. Native `--plugin` libraries cannot be
+loaded by the static build because static musl executables cannot `dlopen`.
 
 Run `pmai -U` or `pmai --update` to download and verify a release directly in
 Swift, showing the old and new versions without download progress noise. It
@@ -345,33 +340,6 @@ had been typed at the prompt. `/reply WIDTH` wraps the quote at another column
 instead, and leaving the quote untouched sends nothing. It is the same quoting
 the reply action in the iOS app uses.
 
-`/visual` hands the terminal to a [SwiftTUI](https://swifttui.sh/) workspace
-built by the `MaiVisual` module and returns to the prompt on `Ctrl+C`, `/exit`,
-or the REPL button. The Chats tab keeps several conversations in a sidebar and
-shows them in framed panes. Every action is reachable in three portable ways:
-the button toolbar above the panes (Tab moves between controls, Return
-activates, the mouse works too), the searchable command menu on `Ctrl+K` or
-`F2`, and slash commands typed into a pane: `/pane new|split|down|close|next|prev`,
-`/tab chats|providers|mcp|tools|agents`, `/menu`, `/sidebar`, and `/cancel`.
-Alt chords (`Alt+N`, `Alt+V`, `Alt+S`, `Alt+X`, `Alt+arrows`, `Alt+B`,
-`Alt+K`, `Alt+C`, `Alt+1` to `Alt+5`) are listed in the menu and work only where
-the terminal sends Alt as an Escape prefix. The REPL's own slash commands run
-unchanged on the focused pane's conversation: `/chat list`, `/model`, `/agent`,
-`/image`, `/copy`, `/clear`, and the rest. Command output appears above the
-input until Escape closes it. The Providers, MCP, Tools, and Agents tabs
-register new OpenAI-compatible or plugin providers, connect Streamable HTTP MCP
-servers, toggle the tools each conversation may call, register plugin tool
-sources, switch agents, and save the focused conversation as a named agent.
-The Stats tab draws one bar per provider:model, colored by provider, for
-average output speed and for time in use, refreshed after every reply.
-Registrations apply to the running session immediately and are saved atomically
-to the loaded config path, or to `~/.config/pmai/config.json` when none was
-loaded. Tool approvals raised
-while the workspace is open appear as a sheet instead of a stdin prompt. Leaving
-the workspace makes the focused conversation the REPL conversation; the other
-conversations and the pane layout are kept in memory for the next `/visual`.
-Visual mode needs an interactive terminal and, on macOS, version 15 or later.
-
 `/attach PATH` queues a document for the next message. Word files, EPUB books
 and PDFs are converted to Markdown (scanned PDF pages go through on-device OCR
 on Apple platforms), JSON files become an indented outline, and other text files are
@@ -379,8 +347,8 @@ attached verbatim. HTML asks whether to keep its source, convert it to Markdown,
 or copy it into the working directory; scripts can make that explicit with
 `/attach source|markdown|copy PATH`. Images are attached at medium size, so use `/image` for other
 sizes or OCR. `/attach clear` drops everything queued. The converters live in
-the `MaiDocuments` module, which PocketMai links as well, so the app, the CLI,
-and its visual mode share one implementation. `MaiDocuments` needs PDFKit for
+the `MaiDocuments` module, which PocketMai links as well, so the app and CLI
+share one implementation. `MaiDocuments` needs PDFKit for
 PDFs, so PDF conversion is unavailable on Linux while Word, EPUB, JSON, and
 text work everywhere. The same module holds the exporters (`ChatExport`, `TextExport`, `MarkdownExport`,
 `HTMLExport`, `EPUBExport`, `DOCXExport`): they write from a small `ExportDocument` that each
@@ -552,9 +520,7 @@ runtime and the change is saved when the editor closes. `/baseurl [ID]` shows th
 effective URL without changing it. `/provider rename OLD NEW` renames a
 connection and updates all configured agents, including task agents; omit OLD
 to rename the current provider. The active chat follows the rename, while other
-saved chats retain their independent snapshots. In `/visual`, open the Providers
-tab, choose **Edit** beside a
-configured provider, change **Base URL**, and choose **Update**. See
+saved chats retain their independent snapshots. See
 `doc/edit.md` for everything `/edit` reaches.
 
 On a terminal the prompt never goes away: the bottom two rows are reserved for
@@ -629,7 +595,7 @@ or generation duration are available.
 three measured categories: average output speed, time in use, and efficiency,
 with the request and token counts beside each bar. The runtime records every
 provider call it makes — REPL turns, one-shot runs, tool-loop rounds, child
-agents, and the visual workspace — into `ModelUsageStore`, kept in
+agents — into `ModelUsageStore`, kept in
 `~/.pmai/stats.json` (`$PMAI_HOME` relocates it) so the totals span every
 project. Tokens come from the provider's usage payload, or are estimated from
 text length and marked `~` when it reports none; speed is visible output
@@ -821,8 +787,7 @@ headings, lists, task lists, quotes, rules, fenced code, footnotes, and pipe
 tables whose cells keep their bold, code, and link styling and wrap to the
 terminal width. `--no-markdown` or `ui.markdown off` prints replies verbatim,
 output that is not a terminal stays verbatim unless `--markdown` is given, and
-`NO_COLOR` keeps the structure without colors. The visual workspace renders the
-same markdown inside its panes.
+`NO_COLOR` keeps the structure without colors.
 Up/Down or `Ctrl+P`/`Ctrl+N` move through input history. `Ctrl+R` starts an
 incremental reverse search; type to narrow it, press `Ctrl+R` again for an older
 match, Return to submit it, or `Ctrl+G` to restore the original input. `Ctrl+A`
@@ -967,9 +932,7 @@ approved, and its parameters, then the group's settings — the same schema the
 model receives, readable. `/tools set GROUP OPTION VALUE` persists
 typed group settings and reloads the source; for example, Mastodon's instance,
 API-key environment variable, and write permission are configured this way.
-Visual mode offers group and individual direct/proxy/hidden/disabled/inherit selectors
-with call counters, alongside typed source settings. Group
-selections live on each `AgentDefinition`, while source credentials and options
+Group selections live on each `AgentDefinition`, while source credentials and options
 live on `ConfiguredToolSource`, so every host uses the same configuration and
 plugin API. Older native plugins without group metadata are grouped by their
 tool-name prefix and described by the first sentence of each tool. MaiCore's
@@ -1280,8 +1243,7 @@ and limits — that people switch between with `/agent use ID`. Each one carries
 `description` saying what it is for, which a delegating model also reads when it
 picks an agent for a task, and an `enabled` flag that parks a setup without
 deleting it. `/agents` lists them; `/agents describe ID TEXT` and
-`/agents enable|disable ID` maintain them. Visual mode edits the same fields on
-its Agents tab.
+`/agents enable|disable ID` maintain them.
 
 A running instance of a definition is a process with a **pid**. `/jobs` (or
 `/jobs tree`) draws them, `/jobs log PID` prints one agent's own transcript,
@@ -1519,8 +1481,7 @@ unfinished prompt. The model receives the exit status; terminal input and
 output stay out of the conversation. Interactive runs preserve the terminal
 environment and have no default timeout; an explicit `timeout_seconds` still
 applies. Omit `stdin` and `output` in this mode. It requires a foreground CLI
-terminal and is unavailable in piped/server sessions or while `/visual` owns
-the terminal.
+terminal and is unavailable in piped/server sessions.
 `output: "auto"` (the default) returns small output but saves any stream larger
 than 24 KB to a temporary file and reports its path; use `inline` to drop the
 excess, `file` to save both streams immediately, or `none` to suppress them.

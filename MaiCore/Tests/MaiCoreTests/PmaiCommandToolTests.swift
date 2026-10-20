@@ -91,7 +91,7 @@ func pmaiRunWithoutHost() async throws {
 @Test("The blocked list refuses the commands that cannot work away from the prompt")
 func pmaiRunBlocksSessionCommands() async throws {
   let tool = MaiPmaiRunTool(policy: .init(), host: await host { _ in "ran" })
-  for command in ["/exit", "/quit", "/clear", "/visual", "/image", "/attach"] {
+  for command in ["/exit", "/quit", "/clear", "/image", "/attach"] {
     await #expect(throws: PmaiCommandError.blocked(String(command.dropFirst()))) {
       try await call(tool, ["command": command + " rest"])
     }

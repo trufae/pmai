@@ -156,7 +156,7 @@ It does not offer tools, MCP, attachments, voice, OCR, or local models.
 ```sh
 sh PocketMaiAndroid/scripts/bootstrap.sh
 swift test --package-path MaiCore --filter portable
-PMAI_NO_VISUAL=1 swift test --package-path PocketMaiAndroid --build-system native --disable-sandbox
+swift test --package-path PocketMaiAndroid --build-system native --disable-sandbox
 ```
 
 The core tests cover configuration and prompt persistence, model discovery,

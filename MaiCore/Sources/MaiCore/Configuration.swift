@@ -510,7 +510,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   public var selectionForeground: String
   public var selectionBackground: String
   public var bold: Bool
-  /// Render assistant replies as styled markdown in the REPL and visual mode.
+  /// Render assistant replies as styled markdown in the REPL.
   public var markdown: Bool
   /// Show all results, important results in full, or a fixed number of leading lines.
   public var toolResultLines: ToolResultDisplay

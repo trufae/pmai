@@ -184,8 +184,7 @@ editing.
 `/edit input` is the odd one out: it changes nothing pmai owns. An empty file
 opens, and what it holds when the editor closes is sent to the chat as if it
 had been typed at the prompt, so a long message is written with the editor's
-keys. Leaving the file empty sends nothing. It works at the chat prompt; in
-visual mode, type the message into the pane.
+keys. Leaving the file empty sends nothing. It works at the chat prompt.
 
 ## Related one-line commands
 

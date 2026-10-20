@@ -6,12 +6,7 @@ import Foundation
 // --filter only selects tests after SwiftPM has built every test target.
 let testProfile = Context.environment["PMAI_TEST_PROFILE"]
 let focusedTests = testProfile == "core" || testProfile == "chat"
-// The `/visual` workspace needs swift-tui, which only builds against Darwin
-// and Glibc. Android already leaves it out through the platform condition;
-// PMAI_NO_VISUAL=1 does the same for builds SwiftPM still calls Linux, such
-// as the fully static musl release made with the Swift Static Linux SDK.
-let visualEnabled = Context.environment["PMAI_NO_VISUAL"] == nil
-var cliDependencies: [Target.Dependency] = [
+let cliDependencies: [Target.Dependency] = [
   "MaiCore", "MaiMCP", "MaiOpenAI", "MaiPluginHost", "MaiStandardTools", "MaiVisionOCR",
   "MaiDocuments", "MaiMarkdown", "MaiACP", "MaiACPGateway", "MaiLocalProviders",
   .product(name: "Crypto", package: "swift-crypto"),
@@ -20,7 +15,6 @@ var localProviderDependencies: [Target.Dependency] = ["MaiCore"]
 var localProviderSwiftSettings: [SwiftSetting] = []
 var packageDependencies: [Package.Dependency] = [
   .package(url: "https://github.com/apple/swift-crypto", from: "4.5.2"),
-  .package(url: "https://github.com/SwiftTUI/swift-tui", exact: "0.13.3"),
   .package(url: "https://github.com/apple/swift-nio", from: "2.81.0"),
   .package(
     name: "Forwiroh", path: Context.environment["PMAI_FORWIROH_PATH"] ?? "../Vendor/Forwiroh"),
@@ -67,12 +61,6 @@ var packageDependencies: [Package.Dependency] = [
     ]
   }
 #endif
-var cliSwiftSettings: [SwiftSetting] = []
-if visualEnabled {
-  cliDependencies.append(.target(name: "MaiVisual", condition: .when(platforms: [.macOS, .linux])))
-  cliSwiftSettings.append(.define("PMAI_HAS_VISUAL", .when(platforms: [.macOS, .linux])))
-}
-
 let package = Package(
   name: "MaiCore",
   platforms: [
@@ -89,7 +77,6 @@ let package = Package(
     .library(name: "MaiVisionOCR", targets: ["MaiVisionOCR"]),
     .library(name: "MaiPluginSDK", targets: ["MaiPluginSDK"]),
     .library(name: "MaiPluginHost", targets: ["MaiPluginHost"]),
-    .library(name: "MaiVisual", targets: ["MaiVisual"]),
     .library(name: "MaiDocuments", targets: ["MaiDocuments"]),
     .library(name: "MaiMarkdown", targets: ["MaiMarkdown"]),
     .library(name: "MaiACP", targets: ["MaiACP"]),
@@ -138,18 +125,10 @@ let package = Package(
     .target(
       name: "MaiFixturePlugin",
       dependencies: ["MaiPluginSDK", "CMaiPluginABI"]),
-    .target(
-      name: "MaiVisual",
-      dependencies: [
-        "MaiCore", "MaiMarkdown",
-        .product(name: "SwiftTUIRuntime", package: "swift-tui"),
-        .product(name: "SwiftTUICLI", package: "swift-tui"),
-      ]),
     .executableTarget(
       name: "MaiCLI",
       dependencies: cliDependencies,
       path: "Sources/mai",
-      swiftSettings: cliSwiftSettings,
       linkerSettings: [
         .linkedLibrary("ssl", .when(platforms: [.android])),
         .linkedLibrary("crypto", .when(platforms: [.android])),
@@ -172,13 +151,6 @@ let package = Package(
     .testTarget(name: "MaiPluginTests", dependencies: [
       "MaiCore", "MaiMCP", "MaiPluginHost", "MaiStandardTools", "MaiVisionOCR",
     ]),
-    .testTarget(
-      name: "MaiVisualTests",
-      dependencies: [
-        "MaiCore", "MaiStandardTools", "MaiVisual",
-        .product(name: "SwiftTUIRuntime", package: "swift-tui"),
-        .product(name: "SwiftTUICLI", package: "swift-tui"),
-      ]),
   ])
 
 if focusedTests {

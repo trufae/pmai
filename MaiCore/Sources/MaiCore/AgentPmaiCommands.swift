@@ -82,7 +82,7 @@ public struct PmaiCommandPolicy: Equatable, Sendable {
 
   /// Commands that cannot run away from the prompt: two end the session, two
   /// take the terminal over, and two queue something only the prompt holds.
-  public static let defaultBlockedCommands = "exit quit clear visual image attach"
+  public static let defaultBlockedCommands = "exit quit clear image attach"
   /// Commands that answer with what they are rather than changing it.
   public static let defaultReadOnlyCommands =
     "help set models providers tools mcp mcps agents agent jobs job theme prompts skills memory todo stats version cwd pwd path"

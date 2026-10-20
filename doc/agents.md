@@ -47,8 +47,8 @@ a **preset**, and two fields exist for that role:
   might want next week is worse than hiding it.
 
 Both are edited from every host: `/agents describe ID TEXT` and
-`/agents enable|disable ID` in the REPL, the Agents tab in visual mode, and the
-same `MaiConfiguration` file the iOS app reads.
+`/agents enable|disable ID` in the REPL and the same `MaiConfiguration` file
+the iOS app reads.
 
 The process analogy is not decoration. `agent_start` is fork+exec, `agent_stop`
 is kill, `/jobs tree` is pstree, and a pid is short enough to type. One
@@ -510,11 +510,6 @@ can be inspected or cleared, but cannot be resumed.
 
 Turning delegation on with no subagent budget would silently do nothing, so
 `/set delegation subagent` raises `limits.maxSubagents` to 1 and says it did.
-
-Visual mode carries the same three surfaces: the Agents tab lists setups with
-their description and an Enable/Disable button, the focused chat has a "May
-delegate tool work" toggle, and a Running agents pane draws the live tree with
-a Stop button per row.
 
 ## Cost model
 

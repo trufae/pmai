@@ -120,12 +120,8 @@ jobs:
           sdks: static-linux
 
       # Fully static: runs on Alpine and other musl distributions as well as
-      # on glibc systems too old for the regular Linux build. swift-tui does
-      # not build against musl, so like the Android build this one leaves out
-      # the /visual workspace (PMAI_NO_VISUAL).
+      # on glibc systems too old for the regular Linux build.
       - name: Build fully static release CLI
-        env:
-          PMAI_NO_VISUAL: "1"
         run: |
           set -eu
           args=(--package-path MaiCore -c release --swift-sdk ${{ matrix.arch }}-swift-linux-musl -Xswiftc -Osize)
@@ -160,8 +156,6 @@ jobs:
   android-cli:
     name: CLI (Android arm64)
     runs-on: ubuntu-24.04
-    env:
-      PMAI_NO_VISUAL: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v7

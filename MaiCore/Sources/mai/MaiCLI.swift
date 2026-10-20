@@ -10,10 +10,6 @@ import MaiPluginHost
 import MaiStandardTools
 import MaiVisionOCR
 
-#if PMAI_HAS_VISUAL
-  import MaiVisual
-#endif
-
 #if canImport(Android)
   import Android
 #elseif canImport(Musl)
@@ -428,7 +424,7 @@ private func environmentName(
   names.first { environment[$0].map { !$0.isEmpty } ?? false }
 }
 
-/// What `/visual` needs beyond the REPL session itself.
+/// Provider endpoints shared by the REPL and hosted pmai commands.
 private final class ProviderBaseURLStore: @unchecked Sendable {
   private let lock = NSLock()
   private var urls: [String: URL]
@@ -454,11 +450,10 @@ private final class ProviderBaseURLStore: @unchecked Sendable {
   }
 }
 
-private struct VisualBridge: Sendable {
+private struct REPLServices: Sendable {
   var approvalHandler: TerminalApprovalHandler
   var promptFileAccess: PromptFileAccess
   var configurationPath: String?
-  var implicitProviders: [ConfiguredProvider]
   var providerBaseURLs: ProviderBaseURLStore
   var memory: MemoryState
   var todo: TodoState
@@ -776,10 +771,6 @@ struct REPLSession: Sendable {
   var subagents: [AgentProcessRecord]
   var runtimeConfiguration: AgentChatConfiguration?
   var redactor: ContentRedactor?
-  #if PMAI_HAS_VISUAL
-    /// Conversations and panes left behind by the last `/visual` session.
-    var visualSnapshot: VisualWorkspaceSnapshot?
-  #endif
 
   init(
     id: UUID = UUID(),
@@ -855,28 +846,6 @@ struct REPLSession: Sendable {
   mutating func touch() {
     updatedAt = Date()
   }
-
-  #if PMAI_HAS_VISUAL
-    func visualSeed() -> VisualConversationSeed {
-      VisualConversationSeed(
-        id: id,
-        title: title,
-        profile: profile.agentDefinition,
-        messages: history.messages,
-        pendingContent: pendingContent,
-        sessionID: sessionID)
-    }
-
-    mutating func adopt(_ conversation: VisualConversationSeed) {
-      id = conversation.id
-      sessionID = conversation.sessionID
-      title = conversation.title
-      profile = SessionProfile(definition: conversation.profile)
-      history.replaceAll(with: conversation.messages)
-      pendingContent = conversation.pendingContent
-      touch()
-    }
-  #endif
 
   private static func initialHistory(for profile: SessionProfile) -> [AgentMessage] {
     let instructions = profile.instructions.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1537,11 +1506,10 @@ struct MaiCLI {
       let themesDirectory = home.rootURL.appendingPathComponent("themes", isDirectory: true)
       // Shared by the REPL and by the pmai_run/pmai_help tools, so a command
       // either of them runs reaches the same session, configuration and themes.
-      let visual = VisualBridge(
+      let services = REPLServices(
         approvalHandler: approvalHandler,
         promptFileAccess: promptFileAccess,
         configurationPath: configurationPath,
-        implicitProviders: setup.implicitProviders,
         providerBaseURLs: ProviderBaseURLStore(setup.providerBaseURLs),
         memory: memoryState,
         todo: todoState,
@@ -1603,7 +1571,7 @@ struct MaiCLI {
           runtime: runtime,
           plugins: plugins,
           ocrProvider: ocrProvider,
-          visual: visual)
+          services: services)
       }
       defer { Task { await PmaiCommandHost.shared.install(runner: nil) } }
       if let prompt = options.initialPrompt {
@@ -1673,7 +1641,7 @@ struct MaiCLI {
         ocrProvider: ocrProvider,
         configuration: configuration,
         catalogs: setup.catalogs,
-        visual: visual,
+        services: services,
         pmaiBridge: pmaiBridge,
         promptFileAccess: promptFileAccess,
         terminal: terminal)
@@ -2389,7 +2357,7 @@ struct MaiCLI {
     ocrProvider: any OCRProvider,
     configuration: MaiConfiguration?,
     catalogs: [MCPServerCatalog],
-    visual: VisualBridge,
+    services: REPLServices,
     pmaiBridge: PmaiCommandBridge,
     promptFileAccess: PromptFileAccess,
     terminal: TerminalWriter
@@ -2469,7 +2437,7 @@ struct MaiCLI {
       editor.install(surface: screen)
       await terminal.attach(screen: screen)
       await installInteractiveRunHost(screen: screen, inputGate: editor.inputGate)
-      await visual.approvalHandler.setPrompter { request in
+      await services.approvalHandler.setPrompter { request in
         // Stream iteration wakes when the waiting agent's task is cancelled.
         let (decisions, pending) = AsyncThrowingStream<ApprovalDecision, any Error>.makeStream()
         let reply = REPLApprovalReply(pending)
@@ -2484,7 +2452,7 @@ struct MaiCLI {
       }
     }
     if isatty(STDIN_FILENO) != 0 {
-      await visual.approvalHandler.setCompactionPrompter { request in
+      await services.approvalHandler.setCompactionPrompter { request in
         let (decisions, pending) = AsyncThrowingStream<AutocompactionDecision, any Error>.makeStream()
         let reply = REPLCompactionReply(pending)
         defer { continuation.yield(.compactionFinished(reply)) }
@@ -2517,9 +2485,9 @@ struct MaiCLI {
       await terminal.configureRedactor(session.redactor)
       await terminal.configureTerminalTitle(ui.title)
       configureEditor(ui.editor)
-      visual.memory.focus(project: project, chatID: session.id)
-      visual.todo.focus(project: project)
-      await runtime.configureMemory(visual.memory.promptSection)
+      services.memory.focus(project: project, chatID: session.id)
+      services.todo.focus(project: project)
+      await runtime.configureMemory(services.memory.promptSection)
       let directory = AgentExecutionScope.directory.standardizedFileURL
       let mode = configuration?.use.agentsmd ?? .off
       let approved: Bool
@@ -2616,7 +2584,7 @@ struct MaiCLI {
 
     func refreshStatus() async {
       guard let screen else { return }
-      visual.modelCatalog.select(session.profile.provider, runtime: runtime)
+      services.modelCatalog.select(session.profile.provider, runtime: runtime)
       let status = await statusLine()
       reader.update(inputPrompt())
       screen.setStatus(status.text, animating: status.animating, attention: loop.modalPrompt != nil)
@@ -2626,7 +2594,7 @@ struct MaiCLI {
     /// reads are refreshed here, while the thread is parked and cannot race.
     func releaseReader(workspace: AgentChatWorkspace) async {
       if isatty(STDIN_FILENO) != 0 {
-        visual.modelCatalog.select(session.profile.provider, runtime: runtime)
+        services.modelCatalog.select(session.profile.provider, runtime: runtime)
       }
       guard loop.readerParked, !loop.exiting else { return }
       await refreshTerminalSettings()
@@ -2646,8 +2614,8 @@ struct MaiCLI {
           completions: completionCandidates(
             workspace: workspace, configuration: configuration,
             availableProviders: availableProviders,
-            skills: visual.skills.catalog.skills, themesDirectory: visual.themesDirectory),
-          additionalCompletions: { visual.modelCatalog.completions(for: $0, runtime: runtime) },
+            skills: services.skills.catalog.skills, themesDirectory: services.themesDirectory),
+          additionalCompletions: { services.modelCatalog.completions(for: $0, runtime: runtime) },
           separator: screen == nil ? status.text : nil))
     }
 
@@ -2675,7 +2643,7 @@ struct MaiCLI {
     func recordSubagents() async {
       if let configuration {
         session.runtimeConfiguration = AgentChatConfiguration(
-          configuration: configuration, providerBaseURLs: visual.providerBaseURLs.snapshot())
+          configuration: configuration, providerBaseURLs: services.providerBaseURLs.snapshot())
       }
       for (chatID, pid) in chatProcessIDs {
         guard
@@ -2711,7 +2679,7 @@ struct MaiCLI {
         return
       }
       let base: MaiConfiguration
-      if let path = visual.configurationPath, FileManager.default.fileExists(atPath: path) {
+      if let path = services.configurationPath, FileManager.default.fileExists(atPath: path) {
         base = try MaiConfiguration.load(from: URL(fileURLWithPath: path))
       } else {
         base = configuration ?? MaiConfiguration()
@@ -2734,12 +2702,12 @@ struct MaiCLI {
       }
       await runtime.configureTaskAgents(draft.taskAgents)
       configuration = draft
-      visual.providerBaseURLs.replace(
+      services.providerBaseURLs.replace(
         Dictionary(
           uniqueKeysWithValues: draft.providers.compactMap { provider in
             provider.baseURL.map { (provider.id, $0) }
           }))
-      visual.modelCatalog.invalidate()
+      services.modelCatalog.invalidate()
       session.runtimeConfiguration = saved
     }
 
@@ -2850,7 +2818,7 @@ struct MaiCLI {
         guard await preparePromptFileAccess(
           for: text, runtime: runtime, configuration: configuration,
           environment: ProcessInfo.processInfo.environment,
-          promptFileAccess: promptFileAccess, approvalHandler: visual.approvalHandler,
+          promptFileAccess: promptFileAccess, approvalHandler: services.approvalHandler,
           terminal: terminal)
         else { return }
       }
@@ -3230,7 +3198,7 @@ struct MaiCLI {
         waiting.reply.resume(with: .approve(arguments: waiting.request.call.arguments))
         await terminal.note("approved \(tool)")
       case "a" where tool != "files_path_access", "always" where tool != "files_path_access":
-        await visual.approvalHandler.setApprovalMode(.yolo)
+        await services.approvalHandler.setApprovalMode(.yolo)
         waiting.reply.resume(with: .approve(arguments: waiting.request.call.arguments))
         await terminal.note("approved \(tool); tool.aproval = yolo for this session")
       case "n", "no":
@@ -3258,7 +3226,7 @@ struct MaiCLI {
     /// well as future calls. Otherwise the setting is live but the run still
     /// appears blocked on decisions made under the old value.
     func releasePendingApprovalsIfUnattended() async {
-      guard await visual.approvalHandler.permitsUnattendedExecution() else { return }
+      guard await services.approvalHandler.permitsUnattendedExecution() else { return }
       if let editing = loop.editingApproval, editing.request.tool.name != "files_path_access" {
         editing.reply.resume(with: .approve(arguments: editing.request.call.arguments))
         loop.editingApproval = nil
@@ -3569,7 +3537,7 @@ struct MaiCLI {
                   catch { await probe.disconnect(); await terminal.line("error: \(error.localizedDescription)", to: .standardError); return false }
                 }
                 if checked.value && !checked.interrupted {
-                  guard let configPath = visual.configurationPath else {
+                  guard let configPath = services.configurationPath else {
                     throw JSONRPCError.invalidParams("No writable configuration is active")
                   }
                   var draft = configuration ?? MaiConfiguration()
@@ -3583,7 +3551,7 @@ struct MaiCLI {
                   try await runtime.register(built, replacingExisting: true)
                   try await runtime.register(agent: agent, replacingExisting: true)
                   configuration = draft
-                  visual.modelCatalog.invalidate()
+                  services.modelCatalog.invalidate()
                   await recordSubagents()
                   workspace.upsert(session.chat, selecting: true)
                   if !session.profile.provider.rawValue.hasPrefix("remote.") { remoteReturnChatID = session.id }
@@ -3706,8 +3674,8 @@ struct MaiCLI {
                 argument,
                 session: session,
                 configuration: &configuration,
-                configurationPath: visual.configurationPath,
-                skills: visual.skills.catalog,
+                configurationPath: services.configurationPath,
+                skills: services.skills.catalog,
                 terminal: terminal)
             }
             switch outcome {
@@ -3722,7 +3690,7 @@ struct MaiCLI {
                 session: &session,
                 runtime: runtime,
                 configuration: &configuration,
-                configurationPath: visual.configurationPath,
+                configurationPath: services.configurationPath,
                 terminal: terminal)
               session.touch()
               workspace.upsert(session.chat, selecting: true)
@@ -3736,7 +3704,7 @@ struct MaiCLI {
           if name == "/skills", let request = skillPromptRequest(argument) {
             if request.name.isEmpty {
               await terminal.line("Usage: /skills prompt NAME [TEXT]   (/skills lists the names)")
-            } else if let skill = visual.skills.catalog.skill(named: request.name) {
+            } else if let skill = services.skills.catalog.skill(named: request.name) {
               if isSkillEnabled(skill, profile: session.profile) {
                 session.refreshTitle(from: "\(skill.name) \(request.arguments)")
                 await deliver(skill.prompt(arguments: request.arguments), to: loop.focus)
@@ -3776,15 +3744,6 @@ struct MaiCLI {
             await releaseIfIdle(workspace: workspace)
             return false
           }
-          #if PMAI_HAS_VISUAL
-            if name == "/visual", loop.hasTurns {
-              await terminal.note(
-                "Visual mode takes the whole screen, so it waits for the running turn; Ctrl+C cancels it."
-              )
-              await releaseIfIdle(workspace: workspace)
-              return false
-            }
-          #endif
           // Every other command runs now. What it changes and the running
           // turn meet as noteTurnEffects describes, with a note, not a wait.
           let before = REPLCommandSnapshot(session: session)
@@ -3831,9 +3790,9 @@ struct MaiCLI {
                   guard FileManager.default.changeCurrentDirectoryPath(directory) else {
                     throw JSONRPCError.invalidParams("Cannot open directory '\(directory)'.")
                   }
-                  try await visual.approvalHandler.focusProject(home.storageDirectory(for: target).appendingPathComponent("settings.json"))
-                  let debugLog = await visual.approvalHandler.isDebugEnabled()
-                    ? try AgentDebugLog(url: await visual.approvalHandler.debugLogURL()) : nil
+                  try await services.approvalHandler.focusProject(home.storageDirectory(for: target).appendingPathComponent("settings.json"))
+                  let debugLog = await services.approvalHandler.isDebugEnabled()
+                    ? try AgentDebugLog(url: await services.approvalHandler.debugLogURL()) : nil
                   await runtime.configureDebugLog(debugLog)
                 } catch {
                   let attemptedSession = session
@@ -3841,16 +3800,16 @@ struct MaiCLI {
                   workspace = previousWorkspace
                   _ = FileManager.default.changeCurrentDirectoryPath(project.workingDirectory)
                   try? await restoreChatConfiguration(previous: attemptedSession, isNewChat: false)
-                  try? await visual.approvalHandler.focusProject(home.storageDirectory(for: project).appendingPathComponent("settings.json"))
+                  try? await services.approvalHandler.focusProject(home.storageDirectory(for: project).appendingPathComponent("settings.json"))
                   throw error
                 }
                 project = target
                 store = nextStore
                 workspace = nextWorkspace
                 remoteReturnChatID = nil
-                visual.memory.adopt(project: target, settings: configuration?.memory ?? .init())
-                visual.todo.focus(project: target)
-                visual.skills.focus(project: target)
+                services.memory.adopt(project: target, settings: configuration?.memory ?? .init())
+                services.todo.focus(project: target)
+                services.skills.focus(project: target)
                 await restoreSavedSubagents()
                 await terminal.line("Opened project '\(target.displayName)' · \(target.workingDirectory) · chat '\(session.title)'.")
               case "rename", "name", "tint", "color", "colour":
@@ -3957,7 +3916,7 @@ struct MaiCLI {
                 plugins: plugins,
                 configuration: &configuration,
                 catalogs: &catalogs,
-                visual: visual,
+                services: services,
                 selectImportedChat: loop.activeTurn == nil,
                 terminal: terminal)
             }
@@ -3969,16 +3928,10 @@ struct MaiCLI {
             return false
           }
           await recordSubagents()
-          #if PMAI_HAS_VISUAL
-            if text == "/visual" {
-              workspace.upsert(session.chat, selecting: true)
-              session.visualSnapshot = visualSnapshot(for: workspace)
-            }
-          #endif
           var exits = false
           var commandWasInterrupted = false
           let editsInTerminal =
-            ["/edit", "/attach", "/visual"].contains(name)
+            ["/edit", "/attach"].contains(name)
             || argument.split(whereSeparator: \Character.isWhitespace).first?.lowercased() == "edit"
           if editsInTerminal {
             await withTurnInterruptSetAside {
@@ -3990,7 +3943,7 @@ struct MaiCLI {
                 ocrProvider: ocrProvider,
                 configuration: &configuration,
                 catalogs: &catalogs,
-                visual: visual,
+                services: services,
                 chatProcess: chatProcessIDs[session.id],
                 editor: editor,
                 terminal: terminal)
@@ -4014,7 +3967,7 @@ struct MaiCLI {
                 ocrProvider: ocrProvider,
                 configuration: commandConfiguration,
                 catalogs: commandCatalogs,
-                visual: visual,
+                services: services,
                 chatProcess: commandChatProcess,
                 pmaiBridge: pmaiBridge,
                 terminal: terminal)
@@ -4036,18 +3989,8 @@ struct MaiCLI {
           }
           await recordSubagents()
           await releasePendingApprovalsIfUnattended()
-          #if PMAI_HAS_VISUAL
-            if text == "/visual", let snapshot = session.visualSnapshot {
-              workspace = chatWorkspace(from: snapshot, focusedID: session.id, previous: workspace)
-              session = REPLSession(chat: workspace.selectedChat!)
-            } else {
-              session.touch()
-              workspace.upsert(session.chat, selecting: true)
-            }
-          #else
-            session.touch()
-            workspace.upsert(session.chat, selecting: true)
-          #endif
+          session.touch()
+          workspace.upsert(session.chat, selecting: true)
           await saveWorkspace(&workspace, store: store, terminal: terminal)
           await restoreSavedSubagents()
           await noteTurnEffects(since: before)
@@ -4217,7 +4160,7 @@ struct MaiCLI {
           } else if let paused, atPrompt {
             // A spent turn budget is a checkpoint, and with yolo on the person
             // asked not to be consulted; time and token caps are theirs to lift.
-            if paused.isCheckpoint, await visual.approvalHandler.permitsUnattendedExecution() {
+            if paused.isCheckpoint, await services.approvalHandler.permitsUnattendedExecution() {
               await terminal.note(
                 "continuing: yolo is on, so a spent turn budget does not stop the task (/set tool.aproval ask to be asked)",
                 tone: .warning)
@@ -4251,7 +4194,7 @@ struct MaiCLI {
         if loop.exiting {
           reply.fail(CancellationError())
         } else if request.tool.name != "files_path_access",
-          await visual.approvalHandler.permitsUnattendedExecution()
+          await services.approvalHandler.permitsUnattendedExecution()
         {
           reply.resume(with: .approve(arguments: request.call.arguments))
         } else {
@@ -4379,11 +4322,11 @@ struct MaiCLI {
     await ForwirohRemote.shared.close()
     await MaiRunTerminalHost.shared.install(runner: nil)
     reader.stop()
-    visual.modelCatalog.cancel()
+    services.modelCatalog.cancel()
     supervisorFeed.cancel()
     continuation.finish()
-    await visual.approvalHandler.setPrompter(nil)
-    await visual.approvalHandler.setCompactionPrompter(nil)
+    await services.approvalHandler.setPrompter(nil)
+    await services.approvalHandler.setCompactionPrompter(nil)
     await recordSubagents()
     workspace.upsert(session.chat, selecting: true)
     await saveWorkspace(&workspace, store: store, terminal: terminal, closing: true)
@@ -4816,9 +4759,8 @@ struct MaiCLI {
       context: profile.context, sessionID: sessionID)
   }
 
-  /// Visual mode runs commands in their own task already, so it can await the
-  /// isolated turn directly. The REPL starts the same request in its event loop
-  /// to keep approvals and Ctrl+C responsive.
+  /// Runs an isolated side question for the hosted command runner. The REPL
+  /// starts the same request in its event loop to keep approvals and Ctrl+C responsive.
   private static func handleBTWCommand(
     _ text: String,
     session: REPLSession,
@@ -4924,7 +4866,7 @@ struct MaiCLI {
     ocrProvider: any OCRProvider,
     configuration: MaiConfiguration?,
     catalogs: [MCPServerCatalog],
-    visual: VisualBridge,
+    services: REPLServices,
     chatProcess: AgentPID?,
     pmaiBridge: PmaiCommandBridge? = nil,
     terminal: TerminalWriter
@@ -4947,7 +4889,7 @@ struct MaiCLI {
       ocrProvider: ocrProvider,
       configuration: &configuration,
       catalogs: &catalogs,
-      visual: visual,
+      services: services,
       chatProcess: chatProcess,
       terminal: terminal)
     return REPLCommandResult(
@@ -4964,7 +4906,7 @@ struct MaiCLI {
     runtime: AgentRuntime,
     plugins: PluginRegistry,
     ocrProvider: any OCRProvider,
-    visual: VisualBridge
+    services: REPLServices
   ) async throws -> String {
     let command = line.split(maxSplits: 1, whereSeparator: \Character.isWhitespace).map(String.init)
     if command.first == "/remote" {
@@ -5006,7 +4948,7 @@ struct MaiCLI {
       ocrProvider: ocrProvider,
       configuration: &configuration,
       catalogs: &catalogs,
-      visual: visual,
+      services: services,
       chatProcess: state.chatProcess,
       terminal: terminal)
     bridge.finish(session: session, configuration: configuration, catalogs: catalogs)
@@ -5026,7 +4968,7 @@ struct MaiCLI {
     ocrProvider: any OCRProvider,
     configuration: inout MaiConfiguration?,
     catalogs: inout [MCPServerCatalog],
-    visual: VisualBridge,
+    services: REPLServices,
     chatProcess: AgentPID? = nil,
     editor: TerminalLineEditor? = nil,
     terminal: TerminalWriter
@@ -5038,12 +4980,12 @@ struct MaiCLI {
       return false
     }
     let previousProviders = configuration?.providers
-    let previousURLs = visual.providerBaseURLs.snapshot()
+    let previousURLs = services.providerBaseURLs.snapshot()
     defer {
       if configuration?.providers != previousProviders
-        || visual.providerBaseURLs.snapshot() != previousURLs
+        || services.providerBaseURLs.snapshot() != previousURLs
       {
-        visual.modelCatalog.invalidate()
+        services.modelCatalog.invalidate()
       }
     }
 
@@ -5122,30 +5064,30 @@ struct MaiCLI {
     case "/path":
       await handlePathCommand(
         argument, runtime: runtime, configuration: &configuration,
-        configurationPath: visual.configurationPath,
-        access: visual.promptFileAccess, terminal: terminal)
+        configurationPath: services.configurationPath,
+        access: services.promptFileAccess, terminal: terminal)
     case "/cd":
       await changeWorkingDirectory(argument, terminal: terminal)
     case "/nothink":
       await handleEffortCommand(
         "off", session: &session, runtime: runtime, configuration: &configuration,
-        configurationPath: visual.configurationPath, terminal: terminal)
+        configurationPath: services.configurationPath, terminal: terminal)
     case "/set":
       await handleSetCommand(
         argument,
         session: &session,
         runtime: runtime,
         plugins: plugins,
-        providerBaseURLs: visual.providerBaseURLs,
-        approvalHandler: visual.approvalHandler,
+        providerBaseURLs: services.providerBaseURLs,
+        approvalHandler: services.approvalHandler,
         configuration: &configuration,
-        configurationPath: visual.configurationPath,
+        configurationPath: services.configurationPath,
         catalogs: &catalogs,
         terminal: terminal)
     case "/theme":
       await handleThemeCommand(
-        argument, configuration: &configuration, configurationPath: visual.configurationPath,
-        directory: visual.themesDirectory, terminal: terminal)
+        argument, configuration: &configuration, configurationPath: services.configurationPath,
+        directory: services.themesDirectory, terminal: terminal)
     case "/providers":
       let providers = await runtime.availableProviders()
       if providers.isEmpty {
@@ -5154,7 +5096,7 @@ struct MaiCLI {
       for provider in providers {
         let selected = provider.id == session.profile.provider ? "*" : " "
         let baseURL =
-          (visual.providerBaseURLs.url(for: provider.id.rawValue)
+          (services.providerBaseURLs.url(for: provider.id.rawValue)
           ?? configuration?.providers.first { $0.id == provider.id.rawValue }?.baseURL)
           .map { " — \($0.absoluteString)" } ?? ""
         let defaultModel = provider.defaultModel.map { " — default model \($0)" } ?? ""
@@ -5175,7 +5117,7 @@ struct MaiCLI {
       let providerID = argument.isEmpty ? session.profile.provider : ProviderID(argument)
       do {
         let models = try await runtime.availableModels(provider: providerID)
-        visual.modelCatalog.store(models, for: providerID)
+        services.modelCatalog.store(models, for: providerID)
         if models.isEmpty {
           await terminal.line("Provider '\(providerID)' returned no models.")
         }
@@ -5194,29 +5136,29 @@ struct MaiCLI {
     case "/btw":
       await handleBTWCommand(argument, session: session, runtime: runtime, terminal: terminal)
     case "/todo":
-      await handleTodoCommand(argument, todo: visual.todo, terminal: terminal)
+      await handleTodoCommand(argument, todo: services.todo, terminal: terminal)
     case "/vdb":
       await handleVectorDatabaseCommand(
         argument, configuration: configuration, environment: ProcessInfo.processInfo.environment,
-        access: visual.promptFileAccess, terminal: terminal)
+        access: services.promptFileAccess, terminal: terminal)
     case "/skills":
       await handleSkillsCommand(
         argument,
         session: &session,
         runtime: runtime,
-        skills: visual.skills,
+        skills: services.skills,
         plugins: plugins,
         configuration: &configuration,
-        configurationPath: visual.configurationPath,
+        configurationPath: services.configurationPath,
         terminal: terminal)
     case "/memory":
       await handleMemoryCommand(
         argument,
         session: session,
         runtime: runtime,
-        memory: visual.memory,
+        memory: services.memory,
         configuration: &configuration,
-        configurationPath: visual.configurationPath,
+        configurationPath: services.configurationPath,
         terminal: terminal)
     case "/prompts":
       // The REPL loop answers /prompts before it gets here, so a prompt can
@@ -5225,8 +5167,8 @@ struct MaiCLI {
         argument,
         session: session,
         configuration: &configuration,
-        configurationPath: visual.configurationPath,
-        skills: visual.skills.catalog,
+        configurationPath: services.configurationPath,
+        skills: services.skills.catalog,
         terminal: terminal)
       {
       case .handled:
@@ -5240,8 +5182,8 @@ struct MaiCLI {
         session: &session,
         runtime: runtime,
         configuration: &configuration,
-        configurationPath: visual.configurationPath,
-        skills: visual.skills.catalog,
+        configurationPath: services.configurationPath,
+        skills: services.skills.catalog,
         terminal: terminal)
     case "/chat":
       await handleChatCommand(
@@ -5258,11 +5200,11 @@ struct MaiCLI {
         session: &session,
         runtime: runtime,
         plugins: plugins,
-        memory: visual.memory,
-        skills: visual.skills,
+        memory: services.memory,
+        skills: services.skills,
         configuration: &configuration,
-        configurationPath: visual.configurationPath,
-        providerBaseURLs: visual.providerBaseURLs,
+        configurationPath: services.configurationPath,
+        providerBaseURLs: services.providerBaseURLs,
         terminal: terminal)
     case "/provider":
       await handleProviderCommand(
@@ -5271,9 +5213,9 @@ struct MaiCLI {
         runtime: runtime,
         plugins: plugins,
         configuration: &configuration,
-        configurationPath: visual.configurationPath,
-        providerBaseURLs: visual.providerBaseURLs,
-        credentialsDirectory: visual.themesDirectory.deletingLastPathComponent()
+        configurationPath: services.configurationPath,
+        providerBaseURLs: services.providerBaseURLs,
+        credentialsDirectory: services.themesDirectory.deletingLastPathComponent()
           .appendingPathComponent("chatgpt"),
         terminal: terminal)
     case "/baseurl":
@@ -5281,34 +5223,34 @@ struct MaiCLI {
         argument,
         currentProvider: session.profile.provider,
         configuration: configuration,
-        providerBaseURLs: visual.providerBaseURLs,
+        providerBaseURLs: services.providerBaseURLs,
         terminal: terminal)
     case "/model":
       await handleModelCommand(
         argument, session: &session, runtime: runtime, configuration: &configuration,
-        configurationPath: visual.configurationPath, terminal: terminal)
+        configurationPath: services.configurationPath, terminal: terminal)
     case "/model-chat":
       await handleModelCommand(
         argument, chatOnly: true, session: &session, runtime: runtime,
-        configuration: &configuration, configurationPath: visual.configurationPath,
+        configuration: &configuration, configurationPath: services.configurationPath,
         terminal: terminal)
     case "/model-compact":
       await handleModelCommand(
         "-compact " + argument, session: &session, runtime: runtime, configuration: &configuration,
-        configurationPath: visual.configurationPath, terminal: terminal)
+        configurationPath: services.configurationPath, terminal: terminal)
     case "/model-aproval":
       await handleModelCommand(
         "-aproval " + argument, session: &session, runtime: runtime,
-        configuration: &configuration, configurationPath: visual.configurationPath,
+        configuration: &configuration, configurationPath: services.configurationPath,
         terminal: terminal)
     case "/model-tool":
       await handleModelCommand(
         "-tool " + argument, session: &session, runtime: runtime, configuration: &configuration,
-        configurationPath: visual.configurationPath, terminal: terminal)
+        configurationPath: services.configurationPath, terminal: terminal)
     case "/model-btw":
       await handleModelCommand(
         "-btw " + argument, session: &session, runtime: runtime, configuration: &configuration,
-        configurationPath: visual.configurationPath, terminal: terminal)
+        configurationPath: services.configurationPath, terminal: terminal)
     case "/agents", "/agent":
       await handleAgentCommand(
         argument,
@@ -5316,8 +5258,8 @@ struct MaiCLI {
         runtime: runtime,
         plugins: plugins,
         configuration: &configuration,
-        configurationPath: visual.configurationPath,
-        providerBaseURLs: visual.providerBaseURLs,
+        configurationPath: services.configurationPath,
+        providerBaseURLs: services.providerBaseURLs,
         terminal: terminal)
     case "/tools":
       await handleToolsCommand(
@@ -5326,7 +5268,7 @@ struct MaiCLI {
         runtime: runtime,
         plugins: plugins,
         configuration: &configuration,
-        configurationPath: visual.configurationPath,
+        configurationPath: services.configurationPath,
         terminal: terminal)
     case "/mcp":
       await handleMCPCommand(
@@ -5335,7 +5277,7 @@ struct MaiCLI {
         runtime: runtime,
         plugins: plugins,
         configuration: &configuration,
-        configurationPath: visual.configurationPath,
+        configurationPath: services.configurationPath,
         catalogs: &catalogs,
         terminal: terminal)
     case "/mcps":
@@ -5345,7 +5287,7 @@ struct MaiCLI {
         runtime: runtime,
         plugins: plugins,
         configuration: &configuration,
-        configurationPath: visual.configurationPath,
+        configurationPath: services.configurationPath,
         catalogs: &catalogs,
         terminal: terminal)
     case "/image":
@@ -5388,24 +5330,12 @@ struct MaiCLI {
         runtime: runtime,
         process: chatProcess,
         configuration: configuration,
-        skills: visual.skills.catalog,
+        skills: services.skills.catalog,
         terminal: terminal)
     case "/import":
       await terminal.line("Use /import PATH at the interactive chat prompt.")
     case "/stats":
-      await handleStatsCommand(argument, store: visual.usageStats, terminal: terminal)
-    #if PMAI_HAS_VISUAL
-      case "/visual":
-        await runVisualMode(
-          session: &session,
-          runtime: runtime,
-          plugins: plugins,
-          ocrProvider: ocrProvider,
-          configuration: &configuration,
-          catalogs: &catalogs,
-          visual: visual,
-          terminal: terminal)
-    #endif
+      await handleStatsCommand(argument, store: services.usageStats, terminal: terminal)
     case "/clear":
       session.reset()
       // The agents the cleared runs started leave the table with them, so
@@ -5421,16 +5351,13 @@ struct MaiCLI {
       await terminal.line(
         "Use /stop at the chat prompt to interrupt the running turn and keep its queue.")
     case "/continue":
-        // /continue is handled directly at the chat prompt; from a command it
-        // just explains itself. If text is supplied, queue it as a user message
-        // so the next /continue at the prompt sees it.
-        if argument.isEmpty {
-          await terminal.line(
-                "Use /continue at the chat prompt; in visual mode, send \"continue\" as a message.")
-        } else {
-          session.history.append(AgentMessage.user(argument))
-          await terminal.line("Message added to history; use /continue at the chat prompt to resume.")
-        }
+      // Hosted commands can queue input, but resuming belongs to the chat prompt.
+      if argument.isEmpty {
+        await terminal.line("Use /continue at the chat prompt.")
+      } else {
+        session.history.append(AgentMessage.user(argument))
+        await terminal.line("Message added to history; use /continue at the chat prompt to resume.")
+      }
     default:
       await terminal.line("Unknown command. Type /help.")
     }
@@ -10780,7 +10707,7 @@ struct MaiCLI {
     plugins: PluginRegistry,
     configuration: inout MaiConfiguration?,
     catalogs: inout [MCPServerCatalog],
-    visual: VisualBridge,
+    services: REPLServices,
     selectImportedChat: Bool,
     terminal: TerminalWriter
   ) async {
@@ -10801,7 +10728,7 @@ struct MaiCLI {
         plugins: plugins,
         configuration: &configuration,
         catalogs: &catalogs,
-        visual: visual,
+        services: services,
         selectImportedChat: selectImportedChat,
         terminal: terminal)
       await terminal.line("Imported \(summary.joined(separator: ", ")) from \(url.path).")
@@ -10836,14 +10763,14 @@ struct MaiCLI {
     plugins: PluginRegistry,
     configuration: inout MaiConfiguration?,
     catalogs: inout [MCPServerCatalog],
-    visual: VisualBridge,
+    services: REPLServices,
     selectImportedChat: Bool,
     terminal: TerminalWriter
   ) async throws -> [String] {
     var summary: [String] = []
     var importedConfiguration = configuration
     if let settings = archive.settings {
-      guard let path = visual.configurationPath else {
+      guard let path = services.configurationPath else {
         throw ArchiveImportError.configurationUnavailable
       }
       var draft = configuration ?? MaiConfiguration()
@@ -10855,8 +10782,8 @@ struct MaiCLI {
     }
 
     if let skills = archive.skills {
-      for skill in skills { try skill.install(in: visual.skills.userDirectory) }
-      _ = await synchronizeSkillTools(runtime: runtime, state: visual.skills)
+      for skill in skills { try skill.install(in: services.skills.userDirectory) }
+      _ = await synchronizeSkillTools(runtime: runtime, state: services.skills)
       summary.append("\(skills.count) skill\(skills.count == 1 ? "" : "s")")
     }
 
@@ -10868,7 +10795,7 @@ struct MaiCLI {
         runtime: runtime,
         plugins: plugins,
         catalogs: &catalogs,
-        providerBaseURLs: visual.providerBaseURLs,
+        providerBaseURLs: services.providerBaseURLs,
         terminal: terminal)
     }
 
@@ -11082,8 +11009,8 @@ struct MaiCLI {
       /stats reset           Forget every statistic
       /stats path            Print the file the statistics are saved in
     The runtime records tokens (from the provider's usage, or estimated from text
-    length and marked ~) and the wall-clock time of every model call, in the REPL,
-    one-shot runs, and the visual workspace alike. Speed uses answer text tokens
+    length and marked ~) and the wall-clock time of every model call, in the REPL
+    and one-shot runs alike. Speed uses answer text tokens
     over the streaming window (~ means estimated from text length). Time in use
     adds the wait for the first token; efficiency is total tokens /
     (seconds in use × requests).
@@ -11391,125 +11318,6 @@ struct MaiCLI {
       await terminal.line("error: \(error.localizedDescription)", to: .standardError)
     }
   }
-
-  #if PMAI_HAS_VISUAL
-    /// Hands the terminal to the SwiftTUI workspace and adopts its focused
-    /// conversation, registrations, and configuration draft when it returns.
-    private static func runVisualMode(
-      session: inout REPLSession,
-      runtime: AgentRuntime,
-      plugins: PluginRegistry,
-      ocrProvider: any OCRProvider,
-      configuration: inout MaiConfiguration?,
-      catalogs: inout [MCPServerCatalog],
-      visual: VisualBridge,
-      terminal: TerminalWriter
-    ) async {
-      guard isatty(STDIN_FILENO) != 0, isatty(STDOUT_FILENO) != 0 else {
-        await terminal.line("Visual mode needs an interactive terminal.", to: .standardError)
-        return
-      }
-      let screen = TerminalScreen.current
-      screen?.deactivate()
-      defer { screen?.resume() }
-      let launch = VisualLaunch(
-        focusedConversation: session.visualSeed(),
-        snapshot: session.visualSnapshot,
-        configuration: configuration ?? MaiConfiguration(providers: visual.implicitProviders),
-        configurationPath: visual.configurationPath,
-        catalogs: catalogs,
-        environment: ProcessInfo.processInfo.environment,
-        commandHandler: { request in
-          await runVisualCommand(
-            request,
-            runtime: runtime,
-            plugins: plugins,
-            ocrProvider: ocrProvider,
-            visual: visual)
-        })
-      let approvals = VisualApprovalHandler(requiresConfirmation: {
-        $0.tool.name == "files_path_access"
-      }) {
-        await visual.approvalHandler.setApprovalMode(.yolo)
-      }
-      await visual.approvalHandler.setDelegate(approvals)
-      do {
-        let outcome = try await VisualMode.run(
-          launch,
-          runtime: runtime,
-          plugins: plugins,
-          approvals: approvals)
-        await visual.approvalHandler.setDelegate(nil)
-        session.adopt(outcome.focusedConversation)
-        session.visualSnapshot = outcome.snapshot
-        catalogs = outcome.catalogs
-        if outcome.configurationChanged || configuration != nil {
-          configuration = outcome.configuration
-        }
-        await terminal.line(outcome.summary)
-      } catch {
-        await visual.approvalHandler.setDelegate(nil)
-        await terminal.line("error: \(error.localizedDescription)", to: .standardError)
-      }
-    }
-
-    /// Runs a slash command typed into a visual pane exactly as the REPL would,
-    /// on a session built from that pane's conversation, and returns what it
-    /// printed together with the conversation it left behind.
-    private static func runVisualCommand(
-      _ request: VisualCommandRequest,
-      runtime: AgentRuntime,
-      plugins: PluginRegistry,
-      ocrProvider: any OCRProvider,
-      visual: VisualBridge
-    ) async -> VisualCommandOutcome {
-      let command =
-        request.input.split(maxSplits: 1, whereSeparator: \Character.isWhitespace).first.map(
-          String.init) ?? request.input
-      switch command {
-      case "/visual":
-        return VisualCommandOutcome(
-          output: "Already in visual mode. /exit or Ctrl+C returns to the REPL.",
-          conversation: request.conversation)
-      case "/exit", "/quit":
-        return VisualCommandOutcome(
-          output: "Leaving visual mode.",
-          conversation: request.conversation,
-          leavesVisualMode: true)
-      default:
-        break
-      }
-
-      var session = REPLSession(
-        profile: SessionProfile(definition: request.conversation.profile),
-        pendingContent: request.conversation.pendingContent)
-      session.history.replaceAll(with: request.conversation.messages)
-      var configuration: MaiConfiguration? = request.configuration
-      var catalogs = request.catalogs
-      let terminal = TerminalWriter(capturesOutput: true)
-      _ = await handleCommand(
-        request.input,
-        session: &session,
-        runtime: runtime,
-        plugins: plugins,
-        ocrProvider: ocrProvider,
-        configuration: &configuration,
-        catalogs: &catalogs,
-        visual: visual,
-        terminal: terminal)
-      var output = await terminal.drainCaptured()
-      if request.input.trimmingCharacters(in: .whitespacesAndNewlines) == "/help" {
-        output +=
-          "\nIn visual mode, /exit returns to the REPL and the output above closes with Esc."
-      }
-      if output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { output = "Done." }
-      var conversation = request.conversation
-      conversation.profile = session.profile.agentDefinition
-      conversation.messages = session.history.messages
-      conversation.pendingContent = session.pendingContent
-      return VisualCommandOutcome(output: output, conversation: conversation)
-    }
-  #endif
 
   private static func handleWorkspaceChatCommand(
     _ argument: String,
@@ -12612,54 +12420,6 @@ struct MaiCLI {
     }
   }
 
-  #if PMAI_HAS_VISUAL
-    private static func visualSnapshot(for workspace: AgentChatWorkspace) -> VisualWorkspaceSnapshot
-    {
-      let conversations = workspace.chats.map { chat in
-        VisualConversationSeed(
-          id: chat.id,
-          title: chat.title,
-          profile: chat.primaryAgent,
-          messages: chat.messages,
-          pendingContent: chat.pendingContent,
-          sessionID: chat.sessionID)
-      }
-      return VisualWorkspaceSnapshot(
-        conversations: conversations,
-        layout: PaneLayout(conversation: workspace.selectedChatID ?? conversations[0].id))
-    }
-
-    private static func chatWorkspace(
-      from snapshot: VisualWorkspaceSnapshot,
-      focusedID: UUID,
-      previous: AgentChatWorkspace
-    ) -> AgentChatWorkspace {
-      let previousByID = Dictionary(uniqueKeysWithValues: previous.chats.map { ($0.id, $0) })
-      let chats = snapshot.conversations.map { conversation in
-        let old = previousByID[conversation.id]
-        let untouched =
-          old.map {
-            $0.title == conversation.title && $0.primaryAgent == conversation.profile
-              && $0.messages == conversation.messages
-              && $0.pendingContent == conversation.pendingContent
-          } ?? false
-        return AgentChat(
-          id: conversation.id,
-          title: conversation.title,
-          primaryAgent: conversation.profile,
-          messages: conversation.messages,
-          pendingContent: conversation.pendingContent,
-          createdAt: old?.createdAt ?? Date(),
-          updatedAt: untouched ? old!.updatedAt : Date(),
-          isArchived: old?.isArchived ?? false,
-          sessionID: conversation.sessionID,
-          subagents: old?.subagents ?? [],
-          runtimeConfiguration: old?.runtimeConfiguration)
-      }
-      return AgentChatWorkspace(chats: chats, selectedChatID: focusedID)
-    }
-  #endif
-
   private static func completionCandidates(
     workspace: AgentChatWorkspace,
     configuration: MaiConfiguration?,
@@ -12780,9 +12540,6 @@ struct MaiCLI {
     }
     values += TerminalTheme.keys.map { "/theme color \($0) " }
     values += TerminalTheme.names(directory: themesDirectory).map { "/theme use \($0)" }
-    #if PMAI_HAS_VISUAL
-      values.append("/visual")
-    #endif
     for (index, chat) in workspace.orderedChats.enumerated() {
       values.append("/chat use \(index + 1)")
       values.append("/chat use \(chat.id.uuidString.prefix(8))")
@@ -13070,14 +12827,6 @@ struct MaiCLI {
       approvals: ConfiguredApprovals())
   }
 
-  private static let visualHelp: String = {
-    #if PMAI_HAS_VISUAL
-      "/visual                Open the terminal workspace: split chats, providers, MCPs, tools\n"
-    #else
-      ""
-    #endif
-  }()
-
   private static let remoteHelp = """
     /remote serve          Start sharing all indexed pmai projects; prints your address and a pairing QR
     /remote serve --protocol local  Serve directly on your local network (default)
@@ -13219,7 +12968,6 @@ struct MaiCLI {
     /tools                 List logical tool groups for the current agent
     /vdb                   Index and query local documentation and source code
     /version               Print the pmai version
-    \(visualHelp)
     Input: Shift+Enter adds a line (Alt+Enter or Ctrl+J where the terminal sends Enter for it)
            A paste keeps its lines · Enter sends the whole text
            <<WORD starts a multiline message ending at WORD alone

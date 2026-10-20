@@ -70,8 +70,7 @@ there yet. The Android CLI is a separate terminal client.
   files. Connect over your LAN or use encrypted OpenTunnel access across
   firewalls, with pairing approved on the host.
 - **Stay in your coding flow.** Pipe context into pmai, run shell tools for builds,
-  tests, and Git, or hand the terminal over to an interactive program. Open
-  `/visual` for a split-pane workspace on macOS and glibc Linux. Install the
+  tests, and Git, or hand the terminal over to an interactive program. Install the
   [Vim integration](doc/vim.md) to review and apply changes to a selection.
 - **Keep the whole conversation.** Organize chats by project, search past work,
   and carry persistent memory and todos forward. Share a `.pocketmai` file with
@@ -144,7 +143,7 @@ pmai --vim install
 
 In Vim, select lines and press `m` to choose a prompt, review the reply, and apply
 it. Use `pmai --vim update` to refresh the integration or `pmai --vim uninstall`
-to remove it. In the REPL, try `/projects`, `/visual`, and `/help`.
+to remove it. In the REPL, try `/projects` and `/help`.
 
 ## Bring your workstation to your phone
 
@@ -401,8 +400,7 @@ debugger attachment or to run in the Simulator.
 Get PocketMai from the [App Store](https://apps.apple.com/es/app/pocketmai/id6764296742).
 The [GitHub releases](https://github.com/trufae/pmai/releases) include the iOS IPA,
 source archives, and pmai CLI binaries for macOS and Linux (arm64 and x64), plus
-Android arm64. Android and static musl CLI builds omit `/visual`; static musl
-builds also omit native plugin loading.
+Android arm64. Static musl builds omit native plugin loading.
 
 The website's [Android APK](https://trufae.github.io/pmai/downloads/PocketMai-Android.apk)
 is the latest successful main-branch development build, with arm64 and x86_64

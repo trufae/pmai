@@ -76,7 +76,7 @@ actor TerminalWriter {
   }
 
   /// True when `paint` will add color: output goes to a color terminal rather
-  /// than a pipe or a captured surface such as the visual workspace.
+  /// than a pipe or captured command output.
   var paintsOutput: Bool { colorsOutput && REPLRedirection.current == nil }
 
   /// Styles a piece of stdout text, or returns it untouched where

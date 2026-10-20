@@ -125,36 +125,6 @@ extension MarkdownSpan {
   }
 }
 
-/// Accumulates layout events into finished lines, for renderers that draw a
-/// whole document (the visual mode) rather than a byte stream.
-public struct MarkdownStyledDocument: Equatable, Sendable {
-  public private(set) var lines: [MarkdownStyledLine] = []
-  public private(set) var openLine: MarkdownStyledLine = []
-
-  public init() {}
-
-  public mutating func apply(_ events: [MarkdownLayoutEvent]) {
-    for event in events {
-      switch event {
-      case .spans(let spans):
-        openLine.append(contentsOf: spans)
-      case .lineBreak:
-        lines.append(openLine)
-        openLine = []
-      }
-    }
-  }
-
-  /// Finished lines followed by the line still being written, if any.
-  public var allLines: [MarkdownStyledLine] {
-    openLine.isEmpty ? lines : lines + [openLine]
-  }
-
-  public var plainText: String {
-    allLines.map { $0.map(\.text).joined() }.joined(separator: "\n")
-  }
-}
-
 /// Terminal cell widths: wide East Asian and emoji glyphs take two cells,
 /// combining marks and zero-width characters take none.
 public enum MarkdownDisplayWidth {

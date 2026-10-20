@@ -46,8 +46,8 @@ extension MaiCLI {
         await terminal.line("Usage: /jobs clear")
         return
       }
-      // The REPL loop handles this itself so its chat pids follow; this is
-      // the path from visual mode, which holds no pids.
+      // The REPL loop also updates its chat pids; hosted commands only
+      // clear the supervisor records.
       let cleared = await runtime.supervisor.clearFinished()
       await terminal.line(
         cleared.isEmpty

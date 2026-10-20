@@ -9,8 +9,8 @@ the token arithmetic behind it, what the `test/` benchmark measured on
 `MaiCore/README.md` documents the setting; `doc/agents.md` covers subagents,
 the other way MaiCore keeps a transcript small.
 
-PocketMai's **Settings > Tools > Tool list** and `/visual`'s **Tools > Tool list**
-show the discovered groups, member names, descriptions, arguments, and counts
+PocketMai's **Settings > Tools > Tool list** shows the discovered groups, member
+names, descriptions, arguments, and counts
 of Direct, Proxy, Hidden, and Disabled tools. Each group also has a small button to
 open just its members. These lists and counts come from tool definitions and
 MaiCore's shared policy and catalog types, also used by `/tools` in the REPL.

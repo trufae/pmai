@@ -43,9 +43,8 @@ public struct MarkdownInlineParse: Equatable, Sendable {
 
 /// A small CommonMark-style inline parser: emphasis with the delimiter-run
 /// rules, code spans, links, images, autolinks, `<br>`, escapes, and entities.
-/// It is deterministic and self-contained so the shell and the visual mode
-/// render text the same way, and it exposes what the streaming renderer needs
-/// to emit a line while the rest of it is still arriving.
+/// It is deterministic and self-contained, and lets the streaming renderer emit
+/// a line while the rest of it is still arriving.
 public enum MarkdownInlineParser {
   public static func parse(_ text: String) -> MarkdownInlineParse {
     parse(Array(text), allowsLinks: true)

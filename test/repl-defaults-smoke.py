@@ -37,6 +37,8 @@ def main():
         assert 'No provider selected.' in output, output
         assert 'Chat: no model selected' in output, output
         assert '/about' in output, output
+        assert '/visual' not in output, output
+        assert 'Unknown command. Type /help.' in run(['/visual'])
         saved = json.loads(config.read_text())
         assert saved['providers'] == [] and saved['agents'] == [], saved
         assert saved['fileAccess'] == {

@@ -143,11 +143,10 @@ repl-uninstall:
 	rm -f "$(BINDIR)/pmai"
 
 # Fully static Linux build that also runs on musl distributions such as
-# Alpine. Needs the Swift Static Linux SDK matching the toolchain. swift-tui
-# does not build against musl, so the /visual workspace is left out.
+# Alpine. Needs the Swift Static Linux SDK matching the toolchain.
 MUSL_ARCH ?= $(shell uname -m)
 repl-musl:
-	PMAI_NO_VISUAL=1 $(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) -c release --product pmai \
+	$(SWIFT) build --package-path MaiCore $(SWIFT_BUILD_FLAGS) -c release --product pmai \
 		--swift-sdk $(MUSL_ARCH)-swift-linux-musl -Xswiftc -Osize
 
 plugin-fixture:

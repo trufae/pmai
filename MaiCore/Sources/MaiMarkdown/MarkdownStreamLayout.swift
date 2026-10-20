@@ -41,18 +41,6 @@ public struct MarkdownStreamLayout: Equatable, Sendable {
     self.options = options
   }
 
-  /// Lays out a complete document.
-  public static func lines(
-    for text: String,
-    options: MarkdownLayoutOptions = MarkdownLayoutOptions()
-  ) -> [MarkdownStyledLine] {
-    var layout = MarkdownStreamLayout(options: options)
-    var document = MarkdownStyledDocument()
-    document.apply(layout.feed(text))
-    document.apply(layout.flush())
-    return document.allLines
-  }
-
   public mutating func reset() {
     self = MarkdownStreamLayout(options: options)
   }

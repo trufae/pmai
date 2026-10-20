@@ -1,5 +1,5 @@
 {
-  "originHash" : "3437095629a2ecb0d9febb0cfcc3c02bb43c97cd1452040e48505c47af190d9c",
+  "originHash" : "df486c67aa0a4ef140226c6ed7ff655f8b7e42b845f47b669582b4cb30f79ac2",
   "pins" : [
     {
       "identity" : "mlx-swift",
@@ -35,15 +35,6 @@
       "state" : {
         "revision" : "3b6410f7dee09eb33cdd26260c5fd47fda19b0e2",
         "version" : "1.7.3"
-      }
-    },
-    {
-      "identity" : "swift-async-algorithms",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-async-algorithms.git",
-      "state" : {
-        "revision" : "d0b4a06d0f173a2f3be27d3ea21b3c3aa18db440",
-        "version" : "1.1.4"
       }
     },
     {
@@ -161,15 +152,6 @@
       "state" : {
         "revision" : "6fb48051a8b7e36707725d3ef2f876d6ed860250",
         "version" : "0.3.0"
-      }
-    },
-    {
-      "identity" : "swift-tui",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/SwiftTUI/swift-tui",
-      "state" : {
-        "revision" : "c0319890ae5e12828d37cd657c62169bcdbf9cca",
-        "version" : "0.13.3"
       }
     },
     {

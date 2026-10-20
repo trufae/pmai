@@ -46,7 +46,7 @@ final class REPLReply<Decision: Sendable>: Sendable {
 /// Reads lines on a thread of its own, so the loop stays free to print while
 /// a person types, and waits for the loop's go-ahead before each line: the
 /// prompt then reflects what the loop knows, and nothing reads stdin while an
-/// editor or visual mode has the terminal.
+/// editor has the terminal.
 final class REPLInputReader: @unchecked Sendable {
   struct Prompt: Sendable {
     var presentation: TerminalPrompt

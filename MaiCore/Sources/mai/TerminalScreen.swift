@@ -28,7 +28,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   nonisolated(unsafe) private static var installed: TerminalScreen?
 
   /// The screen the REPL activated, so a command that hands the terminal to
-  /// another program — an editor, visual mode — can step aside and come back.
+  /// another program, such as an editor, can step aside and come back.
   static var current: TerminalScreen? {
     currentLock.withLock { installed }
   }
@@ -110,12 +110,6 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     lock.withLock { activateLocked() }
   }
 
-  /// Takes the terminal back after `deactivate`, with the same status and
-  /// input on screen. Only valid while the input thread is parked.
-  func resume() {
-    lock.withLock { activateLocked() }
-  }
-
   private func activateLocked() {
     guard !active else { return }
     measure()
@@ -163,7 +157,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     }
   }
 
-  /// Tool handoffs must not interrupt /visual, which owns its own reader.
+  /// Tool handoffs require the REPL to own the terminal.
   func handOverTerminal(_ action: () throws -> Void) throws {
     try lock.withLock {
       guard active else {

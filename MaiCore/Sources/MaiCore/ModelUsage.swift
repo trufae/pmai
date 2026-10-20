@@ -842,8 +842,8 @@ public struct ModelUsageColor: Hashable, Sendable {
 }
 
 /// A label-derived hue gives every model, and every provider, a distinct,
-/// repeatable chart color that is the same in PocketMai, the REPL, and the
-/// visual workspace. Rows are keyed by `provider|model`, so two models of one
+/// repeatable chart color shared by PocketMai and the REPL.
+/// Rows are keyed by `provider|model`, so two models of one
 /// provider never share a bar color and a model keeps its color across the
 /// speed, time, and efficiency rankings.
 public enum ModelUsagePalette {
@@ -977,7 +977,7 @@ public enum ModelUsageFormat {
 /// The usage ledger arranged for display: rows ranked by speed, each with
 /// its bar fraction per metric and its color, plus the totals for a headline.
 /// Hosts render the rows with their own widgets or print `lines`, the
-/// plain-text rendering the REPL and the visual workspace share.
+/// plain-text rendering used by the REPL.
 public struct ModelUsageReport: Equatable, Sendable {
   /// One ranking. Adding a metric is one entry here: its name, how it is
   /// explained, how its number is read off a row, and how it is spelled.

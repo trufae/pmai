@@ -245,7 +245,7 @@ struct UsageStatsView: View {
 
 extension Color {
   /// The shared palette's color, so a model looks the same here as in the
-  /// pmai REPL and visual workspace.
+  /// pmai REPL.
   fileprivate init(_ color: ModelUsageColor) {
     self.init(red: color.red, green: color.green, blue: color.blue)
   }

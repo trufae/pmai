@@ -293,16 +293,6 @@ func blockRendering() {
   #expect(ascii.contains("| quote\n[ ] todo\n  1. sub\n--------------------\n```\ncode\n```"))
 }
 
-@Test("Layout lines carry roles for the visual mode")
-func styledLines() {
-  let lines = MarkdownStreamLayout.lines(
-    for: "## T\n\ntext **b**", options: MarkdownLayoutOptions(width: 30))
-  #expect(lines.count == 3)
-  #expect(lines[0] == [MarkdownSpan("T", MarkdownSpanStyle(role: .heading(2)))])
-  #expect(lines[1] == [])
-  #expect(lines[2] == [MarkdownSpan("text "), MarkdownSpan("b", MarkdownSpanStyle(inline: .bold))])
-}
-
 @Test("Terminal environment detection")
 func environmentDetection() {
   let dumb = MarkdownTerminalEnvironment.detect(["TERM": "dumb", "LANG": "en_US.UTF-8"])

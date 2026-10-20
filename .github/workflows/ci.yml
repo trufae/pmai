@@ -167,12 +167,8 @@ jobs:
 
       # Fully static: no glibc, libstdc++, libcurl or libxml2 dependency, so
       # the same binary runs on Alpine and on every glibc distribution.
-      # swift-tui does not build against musl, so like the Android build this
-      # one leaves out the /visual workspace (PMAI_NO_VISUAL).
       # Keep one optimized build to exercise the SDK/runtime without AVX.
       - name: Build fully static CLI
-        env:
-          PMAI_NO_VISUAL: "1"
         run: |
           args=(--package-path MaiCore --swift-sdk ${{ matrix.arch }}-swift-linux-musl ${{ matrix.build-args }})
           swift build "${args[@]}" --disable-index-store --product pmai
@@ -207,8 +203,6 @@ jobs:
   android-cli:
     name: CLI (Android arm64)
     runs-on: ubuntu-24.04
-    env:
-      PMAI_NO_VISUAL: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -250,10 +244,6 @@ jobs:
     defaults:
       run:
         shell: pwsh
-    env:
-      # swift-tui only builds against Darwin and Glibc, so like the musl and
-      # Android builds the Windows CLI leaves out the /visual workspace.
-      PMAI_NO_VISUAL: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v7

@@ -13,7 +13,6 @@ concurrency:
 
 env:
   SWIFT_VERSION: "6.4.0"
-  PMAI_NO_VISUAL: "1"
 
 jobs:
   apk:

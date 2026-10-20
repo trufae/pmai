@@ -67,7 +67,6 @@ if [ ! -d "$sdk_root/swift-resources" ]; then
   exit 1
 fi
 
-export PMAI_NO_VISUAL=1
 # Preserve timestamps for unchanged libraries so Gradle can reuse native
 # packaging outputs on a no-op Swift build.
 copy_library() {

@@ -3,7 +3,7 @@ import Testing
 
 @testable import MaiCore
 
-// `/tools show GROUP` and the visual config screen describe a group by its
+// `/tools show GROUP` describes a group by its
 // purpose and every tool's schema; a group nobody described gets a summary of
 // its tools instead of a list of their names.
 
