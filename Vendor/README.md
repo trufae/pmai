@@ -1,6 +1,6 @@
 # Forwiroh SwiftPM dependency
 
-`Forwiroh/` contains the small SwiftPM **0.1.1** release package from
+`Forwiroh/` contains the small SwiftPM **0.1.2** release package from
 https://github.com/trufae/forwiroh/releases. The Swift sources and license are
 vendored; `Artifacts/manifest.json` pins immutable release binary URLs and
 SHA-256 checksums. SwiftPM fetches only the Apple XCFramework on a Mac or the

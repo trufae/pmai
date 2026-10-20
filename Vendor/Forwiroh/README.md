@@ -158,6 +158,62 @@ separate XCFramework/artifactbundle ZIPs, the complete SwiftPM package ZIP,
 `SHA256SUMS`, and build provenance (`Artifacts/build-info.json`). You can specify
 individual inputs with `--library RUST_TARGET=/path/to/libforwiroh.a`.
 
+### Binary size
+
+Release builds optimize for size with `opt-level = "z"` (Rust's `-Oz`), full LTO,
+one code generation unit, and stripped binary symbols. Native app and SDK builds
+request **only** `staticlib` so Rust completes LTO before Swift/NDK links it.
+Building `rlib` alongside `staticlib` leaves embedded LLVM bitcode and prevents
+these cross-crate savings in the native archive. The SDK script also removes
+debug information from the prebuilt Rust standard library and local Apple
+symbols, preserving the external symbols needed to link consumers.
+
+Measured on Apple Silicon with Rust 1.99.1, version 0.1.1 (decimal MB):
+
+| CLI build | Executable |
+| --- | ---: |
+| Previous release: `-O3`, thin LTO, debug info stripped | 16.74 MB |
+| Previous release, additionally stripped | 12.63 MB |
+| `-Os`, full LTO, one code generation unit, stripped | 5.99 MB |
+| New default: `-Oz`, full LTO, one code generation unit, stripped | 4.72 MB |
+| `min-size`: same settings, `panic = "abort"` | 3.67 MB |
+
+The existing macOS arm64 SDK archive was 61.0 MB. With the new settings and
+staticlib-only compilation it is about 8.2 MB, or 3.1 MB zipped. A stripped C
+consumer exercising endpoint creation, commands, QR and crypto linked to 4.45 MB
+versus 11.21 MB with the old SDK. Archives include code and symbols that the final
+linker discards; universal XCFrameworks and the offline package also include
+multiple architectures. Their total download size is not the installed app size.
+These measurements do not predict Linux/Android sizes or networking throughput.
+The `min-size` SDK archive measured 6.6 MB (2.6 MB zipped), with a 3.47 MB linked
+C consumer.
+
+Use the normal release for size optimization with panic unwinding intact:
+
+```sh
+cargo build --locked --release -p forwiroh-cli
+bash scripts/build-swift-core.sh aarch64-apple-darwin
+```
+
+For the smallest build, explicitly opt into aborting the **whole process** on any
+panic, including a Tokio worker task panic. This changes failure behavior; normal
+releases can unwind a failed task. Compiler tests use unwinding regardless of this
+profile, so validate the actual produced binary as well:
+
+```sh
+cargo build --locked --profile min-size -p forwiroh-cli
+python3 scripts/cli-smoke.py target/min-size/forwiroh
+FORWIROH_PROFILE=min-size bash scripts/build-swift-core.sh aarch64-apple-darwin
+```
+
+The CLI executable is in `target/min-size/`; SDK archives retain their usual
+`dist/libraries/<rust-target>/` paths. Rebuild every release target with the same
+profile before packaging. Host apps should enable release optimization and dead
+code stripping; Swift supports `-Osize`. Strip the final executable before code
+signing. Keep dSYMs separately when the host generates them. See the
+[Cargo profile reference](https://doc.rust-lang.org/cargo/reference/profiles.html)
+for the compiler settings and panic/test behavior.
+
 To prepare a small Git-distributed Swift package, also pass
 `--require-all --release-base-url https://HOST/OWNER/REPO/releases/download/TAG`.
 This produces `Forwiroh-<version>-swiftpm-remote.zip` containing the Swift sources
@@ -181,9 +237,11 @@ git push origin --tags
 ```
 
 The tag must match the workspace version. The SwiftPM workflow builds and tests
-all platforms, requires all eleven native variants, generates the remote
+all platforms, requires all eleven SDK variants and all eight CLI targets, generates the remote
 manifest using that tag's GitHub asset URLs, verifies checksums, then creates
-the release and uploads both package ZIPs, both binary ZIPs, and `SHA256SUMS`.
+the release and uploads both package ZIPs, both binary ZIPs, the CLI archives,
+both installers, the Android debug APK, `SHA256SUMS`, `CLI-SHA256SUMS`, and
+`ANDROID-SHA256SUMS`.
 Only the final publishing job has permission to write releases. Pull requests
 and manual runs upload Actions artifacts without publishing a release.
 
