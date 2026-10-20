@@ -29,7 +29,6 @@ struct HostsView: View {
 
   var body: some View {
     List {
-      row(title: "Local", subtitle: "This PocketMai", image: "iphone", id: nil)
       let pinned = hosts.remotes.connections.filter { hosts.isHostPinned($0.id) }
       let online = hosts.remotes.connections.filter {
         !hosts.isHostPinned($0.id) && connectionState($0.id) == .connected
@@ -37,13 +36,13 @@ struct HostsView: View {
       let offline = hosts.remotes.connections.filter {
         !hosts.isHostPinned($0.id) && connectionState($0.id) != .connected
       }
-      if !hosts.remotes.connections.isEmpty { groupSeparator }
       if !pinned.isEmpty {
         SidebarConversationGroupHeader(title: "Pinned")
         ForEach(pinned) { host in remoteRow(host) }
       }
+      SidebarConversationGroupHeader(title: "Online")
+      row(title: "Local", subtitle: "This PocketMai", image: "iphone", id: nil)
       if !online.isEmpty {
-        SidebarConversationGroupHeader(title: "Online")
         ForEach(online) { host in remoteRow(host) }
       }
       if !offline.isEmpty {
@@ -105,14 +104,6 @@ struct HostsView: View {
     }
     .sheet(item: $editing) { host in RemoteAgentConnectionView(initialHost: host) }
     .sheet(item: $renaming) { host in RemoteHostRenameView(host: host) }
-  }
-
-  private var groupSeparator: some View {
-    Divider()
-      .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
-      .listRowBackground(Color.clear)
-      .listRowSeparator(.hidden)
-      .accessibilityHidden(true)
   }
 
   private func connectionState(_ id: UUID) -> HostConnectionState {
