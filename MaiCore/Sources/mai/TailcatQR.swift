@@ -32,7 +32,10 @@ enum TailcatQR {
           case (false, false): line += " "
           }
         }
-        write(line + "\u{1B}[0m")
+        // Some terminals retain a line's last background colour through the
+        // unused cells to its right. Reset first, then erase that tail using
+        // the terminal's normal background so the QR stays square.
+        write(line + "\u{1B}[0m\u{1B}[K")
       }
       if let output {
         let data: Data
