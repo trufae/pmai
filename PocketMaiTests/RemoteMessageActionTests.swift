@@ -59,9 +59,10 @@ final class RemoteMessageActionTests: XCTestCase {
       XCTAssertEqual(saved.messages.map(\.text), chat.messages.map(\.text))
 
       chat.disconnect()
-      XCTAssertFalse(chat.canResubmit(restarted.id))
+      XCTAssertTrue(chat.canResubmit(restarted.id))
       chat.resubmit(restarted.id)
-      XCTAssertEqual(fixture.prompts.count, 3)
+      try await waitForIdle(chat)
+      XCTAssertEqual(fixture.prompts, ["Second", "Second", "Second", "Second"])
     }
   }
 
@@ -78,6 +79,20 @@ final class RemoteMessageActionTests: XCTestCase {
       XCTAssertEqual(chat.messages.map(\.id), before)
       XCTAssertTrue(fixture.prompts.isEmpty)
       XCTAssertFalse(fixture.mutations.contains("POST /api/session/ses_test/revert/commit"))
+    }
+  }
+
+  func testDeletingAnArbitraryRemoteMessageRewindsTheHostHistory() async throws {
+    try await withChat { chat, _, fixture, _ in
+      let selected = try XCTUnwrap(chat.messages.first { $0.text == "First answer" })
+      XCTAssertTrue(chat.canDelete(selected.id))
+
+      chat.delete(selected.id)
+      try await waitForIdle(chat)
+
+      XCTAssertNil(chat.error)
+      XCTAssertEqual(fixture.boundaries, ["msg_answer"])
+      XCTAssertEqual(chat.messages.map(\.text), ["First"])
     }
   }
 

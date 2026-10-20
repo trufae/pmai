@@ -472,6 +472,7 @@ final class RemoteAgentChat {
   private var pendingPrompt: String?
   private var permissionReplies: [UUID: CheckedContinuation<ACPPermissionResponse?, Never>] = [:]
   private var generation = 0
+  private var historyRewindSupported = false
   private var deleted = false
   private var connectingHistory: [RemoteAgentMessage]?
   private let store: RemoteAgentStore
@@ -510,14 +511,30 @@ final class RemoteAgentChat {
   /// The actual prompt remains pending until that connection completes.
   var canSubmit: Bool { !busy && !isOffline() }
 
-  var supportsHistoryRewind: Bool { client?.supportsHistoryRewind == true }
+  var remoteToolOptions: [RemoteSessionOption] {
+    configurationOptions.filter {
+      $0.id == "tools.enabled" || $0.id.hasPrefix("tools.tool.")
+    }
+  }
+
+  var remoteToolsEnabled: Bool? {
+    remoteToolOptions.first(where: { $0.id == "tools.enabled" })?.currentValue.boolValue
+  }
+
+  var enabledRemoteToolCount: Int {
+    remoteToolOptions.filter { $0.id != "tools.enabled" }.reduce(into: 0) { count, option in
+      if option.currentValue.boolValue == true { count += 1 }
+    }
+  }
+
+  var supportsHistoryRewind: Bool { historyRewindSupported }
 
   func canResubmit(_ messageID: UUID) -> Bool {
-    canSend && sourceMessage(messageID) != nil
+    canSubmit && sourceMessage(messageID) != nil
   }
 
   func canRetry(_ messageID: UUID) -> Bool {
-    canResubmit(messageID) && supportsHistoryRewind
+    canSend && supportsHistoryRewind
       && sourceMessage(messageID)?.remoteID != nil
   }
 
@@ -529,6 +546,40 @@ final class RemoteAgentChat {
   func retry(_ messageID: UUID, restarting: Bool = false) {
     guard canRetry(messageID), let message = sourceMessage(messageID) else { return }
     submit(message.text, rewind: true, boundary: restarting ? nil : message.remoteID)
+  }
+
+  func canDelete(_ messageID: UUID) -> Bool {
+    canSend && supportsHistoryRewind && messages.contains {
+      $0.id == messageID && $0.remoteID != nil
+    }
+  }
+
+  /// Removes this remote message and everything after it. The pmai host owns
+  /// the transcript, so this never mutates PocketMai's unrelated local chats.
+  func delete(_ messageID: UUID) {
+    guard canDelete(messageID), let message = messages.first(where: { $0.id == messageID }),
+      let remoteID = message.remoteID, let client
+    else { return }
+    busy = true
+    error = nil
+    status = "Deleting…"
+    let attempt = generation
+    operation = Task {
+      do {
+        try await client.rewind(to: remoteID)
+        guard generation == attempt else { return }
+        status = "Connected"
+      } catch {
+        guard generation == attempt else { return }
+        self.error = error is CancellationError ? nil : error.localizedDescription
+        status = "Connected"
+      }
+      guard generation == attempt else { return }
+      busy = false
+      operation = nil
+      conversation.updatedAt = Date()
+      persist()
+    }
   }
 
   private func sourceMessage(_ id: UUID) -> RemoteAgentMessage? {
@@ -641,6 +692,7 @@ final class RemoteAgentChat {
     busy = true
     error = nil
     status = "Connecting…"
+    historyRewindSupported = false
     store.setConnectionFailed(false, for: bookmark.id)
     generation += 1
     let attempt = generation
@@ -658,6 +710,7 @@ final class RemoteAgentChat {
         sessionID = id
         connected = await client.isConnected
         guard generation == attempt else { return }
+        historyRewindSupported = await client.historyRewindSupported()
         store.setConnectionFailed(!connected, for: bookmark.id)
         connectingHistory = nil
         status = connected ? "Connected" : "Disconnected"
@@ -667,6 +720,7 @@ final class RemoteAgentChat {
         messages = previous
         connectingHistory = nil
         pendingPrompt = nil
+        historyRewindSupported = false
         self.error = error.localizedDescription
         connected = false
         store.setConnectionFailed(!(error is CancellationError), for: bookmark.id)
@@ -754,6 +808,7 @@ final class RemoteAgentChat {
     self.client = nil
     Task { await client?.disconnect() }
     connected = false
+    historyRewindSupported = false
     configurationOptions = []
     settingsLoading = false
     settingsError = nil
@@ -769,6 +824,7 @@ final class RemoteAgentChat {
   private func connectionClosed(generation: Int) {
     guard self.generation == generation else { return }
     connected = false
+    historyRewindSupported = false
     store.setConnectionFailed(true, for: bookmark.id)
     status = "Disconnected"
     cancelPermissions()

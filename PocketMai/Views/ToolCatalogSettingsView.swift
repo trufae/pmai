@@ -13,6 +13,46 @@ private func settingsToolCatalog(_ store: AppStore) -> AgentToolCatalog {
     mcpResources: store.mcpResources, mcpStatuses: store.mcpStatuses)
 }
 
+/// Shared compact selection row for local and remote session tool pickers.
+struct ToolSelectionRow: View {
+  let title: String
+  var detail: String? = nil
+  var systemImage: String? = nil
+  let isEnabled: Bool
+  var isUnavailable = false
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      HStack(alignment: detail == nil ? .center : .top, spacing: 10) {
+        Image(systemName: isEnabled ? "checkmark.circle.fill" : "circle")
+          .foregroundStyle(isEnabled ? Color.accentColor : .secondary)
+        if let systemImage {
+          Image(systemName: systemImage)
+            .foregroundStyle(.secondary)
+            .frame(width: 18)
+        }
+        VStack(alignment: .leading, spacing: 2) {
+          Text(title).foregroundStyle(.primary)
+          if let detail, !detail.isEmpty {
+            Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+          }
+        }
+        Spacer(minLength: 0)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.horizontal, 12)
+      .padding(.vertical, 9)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .disabled(isUnavailable)
+    .opacity(isUnavailable ? 0.5 : 1)
+    .accessibilityLabel("Enable \(title)")
+    .accessibilityValue(isEnabled ? "Enabled" : "Disabled")
+  }
+}
+
 /// Keep header actions independent and lay every option out beneath them.
 struct NativeToolSettingsRow<Options: View>: View {
   let tool: BuiltInToolID

@@ -17,6 +17,9 @@ public enum ACP {
     public static let sessionLoad = "session/load"
     public static let sessionList = "session/list"
     public static let sessionManage = "_pmai/session/manage"
+    /// Removes one message and everything after it from a pmai session while
+    /// preserving the workspace. PocketMai uses it for delete/retry/reset.
+    public static let sessionRewind = "_pmai/session/rewind"
     /// Runs an already-enabled host tool at a workspace path without creating
     /// or changing a chat session. This is used by PocketMai's remote terminal.
     public static let sessionRunTool = "_pmai/session/run_tool"

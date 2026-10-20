@@ -18,6 +18,8 @@ public actor ACPServer {
     var createdAt: Date?
     var updatedAt: Date?
     var definition: AgentDefinition?
+    /// Keeps the chat's tool selection intact while tools are temporarily off.
+    var toolsEnabled: Bool?
     var providerSessionID: String?
     var indexed: Bool?
   }
@@ -48,6 +50,9 @@ public actor ACPServer {
   private var connected = false
   private var initialized = false
   private var connectedAt = Date()
+
+  private static let toolsEnabledOptionID = "tools.enabled"
+  private static let toolOptionPrefix = "tools.tool."
 
   /// - Parameters:
   ///   - runtime: built with `bridge.approvalHandler` so tool approvals reach
@@ -141,6 +146,8 @@ public actor ACPServer {
       return try await listSessions(params: params)
     case ACP.Method.sessionManage:
       return try await manageSession(params: params)
+    case ACP.Method.sessionRewind:
+      return try await rewindSession(params: params)
     case ACP.Method.sessionRunTool:
       return try await runTool(params: params)
     case ACP.Method.workspaceFiles:
@@ -174,6 +181,7 @@ public actor ACPServer {
       "agentCapabilities": .object([
         "_meta": .object(["pmai": .object([
           "workspaceFiles": .integer(1), "permissionEditing": .integer(1), "yolo": .integer(1),
+          "historyRewind": .integer(1),
         ])]),
         "loadSession": .bool(sessionDirectory != nil || workspace != nil),
         "sessionCapabilities": .object(
@@ -403,6 +411,7 @@ public actor ACPServer {
     guard connected else { throw JSONRPCTransportError.closed }
     sessions[id] = Session(saved: saved, lease: lock)
     let options = await configurationOptions(for: agent)
+    await messageSnapshot(session: id)
     return .object(["sessionId": .string(id), "configOptions": .array(options.map(\.json))])
   }
 
@@ -498,12 +507,47 @@ public actor ACPServer {
       default: break
       }
     }
-    let options = await configurationOptions(for: session.saved.definition ?? agent)
+    await messageSnapshot(session: id)
+    let options = await configurationOptions(
+      for: session.saved.definition ?? agent, toolsEnabled: session.saved.toolsEnabled ?? true)
     return .object(["configOptions": .array(options.map(\.json))])
   }
 
-  private func configurationOptions(for definition: AgentDefinition) async -> [RemoteSessionOption]
-  {
+  /// Removes the selected transcript entry and all later entries, leaving the
+  /// agent's configured system/developer context and workspace unchanged.
+  private func rewindSession(params: JSONValue?) async throws -> JSONValue {
+    guard let fields = params?.objectValue, let id = fields["sessionId"]?.stringValue,
+      var saved = sessions[id]?.saved
+    else { throw JSONRPCError.invalidParams("Unknown session") }
+    guard sessions[id]?.busy != true, !loadingSessions.contains(id) else {
+      throw JSONRPCError.invalidParams("A prompt is already running in this session")
+    }
+    let boundary = fields["messageId"]?.stringValue
+    let end: Int
+    if let boundary {
+      guard let index = saved.transcript.firstIndex(where: { $0.id == boundary }) else {
+        throw JSONRPCError.invalidParams("This message is no longer in the conversation")
+      }
+      end = index
+    } else {
+      // A reset starts from the agent's initial instructions, not a blank
+      // transcript, matching local PocketMai's "Reset Chat From Here" action.
+      end = saved.transcript.prefix {
+        $0.role == .system || $0.role == .developer
+      }.count
+    }
+    saved.transcript = Array(saved.transcript.prefix(end))
+    saved.promptInFlight = false
+    saved.updatedAt = Date()
+    sessions[id]?.saved = saved
+    try await save(saved)
+    await messageSnapshot(session: id)
+    return .object([:])
+  }
+
+  private func configurationOptions(
+    for definition: AgentDefinition, toolsEnabled: Bool = true
+  ) async -> [RemoteSessionOption] {
     let providers = await runtime.availableProviders()
     let displayNameCounts = Dictionary(grouping: providers, by: \.displayName).mapValues(\.count)
     var providerChoices = providers.map { provider in
@@ -538,6 +582,22 @@ public actor ACPServer {
       RemoteSessionOption.Choice($0.rawValue, $0.displayName)
     }
     if !efforts.contains(where: { $0.id == effort }) { efforts.append(.init(effort, effort)) }
+    let definitions = await runtime.availableTools()
+    let groups = await runtime.availableToolGroups()
+    let modes = definition.toolModes(in: groups, usage: await runtime.toolUsageSnapshot())
+    var groupNamesByTool: [String: String] = [:]
+    for group in groups.sorted(by: { $0.catalogID < $1.catalogID }) {
+      for name in group.toolNames where groupNamesByTool[name] == nil {
+        groupNamesByTool[name] = group.displayName
+      }
+    }
+    let toolOptions = definitions.map { tool in
+      return RemoteSessionOption(
+        id: Self.toolOptionPrefix + tool.name, name: tool.name,
+        category: "tools/\(groupNamesByTool[tool.name] ?? "Other")",
+        description: tool.description,
+        currentValue: .bool(toolsEnabled && modes[tool.name, default: .disabled] != .disabled))
+    }
     return [
       .init(
         id: "provider", name: "Provider", category: "_provider",
@@ -548,12 +608,15 @@ public actor ACPServer {
       .init(
         id: "reasoning", name: "Reasoning", category: "thought_level",
         currentValue: .string(effort), choices: efforts),
-    ]
+      .init(
+        id: Self.toolsEnabledOptionID, name: "Enable Tools", category: "tools",
+        currentValue: .bool(toolsEnabled)),
+    ] + toolOptions
   }
 
   private func setConfigurationOption(params: JSONValue?) async throws -> JSONValue {
     guard let fields = params?.objectValue, let id = fields["sessionId"]?.stringValue,
-      let key = fields["configId"]?.stringValue, let value = fields["value"]?.stringValue,
+      let key = fields["configId"]?.stringValue, let value = fields["value"],
       var saved = sessions[id]?.saved
     else { throw JSONRPCError.invalidParams("Unknown session or setting") }
     guard sessions[id]?.busy != true, !loadingSessions.contains(id) else {
@@ -562,12 +625,16 @@ public actor ACPServer {
     sessions[id]?.busy = true
     defer { sessions[id]?.busy = false }
     var definition = saved.definition ?? agent
-    let available = await configurationOptions(for: definition)
-    guard available.first(where: { $0.id == key })?.accepts(.string(value)) == true else {
+    let toolsEnabled = saved.toolsEnabled ?? true
+    let available = await configurationOptions(for: definition, toolsEnabled: toolsEnabled)
+    guard available.first(where: { $0.id == key })?.accepts(value) == true else {
       throw JSONRPCError.invalidParams("Choose an available setting")
     }
     switch key {
     case "provider":
+      guard let value = value.stringValue else {
+        throw JSONRPCError.invalidParams("Choose an available setting")
+      }
       if definition.provider.rawValue != value {
         guard
           let provider = await runtime.availableProviders().first(where: { $0.id.rawValue == value }
@@ -581,11 +648,34 @@ public actor ACPServer {
         }
         definition.model = provider.defaultModel ?? modelCatalogs[provider.id]?.first?.id ?? ""
       }
-    case "model": definition.model = value
-    case "reasoning": definition.options.reasoningEffort = value == "automatic" ? nil : value
+    case "model":
+      guard let value = value.stringValue else {
+        throw JSONRPCError.invalidParams("Choose an available setting")
+      }
+      definition.model = value
+    case "reasoning":
+      guard let value = value.stringValue else {
+        throw JSONRPCError.invalidParams("Choose an available setting")
+      }
+      definition.options.reasoningEffort = value == "automatic" ? nil : value
+    case Self.toolsEnabledOptionID:
+      guard let enabled = value.boolValue else {
+        throw JSONRPCError.invalidParams("Choose an available setting")
+      }
+      saved.toolsEnabled = enabled
+    case let key where key.hasPrefix(Self.toolOptionPrefix):
+      guard let enabled = value.boolValue else {
+        throw JSONRPCError.invalidParams("Choose an available setting")
+      }
+      let name = String(key.dropFirst(Self.toolOptionPrefix.count))
+      guard (await runtime.availableTools()).contains(where: { $0.name == name }) else {
+        throw JSONRPCError.invalidParams("Choose an available tool")
+      }
+      definition.setToolMode(enabled ? .direct : .disabled, for: name)
     default: throw JSONRPCError.invalidParams("Unknown setting")
     }
-    let options = await configurationOptions(for: definition)
+    let options = await configurationOptions(
+      for: definition, toolsEnabled: saved.toolsEnabled ?? true)
     guard connected, sessions[id] != nil else { throw JSONRPCTransportError.closed }
     saved.definition = definition
     saved.updatedAt = Date()
@@ -626,6 +716,15 @@ public actor ACPServer {
     guard connected, sessions[id] != nil else { throw JSONRPCTransportError.closed }
 
     let agent = sessions[id]?.saved.definition ?? self.agent
+    var toolPolicy = agent.toolPolicy
+    if sessions[id]?.saved.toolsEnabled == false {
+      for group in await runtime.availableToolGroups() {
+        toolPolicy.setGroupMode(.disabled, for: group)
+      }
+      for tool in await runtime.availableTools() {
+        toolPolicy.tools[tool.name] = .disabled
+      }
+    }
     let request = AgentRequest(
       agentID: agent.id,
       provider: agent.provider,
@@ -642,7 +741,7 @@ public actor ACPServer {
       toolCallingStrategy: agent.toolCallingStrategy,
       useToolProxy: agent.useToolProxy,
       proxyExposedTools: agent.proxyExposedTools,
-      toolPolicy: agent.toolPolicy,
+      toolPolicy: toolPolicy,
       toolDelegation: agent.toolDelegation,
       retry: agent.retry, autocompact: agent.autocompact, context: agent.context,
       sessionID: sessions[id]?.saved.providerSessionID ?? id)
@@ -670,6 +769,7 @@ public actor ACPServer {
       sessions[id]?.saved.updatedAt = Date()
       if let saved = sessions[id]?.saved { try await save(saved) }
       sessions[id]?.task = nil
+      await messageSnapshot(session: id)
       // A limit pauses the run with its transcript kept, so the next prompt
       // carries on; the editor is told which limit it was.
       if let interruption = result.interruption {
@@ -688,10 +788,12 @@ public actor ACPServer {
     } catch is CancellationError {
       try? await finishInterruptedPrompt(id)
       sessions[id]?.task = nil
+      await messageSnapshot(session: id)
       return .object(["stopReason": .string(ACP.StopReason.cancelled.rawValue)])
     } catch {
       try? await finishInterruptedPrompt(id)
       sessions[id]?.task = nil
+      await messageSnapshot(session: id)
       // A run that never produced text should still tell the editor why.
       await update(session: id, kind: .agentMessageChunk, text: error.localizedDescription)
       return .object(["stopReason": .string(ACP.StopReason.refusal.rawValue)])
@@ -738,6 +840,37 @@ public actor ACPServer {
         "update": .object([
           "sessionUpdate": .string(kind.rawValue),
           "content": ACP.ContentBlock.text(text).json,
+        ]),
+      ]))
+  }
+
+  /// PocketMai consumes this extension to replace optimistic streaming rows
+  /// with durable transcript entries. Standard ACP clients simply ignore it.
+  private func messageSnapshot(session id: String) async {
+    guard let transcript = sessions[id]?.saved.transcript else { return }
+    let messages = transcript.compactMap { message -> JSONValue? in
+      guard message.role == .user || message.role == .assistant || message.role == .tool else {
+        return nil
+      }
+      let text: String
+      switch message.role {
+      case .tool:
+        text = message.toolResults.map(\.text).joined(separator: "\n")
+      default:
+        text = message.text
+      }
+      guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+      return .object([
+        "remoteID": .string(message.id), "role": .string(message.role.rawValue),
+        "text": .string(text),
+      ])
+    }
+    try? peer?.notify(
+      ACP.Method.sessionUpdate,
+      params: .object([
+        "sessionId": .string(id),
+        "update": .object([
+          "sessionUpdate": .string("_pmai/message_snapshot"), "messages": .array(messages),
         ]),
       ]))
   }

@@ -221,7 +221,11 @@ struct ChatView: View {
           messagePendingDeletion = nil
         }
         Button("Delete Message", role: .destructive) {
-          store.deleteMessage(message)
+          if let remoteChat {
+            remoteChat.delete(message.id)
+          } else {
+            store.deleteMessage(message)
+          }
           messagePendingDeletion = nil
         }
       } message: { _ in
@@ -823,7 +827,7 @@ struct ChatView: View {
                     renderImages: store.settings.renderMarkdownImagesInChat,
                     searchHighlight: searchHighlight,
                     actions: MessageBubbleActions(
-                      allowsConversationMutation: remoteChat == nil,
+                      allowsConversationMutation: remoteChat?.canDelete(message.id) ?? true,
                       canReply: remoteChat == nil
                         || (remoteChat?.connected == true
                           && !currentChatIsResponding && !store.settings.isOffline),
@@ -2874,6 +2878,7 @@ private struct ChatComposer: View {
   @FocusState private var composerFocused: Bool
   @State private var showingToolMenu = false
   @State private var showingToolPicker = false
+  @State private var showingRemoteToolSettings = false
   @State private var showingTextFileImporter = false
   @State private var showingWorkingFolderMenu = false
   @State private var showingWorkingFolderImporter = false
@@ -3828,6 +3833,14 @@ private struct ChatComposer: View {
         .environmentObject(store)
         .presentationCompactAdaptation(.popover)
     }
+    .sheet(isPresented: $showingRemoteToolSettings) {
+      if let remoteChat {
+        NavigationStack {
+          RemoteToolSettingsView(chat: remoteChat)
+        }
+        .environmentObject(store)
+      }
+    }
     .popover(
       isPresented: $showingWorkingFolderMenu, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom
     ) {
@@ -3837,7 +3850,40 @@ private struct ChatComposer: View {
     .help("Tools")
   }
 
+  @ViewBuilder
   private var toolMenuPopover: some View {
+    if let remoteChat {
+      VStack(alignment: .leading, spacing: 4) {
+        if let enabled = remoteChat.remoteToolsEnabled {
+          Toggle(
+            "Enable Tools",
+            isOn: Binding(
+              get: { enabled },
+              set: { remoteChat.setConfigurationOption(id: "tools.enabled", value: .bool($0)) }
+            )
+          )
+          .toggleStyle(.switch)
+          .padding(.horizontal, 12).padding(.vertical, 9)
+        }
+        toolMenuButton(
+          "Select Tools...", systemImage: "checklist",
+          trailingText: remoteChat.remoteToolsEnabled.map { _ in
+            "(\(remoteChat.enabledRemoteToolCount))"
+          }
+        ) {
+          showingToolMenu = false
+          showingRemoteToolSettings = true
+        }
+      }
+      .padding(8).frame(minWidth: 240).background(.regularMaterial)
+      .disabled(remoteChat.busy || remoteChat.settingsLoading || store.settings.isOffline)
+      .task(id: remoteChat.connected) { await remoteChat.refreshConfiguration() }
+    } else {
+      localToolMenuPopover
+    }
+  }
+
+  private var localToolMenuPopover: some View {
     VStack(alignment: .leading, spacing: 4) {
       Toggle(isOn: toolsEnabledBinding) {
         toolMenuRowLabel("Enable Tools", systemImage: "wrench.and.screwdriver")
@@ -3846,7 +3892,7 @@ private struct ChatComposer: View {
       .padding(.horizontal, 12).padding(.vertical, 9)
       toolMenuButton(
         "Select Tools...", systemImage: "checklist",
-        trailingText: remoteChat == nil ? "(\(enabledToolSelectionCount))" : "Host managed",
+        trailingText: "(\(enabledToolSelectionCount))",
         action: openToolPicker
       )
       .disabled(!toolsEnabled).opacity(toolsEnabled ? 1 : 0.45)
@@ -3876,7 +3922,6 @@ private struct ChatComposer: View {
       }
     }
     .padding(8).frame(minWidth: 240).background(.regularMaterial)
-    .disabled(remoteChat != nil)
     .fileImporter(
       isPresented: $showingTextFileImporter,
       allowedContentTypes: Self.documentAttachmentTypes
@@ -5637,29 +5682,14 @@ private struct ToolPickerPopover: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 4) {
         ForEach(BuiltInToolID.allCases.filter { $0 != .memory }.sorted { $0.displayName < $1.displayName }) { tool in
-          Button {
+          ToolSelectionRow(
+            title: tool.displayName,
+            systemImage: tool.systemImage,
+            isEnabled: isBuiltInToolEnabled(tool),
+            isUnavailable: store.settings.isOffline && tool.isDisabledInAirplaneMode
+          ) {
             toggleBuiltInTool(tool)
-          } label: {
-            HStack(spacing: 10) {
-              Image(
-                systemName: isBuiltInToolEnabled(tool) ? "checkmark.circle.fill" : "circle"
-              )
-              .foregroundStyle(isBuiltInToolEnabled(tool) ? Color.accentColor : Color.secondary)
-              Image(systemName: tool.systemImage)
-                .foregroundStyle(.secondary)
-                .frame(width: 18)
-              Text(tool.displayName)
-                .foregroundStyle(.primary)
-              Spacer()
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .contentShape(Rectangle())
           }
-          .buttonStyle(.plain)
-          .disabled(store.settings.isOffline && tool.isDisabledInAirplaneMode)
-          .opacity(store.settings.isOffline && tool.isDisabledInAirplaneMode ? 0.5 : 1)
         }
 
         if !store.settings.mcpServers.isEmpty {

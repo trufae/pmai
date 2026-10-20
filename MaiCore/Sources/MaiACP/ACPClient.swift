@@ -72,6 +72,7 @@ public actor ACPClient {
   private var supportsFiles = false
   private var supportsPermissionEditing = false
   private var supportsYolo = false
+  private var supportsHistoryRewind = false
   private var busy = false
   private var internetAccess = InternetAccessPolicy()
   /// The delta sink for the prompt in flight; only one prompt runs at a time.
@@ -101,6 +102,8 @@ public actor ACPClient {
   }
 
   public var currentSessionID: String? { sessionID }
+
+  public func historyRewindSupported() async -> Bool { supportsHistoryRewind }
 
   public func configurationOptions() async throws -> [RemoteSessionOption] {
     if !sessionLoaded { _ = try await connect() }
@@ -140,6 +143,18 @@ public actor ACPClient {
       sessionOptions = RemoteSessionOption.parse(options)
     }
     return sessionOptions
+  }
+
+  public func rewind(to messageID: String?) async throws {
+    guard !busy, sessionLoaded, supportsHistoryRewind, let sessionID, let peer else {
+      throw JSONRPCError.invalidParams(
+        "Connect to an idle pmai session before changing its conversation history.")
+    }
+    busy = true
+    defer { busy = false }
+    var params: [String: JSONValue] = ["sessionId": .string(sessionID)]
+    params["messageId"] = messageID.map(JSONValue.string) ?? .null
+    _ = try await peer.request(ACP.Method.sessionRewind, params: .object(params), timeout: 60)
   }
 
   private func readSessionOptions(_ result: JSONValue) {
@@ -366,6 +381,7 @@ public actor ACPClient {
     sessionLoaded = false
     supportsPermissionEditing = false
     supportsYolo = false
+    supportsHistoryRewind = false
     let tunnel = forwirohTunnel
     forwirohTunnel = nil
     transport?.close()
@@ -475,6 +491,7 @@ public actor ACPClient {
       supportsFiles = pmaiCapabilities?["workspaceFiles"]?.intValue == 1
       supportsPermissionEditing = pmaiCapabilities?["permissionEditing"]?.intValue == 1
       supportsYolo = pmaiCapabilities?["yolo"]?.intValue == 1
+      supportsHistoryRewind = pmaiCapabilities?["historyRewind"]?.intValue == 1
       guard initialized.objectValue?["protocolVersion"]?.intValue == ACP.protocolVersion else {
         throw JSONRPCError.invalidParams("The agent returned an unsupported ACP protocol version")
       }

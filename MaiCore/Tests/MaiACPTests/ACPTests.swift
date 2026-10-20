@@ -305,6 +305,7 @@ func acpServerServesARuntime() async throws {
   let serving = Task { await server.serve(on: serverTransport) }
 
   let chunks = ChunkRecorder()
+  let snapshots = MessageSnapshotRecorder()
   let client = JSONRPCPeer(
     transport: clientTransport,
     onNotification: { method, params in
@@ -312,6 +313,9 @@ func acpServerServesARuntime() async throws {
       let update = params?.objectValue?["update"]?.objectValue
       if update?["sessionUpdate"]?.stringValue == ACP.Update.agentMessageChunk.rawValue {
         await chunks.append(ACP.ContentBlock.text(from: update?["content"]))
+      }
+      if update?["sessionUpdate"]?.stringValue == "_pmai/message_snapshot" {
+        await snapshots.record(update?["messages"]?.arrayValue ?? [])
       }
     })
   await client.start()
@@ -334,6 +338,13 @@ func acpServerServesARuntime() async throws {
     timeout: 5)
   #expect(result.objectValue?["stopReason"]?.stringValue == ACP.StopReason.endTurn.rawValue)
   #expect(await chunks.joined == "Hello from pmai")
+  let promptID = try #require(
+    await snapshots.last.first(where: { $0.objectValue?["text"]?.stringValue == "hi" })?
+      .objectValue?["remoteID"]?.stringValue)
+  _ = try await client.request(
+    ACP.Method.sessionRewind,
+    params: .object(["sessionId": .string(sessionID), "messageId": .string(promptID)]), timeout: 5)
+  #expect(await snapshots.last.isEmpty)
 
   await client.close()
   serving.cancel()
@@ -399,6 +410,12 @@ private actor ChunkRecorder {
   private var chunks: [String] = []
   func append(_ chunk: String) { chunks.append(chunk) }
   var joined: String { chunks.joined() }
+}
+
+private actor MessageSnapshotRecorder {
+  private var snapshots: [[JSONValue]] = []
+  func record(_ snapshot: [JSONValue]) { snapshots.append(snapshot) }
+  var last: [JSONValue] { snapshots.last ?? [] }
 }
 
 @Test("ACP lists CLI projects and resumes their existing chats within the served root")
@@ -763,7 +780,11 @@ func acpSessionConfiguration() async throws {
   let second = ACPSettingsProvider(id: "second")
   try await runtime.register(first)
   try await runtime.register(second)
-  let agent = AgentDefinition(id: "main", instructions: "", provider: "first", model: "a")
+  try await runtime.register(tool: ClosureTool(definition: ToolDefinition(
+    name: "fixture_tool", description: "Fixture tool", parameters: []
+  )) { _, _ in ToolOutput(text: "fixture") })
+  let agent = AgentDefinition(
+    id: "main", instructions: "", provider: "first", model: "a", toolNames: ["fixture_tool"])
   let (transport, worker) = PipeTransport.pair()
   let server = ACPServer(
     runtime: runtime, agent: agent, bridge: ACPPermissionBridge(), sessionDirectory: directory,
@@ -776,10 +797,10 @@ func acpSessionConfiguration() async throws {
   let created = try await client.request(
     ACP.Method.sessionNew, params: .object(["cwd": .string(workspaceRoot.path)]), timeout: 5)
   let id = try #require(created.objectValue?["sessionId"]?.stringValue)
-  #expect(
-    RemoteSessionOption.parse(created.objectValue?["configOptions"]).map(\.id) == [
-      "provider", "model", "reasoning",
-    ])
+  let initialOptions = RemoteSessionOption.parse(created.objectValue?["configOptions"])
+  #expect(initialOptions.prefix(3).map(\.id) == ["provider", "model", "reasoning"])
+  #expect(initialOptions.first(where: { $0.id == "tools.enabled" })?.currentValue == .bool(true))
+  #expect(initialOptions.first(where: { $0.id == "tools.tool.fixture_tool" })?.currentValue == .bool(true))
   let providerChoices = try #require(
     RemoteSessionOption.parse(created.objectValue?["configOptions"])
       .first(where: { $0.id == "provider" })?.choices)
@@ -787,21 +808,35 @@ func acpSessionConfiguration() async throws {
   #expect(providerChoices.map(\.name) == [
     "first · OpenAI-compatible", "second · OpenAI-compatible",
   ])
-  func set(_ key: String, _ value: String) async throws -> [RemoteSessionOption] {
+  func set(_ key: String, _ value: JSONValue) async throws -> [RemoteSessionOption] {
     let result = try await client.request(
       ACP.Method.sessionSetConfigOption,
       params: .object([
-        "sessionId": .string(id), "configId": .string(key), "value": .string(value),
+        "sessionId": .string(id), "configId": .string(key), "value": value,
       ]), timeout: 5)
     return RemoteSessionOption.parse(result.objectValue?["configOptions"])
   }
-  let switched = try await set("provider", "second")
+  let switched = try await set("provider", .string("second"))
   #expect(switched.first(where: { $0.id == "model" })?.currentValue == .string("a"))
   #expect(switched.first(where: { $0.id == "model" })?.choices.map(\.id) == ["a", "b"])
-  _ = try await set("model", "b")
-  _ = try await set("reasoning", "high")
-  await #expect(throws: JSONRPCError.self) { _ = try await set("model", "invented") }
-  await #expect(throws: JSONRPCError.self) { _ = try await set("tools", "all") }
+  _ = try await set("model", .string("b"))
+  _ = try await set("reasoning", .string("high"))
+  let toolDisabled = try await set("tools.tool.fixture_tool", .bool(false))
+  #expect(
+    toolDisabled.first(where: { $0.id == "tools.tool.fixture_tool" })?.currentValue == .bool(false))
+  let toolsDisabled = try await set("tools.enabled", .bool(false))
+  #expect(toolsDisabled.first(where: { $0.id == "tools.enabled" })?.currentValue == .bool(false))
+  _ = try await client.request(
+    ACP.Method.sessionPrompt,
+    params: .object([
+      "sessionId": .string(id), "prompt": .array([ACP.ContentBlock.text("without tools").json]),
+    ]), timeout: 5)
+  #expect(await second.requests.last?.tools.isEmpty == true)
+  let toolsRestored = try await set("tools.enabled", .bool(true))
+  #expect(
+    toolsRestored.first(where: { $0.id == "tools.tool.fixture_tool" })?.currentValue == .bool(false))
+  await #expect(throws: JSONRPCError.self) { _ = try await set("model", .string("invented")) }
+  await #expect(throws: JSONRPCError.self) { _ = try await set("tools", .string("all")) }
   _ = try await client.request(
     ACP.Method.sessionPrompt,
     params: .object([
@@ -833,7 +868,9 @@ func acpSessionConfiguration() async throws {
       "sessionId": .string(id), "cwd": .string(workspaceRoot.path),
     ]), timeout: 5)
   let options = RemoteSessionOption.parse(loaded.objectValue?["configOptions"])
-  #expect(options.map(\.currentValue) == [.string("second"), .string("b"), .string("high")])
+  #expect(options.prefix(3).map(\.currentValue) == [.string("second"), .string("b"), .string("high")])
+  #expect(options.first(where: { $0.id == "tools.enabled" })?.currentValue == .bool(true))
+  #expect(options.first(where: { $0.id == "tools.tool.fixture_tool" })?.currentValue == .bool(false))
   _ = try await client2.request(
     ACP.Method.sessionPrompt,
     params: .object([

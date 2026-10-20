@@ -18,17 +18,20 @@ public struct RemoteSessionOption: Identifiable, Equatable, Sendable {
   public var id: String
   public var name: String
   public var category: String?
+  public var description: String?
   public var currentValue: JSONValue
   public var choices: [Choice]
   public var isBoolean: Bool { currentValue.boolValue != nil }
 
   public init(
-    id: String, name: String, category: String? = nil, currentValue: JSONValue,
+    id: String, name: String, category: String? = nil, description: String? = nil,
+    currentValue: JSONValue,
     choices: [Choice] = []
   ) {
     self.id = id
     self.name = name
     self.category = category
+    self.description = description
     self.currentValue = currentValue
     self.choices = choices
   }
@@ -60,6 +63,7 @@ public struct RemoteSessionOption: Identifiable, Equatable, Sendable {
       }
       return Self(
         id: id, name: name, category: object["category"]?.stringValue,
+        description: object["description"]?.stringValue,
         currentValue: current, choices: choices)
     }
   }
@@ -70,6 +74,7 @@ public struct RemoteSessionOption: Identifiable, Equatable, Sendable {
       "type": .string(isBoolean ? "boolean" : "select"), "currentValue": currentValue,
     ]
     if let category { result["category"] = .string(category) }
+    if let description { result["description"] = .string(description) }
     if !isBoolean {
       result["options"] = .array(
         choices.map {

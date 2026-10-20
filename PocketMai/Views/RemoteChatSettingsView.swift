@@ -14,7 +14,21 @@ struct RemoteChatSettingsView: View {
           Button("Connect") { chat.connect() }
             .disabled(chat.busy || store.settings.isOffline)
         } else {
-          ForEach(chat.configurationOptions) { option in
+          let toolOptions = chat.remoteToolOptions
+          if !toolOptions.isEmpty {
+            Section("Tools") {
+              NavigationLink {
+                RemoteToolSettingsView(chat: chat)
+              } label: {
+                LabeledContent(
+                  "Select Tools",
+                  value: "\(chat.enabledRemoteToolCount)/\(max(0, toolOptions.count - 1)) enabled")
+              }
+            }
+          }
+          ForEach(chat.configurationOptions.filter {
+            $0.id != "tools.enabled" && !$0.id.hasPrefix("tools.tool.")
+          }) { option in
             if option.isBoolean {
               Toggle(
                 option.name,
@@ -70,6 +84,69 @@ struct RemoteChatSettingsView: View {
       .task(id: chat.connected) { await chat.refreshConfiguration() }
       .refreshable { await chat.refreshConfiguration() }
     }
+  }
+}
+
+struct RemoteToolSettingsView: View {
+  @EnvironmentObject private var store: AppStore
+  let chat: RemoteAgentChat
+
+  private var toolsEnabled: Bool { chat.remoteToolsEnabled ?? false }
+
+  private var groups: [(name: String, options: [RemoteSessionOption])] {
+    let options = chat.remoteToolOptions.filter { $0.id != "tools.enabled" }
+    let grouped = Dictionary(grouping: options) {
+      $0.category?.split(separator: "/", maxSplits: 1).last.map(String.init) ?? "Other"
+    }
+    return grouped.keys.sorted().map { name in
+      (name, (grouped[name] ?? []).sorted { $0.name < $1.name })
+    }
+  }
+
+  var body: some View {
+    List {
+      if let enabled = chat.remoteToolsEnabled {
+        Section {
+          Toggle(
+            "Enable Tools",
+            isOn: Binding(
+              get: { enabled },
+              set: { chat.setConfigurationOption(id: "tools.enabled", value: .bool($0)) }))
+          Text("Tools run on the remote pmai host and apply only to this chat.")
+            .font(.caption).foregroundStyle(.secondary)
+        }
+      }
+      ForEach(groups, id: \.name) { group in
+        Section(group.name) {
+          ForEach(group.options) { option in
+            ToolSelectionRow(
+              title: option.name, detail: option.description,
+              isEnabled: option.currentValue.boolValue == true,
+              isUnavailable: !toolsEnabled || chat.busy || chat.settingsLoading
+            ) {
+              chat.setConfigurationOption(
+                id: option.id, value: .bool(option.currentValue.boolValue != true))
+            }
+          }
+        }
+      }
+      if chat.settingsLoading {
+        ProgressView()
+      } else if chat.remoteToolsEnabled == nil {
+        ContentUnavailableView(
+          "Host-managed tools",
+          systemImage: "wrench.and.screwdriver",
+          description: Text("Update the remote pmai host to choose tools for this chat."))
+      }
+      if let error = chat.settingsError {
+        Text(error).foregroundStyle(.red)
+      }
+    }
+    .navigationTitle("Select Tools")
+    .navigationBarTitleDisplayMode(.inline)
+    .disabled(store.settings.isOffline)
+    .task(id: chat.connected) { await chat.refreshConfiguration() }
+    .refreshable { await chat.refreshConfiguration() }
   }
 }
 

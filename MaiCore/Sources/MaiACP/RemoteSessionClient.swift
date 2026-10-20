@@ -5,6 +5,8 @@ import MaiCore
 public protocol RemoteSessionClient: AnyObject, Sendable {
   var isConnected: Bool { get async }
   var supportsHistoryRewind: Bool { get }
+  /// Some clients learn this capability during their connection handshake.
+  func historyRewindSupported() async -> Bool
   func connect() async throws -> String
   func workspace() async throws -> ACPWorkspaceSnapshot?
   func manageSession(_ id: String, cwd: String, title: String?) async throws
@@ -20,6 +22,8 @@ public protocol RemoteSessionClient: AnyObject, Sendable {
 
 extension RemoteSessionClient {
   public var supportsHistoryRewind: Bool { false }
+
+  public func historyRewindSupported() async -> Bool { supportsHistoryRewind }
 
   public func rewind(to messageID: String?) async throws {
     throw JSONRPCError.invalidParams("This host does not support rewinding conversation history.")
