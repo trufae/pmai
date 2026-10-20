@@ -77,6 +77,7 @@ actor RemoteREPLServer {
   private let executable: String
   private var task: Task<Void, Never>?
   private var profile: ACPRemoteConnection?
+  private var openAIStatus: String?
   private var failure: String?
   private var generation = 0
   private var lease: ACPFileLock?
@@ -102,7 +103,7 @@ actor RemoteREPLServer {
 
   func start(
     _ arguments: [String], configuration: MaiConfiguration, agent: AgentDefinition,
-    cwd: URL, terminal: TerminalWriter
+    runtime: AgentRuntime, cwd: URL, terminal: TerminalWriter
   ) async throws {
     if task != nil {
       guard arguments.isEmpty else {
@@ -110,6 +111,12 @@ actor RemoteREPLServer {
           "Already serving. Run /remote stop before changing paths or options.")
       }
       await showPairing(terminal: terminal)
+      return
+    }
+    if let index = arguments.firstIndex(of: "--protocol"),
+      index + 1 < arguments.count, arguments[index + 1] == "openai" {
+      try await startOpenAI(OpenAIRemoteOptions(arguments), configuration: configuration,
+        agent: agent, runtime: runtime, terminal: terminal)
       return
     }
     var flags: [String: String] = [:]
@@ -139,7 +146,7 @@ actor RemoteREPLServer {
         index + 1 < arguments.count, !arguments[index + 1].hasPrefix("--"), flags[key] == nil
       else {
         throw JSONRPCError.invalidParams(
-          "Usage: /remote serve [--protocol local|opentunnel|forwiroh] [--path PATH ...] [--port PORT] [--loopback] [--address IP | --url URL] [--name NAME]"
+          "Usage: /remote serve [--protocol local|opentunnel|forwiroh|openai] [--path PATH ...] [--port PORT] [--loopback] [--address IP | --url URL] [--name NAME]"
         )
       }
       flags[key] = arguments[index + 1]
@@ -151,7 +158,7 @@ actor RemoteREPLServer {
     guard let connectionProtocol = ACPRemoteProtocol(rawValue: flags["--protocol"] ?? "local")
     else {
       throw JSONRPCError.invalidParams(
-        "Unknown serving protocol. Use --protocol local, opentunnel or forwiroh.")
+        "Unknown serving protocol. Use --protocol local, opentunnel, forwiroh or openai.")
     }
     guard connectionProtocol != .tailcat else {
       throw JSONRPCError.invalidParams(
@@ -313,10 +320,64 @@ actor RemoteREPLServer {
     }
   }
 
+  private func startOpenAI(
+    _ options: OpenAIRemoteOptions, configuration: MaiConfiguration, agent: AgentDefinition,
+    runtime: AgentRuntime, terminal: TerminalWriter
+  ) async throws {
+    let directory = home.rootURL.appendingPathComponent("remote-server")
+    try ACPStateFiles.createDirectory(directory)
+    let serverLease = try ACPFileLock(url: directory.appendingPathComponent("serve.lock"))
+    var environment = ProcessInfo.processInfo.environment
+    var tokenNote = environment["PMAI_HTTP_TOKEN"]?.isEmpty == false ? " · token: PMAI_HTTP_TOKEN" : ""
+    if !OpenAIRemoteOptions.isLoopback(options.host), environment["PMAI_HTTP_TOKEN"]?.isEmpty != false {
+      let tokenFile = directory.appendingPathComponent("openai/token")
+      environment["PMAI_HTTP_TOKEN"] = try ACPGatewayCLI.loadToken(tokenFile)
+      tokenNote = " · token file: \(tokenFile.path)"
+    }
+    let serverEnvironment = environment
+    let (ready, signal) = AsyncStream<Result<Void, any Error>>.makeStream()
+    generation += 1
+    let attempt = generation
+    failure = nil
+    task = Task { [weak self] in
+      defer { signal.finish() }
+      do {
+        try await OpenAIProxy.serve(runtime: runtime, agent: agent, configuration: configuration,
+          environment: serverEnvironment, host: options.host, port: options.port,
+          tokenEnvironment: "PMAI_HTTP_TOKEN", allowTools: options.allowTools,
+          onListening: { signal.yield(.success(())) })
+      } catch {
+        signal.yield(.failure(error))
+        if !Task.isCancelled {
+          await self?.ended(attempt, error: error.localizedDescription, terminal: terminal)
+        }
+      }
+    }
+    var iterator = ready.makeAsyncIterator()
+    guard let result = await iterator.next() else {
+      await stop()
+      throw CancellationError()
+    }
+    do {
+      try result.get()
+      try Task.checkCancellation()
+    } catch {
+      if generation == attempt { await stop() }
+      throw error
+    }
+    guard generation == attempt, task != nil else { throw CancellationError() }
+    lease = serverLease
+    let address = options.host.contains(":") ? "[\(options.host)]" : options.host
+    let status = "Serving http://\(address):\(options.port)/v1 via OpenAI · tools \(options.allowTools ? "enabled" : "disabled")" + tokenNote
+    openAIStatus = status
+    await terminal.line(status)
+  }
+
   private func ended(_ attempt: Int, error: String, terminal: TerminalWriter) async {
     guard generation == attempt else { return }
     task = nil
     profile = nil
+    openAIStatus = nil
     failure = error
     for code in Array(pending.keys) { cancelPairing(code) }
     await stopPublisher()
@@ -325,6 +386,7 @@ actor RemoteREPLServer {
   }
 
   func showPairing(terminal: TerminalWriter) async {
+    if let openAIStatus { await terminal.line(openAIStatus); return }
     guard var profile else {
       await terminal.line(
         failure.map { "Remote server stopped: " + $0 }
@@ -351,7 +413,8 @@ actor RemoteREPLServer {
   }
 
   func status() -> String {
-    profile.map {
+    if let openAIStatus { return openAIStatus }
+    return profile.map {
       "Serving \($0.url.absoluteString) via \(($0.connectionProtocol ?? .local).rawValue)"
     }
       ?? (task != nil ? "Starting remote server…" : nil) ?? failure.map { "Stopped: \($0)" }
@@ -429,6 +492,7 @@ actor RemoteREPLServer {
     let running = task
     task = nil
     profile = nil
+    openAIStatus = nil
     for code in Array(pending.keys) { cancelPairing(code) }
     running?.cancel()
     await running?.value

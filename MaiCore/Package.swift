@@ -147,6 +147,7 @@ let package = Package(
     .testTarget(name: "MaiDocumentsTests", dependencies: ["MaiCore", "MaiDocuments", "MaiMarkdown"]),
     .testTarget(name: "MaiMarkdownTests", dependencies: ["MaiMarkdown"]),
     .testTarget(name: "MaiACPTests", dependencies: ["MaiCore", "MaiACP", "MaiStandardTools", "MaiTestSupport"]),
+    .testTarget(name: "MaiCLIHTTPTests", dependencies: ["MaiCLI", "MaiCore", "MaiACPGateway"]),
     .testTarget(name: "MaiLocalProvidersTests", dependencies: ["MaiCore", "MaiLocalProviders"]),
     .testTarget(name: "MaiPluginTests", dependencies: [
       "MaiCore", "MaiMCP", "MaiPluginHost", "MaiStandardTools", "MaiVisionOCR",

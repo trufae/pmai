@@ -1024,6 +1024,15 @@ only the advertised host and cannot be combined with `--url`. Plain `ws://`
 connections should be used on trusted private networks. OpenTunnel encrypts
 the public connection; pmai still requires operator-approved pairing.
 
+### OpenAI HTTP server
+
+In the pmai REPL, run `/remote serve --protocol openai` to expose configured
+agents and providers at `http://127.0.0.1:11435/v1`. Add `--tools` to enable agent
+tools. `/remote status` shows the endpoint and `/remote stop` stops it. The server
+also exposes OpenAI-compatible transcription, speech and voice discovery routes.
+See [audio server usage](../doc/audio-server.md) for model selectors, Groq and
+native speech, streaming formats, authentication and examples.
+
 ### ACP and MCP
 
 pmai speaks the Agent Client Protocol both ways and serves MCP too. `pmai --acp`

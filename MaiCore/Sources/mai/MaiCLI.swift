@@ -3454,7 +3454,7 @@ struct MaiCLI {
                 let agent = session.profile.agentDefinition
                 let cwd = AgentExecutionScope.directory
                 _ = await runForeground("/remote serve", resumeInput: false) {
-                  do { try await remoteServer.start(arguments, configuration: draft, agent: agent, cwd: cwd, terminal: terminal) }
+                  do { try await remoteServer.start(arguments, configuration: draft, agent: agent, runtime: runtime, cwd: cwd, terminal: terminal) }
                   catch { await terminal.line("error: \(error.localizedDescription)", to: .standardError) }
                 }
               case "stop":
@@ -12442,7 +12442,7 @@ struct MaiCLI {
       "/help memory", "/help agents", "/help jobs", "/help chat", "/help edit", "/help tools",
       "/agent acp list", "/agent acp add ", "/agents acp list",
       "/help remote", "/remote", "/remote serve", "/remote stop", "/remote qr", "/remote status",
-      "/remote serve --protocol local", "/remote serve --protocol opentunnel", "/remote serve --protocol forwiroh",
+      "/remote serve --protocol local", "/remote serve --protocol opentunnel", "/remote serve --protocol forwiroh", "/remote serve --protocol openai",
       "/remote list", "/remote pair ", "/remote connect ", "/remote disconnect",
       "/remote pending", "/remote accept", "/remote reject", "/remote clients", "/remote del ",
       "/help projects", "/projects", "/projects list", "/projects open ", "/projects switch ",
@@ -12829,6 +12829,8 @@ struct MaiCLI {
 
   private static let remoteHelp = """
     /remote serve          Start sharing all indexed pmai projects; prints your address and a pairing QR
+    /remote serve --protocol openai  Serve OpenAI-compatible chat and audio on localhost:11435
+    /remote serve --protocol openai --tools  Include the selected agent's configured tools
     /remote serve --protocol local  Serve directly on your local network (default)
     /remote serve --protocol opentunnel  Publish an encrypted connection using the opentunnel CLI
     /remote serve --protocol forwiroh  Share through encrypted paired devices without an external tunnel CLI
@@ -12847,7 +12849,14 @@ struct MaiCLI {
     /remote connect NAME   Open a new chat with a paired host's agent
     /remote disconnect     Return to your local chat
 
-    /remote serve keeps this REPL usable and stops when it exits. Your LAN address,
+    OpenAI serving uses the current agent and provider settings at startup. Use
+    --port PORT to change 11435, or --bind HOST to choose a listener address.
+    It stays on loopback by default. LAN serving requires a bearer token from
+    PMAI_HTTP_TOKEN, or creates one in ~/.pmai/remote-server/openai/token.
+    /remote status shows the endpoint and token file location; /remote stop or
+    leaving the REPL stops serving. Audio examples are in doc/audio-server.md.
+
+    Other /remote serve protocols keep this REPL usable too. Your LAN address,
     port 19283, current agent, and current directory are selected automatically.
     All projects in ~/.pmai/projects.json and their saved chats are shared by default.
     Use --path PATH ... to restrict folders or --port PORT to change the port.

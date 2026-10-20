@@ -242,6 +242,8 @@ goes to your selected model provider.
 <details>
 <summary>Configure OpenAI or compatible text-to-speech</summary>
 
+See [OpenAI-compatible chat and audio server](doc/audio-server.md) for CLI serving, native audio HTTP endpoints, and Groq transcription/voices.
+
 ### OpenAI text-to-speech
 
 ChatGPT subscription sign-in provides the Responses API connection; it does not
