@@ -59,6 +59,7 @@ public actor ACPClient {
   private var forwirohTunnel: ForwirohRemote.Tunnel?
   private let onUpdate: (@Sendable (JSONValue) async -> Void)?
   private let onPermission: (@Sendable (JSONValue) async throws -> String?)?
+  private let onPermissionResponse: (@Sendable (JSONValue) async throws -> ACPPermissionResponse?)?
   private let onDisconnect: (@Sendable () async -> Void)?
   private var reader: Task<Void, Never>?
   private var peer: JSONRPCPeer?
@@ -69,6 +70,8 @@ public actor ACPClient {
   private var supportsLoad = false
   private var supportsList = false
   private var supportsFiles = false
+  private var supportsPermissionEditing = false
+  private var supportsYolo = false
   private var busy = false
   private var internetAccess = InternetAccessPolicy()
   /// The delta sink for the prompt in flight; only one prompt runs at a time.
@@ -78,12 +81,14 @@ public actor ACPClient {
     configuration: Configuration,
     onUpdate: (@Sendable (JSONValue) async -> Void)? = nil,
     onPermission: (@Sendable (JSONValue) async throws -> String?)? = nil,
+    onPermissionResponse: (@Sendable (JSONValue) async throws -> ACPPermissionResponse?)? = nil,
     onDisconnect: (@Sendable () async -> Void)? = nil
   ) {
     self.configuration = configuration
     self.sessionID = configuration.sessionID
     self.onUpdate = onUpdate
     self.onPermission = onPermission
+    self.onPermissionResponse = onPermissionResponse
     self.onDisconnect = onDisconnect
   }
 
@@ -359,6 +364,8 @@ public actor ACPClient {
     reader?.cancel()
     reader = nil
     sessionLoaded = false
+    supportsPermissionEditing = false
+    supportsYolo = false
     let tunnel = forwirohTunnel
     forwirohTunnel = nil
     transport?.close()
@@ -463,9 +470,11 @@ public actor ACPClient {
       supportsList =
         initialized.objectValue?["agentCapabilities"]?.objectValue?["sessionCapabilities"]?
         .objectValue?["list"]?.objectValue != nil
-      supportsFiles =
-        initialized.objectValue?["agentCapabilities"]?.objectValue?["_meta"]?
-        .objectValue?["pmai"]?.objectValue?["workspaceFiles"]?.intValue == 1
+      let pmaiCapabilities = initialized.objectValue?["agentCapabilities"]?.objectValue?["_meta"]?
+        .objectValue?["pmai"]?.objectValue
+      supportsFiles = pmaiCapabilities?["workspaceFiles"]?.intValue == 1
+      supportsPermissionEditing = pmaiCapabilities?["permissionEditing"]?.intValue == 1
+      supportsYolo = pmaiCapabilities?["yolo"]?.intValue == 1
       guard initialized.objectValue?["protocolVersion"]?.intValue == ACP.protocolVersion else {
         throw JSONRPCError.invalidParams("The agent returned an unsupported ACP protocol version")
       }
@@ -554,6 +563,33 @@ public actor ACPClient {
     case ACP.Method.requestPermission:
       guard params?.objectValue?["sessionId"]?.stringValue == sessionID else {
         throw JSONRPCError.invalidParams("Permission requested for an unknown session")
+      }
+      if let onPermissionResponse, let params {
+        var request = params
+        if supportsPermissionEditing || supportsYolo, var object = request.objectValue {
+          object["_pmai"] = .object([
+            "permissionEditing": .bool(supportsPermissionEditing),
+            "yolo": .bool(supportsYolo),
+          ])
+          request = .object(object)
+        }
+        let response = try await onPermissionResponse(request)
+        let optionID = response?.optionID
+        let options = params.objectValue?["options"]?.arrayValue ?? []
+        guard let optionID,
+          options.contains(where: { $0.objectValue?["optionId"]?.stringValue == optionID })
+        else {
+          return .object(["outcome": .object(["outcome": .string("cancelled")])])
+        }
+        var outcome: [String: JSONValue] = [
+          "outcome": .string("selected"), "optionId": .string(optionID),
+        ]
+        if supportsPermissionEditing, let rawInput = response?.rawInput {
+          outcome["rawInput"] = rawInput
+        }
+        return .object([
+          "outcome": .object(outcome)
+        ])
       }
       if let onPermission, let params {
         let optionID = try await onPermission(params)

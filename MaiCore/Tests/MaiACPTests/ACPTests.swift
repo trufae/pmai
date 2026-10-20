@@ -33,6 +33,12 @@ func acpWorkspaceFiles() async throws {
   #expect(
     initialized.objectValue?["agentCapabilities"]?.objectValue?["_meta"]?
       .objectValue?["pmai"]?.objectValue?["workspaceFiles"]?.intValue == 1)
+  #expect(
+    initialized.objectValue?["agentCapabilities"]?.objectValue?["_meta"]?
+      .objectValue?["pmai"]?.objectValue?["permissionEditing"]?.intValue == 1)
+  #expect(
+    initialized.objectValue?["agentCapabilities"]?.objectValue?["_meta"]?
+      .objectValue?["pmai"]?.objectValue?["yolo"]?.intValue == 1)
   func request(_ request: WorkspaceFileRequest, cwd: String? = nil) async throws
     -> WorkspaceFileResponse
   {

@@ -35,6 +35,7 @@ public actor ACPServer {
   private let bridge: ACPPermissionBridge
   private var peer: JSONRPCPeer?
   private var sessions: [String: Session] = [:]
+  private var yoloSessionIDs = Set<String>()
   private var loadingSessions = Set<String>()
   private var modelCatalogs: [ProviderID: [ModelDescriptor]] = [:]
   private var fileSystems: [String: MaiWorkspaceFiles] = [:]
@@ -109,6 +110,7 @@ public actor ACPServer {
     for task in tasks { task.cancel() }
     for task in tasks { _ = try? await task.value }
     sessions.removeAll()
+    yoloSessionIDs.removeAll()
     for fileSystem in fileSystems.values { await fileSystem.close() }
     fileSystems.removeAll()
     self.peer = nil
@@ -170,7 +172,9 @@ public actor ACPServer {
         "name": .string(ACP.agentName), "version": .string("1.0.0"),
       ]),
       "agentCapabilities": .object([
-        "_meta": .object(["pmai": .object(["workspaceFiles": .integer(1)])]),
+        "_meta": .object(["pmai": .object([
+          "workspaceFiles": .integer(1), "permissionEditing": .integer(1), "yolo": .integer(1),
+        ])]),
         "loadSession": .bool(sessionDirectory != nil || workspace != nil),
         "sessionCapabilities": .object(
           sessionDirectory != nil || workspace != nil ? ["list": .object([:])] : [:]),
@@ -780,6 +784,9 @@ public actor ACPServer {
       return .deny(reason: "no ACP client is connected")
     }
     do { try authorize() } catch { return .deny(reason: "Peer authorization was revoked") }
+    if yoloSessionIDs.contains(sessionID) {
+      return .approve(arguments: request.call.arguments)
+    }
     let toolCall: JSONValue = .object([
       "toolCallId": .string(request.call.id),
       "rawInput": request.call.arguments,
@@ -789,7 +796,12 @@ public actor ACPServer {
     ])
     let options: JSONValue = .array([
       .object([
-        "optionId": .string("allow_once"), "name": .string("Allow"), "kind": .string("allow_once"),
+        "optionId": .string("allow_once"), "name": .string("Allow once"),
+        "kind": .string("allow_once"),
+      ]),
+      .object([
+        "optionId": .string("allow_always"), "name": .string("Enable YOLO mode"),
+        "kind": .string("allow_always"),
       ]),
       .object([
         "optionId": .string("reject_once"), "name": .string("Reject"),
@@ -807,12 +819,19 @@ public actor ACPServer {
     else {
       return .deny(reason: "the editor did not answer the permission request")
     }
-    if outcome["outcome"]?.stringValue == "selected",
-      outcome["optionId"]?.stringValue == "allow_once"
-    {
-      return .approve(arguments: request.call.arguments)
+    guard outcome["outcome"]?.stringValue == "selected" else {
+      return .deny(reason: "the editor rejected the tool call")
     }
-    return .deny(reason: "the editor rejected the tool call")
+    let arguments = outcome["rawInput"] ?? request.call.arguments
+    switch outcome["optionId"]?.stringValue {
+    case "allow_once":
+      return .approve(arguments: arguments)
+    case "allow_always":
+      yoloSessionIDs.insert(sessionID)
+      return .approve(arguments: arguments)
+    default:
+      return .deny(reason: "the editor rejected the tool call")
+    }
   }
 }
 

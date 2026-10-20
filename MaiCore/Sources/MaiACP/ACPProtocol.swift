@@ -155,3 +155,18 @@ public enum ACPPermissionPolicy: String, Codable, Sendable {
     }?.objectValue?["optionId"]?.stringValue ?? ids.first
   }
 }
+
+/// An interactive answer to an ACP permission request.
+///
+/// `rawInput` is optional because it is a pmai extension: standard ACP agents
+/// still receive the selected option unchanged. pmai servers validate edited
+/// arguments against the tool schema before the call can run.
+public struct ACPPermissionResponse: Equatable, Sendable {
+  public var optionID: String?
+  public var rawInput: JSONValue?
+
+  public init(optionID: String?, rawInput: JSONValue? = nil) {
+    self.optionID = optionID
+    self.rawInput = rawInput
+  }
+}

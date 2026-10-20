@@ -135,24 +135,8 @@ struct ChatView: View {
             }
           })
       ) { permission in
-        NavigationStack {
-          ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-              Text(permission.title).font(.headline)
-              Text(permission.details).font(.system(.callout, design: .monospaced))
-                .textSelection(.enabled)
-              ForEach(permission.options) { option in
-                Button(option.name) { remoteChat?.answer(permission.id, optionID: option.id) }
-                  .buttonStyle(.borderedProminent)
-                  .tint(option.kind.hasPrefix("reject") ? .red : .accentColor)
-              }
-              Button("Cancel tool request", role: .cancel) {
-                remoteChat?.answer(permission.id, optionID: nil)
-              }
-            }.padding()
-          }
-          .navigationTitle("Remote Tool Permission")
-          .navigationBarTitleDisplayMode(.inline)
+        RemoteToolPermissionView(permission: permission) { optionID, rawInput in
+          remoteChat?.answer(permission.id, optionID: optionID, rawInput: rawInput)
         }
         .interactiveDismissDisabled()
       }

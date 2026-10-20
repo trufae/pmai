@@ -28,9 +28,17 @@ struct RemoteAgentBookmark: Codable, Identifiable {
     httpConfiguration: URLSessionConfiguration = .ephemeral,
     onUpdate: (@Sendable (JSONValue) async -> Void)? = nil,
     onPermission: (@Sendable (JSONValue) async throws -> String?)? = nil,
+    onPermissionResponse: (@Sendable (JSONValue) async throws -> ACPPermissionResponse?)? = nil,
     onDisconnect: (@Sendable () async -> Void)? = nil
   ) throws -> any RemoteSessionClient {
     if backend == .openCode {
+      if let onPermissionResponse {
+        return OpenCodeClient(
+          connection: try .init(name: name, url: url, token: token, cwd: cwd), sessionID: sessionID,
+          configuration: httpConfiguration,
+          onUpdate: onUpdate,
+          onPermission: { request in try await onPermissionResponse(request)?.optionID })
+      }
       return OpenCodeClient(
         connection: try .init(name: name, url: url, token: token, cwd: cwd), sessionID: sessionID,
         configuration: httpConfiguration,
@@ -40,7 +48,8 @@ struct RemoteAgentBookmark: Codable, Identifiable {
       configuration: .init(
         command: name, permission: .reject, remoteWorkingDirectory: cwd, readClientFiles: false,
         webSocketURL: url, bearerToken: token, sessionID: sessionID),
-      onUpdate: onUpdate, onPermission: onPermission, onDisconnect: onDisconnect)
+      onUpdate: onUpdate, onPermission: onPermission,
+      onPermissionResponse: onPermissionResponse, onDisconnect: onDisconnect)
   }
 }
 
@@ -432,6 +441,10 @@ struct RemoteAgentPermission: Identifiable {
   let id: UUID
   let title: String
   let details: String
+  let kind: String
+  let rawInput: JSONValue?
+  let supportsEditing: Bool
+  let supportsYolo: Bool
   let options: [Option]
   struct Option: Identifiable {
     let id: String
@@ -457,7 +470,7 @@ final class RemoteAgentChat {
   private var client: (any RemoteSessionClient)?
   private var operation: Task<Void, Never>?
   private var pendingPrompt: String?
-  private var permissionReplies: [UUID: CheckedContinuation<String?, Never>] = [:]
+  private var permissionReplies: [UUID: CheckedContinuation<ACPPermissionResponse?, Never>] = [:]
   private var generation = 0
   private var deleted = false
   private var connectingHistory: [RemoteAgentMessage]?
@@ -611,7 +624,7 @@ final class RemoteAgentChat {
       token: token, cwd: conversation.cwd, sessionID: sessionID,
       httpConfiguration: httpConfiguration,
       onUpdate: { [weak self] update in await self?.receive(update, generation: generation) },
-      onPermission: { [weak self] request in
+      onPermissionResponse: { [weak self] request in
         await self?.requestPermission(request, generation: generation)
       },
       onDisconnect: { [weak self] in
@@ -761,19 +774,21 @@ final class RemoteAgentChat {
     cancelPermissions()
   }
 
-  func answer(_ id: UUID, optionID: String?) {
+  func answer(_ id: UUID, optionID: String?, rawInput: JSONValue? = nil) {
     permissions.removeAll { $0.id == id }
-    permissionReplies.removeValue(forKey: id)?.resume(returning: optionID)
+    permissionReplies.removeValue(forKey: id)?.resume(
+      returning: optionID.map { ACPPermissionResponse(optionID: $0, rawInput: rawInput) })
   }
 
   private func cancelPermissions() {
     for id in Array(permissionReplies.keys) { answer(id, optionID: nil) }
   }
 
-  private func requestPermission(_ request: JSONValue, generation: Int) async -> String? {
+  private func requestPermission(_ request: JSONValue, generation: Int) async -> ACPPermissionResponse? {
     guard self.generation == generation, !Task.isCancelled else { return nil }
     let id = UUID()
     let tool = request.objectValue?["toolCall"]
+    let pmai = request.objectValue?["_pmai"]?.objectValue
     let options = (request.objectValue?["options"]?.arrayValue ?? []).compactMap {
       value -> RemoteAgentPermission.Option? in
       guard let object = value.objectValue, let id = object["optionId"]?.stringValue else {
@@ -795,7 +810,11 @@ final class RemoteAgentChat {
         permissions.append(
           .init(
             id: id, title: tool?.objectValue?["title"]?.stringValue ?? "Tool permission",
-            details: details, options: options))
+            details: details, kind: tool?.objectValue?["kind"]?.stringValue ?? "",
+            rawInput: tool?.objectValue?["rawInput"],
+            supportsEditing: pmai?["permissionEditing"]?.boolValue == true,
+            supportsYolo: pmai?["yolo"]?.boolValue == true,
+            options: options))
       }
     } onCancel: {
       Task { @MainActor [weak self] in self?.answer(id, optionID: nil) }
