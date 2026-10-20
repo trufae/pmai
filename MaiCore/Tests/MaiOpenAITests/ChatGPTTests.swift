@@ -501,6 +501,7 @@ import Testing
         503, "application/json", #"{"error":{"code":"subscription_sharing_usage_unavailable"}}"#,
         "Try again later"
       ),
+      (401, "application/json", #"{"error":{"message":"Expired token"}}"#, "/provider login chatgpt"),
       (502, "text/html", "<html>Bad gateway</html>", "HTTP 502"),
       (200, "application/json", #"{"output":[]}"#, "expected text/event-stream"),
       (200, "text/event-stream", "data: not-json\n\n", "malformed JSON"),
@@ -560,6 +561,18 @@ import Testing
       #expect(response.message.text == "Hello 👋")
       #expect(response.stopReason == .stop)
       #expect(await events.events == (stream ? [.textDelta("Hello 👋")] : []))
+    }
+
+    @Test func providerNamesTheSignInCommandWhenCredentialsAreMissing() async throws {
+      let store = temporaryStore()
+      defer { try? FileManager.default.removeItem(at: store.directory) }
+      let provider = ChatGPTProvider(id: "work", store: store, session: stubSession())
+      do {
+        _ = try await provider.availableModels()
+        Issue.record("Expected provider to require sign-in")
+      } catch {
+        #expect(error.localizedDescription == "ChatGPT sign-in is required. Run /provider login work.")
+      }
     }
 
     @Test(arguments: [true, false])

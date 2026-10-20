@@ -36,7 +36,7 @@ public final class ChatGPTProvider: ChatProvider, @unchecked Sendable {
     let request = try await authorizedRequest(path: "models")
     let (data, response) = try await session.data(
       for: request, delegate: ProviderRedirectDelegate(originalRequest: request))
-    try Self.validate(response, data: data)
+    try validate(response, data: data)
     guard let root = try? JSONDecoder().decode([String: JSONValue].self, from: data),
       let models = root["models"]?.arrayValue
     else {
@@ -93,7 +93,7 @@ public final class ChatGPTProvider: ChatProvider, @unchecked Sendable {
           if data.count >= 65_536 { break }
           data.append(byte)
         }
-        try Self.validate(response, data: data)
+        try validate(response, data: data)
         let root = try? JSONDecoder().decode(JSONValue.self, from: data)
         throw Self.failure(
           root?["error"] ?? root, status: httpResponse?.statusCode,
@@ -144,7 +144,12 @@ public final class ChatGPTProvider: ChatProvider, @unchecked Sendable {
   }
 
   private func authorizedRequest(path: String) async throws -> URLRequest {
-    let token = try await auth.accessToken(store: store)
+    let token: String
+    do {
+      token = try await auth.accessToken(store: store)
+    } catch ChatGPTError.signInRequired {
+      throw ChatGPTError.message(signInRequiredMessage)
+    }
     var request = URLRequest(url: Self.baseURL.appendingPathComponent(path))
     request.timeoutInterval = timeout
     request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -315,7 +320,13 @@ public final class ChatGPTProvider: ChatProvider, @unchecked Sendable {
     }
   }
 
-  static func validate(_ response: URLResponse, data: Data) throws {
+  private func validate(_ response: URLResponse, data: Data) throws {
+    try Self.validate(response, data: data, signInMessage: signInRequiredMessage)
+  }
+
+  static func validate(
+    _ response: URLResponse, data: Data, signInMessage: String? = nil
+  ) throws {
     guard let status = (response as? HTTPURLResponse)?.statusCode else {
       throw ChatGPTError.message("Expected an HTTP response from ChatGPT.")
     }
@@ -328,17 +339,22 @@ public final class ChatGPTProvider: ChatProvider, @unchecked Sendable {
     throw failure(
       root?["error"] ?? root, status: status,
       requestID: (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "x-request-id"),
-      fallback: fallback)
+      fallback: fallback, signInMessage: status == 401 ? signInMessage : nil)
+  }
+
+  private var signInRequiredMessage: String {
+    "ChatGPT sign-in is required. Run /provider login \(descriptor.id)."
   }
 
   static func failure(
     _ error: JSONValue?, status: Int? = nil, requestID: String? = nil,
-    fallback: String = "ChatGPT request failed."
+    fallback: String = "ChatGPT request failed.", signInMessage: String? = nil
   ) -> any Error {
     let code = error?["code"]?.stringValue ?? ""
     var message =
       error?["message"]?.stringValue ?? error?["detail"]?.stringValue
       ?? error?.stringValue ?? fallback
+    if status == 401, let signInMessage { message += " \(signInMessage)" }
     if code == "cyber_policy" {
       return ProviderPolicyError(
         code: code, message: message, statusCode: status, requestID: requestID,
