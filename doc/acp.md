@@ -168,11 +168,3 @@ an updated pmai is required.
   this adapter. `session/list` discovers them; `session/load` restores history.
   Persistent ACP session checkpoints retain interruption state and exclusive
   leases; browsing a host does not create a session. See [Remote ACP agents](tailcat.md).
-
-### FoundationNetworking WebSocket clients
-
-Clients may send `X-Pmai-Ready: 1` in the authenticated WebSocket upgrade. The
-gateway then sends an empty `_pmai/ready` JSON-RPC notification before waiting
-for requests. This lets FoundationNetworking finish its upgrade before sending
-its first RPC. Invitation connections still require the operator's ACP approval;
-the notification grants no access and starts no agent process.

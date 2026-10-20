@@ -100,9 +100,7 @@ public enum ACPWebSocketGateway {
               timeout.cancel()
               let token = String((request.headers.first(name: "authorization") ?? "").dropFirst(7))
               return channel.pipeline.addHandler(
-                AgentBridge(
-                  configuration: configuration, token: token,
-                  announceReady: request.headers.first(name: "x-pmai-ready") == "1"))
+                AgentBridge(configuration: configuration, token: token))
             })
           return channel.pipeline.configureHTTPServerPipeline(
             withServerUpgrade: (
@@ -171,7 +169,6 @@ private final class AgentBridge: ChannelInboundHandler, @unchecked Sendable {
   typealias OutboundOut = WebSocketFrame
   let configuration: ACPWebSocketGateway.Configuration
   let token: String
-  let announceReady: Bool
   var transport: StdioJSONRPCTransport?
   var reader: Task<Void, Never>?
   var writer: Task<Void, Never>?
@@ -181,24 +178,15 @@ private final class AgentBridge: ChannelInboundHandler, @unchecked Sendable {
   var pairingOnly = false
   let outbound = AsyncStream<JSONRPCMessage>.makeStream(bufferingPolicy: .bufferingOldest(256))
 
-  init(configuration: ACPWebSocketGateway.Configuration, token: String, announceReady: Bool) {
+  init(configuration: ACPWebSocketGateway.Configuration, token: String) {
     self.configuration = configuration
     self.token = token
-    self.announceReady = announceReady
   }
 
   func handlerAdded(context: ChannelHandlerContext) {
     guard configuration.authorizes(token) else {
       context.close(promise: nil)
       return
-    }
-    if announceReady {
-      // An empty application notification completes corelibs' WebSocket
-      // handshake without authorizing the invitation or starting an agent.
-      var buffer = context.channel.allocator.buffer(capacity: 48)
-      buffer.writeString(#"{"jsonrpc":"2.0","method":"_pmai/ready"}"#)
-      context.writeAndFlush(
-        wrapOutboundOut(WebSocketFrame(fin: true, opcode: .text, data: buffer)), promise: nil)
     }
     if let policy = configuration.pairing, !policy.authorizes(token) {
       pairingOnly = true

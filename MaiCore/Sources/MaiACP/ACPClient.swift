@@ -220,6 +220,10 @@ public actor ACPClient {
       return token
     } catch {
       await disconnect()
+      if !(error is CancellationError), !transport.recentErrorOutput.isEmpty {
+        throw ACPClientError.launchFailed(
+          command: configuration.command, detail: transport.recentErrorOutput)
+      }
       throw error
     }
   }
@@ -360,7 +364,7 @@ public actor ACPClient {
   }
 
   private func remoteTransport(url: URL, pairing: Bool = false) async throws
-    -> WebSocketJSONRPCTransport
+    -> any JSONRPCTransport
   {
     if url.scheme != "forwiroh" {
       return try WebSocketJSONRPCTransport(url: url, bearerToken: configuration.bearerToken)
@@ -371,7 +375,7 @@ public actor ACPClient {
     let tunnel = try await ForwirohRemote.shared.connect(url: url)
     do {
       try Task.checkCancellation()
-      let transport = try WebSocketJSONRPCTransport(
+      let transport = try ForwirohWebSocketTransport(
         url: tunnel.url, bearerToken: configuration.bearerToken)
       forwirohTunnel = tunnel
       return transport

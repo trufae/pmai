@@ -107,6 +107,10 @@ let package = Package(
     .target(name: "MaiLocalProviders", dependencies: localProviderDependencies, swiftSettings: localProviderSwiftSettings),
     .target(name: "MaiChat", dependencies: ["MaiCore", "MaiOpenAI"]),
     .target(name: "MaiACP", dependencies: ["MaiCore", "MaiStandardTools",
+        .product(name: "NIOCore", package: "swift-nio"),
+        .product(name: "NIOHTTP1", package: "swift-nio"),
+        .product(name: "NIOPosix", package: "swift-nio"),
+        .product(name: "NIOWebSocket", package: "swift-nio"),
         .product(
           name: "Forwiroh", package: "Forwiroh",
           condition: .when(platforms: [.macOS, .iOS, .linux, .android])),

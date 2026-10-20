@@ -30,11 +30,6 @@ public final class WebSocketJSONRPCTransport: NSObject, JSONRPCTransport,
     super.init()
     var request = URLRequest(url: url)
     request.timeoutInterval = 30
-    #if canImport(FoundationNetworking)
-      // corelibs finalizes the upgrade on the first received frame. Ask pmai
-      // gateways for a notification before buffering our first RPC request.
-      request.setValue("1", forHTTPHeaderField: "X-Pmai-Ready")
-    #endif
     if let bearerToken {
       guard !bearerToken.contains(where: { $0.isNewline || $0 == "\r" }) else {
         throw JSONRPCError.invalidParams("Invalid gateway token")

@@ -1,0 +1,12 @@
+[
+  {
+    "name": "ForwirohApple",
+    "url": "https://github.com/trufae/forwiroh/releases/download/v0.1.1/ForwirohApple.xcframework.zip",
+    "checksum": "9940d37a219226f9fd70392f06801420addb854aa11fa5de90440b840459f8c0"
+  },
+  {
+    "name": "ForwirohNative",
+    "url": "https://github.com/trufae/forwiroh/releases/download/v0.1.1/ForwirohNative.artifactbundle.zip",
+    "checksum": "bcf5d8449cd667afaf1b35dd931fcb1d1bb9d6bf72dc600c8045cd1e004f4915"
+  }
+]
