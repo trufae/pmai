@@ -87,7 +87,8 @@ for abi in $abis; do
   triple="$architecture-unknown-linux-android28"
   args=(--package-path "$app_dir" --build-system native --disable-sandbox --disable-index-store
     --swift-sdk "$swift_sdk" --triple "$triple" -c "$configuration" "${sdk_options[@]}"
-    -Xlinker "-L$sdk_root/swift-resources/usr/lib/swift_static-$architecture/android")
+    -Xlinker "-L$sdk_root/swift-resources/usr/lib/swift_static-$architecture/android"
+    -Xlinker -z -Xlinker max-page-size=16384)
   "$swift_command" build "${args[@]}" --product SwiftAndroidApp
   bin_dir=$("$swift_command" build "${args[@]}" --show-bin-path)
   destination="$app_dir/app/src/main/jniLibs/$abi"

@@ -20,7 +20,9 @@ Gradle copies it at build time, keeping one source of truth for both apps.
 the common SwiftUI API subset, importing Apple's SwiftUI on iOS and
 SwiftUICore on Android and the desktop test host.
 
-There are **no app-authored Kotlin/Java sources or JNI bindings**. The manifest
+A small Java helper encrypts the Forwiroh identity seed using Android Keystore.
+Networking and remote chat use the prebuilt SwiftPM SDK and shared MaiACP code;
+no app-authored Rust wrapper or JNI exports are required. The manifest
 uses AndroidSwiftUI's supplied Application and Activity directly. The reusable
 Compose renderer and generated Swift/Java bindings contain Kotlin/Java/JNI;
 this is a Swift application over that runtime, not a JVM-free NativeActivity.
@@ -166,3 +168,16 @@ access on a fresh build; `--disable-sandbox` allows those plugins to run.
 
 See [AndroidSwiftUI](https://github.com/PureSwift/AndroidSwiftUI) for the UI
 runtime, licensing, and its current API coverage.
+
+## Remote hosts
+
+Open **Hosts**, paste the connection URI from `pmai` →
+`/remote serve --protocol forwiroh`, and choose **Pair host**. Approve device
+pairing and then ACP chat access in the serving REPL. Saved hosts and their
+conversation sessions survive restarts. **Cancel** stops pairing or an active
+request; **Disconnect** closes the ACP connection and TCP tunnel.
+
+The app initializes rustls certificate verification with the Android Application
+before starting Forwiroh. Gradle includes the platform verifier and Kotlin
+runtime; native linkage supports 16 KiB pages. The persisted seed is encrypted
+with a non-exportable Android Keystore key. App data backup remains disabled.

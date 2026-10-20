@@ -160,7 +160,20 @@ connection URI, save it, and select the host. Accept the request on the host wit
 The serving REPL stays usable; `/remote stop` or exiting it ends the server.
 
 For access across firewalls, install the OpenTunnel CLI on the host and use
-`/remote serve --protocol opentunnel --path /path/to/project`. See
+`/remote serve --protocol opentunnel --path /path/to/project`. For encrypted device pairing without
+an external tunnel command, use `/remote serve --protocol forwiroh --path /path/to/project`.
+Scan the connection QR in PocketMai, paste its URI in Android's **Hosts** tab,
+or run `/remote pair '<URI>'` on another CLI. Approve the Forwiroh device request
+and then the ACP chat request with `/remote accept`. Saved hosts reconnect
+without scanning again; `/remote qr` creates a fresh five-minute invitation for
+another device. Forwiroh grants access only to pmai's loopback ACP endpoint.
+
+Forwiroh [0.1.1](https://github.com/trufae/forwiroh/releases/tag/v0.1.1) is supplied as a prebuilt SwiftPM dependency under `Vendor/Forwiroh`:
+no Rust build or wrapper generation is needed. Its release binaries support
+macOS, iOS, Linux and Android. Linux glibc binaries require Ubuntu 24.04/glibc
+2.39 or newer; musl builds use the musl variants. The source package requires
+Swift 6.2 or newer (Android uses the project's matching Swift 6.4 SDK).
+Windows keeps direct ACP connections; Forwiroh has no Windows binary yet. See
 [remote pmai hosts](MaiCore/README.md#remote-pmai-hosts) for setup and connection
 options, and [file browsing over ACP](doc/acp.md#file-browsing-from-pocketmai).
 

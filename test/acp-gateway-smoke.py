@@ -19,13 +19,15 @@ PMAI = str(Path(sys.argv[1]).resolve())
 
 
 class WS:
-    def __init__(self, port, token, origin=None, path="/acp", accepted=True):
+    def __init__(self, port, token, origin=None, path="/acp", accepted=True, ready=False):
         self.sock = socket.create_connection(("127.0.0.1", port), timeout=10)
         self.next_id = 0
         key = base64.b64encode(os.urandom(16)).decode()
         request = (f"GET {path} HTTP/1.1\r\nHost: localhost:{port}\r\nUpgrade: websocket\r\n"
                    f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n"
                    f"Authorization: Bearer {token}\r\n")
+        if ready:
+            request += "X-Pmai-Ready: 1\r\n"
         if origin:
             request += f"Origin: {origin}\r\n"
         self.sock.sendall((request + "\r\n").encode())
@@ -198,6 +200,13 @@ def run():
                 WS(port, credential, path="/other", accepted=False)
                 assert not list(root.glob("*.pid")), "unauthenticated request spawned an agent"
                 print("Authentication, origin/path checks, and credential export: passed", flush=True)
+                ready = WS(port, credential, ready=True)
+                clients.append(ready)
+                opcode, data = ready.receive()
+                assert opcode == 1 and json.loads(data) == {"jsonrpc": "2.0", "method": "_pmai/ready"}
+                assert ready.rpc("initialize")[0]["protocolVersion"] == 1
+                ready.close()
+                print("Opt-in readiness frame precedes the first client request: passed", flush=True)
                 client = WS(port, credential)
                 clients.append(client)
                 assert client.rpc("initialize", fragmented=True)[0]["protocolVersion"] == 1

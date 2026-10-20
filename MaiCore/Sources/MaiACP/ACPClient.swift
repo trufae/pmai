@@ -23,6 +23,7 @@ public actor ACPClient {
     public var webSocketURL: URL?
     public var bearerToken: String?
     public var sessionID: String?
+    public var forwirohInvitation: String?
 
     public init(
       command: String,
@@ -35,7 +36,8 @@ public actor ACPClient {
       readClientFiles: Bool = true,
       webSocketURL: URL? = nil,
       bearerToken: String? = nil,
-      sessionID: String? = nil
+      sessionID: String? = nil,
+      forwirohInvitation: String? = nil
     ) {
       self.command = command
       self.arguments = arguments
@@ -48,11 +50,13 @@ public actor ACPClient {
       self.webSocketURL = webSocketURL
       self.bearerToken = bearerToken
       self.sessionID = sessionID
+      self.forwirohInvitation = forwirohInvitation
     }
   }
 
   private let configuration: Configuration
   private var transport: (any JSONRPCTransport)?
+  private var forwirohTunnel: ForwirohRemote.Tunnel?
   private let onUpdate: (@Sendable (JSONValue) async -> Void)?
   private let onPermission: (@Sendable (JSONValue) async throws -> String?)?
   private let onDisconnect: (@Sendable () async -> Void)?
@@ -198,7 +202,7 @@ public actor ACPClient {
     await disconnect()
     try Task.checkCancellation()
     guard !internetAccess.isOffline else { throw InternetAccessError.offline }
-    let transport = try WebSocketJSONRPCTransport(url: url, bearerToken: configuration.bearerToken)
+    let transport = try await remoteTransport(url: url, pairing: true)
     let peer = JSONRPCPeer(transport: transport)
     self.transport = transport
     self.peer = peer
@@ -335,8 +339,11 @@ public actor ACPClient {
     reader?.cancel()
     reader = nil
     sessionLoaded = false
+    let tunnel = forwirohTunnel
+    forwirohTunnel = nil
     transport?.close()
     await previous?.close()
+    await tunnel?.close()
   }
 
   private func connectionClosed(_ peer: JSONRPCPeer) async {
@@ -346,7 +353,32 @@ public actor ACPClient {
     transport = nil
     reader = nil
     sessionLoaded = false
+    let tunnel = forwirohTunnel
+    forwirohTunnel = nil
+    await tunnel?.close()
     await onDisconnect?()
+  }
+
+  private func remoteTransport(url: URL, pairing: Bool = false) async throws
+    -> WebSocketJSONRPCTransport
+  {
+    if url.scheme != "forwiroh" {
+      return try WebSocketJSONRPCTransport(url: url, bearerToken: configuration.bearerToken)
+    }
+    if pairing {
+      try await ForwirohRemote.shared.pair(url: url, invitation: configuration.forwirohInvitation)
+    }
+    let tunnel = try await ForwirohRemote.shared.connect(url: url)
+    do {
+      try Task.checkCancellation()
+      let transport = try WebSocketJSONRPCTransport(
+        url: tunnel.url, bearerToken: configuration.bearerToken)
+      forwirohTunnel = tunnel
+      return transport
+    } catch {
+      await tunnel.close()
+      throw error
+    }
   }
 
   // MARK: - Connection
@@ -361,7 +393,7 @@ public actor ACPClient {
     }
     let transport: any JSONRPCTransport
     if let url = configuration.webSocketURL {
-      transport = try WebSocketJSONRPCTransport(url: url, bearerToken: configuration.bearerToken)
+      transport = try await remoteTransport(url: url)
     } else {
       #if os(macOS) || os(Linux) || os(Windows) || os(Android)
         transport = try StdioJSONRPCTransport.spawn(
@@ -401,7 +433,7 @@ public actor ACPClient {
               "readTextFile": .bool(configuration.readClientFiles), "writeTextFile": .bool(false),
             ]),
             "terminal": .bool(false),
-            "session": .object(["configOptions": .object(["boolean": .object([:])])])
+            "session": .object(["configOptions": .object(["boolean": .object([:])])]),
           ]),
         ]),
         timeout: 30)

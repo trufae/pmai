@@ -3,7 +3,10 @@ pluginManagement {
 }
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-    repositories { google(); mavenCentral() }
+    repositories {
+        google(); mavenCentral()
+        maven { url 'https://raw.githubusercontent.com/rustls/rustls-platform-verifier/maven-archive/android-release-support/maven/' }
+    }
     versionCatalogs {
         libs { from(files('.deps/AndroidSwiftUI/gradle/libs.versions.toml')) }
     }

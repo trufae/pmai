@@ -420,3 +420,33 @@ The Tailcat test uses its local test relay and an offline provider to verify QR
 pairing, the complete WebSocket/Tailcat/pmai path, session recovery, unauthorized
 access rejection, and live revocation. Neither test uses a model API or a public
 Tailcat relay.
+
+## Forwiroh paired transport
+
+Run `/remote serve --protocol forwiroh [--path PATH ...]` in the CLI. The ACP
+listener binds only to loopback; Forwiroh carries the connection between paired
+devices. No OpenTunnel executable or public WebSocket address is needed.
+
+Import the printed pmai connection URI/QR using `/remote pair`, the iOS Hosts
+screen, or Android's Hosts tab. The serving REPL first asks for
+`/remote accept fw-REQUEST_ID`, then `/remote accept CODE` for ACP chat access.
+`/remote pending` shows both kinds of request. `/remote reject` rejects the
+selected request. This keeps device pairing separate from ACP credentials.
+
+The invitation expires after five minutes and is single-use. `/remote qr`
+creates another invitation; previously approved hosts retain their identity
+and reconnect after restarting. `/remote clients` lists both device and ACP
+credentials. `/remote del fw-PEER_ID` revokes device access; `/remote del CLIENT_ID`
+revokes an ACP credential. `/remote stop` closes the listener and host endpoint.
+
+Only the `pmai-acp` service is authorized. SOCKS, reverse forwarding, VPN and
+arbitrary host ports are unavailable. Client endpoints accept no incoming
+services. The host and client keep separate state directories under the pmai
+home. iOS stores the client seed in Keychain; Android encrypts it with an
+Android Keystore key. Removing this identity requires pairing again.
+
+The Android app can pair and chat with a remote CLI host. Hosting runs in the
+macOS or Linux CLI; mobile apps do not run a
+background ACP server. Android currently uses the workspace from the invitation
+and rejects interactive tool-permission requests. Configure the host's agent
+permissions accordingly. iOS retains its existing project/chat browsing.

@@ -120,6 +120,7 @@ struct RemoteAgentConnectionView: View {
   @State private var error: String?
   @State private var accentColor: String?
   @State private var requiresApproval: Bool?
+  @State private var forwirohInvitation: String?
   @State private var connectionProtocol: ACPRemoteProtocol = .local
   @State private var backend: RemoteAgentBackend = .acp
   @State private var importing = false
@@ -224,7 +225,7 @@ struct RemoteAgentConnectionView: View {
           }
           if backend == .acp {
             Text(
-              "For pmai, run /remote serve --protocol local or /remote serve --protocol opentunnel, scan its QR, then accept with /remote accept."
+              "For pmai, run /remote serve --protocol local, opentunnel or forwiroh, scan its QR, then accept with /remote accept. Forwiroh asks for device approval followed by ACP chat approval. Use /remote qr for a fresh invitation when adding another device."
             )
             .font(.footnote).foregroundStyle(.secondary)
           }
@@ -263,6 +264,7 @@ struct RemoteAgentConnectionView: View {
           cwd = host.cwd
           accentColor = host.accentColor
           requiresApproval = host.requiresApproval
+          forwirohInvitation = host.forwirohInvitation
           connectionProtocol = host.connectionProtocol ?? .local
           backend = host.backend ?? .acp
           do { token = try RemoteAgentStore.shared.token(for: host.id) } catch {
@@ -338,6 +340,7 @@ struct RemoteAgentConnectionView: View {
       token = profile.token
       cwd = profile.cwd
       requiresApproval = profile.requiresApproval
+      forwirohInvitation = profile.forwirohInvitation
       connectionProtocol =
         profile.connectionProtocol ?? (connectionProtocol == .tailcat ? .tailcat : .local)
       uri = ""
@@ -366,6 +369,7 @@ struct RemoteAgentConnectionView: View {
         url: url, token: token.trimmingCharacters(in: .whitespacesAndNewlines), cwd: cwd,
         connectionProtocol: connectionProtocol)
       profile.requiresApproval = requiresApproval
+      profile.forwirohInvitation = connectionProtocol == .forwiroh ? forwirohInvitation : nil
       let id = try RemoteAgentStore.shared.add(
         profile, replacing: initialHost?.id, accentColor: accentColor)
       dismiss()

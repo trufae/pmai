@@ -1,5 +1,5 @@
 {
-  "originHash" : "47fa7f5c4b965735d4ad668cf4946fb7290b3ad13aca2d7deccf8b523782ee41",
+  "originHash" : "3437095629a2ecb0d9febb0cfcc3c02bb43c97cd1452040e48505c47af190d9c",
   "pins" : [
     {
       "identity" : "mlx-swift",
@@ -148,7 +148,7 @@
     {
       "identity" : "swift-tokenizers",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/DePasqualeOrg/swift-tokenizers.git",
+      "location" : "https://github.com/DePasqualeOrg/swift-tokenizers",
       "state" : {
         "revision" : "9cb02e836c1d8782a36ea02e7c437697ceff2ab8",
         "version" : "0.5.0"

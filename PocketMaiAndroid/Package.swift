@@ -11,6 +11,8 @@ let package = Package(
   ],
   dependencies: [
     .package(path: "../MaiCore"),
+    .package(url: "https://github.com/PureSwift/Android.git", branch: "master"),
+    .package(url: "https://github.com/swiftlang/swift-java.git", branch: "main"),
     // bootstrap.sh pins the framework. Its nested local package requires a
     // checkout rather than a remote SwiftPM dependency.
     .package(path: ".deps/AndroidSwiftUI"),
@@ -21,6 +23,7 @@ let package = Package(
       name: "PocketMaiPortableUI",
       dependencies: [
         .product(name: "MaiChat", package: "MaiCore"),
+        .product(name: "MaiACP", package: "MaiCore"),
         .product(name: "MaiCore", package: "MaiCore"),
         .product(name: "MaiMarkdown", package: "MaiCore"),
         .product(
@@ -31,7 +34,11 @@ let package = Package(
       name: "SwiftAndroidApp",
       dependencies: [
         "PocketMaiPortableUI",
+        .product(
+          name: "AndroidContent", package: "Android", condition: .when(platforms: [.android])),
+        .product(name: "SwiftJava", package: "swift-java", condition: .when(platforms: [.android])),
         .product(name: "MaiChat", package: "MaiCore"),
+        .product(name: "MaiACP", package: "MaiCore"),
         .product(
           name: "AndroidSwiftUI", package: "AndroidSwiftUI", condition: .when(platforms: [.android])
         ),

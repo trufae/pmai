@@ -48,7 +48,8 @@ enum RemoteAddress {
             address, socklen_t(MemoryLayout<sockaddr_in>.size), &buffer,
             .init(buffer.count), nil, 0, NI_NUMERICHOST) == 0
         else { continue }
-        let ip = String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        let ip = String(
+          decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
         let name = String(cString: interfaceName)
         guard !ip.hasPrefix("169.254."), !ip.hasPrefix("127.") else { continue }
         let physical = name.hasPrefix("en") || name.hasPrefix("eth") || name.hasPrefix("wl")
@@ -80,6 +81,8 @@ actor RemoteREPLServer {
   private var generation = 0
   private var lease: ACPFileLock?
   private var publisher: RemoteOpenTunnel?
+  private var forwiroh: ForwirohRemote?
+  private var forwirohWatcher: Task<Void, Never>?
   private var servingTerminal: TerminalWriter?
   private struct PendingClient {
     var clientID: String
@@ -103,7 +106,8 @@ actor RemoteREPLServer {
   ) async throws {
     if task != nil {
       guard arguments.isEmpty else {
-        throw JSONRPCError.invalidParams("Already serving. Run /remote stop before changing paths or options.")
+        throw JSONRPCError.invalidParams(
+          "Already serving. Run /remote stop before changing paths or options.")
       }
       await showPairing(terminal: terminal)
       return
@@ -135,7 +139,8 @@ actor RemoteREPLServer {
         index + 1 < arguments.count, !arguments[index + 1].hasPrefix("--"), flags[key] == nil
       else {
         throw JSONRPCError.invalidParams(
-          "Usage: /remote serve [--protocol local|opentunnel] [--path PATH ...] [--port PORT] [--loopback] [--address IP | --url URL] [--name NAME]")
+          "Usage: /remote serve [--protocol local|opentunnel|forwiroh] [--path PATH ...] [--port PORT] [--loopback] [--address IP | --url URL] [--name NAME]"
+        )
       }
       flags[key] = arguments[index + 1]
       index += 2
@@ -143,20 +148,29 @@ actor RemoteREPLServer {
     guard let port = Int(flags["--port"] ?? "19283"), (1...65535).contains(port) else {
       throw JSONRPCError.invalidParams("Port must be between 1 and 65535")
     }
-    guard let connectionProtocol = ACPRemoteProtocol(rawValue: flags["--protocol"] ?? "local") else {
-      throw JSONRPCError.invalidParams("Unknown serving protocol. Use --protocol local or --protocol opentunnel.")
+    guard let connectionProtocol = ACPRemoteProtocol(rawValue: flags["--protocol"] ?? "local")
+    else {
+      throw JSONRPCError.invalidParams(
+        "Unknown serving protocol. Use --protocol local, opentunnel or forwiroh.")
     }
     guard connectionProtocol != .tailcat else {
       throw JSONRPCError.invalidParams(
-        "For Tailcat, pair the worker with pmai tailcat pair, then run pmai acp-gateway -- pmai tailcat connect NAME.")
+        "For Tailcat, pair the worker with pmai tailcat pair, then run pmai acp-gateway -- pmai tailcat connect NAME."
+      )
     }
     guard flags["--url"] == nil || flags["--address"] == nil else {
       throw JSONRPCError.invalidParams("Use either --url or --address to advertise the connection")
     }
     guard connectionProtocol != .opentunnel || flags["--address"] == nil else {
-      throw JSONRPCError.invalidParams("OpenTunnel chooses its public address. Use --url for an existing tunnel.")
+      throw JSONRPCError.invalidParams(
+        "OpenTunnel chooses its public address. Use --url for an existing tunnel.")
     }
-    loopback = loopback || connectionProtocol == .opentunnel
+    guard connectionProtocol != .forwiroh || (flags["--url"] == nil && flags["--address"] == nil)
+    else {
+      throw JSONRPCError.invalidParams(
+        "Forwiroh uses its paired device address; omit --url and --address")
+    }
+    loopback = loopback || connectionProtocol == .opentunnel || connectionProtocol == .forwiroh
     let bindAddress = loopback ? "127.0.0.1" : "0.0.0.0"
     let url: URL
     if let advertised = flags["--url"] {
@@ -220,7 +234,8 @@ actor RemoteREPLServer {
       host: bindAddress, port: port,
       tokenFile: tokenFile, command: executable, arguments: childArguments, workingDirectory: cwd,
       pairing: pairing)
-    let tunnel = try connectionProtocol == .opentunnel && flags["--url"] == nil
+    let tunnel =
+      try connectionProtocol == .opentunnel && flags["--url"] == nil
       ? RemoteOpenTunnel(directory: directory) : nil
     let (ready, signal) = AsyncStream<Result<Void, any Error>>.makeStream()
     generation += 1
@@ -251,8 +266,34 @@ actor RemoteREPLServer {
     servingTerminal = terminal
     do {
       if let tunnel {
-        await terminal.line("Connecting OpenTunnel; first-time certificate provisioning can take a few minutes…")
+        await terminal.line(
+          "Connecting OpenTunnel; first-time certificate provisioning can take a few minutes…")
         connection.url = try await tunnel.start(port: port)
+      }
+      if connectionProtocol == .forwiroh {
+        let node = ForwirohRemote(
+          directory: directory.appendingPathComponent("forwiroh"), name: connection.name)
+        forwiroh = node
+        connection.url = try await node.serve(port: port)
+        forwirohWatcher = Task { [weak self] in
+          var seen = Set<String>()
+          while !Task.isCancelled {
+            do {
+              let requests = try await node.pending()
+              for request in requests where seen.insert(request.id).inserted {
+                await terminal.line(
+                  "Forwiroh pairing: \(request.name) · /remote accept fw-\(request.id) or /remote reject fw-\(request.id). After accepting, approve the ACP request too."
+                )
+              }
+              try await Task.sleep(for: .seconds(1))
+            } catch {
+              if !Task.isCancelled {
+                await self?.ended(attempt, error: error.localizedDescription, terminal: terminal)
+              }
+              return
+            }
+          }
+        }
       }
       try Task.checkCancellation()
       guard generation == attempt, task != nil else { throw CancellationError() }
@@ -284,13 +325,14 @@ actor RemoteREPLServer {
   }
 
   func showPairing(terminal: TerminalWriter) async {
-    guard let profile else {
+    guard var profile else {
       await terminal.line(
         failure.map { "Remote server stopped: " + $0 }
           ?? "Remote server is stopped. /remote serve starts it.")
       return
     }
     do {
+      if let forwiroh { profile.forwirohInvitation = try await forwiroh.invite() }
       let uri = try profile.uri()
       let file = home.rootURL.appendingPathComponent("remote-server/connection.txt")
       try Data((uri + "\n").utf8).write(to: file, options: .atomic)
@@ -309,7 +351,9 @@ actor RemoteREPLServer {
   }
 
   func status() -> String {
-    profile.map { "Serving \($0.url.absoluteString) via \(($0.connectionProtocol ?? .local).rawValue)" }
+    profile.map {
+      "Serving \($0.url.absoluteString) via \(($0.connectionProtocol ?? .local).rawValue)"
+    }
       ?? (task != nil ? "Starting remote server…" : nil) ?? failure.map { "Stopped: \($0)" }
       ?? "Remote server is stopped."
   }
@@ -340,11 +384,28 @@ actor RemoteREPLServer {
     pending.removeValue(forKey: code)?.reply.resume(throwing: CancellationError())
   }
 
-  func pendingClients() -> [String] {
-    pending.sorted { $0.key < $1.key }.map { "\($0.key) · \($0.value.name)" }
+  func pendingClients() async throws -> [String] {
+    var result = pending.sorted { $0.key < $1.key }.map { "\($0.key) · \($0.value.name) (ACP)" }
+    if let forwiroh {
+      result += try await forwiroh.pending().map { "fw-\($0.id) · \($0.name) (Forwiroh)" }
+    }
+    return result
   }
 
-  func resolvePairing(_ code: String?, allow: Bool) throws -> String {
+  func resolvePairing(_ code: String?, allow: Bool) async throws -> String {
+    if let forwiroh, code?.hasPrefix("fw-") == true || (code == nil && pending.isEmpty) {
+      let requests = try await forwiroh.pending()
+      let matches = requests.filter { request in
+        code.map { request.id.hasPrefix(String($0.dropFirst(3))) } ?? true
+      }
+      guard matches.count == 1, let request = matches.first else {
+        throw JSONRPCError.invalidParams("Choose a Forwiroh request from /remote pending")
+      }
+      try await forwiroh.approve(id: request.id, accept: allow)
+      return allow
+        ? "Paired \(request.name) over Forwiroh. Accept the next ACP request to grant chat access."
+        : "Rejected \(request.name)."
+    }
     let matches = pending.keys.filter { key in code.map { key.hasPrefix($0.lowercased()) } ?? true }
     guard matches.count == 1, let key = matches.first, let client = pending[key] else {
       throw JSONRPCError.invalidParams(
@@ -375,15 +436,37 @@ actor RemoteREPLServer {
     lease = nil
   }
 
+  func forwirohClients() async throws -> [String] {
+    guard let forwiroh else { return [] }
+    return try await forwiroh.peers().map { "fw-\($0.id) · \($0.name)" }
+  }
+
+  func revokeClient(_ id: String) async throws {
+    if id.hasPrefix("fw-") {
+      guard let forwiroh else {
+        throw JSONRPCError.invalidParams(
+          "Start /remote serve --protocol forwiroh before revoking a paired device")
+      }
+      try await forwiroh.revoke(id: String(id.dropFirst(3)))
+    } else {
+      try pairingStore.revoke(id: id)
+    }
+  }
+
   private func stopPublisher() async {
+    forwirohWatcher?.cancel()
+    forwirohWatcher = nil
+    let node = forwiroh
+    forwiroh = nil
+    await node?.close()
     let tunnel = publisher
     let terminal = servingTerminal
     publisher = nil
     servingTerminal = nil
     if let tunnel {
-      do { try await tunnel.stop() }
-      catch {
-        await terminal?.line("error: Cannot stop OpenTunnel: \(error.localizedDescription)", to: .standardError)
+      do { try await tunnel.stop() } catch {
+        await terminal?.line(
+          "error: Cannot stop OpenTunnel: \(error.localizedDescription)", to: .standardError)
       }
     }
   }

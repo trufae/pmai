@@ -1349,6 +1349,9 @@ struct MaiCLI {
         configuration = existing
       }
       let home = resolvedHome(options: options, environment: environment)
+      try await ForwirohRemote.shared.configure(
+        directory: home.rootURL.appendingPathComponent("forwiroh-client"),
+        name: ProcessInfo.processInfo.hostName)
       let project = try home.openProject(
         atWorkingDirectory: URL(
           fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true))
@@ -3516,7 +3519,8 @@ struct MaiCLI {
                   let invitation = profile
                   let pairing = await runForeground("/remote pair", resumeInput: false) {
                     let client = ACPClient(configuration: .init(command: invitation.name,
-                      webSocketURL: invitation.url, bearerToken: invitation.token))
+                      webSocketURL: invitation.url, bearerToken: invitation.token,
+                      forwirohInvitation: invitation.forwirohInvitation))
                     await terminal.line("Waiting for \(invitation.name) to accept this client with /remote accept…")
                     do { return Optional(try await client.requestPairing(clientID: clientID, name: ProcessInfo.processInfo.hostName)) }
                     catch { await client.disconnect(); await terminal.line("error: \(error.localizedDescription)", to: .standardError); return String?.none }
@@ -3531,18 +3535,19 @@ struct MaiCLI {
                 let host = try hosts.pair(profile, name: arguments.count == 2 ? arguments[1] : nil)
                 await terminal.line("Paired \(host.name). /remote connect \(shellQuote(host.name)) opens a chat.")
               case "pending":
-                let waiting = await remoteServer.pendingClients()
+                let waiting = try await remoteServer.pendingClients()
                 await terminal.line(waiting.isEmpty ? "No pairing requests are waiting." : waiting.joined(separator: "\n"))
               case "accept", "reject":
                 guard arguments.count <= 1 else { throw JSONRPCError.invalidParams("Usage: /remote \(action) [CODE]") }
                 await terminal.line(try remoteServer.resolvePairing(arguments.first, allow: action == "accept"))
               case "clients":
+                for client in try await remoteServer.forwirohClients() { await terminal.line(client) }
                 for client in try await remoteServer.pairingStore.clients() {
                   await terminal.line("\(client.id) · \(client.name)")
                 }
               case "del":
                 guard arguments.count == 1 else { throw JSONRPCError.invalidParams("Usage: /remote del CLIENT_ID") }
-                try await remoteServer.pairingStore.revoke(id: arguments[0])
+                try await remoteServer.revokeClient(arguments[0])
                 await terminal.line("Revoked client \(arguments[0]).")
               case "connect":
                 guard arguments.count == 1 else {
@@ -4021,7 +4026,10 @@ struct MaiCLI {
             exits = command.value.exits
             if commandWasInterrupted { await terminal.note("cancelled \(name)") }
           }
-          if await runtime.internetAccessPolicy().isOffline { await remoteServer.stop() }
+          if await runtime.internetAccessPolicy().isOffline {
+            await remoteServer.stop()
+            await ForwirohRemote.shared.close()
+          }
           if exits {
             loop.exiting = true
             return true
@@ -4368,6 +4376,7 @@ struct MaiCLI {
 
     loop.beginExit()
     await remoteServer.stop()
+    await ForwirohRemote.shared.close()
     await MaiRunTerminalHost.shared.install(runner: nil)
     reader.stop()
     visual.modelCatalog.cancel()
@@ -12673,7 +12682,7 @@ struct MaiCLI {
       "/help memory", "/help agents", "/help jobs", "/help chat", "/help edit", "/help tools",
       "/agent acp list", "/agent acp add ", "/agents acp list",
       "/help remote", "/remote", "/remote serve", "/remote stop", "/remote qr", "/remote status",
-      "/remote serve --protocol local", "/remote serve --protocol opentunnel",
+      "/remote serve --protocol local", "/remote serve --protocol opentunnel", "/remote serve --protocol forwiroh",
       "/remote list", "/remote pair ", "/remote connect ", "/remote disconnect",
       "/remote pending", "/remote accept", "/remote reject", "/remote clients", "/remote del ",
       "/help projects", "/projects", "/projects list", "/projects open ", "/projects switch ",
@@ -13073,6 +13082,7 @@ struct MaiCLI {
     /remote serve          Start sharing all indexed pmai projects; prints your address and a pairing QR
     /remote serve --protocol local  Serve directly on your local network (default)
     /remote serve --protocol opentunnel  Publish an encrypted connection using the opentunnel CLI
+    /remote serve --protocol forwiroh  Share through encrypted paired devices without an external tunnel CLI
     /remote serve --path PATH ...  Share only these directories and their descendants
     /remote serve --loopback  Listen only on 127.0.0.1 for a local tunnel or proxy
     /remote serve --loopback --url wss://HOST/acp  Advertise an existing tunnel or TLS proxy

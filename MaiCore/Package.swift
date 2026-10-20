@@ -22,6 +22,8 @@ var packageDependencies: [Package.Dependency] = [
   .package(url: "https://github.com/apple/swift-crypto", from: "4.5.2"),
   .package(url: "https://github.com/SwiftTUI/swift-tui", exact: "0.13.3"),
   .package(url: "https://github.com/apple/swift-nio", from: "2.81.0"),
+  .package(
+    name: "Forwiroh", path: Context.environment["PMAI_FORWIROH_PATH"] ?? "../Vendor/Forwiroh"),
 ]
 #if os(macOS)
   // Optional Foundation Models APIs follow the SDK, including when using a newer Swift toolchain.
@@ -104,7 +106,11 @@ let package = Package(
     ]),
     .target(name: "MaiLocalProviders", dependencies: localProviderDependencies, swiftSettings: localProviderSwiftSettings),
     .target(name: "MaiChat", dependencies: ["MaiCore", "MaiOpenAI"]),
-    .target(name: "MaiACP", dependencies: ["MaiCore", "MaiStandardTools"]),
+    .target(name: "MaiACP", dependencies: ["MaiCore", "MaiStandardTools",
+        .product(
+          name: "Forwiroh", package: "Forwiroh",
+          condition: .when(platforms: [.macOS, .iOS, .linux, .android])),
+      ]),
     .target(name: "MaiACPGateway", dependencies: [
       "MaiACP", "MaiCore",
       .product(name: "NIOCore", package: "swift-nio"),

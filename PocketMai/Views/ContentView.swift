@@ -1,3 +1,4 @@
+import MaiACP
 import MaiCore
 import SwiftUI
 import UIKit
@@ -313,7 +314,10 @@ struct ContentView: View {
       }
     }
     .onChange(of: store.settings.isOffline) { _, enabled in
-      if enabled { hosts.suspendConnections() }
+      if enabled {
+        hosts.suspendConnections()
+        Task { await ForwirohRemote.shared.close() }
+      }
     }
     .onChange(of: hosts.remotes.connections.map(\.id)) { _, ids in
       if let id = hosts.selectedHostID, !ids.contains(id) {

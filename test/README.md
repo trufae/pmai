@@ -491,3 +491,8 @@ chat request open while multiple side questions finish out of order. It also
 checks queue routing, cancellation, exit, transcript isolation, and piped input.
 The iOS `BTWTests` exercise the app's provider path while a main reply runs,
 including independent cancellation and fresh context.
+
+`python3 test/forwiroh-remote-smoke.py /path/to/pmai` checks device and ACP
+approval, service restrictions, remote chat, reconnect, and device revocation
+using the prebuilt Forwiroh SDK. It needs network access for device discovery
+and relay connections, but no model API. It is included in the smoke/full profiles.

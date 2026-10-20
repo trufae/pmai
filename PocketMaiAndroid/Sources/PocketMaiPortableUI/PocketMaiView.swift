@@ -18,16 +18,20 @@ import MaiCore
 @MainActor
 public struct PocketMaiView: @preconcurrency View {
   @Bindable private var store: PortableChat
+  private let remote: PortableRemoteChat?
   @State private var tab = Tab.chat
   @State private var promptName = ""
   @State private var promptText = ""
   @State private var editingPromptID: UUID?
   @AppStorage("appearanceTheme") private var appearanceTheme = "system"
 
-  public init(store: PortableChat) { self.store = store }
+  public init(store: PortableChat, remote: PortableRemoteChat? = nil) {
+    self.store = store
+    self.remote = remote
+  }
 
   enum Tab: Int, CaseIterable {
-    case chat, provider, prompts, history
+    case chat, provider, prompts, history, hosts
 
     var title: String {
       switch self {
@@ -35,6 +39,7 @@ public struct PocketMaiView: @preconcurrency View {
       case .provider: "Settings"
       case .prompts: "Prompts"
       case .history: "History"
+      case .hosts: "Hosts"
       }
     }
 
@@ -45,6 +50,7 @@ public struct PocketMaiView: @preconcurrency View {
       case .provider: "gearshape"
       case .prompts: "person"
       case .history: "calendar"
+      case .hosts: "square.and.arrow.up"
       }
     }
   }
@@ -103,6 +109,12 @@ public struct PocketMaiView: @preconcurrency View {
       case .provider: providerView
       case .prompts: promptsView
       case .history: historyView
+      case .hosts:
+        if let remote {
+          RemoteHostView(remote: remote)
+        } else {
+          Text("Remote hosts are unavailable in this preview.")
+        }
       }
     }.frame(maxWidth: .infinity, maxHeight: .infinity)
   }

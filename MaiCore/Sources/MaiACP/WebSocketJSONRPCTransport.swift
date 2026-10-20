@@ -8,10 +8,11 @@ import MaiCore
 /// One JSON-RPC message per WebSocket text message. Credentials are sent only
 /// in the upgrade header; redirects are refused so they cannot change hosts.
 public final class WebSocketJSONRPCTransport: NSObject, JSONRPCTransport,
-  URLSessionTaskDelegate, @unchecked Sendable
+  URLSessionWebSocketDelegate, @unchecked Sendable
 {
   private let lock = NSLock()
   private var closed = false
+  private var opened = false
   private var detail = ""
   private var session: URLSession!
   private var socket: URLSessionWebSocketTask!
@@ -23,9 +24,17 @@ public final class WebSocketJSONRPCTransport: NSObject, JSONRPCTransport,
 
   public init(url: URL, bearerToken: String? = nil) throws {
     try ACPRemoteConnection.validate(url: url)
+    guard url.scheme != "forwiroh" else {
+      throw JSONRPCError.invalidParams("Resolve the Forwiroh tunnel before opening WebSocket")
+    }
     super.init()
     var request = URLRequest(url: url)
     request.timeoutInterval = 30
+    #if canImport(FoundationNetworking)
+      // corelibs finalizes the upgrade on the first received frame. Ask pmai
+      // gateways for a notification before buffering our first RPC request.
+      request.setValue("1", forHTTPHeaderField: "X-Pmai-Ready")
+    #endif
     if let bearerToken {
       guard !bearerToken.contains(where: { $0.isNewline || $0 == "\r" }) else {
         throw JSONRPCError.invalidParams("Invalid gateway token")
@@ -106,14 +115,33 @@ public final class WebSocketJSONRPCTransport: NSObject, JSONRPCTransport,
   }
 
   private func ping() {
+    guard lock.withLock({ opened && !closed }) else { return }
     let timeout = Task { [weak self] in
       do { try await Task.sleep(for: .seconds(10)) } catch { return }
       self?.fail(JSONRPCTransportError.timedOut("WebSocket heartbeat"))
     }
     socket.sendPing { [weak self] error in
       timeout.cancel()
-      if let error { self?.fail(error) }
+      // FoundationNetworking calls this on its session queue; cancellation
+      // synchronously joins that queue, so close from a separate executor.
+      if let error { DispatchQueue.global().async { [weak self] in self?.fail(error) } }
     }
+  }
+
+  public func urlSession(
+    _ session: URLSession, webSocketTask: URLSessionWebSocketTask,
+    didOpenWithProtocol protocol: String?
+  ) { lock.withLock { opened = true } }
+
+  public func urlSession(
+    _ session: URLSession, webSocketTask: URLSessionWebSocketTask,
+    didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?
+  ) { DispatchQueue.global().async { [weak self] in self?.close() } }
+
+  public func urlSession(
+    _ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?
+  ) {
+    if let error { DispatchQueue.global().async { [weak self] in self?.fail(error) } }
   }
 
   public func urlSession(
@@ -127,12 +155,14 @@ public final class WebSocketJSONRPCTransport: NSObject, JSONRPCTransport,
 public enum ACPRemoteProtocol: String, Codable, CaseIterable, Sendable {
   case local
   case opentunnel
+  case forwiroh
   case tailcat
 
   public var displayName: String {
     switch self {
     case .local: "Local / direct"
     case .opentunnel: "OpenTunnel"
+    case .forwiroh: "Forwiroh (paired devices)"
     case .tailcat: "Tailcat (via gateway)"
     }
   }
@@ -146,6 +176,7 @@ public struct ACPRemoteConnection: Codable, Equatable, Sendable {
   public var token: String
   public var cwd: String
   public var requiresApproval: Bool?
+  public var forwirohInvitation: String?
   public var connectionProtocol: ACPRemoteProtocol?
 
   public init(
@@ -162,6 +193,12 @@ public struct ACPRemoteConnection: Codable, Equatable, Sendable {
 
   public func validate() throws {
     try Self.validate(url: url)
+    guard (connectionProtocol == .forwiroh) == (url.scheme == "forwiroh") else {
+      throw JSONRPCError.invalidParams("Forwiroh hosts require a forwiroh:// peer URL")
+    }
+    guard forwirohInvitation == nil || connectionProtocol == .forwiroh else {
+      throw JSONRPCError.invalidParams("Unexpected Forwiroh invitation")
+    }
     guard connectionProtocol != .opentunnel || url.scheme?.lowercased() == "wss" else {
       throw JSONRPCError.invalidParams("OpenTunnel connections require a wss:// gateway URL")
     }
@@ -174,6 +211,10 @@ public struct ACPRemoteConnection: Codable, Equatable, Sendable {
   }
 
   public static func validate(url: URL) throws {
+    if url.scheme == "forwiroh" {
+      _ = try ForwirohRemote.peerID(in: url)
+      return
+    }
     guard ["ws", "wss"].contains(url.scheme?.lowercased() ?? ""),
       let host = url.host, !host.isEmpty, url.user == nil, url.password == nil,
       url.query == nil, url.fragment == nil

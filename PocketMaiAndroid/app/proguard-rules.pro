@@ -1,0 +1,2 @@
+-keep class org.rustls.platformverifier.** { *; }
+-keep class org.mai.pocketmai.ForwirohIdentity { *; }

@@ -1,8 +1,9 @@
 import Foundation
 import MaiChat
-@testable import PocketMaiPortableUI
 import SwiftUICore
 import Testing
+
+@testable import PocketMaiPortableUI
 
 private func flatten(_ node: RenderNode) -> [RenderNode] {
   [node] + node.children.flatMap(flatten)
@@ -21,7 +22,8 @@ func portableScreensRenderAndCallbacksEditState() throws {
     "pmai-ui-test-\(UUID())")
   defer { try? FileManager.default.removeItem(at: directory) }
   let store = try PortableChat(directory: directory)
-  let host = ViewHost(PocketMaiView(store: store))
+  let remote = PortableRemoteChat(directory: directory.appendingPathComponent("remotes"))
+  let host = ViewHost(PocketMaiView(store: store, remote: remote))
   var nodes = flatten(host.evaluate())
   #expect(nodes.contains { $0.type == "NavStack" })
 
@@ -31,7 +33,7 @@ func portableScreensRenderAndCallbacksEditState() throws {
   let tabs = flatten(bar).filter { $0.type == "Image" }
   #expect(
     tabs.map(\.props["systemName"])
-      == ["house", "gearshape", "person", "calendar"].map { .string($0) })
+      == ["house", "gearshape", "person", "calendar", "square.and.arrow.up"].map { .string($0) })
   func open(_ index: Int) throws {
     let tap = try #require(callback(tabs[index], "onTapGesture", "action"))
     host.callbacks.invokeVoid(tap)
@@ -63,6 +65,16 @@ func portableScreensRenderAndCallbacksEditState() throws {
   #expect(nodes.contains { $0.props["text"] == .string("System prompts") })
   try open(3)
   #expect(nodes.contains { $0.props["text"] == .string("No saved chats") })
+  try open(4)
+  #expect(nodes.contains { $0.props["text"] == .string("Remote hosts") })
+  let invite = try #require(
+    nodes.first { $0.props["placeholder"] == .string("pmai-acp://connect/…") })
+  if case .int(let change)? = invite.props["onChange"] {
+    host.callbacks.invokeString(Int64(change), "connection-invitation")
+  } else {
+    Issue.record("The remote invitation field has no change callback")
+  }
+  #expect(remote.invitation == "connection-invitation")
 }
 
 @Test @MainActor
@@ -81,15 +93,17 @@ func portableThemePickerPersistsAndPreservesDraft() throws {
   let host = ViewHost(PocketMaiView(store: store))
   let initial = host.evaluate()
   #expect(initial.modifiers.first { $0.kind == "preferredColorScheme" }?.args.isEmpty == true)
-  let settings = try #require(flatten(initial).first {
-    $0.type == "Image" && $0.props["systemName"] == .string("gearshape")
-  })
+  let settings = try #require(
+    flatten(initial).first {
+      $0.type == "Image" && $0.props["systemName"] == .string("gearshape")
+    })
   host.callbacks.invokeVoid(try #require(callback(settings, "onTapGesture", "action")))
 
   for theme in ["dark", "light", "system", "dark"] {
-    let picker = try #require(flatten(host.evaluate()).first {
-      $0.type == "Picker" && $0.props["title"] == .string("App theme")
-    })
+    let picker = try #require(
+      flatten(host.evaluate()).first {
+        $0.type == "Picker" && $0.props["title"] == .string("App theme")
+      })
     guard case .int(let id)? = picker.props["onChange"] else {
       Issue.record("The theme picker has no change callback")
       return
@@ -97,13 +111,16 @@ func portableThemePickerPersistsAndPreservesDraft() throws {
     host.callbacks.invokeString(Int64(id), theme)
     let tree = host.evaluate()
     let expected: PropValue? = theme == "system" ? nil : .string(theme)
-    #expect(tree.modifiers.first { $0.kind == "preferredColorScheme" }?.args["colorScheme"] == expected)
+    #expect(
+      tree.modifiers.first { $0.kind == "preferredColorScheme" }?.args["colorScheme"] == expected)
     #expect(store.draft == "Keep this draft")
   }
 
   AppStorageStore.backend = FileAppStorage(directory: directory.path)
   let reloaded = ViewHost(PocketMaiView(store: try PortableChat(directory: directory))).evaluate()
-  #expect(reloaded.modifiers.first { $0.kind == "preferredColorScheme" }?.args["colorScheme"] == .string("dark"))
+  #expect(
+    reloaded.modifiers.first { $0.kind == "preferredColorScheme" }?.args["colorScheme"]
+      == .string("dark"))
 }
 
 @Test @MainActor

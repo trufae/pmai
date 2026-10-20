@@ -195,7 +195,8 @@ final class HostNavigationStore {
           let pairingClient = ACPClient(
             configuration: .init(
               command: host.name,
-              webSocketURL: host.url, bearerToken: token))
+              webSocketURL: host.url, bearerToken: token,
+              forwirohInvitation: host.forwirohInvitation))
           self.client = pairingClient
           token = try await pairingClient.requestPairing(
             clientID: host.id.uuidString.lowercased(),

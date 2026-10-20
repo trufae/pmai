@@ -1,5 +1,5 @@
 {
-  "originHash" : "bd3d34d14bd04750386de6b22fbce9e6561dfec78c7ab5a01f7e0ff9bf047cba",
+  "originHash" : "092c1941251f5e52e6b04e72168140f6702eea4ea2de44e06a3fde1f986497f2",
   "pins" : [
     {
       "identity" : "android",
@@ -47,6 +47,15 @@
       }
     },
     {
+      "identity" : "swift-asn1",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-asn1.git",
+      "state" : {
+        "revision" : "3b6410f7dee09eb33cdd26260c5fd47fda19b0e2",
+        "version" : "1.7.3"
+      }
+    },
+    {
       "identity" : "swift-async-algorithms",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-async-algorithms.git",
@@ -71,6 +80,15 @@
       "state" : {
         "revision" : "98ef3c98609a1e31b7e157b5b619579001a789d6",
         "version" : "1.7.1"
+      }
+    },
+    {
+      "identity" : "swift-crypto",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-crypto",
+      "state" : {
+        "revision" : "da9d28d69ebe3894b18376c8f2395c2f37b8448f",
+        "version" : "4.5.2"
       }
     },
     {
@@ -141,17 +159,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/SwiftTUI/swift-tui",
       "state" : {
-        "revision" : "e75e26b2ee433a3a7114d71c309ff56725d25a67",
-        "version" : "0.10.1"
-      }
-    },
-    {
-      "identity" : "swiftterm",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/migueldeicaza/SwiftTerm.git",
-      "state" : {
-        "revision" : "5d14406844143538cd8f8851d2d8a67c1fe443e5",
-        "version" : "1.20.0"
+        "revision" : "c0319890ae5e12828d37cd657c62169bcdbf9cca",
+        "version" : "0.13.3"
       }
     }
   ],

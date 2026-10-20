@@ -15,6 +15,7 @@ struct RemoteAgentBookmark: Codable, Identifiable {
   var workspace: ACPWorkspaceSnapshot?
   var accentColor: String?
   var requiresApproval: Bool?
+  var forwirohInvitation: String?
   var connectionProtocol: ACPRemoteProtocol?
   var revision: UUID?
   var backend: RemoteAgentBackend?
@@ -118,7 +119,8 @@ final class RemoteAgentStore {
     return try add(
       name: profile.name, url: profile.url, token: profile.token, cwd: profile.cwd,
       backend: .acp, requiresApproval: profile.requiresApproval,
-      connectionProtocol: profile.connectionProtocol, replacing: hostID, accentColor: accentColor)
+      connectionProtocol: profile.connectionProtocol, replacing: hostID, accentColor: accentColor,
+      forwirohInvitation: profile.forwirohInvitation)
   }
 
   @discardableResult
@@ -136,7 +138,7 @@ final class RemoteAgentStore {
   private func add(
     name: String, url: URL, token: String, cwd: String, backend: RemoteAgentBackend,
     requiresApproval: Bool?, connectionProtocol: ACPRemoteProtocol?,
-    replacing hostID: UUID?, accentColor: String?
+    replacing hostID: UUID?, accentColor: String?, forwirohInvitation: String? = nil
   ) throws -> UUID {
     // Reimporting the same endpoint updates its token without losing the chat.
     let existing = connections.firstIndex {
@@ -165,6 +167,7 @@ final class RemoteAgentStore {
       connections[existing].url = url
       connections[existing].accentColor = accentColor
       connections[existing].requiresApproval = requiresApproval
+      connections[existing].forwirohInvitation = forwirohInvitation
       connections[existing].connectionProtocol = connectionProtocol
       connections[existing].backend = backend
       connections[existing].revision = UUID()
@@ -172,7 +175,8 @@ final class RemoteAgentStore {
       connections.append(
         RemoteAgentBookmark(
           id: id, name: name, url: url, cwd: cwd, accentColor: accentColor,
-          requiresApproval: requiresApproval, connectionProtocol: connectionProtocol,
+          requiresApproval: requiresApproval, forwirohInvitation: forwirohInvitation,
+          connectionProtocol: connectionProtocol,
           backend: backend))
     }
     setConnectionFailed(false, for: id)
@@ -199,6 +203,7 @@ final class RemoteAgentStore {
         keychainQuery(id) as CFDictionary,
         [kSecValueData: Data(token.utf8)] as CFDictionary))
     connections[index].requiresApproval = false
+    connections[index].forwirohInvitation = nil
     try save()
   }
 
