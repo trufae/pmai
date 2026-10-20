@@ -111,6 +111,24 @@ final class RemoteMessageActionTests: XCTestCase {
     }
   }
 
+  func testSendingWhileDisconnectedReconnectsBeforeSubmittingThePrompt() async throws {
+    try await withChat { chat, _, fixture, _ in
+      chat.disconnect()
+      XCTAssertFalse(chat.connected)
+      XCTAssertTrue(chat.canSubmit)
+
+      chat.send("Send after reconnecting")
+      XCTAssertTrue(chat.busy)
+      XCTAssertEqual(chat.status, "Connecting…")
+
+      try await waitForIdle(chat)
+      XCTAssertNil(chat.error)
+      XCTAssertTrue(chat.connected)
+      XCTAssertEqual(fixture.prompts, ["Send after reconnecting"])
+      XCTAssertEqual(chat.messages.suffix(2).map(\.text), ["Send after reconnecting", "New answer"])
+    }
+  }
+
   private func waitForIdle(_ chat: RemoteAgentChat) async throws {
     for _ in 0..<500 {
       if !chat.busy { return }

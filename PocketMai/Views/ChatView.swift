@@ -2906,7 +2906,7 @@ private struct ChatComposer: View {
 
   private var canSubmitDraft: Bool {
     (!isResponding || isBTW) && hasDraftText
-      && (remoteChat == nil || (remoteChat?.connected == true && !store.settings.isOffline))
+      && (remoteChat == nil || remoteChat?.canSubmit == true)
   }
 
   private var isBTW: Bool {

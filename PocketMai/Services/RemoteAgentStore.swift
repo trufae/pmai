@@ -456,6 +456,7 @@ final class RemoteAgentChat {
   private var sessionID: String?
   private var client: (any RemoteSessionClient)?
   private var operation: Task<Void, Never>?
+  private var pendingPrompt: String?
   private var permissionReplies: [UUID: CheckedContinuation<String?, Never>] = [:]
   private var generation = 0
   private var deleted = false
@@ -491,6 +492,10 @@ final class RemoteAgentChat {
   }
 
   var canSend: Bool { connected && !busy && !isOffline() }
+
+  /// A disconnected remote can reconnect when the person submits a draft.
+  /// The actual prompt remains pending until that connection completes.
+  var canSubmit: Bool { !busy && !isOffline() }
 
   var supportsHistoryRewind: Bool { client?.supportsHistoryRewind == true }
 
@@ -648,6 +653,7 @@ final class RemoteAgentChat {
         guard generation == attempt else { return }
         messages = previous
         connectingHistory = nil
+        pendingPrompt = nil
         self.error = error.localizedDescription
         connected = false
         store.setConnectionFailed(!(error is CancellationError), for: bookmark.id)
@@ -657,12 +663,23 @@ final class RemoteAgentChat {
       if generation == attempt {
         busy = false
         operation = nil
+        if connected, let pendingPrompt {
+          self.pendingPrompt = nil
+          submit(pendingPrompt)
+        }
       }
     }
   }
 
   func send(_ text: String) {
-    submit(text)
+    let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty, canSubmit else { return }
+    guard !connected else {
+      submit(text)
+      return
+    }
+    pendingPrompt = text
+    connect()
   }
 
   private func submit(_ text: String, rewind: Bool = false, boundary: String? = nil) {
@@ -718,6 +735,7 @@ final class RemoteAgentChat {
     generation += 1
     operation?.cancel()
     operation = nil
+    pendingPrompt = nil
     cancelPermissions()
     let client = client
     self.client = nil
