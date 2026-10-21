@@ -27,16 +27,18 @@ public final class MaiFileAccessPolicy: @unchecked Sendable, Equatable {
   private var rules: [Rule] = []
   private var outside: Access
   private var hidden: Access
+  private var sensitive: Access
   private var outsideConfigured = false
   private var revision = 0
   private let confirmation: Confirmation
 
   public init(
-    outside: Access = .deny, hidden: Access = .allow,
+    outside: Access = .deny, hidden: Access = .allow, sensitive: Access = .ask,
     confirmation: @escaping Confirmation
   ) {
     self.outside = outside
     self.hidden = hidden
+    self.sensitive = sensitive
     self.confirmation = confirmation
   }
 
@@ -45,9 +47,9 @@ public final class MaiFileAccessPolicy: @unchecked Sendable, Equatable {
   }
 
   public func snapshot() -> (
-    rules: [Rule], outside: Access, outsideConfigured: Bool, hidden: Access, revision: Int
+    rules: [Rule], outside: Access, outsideConfigured: Bool, hidden: Access, sensitive: Access, revision: Int
   ) {
-    lock.withLock { (rules, outside, outsideConfigured, hidden, revision) }
+    lock.withLock { (rules, outside, outsideConfigured, hidden, sensitive, revision) }
   }
 
   public func setOutside(_ access: Access) {
@@ -61,6 +63,13 @@ public final class MaiFileAccessPolicy: @unchecked Sendable, Equatable {
   public func setHidden(_ access: Access) {
     lock.withLock {
       hidden = access
+      revision += 1
+    }
+  }
+
+  public func setSensitive(_ access: Access) {
+    lock.withLock {
+      sensitive = access
       revision += 1
     }
   }
@@ -89,8 +98,20 @@ public final class MaiFileAccessPolicy: @unchecked Sendable, Equatable {
     if matches.contains(where: { $0.access == .ask }) { return .ask }
     if matches.contains(where: { $0.access == .allow }) { return .allow }
     if state.hidden != .allow, Self.isHidden(url) || Self.isHidden(resolved) { return state.hidden }
+    if state.sensitive != .allow, Self.isSensitive(url) || Self.isSensitive(resolved) { return state.sensitive }
     if insideWorkspace { return .allow }
     return state.outside
+  }
+
+  /// Names only: never read a secret to decide whether reading it is allowed.
+  public static func isSensitive(_ url: URL) -> Bool {
+    let names = url.standardizedFileURL.pathComponents.map { $0.lowercased() }
+    if names.contains(where: { [".ssh", ".gnupg", ".aws", ".kube", ".azure"].contains($0) }) { return true }
+    let name = url.lastPathComponent.lowercased()
+    return ["pem", "key", "p12", "pfx", "jks", "keystore", "gpg", "pgp", "kdbx", "age", "enc"]
+      .contains(url.pathExtension.lowercased())
+      || ["id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "credentials", ".netrc", ".npmrc", ".pypirc", ".env"].contains(name)
+      || name.hasPrefix(".env.")
   }
 
   public static func isHidden(_ url: URL) -> Bool {
@@ -136,7 +157,12 @@ extension MaiFileWorkspaceConfiguration {
     case .ask:
       guard confirmedPolicyRevision == pathAccessPolicy.snapshot().revision else { return false }
       let resolved = url.standardizedFileURL.resolvingSymlinksInPath()
-      return confirmedPathURLs.contains { MaiFileAccessPolicy.contains(resolved, in: $0) }
+      return confirmedPathURLs.contains {
+        if pathAccessPolicy.snapshot().sensitive != .allow, MaiFileAccessPolicy.isSensitive(resolved) {
+          return resolved == $0
+        }
+        return MaiFileAccessPolicy.contains(resolved, in: $0)
+      }
     }
   }
 
@@ -190,7 +216,7 @@ extension MaiFileWorkspaceConfiguration {
       // Searches omit hidden entries. Tree mutations still affect them, so
       // authorize protected hidden descendants before renaming or deleting.
       var directory: ObjCBool = false
-      if mutatingTree, pathAccessPolicy.snapshot().hidden != .allow,
+      if mutatingTree, (pathAccessPolicy.snapshot().hidden != .allow || pathAccessPolicy.snapshot().sensitive != .allow),
         FileManager.default.fileExists(atPath: target.path, isDirectory: &directory),
         directory.boolValue
       {
@@ -207,7 +233,7 @@ extension MaiFileWorkspaceConfiguration {
         }
         while let url = entries.nextObject() as? URL {
           try Task.checkCancellation()
-          guard MaiFileAccessPolicy.isHidden(url) else { continue }
+          guard MaiFileAccessPolicy.isHidden(url) || MaiFileAccessPolicy.isSensitive(url) else { continue }
           var affected = [url]
           if let movingTo, path == paths.first {
             let expanded = AgentHome.expandUserPath(movingTo)

@@ -403,7 +403,7 @@ public struct ConfiguredMCPServer: Codable, Equatable, Identifiable, Sendable {
 
 public struct ConfiguredApprovals: Codable, Equatable, Sendable {
   public var mode: ToolApprovalMode
-  public init(mode: ToolApprovalMode = .yolo) { self.mode = mode }
+  public init(mode: ToolApprovalMode = .ask) { self.mode = mode }
 
   private enum CodingKeys: String, CodingKey { case mode, yolo, confirm, dangerous }
   public init(from decoder: Decoder) throws {
@@ -415,7 +415,7 @@ public struct ConfiguredApprovals: Codable, Equatable, Sendable {
     } else if c.contains(.confirm) || c.contains(.dangerous) {
       mode = .ask
     } else {
-      mode = .yolo
+      mode = .ask
     }
   }
   public func encode(to encoder: Encoder) throws {

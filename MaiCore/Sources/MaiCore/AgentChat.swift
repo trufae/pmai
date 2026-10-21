@@ -35,6 +35,7 @@ public struct AgentChat: StoredChat, Equatable {
   public var primaryAgent: AgentDefinition
   public var messages: [AgentMessage]
   public var pendingContent: [ContentPart]
+  public var accessedFiles: [String]
   public var createdAt: Date
   public var updatedAt: Date
   /// Archived chats are kept for reference but listed apart from active ones.
@@ -54,6 +55,7 @@ public struct AgentChat: StoredChat, Equatable {
     primaryAgent: AgentDefinition,
     messages: [AgentMessage]? = nil,
     pendingContent: [ContentPart] = [],
+    accessedFiles: [String] = [],
     createdAt: Date = Date(),
     updatedAt: Date = Date(),
     isArchived: Bool = false,
@@ -66,6 +68,7 @@ public struct AgentChat: StoredChat, Equatable {
     self.primaryAgent = primaryAgent
     self.messages = messages ?? Self.initialHistory(for: primaryAgent)
     self.pendingContent = pendingContent
+    self.accessedFiles = accessedFiles
     self.createdAt = createdAt
     self.updatedAt = updatedAt
     self.isArchived = isArchived
@@ -76,7 +79,7 @@ public struct AgentChat: StoredChat, Equatable {
 
   private enum CodingKeys: String, CodingKey {
     case id, title, primaryAgent, messages, pendingContent, createdAt, updatedAt, isArchived
-    case sessionID, subagents, runtimeConfiguration
+    case sessionID, subagents, runtimeConfiguration, accessedFiles
   }
 
   public init(from decoder: Decoder) throws {
@@ -90,6 +93,7 @@ public struct AgentChat: StoredChat, Equatable {
     messages = try container.decode([AgentMessage].self, forKey: .messages)
     pendingContent =
       try container.decodeIfPresent([ContentPart].self, forKey: .pendingContent) ?? []
+    accessedFiles = try container.decodeIfPresent([String].self, forKey: .accessedFiles) ?? []
     createdAt = try container.decode(Date.self, forKey: .createdAt)
     updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
@@ -159,6 +163,7 @@ public struct AgentChat: StoredChat, Equatable {
     primaryAgent = agent
     if resettingTranscript {
       messages = Self.initialHistory(for: agent)
+      accessedFiles.removeAll()
       subagents.removeAll()
     }
     pendingContent.removeAll()
@@ -169,6 +174,7 @@ public struct AgentChat: StoredChat, Equatable {
   /// started go with the messages.
   public mutating func resetTranscript() {
     messages = Self.initialHistory(for: primaryAgent)
+    accessedFiles.removeAll()
     subagents.removeAll()
     pendingContent.removeAll()
     touch()

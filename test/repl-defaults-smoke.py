@@ -42,9 +42,10 @@ def main():
         saved = json.loads(config.read_text())
         assert saved['providers'] == [] and saved['agents'] == [], saved
         assert saved['fileAccess'] == {
-            'hidden': 'ask', 'rules': [
+            'hidden': 'ask', 'sensitive': 'ask', 'rules': [
                 {'path': path, 'access': 'ask', 'descendants': True}
-                for path in ['/etc', '~/.ssh', '~/.config']]}, saved
+                for path in ['/etc', '/root', '~/.ssh', '~/.gnupg', '~/.config']]}, saved
+        assert saved['approvals']['mode'] == 'ask', saved
         original = config.read_bytes()
         welcome, about = run(['/providers', '/about'], split=True)
         assert 'Welcome to PocketMai!' in welcome and 'Welcome to PocketMai!' in about

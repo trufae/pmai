@@ -178,6 +178,7 @@ public struct MaiVectorDatabaseTool: AgentTool {
       let text: String
       do {
         let attachment = try DocumentAttachmentImporter.attachment(at: file)
+        FileAccessLog.current?.record(file)
         guard case .file(let content) = attachment.content, let imported = content.text else {
           continue
         }

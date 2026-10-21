@@ -66,6 +66,7 @@ def main():
                 folder.mkdir()
             (root / 'private/secret.txt').write_text('LOCAL SECRET')
             (root / '.env').write_text('HIDDEN SECRET')
+            (root / 'server.pem').write_text('PRIVATE KEY FIXTURE')
             (external / 'outside.txt').write_text('EXTERNAL SECRET')
             (base / 'outside.txt').write_text('PROMPT GRANT')
             (root / 'new-cwd').mkdir()
@@ -104,7 +105,7 @@ def main():
 
             # Saved edits survive restarts; removing all defaults does not reseed them.
             output = run_repl(command, ['/path', '/path hidden deny', '/path del /etc',
-                '/path del ~/.ssh', '/path del ~/.config', '/path del private'], cwd=root, env=env)
+                '/path del ~/.ssh', '/path del ~/.gnupg', '/path del /root', '/path del ~/.config', '/path del private'], cwd=root, env=env)
             assert canonical(f'deny {root / "private"}') in canonical(output), output
             assert 'Outside allowed paths: deny' in output, output
             output = run_repl(command, ['/path'], cwd=root, env=env)
@@ -113,13 +114,13 @@ def main():
 
             # Startup defaults require a person even for hidden prompt-named paths in yolo.
             config.write_text(original_config)
-            for path in ['.env', str(root / '.env'), '/etc/pmai-policy-smoke']:
+            for path in ['.env', str(root / '.env'), 'server.pem', '/etc/pmai-policy-smoke']:
                 enqueue(call('files_read', path=path))
             output = run_repl(command, ['Read hidden', 'Inspect ' + str(root / '.env'),
-                'Read system settings'], cwd=root, env=env)
+                'Read key', 'Read system settings'], cwd=root, env=env)
             tool_messages = [json.dumps(m) for req in requests for m in req['messages'] if m['role'] == 'tool']
             assert sum('was not approved' in m for m in tool_messages) >= 3, tool_messages
-            assert not any('HIDDEN SECRET' in m for m in tool_messages), tool_messages
+            assert not any('HIDDEN SECRET' in m or 'PRIVATE KEY FIXTURE' in m for m in tool_messages), tool_messages
             assert '[granted from prompt]' not in run_repl(command, ['/path'], cwd=root, env=env)
             requests.clear()
 
@@ -151,6 +152,18 @@ def main():
             assert 'Use /path to review, deny, or require prompts' in output, output
             assert '[granted from prompt]' in output, output
             assert 'PROMPT GRANT' in json.dumps(requests[-1]), requests[-1]
+            requests.clear()
+
+            config.write_text(original_config)
+            enqueue(call('files_read', path='private/secret.txt'))
+            output = run_repl(command, ['/chat rename File audit', 'Read a normal file', '/chat files'], cwd=root, env=env)
+            chats = [json.loads(p.read_text()) for p in (root / '.pmai/chats').glob('*.json')]
+            audit = next(chat for chat in chats if chat['title'] == 'File audit')
+            assert list(map(canonical, audit['accessedFiles'])) == [canonical(root / 'private/secret.txt')], audit
+            assert canonical(root / 'private/secret.txt') in canonical(output), output
+            output = run_repl(command + ['-r', 'File audit'], ['/chat files', '/chat clear', '/chat files'], cwd=root, env=env)
+            assert canonical(root / 'private/secret.txt') in canonical(output), output
+            assert 'No recorded file accesses' in output, output
             requests.clear()
 
             # A fixed Files root is listed separately from the process cwd.

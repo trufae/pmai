@@ -72,7 +72,7 @@ final class AgentProfileTests: XCTestCase {
   func testApprovalModesMigrateAndOnlyEncodeTheNewSetting() throws {
     let decoder = JSONDecoder()
     for (json, expected) in [
-      ("{}", ToolApprovalMode.yolo),
+      ("{}", ToolApprovalMode.ask),
       (#"{"yoloModeEnabled":false}"#, .ask),
       (#"{"yoloModeEnabled":true}"#, .yolo),
       (#"{"yoloModeEnabled":true,"toolApprovalMode":"smart"}"#, .smart),
