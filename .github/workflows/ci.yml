@@ -191,6 +191,9 @@ jobs:
       - name: Test paged web fetch over HTTP
         run: python3 test/web-fetch-smoke.py ./pmai
 
+      - name: Test native updater and session lifetime
+        run: python3 test/update-smoke.py ./pmai
+
       - name: Test REPL suspend and resume
         run: python3 test/repl-suspend-smoke.py ./pmai
 

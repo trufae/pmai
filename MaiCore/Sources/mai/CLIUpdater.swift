@@ -18,6 +18,15 @@ import MaiDocuments
 /// Release downloads, verification, and installation stay in the CLI; no remote
 /// installer or external download, checksum, or archive tools are needed.
 enum CLIUpdater {
+  // Keep the session alive until process exit: FoundationNetworking's libcurl
+  // cleanup can retain _MultiHandle from its own deinit on Linux/musl.
+  private static let session: URLSession = {
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.timeoutIntervalForRequest = 30
+    configuration.timeoutIntervalForResource = 300
+    return URLSession(configuration: configuration)
+  }()
+
   private enum Failure: LocalizedError {
     case message(String)
     case http(Int, URL)
@@ -50,12 +59,6 @@ enum CLIUpdater {
       let oldVersion = normalizedVersion(installedVersion ?? currentVersion)
       let releases = try releaseURL(
         setting("PMAI_RELEASES_URL", in: environment) ?? "https://github.com/trufae/pmai/releases")
-      let configuration = URLSessionConfiguration.ephemeral
-      configuration.timeoutIntervalForRequest = 30
-      configuration.timeoutIntervalForResource = 300
-      let session = URLSession(configuration: configuration)
-      defer { session.invalidateAndCancel() }
-
       var tag = setting("PMAI_VERSION", in: environment) ?? "latest"
       if tag == "latest" {
         var request = URLRequest(url: releases.appendingPathComponent("latest"))

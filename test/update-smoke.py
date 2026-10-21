@@ -14,6 +14,9 @@ import zipfile
 
 
 class Releases(SimpleHTTPRequestHandler):
+    # Keep connections open to exercise session cleanup with cached sockets.
+    protocol_version = 'HTTP/1.1'
+
     def log_message(self, *_):
         pass
 
@@ -34,9 +37,11 @@ class Releases(SimpleHTTPRequestHandler):
                 return
             self.send_response(302)
             self.send_header('Location', '/releases/tag/' + self.server.latest)
+            self.send_header('Content-Length', '0')
             self.end_headers()
         elif self.path.startswith('/releases/tag/'):
             self.send_response(200)
+            self.send_header('Content-Length', '0')
             self.end_headers()
         else:
             self.send_error(404)
@@ -129,6 +134,7 @@ os.execv(tool, [tool, *sys.argv[1:]])
                                     capture_output=True, text=True, timeout=30)
             output = result.stdout + result.stderr
             assert result.returncode == status, (result.returncode, status, output)
+            assert '_MultiHandle' not in output, output
             assert not (root / '.pmai').exists(), 'Updating initialized project state'
             assert not Path(environment['SMOKE_EXTERNAL_MARKER']).exists(), 'CLI used an external tool'
             assert '% Total' not in output and 'Dload' not in output, output
