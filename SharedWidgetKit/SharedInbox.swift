@@ -3,7 +3,8 @@ import Foundation
 /// What the share extension recognised in a shared item, which decides how the
 /// app attaches it: pictures follow the picture workflow (resize or OCR), voice
 /// messages are transcribed, documents are converted to text, and plain text or
-/// links are appended to the composer draft.
+/// links are appended to the composer draft. Webxdc documents are installed in
+/// the app library before the remaining items reach the composer.
 enum SharedInboxItemKind: String, Codable, Sendable {
   case image
   case audio
@@ -48,7 +49,7 @@ struct SharedInboxItem: Codable, Equatable, Identifiable, Sendable {
 ///
 /// The extension copies each shared file into the App Group container and
 /// appends a queue entry; the app drains the queue when it next becomes active
-/// and imports the items through the composer's usual attachment workflow.
+/// and routes Webxdc apps to the app library and attachments to the composer.
 enum SharedInbox {
   static let appGroupID = SharedAppState.appGroupID
   /// Files older than this are swept on the next drain: the extension may have

@@ -221,7 +221,7 @@ final class ConversationTransferTests: XCTestCase {
     let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
     XCTAssertNil(object["toolCallingDebug"])
 
-    store.openConversationImportFile(at: url)
+    store.openImportFile(at: url)
     let pending = try XCTUnwrap(store.pendingConversationImportFiles.first)
     let preview = try store.previewConversationCollectionImport(pending)
     XCTAssertEqual(preview.conversations, [original])
@@ -230,7 +230,7 @@ final class ConversationTransferTests: XCTestCase {
     let legacy = url.deletingPathExtension().appendingPathExtension("pocketmai.json")
     defer { try? FileManager.default.removeItem(at: legacy) }
     try data.write(to: legacy)
-    store.openConversationImportFile(at: legacy)
+    store.openImportFile(at: legacy)
     XCTAssertEqual(store.pendingConversationImportFiles.first?.data, data)
   }
 

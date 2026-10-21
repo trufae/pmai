@@ -255,6 +255,14 @@ struct ContentView: View {
       }
       .environmentObject(store)
     }
+    .fullScreenCover(
+      item: Binding(
+        get: { store.pendingWebXDCImport },
+        set: { store.pendingWebXDCImport = $0 })
+    ) { app in
+      ImportedWebXDCRunnerSheet(app: app)
+        .environmentObject(store)
+    }
     .onChange(of: showingSettings) { _, isShowing in
       // The chat view keeps rendering behind the sheet; pausing streamed-text
       // publications while Settings is open stops the message list from doing

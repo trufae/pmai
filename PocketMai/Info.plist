@@ -14,6 +14,18 @@
 	<array>
 		<dict>
 			<key>CFBundleTypeName</key>
+			<string>Webxdc App</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>io.github.trufae.mai.webxdc</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
 			<string>PocketMai Conversation</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
@@ -89,6 +101,27 @@
 	</array>
 	<key>UIFileSharingEnabled</key>
 	<true/>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>io.github.trufae.mai.webxdc</string>
+			<key>UTTypeDescription</key>
+			<string>Webxdc App</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.zip-archive</string>
+				<string>public.content</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<string>xdc</string>
+				<key>public.mime-type</key>
+				<string>application/webxdc+zip</string>
+			</dict>
+		</dict>
+	</array>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>

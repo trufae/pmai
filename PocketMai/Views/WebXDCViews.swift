@@ -387,6 +387,25 @@ extension WebXDCRunningSession: WKNavigationDelegate {
 
 // MARK: - Runner sheet
 
+struct ImportedWebXDCRunnerSheet: View {
+  @EnvironmentObject private var store: AppStore
+  let app: WebXDCAppInfo
+  @State private var session: WebXDCRunningSession?
+
+  var body: some View {
+    Group {
+      if let session {
+        WebXDCRunnerSheet(session: session)
+      } else {
+        ProgressView()
+      }
+    }
+    .onAppear {
+      if session == nil { session = store.startWebXDCSession(app: app) }
+    }
+  }
+}
+
 struct WebXDCRunnerSheet: View {
   @EnvironmentObject private var store: AppStore
   @Environment(\.dismiss) private var dismiss
@@ -894,6 +913,7 @@ struct WebXDCAppsPanel: View {
         Text(errorMessage ?? "")
       }
       .onAppear { reload() }
+      .onChange(of: store.pendingWebXDCImport?.id) { _, _ in reload() }
     }
   }
 
@@ -1433,6 +1453,9 @@ struct WebXDCAppLauncherSheet: View {
         }
       }
       .onAppear { apps = WebXDCLibrary.listApps() }
+      .onChange(of: store.pendingWebXDCImport?.id) { _, _ in
+        apps = WebXDCLibrary.listApps()
+      }
     }
   }
 }

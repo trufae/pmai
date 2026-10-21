@@ -471,6 +471,8 @@ final class AppStore: ObservableObject {
   /// Conversation export files opened by iOS or handed over by the share
   /// extension. ContentView presents them one at a time.
   @Published private(set) var pendingConversationImportFiles: [PendingConversationImportFile] = []
+  /// Shared Webxdc apps are installed immediately, then opened by ContentView.
+  @Published var pendingWebXDCImport: WebXDCAppInfo?
   /// Bumped to ask the composer to take keyboard focus (e.g. after a widget tap).
   @Published private(set) var composerFocusRequestID = 0
   @Published private(set) var composerDraftReplacement: ComposerDraftReplacement?
@@ -4959,13 +4961,26 @@ final class AppStore: ObservableObject {
     drainSharedInbox()
   }
 
-  /// Picks up whatever the share extension queued — a WhatsApp voice message, a
-  /// picture, an EPUB — and asks the composer to import it.
+  /// Routes shared apps and conversation exports before passing attachments to
+  /// the composer.
   func drainSharedInbox() {
     let items = SharedInbox.takeAll()
+    importSharedItems(items)
+  }
+
+  func importSharedItems(_ items: [SharedInboxItem]) {
     guard !items.isEmpty else { return }
     var composerItems: [SharedInboxItem] = []
     for item in items {
+      if (item.filename as NSString).pathExtension.lowercased() == "xdc" {
+        defer { SharedInbox.discard(item) }
+        guard let url = SharedInbox.fileURL(for: item) else {
+          errorMessage = "Could not read \(item.filename)."
+          continue
+        }
+        importWebXDCFile(at: url, filename: item.filename)
+        continue
+      }
       guard ConversationExportFiles.isConversationExport(filename: item.filename) else {
         composerItems.append(item)
         continue
@@ -4982,6 +4997,28 @@ final class AppStore: ObservableObject {
     guard !composerItems.isEmpty else { return }
     queuedSharedItems += composerItems
     sharedImportRequestID &+= 1
+  }
+
+  /// Handles both document handoff from iOS and the share extension inbox.
+  func openImportFile(at url: URL) {
+    guard url.isFileURL else { return }
+    if url.pathExtension.lowercased() == "xdc" {
+      importWebXDCFile(at: url, filename: url.lastPathComponent)
+    } else {
+      openConversationImportFile(at: url)
+    }
+  }
+
+  private func importWebXDCFile(at url: URL, filename: String) {
+    let access = url.startAccessingSecurityScopedResource()
+    defer { if access { url.stopAccessingSecurityScopedResource() } }
+    do {
+      // Inbox URLs have a UUID prefix; keep the sender's name as the fallback.
+      let fallback = (filename as NSString).deletingPathExtension
+      pendingWebXDCImport = try WebXDCLibrary.importXDC(from: url, fallbackName: fallback)
+    } catch {
+      errorMessage = "Could not import \(filename): \(error.localizedDescription)"
+    }
   }
 
   /// Queues a registered `.pocketmai` document (or a legacy `.pocketmai.json`)
@@ -6361,6 +6398,7 @@ final class AppStoreViewObservation: ObservableObject {
     case .content:
       observe(store.$settings)
       observe(store.$errorMessage)
+      observe(store.$pendingWebXDCImport)
       observe(store.$toolCallApprovalRequests)
       observe(store.$autocompactionApprovalRequests)
       observe(store.$longRunningOperationTimeoutRequests)
@@ -6395,6 +6433,7 @@ final class AppStoreViewObservation: ObservableObject {
       observe(store.$pendingMessageNavigation)
       observe(store.$browserSession)
       observe(store.$closedBrowserURL)
+      observe(store.$activeWebXDCSession)
     case .sidebar:
       observe(store.$conversationSummaries)
       observe(store.$messageBookmarks)

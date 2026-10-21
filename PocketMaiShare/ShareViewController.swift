@@ -4,7 +4,7 @@ import UIKit
 ///
 /// It has no composer of its own: whatever is shared is copied into the App
 /// Group inbox and PocketMai is brought to the front, so the items land in the
-/// chat composer through the same workflow as picking them inside the app. When
+/// chat composer or Webxdc app library as appropriate. When
 /// the system refuses to open the app, the items stay queued and are imported
 /// the next time PocketMai becomes active.
 final class ShareViewController: UIViewController {
@@ -44,7 +44,7 @@ final class ShareViewController: UIViewController {
       extensionContext?.completeRequest(returningItems: nil)
       return
     }
-    await finish(message: "Saved. Open PocketMai to attach.")
+    await finish(message: "Saved. Open PocketMai to import.")
   }
 
   private func openHostApp() async -> Bool {

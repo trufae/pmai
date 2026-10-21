@@ -84,8 +84,8 @@ enum SharedItemLoader {
     from provider: NSItemProvider,
     typeIdentifier: String
   ) async -> SharedInboxItem? {
-    guard let data = await loadFileData(from: provider, typeIdentifier: typeIdentifier),
-      !data.isEmpty
+    guard let file = await loadFileData(from: provider, typeIdentifier: typeIdentifier),
+      !file.data.isEmpty
     else {
       return nil
     }
@@ -93,9 +93,10 @@ enum SharedItemLoader {
     let filename = Self.filename(
       suggested: provider.suggestedName,
       type: type,
-      fallback: "shared-file")
+      fallback: "shared-file",
+      sourceFilename: file.filename)
     return SharedInbox.storeFile(
-      data: data,
+      data: file.data,
       filename: filename,
       kind: kind(for: type, filename: filename))
   }
@@ -166,10 +167,18 @@ enum SharedItemLoader {
 
   // MARK: - Naming
 
-  private static func filename(suggested: String?, type: UTType?, fallback: String) -> String {
+  private static func filename(
+    suggested: String?, type: UTType?, fallback: String, sourceFilename: String? = nil
+  ) -> String {
     let name = (suggested ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    let base = name.isEmpty ? "\(fallback)-\(Int(Date().timeIntervalSince1970))" : name
+    let base =
+      name.isEmpty
+      ? (sourceFilename ?? "\(fallback)-\(Int(Date().timeIntervalSince1970))") : name
     guard (base as NSString).pathExtension.isEmpty else { return base }
+    // A generic data/ZIP type may have no knowledge of the .xdc extension.
+    if let ext = (sourceFilename as NSString?)?.pathExtension, !ext.isEmpty {
+      return base + "." + ext
+    }
     guard let ext = type?.preferredFilenameExtension else { return base }
     return base + "." + ext
   }
@@ -196,9 +205,9 @@ enum SharedItemLoader {
   private static func loadFileData(
     from provider: NSItemProvider,
     typeIdentifier: String
-  ) async -> Data? {
+  ) async -> (data: Data, filename: String?)? {
     let limit = maximumItemBytes
-    let fileData: Data? = await withCheckedContinuation { continuation in
+    let fileData: (data: Data, filename: String?)? = await withCheckedContinuation { continuation in
       let handler: @Sendable (URL?, (any Error)?) -> Void = { url, _ in
         // The URL is only valid until this handler returns, so the bytes are
         // read here rather than mapped.
@@ -209,14 +218,21 @@ enum SharedItemLoader {
           continuation.resume(returning: nil)
           return
         }
-        continuation.resume(returning: try? Data(contentsOf: url))
+        guard let data = try? Data(contentsOf: url) else {
+          continuation.resume(returning: nil)
+          return
+        }
+        continuation.resume(returning: (data, url.lastPathComponent))
       }
       _ = provider.loadFileRepresentation(
         forTypeIdentifier: typeIdentifier,
         completionHandler: handler)
     }
     if let fileData { return fileData }
-    return await loadData(from: provider, typeIdentifier: typeIdentifier)
+    guard let data = await loadData(from: provider, typeIdentifier: typeIdentifier) else {
+      return nil
+    }
+    return (data, nil)
   }
 
   private static func loadData(
