@@ -9,6 +9,29 @@ final class ConversationFolderTests: XCTestCase {
   private var persistence: PersistenceStore!
   private var store: AppStore!
 
+  func testMessagePinsAreConversationLocalAndIndependentOfBookmarks() async throws {
+    let first = ChatMessage(role: .system, text: "Instructions")
+    let second = ChatMessage(role: .tool, text: "Tool output")
+    let last = ChatMessage(role: .user, text: "Question")
+    store.updateCurrentConversation { $0.messages = [first, second, last] }
+    let id = try XCTUnwrap(store.currentConversation?.id)
+    store.toggleMessageBookmark(second, in: id)
+    store.setMessagePinned(true, messageID: first.id, in: id)
+    store.setMessagePinned(true, messageID: second.id, in: id)
+    store.setMessagePinned(true, messageID: second.id, in: id)
+    XCTAssertEqual(store.currentConversation?.messages.pinnedMessages.map(\.id), [first.id, second.id])
+    XCTAssertEqual(store.messageBookmarks.count, 1)
+    store.removeMessageBookmark(conversationID: id, messageID: second.id)
+    XCTAssertEqual(store.currentConversation?.messages.pinnedMessages.count, 2)
+    store.setMessagePinned(true, messageID: UUID(), in: id)
+    store.replaceConversationWithCompactSummary(conversationID: id, summary: "Compacted")
+    XCTAssertEqual(store.currentConversation?.messages.pinnedMessages.map(\.id), [first.id, second.id])
+    try await waitUntil { persistence.loadConversation(id: id)?.messages.pinnedMessages.count == 2 }
+    store.setMessagePinned(false, messageID: first.id, in: id)
+    XCTAssertEqual(store.currentConversation?.messages.pinnedMessages.map(\.id), [second.id])
+    XCTAssertEqual(store.currentConversation?.messages.first?.text, first.text)
+  }
+
   override func setUp() async throws {
     try await super.setUp()
     baseURL = FileManager.default.temporaryDirectory

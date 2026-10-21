@@ -922,7 +922,7 @@ struct ChatAttachment: Identifiable, Codable, Equatable, Sendable {
 /// are the JSON keys, so older chats keep decoding.
 typealias GenerationStats = ModelCallStats
 
-struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
+struct ChatMessage: PinnableMessage, Codable, Equatable, Sendable {
   var id: UUID = UUID()
   var role: ChatRole
   var text: String {
@@ -937,9 +937,10 @@ struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
   var voiceRecordingFilename: String? = nil
   var attachments: [ChatAttachment] = []
   var stats: GenerationStats? = nil
+  var isPinned = false
 
   enum CodingKeys: String, CodingKey {
-    case id, role, text, voiceoverText, displayText, createdAt, voiceRecordingFilename, attachments, stats
+    case id, role, text, voiceoverText, displayText, createdAt, voiceRecordingFilename, attachments, stats, isPinned
   }
 
   init(
@@ -951,7 +952,8 @@ struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
     voiceRecordingFilename: String? = nil,
     attachments: [ChatAttachment] = [],
     stats: GenerationStats? = nil,
-    voiceoverText: String? = nil
+    voiceoverText: String? = nil,
+    isPinned: Bool = false
   ) {
     self.id = id
     self.role = role
@@ -962,6 +964,7 @@ struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
     self.attachments = attachments
     self.stats = stats
     self.voiceoverText = voiceoverText
+    self.isPinned = isPinned
   }
 
   var presentationText: String {
@@ -984,6 +987,7 @@ struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
     voiceRecordingFilename = try? c.decode(String.self, forKey: .voiceRecordingFilename)
     attachments = (try? c.decode([ChatAttachment].self, forKey: .attachments)) ?? []
     stats = try? c.decode(GenerationStats.self, forKey: .stats)
+    isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
   }
 }
 
@@ -1055,6 +1059,7 @@ struct ChatMessageRenderKey: Equatable, Sendable {
   let voiceoverText: String?
   let attachments: [Attachment]
   let stats: GenerationStats?
+  let isPinned: Bool
 
   init(_ message: ChatMessage) {
     id = message.id
@@ -1064,6 +1069,7 @@ struct ChatMessageRenderKey: Equatable, Sendable {
     createdAt = message.createdAt
     voiceRecordingFilename = message.voiceRecordingFilename
     voiceoverText = message.voiceoverText
+    isPinned = message.isPinned
     attachments = message.attachments.map(Attachment.init)
     stats = message.stats
   }

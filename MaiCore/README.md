@@ -720,6 +720,17 @@ default terminal scrollback behavior. Buffer mode restores the shell's screen
 and mouse handling on exit and during terminal handoffs. Hold Shift to select
 text using your terminal's normal mouse selection. Saved conversations remain
 available separately through `/chat log` and the project's `.pmai/chats` files.
+
+`/chat log short` lists the first paragraph of every message with its original
+number; 📌 marks pinned messages. `/chat pin NUMBER` pins any message, including
+instructions and tool messages; negative numbers count from the end. A full
+message ID also works. `/chat pin` shows the pinned messages, and
+`/chat unpin NUMBER` removes a pin. Pins are saved with the conversation, survive compaction
+and portable exports, and appear in PocketMai's pinned-message bar below the
+chat title. In PocketMai, use a message's **Pin Message** menu action; tap the bar
+to jump to it or use the bar's menu to choose another pin or unpin it. Global
+bookmarked messages remain a separate library across conversations.
+
 `/set ui.editor COMMAND` picks the editor `/edit`, `/reply`, and the other
 editor commands hand the terminal to; it is saved in the configuration and used
 before `$EDITOR`, `$VISUAL`, and vim, which are what an unset (or

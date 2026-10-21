@@ -77,12 +77,31 @@ public enum AgentTranscriptEditor {
   public static func mergeCompletedRun(
     current: [AgentMessage], sent: [AgentMessage], result: [AgentMessage]
   ) -> [AgentMessage] {
-    guard current != sent else { return result }
+    // Pins can change while a run is in flight; they are UI metadata, not a
+    // transcript edit that should duplicate the run's original messages.
+    let pins = Dictionary(current.map { ($0.id, $0.isPinned) }, uniquingKeysWith: { _, last in last })
+    func restoringPins(_ messages: [AgentMessage]) -> [AgentMessage] {
+      messages.map { message in
+        var message = message
+        if let pinned = pins[message.id] { message.isPinned = pinned }
+        return message
+      }
+    }
+    let sent = restoringPins(sent)
+    let result = restoringPins(result)
     if let prompt = sent.last(where: { $0.role == .user }),
       !current.contains(where: { $0.id == prompt.id })
     {
       return current
     }
+    let resultIDs = Set(result.map(\.id))
+    if current.contains(where: { $0.isPinned && !resultIDs.contains($0.id) }) {
+      // A pin added after a run began may arrive too late for its compaction.
+      // Keep the original, valid transcript and append only the new messages.
+      let sentIDs = Set(sent.map(\.id))
+      return current + result.filter { !sentIDs.contains($0.id) }
+    }
+    guard current != sent else { return result }
     let shared = zip(sent, result).prefix { $0.0 == $0.1 }.count
     return current + result.dropFirst(shared)
   }
@@ -95,7 +114,7 @@ public enum AgentTranscriptEditor {
     var transcript = AgentTranscript(messages: messages)
     var report = AgentTranscriptEditReport(charactersBefore: characterCount(of: messages))
     for edit in edits {
-      let protected = Set(transcript.messages.filter(AgentPromptContext.isInstruction).map(\.id))
+      let protected = Set(transcript.messages.filter { $0.isPinned || AgentPromptContext.isInstruction($0) }.map(\.id))
         .union(AgentPromptContext.protectedInstructionMessageIDs(
           in: transcript.messages, activeTaskID: activeTaskID))
       func remove(_ id: String) -> Int {

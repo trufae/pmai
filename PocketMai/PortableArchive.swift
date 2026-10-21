@@ -227,7 +227,7 @@ extension AgentMessage {
               height: attachment.height)))
       }
     }
-    self.init(id: message.id.uuidString.lowercased(), role: role, content: content)
+    self.init(id: message.id.uuidString.lowercased(), role: role, content: content, isPinned: message.isPinned)
   }
 }
 
@@ -371,7 +371,8 @@ extension ChatMessage {
       id: UUID(uuidString: message.id) ?? UUID(),
       role: role,
       text: text.joined(separator: "\n\n"),
-      attachments: attachments)
+      attachments: attachments,
+      isPinned: message.isPinned)
   }
 }
 

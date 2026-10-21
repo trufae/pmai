@@ -20,6 +20,11 @@ public struct AgentTranscript: Codable, Equatable, Sendable {
     messages.firstIndex { $0.id == id }
   }
 
+  @discardableResult
+  public mutating func setMessagePinned(_ pinned: Bool, id: String) -> Bool {
+    messages.setMessagePinned(pinned, id: id)
+  }
+
   public mutating func append(_ message: AgentMessage) {
     messages.append(message)
   }

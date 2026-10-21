@@ -418,10 +418,11 @@ public enum ContentPart: Codable, Equatable, Sendable {
   }
 }
 
-public struct AgentMessage: Codable, Equatable, Identifiable, Sendable {
+public struct AgentMessage: Codable, Equatable, PinnableMessage, Sendable {
   public var id: String
   public var role: AgentRole
   public var content: [ContentPart]
+  public var isPinned: Bool = false
   /// Opaque protocol items that must accompany a replayed assistant turn.
   /// Providers own their keys; hosts persist them with the message.
   public var providerState: [String: JSONValue]? = nil
@@ -429,11 +430,33 @@ public struct AgentMessage: Codable, Equatable, Identifiable, Sendable {
   public init(
     id: String = UUID().uuidString,
     role: AgentRole,
-    content: [ContentPart]
+    content: [ContentPart],
+    isPinned: Bool = false
   ) {
     self.id = id
     self.role = role
     self.content = content
+    self.isPinned = isPinned
+  }
+
+  private enum CodingKeys: String, CodingKey { case id, role, content, providerState, isPinned }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(String.self, forKey: .id)
+    role = try container.decode(AgentRole.self, forKey: .role)
+    content = try container.decode([ContentPart].self, forKey: .content)
+    providerState = try container.decodeIfPresent([String: JSONValue].self, forKey: .providerState)
+    isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(id, forKey: .id)
+    try container.encode(role, forKey: .role)
+    try container.encode(content, forKey: .content)
+    try container.encodeIfPresent(providerState, forKey: .providerState)
+    if isPinned { try container.encode(true, forKey: .isPinned) }
   }
 
   public init(id: String = UUID().uuidString, role: AgentRole, content: String) {

@@ -88,7 +88,7 @@ path.write_text('Edited in editor: ' + path.read_text())
             assert text in verbose, (text, verbose)
         assert '[3] Assistant:' in compact and '[reasoning] Hidden thought' in compact, compact
         for output in (invalid, extra):
-            assert 'Usage: /chat log [quiet|verbose]' in output, output
+            assert 'Usage: /chat log [quiet|verbose|short]' in output, output
         assert messages() == fixture, messages()
 
         run(['/chat log > quiet.txt', '/chat log verbose > verbose.txt'])
@@ -124,10 +124,46 @@ path.write_text('Edited in editor: ' + path.read_text())
             assert messages() == fixture, (action, messages())
             assert not (root / 'editor-input.txt').exists()
 
+        # Pins belong to individual messages, including system, reasoning and tool rows.
+        reset()
+        for index in range(1, len(fixture) + 1):
+            output = run([f'/chat pin {index}'])[0]
+            assert f'📌 Pinned message {index} ' in output, output
+        pinned = messages()
+        assert all(m['isPinned'] for m in pinned), pinned
+        assert [{k: v for k, v in m.items() if k != 'isPinned'} for m in pinned] == fixture
+        short, listing, repeated = run(['/chat log short', '/chat pin', '/chat pin 2'])
+        for index, role in enumerate(('System', 'User', 'Assistant', 'Assistant', 'Tool', 'Tool', 'Assistant'), 1):
+            assert f'[{index}] 📌 {role}' in short, (index, short)
+            assert f'## [{index}] 📌 {role}' in listing, (index, listing)
+        assert 'Total messages: 7' in short, short
+        assert len(messages()) == len(fixture)
+
+        for action in ('/chat pin 0', '/chat unpin 0', '/chat pin missing', '/chat pin 2 extra'):
+            output = run([action])[0]
+            assert 'Usage:' in output, (action, output)
+            assert messages() == pinned
+        output = run(['/chat unpin question'])[0]
+        assert 'Unpinned message 2 ' in output, output
+        assert not messages()[1].get('isPinned', False)
+        output = run(['/chat pin -6'])[0]
+        assert '📌 Pinned message 2 ' in output, output
+
+        paragraphs = json.loads(json.dumps(fixture))
+        paragraphs[1]['content'][0] = part('text', '\r\nFirst line\r\ncontinued\r\n \r\nSECOND PARAGRAPH')
+        reset(paragraphs)
+        output = run(['/chat pin 2', '/chat log short'])[1]
+        assert '[2] 📌 User: First line continued' in output, output
+        assert 'SECOND PARAGRAPH' not in output, output
+        run(['/chat log short > short.txt'])
+        assert '[2] 📌 User: First line continued' in (root / 'short.txt').read_text()
+        run(['/chat clear'])
+        assert not any(m.get('isPinned', False) for m in messages())
+
         reset([])
         for output in run(['/chat log', '/chat log verbose']):
             assert 'No conversation messages yet.' in output, output
-        print('PASS chat logs: quiet default, verbose details, stable indexes, redirection; '
+        print('PASS chat logs: quiet/verbose/short, first paragraphs, pins on all roles, stable indexes, redirection; '
               'editor aliases, inline text, attachment preservation, persistence and validation')
 
 

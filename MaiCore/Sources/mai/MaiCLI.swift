@@ -11579,7 +11579,7 @@ struct MaiCLI {
         recapPrompt: configuration?.prompts?.recap,
         chatProcess: chatProcess,
         terminal: terminal)
-    case "log", "last", "edit", "del", "undo", "trim", "compact", "recap", "clear", "help":
+    case "log", "last", "pin", "unpin", "edit", "del", "undo", "trim", "compact", "recap", "clear", "help":
       await handleChatCommand(
         argument,
         session: &session,
@@ -11923,14 +11923,38 @@ struct MaiCLI {
     switch action {
     case "list", "log":
       let verbosity = actionArgument.lowercased()
-      guard action != "log" || ["", "quiet", "verbose"].contains(verbosity) else {
-        await terminal.line("Usage: /chat log [quiet|verbose]")
+      guard action != "log" || ["", "quiet", "verbose", "short"].contains(verbosity) else {
+        await terminal.line("Usage: /chat log [quiet|verbose|short]")
         return
       }
       await terminal.line(
         await conversationLog(
           session: session, full: action == "log", includeDetails: verbosity == "verbose",
+          short: verbosity == "short",
           terminal: terminal))
+    case "pin", "unpin":
+      if action == "pin", actionArgument.isEmpty {
+        let pinned = session.history.messages.enumerated().filter { $0.element.isPinned }
+        guard !pinned.isEmpty else {
+          await terminal.line("No pinned messages. Use /chat pin INDEX or MESSAGE_ID.")
+          return
+        }
+        for (index, message) in pinned {
+          await terminal.line(await renderChatMessage(message, index: index, terminal: terminal))
+        }
+        return
+      }
+      guard parts.count == 2,
+        let index = chatIndex(actionArgument, count: session.history.count)
+          ?? session.history.index(ofMessageID: actionArgument)
+      else {
+        await terminal.line("Usage: /chat \(action) INDEX|MESSAGE_ID")
+        return
+      }
+      let message = session.history[index]
+      session.history.setMessagePinned(action == "pin", id: message.id)
+      session.touch()
+      await terminal.line("\(action == "pin" ? "📌 Pinned" : "Unpinned") message \(index + 1) (id: \(message.id)).")
     case "last":
       if let message = session.history.messages.last(where: { $0.role == .assistant && !$0.text.isEmpty }) {
         await terminal.line(await terminal.render(message.text))
@@ -12164,6 +12188,7 @@ struct MaiCLI {
     session: REPLSession,
     full: Bool,
     includeDetails: Bool,
+    short: Bool = false,
     terminal: TerminalWriter
   ) async -> String {
     guard !session.history.isEmpty else { return "No conversation messages yet." }
@@ -12175,7 +12200,7 @@ struct MaiCLI {
     if !full { lines.append("-----------------") }
     for (index, storedMessage) in session.history.messages.enumerated() {
       var message = storedMessage
-      if full && !includeDetails {
+      if full && !includeDetails && !short {
         guard message.role != .tool else { continue }
         message.content.removeAll { part in
           switch part {
@@ -12187,12 +12212,17 @@ struct MaiCLI {
         guard !message.content.isEmpty else { continue }
       }
       let role = message.role.rawValue.capitalized
-      if full {
+      let pin = message.isPinned ? "📌 " : ""
+      if short {
+        let text = TranscriptCopy.render(message)
+        let preview = TranscriptCopy.firstParagraph(text.isEmpty ? message.content.map(renderCompactContent).joined(separator: "\n") : text)
+        lines.append("[\(index + 1)] \(pin)\(role): \(preview.isEmpty ? "[empty message]" : preview)")
+      } else if full {
         lines.append(
           "\n" + (await renderChatMessage(message, index: index, terminal: terminal)))
         lines.append("--------------------")
       } else {
-        lines.append("[\(index + 1)] \(role): \(messagePreview(message))")
+        lines.append("[\(index + 1)] \(pin)\(role): \(messagePreview(message))")
       }
     }
     lines.append("\nTotal messages: \(session.history.count)")
@@ -12212,7 +12242,7 @@ struct MaiCLI {
   ) async -> String {
     let position = "\(index + 1)" + (count.map { "/\($0)" } ?? "")
     let heading = await terminal.paintHeading(
-      "## [\(position)] \(message.role.rawValue.capitalized) (id: \(message.id))")
+      "## [\(position)] \(message.isPinned ? "📌 " : "")\(message.role.rawValue.capitalized) (id: \(message.id))")
     let renderer = await terminal.markdownRenderer
     let body = message.content.map { part in
       renderFullContent(part) { text in
@@ -12641,7 +12671,7 @@ struct MaiCLI {
       "/chat use ", "/chat next", "/chat previous", "/chat info", "/chat session",
       "/chat session new", "/chat rename ",
       "/chat archive", "/chat unarchive ", "/chat close confirm", "/chat messages",
-      "/chat files", "/chat log", "/chat log quiet", "/chat log verbose", "/chat last", "/chat edit ", "/chat del ", "/chat undo", "/chat chop", "/chat trim ",
+      "/chat files", "/chat log", "/chat log quiet", "/chat log verbose", "/chat log short", "/chat pin", "/chat pin ", "/chat unpin ", "/chat last", "/chat edit ", "/chat del ", "/chat undo", "/chat chop", "/chat trim ",
       "/chat clear", "/project", "/project info", "/project list", "/project name ",
       "/project tint ", "/project tint none", "/project del ",
     ]
@@ -13272,7 +13302,9 @@ struct MaiCLI {
       /chat close confirm           Permanently close the active chat
       /chat files                   List files accessed in this conversation
       /chat messages                Display a compact indexed message list
-      /chat log [quiet|verbose]  Display the conversation (default quiet)
+      /chat log [quiet|verbose|short]  Display the conversation (default quiet)
+      /chat pin [INDEX|MESSAGE_ID]  Pin any message; without an argument, show pinned messages
+      /chat unpin INDEX|MESSAGE_ID  Remove a message pin
       /chat last          Display the latest assistant response
       /chat edit INDEX [TEXT]  Edit in the editor, or replace text inline; preserve attachments
       /chat del INDEX     Remove a message
@@ -13287,6 +13319,9 @@ struct MaiCLI {
     -1 selects the last message, -2 the second-to-last, and so on.
     /chat log quiet hides reasoning, tool calls, and tool outputs; verbose includes them.
     Log indexes keep their original positions, including messages hidden in quiet mode.
+    /chat log short shows the first paragraph of every message with its original
+    index. 📌 marks pinned messages in logs. Pins belong to this conversation,
+    persist across resumed turns and exports, and are retained during compaction.
     /chat edit INDEX opens the same editor as /edit chat INDEX or /edit INDEX.
     Removing a tool call or result also removes its linked tool transaction.
     /chat files keeps a sorted, unique record of Files content reads (including

@@ -136,6 +136,7 @@ struct MessageBubbleActions {
   var canResubmit = true
   var onDelete: (() -> Void)? = nil
   var onToggleBookmark: (() -> Void)? = nil
+  var onTogglePin: (() -> Void)? = nil
   var onBeginSelection: (() -> Void)? = nil
   var onEdit: ((String) -> Void)? = nil
   var onEditAttachment: ((UUID, String) -> Void)? = nil
@@ -304,6 +305,7 @@ private struct MessageBubbleContent: View, Equatable {
       && (lhs.actions.onTrimFromHere == nil) == (rhs.actions.onTrimFromHere == nil)
       && (lhs.actions.onRestartFresh == nil) == (rhs.actions.onRestartFresh == nil)
       && (lhs.actions.onResubmit == nil) == (rhs.actions.onResubmit == nil)
+      && (lhs.actions.onTogglePin == nil) == (rhs.actions.onTogglePin == nil)
       && lhs.isBookmarked == rhs.isBookmarked
       && lhs.conversationCreatedAt == rhs.conversationCreatedAt
       && lhs.showUserTimestamp == rhs.showUserTimestamp
@@ -324,6 +326,11 @@ private struct MessageBubbleContent: View, Equatable {
       : min(renderedPartStartIndex ?? tailStart, tailStart)
 
     VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
+      if message.isPinned {
+        Text("📌 Pinned")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
       ForEach(
         Array(prepared.parts.enumerated().dropFirst(partStart)), id: \.element.id
       ) { index, part in
@@ -398,6 +405,7 @@ private struct MessageBubbleContent: View, Equatable {
       }
     }
     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+    .contextMenu { messageContextMenu(visibleText: prepared.visibleText, rawText: displayText) }
     .preference(
       key: ResponseScrollTargetsKey.self,
       value: responseScrollTarget(in: prepared).map { [message.id: $0] } ?? [:])
@@ -826,6 +834,12 @@ private struct MessageBubbleContent: View, Equatable {
         systemImage: isBookmarked ? "bookmark.slash" : "bookmark", action: onToggleBookmark
       )
       .disabled(!actions.allowsConversationMutation)
+    }
+
+    if let onTogglePin = actions.onTogglePin {
+      Button(
+        message.isPinned ? "Unpin Message" : "Pin Message",
+        systemImage: message.isPinned ? "pin.slash" : "pin", action: onTogglePin)
     }
 
     ForEach(Array(imageAttachments.enumerated()), id: \.element.id) { index, attachment in

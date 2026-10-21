@@ -390,6 +390,16 @@ struct ChatView: View {
 
   private var chatLayout: some View {
     VStack(spacing: 0) {
+      if remoteChat == nil, let conversation = currentConversation,
+        !conversation.messages.pinnedMessages.isEmpty
+      {
+        PinnedMessagesBar(
+          messages: conversation.messages.pinnedMessages,
+          onSelect: { pendingScrollToMessageID = $0 },
+          onUnpin: { store.setMessagePinned(false, messageID: $0, in: conversation.id) }
+        )
+        .id(conversation.id)
+      }
       if let providerStatus {
         providerStatusBanner(providerStatus)
       }
@@ -837,6 +847,9 @@ struct ChatView: View {
                       onToggleBookmark: conversation.map { conversation in
                         { store.toggleMessageBookmark(message, in: conversation.id) }
                       },
+                      onTogglePin: remoteChat == nil ? conversation.map { conversation in
+                        { store.setMessagePinned(!message.isPinned, messageID: message.id, in: conversation.id) }
+                      } : nil,
                       onBeginSelection: { beginMessageSelection(with: message.id) },
                       onEdit: remoteChat == nil ? { editMessage(message, text: $0) } : nil,
                       onEditAttachment: remoteChat == nil

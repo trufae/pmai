@@ -1388,6 +1388,15 @@ final class AppStore: ObservableObject {
     }
   }
 
+  func setMessagePinned(_ pinned: Bool, messageID: UUID, in conversationID: UUID) {
+    guard let index = indexedConversationIndex(for: conversationID),
+      conversations[index].messages.setMessagePinned(pinned, id: messageID)
+    else { return }
+    if selectedConversationID == conversationID { publishActiveConversationIfNeeded(force: true) }
+    upsertSummary(for: conversations[index])
+    saveConversations()
+  }
+
   func toggleMessageBookmark(_ message: ChatMessage, in conversationID: UUID) {
     if let index = messageBookmarks.firstIndex(where: {
       $0.conversationID == conversationID && $0.messageID == message.id
@@ -2823,7 +2832,7 @@ final class AppStore: ObservableObject {
       guard conversations[i].messages == conversation.messages else { return true }
       let lastMsg = conversations[i].messages.last
       let removed = Array(conversations[i].messages.dropLast())
-      conversations[i].messages = [
+      conversations[i].messages = removed.pinnedMessages + [
         ChatMessage(role: .system, text: "Conversation summary (compacted):\n\n\(trimmed)")
       ]
       if let lastMsg { conversations[i].messages.append(lastMsg) }
@@ -3221,7 +3230,7 @@ final class AppStore: ObservableObject {
       guard let idx = indexedConversationIndex(for: compact.conversationID) else {
         return
       }
-      conversations[idx].messages = [
+      conversations[idx].messages = conversations[idx].messages.pinnedMessages + [
         ChatMessage(role: .system, text: "Conversation summary (compacted):\n\n\(trimmed)")
       ]
       conversations[idx].updatedAt = Date()
@@ -3295,7 +3304,7 @@ final class AppStore: ObservableObject {
     }
 
     let removedMessages = conversations[index].messages
-    conversations[index].messages = [
+    conversations[index].messages = removedMessages.pinnedMessages + [
       ChatMessage(role: .system, text: "Conversation summary (compacted):\n\n\(trimmed)")
     ]
     conversations[index].updatedAt = Date()

@@ -224,7 +224,7 @@ public enum AgentAutocompaction {
       in: messages, activeTaskID: activeTaskID)
     let candidates = messages[..<tailStart].enumerated().compactMap { index, message in
       index != latestUser && !AgentPromptContext.isInstruction(message)
-        && !skillInstructions.contains(message.id) ? message : nil
+        && !message.isPinned && !skillInstructions.contains(message.id) ? message : nil
     }
     guard candidates.count >= minimumMessages else { return nil }
     let total = AgentTranscriptEditor.characterCount(of: messages)
@@ -261,7 +261,8 @@ public enum AgentContextPruning {
     let protected = AgentPromptContext.protectedInstructionMessageIDs(
       in: messages, activeTaskID: activeTaskID)
     for index in messages.indices
-    where index < tail && messages[index].role == .tool && !protected.contains(messages[index].id) {
+    where index < tail && messages[index].role == .tool && !messages[index].isPinned
+      && !protected.contains(messages[index].id) {
       messages[index].content = messages[index].content.map { part in
         guard case .toolResult(var result) = part, !result.isError else { return part }
         let original = result.content
@@ -307,7 +308,8 @@ public enum AgentContextPruning {
     let protected = AgentPromptContext.protectedInstructionMessageIDs(
       in: messages, activeTaskID: activeTaskID)
     for (index, message) in messages.enumerated()
-    where index < currentPrompt && message.role == .tool && !protected.contains(message.id) {
+    where index < currentPrompt && message.role == .tool && !message.isPinned
+      && !protected.contains(message.id) {
       if message.toolResults.contains(where: { hasPrunableContent($0, call: calls[$0.callID]) }) {
         candidates.append(index)
       }

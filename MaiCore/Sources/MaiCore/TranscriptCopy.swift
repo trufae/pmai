@@ -3,6 +3,16 @@ import Foundation
 /// Selects transcript messages for copying into a clipboard or a file and
 /// renders them as plain text. Instructions (system and developer messages) are never copied.
 public enum TranscriptCopy {
+  /// A compact paragraph for transcript navigation, without flattening the
+  /// entire message or cutting a paragraph off at an arbitrary character count.
+  public static func firstParagraph(_ text: String) -> String {
+    let lines = text.replacingOccurrences(of: "\r\n", with: "\n")
+      .replacingOccurrences(of: "\r", with: "\n").components(separatedBy: "\n")
+    return lines.drop(while: { $0.trimmingCharacters(in: .whitespaces).isEmpty })
+      .prefix(while: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
+      .map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: " ")
+  }
+
   public enum Selection: Equatable, Sendable {
     /// The most recent assistant reply, as pasteable text without reasoning.
     case lastAssistantReply

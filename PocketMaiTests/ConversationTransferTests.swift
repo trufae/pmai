@@ -7,6 +7,25 @@ import XCTest
 @testable import PocketMai
 
 final class ConversationTransferTests: XCTestCase {
+  func testMessagePinsSurvivePortableTransferAndLegacyMessagesDefaultToUnpinned() throws {
+    var conversation = Conversation()
+    conversation.messages = [
+      ChatMessage(role: .user, text: "Question", isPinned: true),
+      ChatMessage(role: .tool, text: "Output", isPinned: true),
+      ChatMessage(role: .assistant, text: "Answer"),
+    ]
+    let settings = AppSettings()
+    let chat = AgentChat(pocketMai: conversation, settings: settings)
+    let encoded = try JSONEncoder().encode(chat)
+    let decoded = try JSONDecoder().decode(AgentChat.self, from: encoded)
+    let restored = Conversation(archive: decoded, settings: settings)
+    XCTAssertEqual(restored.messages.pinnedMessages.map(\.id), conversation.messages.pinnedMessages.map(\.id))
+    var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(conversation.messages[0])) as? [String: Any])
+    legacy.removeValue(forKey: "isPinned")
+    let message = try JSONDecoder().decode(ChatMessage.self, from: JSONSerialization.data(withJSONObject: legacy))
+    XCTAssertFalse(message.isPinned)
+  }
+
   @MainActor
   func testRemoteChatSharesAndExportsWithoutALocalConversation() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
