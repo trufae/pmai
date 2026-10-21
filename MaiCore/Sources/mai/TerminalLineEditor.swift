@@ -1416,20 +1416,42 @@ final class TerminalLineEditor {
 
   // MARK: - History
 
+  /// Read or change history only while the REPL input reader is parked.
+  var inputHistory: [String] { history }
+  var inputHistoryURL: URL? { historyURL }
+
+  func clearInputHistory() throws {
+    try saveHistory([])
+    history.removeAll()
+    historyPasteBytes.removeAll()
+  }
+
+  func removeInputHistory(at index: Int) throws {
+    var updated = history
+    let removed = updated.remove(at: index)
+    try saveHistory(updated)
+    history = updated
+    if !history.contains(removed) { historyPasteBytes[removed] = nil }
+  }
+
+  private func saveHistory(_ entries: [String]) throws {
+    guard let historyURL else { return }
+    try FileManager.default.createDirectory(
+      at: historyURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try JSONEncoder().encode(entries).write(to: historyURL, options: .atomic)
+  }
+
   private func remember(_ line: String) {
     guard !line.isEmpty else { return }
     let command = line.split(whereSeparator: \.isWhitespace).prefix(2).map(String.init)
+    if command.first == "/history" { return }
     if command.count == 2, command[0] == "/remote", command[1].lowercased() == "pair" { return }
     if history.last != line { history.append(line) }
     if history.count > maximumHistory {
       history.removeFirst(history.count - maximumHistory)
     }
-    guard let historyURL else { return }
     do {
-      try FileManager.default.createDirectory(
-        at: historyURL.deletingLastPathComponent(),
-        withIntermediateDirectories: true)
-      try JSONEncoder().encode(history).write(to: historyURL, options: .atomic)
+      try saveHistory(history)
     } catch {
       // Input must remain usable even if history persistence is unavailable.
     }

@@ -464,6 +464,15 @@ list. When the default home is in use, chats found in the pre-project
 `~/.config/pmai/chats.json` are imported into the first project opened
 afterwards and the file is renamed `chats.json.imported`.
 
+`/history` lists saved REPL inputs with numbers; `/history [list] N` shows
+only the latest N. Use `/history search TEXT` to find inputs, `/history del N`
+to delete one, `/history clear` to clear both saved inputs and live Up/Down
+and Ctrl+R recall, and `/history path` to locate the file. This history is
+shared across projects and separate from chat transcripts. It keeps up to
+500 entries, including slash commands, but excludes consecutive duplicates,
+modal replies, `/remote pair`, and `/history` commands. `--history PATH` or
+`PMAI_HISTORY` selects another file. `/help history` lists the commands.
+
 The persistence rules are shared with the PocketMai app through MaiCore.
 `ChatFileStore` keeps one JSON file per chat in a directory, the layout
 PocketMai has used since its first release, with ISO 8601 dates, `.json.corrupt`

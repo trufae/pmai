@@ -23,6 +23,9 @@ selects a smaller CLI suite; the runner rejects unassigned smoke scripts.
 The remaining two smoke scripts require external fixtures:
 `python3 test/run-tests.py external --tailcat /path/to/tailcat --ghostty /path/to/ghostty-web`.
 Live-provider checks and coding benchmarks remain explicit commands below.
+`python3 test/repl-history-smoke.py MaiCore/.build/debug/pmai` checks input
+history listing, search, deletion, clearing, persistence, path overrides,
+failed writes, and live Up/Down and Ctrl+R recall.
 `python3 test/tool-calling-live.py --base-url URL --model MODEL` runs six
 isolated tool tasks in streamed and buffered modes, checks actual artifacts,
 and retains debug logs. See [the LFM2.5 investigation](lfm25-tool-calling.md)

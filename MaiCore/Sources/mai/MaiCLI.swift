@@ -3466,6 +3466,15 @@ struct MaiCLI {
           let argument =
             command.count > 1
             ? command[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+          if name == "/history" {
+            do {
+              await terminal.line(try REPLHistoryCommand.run(argument, editor: editor))
+            } catch {
+              await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+            }
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
           if name == "/remote" {
             do {
               let fields = try shellWords(argument)
@@ -5038,6 +5047,8 @@ struct MaiCLI {
         await terminal.line(replHelp)
       case "about", "/about":
         await terminal.line(aboutMessage)
+      case "history", "/history":
+        await terminal.line(REPLHistoryCommand.help)
       case "set", "/set":
         await terminal.line(setHelp)
       case "provider", "providers", "baseurl", "/provider", "/providers", "/baseurl":
@@ -5088,11 +5099,13 @@ struct MaiCLI {
         await terminal.line(pathHelp)
       default:
         await terminal.line(
-          "Unknown help topic '\(argument)'. Try /help, or /help set, theme, memory, todo, prompts, agents, jobs, mcp, remote, projects, chat, edit, tools, skills, queue, export, import, copy, or stats."
+          "Unknown help topic '\(argument)'. Try /help, or /help set, theme, memory, todo, prompts, agents, jobs, mcp, remote, projects, chat, edit, tools, skills, queue, export, import, copy, stats, or history."
         )
       }
     case "/cwd", "/pwd":
       await terminal.line(FileManager.default.currentDirectoryPath)
+    case "/history":
+      await terminal.line("Input history is available at the REPL prompt. /help history lists commands.")
     case "/remote":
       await terminal.line(remoteHelp)
     case "/projects":
@@ -12589,6 +12602,8 @@ struct MaiCLI {
   ) -> [String] {
     var values = [
       "/help", "/help set", "/exit", "/quit", "/set tool.aproval yolo", "/set tool.aproval ask",
+      "/help history", "/history", "/history list", "/history search ", "/history del ",
+      "/history clear", "/history path", "/history help",
       "/help theme", "/theme", "/theme list", "/theme use ", "/theme save ", "/theme color",
       "/set tool.aproval smart",
       "/set debug true", "/set debug false",
@@ -13106,6 +13121,7 @@ struct MaiCLI {
     /exit                  Exit the REPL
     /export FORMAT [PATH]  Save a portable archive, or this chat as txt, markdown, html, json, debug, epub, or docx
     /help [COMMAND]        Show commands or help for one command
+    /history [COMMAND]     List, search, delete, or clear saved inputs (/help history)
     /image MODE PATH       Attach at tiny/small/medium/big/full size, or OCR to Markdown
     /import PATH           Merge a PocketMai/pmai archive into settings, skills, and chats
     /jobs                  Manage running and saved processes; /help jobs lists commands
