@@ -18,6 +18,7 @@ final class TTSPlayer: NSObject, ObservableObject {
 
   typealias SpeechSynthesis = @MainActor (OpenAIEndpoint, String, String) async throws -> Data
   private let synthesizeSpeech: SpeechSynthesis
+  private let integratesWithSystemPlayback: Bool
 
   private lazy var synthesizer: AVSpeechSynthesizer = {
     let synthesizer = AVSpeechSynthesizer()
@@ -37,11 +38,13 @@ final class TTSPlayer: NSObject, ObservableObject {
   private var speechGeneration = 0
 
   init(
+    integratesWithSystemPlayback: Bool = true,
     synthesizeSpeech: @escaping SpeechSynthesis = { endpoint, text, voice in
       try await OpenAICompatibleProvider.synthesizeSpeechAudio(
         endpoint: endpoint, input: text, voice: voice)
     }
   ) {
+    self.integratesWithSystemPlayback = integratesWithSystemPlayback
     self.synthesizeSpeech = synthesizeSpeech
     super.init()
   }
@@ -665,6 +668,7 @@ final class TTSPlayer: NSObject, ObservableObject {
   }
 
   private func updateNowPlaying() {
+    guard integratesWithSystemPlayback else { return }
     var info: [String: Any] = [:]
     info[MPMediaItemPropertyTitle] = currentTitle ?? "Spoken Message"
     if let role = currentRole {
@@ -678,11 +682,12 @@ final class TTSPlayer: NSObject, ObservableObject {
   }
 
   private func clearNowPlaying() {
+    guard integratesWithSystemPlayback else { return }
     MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
   }
 
   private func setupRemoteCommands() {
-    guard !remoteCommandsConfigured else { return }
+    guard integratesWithSystemPlayback, !remoteCommandsConfigured else { return }
     remoteCommandsConfigured = true
     let center = MPRemoteCommandCenter.shared()
 

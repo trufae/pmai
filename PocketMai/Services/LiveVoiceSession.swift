@@ -371,24 +371,7 @@ final class LiveVoiceSession: ObservableObject {
   {
     if let store { policy.configure(store.settings) }
     if let recognitionEngineFactory { return try recognitionEngineFactory(settings, policy) }
-    if policy.providerEndpoint != nil {
-      return NativeIOSSpeechRecognitionEngine(
-        localeIdentifier: settings.speechRecognitionLanguageIdentifier,
-        silenceTimeoutSeconds: settings.silenceTimeoutSeconds, policy: policy)
-    }
-    switch settings.speechRecognitionBackend {
-    case .nativeIOSSpeechTranscriber:
-      guard #available(iOS 26.0, *) else {
-        throw LiveSpeechRecognitionError.speechTranscriberUnsupportedOS
-      }
-      return NativeIOSSpeechTranscriberRecognitionEngine(
-        localeIdentifier: settings.speechRecognitionLanguageIdentifier)
-    case .nativeIOS:
-      return NativeIOSSpeechRecognitionEngine(
-        localeIdentifier: settings.speechRecognitionLanguageIdentifier,
-        silenceTimeoutSeconds: settings.silenceTimeoutSeconds,
-        policy: policy)
-    }
+    return try SpeechRecognitionEngineFactory.make(settings: settings, policy: policy)
   }
 
   private func stopRecognition(keepingRecording: Bool = false) {
@@ -842,10 +825,13 @@ private final class NativeIOSSpeechTranscriberRecognitionEngine: LiveSpeechRecog
       transcriptionOptions: [],
       reportingOptions: [.volatileResults, .fastResults],
       attributeOptions: [.audioTimeRange])
-    guard await SpeechTranscriber.installedLocales.contains(where: {
-      $0.identifier == supportedLocale.identifier
-    }) else {
-      throw LiveSpeechRecognitionError.speechTranscriberAssetsUnavailable(supportedLocale.identifier)
+    guard
+      await SpeechTranscriber.installedLocales.contains(where: {
+        $0.identifier == supportedLocale.identifier
+      })
+    else {
+      throw LiveSpeechRecognitionError.speechTranscriberAssetsUnavailable(
+        supportedLocale.identifier)
     }
     try Task.checkCancellation()
 
@@ -1348,4 +1334,32 @@ private final class NativeIOSSpeechRecognitionEngine: NSObject, LiveSpeechRecogn
     }
     recorder = nil
   }
+}
+
+// Shared with isolated webxdc voice sessions.
+@MainActor
+enum SpeechRecognitionEngineFactory {
+  static func make(settings: ConversationSettings, policy: SpeechTranscriptionPolicy) throws
+    -> LiveSpeechRecognitionEngine
+  {
+    if policy.providerEndpoint != nil {
+      return NativeIOSSpeechRecognitionEngine(
+        localeIdentifier: settings.speechRecognitionLanguageIdentifier,
+        silenceTimeoutSeconds: settings.silenceTimeoutSeconds, policy: policy)
+    }
+    switch settings.speechRecognitionBackend {
+    case .nativeIOSSpeechTranscriber:
+      guard #available(iOS 26.0, *) else {
+        throw LiveSpeechRecognitionError.speechTranscriberUnsupportedOS
+      }
+      return NativeIOSSpeechTranscriberRecognitionEngine(
+        localeIdentifier: settings.speechRecognitionLanguageIdentifier)
+    case .nativeIOS:
+      return NativeIOSSpeechRecognitionEngine(
+        localeIdentifier: settings.speechRecognitionLanguageIdentifier,
+        silenceTimeoutSeconds: settings.silenceTimeoutSeconds,
+        policy: policy)
+    }
+  }
+
 }

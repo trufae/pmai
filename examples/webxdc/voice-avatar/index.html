@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voice Avatar</title>
+<style>
+:root { color-scheme: dark; font: 17px system-ui; background: #101522; color: #eef3ff; }
+body { max-width: 38rem; margin: auto; padding: 1.5rem; }
+#avatar { font-size: 7rem; text-align: center; transition: transform .2s; }
+body[data-state="Speaking"] #avatar { animation: talk .3s infinite alternate; }
+body[data-state="Listening"] #avatar { filter: drop-shadow(0 0 20px #7de8cb); }
+@keyframes talk { to { transform: scale(1.08) rotate(3deg); } }
+label { display: block; margin-top: 1rem; }
+select, textarea, button, input { font: inherit; border-radius: .6rem; padding: .6rem; }
+select, textarea { width: 100%; box-sizing: border-box; background: #222b41; color: inherit; }
+button { margin: 1rem .5rem 0 0; background: #7de8cb; color: #101522; border: 0; }
+#status { text-align: center; min-height: 3rem; }
+#transcript { white-space: pre-wrap; line-height: 1.5; }
+summary { cursor: pointer; } small { color: #b6c6dc; }
+</style>
+<div id="avatar" role="img" aria-label="Friendly voice avatar">◕‿◕</div>
+<p id="status" role="status">Checking PocketMai…</p>
+<button id="start" disabled>Start conversation</button><button id="stop" disabled>Stop</button>
+<button id="finish" disabled>Send now</button>
+<details><summary>Voice and personality</summary>
+<label>Inference provider<select id="provider"></select></label>
+<label>Model<select id="model"></select></label>
+<label>Speech provider<select id="speech"></select></label>
+<label>Voice<select id="voice"></select></label>
+<label>Language (blank uses device setting)<input id="language" placeholder="en-US"></label>
+<label>Custom system prompt<textarea id="prompt" rows="5"></textarea></label>
+<small>The avatar uses PocketMai's configured transcription service and microphone. History lasts until this page closes. Provider calls may cost money.</small>
+</details>
+<div id="transcript" aria-live="polite"></div>
+<script src="webxdc.js"></script>
+<script src="avatar.js"></script>
+</html>

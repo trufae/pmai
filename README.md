@@ -180,6 +180,7 @@ options, and [file browsing over ACP](doc/acp.md#file-browsing-from-pocketmai).
 
 - [CLI setup and command reference](MaiCore/README.md)
 - [Providers, agents, and task defaults](doc/task-agents.md)
+- [WebXDC apps and PocketMai inference/speech extensions](doc/webxdc.md)
 - [Reusable prompts and skills](doc/prompts.md)
 - [Editing configuration and conversation context](doc/edit.md)
 - [ACP and MCP integration](doc/acp.md) · [Tool proxy](doc/proxy.md)

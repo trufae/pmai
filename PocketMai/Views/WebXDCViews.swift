@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -30,6 +31,18 @@ final class WebXDCRunningSession: NSObject, ObservableObject, Identifiable {
   private var outbox: [(prompt: String, display: String, expectsUpdate: Bool)] = []
   private var flushTask: Task<Void, Never>?
   private var awaitingAssistantUpdate = false
+  private var settingsSubscription: AnyCancellable?
+
+  lazy var pocketmai = WebXDCPocketMaiHost(
+    appID: app.id,
+    settings: { [weak self] in self?.store?.settings ?? .defaults },
+    emit: { [weak self] reply in
+      guard let data = try? JSONSerialization.data(withJSONObject: reply),
+        let json = String(data: data, encoding: .utf8)
+      else { return }
+      self?.webView.evaluateJavaScript(
+        "window.__pocketmaiReply && window.__pocketmaiReply(\(json));", completionHandler: nil)
+    })
 
   nonisolated var id: UUID { app.id }
 
@@ -58,12 +71,16 @@ final class WebXDCRunningSession: NSObject, ObservableObject, Identifiable {
         source: WebXDCRuntimePolicy.script(settings: webxdcSettings),
         injectionTime: .atDocumentStart,
         forMainFrameOnly: false))
+    configuration.userContentController.add(self, name: "pocketmai")
     configuration.userContentController.add(self, name: "webxdc")
     configuration.userContentController.add(self, name: "webxdcDebug")
     let webView = WKWebView(frame: .zero, configuration: configuration)
     webView.navigationDelegate = self
     webView.isOpaque = false
     self.webView = webView
+    settingsSubscription = store.$settings.dropFirst().sink { [weak self] _ in
+      self?.pocketmai.cancelAll()
+    }
 
     store.webxdcHub.addListener(appID: app.id, token: ObjectIdentifier(self)) {
       [weak self] update in
@@ -93,11 +110,14 @@ final class WebXDCRunningSession: NSObject, ObservableObject, Identifiable {
   }
 
   func stop() {
+    settingsSubscription = nil
+    pocketmai.isActive = false
     flushTask?.cancel()
     flushTask = nil
     outbox.removeAll()
     store?.webxdcHub.removeListener(appID: app.id, token: ObjectIdentifier(self))
     webView.stopLoading()
+    webView.configuration.userContentController.removeScriptMessageHandler(forName: "pocketmai")
     webView.configuration.userContentController.removeScriptMessageHandler(forName: "webxdc")
     webView.configuration.userContentController.removeScriptMessageHandler(forName: "webxdcDebug")
   }
@@ -267,7 +287,8 @@ final class WebXDCRunningSession: NSObject, ObservableObject, Identifiable {
     guard let data = try? JSONSerialization.data(withJSONObject: items),
       var json = String(data: data, encoding: .utf8)
     else { return }
-    json = json
+    json =
+      json
       .replacingOccurrences(of: "\u{2028}", with: "\\u2028")
       .replacingOccurrences(of: "\u{2029}", with: "\\u2029")
     webView.evaluateJavaScript("window.__webxdcDeliver(\(json));", completionHandler: nil)
@@ -316,6 +337,16 @@ extension WebXDCRunningSession: WKScriptMessageHandler {
     didReceive message: WKScriptMessage
   ) {
     guard let body = message.body as? [String: Any] else { return }
+    if message.name == "pocketmai" {
+      // Never expose native providers to iframes or pages reached on the Internet.
+      guard message.frameInfo.isMainFrame,
+        message.frameInfo.request.url?.scheme == Self.appScheme,
+        message.frameInfo.request.url?.host == "app",
+        webView.url?.scheme == Self.appScheme, webView.url?.host == "app"
+      else { return }
+      pocketmai.receive(body)
+      return
+    }
     if message.name == "webxdcDebug" {
       handleDebugMessage(body)
       return
@@ -350,12 +381,15 @@ extension WebXDCRunningSession: WKNavigationDelegate {
       decisionHandler(.cancel)
       return
     }
+    if navigationAction.targetFrame?.isMainFrame == true {
+      pocketmai.cancelAll()
+    }
     let scheme = url.scheme?.lowercased() ?? ""
     if scheme == Self.appScheme || scheme == "about" || scheme == "blob" || scheme == "data" {
       decisionHandler(.allow)
       return
     }
-    if (scheme == "http" || scheme == "https"),
+    if scheme == "http" || scheme == "https",
       store?.settings.toolSettings.webxdcAllowInternet == true
     {
       decisionHandler(.allow)
@@ -381,6 +415,7 @@ extension WebXDCRunningSession: WKNavigationDelegate {
   }
 
   func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+    pocketmai.cancelAll()
     appendDebugLog(level: "error", message: "Web content process terminated.")
   }
 }
@@ -445,6 +480,8 @@ struct WebXDCRunnerSheet: View {
     }
     .ignoresSafeArea(edges: .bottom)
     .interactiveDismissDisabled()
+    .onAppear { session.pocketmai.isActive = true }
+    .onDisappear { session.pocketmai.isActive = false }
     .sheet(isPresented: $showingDebugLogs) {
       WebXDCDebugLogView(session: session)
     }
@@ -725,12 +762,13 @@ enum WebXDCBridge {
         }
       };
     })();
-    """
+    """ + WebXDCPocketMaiBridge.script
   }
 
   private static func jsString(_ value: String) -> String {
-    let data = (try? JSONSerialization.data(
-      withJSONObject: value, options: [.fragmentsAllowed]))
+    let data =
+      (try? JSONSerialization.data(
+        withJSONObject: value, options: [.fragmentsAllowed]))
     return data.flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
   }
 }
@@ -1013,6 +1051,7 @@ struct WebXDCAppDetailView: View {
   @State private var draftDescription = ""
   @State private var editingFile: WebXDCEditingFile?
   @State private var newFilePath = ""
+  @State private var pocketmaiPermissions = WebXDCPermissions()
   @State private var shareURL: URL?
   @State private var runningSession: WebXDCRunningSession?
   @State private var showingIconImporter = false
@@ -1029,6 +1068,7 @@ struct WebXDCAppDetailView: View {
     Form {
       if let app {
         appSection(app)
+        permissionsSection(app)
         revisionSection(app)
         filesSection(app)
         actionsSection(app)
@@ -1132,6 +1172,37 @@ struct WebXDCAppDetailView: View {
         .font(.caption2)
         .foregroundStyle(.secondary)
     }
+  }
+
+  @ViewBuilder
+  private func permissionsSection(_ app: WebXDCAppInfo) -> some View {
+    Section {
+      Toggle("Inference providers", isOn: permissionBinding(\.inference))
+      Toggle("Speech to text", isOn: permissionBinding(\.transcription))
+      Toggle("Text to speech", isOn: permissionBinding(\.synthesis))
+    } header: {
+      Text("PocketMai Extensions")
+    } footer: {
+      Text(
+        "Allow this app to use configured providers outside your chat. Requests may send app text or microphone audio to your selected service and incur charges. Speech also requires Microphone / Audio Playback in WebXDC settings. Grants stay on this device and are never exported."
+      )
+    }
+  }
+
+  private func permissionBinding(_ key: WritableKeyPath<WebXDCPermissions, Bool>) -> Binding<Bool> {
+    Binding(
+      get: { pocketmaiPermissions[keyPath: key] },
+      set: { value in
+        do {
+          var permissions = WebXDCPermissions.load(appID)
+          permissions[keyPath: key] = value
+          try permissions.save(appID)
+          pocketmaiPermissions = permissions
+          if store.activeWebXDCSession?.app.id == appID {
+            store.activeWebXDCSession?.pocketmai.cancelAll()
+          }
+        } catch { errorMessage = error.localizedDescription }
+      })
   }
 
   @ViewBuilder
@@ -1250,6 +1321,7 @@ struct WebXDCAppDetailView: View {
   }
 
   private func reload() {
+    pocketmaiPermissions = WebXDCPermissions.load(appID)
     app = WebXDCLibrary.app(id: appID)
     if let app {
       files = WebXDCLibrary.listFiles(app)
