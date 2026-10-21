@@ -552,12 +552,12 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     write(text, to: .standardOutput)
   }
 
-  func scrollOutput(lines: Int, pages: Int) {
+  func scrollOutput(wheel: Int, pages: Int) {
     lock.withLock {
       guard active, ui.mode == .buffer else { return }
       refreshSize()
       transcript.scroll(
-        lines: lines + pages * max(1, regionBottom - 1),
+        lines: wheel * max(1, ui.scroll) + pages * max(1, regionBottom - 1),
         width: max(1, columns - 1), height: regionBottom)
       drawOutputRows()
       drawStatusRow()

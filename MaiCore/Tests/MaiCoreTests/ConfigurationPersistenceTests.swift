@@ -148,6 +148,18 @@ func terminalOutputModeSetting() throws {
     from: JSONEncoder().encode(configured)) == configured)
 }
 
+@Test("Terminal wheel scrolling defaults to one line and persists its step")
+func terminalScrollSetting() throws {
+  let decoder = JSONDecoder()
+  #expect(ConfiguredTerminalUI().scroll == 1)
+  for json in ["{}", #"{"scroll":0}"#, #"{"scroll":-3}"#, #"{"scroll":"bad"}"#] {
+    #expect(try decoder.decode(ConfiguredTerminalUI.self, from: Data(json.utf8)).scroll == 1)
+  }
+  let configured = ConfiguredTerminalUI(scroll: 3)
+  #expect(try decoder.decode(ConfiguredTerminalUI.self,
+    from: JSONEncoder().encode(configured)) == configured)
+}
+
 @Test("Compact prompt templates require the transcript placeholder")
 func compactPromptRequiresTranscript() {
   let configuration = MaiConfiguration(

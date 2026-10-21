@@ -494,6 +494,8 @@ public enum TerminalOutputMode: String, Codable, Sendable {
 public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   /// Classic terminal scrollback or an application-owned, reflowable transcript.
   public var mode: TerminalOutputMode
+  /// Transcript lines scrolled per mouse-wheel event in buffer mode.
+  public var scroll: Int
   /// Optional label shown in the REPL prompt and used as the terminal window title.
   public var title: String
   public var backgroundLine: String
@@ -532,6 +534,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
 
   public init(
     mode: TerminalOutputMode = .classic,
+    scroll: Int = 1,
     title: String = "",
     backgroundLine: String = "rgb:024",
     foreground: String = "",
@@ -561,6 +564,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     editor: String = ""
   ) {
     self.mode = mode
+    self.scroll = max(1, scroll)
     self.title = title
     self.backgroundLine = backgroundLine
     self.foreground = foreground
@@ -592,6 +596,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case mode
+    case scroll
     case title
     case backgroundLine = "bgline"
     case foreground = "fgcolor"
@@ -628,6 +633,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.init(
       mode: (try? container.decodeIfPresent(TerminalOutputMode.self, forKey: .mode)) ?? .classic,
+      scroll: (try? container.decodeIfPresent(Int.self, forKey: .scroll)) ?? 1,
       title: (try? container.decodeIfPresent(String.self, forKey: .title)) ?? "",
       backgroundLine: (try? container.decodeIfPresent(String.self, forKey: .backgroundLine))
         ?? "rgb:024",

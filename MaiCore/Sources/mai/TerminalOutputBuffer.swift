@@ -359,7 +359,8 @@ struct TerminalOutputBuffer {
   mutating func scroll(lines delta: Int, width: Int, height: Int) {
     let rows = allRows(width: max(1, width))
     let bottom = max(0, rows.count - height)
-    let index = max(0, min(bottom, topIndex(in: rows, height: height) + delta))
+    let current = topIndex(in: rows, height: height)
+    let index = current + max(-current, min(bottom - current, delta))
     top = index == bottom ? nil : rows[index].position
   }
 

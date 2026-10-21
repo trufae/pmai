@@ -33,8 +33,8 @@ protocol LineEditorSurface: AnyObject {
   func cancelInput()
   /// Clears the display while keeping the input and terminal layout.
   func clearScreen()
-  /// Scrolls the application transcript; plain terminal surfaces ignore it.
-  func scrollOutput(lines: Int, pages: Int)
+  /// Scrolls by wheel events or pages; plain terminal surfaces ignore it.
+  func scrollOutput(wheel: Int, pages: Int)
   /// Text that belongs with the output, such as completion candidates.
   func emit(_ text: String)
   /// The line drawn above a fresh prompt, or nothing.
@@ -51,7 +51,7 @@ protocol LineEditorSurface: AnyObject {
 }
 
 extension LineEditorSurface {
-  func scrollOutput(lines: Int, pages: Int) {}
+  func scrollOutput(wheel: Int, pages: Int) {}
   func pendingInput() -> [UInt8] { [] }
   /// Surfaces with no status row simply do not show the menu.
   func drawCompletionMenu(_ menu: CompletionMenu?) {}
@@ -563,11 +563,11 @@ final class TerminalLineEditor {
       case .down:
         moveToNextLine()
       case .pageUp:
-        surface?.scrollOutput(lines: 0, pages: -1)
+        surface?.scrollOutput(wheel: 0, pages: -1)
       case .pageDown:
-        surface?.scrollOutput(lines: 0, pages: 1)
-      case .wheel(let lines):
-        surface?.scrollOutput(lines: lines, pages: 0)
+        surface?.scrollOutput(wheel: 0, pages: 1)
+      case .wheel(let direction):
+        surface?.scrollOutput(wheel: direction, pages: 0)
       case .left:
         cursor = previousCharacterStart(in: bytes, before: cursor)
         redraw(prompt: prompt, bytes: bytes, cursor: cursor)
@@ -685,8 +685,8 @@ final class TerminalLineEditor {
   private func mouseKey(button: Int, released: Bool) -> Key {
     guard !released else { return .ignored }
     switch button & 0xC3 {
-    case 64: return .wheel(-3)
-    case 65: return .wheel(3)
+    case 64: return .wheel(-1)
+    case 65: return .wheel(1)
     default: return .ignored
     }
   }
@@ -899,11 +899,11 @@ final class TerminalLineEditor {
       case .text(let character):
         extendQuery(character)
       case .pageUp:
-        surface?.scrollOutput(lines: 0, pages: -1)
+        surface?.scrollOutput(wheel: 0, pages: -1)
       case .pageDown:
-        surface?.scrollOutput(lines: 0, pages: 1)
-      case .wheel(let lines):
-        surface?.scrollOutput(lines: lines, pages: 0)
+        surface?.scrollOutput(wheel: 0, pages: 1)
+      case .wheel(let direction):
+        surface?.scrollOutput(wheel: direction, pages: 0)
       case .left:  // Any other key accepts the match for editing.
         return .accepted(
           line: selection,

@@ -723,8 +723,11 @@ the normal preview. This only changes terminal display, not what the model recei
 with an ANSI escape sequence; `/set ui.title none` clears the configured label.
 `/set ui.mode buffer` enables a full-screen output buffer. Page Up/Page Down
 (Re Pág/Av Pág) and the mouse wheel scroll the session transcript while the
-status bar and editable prompt stay fixed at the bottom. Output is retained in
-memory, including tool output and submitted commands, and reflows when the
+status bar and editable prompt stay fixed at the bottom. The wheel scrolls one
+line per event by default; `/set ui.scroll=3` changes this to three lines.
+`ui.scroll` accepts a positive integer, applies immediately, and persists in the
+configuration. Output is retained in memory, including tool output and submitted
+commands, and reflows when the
 terminal resizes. Incoming output keeps your place while you scroll; Page Down
 to the end resumes following it. Submitting input or pressing Ctrl+L also returns
 to the latest output. Shell commands such as `!uname` retain stdout and stderr

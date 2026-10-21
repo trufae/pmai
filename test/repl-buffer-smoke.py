@@ -130,6 +130,8 @@ def main(binary):
                 send('/set ui.mode buffer\r')
                 wait_for('\x1b[?1006h')
                 assert json.loads(config.read_text())['ui']['mode'] == 'buffer'
+                send('/set ui.scroll\r')
+                wait_for('ui.scroll = 1')
                 # Reasoning retained while hidden can later be revealed and
                 # collapsed repeatedly without changing the answer.
                 send('thinking-test\r')
@@ -272,7 +274,7 @@ def main(binary):
 
                 send('\x1b[<64;10;5M')
                 read_for()
-                assert output() != previous, screen
+                assert output()[1:] == previous[:-1], (previous, output())
                 send('\x1b[<65;10;5M')
                 read_for()
                 assert output() == previous, (previous, output())
@@ -316,6 +318,35 @@ def main(binary):
 
                 chunks.put(None)
                 wait_for('✓ took')
+                # A new wheel step applies immediately and is saved. Invalid
+                # values leave the last configured step intact.
+                send('/set ui.scroll=3\r')
+                wait_for('Set ui.scroll = 3.')
+                for invalid in ('0', '-1', 'nope', '1.5'):
+                    send(f'/set ui.scroll={invalid}\r')
+                    wait_for('Usage: /set ui.scroll <positive integer>')
+                    assert json.loads(config.read_text())['ui']['scroll'] == 3
+                send('scroll-step-test\r')
+                chunks.put(''.join(f'STEP_ROW{i:02d}\n' for i in range(70)))
+                chunks.put(None)
+                wait_for('STEP_ROW69')
+                wait_for('✓ took')
+                send('\x1b[5~')
+                read_for()
+                previous = output()
+                assert 'STEP_ROW' in previous[0], screen
+                for up, down in (
+                        ('\x1b[<64;10;5M', '\x1b[<65;10;5M'),
+                        ('\x1b[M' + chr(96) + chr(42) + chr(37),
+                         '\x1b[M' + chr(97) + chr(42) + chr(37))):
+                    send(up)
+                    read_for()
+                    assert output()[3:] == previous[:-3], (previous, output())
+                    send(down)
+                    read_for()
+                    assert output() == previous, (previous, output())
+                send('\x0c')
+                read_for()
                 send('\x03')
                 wait_for('Nothing to cancel.')
                 # External editors leave and re-enter the alternate screen.
@@ -336,7 +367,7 @@ def main(binary):
                 assert process.returncode == 0
                 assert b'\x1b[?1000l' in captured and b'\x1b[?1049l' in captured, captured
                 assert termios.tcgetattr(master) == original, 'raw tty mode leaked on exit'
-                print('PASS buffer: thinking, markdown, tools and theme settings, paging, mouse packets, live history anchor, fixed multiline draft, '
+                print('PASS buffer: thinking, markdown, tools and theme settings, paging, configurable wheel steps, mouse packets, live history anchor, fixed multiline draft, '
                       'resize, follow, mode persistence, shell output and input, editor handoff '
                       'and terminal cleanup')
             finally:
