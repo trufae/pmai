@@ -313,18 +313,38 @@ elif action == 'fail':
 
             # Shell escapes share the same launcher and must also recover
             # after a terminal interrupt or a nonzero editor exit.
-            send(b'!kill -STOP $$; echo SHELL_RESUMED\r')
-            wait_for('Stopped')
-            wait_for('SHELL_READY> ')
-            assert termios.tcgetattr(master) == cooked
-            send(b'fg\n')
-            wait_for('SHELL_RESUMED\r\n')
-            wait_for_foreground()
-            wait_for(PROMPT)
-            send(b'!echo SLEEP_READY; exec sleep 30\r')
-            wait_for('SLEEP_READY\r\n')
-            send(b'\x03')
-            wait_for('killed by signal 2')
+            for mode in ('classic', 'buffer'):
+                send(f'/set ui.mode {mode}\r'.encode())
+                wait_for(f'Set ui.mode = {mode}')
+                send(b'!kill -STOP $$; echo SHELL_RESUMED\r')
+                wait_for('Stopped')
+                wait_for('SHELL_READY> ')
+                assert termios.tcgetattr(master) == cooked
+                send(b'fg\n')
+                wait_for('SHELL_RESUMED\r\n')
+                wait_for_foreground()
+                wait_for(PROMPT)
+                send(b'!echo SLEEP_READY; exec sleep 30\r')
+                wait_for('SLEEP_READY\r\n')
+                send(b'\x03')
+                wait_for('killed by signal 2')
+            if shutil.which('vim'):
+                ready = root / 'shell-vim-ready'
+                send((f'!vim -Nu NONE -n -i NONE -c "call writefile([\'ready\'], '
+                      f"'{ready}')\" shell-notes.txt\r").encode())
+                wait_for('\x1b[?1049l')
+                deadline = time.monotonic() + 15
+                while not ready.exists():
+                    assert time.monotonic() < deadline
+                    if select.select([master], [], [], .1)[0]:
+                        output.extend(os.read(master, 65536))
+                send(b'iSHELL_VIM_EDIT\x1b:wq\r')
+                wait_for('\x1b[?1049h')
+                wait_for(PROMPT)
+                assert (root / 'shell-notes.txt').read_text() == 'SHELL_VIM_EDIT\n'
+                print('PASS: buffer shell handoff preserves real Vim editing')
+            send(b'/set ui.mode classic\r')
+            wait_for('Set ui.mode = classic')
             send(b'/set ui.editor command-that-does-not-exist-pmai\r')
             wait_for('Set ui.editor =')
             send(b'/edit provider other\r')

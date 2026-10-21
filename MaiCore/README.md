@@ -715,7 +715,9 @@ status bar and editable prompt stay fixed at the bottom. Output is retained in
 memory, including tool output and submitted commands, and reflows when the
 terminal resizes. Incoming output keeps your place while you scroll; Page Down
 to the end resumes following it. Submitting input or pressing Ctrl+L also returns
-to the latest output. The setting persists; `/set ui.mode classic` restores the
+to the latest output. Shell commands such as `!uname` retain stdout and stderr
+in the buffer after returning to the prompt; interactive commands still receive
+the terminal. The setting persists; `/set ui.mode classic` restores the
 default terminal scrollback behavior. Buffer mode restores the shell's screen
 and mouse handling on exit and during terminal handoffs. Hold Shift to select
 text using your terminal's normal mouse selection. Saved conversations remain

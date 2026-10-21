@@ -126,6 +126,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     lock.withLock { outputEndedLine }
   }
 
+  var isBufferMode: Bool {
+    lock.withLock { ui.mode == .buffer }
+  }
+
   /// Enters raw mode, reserves the bottom rows, and draws them. Call before the
   /// input thread starts reading: locating the cursor needs stdin for a moment.
   func activate() {

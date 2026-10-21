@@ -104,7 +104,7 @@ def main():
                 os.write(master, b'/chat log|less\r')
                 wait('(END)')
                 os.write(master, b'q')
-                wait('pmai> ')
+                wait('pmai#1> ')
                 submit(b'/version > after-pager.txt')
                 assert (root / 'after-pager.txt').read_text() == version
             submit(paste('/chat last > pasted.txt'))

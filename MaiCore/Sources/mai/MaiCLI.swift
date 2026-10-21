@@ -4365,7 +4365,7 @@ struct MaiCLI {
 
   /// `!ls`, `!git diff`, `!vim notes.md`: runs a line in the system shell with
   /// the terminal handed over, so interactive programs work and their output
-  /// is neither captured nor sent to the model.
+  /// is retained in buffer mode without being sent to the model.
   private static func runShellCommand(_ command: String, terminal: TerminalWriter) async {
     let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else {
@@ -4374,7 +4374,7 @@ struct MaiCLI {
     }
     let waitStatus: Int32
     do {
-      waitStatus = try TerminalCommand.run(trimmed)
+      waitStatus = try TerminalCommand.run(trimmed, retainOutput: true)
     } catch {
       await terminal.line(
         "error: Could not run '\(trimmed)': \(error.localizedDescription)",

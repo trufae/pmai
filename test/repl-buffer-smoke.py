@@ -3,6 +3,7 @@
 import fcntl
 import json
 import os
+import platform
 from pathlib import Path
 import pty
 import queue
@@ -61,6 +62,12 @@ def main(binary):
             editor = root / 'editor.py'
             editor.write_text("from pathlib import Path\nimport sys\n"
                               "Path(sys.argv[1]).write_text('buffer editor test')\n")
+            shell = root / 'shell.py'
+            shell.write_text("import os\n"
+                             "assert all(os.isatty(fd) for fd in (0, 1, 2))\n"
+                             "print('SHELL_INPUT_READY', flush=True)\n"
+                             "text = input()\n"
+                             "print('SHELL_REPLY_' + text, flush=True)\n")
             env = clean_environment() | {'TERM': 'xterm-256color',
                 'NO_PROXY': '127.0.0.1,localhost', 'EDITOR': f'{sys.executable} {editor}'}
             master, slave = pty.openpty()
@@ -113,6 +120,24 @@ def main(binary):
                 send('/set ui.mode buffer\r')
                 wait_for('\x1b[?1006h')
                 assert json.loads(config.read_text())['ui']['mode'] == 'buffer'
+                # Handoff output must be in the restored transcript, not just
+                # briefly visible on the shell's screen while the command runs.
+                send('!uname\r')
+                wait_for('\x1b[?1049h')
+                assert platform.system() in '\n'.join(output()), screen
+                send("!printf 'BUFFER_STDOUT\\n'; printf 'BUFFER_STDERR\\n' >&2; exit 7\r")
+                wait_for('exit status 7')
+                assert all(text in '\n'.join(output())
+                           for text in ('BUFFER_STDOUT', 'BUFFER_STDERR')), screen
+                send(f'!{sys.executable} {shell}\r')
+                wait_for('SHELL_INPUT_READY')
+                send('interactive\n')
+                wait_for('\x1b[?1049h')
+                assert 'SHELL_REPLY_interactive' in '\n'.join(output()), screen
+                # A later redraw must retain the shell output too.
+                send('\x0c')
+                read_for()
+                assert 'SHELL_REPLY_interactive' in '\n'.join(output()), screen
                 send('buffer-test\r')
                 chunks.put(''.join(f'ROW{i:02d} content for scrolling\n' for i in range(70)))
                 wait_for('ROW69')
@@ -191,7 +216,8 @@ def main(binary):
                 assert b'\x1b[?1000l' in captured and b'\x1b[?1049l' in captured, captured
                 assert termios.tcgetattr(master) == original, 'raw tty mode leaked on exit'
                 print('PASS buffer: paging, mouse packets, live history anchor, fixed multiline draft, '
-                      'resize, follow, mode persistence, editor handoff and terminal cleanup')
+                      'resize, follow, mode persistence, shell output and input, editor handoff '
+                      'and terminal cleanup')
             finally:
                 chunks.put(None)
                 if process.poll() is None:
