@@ -59,6 +59,27 @@ enum TerminalTheme {
       diffRemovedForeground: "rgb:fbd", diffRemovedBackground: "rgb:324",
       diffHeaderForeground: "rgb:7cf", selectionForeground: "rgb:013",
       selectionBackground: "rgb:7cf"),
+    // Inspired by Visual Studio Code's Dark+ and Light+ palettes.
+    "codark": .init(
+      backgroundLine: "#252526", foreground: "#d4d4d4", background: "#1e1e1e",
+      promptForeground: "#569cd6", promptBackground: "#252526",
+      toolResultForeground: "#ce9178", toolCallForeground: "#9cdcfe",
+      errorForeground: "#f44747", warningForeground: "#dcdcaa", successForeground: "#4ec9b0",
+      infoForeground: "#569cd6", thinkingForeground: "#858585",
+      diffAddedForeground: "#b5cea8", diffAddedBackground: "#203820",
+      diffRemovedForeground: "#f48771", diffRemovedBackground: "#4b2525",
+      diffHeaderForeground: "#9cdcfe", selectionForeground: "#ffffff",
+      selectionBackground: "#264f78"),
+    "colit": .init(
+      backgroundLine: "#f3f3f3", foreground: "#333333", background: "#ffffff",
+      promptForeground: "#005fb8", promptBackground: "#f3f3f3",
+      toolResultForeground: "#a31515", toolCallForeground: "#001080",
+      errorForeground: "#a1260d", warningForeground: "#795e26", successForeground: "#008000",
+      infoForeground: "#0451a5", thinkingForeground: "#6a737d",
+      diffAddedForeground: "#006400", diffAddedBackground: "#e6ffec",
+      diffRemovedForeground: "#a31515", diffRemovedBackground: "#ffeef0",
+      diffHeaderForeground: "#0451a5", selectionForeground: "#000000",
+      selectionBackground: "#add6ff"),
   ]
 
   static var colors: [(String, WritableKeyPath<ConfiguredTerminalUI, String>)] {

@@ -40,7 +40,7 @@ def main():
             return json.loads(config.read_text())['ui']
 
         output = run('/theme', '/help theme')
-        assert 'default\nember\nlight\norange\npink\nsky\nslime\n' in output, output
+        assert 'codark\ncolit\ndefault\nember\nlight\norange\npink\nsky\nslime\n' in output, output
         assert 'PMAI_THEME=NAME' in output, output
         assert not themes.exists(), 'listing must not install built-in theme files'
 
@@ -65,7 +65,8 @@ def main():
         assert 'Use /theme color fgerror [VALUE].' in redirected, redirected
         assert 'Use /theme color bold [VALUE].' in redirected, redirected
         assert config.read_bytes() == before, 'old color commands must only give guidance'
-        for name in ('slime', 'light', 'ember', 'pink', 'orange', 'sky'):
+        for name in ('slime', 'light', 'ember', 'pink', 'orange', 'sky',
+                     'codark', 'colit'):
             output = run(f'/theme use {name}')
             assert f"Applied theme '{name}'." in output, output
             assert ui() != original

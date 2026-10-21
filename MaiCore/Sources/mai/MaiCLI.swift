@@ -13215,7 +13215,7 @@ struct MaiCLI {
     COLOR accepts a named ANSI color, rgb:RGB, #RRGGBB, or none.
 
     Built-ins: default, slime (green), light (white terminals), ember (warm),
-    pink, orange, sky (blue).
+    pink, orange, sky (blue), codark and colit (Visual Studio Code).
     PMAI_THEME=NAME selects a theme at startup, overriding configured colors and bold.
     Custom themes live in ~/.pmai/themes/NAME ($PMAI_HOME or --home relocates it)
     and take precedence over built-ins. Each line is /theme color KEY VALUE;
