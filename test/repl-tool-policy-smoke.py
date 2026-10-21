@@ -79,6 +79,7 @@ for line in sys.stdin:
                             'instructions': 'Rules', 'toolGroupNames': ['files', 'github', 'skills'],
                             'autocompact': {'tokens': 0}}],
                 'memory': {'enabled': False}, 'use': {'plan': False},
+                'approvals': {'mode': 'yolo'},
             }))
             final = {'role': 'assistant', 'content': 'DONE'}
 
@@ -98,6 +99,19 @@ for line in sys.stdin:
                     for key in ('toolNames', 'toolGroupNames', 'subagentNames'):
                         agent[key] = sorted(agent.get(key, []))
                 return agents
+
+            before = agent_settings()
+            output, calls = run(['/tools off', '/tools', 'Chat without tools'], [final])
+            assert 'All tools globally: off' in output, output
+            assert not calls[0].get('tools'), calls[0]
+            assert json.loads(config.read_text())['toolsEnabled'] is False
+            assert agent_settings() == before, 'global off changed individual settings'
+            output, calls = run(['Still off after restart'], [final])
+            assert not calls[0].get('tools'), calls[0]
+            output, calls = run(['/tools on', 'Tools restored'], [final])
+            assert calls[0].get('tools'), calls[0]
+            assert agent_settings() == before, 'global on changed individual settings'
+            assert json.loads(config.read_text())['toolsEnabled'] is True
 
             output, calls = run([
                 '/tools proxy github', '/tools direct github/pr', '/tools direct github/issue',

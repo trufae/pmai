@@ -23,6 +23,7 @@ public actor AgentRuntime {
   var registeredMCPs: [String: RegisteredMCP] = [:]
   var configuredToolGroups: [ToolGroupDefinition] = []
   var internetAccess = InternetAccessPolicy()
+  var toolsEnabled = true
   let approvalHandler: any ApprovalHandler
   /// Overrides for the delegation brief and the derived worker's instructions.
   /// Nil keeps the built-in text, so MaiCore works without configuration.

@@ -1972,6 +1972,7 @@ struct MaiCLI {
     environment: [String: String]
   ) async throws -> RuntimeSetup {
     await runtime.configureInternetAccess(.init(airplaneModeEnabled: configuration?.airplane ?? false))
+    await runtime.configureToolsEnabled(configuration?.toolsEnabled ?? true)
     // Flags deliberately override a connection. Ambient variables only fill
     // missing settings; a named provider owns its endpoint and credentials.
     func resolvedBaseURL(_ configured: URL?) throws -> URL? {
@@ -4946,6 +4947,9 @@ struct MaiCLI {
     }
     if command.first == "/tools", command.count > 1 {
       let options = command[1].split(whereSeparator: \Character.isWhitespace)
+      if options.count == 1, ["on", "off"].contains(options[0].lowercased()) {
+        return "Only the person at the REPL can switch tools globally."
+      }
       if options.count >= 3, ["set", "config", "unset"].contains(String(options[0])),
         options[2] == "filesRoot"
       {
@@ -8672,6 +8676,22 @@ struct MaiCLI {
     let fields = argument.split(maxSplits: 3, whereSeparator: \Character.isWhitespace).map(
       String.init)
     let action = fields.first?.lowercased() ?? "list"
+    if fields.count == 1, action == "on" || action == "off" {
+      guard var draft = configuration, let configurationPath else {
+        await terminal.line("error: No writable configuration is active.", to: .standardError)
+        return
+      }
+      do {
+        draft.toolsEnabled = action == "on"
+        try draft.save(to: URL(fileURLWithPath: configurationPath))
+        configuration = draft
+        await runtime.configureToolsEnabled(draft.toolsEnabled)
+        await terminal.line("All tools globally: \(action). Individual tool settings are preserved; calls already executing may finish.")
+      } catch {
+        await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+      }
+      return
+    }
     let groups: [ToolGroupDefinition]
     do {
       groups = try await toolGroupCatalog(
@@ -8686,10 +8706,13 @@ struct MaiCLI {
     let tools = await runtime.availableTools()
     let usage = await runtime.toolUsageSnapshot()
     let internetAccess = await runtime.internetAccessPolicy()
-    let modesByName = internetAccess.restricting(
+    var modesByName = internetAccess.restricting(
       session.profile.agentDefinition.toolModes(in: groups, usage: usage), tools: tools, groups: groups)
+    let globallyEnabled = await runtime.toolsAreEnabled()
+    if !globallyEnabled { modesByName = modesByName.mapValues { _ in .disabled } }
     let names = Set(tools.map(\.name)).union(AgentRuntime.agentToolNames)
     if action == "list" || fields.isEmpty {
+      await terminal.line("All tools globally: \(globallyEnabled ? "on" : "off"). /tools on|off changes the global switch.")
       await terminal.line("Tool proxy default: \(toolProxySetting(session.profile)); automatic exposure: \(session.profile.toolPolicy.automatic ? "on" : "off"). Per-tool overrides take precedence.")
       for group in groups {
         let label = await terminal.paint(
@@ -12547,7 +12570,7 @@ struct MaiCLI {
       "/set ui.subagents stats", "/set ui.subagents none",
       "/agent use ",
       "/agent show ", "/agent add ", "/agent tools ", "/agent model ", "/agent prompt ",
-      "/agent provider ", "/agent del ", "/edit agent", "/tools",
+      "/agent provider ", "/agent del ", "/edit agent", "/tools", "/tools on", "/tools off",
       "/skills", "/skills list", "/skills show ", "/skills enable ", "/skills disable ",
       "/skills enable all", "/skills disable all", "/skills prompt ", "/skills path",
       "/skills reload", "/skills add ", "/skills edit ", "/skills del ",
@@ -13496,6 +13519,7 @@ struct MaiCLI {
 
   private static let toolHelp = """
     Tool selection commands:
+      /tools on|off                  Switch all tools globally; keep individual settings
       /tools list                    List groups with exposure states and call counters
       /tools show GROUP|TOOL         Show effective states, counters, schemas, and settings
       /tools enable GROUP|TOOL       Enable using the current exposure default

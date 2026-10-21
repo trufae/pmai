@@ -1,6 +1,11 @@
 import Foundation
 
 extension AgentRuntime {
+  /// Global gate, including running and future children. Individual tool policy
+  /// stays intact; calls already executing may finish.
+  public func configureToolsEnabled(_ enabled: Bool) { toolsEnabled = enabled }
+  public func toolsAreEnabled() -> Bool { toolsEnabled }
+
   /// Applies to every live agent, including named and derived children.
   public func configureInternetAccess(_ policy: InternetAccessPolicy) async {
     internetAccess = policy
