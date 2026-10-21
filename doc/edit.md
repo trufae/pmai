@@ -174,8 +174,9 @@ the exception, because it rebuilds the one provider it edited.
 
 `/edit N` opens message N of the current chat; indexes are 1-based and count
 from the end when negative, so `/edit -1` is the last message. The text
-comes back as the message body and any attachments stay. `/chat edit INDEX
-TEXT` does the same in one line, `/chat messages` shows the indexes, and
+comes back as the message body and any attachments stay. `/edit chat N` and
+`/chat edit N` open the same editor. `/chat edit INDEX TEXT` replaces the text
+in one line. `/chat messages` shows the indexes, and
 `/chat del`, `/chat undo`, `/chat chop`, and `/chat trim` cover deleting rather than
 editing.
 

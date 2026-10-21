@@ -6767,6 +6767,13 @@ struct MaiCLI {
       ? "smart" : fields[0].lowercased()
 
     switch action {
+    case "chat":
+      guard let index = editableMessageIndex(actionArgument, in: session.history) else {
+        await terminal.line("Usage: /edit chat INDEX|MESSAGE_ID")
+        return
+      }
+      await editChatMessage(at: index, session: &session, terminal: terminal)
+
     case "skill", "skills":
       await handleSkillMutation(
         "edit", argument: actionArgument, session: &session, runtime: runtime,
@@ -7098,16 +7105,24 @@ struct MaiCLI {
         await terminal.line("Unknown edit target '\(target)'.\n\n\(editHelp)")
         return
       }
-      let message = session.history[index]
-      guard
-        let edited = await editTemporaryText(message.text, suffix: "message.md", terminal: terminal)
-      else { return }
-      do {
-        try session.history.editMessage(at: index, text: edited)
-        await terminal.line("Edited message \(index + 1) (id: \(message.id)).")
-      } catch {
-        await terminal.line("error: \(error.localizedDescription)", to: .standardError)
-      }
+      await editChatMessage(at: index, session: &session, terminal: terminal)
+    }
+  }
+
+  private static func editChatMessage(
+    at index: Int,
+    session: inout REPLSession,
+    terminal: TerminalWriter
+  ) async {
+    let message = session.history[index]
+    guard
+      let edited = await editTemporaryText(message.text, suffix: "message.md", terminal: terminal)
+    else { return }
+    do {
+      try session.history.editMessage(at: index, text: edited)
+      await terminal.line("Edited message \(index + 1) (id: \(message.id)).")
+    } catch {
+      await terminal.line("error: \(error.localizedDescription)", to: .standardError)
     }
   }
 
@@ -11898,8 +11913,15 @@ struct MaiCLI {
 
     switch action {
     case "list", "log":
+      let verbosity = actionArgument.lowercased()
+      guard action != "log" || ["", "quiet", "verbose"].contains(verbosity) else {
+        await terminal.line("Usage: /chat log [quiet|verbose]")
+        return
+      }
       await terminal.line(
-        await conversationLog(session: session, full: action == "log", terminal: terminal))
+        await conversationLog(
+          session: session, full: action == "log", includeDetails: verbosity == "verbose",
+          terminal: terminal))
     case "last":
       if let message = session.history.messages.last(where: { $0.role == .assistant && !$0.text.isEmpty }) {
         await terminal.line(await terminal.render(message.text))
@@ -11907,8 +11929,12 @@ struct MaiCLI {
         await terminal.line("No assistant response in the chat history.")
       }
     case "edit":
-      guard parts.count == 3, let index = chatIndex(parts[1], count: session.history.count) else {
-        await terminal.line("Usage: /chat edit INDEX TEXT")
+      guard parts.count >= 2, let index = chatIndex(parts[1], count: session.history.count) else {
+        await terminal.line("Usage: /chat edit INDEX [TEXT]")
+        return
+      }
+      guard parts.count == 3 else {
+        await editChatMessage(at: index, session: &session, terminal: terminal)
         return
       }
       do {
@@ -12128,14 +12154,29 @@ struct MaiCLI {
   private static func conversationLog(
     session: REPLSession,
     full: Bool,
+    includeDetails: Bool,
     terminal: TerminalWriter
   ) async -> String {
     guard !session.history.isEmpty else { return "No conversation messages yet." }
     var lines = [
-      full ? await terminal.paintHeading("# Full conversation log") : "Conversation log:"
+      full
+        ? await terminal.paintHeading(includeDetails ? "# Full conversation log" : "# Conversation log")
+        : "Conversation log:"
     ]
     if !full { lines.append("-----------------") }
-    for (index, message) in session.history.messages.enumerated() {
+    for (index, storedMessage) in session.history.messages.enumerated() {
+      var message = storedMessage
+      if full && !includeDetails {
+        guard message.role != .tool else { continue }
+        message.content.removeAll { part in
+          switch part {
+          case .reasoning, .toolCall, .toolResult: true
+          case .text(let text): text.isEmpty
+          default: false
+          }
+        }
+        guard !message.content.isEmpty else { continue }
+      }
       let role = message.role.rawValue.capitalized
       if full {
         lines.append(
@@ -12580,7 +12621,7 @@ struct MaiCLI {
       "/mcp del ",
       "/edit prompt", "/edit compact", "/edit config", "/edit mcps",
       "/edit prompt recap", "/edit smart", "/edit prompt smart",
-      "/edit input", "/edit soul",
+      "/edit input", "/edit soul", "/edit chat ",
       "/chat compact ", "/chat recap",
       "/image tiny ", "/image small ", "/image medium ", "/image big ", "/image full ",
       "/image ocr ", "/attach ", "/attach source ", "/attach markdown ", "/attach copy ",
@@ -12590,7 +12631,7 @@ struct MaiCLI {
       "/chat use ", "/chat next", "/chat previous", "/chat info", "/chat session",
       "/chat session new", "/chat rename ",
       "/chat archive", "/chat unarchive ", "/chat close confirm", "/chat messages",
-      "/chat files", "/chat log", "/chat last", "/chat edit ", "/chat del ", "/chat undo", "/chat chop", "/chat trim ",
+      "/chat files", "/chat log", "/chat log quiet", "/chat log verbose", "/chat last", "/chat edit ", "/chat del ", "/chat undo", "/chat chop", "/chat trim ",
       "/chat clear", "/project", "/project info", "/project list", "/project name ",
       "/project tint ", "/project tint none", "/project del ",
     ]
@@ -13220,9 +13261,9 @@ struct MaiCLI {
       /chat close confirm           Permanently close the active chat
       /chat files                   List files accessed in this conversation
       /chat messages                Display a compact indexed message list
-      /chat log           Display the full structured conversation
+      /chat log [quiet|verbose]  Display the conversation (default quiet)
       /chat last          Display the latest assistant response
-      /chat edit INDEX TEXT  Replace a message's text; preserve attachments
+      /chat edit INDEX [TEXT]  Edit in the editor, or replace text inline; preserve attachments
       /chat del INDEX     Remove a message
       /chat undo [INDEX]  Remove the last conversation message or selected message
       /chat chop          Browse messages interactively to delete or chop newer messages
@@ -13233,6 +13274,9 @@ struct MaiCLI {
 
     Message indexes are 1-based. Negative indexes count back from the end;
     -1 selects the last message, -2 the second-to-last, and so on.
+    /chat log quiet hides reasoning, tool calls, and tool outputs; verbose includes them.
+    Log indexes keep their original positions, including messages hidden in quiet mode.
+    /chat edit INDEX opens the same editor as /edit chat INDEX or /edit INDEX.
     Removing a tool call or result also removes its linked tool transaction.
     /chat files keeps a sorted, unique record of Files content reads (including
     grep scans), writes, renames, deletions, and attachments across resumed turns,
@@ -13324,6 +13368,7 @@ struct MaiCLI {
     /edit worker             Edit the instructions of the derived worker agent
     /edit config             Edit the active configuration file
     /edit mcps               Edit the configured MCP server list as JSON
+    /edit chat N|MESSAGE_ID  Edit a conversation message (same as /chat edit N)
     /edit N|MESSAGE_ID       Edit conversation message N or its full message ID
     /edit input              Write the next message in the editor and send it
     /edit soul               Edit your core personality (lives in ~/.pmai/SOUL.md)
