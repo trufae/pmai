@@ -20,6 +20,8 @@ import MaiCore
 /// back to the input, so a person keeps typing while a run streams and nothing
 /// lands in their text. The region starts at the top row, which is what
 /// terminals require to keep scrolled-out lines in the scrollback.
+/// Buffer mode instead paints that region from a retained transcript on the
+/// alternate screen, allowing navigation and reflow without moving the footer.
 ///
 /// One lock serialises everything that touches the tty: a block from a child
 /// agent, a streamed delta, and a keystroke's redraw are each written whole.
@@ -58,6 +60,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var caretRow = 0
   private var caretColumn = 0
   private var outputEndedLine = true
+  /// Retained in both modes so switching to buffer includes earlier output.
+  private var transcript = TerminalOutputBuffer()
+  private var paintedOutputRows: [String] = []
   private var active = false
   private var resizeSource: (any DispatchSourceProtocol)?
   private var activitySource: DispatchSourceTimer?
@@ -78,6 +83,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private static let clearLine = "\u{1B}[2K"
   private static let clearBelow = "\u{1B}[J"
   private static let reset = "\u{1B}[0m"
+  private static let enterBuffer = "\u{1B}[?1049h\u{1B}[2J"
+  private static let leaveBuffer = "\u{1B}[r\u{1B}[?1049l"
+  private static let enableMouse = "\u{1B}[?1000h\u{1B}[?1006h"
+  private static let disableMouse = "\u{1B}[?1006l\u{1B}[?1000l"
 
   /// Nil unless both stdin and stdout are terminals; piped sessions keep the
   /// plain one-line-at-a-time prompt.
@@ -88,8 +97,21 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   func configure(ui: ConfiguredTerminalUI) {
     lock.withLock {
       refreshSize()
+      let previousMode = self.ui.mode
       self.ui = ui
       guard active else { return }
+      if ui.mode != previousMode {
+        transcript.follow()
+        if ui.mode == .buffer {
+          write(Self.enterBuffer + Self.enableMouse)
+          redrawBuffer()
+          return
+        }
+        write(Self.disableMouse + Self.leaveBuffer)
+        write("\u{1B}[1;\(regionBottom)r" + move(row: regionBottom, column: 1) + Self.saveCursor)
+        outputEndedLine = true
+        drawInputRows()
+      }
       paintedThinkingRows = []
       drawStatusRow()
       placeCaret()
@@ -122,6 +144,13 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     active = true
     paintedThinkingRows = []
     clampInputRows()
+    if ui.mode == .buffer {
+      write(TerminalInputModes.enable + Self.enterBuffer + Self.enableMouse)
+      redrawBuffer()
+      watchResizes()
+      updateActivityTimer()
+      return
+    }
     // One newline per reserved row scrolls exactly as much as it takes for
     // the current row to end up inside the region, whatever row it was on.
     let row = currentOutputRow(fallback: rows)
@@ -178,6 +207,12 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     resizeSource = nil
     activitySource?.cancel()
     activitySource = nil
+    if ui.mode == .buffer {
+      write(Self.disableMouse + Self.leaveBuffer + TerminalInputModes.disable)
+      _ = tcsetattr(STDIN_FILENO, TCSAFLUSH, &cooked)
+      active = false
+      return
+    }
     write(Self.restoreCursor + (outputEndedLine ? "" : "\n"))
     // Resetting the region homes the cursor.  We use our tracked row so we
     // never have to ask the terminal for its cursor position (which risks
@@ -201,6 +236,13 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         return
       }
       refreshSize()
+      transcript.append(text)
+      if ui.mode == .buffer {
+        outputEndedLine = text.hasSuffix("\n")
+        drawOutputRows()
+        placeCaret()
+        return
+      }
       if handle === FileHandle.standardOutput {
         write(Self.restoreCursor + text + Self.saveCursor)
       } else {
@@ -319,6 +361,14 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       caretRow = 0
       caretColumn = 0
       guard active else { return }
+      let submitted = (outputEndedLine ? "" : "\n") + styled + "\n"
+      transcript.append(submitted)
+      if ui.mode == .buffer {
+        transcript.follow()
+        outputEndedLine = true
+        redrawBuffer()
+        return
+      }
       var out = Self.restoreCursor
       if !outputEndedLine { out += "\n" }
       out += styled + "\n" + Self.saveCursor
@@ -341,6 +391,12 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     lock.withLock {
       guard active else { return }
       refreshSize()
+      if ui.mode == .buffer {
+        transcript.follow()
+        write("\u{1B}[2J")
+        redrawBuffer()
+        return
+      }
       write("\u{1B}[2J" + move(row: 1, column: 1) + Self.saveCursor)
       outputEndedLine = true
       paintedThinkingRows = []
@@ -352,6 +408,19 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   func emit(_ text: String) {
     write(text, to: .standardOutput)
+  }
+
+  func scrollOutput(lines: Int, pages: Int) {
+    lock.withLock {
+      guard active, ui.mode == .buffer else { return }
+      refreshSize()
+      transcript.scroll(
+        lines: lines + pages * max(1, regionBottom - 1),
+        width: max(1, columns - 1), height: regionBottom)
+      drawOutputRows()
+      drawStatusRow()
+      placeCaret()
+    }
   }
 
   func drawSeparator(styled: String?) {
@@ -411,6 +480,12 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   /// cursor follows it. When the input shrinks, the region takes the freed
   /// rows back as blank ones below the output, where the next output lands.
   private func resizeRegion(inputRows previousCount: Int, to count: Int) {
+    if ui.mode == .buffer {
+      paintedOutputRows = []
+      write("\u{1B}[1;\(regionBottom)r")
+      drawOutputRows()
+      return
+    }
     let previousBottom = max(1, rows - 1 - previousCount)
     let bottom = max(1, rows - 1 - count)
     var out = ""
@@ -439,6 +514,28 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private func drawStatusRow() {
     drawThinkingRows()
     drawStatusLine()
+  }
+
+  private func redrawBuffer() {
+    paintedOutputRows = []
+    paintedThinkingRows = []
+    write("\u{1B}[1;\(regionBottom)r")
+    drawOutputRows()
+    drawStatusRow()
+    drawInputRows()
+    placeCaret()
+  }
+
+  private func drawOutputRows() {
+    var visible = transcript.visibleRows(width: max(1, columns - 1), height: regionBottom)
+    visible += Array(repeating: "", count: max(0, regionBottom - visible.count))
+    var out = ""
+    for (index, text) in visible.enumerated() {
+      if index < paintedOutputRows.count, paintedOutputRows[index] == text { continue }
+      out += move(row: index + 1, column: 1) + Self.reset + Self.clearLine + text + Self.reset
+    }
+    paintedOutputRows = visible
+    writeFixedRows(out)
   }
 
   private func drawThinkingRows() {
@@ -488,7 +585,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     } else {
       status = statusText
     }
-    let content = Self.truncated(" \(status) ", width: width)
+    let scrollHint = ui.mode == .buffer && !transcript.isFollowing ? "↑ scroll · PgDn to latest · " : ""
+    let content = Self.truncated(" \(scrollHint)\(status) ", width: width)
     let padding = String(repeating: " ", count: max(0, width - Self.displayWidth(content)))
     let colors = ProcessInfo.processInfo.environment["NO_COLOR"] == nil
     var out = ""
@@ -591,8 +689,11 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       }
       let marker = animator.next()
       let style = TerminalLineEditor.backgroundColorCode(ui.backgroundLine) ?? "2"
+      let scrollHintWidth = ui.mode == .buffer && !transcript.isFollowing
+        ? Self.displayWidth("↑ scroll · PgDn to latest · ") : 0
+      guard 2 + scrollHintWidth < columns else { return }
       writeFixedRows(
-        move(row: regionBottom + thinkingRows.count + 1, column: 2)
+        move(row: regionBottom + thinkingRows.count + 1, column: 2 + scrollHintWidth)
           + "\u{1B}[\(style)m" + marker + Self.reset)
       placeCaret()
     }
@@ -695,6 +796,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     measure()
     guard rows != previousRows || columns != previousColumns else { return }
     clampInputRows()
+    if ui.mode == .buffer {
+      redrawBuffer()
+      return
+    }
     let bottom = regionBottom
     // The saved output position follows the terminal's resize. Erase the old
     // footer from that boundary, including rows reflowed above the new footer

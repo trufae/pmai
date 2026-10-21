@@ -33,6 +33,8 @@ protocol LineEditorSurface: AnyObject {
   func cancelInput()
   /// Clears the display while keeping the input and terminal layout.
   func clearScreen()
+  /// Scrolls the application transcript; plain terminal surfaces ignore it.
+  func scrollOutput(lines: Int, pages: Int)
   /// Text that belongs with the output, such as completion candidates.
   func emit(_ text: String)
   /// The line drawn above a fresh prompt, or nothing.
@@ -49,6 +51,7 @@ protocol LineEditorSurface: AnyObject {
 }
 
 extension LineEditorSurface {
+  func scrollOutput(lines: Int, pages: Int) {}
   func pendingInput() -> [UInt8] { [] }
   /// Surfaces with no status row simply do not show the menu.
   func drawCompletionMenu(_ menu: CompletionMenu?) {}
@@ -203,6 +206,8 @@ final class TerminalLineEditor {
     /// A whole character the terminal reported through an escape sequence.
     case text([UInt8])
     case up, down, left, right, home, end, delete
+    case pageUp, pageDown
+    case wheel(Int)
     /// Shift+Enter or Alt+Enter: a line break inside the input.
     case newline
     /// A bracketed paste, as sent.
@@ -557,6 +562,12 @@ final class TerminalLineEditor {
         moveToPreviousLine()
       case .down:
         moveToNextLine()
+      case .pageUp:
+        surface?.scrollOutput(lines: 0, pages: -1)
+      case .pageDown:
+        surface?.scrollOutput(lines: 0, pages: 1)
+      case .wheel(let lines):
+        surface?.scrollOutput(lines: lines, pages: 0)
       case .left:
         cursor = previousCharacterStart(in: bytes, before: cursor)
         redraw(prompt: prompt, bytes: bytes, cursor: cursor)
@@ -614,6 +625,12 @@ final class TerminalLineEditor {
   private func readControlSequence() -> Key {
     var parameters: [UInt8] = []
     while let byte = readByte() {
+      // Legacy X10 mouse reports have three bytes after CSI M. Consume the
+      // entire packet even when it is a click that the editor ignores.
+      if byte == UInt8(ascii: "M"), parameters.isEmpty {
+        guard let button = readByte(), readByte() != nil, readByte() != nil else { return .ignored }
+        return mouseKey(button: max(0, Int(button) - 32), released: false)
+      }
       if (0x40...0x7E).contains(byte) {
         return decodeControlSequence(
           parameters: String(decoding: parameters, as: UTF8.self), final: byte)
@@ -625,6 +642,12 @@ final class TerminalLineEditor {
   }
 
   private func decodeControlSequence(parameters: String, final: UInt8) -> Key {
+    if parameters.hasPrefix("<"), final == UInt8(ascii: "M") || final == UInt8(ascii: "m") {
+      let fields = parameters.dropFirst().split(separator: ";")
+      guard fields.count == 3, let button = Int(fields[0]),
+        Int(fields[1]) != nil, Int(fields[2]) != nil else { return .ignored }
+      return mouseKey(button: button, released: final == UInt8(ascii: "m"))
+    }
     let fields = parameters.split(separator: ";", omittingEmptySubsequences: false)
       .map(String.init)
     if let key = cursorKey(final: final) { return key }
@@ -634,6 +657,8 @@ final class TerminalLineEditor {
       case 1, 7: return .home
       case 4, 8: return .end
       case 3: return .delete
+      case 5: return .pageUp
+      case 6: return .pageDown
       case 200: return .paste(readPastedBytes())
       case 27:
         // xterm's modifyOtherKeys form: CSI 27 ; modifiers ; key ~
@@ -654,6 +679,15 @@ final class TerminalLineEditor {
       return decodeKeyCode(code, shifted: shifted, modifiers: modifiers, event: event)
     default:
       return .ignored
+    }
+  }
+
+  private func mouseKey(button: Int, released: Bool) -> Key {
+    guard !released else { return .ignored }
+    switch button & 0xC3 {
+    case 64: return .wheel(-3)
+    case 65: return .wheel(3)
+    default: return .ignored
     }
   }
 
@@ -691,6 +725,8 @@ final class TerminalLineEditor {
     case 57351: return .right
     case 57352: return .up
     case 57353: return .down
+    case 57354: return .pageUp
+    case 57355: return .pageDown
     case 57356: return .home
     case 57357: return .end
     default:
@@ -862,6 +898,12 @@ final class TerminalLineEditor {
         }
       case .text(let character):
         extendQuery(character)
+      case .pageUp:
+        surface?.scrollOutput(lines: 0, pages: -1)
+      case .pageDown:
+        surface?.scrollOutput(lines: 0, pages: 1)
+      case .wheel(let lines):
+        surface?.scrollOutput(lines: lines, pages: 0)
       case .left:  // Any other key accepts the match for editing.
         return .accepted(
           line: selection,

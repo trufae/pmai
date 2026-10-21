@@ -9935,7 +9935,7 @@ struct MaiCLI {
     }
     let booleanKeys = ["ui.markdown", "ui.broadcast"]
     let countKeys = ["ui.toolresultlines"]
-    let levelKeys = ["ui.subagents", "ui.thinking"]
+    let levelKeys = ["ui.subagents", "ui.thinking", "ui.mode"]
     let textKeys = ["ui.title", "ui.editor"]
     guard
       booleanKeys.contains(key) || countKeys.contains(key)
@@ -9972,6 +9972,12 @@ struct MaiCLI {
       }
       ui.toolResultLines = value
       await terminal.configureToolResultLines(value)
+    } else if key == "ui.mode" {
+      guard let mode = TerminalOutputMode(rawValue: parts[1].lowercased()) else {
+        await terminal.line("Usage: /set ui.mode <classic|buffer>")
+        return
+      }
+      ui.mode = mode
     } else if key == "ui.thinking" {
       guard let mode = ThinkingDisplay(rawValue: parts[1].lowercased()) else {
         await terminal.line("Usage: /set ui.thinking <status|line|three|five|full>")
@@ -10602,7 +10608,7 @@ struct MaiCLI {
 
   private static func listUISettings(_ ui: ConfiguredTerminalUI, terminal: TerminalWriter) async {
     let keys = [
-      "ui.title", "ui.editor", "ui.markdown", "ui.toolResultLines", "ui.subagents", "ui.thinking",
+      "ui.mode", "ui.title", "ui.editor", "ui.markdown", "ui.toolResultLines", "ui.subagents", "ui.thinking",
       "ui.broadcast",
     ]
     for key in keys {
@@ -10613,6 +10619,7 @@ struct MaiCLI {
   private static func uiSetting(_ key: String, in ui: ConfiguredTerminalUI) -> String {
     let value: String
     switch key.lowercased() {
+    case "ui.mode": return ui.mode.rawValue
     case "ui.title": value = visibleUITitle(ui.title)
     // Unset is worth showing as what it resolves to, since that is the editor
     // that actually opens.
@@ -12579,6 +12586,7 @@ struct MaiCLI {
       "/set use.plan on", "/set use.plan off",
       "/theme color bold on", "/theme color bold off",
       "/set ui.markdown on", "/set ui.markdown off",
+      "/set ui.mode classic", "/set ui.mode buffer",
       "/set ui.broadcast on", "/set ui.broadcast off",
       "/set ui.toolResultLines all", "/set ui.toolResultLines relevant", "/set ui.toolResultLines ",
       "/set redact on", "/set redact off", "/set redact warn", "/edit redact",
@@ -13228,6 +13236,7 @@ struct MaiCLI {
       /set export.tools BOOL       Include tool calls and results in documents (default off)
       /set export.thinking BOOL    Include thinking blocks in documents (default off)
       /set ui.                     List terminal behavior settings
+      /set ui.mode MODE           classic (default) or buffer: scroll with Page Up/Down and mouse wheel
       /set ui.title TEXT           Set the prompt label and terminal/tab title (`none` clears it)
       /set ui.editor COMMAND       Editor /edit opens (`none` falls back to $EDITOR, $VISUAL, vim)
       /set ui.markdown BOOL        Render replies as styled markdown (on/off)

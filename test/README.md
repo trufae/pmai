@@ -207,6 +207,12 @@ the terminal, including redraws before the resize signal is delivered:
 
     python3 test/repl-resize-smoke.py MaiCore/.build/debug/pmai
 
+The buffer-mode check covers Page Up/Down and mouse-wheel navigation during
+streamed output, a fixed multiline draft, resize reflow, persisted mode changes,
+editor handoffs, and restoration of the terminal screen, mouse, and raw modes:
+
+    python3 test/repl-buffer-smoke.py MaiCore/.build/debug/pmai
+
 The reflow regression also runs those terminal bytes through Ghostty's headless
 engine. It checks that resizing leaves exactly one status row, no footer fragments
 in scrollback, and the complete transcript. Install the optional test engine in

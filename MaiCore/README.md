@@ -709,6 +709,17 @@ mode through `ToolAnnotations.resultImportance = .important`; unmarked tools use
 the normal preview. This only changes terminal display, not what the model receives.
 `/set ui.title TEXT` adds `[TEXT]` to the prompt and sets the terminal/tab title
 with an ANSI escape sequence; `/set ui.title none` clears the configured label.
+`/set ui.mode buffer` enables a full-screen output buffer. Page Up/Page Down
+(Re Pág/Av Pág) and the mouse wheel scroll the session transcript while the
+status bar and editable prompt stay fixed at the bottom. Output is retained in
+memory, including tool output and submitted commands, and reflows when the
+terminal resizes. Incoming output keeps your place while you scroll; Page Down
+to the end resumes following it. Submitting input or pressing Ctrl+L also returns
+to the latest output. The setting persists; `/set ui.mode classic` restores the
+default terminal scrollback behavior. Buffer mode restores the shell's screen
+and mouse handling on exit and during terminal handoffs. Hold Shift to select
+text using your terminal's normal mouse selection. Saved conversations remain
+available separately through `/chat log` and the project's `.pmai/chats` files.
 `/set ui.editor COMMAND` picks the editor `/edit`, `/reply`, and the other
 editor commands hand the terminal to; it is saved in the configuration and used
 before `$EDITOR`, `$VISUAL`, and vim, which are what an unset (or

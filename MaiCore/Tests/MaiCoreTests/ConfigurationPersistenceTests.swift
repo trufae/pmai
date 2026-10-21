@@ -139,6 +139,15 @@ func terminalEditorSetting() throws {
   #expect(try JSONDecoder().decode(ConfiguredTerminalUI.self, from: saved) == configured)
 }
 
+@Test("Terminal output mode defaults to classic and persists buffer mode")
+func terminalOutputModeSetting() throws {
+  let decoder = JSONDecoder()
+  #expect(try decoder.decode(ConfiguredTerminalUI.self, from: Data("{}".utf8)).mode == .classic)
+  let configured = ConfiguredTerminalUI(mode: .buffer)
+  #expect(try decoder.decode(ConfiguredTerminalUI.self,
+    from: JSONEncoder().encode(configured)) == configured)
+}
+
 @Test("Compact prompt templates require the transcript placeholder")
 func compactPromptRequiresTranscript() {
   let configuration = MaiConfiguration(
