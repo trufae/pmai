@@ -125,6 +125,8 @@ def main(binary):
                 assert b'\x1b[?1006h' in captured, captured
                 send('/set ui.mode classic\r')
                 wait_for('\x1b[?1049l')
+                send('/clear\r')
+                wait_for('\x1b[2J')
                 send('/set ui.mode buffer\r')
                 wait_for('\x1b[?1006h')
                 assert json.loads(config.read_text())['ui']['mode'] == 'buffer'
@@ -301,6 +303,16 @@ def main(binary):
                 send('\x0c')
                 wait_for('NEW OUTPUT WHILE SCROLLED')
                 assert 'draft last' in screen[rows], screen
+
+                # Clear the display during streaming, then keep receiving output.
+                send('\x7f' * len('draft first\ndraft last') + '/clear\r')
+                wait_for('\x1b[2J')
+                assert not any(line.strip() for line in output()), screen
+                send('\x0c')
+                read_for()
+                assert not any(line.strip() for line in output()), screen
+                chunks.put('AFTER_CLEAR\n')
+                wait_for('AFTER_CLEAR')
 
                 chunks.put(None)
                 wait_for('✓ took')

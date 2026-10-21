@@ -212,8 +212,8 @@ with `-r`, or on `/chat use` — and says so.
 
 Records are purged two ways. `/jobs clear` forgets the finished processes
 and drops every record of the chat at the prompt that the table no longer
-holds, so what stays in the file is what the tree still shows. `/clear` and
-`/chat clear` drop them with the conversation, and forget the finished
+holds, so what stays in the file is what the tree still shows. `/chat clear`
+drops them with the conversation, and forgets the finished
 processes under the chat so the next save does not bring them back; children
 still running keep going and are saved again when they end.
 

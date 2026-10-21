@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check chat settings, launch precedence, and isolation without a model server."""
 import json
+from datetime import datetime
 from smoke import clean_environment, run_repl
 from pathlib import Path
 import sys
@@ -108,6 +109,11 @@ def main():
                       '/chat use latest', '/model'], env=aliases[0])
         assert 'Chat: hello::chosen' in output, output
         assert 'Chat: alternate::different' in output, output
+        for saved in (retained, latest):
+            started = datetime.fromisoformat(saved['createdAt'].replace('Z', '+00:00'))
+            stamp = started.astimezone().strftime('%Y-%m-%d %H:%M')
+            count = sum(m['role'] != 'system' for m in saved['messages'])
+            assert f'Started: {stamp} · {count} messages' in output, output
         assert_restored(retained_path, retained)
         assert_restored(latest_path, latest)
 

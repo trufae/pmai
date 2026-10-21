@@ -65,6 +65,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var transcript = TerminalOutputBuffer()
   private var thinkingBlock: Int?
   private var replyBlock: Int?
+  /// Tool handles remain unique when /clear discards their transcript lines.
+  private var toolBlocks: [Int: Int] = [:]
+  private var nextToolBlock = 0
   private var paintedOutputRows: [String] = []
   private var active = false
   private var resizeSource: (any DispatchSourceProtocol)?
@@ -256,13 +259,17 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   func writeTool(call: ToolCall?, result: ToolResult?, prefix: String, block: Int?) -> Int {
     lock.withLock {
       refreshSize()
-      let index = transcript.appendTool(call: call, result: result, prefix: prefix, to: block)
+      let line = block.flatMap { toolBlocks.removeValue(forKey: $0) }
+      let index = transcript.appendTool(call: call, result: result, prefix: prefix, to: line)
+      let handle = nextToolBlock
+      nextToolBlock += 1
+      if result == nil { toolBlocks[handle] = index }
       if active, ui.mode == .buffer {
         outputEndedLine = true
         drawOutputRows()
         placeCaret()
       }
-      return index
+      return handle
     }
   }
 
@@ -513,9 +520,19 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   func clearScreen() {
+    clearScreen(clearOutput: false)
+  }
+
+  func clearScreen(clearOutput: Bool) {
     lock.withLock {
       guard active else { return }
       refreshSize()
+      if clearOutput {
+        transcript.clear()
+        thinkingBlock = nil
+        replyBlock = nil
+        toolBlocks.removeAll()
+      }
       if ui.mode == .buffer {
         transcript.follow()
         write("\u{1B}[2J")

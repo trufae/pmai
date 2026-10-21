@@ -515,6 +515,7 @@ then dates), newest first, with their agent, size, and last-update time, and
 lists archived chats last; `/chat list active` and `/chat list archived` narrow
 it down. `/chat use INDEX|ID|TITLE` switches by list entry; `/chat previous`
 goes to an older chat and `/chat next` to a newer one, wrapping at either end.
+Switching chats shows when the conversation started and how many messages it contains.
 `/chat fork [TITLE]` copies the current conversation and switches to the copy,
 preserving messages, attachments, agent settings, and saved subagent history.
 The fork is an active chat with fresh chat and provider session IDs; its default
@@ -524,7 +525,9 @@ in the selected copy, and `/chat use` returns to the original.
 moves a chat out of the active list (archiving the current chat starts a new
 one), `/chat unarchive` brings it back, and `new`, `rename`, and `close` manage
 chats, while `messages`, `log`, `edit`, `del`, `undo`, `trim`, and `clear`
-operate on the active transcript. Tab completes commands, chat selectors,
+operate on the active transcript. `/clear` clears the terminal screen while
+keeping the conversation; `/chat clear` clears the conversation and restores
+configured instructions. Tab completes commands, chat selectors,
 agents, and providers: one match is typed out, and several open a rotating
 menu on the status line above the prompt instead of printing into the chat.
 The first match is inserted immediately; each further Tab selects the next.

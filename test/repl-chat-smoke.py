@@ -72,6 +72,11 @@ path.write_text('Edited in editor: ' + path.read_text())
             return run_repl(command, commands, cwd=root, env=env, split=True)
 
         reset()
+        output = run(['/clear'])[0]
+        assert 'Conversation cleared.' not in output and '\x1b' not in output, output
+        assert messages() == fixture, messages()
+
+        reset()
         quiet, explicit, verbose, compact, invalid, extra = run([
             '/chat log', '/chat log quiet', '/chat log verbose', '/chat messages',
             '/chat log invalid', '/chat log verbose extra',
@@ -173,7 +178,9 @@ path.write_text('Edited in editor: ' + path.read_text())
         assert 'SECOND PARAGRAPH' not in (root / 'pins-short.txt').read_text()
         run(['/chat log short > short.txt'])
         assert '[2] 📌 User: First line continued' in (root / 'short.txt').read_text()
-        run(['/chat clear'])
+        output = run(['/chat clear'])[0]
+        assert 'Conversation cleared.' in output, output
+        assert all(m['role'] == 'system' for m in messages()), messages()
         assert not any(m.get('isPinned', False) for m in messages())
         for output in run(['/chat pin', '/chat pins', '/chat pins short']):
             assert 'No pinned messages.' in output, output

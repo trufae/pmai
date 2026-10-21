@@ -107,6 +107,16 @@ actor TerminalWriter {
     self.screen?.configureMarkdown(markdown)
   }
 
+  func clearScreen() {
+    guard terminalOutput, REPLRedirection.current == nil else { return }
+    if let screen {
+      screen.clearScreen(clearOutput: true)
+    } else {
+      FileHandle.standardOutput.write(Data("\u{1B}[2J\u{1B}[H".utf8))
+    }
+    outputEndedLine = true
+  }
+
   /// Installs the renderer for replies. Captured output stays verbatim because
   /// it is shown by surfaces that do not interpret escape sequences.
   func configureMarkdown(_ renderer: MarkdownTerminalRenderer?) {

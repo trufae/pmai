@@ -5386,11 +5386,7 @@ struct MaiCLI {
     case "/stats":
       await handleStatsCommand(argument, store: services.usageStats, terminal: terminal)
     case "/clear":
-      session.reset()
-      // The agents the cleared runs started leave the table with them, so
-      // the next save does not bring them back; running ones stay.
-      if let chatProcess { await runtime.supervisor.clearFinished(under: chatProcess) }
-      await terminal.line("Conversation cleared.")
+      await terminal.clearScreen()
     case "/queue":
       await terminal.line("The message queue lives at the terminal prompt.\n" + queueHelp)
     case "/reply":
@@ -11625,6 +11621,9 @@ struct MaiCLI {
     let status = chat.isArchived ? ", archived" : ""
     await terminal.line(
       "Switched to '\(chat.displayTitle)' (agent \(chat.primaryAgent.id)\(status)).")
+    let count = chat.conversationMessages.count
+    await terminal.line(
+      "Started: \(ChatDatePresentation.timestamp(chat.createdAt)) · \(count) message\(count == 1 ? "" : "s")")
   }
 
   private enum ChatListScope {
@@ -13112,7 +13111,7 @@ struct MaiCLI {
     /btw PROMPT            Ask in parallel, in a fresh context, without changing this chat
     /cd PATH               Change the current working directory
     /chat                  List, switch, fork, archive, rename, or edit this project's chats
-    /clear                 Clear conversation history
+    /clear                 Clear the screen, keeping the conversation
     /continue              Resume a stopped or interrupted task, including queued messages
     /copy [N] [PATH]       Copy the last reply, or N messages, to the clipboard or a file
     /cwd                   Print the current working directory

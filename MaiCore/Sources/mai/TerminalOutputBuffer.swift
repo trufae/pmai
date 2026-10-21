@@ -77,6 +77,18 @@ struct TerminalOutputBuffer {
 
   mutating func follow() { top = nil }
 
+  mutating func clear() {
+    lines = [Line()]
+    thinkingBlocks.removeAll()
+    activeThinking.removeAll()
+    replyBlocks.removeAll()
+    toolBlocks.removeAll()
+    cursor = 0
+    style = ""
+    escape = ""
+    top = nil
+  }
+
   mutating func configureColors(_ ui: ConfiguredTerminalUI?) {
     guard colors != ui else { return }
     colors = ui
