@@ -1,4 +1,5 @@
 import Foundation
+import MaiStandardTools
 
 #if canImport(Android)
   import Android
@@ -84,6 +85,8 @@ final class REPLRedirection: @unchecked Sendable {
   private let process: Process?
   private let output: Task<Data, Never>?
   private let errors: Task<Data, Never>?
+  private var terminalCommand: String?
+  private var temporaryInput: URL?
 
   init(path: String, append: Bool) throws {
     let expanded = NSString(string: path).expandingTildeInPath
@@ -106,6 +109,23 @@ final class REPLRedirection: @unchecked Sendable {
   }
 
   init(command: String) throws {
+    // A pager must see the tty, and the editor must not consume its keys.
+    // Spool first so a full pipe cannot block the command before the handoff.
+    #if !os(Windows)
+    if isatty(STDIN_FILENO) != 0, isatty(STDOUT_FILENO) != 0 {
+      let url = FileManager.default.temporaryDirectory.appendingPathComponent("pmai-pipe-\(UUID())")
+      guard FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600]) else {
+        throw REPLRedirectError("Cannot create pipeline input")
+      }
+      handle = try FileHandle(forWritingTo: url)
+      process = nil
+      output = nil
+      errors = nil
+      terminalCommand = command
+      temporaryInput = url
+      return
+    }
+    #endif
     let child = Process()
     #if canImport(Android)
       child.executableURL = URL(fileURLWithPath: "/system/bin/sh")
@@ -177,6 +197,18 @@ final class REPLRedirection: @unchecked Sendable {
       return true
     }
     guard didClose else { return }
+    if let command = terminalCommand, let url = temporaryInput {
+      defer { try? FileManager.default.removeItem(at: url) }
+      let quoted = "'" + url.path.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
+      do {
+        try await MaiRunTerminalHost.shared.run {
+          let status = try TerminalCommand.run("(\(command)) < \(quoted)", suspendTerminal: false)
+          if status != 0 { throw REPLRedirectError("pipe exited with status \(status >> 8)") }
+        }
+      } catch {
+        await terminal.note("redirection: \(error.localizedDescription)", tone: .error)
+      }
+    }
     if let process {
       await withTaskCancellationHandler {
         await withCheckedContinuation { continuation in

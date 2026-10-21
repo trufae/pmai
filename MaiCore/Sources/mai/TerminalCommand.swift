@@ -14,10 +14,10 @@ import Foundation
 /// Unlike system(), this observes stopped children and does not pass a Swift
 /// worker thread's blocked signals on to an interactive editor.
 enum TerminalCommand {
-  static func run(_ command: String) throws -> Int32 {
+  static func run(_ command: String, suspendTerminal: Bool = true) throws -> Int32 {
     var result: Result<Int32, Error> = .success(0)
     let launch = { result = Result { try Self.launch(command) } }
-    if let screen = TerminalScreen.current {
+    if suspendTerminal, let screen = TerminalScreen.current {
       screen.suspendTerminal(launch)
     } else {
       launch()

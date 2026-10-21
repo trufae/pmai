@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import pty
 import shlex
+import shutil
 import struct
 import subprocess
 import sys
@@ -14,6 +15,11 @@ import termios
 import time
 
 from smoke import clean_environment, expect_pty, read_pty
+
+
+def controlling_terminal():
+    os.setsid()
+    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
 
 def main():
@@ -74,7 +80,7 @@ def main():
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 160, 0, 0))
         process = subprocess.Popen(command, cwd=root, env=env,
-                                   stdin=slave, stdout=slave, stderr=slave)
+                                   stdin=slave, stdout=slave, stderr=slave, preexec_fn=controlling_terminal)
         os.close(slave)
         pending = bytearray()
 
@@ -94,6 +100,13 @@ def main():
             wait('pmai> ')
             os.write(master, b'banana terminal\r')
             wait('✓ took')
+            if shutil.which('less'):
+                os.write(master, b'/chat log|less\r')
+                wait('(END)')
+                os.write(master, b'q')
+                wait('pmai> ')
+                submit(b'/version > after-pager.txt')
+                assert (root / 'after-pager.txt').read_text() == version
             submit(paste('/chat last > pasted.txt'))
             assert not (root / 'pasted.txt').exists()
             submit(paste('/chat last > literal.txt') + b' > typed.txt')
