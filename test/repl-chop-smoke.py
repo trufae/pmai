@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Check chat chopping, linked tool messages, persistence, and real modal input."""
+"""Check chat editing/chopping, linked tool messages, persistence, and real modal input."""
 import fcntl
 import json
 import os
 from pathlib import Path
 import pty
+import shlex
 import struct
 import subprocess
 import sys
@@ -29,7 +30,14 @@ def main():
         history = root / 'history.json'
         env = clean_environment()
         env.pop('NO_COLOR', None)
-        env.update(TERM='xterm-256color', PWD=str(root))
+        editor = root / 'editor.py'
+        editor.write_text('''from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+path.write_text(path.read_text() + ' edited')
+''')
+        env.update(TERM='xterm-256color', PWD=str(root),
+                   EDITOR=shlex.join([sys.executable, str(editor)]))
         command = [binary, '--config', str(config), '--home', str(root / 'home'),
                    '--history', str(history), '--no-stream']
         run_repl(command, ['/chat rename Chop fixture', 'Seed'], cwd=root, env=env)
@@ -58,6 +66,10 @@ def main():
             text('last', 'assistant', '**Last answer**'),
         ]
 
+        attachment = {'file': {'_0': {'name': 'notes.txt', 'mimeType': 'text/plain',
+                                      'source': {'url': {'_0': 'file:///notes.txt'}}}}}
+        fixture[-1]['content'].append(attachment)
+
         def reset(messages=fixture):
             saved.write_text(json.dumps(chat | {'messages': messages}))
 
@@ -69,6 +81,19 @@ def main():
 
         def run(commands):
             return run_repl(command, commands, cwd=root, env=env)
+
+        # Editing stays on the selected message, preserves attachments, and is durable.
+        reset()
+        output = run(['/chat chop', 'e', 'p', 'edit', 'n', 'q'])
+        assert 'e edit' in output, output
+        assert 'Edited message 8 (id: last).' in output, output
+        assert 'Edited message 7 (id: second).' in output, output
+        assert output.count('## [8/8] Assistant (id: last)') == 3, output
+        expected = json.loads(json.dumps(fixture))
+        for index in (6, 7):
+            expected[index]['content'][0]['text']['_0'] += ' edited'
+        assert messages() == expected, messages()
+        assert 'Hello from MaiCore:' not in output, output
 
         reset()
         output = run(['/chat chop', 'n', 'p', 'd', 'p', 'p', 'd', 'x', 'p', 'x', 'p', 'p', 'q'])
@@ -118,7 +143,7 @@ def main():
 
         def open_chop():
             send('/chat chop\r')
-            return wait('chop [n/p/d/x/q]> ')
+            return wait('chop [n/p/e/d/x/q]> ')
 
         try:
             wait('pmai> ')
@@ -128,14 +153,19 @@ def main():
             for invalid in ('not a choice', '$invalid', '@main invalid', '!invalid'):
                 send(invalid + '\r')
                 wait('Choose n (next)')
-                wait('chop [n/p/d/x/q]> ')
+                wait('chop [n/p/e/d/x/q]> ')
                 assert messages() == fixture, messages()
             send('p\t\r')
             wait('## [7/8] User (id: second)')
-            wait('chop [n/p/d/x/q]> ')
+            wait('chop [n/p/e/d/x/q]> ')
+            send('e\t\r')
+            wait('Edited message 7 (id: second).')
+            wait('chop [n/p/e/d/x/q]> ')
+            assert messages()[6]['content'][0]['text']['_0'] == 'Second question edited', messages()
+            assert ids() == [m['id'] for m in fixture], messages()
             send('d\r')
             wait('## [7/7] Assistant (id: last)')
-            wait('chop [n/p/d/x/q]> ')
+            wait('chop [n/p/e/d/x/q]> ')
             assert ids() == [m['id'] for m in fixture if m['id'] != 'second'], messages()
             send('\x03')
             wait('Chat chop closed.')
@@ -157,7 +187,7 @@ def main():
             assert process.wait(timeout=5) == 0
             assert termios.tcgetattr(master) == cooked
             saved_history = json.loads(history.read_text())
-            for answer in ('n', 'p', 'd', 'x', 'q', 'not a choice', '$invalid', '@main invalid', '!invalid'):
+            for answer in ('n', 'p', 'e', 'edit', 'd', 'x', 'q', 'not a choice', '$invalid', '@main invalid', '!invalid'):
                 assert answer not in saved_history, saved_history
             assert ids() == [m['id'] for m in fixture if m['id'] != 'second'], messages()
         finally:
@@ -165,7 +195,7 @@ def main():
                 process.kill()
                 process.wait()
             os.close(master)
-    print('PASS chat chop: navigation, linked deletion and trimming, immediate persistence, modal input and exits')
+    print('PASS chat chop: editing, attachments, navigation, linked deletion and trimming, immediate persistence, modal input and exits')
 
 
 if __name__ == '__main__':

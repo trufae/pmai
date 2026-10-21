@@ -231,9 +231,10 @@ you can paste a command and then type its redirection suffix.
 
 `/chat chop` opens a modal prompt at the newest conversation message and shows
 its index, role, and full Markdown text. Enter `n` for the next message, `p` for
-the previous message, `d` to delete it, or `x` to chop everything after it.
-After deletion it selects the next surviving message, or the previous one at
-the end. Changes are saved immediately and use the same linked-tool rules as
+the previous message, `e` to edit it in the configured editor, `d` to delete it,
+or `x` to chop everything after it. Editing keeps the current selection and
+preserves attachments. After deletion it selects the next surviving message,
+or the previous one at the end. Changes are saved immediately and use the same linked-tool rules as
 `/chat del` and `/chat trim`. Enter `q` or press Ctrl+C to leave; slash commands
 also leave the prompt. Modal answers are kept out of input history and never
 sent to the model.
