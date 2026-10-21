@@ -238,6 +238,7 @@ extension AgentRuntime {
     for request: AgentRequest,
     depth: Int = 0
   ) throws -> [ToolDefinition] {
+    guard toolsEnabled else { return [] }
     for name in request.subagentNames where agents[name] == nil {
       throw AgentRuntimeError.agentNotRegistered(name)
     }

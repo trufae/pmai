@@ -5,6 +5,9 @@ extension AgentRuntime {
   /// model turn or an approval round trip. Hosts should expose this only from
   /// deliberate UI actions such as a terminal, never from generated content.
   public func runTool(_ call: ToolCall, for agent: AgentDefinition) async throws -> ToolResult {
+    guard toolsEnabled else {
+      return ToolResult(callID: call.id, text: "Error: all tools are disabled globally (/tools off).", isError: true)
+    }
     let request = request(for: agent, messages: [])
     let definitions = try visibleDefinitions(for: request)
     let name = AgentProcessTools.canonicalName(call.name)
@@ -28,6 +31,9 @@ extension AgentRuntime {
     }
 
     await recordToolUse(definition.name)
+    guard toolsEnabled else {
+      return ToolResult(callID: call.id, text: "Error: all tools are disabled globally (/tools off).", isError: true)
+    }
     let context = ToolExecutionContext(
       run: .init(runID: UUID(), parentRunID: nil, agentID: agent.id, depth: 0), modelTurn: 0)
     do {
@@ -107,6 +113,9 @@ extension AgentRuntime {
     emit: @escaping AgentEventHandler
   ) async throws -> ToolResult {
     let context = execution.run
+    guard toolsEnabled else {
+      return await fail(call, "all tools are disabled globally (/tools off).", parent: context, emit: emit)
+    }
     // A proxied model that names a hidden tool directly still gets it run:
     // the proxy saves tokens, it is not a permission boundary.
     var resolvedCall: ToolCall
@@ -248,7 +257,13 @@ extension AgentRuntime {
       await emit(.toolFinished(context, result))
       return result
     }
+    guard toolsEnabled else {
+      return await fail(approvedCall, "all tools are disabled globally (/tools off).", parent: context, emit: emit)
+    }
     await emit(.toolStarted(context, approvedCall))
+    guard toolsEnabled else {
+      return await fail(approvedCall, "all tools are disabled globally (/tools off).", parent: context, emit: emit)
+    }
     // Approval and event handlers can yield while the user switches modes.
     guard internetAccess.allows(definition, in: availableToolGroups()) else {
       return await fail(

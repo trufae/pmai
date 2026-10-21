@@ -2637,3 +2637,26 @@ func learnedToolExposureRuntime() async throws {
   _ = try await runtime.run(request)
   #expect(await provider.requests.last?.tools.map(\.name) == [ToolProxy.listName, ToolProxy.callName])
 }
+
+@Test("Global tool switch hides all schemas and rejects stale calls without changing agents")
+func globalToolsSwitch() async throws {
+  let runtime = AgentRuntime()
+  let definition = ToolDefinition(name: "fixture", description: "Fixture", annotations: .init(approval: .automatic))
+  let tool = ClosureTool(definition: definition) { _, _ in ToolOutput(text: "EXECUTED") }
+  try await runtime.register(tool: tool)
+  let agent = AgentDefinition(id: "main", provider: "scripted", model: "fixture", toolNames: ["fixture"])
+  let request = AgentRequest(provider: "scripted", model: "fixture", messages: [], toolNames: ["fixture"])
+  let definitions = try await runtime.visibleDefinitions(for: request)
+  #expect(definitions.contains { $0.name == "fixture" })
+  await runtime.configureToolsEnabled(false)
+  #expect(try await runtime.visibleDefinitions(for: request).isEmpty)
+  let call = ToolCall(id: "stale", name: "fixture", arguments: .object([:]))
+  let execution = ToolExecutionContext(run: .init(runID: UUID(), parentRunID: nil, agentID: "main", depth: 0), modelTurn: 0)
+  let stale = try await runtime.execute(call, definitions: definitions, request: request, execution: execution,
+    budget: RunBudget(limits: .init()), emit: { _ in })
+  #expect(stale.isError && stale.text.contains("disabled globally"))
+  #expect(try await runtime.runTool(call, for: agent).isError)
+  await runtime.configureToolsEnabled(true)
+  #expect(try await runtime.visibleDefinitions(for: request).contains { $0.name == "fixture" })
+  #expect(try await runtime.runTool(call, for: agent).text == "EXECUTED")
+}

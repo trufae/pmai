@@ -827,6 +827,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
   public var use: ConfiguredUse
   public var documentExport: DocumentExportOptions
   public var airplane: Bool
+  public var toolsEnabled: Bool
   public var redact: RedactionMode
 
   public init(
@@ -847,6 +848,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
     use: ConfiguredUse = .init(),
     documentExport: DocumentExportOptions = .init(),
     airplane: Bool = false,
+    toolsEnabled: Bool = true,
     redact: RedactionMode = .off
   ) {
     self.version = version
@@ -866,6 +868,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
     self.use = use
     self.documentExport = documentExport
     self.airplane = airplane
+    self.toolsEnabled = toolsEnabled
     self.redact = redact
   }
 
@@ -873,7 +876,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
     case version, defaultAgent, taskAgents, plugins, providers, toolSources, ocrProviders,
       mcpServers, agents,
       prompts, memory, ui,
-      approvals, fileAccess, use, documentExport, airplane, redact
+      approvals, fileAccess, use, documentExport, airplane, redact, toolsEnabled
   }
 
   public init(from decoder: Decoder) throws {
@@ -903,6 +906,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
       documentExport: try container.decodeIfPresent(DocumentExportOptions.self, forKey: .documentExport)
         ?? .init(),
       airplane: try container.decodeIfPresent(Bool.self, forKey: .airplane) ?? false,
+      toolsEnabled: try container.decodeIfPresent(Bool.self, forKey: .toolsEnabled) ?? true,
       // Older versions stored a rules filename here. Only the fixed redact.txt
       // file is supported now; obsolete values must not prevent startup.
       redact: (try? container.decodeIfPresent(RedactionMode.self, forKey: .redact)) ?? .off)
