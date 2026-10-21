@@ -196,12 +196,15 @@ the other configured providers.
 API-key endpoints use the provider kind `openai`. Legacy `openAICompatible`
 records are accepted and written back as `openai` when saved.
 
-Use `/chat list` for a compact indexed history or `/chat log` for the complete
-structured transcript, including attachments, reasoning, tool calls, tool
-results, and structured MCP output. Message headers are bold in the theme's
-`fginfo` color, and message text, reasoning, and tool-result text use Markdown
-rendering when enabled. The current in-memory conversation can be
-changed at any point with `/chat edit INDEX TEXT`, `/chat del INDEX`,
+Use `/chat messages` for a compact indexed history or `/chat log` for the
+conversation text and attachments. Logs are quiet by default: reasoning, tool
+calls, and tool outputs are hidden. `/chat log verbose` includes all of these,
+including structured MCP output; `/chat log quiet` explicitly selects the default.
+Message indexes retain their original positions even when messages are hidden.
+Message headers are bold in the theme's `fginfo` color, and text uses Markdown
+rendering when enabled. The current in-memory conversation can be changed at
+any point with `/chat edit INDEX [TEXT]` (opens the editor when TEXT is omitted,
+the same as `/edit chat INDEX` or `/edit INDEX`), `/chat del INDEX`,
 `/chat undo [INDEX]`, `/chat trim INDEX`, `/chat compact [FOCUS]`, and `/chat
 clear`. Positive message indexes are 1-based; negative indexes count back from
 the end, so `-1` selects the last message. Compaction accepts optional guidance

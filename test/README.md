@@ -56,6 +56,7 @@ Session persistence regression checks use temporary projects and configurations:
     python3 test/repl-defaults-smoke.py MaiCore/.build/debug/pmai
     python3 test/repl-resume-smoke.py MaiCore/.build/debug/pmai
     python3 test/repl-fork-smoke.py MaiCore/.build/debug/pmai
+    python3 test/repl-chat-smoke.py MaiCore/.build/debug/pmai
     python3 test/projects-repl-smoke.py MaiCore/.build/debug/pmai
     python3 test/remote-repl-smoke.py MaiCore/.build/debug/pmai
     python3 test/repl-resume-state-smoke.py MaiCore/.build/debug/pmai
