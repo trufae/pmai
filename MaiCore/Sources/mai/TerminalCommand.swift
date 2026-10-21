@@ -111,9 +111,12 @@ enum TerminalCommand {
       }
       var child: pid_t = 0
       #if canImport(Android)
-        var initializedActions: posix_spawn_file_actions_t?
-        try check(posix_spawn_file_actions_init(&initializedActions))
-        guard var actions = initializedActions else { throw posixError(ENOMEM) }
+        // Unlike spawn attributes, Bionic declares the initializer's output
+        // handle non-optional. Let it initialize storage before reading it.
+        var actions = try withUnsafeTemporaryAllocation(of: posix_spawn_file_actions_t.self, capacity: 1) {
+          try check(posix_spawn_file_actions_init($0.baseAddress!))
+          return $0[0]
+        }
       #else
         #if canImport(Darwin)
           var actions: posix_spawn_file_actions_t?
@@ -130,7 +133,7 @@ enum TerminalCommand {
       #if canImport(Android)
         // posix_spawn accepts the nullable handle, unlike the setters above.
         initialized = attributes
-        initializedActions = actions
+        var initializedActions: posix_spawn_file_actions_t? = actions
         try check(posix_spawn(&child, shell, &initializedActions, &initialized, arguments, environment))
       #else
         try check(posix_spawn(&child, shell, &actions, &attributes, arguments, environment))
