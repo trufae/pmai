@@ -19,7 +19,7 @@ def manifest(package, **settings):
     return subprocess.run(
         [env.get('SWIFT', 'swift'), 'package', '--package-path', str(ROOT / package),
          '--disable-prefetching', 'dump-package'],
-        env=env, capture_output=True, text=True, timeout=60)
+        env=env, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60)
 
 
 class DownloadProfiles(unittest.TestCase):
