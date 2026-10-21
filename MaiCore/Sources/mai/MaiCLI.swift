@@ -760,6 +760,7 @@ struct REPLSession: Sendable {
   var title: String
   var profile: SessionProfile
   var history: AgentTranscript
+  var fileAccessLog: FileAccessLog
   var pendingContent: [ContentPart]
   var createdAt: Date
   var updatedAt: Date
@@ -786,6 +787,7 @@ struct REPLSession: Sendable {
     self.title = title ?? profile.agentID
     self.profile = profile
     history = AgentTranscript(messages: Self.initialHistory(for: profile))
+    fileAccessLog = FileAccessLog()
     self.pendingContent = pendingContent
     self.createdAt = createdAt
     self.updatedAt = updatedAt
@@ -800,6 +802,7 @@ struct REPLSession: Sendable {
     title = chat.title
     profile = SessionProfile(definition: chat.primaryAgent)
     history = AgentTranscript(messages: chat.messages)
+    fileAccessLog = FileAccessLog(paths: chat.accessedFiles)
     pendingContent = chat.pendingContent
     createdAt = chat.createdAt
     updatedAt = chat.updatedAt
@@ -816,6 +819,7 @@ struct REPLSession: Sendable {
       primaryAgent: profile.agentDefinition,
       messages: history.messages,
       pendingContent: pendingContent,
+      accessedFiles: fileAccessLog.snapshot(),
       createdAt: createdAt,
       updatedAt: updatedAt,
       isArchived: isArchived,
@@ -840,6 +844,7 @@ struct REPLSession: Sendable {
     history.replaceAll(with: Self.initialHistory(for: self.profile))
     pendingContent.removeAll()
     subagents.removeAll()
+    fileAccessLog = FileAccessLog()
     touch()
   }
 
@@ -1201,7 +1206,7 @@ private actor PromptFileAccess {
     approvalHandler: TerminalApprovalHandler, settings: ConfiguredFileAccess,
     environment: [String: String]
   ) {
-    policy = MaiFileAccessPolicy(hidden: settings.hidden) { url, operation in
+    policy = MaiFileAccessPolicy(hidden: settings.hidden, sensitive: settings.sensitive) { url, operation in
       try await approvalHandler.decidePromptPathAccess(
         url, operation: operation, preparingTurn: operation == "/vdb", forceConfirmation: true)
     }
@@ -1930,7 +1935,7 @@ struct MaiCLI {
       let access = configuration?.fileAccess ?? .init()
       // Direct browsing has no agent session to request a tool approval in.
       // Ask rules remain inaccessible until the host explicitly allows them.
-      let policy = MaiFileAccessPolicy(hidden: access.hidden) { _, _ in false }
+      let policy = MaiFileAccessPolicy(hidden: access.hidden, sensitive: access.sensitive) { _, _ in false }
       for rule in access.rules {
         policy.set(
           .init(
@@ -2400,6 +2405,7 @@ struct MaiCLI {
     // turns ago is still the current run's child, so it stays collectable,
     // and a message typed while a turn runs has a pid to wait in.
     var chatProcessIDs: [UUID: AgentPID] = [:]
+    var fileAccessLogs: [UUID: FileAccessLog] = [session.id: session.fileAccessLog]
     // Chats whose saved agents were put back in the process table this
     // session: once is enough, and clearing the table must not bring them
     // back.
@@ -2641,6 +2647,13 @@ struct MaiCLI {
     /// saved copy, and what the table has since forgotten stays as saved.
     /// Called wherever the workspace is about to be written.
     func recordSubagents() async {
+      fileAccessLogs[session.id] = session.fileAccessLog
+      for (id, log) in fileAccessLogs where id != session.id {
+        if var chat = workspace.chats.first(where: { $0.id == id }), chat.accessedFiles != log.snapshot() {
+          chat.accessedFiles = log.snapshot()
+          workspace.upsert(chat)
+        }
+      }
       if let configuration {
         session.runtimeConfiguration = AgentChatConfiguration(
           configuration: configuration, providerBaseURLs: services.providerBaseURLs.snapshot())
@@ -2674,6 +2687,9 @@ struct MaiCLI {
     // providers before changing them, and leave a failed switch on its old chat.
     func restoreChatConfiguration(previous: REPLSession, isNewChat: Bool) async throws {
       guard previous.id != session.id else { return }
+      fileAccessLogs[previous.id] = previous.fileAccessLog
+      if let log = fileAccessLogs[session.id] { session.fileAccessLog = log }
+      else { fileAccessLogs[session.id] = session.fileAccessLog }
       if isNewChat {
         session.runtimeConfiguration = previous.runtimeConfiguration
         return
@@ -2772,10 +2788,13 @@ struct MaiCLI {
         }
       }
       await output.resetResponse()
+      let fileAccessLog = session.fileAccessLog
       let task = Task {
         try await withTaskCancellationHandler {
-          try await runtime.run(request, process: pid) { event in
-            await output.consume(event)
+          try await FileAccessLog.$current.withValue(fileAccessLog) {
+            try await runtime.run(request, process: pid) { event in
+              await output.consume(event)
+            }
           }
         } onCancel: {
           redirection?.cancel()
@@ -4493,6 +4512,7 @@ struct MaiCLI {
         "Outside allowed paths: \(state.outside.rawValue). Deny rules override ask and allow rules; ask requires confirmation on each call, even in yolo mode."
       )
       await terminal.line("Hidden paths: \(state.hidden.rawValue) (dotfiles and dot directories; explicit rules override this default).")
+      await terminal.line("Sensitive paths: \(state.sensitive.rawValue) (keys, credential stores, and encrypted files; explicit rules override this default).")
       if !state.outsideConfigured {
         await terminal.line("Explicit prompt paths may add grants using tool approval; /path outside deny disables automatic additions.")
       }
@@ -4503,13 +4523,14 @@ struct MaiCLI {
     case "help":
       await terminal.line(pathHelp)
       return
-    case "hidden":
+    case "hidden", "sensitive":
       guard let policy = MaiFileAccessPolicy.Access(rawValue: value.lowercased()) else {
-        await terminal.line("Usage: /path hidden ask|deny|allow")
+        await terminal.line("Usage: /path \(command) ask|deny|allow")
         return
       }
-      access.policy.setHidden(policy)
-      await terminal.note("Files hidden path access: \(policy.rawValue)")
+      if command == "hidden" { access.policy.setHidden(policy) }
+      else { access.policy.setSensitive(policy) }
+      await terminal.note("Files \(command) path access: \(policy.rawValue)")
     case "outside":
       guard let policy = MaiFileAccessPolicy.Access(rawValue: value.lowercased()), policy != .allow
       else {
@@ -4563,7 +4584,7 @@ struct MaiCLI {
     if var draft = configuration, let configurationPath {
       let state = access.policy.snapshot()
       draft.fileAccess = .init(
-        outside: state.outsideConfigured ? state.outside : nil, hidden: state.hidden,
+        outside: state.outsideConfigured ? state.outside : nil, hidden: state.hidden, sensitive: state.sensitive,
         rules: state.rules.map {
           .init(path: $0.url.path, access: $0.access, descendants: $0.descendants)
         })
@@ -4609,6 +4630,7 @@ struct MaiCLI {
       let state = promptFileAccess.policy.snapshot()
       if access == .deny && (state.outsideConfigured
         || state.hidden == .deny && MaiFileAccessPolicy.isHidden(url)
+        || state.sensitive == .deny && MaiFileAccessPolicy.isSensitive(url)
         || state.rules.contains(where: {
           $0.access == .deny && $0.contains(url)
         })) {
@@ -4618,6 +4640,7 @@ struct MaiCLI {
       // An ask rule is per access. Naming it in a prompt never turns it into
       // an ongoing grant; the actual Files call will request confirmation.
       if access == .ask && (state.hidden == .ask && MaiFileAccessPolicy.isHidden(url)
+        || state.sensitive == .ask && MaiFileAccessPolicy.isSensitive(url)
         || state.rules.contains(where: {
           $0.access == .ask && $0.contains(url)
         })) {
@@ -4704,8 +4727,10 @@ struct MaiCLI {
         context: profile.context,
         sessionID: session.sessionID)
       let existingProcess = process
-      let result = try await runtime.run(request, process: existingProcess) { event in
-        await terminal.consume(event)
+      let result = try await FileAccessLog.$current.withValue(session.fileAccessLog) {
+        try await runtime.run(request, process: existingProcess) { event in
+          await terminal.consume(event)
+        }
       }
       process = await runtime.supervisor.tree().processes.first { $0.runID == result.runID }?.pid
       session.history.replaceAll(with: session.redactor?.unredact(result.transcript) ?? result.transcript)
@@ -11253,6 +11278,7 @@ struct MaiCLI {
     let url = URL(fileURLWithPath: path)
     do {
       let data = try DocumentAttachmentImporter.data(at: url)
+      session.fileAccessLog.record(url)
       let kind = DocumentAttachmentImporter.kind(for: data, filename: url.lastPathComponent)
       if kind == .image {
         session.pendingContent.append(
@@ -11488,6 +11514,15 @@ struct MaiCLI {
           chat: workspace.startNewChat(primaryAgent: session.profile.agentDefinition))
         await terminal.line("Closed '\(closed.displayTitle)'; started a new chat.")
       }
+    case "files":
+      guard rest.isEmpty else {
+        await terminal.line("Usage: /chat files")
+        return
+      }
+      let files = session.fileAccessLog.snapshot()
+      await terminal.line(files.isEmpty ? "No recorded file accesses in this conversation."
+        : files.joined(separator: "\n"))
+      await terminal.line("Recorded Files tool accesses and attachments; shell-internal accesses are not tracked. Older chats may have incomplete records.")
     case "messages":
       await handleChatCommand(
         "list",
@@ -12484,6 +12519,7 @@ struct MaiCLI {
       "/cwd", "/pwd", "/cd ", "/plugins",
       "/path", "/path list", "/path allow ", "/path deny ", "/path ask ",
       "/path del ", "/path outside ask", "/path outside deny", "/help path",
+      "/path sensitive ask", "/path sensitive deny", "/path sensitive allow",
       "/path hidden ask", "/path hidden deny", "/path hidden allow",
       "/providers", "/models ", "/provider ", "/provider add ", "/provider rename ",
       "/provider add local-apple --kind apple",
@@ -12531,7 +12567,7 @@ struct MaiCLI {
       "/chat use ", "/chat next", "/chat previous", "/chat info", "/chat session",
       "/chat session new", "/chat rename ",
       "/chat archive", "/chat unarchive ", "/chat close confirm", "/chat messages",
-      "/chat log", "/chat last", "/chat edit ", "/chat del ", "/chat undo", "/chat chop", "/chat trim ",
+      "/chat files", "/chat log", "/chat last", "/chat edit ", "/chat del ", "/chat undo", "/chat chop", "/chat trim ",
       "/chat clear", "/project", "/project info", "/project list", "/project name ",
       "/project tint ", "/project tint none", "/project del ",
     ]
@@ -12882,11 +12918,13 @@ struct MaiCLI {
     /path del PATH         Remove an explicit rule/grant; parent permissions still apply
     /path outside ask|deny Prompt or reject paths outside the allowed scope (default: deny)
     /path hidden ask|deny|allow Set the default for dotfiles and dot directories (default: ask)
+    /path sensitive ask|deny|allow Set the default for key, credential, and encrypted files (default: ask)
 
     Paths resolve relative to the Files workspace; ~, absolute paths, and quoted
     paths with spaces work. Existing directories cover descendants. Add a trailing
     / for a new directory. Deny overrides ask and allow; ask overrides allow.
-    On first startup, /etc, ~/.ssh, ~/.config, and hidden paths default to ask.
+    On first startup, /etc, /root, ~/.ssh, ~/.gnupg, ~/.config, hidden paths,
+    and key/credential/encrypted filenames default to ask.
     Rules and /path edits are saved in configuration; prompt grants last for this
     session. Explicit rules override the hidden-path default. These checks apply
     to Files and vdb, including child agents. Path prompts remain active in yolo
@@ -13097,7 +13135,7 @@ struct MaiCLI {
     Settings commands:
       /set                         List current settings and their values
       /set effort [LEVEL] [TEXT]   Show or set reasoning effort and optional guidance
-      /set tool.aproval MODE       yolo (default), ask for every tool, or smart model review; saved for this project
+      /set tool.aproval MODE       yolo, ask (default) for every tool, or smart model review; saved for this project
       /set debug <true|false>       Log model calls, tool activity, and run events for this project
       /set debugfile <PATH|default> Save debug logs at PATH; default uses .pmai/debug.jsonl
       /set tool.                   List the tool calling settings
@@ -13157,6 +13195,7 @@ struct MaiCLI {
       /chat archive [INDEX|ID|TITLE]  Archive a chat; archiving the active one starts fresh
       /chat unarchive INDEX|ID|TITLE  Return an archived chat to the active list
       /chat close confirm           Permanently close the active chat
+      /chat files                   List files accessed in this conversation
       /chat messages                Display a compact indexed message list
       /chat log           Display the full structured conversation
       /chat last          Display the latest assistant response
@@ -13172,6 +13211,11 @@ struct MaiCLI {
     Message indexes are 1-based. Negative indexes count back from the end;
     -1 selects the last message, -2 the second-to-last, and so on.
     Removing a tool call or result also removes its linked tool transaction.
+    /chat files keeps a sorted, unique record of Files content reads (including
+    grep scans), writes, renames, deletions, and attachments across resumed turns,
+    compaction, and child agents. Shell-internal file accesses are not observable.
+    Older chats only include accesses recorded after this feature was added.
+
     /chat chop starts at the newest conversation message: n next, p previous,
     d delete, x keep through this message, q or Ctrl+C quit. Changes are saved
     immediately; slash commands leave the prompt. Chopping through an unfinished

@@ -35,6 +35,7 @@ public enum AgentInstructionsFile {
   /// One file's text, trimmed; nil for an empty or unreadable file.
   public static func read(_ url: URL) -> String? {
     guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+    FileAccessLog.current?.record(url)
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? nil : trimmed
   }

@@ -851,7 +851,7 @@ struct MaiFileWorkspace: Sendable {
       }
       scannedFiles += 1
       guard (values.fileSize ?? 0) <= 5_000_000,
-        let data = try? Data(contentsOf: url, options: [.mappedIfSafe]),
+        let data = try? readData(at: url),
         !looksBinary(data),
         let text = String(data: data, encoding: .utf8)
       else { return true }
@@ -956,7 +956,7 @@ struct MaiFileWorkspace: Sendable {
       data = Data(text.utf8)
     } else {
       content = FileContent(name: file.lastPathComponent, mimeType: "text/plain")
-      data = try Data(contentsOf: file, options: [.mappedIfSafe])
+      data = try readData(at: file)
     }
     guard !looksBinary(data) else { throw MaiFileWorkspaceError.binary(displayPath(rawPath)) }
     let window = try textWindow(data, arguments: arguments, path: rawPath)
@@ -993,6 +993,7 @@ struct MaiFileWorkspace: Sendable {
     let kind = DocumentAttachmentImporter.kind(forFilename: filename)
     guard format == .markdown || [.pdf, .word, .epub, .image].contains(kind) else { return nil }
     let data = try DocumentAttachmentImporter.data(at: file)
+    FileAccessLog.current?.record(file)
     switch DocumentAttachmentImporter.kind(for: data, filename: filename) {
     case .image:
       let provider: any OCRProvider
@@ -1044,7 +1045,7 @@ struct MaiFileWorkspace: Sendable {
     let entries: [MaiDocumentIndexer.Entry]
     if extension_ == "json" {
       let rendered = try JSONDocumentImporter.render(
-        data: Data(contentsOf: file, options: [.mappedIfSafe]))
+        data: readData(at: file))
       text = rendered.text
       conversion = "converted from JSON to an indented outline"
       entries = rendered.sections.map {
@@ -1053,6 +1054,7 @@ struct MaiFileWorkspace: Sendable {
       }
     } else {
       let attachment = try DocumentAttachmentImporter.attachment(at: file)
+      FileAccessLog.current?.record(file)
       guard case .file(let content) = attachment.content, let contentText = content.text else {
         throw MaiFileWorkspaceError.invalidUTF8(display)
       }
@@ -1170,6 +1172,7 @@ struct MaiFileWorkspace: Sendable {
     switch file.pathExtension.lowercased() {
     case "docx", "pdf", "epub", "json":
       let attachment = try DocumentAttachmentImporter.attachment(at: file)
+      FileAccessLog.current?.record(file)
       guard case .file(let content) = attachment.content, let contentText = content.text else {
         throw MaiFileWorkspaceError.invalidUTF8(displayPath(rawPath))
       }
@@ -1378,6 +1381,7 @@ struct MaiFileWorkspace: Sendable {
       try data.write(to: destination, options: [.atomic])
     }
 
+    FileAccessLog.current?.record(destination)
     return mutationOutput(
       "\(mode == .append ? "Appended" : "Wrote") \(data.count) bytes to \(displayPath(rawPath))",
       path: rawPath,
@@ -1404,6 +1408,8 @@ struct MaiFileWorkspace: Sendable {
         relativePath(destination.deletingLastPathComponent()))
     }
     try FileManager.default.moveItem(at: source, to: destination)
+    FileAccessLog.current?.record(source)
+    FileAccessLog.current?.record(destination)
     return mutationOutput(
       "Renamed \(displayPath(rawPath)) to \(displayPath(newPath))",
       path: newPath,
@@ -1434,11 +1440,18 @@ struct MaiFileWorkspace: Sendable {
       }
     }
     try FileManager.default.removeItem(at: target)
+    FileAccessLog.current?.record(target)
     return mutationOutput("Deleted \(displayPath(rawPath))", path: rawPath)
   }
 
-  private func plainText(at file: URL, path: String) throws -> String {
+  private func readData(at file: URL) throws -> Data {
     let data = try Data(contentsOf: file, options: [.mappedIfSafe])
+    FileAccessLog.current?.record(file)
+    return data
+  }
+
+  private func plainText(at file: URL, path: String) throws -> String {
+    let data = try readData(at: file)
     guard data.count <= Self.maximumEditableFileBytes else {
       throw MaiFileWorkspaceError.fileTooLarge(Self.maximumEditableFileBytes)
     }
@@ -1454,7 +1467,7 @@ struct MaiFileWorkspace: Sendable {
     guard FileManager.default.fileExists(atPath: file.path, isDirectory: &isDirectory),
       !isDirectory.boolValue
     else { throw MaiFileWorkspaceError.notFile(displayPath(path)) }
-    let data = try Data(contentsOf: file, options: [.mappedIfSafe])
+    let data = try readData(at: file)
     guard data.count <= Self.maximumSourceFileBytes else {
       throw MaiFileWorkspaceError.fileTooLarge(Self.maximumSourceFileBytes)
     }
@@ -1732,7 +1745,7 @@ struct MaiFileWorkspace: Sendable {
   ) async throws -> VersionControlledEntries? {
     // VCS enumeration can inspect paths before our per-entry checks. A filtered
     // filesystem walk prunes protected subtrees before visiting their contents.
-    if let policy = configuration.pathAccessPolicy, policy.snapshot().hidden != .allow {
+    if let policy = configuration.pathAccessPolicy, (policy.snapshot().hidden != .allow || policy.snapshot().sensitive != .allow) {
       return nil
     }
     if configuration.pathAccessPolicy?.snapshot().rules.contains(where: {

@@ -21,30 +21,35 @@ public struct ConfiguredFileAccess: Codable, Equatable, Sendable {
   /// nil retains normal tool approval for explicit external prompt paths.
   public var outside: Access?
   public var hidden: Access
+  public var sensitive: Access
   public var rules: [Rule]
 
   public static let defaultRules: [Rule] = [
     .init(path: "/etc", access: .ask),
+    .init(path: "/root", access: .ask),
     .init(path: "~/.ssh", access: .ask),
+    .init(path: "~/.gnupg", access: .ask),
     .init(path: "~/.config", access: .ask),
   ]
 
   public init(
-    outside: Access? = nil, hidden: Access = .ask,
+    outside: Access? = nil, hidden: Access = .ask, sensitive: Access = .ask,
     rules: [Rule] = ConfiguredFileAccess.defaultRules
   ) {
     self.outside = outside
     self.hidden = hidden
+    self.sensitive = sensitive
     self.rules = rules
   }
 
-  private enum CodingKeys: String, CodingKey { case outside, hidden, rules }
+  private enum CodingKeys: String, CodingKey { case outside, hidden, sensitive, rules }
 
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.init(
       outside: try container.decodeIfPresent(Access.self, forKey: .outside),
       hidden: try container.decodeIfPresent(Access.self, forKey: .hidden) ?? .ask,
+      sensitive: try container.decodeIfPresent(Access.self, forKey: .sensitive) ?? .ask,
       rules: try container.decodeIfPresent([Rule].self, forKey: .rules) ?? Self.defaultRules)
   }
 }

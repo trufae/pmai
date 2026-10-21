@@ -23,7 +23,7 @@ struct AgentSettings: Codable, Equatable, Sendable {
   var llmRequestTimeoutSeconds: Int = AppSettings.defaultLLMRequestTimeoutSeconds
   var toolCallingMode: ToolCallingMode = .text
   var maxToolCallsPerTurn: Int = AppSettings.defaultMaxToolCallsPerTurn
-  var toolApprovalMode: ToolApprovalMode = .yolo
+  var toolApprovalMode: ToolApprovalMode = .ask
   var enabledSkillTools: Set<String> = []
   var skillApprovalMode: ToolApprovalMode? = nil
   var toolPolicy = AgentToolPolicy(automatic: false)

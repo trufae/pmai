@@ -3213,7 +3213,7 @@ struct AppSettings: Codable, Equatable, Sendable {
   var redaction = RedactionSettings()
   var toolCallingMode: ToolCallingMode = .text
   var maxToolCallsPerTurn: Int = AppSettings.defaultMaxToolCallsPerTurn
-  var toolApprovalMode: ToolApprovalMode = .yolo
+  var toolApprovalMode: ToolApprovalMode = .ask
   var enabledSkillTools: Set<String> = []
   var skillApprovalMode: ToolApprovalMode? = nil
   var toolPolicy = AgentToolPolicy(automatic: false)
@@ -3527,7 +3527,7 @@ struct AppSettings: Codable, Equatable, Sendable {
         ?? Self.defaultMaxToolCallsPerTurn)
     toolApprovalMode =
       (try? c.decode(ToolApprovalMode.self, forKey: .toolApprovalMode))
-      ?? ToolApprovalMode.legacyValue(from: decoder) ?? .yolo
+      ?? ToolApprovalMode.legacyValue(from: decoder) ?? .ask
     enabledSkillTools = (try? c.decode(Set<String>.self, forKey: .enabledSkillTools)) ?? []
     skillApprovalMode = try? c.decode(ToolApprovalMode.self, forKey: .skillApprovalMode)
     useSystemOne = (try? c.decode(Bool.self, forKey: .useSystemOne)) ?? false

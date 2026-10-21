@@ -250,7 +250,9 @@ func approvalModePersists() throws {
   let legacy = try JSONDecoder().decode(
     MaiConfiguration.self, from: Data(#"{"approvals":{"confirm":"allow"}}"#.utf8))
   #expect(legacy.approvals.mode == .ask)
-  #expect(ConfiguredApprovals().mode == .yolo)
+  #expect(ConfiguredApprovals().mode == .ask)
+  #expect(try JSONDecoder().decode(ConfiguredApprovals.self, from: Data("{}".utf8)).mode == .ask)
+  #expect(try JSONDecoder().decode(MaiConfiguration.self, from: Data("{}".utf8)).approvals.mode == .ask)
   let migrated = try JSONDecoder().decode(
     ConfiguredApprovals.self, from: Data(#"{"yolo":false}"#.utf8))
   #expect(migrated.mode == .ask)

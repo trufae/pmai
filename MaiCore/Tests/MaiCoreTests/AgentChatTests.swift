@@ -284,3 +284,19 @@ func chatDatePresentationGroups() throws {
     ChatDatePresentation.compactTimestamp(now - 86_400, relativeTo: now, calendar: calendar)
       == "2026-09-09 12:00")
 }
+
+@Test("File access history persists independently of compacted messages and forks with the chat")
+func agentChatAccessedFiles() throws {
+  var chat = AgentChat(primaryAgent: chatAgent, accessedFiles: ["/project/main.c"])
+  chat.messages = [.user("Compacted context")]
+  let data = try JSONEncoder().encode(chat)
+  let restored = try JSONDecoder().decode(AgentChat.self, from: data)
+  #expect(restored.accessedFiles == ["/project/main.c"])
+  #expect(restored.forked().accessedFiles == restored.accessedFiles)
+  var legacy = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+  legacy.removeValue(forKey: "accessedFiles")
+  let old = try JSONDecoder().decode(AgentChat.self, from: JSONSerialization.data(withJSONObject: legacy))
+  #expect(old.accessedFiles.isEmpty)
+  chat.resetTranscript()
+  #expect(chat.accessedFiles.isEmpty)
+}

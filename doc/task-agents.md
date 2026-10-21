@@ -198,8 +198,9 @@ On iOS, add a connection in **Settings → Providers**, choose **API → System 
 
 Tool selection and approval are independent. `/set tool.aproval` shows the mode;
 `/set tool.aproval yolo|ask|smart` saves it for the current project. The default
-`yolo` runs every tool without a prompt. `ask` prompts before every call, including
-read-only and proxy catalog tools, and permits editing the arguments. `smart`
+`ask` prompts before every call, including
+read-only and proxy catalog tools, and permits editing the arguments. Explicit
+`yolo` runs tools without general approval; Files path policies still apply. `smart`
 reviews each concrete tool and its arguments before execution:
 
 ```text

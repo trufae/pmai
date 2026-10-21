@@ -157,6 +157,7 @@ func filePathPolicyHiddenTreeMutations() async throws {
     fixture.tool(.rename, policy: policy),
     ["path": .string("private"), "new_path": .string("moved")])).isError)
   policy.setHidden(.allow)
+  policy.setSensitive(.allow)
   #expect(!(try await policyCall(
     fixture.tool(.rename, policy: policy),
     ["path": .string("private"), "new_path": .string("moved")])).isError)
@@ -344,4 +345,69 @@ func filePathPolicyFactoryConfiguration() async throws {
   #expect((try await policyCall(read, ["path": .string("private/secret.txt")])).isError)
   let vector = try #require(tools.compactMap { $0 as? MaiVectorDatabaseTool }.first)
   #expect(vector.configuration.pathAccessPolicy === policy)
+}
+
+@Test("Key, credential and encrypted files prompt inside the workspace and through aliases")
+func sensitiveFileDefaults() async throws {
+  let fixture = try PathFixture()
+  defer { fixture.cleanup() }
+  let confirmations = PathConfirmations()
+  await confirmations.reject()
+  let policy = MaiFileAccessPolicy { url, _ in await confirmations.decide(url) }
+  let read = fixture.tool(.read, policy: policy)
+  for name in ["server.pem", "server.KEY", "id_ed25519", "vault.kdbx", "backup.gpg", "credentials"] {
+    let url = fixture.root.appendingPathComponent(name)
+    try Data("PRIVATE MATERIAL".utf8).write(to: url)
+    let output = try await policyCall(read, ["path": .string(name)])
+    #expect(output.isError)
+    #expect(!output.text.contains("PRIVATE MATERIAL"))
+  }
+  try FileManager.default.createSymbolicLink(
+    at: fixture.root.appendingPathComponent("alias.txt"),
+    withDestinationURL: fixture.root.appendingPathComponent("server.pem"))
+  #expect((try await policyCall(read, ["path": .string("alias.txt")])).isError)
+  #expect(await confirmations.urls.count == 7)
+  let grep = try await policyCall(fixture.tool(.grep, policy: policy), ["query": .string("PRIVATE")])
+  #expect(!grep.text.contains("PRIVATE MATERIAL"))
+  #expect(await confirmations.urls.count == 7)
+  policy.set(.init(url: fixture.root.appendingPathComponent("server.pem"), access: .allow, descendants: false))
+  #expect(!(try await policyCall(read, ["path": .string("server.pem")])).isError)
+}
+
+@Test("Approving a directory search does not approve secret files within it")
+func sensitiveFileDirectoryApproval() async throws {
+  let fixture = try PathFixture()
+  defer { fixture.cleanup() }
+  try Data("PRIVATE MATERIAL".utf8).write(to: fixture.root.appendingPathComponent("key.pem"))
+  let confirmations = PathConfirmations()
+  let policy = MaiFileAccessPolicy { url, _ in await confirmations.decide(url) }
+  policy.setOutside(.ask)
+  // An ask for the workspace models approving /etc for a single recursive search.
+  policy.set(.init(url: fixture.root, access: .ask))
+  let grep = try await policyCall(fixture.tool(.grep, policy: policy), ["query": .string("PRIVATE")])
+  #expect(!grep.text.contains("PRIVATE MATERIAL"))
+  #expect(await confirmations.urls == [fixture.root])
+  #expect(!(try await policyCall(fixture.tool(.read, policy: policy), ["path": .string("key.pem")])).isError)
+  #expect(await confirmations.urls.count == 2)
+}
+
+@Test("File access logs record scans without matches, successful reads and writes, and child tasks")
+func conversationFileAccessLog() async throws {
+  let fixture = try PathFixture()
+  defer { fixture.cleanup() }
+  let log = FileAccessLog()
+  let policy = MaiFileAccessPolicy { _, _ in false }
+  try Data("PRIVATE MATERIAL".utf8).write(to: fixture.root.appendingPathComponent("secret.pem"))
+  try await FileAccessLog.$current.withValue(log) {
+    _ = try await policyCall(fixture.tool(.read, policy: policy), ["path": .string("missing.txt")])
+    _ = try await policyCall(fixture.tool(.read, policy: policy), ["path": .string("secret.pem")])
+    _ = try await policyCall(fixture.tool(.grep, policy: policy), ["query": .string("no-such-match")])
+    _ = try await Task {
+      try await policyCall(fixture.tool(.write, policy: policy), ["path": .string("child.txt"), "content": .string("child")])
+    }.value
+    _ = try await policyCall(fixture.tool(.read, policy: policy), ["path": .string("public.txt")])
+  }
+  #expect(log.snapshot() == ["child.txt", "private/secret.txt", "public.txt"].map {
+    fixture.root.appendingPathComponent($0).resolvingSymlinksInPath().path
+  }.sorted())
 }
