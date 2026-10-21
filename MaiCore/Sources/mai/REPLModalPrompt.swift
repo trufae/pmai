@@ -37,7 +37,7 @@ enum REPLModalPrompt {
     case .queue:
       return TerminalPrompt(text: "queue [submit/ignore/clear]> ", id: "queue", choices: ["submit", "ignore", "clear"])
     case .chop(let id):
-      return TerminalPrompt(text: "chop [n/p/e/d/x/q]> ", id: "chop-\(id)", choices: ["n", "p", "e", "d", "x", "q"])
+      return TerminalPrompt(text: "chop [n/b/p/e/d/x/q]> ", id: "chop-\(id)", choices: ["n", "b", "p", "e", "d", "x", "q"])
     }
   }
 
@@ -51,7 +51,7 @@ enum REPLModalPrompt {
     case .queue:
       return "QUEUED MESSAGES · choose below · Ctrl+C cancels new message"
     case .chop:
-      return "CHAT CHOP · n next · p previous · d delete · x chop after · q / Ctrl+C quit"
+      return "CHAT CHOP · n next · b previous · p pin/unpin · e edit · d delete · x chop after · q / Ctrl+C quit"
     }
   }
 }

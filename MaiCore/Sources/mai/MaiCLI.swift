@@ -3153,13 +3153,18 @@ struct MaiCLI {
       }
       let before = REPLCommandSnapshot(session: session)
       switch text.lowercased() {
-      case "n", "next", "p", "previous":
+      case "n", "next", "b", "back", "prev", "previous":
         let next = index + (["n", "next"].contains(text.lowercased()) ? 1 : -1)
         guard session.history.messages.indices.contains(next) else {
           await terminal.line(next < 0 ? "Already at the first message." : "Already at the last message.")
           return
         }
         loop.chatChop?.messageID = session.history[next].id
+      case "p", "pin", "unpin":
+        let message = session.history[index]
+        let pinned = text.lowercased() == "p" ? !message.isPinned : text.lowercased() == "pin"
+        session.history.setMessagePinned(pinned, id: message.id)
+        await terminal.line("\(pinned ? "📌 Pinned" : "Unpinned") message \(index + 1) (id: \(message.id)).")
       case "e", "edit":
         await editChatMessage(at: index, session: &session, terminal: terminal)
       case "d", "delete":
@@ -3167,7 +3172,7 @@ struct MaiCLI {
       case "x", "chop":
         await trimChatMessages(through: index, session: &session, terminal: terminal)
       default:
-        await terminal.line("Choose n (next), p (previous), e (edit), d (delete), x (chop after), or q (quit).")
+        await terminal.line("Choose n (next), b (previous), p (pin/unpin), e (edit), d (delete), x (chop after), or q (quit).")
         return
       }
       if session.history.messages != before.messages {
@@ -3889,7 +3894,7 @@ struct MaiCLI {
                 loop.chatChop = REPLChatChop(
                   chatID: session.id, messageID: message.id, interrupt: interrupt)
                 await terminal.line(
-                  "n next · p previous · e edit · d delete · x chop everything after this message · q quit\nChanges are saved immediately. Slash commands leave chat chop.")
+                  "n next · b previous · p pin/unpin · e edit · d delete · x chop everything after this message · q quit\nChanges are saved immediately. /chat pins shows pinned messages. Slash commands leave chat chop.")
                 await showChatChopMessage()
               } else {
                 await terminal.line("No conversation messages to chop.")
@@ -11579,7 +11584,7 @@ struct MaiCLI {
         recapPrompt: configuration?.prompts?.recap,
         chatProcess: chatProcess,
         terminal: terminal)
-    case "log", "last", "pin", "unpin", "edit", "del", "undo", "trim", "compact", "recap", "clear", "help":
+    case "log", "last", "pin", "pins", "unpin", "edit", "del", "undo", "trim", "compact", "recap", "clear", "help":
       await handleChatCommand(
         argument,
         session: &session,
@@ -11932,15 +11937,25 @@ struct MaiCLI {
           session: session, full: action == "log", includeDetails: verbosity == "verbose",
           short: verbosity == "short",
           terminal: terminal))
-    case "pin", "unpin":
-      if action == "pin", actionArgument.isEmpty {
+    case "pin", "pins", "unpin":
+      if action == "pins" {
+        guard ["", "short"].contains(actionArgument.lowercased()) else {
+          await terminal.line("Usage: /chat pins [short]")
+          return
+        }
+      }
+      if action == "pins" || (action == "pin" && actionArgument.isEmpty) {
         let pinned = session.history.messages.enumerated().filter { $0.element.isPinned }
         guard !pinned.isEmpty else {
           await terminal.line("No pinned messages. Use /chat pin INDEX or MESSAGE_ID.")
           return
         }
         for (index, message) in pinned {
-          await terminal.line(await renderChatMessage(message, index: index, terminal: terminal))
+          if actionArgument.lowercased() == "short" {
+            await terminal.line(renderShortChatMessage(message, index: index))
+          } else {
+            await terminal.line(await renderChatMessage(message, index: index, terminal: terminal))
+          }
         }
         return
       }
@@ -12214,9 +12229,7 @@ struct MaiCLI {
       let role = message.role.rawValue.capitalized
       let pin = message.isPinned ? "📌 " : ""
       if short {
-        let text = TranscriptCopy.render(message)
-        let preview = TranscriptCopy.firstParagraph(text.isEmpty ? message.content.map(renderCompactContent).joined(separator: "\n") : text)
-        lines.append("[\(index + 1)] \(pin)\(role): \(preview.isEmpty ? "[empty message]" : preview)")
+        lines.append(renderShortChatMessage(message, index: index))
       } else if full {
         lines.append(
           "\n" + (await renderChatMessage(message, index: index, terminal: terminal)))
@@ -12232,6 +12245,12 @@ struct MaiCLI {
       )
     }
     return lines.joined(separator: "\n")
+  }
+
+  private static func renderShortChatMessage(_ message: AgentMessage, index: Int) -> String {
+    let text = TranscriptCopy.render(message)
+    let preview = TranscriptCopy.firstParagraph(text.isEmpty ? message.content.map(renderCompactContent).joined(separator: "\n") : text)
+    return "[\(index + 1)] \(message.isPinned ? "📌 " : "")\(message.role.rawValue.capitalized): \(preview.isEmpty ? "[empty message]" : preview)"
   }
 
   private static func renderChatMessage(
@@ -12671,7 +12690,7 @@ struct MaiCLI {
       "/chat use ", "/chat next", "/chat previous", "/chat info", "/chat session",
       "/chat session new", "/chat rename ",
       "/chat archive", "/chat unarchive ", "/chat close confirm", "/chat messages",
-      "/chat files", "/chat log", "/chat log quiet", "/chat log verbose", "/chat log short", "/chat pin", "/chat pin ", "/chat unpin ", "/chat last", "/chat edit ", "/chat del ", "/chat undo", "/chat chop", "/chat trim ",
+      "/chat files", "/chat log", "/chat log quiet", "/chat log verbose", "/chat log short", "/chat pin", "/chat pin ", "/chat pins", "/chat pins short", "/chat unpin ", "/chat last", "/chat edit ", "/chat del ", "/chat undo", "/chat chop", "/chat trim ",
       "/chat clear", "/project", "/project info", "/project list", "/project name ",
       "/project tint ", "/project tint none", "/project del ",
     ]
@@ -13304,12 +13323,13 @@ struct MaiCLI {
       /chat messages                Display a compact indexed message list
       /chat log [quiet|verbose|short]  Display the conversation (default quiet)
       /chat pin [INDEX|MESSAGE_ID]  Pin any message; without an argument, show pinned messages
+      /chat pins [short]           Show pinned messages in full, or list their first paragraphs
       /chat unpin INDEX|MESSAGE_ID  Remove a message pin
       /chat last          Display the latest assistant response
       /chat edit INDEX [TEXT]  Edit in the editor, or replace text inline; preserve attachments
       /chat del INDEX     Remove a message
       /chat undo [INDEX]  Remove the last conversation message or selected message
-      /chat chop          Browse messages interactively to edit, delete, or chop newer messages
+      /chat chop          Browse messages interactively to pin, edit, delete, or chop newer messages
       /chat trim INDEX    Keep through the selected message; remove newer messages
       /chat compact [FOCUS]  Summarize the chat, prioritizing what FOCUS says to preserve
       /chat recap         Print a short recap using the compact model; keep the history
@@ -13329,8 +13349,8 @@ struct MaiCLI {
     compaction, and child agents. Shell-internal file accesses are not observable.
     Older chats only include accesses recorded after this feature was added.
 
-    /chat chop starts at the newest conversation message: n next, p previous,
-    e edit in the editor, d delete, x keep through this message, q or Ctrl+C quit. Changes are saved
+    /chat chop starts at the newest conversation message: n next, b previous,
+    p pin/unpin, e edit in the editor, d delete, x keep through this message, q or Ctrl+C quit. Changes are saved
     immediately; slash commands leave the prompt. Chopping through an unfinished
     tool transaction also removes that transaction, as with /chat trim.
     pmai opens a fresh chat on every launch and names it after the first

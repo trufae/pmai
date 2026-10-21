@@ -138,14 +138,24 @@ path.write_text('Edited in editor: ' + path.read_text())
             assert f'## [{index}] 📌 {role}' in listing, (index, listing)
         assert 'Total messages: 7' in short, short
         assert len(messages()) == len(fixture)
+        full_pins, short_pins = run(['/chat pins', '/chat pins short'])
+        for index, role in enumerate(('System', 'User', 'Assistant', 'Assistant', 'Tool', 'Tool', 'Assistant'), 1):
+            assert f'## [{index}] 📌 {role}' in full_pins, (index, full_pins)
+            assert f'[{index}] 📌 {role}:' in short_pins, (index, short_pins)
+        for text in hidden:
+            assert text in full_pins, (text, full_pins)
 
-        for action in ('/chat pin 0', '/chat unpin 0', '/chat pin missing', '/chat pin 2 extra'):
+        for action in ('/chat pin 0', '/chat unpin 0', '/chat pin missing', '/chat pin 2 extra',
+                       '/chat pins invalid', '/chat pins short extra'):
             output = run([action])[0]
             assert 'Usage:' in output, (action, output)
             assert messages() == pinned
         output = run(['/chat unpin question'])[0]
         assert 'Unpinned message 2 ' in output, output
         assert not messages()[1].get('isPinned', False)
+        full_pins, short_pins = run(['/chat pins', '/chat pins short'])
+        for output in (full_pins, short_pins):
+            assert '[2]' not in output and '[3]' in output, output
         output = run(['/chat pin -6'])[0]
         assert '📌 Pinned message 2 ' in output, output
 
@@ -155,10 +165,18 @@ path.write_text('Edited in editor: ' + path.read_text())
         output = run(['/chat pin 2', '/chat log short'])[1]
         assert '[2] 📌 User: First line continued' in output, output
         assert 'SECOND PARAGRAPH' not in output, output
+        output = run(['/chat pins short'])[0]
+        assert '[2] 📌 User: First line continued' in output, output
+        assert 'SECOND PARAGRAPH' not in output and '[1]' not in output, output
+        run(['/chat pins > pins.txt', '/chat pins short > pins-short.txt'])
+        assert 'SECOND PARAGRAPH' in (root / 'pins.txt').read_text()
+        assert 'SECOND PARAGRAPH' not in (root / 'pins-short.txt').read_text()
         run(['/chat log short > short.txt'])
         assert '[2] 📌 User: First line continued' in (root / 'short.txt').read_text()
         run(['/chat clear'])
         assert not any(m.get('isPinned', False) for m in messages())
+        for output in run(['/chat pin', '/chat pins', '/chat pins short']):
+            assert 'No pinned messages.' in output, output
 
         reset([])
         for output in run(['/chat log', '/chat log verbose']):

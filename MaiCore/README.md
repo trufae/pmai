@@ -230,9 +230,9 @@ operators, and operators received through bracketed paste, are also literal;
 you can paste a command and then type its redirection suffix.
 
 `/chat chop` opens a modal prompt at the newest conversation message and shows
-its index, role, and full Markdown text. Enter `n` for the next message, `p` for
-the previous message, `e` to edit it in the configured editor, `d` to delete it,
-or `x` to chop everything after it. Editing keeps the current selection and
+its index, role, and full Markdown text. Enter `n` for the next message, `b` for
+the previous message, `p` to pin or unpin it, `e` to edit it in the configured
+editor, `d` to delete it, or `x` to chop everything after it. Editing keeps the current selection and
 preserves attachments. After deletion it selects the next surviving message,
 or the previous one at the end. Changes are saved immediately and use the same linked-tool rules as
 `/chat del` and `/chat trim`. Enter `q` or press Ctrl+C to leave; slash commands
@@ -724,7 +724,9 @@ available separately through `/chat log` and the project's `.pmai/chats` files.
 `/chat log short` lists the first paragraph of every message with its original
 number; 📌 marks pinned messages. `/chat pin NUMBER` pins any message, including
 instructions and tool messages; negative numbers count from the end. A full
-message ID also works. `/chat pin` shows the pinned messages, and
+message ID also works. `/chat pins` (or `/chat pin`) shows pinned messages in full;
+`/chat pins short` lists their first paragraphs with the original message numbers.
+Inside `/chat chop`, `p` toggles the selected message's pin, and
 `/chat unpin NUMBER` removes a pin. Pins are saved with the conversation, survive compaction
 and portable exports, and appear in PocketMai's pinned-message bar below the
 chat title. In PocketMai, use a message's **Pin Message** menu action; tap the bar

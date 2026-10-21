@@ -101,7 +101,7 @@ def main():
                         # Leaving chat chop must not cancel the provider call
                         # still waiting behind it; approval will arrive below.
                         line('/chat chop')
-                        wait('chop [n/p/d/x/q]> ')
+                        wait('chop [n/b/p/e/d/x/q]> ')
                         send('\x03')
                         wait('Chat chop closed.')
                         wait('pmai#')

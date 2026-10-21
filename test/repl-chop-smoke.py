@@ -82,9 +82,25 @@ path.write_text(path.read_text() + ' edited')
         def run(commands):
             return run_repl(command, commands, cwd=root, env=env)
 
+        # Pinning keeps the selection and content, persists, and can be toggled off.
+        reset()
+        output = run(['/chat chop', 'p', 'q'])
+        assert '📌 Pinned message 8 (id: last).' in output, output
+        assert '## [8/8] 📌 Assistant (id: last)' in output, output
+        expected = json.loads(json.dumps(fixture))
+        expected[-1]['isPinned'] = True
+        assert messages() == expected, messages()
+        output = run(['/chat chop', 'p', 'b', 'p', 'q'])
+        assert 'Unpinned message 8 (id: last).' in output, output
+        assert '📌 Pinned message 7 (id: second).' in output, output
+        expected[-1].pop('isPinned')
+        expected[-2]['isPinned'] = True
+        assert messages() == expected, messages()
+        assert 'Hello from MaiCore:' not in output, output
+
         # Editing stays on the selected message, preserves attachments, and is durable.
         reset()
-        output = run(['/chat chop', 'e', 'p', 'edit', 'n', 'q'])
+        output = run(['/chat chop', 'e', 'b', 'edit', 'n', 'q'])
         assert 'e edit' in output, output
         assert 'Edited message 8 (id: last).' in output, output
         assert 'Edited message 7 (id: second).' in output, output
@@ -96,7 +112,7 @@ path.write_text(path.read_text() + ' edited')
         assert 'Hello from MaiCore:' not in output, output
 
         reset()
-        output = run(['/chat chop', 'n', 'p', 'd', 'p', 'p', 'd', 'x', 'p', 'x', 'p', 'p', 'q'])
+        output = run(['/chat chop', 'n', 'b', 'd', 'b', 'b', 'd', 'x', 'b', 'x', 'b', 'b', 'q'])
         assert '## [8/8] Assistant' in output and 'Already at the last message.' in output, output
         assert 'Removed 3 messages (including linked tool messages).' in output, output
         assert '## [3/4] Assistant (id: answer)' in output, output
@@ -107,7 +123,7 @@ path.write_text(path.read_text() + ' edited')
         # A cut inside a tool transaction removes the incomplete transaction,
         # and selects the last retained message instead of an invalid index.
         reset()
-        output = run(['/chat chop', 'p', 'p', 'p', 'p', 'x', 'q'])
+        output = run(['/chat chop', 'b', 'b', 'b', 'b', 'x', 'q'])
         assert 'Trimmed 6 messages; kept through message 2.' in output, output
         assert '## [2/2] User (id: first)' in output, output
         assert ids() == ['system', 'first'], messages()
@@ -143,7 +159,7 @@ path.write_text(path.read_text() + ' edited')
 
         def open_chop():
             send('/chat chop\r')
-            return wait('chop [n/p/e/d/x/q]> ')
+            return wait('chop [n/b/p/e/d/x/q]> ')
 
         try:
             wait('pmai> ')
@@ -153,19 +169,27 @@ path.write_text(path.read_text() + ' edited')
             for invalid in ('not a choice', '$invalid', '@main invalid', '!invalid'):
                 send(invalid + '\r')
                 wait('Choose n (next)')
-                wait('chop [n/p/e/d/x/q]> ')
+                wait('chop [n/b/p/e/d/x/q]> ')
                 assert messages() == fixture, messages()
             send('p\t\r')
+            wait('## [8/8] 📌 Assistant (id: last)')
+            wait('chop [n/b/p/e/d/x/q]> ')
+            assert messages()[-1]['isPinned'], messages()
+            send('p\r')
+            wait('Unpinned message 8 (id: last).')
+            wait('chop [n/b/p/e/d/x/q]> ')
+            assert not messages()[-1].get('isPinned', False), messages()
+            send('b\t\r')
             wait('## [7/8] User (id: second)')
-            wait('chop [n/p/e/d/x/q]> ')
+            wait('chop [n/b/p/e/d/x/q]> ')
             send('e\t\r')
             wait('Edited message 7 (id: second).')
-            wait('chop [n/p/e/d/x/q]> ')
+            wait('chop [n/b/p/e/d/x/q]> ')
             assert messages()[6]['content'][0]['text']['_0'] == 'Second question edited', messages()
             assert ids() == [m['id'] for m in fixture], messages()
             send('d\r')
             wait('## [7/7] Assistant (id: last)')
-            wait('chop [n/p/e/d/x/q]> ')
+            wait('chop [n/b/p/e/d/x/q]> ')
             assert ids() == [m['id'] for m in fixture if m['id'] != 'second'], messages()
             send('\x03')
             wait('Chat chop closed.')
@@ -187,7 +211,7 @@ path.write_text(path.read_text() + ' edited')
             assert process.wait(timeout=5) == 0
             assert termios.tcgetattr(master) == cooked
             saved_history = json.loads(history.read_text())
-            for answer in ('n', 'p', 'e', 'edit', 'd', 'x', 'q', 'not a choice', '$invalid', '@main invalid', '!invalid'):
+            for answer in ('n', 'b', 'p', 'e', 'edit', 'd', 'x', 'q', 'not a choice', '$invalid', '@main invalid', '!invalid'):
                 assert answer not in saved_history, saved_history
             assert ids() == [m['id'] for m in fixture if m['id'] != 'second'], messages()
         finally:
@@ -195,7 +219,7 @@ path.write_text(path.read_text() + ' edited')
                 process.kill()
                 process.wait()
             os.close(master)
-    print('PASS chat chop: editing, attachments, navigation, linked deletion and trimming, immediate persistence, modal input and exits')
+    print('PASS chat chop: pinning, editing, attachments, navigation, linked deletion and trimming, immediate persistence, modal input and exits')
 
 
 if __name__ == '__main__':
