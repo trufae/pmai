@@ -1068,10 +1068,16 @@ final class TerminalLineEditor {
   /// The prompt and text as they appear once accepted, for the surface to
   /// keep; further lines are indented to the prompt.
   func styledLine(prompt: String, text: String) -> String {
-    let promptStyle = style(
+    var promptStyle = style(
       foreground: activePrompt.isModal ? ui.warningForeground : ui.promptForeground,
       background: ui.promptBackground, bold: activePrompt.isModal)
-    let inputStyle = style(foreground: ui.foreground, background: ui.background, bold: ui.bold)
+    var inputStyle = style(foreground: ui.foreground, background: ui.background, bold: ui.bold)
+    if persistentSurface is TerminalScreen {
+      promptStyle += (activePrompt.isModal ? TerminalThemeStyle.warningForeground : .promptForeground).marker
+        + TerminalThemeStyle.promptBackground.marker
+      inputStyle += TerminalThemeStyle.foreground.marker + TerminalThemeStyle.background.marker
+        + TerminalThemeStyle.bold.marker
+    }
     let indent = String(repeating: " ", count: displayWidth(prompt))
     let body = text.split(separator: "\n", omittingEmptySubsequences: false)
       .map { inputStyle + $0 + resetStyle }

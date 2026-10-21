@@ -40,7 +40,9 @@ struct TerminalOutputBuffer {
       output.append(renderer?.feed(text) ?? text)
     }
 
-    mutating func configure(_ template: MarkdownTerminalRenderer?, width: Int) {
+    mutating func configure(
+      _ template: MarkdownTerminalRenderer?, width: Int, colors: ConfiguredTerminalUI?
+    ) {
       renderer = template.map {
         var options = $0.options
         options.width = width
@@ -48,6 +50,7 @@ struct TerminalOutputBuffer {
       }
       self.width = width
       output = TerminalOutputBuffer()
+      output.configureColors(colors)
       output.append(renderer?.feed(source) ?? source)
       if finished { output.append(renderer?.flush() ?? "") }
     }
@@ -61,6 +64,7 @@ struct TerminalOutputBuffer {
   private var thinkingDisplay: ThinkingDisplay = .full
   private var replyBlocks: [Int: ReplyBlock] = [:]
   private var markdownRenderer: MarkdownTerminalRenderer?
+  private var colors: ConfiguredTerminalUI?
   private var cursor = 0
   private var style = ""
   private var escape = ""
@@ -70,6 +74,14 @@ struct TerminalOutputBuffer {
   var isFollowing: Bool { top == nil }
 
   mutating func follow() { top = nil }
+
+  mutating func configureColors(_ ui: ConfiguredTerminalUI?) {
+    guard colors != ui else { return }
+    colors = ui
+    for index in lines.indices { lines[index].cachedWidth = 0 }
+    for index in thinkingBlocks.keys { thinkingBlocks[index]?.configureColors(ui) }
+    for index in replyBlocks.keys { replyBlocks[index]?.output.configureColors(ui) }
+  }
 
   mutating func configureThinking(_ display: ThinkingDisplay) {
     guard display != thinkingDisplay else { return }
@@ -86,6 +98,7 @@ struct TerminalOutputBuffer {
       if !lines[lines.count - 1].glyphs.isEmpty { append("\n") }
       index = lines.count - 1
       thinkingBlocks[index] = TerminalOutputBuffer()
+      thinkingBlocks[index]?.configureColors(colors)
       activeThinking.insert(index)
       lines.append(Line())
       cursor = 0
@@ -212,7 +225,7 @@ struct TerminalOutputBuffer {
     if lines[index].cachedWidth == width { return lines[index].rows }
     if replyBlocks[index] != nil {
       if replyBlocks[index]!.width != width {
-        replyBlocks[index]?.configure(markdownRenderer, width: width)
+        replyBlocks[index]?.configure(markdownRenderer, width: width, colors: colors)
       }
       let result = Self.blockRows(&replyBlocks[index]!.output, index: index, width: width)
       lines[index].cachedWidth = width
@@ -232,21 +245,24 @@ struct TerminalOutputBuffer {
       return result
     }
     var result: [Row] = []
-    var row = Row(position: Position(line: index, glyph: 0), text: "")
+    let base = TerminalThemeStyle.base(colors)
+    var row = Row(position: Position(line: index, glyph: 0), text: base)
     var used = 0
     var rowStyle = ""
     for (offset, glyph) in lines[index].glyphs.enumerated() {
       let cells = glyph.width
       if used > 0 && used + cells > width {
         result.append(row)
-        row = Row(position: Position(line: index, glyph: offset), text: "")
+        row = Row(position: Position(line: index, glyph: offset), text: base)
         used = 0
         rowStyle = ""
       }
       // A wide character cannot be painted in a one-column viewport.
       guard cells <= width else { continue }
       if rowStyle != glyph.style {
-        row.text += Self.reset + glyph.style
+        let styled = TerminalThemeStyle.resolve(glyph.style, ui: colors)
+          .replacingOccurrences(of: Self.reset, with: Self.reset + base)
+        row.text += Self.reset + base + styled
         rowStyle = glyph.style
       }
       row.text += glyph.text
@@ -272,7 +288,7 @@ struct TerminalOutputBuffer {
         position: Position(line: index, glyph: offsets[row.position.line] + row.position.glyph),
         text: row.text)
     }
-    if result.last?.text.isEmpty == true { result.removeLast() }
+    if !result.isEmpty && buffer.lines.last?.glyphs.isEmpty == true { result.removeLast() }
     return result
   }
 

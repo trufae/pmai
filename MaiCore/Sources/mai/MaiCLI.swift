@@ -8823,15 +8823,18 @@ struct MaiCLI {
       let error = TerminalLineEditor.foregroundColorCode(ui.errorForeground)
       let success = TerminalLineEditor.foregroundColorCode(ui.successForeground)
       let colors = await terminal.paintsOutput
-      func paint(_ text: String, _ code: String?) -> String {
-        guard colors, let code else { return text }
-        return "\u{1B}[\(code)m\(text)\u{1B}[0m"
+      let retainsThemeStyles = await terminal.retainsThemeStyles
+      func paint(_ text: String, _ code: String?, role: TerminalThemeStyle? = nil) -> String {
+        guard colors else { return text }
+        let style = code.map { "\u{1B}[\($0)m" } ?? ""
+        let annotation = retainsThemeStyles ? role?.marker ?? "" : ""
+        return style + annotation + text + "\u{1B}[0m"
       }
       await terminal.line(
-        paint(group.displayName, heading.map { "1;" + $0 } ?? "1") + " "
+        paint(group.displayName, heading.map { "1;" + $0 } ?? "1", role: .infoForeground) + " "
           + paint("(\(group.catalogID))", "2")
           + ": \(count) tool\(count == 1 ? "" : "s"), \(usage.count(for: group)) calls, "
-          + paint(enabled ? "enabled" : "disabled", enabled ? success : error)
+          + paint(enabled ? "enabled" : "disabled", enabled ? success : error, role: enabled ? .successForeground : .errorForeground)
           + " for agent \(session.profile.agentID)")
       // The agent family is synthesized per run rather than registered, so
       // its help comes from the definitions the model would see.
@@ -8847,13 +8850,13 @@ struct MaiCLI {
       }
       let helpLines = ToolGroupHelp.lines(for: group, tools: tools) { text, style in
         switch style {
-        case .group: return paint(text, heading)
-        case .tool: return paint(text, heading.map { "1;" + $0 } ?? "1")
-        case .trait: return paint(text, warning)
+        case .group: return paint(text, heading, role: .infoForeground)
+        case .tool: return paint(text, heading.map { "1;" + $0 } ?? "1", role: .infoForeground)
+        case .trait: return paint(text, warning, role: .warningForeground)
         case .description, .parameterDetail: return text
-        case .parameter: return paint(text, tool)
+        case .parameter: return paint(text, tool, role: .toolCallForeground)
         case .parameterType, .note: return paint(text, "2")
-        case .missing: return paint(text, error)
+        case .missing: return paint(text, error, role: .errorForeground)
         }
       }
       for line in helpLines {
@@ -8863,12 +8866,12 @@ struct MaiCLI {
       let options = configuredOptions(for: group, configuration: configuration)
       await terminal.line("")
       await terminal.line(
-        paint("Settings", heading.map { "1;" + $0 } ?? "1")
+        paint("Settings", heading.map { "1;" + $0 } ?? "1", role: .infoForeground)
           + paint(", changed with /tools set \(group.id) OPTION VALUE:", "2"))
       for option in group.options {
         let value = options[option.id] ?? option.defaultValue
         var line =
-          "  " + paint(option.id, tool) + " = "
+          "  " + paint(option.id, tool, role: .toolCallForeground) + " = "
           + paint(displayedOption(value, kind: option.kind), "1")
           + "  " + paint("\(option.label).", "2")
         if let help = option.help?.trimmingCharacters(in: .whitespacesAndNewlines), !help.isEmpty {
@@ -9240,7 +9243,6 @@ struct MaiCLI {
         )
         return
       }
-      let ui = configuration?.ui ?? .init()
       for skill in catalog.skills {
         let mode = modes[skill.toolName] ?? .disabled
         let status = switch (skill.isModelInvocable, mode) {
@@ -9250,10 +9252,10 @@ struct MaiCLI {
         case (true, .hidden): "hidden"
         case (true, .disabled): "disabled"
         }
-        let color =
+        let color: TerminalThemeStyle =
           !skill.isModelInvocable
-          ? ui.warningForeground : mode == .disabled ? ui.errorForeground : ui.successForeground
-        let label = await terminal.paint("(\(status))", color: color)
+          ? .warningForeground : mode == .disabled ? .errorForeground : .successForeground
+        let label = await terminal.paint("(\(status))", role: color)
         let name = await terminal.paint(skill.name, bold: true)
         let source = skill.rootURL.path == skills.userDirectory.path ? "user" : "project"
         await terminal.line("\(name) \(label) [\(source); \(usage.counts[skill.toolName, default: 0]) calls]")
@@ -13184,6 +13186,8 @@ struct MaiCLI {
     /theme color         List all current colors and bold
     /theme color KEY     Show one setting
     /theme color KEY VALUE  Change and persist one setting (KEY=VALUE also works)
+
+    Buffer mode also recolors earlier prompts and themed output when colors change.
 
     Color settings:
       /theme color bgline COLOR       Input/status-line background

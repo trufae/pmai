@@ -160,3 +160,56 @@ func terminalBufferLiveMarkdown() {
   #expect(buffer.visibleRows(width: 80, height: 40) == ["**bold** and tail", ""])
   #expect(buffer.visibleRows(width: 4, height: 40).prefix(2) == ["**bo", "ld**"])
 }
+
+@Test("Buffer theme roles recolor independently even when their original colors match")
+func terminalBufferThemeRoles() {
+  var buffer = TerminalOutputBuffer()
+  let initial = ConfiguredTerminalUI()
+  buffer.configureColors(initial)
+  for role in [TerminalThemeStyle.promptForeground, .toolResultForeground, .warningForeground] {
+    buffer.append("\u{1B}[33m" + role.marker + "text\u{1B}[0m\n")
+  }
+  var theme = initial
+  theme.promptForeground = "red"
+  theme.toolResultForeground = "green"
+  theme.warningForeground = "blue"
+  buffer.configureColors(theme)
+  let rows = buffer.visibleRows(width: 80, height: 20)
+  #expect(rows[0].contains("\u{1B}[31mtext"))
+  #expect(rows[1].contains("\u{1B}[32mtext"))
+  #expect(rows[2].contains("\u{1B}[34mtext"))
+  #expect(!rows.joined().contains("\u{1B}[?"))
+  theme.promptForeground = ""
+  buffer.configureColors(theme)
+  #expect(buffer.visibleRows(width: 80, height: 20)[0].contains("\u{1B}[39mtext"))
+}
+
+@Test(
+  "Themes recolor cached reasoning, replies and wrapped history without changing literal colors")
+func terminalBufferThemeHistory() {
+  var buffer = TerminalOutputBuffer()
+  buffer.configureColors(ConfiguredTerminalUI())
+  let thinking = buffer.appendThinking(
+    "\u{1B}[3;90m" + TerminalThemeStyle.thinkingForeground.marker + "reasoning\u{1B}[0m")
+  buffer.finishThinking(thinking)
+  let reply = buffer.appendReply("reply")
+  buffer.finishReply(reply)
+  buffer.append("\u{1B}[35mliteral\u{1B}[0m\n")
+  _ = buffer.visibleRows(width: 80, height: 20)
+  var theme = ConfiguredTerminalUI()
+  theme.thinkingForeground = "cyan"
+  theme.foreground = "blue"
+  buffer.configureColors(theme)
+  let rows = buffer.visibleRows(width: 80, height: 20)
+  #expect(rows[0].contains("\u{1B}[36mreasoning"))
+  #expect(rows[0].contains("\u{1B}[3;90m"))
+  #expect(rows[1].contains("\u{1B}[34mreply"))
+  #expect(rows[2].contains("\u{1B}[35mliteral"))
+  let narrow = buffer.visibleRows(width: 3, height: 20).joined()
+  #expect(narrow.contains("\u{1B}[36mrea"))
+  #expect(!narrow.contains("\u{1B}[?"))
+  buffer.configureThinking(.status)
+  buffer.configureColors(ConfiguredTerminalUI(thinkingForeground: "green"))
+  buffer.configureThinking(.full)
+  #expect(buffer.visibleRows(width: 80, height: 20)[0].contains("\u{1B}[32mreasoning"))
+}

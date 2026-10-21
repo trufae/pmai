@@ -71,6 +71,7 @@ def main(binary):
                              "print('SHELL_REPLY_' + text, flush=True)\n")
             env = clean_environment() | {'TERM': 'xterm-256color',
                 'NO_PROXY': '127.0.0.1,localhost', 'EDITOR': f'{sys.executable} {editor}'}
+            env.pop('NO_COLOR', None)
             master, slave = pty.openpty()
             original = termios.tcgetattr(slave)
             rows, columns = 24, 80
@@ -80,6 +81,7 @@ def main(binary):
                 start_new_session=True)
             os.close(slave)
             screen = {}
+            styled_screen = {}
             captured = bytearray()
 
             def read_for(seconds=.25):
@@ -95,6 +97,7 @@ def main(binary):
                     content = text[move.end():end]
                     # The renderer clears and replaces each changed row in full.
                     if column == 1 and '\x1b[2K' in content:
+                        styled_screen[row] = content
                         screen[row] = CSI.sub('', content).replace('\x1b7', '').replace('\x1b8', '')
                 return bytes(data)
 
@@ -163,6 +166,32 @@ def main(binary):
                     assert 'MARKDOWN_BOLD' in visible and 'MARKDOWN_CODE' in visible, screen
                     assert ('**MARKDOWN_BOLD**' in visible) == (enabled == 'off'), screen
                     assert ('`MARKDOWN_CODE`' in visible) == (enabled == 'off'), screen
+                send('/theme use missing\r')
+                wait_for("error: Unknown theme 'missing'.")
+                for command, confirmation, prompt_color, error_color in (
+                        ('/theme use slime', "Applied theme 'slime'.",
+                         '38;2;136;255;136', '38;2;255;136;136'),
+                        ('/theme color fgprompt blue', 'Set theme color fgprompt = blue.',
+                         '34', '38;2;255;136;136'),
+                        ('/theme use default', "Applied theme 'default'.", '33', '31')):
+                    send(command + '\r')
+                    wait_for(confirmation)
+                    history = []
+                    for _ in range(8):
+                        history.extend((screen.get(row, ''), styled_screen.get(row, ''))
+                                       for row in range(1, rows - 1))
+                        previous = output()
+                        send('\x1b[5~')
+                        read_for(.1)
+                        if output() == previous:
+                            break
+                    assert any('pmai> thinking-test' in plain and f'\x1b[{prompt_color}m' in raw
+                               for plain, raw in history), (command, history)
+                    assert any("error: Unknown theme 'missing'." in plain
+                               and f'\x1b[{error_color}m' in raw for plain, raw in history), (command, history)
+                    assert not re.search(rb'\x1b\[\?90\d+m', captured), captured
+                    send('\x0c')
+                    read_for(.1)
                 # Handoff output must be in the restored transcript, not just
                 # briefly visible on the shell's screen while the command runs.
                 send('!uname\r')

@@ -101,9 +101,12 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     lock.withLock {
       refreshSize()
       let previousMode = self.ui.mode
-      let previousThinking = self.ui.thinking
+      let previousUI = self.ui
       self.ui = ui
       transcript.configureThinking(ui.thinking)
+      let colors = ProcessInfo.processInfo.environment["NO_COLOR"] == nil
+        && ProcessInfo.processInfo.environment["TERM"] != "dumb"
+      transcript.configureColors(colors ? ui : nil)
       guard active else { return }
       if ui.mode != previousMode {
         transcript.follow()
@@ -117,7 +120,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         outputEndedLine = true
         drawInputRows()
       }
-      if ui.mode == .buffer && ui.thinking != previousThinking {
+      if ui.mode == .buffer && ui != previousUI {
         redrawBuffer()
         return
       }
@@ -331,7 +334,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     guard !text.isEmpty else { return }
     lock.withLock {
       guard active else {
-        handle.write(Data(text.utf8))
+        handle.write(Data(TerminalThemeStyle.resolve(text).utf8))
         return
       }
       refreshSize()
@@ -346,7 +349,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         write(Self.restoreCursor + text + Self.saveCursor)
       } else {
         write(Self.restoreCursor)
-        handle.write(Data(text.utf8))
+        handle.write(Data(TerminalThemeStyle.resolve(text).utf8))
         write(Self.saveCursor)
       }
       outputEndedLine = text.hasSuffix("\n")
@@ -829,7 +832,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   private func write(_ text: String) {
-    FileHandle.standardOutput.write(Data(text.utf8))
+    FileHandle.standardOutput.write(Data(TerminalThemeStyle.resolve(text).utf8))
   }
 
   private func measure() {
