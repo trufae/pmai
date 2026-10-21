@@ -3160,12 +3160,14 @@ struct MaiCLI {
           return
         }
         loop.chatChop?.messageID = session.history[next].id
+      case "e", "edit":
+        await editChatMessage(at: index, session: &session, terminal: terminal)
       case "d", "delete":
         await removeChatMessage(at: index, session: &session, terminal: terminal)
       case "x", "chop":
         await trimChatMessages(through: index, session: &session, terminal: terminal)
       default:
-        await terminal.line("Choose n (next), p (previous), d (delete), x (chop after), or q (quit).")
+        await terminal.line("Choose n (next), p (previous), e (edit), d (delete), x (chop after), or q (quit).")
         return
       }
       if session.history.messages != before.messages {
@@ -3887,7 +3889,7 @@ struct MaiCLI {
                 loop.chatChop = REPLChatChop(
                   chatID: session.id, messageID: message.id, interrupt: interrupt)
                 await terminal.line(
-                  "n next · p previous · d delete · x chop everything after this message · q quit\nChanges are saved immediately. Slash commands leave chat chop.")
+                  "n next · p previous · e edit · d delete · x chop everything after this message · q quit\nChanges are saved immediately. Slash commands leave chat chop.")
                 await showChatChopMessage()
               } else {
                 await terminal.line("No conversation messages to chop.")
@@ -13266,7 +13268,7 @@ struct MaiCLI {
       /chat edit INDEX [TEXT]  Edit in the editor, or replace text inline; preserve attachments
       /chat del INDEX     Remove a message
       /chat undo [INDEX]  Remove the last conversation message or selected message
-      /chat chop          Browse messages interactively to delete or chop newer messages
+      /chat chop          Browse messages interactively to edit, delete, or chop newer messages
       /chat trim INDEX    Keep through the selected message; remove newer messages
       /chat compact [FOCUS]  Summarize the chat, prioritizing what FOCUS says to preserve
       /chat recap         Print a short recap using the compact model; keep the history
@@ -13284,7 +13286,7 @@ struct MaiCLI {
     Older chats only include accesses recorded after this feature was added.
 
     /chat chop starts at the newest conversation message: n next, p previous,
-    d delete, x keep through this message, q or Ctrl+C quit. Changes are saved
+    e edit in the editor, d delete, x keep through this message, q or Ctrl+C quit. Changes are saved
     immediately; slash commands leave the prompt. Chopping through an unfinished
     tool transaction also removes that transaction, as with /chat trim.
     pmai opens a fresh chat on every launch and names it after the first

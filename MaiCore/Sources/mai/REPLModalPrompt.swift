@@ -37,7 +37,7 @@ enum REPLModalPrompt {
     case .queue:
       return TerminalPrompt(text: "queue [submit/ignore/clear]> ", id: "queue", choices: ["submit", "ignore", "clear"])
     case .chop(let id):
-      return TerminalPrompt(text: "chop [n/p/d/x/q]> ", id: "chop-\(id)", choices: ["n", "p", "d", "x", "q"])
+      return TerminalPrompt(text: "chop [n/p/e/d/x/q]> ", id: "chop-\(id)", choices: ["n", "p", "e", "d", "x", "q"])
     }
   }
 
