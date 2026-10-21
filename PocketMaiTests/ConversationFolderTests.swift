@@ -69,7 +69,13 @@ final class ConversationFolderTests: XCTestCase {
     XCTAssertTrue(store.isFolderPinned(second.id))
     XCTAssertEqual(store.conversationFolders.first?.displayName, "Renamed")
     try await waitUntil { persistence.loadSettings().pinnedConversationFolderIDs == pins }
-    let restored = AppStore(persistence: persistence)
+    // Startup saves from the restored store must not overwrite later pin changes.
+    let restoredURL = baseURL.appendingPathComponent("restored", isDirectory: true)
+    try FileManager.default.createDirectory(at: restoredURL, withIntermediateDirectories: true)
+    try FileManager.default.copyItem(
+      at: baseURL.appendingPathComponent("settings.json"),
+      to: restoredURL.appendingPathComponent("settings.json"))
+    let restored = AppStore(persistence: PersistenceStore(localBaseURL: restoredURL))
     try await waitUntil { restored.hasLoadedPersistedSettings }
     XCTAssertEqual(restored.conversationFolders.map(\.id), store.conversationFolders.map(\.id))
 
