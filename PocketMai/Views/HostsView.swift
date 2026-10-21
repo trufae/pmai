@@ -36,19 +36,13 @@ struct HostsView: View {
       let offline = hosts.remotes.connections.filter {
         !hosts.isHostPinned($0.id) && connectionState($0.id) != .connected
       }
-      if !pinned.isEmpty {
-        SidebarConversationGroupHeader(title: "Pinned")
-        ForEach(pinned) { host in remoteRow(host) }
-      }
-      SidebarConversationGroupHeader(title: "Online")
+      SidebarGroupedRows(items: pinned, groupTitle: { _ in "Pinned" }, row: remoteRow)
+      SidebarGroupHeader(title: "Online")
       row(title: "Local", subtitle: "This PocketMai", image: "iphone", id: nil)
       if !online.isEmpty {
         ForEach(online) { host in remoteRow(host) }
       }
-      if !offline.isEmpty {
-        SidebarConversationGroupHeader(title: "Offline")
-        ForEach(offline) { host in remoteRow(host) }
-      }
+      SidebarGroupedRows(items: offline, groupTitle: { _ in "Offline" }, row: remoteRow)
     }
     .environment(\.defaultMinListRowHeight, 0)
     .listStyle(.plain).scrollContentBackground(.hidden)
@@ -169,7 +163,10 @@ struct RemoteFoldersView: View {
 
   var body: some View {
     List {
-      ForEach(hosts.folders(matching: filter, sortedBy: sortOrder)) {
+      SidebarGroupedRows(
+        items: hosts.folders(matching: filter, sortedBy: sortOrder),
+        groupTitle: { hosts.isFolderPinned($0.cwd) ? "Pinned" : "Folders" }
+      ) {
         folder in
         let count =
           hosts.selectedHost.map { host in
@@ -307,12 +304,7 @@ struct RemoteConversationsView: View {
 
   private var conversationList: some View {
     List {
-      let chats = conversations
-      ForEach(Array(chats.enumerated()), id: \.element.id) { index, chat in
-        let title = groupTitle(for: chat)
-        if index == 0 || groupTitle(for: chats[index - 1]) != title {
-          SidebarConversationGroupHeader(title: title)
-        }
+      SidebarGroupedRows(items: conversations, groupTitle: groupTitle) { chat in
         let selected = hosts.selectedConversationID == chat.id
         let summary = summary(for: chat)
         ConversationRow(

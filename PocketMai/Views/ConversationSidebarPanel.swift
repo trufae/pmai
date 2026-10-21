@@ -1,5 +1,52 @@
 import SwiftUI
 
+/// Adjacent rows share one pill header; stores keep their existing sort order.
+struct SidebarGroupedRows<Item: Identifiable, Row: View>: View {
+  let items: [Item]
+  let groupTitle: (Item) -> String
+  @ViewBuilder let row: (Item) -> Row
+
+  var body: some View {
+    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+      let title = groupTitle(item)
+      if index == 0 || groupTitle(items[index - 1]) != title {
+        SidebarGroupHeader(title: title)
+      }
+      row(item)
+    }
+  }
+}
+
+struct SidebarGroupHeader: View {
+  let title: String
+
+  var body: some View {
+    HStack(spacing: 8) {
+      line
+      Text(title)
+        .font(.caption2.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .textCase(nil)
+        .lineLimit(1)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 3)
+        .background(Color(uiColor: .tertiarySystemFill), in: Capsule())
+        .fixedSize(horizontal: true, vertical: false)
+      line
+    }
+    .padding(.horizontal, 14)
+    .padding(.vertical, 7)
+    .listRowInsets(EdgeInsets())
+    .listRowBackground(Color.clear)
+    .listRowSeparator(.hidden)
+    .accessibilityAddTraits(.isHeader)
+  }
+
+  private var line: some View {
+    Rectangle().fill(Color.secondary.opacity(0.18)).frame(height: 1 / UIScreen.main.scale)
+  }
+}
+
 struct ConversationSidebarPanel<Rows: View, Actions: View>: View {
   let title: String
   let onShowFolders: () -> Void

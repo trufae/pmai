@@ -27,6 +27,7 @@ struct ConversationFoldersView: View {
   @State private var showingAppsPanel = false
 
   var body: some View {
+    let folders = store.conversationFolders
     let counts = store.conversationSummaries.reduce(into: [String: Int]()) { counts, summary in
       if summary.hasMessages {
         counts[summary.folderID, default: 0] += 1
@@ -35,7 +36,10 @@ struct ConversationFoldersView: View {
 
     ZStack(alignment: .bottom) {
       List {
-        ForEach(store.conversationFolders) { folder in
+        SidebarGroupedRows(
+          items: folders,
+          groupTitle: { store.isFolderPinned($0.id) ? "Pinned" : "Folders" }
+        ) { folder in
           let count = counts[folder.id, default: 0]
           let isSelected = !isShowingBookmarks && store.selectedConversationFolderID == folder.id
           SidebarFolderRow(
@@ -59,6 +63,9 @@ struct ConversationFoldersView: View {
           }
         }
 
+        if folders.allSatisfy({ store.isFolderPinned($0.id) }) {
+          SidebarGroupHeader(title: "Folders")
+        }
         SidebarFolderRow(
           title: "Bookmarks",
           subtitle: "\(store.messageBookmarks.count) bookmarked message\(store.messageBookmarks.count == 1 ? "" : "s")",
@@ -393,18 +400,10 @@ struct SidebarView: View {
           .foregroundStyle(.secondary)
           .padding(.vertical, 12)
       }
-      if !pinnedConversations.isEmpty {
-        SidebarConversationGroupHeader(title: "Pinned")
-        ForEach(pinnedConversations) { conversation in
-          conversationRow(conversation)
-        }
-      }
-      ForEach(updatedConversationGroups) { group in
-        SidebarConversationGroupHeader(title: group.title)
-        ForEach(group.conversations) { conversation in
-          conversationRow(conversation)
-        }
-      }
+      SidebarGroupedRows(
+        items: visibleConversations,
+        groupTitle: { $0.isPinned ? "Pinned" : ConversationDatePresentation.sidebarGroupTitle(for: $0.updatedAt) },
+        row: conversationRow)
     }
     .listStyle(.plain)
     .contentMargins(.horizontal, 16, for: .scrollContent)
@@ -437,40 +436,15 @@ struct SidebarView: View {
           .foregroundStyle(.secondary)
           .padding(.vertical, 12)
       }
-      if !pinnedBookmarks.isEmpty {
-        SidebarConversationGroupHeader(title: "Pinned")
-        ForEach(pinnedBookmarks) { item in
-          bookmarkRow(item)
-        }
-      }
-      ForEach(bookmarkGroups) { group in
-        SidebarConversationGroupHeader(title: group.title)
-        ForEach(group.bookmarks) { item in
-          bookmarkRow(item)
-        }
-      }
+      SidebarGroupedRows(
+        items: visibleBookmarks,
+        groupTitle: { $0.bookmark.isPinned ? "Pinned" : ConversationDatePresentation.sidebarGroupTitle(for: $0.bookmark.createdAt) },
+        row: bookmarkRow)
     }
     .listStyle(.plain)
     .contentMargins(.horizontal, 16, for: .scrollContent)
     .scrollContentBackground(.hidden)
     .scrollIndicators(.hidden)
-  }
-
-  private var pinnedBookmarks: [BookmarkedMessage] {
-    visibleBookmarks.filter(\.bookmark.isPinned)
-  }
-
-  private var bookmarkGroups: [SidebarBookmarkGroup] {
-    var groups: [SidebarBookmarkGroup] = []
-    for item in visibleBookmarks where !item.bookmark.isPinned {
-      let title = ConversationDatePresentation.sidebarGroupTitle(for: item.bookmark.createdAt)
-      if groups.last?.title == title {
-        groups[groups.count - 1].bookmarks.append(item)
-      } else {
-        groups.append(SidebarBookmarkGroup(id: title, title: title, bookmarks: [item]))
-      }
-    }
-    return groups
   }
 
   private func bookmarkRow(_ item: BookmarkedMessage) -> some View {
@@ -501,27 +475,6 @@ struct SidebarView: View {
     }
     .listRowBackground(Color(uiColor: .secondarySystemGroupedBackground))
     .listRowSeparator(.hidden)
-  }
-
-  private var pinnedConversations: [ConversationSummary] {
-    visibleConversations.filter(\.isPinned)
-  }
-
-  private var updatedConversationGroups: [SidebarConversationGroup] {
-    var groups: [SidebarConversationGroup] = []
-    for conversation in visibleConversations where !conversation.isPinned {
-      let title = ConversationDatePresentation.sidebarGroupTitle(for: conversation.updatedAt)
-      if groups.last?.title == title {
-        groups[groups.count - 1].conversations.append(conversation)
-      } else {
-        groups.append(
-          SidebarConversationGroup(
-            id: title,
-            title: title,
-            conversations: [conversation]))
-      }
-    }
-    return groups
   }
 
   @ViewBuilder
@@ -740,20 +693,6 @@ private struct ConversationDeletionAlertModifier: ViewModifier {
   }
 }
 
-private struct SidebarConversationGroup: Identifiable {
-  let id: String
-  let title: String
-  var conversations: [ConversationSummary]
-
-
-}
-
-private struct SidebarBookmarkGroup: Identifiable {
-  let id: String
-  let title: String
-  var bookmarks: [BookmarkedMessage]
-}
-
 private struct BookmarkRow: View {
   let item: BookmarkedMessage
   let action: () -> Void
@@ -821,36 +760,6 @@ private struct BookmarkRow: View {
     .buttonStyle(.plain)
     .accessibilityLabel("\(item.conversationTitle), \(preview)")
     .accessibilityValue(item.bookmark.isPinned ? "Pinned bookmark" : "Bookmark")
-  }
-}
-
-struct SidebarConversationGroupHeader: View {
-  let title: String
-
-  var body: some View {
-    HStack(spacing: 8) {
-      Rectangle()
-        .fill(Color.secondary.opacity(0.18))
-        .frame(height: 1 / UIScreen.main.scale)
-      Text(title)
-        .font(.caption2.weight(.semibold))
-        .foregroundStyle(.secondary)
-        .textCase(nil)
-        .lineLimit(1)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 3)
-        .background(Color(uiColor: .tertiarySystemFill), in: Capsule())
-        .fixedSize(horizontal: true, vertical: false)
-      Rectangle()
-        .fill(Color.secondary.opacity(0.18))
-        .frame(height: 1 / UIScreen.main.scale)
-    }
-      .padding(.horizontal, 14)
-      .padding(.vertical, 7)
-      .listRowInsets(EdgeInsets())
-      .listRowBackground(Color.clear)
-      .listRowSeparator(.hidden)
-      .accessibilityAddTraits(.isHeader)
   }
 }
 
