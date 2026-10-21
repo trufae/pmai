@@ -101,12 +101,14 @@ actor TerminalWriter {
 
   func attach(screen: TerminalScreen?) {
     self.screen = capturesOutput ? nil : screen
+    self.screen?.configureMarkdown(markdown)
   }
 
   /// Installs the renderer for replies. Captured output stays verbatim because
   /// it is shown by surfaces that do not interpret escape sequences.
   func configureMarkdown(_ renderer: MarkdownTerminalRenderer?) {
     markdown = capturesOutput ? nil : renderer
+    screen?.configureMarkdown(markdown)
   }
 
   func configureToolResultLines(_ display: ToolResultDisplay) {
@@ -186,14 +188,7 @@ actor TerminalWriter {
       finishThinking()
     case .provider(let context, .textDelta(let text)) where context.depth == 0:
       finishThinking()
-      let visible = text
-      if var renderer = markdownRenderer {
-        let output = renderer.feed(visible)
-        markdown = renderer
-        write(output)
-      } else {
-        write(visible)
-      }
+      writeReply(text)
       wroteRootDelta = true
       rootLineOpen = true
     case .toolStarted(let context, let call) where context.depth == 0:
@@ -232,7 +227,8 @@ actor TerminalWriter {
       if wroteRootDelta {
         finishReply()
       } else if result.interruption == nil {
-        write(render(responseText))
+        writeReply(responseText)
+        finishReply()
       }
       closeRootLine(force: true)
     case .childStarted(let parent, let child):
@@ -275,7 +271,7 @@ actor TerminalWriter {
       guard let pid = context.pid, subagentOutput == .all else { return }
       if childReasoning[pid] == nil { flushChildText(pid) }
       childReasoning[pid, default: ""] += text
-      if thinkingDisplay != .full {
+      if thinkingDisplay != .full && screen == nil {
         childReasoning[pid] = ThinkingPreview.tail(childReasoning[pid] ?? "")
       }
     case .provider(let context, .textDelta(let text)):
@@ -500,6 +496,15 @@ actor TerminalWriter {
 
   private func flushChildReasoning(_ pid: AgentPID) {
     guard let text = childReasoning.removeValue(forKey: pid) else { return }
+    if let screen, screen.isBufferMode, REPLRedirection.current == nil {
+      finishReply()
+      closeRootLine()
+      let body = styledLines(text, color: ui.thinkingForeground, diff: false).map {
+        childPrefix(pid) + (colorsStatus ? "\u{1B}[3m\($0)\u{1B}[23m" : $0)
+      }.joined(separator: "\n")
+      screen.appendThinkingBlock(body)
+      return
+    }
     let visible =
       thinkingDisplay == .full
       ? text
@@ -560,10 +565,30 @@ actor TerminalWriter {
   /// Writes what the markdown renderer still holds for the current reply.
   private func finishReply() {
     finishThinking()
-    guard var renderer = markdownRenderer else { return }
-    let output = renderer.flush()
-    markdown = renderer
-    write(output)
+    var output = ""
+    if var renderer = markdownRenderer {
+      output = renderer.flush()
+      markdown = renderer
+    }
+    if let screen, REPLRedirection.current == nil {
+      screen.finishReply(rendered: output)
+    } else {
+      write(output)
+    }
+  }
+
+  private func writeReply(_ text: String) {
+    var output = text
+    if var renderer = markdownRenderer {
+      output = renderer.feed(text)
+      markdown = renderer
+    }
+    if let screen, REPLRedirection.current == nil {
+      screen.writeReply(text, rendered: output)
+      if !output.isEmpty { outputEndedLine = output.hasSuffix("\n") }
+    } else {
+      write(output)
+    }
   }
 
   private func showThinking(_ delta: String) {
@@ -577,14 +602,22 @@ actor TerminalWriter {
         status("Thinking…", color: ui.thinkingForeground)
       }
     }
-    if thinkingDisplay == .full {
-      let safe = delta.unicodeScalars.filter {
-        $0 == "\n" || $0 == "\t" || !CharacterSet.controlCharacters.contains($0)
+    let safe = delta.unicodeScalars.filter {
+      $0 == "\n" || $0 == "\t" || !CharacterSet.controlCharacters.contains($0)
+    }
+    let text = String(String.UnicodeScalarView(safe))
+    let styled =
+      paintsOutput
+      ? Self.styled(text, foreground: ui.thinkingForeground, italic: true) : text
+    if !text.isEmpty {
+      if let screen, REPLRedirection.current == nil {
+        screen.writeThinking(styled, full: thinkingDisplay == .full)
+      } else if thinkingDisplay == .full {
+        write(styled)
       }
-      let text = String(String.UnicodeScalarView(safe))
-      write(
-        paintsOutput ? Self.styled(text, foreground: ui.thinkingForeground, italic: true) : text)
-      outputEndedLine = text.hasSuffix("\n")
+    }
+    if thinkingDisplay == .full {
+      if !text.isEmpty { outputEndedLine = text.hasSuffix("\n") }
     } else {
       thinkingPreview.append(delta)
       let now = Date()
@@ -612,7 +645,12 @@ actor TerminalWriter {
     thinkingDrawTask?.cancel()
     thinkingDrawTask = nil
     screen?.setThinking(nil)
-    if thinkingDisplay == .full && !outputEndedLine { write("\n") }
+    if let screen, REPLRedirection.current == nil {
+      screen.finishThinking()
+      outputEndedLine = true
+    } else if thinkingDisplay == .full && !outputEndedLine {
+      write("\n")
+    }
     thinkingActive = false
     thinkingPreview = ThinkingPreview()
   }

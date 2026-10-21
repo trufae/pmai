@@ -39,7 +39,8 @@ def main(binary):
                     self.wfile.write(b'data: [DONE]\n\n')
                     self.wfile.flush()
                     return
-                event = {'choices': [{'index': 0, 'delta': {'content': content},
+                delta = content if isinstance(content, dict) else {'content': content}
+                event = {'choices': [{'index': 0, 'delta': delta,
                                       'finish_reason': None}]}
                 self.wfile.write(('data: ' + json.dumps(event) + '\n\n').encode())
                 self.wfile.flush()
@@ -120,6 +121,48 @@ def main(binary):
                 send('/set ui.mode buffer\r')
                 wait_for('\x1b[?1006h')
                 assert json.loads(config.read_text())['ui']['mode'] == 'buffer'
+                # Reasoning retained while hidden can later be revealed and
+                # collapsed repeatedly without changing the answer.
+                send('thinking-test\r')
+                chunks.put({'reasoning_content': ''.join(f'THINK_ROW{i}\n' for i in range(8))})
+                wait_for('Thinking…')
+                chunks.put({'content': 'THINK_ANSWER\n'})
+                chunks.put(None)
+                wait_for('✓ took')
+                assert 'THINK_ROW' not in '\n'.join(output()), screen
+                for mode, count in (('full', 8), ('line', 1), ('three', 3),
+                                    ('five', 5), ('status', 0), ('full', 8)):
+                    send(f'/set ui.thinking {mode}\r')
+                    wait_for(f'Set ui.thinking = {mode}.')
+                    found = set()
+                    answer_found = False
+                    for _ in range(5):
+                        visible = '\n'.join(output())
+                        found.update(re.findall(r'THINK_ROW\d', visible))
+                        answer_found |= 'THINK_ANSWER' in visible
+                        previous = output()
+                        send('\x1b[5~')
+                        read_for(.1)
+                        if output() == previous:
+                            break
+                    assert found == {f'THINK_ROW{i}' for i in range(8 - count, 8)}, (mode, found)
+                    assert answer_found, (mode, screen)
+                    send('\x0c')
+                    read_for(.1)
+                send('/set ui.thinking status\r')
+                wait_for('Set ui.thinking = status.')
+                send('markdown-test\r')
+                chunks.put('**MARKDOWN_BOLD** and `MARKDOWN_CODE`\n')
+                chunks.put(None)
+                wait_for('✓ took')
+                assert '**MARKDOWN_BOLD**' in '\n'.join(output()), screen
+                for enabled in ('on', 'off', 'on', 'off'):
+                    send(f'/set ui.markdown {enabled}\r')
+                    wait_for(f'Set ui.markdown = {enabled}.')
+                    visible = '\n'.join(output())
+                    assert 'MARKDOWN_BOLD' in visible and 'MARKDOWN_CODE' in visible, screen
+                    assert ('**MARKDOWN_BOLD**' in visible) == (enabled == 'off'), screen
+                    assert ('`MARKDOWN_CODE`' in visible) == (enabled == 'off'), screen
                 # Handoff output must be in the restored transcript, not just
                 # briefly visible on the shell's screen while the command runs.
                 send('!uname\r')
@@ -215,7 +258,7 @@ def main(binary):
                 assert process.returncode == 0
                 assert b'\x1b[?1000l' in captured and b'\x1b[?1049l' in captured, captured
                 assert termios.tcgetattr(master) == original, 'raw tty mode leaked on exit'
-                print('PASS buffer: paging, mouse packets, live history anchor, fixed multiline draft, '
+                print('PASS buffer: thinking and markdown settings, paging, mouse packets, live history anchor, fixed multiline draft, '
                       'resize, follow, mode persistence, shell output and input, editor handoff '
                       'and terminal cleanup')
             finally:

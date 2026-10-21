@@ -13289,8 +13289,10 @@ struct MaiCLI {
       /set ui.title TEXT           Set the prompt label and terminal/tab title (`none` clears it)
       /set ui.editor COMMAND       Editor /edit opens (`none` falls back to $EDITOR, $VISUAL, vim)
       /set ui.markdown BOOL        Render replies as styled markdown (on/off)
+                                   Buffer mode also redraws earlier replies with this setting
       /set ui.toolResultLines <all|relevant|N>  Full results, full edits/errors with 3-line previews otherwise, or first N lines (0 hides them)
       /set ui.thinking MODE        Thinking display: status, line, three, five, or full
+                                   Buffer history: hide blocks, show their last 1/3/5 rows, or show all
       /set ui.subagents LEVEL      What child agents print: all, tools, stats, or none
       /set ui.broadcast BOOL       Default unaddressed messages to @* / @@ / bare @ (on/off; default off)
       /set redact on|off|warn   Filter model requests using ~/.pmai/redact.txt (warn logs counts)

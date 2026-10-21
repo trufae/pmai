@@ -1,4 +1,6 @@
 import Foundation
+import MaiCore
+import MaiMarkdown
 
 /// The visible terminal transcript, independent of model context and input history.
 /// Logical lines retain styling and are wrapped again when the window changes size.
@@ -26,7 +28,39 @@ struct TerminalOutputBuffer {
     var rows: [Row] = []
   }
 
+  private struct ReplyBlock {
+    var source = ""
+    var output = TerminalOutputBuffer()
+    var renderer: MarkdownTerminalRenderer?
+    var width = 0
+    var finished = false
+
+    mutating func append(_ text: String) {
+      source += text
+      output.append(renderer?.feed(text) ?? text)
+    }
+
+    mutating func configure(_ template: MarkdownTerminalRenderer?, width: Int) {
+      renderer = template.map {
+        var options = $0.options
+        options.width = width
+        return MarkdownTerminalRenderer(theme: $0.theme, options: options)
+      }
+      self.width = width
+      output = TerminalOutputBuffer()
+      output.append(renderer?.feed(source) ?? source)
+      if finished { output.append(renderer?.flush() ?? "") }
+    }
+  }
+
   private var lines = [Line()]
+  /// Reasoning and reply blocks each occupy one logical line. Their source
+  /// survives changes to visibility and Markdown rendering.
+  private var thinkingBlocks: [Int: TerminalOutputBuffer] = [:]
+  private var activeThinking: Set<Int> = []
+  private var thinkingDisplay: ThinkingDisplay = .full
+  private var replyBlocks: [Int: ReplyBlock] = [:]
+  private var markdownRenderer: MarkdownTerminalRenderer?
   private var cursor = 0
   private var style = ""
   private var escape = ""
@@ -36,6 +70,69 @@ struct TerminalOutputBuffer {
   var isFollowing: Bool { top == nil }
 
   mutating func follow() { top = nil }
+
+  mutating func configureThinking(_ display: ThinkingDisplay) {
+    guard display != thinkingDisplay else { return }
+    thinkingDisplay = display
+    for index in thinkingBlocks.keys { lines[index].cachedWidth = 0 }
+  }
+
+  @discardableResult
+  mutating func appendThinking(_ text: String, to block: Int? = nil) -> Int {
+    let index: Int
+    if let block {
+      index = block
+    } else {
+      if !lines[lines.count - 1].glyphs.isEmpty { append("\n") }
+      index = lines.count - 1
+      thinkingBlocks[index] = TerminalOutputBuffer()
+      activeThinking.insert(index)
+      lines.append(Line())
+      cursor = 0
+    }
+    thinkingBlocks[index]?.append(text)
+    lines[index].cachedWidth = 0
+    return index
+  }
+
+  mutating func finishThinking(_ block: Int) {
+    activeThinking.remove(block)
+    lines[block].cachedWidth = 0
+  }
+
+  mutating func configureMarkdown(_ renderer: MarkdownTerminalRenderer?) {
+    markdownRenderer = renderer
+    for index in replyBlocks.keys {
+      replyBlocks[index]?.width = 0
+      lines[index].cachedWidth = 0
+    }
+  }
+
+  @discardableResult
+  mutating func appendReply(_ text: String, to block: Int? = nil) -> Int {
+    let index: Int
+    if let block {
+      index = block
+    } else {
+      if !lines[lines.count - 1].glyphs.isEmpty { append("\n") }
+      index = lines.count - 1
+      replyBlocks[index] = ReplyBlock()
+      lines.append(Line())
+      cursor = 0
+    }
+    replyBlocks[index]?.append(text)
+    lines[index].cachedWidth = 0
+    return index
+  }
+
+  mutating func finishReply(_ block: Int) {
+    if var reply = replyBlocks.removeValue(forKey: block) {
+      reply.output.append(reply.renderer?.flush() ?? "")
+      reply.finished = true
+      replyBlocks[block] = reply
+    }
+    lines[block].cachedWidth = 0
+  }
 
   mutating func append(_ text: String) {
     for character in text {
@@ -113,6 +210,27 @@ struct TerminalOutputBuffer {
 
   private mutating func wrappedLine(_ index: Int, width: Int) -> [Row] {
     if lines[index].cachedWidth == width { return lines[index].rows }
+    if replyBlocks[index] != nil {
+      if replyBlocks[index]!.width != width {
+        replyBlocks[index]?.configure(markdownRenderer, width: width)
+      }
+      let result = Self.blockRows(&replyBlocks[index]!.output, index: index, width: width)
+      lines[index].cachedWidth = width
+      lines[index].rows = result
+      return result
+    }
+    if thinkingBlocks[index] != nil {
+      var result: [Row] = []
+      if thinkingDisplay == .full
+        || (thinkingDisplay != .status && !activeThinking.contains(index))
+      {
+        result = Self.blockRows(&thinkingBlocks[index]!, index: index, width: width)
+        if thinkingDisplay != .full { result = Array(result.suffix(thinkingDisplay.lineCount)) }
+      }
+      lines[index].cachedWidth = width
+      lines[index].rows = result
+      return result
+    }
     var result: [Row] = []
     var row = Row(position: Position(line: index, glyph: 0), text: "")
     var used = 0
@@ -137,6 +255,24 @@ struct TerminalOutputBuffer {
     result.append(row)
     lines[index].cachedWidth = width
     lines[index].rows = result
+    return result
+  }
+
+  /// Block-local row positions become positions in their parent logical line.
+  private static func blockRows(_ buffer: inout TerminalOutputBuffer, index: Int, width: Int)
+    -> [Row]
+  {
+    let rows = buffer.allRows(width: width)
+    var offsets = [0]
+    for line in buffer.lines {
+      offsets.append(offsets.last! + line.glyphs.count + 1)
+    }
+    var result = rows.map { row in
+      Row(
+        position: Position(line: index, glyph: offsets[row.position.line] + row.position.glyph),
+        text: row.text)
+    }
+    if result.last?.text.isEmpty == true { result.removeLast() }
     return result
   }
 

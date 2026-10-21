@@ -1,5 +1,6 @@
 import Foundation
 import MaiCore
+import MaiMarkdown
 
 #if canImport(Android)
   import Android
@@ -62,6 +63,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var outputEndedLine = true
   /// Retained in both modes so switching to buffer includes earlier output.
   private var transcript = TerminalOutputBuffer()
+  private var thinkingBlock: Int?
+  private var replyBlock: Int?
   private var paintedOutputRows: [String] = []
   private var active = false
   private var resizeSource: (any DispatchSourceProtocol)?
@@ -98,7 +101,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     lock.withLock {
       refreshSize()
       let previousMode = self.ui.mode
+      let previousThinking = self.ui.thinking
       self.ui = ui
+      transcript.configureThinking(ui.thinking)
       guard active else { return }
       if ui.mode != previousMode {
         transcript.follow()
@@ -111,6 +116,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         write("\u{1B}[1;\(regionBottom)r" + move(row: regionBottom, column: 1) + Self.saveCursor)
         outputEndedLine = true
         drawInputRows()
+      }
+      if ui.mode == .buffer && ui.thinking != previousThinking {
+        redrawBuffer()
+        return
       }
       paintedThinkingRows = []
       drawStatusRow()
@@ -230,6 +239,92 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   // MARK: - Output
+
+  func configureMarkdown(_ renderer: MarkdownTerminalRenderer?) {
+    lock.withLock {
+      transcript.configureMarkdown(renderer)
+      guard active, ui.mode == .buffer else { return }
+      redrawBuffer()
+    }
+  }
+
+  func writeReply(_ text: String, rendered: String) {
+    lock.withLock {
+      refreshSize()
+      replyBlock = transcript.appendReply(text, to: replyBlock)
+      guard active else { return }
+      if ui.mode == .buffer {
+        outputEndedLine = true
+        drawOutputRows()
+      } else if !rendered.isEmpty {
+        write(Self.restoreCursor + rendered + Self.saveCursor)
+        outputEndedLine = rendered.hasSuffix("\n")
+      }
+      placeCaret()
+    }
+  }
+
+  func finishReply(rendered: String) {
+    lock.withLock {
+      guard let replyBlock else { return }
+      transcript.finishReply(replyBlock)
+      self.replyBlock = nil
+      guard active else { return }
+      if ui.mode == .buffer {
+        drawOutputRows()
+      } else if !rendered.isEmpty {
+        write(Self.restoreCursor + rendered + Self.saveCursor)
+        outputEndedLine = rendered.hasSuffix("\n")
+      }
+      placeCaret()
+    }
+  }
+
+  /// Retains reasoning separately from replies, including when only the live
+  /// footer preview is visible. Full mode streams it into the output region.
+  func writeThinking(_ text: String, full: Bool) {
+    guard !text.isEmpty else { return }
+    lock.withLock {
+      refreshSize()
+      thinkingBlock = transcript.appendThinking(text, to: thinkingBlock)
+      guard active else { return }
+      if ui.mode == .buffer {
+        outputEndedLine = true
+        drawOutputRows()
+      } else if full {
+        write(Self.restoreCursor + text + Self.saveCursor)
+        outputEndedLine = text.hasSuffix("\n")
+      }
+      placeCaret()
+    }
+  }
+
+  func finishThinking() {
+    lock.withLock {
+      guard let thinkingBlock else { return }
+      transcript.finishThinking(thinkingBlock)
+      self.thinkingBlock = nil
+      guard active else { return }
+      if ui.mode == .buffer {
+        drawOutputRows()
+      } else if !outputEndedLine {
+        write(Self.restoreCursor + "\n" + Self.saveCursor)
+        outputEndedLine = true
+      }
+      placeCaret()
+    }
+  }
+
+  func appendThinkingBlock(_ text: String) {
+    lock.withLock {
+      refreshSize()
+      let block = transcript.appendThinking(text)
+      transcript.finishThinking(block)
+      guard active, ui.mode == .buffer else { return }
+      drawOutputRows()
+      placeCaret()
+    }
+  }
 
   /// Writes into the scroll region, leaving the caret on the input row.
   func write(_ text: String, to handle: FileHandle) {
