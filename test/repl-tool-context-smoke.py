@@ -82,7 +82,7 @@ def main():
                                 'toolNames': ['files_read'], 'toolGroupNames': [],
                                 'retry': {'attempts': 0}, 'autocompact': {'tokens': 0}}],
                     'memory': {'enabled': False}, 'use': {'plan': False},
-                    'ui': {'toolResultLines': 0},
+                    'ui': {'tools': 0},
                 }))
                 master, slave = pty.openpty()
                 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 240, 0, 0))

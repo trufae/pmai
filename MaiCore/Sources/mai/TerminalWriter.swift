@@ -36,10 +36,11 @@ actor TerminalWriter {
   /// Styles assistant markdown when set; nil prints replies verbatim.
   private var markdown: MarkdownTerminalRenderer?
   private var outputEndedLine = true
-  private var toolResultLines = ConfiguredTerminalUI().toolResultLines
+  private var tools = ConfiguredTerminalUI().tools
   /// Compact calls are printed once their outcome is known. Scope IDs by run
   /// because different agents can issue the same provider-generated call ID.
   private var compactToolCalls: [UUID: [String: String]] = [:]
+  private var bufferToolCalls: [UUID: [String: Int]] = [:]
   private var ui = ConfiguredTerminalUI()
   private var subagentOutput = ConfiguredTerminalUI().subagentOutput
   /// Last requested title. A first empty value leaves the shell's title alone.
@@ -113,8 +114,9 @@ actor TerminalWriter {
     screen?.configureMarkdown(markdown)
   }
 
-  func configureToolResultLines(_ display: ToolResultDisplay) {
-    toolResultLines = display
+  func configureTools(_ display: ToolResultDisplay) {
+    tools = display
+    screen?.configureTools(display)
   }
 
   func configureColors(_ ui: ConfiguredTerminalUI) {
@@ -224,6 +226,7 @@ actor TerminalWriter {
         color: .warningForeground)
     case .finished(let context, let result) where context.depth == 0:
       compactToolCalls[context.runID] = nil
+      bufferToolCalls[context.runID] = nil
       finishThinking()
       let responseText = redactor?.unredact(result.response.text) ?? result.response.text
       if wroteRootDelta {
@@ -324,6 +327,7 @@ actor TerminalWriter {
         color: .warningForeground)
     case .finished(let context, let result):
       compactToolCalls[context.runID] = nil
+      bufferToolCalls[context.runID] = nil
       guard let pid = context.pid else { return }
       flushChildText(pid)
       childrenEnded.insert(pid)
@@ -457,8 +461,16 @@ actor TerminalWriter {
   // MARK: - Tool output
 
   private func toolStarted(_ call: ToolCall, context: AgentEventContext) {
+    if let screen, screen.isBufferMode, REPLRedirection.current == nil {
+      finishReply()
+      closeRootLine()
+      let prefix = context.depth > 0 ? context.pid.map { childPrefix($0) } ?? "" : ""
+      let block = screen.writeTool(call: call, result: nil, prefix: prefix, block: nil)
+      bufferToolCalls[context.runID, default: [:]][call.id] = block
+      return
+    }
     let preview = ToolCallPreview.render(call)
-    if toolResultLines == .lines(0) {
+    if tools == .lines(0) {
       compactToolCalls[context.runID, default: [:]][call.id] = String(preview.dropFirst(2))
     } else {
       toolStatus(preview, context: context, color: .toolCallForeground)
@@ -466,20 +478,29 @@ actor TerminalWriter {
   }
 
   private func toolFinished(_ result: ToolResult, context: AgentEventContext) {
+    let block = bufferToolCalls[context.runID]?.removeValue(forKey: result.callID)
+    if bufferToolCalls[context.runID]?.isEmpty == true { bufferToolCalls[context.runID] = nil }
+    if let screen, screen.isBufferMode, REPLRedirection.current == nil {
+      finishReply()
+      closeRootLine()
+      let prefix = context.depth > 0 ? context.pid.map { childPrefix($0) } ?? "" : ""
+      _ = screen.writeTool(call: nil, result: result, prefix: prefix, block: block)
+      return
+    }
     let call = compactToolCalls[context.runID]?.removeValue(forKey: result.callID)
     if compactToolCalls[context.runID]?.isEmpty == true {
       compactToolCalls[context.runID] = nil
     }
     // Finish a compact call in the same format even if the display setting
     // changed while it ran. Some rejected calls arrive without a start event.
-    if call != nil || toolResultLines == .lines(0) {
+    if call != nil || tools == .lines(0) {
       let marker = result.isError ? "✘" : "✔"
       toolStatus(
         "\(marker) \(call ?? (result.isError ? "error" : "done"))",
         context: context, color: result.isError ? .errorForeground : .toolCallForeground)
     } else {
       toolStatus(
-        ToolResultPreview.render(result, display: toolResultLines), context: context,
+        ToolResultPreview.render(result, display: tools), context: context,
         color: result.isError ? .errorForeground : .toolResultForeground, diff: true)
     }
   }
@@ -725,32 +746,8 @@ actor TerminalWriter {
   private func styledLines(_ value: String, color: TerminalThemeStyle?, diff: Bool) -> [String] {
     let lines = value.components(separatedBy: "\n")
     guard colorsStatus else { return lines }
-    let content = diff ? lines.map { String($0.dropFirst(2)) } : lines
-    let hasUnifiedDiff =
-      diff
-      && content.indices.dropLast().contains { index in
-        content[index].hasPrefix("--- ") && content[index + 1].hasPrefix("+++ ")
-      }
-    return lines.indices.map { index in
-      let line = lines[index]
-      let marker = content[index]
-      if hasUnifiedDiff {
-        if marker.hasPrefix("--- ") || marker.hasPrefix("+++ ")
-          || marker.hasPrefix("@@ ") || marker.hasPrefix("diff --git ")
-          || marker.hasPrefix("index ")
-        {
-          return styled(line, foreground: .diffHeaderForeground)
-        }
-        if marker.hasPrefix("-") {
-          return styled(
-            line, foreground: .diffRemovedForeground, background: .diffRemovedBackground)
-        }
-        if marker.hasPrefix("+") {
-          return styled(
-            line, foreground: .diffAddedForeground, background: .diffAddedBackground)
-        }
-      }
-      return styled(line, foreground: color)
+    return TerminalThemeStyle.lineRoles(value, color: color, diff: diff).map {
+      styled($0.text, foreground: $0.foreground, background: $0.background)
     }
   }
 

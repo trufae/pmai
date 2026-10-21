@@ -61,4 +61,34 @@ enum TerminalThemeStyle: Int, CaseIterable {
     ].compactMap { $0 }
     return codes.isEmpty ? "" : "\u{1B}[\(codes.joined(separator: ";"))m"
   }
+
+  /// Tool previews add a two-character prefix before the original diff marker.
+  static func lineRoles(_ value: String, color: Self?, diff: Bool)
+    -> [(text: String, foreground: Self?, background: Self?)]
+  {
+    let lines = value.components(separatedBy: "\n")
+    let content = diff ? lines.map { String($0.dropFirst(2)) } : lines
+    let unified =
+      diff
+      && content.indices.dropLast().contains { index in
+        content[index].hasPrefix("--- ") && content[index + 1].hasPrefix("+++ ")
+      }
+    return lines.indices.map { index in
+      let marker = content[index]
+      if unified {
+        if marker.hasPrefix("--- ") || marker.hasPrefix("+++ ") || marker.hasPrefix("@@ ")
+          || marker.hasPrefix("diff --git ") || marker.hasPrefix("index ")
+        {
+          return (lines[index], .diffHeaderForeground, nil)
+        }
+        if marker.hasPrefix("-") {
+          return (lines[index], .diffRemovedForeground, .diffRemovedBackground)
+        }
+        if marker.hasPrefix("+") {
+          return (lines[index], .diffAddedForeground, .diffAddedBackground)
+        }
+      }
+      return (lines[index], color, nil)
+    }
+  }
 }

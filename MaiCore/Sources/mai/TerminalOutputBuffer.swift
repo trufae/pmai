@@ -63,6 +63,8 @@ struct TerminalOutputBuffer {
   private var activeThinking: Set<Int> = []
   private var thinkingDisplay: ThinkingDisplay = .full
   private var replyBlocks: [Int: ReplyBlock] = [:]
+  private var toolBlocks: [Int: TerminalToolBlock] = [:]
+  private var tools: ToolResultDisplay = .all
   private var markdownRenderer: MarkdownTerminalRenderer?
   private var colors: ConfiguredTerminalUI?
   private var cursor = 0
@@ -119,6 +121,31 @@ struct TerminalOutputBuffer {
       replyBlocks[index]?.width = 0
       lines[index].cachedWidth = 0
     }
+  }
+
+  mutating func configureTools(_ display: ToolResultDisplay) {
+    guard tools != display else { return }
+    tools = display
+    for index in toolBlocks.keys { lines[index].cachedWidth = 0 }
+  }
+
+  @discardableResult
+  mutating func appendTool(
+    call: ToolCall?, result: ToolResult?, prefix: String = "", to block: Int? = nil
+  ) -> Int {
+    let index: Int
+    if let block {
+      index = block
+    } else {
+      if !lines[lines.count - 1].glyphs.isEmpty { append("\n") }
+      index = lines.count - 1
+      toolBlocks[index] = TerminalToolBlock(call: call, result: nil, prefix: prefix)
+      lines.append(Line())
+      cursor = 0
+    }
+    if let result { toolBlocks[index]?.result = result }
+    lines[index].cachedWidth = 0
+    return index
   }
 
   @discardableResult
@@ -223,6 +250,16 @@ struct TerminalOutputBuffer {
 
   private mutating func wrappedLine(_ index: Int, width: Int) -> [Row] {
     if lines[index].cachedWidth == width { return lines[index].rows }
+    if let tool = toolBlocks[index] {
+      let text = tool.render(display: tools, colors: colors != nil)
+      var output = TerminalOutputBuffer()
+      output.configureColors(colors)
+      output.append(text)
+      let result = text.isEmpty ? [] : Self.blockRows(&output, index: index, width: width)
+      lines[index].cachedWidth = width
+      lines[index].rows = result
+      return result
+    }
     if replyBlocks[index] != nil {
       if replyBlocks[index]!.width != width {
         replyBlocks[index]?.configure(markdownRenderer, width: width, colors: colors)

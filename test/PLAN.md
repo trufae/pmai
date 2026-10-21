@@ -111,7 +111,7 @@ Three facts decide everything below:
   heading. Calls are one readable line (`→ files_read cli.py`,
   `→ files_patch path=… find=… (+1 lines) replace=…`), results start right
   after `←`, errors read `← Error: …`; the same renderers serve child-agent
-  blocks. Still open: `ui.toolResultLines` defaults to all
+  blocks. Still open: `ui.tools` defaults to all
   lines, so a 500-line read floods the terminal; a default of ~40 with the
   `… N more lines` tail is probably right, and `ui.subagents` could gain a
   `results` level (results only, no calls) to match what people read.

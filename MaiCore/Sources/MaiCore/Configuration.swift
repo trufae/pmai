@@ -520,7 +520,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   /// Render assistant replies as styled markdown in the REPL.
   public var markdown: Bool
   /// Show all results, important results in full, or a fixed number of leading lines.
-  public var toolResultLines: ToolResultDisplay
+  public var tools: ToolResultDisplay
   /// What the text REPL prints while child agents run.
   public var subagentOutput: SubagentOutputLevel
   /// Send unaddressed REPL messages to every active process instead of the focus.
@@ -554,7 +554,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     selectionBackground: String = "blue",
     bold: Bool = false,
     markdown: Bool = true,
-    toolResultLines: ToolResultDisplay = .all,
+    tools: ToolResultDisplay = .all,
     subagentOutput: SubagentOutputLevel = .all,
     broadcast: Bool = false,
     thinking: ThinkingDisplay = .status,
@@ -583,7 +583,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     self.selectionBackground = selectionBackground
     self.bold = bold
     self.markdown = markdown
-    self.toolResultLines = toolResultLines
+    self.tools = tools
     self.subagentOutput = subagentOutput
     self.broadcast = broadcast
     self.thinking = thinking
@@ -614,14 +614,17 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     case selectionBackground = "bgselection"
     case bold
     case markdown
-    case toolResultLines
+    case tools
     case subagentOutput = "subagents"
     case broadcast
     case thinking
     case editor
   }
 
+  private enum LegacyCodingKeys: String, CodingKey { case toolResultLines }
+
   public init(from decoder: Decoder) throws {
+    let legacy = try decoder.container(keyedBy: LegacyCodingKeys.self)
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.init(
       mode: (try? container.decodeIfPresent(TerminalOutputMode.self, forKey: .mode)) ?? .classic,
@@ -664,8 +667,9 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
         String.self, forKey: .selectionBackground)) ?? "blue",
       bold: (try? container.decodeIfPresent(Bool.self, forKey: .bold)) ?? false,
       markdown: (try? container.decodeIfPresent(Bool.self, forKey: .markdown)) ?? true,
-      toolResultLines: (try? container.decodeIfPresent(
-        ToolResultDisplay.self, forKey: .toolResultLines)) ?? .all,
+      tools: (try? container.decodeIfPresent(
+        ToolResultDisplay.self, forKey: .tools))
+        ?? (try? legacy.decodeIfPresent(ToolResultDisplay.self, forKey: .toolResultLines)) ?? .all,
       subagentOutput: (try? container.decodeIfPresent(
         SubagentOutputLevel.self, forKey: .subagentOutput)) ?? .all,
       broadcast: (try? container.decodeIfPresent(Bool.self, forKey: .broadcast)) ?? false,

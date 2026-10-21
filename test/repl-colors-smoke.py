@@ -151,8 +151,8 @@ def main():
             # failures, without leaking result bodies or separate status lines.
             for options in ({}, {'terminal': False}, {'extra_env': {'NO_COLOR': '1'}},
                             {'extra_env': {'TERM': 'dumb'}}):
-                output = run('/set ui.toolResultLines 0', 'show colors',
-                             '/set ui.toolResultLines all', **options)
+                output = run('/set ui.tools 0', 'show colors',
+                             '/set ui.tools all', **options)
                 plain = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', output)
                 for marker, path in (('✔', 'diff.txt'), ('✔', 'plain.txt'), ('✘', 'missing.txt')):
                     assert plain.count(f'{marker} files_read {path}\n') == 1, plain

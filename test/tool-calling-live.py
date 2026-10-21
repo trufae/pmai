@@ -90,7 +90,7 @@ def main():
                                      "options": {"filesRoot": str(root), "filesWriteEnabled": True,
                                                  "runShell": "/bin/sh"}}],
                     "memory": {"enabled": False}, "use": {"plan": False, "agentsmd": False},
-                    "ui": {"markdown": False, "toolResultLines": -1},
+                    "ui": {"markdown": False, "tools": -1},
                 }
                 config_path = root / "config.json"
                 config_path.write_text(json.dumps(config, indent=2))

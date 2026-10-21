@@ -21,7 +21,7 @@ def main():
             'version': 1, 'defaultAgent': 'hello',
             'providers': [{'id': 'hello', 'kind': 'hello'}],
             'agents': [{'id': 'hello', 'provider': 'hello', 'model': ''}],
-            'ui': {'title': 'keep', 'markdown': False, 'toolResultLines': 3},
+            'ui': {'title': 'keep', 'markdown': False, 'tools': 3},
         }))
 
         def run(*commands, theme=None, flags=()):
@@ -70,7 +70,7 @@ def main():
             assert f"Applied theme '{name}'." in output, output
             assert ui() != original
             assert all(ui()[key] != original[key] for key in colors), ui()
-            for key in ('title', 'markdown', 'toolResultLines'):
+            for key in ('title', 'markdown', 'tools'):
                 assert ui()[key] == original[key], ui()
             run('/theme use default')
             assert ui() == original, 'default must restore every theme setting'

@@ -80,7 +80,7 @@ def main():
                             'instructions': 'Rules', 'toolGroupNames': ['files', 'pmai'],
                             'retry': {'attempts': 0}, 'autocompact': {'tokens': 0}}],
                 'memory': {'enabled': False}, 'use': {'plan': False, 'agentsmd': 'off'},
-                'approvals': {'mode': 'yolo'}, 'ui': {'toolResultLines': 0}}))
+                'approvals': {'mode': 'yolo'}, 'ui': {'tools': 0}}))
             original_config = config.read_text()
             command = [binary, '--config', str(config), '--home', str(base / 'home'),
                        '--no-stream', '--no-markdown']

@@ -1536,8 +1536,8 @@ struct MaiCLI {
           forced: options.markdown == true,
           environment: environment))
       await terminal.configureThinking(configuration?.ui.thinking ?? .status)
-      await terminal.configureToolResultLines(
-        configuration?.ui.toolResultLines ?? ConfiguredTerminalUI().toolResultLines)
+      await terminal.configureTools(
+        configuration?.ui.tools ?? ConfiguredTerminalUI().tools)
       await terminal.configureColors(configuration?.ui ?? .init())
       await terminal.configureSubagentOutput(
         configuration?.ui.subagentOutput ?? ConfiguredTerminalUI().subagentOutput)
@@ -2485,7 +2485,7 @@ struct MaiCLI {
       editor.configure(ui: ui)
       screen?.configure(ui: ui)
       await terminal.configureThinking(ui.thinking)
-      await terminal.configureToolResultLines(ui.toolResultLines)
+      await terminal.configureTools(ui.tools)
       await terminal.configureColors(ui)
       await terminal.configureSubagentOutput(ui.subagentOutput)
       session.redactor = await runtime.contentRedactor(sessionID: session.sessionID)
@@ -2781,7 +2781,7 @@ struct MaiCLI {
         let ui = configuration?.ui ?? .init()
         await output.configureRedactor(session.redactor)
         await output.configureThinking(ui.thinking)
-        await output.configureToolResultLines(ui.toolResultLines)
+        await output.configureTools(ui.tools)
         await output.configureSubagentOutput(ui.subagentOutput)
         if redirection != nil {
           await output.configureColors(ui)
@@ -9607,8 +9607,9 @@ struct MaiCLI {
       await listUseSettings(configuration?.use ?? .init(), terminal: terminal)
       return
     }
-    let key = parts[0].lowercased()
-    let displayedKey = key == "ui.toolresultlines" ? "ui.toolResultLines" : key
+    let requestedKey = parts[0].lowercased()
+    let key = requestedKey == "ui.toolresultlines" ? "ui.tools" : requestedKey
+    let displayedKey = key
     if key == "airplane" {
       guard parts.count > 1 else {
         await terminal.line("airplane = \(await runtime.internetAccessPolicy().airplaneModeEnabled ? "on ✈" : "off")")
@@ -9941,7 +9942,7 @@ struct MaiCLI {
       return
     }
     let booleanKeys = ["ui.markdown", "ui.broadcast"]
-    let countKeys = ["ui.toolresultlines"]
+    let countKeys = ["ui.tools"]
     let levelKeys = ["ui.subagents", "ui.thinking", "ui.mode"]
     let textKeys = ["ui.title", "ui.editor"]
     guard
@@ -9974,11 +9975,11 @@ struct MaiCLI {
       }
     } else if countKeys.contains(key) {
       guard let value = ToolResultDisplay(setting: parts[1]) else {
-        await terminal.line("Usage: /set ui.toolResultLines <all|relevant|N>")
+        await terminal.line("Usage: /set ui.tools <all|relevant|N>")
         return
       }
-      ui.toolResultLines = value
-      await terminal.configureToolResultLines(value)
+      ui.tools = value
+      await terminal.configureTools(value)
     } else if key == "ui.mode" {
       guard let mode = TerminalOutputMode(rawValue: parts[1].lowercased()) else {
         await terminal.line("Usage: /set ui.mode <classic|buffer>")
@@ -10615,7 +10616,7 @@ struct MaiCLI {
 
   private static func listUISettings(_ ui: ConfiguredTerminalUI, terminal: TerminalWriter) async {
     let keys = [
-      "ui.mode", "ui.title", "ui.editor", "ui.markdown", "ui.toolResultLines", "ui.subagents", "ui.thinking",
+      "ui.mode", "ui.title", "ui.editor", "ui.markdown", "ui.tools", "ui.subagents", "ui.thinking",
       "ui.broadcast",
     ]
     for key in keys {
@@ -10633,7 +10634,7 @@ struct MaiCLI {
     case "ui.editor":
       return ui.editor.isEmpty ? "\(resolvedEditor()) (from the environment)" : ui.editor
     case "ui.markdown": return ui.markdown ? "on" : "off"
-    case "ui.toolresultlines": return ui.toolResultLines.description
+    case "ui.tools": return ui.tools.description
     case "ui.thinking": return ui.thinking.rawValue
     case "ui.subagents": return ui.subagentOutput.rawValue
     case "ui.broadcast": return ui.broadcast ? "on" : "off"
@@ -12639,7 +12640,7 @@ struct MaiCLI {
       "/set ui.markdown on", "/set ui.markdown off",
       "/set ui.mode classic", "/set ui.mode buffer",
       "/set ui.broadcast on", "/set ui.broadcast off",
-      "/set ui.toolResultLines all", "/set ui.toolResultLines relevant", "/set ui.toolResultLines ",
+      "/set ui.tools all", "/set ui.tools relevant", "/set ui.tools ",
       "/set redact on", "/set redact off", "/set redact warn", "/edit redact",
       "/cwd", "/pwd", "/cd ", "/plugins",
       "/path", "/path list", "/path allow ", "/path deny ", "/path ask ",
@@ -13294,7 +13295,8 @@ struct MaiCLI {
       /set ui.editor COMMAND       Editor /edit opens (`none` falls back to $EDITOR, $VISUAL, vim)
       /set ui.markdown BOOL        Render replies as styled markdown (on/off)
                                    Buffer mode also redraws earlier replies with this setting
-      /set ui.toolResultLines <all|relevant|N>  Full results, full edits/errors with 3-line previews otherwise, or first N lines (0 hides them)
+      /set ui.tools <all|relevant|N>  Full results, full edits/errors with 3-line previews otherwise, or first N lines (0 hides them)
+                                   Buffer mode also updates earlier tool calls and results
       /set ui.thinking MODE        Thinking display: status, line, three, five, or full
                                    Buffer history: hide blocks, show their last 1/3/5 rows, or show all
       /set ui.subagents LEVEL      What child agents print: all, tools, stats, or none

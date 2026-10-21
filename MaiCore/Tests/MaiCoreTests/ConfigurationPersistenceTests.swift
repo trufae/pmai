@@ -21,13 +21,13 @@ func configurationTolerantDisplaySettings() throws {
     MaiConfiguration.self,
     from: Data(
       #"""
-      {"ui":{"title":"Keep this", "bold":"obsolete", "thinking":"future-mode", "toolResultLines":{}},
+      {"ui":{"title":"Keep this", "bold":"obsolete", "thinking":"future-mode", "tools":{}},
        "providers":[{"id":"local","kind":"hello"}], "futureSetting":{"enabled":true}}
       """#.utf8))
   #expect(configuration.ui.title == "Keep this")
   #expect(configuration.ui.bold == false)
   #expect(configuration.ui.thinking == .status)
-  #expect(configuration.ui.toolResultLines == .all)
+  #expect(configuration.ui.tools == .all)
   #expect(configuration.providers.map(\.id) == ["local"])
 }
 
@@ -80,7 +80,7 @@ func configurationSaveRoundTrip() throws {
       promptForeground: "cyan",
       toolResultForeground: "bright-yellow",
       bold: true,
-      toolResultLines: .lines(7)))
+      tools: .lines(7)))
 
   try configuration.save(to: url)
 

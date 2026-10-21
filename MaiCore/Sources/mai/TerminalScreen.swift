@@ -104,6 +104,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       let previousUI = self.ui
       self.ui = ui
       transcript.configureThinking(ui.thinking)
+      transcript.configureTools(ui.tools)
       let colors = ProcessInfo.processInfo.environment["NO_COLOR"] == nil
         && ProcessInfo.processInfo.environment["TERM"] != "dumb"
       transcript.configureColors(colors ? ui : nil)
@@ -242,6 +243,28 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   // MARK: - Output
+
+  func configureTools(_ display: ToolResultDisplay) {
+    lock.withLock {
+      ui.tools = display
+      transcript.configureTools(display)
+      guard active, ui.mode == .buffer else { return }
+      redrawBuffer()
+    }
+  }
+
+  func writeTool(call: ToolCall?, result: ToolResult?, prefix: String, block: Int?) -> Int {
+    lock.withLock {
+      refreshSize()
+      let index = transcript.appendTool(call: call, result: result, prefix: prefix, to: block)
+      if active, ui.mode == .buffer {
+        outputEndedLine = true
+        drawOutputRows()
+        placeCaret()
+      }
+      return index
+    }
+  }
 
   func configureMarkdown(_ renderer: MarkdownTerminalRenderer?) {
     lock.withLock {

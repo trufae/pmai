@@ -55,11 +55,15 @@ def main(binary):
                 'defaultAgent': 'main',
                 'providers': [{'id': 'mock', 'kind': 'openAICompatible',
                                'baseURL': f'http://127.0.0.1:{server.server_port}/v1'}],
+                'toolSources': [{'id': 'standard', 'kind': 'standard-tools',
+                                 'options': {'tools': ['files_read']}}],
                 'agents': [{'id': 'main', 'provider': 'mock', 'model': 'fixture',
-                            'toolNames': [], 'toolGroupNames': [], 'retry': {'attempts': 0}}],
+                            'toolNames': ['files_read'], 'toolGroupNames': [], 'retry': {'attempts': 0}}],
+                'approvals': {'mode': 'yolo'},
                 'memory': {'enabled': False}, 'use': {'plan': False},
                 'ui': {'mode': 'buffer'},
             }))
+            (root / 'tool-output.txt').write_text(''.join(f'TOOL_ROW{i}\n' for i in range(8)))
             editor = root / 'editor.py'
             editor.write_text("from pathlib import Path\nimport sys\n"
                               "Path(sys.argv[1]).write_text('buffer editor test')\n")
@@ -192,6 +196,39 @@ def main(binary):
                     assert not re.search(rb'\x1b\[\?90\d+m', captured), captured
                     send('\x0c')
                     read_for(.1)
+                send('/set ui.tools 0\r')
+                wait_for('Set ui.tools = 0.')
+                send('tool-test\r')
+                chunks.put({'tool_calls': [{'index': 0, 'id': 'read-output', 'type': 'function',
+                    'function': {'name': 'files_read', 'arguments': json.dumps({'path': 'tool-output.txt'})}}]})
+                chunks.put(None)
+                chunks.put('TOOL_ANSWER\n')
+                chunks.put(None)
+                wait_for('✓ took')
+                assert 'TOOL_ROW' not in '\n'.join(output()), screen
+                for display, count in (('all', 8), ('2', 2), ('relevant', 3), ('0', 0), ('all', 8)):
+                    send(f'/set ui.tools {display}\r')
+                    wait_for(f'Set ui.tools = {display}.')
+                    found = set()
+                    answer_found = False
+                    for _ in range(8):
+                        visible = '\n'.join(output())
+                        found.update(re.findall(r'TOOL_ROW\d', visible))
+                        answer_found |= 'TOOL_ANSWER' in visible
+                        previous = output()
+                        send('\x1b[5~')
+                        read_for(.1)
+                        if output() == previous:
+                            break
+                    assert found == {f'TOOL_ROW{i}' for i in range(count)}, (display, found, screen)
+                    assert answer_found, (display, screen)
+                    send('\x0c')
+                    read_for(.1)
+                assert json.loads(config.read_text())['ui']['tools'] == -1
+                send('/set ui.toolResultLines 2\r')
+                wait_for('Set ui.tools = 2.')
+                saved_ui = json.loads(config.read_text())['ui']
+                assert saved_ui['tools'] == 2 and 'toolResultLines' not in saved_ui, saved_ui
                 # Handoff output must be in the restored transcript, not just
                 # briefly visible on the shell's screen while the command runs.
                 send('!uname\r')
@@ -287,7 +324,7 @@ def main(binary):
                 assert process.returncode == 0
                 assert b'\x1b[?1000l' in captured and b'\x1b[?1049l' in captured, captured
                 assert termios.tcgetattr(master) == original, 'raw tty mode leaked on exit'
-                print('PASS buffer: thinking and markdown settings, paging, mouse packets, live history anchor, fixed multiline draft, '
+                print('PASS buffer: thinking, markdown, tools and theme settings, paging, mouse packets, live history anchor, fixed multiline draft, '
                       'resize, follow, mode persistence, shell output and input, editor handoff '
                       'and terminal cleanup')
             finally:

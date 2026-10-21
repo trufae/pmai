@@ -122,7 +122,7 @@ def make_config(port, model, variant, instructions, strategy="automatic", contex
             }
         ],
         "agents": [agent],
-        "ui": {"markdown": False, "toolResultLines": -1},
+        "ui": {"markdown": False, "tools": -1},
         "use": {"plan": plan},
         "approvals": {"confirm": "allow", "dangerous": "allow", "yolo": True},
         "memory": {"enabled": False, "scope": "project"},

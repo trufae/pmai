@@ -213,3 +213,55 @@ func terminalBufferThemeHistory() {
   buffer.configureThinking(.full)
   #expect(buffer.visibleRows(width: 80, height: 20)[0].contains("\u{1B}[32mreasoning"))
 }
+
+@Test(
+  "Tool previews retain complete results when switching between compact, limited and full output")
+func terminalBufferTools() {
+  var buffer = TerminalOutputBuffer()
+  let call = ToolCall(
+    id: "read", name: "files_read", arguments: .object(["path": .string("file.txt")]))
+  buffer.append("prompt\n")
+  buffer.configureTools(.lines(0))
+  let block = buffer.appendTool(call: call, result: nil)
+  #expect(buffer.visibleRows(width: 80, height: 40) == ["prompt", ""])
+  buffer.configureTools(.all)
+  #expect(buffer.visibleRows(width: 80, height: 40).contains("→ files_read file.txt"))
+  let result = ToolResult(callID: "read", text: "one\ntwo\nthree\nfour\nfive")
+  buffer.appendTool(call: nil, result: result, to: block)
+  buffer.append("answer")
+  for display in [ToolResultDisplay.lines(0), .lines(1), .relevant, .all, .lines(0), .all] {
+    buffer.configureTools(display)
+    let rows = buffer.visibleRows(width: 80, height: 40)
+    #expect(rows.first == "prompt")
+    #expect(rows.last == "answer")
+    if display == .lines(0) {
+      #expect(rows == ["prompt", "✔ files_read file.txt", "answer"])
+    } else {
+      #expect(rows.contains("→ files_read file.txt"))
+      #expect(rows.contains("← one"))
+      #expect(rows.contains("  five") == (display == .all))
+      #expect(rows.contains("  three") == (display != .lines(1)))
+    }
+  }
+}
+
+@Test("Relevant buffer output expands important results and errors and keeps child prefixes")
+func terminalBufferRelevantTools() {
+  for important in [true, false] {
+    var buffer = TerminalOutputBuffer()
+    buffer.configureTools(.relevant)
+    buffer.appendTool(
+      call: nil,
+      result: ToolResult(
+        callID: "result", text: "one\ntwo\nthree\nfour", isError: !important,
+        importance: important ? .important : .normal), prefix: "agent#3 ")
+    let full = buffer.visibleRows(width: 80, height: 40)
+    #expect(full.contains("agent#3   four"))
+    buffer.configureTools(.lines(1))
+    let limited = buffer.visibleRows(width: 80, height: 40)
+    #expect(!limited.contains("agent#3   four"))
+    #expect(limited.contains("agent#3   … 3 more lines"))
+    buffer.configureTools(.relevant)
+    #expect(buffer.visibleRows(width: 80, height: 40) == full)
+  }
+}

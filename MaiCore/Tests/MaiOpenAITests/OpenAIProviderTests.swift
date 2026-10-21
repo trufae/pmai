@@ -1093,7 +1093,7 @@ func configurationLoading() async throws {
   #expect(configuration.agents[0].useToolProxy)
   #expect(configuration.agents[0].options.maxOutputTokens == 100)
   #expect(configuration.ui.toolResultForeground == "yellow")
-  #expect(configuration.ui.toolResultLines == .all)
+  #expect(configuration.ui.tools == .all)
   let plugins = PluginRegistry()
   try await plugins.install(MaiOpenAIPlugin())
   let provider = try await plugins.makeProvider(

@@ -8,6 +8,9 @@ import Testing
 func toolResultDisplayConfiguration() throws {
   let cases: [(String, ToolResultDisplay)] = [
     ("{}", .all),
+    (#"{"tools":0}"#, .lines(0)),
+    (#"{"tools":"relevant"}"#, .relevant),
+    (#"{"tools":7,"toolResultLines":0}"#, .lines(7)),
     (#"{"toolResultLines":-1}"#, .all),
     (#"{"toolResultLines":-20}"#, .all),
     (#"{"toolResultLines":0}"#, .lines(0)),
@@ -18,14 +21,15 @@ func toolResultDisplayConfiguration() throws {
   ]
   for (json, expected) in cases {
     let ui = try JSONDecoder().decode(ConfiguredTerminalUI.self, from: Data(json.utf8))
-    #expect(ui.toolResultLines == expected)
+    #expect(ui.tools == expected)
     let saved = try JSONEncoder().encode(ui)
     #expect(try JSONDecoder().decode(ConfiguredTerminalUI.self, from: saved) == ui)
     let object = try #require(JSONSerialization.jsonObject(with: saved) as? [String: Any])
+    #expect(object["toolResultLines"] == nil)
     if expected == .relevant {
-      #expect(object["toolResultLines"] as? String == "relevant")
+      #expect(object["tools"] as? String == "relevant")
     } else {
-      #expect(object["toolResultLines"] is Int)
+      #expect(object["tools"] is Int)
     }
   }
   #expect(throws: DecodingError.self) {
