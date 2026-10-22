@@ -138,6 +138,22 @@ path.write_text('Edited in editor: ' + path.read_text())
             assert not messages()[0].get('isPinned', False), messages()
             assert messages()[1] == last | {'isPinned': True}, messages()
 
+        # Manual compaction keeps pinned rows verbatim, including linked tools.
+        for index, original in enumerate(fixture, 1):
+            reset()
+            run([f'/chat pin {index}'])
+            expected = original | {'isPinned': True}
+            for _ in range(2):
+                output = run(['/chat compact'])[0]
+                assert 'Conversation compacted into a summary.' in output, output
+                compacted = messages()
+                assert [m for m in compacted if m['id'] == original['id']] == [expected], compacted
+                assert any(m['content'][0].get('text', {}).get('_0', '').startswith(
+                    'Summary of earlier parts of this conversation') for m in compacted), compacted
+            listing = run(['/chat pins'])[0]
+            assert f'(id: {original["id"]})' in listing, listing
+            assert expected in messages(), messages()
+
         reset()
         for index in range(1, len(fixture) + 1):
             output = run([f'/chat pin {index}'])[0]
@@ -199,7 +215,7 @@ path.write_text('Edited in editor: ' + path.read_text())
         assert messages() == [], messages()
         for output in run(['/chat log', '/chat log verbose']):
             assert 'No conversation messages yet.' in output, output
-        print('PASS chat logs: quiet/verbose/short, first paragraphs, pins on all roles, stable indexes, redirection; '
+        print('PASS chat logs: quiet/verbose/short, first paragraphs, pins on all roles across repeated compaction, stable indexes, redirection; '
               'editor aliases, inline text, attachment preservation, persistence and validation')
 
 
