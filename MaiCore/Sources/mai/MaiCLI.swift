@@ -11966,7 +11966,7 @@ struct MaiCLI {
           return
         }
       }
-      if action == "pins" || (action == "pin" && actionArgument.isEmpty) {
+      if action == "pins" {
         let pinned = session.history.messages.enumerated().filter { $0.element.isPinned }
         guard !pinned.isEmpty else {
           await terminal.line("No pinned messages. Use /chat pin INDEX or MESSAGE_ID.")
@@ -11981,10 +11981,20 @@ struct MaiCLI {
         }
         return
       }
-      guard parts.count == 2,
-        let index = chatIndex(actionArgument, count: session.history.count)
-          ?? session.history.index(ofMessageID: actionArgument)
-      else {
+      let index: Int?
+      if action == "pin" && actionArgument.isEmpty {
+        guard !session.history.isEmpty else {
+          await terminal.line("No messages to pin.")
+          return
+        }
+        index = session.history.count - 1
+      } else {
+        index = parts.count == 2
+          ? chatIndex(actionArgument, count: session.history.count)
+            ?? session.history.index(ofMessageID: actionArgument)
+          : nil
+      }
+      guard let index else {
         await terminal.line("Usage: /chat \(action) INDEX|MESSAGE_ID")
         return
       }
@@ -13354,7 +13364,7 @@ struct MaiCLI {
       /chat files                   List files accessed in this conversation
       /chat messages                Display a compact indexed message list
       /chat log [quiet|verbose|short]  Display the conversation (default quiet)
-      /chat pin [INDEX|MESSAGE_ID]  Pin any message; without an argument, show pinned messages
+      /chat pin [INDEX|MESSAGE_ID]  Pin any message; defaults to the last message
       /chat pins [short]           Show pinned messages in full, or list their first paragraphs
       /chat unpin INDEX|MESSAGE_ID  Remove a message pin
       /chat last          Display the latest assistant response

@@ -130,6 +130,14 @@ path.write_text('Edited in editor: ' + path.read_text())
             assert not (root / 'editor-input.txt').exists()
 
         # Pins belong to individual messages, including system, reasoning and tool rows.
+        for last in (fixture[-1], fixture[1], fixture[4], fixture[2], fixture[0]):
+            reset([message('earlier', 'user', part('text', 'Earlier message')), last])
+            output, repeated = run(['/chat pin', '/chat pin'])
+            for text in (output, repeated):
+                assert f'📌 Pinned message 2 (id: {last["id"]}).' in text, text
+            assert not messages()[0].get('isPinned', False), messages()
+            assert messages()[1] == last | {'isPinned': True}, messages()
+
         reset()
         for index in range(1, len(fixture) + 1):
             output = run([f'/chat pin {index}'])[0]
@@ -137,7 +145,7 @@ path.write_text('Edited in editor: ' + path.read_text())
         pinned = messages()
         assert all(m['isPinned'] for m in pinned), pinned
         assert [{k: v for k, v in m.items() if k != 'isPinned'} for m in pinned] == fixture
-        short, listing, repeated = run(['/chat log short', '/chat pin', '/chat pin 2'])
+        short, listing, repeated = run(['/chat log short', '/chat pins', '/chat pin 2'])
         for index, role in enumerate(('System', 'User', 'Assistant', 'Assistant', 'Tool', 'Tool', 'Assistant'), 1):
             assert f'[{index}] 📌 {role}' in short, (index, short)
             assert f'## [{index}] 📌 {role}' in listing, (index, listing)
@@ -182,10 +190,13 @@ path.write_text('Edited in editor: ' + path.read_text())
         assert 'Conversation cleared.' in output, output
         assert all(m['role'] == 'system' for m in messages()), messages()
         assert not any(m.get('isPinned', False) for m in messages())
-        for output in run(['/chat pin', '/chat pins', '/chat pins short']):
+        for output in run(['/chat pins', '/chat pins short']):
             assert 'No pinned messages.' in output, output
 
         reset([])
+        output = run(['/chat pin'])[0]
+        assert 'No messages to pin.' in output, output
+        assert messages() == [], messages()
         for output in run(['/chat log', '/chat log verbose']):
             assert 'No conversation messages yet.' in output, output
         print('PASS chat logs: quiet/verbose/short, first paragraphs, pins on all roles, stable indexes, redirection; '
