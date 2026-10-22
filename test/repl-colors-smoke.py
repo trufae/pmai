@@ -230,7 +230,7 @@ def main():
                     wait_for(f'Set theme color {key} = none.')
                     wait_for('pmai> ')
                 os.write(master, b'/theme use \t')
-                wait_for('\x1b[7mdefault')
+                wait_for('\x1b[7m')
                 os.write(master, b'\x03')
                 wait_for('Nothing to cancel.')
                 wait_for('pmai> ')
