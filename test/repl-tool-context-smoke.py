@@ -82,6 +82,7 @@ def main():
                                 'toolNames': ['files_read'], 'toolGroupNames': [],
                                 'retry': {'attempts': 0}, 'autocompact': {'tokens': 0}}],
                     'memory': {'enabled': False}, 'use': {'plan': False},
+                    'approvals': {'mode': 'yolo'},
                     'ui': {'tools': 0},
                 }))
                 master, slave = pty.openpty()

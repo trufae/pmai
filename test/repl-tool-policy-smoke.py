@@ -100,6 +100,8 @@ for line in sys.stdin:
                         agent[key] = sorted(agent.get(key, []))
                 return agents
 
+            # Startup expands tool groups and saves decoded defaults before any command.
+            run([], [])
             before = agent_settings()
             output, calls = run(['/tools off', '/tools', 'Chat without tools'], [final])
             assert 'All tools globally: off' in output, output
@@ -122,16 +124,16 @@ for line in sys.stdin:
             assert 'github_ci_log [disabled; 0 calls]' in output, output
             offered = {t['function']['name'] for t in calls[0]['tools']}
             assert {'files_read', 'github_pr', 'github_issue', 'external_search',
-                    'list-tools', 'call-tool'} <= offered, offered
+                    'list_tools', 'call_tool'} <= offered, offered
             assert not {'github_ci_log', 'skills_beta', 'skills_alpha', 'external::read'} & offered
             catalog = next(t['function']['description'] for t in calls[0]['tools']
-                           if t['function']['name'] == 'list-tools')
+                           if t['function']['name'] == 'list_tools')
             assert 'external::read' in catalog and 'skills_alpha' in catalog, catalog
             assert 'github_ci_log' not in catalog and 'skills_beta' not in catalog, catalog
 
             for _ in range(3):
                 output, calls = run(['Load alpha'], [
-                    call('call-tool', {'name': 'skills_alpha', 'arguments': {}}), final])
+                    call('call_tool', {'name': 'skills_alpha', 'arguments': {}}), final])
             offered = {t['function']['name'] for t in calls[-1]['tools']}
             assert 'skills_alpha' in offered, offered
             usage = json.loads((root / 'home/tool-usage.json').read_text())
@@ -161,13 +163,13 @@ for line in sys.stdin:
             output, calls = run(['/tools disable mcp/fixture', '/mcp proxy fixture/search',
                                  '/mcp tools fixture', 'Restricted MCP'], [final])
             catalog = next(t['function']['description'] for t in calls[0]['tools']
-                           if t['function']['name'] == 'list-tools')
+                           if t['function']['name'] == 'list_tools')
             assert 'external::read' not in catalog and 'external::search' in catalog, catalog
             output, calls = run(['/tools disable mcp', '/tools inherit mcp/fixture',
                                  '/tools inherit external::search', '/tools enable mcp/fixture',
                                  '/mcp list', '/tools show agent_start', 'MCP enabled'], [final])
             catalog = next(t['function']['description'] for t in calls[0]['tools']
-                           if t['function']['name'] == 'list-tools')
+                           if t['function']['name'] == 'list_tools')
             assert 'external::read' in catalog and 'external::search' in catalog, catalog
             assert '0 calls' in output and 'agent_start [' in output, output
             saved = json.loads(config.read_text())['agents'][0]
@@ -184,7 +186,7 @@ for line in sys.stdin:
             offered = {t['function']['name'] for t in calls[0]['tools']}
             assert not {'github_issue', 'skills_alpha', 'external_search', 'external_read'} & offered
             catalog = next(t['function']['description'] for t in calls[0]['tools']
-                           if t['function']['name'] == 'list-tools')
+                           if t['function']['name'] == 'list_tools')
             assert not any(name + ' (' in catalog for name in
                            ('github_issue', 'skills_alpha', 'external::search', 'external::read')), catalog
             saved = json.loads(config.read_text())['agents'][0]['toolPolicy']
@@ -192,12 +194,12 @@ for line in sys.stdin:
             assert saved['tools']['skills_alpha'] == 'hidden', saved
             assert saved['groups']['mcp/fixture'] == 'hidden', saved
             output, calls = run(['Find hidden tools'], [
-                call('list-tools', {'keywords': 'github_issue skills_alpha external'}), final])
+                call('list_tools', {'keywords': 'github_issue skills_alpha external'}), final])
             listings = [m['content'] for m in calls[-1]['messages'] if m['role'] == 'tool']
             assert listings and not any(name in '\n'.join(listings) for name in
                 ('- github_issue:', '- skills_alpha:', '- external::search:', '- external::read:')), listings
             output, calls = run(['Call hidden skill'], [
-                call('call-tool', {'name': 'skills_alpha', 'arguments': {}}), final])
+                call('call_tool', {'name': 'skills_alpha', 'arguments': {}}), final])
             assert any('Read the code.' in m['content'] for m in calls[-1]['messages']
                        if m['role'] == 'system'), calls[-1]
             assert any('Skill instructions loaded by skills_alpha' in m['content']
@@ -218,7 +220,7 @@ for line in sys.stdin:
             offered = {t['function']['name'] for t in calls[0]['tools']}
             assert 'files_read' in offered, offered
             assert not any(name.startswith(('github_', 'weather', 'web_', 'mastodon')) for name in offered), offered
-            catalog = next(t['function']['description'] for t in calls[0]['tools'] if t['function']['name'] == 'list-tools')
+            catalog = next(t['function']['description'] for t in calls[0]['tools'] if t['function']['name'] == 'list_tools')
             assert not any(name in catalog for name in ('github_pr', 'weather', 'web_search', 'mastodon')), catalog
             assert 'external::read' in catalog, catalog
             assert json.loads(config.read_text())['airplane'] is True

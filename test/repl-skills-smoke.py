@@ -66,6 +66,7 @@ def main():
                             'instructions': 'Rules', 'toolNames': ['files_read'],
                             'toolGroupNames': ['skills'], 'autocompact': {'tokens': 0}}],
                 'memory': {'enabled': False}, 'use': {'plan': False},
+                'approvals': {'mode': 'yolo'},
             }
 
             def run(commands, responses):
