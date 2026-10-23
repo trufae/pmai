@@ -63,6 +63,12 @@ final class WebXDCRunningSession: NSObject, ObservableObject, Identifiable {
     configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: app.id)
     configuration.userContentController.addUserScript(
       WKUserScript(
+        source: WebXDCBridge.script(
+          selfAddr: "you@pocketmai", selfName: "You", settings: webxdcSettings),
+        injectionTime: .atDocumentStart,
+        forMainFrameOnly: true))
+    configuration.userContentController.addUserScript(
+      WKUserScript(
         source: WebXDCDebugBridge.script,
         injectionTime: .atDocumentStart,
         forMainFrameOnly: false))
