@@ -42,6 +42,7 @@ final class WebXDCPocketMaiHost {
     """
   let appID: UUID
   private let settings: () -> AppSettings
+  var requestPermission: ((String) async -> Bool)?
   private let emit: ([String: Any]) -> Void
   private var tasks: [String: Task<Void, Never>] = [:]
   private var cancelledRequests: Set<String> = []
@@ -145,8 +146,8 @@ final class WebXDCPocketMaiHost {
     emit(["id": id, "error": ["code": code, "message": error.localizedDescription]])
   }
 
-  private func require(_ capability: String) throws {
-    let grants = WebXDCPermissions.load(appID)
+  private func require(_ capability: String) async throws {
+    var grants = WebXDCPermissions.load(appID)
     let tools = settings().toolSettings
     let allowed: Bool
     switch capability {
@@ -154,6 +155,21 @@ final class WebXDCPocketMaiHost {
     case "transcription": allowed = grants.transcription && tools.webxdcAllowMicrophone
     case "synthesis": allowed = grants.synthesis && tools.webxdcAllowAudioPlayback
     default: allowed = false
+    }
+    if !allowed && requestPermission != nil {
+      let granted = await requestPermission!(capability)
+      try Task.checkCancellation()
+      if granted {
+        grants = WebXDCPermissions.load(appID)
+        switch capability {
+        case "inference": grants.inference = true
+        case "transcription": grants.transcription = true
+        case "synthesis": grants.synthesis = true
+        default: break
+        }
+        try grants.save(appID)
+        return try await require(capability)
+      }
     }
     guard allowed else {
       throw WebXDCAPIError(
@@ -253,7 +269,7 @@ final class WebXDCPocketMaiHost {
         ? "synthesis" : "transcription"
     default: throw WebXDCAPIError(code: "NotSupportedError", message: "Unknown PocketMai method.")
     }
-    try require(capability)
+    try await require(capability)
     if method == "models" {
       let provider =
         options["provider"] as? String ?? (capability == "inference" ? defaultProviderID : "system")
