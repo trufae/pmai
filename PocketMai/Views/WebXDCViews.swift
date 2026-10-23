@@ -49,6 +49,21 @@ final class WebXDCRunningSession: NSObject, ObservableObject, Identifiable {
     permissionContinuation = nil
   }
 
+  @Published var consoleEntries: [(id: UUID, command: String, result: String)] = []
+
+  func evaluateConsole(_ command: String) {
+    guard webView.url?.scheme == Self.appScheme, webView.url?.host == "app" else { return }
+    let id = UUID()
+    consoleEntries.append((id: id, command: command, result: "Running…"))
+    webView.evaluateJavaScript(command) { [weak self] value, error in
+      Task { @MainActor [weak self] in
+        guard let self, let index = self.consoleEntries.firstIndex(where: { $0.id == id }) else { return }
+        self.consoleEntries[index].result = error?.localizedDescription ?? String(describing: value ?? "undefined")
+      }
+    }
+  }
+
+
   lazy var pocketmai = WebXDCPocketMaiHost(
     appID: app.id,
     settings: { [weak self] in self?.store?.settings ?? .defaults },
@@ -531,6 +546,7 @@ struct WebXDCRunnerSheet: View {
 private struct WebXDCDebugLogView: View {
   @Environment(\.dismiss) private var dismiss
   @ObservedObject var session: WebXDCRunningSession
+  @State private var showingConsole = false
 
   var body: some View {
     NavigationStack {
@@ -561,17 +577,39 @@ private struct WebXDCDebugLogView: View {
               }
             }
             .padding(.vertical, 4)
+            .contextMenu {
+              Button("Copy", systemImage: "doc.on.doc") {
+                UIPasteboard.general.string = logText(log)
+              }
+            }
           }
         }
       }
       .navigationTitle("Debug Logs")
+      .sheet(isPresented: $showingConsole) { WebXDCConsoleView(session: session) }
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
+        ToolbarItem(placement: .topBarLeading) {
+          Button("Console", systemImage: "chevron.left.forwardslash.chevron.right") {
+            showingConsole = true
+          }
+        }
+        ToolbarItem(placement: .topBarLeading) {
+          Button("Copy All", systemImage: "doc.on.doc") {
+            UIPasteboard.general.string = session.debugLogs.map(logText).joined(separator: "\n")
+          }
+          .disabled(session.debugLogs.isEmpty)
+        }
         ToolbarItem(placement: .confirmationAction) {
           Button("Done") { dismiss() }
         }
       }
     }
+  }
+
+  private func logText(_ log: WebXDCDebugLog) -> String {
+    let location = locationText(log).map { " ($0)" } ?? ""
+    return "[\(formatted(log.date))] [\(log.level.uppercased())] \(log.message)\(location)"
   }
 
   private func color(for level: String) -> Color {
@@ -599,6 +637,76 @@ private struct WebXDCDebugLogView: View {
       }
     }
     return text
+  }
+}
+
+private struct WebXDCConsoleView: View {
+  @Environment(\.dismiss) private var dismiss
+  @ObservedObject var session: WebXDCRunningSession
+  @State private var command = ""
+
+  var body: some View {
+    NavigationStack {
+      ScrollViewReader { proxy in
+        ScrollView {
+          LazyVStack(alignment: .leading, spacing: 10) {
+            ForEach(session.debugLogs) { log in
+              Text("[\(log.level.uppercased())] \(log.message)")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(log.level == "error" ? .red : .secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+            }
+            ForEach(session.consoleEntries, id: \.id) { entry in
+              VStack(alignment: .leading, spacing: 5) {
+                Text("> " + entry.command)
+                  .foregroundStyle(.primary)
+                Text(entry.result)
+                  .foregroundStyle(.secondary)
+              }
+              .font(.system(.caption, design: .monospaced))
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .padding(12)
+              .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+              .contextMenu {
+                Button("Copy", systemImage: "doc.on.doc") {
+                  UIPasteboard.general.string = entry.command + "\n" + entry.result
+                }
+              }
+              .id(entry.id)
+            }
+          }
+          .padding()
+        }
+        .onChange(of: session.consoleEntries.count) { _, _ in
+          if let last = session.consoleEntries.last { proxy.scrollTo(last.id, anchor: .bottom) }
+        }
+      }
+      .safeAreaInset(edge: .bottom) {
+        HStack(spacing: 8) {
+          TextField("JavaScript expression", text: $command, axis: .vertical)
+            .font(.system(.body, design: .monospaced))
+            .lineLimit(1...4)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .onSubmit(run)
+          Button("Run", systemImage: "arrow.up.circle.fill") { run() }
+            .disabled(command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .padding()
+        .background(.bar)
+      }
+      .navigationTitle("JavaScript Console")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+    }
+  }
+
+  private func run() {
+    let text = command.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty else { return }
+    command = ""
+    session.evaluateConsole(text)
   }
 }
 
