@@ -5047,6 +5047,8 @@ struct MaiCLI {
         await terminal.line(replHelp)
       case "about", "/about":
         await terminal.line(aboutMessage)
+      case "keys", "/keys":
+        await terminal.line(keysHelp)
       case "history", "/history":
         await terminal.line(REPLHistoryCommand.help)
       case "set", "/set":
@@ -5099,9 +5101,11 @@ struct MaiCLI {
         await terminal.line(pathHelp)
       default:
         await terminal.line(
-          "Unknown help topic '\(argument)'. Try /help, or /help set, theme, memory, todo, prompts, agents, jobs, mcp, remote, projects, chat, edit, tools, skills, queue, export, import, copy, stats, or history."
+          "Unknown help topic '\(argument)'. Try /help, or /help set, theme, memory, todo, prompts, agents, jobs, mcp, remote, projects, chat, edit, tools, skills, queue, export, import, copy, stats, history, or keys."
         )
       }
+    case "/keys":
+      await terminal.line(keysHelp)
     case "/cwd", "/pwd":
       await terminal.line(FileManager.default.currentDirectoryPath)
     case "/history":
@@ -12618,6 +12622,7 @@ struct MaiCLI {
   ) -> [String] {
     var values = [
       "/help", "/help set", "/exit", "/quit", "/set tool.aproval yolo", "/set tool.aproval ask",
+      "/keys", "/help keys",
       "/help history", "/history", "/history list", "/history search ", "/history del ",
       "/history clear", "/history path", "/history help",
       "/help theme", "/theme", "/theme list", "/theme use ", "/theme save ", "/theme color",
@@ -13142,6 +13147,7 @@ struct MaiCLI {
     /image MODE PATH       Attach at tiny/small/medium/big/full size, or OCR to Markdown
     /import PATH           Merge a PocketMai/pmai archive into settings, skills, and chats
     /jobs                  Manage running and saved processes; /help jobs lists commands
+    /keys                  Show keyboard shortcuts
     /mcp                   Manage MCP servers; /help mcp lists commands
     /memory                Show, edit, learn, or scope this project's durable memory
     /model [PROVIDER::]MODEL  Select and save a model for chat and all tasks
@@ -13174,19 +13180,12 @@ struct MaiCLI {
     /tools                 List logical tool groups for the current agent
     /vdb                   Index and query local documentation and source code
     /version               Print the pmai version
-    Input: Shift+Enter adds a line (Alt+Enter or Ctrl+J where the terminal sends Enter for it)
-           A paste keeps its lines · Enter sends the whole text
-           <<WORD starts a multiline message ending at WORD alone
+    Input: <<WORD starts a multiline message ending at WORD alone
            $NAME [TEXT] sends a prompt or skill by name; /prompts lists them
            !COMMAND runs a line in the system shell (interactive programs work)
            /COMMAND > FILE overwrites; /COMMAND >> FILE appends; /COMMAND | SHELL_COMMAND pipes stdout
            Examples: /chat log > log.txt · /chat last | grep banana
            Only slash commands redirect; quoted, escaped, or pasted operators stay literal
-           Up/Down or Ctrl+P/N move between lines, then history · Ctrl+R reverse search
-           Ctrl+A/E or Home/End beginning/end of the line
-           Ctrl+B/F move left/right like the arrow keys
-           Ctrl+L clear the screen, keeping the input
-           Ctrl+W delete word · Ctrl+C or /stop interrupt the run · Ctrl+Z suspend
            The prompt stays open while a turn runs: a message typed then is queued and
            joins the conversation at the next model turn. @2,3 TEXT or @2 @3 TEXT reaches several agents.
            @* TEXT reaches every active agent, including the main chat when it is running.
@@ -13194,6 +13193,20 @@ struct MaiCLI {
            @ alone prints usage help.
            Commands run right away too; a setting changed then reaches the next turn.
            Child agents print in blocks prefixed agent#PID; /set ui.subagents picks how much.
+    """
+
+  private static let keysHelp = """
+    Keyboard shortcuts:
+      Shift+Enter adds a line (Alt+Enter or Ctrl+J where the terminal sends Enter for it)
+      A paste keeps its lines · Enter sends the whole text
+      Tab selects the next completion · Shift+Tab selects the previous completion
+      Up/Down or Ctrl+P/N move between lines, then history · Ctrl+R reverse search
+      Ctrl+A/E or Home/End beginning/end of the line
+      Ctrl+B/F move left/right like the arrow keys
+      Ctrl+L clear the screen, keeping the input
+      Ctrl+W delete word · Ctrl+C or /stop interrupt the run · Ctrl+Z suspend
+      Ctrl+D exits when the input is empty
+      Page Up/Down and the mouse wheel scroll the transcript in buffer mode
     """
 
   private static let effortHelp = """

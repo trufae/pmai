@@ -161,6 +161,14 @@ def main():
         names = re.findall(r'(?m)^(/[a-z]+)\b', commands)
         assert len(names) > 20 and names == sorted(names), names
         assert '/stop' in names and '/retry' not in names, names
+        assert '/keys' in names, names
+        assert 'Ctrl+' not in commands and 'Shift+Enter' not in commands, commands
+        for keys in run(('/keys', '/help keys', '/help /keys'), split=True):
+            assert 'Keyboard shortcuts:' in keys, keys
+            assert 'Shift+Enter adds a line' in keys, keys
+            assert 'Shift+Tab selects the previous completion' in keys, keys
+            assert 'Ctrl+R reverse search' in keys and 'Ctrl+Z suspend' in keys, keys
+            assert 'Unknown command.' not in keys and 'Unknown help topic' not in keys, keys
         assert '/skills prompt NAME [TEXT]' in help_text, help_text
 
         # Environment defaults can still bootstrap an installation once.
