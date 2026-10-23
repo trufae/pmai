@@ -17,6 +17,47 @@ name = "My voice companion"
 description = "An alternative interface for PocketMai"
 ```
 
+The script tags above must execute in that order (do not use `async` on
+`webxdc.js`). In PocketMai, the host serves its own `webxdc.js` for
+`xdc://app`, even if the archive includes a stub with that filename. The
+extension is available synchronously after that script has executed; callers
+do not need to poll, wait for a custom ready event, or load the script again.
+A plain browser or another WebXDC host may expose `window.webxdc` without
+providing PocketMai's extension.
+
+### Troubleshoot an unavailable native API
+
+Check these values in the running app (or its WebXDC debug console):
+
+```js
+console.log({
+  protocol: location.protocol,
+  webxdc: !!window.webxdc,
+  pocketmai: !!window.webxdc?.pocketmai,
+  host: window.webxdc?.pocketmai?.host,
+  version: window.webxdc?.pocketmai?.version
+});
+```
+
+- If `webxdc` is false, check that `webxdc.js` loaded successfully before
+  your application script and that the app is running in a WebXDC host.
+- If `webxdc` is true but `pocketmai` is false, check that the app is running
+  inside PocketMai's **Apps/WebXDC runner**, not a browser preview or another
+  host. This is a missing extension, **not** a permission failure. Verify the
+  installed PocketMai build includes the native extension; changing inference
+  grants or reloading `webxdc.js` will not fix an unsupported host.
+- If `pocketmai` exists but the host/version does not match, use a portable
+  fallback rather than assuming API compatibility.
+- If the extension is present, call `capabilities()` to inspect effective
+  grants. Disabled inference/transcription/synthesis permissions do **not**
+  remove the namespace; they block the corresponding native operations.
+
+When updating an app's JavaScript or HTML, ensure the runner uses the new app
+revision. For an unavailable extension in a supported PocketMai build, inspect
+the WebXDC debug log and report the host/version and PocketMai build. Do not
+silently fall back to browser microphone or direct provider network calls:
+those have different permissions and privacy properties.
+
 `webxdc.pocketmai` is a **PocketMai extension**, not part of the webxdc standard.
 Other hosts can run the portable parts of an app, but do not have to implement
 inference or speech. Never assume that loading `webxdc.js` implies support.
