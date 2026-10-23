@@ -156,8 +156,14 @@ final class WebXDCPocketMaiHost {
     case "synthesis": allowed = grants.synthesis && tools.webxdcAllowAudioPlayback
     default: allowed = false
     }
-    if !allowed && requestPermission != nil {
-      let granted = await requestPermission!(capability)
+    let hasGrant = switch capability {
+    case "inference": grants.inference
+    case "transcription": grants.transcription
+    case "synthesis": grants.synthesis
+    default: false
+    }
+    if !hasGrant, let requestPermission {
+      let granted = await requestPermission(capability)
       try Task.checkCancellation()
       if granted {
         grants = WebXDCPermissions.load(appID)
