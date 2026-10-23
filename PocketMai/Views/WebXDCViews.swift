@@ -32,6 +32,22 @@ final class WebXDCRunningSession: NSObject, ObservableObject, Identifiable {
   private var flushTask: Task<Void, Never>?
   private var awaitingAssistantUpdate = false
   private var settingsSubscription: AnyCancellable?
+  @Published var permissionRequest: String?
+  private var permissionContinuation: CheckedContinuation<Bool, Never>?
+
+  func askPermission(_ capability: String) async -> Bool {
+    guard permissionContinuation == nil else { return false }
+    return await withCheckedContinuation { continuation in
+      permissionContinuation = continuation
+      permissionRequest = capability
+    }
+  }
+
+  func resolvePermission(_ allowed: Bool) {
+    permissionRequest = nil
+    permissionContinuation?.resume(returning: allowed)
+    permissionContinuation = nil
+  }
 
   lazy var pocketmai = WebXDCPocketMaiHost(
     appID: app.id,
@@ -84,6 +100,9 @@ final class WebXDCRunningSession: NSObject, ObservableObject, Identifiable {
     webView.navigationDelegate = self
     webView.isOpaque = false
     self.webView = webView
+    pocketmai.requestPermission = { [weak self] capability in
+      await self?.askPermission(capability) ?? false
+    }
     settingsSubscription = store.$settings.dropFirst().sink { [weak self] _ in
       self?.pocketmai.cancelAll()
     }
@@ -116,6 +135,7 @@ final class WebXDCRunningSession: NSObject, ObservableObject, Identifiable {
   }
 
   func stop() {
+    resolvePermission(false)
     settingsSubscription = nil
     pocketmai.isActive = false
     flushTask?.cancel()
@@ -490,6 +510,15 @@ struct WebXDCRunnerSheet: View {
     .onDisappear { session.pocketmai.isActive = false }
     .sheet(isPresented: $showingDebugLogs) {
       WebXDCDebugLogView(session: session)
+    }
+    .alert("PocketMai Extension Permission", isPresented: Binding(
+      get: { session.permissionRequest != nil },
+      set: { if !$0 { session.resolvePermission(false) } }
+    )) {
+      Button("Don’t Allow", role: .cancel) { session.resolvePermission(false) }
+      Button("Allow") { session.resolvePermission(true) }
+    } message: {
+      Text("\(session.app.name) wants to use \(session.permissionRequest ?? "native services"). Allow access?")
     }
   }
 
