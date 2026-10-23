@@ -21,6 +21,11 @@ enum TerminalCommand {
     var output = Data()
     let screen = TerminalScreen.current
     let capturesOutput = retainOutput && screen?.isBufferMode == true
+    #if !os(Windows)
+      if capturesOutput, suspendTerminal, let screen {
+        return try runBuffered(command, screen: screen)
+      }
+    #endif
     let launch = {
       result = Result {
         #if !os(Windows)
@@ -44,7 +49,45 @@ enum TerminalCommand {
     return try result.get()
   }
 
-  private static func launch(_ command: String, outputDescriptor: Int32? = nil) throws -> Int32 {
+  #if !os(Windows)
+    /// Keep quick commands on the current screen. A program that is still
+    /// running after the grace period gets the normal interactive handoff.
+    private static func runBuffered(_ command: String, screen: TerminalScreen) throws -> Int32 {
+      var output = Data()
+      defer {
+        if !output.isEmpty {
+          screen.write(String(decoding: output, as: UTF8.self), to: .standardOutput)
+        }
+      }
+      var result: Result<Int32, Error> = .success(0)
+      screen.suspendTerminal(deferBufferHandoff: { handoff in
+        result = Result {
+          let capture = try OutputCapture(forwardOutput: false)
+          defer { output = capture.finish() }
+          return try launch(command, outputDescriptor: capture.slave) { child in
+            let deadline = ProcessInfo.processInfo.systemUptime + 0.15
+            repeat {
+              var status: Int32 = 0
+              let waited = waitpid(child, &status, WNOHANG)
+              if waited == child { return status }
+              if waited == -1 && errno != EINTR { throw posixError(errno) }
+              Thread.sleep(forTimeInterval: 0.005)
+            } while ProcessInfo.processInfo.systemUptime < deadline
+
+            handoff()
+            capture.beginForwarding()
+            return nil
+          }
+        }
+      })
+      return try result.get()
+    }
+  #endif
+
+  private static func launch(
+    _ command: String, outputDescriptor: Int32? = nil,
+    beforeWait: (Int32) throws -> Int32? = { _ in nil }
+  ) throws -> Int32 {
     #if os(Windows)
       let status = command.withCString(terminalSystem)
       guard status != -1 else { throw posixError(errno) }
@@ -138,6 +181,7 @@ enum TerminalCommand {
       #else
         try check(posix_spawn(&child, shell, &actions, &attributes, arguments, environment))
       #endif
+      if let status = try beforeWait(child) { return status }
       var status: Int32 = 0
       while true {
         let waited = waitpid(child, &status, WUNTRACED)
@@ -167,11 +211,14 @@ enum TerminalCommand {
       let slave: Int32
       private let lock = NSLock()
       private var stopping = false
+      private var forwardOutput: Bool
       private let reader = DispatchGroup()
-      // Only the reader accesses bytes until finish() joins it.
+      // The reader and beginForwarding() access bytes under the lock;
+      // finish() joins the reader before returning them.
       private var bytes = Data()
 
-      init() throws {
+      init(forwardOutput: Bool = true) throws {
+        self.forwardOutput = forwardOutput
         var master: Int32 = -1
         var slave: Int32 = -1
         var attributes = termios()
@@ -218,9 +265,18 @@ enum TerminalCommand {
             if count < 0 && errno == EINTR { continue }
             guard count > 0 else { break }
             let data = Data(buffer.prefix(count))
-            self.bytes.append(data)
-            FileHandle.standardOutput.write(data)
+            self.lock.withLock {
+              self.bytes.append(data)
+              if self.forwardOutput { FileHandle.standardOutput.write(data) }
+            }
           }
+        }
+      }
+
+      func beginForwarding() {
+        lock.withLock {
+          FileHandle.standardOutput.write(bytes)
+          forwardOutput = true
         }
       }
 

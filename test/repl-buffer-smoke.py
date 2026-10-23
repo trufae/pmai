@@ -68,10 +68,13 @@ def main(binary):
             editor.write_text("from pathlib import Path\nimport sys\n"
                               "Path(sys.argv[1]).write_text('buffer editor test')\n")
             shell = root / 'shell.py'
-            shell.write_text("import os\n"
+            shell.write_text("import os, termios, tty\n"
                              "assert all(os.isatty(fd) for fd in (0, 1, 2))\n"
+                             "assert termios.tcgetattr(0)[3] & termios.ICANON\n"
+                             "tty.setraw(0)\n"
                              "print('SHELL_INPUT_READY', flush=True)\n"
                              "text = input()\n"
+                             "assert not termios.tcgetattr(0)[3] & termios.ICANON\n"
                              "print('SHELL_REPLY_' + text, flush=True)\n")
             env = clean_environment() | {'TERM': 'xterm-256color',
                 'NO_PROXY': '127.0.0.1,localhost', 'EDITOR': f'{sys.executable} {editor}'}
@@ -233,17 +236,35 @@ def main(binary):
                 wait_for('Set ui.tools = 2.')
                 saved_ui = json.loads(config.read_text())['ui']
                 assert saved_ui['tools'] == 2 and 'toolResultLines' not in saved_ui, saved_ui
-                # Handoff output must be in the restored transcript, not just
-                # briefly visible on the shell's screen while the command runs.
+                # Quick commands stay on the alternate screen and retain both
+                # output streams, partial lines, and failure status.
+                send('!pwd\r')
+                wait_for(str(root))
+                assert str(root) in '\n'.join(output()), screen
+                assert b'\x1b[?1049l' not in captured and b'\x1b[?1049h' not in captured, captured
                 send('!uname\r')
-                wait_for('\x1b[?1049h')
+                wait_for(platform.system())
                 assert platform.system() in '\n'.join(output()), screen
+                assert b'\x1b[?1049l' not in captured and b'\x1b[?1049h' not in captured, captured
                 send("!printf 'BUFFER_STDOUT\\n'; printf 'BUFFER_STDERR\\n' >&2; exit 7\r")
                 wait_for('exit status 7')
                 assert all(text in '\n'.join(output())
                            for text in ('BUFFER_STDOUT', 'BUFFER_STDERR')), screen
+                assert b'\x1b[?1049l' not in captured and b'\x1b[?1049h' not in captured, captured
+                send("!printf 'BUFFER_PARTIAL'\r")
+                wait_for('BUFFER_PARTIAL')
+                assert 'BUFFER_PARTIAL' in '\n'.join(output()), screen
+                assert b'\x1b[?1049l' not in captured and b'\x1b[?1049h' not in captured, captured
+                # Slower commands hand over the terminal and replay output
+                # captured during the grace period before forwarding live data.
+                send("!printf 'BEFORE_HANDOFF\\n'; sleep 0.3; printf 'AFTER_HANDOFF\\n'\r")
+                wait_for('\x1b[?1049h')
+                assert b'\x1b[?1049l' in captured, captured
+                assert all(text in '\n'.join(output())
+                           for text in ('BEFORE_HANDOFF', 'AFTER_HANDOFF')), screen
                 send(f'!{sys.executable} {shell}\r')
                 wait_for('SHELL_INPUT_READY')
+                assert b'\x1b[?1049l' in captured, captured
                 send('interactive\n')
                 wait_for('\x1b[?1049h')
                 assert 'SHELL_REPLY_interactive' in '\n'.join(output()), screen

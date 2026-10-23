@@ -152,7 +152,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     lock.withLock { activateLocked() }
   }
 
-  private func activateLocked() {
+  private func activateLocked(enterBuffer: Bool = true) {
     guard !active else { return }
     measure()
     var raw = termios()
@@ -165,7 +165,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     paintedThinkingRows = []
     clampInputRows()
     if ui.mode == .buffer {
-      write(TerminalInputModes.enable + Self.enterBuffer + Self.enableMouse)
+      write(TerminalInputModes.enable + (enterBuffer ? Self.enterBuffer : "") + Self.enableMouse)
       redrawBuffer()
       watchResizes()
       updateActivityTimer()
@@ -206,6 +206,26 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     }
   }
 
+  /// Restore cooked input immediately, but keep the buffer visible until the
+  /// command requests a handoff. Short commands can return without switching
+  /// screens; interactive programs start with the correct tty settings.
+  func suspendTerminal(deferBufferHandoff action: (_ handoff: () -> Void) -> Void) {
+    lock.withLock {
+      guard active, ui.mode == .buffer else {
+        action({})
+        return
+      }
+      deactivateLocked(leaveBuffer: false)
+      var handedOff = false
+      action {
+        guard !handedOff else { return }
+        write(Self.leaveBuffer)
+        handedOff = true
+      }
+      activateLocked(enterBuffer: handedOff)
+    }
+  }
+
   /// Tool handoffs require the REPL to own the terminal.
   func handOverTerminal(_ action: () throws -> Void) throws {
     try lock.withLock {
@@ -220,7 +240,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     }
   }
 
-  private func deactivateLocked() {
+  private func deactivateLocked(leaveBuffer: Bool = true) {
     guard active else { return }
     refreshSize()
     resizeSource?.cancel()
@@ -228,7 +248,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     activitySource?.cancel()
     activitySource = nil
     if ui.mode == .buffer {
-      write(Self.disableMouse + Self.leaveBuffer + TerminalInputModes.disable)
+      write(Self.disableMouse + (leaveBuffer ? Self.leaveBuffer : "") + TerminalInputModes.disable)
       _ = tcsetattr(STDIN_FILENO, TCSAFLUSH, &cooked)
       active = false
       return

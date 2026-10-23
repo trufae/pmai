@@ -4373,8 +4373,8 @@ struct MaiCLI {
   }
 
   /// `!ls`, `!git diff`, `!vim notes.md`: runs a line in the system shell with
-  /// the terminal handed over, so interactive programs work and their output
-  /// is retained in buffer mode without being sent to the model.
+  /// the terminal handed over when needed. Quick commands stay in buffer
+  /// mode; output is retained without being sent to the model.
   private static func runShellCommand(_ command: String, terminal: TerminalWriter) async {
     let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else {
