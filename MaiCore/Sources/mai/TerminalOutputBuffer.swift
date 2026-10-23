@@ -64,7 +64,7 @@ struct TerminalOutputBuffer {
   private var thinkingDisplay: ThinkingDisplay = .full
   private var replyBlocks: [Int: ReplyBlock] = [:]
   private var toolBlocks: [Int: TerminalToolBlock] = [:]
-  private var tools: ToolResultDisplay = .all
+  private var tools = ConfiguredTerminalUI().tools
   private var markdownRenderer: MarkdownTerminalRenderer?
   private var colors: ConfiguredTerminalUI?
   private var cursor = 0
@@ -267,6 +267,7 @@ struct TerminalOutputBuffer {
       var output = TerminalOutputBuffer()
       output.configureColors(colors)
       output.append(text)
+      if tools == .lines(0) { output.truncateLine(to: width) }
       let result = text.isEmpty ? [] : Self.blockRows(&output, index: index, width: width)
       lines[index].cachedWidth = width
       lines[index].rows = result
@@ -321,6 +322,21 @@ struct TerminalOutputBuffer {
     lines[index].cachedWidth = width
     lines[index].rows = result
     return result
+  }
+
+  /// Compact tool entries occupy one row. Clip parsed glyphs so ANSI colors,
+  /// child prefixes and wide characters all count toward the same cell budget.
+  /// The original tool block is rendered again when the terminal grows.
+  private mutating func truncateLine(to width: Int) {
+    let glyphs = lines[0].glyphs
+    guard glyphs.reduce(0, { $0 + $1.width }) > width else { return }
+    var used = 0
+    let visible = glyphs.prefix { glyph in
+      guard used + glyph.width < width else { return false }
+      used += glyph.width
+      return true
+    }
+    lines[0].glyphs = Array(visible) + [Glyph(text: "…", style: visible.last?.style ?? "")]
   }
 
   /// Block-local row positions become positions in their parent logical line.

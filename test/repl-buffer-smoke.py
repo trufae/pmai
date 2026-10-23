@@ -203,8 +203,8 @@ def main(binary):
                     assert not re.search(rb'\x1b\[\?90\d+m', captured), captured
                     send('\x0c')
                     read_for(.1)
-                send('/set ui.tools 0\r')
-                wait_for('Set ui.tools = 0.')
+                send('/set ui.tools\r')
+                wait_for('ui.tools = 0')
                 send('tool-test\r')
                 chunks.put({'tool_calls': [{'index': 0, 'id': 'read-output', 'type': 'function',
                     'function': {'name': 'files_read', 'arguments': json.dumps({'path': 'tool-output.txt'})}}]})
@@ -213,6 +213,17 @@ def main(binary):
                 chunks.put(None)
                 wait_for('✓ took')
                 assert 'TOOL_ROW' not in '\n'.join(output()), screen
+                for columns in (18, 80):
+                    screen.clear()
+                    fcntl.ioctl(master, termios.TIOCSWINSZ,
+                                struct.pack('HHHH', rows, columns, 0, 0))
+                    os.kill(process.pid, signal.SIGWINCH)
+                    read_for()
+                    compact = [line for line in output() if '✔ files_read' in line]
+                    assert len(compact) == 1, screen
+                    assert ('…' in compact[0]) == (columns == 18), screen
+                    if columns == 80:
+                        assert 'tool-output.txt' in compact[0], screen
                 for display, count in (('all', 8), ('2', 2), ('relevant', 3), ('0', 0), ('all', 8)):
                     send(f'/set ui.tools {display}\r')
                     wait_for(f'Set ui.tools = {display}.')

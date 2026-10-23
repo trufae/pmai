@@ -27,7 +27,7 @@ func configurationTolerantDisplaySettings() throws {
   #expect(configuration.ui.title == "Keep this")
   #expect(configuration.ui.bold == false)
   #expect(configuration.ui.thinking == .status)
-  #expect(configuration.ui.tools == .all)
+  #expect(configuration.ui.tools == .lines(0))
   #expect(configuration.providers.map(\.id) == ["local"])
 }
 

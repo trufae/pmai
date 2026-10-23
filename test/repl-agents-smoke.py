@@ -120,7 +120,8 @@ def main():
                 def check_queue(expected):
                     send('/queue')
                     listing = wait_for('Each is delivered')
-                    copies = re.findall(r'(?m)^  \d+\. agent#(\d+) \S+  (.+)$', listing)
+                    # A status spinner can precede a row in the raw PTY log.
+                    copies = re.findall(r'(?m)^[\u2800-\u28ff]*  \d+\. agent#(\d+) \S+  (.+)$', listing)
                     displayed = [(pid, ' '.join(text.split())) for pid, text in expected]
                     assert sorted(copies) == sorted(displayed), (mode, copies, displayed, listing)
 

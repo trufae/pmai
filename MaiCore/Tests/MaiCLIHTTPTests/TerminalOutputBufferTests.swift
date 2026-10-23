@@ -245,6 +245,41 @@ func terminalBufferTools() {
   }
 }
 
+@Test("Compact tool entries fit one row and reveal retained text after resize", arguments: [false, true])
+func terminalBufferCompactToolWidth(isError: Bool) {
+  for prefix in ["", "\u{1B}[36magent#3 \u{1B}[0m"] {
+    var buffer = TerminalOutputBuffer()
+    buffer.configureColors(ConfiguredTerminalUI())
+    let path = String(repeating: "界🙂e\u{301}", count: 10) + ".txt"
+    buffer.appendTool(
+      call: ToolCall(id: "read", name: "files_read", arguments: .object(["path": .string(path)])),
+      result: ToolResult(callID: "read", text: "HIDDEN_TOOL_RESULT", isError: isError), prefix: prefix)
+    buffer.append("z")
+    let fullWidth = buffer.visibleRows(width: 200, height: 40)
+    #expect(fullWidth.count == 2)
+    #expect(fullWidth[0].contains(path))
+    #expect(fullWidth[0].contains(isError ? "\u{1B}[31m✘" : "\u{1B}[32m✔"))
+    for width in [80, 24, 8, 1, 120, 24] {
+      let rows = buffer.visibleRows(width: width, height: 40)
+      #expect(rows.count == 2)
+      let plain = rows[0].replacingOccurrences(
+        of: "\u{1B}\\[[0-9;]*m", with: "", options: .regularExpression)
+      #expect(TerminalLineEditor.displayWidth(of: plain) <= width)
+      if width <= 24 { #expect(plain.hasSuffix("…")) }
+      #expect(!rows.joined().contains("HIDDEN_TOOL_RESULT"))
+    }
+    #expect(buffer.visibleRows(width: 200, height: 40) == fullWidth)
+    buffer.configureTools(.all)
+    let expanded = buffer.visibleRows(width: 24, height: 40)
+    #expect(expanded.count > 2)
+    let plainExpanded = expanded.joined().replacingOccurrences(
+      of: "\u{1B}\\[[0-9;]*m", with: "", options: .regularExpression)
+    #expect(plainExpanded.contains("HIDDEN_TOOL_RESULT"))
+    buffer.configureTools(.lines(0))
+    #expect(buffer.visibleRows(width: 200, height: 40) == fullWidth)
+  }
+}
+
 @Test("Relevant buffer output expands important results and errors and keeps child prefixes")
 func terminalBufferRelevantTools() {
   for important in [true, false] {

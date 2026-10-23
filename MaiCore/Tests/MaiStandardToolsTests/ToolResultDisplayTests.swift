@@ -7,7 +7,9 @@ import Testing
 @Test("Tool result display loads legacy counts and persists relevant mode")
 func toolResultDisplayConfiguration() throws {
   let cases: [(String, ToolResultDisplay)] = [
-    ("{}", .all),
+    ("{}", .lines(0)),
+    (#"{"tools":-1}"#, .all),
+    (#"{"tools":"all"}"#, .all),
     (#"{"tools":0}"#, .lines(0)),
     (#"{"tools":"relevant"}"#, .relevant),
     (#"{"tools":7,"toolResultLines":0}"#, .lines(7)),
@@ -17,7 +19,7 @@ func toolResultDisplayConfiguration() throws {
     (#"{"toolResultLines":7}"#, .lines(7)),
     (#"{"toolResultLines":"all"}"#, .all),
     (#"{"toolResultLines":"relevant"}"#, .relevant),
-    (#"{"toolResultLines":"unknown"}"#, .all),
+    (#"{"toolResultLines":"unknown"}"#, .lines(0)),
   ]
   for (json, expected) in cases {
     let ui = try JSONDecoder().decode(ConfiguredTerminalUI.self, from: Data(json.utf8))
@@ -32,6 +34,7 @@ func toolResultDisplayConfiguration() throws {
       #expect(object["tools"] is Int)
     }
   }
+  #expect(ConfiguredTerminalUI().tools == .lines(0))
   #expect(throws: DecodingError.self) {
     try JSONDecoder().decode(
       ToolResultDisplay.self, from: Data(#""unknown""#.utf8))

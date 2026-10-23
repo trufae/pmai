@@ -557,7 +557,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     selectionBackground: String = "blue",
     bold: Bool = false,
     markdown: Bool = true,
-    tools: ToolResultDisplay = .all,
+    tools: ToolResultDisplay = .lines(0),
     subagentOutput: SubagentOutputLevel = .all,
     broadcast: Bool = false,
     thinking: ThinkingDisplay = .status,
@@ -675,7 +675,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
       markdown: (try? container.decodeIfPresent(Bool.self, forKey: .markdown)) ?? true,
       tools: (try? container.decodeIfPresent(
         ToolResultDisplay.self, forKey: .tools))
-        ?? (try? legacy.decodeIfPresent(ToolResultDisplay.self, forKey: .toolResultLines)) ?? .all,
+        ?? (try? legacy.decodeIfPresent(ToolResultDisplay.self, forKey: .toolResultLines)) ?? .lines(0),
       subagentOutput: (try? container.decodeIfPresent(
         SubagentOutputLevel.self, forKey: .subagentOutput)) ?? .all,
       broadcast: (try? container.decodeIfPresent(Bool.self, forKey: .broadcast)) ?? false,

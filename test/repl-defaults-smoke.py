@@ -46,6 +46,7 @@ def main():
                 {'path': path, 'access': 'ask', 'descendants': True}
                 for path in ['/etc', '/root', '~/.ssh', '~/.gnupg', '~/.config']]}, saved
         assert saved['approvals']['mode'] == 'ask', saved
+        assert saved['ui']['tools'] == 0, saved
         original = config.read_bytes()
         welcome, about = run(['/providers', '/about'], split=True)
         assert 'Welcome to PocketMai!' in welcome and 'Welcome to PocketMai!' in about

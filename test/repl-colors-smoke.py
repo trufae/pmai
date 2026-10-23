@@ -68,7 +68,7 @@ def main():
                             'retry': {'attempts': 0}}],
                 'approvals': {'mode': 'yolo'},
                 'memory': {'enabled': False}, 'use': {'plan': False},
-                'ui': {'fgerror': '#123456', 'fgwarning': '#234567',
+                'ui': {'tools': -1, 'fgerror': '#123456', 'fgwarning': '#234567',
                        'fgtoolcall': '#345678', 'fgtoolresult': '#456789',
                        'fgdiffadd': '#56789a', 'bgdiffadd': '#6789ab',
                        'fgdiffdel': '#789abc', 'bgdiffdel': '#89abcd',

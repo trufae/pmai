@@ -61,7 +61,7 @@ file.write_text("alice\\n/\\\\b(?:\\\\d{4}-){3}\\\\d{4}\\\\b/\\n")
                 'use': {'plan': False, 'agentsmd': 'off'},
                 # Released configurations used a filename here. Startup must
                 # ignore it; /edit redact still edits only the fixed rules file.
-                'redact': 'safe2.txt', 'ui': {'thinking': 'obsolete-mode'},
+                'redact': 'safe2.txt', 'ui': {'tools': -1, 'thinking': 'obsolete-mode'},
             }))
             command = [binary, '--config', str(config), '--home', str(home),
                 '--no-stream', '--no-markdown']

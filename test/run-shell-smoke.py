@@ -66,6 +66,7 @@ def main():
                                     'toolNames': ['run_shell'], 'toolGroupNames': [],
                                     'retry': {'attempts': 0}, 'autocompact': {'tokens': 0}}],
                         'approvals': {'mode': 'yolo'}, 'memory': {'enabled': False},
+                        'ui': {'tools': -1},
                         'use': {'plan': False, 'agentsmd': 'off'},
                     }))
                     result = subprocess.run([
