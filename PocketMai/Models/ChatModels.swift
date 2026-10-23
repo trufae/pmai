@@ -2867,6 +2867,7 @@ struct NativeToolSettings: Codable, Equatable, Sendable {
   var filesAdvancedToolsEnabled: Bool = false
   var webxdcAllowInternet: Bool = false
   var webxdcChatInteractionEnabled: Bool = true
+  var webxdcAllowProviderAPIs: Bool = true
   var webxdcAllowGPSLocation: Bool = false
   var webxdcAllowMotionSensors: Bool = false
   var webxdcAllowWASM: Bool = true
@@ -2898,7 +2899,7 @@ struct NativeToolSettings: Codable, Equatable, Sendable {
     case webSearchSearXNGURL, webSearchSearXNGUsername, webSearchSearXNGPassword
     case webSearchFetchingEnabled, calendarEventCreationEnabled, todos, files
     case filesWorkspaceAccessEnabled, filesAdvancedToolsEnabled
-    case webxdcAllowInternet, webxdcChatInteractionEnabled
+    case webxdcAllowInternet, webxdcChatInteractionEnabled, webxdcAllowProviderAPIs
     case webxdcAllowGPSLocation, webxdcAllowMotionSensors, webxdcAllowWASM
     case webxdcAllowWebGL, webxdcAllowCanvas2D, webxdcAllowAudioPlayback
     case webxdcAllowCamera, webxdcAllowMicrophone, webxdcAllowClipboard
@@ -2959,6 +2960,9 @@ struct NativeToolSettings: Codable, Equatable, Sendable {
     webxdcChatInteractionEnabled =
       (try? c.decode(Bool.self, forKey: .webxdcChatInteractionEnabled))
       ?? defaults.webxdcChatInteractionEnabled
+    webxdcAllowProviderAPIs =
+      (try? c.decode(Bool.self, forKey: .webxdcAllowProviderAPIs))
+      ?? defaults.webxdcAllowProviderAPIs
     webxdcAllowGPSLocation =
       (try? c.decode(Bool.self, forKey: .webxdcAllowGPSLocation))
       ?? defaults.webxdcAllowGPSLocation
@@ -3047,6 +3051,7 @@ struct NativeToolSettings: Codable, Equatable, Sendable {
     try c.encode(filesAdvancedToolsEnabled, forKey: .filesAdvancedToolsEnabled)
     try c.encode(webxdcAllowInternet, forKey: .webxdcAllowInternet)
     try c.encode(webxdcChatInteractionEnabled, forKey: .webxdcChatInteractionEnabled)
+    try c.encode(webxdcAllowProviderAPIs, forKey: .webxdcAllowProviderAPIs)
     try c.encode(webxdcAllowGPSLocation, forKey: .webxdcAllowGPSLocation)
     try c.encode(webxdcAllowMotionSensors, forKey: .webxdcAllowMotionSensors)
     try c.encode(webxdcAllowWASM, forKey: .webxdcAllowWASM)

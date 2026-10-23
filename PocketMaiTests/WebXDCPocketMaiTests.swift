@@ -73,6 +73,76 @@ final class WebXDCPocketMaiTests: XCTestCase {
     await Task.yield()
   }
 
+  func testProviderAPISwitchBlocksGrantedAppsWithoutPrompting() async throws {
+    let app = try WebXDCLibrary.createApp(name: "Disabled APIs", description: "")
+    defer { try? WebXDCLibrary.deleteApp(id: app.id) }
+    try WebXDCPermissions(inference: true, transcription: true, synthesis: true).save(app.id)
+    var settings = AppSettings.defaults
+    settings.toolSettings.webxdcAllowProviderAPIs = false
+    let methods = ["complete", "models", "voices", "speak", "listen", "languages", "providers", "requestPermissions"]
+    let denied = expectation(description: "All provider methods disabled")
+    denied.expectedFulfillmentCount = methods.count
+    let capabilities = expectation(description: "No effective grants")
+    let host = WebXDCPocketMaiHost(appID: app.id, settings: { settings }) { reply in
+      if reply["id"] as? String == "capabilities" {
+        let result = reply["result"] as? [String: Any]
+        XCTAssertEqual(result?["permissions"] as? [String: Bool],
+          ["inference": false, "transcription": false, "synthesis": false])
+        capabilities.fulfill()
+      } else {
+        let error = reply["error"] as? [String: String]
+        XCTAssertEqual(error?["code"], "NotAllowedError")
+        XCTAssertTrue(error?["message"]?.contains("Inference and speech APIs") == true)
+        denied.fulfill()
+      }
+    }
+    host.requestPermission = { _ in
+      XCTFail("Disabled APIs must not ask for app grants")
+      return true
+    }
+    host.receive(["id": "capabilities", "method": "capabilities"])
+    for method in methods {
+      host.receive(["id": method, "method": method, "options": ["capabilities": ["inference"]]])
+      await Task.yield()
+    }
+    await fulfillment(of: [denied, capabilities], timeout: 3)
+  }
+
+  func testAppCanRequestPermissionsWithoutCallingAProvider() async throws {
+    let app = try WebXDCLibrary.createApp(name: "Request access", description: "")
+    defer { try? WebXDCLibrary.deleteApp(id: app.id) }
+    var settings = AppSettings.defaults
+    settings.toolSettings.webxdcAllowMicrophone = true
+    var requested: [String] = []
+    let finished = expectation(description: "Permissions granted")
+    let host = WebXDCPocketMaiHost(appID: app.id, settings: { settings }) { reply in
+      XCTAssertNil(reply["error"])
+      let result = reply["result"] as? [String: Any]
+      XCTAssertEqual(result?["permissions"] as? [String: Bool],
+        ["inference": true, "transcription": true, "synthesis": true])
+      finished.fulfill()
+    }
+    host.requestPermission = { capability in
+      requested.append(capability)
+      return true
+    }
+    host.receive(["id": "request", "method": "requestPermissions",
+      "options": ["capabilities": ["inference", "transcription", "synthesis"]]])
+    await fulfillment(of: [finished], timeout: 3)
+    XCTAssertEqual(requested, ["inference", "transcription", "synthesis"])
+    XCTAssertEqual(WebXDCPermissions.load(app.id),
+      WebXDCPermissions(inference: true, transcription: true, synthesis: true))
+  }
+
+  func testProviderAPISwitchPersistsAndPreservesOlderSettings() throws {
+    let legacy = try JSONDecoder().decode(NativeToolSettings.self, from: Data("{}".utf8))
+    XCTAssertTrue(legacy.webxdcAllowProviderAPIs)
+    var settings = legacy
+    settings.webxdcAllowProviderAPIs = false
+    let restored = try JSONDecoder().decode(NativeToolSettings.self, from: JSONEncoder().encode(settings))
+    XCTAssertFalse(restored.webxdcAllowProviderAPIs)
+  }
+
   func testJavaScriptCanReachNativeCapabilitiesInWKWebView() async throws {
     let html = """
       <!doctype html><script src="webxdc.js"></script><script>

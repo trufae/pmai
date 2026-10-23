@@ -45,5 +45,10 @@ function host() {
   const closing = api.capabilities();
   events.pagehide();
   await assert.rejects(closing, {name: 'AbortError'});
+  const permissions = api.requestPermissions({capabilities: ['inference', 'synthesis']});
+  assert.equal(messages.at(-1).method, 'requestPermissions');
+  assert.equal(JSON.stringify(messages.at(-1).options.capabilities), '["inference","synthesis"]');
+  window.__pocketmaiReply({id: messages.at(-1).id, result: {permissions: {inference: true}}});
+  assert.equal((await permissions).permissions.inference, true);
   console.log('webxdc bridge: streaming, discovery, errors, finish, abort, cancel and page cleanup passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

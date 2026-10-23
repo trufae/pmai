@@ -1757,6 +1757,12 @@ struct SettingsView: View {
       VStack(alignment: .leading, spacing: 6) {
         webXDCToggle("Internet and WebSockets", \.toolSettings.webxdcAllowInternet)
         webXDCToggle("Chat bridge", \.toolSettings.webxdcChatInteractionEnabled)
+        webXDCToggle("Inference and speech APIs", \.toolSettings.webxdcAllowProviderAPIs)
+        Text(
+          "Each app asks for access to inference or speech. Manage its grants with the Permissions button while the app is open."
+        )
+          .font(.caption)
+          .foregroundStyle(.secondary)
         webXDCToggle("GPS location", \.toolSettings.webxdcAllowGPSLocation)
         webXDCToggle("Accelerometer and gyroscope", \.toolSettings.webxdcAllowMotionSensors)
         webXDCToggle("WebAssembly", \.toolSettings.webxdcAllowWASM)
@@ -2310,6 +2316,7 @@ struct SettingsView: View {
   private func resetWebXDCOptions() {
     store.settings.toolSettings.webxdcAllowInternet = false
     store.settings.toolSettings.webxdcChatInteractionEnabled = true
+    store.settings.toolSettings.webxdcAllowProviderAPIs = true
     store.settings.toolSettings.webxdcAllowGPSLocation = false
     store.settings.toolSettings.webxdcAllowMotionSensors = false
     store.settings.toolSettings.webxdcAllowWASM = true

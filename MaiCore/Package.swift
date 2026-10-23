@@ -58,6 +58,8 @@ var packageDependencies: [Package.Dependency] = [
       .product(name: "MLXLMCommon", package: "mlx-swift-lm", condition: .when(platforms: mlxPlatforms)),
       .product(name: "MLXLMHFAPI", package: "swift-hf-api-mlx", condition: .when(platforms: mlxPlatforms)),
       .product(name: "MLXLMTokenizers", package: "swift-tokenizers-mlx", condition: .when(platforms: mlxPlatforms)),
+      .product(name: "HFAPI", package: "swift-hf-api", condition: .when(platforms: mlxPlatforms)),
+      .product(name: "Tokenizers", package: "swift-tokenizers", condition: .when(platforms: mlxPlatforms)),
     ]
   }
 #endif

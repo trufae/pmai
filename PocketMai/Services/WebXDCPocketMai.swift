@@ -149,6 +149,21 @@ final class WebXDCPocketMaiHost {
   private func require(_ capability: String) async throws {
     var grants = WebXDCPermissions.load(appID)
     let tools = settings().toolSettings
+    guard tools.webxdcAllowProviderAPIs else {
+      throw WebXDCAPIError(
+        code: "NotAllowedError",
+        message: "Enable Inference and speech APIs in Permissions in the app's top bar, or Settings → Tools → Native → WebXDC Apps.")
+    }
+    if capability == "transcription", !tools.webxdcAllowMicrophone {
+      throw WebXDCAPIError(
+        code: "NotAllowedError",
+        message: "Enable Microphone in Permissions in the app's top bar, or Settings → Tools → Native → WebXDC Apps.")
+    }
+    if capability == "synthesis", !tools.webxdcAllowAudioPlayback {
+      throw WebXDCAPIError(
+        code: "NotAllowedError",
+        message: "Enable Audio playback in Permissions in the app's top bar, or Settings → Tools → Native → WebXDC Apps.")
+    }
     let allowed: Bool
     switch capability {
     case "inference": allowed = grants.inference
@@ -181,7 +196,7 @@ final class WebXDCPocketMaiHost {
       throw WebXDCAPIError(
         code: "NotAllowedError",
         message:
-          "Enable \(capability) in this app's PocketMai permissions and the required WebXDC media settings."
+          "Open Permissions in the app's top bar to allow \(capability)."
       )
     }
   }
@@ -200,28 +215,47 @@ final class WebXDCPocketMaiHost {
   }
 
   private func run(_ method: String, options: [String: Any], id: String) async throws -> Any {
+    if method == "requestPermissions" {
+      guard let capabilities = options["capabilities"] as? [String],
+        !capabilities.isEmpty, capabilities.count <= 3,
+        capabilities.allSatisfy({ ["inference", "transcription", "synthesis"].contains($0) })
+      else {
+        throw WebXDCAPIError(
+          code: "TypeError", message: "Choose inference, transcription or synthesis permissions.")
+      }
+      for capability in capabilities { try await require(capability) }
+      return try await run("capabilities", options: [:], id: id)
+    }
     if method == "capabilities" {
       let grants = WebXDCPermissions.load(appID)
       let tools = settings().toolSettings
       return [
         "host": "pocketmai", "version": 1,
         "permissions": [
-          "inference": grants.inference,
-          "transcription": grants.transcription && tools.webxdcAllowMicrophone,
-          "synthesis": grants.synthesis && tools.webxdcAllowAudioPlayback,
+          "inference": tools.webxdcAllowProviderAPIs && grants.inference,
+          "transcription": tools.webxdcAllowProviderAPIs && grants.transcription
+            && tools.webxdcAllowMicrophone,
+          "synthesis": tools.webxdcAllowProviderAPIs && grants.synthesis
+            && tools.webxdcAllowAudioPlayback,
         ],
         "features": [
           "streaming": true, "cancellation": true, "microphone": true,
+          "providerAPIs": tools.webxdcAllowProviderAPIs,
           "tools": false,
         ], "voicePrompt": Self.voicePrompt,
       ] as [String: Any]
     }
     if method == "providers" {
+      guard settings().toolSettings.webxdcAllowProviderAPIs else {
+        throw WebXDCAPIError(
+          code: "NotAllowedError",
+          message: "Enable Inference and speech APIs in Permissions in the app's top bar, or Settings → Tools → Native → WebXDC Apps.")
+      }
       // Catalogs may disclose configured services, so they also require a grant.
       let grants = WebXDCPermissions.load(appID)
       guard grants.inference || grants.transcription || grants.synthesis else {
         throw WebXDCAPIError(
-          code: "NotAllowedError", message: "Enable at least one PocketMai permission for this app."
+          code: "NotAllowedError", message: "Open Permissions in the app's top bar to allow inference or speech."
         )
       }
       var providers: [[String: Any]] = []
@@ -613,6 +647,7 @@ enum WebXDCPocketMaiBridge {
       window.webxdc.pocketmai = Object.freeze({
         host: 'pocketmai', version: 1,
         capabilities: options => call('capabilities', options),
+        requestPermissions: options => call('requestPermissions', options),
         providers: options => call('providers', options),
         models: options => call('models', options),
         voices: options => call('voices', options),

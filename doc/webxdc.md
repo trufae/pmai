@@ -70,7 +70,7 @@ if (mai?.host === 'pocketmai' && mai.version === 1) {
   const caps = await mai.capabilities();
   // caps.host === 'pocketmai'; caps.version === 1
   // caps.permissions: {inference, transcription, synthesis} -- effective booleans
-  // caps.features: {streaming: true, cancellation: true, microphone: true, tools: false}
+  // caps.features: {streaming: true, cancellation: true, microphone: true, providerAPIs: true, tools: false}
   // caps.voicePrompt: the built-in conversational voice system prompt
   showVoiceUI(caps.permissions.transcription && caps.permissions.synthesis);
 } else {
@@ -78,12 +78,31 @@ if (mai?.host === 'pocketmai' && mai.version === 1) {
 }
 ```
 
-`capabilities()` is available without a grant. Users enable **Inference
-providers**, **Speech to text**, and **Text to speech** separately in the app's
-**PocketMai Extensions** settings in its Apps detail page. New and imported apps
+`capabilities()` is available without a grant. The **Inference and speech APIs**
+checkbox is in **Settings → Tools → Native → WebXDC Apps**, alongside the other
+WebXDC features. It is enabled by default to preserve existing app grants;
+turning it off blocks inference, speech and provider discovery for every app.
+
+Tap **Permissions** in the running app's top bar to manage this checkbox,
+**Microphone**, **Audio playback**, and the app's own **Inference providers**,
+**Speech to text**, and **Text to speech** grants. App grants are also available
+under **App Permissions** in its Apps detail page. New and imported apps
 start with all three disabled. Grants belong to the installed app on this device;
 revisions keep them, exports do not include them, and importing an export does not
 restore them. JavaScript and manifests cannot grant permissions.
+
+Apps can ask the user for grants without making a provider request:
+
+```js
+const caps = await mai.requestPermissions({
+  capabilities: ['inference', 'transcription', 'synthesis']
+});
+```
+
+This shows native confirmation prompts for missing grants and returns the same
+shape as `capabilities()`. Denial or a disabled WebXDC feature rejects with
+`NotAllowedError` and directions to the relevant control. Older PocketMai builds
+may not provide `requestPermissions`; check for the function before using it.
 
 Speech to text additionally requires **Microphone** in PocketMai's WebXDC
 settings and the relevant iOS microphone/speech permissions. Text to speech also
@@ -175,6 +194,7 @@ but reject it if their server does not implement the relevant audio endpoint.
 | Method | Options and results | Required grant |
 | --- | --- | --- |
 | `capabilities()` | Host/version, effective permissions, features, voice prompt | None |
+| `requestPermissions({capabilities})` | Request one to three named permissions through native prompts; returns capabilities | User approval for each missing grant |
 | `providers()` | Provider descriptors described above | At least one extension grant |
 | `models({provider?, purpose?})` | Model ID strings; purpose defaults to `inference`, or `transcription` / `synthesis` | The chosen purpose |
 | `voices({provider?, model?})` | Voice descriptors; provider defaults to `system`; optional speech model changes model-specific voice choices | Synthesis |
@@ -324,8 +344,9 @@ Build the shareable archive:
 make -C examples/webxdc/voice-avatar
 ```
 
-Import `voice-avatar.xdc` into PocketMai, enable its three extension grants and
-the global microphone/audio settings, then run it and tap Start. Configure a
+Import `voice-avatar.xdc` into PocketMai and run it. The example requests its
+three app grants. If a WebXDC feature is disabled, use **Permissions** in the
+top bar to enable it, then tap **Start** to retry. Configure a
 working inference provider and any remote speech credentials in PocketMai first.
 The example uses silence-ended file transcription for short turns; the same API
 can drive a WebGL character when WebGL is enabled in WebXDC settings. Animate from

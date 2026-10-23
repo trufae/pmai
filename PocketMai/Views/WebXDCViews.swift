@@ -488,6 +488,7 @@ struct WebXDCRunnerSheet: View {
 
   @ObservedObject var session: WebXDCRunningSession
   @State private var showingDebugLogs = false
+  @State private var showingPermissions = false
 
   var body: some View {
     NavigationStack {
@@ -517,6 +518,13 @@ struct WebXDCRunnerSheet: View {
           ToolbarItem(placement: .confirmationAction) {
             Button("Close") { dismiss() }
           }
+          ToolbarItem(placement: .topBarTrailing) {
+            Button {
+              showingPermissions = true
+            } label: {
+              Label("Permissions", systemImage: "checkmark.shield")
+            }
+          }
         }
     }
     .ignoresSafeArea(edges: .bottom)
@@ -526,7 +534,10 @@ struct WebXDCRunnerSheet: View {
     .sheet(isPresented: $showingDebugLogs) {
       WebXDCDebugLogView(session: session)
     }
-    .alert("PocketMai Extension Permission", isPresented: Binding(
+    .sheet(isPresented: $showingPermissions) {
+      WebXDCPermissionsSheet(app: session.app)
+    }
+    .alert("WebXDC App Permission", isPresented: Binding(
       get: { session.permissionRequest != nil },
       set: { if !$0 { session.resolvePermission(false) } }
     )) {
@@ -608,7 +619,7 @@ private struct WebXDCDebugLogView: View {
   }
 
   private func logText(_ log: WebXDCDebugLog) -> String {
-    let location = locationText(log).map { " ($0)" } ?? ""
+      let location = locationText(log).map { _ in " ($0)" } ?? ""
     return "[\(formatted(log.date))] [\(log.level.uppercased())] \(log.message)\(location)"
   }
 
@@ -1181,6 +1192,91 @@ private struct WebXDCEditingFile: Identifiable {
   var id: String { path }
 }
 
+private struct WebXDCPermissionsSheet: View {
+  @EnvironmentObject private var store: AppStore
+  @Environment(\.dismiss) private var dismiss
+  let app: WebXDCAppInfo
+
+  var body: some View {
+    NavigationStack {
+      Form {
+        Section("WebXDC Features") {
+          Toggle("Inference and speech APIs", isOn: featureBinding(\.webxdcAllowProviderAPIs))
+          Toggle("Microphone", isOn: featureBinding(\.webxdcAllowMicrophone))
+          Toggle("Audio playback", isOn: featureBinding(\.webxdcAllowAudioPlayback))
+          Text(
+            "These switches apply to all WebXDC apps. They are also in Settings → Tools → Native → WebXDC Apps."
+          )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        WebXDCPermissionsSection(appID: app.id)
+      }
+      .navigationTitle("\(app.name) Permissions")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .confirmationAction) {
+          Button("Done") { dismiss() }
+        }
+      }
+    }
+  }
+
+  private func featureBinding(_ key: WritableKeyPath<NativeToolSettings, Bool>) -> Binding<Bool> {
+    Binding(
+      get: { store.settings.toolSettings[keyPath: key] },
+      set: {
+        store.settings.toolSettings[keyPath: key] = $0
+        store.saveSettings()
+      })
+  }
+}
+
+private struct WebXDCPermissionsSection: View {
+  @EnvironmentObject private var store: AppStore
+  let appID: UUID
+  @State private var permissions = WebXDCPermissions()
+  @State private var errorMessage: String?
+
+  var body: some View {
+    Section {
+      Toggle("Inference providers", isOn: permissionBinding(\.inference))
+      Toggle("Speech to text", isOn: permissionBinding(\.transcription))
+      Toggle("Text to speech", isOn: permissionBinding(\.synthesis))
+    } header: {
+      Text("App Permissions")
+    } footer: {
+      Text(
+        "Allow this app to use configured providers outside your chat. Requests may send app text or microphone audio to your selected service and incur charges. Inference and speech APIs must be enabled in WebXDC features; speech also requires Microphone or Audio playback. Grants stay on this device and are never exported."
+      )
+    }
+    .onAppear { permissions = WebXDCPermissions.load(appID) }
+    .alert("Cannot Save Permissions", isPresented: Binding(
+      get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
+    )) {
+      Button("OK", role: .cancel) { errorMessage = nil }
+    } message: {
+      Text(errorMessage ?? "")
+    }
+  }
+
+  private func permissionBinding(_ key: WritableKeyPath<WebXDCPermissions, Bool>) -> Binding<Bool> {
+    Binding(
+      get: { permissions[keyPath: key] },
+      set: { value in
+        do {
+          var updated = WebXDCPermissions.load(appID)
+          updated[keyPath: key] = value
+          try updated.save(appID)
+          permissions = updated
+          if store.activeWebXDCSession?.app.id == appID {
+            store.activeWebXDCSession?.pocketmai.cancelAll()
+          }
+        } catch { errorMessage = error.localizedDescription }
+      })
+  }
+}
+
 struct WebXDCAppDetailView: View {
   @EnvironmentObject private var store: AppStore
   @Environment(\.dismiss) private var dismiss
@@ -1194,7 +1290,6 @@ struct WebXDCAppDetailView: View {
   @State private var draftDescription = ""
   @State private var editingFile: WebXDCEditingFile?
   @State private var newFilePath = ""
-  @State private var pocketmaiPermissions = WebXDCPermissions()
   @State private var shareURL: URL?
   @State private var runningSession: WebXDCRunningSession?
   @State private var showingIconImporter = false
@@ -1211,7 +1306,7 @@ struct WebXDCAppDetailView: View {
     Form {
       if let app {
         appSection(app)
-        permissionsSection(app)
+        WebXDCPermissionsSection(appID: app.id)
         revisionSection(app)
         filesSection(app)
         actionsSection(app)
@@ -1315,37 +1410,6 @@ struct WebXDCAppDetailView: View {
         .font(.caption2)
         .foregroundStyle(.secondary)
     }
-  }
-
-  @ViewBuilder
-  private func permissionsSection(_ app: WebXDCAppInfo) -> some View {
-    Section {
-      Toggle("Inference providers", isOn: permissionBinding(\.inference))
-      Toggle("Speech to text", isOn: permissionBinding(\.transcription))
-      Toggle("Text to speech", isOn: permissionBinding(\.synthesis))
-    } header: {
-      Text("PocketMai Extensions")
-    } footer: {
-      Text(
-        "Allow this app to use configured providers outside your chat. Requests may send app text or microphone audio to your selected service and incur charges. Speech also requires Microphone / Audio Playback in WebXDC settings. Grants stay on this device and are never exported."
-      )
-    }
-  }
-
-  private func permissionBinding(_ key: WritableKeyPath<WebXDCPermissions, Bool>) -> Binding<Bool> {
-    Binding(
-      get: { pocketmaiPermissions[keyPath: key] },
-      set: { value in
-        do {
-          var permissions = WebXDCPermissions.load(appID)
-          permissions[keyPath: key] = value
-          try permissions.save(appID)
-          pocketmaiPermissions = permissions
-          if store.activeWebXDCSession?.app.id == appID {
-            store.activeWebXDCSession?.pocketmai.cancelAll()
-          }
-        } catch { errorMessage = error.localizedDescription }
-      })
   }
 
   @ViewBuilder
@@ -1464,7 +1528,6 @@ struct WebXDCAppDetailView: View {
   }
 
   private func reload() {
-    pocketmaiPermissions = WebXDCPermissions.load(appID)
     app = WebXDCLibrary.app(id: appID)
     if let app {
       files = WebXDCLibrary.listFiles(app)

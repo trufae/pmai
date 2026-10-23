@@ -25,11 +25,13 @@ async function init() {
   if (api?.host !== 'pocketmai' || api.version !== 1) {
     state('This avatar needs PocketMai with its webxdc voice extensions.'); return;
   }
-  const caps = await api.capabilities();
+  const caps = typeof api.requestPermissions === 'function'
+    ? await api.requestPermissions({capabilities: ['inference', 'transcription', 'synthesis']})
+    : await api.capabilities();
   $('prompt').value = caps.voicePrompt;
   capable = ['inference', 'transcription', 'synthesis'].every(key => caps.permissions[key]);
   if (!capable) {
-    state('Enable Inference, Speech to text and Text to speech in this app’s settings, and Microphone / Audio Playback in WebXDC settings. Then reopen the app.');
+    state('Open Permissions in the app’s top bar. Enable Inference and speech APIs, Microphone and Audio playback, then allow Inference providers, Speech to text and Text to speech for this app. Tap Start to retry.');
     return;
   }
   const providers = (await api.providers()).filter(p => p.available);
@@ -40,6 +42,10 @@ async function init() {
   await Promise.all([models(), voices()]);
 }
 $('start').onclick = async () => {
+  if (!capable) {
+    try { await init(); } catch (e) { state(e.message); }
+    return;
+  }
   controller = new AbortController();
   const {signal} = controller;
   $('start').disabled = true; $('stop').disabled = false;
@@ -77,4 +83,4 @@ $('start').onclick = async () => {
 $('stop').onclick = () => controller?.abort();
 $('finish').onclick = () => listening?.finish();
 window.addEventListener('pagehide', () => controller?.abort());
-init().catch(e => state(e.message));
+init().catch(e => state(e.message)).finally(() => { $('start').disabled = false; });

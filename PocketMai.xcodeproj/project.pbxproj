@@ -747,6 +747,11 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 1.12.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					AppIntents,
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.trufae.mai.PocketMaiShareExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -774,6 +779,11 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 1.12.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-framework",
+					AppIntents,
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.trufae.mai.PocketMaiShareExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;

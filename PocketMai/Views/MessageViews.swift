@@ -249,7 +249,7 @@ private struct MessageBubbleLayout: Layout {
   }
 }
 
-private struct MessageBubbleContent: View, Equatable {
+private struct MessageBubbleContent: View, @MainActor Equatable {
   @AppStorage("thinkingDisplay") private var thinkingDisplay: ThinkingDisplay = .five
   @Environment(\.isFullChatScreenshotRendering) private var isFullChatScreenshotRendering
   let message: ChatMessage
@@ -287,7 +287,7 @@ private struct MessageBubbleContent: View, Equatable {
   /// Identity for SwiftUI's EquatableView: skip body re-evaluation when neither
   /// the canonical message nor the streaming override has changed. Closure
   /// equality is irrelevant because actions are invoked only from fresh menus.
-  nonisolated static func == (lhs: MessageBubbleContent, rhs: MessageBubbleContent) -> Bool {
+  static func == (lhs: MessageBubbleContent, rhs: MessageBubbleContent) -> Bool {
     lhs.messageRenderKey == rhs.messageRenderKey
       && lhs.renderedPartStartIndex == rhs.renderedPartStartIndex
       && lhs.streamingOverride == rhs.streamingOverride

@@ -35,7 +35,7 @@ struct RemoteAgentsView: View {
             {
               Button("Disconnect", systemImage: "network.slash") { hosts.disconnect(connection.id) }
             }
-            if let onSelectHost {
+            if onSelectHost != nil {
               Button("Reconnect", systemImage: "arrow.clockwise") {
                 if let hosts {
                   hosts.reconnect(connection.id, isOffline: appStore.settings.isOffline)
