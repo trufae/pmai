@@ -162,6 +162,35 @@ elif action == 'fail':
             wait_for('Nothing to cancel.')
             print('PASS: completion selection, wraparound, narrow rows and editing')
 
+            # Shift+Tab reverses the same menu, including its first selection
+            # and wraparound. Exercise legacy, Kitty and modifyOtherKeys forms
+            # on both terminal surfaces while the menu is narrower than its items.
+            for mode in ('classic', 'buffer'):
+                send(f'/set ui.mode {mode}\r'.encode())
+                wait_for(f'Set ui.mode = {mode}')
+                for backtab in (b'\x1b[Z', b'\x1b[9;2u', b'\x1b[27;2;9~'):
+                    send(b'/set tool.calling ')
+                    for key, option in (
+                            (backtab, 'xml'), (backtab, 'text'), (b'\t', 'xml'),
+                            (b'\t', 'automatic'), (backtab, 'xml'), (backtab, 'text'),
+                            (backtab, 'native'), (backtab, 'json'), (backtab, 'automatic'),
+                            (backtab, 'xml'), (b'\t', 'automatic')):
+                        send(key)
+                        wait_for(f'\x1b[97;44m{option}\x1b[0m')
+                    send(b'\r')
+                    wait_for('Set tool.calling = automatic')
+                send(b'/provider\x1b[Z')
+                wait_for('\x1b[97;44m/providers\x1b[0m')
+                send(b'\x1b[Z')
+                wait_for('\x1b[97;44m/provider\x1b[0m')
+                send(b's\x1b[Z')
+                wait_for('/providers \x1b[0m')
+                send(b'\x03')
+                wait_for('Nothing to cancel.')
+            send(b'/set ui.mode classic\r')
+            wait_for('Set ui.mode = classic')
+            print('PASS: Shift+Tab selects previous completions in classic and buffer modes')
+
             for cycle in range(8):
                 # Keep an unfinished line across suspension and a shell command.
                 prefix = f'resume-{cycle}'

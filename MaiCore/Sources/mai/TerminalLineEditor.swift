@@ -207,6 +207,7 @@ final class TerminalLineEditor {
     case text([UInt8])
     case up, down, left, right, home, end, delete
     case pageUp, pageDown
+    case backTab
     case wheel(Int)
     /// Shift+Enter or Alt+Enter: a line break inside the input.
     case newline
@@ -416,9 +417,27 @@ final class TerminalLineEditor {
       redraw(prompt: prompt, bytes: bytes, cursor: cursor)
     }
 
+    func completeInput(backwards: Bool = false) {
+      let previousBytes = bytes
+      let query = completionQuery ?? String(decoding: bytes, as: UTF8.self)
+      let candidates = activePrompt.isModal && !query.hasPrefix("/")
+        ? activePrompt.choices : completions + (additionalCompletions?(query) ?? [])
+      complete(
+        prompt: prompt, bytes: &bytes, cursor: &cursor, candidates: candidates,
+        backwards: backwards)
+      // Completion replaces one range; retain provenance on its unchanged
+      // prefix and suffix, marking only the inserted completion as typed.
+      let prefix = zip(previousBytes, bytes).prefix { $0 == $1 }.count
+      let suffix = zip(previousBytes.dropFirst(prefix).reversed(), bytes.dropFirst(prefix).reversed())
+        .prefix { $0 == $1 }.count
+      let replaced = prefix..<(previousBytes.count - suffix)
+      pasted.remove(integersIn: replaced)
+      pasted.shift(startingAt: replaced.upperBound, by: bytes.count - previousBytes.count)
+    }
+
     while let key = readKey() {
-      // Any key but Tab closes the rotating completion menu: the next edit
-      // starts a fresh completion, and the status row comes back.
+      // Any key but Tab or Shift+Tab closes the rotating completion menu:
+      // the next edit starts fresh, and the status row comes back.
       if !isTabKey(key) { dismissCompletion() }
       switch key {
       case .refreshPrompt:
@@ -471,23 +490,7 @@ final class TerminalLineEditor {
           cursor = nextCharacterEnd(in: bytes, after: cursor)
           redraw(prompt: prompt, bytes: bytes, cursor: cursor)
         case 9:  // Tab
-          let previousBytes = bytes
-          let query = completionQuery ?? String(decoding: bytes, as: UTF8.self)
-          let candidates = activePrompt.isModal && !query.hasPrefix("/")
-            ? activePrompt.choices : completions + (additionalCompletions?(query) ?? [])
-          complete(
-            prompt: prompt,
-            bytes: &bytes,
-            cursor: &cursor,
-            candidates: candidates)
-          // Completion replaces one range; retain provenance on its unchanged
-          // prefix and suffix, marking only the inserted completion as typed.
-          let prefix = zip(previousBytes, bytes).prefix { $0 == $1 }.count
-          let suffix = zip(previousBytes.dropFirst(prefix).reversed(), bytes.dropFirst(prefix).reversed())
-            .prefix { $0 == $1 }.count
-          let replaced = prefix..<(previousBytes.count - suffix)
-          pasted.remove(integersIn: replaced)
-          pasted.shift(startingAt: replaced.upperBound, by: bytes.count - previousBytes.count)
+          completeInput()
         case 10:  // Ctrl+J: a line break, for terminals that send Enter for Shift+Enter
           insert([10])
         case 12:  // Ctrl+L
@@ -554,6 +557,8 @@ final class TerminalLineEditor {
         }
       case .text(let character):
         insert(character)
+      case .backTab:
+        completeInput(backwards: true)
       case .newline:
         insert([10])
       case .paste(let pasted):
@@ -652,6 +657,8 @@ final class TerminalLineEditor {
       .map(String.init)
     if let key = cursorKey(final: final) { return key }
     switch final {
+    case UInt8(ascii: "Z"):
+      return .backTab
     case UInt8(ascii: "~"):
       switch fields.first.flatMap({ Int($0) }) {
       case 1, 7: return .home
@@ -718,7 +725,9 @@ final class TerminalLineEditor {
     case 13, 57414:  // Enter, keypad Enter
       return held == 0 ? .byte(13) : .newline
     case 27: return .ignored
-    case 9: return held == 0 ? .byte(9) : .ignored
+    case 9:
+      if held == 1 { return .backTab }
+      return held == 0 ? .byte(9) : .ignored
     case 127, 8: return .byte(127)
     case 57349: return .delete
     case 57350: return .left
@@ -909,7 +918,7 @@ final class TerminalLineEditor {
           line: selection,
           historyIndex: state.matchIndex,
           cursor: previousCharacterStart(in: selection, before: selection.count))
-      case .right, .up, .down, .home, .end, .delete, .newline, .paste, .ignored:
+      case .right, .up, .down, .home, .end, .delete, .newline, .paste, .backTab, .ignored:
         return .accepted(
           line: selection,
           historyIndex: state.matchIndex,
@@ -945,12 +954,13 @@ final class TerminalLineEditor {
       cursor: selection.count)
   }
 
-  /// Tab cycles matches; the menu highlights the text currently in the prompt.
+  /// Tab and Shift+Tab cycle matches; the menu highlights the applied text.
   private func complete(
     prompt: String,
     bytes: inout [UInt8],
     cursor: inout Int,
-    candidates: [String]
+    candidates: [String],
+    backwards: Bool = false
   ) {
     guard cursor == bytes.count, !bytes.contains(10) else {
       dismissCompletion()
@@ -966,7 +976,8 @@ final class TerminalLineEditor {
       return match.last?.isWhitespace == false ? match : nil
     }).sorted()
     if let menu = completionMenu, !completionMatches.isEmpty, matches == completionMatches {
-      let applied = (menu.selected + 1) % completionMatches.count
+      let step = backwards ? completionMatches.count - 1 : 1
+      let applied = (menu.selected + step) % completionMatches.count
       bytes = Array(completionMatches[applied].utf8)
       cursor = bytes.count
       completionMenu = CompletionMenu(
@@ -995,10 +1006,11 @@ final class TerminalLineEditor {
     let prefixCount = line.distance(from: line.startIndex, to: wordStart)
     completionQuery = line
     completionMatches = matches
+    let selected = backwards ? matches.count - 1 : 0
     completionMenu = CompletionMenu(
       options: matches.map { String($0.dropFirst(prefixCount)) },
-      selected: 0)
-    bytes = Array(matches[0].utf8)
+      selected: selected)
+    bytes = Array(matches[selected].utf8)
     cursor = bytes.count
     surface?.drawCompletionMenu(completionMenu)
     redraw(prompt: prompt, bytes: bytes, cursor: cursor)
@@ -1014,10 +1026,12 @@ final class TerminalLineEditor {
     surface?.drawCompletionMenu(nil)
   }
 
-  /// True for the Tab byte, the only key that keeps a menu open.
+  /// Completion keys keep the current menu and its original query open.
   private func isTabKey(_ key: Key) -> Bool {
-    if case .byte(9) = key { return true }
-    return false
+    switch key {
+    case .byte(9), .backTab: true
+    default: false
+    }
   }
 
   // MARK: - Drawing
