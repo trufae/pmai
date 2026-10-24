@@ -10,37 +10,13 @@ struct SubagentsBar: View {
   private var live: [AgentProcessInfo] { processes.filter { !$0.state.isTerminal } }
 
   var body: some View {
-    Button(action: onOpen) {
-      HStack(spacing: 10) {
-        Image(systemName: "person.2")
-          .foregroundStyle(.tint)
-        VStack(alignment: .leading, spacing: 1) {
-          Text(headline)
-            .font(.subheadline.weight(.medium))
-            .lineLimit(1)
-          if let detail, !detail.isEmpty {
-            Text(detail)
-              .font(.caption)
-              .foregroundStyle(.secondary)
-              .lineLimit(1)
-          }
-        }
-        Spacer()
-        if !live.isEmpty {
-          ProgressView()
-            .controlSize(.small)
-        }
-        Image(systemName: "chevron.right")
-          .font(.caption.weight(.semibold))
-          .foregroundStyle(.tertiary)
+    ChatTitleBar(title: headline, subtitle: detail, systemImage: "person.2", onTap: onOpen) {
+      if !live.isEmpty { ProgressView().controlSize(.small) }
+      Button(action: onOpen) {
+        Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
       }
-      .padding(.horizontal, 12)
-      .padding(.vertical, 8)
-      .background(.thinMaterial)
-      .contentShape(Rectangle())
+      .accessibilityLabel("Show child agents")
     }
-    .buttonStyle(.plain)
-    .accessibilityLabel(headline)
     .accessibilityHint("Shows the child agents of this chat")
   }
 

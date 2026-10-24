@@ -10,23 +10,11 @@ struct PinnedMessagesBar: View {
 
   var body: some View {
     if let message = messages.first(where: { $0.id == selectedID }) ?? messages.first {
-      HStack(spacing: 12) {
-        Button {
-          onSelect(message.id)
-        } label: {
-          HStack(spacing: 10) {
-            Text("📌").accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-              Text(messages.count == 1 ? "Pinned message" : "Pinned messages · \(messages.count)")
-                .font(.caption.weight(.semibold)).foregroundStyle(Color.accentColor)
-              Text(preview(message)).font(.subheadline).foregroundStyle(.primary).lineLimit(1)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-          }
-          .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Go to pinned message: \(preview(message))")
+      ChatTitleBar(
+        title: messages.count == 1 ? "Pinned message" : "Pinned messages · \(messages.count)",
+        subtitle: preview(message), systemImage: "pin.fill",
+        onTap: { onSelect(message.id) }
+      ) {
         Menu {
           ForEach(messages) { pinned in
             Button("📌 \(preview(pinned))") {
@@ -41,8 +29,6 @@ struct PinnedMessagesBar: View {
         }
         .accessibilityLabel("Pinned message actions")
       }
-      .padding(.horizontal, 16).padding(.vertical, 8)
-      .background(.bar)
     }
   }
 

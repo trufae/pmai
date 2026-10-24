@@ -111,6 +111,10 @@ agent's system prompt; iOS uses the assigned agent's system prompt. The request
 contains only the side question, without the chat transcript or pending
 attachments. Clearing `/model-btw` restores the current conversation model.
 
+On iOS, side questions appear in a collapsible bar below the chat title. Expand
+it to read all answers, newest first, and stop or dismiss individual questions.
+These answers remain separate from chat history and are kept until dismissed or the app exits.
+
 Compaction sends the compaction template and selected transcript to the assigned agent with its prompt and reasoning settings, with tools disabled. Both manual and automatic compaction use the assignment. A failed summary leaves the existing conversation intact. With no assignment, the current model and reasoning settings are used.
 
 `/set ctx.strategy=smart` also uses the compact assignment, with a separate
