@@ -216,6 +216,14 @@ editor handoffs, and restoration of the terminal screen, mouse, and raw modes:
 
     python3 test/repl-buffer-smoke.py MaiCore/.build/debug/pmai
 
+The view check covers the buffer-only `/view` split, empty-prompt Tab focus,
+read-only input, independent scrolling, live thinking/tools/applied diffs,
+background agent conversations, short-terminal resize, and saved content.
+It also checks dragging the separator with SGR and legacy mouse packets,
+preserving drafts and focus, size bounds, release, and mouse-mode cleanup.
+
+    python3 test/repl-view-smoke.py MaiCore/.build/debug/pmai
+
 The reflow regression also runs those terminal bytes through Ghostty's headless
 engine. It checks that resizing leaves exactly one status row, no footer fragments
 in scrollback, and the complete transcript. Install the optional test engine in

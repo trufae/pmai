@@ -71,11 +71,23 @@ struct TerminalOutputBuffer {
   private var style = ""
   private var escape = ""
   private var top: Position?
+  private var selection: TerminalOutputSelection = .all
   private static let reset = "\u{1B}[0m"
 
   var isFollowing: Bool { top == nil }
 
   mutating func follow() { top = nil }
+
+  /// Share retained blocks while keeping this pane's own scroll anchor.
+  mutating func updateView(from source: TerminalOutputBuffer, selection: TerminalOutputSelection) {
+    let anchor = top
+    self = source
+    top = anchor.flatMap { $0.line < lines.count ? $0 : nil }
+    self.selection = selection
+    if selection == .thinking { configureThinking(.full) }
+    if case .tools = selection { configureTools(.all) }
+    if selection == .diffs { configureTools(.all) }
+  }
 
   mutating func clear() {
     lines = [Line()]
@@ -261,6 +273,15 @@ struct TerminalOutputBuffer {
   }
 
   private mutating func wrappedLine(_ index: Int, width: Int) -> [Row] {
+    switch selection {
+    case .all: break
+    case .thinking:
+      guard thinkingBlocks[index] != nil else { return [] }
+    case .tools(let name):
+      guard let tool = toolBlocks[index], name == nil || tool.call?.name == name else { return [] }
+    case .diffs:
+      guard toolBlocks[index]?.hasAppliedDiff == true else { return [] }
+    }
     if lines[index].cachedWidth == width { return lines[index].rows }
     if let tool = toolBlocks[index] {
       let text = tool.render(display: tools, colors: colors != nil)
@@ -377,7 +398,7 @@ struct TerminalOutputBuffer {
     let bottom = max(0, rows.count - height)
     let current = topIndex(in: rows, height: height)
     let index = current + max(-current, min(bottom - current, delta))
-    top = index == bottom ? nil : rows[index].position
+    top = index == bottom || rows.isEmpty ? nil : rows[index].position
   }
 
   mutating func visibleRows(width: Int, height: Int) -> [String] {
