@@ -130,6 +130,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var nextToolBlock = 0
   private var paintedOutputRows: [String] = []
   private var view: TerminalView?
+  private var draggingViewSeparator = false
   private var paintedViewRows: [String] = []
   private var active = false
   private var resizeSource: (any DispatchSourceProtocol)?
@@ -154,7 +155,13 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private static let enterBuffer = "\u{1B}[?1049h\u{1B}[2J"
   private static let leaveBuffer = "\u{1B}[r\u{1B}[?1049l"
   private static let enableMouse = "\u{1B}[?1000h\u{1B}[?1006h"
-  private static let disableMouse = "\u{1B}[?1006l\u{1B}[?1000l"
+  private static let enableDragMouse = "\u{1B}[?1002h"
+  private static let disableDragMouse = "\u{1B}[?1002l"
+  private static let disableMouse = "\u{1B}[?1002l\u{1B}[?1006l\u{1B}[?1000l"
+
+  private var mouseTracking: String {
+    Self.disableDragMouse + Self.enableMouse + (view == nil ? "" : Self.enableDragMouse)
+  }
 
   /// Nil unless both stdin and stdout are terminals; piped sessions keep the
   /// plain one-line-at-a-time prompt.
@@ -168,7 +175,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       let previousMode = self.ui.mode
       let previousUI = self.ui
       self.ui = ui
-      if ui.mode != .buffer { view = nil }
+      if ui.mode != .buffer { view = nil; draggingViewSeparator = false }
       for conversation in conversations.values {
         conversation.transcript.configureThinking(ui.thinking)
         conversation.transcript.configureTools(ui.tools)
@@ -185,7 +192,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       if ui.mode != previousMode {
         transcript.follow()
         if ui.mode == .buffer {
-          write(Self.enterBuffer + Self.enableMouse)
+          write(Self.enterBuffer + mouseTracking)
           redrawBuffer()
           return
         }
@@ -284,9 +291,12 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     lock.withLock {
       guard ui.mode == .buffer else { return }
       let label = title.components(separatedBy: .controlCharacters).joined(separator: " ")
-      view = source.map { TerminalView(source: $0, title: label) }
+      let height = view?.preferredHeight
+      view = source.map { TerminalView(source: $0, title: label, preferredHeight: height) }
+      draggingViewSeparator = false
       guard active else { return }
       refreshSize()
+      write(mouseTracking)
       redrawBuffer()
     }
   }
@@ -327,6 +337,28 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     }
   }
 
+  func handleMouse(_ event: TerminalMouseEvent) {
+    lock.withLock {
+      guard active, ui.mode == .buffer else { return }
+      refreshSize()
+      guard viewHeight > 0 else { draggingViewSeparator = false; return }
+      switch event.action {
+      case .press:
+        draggingViewSeparator = event.row == viewHeight + 1 && event.column <= columns
+        return
+      case .drag:
+        guard draggingViewSeparator else { return }
+      case .release:
+        guard draggingViewSeparator else { return }
+        draggingViewSeparator = false
+      }
+      let height = TerminalView.height(availableRows: regionBottom, preferredHeight: event.row - 1)
+      guard height != viewHeight else { return }
+      view?.preferredHeight = height
+      redrawBuffer()
+    }
+  }
+
   /// Enters raw mode, reserves the bottom rows, and draws them. Call before the
   /// input thread starts reading: locating the cursor needs stdin for a moment.
   func activate() {
@@ -346,7 +378,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     paintedThinkingRows = []
     clampInputRows()
     if ui.mode == .buffer {
-      write(TerminalInputModes.enable + (enterBuffer ? Self.enterBuffer : "") + Self.enableMouse)
+      write(TerminalInputModes.enable + (enterBuffer ? Self.enterBuffer : "") + mouseTracking)
       redrawBuffer()
       watchResizes()
       updateActivityTimer()
@@ -423,6 +455,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   private func deactivateLocked(leaveBuffer: Bool = true) {
     guard active else { return }
+    draggingViewSeparator = false
     refreshSize()
     resizeSource?.cancel()
     resizeSource = nil
@@ -847,7 +880,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var regionBottom: Int { max(1, rows - reservedRows) }
 
   private var viewHeight: Int {
-    ui.mode == .buffer && view != nil ? TerminalView.height(availableRows: regionBottom) : 0
+    ui.mode == .buffer && view != nil
+      ? TerminalView.height(availableRows: regionBottom, preferredHeight: view?.preferredHeight) : 0
   }
 
   private var outputOrigin: Int { viewHeight > 0 ? viewHeight + 2 : 1 }
@@ -949,14 +983,14 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   private func drawViewRows() {
     let height = viewHeight
-    guard height > 0 else { view?.focused = false; return }
+    guard height > 0 else { view?.focused = false; draggingViewSeparator = false; return }
     updateViewBuffer()
     let width = max(1, columns - 1)
     var visible = view?.buffer.visibleRows(width: width, height: height) ?? []
     if visible.isEmpty { visible = ["No matching output yet."] }
     visible += Array(repeating: "", count: max(0, height - visible.count))
     let focus = view?.focused == true ? "view focused · j/k scroll · Tab prompt" : "Tab on empty prompt to focus"
-    let label = "── view: \(view?.title ?? "") · \(focus) ──"
+    let label = "── view: \(view?.title ?? "") · \(focus) · drag to resize ──"
     visible.append("\u{1B}[\(view?.focused == true ? "7" : "2")m" + Self.truncated(label, width: width) + Self.reset)
     var out = ""
     for (index, text) in visible.enumerated() {

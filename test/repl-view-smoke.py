@@ -117,6 +117,16 @@ def main(binary):
                 os.kill(process.pid, signal.SIGWINCH)
                 read_for()
 
+            def drag_separator(target, legacy=False):
+                start = separator()
+                if legacy:
+                    def packet(button, row):
+                        return '\x1b[M' + chr(button + 32) + chr(42) + chr(row + 32)
+                    send(packet(0, start) + packet(32, target) + packet(3, target))
+                else:
+                    send(f'\x1b[<0;10;{start}M\x1b[<32;10;{target}M\x1b[<0;10;{target}m')
+                read_for()
+
             def tool(name, arguments):
                 chunks.put({'tool_calls': [{'index': 0, 'id': name, 'type': 'function',
                     'function': {'name': name, 'arguments': json.dumps(arguments)}}]})
@@ -140,6 +150,7 @@ def main(binary):
                 wait_for('\x1b[?1049h')
                 send('/view thinking\r')
                 wait_for('── view: thinking')
+                assert b'\x1b[?1002h' in captured, captured
                 assert 'No matching output yet.' in top(), screen
                 send('STREAM_REQUEST\r')
                 chunks.put({'reasoning_content': ''.join(f'THOUGHT_{i:02d}\n' for i in range(40))})
@@ -180,10 +191,43 @@ def main(binary):
                 send('/vi\t')
                 wait_for('/view')
                 assert 'view focused' not in screen[separator()], screen
+                draft = screen[rows]
+                drag_separator(6)
+                assert separator() == 6 and screen[rows] == draft, screen
+                assert 'view focused' not in screen[separator()], screen
+                send('\x1b[<32;10;9M')  # A released drag cannot keep resizing the view.
+                read_for()
+                assert separator() == 6, screen
+                send('\x1b[<0;10;2M\x1b[<32;10;9M\x1b[<0;10;9m')
+                read_for()
+                assert separator() == 6, screen  # Presses outside the separator are ignored.
+                send('\x1b[<2;10;6M\x1b[<34;10;9M\x1b[<2;10;9m')
+                read_for()
+                assert separator() == 6, screen  # Only the left button starts a resize.
+                drag_separator(10, legacy=True)
+                assert separator() == 10 and screen[rows] == draft, screen
+                drag_separator(1)
+                assert separator() == 2 and screen[rows] == draft, screen
+                drag_separator(rows)
+                assert separator() == rows - 3 and screen[rows] == draft, screen
+                drag_separator(12)
+                assert separator() == 12 and screen[rows] == draft, screen
                 send('\x03')
                 read_for()
+                send('\t')
+                wait_for('view focused')
+                drag_separator(8)
+                assert separator() == 8 and 'view focused' in screen[separator()], screen
+                send('\t')
+                wait_for('Tab on empty prompt')
+                drag_separator(12)
+                resize(18, columns)
+                assert separator() == 12, screen
+                resize(24, columns)
+                assert separator() == 12, screen
                 send('/view tools files_patch\r')
                 wait_for('── view: tool files_patch')
+                assert separator() == 12, screen  # Source changes retain the chosen height.
                 send('EDIT_REQUEST\r')
                 tool('files_patch', {'path': 'file.txt', 'find': 'OLD_LINE', 'replace': 'NEW_LINE'})
                 chunks.put('EDIT_ANSWER\n')
@@ -232,6 +276,7 @@ def main(binary):
                 wait_for('── view: agent conversations')
                 send('/view off\r')
                 read_for()
+                assert b'\x1b[?1002l' in captured and b'\x1b[?1002h' not in captured, captured
                 assert all('── view:' not in screen.get(row, '') for row in range(1, rows)), screen
                 send('/view current\r')
                 wait_for('── view: current conversation')
@@ -243,6 +288,7 @@ def main(binary):
                 assert 'READ_ANSWER' in top(), screen
                 send('/set ui.mode classic\r')
                 wait_for('\x1b[?1049l')
+                assert b'\x1b[?1002l' in captured, captured
                 send('/set ui.mode buffer\r')
                 wait_for('\x1b[?1049h')
                 assert all('── view:' not in screen.get(row, '') for row in range(1, rows)), screen
@@ -271,7 +317,7 @@ def main(binary):
                                  ['/view thinking', '/help view'], cwd=root, env=env, allow_errors=True)
                 assert 'error: /view requires ui.mode=buffer.' in output and '/view off' in output
                 print('PASS view: mode guard, sources, read-only focus, independent scrolling, live thinking/tools/diffs, '
-                      'background agents, resize, saved reasoning/results, off and cleanup')
+                      'background agents, separator dragging, mouse cleanup, resize, saved reasoning/results, off and cleanup')
             finally:
                 chunks.put(None)
                 if process.poll() is None:

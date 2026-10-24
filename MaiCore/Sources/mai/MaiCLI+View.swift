@@ -65,7 +65,9 @@ extension MaiCLI {
     /view off              Close the view
 
     Requires /set ui.mode buffer and an interactive terminal. The read-only view
-    occupies the top half of the output area, with the conversation below it.
+    starts in the top half of the output area, with the conversation below it.
+    Drag the separator with the left mouse button to resize the panes. Both
+    panes keep at least one row; the chosen height is kept when sources change.
     Tab with an empty prompt switches focus between the prompt and the view.
     In the view, j/k or Down/Up scroll one row; Page Up/Down and the mouse wheel
     scroll the focused pane. Tab returns to typing; completion works as usual

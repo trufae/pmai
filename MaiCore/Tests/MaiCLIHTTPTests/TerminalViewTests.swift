@@ -114,4 +114,9 @@ func terminalViewScroll() {
     let height = TerminalView.height(availableRows: available)
     #expect(height == 0 || height + 2 <= available)
   }
+  #expect(TerminalView.height(availableRows: 22, preferredHeight: 6) == 6)
+  #expect(TerminalView.height(availableRows: 3, preferredHeight: 6) == 1)
+  #expect(TerminalView.height(availableRows: 2, preferredHeight: 6) == 0)
+  #expect(TerminalView.height(availableRows: 22, preferredHeight: 0) == 1)
+  #expect(TerminalView.height(availableRows: 22, preferredHeight: 100) == 20)
 }

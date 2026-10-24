@@ -39,6 +39,7 @@ protocol LineEditorSurface: AnyObject {
   func toggleViewFocus() -> Bool
   func focusPrompt()
   func scrollView(lines: Int)
+  func handleMouse(_ event: TerminalMouseEvent)
   /// Text that belongs with the output, such as completion candidates.
   func emit(_ text: String)
   /// The line drawn above a fresh prompt, or nothing.
@@ -60,6 +61,7 @@ extension LineEditorSurface {
   func toggleViewFocus() -> Bool { false }
   func focusPrompt() {}
   func scrollView(lines: Int) {}
+  func handleMouse(_ event: TerminalMouseEvent) {}
   func pendingInput() -> [UInt8] { [] }
   /// Surfaces with no status row simply do not show the menu.
   func drawCompletionMenu(_ menu: CompletionMenu?) {}
@@ -218,6 +220,7 @@ final class TerminalLineEditor {
     case backTab
     case switchAgent(REPLAgentSwitch)
     case wheel(Int)
+    case mouse(TerminalMouseEvent)
     /// Shift+Enter or Alt+Enter: a line break inside the input.
     case newline
     /// A bracketed paste, as sent.
@@ -447,6 +450,10 @@ final class TerminalLineEditor {
     }
 
     while let key = readKey() {
+      if case .mouse(let event) = key {
+        surface?.handleMouse(event)
+        continue
+      }
       if activePrompt.isModal { surface?.focusPrompt() }
       if !activePrompt.isModal, bytes.isEmpty, case .byte(9) = key,
         surface?.toggleViewFocus() == true
@@ -639,7 +646,7 @@ final class TerminalLineEditor {
         let end = nextCharacterEnd(in: bytes, after: cursor)
         remove(cursor..<end)
         redraw(prompt: prompt, bytes: bytes, cursor: cursor)
-      case .ignored:
+      case .mouse, .ignored:
         continue
       }
     }
@@ -684,8 +691,10 @@ final class TerminalLineEditor {
       // Legacy X10 mouse reports have three bytes after CSI M. Consume the
       // entire packet even when it is a click that the editor ignores.
       if byte == UInt8(ascii: "M"), parameters.isEmpty {
-        guard let button = readByte(), readByte() != nil, readByte() != nil else { return .ignored }
-        return mouseKey(button: max(0, Int(button) - 32), released: false)
+        guard let button = readByte(), let column = readByte(), let row = readByte() else { return .ignored }
+        return mouseKey(
+          button: Int(button) - 32, column: Int(column) - 32, row: Int(row) - 32,
+          released: false)
       }
       if (0x40...0x7E).contains(byte) {
         return decodeControlSequence(
@@ -701,8 +710,8 @@ final class TerminalLineEditor {
     if parameters.hasPrefix("<"), final == UInt8(ascii: "M") || final == UInt8(ascii: "m") {
       let fields = parameters.dropFirst().split(separator: ";")
       guard fields.count == 3, let button = Int(fields[0]),
-        Int(fields[1]) != nil, Int(fields[2]) != nil else { return .ignored }
-      return mouseKey(button: button, released: final == UInt8(ascii: "m"))
+        let column = Int(fields[1]), let row = Int(fields[2]) else { return .ignored }
+      return mouseKey(button: button, column: column, row: row, released: final == UInt8(ascii: "m"))
     }
     let fields = parameters.split(separator: ";", omittingEmptySubsequences: false)
       .map(String.init)
@@ -744,11 +753,16 @@ final class TerminalLineEditor {
     }
   }
 
-  private func mouseKey(button: Int, released: Bool) -> Key {
-    guard !released else { return .ignored }
+  private func mouseKey(button: Int, column: Int, row: Int, released: Bool) -> Key {
+    guard button >= 0, column > 0, row > 0 else { return .ignored }
     switch button & 0xC3 {
-    case 64: return .wheel(-1)
-    case 65: return .wheel(1)
+    case 64: return released ? .ignored : .wheel(-1)
+    case 65: return released ? .ignored : .wheel(1)
+    case 0:
+      let action: TerminalMouseEvent.Action = released ? .release : (button & 32 != 0 ? .drag : .press)
+      return .mouse(TerminalMouseEvent(action: action, column: column, row: row))
+    case 3:
+      return .mouse(TerminalMouseEvent(action: .release, column: column, row: row))
     default: return .ignored
     }
   }
@@ -976,6 +990,8 @@ final class TerminalLineEditor {
         surface?.scrollOutput(wheel: 0, pages: 1)
       case .wheel(let direction):
         surface?.scrollOutput(wheel: direction, pages: 0)
+      case .mouse(let event):
+        surface?.handleMouse(event)
       case .left:  // Any other key accepts the match for editing.
         return .accepted(
           line: selection,

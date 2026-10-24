@@ -25,15 +25,24 @@ enum TerminalOutputSelection: Equatable {
   case diffs
 }
 
+struct TerminalMouseEvent {
+  enum Action { case press, drag, release }
+  var action: Action
+  var column: Int
+  var row: Int
+}
+
 /// Input focus is separate from agent focus: inspecting a view never redirects messages.
 struct TerminalView {
   var source: TerminalViewSource
   var title: String
   var focused = false
+  var preferredHeight: Int?
   var buffer = TerminalOutputBuffer()
 
   /// Leave a separator and at least one row for the main conversation.
-  static func height(availableRows: Int) -> Int {
-    availableRows >= 3 ? max(1, (availableRows - 1) / 2) : 0
+  static func height(availableRows: Int, preferredHeight: Int? = nil) -> Int {
+    guard availableRows >= 3 else { return 0 }
+    return max(1, min(availableRows - 2, preferredHeight ?? (availableRows - 1) / 2))
   }
 }

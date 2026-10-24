@@ -218,7 +218,9 @@ editor handoffs, and restoration of the terminal screen, mouse, and raw modes:
 
 The view check covers the buffer-only `/view` split, empty-prompt Tab focus,
 read-only input, independent scrolling, live thinking/tools/applied diffs,
-background agent conversations, short-terminal resize, and saved content:
+background agent conversations, short-terminal resize, and saved content.
+It also checks dragging the separator with SGR and legacy mouse packets,
+preserving drafts and focus, size bounds, release, and mouse-mode cleanup.
 
     python3 test/repl-view-smoke.py MaiCore/.build/debug/pmai
 
