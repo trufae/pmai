@@ -146,7 +146,8 @@ public struct MaiRunTool: AgentTool {
         let outcome = try await MaiHostProcess.runInteractive(
           executable: launcher.executable, arguments: launcher.arguments + extraArguments,
           workingDirectory: workingDirectory, environment: environment,
-          timeout: arguments["timeout_seconds"] == nil ? nil : timeout, host: terminalHost)
+          timeout: arguments["timeout_seconds"] == nil ? nil : timeout, host: terminalHost,
+          command: script, commandArguments: Array(extraArguments.dropFirst()))
         return Self.output(
           for: outcome, timeout: timeout, workingDirectory: workingDirectory, interactive: true)
       }
@@ -159,7 +160,8 @@ public struct MaiRunTool: AgentTool {
         stdin: stdin,
         timeout: timeout,
         outputLimit: configuration.outputLimit,
-        outputMode: outputMode)
+        outputMode: outputMode, command: script,
+        commandArguments: Array(extraArguments.dropFirst()))
       return Self.output(for: outcome, timeout: timeout, workingDirectory: workingDirectory)
     }
 
@@ -209,6 +211,7 @@ public struct MaiRunTool: AgentTool {
       return ToolOutput(
         content: [.text(sections.joined(separator: "\n"))],
         structuredContent: .object([
+          "pid": .integer(Int(outcome.pid)),
           "exitCode": .integer(Int(outcome.exitCode)),
           "timedOut": .bool(outcome.timedOut),
           "durationMs": .integer(Int(outcome.duration * 1000)),
@@ -406,6 +409,7 @@ enum MaiRunToolError: LocalizedError {
 
 #if os(macOS) || os(Linux) || os(Android)
   struct MaiHostProcessOutcome: Sendable {
+    var pid: Int32
     var stdout: Data
     var stderr: Data
     var stdoutDropped: Int
@@ -456,7 +460,9 @@ enum MaiRunToolError: LocalizedError {
       stdin: String?,
       timeout: TimeInterval,
       outputLimit: Int,
-      outputMode: MaiRunTool.OutputMode
+      outputMode: MaiRunTool.OutputMode,
+      command: String? = nil,
+      commandArguments: [String] = []
     ) async throws -> MaiHostProcessOutcome {
       let session = ProcessSession(
         executable: executable,
@@ -465,7 +471,7 @@ enum MaiRunToolError: LocalizedError {
         environment: environment,
         hasInput: stdin != nil,
         outputLimit: outputLimit,
-        outputMode: outputMode)
+        outputMode: outputMode, command: command, commandArguments: commandArguments)
       return try await withTaskCancellationHandler {
         try Task.checkCancellation()
         try session.start()
@@ -485,12 +491,13 @@ enum MaiRunToolError: LocalizedError {
 
     static func runInteractive(
       executable: URL, arguments: [String], workingDirectory: URL,
-      environment: [String: String], timeout: TimeInterval?, host: MaiRunTerminalHost
+      environment: [String: String], timeout: TimeInterval?, host: MaiRunTerminalHost,
+      command: String? = nil, commandArguments: [String] = []
     ) async throws -> MaiHostProcessOutcome {
       let session = ProcessSession(
         executable: executable, arguments: arguments, workingDirectory: workingDirectory,
         environment: environment, hasInput: false, outputLimit: 0, outputMode: .none,
-        interactive: true)
+        interactive: true, command: command, commandArguments: commandArguments)
       return try await withTaskCancellationHandler {
         try Task.checkCancellation()
         try await host.run {
@@ -555,6 +562,11 @@ enum MaiRunToolError: LocalizedError {
       private let readersClosed = DispatchGroup()
       private let completion = DispatchGroup()
       private let interactive: Bool
+      private let commandScope: AgentCommandScope?
+      private let command: String?
+      private let commandArguments: [String]
+      private var commandID: UUID?
+      private var killed = false
       private var stdoutSource: DispatchSourceRead?
       private var stderrSource: DispatchSourceRead?
       private var readError: NSError?
@@ -587,9 +599,14 @@ enum MaiRunToolError: LocalizedError {
         hasInput: Bool,
         outputLimit: Int,
         outputMode: MaiRunTool.OutputMode,
-        interactive: Bool = false
+        interactive: Bool = false,
+        command: String? = nil,
+        commandArguments: [String] = []
       ) {
         self.interactive = interactive
+        self.commandScope = AgentCommandScope.current
+        self.command = command
+        self.commandArguments = commandArguments
         completion.enter()
         self.outputLimit = outputLimit
         self.outputMode = outputMode
@@ -615,6 +632,7 @@ enum MaiRunToolError: LocalizedError {
           try lock.withLock {
             if let readError { throw readError }
             return MaiHostProcessOutcome(
+              pid: process.processIdentifier,
               stdout: stdout,
               stderr: stderr,
               stdoutDropped: stdoutDropped,
@@ -638,6 +656,12 @@ enum MaiRunToolError: LocalizedError {
             }
             process.terminationHandler = { [weak self] _ in self?.markExited() }
             try process.run()
+            if let commandScope, let command {
+              commandID = commandScope.started(
+                pid: process.processIdentifier, command: command, arguments: commandArguments,
+                cwd: process.currentDirectoryURL?.path ?? "",
+                stop: { [weak self] in self?.stop(timedOut: false, userRequested: true) ?? false })
+            }
           }
         } catch {
           lock.withLock { killSent = true }
@@ -688,14 +712,16 @@ enum MaiRunToolError: LocalizedError {
       }
 
       /// Stop the shell's process group, including children that outlive the shell.
-      func stop(timedOut: Bool) {
+      @discardableResult
+      func stop(timedOut: Bool, userRequested: Bool = false) -> Bool {
         let pid: Int32 = lock.withLock {
-          guard !stopping, !finishing else { return 0 }
+          guard !stopping, !finishing, !userRequested || !exited && process.isRunning else { return 0 }
           self.timedOut = timedOut
+          killed = userRequested
           stopping = true
           return process.processIdentifier
         }
-        guard pid > 0 else { return }
+        guard pid > 0 else { return false }
         // A shell can defer or trap SIGTERM and keep executing after its child exits.
         // Timeout and cancellation must stop the whole group without that grace period.
         signalGroup(pid, SIGKILL)
@@ -704,6 +730,7 @@ enum MaiRunToolError: LocalizedError {
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1) { [self] in
           finish()
         }
+        return true
       }
 
       private func signalGroup(_ pid: Int32, _ signal: Int32) {
@@ -785,7 +812,14 @@ enum MaiRunToolError: LocalizedError {
       }
 
       private func markExited() {
-        lock.withLock { exited = true }
+        lock.withLock {
+          exited = true
+          if let commandID {
+            commandScope?.history.finished(
+              commandID, exitCode: process.terminationStatus,
+              state: killed ? .killed : timedOut ? .timedOut : stopping ? .cancelled : .exited)
+          }
+        }
         finishIfComplete()
       }
 

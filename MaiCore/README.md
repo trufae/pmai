@@ -1537,6 +1537,19 @@ inspect `/path` through `pmai_run`, but cannot change its policies or the Files
 workspace. These are tool-level checks: `run_shell` and other tools retain their
 own permissions. `/help path` lists the commands.
 
+`/ps` lists the current chat's live main-agent shell commands with their OS
+PID, agent name, `/jobs` ID, elapsed time, start time, working directory, and
+command. Add `-a` to include all subagents, `-p` to show past commands with
+duration and exit status, or `-ap` for past commands from every agent.
+`/ps -k PID` kills a live command and its process group. It only accepts
+processes owned by this chat; a saved PID is never used to signal a process.
+Command records persist with the conversation and in exports, independently
+of transcript compaction and `/jobs clear`. Restored unfinished commands are
+marked interrupted with unknown duration. `/help ps` describes the flags.
+Chats saved before command records existed recover their command history and
+durations from the available run-tool calls and results; missing PIDs and
+start times are shown as unknown.
+
 The `run` group is one tool, `run_shell`, which executes code on this computer
 with the privileges of the `pmai` process: the command line or script is saved
 to a temporary file and run with the configured shell (`runShell`; a name looked

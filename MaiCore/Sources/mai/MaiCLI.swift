@@ -770,6 +770,7 @@ struct REPLSession: Sendable {
   /// runs end and puts them back in the process table when the chat is
   /// reopened, so `/jobs tree` and `/jobs log` outlive the session.
   var subagents: [AgentProcessRecord]
+  var commands: [AgentCommandRecord]
   var runtimeConfiguration: AgentChatConfiguration?
   var redactor: ContentRedactor?
 
@@ -793,6 +794,7 @@ struct REPLSession: Sendable {
     self.updatedAt = updatedAt
     isArchived = false
     subagents = []
+    commands = []
     redactor = nil
   }
 
@@ -808,6 +810,7 @@ struct REPLSession: Sendable {
     updatedAt = chat.updatedAt
     isArchived = chat.isArchived
     subagents = chat.subagents
+    commands = chat.commands
     runtimeConfiguration = chat.runtimeConfiguration
     redactor = nil
   }
@@ -825,6 +828,7 @@ struct REPLSession: Sendable {
       isArchived: isArchived,
       sessionID: sessionID,
       subagents: redactor?.unredact(subagents) ?? subagents,
+      commands: commands,
       runtimeConfiguration: runtimeConfiguration)
   }
 
@@ -1592,6 +1596,7 @@ struct MaiCLI {
         var oneShotProcess: AgentPID? = await runtime.allocateProcess(
           agentID: session.profile.agentID, task: session.title)
         await runtime.restoreConversations(session.subagents, under: oneShotProcess!, sessionID: session.sessionID)
+        runtime.commandHistory.restore(session.commands)
         pmaiBridge.sync(
           session: session,
           configuration: configuration,
@@ -1629,6 +1634,7 @@ struct MaiCLI {
             }
           }
         }
+        session.commands = runtime.commandHistory.records(sessionID: session.sessionID, saved: session.commands)
         session.touch()
         workspace.upsert(session.chat, selecting: true)
         try store.commit(&workspace)
@@ -2705,6 +2711,11 @@ struct MaiCLI {
     /// saved copy, and what the table has since forgotten stays as saved.
     /// Called wherever the workspace is about to be written.
     func recordSubagents() async {
+      let commands = runtime.commandHistory.records(sessionID: session.sessionID, saved: session.commands)
+      if commands != session.commands {
+        session.commands = commands
+        session.touch()
+      }
       fileAccessLogs[session.id] = session.fileAccessLog
       for (id, log) in fileAccessLogs where id != session.id {
         if var chat = workspace.chats.first(where: { $0.id == id }), chat.accessedFiles != log.snapshot() {
@@ -2732,8 +2743,10 @@ struct MaiCLI {
           }
         } else if var chat = workspace.chats.first(where: { $0.id == chatID }) {
           let records = AgentProcessRecord.merging(saved: chat.subagents, current: current)
-          if records != chat.subagents {
+          let commands = runtime.commandHistory.records(sessionID: chat.sessionID, saved: chat.commands)
+          if records != chat.subagents || commands != chat.commands {
             chat.subagents = records
+            chat.commands = commands
             chat.touch()
             workspace.upsert(chat)
           }
@@ -2789,6 +2802,7 @@ struct MaiCLI {
     /// table, once per chat and session, so `/jobs tree` and `/jobs log`
     /// show what earlier runs started before the chat's next turn.
     func restoreSavedSubagents() async {
+      runtime.commandHistory.restore(session.commands)
       guard restoredChatIDs.insert(session.id).inserted, !session.subagents.isEmpty else {
         return
       }
@@ -5278,6 +5292,10 @@ struct MaiCLI {
     }
 
     switch parts[0] {
+    case "/ps":
+      runtime.commandHistory.restore(session.commands)
+      await handlePSCommand(
+        argument, session: session, runtime: runtime, chatProcess: chatProcess, terminal: terminal)
     case "/exit", "/quit":
       return true
     case "/version":
@@ -5318,6 +5336,8 @@ struct MaiCLI {
         await terminal.line(conversationsHelp)
       case "jobs", "job", "/jobs", "/job":
         await terminal.line(jobsHelp)
+      case "ps", "/ps":
+        await terminal.line(psHelp)
       case "mcp", "/mcp":
         await terminal.line(mcpCommandHelp)
       case "remote", "/remote":
@@ -10945,6 +10965,7 @@ struct MaiCLI {
       return
     }
     var chat = session.chat
+    chat.commands = runtime.commandHistory.records(sessionID: session.sessionID, saved: session.commands)
     // The agents of this chat's runs as they stand: what the process table
     // holds now, live or finished, over what was saved with the chat.
     if chat.hasConversation, let process {
@@ -11161,6 +11182,7 @@ struct MaiCLI {
         if existingIDs.contains(chat.id) {
           chat.id = UUID()
           chat.sessionID = ChatSession.newID()
+          chat.commands = chat.commands.map { $0.copied(to: chat.sessionID) }
         }
         while !existingIDs.insert(chat.id).inserted { chat.id = UUID() }
         workspace.upsert(chat)
@@ -11771,6 +11793,7 @@ struct MaiCLI {
       case "new":
         // A fresh session for the same chat: a backend that meters by session
         // sees a new one from the next message on, and nothing else changes.
+        session.commands = runtime.commandHistory.records(sessionID: session.sessionID, saved: session.commands)
         session.sessionID = ChatSession.newID()
         session.touch()
         workspace.upsert(session.chat, selecting: true)
@@ -12891,7 +12914,7 @@ struct MaiCLI {
       "/set export.thinking on", "/set export.thinking off",
       "/fork", "/fork --empty", "/subagents", "/subagents main", "/subagents parent",
       "/subagents next", "/subagents prev", "/btw ",
-      "/help memory", "/help agents", "/help jobs", "/help chat", "/help edit", "/help tools",
+      "/help memory", "/help agents", "/help jobs", "/help ps", "/help chat", "/help edit", "/help tools",
       "/agent acp list", "/agent acp add ", "/agents acp list",
       "/help remote", "/remote", "/remote serve", "/remote stop", "/remote qr", "/remote status",
       "/remote serve --protocol local", "/remote serve --protocol opentunnel", "/remote serve --protocol forwiroh", "/remote serve --protocol openai",
@@ -12953,6 +12976,7 @@ struct MaiCLI {
       "/prompts add ", "/prompts edit ", "/prompts del ", "/edit user ", "/edit system ",
       "/agent", "/agents", "/agents list", "/agents describe ", "/agents enable ",
       "/agents disable ",
+      "/ps", "/ps -a", "/ps -p", "/ps -ap", "/ps -k ",
       "/job", "/jobs", "/jobs tree", "/jobs stop ", "/jobs continue ", "/jobs clear", "/jobs log ",
       "/jobs kill ", "/jobs focus ",
       "/jobs focus main", "/queue", "/queue push ", "/queue pop", "/queue del",
@@ -13397,6 +13421,7 @@ struct MaiCLI {
     /fork [--empty] [TITLE] Fork into a child conversation and switch to it
     /subagents [PID|main]  List or switch agent conversations
     /jobs                  Manage running and saved processes
+    /ps [-a] [-p]          Show shell processes and command history; -k PID kills one
     /mcp                   Manage MCP servers
     /memory                Show, edit, learn, or scope project memory
     /model [FLAG] [MODEL]  Select chat or task models; /help model

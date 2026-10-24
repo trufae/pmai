@@ -85,7 +85,7 @@ public struct PmaiCommandPolicy: Equatable, Sendable {
   public static let defaultBlockedCommands = "exit quit clear image attach"
   /// Commands that answer with what they are rather than changing it.
   public static let defaultReadOnlyCommands =
-    "help set models providers tools mcp mcps agents agent jobs job theme prompts skills memory todo stats version cwd pwd path"
+    "help set models providers tools mcp mcps agents agent jobs job ps theme prompts skills memory todo stats version cwd pwd path"
 
   public var blockedCommands: String
   public var readOnly: Bool
@@ -127,6 +127,12 @@ public struct PmaiCommandPolicy: Equatable, Sendable {
       throw PmaiCommandError.blocked(name)
     }
     guard readOnly else { return line }
+    if name == "ps" {
+      let argument = line.dropFirst(head.count).trimmingCharacters(in: .whitespacesAndNewlines)
+      guard let options = try? AgentPSOptions(argument), options.killPID == nil else {
+        throw PmaiCommandError.notReadOnly(name)
+      }
+    }
     guard matches(readOnlyCommands, name: name, line: line) else {
       throw PmaiCommandError.notReadOnly(name)
     }

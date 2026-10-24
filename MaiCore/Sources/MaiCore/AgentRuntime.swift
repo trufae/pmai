@@ -59,6 +59,7 @@ public actor AgentRuntime {
   /// The process table every run reports into. Hosts read it for `/jobs`,
   /// follow its events for notifications, and stop subtrees through it.
   public nonisolated let supervisor: AgentSupervisor
+  public nonisolated let commandHistory = AgentCommandHistory()
 
   public init(
     approvalHandler: any ApprovalHandler = DenyInteractiveApprovals(),

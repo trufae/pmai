@@ -37,7 +37,13 @@ extension AgentRuntime {
     let context = ToolExecutionContext(
       run: .init(runID: UUID(), parentRunID: nil, agentID: agent.id, depth: 0), modelTurn: 0)
     do {
-      let output = try await tool.call(arguments: arguments, context: context)
+      let scope = AgentCommandScope(
+        history: commandHistory,
+        sessionID: AgentExecutionScope.current?.sessionID ?? context.run.runID.uuidString,
+        run: context.run, callID: call.id, tool: definition.name)
+      let output = try await AgentCommandScope.$current.withValue(scope) {
+        try await tool.call(arguments: arguments, context: context)
+      }
       return ToolResult(
         callID: call.id, content: output.content, structuredContent: output.structuredContent,
         isError: output.isError, importance: definition.annotations.resultImportance)
@@ -317,9 +323,13 @@ extension AgentRuntime {
           approvedCall, "internet tools are disabled while offline.", parent: context, emit: emit)
       }
       do {
-        let output = try await tool.call(
-          arguments: approvedCall.arguments,
-          context: execution)
+        let scope = AgentCommandScope(
+          history: commandHistory,
+          sessionID: request.sessionID ?? context.runID.uuidString,
+          run: context, callID: approvedCall.id, tool: approvedCall.name)
+        let output = try await AgentCommandScope.$current.withValue(scope) {
+          try await tool.call(arguments: approvedCall.arguments, context: execution)
+        }
         result = ToolResult(
           callID: approvedCall.id,
           content: output.content,

@@ -47,6 +47,7 @@ public struct AgentChat: StoredChat, Equatable {
   /// once the chat is resumed, and what the debug export carries. Hosts
   /// bring these up to date from the supervisor as runs end.
   public var subagents: [AgentProcessRecord]
+  public var commands: [AgentCommandRecord]
   public var runtimeConfiguration: AgentChatConfiguration?
 
   public init(
@@ -61,6 +62,7 @@ public struct AgentChat: StoredChat, Equatable {
     isArchived: Bool = false,
     sessionID: String? = nil,
     subagents: [AgentProcessRecord] = [],
+    commands: [AgentCommandRecord] = [],
     runtimeConfiguration: AgentChatConfiguration? = nil
   ) {
     self.id = id
@@ -74,12 +76,13 @@ public struct AgentChat: StoredChat, Equatable {
     self.isArchived = isArchived
     self.sessionID = sessionID ?? ChatSession.newID()
     self.subagents = subagents
+    self.commands = commands
     self.runtimeConfiguration = runtimeConfiguration
   }
 
   private enum CodingKeys: String, CodingKey {
     case id, title, primaryAgent, messages, pendingContent, createdAt, updatedAt, isArchived
-    case sessionID, subagents, runtimeConfiguration, accessedFiles
+    case sessionID, subagents, commands, runtimeConfiguration, accessedFiles
   }
 
   public init(from decoder: Decoder) throws {
@@ -99,6 +102,19 @@ public struct AgentChat: StoredChat, Equatable {
     isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
     subagents =
       try container.decodeIfPresent([AgentProcessRecord].self, forKey: .subagents) ?? []
+    if let saved = try container.decodeIfPresent([AgentCommandRecord].self, forKey: .commands) {
+      commands = saved
+    } else {
+      commands = AgentCommandRecord.recovering(
+        messages: messages, sessionID: sessionID,
+        run: .init(runID: id, parentRunID: nil, agentID: primaryAgent.id, depth: 0))
+      for child in subagents {
+        commands += AgentCommandRecord.recovering(
+          messages: child.messages, sessionID: sessionID,
+          run: .init(runID: child.runID, parentRunID: child.parentRunID,
+            agentID: child.agentID, depth: child.depth, pid: child.pid))
+      }
+    }
     runtimeConfiguration = try container.decodeIfPresent(
       AgentChatConfiguration.self, forKey: .runtimeConfiguration)
   }
@@ -186,6 +202,7 @@ public struct AgentChat: StoredChat, Equatable {
     var chat = self
     chat.id = UUID()
     chat.sessionID = ChatSession.newID()
+    chat.commands = commands.map { $0.copied(to: chat.sessionID) }
     let title = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     chat.title = title.isEmpty ? "\(displayTitle) (fork)" : title
     chat.createdAt = date
