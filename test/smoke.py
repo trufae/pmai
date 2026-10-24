@@ -14,7 +14,7 @@ def clean_environment():
             and key.lower() not in ('http_proxy', 'https_proxy', 'all_proxy')}
 
 
-def run_repl(command, commands=(), *, cwd, env, timeout=30, split=False):
+def run_repl(command, commands=(), *, cwd, env, timeout=30, split=False, allow_errors=False):
     commands = list(commands)
     # Unknown help topics delimit responses without shell processes or model calls.
     topics = [f'smoke-{uuid.uuid4().hex}-{index}' for index in range(len(commands))] if split else []
@@ -24,7 +24,7 @@ def run_repl(command, commands=(), *, cwd, env, timeout=30, split=False):
                             input='\n'.join([*lines, '/exit', '']),
                             capture_output=True, text=True, encoding='utf-8', timeout=timeout)
     output = result.stdout + result.stderr
-    assert result.returncode == 0 and 'error:' not in output, output
+    assert result.returncode == 0 and (allow_errors or 'error:' not in output), output
     if not split:
         return output
     responses = []

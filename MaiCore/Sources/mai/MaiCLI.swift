@@ -3413,7 +3413,7 @@ struct MaiCLI {
     func handleConversationCommand(_ name: String, argument: String) async -> Bool {
       guard case .agent(let pid) = loop.focus, let info = await runtime.supervisor.info(pid) else { return false }
       let action = argument.split(whereSeparator: \.isWhitespace).first?.lowercased() ?? ""
-      let transcriptActions: Set<String> = ["log", "last", "edit", "del", "undo", "trim", "pin", "pins", "unpin", "clear"]
+      let transcriptActions: Set<String> = ["log", "last", "edit", "del", "undo", "trim", "rewind", "pin", "pins", "unpin", "clear"]
       guard name == "/copy" || name == "/last" || name == "/continue"
         || (name == "/chat" && transcriptActions.contains(action)) else { return false }
       var focused = session
@@ -11885,7 +11885,7 @@ struct MaiCLI {
         recapPrompt: configuration?.prompts?.recap,
         chatProcess: chatProcess,
         terminal: terminal)
-    case "log", "last", "pin", "pins", "unpin", "edit", "del", "undo", "trim", "compact", "recap", "clear", "help":
+    case "log", "last", "pin", "pins", "unpin", "edit", "del", "undo", "trim", "rewind", "compact", "recap", "clear", "help":
       await handleChatCommand(
         argument,
         session: &session,
@@ -12330,6 +12330,12 @@ struct MaiCLI {
         return
       }
       await trimChatMessages(through: index, session: &session, terminal: terminal)
+    case "rewind":
+      guard actionArgument.isEmpty else {
+        await terminal.line("Usage: /chat rewind")
+        return
+      }
+      await rewindChatToLastPin(session: &session, terminal: terminal)
     case "chop":
       await terminal.line("Use /chat chop at the REPL prompt to browse and remove messages interactively.")
     case "compact", "recap":
@@ -12383,6 +12389,45 @@ struct MaiCLI {
         await terminal.line(
           "Trimmed \(removed.count) message\(removed.count == 1 ? "" : "s"); kept through message \(session.history.count)."
         )
+      }
+    } catch {
+      await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+    }
+  }
+
+  /// Trims the conversation to the newest pinned message, if there is one.
+  private static func rewindChatToLastPin(
+    session: inout REPLSession,
+    terminal: TerminalWriter
+  ) async {
+    guard let index = session.history.messages.lastIndex(where: { $0.isPinned }) else {
+      await terminal.line(
+        "error: No pinned message to rewind to. Pin one with /chat pin [INDEX|MESSAGE_ID].",
+        to: .standardError)
+      return
+    }
+    do {
+      let removed = try session.history.trim(through: index)
+      session.touch()
+      let kept = session.history.count
+      if removed.isEmpty {
+        await terminal.line("Already at pinned message \(index + 1); nothing to rewind.")
+      } else {
+        let dropped = kept <= index
+          ? " An unfinished tool transaction around it was removed too."
+          : ""
+        await terminal.line(
+          "Rewound to pinned message \(index + 1); removed \(removed.count) newer message\(removed.count == 1 ? "" : "s").\(dropped)"
+        )
+      }
+      // Show where the conversation landed, so the rewind point is visible.
+      if session.history.messages.indices.contains(index) {
+        let landed = session.history.messages[index]
+        let preview = messagePreview(landed)
+        if !preview.isEmpty {
+          await terminal.line(
+            "\(landed.isPinned ? "📌 " : "")\(landed.role.rawValue.capitalized): \(preview)")
+        }
       }
     } catch {
       await terminal.line("error: \(error.localizedDescription)", to: .standardError)
@@ -13009,7 +13054,7 @@ struct MaiCLI {
       "/chat use ", "/chat next", "/chat previous", "/chat info", "/chat session",
       "/chat session new", "/chat rename ",
       "/chat archive", "/chat unarchive ", "/chat close confirm", "/chat messages",
-      "/chat files", "/chat log", "/chat log quiet", "/chat log verbose", "/chat log short", "/chat pin", "/chat pin ", "/chat pins", "/chat pins short", "/chat unpin ", "/chat last", "/chat edit ", "/chat del ", "/chat undo", "/chat chop", "/chat trim ",
+      "/chat files", "/chat log", "/chat log quiet", "/chat log verbose", "/chat log short", "/chat pin", "/chat pin ", "/chat pins", "/chat pins short", "/chat unpin ", "/chat last", "/chat edit ", "/chat del ", "/chat undo", "/chat chop", "/chat trim ", "/chat rewind",
       "/chat clear", "/project", "/project info", "/project list", "/project name ",
       "/project tint ", "/project tint none", "/project del ",
     ]
@@ -13681,6 +13726,7 @@ struct MaiCLI {
       /chat undo [INDEX]  Remove the last conversation message or selected message
       /chat chop          Browse messages interactively to pin, edit, delete, or chop newer messages
       /chat trim INDEX    Keep through the selected message; remove newer messages
+      /chat rewind        Keep through the newest pinned message; remove newer messages
       /chat compact [FOCUS]  Summarize the chat, prioritizing what FOCUS says to preserve
       /chat recap         Print a short recap using the compact model; keep the history
       /chat clear         Clear the conversation and restore configured instructions

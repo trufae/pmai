@@ -68,8 +68,9 @@ path.write_text('Edited in editor: ' + path.read_text())
         def messages():
             return json.loads(saved.read_text())['messages']
 
-        def run(commands):
-            return run_repl(command, commands, cwd=root, env=env, split=True)
+        def run(commands, allow_errors=False):
+            return run_repl(command, commands, cwd=root, env=env, split=True,
+                            allow_errors=allow_errors)
 
         reset()
         output = run(['/clear'])[0]
@@ -202,6 +203,28 @@ path.write_text('Edited in editor: ' + path.read_text())
         assert 'SECOND PARAGRAPH' not in (root / 'pins-short.txt').read_text()
         run(['/chat log short > short.txt'])
         assert '[2] 📌 User: First line continued' in (root / 'short.txt').read_text()
+
+        # Rewinding keeps the newest pin and drops everything newer; no pin is an error.
+        reset()
+        output = run_repl(command, ['/chat rewind'], cwd=root, env=env, allow_errors=True)
+        assert 'error: No pinned message to rewind to' in output, output
+        usage = run(['/chat rewind extra'])[0]
+        assert 'Usage: /chat rewind' in usage, usage
+        assert messages() == fixture, messages()
+        run(['/chat pin 2'])
+        output, repeated = run(['/chat rewind', '/chat rewind'])
+        assert 'Rewound to pinned message 2; removed 5 newer messages.' in output, output
+        assert '📌 User: Question' in output, output
+        assert [m['id'] for m in messages()] == ['system', 'question'], messages()
+        assert messages()[1]['isPinned'], messages()
+        assert 'Already at pinned message 2; nothing to rewind.' in repeated, repeated
+        reset()
+        run(['/chat pin 4'])
+        output = run(['/chat rewind'])[0]
+        assert 'Rewound to pinned message 4; removed 4 newer messages.' in output, output
+        assert 'unfinished tool transaction' in output, output
+        assert [m['id'] for m in messages()] == ['system', 'question', 'thinking'], messages()
+
         output = run(['/chat clear'])[0]
         assert 'Conversation cleared.' in output, output
         assert all(m['role'] == 'system' for m in messages()), messages()
@@ -215,8 +238,8 @@ path.write_text('Edited in editor: ' + path.read_text())
         assert messages() == [], messages()
         for output in run(['/chat log', '/chat log verbose']):
             assert 'No conversation messages yet.' in output, output
-        print('PASS chat logs: quiet/verbose/short, first paragraphs, pins on all roles across repeated compaction, stable indexes, redirection; '
-              'editor aliases, inline text, attachment preservation, persistence and validation')
+        print('PASS chat logs: quiet/verbose/short, first paragraphs, pins on all roles across repeated compaction, stable indexes, redirection, '
+              'rewind to the newest pin and its errors; editor aliases, inline text, attachment preservation, persistence and validation')
 
 
 if __name__ == '__main__':

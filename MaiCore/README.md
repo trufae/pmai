@@ -208,12 +208,15 @@ Message headers are bold in the theme's `fginfo` color, and text uses Markdown
 rendering when enabled. The current in-memory conversation can be changed at
 any point with `/chat edit INDEX [TEXT]` (opens the editor when TEXT is omitted,
 the same as `/edit chat INDEX` or `/edit INDEX`), `/chat del INDEX`,
-`/chat undo [INDEX]`, `/chat trim INDEX`, `/chat compact [FOCUS]`, and `/chat
-clear`. Positive message indexes are 1-based; negative indexes count back from
-the end, so `-1` selects the last message. Compaction accepts optional guidance
-describing the information the summary should prioritize. Trimming keeps
+`/chat undo [INDEX]`, `/chat trim INDEX`, `/chat rewind`, `/chat compact
+[FOCUS]`, and `/chat clear`. Positive message indexes are 1-based; negative
+indexes count back from the end, so `-1` selects the last message. Compaction
+accepts optional guidance describing the information the summary should
+prioritize. Trimming keeps
 messages through the selected index and removes newer ones; linked tool-call
 transactions are kept structurally valid when removing or trimming messages.
+`/chat rewind` does the same through the newest pinned message, so a pin acts as
+a rewind point; it reports an error when the chat has no pins.
 
 `/chat last` prints the latest assistant response. Slash commands support
 stdout redirection: `>` overwrites a file, `>>` appends, and `|` sends the output
