@@ -11,7 +11,7 @@ struct TerminalPrompt: Equatable, Sendable {
   var isModal: Bool { id != nil }
 }
 
-/// The same active modal supplies the editor, status row, and input routing.
+/// The same active modal supplies the editor, pinned question, status row, and input routing.
 enum REPLModalPrompt {
   case approval(ApprovalRequest, id: UUID, editing: Bool)
   case compaction(AutocompactionRequest, id: UUID)
@@ -40,6 +40,40 @@ enum REPLModalPrompt {
     case .chop(let id):
       return TerminalPrompt(text: "chop [n/b/p/e/d/x/q]> ", id: "chop-\(id)", choices: ["n", "b", "p", "e", "d", "x", "q"])
     }
+  }
+
+  var question: String? {
+    switch self {
+    case .approval(let request, _, let editing):
+      let who = request.run.pid.map { "Agent#\($0.rawValue): " } ?? ""
+      return "\(who)Approve \(request.tool.annotations.approval.rawValue) tool '\(request.tool.name)'?\nArguments: \(request.call.arguments.compactJSONString)\n"
+        + (editing ? "Enter the replacement arguments as a JSON object." : Self.approvalHelp(request))
+    case .compaction(let request, _):
+      let pruning = request.pruning.map { "\nPruning preview: \($0.summary)." } ?? ""
+      return "Context limit for \(request.run.agentID): about \(request.estimatedTokens) tokens (threshold \(request.threshold)). What should happen next?\(pruning)\n"
+        + (request.pruning == nil ? "" : "p prune tool output · ")
+        + "y summarize · n keep context · m change model · x clear chat · c stop"
+    case .queue:
+      return "Submit queued messages before this message, ignore them for this turn, or clear them?\nsubmit · ignore · clear"
+    case .chop:
+      return nil
+    }
+  }
+
+  /// Wrap plain question text without allowing terminal controls into the footer.
+  static func questionRows(_ text: String, width: Int, height: Int) -> [String] {
+    guard height > 0 else { return [] }
+    let plain = text.components(separatedBy: "\n").map {
+      $0.components(separatedBy: .controlCharacters).joined(separator: " ")
+    }.joined(separator: "\n")
+    var buffer = TerminalOutputBuffer()
+    buffer.append(plain)
+    let rows = buffer.visibleRows(width: max(1, width), height: Int.max)
+    guard rows.count > height else { return rows }
+    var visible = Array(rows.prefix(height))
+    visible[height - 1] = width >= 22 && height > 1
+      ? "… full details in chat" : String(visible[height - 1].dropLast()) + "…"
+    return visible
   }
 
   var status: String {

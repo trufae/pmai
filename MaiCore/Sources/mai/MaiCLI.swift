@@ -1168,9 +1168,10 @@ private actor TerminalApprovalHandler: ApprovalHandler {
     editor.install(surface: screen)
     let id = UUID()
     var editing = false
+    defer { screen?.setStatus("") }
     while true {
       let modal = REPLModalPrompt.approval(request, id: id, editing: editing)
-      screen?.setStatus(modal.status, attention: true)
+      screen?.setStatus(modal.status, attention: true, question: modal.question)
       editor.updatePrompt(modal.input)
       guard let raw = editor.readLine(
         prompt: modal.input.text, completions: [], rememberInput: false, tracksPromptUpdates: true)
@@ -2657,7 +2658,9 @@ struct MaiCLI {
       services.modelCatalog.select(session.profile.provider, runtime: runtime)
       let status = await statusLine()
       reader.update(inputPrompt())
-      screen.setStatus(status.text, animating: status.animating, attention: loop.modalPrompt != nil)
+      screen.setStatus(
+        status.text, animating: status.animating, attention: loop.modalPrompt != nil,
+        question: loop.modalPrompt?.question)
     }
 
     /// Lets the input thread read the next line. Settings that the editor
@@ -2675,7 +2678,9 @@ struct MaiCLI {
           runtime: runtime, announced: &announcedAttention, terminal: terminal)
       }
       let status = await statusLine()
-      screen?.setStatus(status.text, animating: status.animating, attention: loop.modalPrompt != nil)
+      screen?.setStatus(
+        status.text, animating: status.animating, attention: loop.modalPrompt != nil,
+        question: loop.modalPrompt?.question)
       loop.readerParked = false
       let availableProviders = await runtime.availableProviders()
       reader.resume(

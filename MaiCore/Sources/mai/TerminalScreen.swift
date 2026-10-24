@@ -16,8 +16,8 @@ import MaiMarkdown
 ///
 /// The terminal is split into a scroll region — every row but the last few —
 /// where replies, tool lines, and child-agent blocks land, and rows below it
-/// that never scroll: a status line and the input, one row per line being
-/// typed. Output is written at the region's saved cursor and the caret goes
+/// that never scroll: a question or thinking panel, a status line and the input,
+/// one row per line being typed. Output is written at the region's saved cursor and the caret goes
 /// back to the input, so a person keeps typing while a run streams and nothing
 /// lands in their text. The region starts at the top row, which is what
 /// terminals require to keep scrolled-out lines in the scrollback.
@@ -50,7 +50,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   /// The rotating tab-completion options that take over the status row, or
   /// nil when the row shows `statusText`.
   private var completionMenu: CompletionMenu?
-  private var thinkingRows: [String] = []
+  private var questionText: String?
+  /// The active question takes precedence over the live thinking preview.
+  private var panelRows: [String] = []
   private var thinkingText: String? {
     get { outputConversation.thinkingText }
     set { outputConversation.thinkingText = newValue }
@@ -59,9 +61,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     get { outputConversation.thinkingDisplay }
     set { outputConversation.thinkingDisplay = newValue }
   }
-  private var paintedThinkingRows: [String] = []
-  private var paintedThinkingOrigin = 0
-  private var paintedThinkingWidth = 0
+  private var paintedPanelRows: [String] = []
+  private var paintedPanelOrigin = 0
+  private var paintedPanelWidth = 0
   /// The input as drawn, one styled string per row below the status line.
   private var inputRows = [""]
   private var caretRow = 0
@@ -205,7 +207,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         redrawBuffer()
         return
       }
-      paintedThinkingRows = []
+      paintedPanelRows = []
       drawStatusRow()
       placeCaret()
     }
@@ -235,8 +237,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         }
       }
       seedConversationLocked(id, messages: messages)
-      layoutThinking()
-      paintedThinkingRows = []
+      layoutPanel()
+      paintedPanelRows = []
       guard active, ui.mode == .buffer else { return }
       refreshSize()
       redrawBuffer()
@@ -375,7 +377,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     raw.c_iflag &= ~tcflag_t(IXON | ICRNL)
     guard tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == 0 else { return }
     active = true
-    paintedThinkingRows = []
+    paintedPanelRows = []
     clampInputRows()
     if ui.mode == .buffer {
       write(TerminalInputModes.enable + (enterBuffer ? Self.enterBuffer : "") + mouseTracking)
@@ -643,14 +645,30 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   /// Replaces the status line above the input; an unchanged line is not redrawn.
-  func setStatus(_ text: String, animating: Bool = false, attention: Bool = false) {
-    setStatus(text, animating: animating, style: nil, attention: attention)
+  func setStatus(
+    _ text: String, animating: Bool = false, attention: Bool = false, question: String? = nil
+  ) {
+    setStatus(text, animating: animating, style: nil, attention: attention, question: question)
   }
 
   /// Replaces the status line and optionally switches the Braille animation style.
-  func setStatus(_ text: String, animating: Bool, style: BrailleAnimator.Style?, attention: Bool = false) {
+  func setStatus(
+    _ text: String, animating: Bool, style: BrailleAnimator.Style?, attention: Bool = false,
+    question: String? = nil
+  ) {
     lock.withLock {
       refreshSize()
+      let questionChanged = questionText != question
+      if questionChanged {
+        let previousCount = inputRows.count + panelRows.count
+        questionText = question
+        clampInputRows()
+        if active {
+          resizeRegion(inputRows: previousCount, to: inputRows.count + panelRows.count)
+          paintedPanelRows = []
+          drawInputRows()
+        }
+      }
       let attentionChanged = statusNeedsAttention != attention
       statusNeedsAttention = attention
       let animationChanged = animatingStatus != animating
@@ -671,12 +689,13 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         activityRestarted = true
       }
       updateActivityTimer()
-      guard text != statusText || animationChanged || activityRestarted || attentionChanged else { return }
+      guard text != statusText || animationChanged || activityRestarted || attentionChanged || questionChanged
+      else { return }
       statusText = text
       activityRestarted = false
       // A tab-completion menu owns the row until it closes; the status is
       // still kept so the row can be restored when it does.
-      guard active, completionMenu == nil else { return }
+      guard active else { return }
       drawStatusRow()
       placeCaret()
     }
@@ -691,21 +710,21 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   func setThinking(_ text: String?, display: ThinkingDisplay = .status) {
     lock.withLock {
       refreshSize()
-      let previousRows = thinkingRows
+      let previousRows = panelRows
       thinkingText = text
       thinkingDisplay = display
-      guard isOutputVisible else { return }
-      layoutThinking()
-      guard thinkingRows != previousRows else { return }
+      guard isOutputVisible, questionText == nil else { return }
+      layoutPanel()
+      guard panelRows != previousRows else { return }
       guard active else { return }
-      if thinkingRows.count != previousRows.count {
+      if panelRows.count != previousRows.count {
         resizeRegion(
           inputRows: inputRows.count + previousRows.count,
-          to: inputRows.count + thinkingRows.count)
+          to: inputRows.count + panelRows.count)
         drawStatusRow()
         drawInputRows()
       } else {
-        drawThinkingRows()
+        drawPanelRows()
       }
       placeCaret()
     }
@@ -719,7 +738,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   private var maximumInputRowsLocked: Int {
-    max(1, min(rows / 2, rows - 5))
+    max(1, min(rows / 2, rows - 5, rows - 2 - panelRows.count))
   }
 
   func drawInput(rows: [String], caretRow: Int, caretColumn: Int) {
@@ -733,7 +752,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       clampInputRows()
       if inputRows.count != previousCount {
         resizeRegion(
-          inputRows: previousCount + thinkingRows.count, to: inputRows.count + thinkingRows.count)
+          inputRows: previousCount + panelRows.count, to: inputRows.count + panelRows.count)
         drawStatusRow()
       }
       drawInputRows()
@@ -763,7 +782,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       write(out)
       outputEndedLine = true
       if previousCount != 1 {
-        resizeRegion(inputRows: previousCount + thinkingRows.count, to: 1 + thinkingRows.count)
+        resizeRegion(inputRows: previousCount + panelRows.count, to: 1 + panelRows.count)
         drawStatusRow()
       }
       drawInputRows()
@@ -797,7 +816,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       }
       write("\u{1B}[2J" + move(row: 1, column: 1) + Self.saveCursor)
       outputEndedLine = true
-      paintedThinkingRows = []
+      paintedPanelRows = []
       drawStatusRow()
       drawInputRows()
       placeCaret()
@@ -874,8 +893,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   // MARK: - Drawing
 
-  /// The status row and the input rows.
-  private var reservedRows: Int { 1 + thinkingRows.count + inputRows.count }
+  /// The pinned question or thinking preview, status row, and input rows.
+  private var reservedRows: Int { 1 + panelRows.count + inputRows.count }
 
   private var regionBottom: Int { max(1, rows - reservedRows) }
 
@@ -929,14 +948,14 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   private func drawStatusRow() {
-    drawThinkingRows()
+    drawPanelRows()
     drawStatusLine()
   }
 
   private func redrawBuffer() {
     paintedOutputRows = []
     paintedViewRows = []
-    paintedThinkingRows = []
+    paintedPanelRows = []
     write("\u{1B}[1;\(regionBottom)r")
     drawOutputRows()
     drawStatusRow()
@@ -1001,28 +1020,34 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     writeFixedRows(out)
   }
 
-  private func drawThinkingRows() {
+  private func drawPanelRows() {
     let width = max(1, columns - 1)
     let origin = regionBottom + 1
-    if origin != paintedThinkingOrigin || width != paintedThinkingWidth {
-      paintedThinkingRows = []
+    if origin != paintedPanelOrigin || width != paintedPanelWidth {
+      paintedPanelRows = []
     }
     var out = ""
     var painted: [String] = []
     let colors = ProcessInfo.processInfo.environment["NO_COLOR"] == nil
-    for (index, line) in thinkingRows.enumerated() {
+    for (index, line) in panelRows.enumerated() {
       let content = Self.truncated(line, width: width)
       let padded =
         content + String(repeating: " ", count: max(0, width - Self.displayWidth(content)))
       painted.append(padded)
-      let previous = index < paintedThinkingRows.count ? paintedThinkingRows[index] : ""
+      let previous = index < paintedPanelRows.count ? paintedPanelRows[index] : ""
       guard previous != padded else { continue }
       let prefix = zip(previous, padded).prefix { $0 == $1 }.count
       let suffix = zip(previous.dropFirst(prefix).reversed(), padded.dropFirst(prefix).reversed())
         .prefix { $0 == $1 }.count
       let column = Self.displayWidth(String(padded.prefix(prefix))) + 1
       out += move(row: origin + index, column: column) + Self.reset
-      if colors {
+      if questionText != nil {
+        let codes = colors ? [
+          TerminalLineEditor.foregroundColorCode(ui.selectionForeground),
+          TerminalLineEditor.backgroundColorCode(ui.selectionBackground),
+        ].compactMap { $0 } : []
+        out += "\u{1B}[" + (codes.isEmpty ? "7" : codes.joined(separator: ";")) + "m"
+      } else if colors {
         let code = TerminalLineEditor.foregroundColorCode(ui.thinkingForeground)
         out += "\u{1B}[3" + (code.map { ";" + $0 } ?? "") + "m"
       }
@@ -1031,9 +1056,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       out += padded.dropFirst(prefix).dropLast(suffix) + Self.reset
       if previous.isEmpty { out += "\u{1B}[K" }
     }
-    paintedThinkingRows = painted
-    paintedThinkingOrigin = origin
-    paintedThinkingWidth = width
+    paintedPanelRows = painted
+    paintedPanelOrigin = origin
+    paintedPanelWidth = width
     writeFixedRows(out)
   }
 
@@ -1053,7 +1078,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     let padding = String(repeating: " ", count: max(0, width - Self.displayWidth(content)))
     let colors = ProcessInfo.processInfo.environment["NO_COLOR"] == nil
     var out = ""
-    out += move(row: regionBottom + thinkingRows.count + 1, column: 1)
+    out += move(row: regionBottom + panelRows.count + 1, column: 1)
     if clear { out += Self.clearLine }
     if let menu = completionMenu {
       out += completionMenuRow(menu, width: width, colors: colors)
@@ -1156,7 +1181,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         ? Self.displayWidth("↑ scroll · PgDn to latest · ") : 0
       guard 2 + scrollHintWidth < columns else { return }
       writeFixedRows(
-        move(row: regionBottom + thinkingRows.count + 1, column: 2 + scrollHintWidth)
+        move(row: regionBottom + panelRows.count + 1, column: 2 + scrollHintWidth)
           + "\u{1B}[\(style)m" + marker + Self.reset)
       placeCaret()
     }
@@ -1210,29 +1235,34 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   /// Keeps the input area within what the screen allows; the editor draws
   /// it again in full at its next keystroke.
   private func clampInputRows() {
-    layoutThinking()
+    layoutPanel()
     let maximum = maximumInputRowsLocked
     guard inputRows.count > maximum else { return }
     inputRows = Array(inputRows.suffix(maximum))
     caretRow = min(caretRow, maximum - 1)
   }
 
-  private func layoutThinking() {
+  private func layoutPanel() {
+    if let questionText {
+      panelRows = REPLModalPrompt.questionRows(
+        questionText, width: max(1, columns - 1), height: max(0, min(rows / 2, rows - 3)))
+      return
+    }
     guard let thinkingText else {
-      thinkingRows = []
+      panelRows = []
       return
     }
     let count = min(thinkingDisplay.lineCount, rows / 4)
     guard count > 0 else {
-      thinkingRows = []
+      panelRows = []
       return
     }
-    thinkingRows =
+    panelRows =
       thinkingDisplay == .status
       ? ["Thinking…"]
       : ThinkingPreview.carouselLines(
         thinkingText, count: count, width: max(1, columns - 1), measure: Self.displayWidth)
-    thinkingRows += Array(repeating: "", count: max(0, count - thinkingRows.count))
+    panelRows += Array(repeating: "", count: max(0, count - panelRows.count))
   }
 
   private func watchResizes() {
@@ -1280,7 +1310,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     out += move(row: bottom, column: 1) + Self.saveCursor
     write(out)
     outputEndedLine = true
-    paintedThinkingRows = []
+    paintedPanelRows = []
     drawStatusRow()
     drawInputRows()
     placeCaret()
