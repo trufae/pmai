@@ -14,8 +14,49 @@ enum REPLEvent: Sendable {
   case approvalFinished(REPLApprovalReply)
   case compaction(AutocompactionRequest, REPLCompactionReply)
   case compactionFinished(REPLCompactionReply)
-  case supervisor(AgentSupervisorEvent)
+  case supervisor
   case switchAgent(REPLAgentSwitch, reply: @Sendable () -> Void)
+}
+
+/// Progress is a wake-up, not a queue of workspace saves. Keep completion
+/// notices separately so a later progress update cannot hide a finished run.
+final class REPLSupervisorUpdates: @unchecked Sendable {
+  struct Batch {
+    var finished: [UUID: AgentProcessInfo] = [:]
+    var hasChildren = false
+    var needsAttention = false
+  }
+
+  private let lock = NSLock()
+  private var pending: Batch?
+
+  /// Only the first update schedules a wake-up; typed lines keep their place.
+  func insert(_ event: AgentSupervisorEvent) -> Bool {
+    lock.withLock {
+      let wakes = pending == nil
+      var batch = pending ?? Batch()
+      let info: AgentProcessInfo
+      switch event {
+      case .started(let value), .changed(let value): info = value
+      case .attention(let value):
+        info = value
+        batch.needsAttention = true
+      case .finished(let value):
+        info = value
+        batch.finished[value.runID] = value
+      }
+      batch.hasChildren = batch.hasChildren || info.depth > 0
+      pending = batch
+      return wakes
+    }
+  }
+
+  func take() -> Batch {
+    lock.withLock {
+      defer { pending = nil }
+      return pending ?? Batch()
+    }
+  }
 }
 
 struct REPLInterruptID: Equatable, Hashable, Sendable {
@@ -83,9 +124,11 @@ final class REPLInputReader: @unchecked Sendable {
   }
 
   /// Lets the thread read one more line with this prompt.
-  func resume(with prompt: Prompt) {
-    update(prompt.presentation)
-    lock.withLock { next = prompt }
+  func resume(with prompt: Prompt? = nil) {
+    if let prompt {
+      update(prompt.presentation)
+      lock.withLock { next = prompt }
+    }
     gate.signal()
   }
 

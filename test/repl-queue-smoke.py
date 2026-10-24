@@ -252,7 +252,7 @@ def main():
                                     # the person can inspect or continue them.
                                     wait_for(f'agent#{pid} ')
                                     wait_for('✗ killed')
-                                    wait_for(f'pmai#{pid}>')
+                                    # The prompt may precede the batched completion notice.
                                     send('/jobs focus main\n')
                                     wait_for('Messages go to this chat again.')
                                     wait_for('1 queued')

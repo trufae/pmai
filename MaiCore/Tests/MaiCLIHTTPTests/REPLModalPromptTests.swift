@@ -9,7 +9,7 @@ func pinnedApprovalQuestion() throws {
   let request = ApprovalRequest(
     run: AgentEventContext(runID: UUID(), parentRunID: nil, agentID: "worker", depth: 1, pid: 42),
     tool: ToolDefinition(name: "files_write", description: "Write a file", inputSchema: .object([:])),
-    call: ToolCall(id: "write", name: "files_write", arguments: .object(["path": .string("file.txt")]))
+    call: ToolCall(id: "write", name: "files_write", arguments: .object(["path": .string("file.txt")])))
   let id = UUID()
   let modal = REPLModalPrompt.approval(request, id: id, editing: false)
   let question = try #require(modal.question)

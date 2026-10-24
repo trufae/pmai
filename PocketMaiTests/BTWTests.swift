@@ -60,16 +60,17 @@ final class BTWTests: XCTestCase {
   }
 
   func testSideQuestionsFinishWhileMainTurnRunsAndNeverEnterHistory() async throws {
+    defer { StubChatEndpoint.releaseHeldReplies() }
     StubChatEndpoint.script = { request in
       let messages = request["messages"] as? [[String: Any]] ?? []
       let prompt = messages.last { $0["role"] as? String == "user" }?["content"] as? String ?? ""
       // The provider folds consecutive user messages into one message.
-      return (StubChatEndpoint.completion(content: "Answer: \(prompt)"), prompt.hasSuffix("main") ? 3 : 0)
+      return (StubChatEndpoint.completion(content: "Answer: \(prompt)"), prompt.hasSuffix("main") ? -1 : 0)
     }
     let id = try XCTUnwrap(store.currentConversation?.id)
     let acceptedMain = await store.send(prompt: "main")
     XCTAssertTrue(acceptedMain)
-    try await waitUntil { !StubChatEndpoint.requests.isEmpty }
+    try await waitUntil { StubChatEndpoint.heldReplyCount == 1 }
     let acceptedSide = await store.send(prompt: "/btw side")
     XCTAssertTrue(acceptedSide)
     // Other submission paths also bypass the queue for /btw.
@@ -85,6 +86,7 @@ final class BTWTests: XCTestCase {
       XCTAssertTrue(["side", "another"].contains(users[0]["content"] as? String ?? ""), "\(users)")
       XCTAssertFalse(messages.contains { $0["role"] as? String == "assistant" })
     }
+    StubChatEndpoint.releaseHeldReplies()
     try await waitUntil { !self.store.isResponding(in: id) }
     let history = try XCTUnwrap(store.currentConversation?.messages)
     XCTAssertEqual(history.filter { $0.role == .user }.map(\.text), ["Previous private context", "main"])
@@ -101,15 +103,12 @@ final class BTWTests: XCTestCase {
   }
 
   func testStopAndDismissSideQuestionLeaveMainTaskRunning() async throws {
-    StubChatEndpoint.script = { request in
-      let messages = request["messages"] as? [[String: Any]] ?? []
-      let prompt = messages.last { $0["role"] as? String == "user" }?["content"] as? String ?? ""
-      return (StubChatEndpoint.completion(content: "Done"), prompt.hasSuffix("main") ? 3 : 1)
-    }
+    defer { StubChatEndpoint.releaseHeldReplies() }
+    StubChatEndpoint.script = { _ in (StubChatEndpoint.completion(content: "Done"), -1) }
     let id = try XCTUnwrap(store.currentConversation?.id)
     _ = await store.send(prompt: "main")
     _ = await store.send(prompt: "/btw stop me")
-    try await waitUntil { StubChatEndpoint.requests.count == 2 }
+    try await waitUntil { StubChatEndpoint.heldReplyCount == 2 }
     let sideID = try XCTUnwrap(store.btwQuestions.first?.id)
     store.stopBTW(sideID)
     try await waitUntil { self.store.btwQuestions.first?.isRunning == false }
@@ -117,7 +116,8 @@ final class BTWTests: XCTestCase {
     XCTAssertTrue(store.isResponding(in: id))
     store.dismissBTW(sideID)
     XCTAssertTrue(store.btwQuestions.isEmpty)
-    // Let delayed fixture callbacks finish before uninstalling the protocol.
+    StubChatEndpoint.releaseHeldReplies()
+    // Finish fixture callbacks before uninstalling the protocol.
     try await waitUntil { !self.store.isResponding(in: id) }
     XCTAssertFalse(store.currentConversation?.messages.contains { $0.text.contains("stop me") } ?? true)
   }
