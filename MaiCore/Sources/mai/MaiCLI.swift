@@ -13531,9 +13531,9 @@ struct MaiCLI {
     /theme                 List, apply, or customize terminal themes
     /todo                  Show or edit the project's todo list
     /tools                 List tool groups for this agent
-    /view SOURCE           Read-only top split in buffer mode; /help view
     /vdb                   Index or search local documentation and code
     /version               Print the pmai version
+    /view SOURCE           Read-only top split in buffer mode; /help view
     $NAME [TEXT]           Send a prompt or skill; /prompts lists names
     """
 
