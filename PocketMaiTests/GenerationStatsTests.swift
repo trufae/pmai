@@ -85,15 +85,16 @@ final class GenerationStatsTests: XCTestCase {
     XCTAssertEqual(stats.tokensPerSecond ?? -1, 50.0, accuracy: 0.01)
   }
 
-  func testTokensPerSecondExcludesReasoningTokens() {
+  func testTokensPerSecondIncludesReasoningAndIgnoresTextEstimate() {
     let stats = GenerationStats(
       providerLabel: "p",
       modelID: "m",
       outputTokens: 300,
+      receivedTextTokens: 5,
       reasoningTokens: 100,
       generationSeconds: 10)
 
-    XCTAssertEqual(stats.tokensPerSecond ?? -1, 20.0, accuracy: 0.0001)
+    XCTAssertEqual(stats.tokensPerSecond ?? -1, 30.0, accuracy: 0.0001)
   }
 
   func testTokensPerSecondIsNilWithoutDuration() {
