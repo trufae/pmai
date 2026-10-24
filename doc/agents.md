@@ -451,6 +451,23 @@ Each conversation retains its own output, scroll position, and unsent draft,
 including pasted text and the cursor position. Other agents keep working;
 their streamed replies and tools update their own buffers.
 
+`/view SOURCE` opens a read-only horizontal split above the conversation. It
+requires `ui.mode=buffer`; use `/set ui.mode buffer` to enable that mode.
+Sources include `current`, `main`, an agent's name or `agent#PID`, `agents`
+(retained conversations), `thinking`, `tools [NAME]`, and `diffs` (successful
+file edits with unified diffs). A tool name can also be used directly.
+Thinking and tool views show the full retained output regardless of the
+normal preview limits. These filtered sources follow the selected agent;
+an explicit agent source keeps watching that agent while you work elsewhere.
+
+With an empty prompt, Tab switches focus between the prompt and the view.
+In the view, `j`/`k` or Down/Up scroll one row, and Page Up/Down and the mouse
+wheel scroll the focused pane. Typing and pasted text cannot change the
+view or submit messages. Tab returns to the prompt; completion still works
+when it contains text. `/view off` closes the split. Switching to classic
+mode also closes it. On very short terminals the view hides until both panes
+fit. `/help view` lists the selectors and controls.
+
 `/fork [TITLE]` copies the selected conversation into an idle child and switches
 to it. `/fork --empty [TITLE]` keeps the settings and system instructions but
 starts with fresh history. Neither command calls a model until you send a

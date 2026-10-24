@@ -7,6 +7,15 @@ struct TerminalToolBlock {
   var result: ToolResult?
   var prefix: String
 
+  var hasAppliedDiff: Bool {
+    guard let result, !result.isError,
+      case .object(let metadata) = result.structuredContent,
+      metadata["changed"] == .bool(true)
+    else { return false }
+    return result.text.contains("\n--- ") && result.text.contains("\n+++ ")
+      && result.text.contains("\n@@ ")
+  }
+
   func render(display: ToolResultDisplay, colors: Bool) -> String {
     func styled(_ text: String, color: TerminalThemeStyle, diff: Bool = false) -> String {
       TerminalThemeStyle.lineRoles(text, color: color, diff: diff).map { line in

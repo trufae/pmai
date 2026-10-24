@@ -92,6 +92,16 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     ui.mode != .buffer || TerminalConversationScope.id == nil
       || TerminalConversationScope.id == selectedConversation
   }
+
+  /// Hidden agents may still be watched in the view without replacing the prompt's output.
+  private func prepareOutputDrawing() -> Bool {
+    guard active else { return false }
+    guard isOutputVisible else {
+      if ui.mode == .buffer { drawViewRows(); placeCaret() }
+      return false
+    }
+    return true
+  }
   private var transcript: TerminalOutputBuffer {
     get { outputConversation.transcript }
     set { outputConversation.transcript = newValue }
@@ -119,6 +129,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   /// Tool handles remain unique across conversations and /clear.
   private var nextToolBlock = 0
   private var paintedOutputRows: [String] = []
+  private var view: TerminalView?
+  private var paintedViewRows: [String] = []
   private var active = false
   private var resizeSource: (any DispatchSourceProtocol)?
   private var activitySource: DispatchSourceTimer?
@@ -156,6 +168,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       let previousMode = self.ui.mode
       let previousUI = self.ui
       self.ui = ui
+      if ui.mode != .buffer { view = nil }
       for conversation in conversations.values {
         conversation.transcript.configureThinking(ui.thinking)
         conversation.transcript.configureTools(ui.tools)
@@ -208,6 +221,12 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     lock.withLock {
       guard selectedConversation != id else { return }
       selectedConversation = id
+      if let source = view?.source {
+        switch source {
+        case .current, .thinking, .tools, .diffs: view?.buffer.follow()
+        default: break
+        }
+      }
       seedConversationLocked(id, messages: messages)
       layoutThinking()
       paintedThinkingRows = []
@@ -224,15 +243,25 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private func seedConversationLocked(_ id: String, messages: [AgentMessage]) {
     TerminalConversationScope.$id.withValue(id) {
       if conversations[id] == nil {
+        var calls: [String: Int] = [:]
         for message in messages where message.role != .system {
           if message.role == .assistant {
-            let block = transcript.appendReply(message.text)
-            transcript.finishReply(block)
-            for call in message.toolCalls {
-              _ = transcript.appendTool(call: call, result: nil)
+            if !message.reasoning.isEmpty {
+              let block = transcript.appendThinking(message.reasoning)
+              transcript.finishThinking(block)
             }
-          } else {
+            if !message.text.isEmpty {
+              let block = transcript.appendReply(message.text)
+              transcript.finishReply(block)
+            }
+            for call in message.toolCalls {
+              calls[call.id] = transcript.appendTool(call: call, result: nil)
+            }
+          } else if !message.text.isEmpty {
             transcript.append("\(message.role == .user ? "you" : message.role.rawValue): \(message.text)\n")
+          }
+          for result in message.toolResults {
+            transcript.appendTool(call: nil, result: result, to: calls.removeValue(forKey: result.callID))
           }
         }
       }
@@ -249,6 +278,53 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   var isBufferMode: Bool {
     lock.withLock { ui.mode == .buffer }
+  }
+
+  func setView(_ source: TerminalViewSource?, title: String = "") {
+    lock.withLock {
+      guard ui.mode == .buffer else { return }
+      let label = title.components(separatedBy: .controlCharacters).joined(separator: " ")
+      view = source.map { TerminalView(source: $0, title: label) }
+      guard active else { return }
+      refreshSize()
+      redrawBuffer()
+    }
+  }
+
+  var viewHasFocus: Bool {
+    lock.withLock { ui.mode == .buffer && view?.focused == true && viewHeight > 0 }
+  }
+
+  func toggleViewFocus() -> Bool {
+    lock.withLock {
+      guard active, ui.mode == .buffer, view != nil, viewHeight > 0 else { return false }
+      view?.focused.toggle()
+      drawViewRows()
+      placeCaret()
+      return true
+    }
+  }
+
+  func focusPrompt() {
+    lock.withLock {
+      guard view?.focused == true else { return }
+      view?.focused = false
+      guard active else { return }
+      drawViewRows()
+      placeCaret()
+    }
+  }
+
+  func scrollView(lines: Int) {
+    lock.withLock {
+      guard active, ui.mode == .buffer, viewHeight > 0 else { return }
+      refreshSize()
+      updateViewBuffer()
+      let height = viewHeight
+      view?.buffer.scroll(lines: lines, width: max(1, columns - 1), height: height)
+      drawViewRows()
+      placeCaret()
+    }
   }
 
   /// Enters raw mode, reserves the bottom rows, and draws them. Call before the
@@ -389,7 +465,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       let handle = nextToolBlock
       nextToolBlock += 1
       if result == nil { toolBlocks[handle] = index }
-      if active, ui.mode == .buffer, isOutputVisible {
+      if active, ui.mode == .buffer {
         outputEndedLine = true
         drawOutputRows()
         placeCaret()
@@ -403,7 +479,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       markdownTemplate = renderer
       for conversation in conversations.values { conversation.transcript.configureMarkdown(renderer) }
       transcript.configureMarkdown(renderer)
-      guard active, ui.mode == .buffer, isOutputVisible else { return }
+      guard ui.mode == .buffer, prepareOutputDrawing() else { return }
       redrawBuffer()
     }
   }
@@ -412,7 +488,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     lock.withLock {
       refreshSize()
       replyBlock = transcript.appendReply(text, to: replyBlock)
-      guard active, isOutputVisible else { return }
+      guard prepareOutputDrawing() else { return }
       if ui.mode == .buffer {
         outputEndedLine = true
         drawOutputRows()
@@ -431,7 +507,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       refreshSize()
       let block = transcript.appendReply(text)
       transcript.finishReply(block)
-      guard active, isOutputVisible else { return }
+      guard prepareOutputDrawing() else { return }
       if ui.mode == .buffer {
         drawOutputRows()
       } else {
@@ -447,7 +523,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       guard let replyBlock else { return }
       transcript.finishReply(replyBlock)
       self.replyBlock = nil
-      guard active, isOutputVisible else { return }
+      guard prepareOutputDrawing() else { return }
       if ui.mode == .buffer {
         drawOutputRows()
       } else if !rendered.isEmpty {
@@ -465,7 +541,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     lock.withLock {
       refreshSize()
       thinkingBlock = transcript.appendThinking(text, to: thinkingBlock)
-      guard active, isOutputVisible else { return }
+      guard prepareOutputDrawing() else { return }
       if ui.mode == .buffer {
         outputEndedLine = true
         drawOutputRows()
@@ -482,7 +558,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       guard let thinkingBlock else { return }
       transcript.finishThinking(thinkingBlock)
       self.thinkingBlock = nil
-      guard active, isOutputVisible else { return }
+      guard prepareOutputDrawing() else { return }
       if ui.mode == .buffer {
         drawOutputRows()
       } else if !outputEndedLine {
@@ -498,7 +574,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       refreshSize()
       let block = transcript.appendThinking(text)
       transcript.finishThinking(block)
-      guard active, ui.mode == .buffer, isOutputVisible else { return }
+      guard ui.mode == .buffer, prepareOutputDrawing() else { return }
       drawOutputRows()
       placeCaret()
     }
@@ -514,7 +590,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       }
       refreshSize()
       transcript.append(text)
-      guard isOutputVisible else { return }
+      guard prepareOutputDrawing() else { return }
       if ui.mode == .buffer {
         outputEndedLine = text.hasSuffix("\n")
         drawOutputRows()
@@ -703,9 +779,19 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     lock.withLock {
       guard active, ui.mode == .buffer else { return }
       refreshSize()
-      transcript.scroll(
-        lines: wheel * max(1, ui.scroll) + pages * max(1, regionBottom - 1),
-        width: max(1, columns - 1), height: regionBottom)
+      if view?.focused == true, viewHeight > 0 {
+        updateViewBuffer()
+        let height = viewHeight
+        view?.buffer.scroll(
+          lines: wheel * max(1, ui.scroll) + pages * max(1, height - 1),
+          width: max(1, columns - 1), height: height)
+      } else {
+        TerminalConversationScope.$id.withValue(nil) {
+          transcript.scroll(
+            lines: wheel * max(1, ui.scroll) + pages * max(1, outputHeight - 1),
+            width: max(1, columns - 1), height: outputHeight)
+        }
+      }
       drawOutputRows()
       drawStatusRow()
       placeCaret()
@@ -760,6 +846,13 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   private var regionBottom: Int { max(1, rows - reservedRows) }
 
+  private var viewHeight: Int {
+    ui.mode == .buffer && view != nil ? TerminalView.height(availableRows: regionBottom) : 0
+  }
+
+  private var outputOrigin: Int { viewHeight > 0 ? viewHeight + 2 : 1 }
+  private var outputHeight: Int { regionBottom - outputOrigin + 1 }
+
   private var firstInputRow: Int { rows - inputRows.count + 1 }
 
   /// Moves the region's bottom edge for an input area of another height.
@@ -771,6 +864,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private func resizeRegion(inputRows previousCount: Int, to count: Int) {
     if ui.mode == .buffer {
       paintedOutputRows = []
+      paintedViewRows = []
       write("\u{1B}[1;\(regionBottom)r")
       drawOutputRows()
       return
@@ -807,6 +901,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   private func redrawBuffer() {
     paintedOutputRows = []
+    paintedViewRows = []
     paintedThinkingRows = []
     write("\u{1B}[1;\(regionBottom)r")
     drawOutputRows()
@@ -816,14 +911,59 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   private func drawOutputRows() {
-    var visible = transcript.visibleRows(width: max(1, columns - 1), height: regionBottom)
-    visible += Array(repeating: "", count: max(0, regionBottom - visible.count))
+    drawViewRows()
+    var visible = TerminalConversationScope.$id.withValue(nil) {
+      transcript.visibleRows(width: max(1, columns - 1), height: outputHeight)
+    }
+    visible += Array(repeating: "", count: max(0, outputHeight - visible.count))
     var out = ""
     for (index, text) in visible.enumerated() {
       if index < paintedOutputRows.count, paintedOutputRows[index] == text { continue }
-      out += move(row: index + 1, column: 1) + Self.reset + Self.clearLine + text + Self.reset
+      out += move(row: outputOrigin + index, column: 1) + Self.reset + Self.clearLine + text + Self.reset
     }
     paintedOutputRows = visible
+    writeFixedRows(out)
+  }
+
+  private func updateViewBuffer() {
+    guard let source = view?.source else { return }
+    if source == .conversations {
+      var combined = TerminalOutputBuffer()
+      for id in conversations.keys.sorted() where id != "initial" {
+        combined.append("── \(id) ──\n")
+        var buffer = conversations[id]!.transcript
+        buffer.follow()
+        // Copy rendered rows through the same parser that strips terminal controls.
+        combined.append(buffer.visibleRows(width: max(1, columns - 1), height: Int.max).joined(separator: "\n"))
+        combined.append("\n")
+      }
+      view?.buffer.updateView(from: combined, selection: .all)
+    } else {
+      let id: String
+      if case .conversation(let watched) = source { id = watched }
+      else { id = selectedConversation }
+      view?.buffer.updateView(
+        from: conversations[id]?.transcript ?? TerminalOutputBuffer(), selection: source.selection)
+    }
+  }
+
+  private func drawViewRows() {
+    let height = viewHeight
+    guard height > 0 else { view?.focused = false; return }
+    updateViewBuffer()
+    let width = max(1, columns - 1)
+    var visible = view?.buffer.visibleRows(width: width, height: height) ?? []
+    if visible.isEmpty { visible = ["No matching output yet."] }
+    visible += Array(repeating: "", count: max(0, height - visible.count))
+    let focus = view?.focused == true ? "view focused · j/k scroll · Tab prompt" : "Tab on empty prompt to focus"
+    let label = "── view: \(view?.title ?? "") · \(focus) ──"
+    visible.append("\u{1B}[\(view?.focused == true ? "7" : "2")m" + Self.truncated(label, width: width) + Self.reset)
+    var out = ""
+    for (index, text) in visible.enumerated() {
+      if index < paintedViewRows.count, paintedViewRows[index] == text { continue }
+      out += move(row: index + 1, column: 1) + Self.reset + Self.clearLine + text + Self.reset
+    }
+    paintedViewRows = visible
     writeFixedRows(out)
   }
 
@@ -1000,6 +1140,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   private func placeCaret() {
+    if view?.focused == true, viewHeight > 0 {
+      write(move(row: viewHeight + 1, column: 1))
+      return
+    }
     write(
       move(
         row: min(rows, firstInputRow + caretRow),

@@ -3706,6 +3706,39 @@ struct MaiCLI {
           let argument =
             command.count > 1
             ? command[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+          if name == "/view" {
+            if let screen, screen.isBufferMode {
+              if argument.isEmpty || argument == "help" {
+                await terminal.line(viewHelp)
+              } else {
+                do {
+                  let processes = await conversationTabs()
+                  let selection = try viewSource(
+                    argument, processes: processes,
+                    tools: Set(await runtime.availableTools().map(\.name)),
+                    mainConversation: "chat:\(session.id)")
+                  for process in processes where process.depth > 0
+                    && (selection.source == .conversations
+                      || selection.source == .conversation("agent:\(process.pid.rawValue)"))
+                  {
+                    let messages = await runtime.supervisor.transcript(process.pid)
+                    screen.seedConversation(
+                      "agent:\(process.pid.rawValue)",
+                      messages: session.redactor?.unredact(messages) ?? messages)
+                  }
+                  screen.setView(selection.source, title: selection.title)
+                } catch {
+                  await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+                }
+              }
+            } else {
+              await terminal.line(
+                "error: /view requires ui.mode=buffer. Run /set ui.mode buffer in an interactive terminal.",
+                to: .standardError)
+            }
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
           if name == "/history" {
             do {
               await terminal.line(try REPLHistoryCommand.run(argument, editor: editor))
@@ -5292,6 +5325,10 @@ struct MaiCLI {
     }
 
     switch parts[0] {
+    case "/view":
+      await terminal.line(
+        "error: /view requires ui.mode=buffer. Run /set ui.mode buffer in an interactive terminal.",
+        to: .standardError)
     case "/ps":
       runtime.commandHistory.restore(session.commands)
       await handlePSCommand(
@@ -5338,6 +5375,8 @@ struct MaiCLI {
         await terminal.line(jobsHelp)
       case "ps", "/ps":
         await terminal.line(psHelp)
+      case "view", "/view":
+        await terminal.line(viewHelp)
       case "mcp", "/mcp":
         await terminal.line(mcpCommandHelp)
       case "remote", "/remote":
@@ -13022,6 +13061,8 @@ struct MaiCLI {
       "/agent", "/agents", "/agents list", "/agents describe ", "/agents enable ",
       "/agents disable ",
       "/ps", "/ps -a", "/ps -p", "/ps -ap", "/ps -k ",
+      "/view", "/view off", "/view current", "/view main", "/view thinking", "/view tools",
+      "/view tools ", "/view diffs", "/view agents", "/view agent ", "/help view",
       "/job", "/jobs", "/jobs tree", "/jobs stop ", "/jobs continue ", "/jobs clear", "/jobs log ",
       "/jobs kill ", "/jobs focus ",
       "/jobs focus main", "/queue", "/queue push ", "/queue pop", "/queue del",
@@ -13490,6 +13531,7 @@ struct MaiCLI {
     /theme                 List, apply, or customize terminal themes
     /todo                  Show or edit the project's todo list
     /tools                 List tool groups for this agent
+    /view SOURCE           Read-only top split in buffer mode; /help view
     /vdb                   Index or search local documentation and code
     /version               Print the pmai version
     $NAME [TEXT]           Send a prompt or skill; /prompts lists names
@@ -13545,6 +13587,7 @@ struct MaiCLI {
       Ctrl+W delete word · Ctrl+C or /stop interrupt the run · Ctrl+Z suspend
       Ctrl+D exits when the input is empty
       Page Up/Down and the mouse wheel scroll the transcript in buffer mode
+      Tab on an empty prompt focuses /view; j/k scroll there, Tab returns to the prompt
       Alt+1…9 selects an agent slot · Ctrl+Left/Right cycles agent conversations
       Extended keyboards also support Ctrl+1…9 and Ctrl+Tab/Ctrl+Shift+Tab
     """

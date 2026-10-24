@@ -35,6 +35,10 @@ protocol LineEditorSurface: AnyObject {
   func clearScreen()
   /// Scrolls by wheel events or pages; plain terminal surfaces ignore it.
   func scrollOutput(wheel: Int, pages: Int)
+  var viewHasFocus: Bool { get }
+  func toggleViewFocus() -> Bool
+  func focusPrompt()
+  func scrollView(lines: Int)
   /// Text that belongs with the output, such as completion candidates.
   func emit(_ text: String)
   /// The line drawn above a fresh prompt, or nothing.
@@ -52,6 +56,10 @@ protocol LineEditorSurface: AnyObject {
 
 extension LineEditorSurface {
   func scrollOutput(wheel: Int, pages: Int) {}
+  var viewHasFocus: Bool { false }
+  func toggleViewFocus() -> Bool { false }
+  func focusPrompt() {}
+  func scrollView(lines: Int) {}
   func pendingInput() -> [UInt8] { [] }
   /// Surfaces with no status row simply do not show the menu.
   func drawCompletionMenu(_ menu: CompletionMenu?) {}
@@ -439,6 +447,25 @@ final class TerminalLineEditor {
     }
 
     while let key = readKey() {
+      if activePrompt.isModal { surface?.focusPrompt() }
+      if !activePrompt.isModal, bytes.isEmpty, case .byte(9) = key,
+        surface?.toggleViewFocus() == true
+      {
+        dismissCompletion()
+        continue
+      }
+      if surface?.viewHasFocus == true {
+        switch key {
+        case .byte(106), .down: surface?.scrollView(lines: 1); continue
+        case .byte(107), .up: surface?.scrollView(lines: -1); continue
+        case .pageUp: surface?.scrollOutput(wheel: 0, pages: -1); continue
+        case .pageDown: surface?.scrollOutput(wheel: 0, pages: 1); continue
+        case .wheel(let direction): surface?.scrollOutput(wheel: direction, pages: 0); continue
+        case .refreshPrompt, .switchAgent: break
+        case .byte(3), .byte(4), .byte(12), .byte(26): surface?.focusPrompt()
+        default: continue  // The view is read-only; typing and pastes cannot edit the prompt.
+        }
+      }
       // Any key but Tab or Shift+Tab closes the rotating completion menu:
       // the next edit starts fresh, and the status row comes back.
       if !isTabKey(key) { dismissCompletion() }
@@ -478,6 +505,7 @@ final class TerminalLineEditor {
           viewTop = 0
         }
         activePrompt = updated
+        if updated.isModal || !bytes.isEmpty { surface?.focusPrompt() }
         prompt = updated.text
         redraw(prompt: prompt, bytes: bytes, cursor: cursor)
       case .byte(let byte):
