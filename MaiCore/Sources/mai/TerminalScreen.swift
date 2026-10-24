@@ -51,8 +51,14 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   /// nil when the row shows `statusText`.
   private var completionMenu: CompletionMenu?
   private var thinkingRows: [String] = []
-  private var thinkingText: String?
-  private var thinkingDisplay: ThinkingDisplay = .status
+  private var thinkingText: String? {
+    get { outputConversation.thinkingText }
+    set { outputConversation.thinkingText = newValue }
+  }
+  private var thinkingDisplay: ThinkingDisplay {
+    get { outputConversation.thinkingDisplay }
+    set { outputConversation.thinkingDisplay = newValue }
+  }
   private var paintedThinkingRows: [String] = []
   private var paintedThinkingOrigin = 0
   private var paintedThinkingWidth = 0
@@ -60,13 +66,57 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var inputRows = [""]
   private var caretRow = 0
   private var caretColumn = 0
-  private var outputEndedLine = true
+  private var outputEndedLine: Bool {
+    get { outputConversation.outputEndedLine }
+    set { outputConversation.outputEndedLine = newValue }
+  }
   /// Retained in both modes so switching to buffer includes earlier output.
-  private var transcript = TerminalOutputBuffer()
-  private var thinkingBlock: Int?
-  private var replyBlock: Int?
-  /// Tool handles remain unique when /clear discards their transcript lines.
-  private var toolBlocks: [Int: Int] = [:]
+  private var conversations: [String: TerminalConversation] = [:]
+  private var selectedConversation = "initial"
+  private var processConversations: [AgentPID: String] = [:]
+  private var markdownTemplate: MarkdownTerminalRenderer?
+  private var outputConversation: TerminalConversation {
+    let id = TerminalConversationScope.id ?? selectedConversation
+    if let conversation = conversations[id] { return conversation }
+    let conversation = TerminalConversation()
+    conversation.transcript.configureThinking(ui.thinking)
+    conversation.transcript.configureTools(ui.tools)
+    conversation.transcript.configureMarkdown(markdownTemplate)
+    let colors = ProcessInfo.processInfo.environment["NO_COLOR"] == nil
+      && ProcessInfo.processInfo.environment["TERM"] != "dumb"
+    conversation.transcript.configureColors(colors ? ui : nil)
+    conversations[id] = conversation
+    return conversation
+  }
+  private var isOutputVisible: Bool {
+    ui.mode != .buffer || TerminalConversationScope.id == nil
+      || TerminalConversationScope.id == selectedConversation
+  }
+  private var transcript: TerminalOutputBuffer {
+    get { outputConversation.transcript }
+    set { outputConversation.transcript = newValue }
+    _modify {
+      let conversation = outputConversation
+      yield &conversation.transcript
+    }
+  }
+  private var thinkingBlock: Int? {
+    get { outputConversation.thinkingBlock }
+    set { outputConversation.thinkingBlock = newValue }
+  }
+  private var replyBlock: Int? {
+    get { outputConversation.replyBlock }
+    set { outputConversation.replyBlock = newValue }
+  }
+  private var toolBlocks: [Int: Int] {
+    get { outputConversation.toolBlocks }
+    set { outputConversation.toolBlocks = newValue }
+    _modify {
+      let conversation = outputConversation
+      yield &conversation.toolBlocks
+    }
+  }
+  /// Tool handles remain unique across conversations and /clear.
   private var nextToolBlock = 0
   private var paintedOutputRows: [String] = []
   private var active = false
@@ -106,6 +156,13 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       let previousMode = self.ui.mode
       let previousUI = self.ui
       self.ui = ui
+      for conversation in conversations.values {
+        conversation.transcript.configureThinking(ui.thinking)
+        conversation.transcript.configureTools(ui.tools)
+        let colors = ProcessInfo.processInfo.environment["NO_COLOR"] == nil
+          && ProcessInfo.processInfo.environment["TERM"] != "dumb"
+        conversation.transcript.configureColors(colors ? ui : nil)
+      }
       transcript.configureThinking(ui.thinking)
       transcript.configureTools(ui.tools)
       let colors = ProcessInfo.processInfo.environment["NO_COLOR"] == nil
@@ -131,6 +188,54 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       paintedThinkingRows = []
       drawStatusRow()
       placeCaret()
+    }
+  }
+
+  func bindConversation(_ id: String, to pid: AgentPID) {
+    lock.withLock { processConversations[pid] = id }
+  }
+
+  func conversationID(for context: AgentEventContext) -> String? {
+    lock.withLock {
+      guard let pid = context.pid else { return nil }
+      return processConversations[pid] ?? (context.depth > 0 ? "agent:\(pid.rawValue)" : nil)
+    }
+  }
+
+  /// Seed resumed and newly forked threads once; subsequent switches retain
+  /// their streaming blocks, command output and exact scroll position.
+  func selectConversation(_ id: String, messages: [AgentMessage]) {
+    lock.withLock {
+      guard selectedConversation != id else { return }
+      selectedConversation = id
+      seedConversationLocked(id, messages: messages)
+      layoutThinking()
+      paintedThinkingRows = []
+      guard active, ui.mode == .buffer else { return }
+      refreshSize()
+      redrawBuffer()
+    }
+  }
+
+  func seedConversation(_ id: String, messages: [AgentMessage]) {
+    lock.withLock { seedConversationLocked(id, messages: messages) }
+  }
+
+  private func seedConversationLocked(_ id: String, messages: [AgentMessage]) {
+    TerminalConversationScope.$id.withValue(id) {
+      if conversations[id] == nil {
+        for message in messages where message.role != .system {
+          if message.role == .assistant {
+            let block = transcript.appendReply(message.text)
+            transcript.finishReply(block)
+            for call in message.toolCalls {
+              _ = transcript.appendTool(call: call, result: nil)
+            }
+          } else {
+            transcript.append("\(message.role == .user ? "you" : message.role.rawValue): \(message.text)\n")
+          }
+        }
+      }
     }
   }
 
@@ -284,7 +389,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       let handle = nextToolBlock
       nextToolBlock += 1
       if result == nil { toolBlocks[handle] = index }
-      if active, ui.mode == .buffer {
+      if active, ui.mode == .buffer, isOutputVisible {
         outputEndedLine = true
         drawOutputRows()
         placeCaret()
@@ -295,8 +400,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   func configureMarkdown(_ renderer: MarkdownTerminalRenderer?) {
     lock.withLock {
+      markdownTemplate = renderer
+      for conversation in conversations.values { conversation.transcript.configureMarkdown(renderer) }
       transcript.configureMarkdown(renderer)
-      guard active, ui.mode == .buffer else { return }
+      guard active, ui.mode == .buffer, isOutputVisible else { return }
       redrawBuffer()
     }
   }
@@ -305,7 +412,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     lock.withLock {
       refreshSize()
       replyBlock = transcript.appendReply(text, to: replyBlock)
-      guard active else { return }
+      guard active, isOutputVisible else { return }
       if ui.mode == .buffer {
         outputEndedLine = true
         drawOutputRows()
@@ -324,7 +431,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       refreshSize()
       let block = transcript.appendReply(text)
       transcript.finishReply(block)
-      guard active else { return }
+      guard active, isOutputVisible else { return }
       if ui.mode == .buffer {
         drawOutputRows()
       } else {
@@ -340,7 +447,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       guard let replyBlock else { return }
       transcript.finishReply(replyBlock)
       self.replyBlock = nil
-      guard active else { return }
+      guard active, isOutputVisible else { return }
       if ui.mode == .buffer {
         drawOutputRows()
       } else if !rendered.isEmpty {
@@ -358,7 +465,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     lock.withLock {
       refreshSize()
       thinkingBlock = transcript.appendThinking(text, to: thinkingBlock)
-      guard active else { return }
+      guard active, isOutputVisible else { return }
       if ui.mode == .buffer {
         outputEndedLine = true
         drawOutputRows()
@@ -375,7 +482,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       guard let thinkingBlock else { return }
       transcript.finishThinking(thinkingBlock)
       self.thinkingBlock = nil
-      guard active else { return }
+      guard active, isOutputVisible else { return }
       if ui.mode == .buffer {
         drawOutputRows()
       } else if !outputEndedLine {
@@ -391,7 +498,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       refreshSize()
       let block = transcript.appendThinking(text)
       transcript.finishThinking(block)
-      guard active, ui.mode == .buffer else { return }
+      guard active, ui.mode == .buffer, isOutputVisible else { return }
       drawOutputRows()
       placeCaret()
     }
@@ -407,6 +514,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       }
       refreshSize()
       transcript.append(text)
+      guard isOutputVisible else { return }
       if ui.mode == .buffer {
         outputEndedLine = text.hasSuffix("\n")
         drawOutputRows()
@@ -477,6 +585,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       let previousRows = thinkingRows
       thinkingText = text
       thinkingDisplay = display
+      guard isOutputVisible else { return }
       layoutThinking()
       guard thinkingRows != previousRows else { return }
       guard active else { return }
@@ -970,6 +1079,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   /// Called under `lock` before drawing: SIGWINCH delivery can lag behind a
   /// keystroke, streamed output, or an animation tick during a window drag.
   private func refreshSize() {
+    TerminalConversationScope.$id.withValue(nil) { refreshVisibleSize() }
+  }
+
+  private func refreshVisibleSize() {
     guard active else { return }
     let previousRows = rows
     let previousColumns = columns

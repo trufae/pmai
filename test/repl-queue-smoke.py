@@ -248,7 +248,12 @@ def main():
                                 send('\x03')
                                 wait_for('✗ took')
                                 if prompt == 'background':
-                                    wait_for(f'agent#{pid} has ended; messages go to this chat again.')
+                                    # Finished conversations keep their focus so
+                                    # the person can inspect or continue them.
+                                    wait_for(f'agent#{pid} ✗ killed')
+                                    wait_for(f'pmai#{pid}>')
+                                    send('/jobs focus main\n')
+                                    wait_for('Messages go to this chat again.')
                                     wait_for('1 queued')
                             assert requests.empty(), 'Unexpected request after cancellation'
                             # "yes" must reach the provider, not a stale approval prompt.
@@ -269,7 +274,7 @@ def main():
                         print(f'PASS {choice}')
                         continue
                     if choice == 'continue':
-                        send('/help\n')
+                        send('/help shell\n')
                         wait_for('Input:')
                         # Slash commands used to run inside the event loop, so
                         # a stalled catalog request also stopped Ctrl+C and all
@@ -279,7 +284,7 @@ def main():
                         assert next_request(model_requests).endswith('/models')
                         send('\x03')
                         wait_for('cancelled /models')
-                        send('/help\n')
+                        send('/help shell\n')
                         wait_for('Input:')
                         models_release.set()
                     send('slow\n')

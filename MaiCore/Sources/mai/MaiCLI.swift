@@ -1591,7 +1591,7 @@ struct MaiCLI {
         }
         var oneShotProcess: AgentPID? = await runtime.allocateProcess(
           agentID: session.profile.agentID, task: session.title)
-        await runtime.supervisor.restore(session.subagents, under: oneShotProcess!)
+        await runtime.restoreConversations(session.subagents, under: oneShotProcess!, sessionID: session.sessionID)
         pmaiBridge.sync(
           session: session,
           configuration: configuration,
@@ -1618,7 +1618,7 @@ struct MaiCLI {
         if let process = oneShotProcess {
           session.subagents = AgentProcessRecord.merging(
             saved: session.subagents,
-            current: await runtime.supervisor.records(under: process))
+            current: await runtime.conversationRecords(under: process))
           if !succeeded {
             let partial = await runtime.supervisor.transcript(process)
             if !partial.isEmpty {
@@ -2145,6 +2145,7 @@ struct MaiCLI {
   private enum REPLTurnKind {
     case chat
     case btw
+    case conversation
   }
 
   /// One run in flight. A chat turn also remembers which chat it belongs to
@@ -2173,6 +2174,7 @@ struct MaiCLI {
   private struct REPLLoop {
     var activeTurn: REPLTurn?
     var btwTurns: [AgentPID: REPLTurn] = [:]
+    var conversationTurns: [AgentPID: REPLTurn] = [:]
     var foregroundCommand: String?
     var focus: REPLMessageTarget = .main
     var approvals: [(request: ApprovalRequest, reply: REPLApprovalReply)] = []
@@ -2185,7 +2187,7 @@ struct MaiCLI {
     var readerParked = true
     var exiting = false
 
-    var hasTurns: Bool { activeTurn != nil || !btwTurns.isEmpty }
+    var hasTurns: Bool { activeTurn != nil || !btwTurns.isEmpty || !conversationTurns.isEmpty }
 
     var modalPrompt: REPLModalPrompt? {
       if let chop = chatChop {
@@ -2206,7 +2208,7 @@ struct MaiCLI {
 
     /// Ctrl+C belongs to the most recently started run still in flight.
     var interruptTurn: REPLTurn? {
-      (Array(btwTurns.values) + [activeTurn].compactMap { $0 })
+      (Array(btwTurns.values) + Array(conversationTurns.values) + [activeTurn].compactMap { $0 })
         .max { $0.interrupt.rawValue < $1.interrupt.rawValue }
     }
 
@@ -2214,6 +2216,7 @@ struct MaiCLI {
       exiting = true
       activeTurn?.task.cancel()
       for turn in btwTurns.values { turn.task.cancel() }
+      for turn in conversationTurns.values { turn.task.cancel() }
       cancelApprovals { _ in true }
       for pending in compactions { pending.reply.fail(CancellationError()) }
       compactions.removeAll()
@@ -2442,7 +2445,7 @@ struct MaiCLI {
       screen.activate()
       TerminalScreen.install(screen)
       editor.install(surface: screen)
-      await terminal.attach(screen: screen)
+      await terminal.attach(screen: screen, supervisor: runtime.supervisor)
       await installInteractiveRunHost(screen: screen, inputGate: editor.inputGate)
       await services.approvalHandler.setPrompter { request in
         // Stream iteration wakes when the waiting agent's task is cancelled.
@@ -2479,8 +2482,41 @@ struct MaiCLI {
     }
     var loop = REPLLoop()
     var activityWasInterrupted = false
+    var visibleChatID = session.id
+    if screen != nil {
+      editor.onAgentSwitch = { selection in
+        let handled = DispatchSemaphore(value: 0)
+        if case .terminated = continuation.yield(.switchAgent(selection, reply: { handled.signal() })) {
+          return
+        }
+        handled.wait()
+      }
+    }
+
+    func refreshConversation() async {
+      if visibleChatID != session.id {
+        visibleChatID = session.id
+        loop.focus = .main
+      }
+      if case .agent(let pid) = loop.focus, await runtime.supervisor.info(pid) == nil {
+        loop.focus = .main
+      }
+      guard let screen else { return }
+      if case .agent(let pid) = loop.focus {
+        let messages = await runtime.supervisor.transcript(pid)
+        screen.selectConversation("agent:\(pid.rawValue)", messages: session.redactor?.unredact(messages) ?? messages)
+      } else {
+        screen.selectConversation("chat:\(session.id)", messages: session.history.messages)
+      }
+    }
+
+    func conversationTabs() async -> [AgentProcessInfo] {
+      guard let root = chatProcessIDs[session.id] else { return [] }
+      return await runtime.supervisor.tree().subtree(of: root).sorted { $0.pid < $1.pid }
+    }
 
     func refreshTerminalSettings() async {
+      await refreshConversation()
       let ui = tintedUI(configuration?.ui ?? .init(), project: project)
       editor.configure(ui: ui)
       screen?.configure(ui: ui)
@@ -2527,8 +2563,15 @@ struct MaiCLI {
       var facts: [String] = []
       if await runtime.internetAccessPolicy().isOffline { facts.append("✈ offline") }
       var liveContext: AgentContextSize?
+      var identitySession = session
       if case .agent(let pid) = loop.focus {
         liveContext = await runtime.supervisor.info(pid)?.contextSize
+        if let request = await runtime.conversationRequest(for: pid) {
+          identitySession.profile.agentID = request.agentID
+          identitySession.profile.provider = request.provider
+          identitySession.profile.model = request.model
+          identitySession.history.replaceAll(with: request.messages)
+        }
       } else if let turn = loop.activeTurn, turn.chatID == session.id {
         liveContext = await runtime.supervisor.info(turn.pid)?.contextSize
       }
@@ -2564,9 +2607,17 @@ struct MaiCLI {
       } else if case .agent(let pid) = loop.focus {
         facts.append("→ agent#\(pid.rawValue)")
       }
+      let tabs = await conversationTabs()
+      let selected: AgentPID? = if case .agent(let pid) = loop.focus { pid } else { chatProcessIDs[session.id] }
+      let strip = tabs.count > 1 ? " [" + tabs.enumerated().map { index, info in
+        if info.pid == selected { return index < 9 ? String(index + 1) : "*" }
+        if info.needsAttention { return "!" }
+        if info.state == .paused { return "‖" }
+        return info.state.isTerminal ? "." : "●"
+      }.joined() + "]" : ""
       let detail = facts.isEmpty ? "" : " · " + facts.joined(separator: " · ")
       return (
-        "\(activityMarker) \(currentDirectoryName()) \(promptIdentity(session, contextSize: liveContext))\(detail)",
+        "\(activityMarker)\(strip) \(currentDirectoryName()) \(promptIdentity(identitySession, contextSize: liveContext))\(detail)",
         running
       )
     }
@@ -2586,10 +2637,14 @@ struct MaiCLI {
         prompt = "pmai> "
       }
       let title = visibleUITitle(configuration?.ui.title ?? "")
-      return TerminalPrompt(text: title.isEmpty ? prompt : "[\(title)] \(prompt)")
+      let conversationID: String
+      if case .agent(let pid) = loop.focus { conversationID = "agent:\(pid.rawValue)" }
+      else { conversationID = "chat:\(session.id)" }
+      return TerminalPrompt(text: title.isEmpty ? prompt : "[\(title)] \(prompt)", conversationID: conversationID)
     }
 
     func refreshStatus() async {
+      await refreshConversation()
       guard let screen else { return }
       services.modelCatalog.select(session.profile.provider, runtime: runtime)
       let status = await statusLine()
@@ -2636,10 +2691,12 @@ struct MaiCLI {
 
     func mainProcess() async -> AgentPID {
       if let pid = chatProcessIDs[session.id], await runtime.supervisor.info(pid) != nil {
+        screen?.bindConversation("chat:\(session.id)", to: pid)
         return pid
       }
       let pid = await runtime.allocateProcess(agentID: session.profile.agentID, task: session.title)
       chatProcessIDs[session.id] = pid
+      screen?.bindConversation("chat:\(session.id)", to: pid)
       return pid
     }
 
@@ -2665,7 +2722,7 @@ struct MaiCLI {
             ? session.chat : workspace.chats.first(where: { $0.id == chatID })
         else { continue }
         let redactor = await runtime.contentRedactor(sessionID: chat.sessionID)
-        let current = redactor.unredact(await runtime.supervisor.records(under: pid))
+        let current = redactor.unredact(await runtime.conversationRecords(under: pid))
         if chatID == session.id {
           let records = AgentProcessRecord.merging(
             saved: session.subagents, current: current)
@@ -2736,7 +2793,7 @@ struct MaiCLI {
         return
       }
       let pid = await mainProcess()
-      let restored = await runtime.supervisor.restore(session.subagents, under: pid)
+      let restored = await runtime.restoreConversations(session.subagents, under: pid, sessionID: session.sessionID)
       // Idle between turns, like a chat that has already run: listed as done,
       // cleared with the rest, and reopened by its next turn.
       await runtime.supervisor.complete(pid)
@@ -2768,6 +2825,7 @@ struct MaiCLI {
 
     func beginTurn(_ request: AgentRequest, process pid: AgentPID, kind: REPLTurnKind) async {
       let redirection = REPLRedirection.current
+      if kind == .chat { screen?.bindConversation("chat:\(session.id)", to: pid) }
       shareStateWithPmaiTools()
       if kind == .chat {
         await recordSubagents()
@@ -2788,7 +2846,7 @@ struct MaiCLI {
           await output.attach(screen: screen)
         }
       }
-      await output.resetResponse()
+      if kind != .conversation { await output.resetResponse() }
       let fileAccessLog = session.fileAccessLog
       let task = Task {
         try await withTaskCancellationHandler {
@@ -2810,6 +2868,9 @@ struct MaiCLI {
       )
       if kind == .btw {
         loop.btwTurns[pid] = turn
+      } else if kind == .conversation {
+        loop.conversationTurns[pid] = turn
+        await runtime.supervisor.attach(task, to: pid)
       } else {
         loop.activeTurn = turn
       }
@@ -3081,13 +3142,21 @@ struct MaiCLI {
           await deliver(text, to: .main)
           return
         }
-        // A top-level pid from another chat owns a different inbox, even
-        // when that chat is idle. Never redirect it to the focused chat.
-        guard info.depth == 0 || !info.state.isTerminal else {
-          await terminal.note(
-            "agent#\(pid.rawValue) (\(info.agentID)) has finished; /jobs log \(pid.rawValue) shows what it did."
-          )
-          if loop.focus == .agent(pid) { loop.focus = .main }
+        if info.depth > 0, info.state.isTerminal, loop.conversationTurns[pid] == nil {
+          guard await preparePromptFileAccess(
+            for: text, runtime: runtime, configuration: configuration,
+            environment: ProcessInfo.processInfo.environment,
+            promptFileAccess: promptFileAccess, approvalHandler: services.approvalHandler,
+            terminal: terminal) else { return }
+          guard var request = await runtime.conversationRequest(for: pid) else {
+            await terminal.note("This older saved job has no conversation settings. Select main or create a new fork.")
+            return
+          }
+          request.messages = AgentTranscriptEditor.answeringUnansweredToolCalls(
+            in: request.messages, reason: "the previous run ended")
+          request.messages.append(contentsOf: await runtime.supervisor.drainInbox(pid))
+          request.messages.append(.user(text))
+          await beginTurn(request, process: pid, kind: .conversation)
           return
         }
         await runtime.supervisor.post(.user(text), to: pid)
@@ -3295,6 +3364,7 @@ struct MaiCLI {
       switch target {
       case .main:
         loop.focus = .main
+        await refreshConversation()
         await terminal.line(
           configuration?.ui.broadcast == true
             ? "Focus saved: main. Broadcast is on; @main TEXT addresses this chat."
@@ -3304,15 +3374,20 @@ struct MaiCLI {
           await terminal.line("No agent #\(pid.rawValue). /jobs tree lists the running ones.")
           return
         }
-        guard info.depth > 0, !info.state.isTerminal else {
-          await terminal.line(
-            info.depth == 0
-              ? "agent#\(pid.rawValue) is this chat; /jobs focus main is the same thing."
-              : "agent#\(pid.rawValue) (\(info.agentID)) has finished; pick a running one from /jobs tree."
-          )
+        guard info.depth > 0 else {
+          if pid == chatProcessIDs[session.id] {
+            await handleFocus("main")
+          } else {
+            await terminal.line("agent#\(pid.rawValue) belongs to another chat; /chat use selects its conversation.")
+          }
+          return
+        }
+        guard await conversationTabs().contains(where: { $0.pid == pid }) else {
+          await terminal.line("agent#\(pid.rawValue) belongs to another chat; /chat use selects its conversation.")
           return
         }
         loop.focus = .agent(pid)
+        await refreshConversation()
         await terminal.line(
           configuration?.ui.broadcast == true
             ? "Focus saved: agent#\(pid.rawValue). Broadcast is on; @\(pid.rawValue) TEXT addresses this agent."
@@ -3321,12 +3396,163 @@ struct MaiCLI {
       }
     }
 
+    func handleConversationCommand(_ name: String, argument: String) async -> Bool {
+      guard case .agent(let pid) = loop.focus, let info = await runtime.supervisor.info(pid) else { return false }
+      let action = argument.split(whereSeparator: \.isWhitespace).first?.lowercased() ?? ""
+      let transcriptActions: Set<String> = ["log", "last", "edit", "del", "undo", "trim", "pin", "pins", "unpin", "clear"]
+      guard name == "/copy" || name == "/last" || name == "/continue"
+        || (name == "/chat" && transcriptActions.contains(action)) else { return false }
+      var focused = session
+      let messages = await runtime.supervisor.transcript(pid)
+      focused.history.replaceAll(with: session.redactor?.unredact(messages) ?? messages)
+      focused.title = info.displayName
+      if name == "/continue" {
+        if await runtime.supervisor.isPaused(pid) {
+          await runtime.supervisor.resume(pid)
+          await terminal.note("Continued agent#\(pid.rawValue).")
+        } else if !info.state.isTerminal || loop.conversationTurns[pid] != nil {
+          await terminal.note("agent#\(pid.rawValue) is already running.")
+        } else if var request = await runtime.conversationRequest(for: pid) {
+          let queued = await runtime.supervisor.drainInbox(pid)
+          if queued.isEmpty, let last = request.messages.last,
+            last.role == .assistant, last.toolCalls.isEmpty
+          {
+            await terminal.note("Nothing to continue: the last reply was complete. Type a message instead.")
+          } else if request.messages.contains(where: { $0.role != .system }) || !queued.isEmpty {
+            request.messages = AgentTranscriptEditor.answeringUnansweredToolCalls(
+              in: request.messages, reason: "the previous run ended")
+            request.messages.append(contentsOf: queued)
+            await beginTurn(request, process: pid, kind: .conversation)
+          } else {
+            await terminal.note("Nothing to continue yet: this agent has no messages.")
+          }
+        } else {
+          await terminal.note("This older saved job has no conversation settings. Select main or create a new fork.")
+        }
+      } else if name == "/copy" {
+        await copyToClipboard(argument, session: focused, terminal: terminal)
+      } else {
+        let readOnly = name == "/last" || ["log", "last", "pins"].contains(action)
+        guard readOnly || info.state.isTerminal else {
+          await terminal.note("Wait for this agent's turn to finish before editing its transcript.")
+          return true
+        }
+        if action == "clear" {
+          focused.history.replaceAll(with: focused.history.messages.filter { $0.role == .system })
+          await terminal.line("Conversation cleared.")
+        } else {
+          await withTurnInterruptSetAside {
+            await handleChatCommand(
+              name == "/last" ? "last" : argument,
+              session: &focused, runtime: runtime,
+              compactPrompt: nil, recapPrompt: nil, chatProcess: pid, terminal: terminal)
+          }
+        }
+        if !readOnly {
+          await runtime.supervisor.note(pid, transcript: focused.history.messages)
+          await recordSubagents()
+          workspace.upsert(session.chat, selecting: true)
+          await saveWorkspace(&workspace, store: store, terminal: terminal)
+        }
+      }
+      return true
+    }
+
+    func switchAgent(_ selection: REPLAgentSwitch) async {
+      let tabs = await conversationTabs()
+      guard !tabs.isEmpty else { return }
+      let current: AgentPID? = if case .agent(let pid) = loop.focus { pid } else { chatProcessIDs[session.id] }
+      let index = tabs.firstIndex { $0.pid == current } ?? 0
+      let target: AgentPID?
+      switch selection {
+      case .slot(let number):
+        target = tabs.indices.contains(number - 1) ? tabs[number - 1].pid : nil
+      case .next:
+        target = tabs[(index + 1) % tabs.count].pid
+      case .previous:
+        target = tabs[(index + tabs.count - 1) % tabs.count].pid
+      case .parent:
+        target = tabs[index].parent ?? tabs.first?.pid
+      }
+      guard let target else { return }
+      loop.focus = target == chatProcessIDs[session.id] ? .main : .agent(target)
+      await refreshStatus()
+    }
+
+    func handleSubagents(_ argument: String) async {
+      let value = argument.trimmingCharacters(in: .whitespacesAndNewlines)
+      switch value.lowercased() {
+      case "next": await switchAgent(.next)
+      case "previous", "prev": await switchAgent(.previous)
+      case "parent": await switchAgent(.parent)
+      case "main", "0": await handleFocus("main")
+      case "", "list":
+        let tabs = await conversationTabs()
+        let selected: AgentPID? = if case .agent(let pid) = loop.focus { pid } else { chatProcessIDs[session.id] }
+        var lines = ["Agent conversations:"]
+        if tabs.isEmpty { lines.append("  1. main (current chat)") }
+        for (index, info) in tabs.enumerated() {
+          let marker = info.pid == selected ? "*" : " "
+          let title = info.parent == nil ? session.title : info.displayName
+          lines.append("\(marker) \(index + 1). #\(info.pid.rawValue) \(info.agentID) [\(info.state.shortLabel)] \(title)")
+        }
+        lines.append("/subagents PID|main|parent|next|prev switches; /fork [--empty] [TITLE] branches here.")
+        lines.append("Alt+1…9 selects a slot; Ctrl+Left/Right cycles. Ctrl+1…9 works with extended keyboard protocols.")
+        lines.append("Status: selected slot number · running ● · idle . · paused ‖ · attention !")
+        await terminal.line(lines.joined(separator: "\n"))
+      default:
+        await handleFocus(value)
+      }
+    }
+
+    func forkConversation(_ argument: String) async {
+      var title = argument.trimmingCharacters(in: .whitespacesAndNewlines)
+      let empty = title == "--empty" || title.hasPrefix("--empty ")
+      if empty { title = String(title.dropFirst(7)).trimmingCharacters(in: .whitespacesAndNewlines) }
+      let parent: AgentPID
+      var request: AgentRequest
+      if case .agent(let pid) = loop.focus {
+        parent = pid
+        guard let snapshot = await runtime.conversationRequest(for: pid) else {
+          await terminal.line("This older saved job has no runtime settings. Select main to fork the saved chat.")
+          return
+        }
+        request = snapshot
+      } else {
+        parent = await mainProcess()
+        request = chatRequest()
+        if loop.activeTurn?.chatID == session.id,
+          let snapshot = await runtime.conversationRequest(for: parent), !snapshot.messages.isEmpty
+        {
+          request = snapshot
+        }
+        if loop.activeTurn == nil { await runtime.supervisor.complete(parent) }
+      }
+      if empty { request.messages = request.messages.filter { $0.role == .system } }
+      else {
+        request.messages = AgentTranscriptEditor.answeringUnansweredToolCalls(
+          in: request.messages, reason: "forked before the tool finished")
+      }
+      if title.isEmpty { title = empty ? "New conversation" : "Conversation fork" }
+      guard let pid = await runtime.forkConversation(request, parent: parent, title: title) else { return }
+      loop.focus = .agent(pid)
+      await refreshConversation()
+      await terminal.line("Forked agent#\(parent.rawValue) into agent#\(pid.rawValue) (\(title)) and switched to it.")
+      await recordSubagents()
+      workspace.upsert(session.chat, selecting: true)
+      await saveWorkspace(&workspace, store: store, terminal: terminal)
+    }
+
     await restoreSavedSubagents()
     reader.start()
     await releaseReader(workspace: workspace)
 
     func handleEvent(_ event: REPLEvent) async -> Bool {
       switch event {
+      case .switchAgent(let selection, let reply):
+        defer { reply() }
+        guard loop.modalPrompt == nil, !loop.exiting else { return false }
+        await switchAgent(selection)
       case .line(let raw, let heredoc, let promptID, _):
         loop.readerParked = true
         let typed = heredoc ? raw : raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3628,6 +3854,18 @@ struct MaiCLI {
               argument,
               defaultAddress: configuration?.ui.broadcast == true ? .active : .target(loop.focus),
               main: main, runtime: runtime, terminal: terminal)
+            await refreshStatus()
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
+          if await handleConversationCommand(name, argument: argument) {
+            await refreshStatus()
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
+          if name == "/fork" || name == "/subagents" {
+            if name == "/fork" { await forkConversation(argument) }
+            else { await handleSubagents(argument) }
             await refreshStatus()
             await releaseIfIdle(workspace: workspace)
             return false
@@ -4095,7 +4333,7 @@ struct MaiCLI {
           turn = loop.activeTurn
           loop.activeTurn = nil
         } else {
-          turn = loop.btwTurns.removeValue(forKey: pid)
+          turn = loop.btwTurns.removeValue(forKey: pid) ?? loop.conversationTurns.removeValue(forKey: pid)
         }
         let wasInterrupted = turn.map { interruptHandler.deactivate($0.interrupt) } ?? false
         if let remaining = loop.interruptTurn {
@@ -4122,9 +4360,14 @@ struct MaiCLI {
               let stopped = Set(await runtime.supervisor.stop(turn.pid, reason: "Cancelled"))
               loop.cancelApprovals { $0.run.pid.map(stopped.contains) ?? false }
             }
-            await (turn?.output ?? terminal).recoverAfterCancellation()
+          }
+          if let turn, turn.kind == .conversation {
+            await terminal.recoverConversation(turn.pid, error: cancelled ? nil : error)
           } else {
-            await (turn?.output ?? terminal).recoverAfterError(error)
+            await TerminalConversationScope.$id.withValue(turn?.chatID.map { "chat:\($0)" }) {
+              if cancelled { await (turn?.output ?? terminal).recoverAfterCancellation() }
+              else { await (turn?.output ?? terminal).recoverAfterError(error) }
+            }
           }
           // What the run did before it broke off is not thrown away: the
           // supervisor has its transcript, and /continue picks it up.
@@ -4159,14 +4402,18 @@ struct MaiCLI {
           } else if !settled {
             took += " · its chat was closed; /jobs log \(turn.pid.rawValue) shows the reply"
           }
-          if let paused {
-            await terminal.note("⏸ \(took) · \(paused.summary)", tone: .warning)
-          } else {
-            await terminal.note(
-              succeeded ? "✓ \(took)" : "✗ \(took)", tone: succeeded ? .success : .error)
+          let destination = turn.chatID.map { "chat:\($0)" }
+            ?? (turn.kind == .conversation ? "agent:\(turn.pid.rawValue)" : nil)
+          await TerminalConversationScope.$id.withValue(destination) {
+            if let paused {
+              await terminal.note("⏸ \(took) · \(paused.summary)", tone: .warning)
+            } else {
+              await terminal.note(
+                succeeded ? "✓ \(took)" : "✗ \(took)", tone: succeeded ? .success : .error)
+            }
           }
         }
-        if let turn, turn.chatID != nil {
+        if let turn, turn.chatID != nil || turn.kind == .conversation {
           // The agents the run started, and earlier ones still going, are
           // saved with their chat as they stand now.
           await recordSubagents()
@@ -4273,11 +4520,6 @@ struct MaiCLI {
         switch change {
         case .finished(let info) where info.depth > 0:
           await terminal.processEnded(info)
-          if loop.focus == .agent(info.pid) {
-            loop.focus = .main
-            await terminal.note(
-              "agent#\(info.pid.rawValue) has ended; messages go to this chat again.")
-          }
         case .attention where screen != nil:
           await announceAgentAttention(
             runtime: runtime, announced: &announcedAttention, terminal: terminal,
@@ -4333,7 +4575,7 @@ struct MaiCLI {
         }
       case .turnFinished(let pid, _):
         redirection = loop.activeTurn?.pid == pid
-          ? loop.activeTurn?.redirection : loop.btwTurns[pid]?.redirection
+          ? loop.activeTurn?.redirection : (loop.btwTurns[pid] ?? loop.conversationTurns[pid])?.redirection
       case .interrupt, .endOfFile:
         redirection = loop.pendingQueueRedirection
       default: break
@@ -4344,6 +4586,7 @@ struct MaiCLI {
       if let redirection,
         loop.activeTurn?.redirection !== redirection,
         !loop.btwTurns.values.contains(where: { $0.redirection === redirection }),
+        !loop.conversationTurns.values.contains(where: { $0.redirection === redirection }),
         loop.pendingQueueRedirection !== redirection || exits
       {
         _ = await runForeground("redirection", resumeInput: false) {
@@ -5071,6 +5314,8 @@ struct MaiCLI {
         await terminal.line(promptHelp)
       case "agents", "agent", "/agents", "/agent":
         await terminal.line(agentsHelp)
+      case "subagents", "fork", "/subagents", "/fork":
+        await terminal.line(conversationsHelp)
       case "jobs", "job", "/jobs", "/job":
         await terminal.line(jobsHelp)
       case "mcp", "/mcp":
@@ -10704,7 +10949,7 @@ struct MaiCLI {
     // holds now, live or finished, over what was saved with the chat.
     if chat.hasConversation, let process {
       chat.subagents = AgentProcessRecord.merging(
-        saved: chat.subagents, current: await runtime.supervisor.records(under: process))
+        saved: chat.subagents, current: await runtime.conversationRecords(under: process))
       chat.subagents = session.redactor?.unredact(chat.subagents) ?? chat.subagents
     }
     if ["archive", "pack", "portable"].contains(first.lowercased()) {
@@ -12644,7 +12889,8 @@ struct MaiCLI {
       "/set ui.thinking five", "/set ui.thinking full",
       "/set export.", "/set export.tools on", "/set export.tools off",
       "/set export.thinking on", "/set export.thinking off",
-      "/btw ",
+      "/fork", "/fork --empty", "/subagents", "/subagents main", "/subagents parent",
+      "/subagents next", "/subagents prev", "/btw ",
       "/help memory", "/help agents", "/help jobs", "/help chat", "/help edit", "/help tools",
       "/agent acp list", "/agent acp add ", "/agents acp list",
       "/help remote", "/remote", "/remote serve", "/remote stop", "/remote qr", "/remote status",
@@ -13148,6 +13394,8 @@ struct MaiCLI {
     /history [COMMAND]     List, search, or delete saved inputs
     /image MODE PATH       Attach an image or extract text with OCR
     /import PATH           Import settings, skills, and chats
+    /fork [--empty] [TITLE] Fork into a child conversation and switch to it
+    /subagents [PID|main]  List or switch agent conversations
     /jobs                  Manage running and saved processes
     /mcp                   Manage MCP servers
     /memory                Show, edit, learn, or scope project memory
@@ -13227,6 +13475,8 @@ struct MaiCLI {
       Ctrl+W delete word · Ctrl+C or /stop interrupt the run · Ctrl+Z suspend
       Ctrl+D exits when the input is empty
       Page Up/Down and the mouse wheel scroll the transcript in buffer mode
+      Alt+1…9 selects an agent slot · Ctrl+Left/Right cycles agent conversations
+      Extended keyboards also support Ctrl+1…9 and Ctrl+Tab/Ctrl+Shift+Tab
     """
 
   private static let effortHelp = """

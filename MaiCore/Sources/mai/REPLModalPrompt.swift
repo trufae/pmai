@@ -4,6 +4,7 @@ import MaiCore
 /// A stable identity separates a question's input from chat drafts and other questions.
 struct TerminalPrompt: Equatable, Sendable {
   var text: String
+  var conversationID: String? = nil
   var id: String? = nil
   var choices: [String] = []
 

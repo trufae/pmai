@@ -171,14 +171,15 @@ extension MaiCLI {
       /jobs stop PID            Pause a child and its descendants after their current step
       /jobs continue PID        Resume paused processes and deliver queued messages
       /jobs kill PID [REASON]   Cancel a process and its descendants
-      /jobs focus [PID|main]    Show or change input focus at the interactive prompt
+      /jobs focus [PID|main]    Switch input and the buffer to an agent conversation
       /jobs clear               Forget finished processes and their saved chat records
 
     PIDs accept 4 or #4. Tree states include run, paused, queued, done, failed,
     killed, stopped, blocked, approve?, and input?. /help queue explains addressing.
     Pausing waits at runtime boundaries; killing requests cancellation.
     /jobs stop does not pause the main chat; Ctrl+C cancels its turn.
-    Historical jobs are inspectable but cannot be resumed.
+    Finished conversations accept new messages. Saved conversations with runtime
+    settings can start new turns; older jobs remain available for inspection.
 
     @PID TEXT addresses one process once; @2,3 TEXT or @2 @3 TEXT addresses several.
     @* TEXT, @@ TEXT, and bare @ TEXT reach every active process, including the
@@ -187,5 +188,21 @@ extension MaiCLI {
     off restores the focus. /set ui.subagents controls child output.
 
     The old /agents and /agent runtime subcommands remain compatibility aliases.
+    """
+
+  static let conversationsHelp = """
+    /subagents                    List conversations with their tab slots and PIDs
+    /subagents PID|main           Switch to a conversation (also /jobs focus PID)
+    /subagents parent|next|prev    Navigate the conversation tree
+    /fork [TITLE]                 Copy this conversation into an idle child and switch
+    /fork --empty [TITLE]         Start a child with the same settings and fresh history
+
+    Buffer mode replaces the whole conversation and retains each thread's scroll
+    position and input draft. Other agents continue running in the background.
+    Alt+1…9 selects a slot; Ctrl+Left/Right cycles. Extended keyboard protocols
+    also support Ctrl+1…9 and Ctrl+Tab/Ctrl+Shift+Tab. Terminals may reserve keys.
+    The status strip uses one cell per agent: the selected slot number, ● running,
+    . idle, ‖ paused, ! needing attention. Slots follow PID order; clearing jobs
+    removes their slots. /chat fork still creates a separate saved chat.
     """
 }

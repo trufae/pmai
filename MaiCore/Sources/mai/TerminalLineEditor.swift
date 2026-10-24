@@ -208,6 +208,7 @@ final class TerminalLineEditor {
     case up, down, left, right, home, end, delete
     case pageUp, pageDown
     case backTab
+    case switchAgent(REPLAgentSwitch)
     case wheel(Int)
     /// Shift+Enter or Alt+Enter: a line break inside the input.
     case newline
@@ -232,7 +233,8 @@ final class TerminalLineEditor {
   private var activePrompt = TerminalPrompt(text: "")
   private var tracksPromptUpdates = false
   private var continuationPrompt: String?
-  private var savedChatDraft: (bytes: [UInt8], cursor: Int, pasted: IndexSet)?
+  var onAgentSwitch: (@Sendable (REPLAgentSwitch) -> Void)?
+  private var conversationDrafts: [String: (bytes: [UInt8], cursor: Int, pasted: IndexSet)] = [:]
   /// A surface that owns the tty for the whole session. While one is
   /// installed the editor neither changes the terminal mode nor draws a
   /// separator; the surface keeps the row and the status line.
@@ -346,11 +348,12 @@ final class TerminalLineEditor {
     var bytes: [UInt8] = []
     var cursor = 0
     var pasted = IndexSet()
-    if tracksPromptUpdates, !activePrompt.isModal, let saved = savedChatDraft {
+    if tracksPromptUpdates, !activePrompt.isModal,
+      let saved = conversationDrafts.removeValue(forKey: activePrompt.conversationID ?? "main")
+    {
       bytes = saved.bytes
       cursor = saved.cursor
       pasted = saved.pasted
-      savedChatDraft = nil
     }
     var historyIndex: Int?
     var draft: [UInt8] = []
@@ -444,18 +447,30 @@ final class TerminalLineEditor {
         guard var updated = takePromptUpdate() else { continue }
         if !updated.isModal, let continuationPrompt { updated.text = continuationPrompt }
         guard updated != activePrompt else { continue }
+        if !updated.isModal, !activePrompt.isModal,
+          updated.conversationID != activePrompt.conversationID
+        {
+          conversationDrafts[activePrompt.conversationID ?? "main"] = (bytes, cursor, pasted)
+          let saved = conversationDrafts.removeValue(forKey: updated.conversationID ?? "main")
+          bytes = saved?.bytes ?? []
+          cursor = saved?.cursor ?? 0
+          pasted = saved?.pasted ?? []
+          historyIndex = nil
+          draft = []
+          draftPasted = []
+          viewTop = 0
+        }
         if updated.id != activePrompt.id {
           if !activePrompt.isModal {
-            savedChatDraft = (bytes, cursor, pasted)
+            conversationDrafts[activePrompt.conversationID ?? "main"] = (bytes, cursor, pasted)
           }
           bytes = []
           cursor = 0
           pasted = []
-          if !updated.isModal, let saved = savedChatDraft {
+          if !updated.isModal, let saved = conversationDrafts.removeValue(forKey: updated.conversationID ?? "main") {
             bytes = saved.bytes
             cursor = saved.cursor
             pasted = saved.pasted
-            savedChatDraft = nil
           }
           historyIndex = nil
           draft = []
@@ -555,6 +570,12 @@ final class TerminalLineEditor {
           guard byte >= 32 else { continue }
           insert(readCharacter(startingWith: byte))
         }
+      case .switchAgent(let selection):
+        guard tracksPromptUpdates, !activePrompt.isModal, let onAgentSwitch else {
+          surface?.bell()
+          continue
+        }
+        onAgentSwitch(selection)
       case .text(let character):
         insert(character)
       case .backTab:
@@ -616,6 +637,8 @@ final class TerminalLineEditor {
     switch next {
     case 10, 13:
       return .newline
+    case UInt8(ascii: "1")...UInt8(ascii: "9"):
+      return .switchAgent(.slot(Int(next - UInt8(ascii: "0"))))
     case UInt8(ascii: "["):
       return readControlSequence()
     case UInt8(ascii: "O"):
@@ -655,6 +678,10 @@ final class TerminalLineEditor {
     }
     let fields = parameters.split(separator: ";", omittingEmptySubsequences: false)
       .map(String.init)
+    if fields.count == 2, fields[1] == "5" {
+      if final == UInt8(ascii: "D") { return .switchAgent(.previous) }
+      if final == UInt8(ascii: "C") { return .switchAgent(.next) }
+    }
     if let key = cursorKey(final: final) { return key }
     switch final {
     case UInt8(ascii: "Z"):
@@ -721,6 +748,14 @@ final class TerminalLineEditor {
     let shift = held & 1 != 0
     let ctrl = held & 4 != 0
     let others = held & ~5 != 0
+    if (held == 4 || held == 2), (49...57).contains(code) {
+      return .switchAgent(.slot(code - 48))
+    }
+    if held == 4 {
+      if code == 57350 { return .switchAgent(.previous) }
+      if code == 57351 || code == 9 { return .switchAgent(.next) }
+    }
+    if held == 5, code == 9 { return .switchAgent(.previous) }
     switch code {
     case 13, 57414:  // Enter, keypad Enter
       return held == 0 ? .byte(13) : .newline
@@ -918,7 +953,7 @@ final class TerminalLineEditor {
           line: selection,
           historyIndex: state.matchIndex,
           cursor: previousCharacterStart(in: selection, before: selection.count))
-      case .right, .up, .down, .home, .end, .delete, .newline, .paste, .backTab, .ignored:
+      case .right, .up, .down, .home, .end, .delete, .newline, .paste, .backTab, .switchAgent, .ignored:
         return .accepted(
           line: selection,
           historyIndex: state.matchIndex,

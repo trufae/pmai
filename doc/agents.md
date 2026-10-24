@@ -438,11 +438,51 @@ or joins its inbox while it is running. `/queue` lists pending copies; use
 `/queue pop PID` or `/queue del PID` to remove a copy from one recipient.
 
 Children report through the same event handler as their parent, background or
-not, with their own pid in the context. pmai turns that into blocks prefixed
+not, with their own pid in the context. In classic mode, pmai turns that into blocks prefixed
 `agent#N` — a child's text is held until a tool call, the next turn, or the end
 of its run, then printed whole, so two children never interleave mid-line —
 and `ui.subagents` chooses `all`, `tools`, `stats`, or `none`. The ACP server
 forwards only depth-0 events to the editor.
+
+## Agent conversations in the shell
+
+In `/set ui.mode buffer`, switching agents replaces the entire output area.
+Each conversation retains its own output, scroll position, and unsent draft,
+including pasted text and the cursor position. Other agents keep working;
+their streamed replies and tools update their own buffers.
+
+`/fork [TITLE]` copies the selected conversation into an idle child and switches
+to it. `/fork --empty [TITLE]` keeps the settings and system instructions but
+starts with fresh history. Neither command calls a model until you send a
+message. Fork from the parent again to create independent siblings, or fork
+from a child to create a nested conversation. `/chat fork` continues to create
+a separate saved chat.
+
+`/subagents` lists numbered slots, PIDs, titles, and states. Use
+`/subagents PID`, `/subagents main`, or `/jobs focus PID` to select a thread;
+`/subagents parent`, `next`, and `prev` navigate the tree. Finished agents remain
+selected, and sending another message starts another turn with their existing
+history. `/copy`, `/last`, `/continue`, and transcript actions such as
+`/chat log`, `edit`, `del`, and `clear` use the selected agent. Transcript edits
+require that agent's turn to have finished. Chat management commands such as
+`/chat use` still select a saved chat.
+
+Alt+1 through Alt+9 select slots, and Ctrl+Left/Right cycle through them without
+submitting the draft. Extended keyboard protocols also support Ctrl+1 through
+Ctrl+9 and Ctrl+Tab/Ctrl+Shift+Tab. Ctrl+number is ambiguous in traditional
+terminal input, and terminals may reserve shortcuts; slash commands remain
+available. Slots follow PID order and change when `/jobs clear` removes jobs.
+
+The status strip uses one cell per agent: the selected slot number, `●` for a
+running agent, `.` for an idle or finished agent, `‖` for a paused agent, and
+`!` for one needing attention. For example, `[1●.]` means the parent is selected,
+the second conversation is running, and the third is idle.
+
+Saved conversations include their runtime settings and tool restrictions, so
+they can accept new turns after restarting pmai. A stable conversation identity
+keeps follow-up turns in one saved entry. Older job records without settings
+remain available for inspection. Restoring a job never automatically restarts
+the task that was running when it was saved.
 
 ## Commands
 
@@ -455,8 +495,9 @@ Existing state labels (`run`, `paused`, `queued`, `done`, `failed`, `killed`,
 `stopped`, `approve?`, `input?`, and `blocked`) remain unchanged. Pausing a child
 holds it and its descendants after their current step; killing requests
 cancellation, rather than sending SIGKILL. The main chat cannot be paused with
-`/jobs stop`; Ctrl+C cancels its active turn. Restored jobs are historical and
-can be inspected or cleared, but cannot be resumed.
+`/jobs stop`; Ctrl+C cancels the most recently started shell turn. Restored
+tasks never resume automatically; conversations saved with runtime settings
+can start a new turn when selected.
 
 ```
 /agents                       saved definitions only (/agent is an alias)
@@ -478,7 +519,9 @@ can be inspected or cleared, but cannot be resumed.
 /jobs kill PID [REASON]       cancel a process and everything under it
 /jobs clear                   forget finished processes, and drop the ones saved with
                               this chat; the tree keeps only running ones
-/jobs focus [PID|main]        show or change where input goes (this chat or one process)
+/jobs focus [PID|main]        switch input and the buffer to a conversation
+/subagents [PID|main|parent|next|prev]  list or switch conversations
+/fork [--empty] [TITLE]      fork into an idle child conversation and switch to it
 @PID TEXT                     one message to one process, focus unchanged
 @2,3 TEXT or @2 @3 TEXT       one copy of the same message to each process
 @* TEXT                       one copy to every active process in this session

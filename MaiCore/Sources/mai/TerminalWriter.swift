@@ -54,6 +54,8 @@ actor TerminalWriter {
   /// The persistent screen, when the REPL runs on a terminal. Output written
   /// through it lands above the prompt instead of on top of it.
   private var screen: TerminalScreen?
+  private var supervisor: AgentSupervisor?
+  private var rootDestination: String?
   /// Text each child has streamed since its last block boundary.
   private var childText: [AgentPID: String] = [:]
   private var childAgents: [AgentPID: String] = [:]
@@ -66,6 +68,7 @@ actor TerminalWriter {
   /// Children whose end has been printed, so a supervisor notice does not
   /// repeat what the run's own event already said.
   private var childrenEnded: Set<AgentPID> = []
+  private var conversationWriters: [AgentPID: TerminalWriter] = [:]
 
   init(capturesOutput: Bool = false) {
     self.capturesOutput = capturesOutput
@@ -102,7 +105,8 @@ actor TerminalWriter {
     return text
   }
 
-  func attach(screen: TerminalScreen?) {
+  func attach(screen: TerminalScreen?, supervisor: AgentSupervisor? = nil) {
+    self.supervisor = supervisor
     self.screen = capturesOutput ? nil : screen
     self.screen?.configureMarkdown(markdown)
   }
@@ -142,7 +146,8 @@ actor TerminalWriter {
   }
 
   func configureThinking(_ mode: ThinkingDisplay) {
-    finishThinking()
+    guard mode != thinkingDisplay else { return }
+    TerminalConversationScope.$id.withValue(rootDestination) { finishThinking() }
     thinkingDisplay = mode
   }
 
@@ -188,7 +193,51 @@ actor TerminalWriter {
     markdown?.reset()
   }
 
-  func consume(_ event: AgentEvent) {
+  func consume(_ event: AgentEvent) async {
+    let context = event.terminalContext
+    let destination = screen?.conversationID(for: context)
+    if context.depth == 0 { rootDestination = destination }
+    if let screen, screen.isBufferMode, context.depth > 0,
+      let pid = context.pid, REPLRedirection.current == nil
+    {
+      if case .modelStarted = event, let supervisor, let destination {
+        let messages = await supervisor.transcript(pid)
+        screen.seedConversation(destination, messages: redactor?.unredact(messages) ?? messages)
+      }
+      let writer: TerminalWriter
+      if let existing = conversationWriters[pid] { writer = existing }
+      else {
+        writer = TerminalWriter()
+        conversationWriters[pid] = writer
+      }
+      await writer.consumeConversation(
+        event.terminalForegroundEvent, destination: destination, screen: screen,
+        ui: ui, markdown: markdown, redactor: redactor)
+      return
+    }
+    TerminalConversationScope.$id.withValue(destination) { consumeEvent(event) }
+  }
+
+  private func consumeConversation(
+    _ event: AgentEvent, destination: String?, screen: TerminalScreen,
+    ui: ConfiguredTerminalUI, markdown: MarkdownTerminalRenderer?, redactor: ContentRedactor?
+  ) {
+    if self.screen == nil {
+      self.markdown = markdown.map { MarkdownTerminalRenderer(theme: $0.theme, options: $0.options) }
+    }
+    self.screen = screen
+    self.ui = ui
+    self.redactor = redactor
+    tools = ui.tools
+    thinkingDisplay = ui.thinking
+    subagentOutput = ui.subagentOutput
+    TerminalConversationScope.$id.withValue(destination) {
+      if case .started = event { resetResponse() }
+      consumeEvent(event)
+    }
+  }
+
+  private func consumeEvent(_ event: AgentEvent) {
     switch event {
     case .modelStarted(let context, let turn) where context.depth == 0:
       if turn > 1 {
@@ -368,6 +417,13 @@ actor TerminalWriter {
   /// A child ended without an answer — it failed or was stopped — which the
   /// run itself never reports, so the supervisor's notice is printed instead.
   func processEnded(_ info: AgentProcessInfo) {
+    if let screen, screen.isBufferMode {
+      guard info.state != .completed else { return }
+      TerminalConversationScope.$id.withValue("agent:\(info.pid.rawValue)") {
+        status("✗ \(info.state.shortLabel)" + (info.failure.map { ": \($0)" } ?? ""), color: .errorForeground)
+      }
+      return
+    }
     compactToolCalls[info.runID] = nil
     guard info.depth > 0, !childrenEnded.contains(info.pid) else { return }
     childrenEnded.insert(info.pid)
@@ -410,6 +466,14 @@ actor TerminalWriter {
     finishReply()
     closeRootLine()
     status("cancelled", color: .warningForeground)
+  }
+
+  func recoverConversation(_ pid: AgentPID, error: (any Error)?) async {
+    let writer = conversationWriters[pid] ?? self
+    await TerminalConversationScope.$id.withValue("agent:\(pid.rawValue)") {
+      if let error { await writer.recoverAfterError(error) }
+      else { await writer.recoverAfterCancellation() }
+    }
   }
 
   func prompt(_ value: String) { write(value) }

@@ -15,6 +15,7 @@ enum REPLEvent: Sendable {
   case compaction(AutocompactionRequest, REPLCompactionReply)
   case compactionFinished(REPLCompactionReply)
   case supervisor(AgentSupervisorEvent)
+  case switchAgent(REPLAgentSwitch, reply: @Sendable () -> Void)
 }
 
 struct REPLInterruptID: Equatable, Hashable, Sendable {
