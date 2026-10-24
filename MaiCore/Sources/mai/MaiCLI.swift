@@ -5049,6 +5049,8 @@ struct MaiCLI {
         await terminal.line(aboutMessage)
       case "keys", "/keys":
         await terminal.line(keysHelp)
+      case "shell", "/shell":
+        await terminal.line(shellHelp)
       case "history", "/history":
         await terminal.line(REPLHistoryCommand.help)
       case "set", "/set":
@@ -5101,7 +5103,7 @@ struct MaiCLI {
         await terminal.line(pathHelp)
       default:
         await terminal.line(
-          "Unknown help topic '\(argument)'. Try /help, or /help set, theme, memory, todo, prompts, agents, jobs, mcp, remote, projects, chat, edit, tools, skills, queue, export, import, copy, stats, history, or keys."
+          "Unknown help topic '\(argument)'. Try /help, /help COMMAND, /help shell, or /help keys."
         )
       }
     case "/keys":
@@ -12622,7 +12624,7 @@ struct MaiCLI {
   ) -> [String] {
     var values = [
       "/help", "/help set", "/exit", "/quit", "/set tool.aproval yolo", "/set tool.aproval ask",
-      "/keys", "/help keys",
+      "/help shell", "/help keys",
       "/help history", "/history", "/history list", "/history search ", "/history del ",
       "/history clear", "/history path", "/history help",
       "/help theme", "/theme", "/theme list", "/theme use ", "/theme save ", "/theme color",
@@ -13123,76 +13125,81 @@ struct MaiCLI {
     """#
 
   private static let replHelp = """
-    /about                 Show the PocketMai logo, version, and provider setup commands
+    /about                 Logo, version, and provider setup
     /agent                 Alias for /agents
-    /agent add NAME       Copy this agent's settings into a new saved agent
-    /agent default ID     Save the default agent for new chats and runs
-    /agent effort ID LEVEL  Set an agent's reasoning effort
-    /agents                List or edit saved agent definitions; /help agents lists commands
-    /attach [MODE] PATH    Attach a document/source file; HTML asks for source, markdown, or copy
-    /attach clear          Drop the attachments queued for the next message
-    /btw PROMPT            Ask in parallel, in a fresh context, without changing this chat
-    /cd PATH               Change the current working directory
-    /chat                  List, switch, fork, archive, rename, or edit this project's chats
-    /clear                 Clear the screen, keeping the conversation
-    /continue              Resume a stopped or interrupted task, including queued messages
-    /copy [N] [PATH]       Copy the last reply, or N messages, to the clipboard or a file
-    /cwd                   Print the current working directory
-    /edit TARGET           Edit a prompt, skill, agent, config, MCP list, or message in $EDITOR
-    /edit input            Write the next message in $EDITOR instead of at the prompt
+    /agents                List or edit saved agents
+    /attach [MODE] PATH    Attach a file; /attach clear removes attachments
+    /btw PROMPT            Ask a side question in a fresh context
+    /cd PATH               Change working directory
+    /chat                  List, switch, fork, or edit chats
+    /clear                 Clear the screen
+    /continue              Resume an interrupted task
+    /copy [N] [PATH]       Copy replies to the clipboard or a file
+    /cwd                   Print working directory
+    /edit TARGET           Edit input, prompts, skills, agents, or settings
     /exit                  Exit the REPL
-    /export FORMAT [PATH]  Save a portable archive, or this chat as txt, markdown, html, json, debug, epub, or docx
-    /help [COMMAND]        Show commands or help for one command
-    /history [COMMAND]     List, search, delete, or clear saved inputs (/help history)
-    /image MODE PATH       Attach at tiny/small/medium/big/full size, or OCR to Markdown
-    /import PATH           Merge a PocketMai/pmai archive into settings, skills, and chats
-    /jobs                  Manage running and saved processes; /help jobs lists commands
-    /keys                  Show keyboard shortcuts
-    /mcp                   Manage MCP servers; /help mcp lists commands
-    /memory                Show, edit, learn, or scope this project's durable memory
-    /model [PROVIDER::]MODEL  Select and save a model for chat and all tasks
-    /model-chat [PROVIDER::]MODEL  Select and save only this agent's chat model
-    /model-compact [NAME] Select a compaction agent/model; omit NAME to clear
-    /model-aproval [NAME] Select a smart-approval agent/model; omit NAME to use the current chat model
-    /model-tool [NAME]    Select a tool-decision agent/model; omit NAME to clear
-    /model-btw [NAME]     Select a side-question agent/model; omit NAME to use the current chat model
-    /models [PROVIDER]     List models and refresh /model Tab completion
-    /nothink               Disable reasoning where the model supports it
-    /path                  Show or change Files sandbox paths and access policies
-    /plugins               List statically and dynamically loaded plugins
-    /project               Show, rename, or tint the current project
-    /projects              List, manage, and switch working directories; /help projects lists commands
-    /prompt                Manage named system prompts; /help prompt lists commands
-    /prompts               List every prompt and skill; $NAME [TEXT] sends one (/help prompt)
-    /provider ID           Select a provider
-    /provider add ID [URL] [--kind KIND]  Save a local or remote provider; /help provider
-    /provider rename [OLD] NEW  Rename a provider and update its agents
+    /export FORMAT [PATH]  Export this chat or a portable archive
+    /help [COMMAND]        List commands or show detailed help
+    /help keys             Keyboard shortcuts
+    /help shell            Input, shell commands, redirects, and agent messages
+    /history [COMMAND]     List, search, or delete saved inputs
+    /image MODE PATH       Attach an image or extract text with OCR
+    /import PATH           Import settings, skills, and chats
+    /jobs                  Manage running and saved processes
+    /mcp                   Manage MCP servers
+    /memory                Show, edit, learn, or scope project memory
+    /model [PROVIDER::]MODEL  Select the model for chat and tasks
+    /model-chat MODEL      Select this agent's chat model
+    /model-compact [NAME]  Select a compaction agent or model
+    /model-aproval [NAME]  Select a smart-approval agent or model
+    /model-tool [NAME]     Select a tool-decision agent or model
+    /model-btw [NAME]      Select a side-question agent or model
+    /models [PROVIDER]     List available models
+    /nothink               Disable reasoning
+    /path                  Show or change file access policies
+    /plugins               List loaded plugins
+    /project               Show, rename, or tint this project
+    /projects              List, manage, or switch projects
+    /prompt                Manage named system prompts
+    /prompts               List prompts and skills
+    /provider [ID]         Show or select a provider; /help provider for setup
     /providers             List registered providers
-    /queue                 List, push, pop, or delete messages waiting for an agent
-    /remote                Serve, pair, and connect to remote hosts; /help remote lists commands
-    /reply [WIDTH]         Answer the last reply in $EDITOR with it quoted above (/help reply)
-    /set [SETTING VALUE]   Show or change settings; /help set lists them
-    /skills                Manage, enable, disable, or send skills (/help skills)
-    /stats                 Combined ranking, tokens/s, time in use, and efficiency per provider:model, as bars
-    /stop                  Interrupt the current turn and keep its queue; /continue resumes it
-    /theme                 List, apply, save, or customize terminal themes (/help theme)
-    /todo                  Show, add to, tick off, or edit this project's todo list
-    /tools                 List logical tool groups for the current agent
-    /vdb                   Index and query local documentation and source code
+    /queue                 Manage messages waiting for an agent
+    /remote                Serve, pair, or connect to remote hosts
+    /reply [WIDTH]         Reply in $EDITOR with the last reply quoted
+    /set [SETTING VALUE]   Show or change settings
+    /skills                Manage or send skills
+    /stats                 Show model usage and performance
+    /stop                  Interrupt the current turn
+    /theme                 List, apply, or customize terminal themes
+    /todo                  Show or edit the project's todo list
+    /tools                 List tool groups for this agent
+    /vdb                   Index or search local documentation and code
     /version               Print the pmai version
-    Input: <<WORD starts a multiline message ending at WORD alone
-           $NAME [TEXT] sends a prompt or skill by name; /prompts lists them
-           !COMMAND runs a line in the system shell (interactive programs work)
-           /COMMAND > FILE overwrites; /COMMAND >> FILE appends; /COMMAND | SHELL_COMMAND pipes stdout
-           Examples: /chat log > log.txt · /chat last | grep banana
-           Only slash commands redirect; quoted, escaped, or pasted operators stay literal
-           The prompt stays open while a turn runs: a message typed then is queued and
-           joins the conversation at the next model turn. @2,3 TEXT or @2 @3 TEXT reaches several agents.
-           @* TEXT reaches every active agent, including the main chat when it is running.
-           @@ TEXT and bare @ TEXT are aliases for @* TEXT.
-           @ alone prints usage help.
-           Commands run right away too; a setting changed then reaches the next turn.
-           Child agents print in blocks prefixed agent#PID; /set ui.subagents picks how much.
+    $NAME [TEXT]           Send a prompt or skill; /prompts lists names
+    """
+
+  private static let shellHelp = """
+    Input:
+      <<WORD              Start a multiline message; WORD alone ends it
+      $NAME [TEXT]        Send a named prompt or skill; /prompts lists names
+      !COMMAND            Run a system shell command (interactive programs work)
+
+    Redirect slash-command output:
+      /COMMAND > FILE     Overwrite a file
+      /COMMAND >> FILE    Append to a file
+      /COMMAND | COMMAND  Pipe stdout to a shell command
+      Examples: /chat log > log.txt
+                /chat last | grep banana
+      Only slash commands redirect; quoted, escaped, or pasted operators stay literal.
+
+    While a turn runs:
+      Messages are queued for the next model turn. Commands run right away;
+      setting changes reach the next turn.
+      @2,3 TEXT or @2 @3 TEXT sends to several agents.
+      @* TEXT sends to every active agent, including the running main chat.
+      @@ TEXT and bare @ TEXT are aliases for @* TEXT. @ alone shows usage.
+      Child output uses agent#PID blocks; /set ui.subagents controls how much.
     """
 
   private static let keysHelp = """

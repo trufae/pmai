@@ -161,8 +161,18 @@ def main():
         names = re.findall(r'(?m)^(/[a-z]+)\b', commands)
         assert len(names) > 20 and names == sorted(names), names
         assert '/stop' in names and '/retry' not in names, names
-        assert '/keys' in names, names
+        assert '/keys' not in names, names
+        assert '/help shell' in commands and '/help keys' in commands, commands
+        assert '$NAME [TEXT]' in commands, commands
+        assert '<<WORD' not in commands and 'agent#PID' not in commands, commands
         assert 'Ctrl+' not in commands and 'Shift+Enter' not in commands, commands
+        for shell in run(('/help shell', '/help /shell'), split=True):
+            assert '<<WORD' in shell and '!COMMAND' in shell, shell
+            assert '/COMMAND > FILE' in shell and '/COMMAND >> FILE' in shell, shell
+            assert '/chat last | grep banana' in shell, shell
+            assert 'quoted, escaped, or pasted operators stay literal' in shell, shell
+            assert '@2,3 TEXT' in shell and '@* TEXT' in shell, shell
+            assert 'Messages are queued for the next model turn' in shell, shell
         for keys in run(('/keys', '/help keys', '/help /keys'), split=True):
             assert 'Keyboard shortcuts:' in keys, keys
             assert 'Shift+Enter adds a line' in keys, keys

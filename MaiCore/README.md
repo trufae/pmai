@@ -551,6 +551,10 @@ to rename the current provider. The active chat follows the rename, while other
 saved chats retain their independent snapshots. See
 `doc/edit.md` for everything `/edit` reaches.
 
+`/help` lists commands and the `$NAME [TEXT]` prompt/skill syntax. Use
+`/help shell` for input, shell commands, redirects, and agent messages, or
+`/help keys` for keyboard shortcuts.
+
 On a terminal the prompt never goes away: the bottom two rows are reserved for
 a status line and the input line, and everything else scrolls above them.
 The status shows the current directory once, the agent, estimated context as
