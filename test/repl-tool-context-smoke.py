@@ -109,7 +109,7 @@ def main():
                     output.clear()
                     os.write(master, (text + '\r').encode())
 
-                def next_call(expect_below=None):
+                def next_call(previous=None, expect_below=None):
                     wait_for(lambda: not calls.empty())
                     request, gate = calls.get_nowait()
 
@@ -124,8 +124,10 @@ def main():
                         return int(messages), tokens
 
                     # Provider calls and supervisor redraws arrive on separate
-                    # tasks; wait for the projected context to reach the UI.
+                    # tasks; wait for both the assistant and its tool result
+                    # to reach the UI, rather than accepting an older redraw.
                     wait_for(lambda: latest_size() is not None
+                             and (previous is None or latest_size()[0] >= previous[0] + 2)
                              and (expect_below is None or latest_size()[1] < expect_below))
                     size = latest_size()
                     output.clear()
@@ -141,11 +143,11 @@ def main():
                     send('Inspect both files and preserve the boundary condition.')
                     first, gate, initial = next_call()
                     gate.set()
-                    second, gate, grown = next_call()
+                    second, gate, grown = next_call(initial)
                     assert evidence in json.dumps(second).replace('\\n', '\n'), second
                     assert grown[0] > initial[0] and grown[1] > initial[1] + 3000, (initial, grown)
                     gate.set()
-                    third, gate, final = next_call(expect_below=grown[1] / 2 if mode == 'tools' else None)
+                    third, gate, final = next_call(grown, expect_below=grown[1] / 2 if mode == 'tools' else None)
                     assert final[0] > grown[0], (grown, final)
                     if mode == 'tools':
                         assert final[1] < grown[1] / 2, (grown, final)

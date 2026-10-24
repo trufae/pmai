@@ -651,8 +651,12 @@ enum MaiRunToolError: LocalizedError {
           try lock.withLock {
             guard !stopping else { throw CancellationError() }
             if !interactive {
-              stdoutSource = try monitor(stdoutPipe.fileHandleForReading, isStderr: false)
-              stderrSource = try monitor(stderrPipe.fileHandleForReading, isStderr: true)
+              #if os(Linux) || os(Android)
+                try monitorPipes()
+              #else
+                stdoutSource = try monitor(stdoutPipe.fileHandleForReading, isStderr: false)
+                stderrSource = try monitor(stderrPipe.fileHandleForReading, isStderr: true)
+              #endif
             }
             process.terminationHandler = { [weak self] _ in self?.markExited() }
             try process.run()
@@ -669,6 +673,51 @@ enum MaiRunToolError: LocalizedError {
           throw error
         }
       }
+
+      #if os(Linux) || os(Android)
+        /// Linux Dispatch read sources can race during concurrent EOF teardown
+        /// (swift-corelibs-libdispatch#949). Keep both pipes on one poll thread;
+        /// it owns their descriptors until finishing has stopped all reads.
+        private func monitorPipes() throws {
+          let handles = [stdoutPipe.fileHandleForReading, stderrPipe.fileHandleForReading]
+          let descriptors = try handles.map { handle -> pollfd in
+            let fd = handle.fileDescriptor
+            let flags = fcntl(fd, F_GETFL)
+            guard flags >= 0, fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0 else {
+              throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+            }
+            return pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+          }
+          readersClosed.enter()
+          let thread = Thread { [self, descriptors] in
+            var descriptors = descriptors
+            defer {
+              for handle in handles { try? handle.close() }
+              readersClosed.leave()
+            }
+            while !lock.withLock({ finishing }) {
+              for index in descriptors.indices {
+                if lock.withLock({ index == 0 ? stdoutClosed : stderrClosed }) {
+                  descriptors[index].fd = -1
+                }
+              }
+              if descriptors.allSatisfy({ $0.fd < 0 }) { return }
+              let ready = poll(&descriptors, nfds_t(descriptors.count), 50)
+              if ready < 0 {
+                if errno == EINTR { continue }
+                lock.withLock { readError = NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+                finish()
+                return
+              }
+              for index in descriptors.indices where descriptors[index].revents != 0 {
+                receive(handles[index], isStderr: index == 1)
+              }
+            }
+          }
+          thread.name = "pmai-run-output"
+          thread.start()
+        }
+      #endif
 
       private func monitor(_ handle: FileHandle, isStderr: Bool) throws -> DispatchSourceRead {
         let fd = handle.fileDescriptor
