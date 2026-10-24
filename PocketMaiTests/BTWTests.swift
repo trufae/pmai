@@ -92,6 +92,10 @@ final class BTWTests: XCTestCase {
     XCTAssertTrue(acceptedIdle)
     try await waitUntil { self.store.btwQuestions.last?.isRunning == false }
     XCTAssertEqual(store.btwQuestions.last?.answer, "Answer: idle")
+    XCTAssertEqual(store.btwQuestions.map(\.answer), ["Answer: side", "Answer: another", "Answer: idle"])
+    let dismissed = store.btwQuestions[1].id
+    store.dismissBTW(dismissed)
+    XCTAssertEqual(store.btwQuestions.map(\.answer), ["Answer: side", "Answer: idle"])
     XCTAssertEqual(store.currentConversation?.messages, history)
     XCTAssertEqual(store.currentConversation?.id, id)
   }

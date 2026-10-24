@@ -414,6 +414,16 @@ struct ChatView: View {
           showingSubagents = true
         }
       }
+      if !currentBTWQuestions.isEmpty {
+        BTWQuestionsBar(
+          questions: currentBTWQuestions,
+          appearance: store.settings.appearance,
+          renderMarkdown: store.settings.renderMarkdownInChat,
+          renderImages: store.settings.renderMarkdownImagesInChat,
+          onStop: { store.stopBTW($0) },
+          onDismiss: { store.dismissBTW($0) })
+          .id(currentConversationID)
+      }
       messages
         .overlay(alignment: .bottomTrailing) {
           browserCardOverlay
@@ -807,7 +817,6 @@ struct ChatView: View {
               compactLoadingState
             } else if !isPreviewingConversation && currentConversationIsEmpty
               && liveVoiceSession.previewMessage == nil
-              && currentBTWQuestions.isEmpty
             {
               emptyState
                 .containerRelativeFrame(.vertical)
@@ -955,17 +964,6 @@ struct ChatView: View {
                   )
                   .id(message.id)
                 }
-              }
-            }
-            if !isPreviewingConversation, remoteChat == nil {
-              ForEach(currentBTWQuestions) { question in
-                BTWQuestionCard(
-                  question: question,
-                  appearance: store.settings.appearance,
-                  renderMarkdown: store.settings.renderMarkdownInChat,
-                  renderImages: store.settings.renderMarkdownImagesInChat,
-                  onStop: { store.stopBTW(question.id) },
-                  onDismiss: { store.dismissBTW(question.id) })
               }
             }
             if !renderedMessages.isEmpty,
@@ -1126,10 +1124,6 @@ struct ChatView: View {
         .onChange(of: currentQueuedUserMessageIDs) { _, _ in
           guard !messageFontPinchSession.isActive, !userScrolledAfterLastMessage else { return }
           scrollToBottomAfterLayout(proxy, animated: true, followResponse: true)
-        }
-        .onChange(of: currentBTWQuestions) { _, _ in
-          guard !messageFontPinchSession.isActive, !userScrolledAfterLastMessage else { return }
-          scrollToBottomAfterLayout(proxy, animated: true)
         }
         .onChange(of: currentFollowUpPresentationSnapshot) { old, new in
           guard old != new,
