@@ -227,6 +227,15 @@ final class AppStore: ObservableObject {
   @Published var respondingConversationIDs: Set<UUID> = []
   @Published private(set) var loadingLocalModelConversationIDs: Set<UUID> = []
   @Published private(set) var queuedUserMessagesByConversationID: [UUID: [QueuedChatMessage]] = [:]
+  private struct ThenAction {
+    let conversationID: UUID
+    let message: QueuedChatMessage
+  }
+  private var thenActions: [ThenAction] = []
+  private var thenDrainTask: Task<Void, Never>?
+  private var thenDrainRequested = false
+  private var preparingConversationIDs: Set<UUID> = []
+  @Published var commandOutput: String?
   @Published var btwQuestions: [BTWQuestion] = []
   @Published var showingVersion = false
   var btwTasks: [UUID: Task<Void, Never>] = [:]
@@ -301,6 +310,7 @@ final class AppStore: ObservableObject {
     in conversationID: UUID
   ) -> Bool {
     if handleLocalChatCommand(rawPrompt) { return true }
+    if handleThenCommand(rawPrompt, attachments: attachments, in: conversationID) { return true }
     if let question = BTWQuestion.prompt(in: rawPrompt) {
       return startBTW(question, in: conversationID)
     }
@@ -314,6 +324,109 @@ final class AppStore: ObservableObject {
     queuedUserMessagesByConversationID[conversationID, default: []].append(
       QueuedChatMessage(text: prompt, attachments: attachments))
     return true
+  }
+
+  /// Kept apart from the tool-loop inbox: each line becomes a new submission
+  /// only after every chat, side question and child agent has stopped working.
+  static func isThenCommand(_ text: String) -> Bool {
+    let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard text.hasPrefix("/"), let command = PromptSlashCommand.parse(text) else { return false }
+    return ["then", "unthen"].contains(command.command.lowercased())
+  }
+
+  private func handleThenCommand(
+    _ text: String, attachments: [ChatAttachment], in conversationID: UUID
+  ) -> Bool {
+    guard Self.isThenCommand(text), let command = PromptSlashCommand.parse(text) else { return false }
+    if command.command.lowercased() == "unthen" {
+      thenActions.removeAll()
+    } else if command.remainder.isEmpty {
+      commandOutput = thenActions.isEmpty ? "No /then actions queued."
+        : thenActions.enumerated().map { "\($0.offset + 1). \($0.element.message.text)" }.joined(separator: "\n")
+    } else {
+      thenActions.append(ThenAction(conversationID: conversationID,
+        message: QueuedChatMessage(text: command.remainder, attachments: attachments)))
+      drainThenQueue()
+    }
+    return true
+  }
+
+  private var canRunThen: Bool {
+    !isResponding && btwTasks.isEmpty && !isCompacting && !isUpdatingMemory
+      && followUpTasks.isEmpty && preparingConversationIDs.isEmpty
+  }
+
+  func drainThenQueue() {
+    guard !thenActions.isEmpty else { return }
+    thenDrainRequested = true
+    guard thenDrainTask == nil else { return }
+    thenDrainTask = Task { @MainActor [weak self] in
+      guard let self else { return }
+      thenDrainRequested = false
+      defer {
+        thenDrainTask = nil
+        if thenDrainRequested { drainThenQueue() }
+      }
+      while canRunThen, !thenActions.isEmpty, !Task.isCancelled {
+        guard await agentSupervisor.liveProcesses().allSatisfy({
+          $0.depth == 0 && agentProcessIDs.values.contains($0.pid)
+        }) else { return }
+        // Awaiting the supervisor lets other main-actor submissions run.
+        guard canRunThen, !thenActions.isEmpty, !Task.isCancelled else { return }
+        let action = thenActions.removeFirst()
+        guard conversation(withID: action.conversationID) != nil else { continue }
+        _ = await send(prompt: action.message.text, attachments: action.message.attachments,
+          in: action.conversationID)
+      }
+    }
+  }
+
+  /// Native equivalents of the CLI commands that can start a deferred turn.
+  /// Resolve them at execution time so /model affects subsequent queued lines.
+  private func runChatCommand(_ text: String, in conversationID: UUID) async -> Bool? {
+    guard text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/"),
+      let command = PromptSlashCommand.parse(text),
+      let index = indexedConversationIndex(for: conversationID) else { return nil }
+    switch command.command.lowercased() {
+    case "model", "model-chat":
+      if command.remainder.isEmpty {
+        commandOutput = conversations[index].modelID
+      } else {
+        conversations[index].modelID = command.remainder
+        conversations[index].lastContextSignature = nil
+        conversations[index].updatedAt = Date()
+        upsertSummary(for: conversations[index])
+        saveConversations()
+      }
+      return true
+    case "skills":
+      let catalog = SkillTools.catalog(for: conversations[index], settings: settings)
+      let fields = command.remainder.split(maxSplits: 2, whereSeparator: \Character.isWhitespace)
+      guard let action = fields.first else {
+        commandOutput = catalog.skills.map(\.name).joined(separator: "\n")
+        return true
+      }
+      guard ["prompt", "send", "use"].contains(action.lowercased()), fields.count > 1,
+        let skill = catalog.skill(named: String(fields[1])) else {
+        errorMessage = "Usage: /skills prompt NAME [TEXT]   (/skills lists the names)"
+        return false
+      }
+      guard SkillTools.enabledSkills(for: conversations[index], settings: settings)
+        .contains(where: { $0.toolName == skill.toolName }) else {
+        errorMessage = "Skill '\(skill.name)' has no enabled tool for this agent."
+        return false
+      }
+      let arguments = fields.count > 2 ? String(fields[2]) : ""
+      return await send(prompt: skill.prompt(arguments: arguments), in: conversationID)
+    default:
+      // Named prompt shortcuts keep their existing expansion path. An unknown
+      // slash command must never turn into an accidental model request.
+      guard promptShortcutTarget(command: command.command) != nil else {
+        errorMessage = "Unknown command '/\(command.command)'."
+        return false
+      }
+      return nil
+    }
   }
 
   func removeQueuedUserMessage(id: UUID, from conversationID: UUID) {
@@ -442,8 +555,12 @@ final class AppStore: ObservableObject {
   }
 
   @Published var errorMessage: String?
-  @Published var isUpdatingMemory = false
-  @Published var isCompacting = false
+  @Published var isUpdatingMemory = false {
+    didSet { if !isUpdatingMemory { drainThenQueue() } }
+  }
+  @Published var isCompacting = false {
+    didSet { if !isCompacting { drainThenQueue() } }
+  }
   @Published private(set) var autocompactionApprovalRequests: [AutocompactionApprovalRequest] = []
   private var autoCompactingConversationIDs: Set<UUID> = []
   @Published var endpointStatuses: [UUID: EndpointConnectionState] = [:]
@@ -1694,6 +1811,8 @@ final class AppStore: ObservableObject {
     clearAllFollowUpSuggestions()
     conversationDrafts.removeAll()
     queuedUserMessagesByConversationID.removeAll()
+    thenActions.removeAll()
+    thenDrainTask?.cancel()
     if !hasLoadedPersistedDrafts {
       deletedDraftIDsBeforeLoad.formUnion(removedIDs)
       dirtyDraftIDsBeforeLoad.subtract(removedIDs)
@@ -1731,6 +1850,8 @@ final class AppStore: ObservableObject {
     stopAllAgentProcesses(reason: "Factory reset")
     respondingConversationIDs.removeAll()
     queuedUserMessagesByConversationID.removeAll()
+    thenActions.removeAll()
+    thenDrainTask?.cancel()
     conversationDrafts.removeAll()
     messageBookmarks.removeAll()
     streamingTextStore.removeAll()
@@ -2066,13 +2187,21 @@ final class AppStore: ObservableObject {
     displayText rawDisplayText: String? = nil,
     voiceRecordingFilename: String? = nil,
     attachments: [ChatAttachment] = [],
-    promptShortcutSelection: PromptShortcutSelection? = nil
+    promptShortcutSelection: PromptShortcutSelection? = nil,
+    in targetConversationID: UUID? = nil
   ) async -> Bool {
     if promptShortcutSelection == nil, handleLocalChatCommand(rawPrompt) { return true }
-    if promptShortcutSelection == nil, let question = BTWQuestion.prompt(in: rawPrompt) {
-      if currentConversation == nil { newConversation() }
-      guard let conversationID = currentConversation?.id else { return false }
-      return startBTW(question, in: conversationID)
+    guard !rawPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      || !attachments.isEmpty || promptShortcutSelection != nil else { return false }
+    if currentConversation == nil && targetConversationID == nil { newConversation() }
+    guard let conversationID = targetConversationID ?? currentConversation?.id,
+      indexedConversationIndex(for: conversationID) != nil else { return false }
+    if promptShortcutSelection == nil {
+      if handleThenCommand(rawPrompt, attachments: attachments, in: conversationID) { return true }
+      if let question = BTWQuestion.prompt(in: rawPrompt) {
+        return startBTW(question, in: conversationID)
+      }
+      if let handled = await runChatCommand(rawPrompt, in: conversationID) { return handled }
     }
     let resolved = resolvedPromptSubmission(
       rawPrompt: rawPrompt,
@@ -2081,13 +2210,10 @@ final class AppStore: ObservableObject {
     guard !resolved.prompt.isEmpty || !attachments.isEmpty || resolved.systemPromptID != nil else {
       return false
     }
-    if currentConversation == nil {
-      newConversation()
-    }
-    guard let index = currentConversationIndex else { return false }
-    let conversationID = conversations[index].id
+    guard let index = indexedConversationIndex(for: conversationID) else { return false }
     normalizeCurrentAppleConversationIfNeeded(index: index)
-    guard !respondingConversationIDs.contains(conversationID) else { return false }
+    guard !respondingConversationIDs.contains(conversationID),
+      !preparingConversationIDs.contains(conversationID) else { return false }
     if let systemPromptID = resolved.systemPromptID {
       conversations[index].systemPromptID = systemPromptID
       conversations[index].updatedAt = Date()
@@ -2103,6 +2229,11 @@ final class AppStore: ObservableObject {
     }
 
     errorMessage = nil
+    preparingConversationIDs.insert(conversationID)
+    defer {
+      preparingConversationIDs.remove(conversationID)
+      drainThenQueue()
+    }
     await composeUserTurn(
       prompt: resolved.prompt,
       displayText: resolved.displayText,
@@ -2756,7 +2887,7 @@ final class AppStore: ObservableObject {
       locationService: { self.locationService }
     )
 
-    guard let i = indexedConversationIndex(for: conversationID) else { return }
+    guard !Task.isCancelled, let i = indexedConversationIndex(for: conversationID) else { return }
     switch mode {
     case .append:
       let userMessage = ChatMessage(
@@ -2937,6 +3068,7 @@ final class AppStore: ObservableObject {
           }
           activityTurnFinished(conversationID: conversationID)
           completeAgentProcess(for: conversationID)
+          drainThenQueue()
         }
       }
       guard await autoCompactIfNeeded(conversationID: conversationID), !Task.isCancelled else {
@@ -3051,6 +3183,7 @@ final class AppStore: ObservableObject {
     followUpTasks[conversationID] = nil
     followUpTaskTokens[conversationID] = nil
     generatingFollowUpSourceMessageIDsByConversationID[conversationID] = nil
+    drainThenQueue()
   }
 
   private func beginResponseBackgroundTask(for conversationID: UUID) {
@@ -4846,6 +4979,7 @@ final class AppStore: ObservableObject {
     stopAgentProcesses(for: removedID, reason: "Chat deleted")
     clearFollowUpSuggestions(in: removedID)
     queuedUserMessagesByConversationID[removedID] = nil
+    thenActions.removeAll { $0.conversationID == removedID }
     if conversationDrafts.removeValue(forKey: removedID) != nil {
       if !hasLoadedPersistedDrafts {
         deletedDraftIDsBeforeLoad.insert(removedID)
@@ -4869,6 +5003,8 @@ final class AppStore: ObservableObject {
     return !hasDraft
       && !respondingConversationIDs.contains(conversation.id)
       && !btwQuestions.contains { $0.conversationID == conversation.id }
+      && !thenActions.contains { $0.conversationID == conversation.id }
+      && !preparingConversationIDs.contains(conversation.id)
       && conversation.isDisposable
   }
 
@@ -6409,6 +6545,7 @@ final class AppStoreViewObservation: ObservableObject {
     case .content:
       observe(store.$settings)
       observe(store.$errorMessage)
+      observe(store.$commandOutput)
       observe(store.$pendingWebXDCImport)
       observe(store.$toolCallApprovalRequests)
       observe(store.$autocompactionApprovalRequests)

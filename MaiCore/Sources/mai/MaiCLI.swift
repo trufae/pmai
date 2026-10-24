@@ -2182,6 +2182,8 @@ struct MaiCLI {
     var btwTurns: [AgentPID: REPLTurn] = [:]
     var conversationTurns: [AgentPID: REPLTurn] = [:]
     var foregroundCommand: String?
+    var thenLines: [String] = []
+    var drainingThen = false
     var focus: REPLMessageTarget = .main
     var approvals: [(request: ApprovalRequest, reply: REPLApprovalReply)] = []
     var editingApproval: (request: ApprovalRequest, reply: REPLApprovalReply)?
@@ -2664,7 +2666,7 @@ struct MaiCLI {
       if isatty(STDIN_FILENO) != 0 {
         services.modelCatalog.select(session.profile.provider, runtime: runtime)
       }
-      guard loop.readerParked, !loop.exiting else { return }
+      guard loop.readerParked, !loop.exiting, !loop.drainingThen else { return }
       await refreshTerminalSettings()
       if screen == nil {
         // Announcing while the classic editor owns the row would corrupt it,
@@ -3568,7 +3570,7 @@ struct MaiCLI {
         guard loop.modalPrompt == nil, !loop.exiting else { return false }
         await switchAgent(selection)
       case .line(let raw, let heredoc, let promptID, _):
-        loop.readerParked = true
+        if !loop.drainingThen { loop.readerParked = true }
         let typed = heredoc ? raw : raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if !typed.hasPrefix("/"), promptID != loop.modalPrompt?.input.id {
           await terminal.note("The prompt changed before submission. Please answer the current prompt.", tone: .warning)
@@ -3588,6 +3590,26 @@ struct MaiCLI {
           // Use the same event as Ctrl+C, including pending queue decisions.
           interruptHandler.requestInterrupt()
           return false
+        }
+        if !heredoc {
+          let fields = text.split(maxSplits: 1, whereSeparator: \Character.isWhitespace)
+          if fields.first == "/then" {
+            if fields.count > 1 {
+              loop.thenLines.append(String(fields[1]))
+              await terminal.note("then: queued (\(loop.thenLines.count) waiting)")
+            } else {
+              await terminal.line(loop.thenLines.isEmpty ? "No /then actions queued."
+                : loop.thenLines.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n"))
+            }
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
+          if fields.first == "/unthen" {
+            loop.thenLines.removeAll()
+            await terminal.note("Cleared /then queue.")
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
         }
         if loop.chatChop != nil {
           if !heredoc, text.hasPrefix("/") {
@@ -4591,14 +4613,16 @@ struct MaiCLI {
       return false
     }
 
-    for await event in events {
-      var event = event
+    func dispatchEvent(_ input: REPLEvent) async -> Bool {
+      var event = input
       var redirection: REPLRedirection?
       switch event {
       case .line(let raw, let heredoc, let promptID, let pasted):
         let isCommand = raw.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/")
         redirection = isCommand ? nil : loop.pendingQueueRedirection
-        if !heredoc, isCommand {
+        // A queued line's redirection belongs to its eventual execution.
+        let command = raw.split(whereSeparator: \Character.isWhitespace).first
+        if !heredoc, isCommand, command != "/then" {
           do {
             if let syntax = try REPLRedirectSyntax.parse(raw, pasted: pasted) {
               switch syntax.destination {
@@ -4614,10 +4638,10 @@ struct MaiCLI {
               event = .line(syntax.input, heredoc: false, promptID: promptID)
             }
           } catch {
-            loop.readerParked = true
+            if !loop.drainingThen { loop.readerParked = true }
             await terminal.note("redirection: \(error.localizedDescription)", tone: .error)
             await releaseIfIdle(workspace: workspace)
-            continue
+            return false
           }
         }
       case .turnFinished(let pid, _):
@@ -4640,7 +4664,33 @@ struct MaiCLI {
           await redirection.finish(terminal: terminal)
         }
       }
+      return exits
+    }
+
+    for await event in events {
+      if await dispatchEvent(event) { break }
+      var exits = false
+      // Turns must have settled their transcripts, and background children
+      // must also have finished, before the next line reaches the dispatcher.
+      loop.drainingThen = true
+      while !loop.exiting, !loop.hasTurns, loop.modalPrompt == nil,
+        !loop.thenLines.isEmpty,
+        await runtime.supervisor.liveProcesses().allSatisfy({
+          // Chat roots may have been allocated by /queue before their first
+          // turn. With no REPL turn in flight, these are idle placeholders.
+          $0.depth == 0 && chatProcessIDs.values.contains($0.pid)
+        })
+      {
+        let line = loop.thenLines.removeFirst()
+        await terminal.note("then: \(line)")
+        if await dispatchEvent(.line(line, heredoc: false, promptID: nil)) {
+          exits = true
+          break
+        }
+      }
+      loop.drainingThen = false
       if exits { break }
+      await releaseIfIdle(workspace: workspace)
     }
 
     loop.beginExit()
@@ -12997,7 +13047,7 @@ struct MaiCLI {
       "/set export.", "/set export.tools on", "/set export.tools off",
       "/set export.thinking on", "/set export.thinking off",
       "/fork", "/fork --empty", "/subagents", "/subagents main", "/subagents parent",
-      "/subagents next", "/subagents prev", "/btw ",
+      "/subagents next", "/subagents prev", "/btw ", "/then ", "/unthen",
       "/help memory", "/help agents", "/help jobs", "/help ps", "/help chat", "/help edit", "/help tools",
       "/agent acp list", "/agent acp add ", "/agents acp list",
       "/help remote", "/remote", "/remote serve", "/remote stop", "/remote qr", "/remote status",
@@ -13529,8 +13579,10 @@ struct MaiCLI {
     /stop                  Interrupt the current turn
     /subagents [PID|main]  List or switch agent conversations
     /theme                 List, apply, or customize terminal themes
+    /then [LINE]           Queue a prompt or command until all tasks finish; no args lists it
     /todo                  Show or edit the project's todo list
     /tools                 List tool groups for this agent
+    /unthen                Clear all pending /then actions
     /vdb                   Index or search local documentation and code
     /version               Print the pmai version
     /view SOURCE           Read-only top split in buffer mode; /help view

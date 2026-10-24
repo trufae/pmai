@@ -2934,7 +2934,7 @@ private struct ChatComposer: View {
   }
 
   private var canSubmitDraft: Bool {
-    (!isResponding || isBTW || isVersionCommand) && (hasDraftText || !pendingAttachments.isEmpty)
+    (!isResponding || isImmediateCommand) && (hasDraftText || !pendingAttachments.isEmpty)
       && inputSession.canSubmit
   }
 
@@ -2946,8 +2946,12 @@ private struct ChatComposer: View {
     remoteChat == nil && BTWQuestion.prompt(in: draftText) != nil
   }
 
+  private var isImmediateCommand: Bool {
+    isBTW || isVersionCommand || (remoteChat == nil && AppStore.isThenCommand(draftText))
+  }
+
   private var canQueueDraft: Bool {
-    remoteChat == nil && isResponding && hasDraftText && !isBTW && !isVersionCommand
+    remoteChat == nil && isResponding && hasDraftText && !isImmediateCommand
   }
 
   private var shouldShowPromptAutocomplete: Bool {
@@ -3009,6 +3013,10 @@ private struct ChatComposer: View {
       PromptShortcutMenuOption(
         selection: nil, commandName: "version", displayName: "App version",
         detail: "Version and build", systemImage: "info.circle"),
+      PromptShortcutMenuOption(selection: nil, commandName: "then", displayName: "Queue action",
+        detail: "Runs after all tasks finish; no arguments lists the queue", systemImage: "text.badge.plus"),
+      PromptShortcutMenuOption(selection: nil, commandName: "unthen", displayName: "Clear queued actions",
+        detail: "Drops all pending /then lines", systemImage: "trash"),
     ]
     let options = draftText.hasPrefix("$") ? (isResponding ? [] : systemOptions + userOptions) : commands
     guard let fragment = PromptSlashCommand.fragment(in: draftText),
@@ -3449,7 +3457,7 @@ private struct ChatComposer: View {
   }
 
   private var trailingActionSystemImage: String {
-    if (isBTW || isVersionCommand) && canSubmitDraft { return "arrow.up" }
+    if isImmediateCommand && canSubmitDraft { return "arrow.up" }
     if isResponding {
       return canQueueDraft ? "arrow.up.to.line" : "stop.fill"
     }
@@ -3460,7 +3468,7 @@ private struct ChatComposer: View {
   }
 
   private var trailingActionColor: Color {
-    if (isBTW || isVersionCommand) && canSubmitDraft { return .accentColor }
+    if isImmediateCommand && canSubmitDraft { return .accentColor }
     if isResponding {
       return canQueueDraft ? .orange : .red
     }
@@ -3469,7 +3477,7 @@ private struct ChatComposer: View {
 
   private var trailingActionHelp: String {
     if isVersionCommand { return "Show app version" }
-    if isBTW && canSubmitDraft { return "Ask a side question now" }
+    if isImmediateCommand && canSubmitDraft { return isBTW ? "Ask a side question now" : "Manage queued actions" }
     if isResponding {
       return canQueueDraft ? "Queue message" : "Stop response"
     }
