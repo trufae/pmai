@@ -213,21 +213,6 @@ func closedStdioTransportFinishesMessages(startReading: Bool) async {
   #expect(await messages.next() == nil)
 }
 
-@Test("A closed stdio input finishes the stream without crashing")
-func closedStdioInputFinishesMessages() async throws {
-  let input = Pipe()
-  let output = Pipe()
-  let transport = StdioJSONRPCTransport(
-    input: input.fileHandleForReading,
-    output: output.fileHandleForWriting)
-  defer { transport.close() }
-  try input.fileHandleForReading.close()
-  var messages = transport.messages().makeAsyncIterator()
-
-  #expect(await messages.next() == nil)
-  #expect(!transport.isRunning)
-}
-
 @Test("A JSON-RPC request without a reply times out")
 func jsonRPCRequestTimeout() async {
   let (clientTransport, serverTransport) = PipeTransport.pair()

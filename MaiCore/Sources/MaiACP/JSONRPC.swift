@@ -221,17 +221,18 @@ public final class StdioJSONRPCTransport: JSONRPCTransport, @unchecked Sendable 
   }
 
   public func close() {
-    let state: (shouldClose: Bool, pending: AsyncStream<JSONRPCMessage>.Continuation?) =
+    let state: (shouldClose: Bool, pending: AsyncStream<JSONRPCMessage>.Continuation?, closeInput: Bool) =
       stateLock.withLock {
-        guard !isClosed else { return (false, nil) }
+        guard !isClosed else { return (false, nil, false) }
         isClosed = true
         let pending = continuation
         continuation = nil
-        return (true, pending)
+        return (true, pending, stream == nil)
       }
     guard state.shouldClose else { return }
     state.pending?.finish()
-    try? input.close()
+    // Once started, the reader owns input so close cannot race availableData.
+    if state.closeInput { try? input.close() }
     // A sender holds this lock from the closed-state check through its write.
     // Closing the handle under the same lock prevents close/write races.
     writeLock.withLock { try? output.close() }
@@ -252,9 +253,11 @@ public final class StdioJSONRPCTransport: JSONRPCTransport, @unchecked Sendable 
   private func startReading() {
     let thread = Thread { [weak self] in
       guard let self else { return }
+      defer { try? self.input.close() }
       var buffer = Data()
-      // The throwing API handles close() racing this reader without an NSException.
-      while let chunk = try? self.input.read(upToCount: 64 * 1024), !chunk.isEmpty {
+      while !self.isClosedNow {
+        let chunk = self.input.availableData
+        if chunk.isEmpty { break }
         buffer.append(chunk)
         // A network peer must not grow an unterminated frame without bound.
         guard buffer.count <= 16 * 1024 * 1024 else { self.close(); return }
@@ -292,7 +295,9 @@ public final class StdioJSONRPCTransport: JSONRPCTransport, @unchecked Sendable 
 
   private func drainErrors(from handle: FileHandle) {
     let thread = Thread { [weak self] in
-      while let self, let chunk = try? handle.read(upToCount: 64 * 1024), !chunk.isEmpty {
+      while let self {
+        let chunk = handle.availableData
+        if chunk.isEmpty { break }
         guard let text = String(data: chunk, encoding: .utf8) else { continue }
         self.stateLock.withLock {
           self.errorTail.append(contentsOf: text.split(separator: "\n").map(String.init))
