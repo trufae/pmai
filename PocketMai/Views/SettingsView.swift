@@ -4611,7 +4611,7 @@ private struct UserPromptDetailView: View {
         TextField("Name", text: $draftName)
           .focused($isNameFocused)
       } footer: {
-        Text("Used as /name in the chat composer.")
+        Text("Used as $name in the chat composer.")
       }
       Section {
         TextEditor(text: $draftText)

@@ -287,6 +287,13 @@ struct ChatView: View {
 
   private var chatViewWithSheetsAndToolbar: some View {
     chatViewWithToolbar
+      .alert("PocketMai Version", isPresented: Binding(
+        get: { store.showingVersion }, set: { store.showingVersion = $0 }
+      )) {
+        Button("OK", role: .cancel) { store.showingVersion = false }
+      } message: {
+        Text(ConversationExportEnvelope.currentPocketMaiVersion)
+      }
       .alert("Rename", isPresented: $showingRenameAlert) {
         TextField("Chat title", text: $renameDraft)
           .onSubmit {
@@ -2864,6 +2871,8 @@ private struct PromptShortcutMenuOption: Identifiable, Equatable {
   var detail: String
   var systemImage: String
 
+  var prefix: String { selection == nil ? "/" : "$" }
+
   var id: String {
     selection.map { "\($0.kind.rawValue):\($0.id.uuidString)" } ?? "builtin:\(commandName)"
   }
@@ -2925,8 +2934,12 @@ private struct ChatComposer: View {
   }
 
   private var canSubmitDraft: Bool {
-    (!isResponding || isBTW) && (hasDraftText || !pendingAttachments.isEmpty)
+    (!isResponding || isBTW || isVersionCommand) && (hasDraftText || !pendingAttachments.isEmpty)
       && inputSession.canSubmit
+  }
+
+  private var isVersionCommand: Bool {
+    remoteChat == nil && draftText.trimmingCharacters(in: .whitespacesAndNewlines) == "/version"
   }
 
   private var isBTW: Bool {
@@ -2934,12 +2947,12 @@ private struct ChatComposer: View {
   }
 
   private var canQueueDraft: Bool {
-    remoteChat == nil && isResponding && hasDraftText && !isBTW
+    remoteChat == nil && isResponding && hasDraftText && !isBTW && !isVersionCommand
   }
 
   private var shouldShowPromptAutocomplete: Bool {
     remoteChat == nil && pendingPromptCompletion == nil
-      && draftText.hasPrefix("/")
+      && currentPromptCommandFragment != nil
       && !promptShortcutOptions.isEmpty
       && !promptAutocompleteIsSuppressed
   }
@@ -2989,12 +3002,15 @@ private struct ChatComposer: View {
         detail: "User prompt",
         systemImage: "text.quote")
     }
-    let builtin = PromptShortcutMenuOption(
-      selection: nil, commandName: "btw", displayName: "Side question",
-      detail: "Answers in parallel", systemImage: "bubble.left.and.bubble.right")
-    let options = [builtin] + (isResponding ? [] : (systemOptions + userOptions).filter {
-      $0.commandName.lowercased() != "btw"
-    })
+    let commands = [
+      PromptShortcutMenuOption(
+        selection: nil, commandName: "btw", displayName: "Side question",
+        detail: "Answers in parallel", systemImage: "bubble.left.and.bubble.right"),
+      PromptShortcutMenuOption(
+        selection: nil, commandName: "version", displayName: "App version",
+        detail: "Version and build", systemImage: "info.circle"),
+    ]
+    let options = draftText.hasPrefix("$") ? (isResponding ? [] : systemOptions + userOptions) : commands
     guard let fragment = PromptSlashCommand.fragment(in: draftText),
       !fragment.isEmpty
     else {
@@ -3433,7 +3449,7 @@ private struct ChatComposer: View {
   }
 
   private var trailingActionSystemImage: String {
-    if isBTW && canSubmitDraft { return "arrow.up" }
+    if (isBTW || isVersionCommand) && canSubmitDraft { return "arrow.up" }
     if isResponding {
       return canQueueDraft ? "arrow.up.to.line" : "stop.fill"
     }
@@ -3444,7 +3460,7 @@ private struct ChatComposer: View {
   }
 
   private var trailingActionColor: Color {
-    if isBTW && canSubmitDraft { return .accentColor }
+    if (isBTW || isVersionCommand) && canSubmitDraft { return .accentColor }
     if isResponding {
       return canQueueDraft ? .orange : .red
     }
@@ -3452,6 +3468,7 @@ private struct ChatComposer: View {
   }
 
   private var trailingActionHelp: String {
+    if isVersionCommand { return "Show app version" }
     if isBTW && canSubmitDraft { return "Ask a side question now" }
     if isResponding {
       return canQueueDraft ? "Queue message" : "Stop response"
@@ -3673,10 +3690,10 @@ private struct ChatComposer: View {
     guard canSubmitDraft else { return }
     composerFocused = false
     let submitted = draftText
-    let submittedIsBTW = isBTW
-    let submittedAttachments = submittedIsBTW ? [] : pendingAttachments
+    let submittedIsCommand = isBTW || isVersionCommand
+    let submittedAttachments = submittedIsCommand ? [] : pendingAttachments
     let submittedConversationID = conversationID
-    if !submittedIsBTW { pendingAttachments = [] }
+    if !submittedIsCommand { pendingAttachments = [] }
     draftText = ""
     persistDraftTextNow("", for: submittedConversationID)
     Task {
@@ -3685,7 +3702,7 @@ private struct ChatComposer: View {
         attachments: submittedAttachments)
       if !sent {
         draftText = submitted
-        if !submittedIsBTW { pendingAttachments = submittedAttachments }
+        if !submittedIsCommand { pendingAttachments = submittedAttachments }
         persistDraftTextNow(submitted, for: submittedConversationID)
       }
     }
@@ -3768,7 +3785,7 @@ private struct ChatComposer: View {
                 .foregroundStyle(Color.accentColor)
                 .frame(width: 18)
               VStack(alignment: .leading, spacing: 2) {
-                Text("/\(option.commandName)")
+                Text("\(option.prefix)\(option.commandName)")
                   .font(.callout.weight(.semibold))
                   .foregroundStyle(.primary)
                 HStack(spacing: 6) {
@@ -3796,10 +3813,7 @@ private struct ChatComposer: View {
 
   private func autocompletePrompt(_ option: PromptShortcutMenuOption) {
     let remainder = PromptSlashCommand.parse(draftText)?.remainder ?? ""
-    let completed =
-      remainder.isEmpty
-      ? "/\(option.commandName) "
-      : PromptSlashCommand.visualText(commandName: option.commandName, remainder: remainder)
+    let completed = "\(option.prefix)\(option.commandName) \(remainder)"
     // Rewriting the draft in the same update that dismisses the popover leaves
     // the composer's text view showing the typed fragment until it is tapped
     // again: the text change is swallowed by the presentation teardown. Close
