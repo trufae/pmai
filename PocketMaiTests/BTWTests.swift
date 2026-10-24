@@ -171,4 +171,91 @@ final class BTWTests: XCTestCase {
     try await waitUntil { self.store.btwQuestions.last?.isRunning == false }
     XCTAssertEqual(StubChatEndpoint.requests.last?["model"] as? String, source.modelID)
   }
+
+  func testThenRunsSeparateTurnsInOrderAndDispatchesModelCommand() async throws {
+    StubChatEndpoint.script = { request in
+      let messages = request["messages"] as? [[String: Any]] ?? []
+      let prompt = messages.last { $0["role"] as? String == "user" }?["content"] as? String ?? ""
+      return (StubChatEndpoint.completion(content: "Done: \(prompt)"), prompt.hasSuffix("main") ? 1 : 0)
+    }
+    let id = try XCTUnwrap(store.currentConversation?.id)
+    _ = await store.send(prompt: "main")
+    try await waitUntil { StubChatEndpoint.requests.count == 1 }
+    _ = await store.send(prompt: "/then first")
+    XCTAssertTrue(store.enqueueUserMessage(prompt: "/then /model next", in: id))
+    _ = await store.send(prompt: "/then second")
+    _ = await store.send(prompt: "/then")
+    XCTAssertEqual(store.commandOutput, "1. first\n2. /model next\n3. second")
+    XCTAssertEqual(StubChatEndpoint.requests.count, 1)
+    XCTAssertTrue(store.queuedUserMessages(in: id).isEmpty)
+    try await waitUntil {
+      StubChatEndpoint.requests.count == 3 && !self.store.isResponding
+    }
+    XCTAssertEqual(StubChatEndpoint.requests.compactMap { $0["model"] as? String }, ["stub", "stub", "next"])
+    let history = try XCTUnwrap(store.conversation(withID: id)?.messages)
+    XCTAssertEqual(history.filter { $0.role == .user }.map(\.text),
+      ["Previous private context", "main", "first", "second"])
+    let firstRequest = StubChatEndpoint.requests[1]["messages"] as? [[String: Any]] ?? []
+    XCTAssertTrue(firstRequest.contains { $0["role"] as? String == "assistant" })
+    _ = await store.send(prompt: "/then")
+    XCTAssertEqual(store.commandOutput, "No /then actions queued.")
+  }
+
+  func testUnthenClearsPendingCommandsDuringCompaction() async throws {
+    store.isCompacting = true
+    _ = await store.send(prompt: "/then dropped")
+    _ = await store.send(prompt: "/then /model dropped")
+    _ = await store.send(prompt: "/unthen")
+    store.isCompacting = false
+    _ = await store.send(prompt: "/then")
+    XCTAssertEqual(store.commandOutput, "No /then actions queued.")
+    XCTAssertEqual(store.currentConversation?.modelID, "stub")
+    XCTAssertTrue(StubChatEndpoint.requests.isEmpty)
+  }
+
+  func testThenWaitsForSideQuestionsAndBackgroundAgentsAndKeepsOriginChat() async throws {
+    StubChatEndpoint.script = { _ in (StubChatEndpoint.completion(content: "Done"), 0) }
+    let id = try XCTUnwrap(store.currentConversation?.id)
+    let child = await store.agentSupervisor.register(
+      runID: UUID(), parent: nil, agentID: "background", depth: 1)
+    _ = await store.send(prompt: "/btw side")
+    _ = await store.send(prompt: "/then /model origin-model")
+    _ = await store.send(prompt: "/then origin")
+    try await waitUntil { self.store.btwTasks.isEmpty }
+    XCTAssertEqual(StubChatEndpoint.requests.count, 1)
+    store.newConversation()
+    let selectedID = try XCTUnwrap(store.currentConversation?.id)
+    await store.agentSupervisor.complete(child)
+    try await waitUntil { StubChatEndpoint.requests.count == 2 && !self.store.isResponding }
+    XCTAssertEqual(store.currentConversation?.id, selectedID)
+    XCTAssertEqual(store.conversation(withID: id)?.modelID, "origin-model")
+    XCTAssertEqual(store.conversation(withID: id)?.messages.last { $0.role == .user }?.text, "origin")
+    XCTAssertTrue(store.currentConversation?.messages.isEmpty == true)
+    XCTAssertEqual(StubChatEndpoint.requests.last?["model"] as? String, "origin-model")
+  }
+
+  func testIdleThenRunsEnabledSkillAsANormalTurn() async throws {
+    StubChatEndpoint.script = { _ in (StubChatEndpoint.completion(content: "Done"), 0) }
+    let skill = try SkillTools.create(name: "then-\(UUID().uuidString.lowercased())",
+      description: "Queue fixture", prompt: "SKILL-$ARGUMENTS")
+    defer { try? SkillTools.remove(skill, conversation: store.currentConversation, settings: store.settings) }
+    store.settings.enabledSkillTools.insert(skill.toolName)
+    store.updateCurrentConversation { $0.toolsEnabled = true }
+    _ = await store.send(prompt: "/then /skills prompt \(skill.name) payload")
+    try await waitUntil { StubChatEndpoint.requests.count == 1 && !self.store.isResponding }
+    XCTAssertTrue(store.currentConversation?.messages.contains {
+      $0.role == .user && $0.text.contains("SKILL-payload")
+    } == true)
+    XCTAssertFalse(store.currentConversation?.messages.contains { $0.text.hasPrefix("/then") } ?? true)
+  }
+
+
+  func testThenDoesNotSendUnknownCommandsToTheModel() async throws {
+    _ = await store.send(prompt: "/then /not-a-command")
+    try await waitUntil { self.store.errorMessage != nil }
+    XCTAssertEqual(store.errorMessage, "Unknown command '/not-a-command'.")
+    XCTAssertTrue(StubChatEndpoint.requests.isEmpty)
+    XCTAssertEqual(store.currentConversation?.messages.map(\.text), ["Previous private context"])
+  }
+
 }

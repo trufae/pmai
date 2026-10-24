@@ -305,6 +305,20 @@ struct ContentView: View {
     } message: { request in
       Text(request.context.promptMessage)
     }
+    .sheet(isPresented: Binding(
+      get: { store.commandOutput != nil },
+      set: { if !$0 { store.commandOutput = nil } }
+    )) {
+      NavigationStack {
+        ScrollView {
+          Text(store.commandOutput ?? "")
+            .font(.body.monospaced()).textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading).padding()
+        }
+        .navigationTitle("Command output")
+        .toolbar { Button("Done") { store.commandOutput = nil } }
+      }
+    }
     .alert("Error", isPresented: errorBinding) {
       Button("OK") { store.errorMessage = nil }
     } message: {

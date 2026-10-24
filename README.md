@@ -77,7 +77,12 @@ there yet. The Android CLI is a separate terminal client.
   attachments, tool messages, and nested subagent chats, then continue on another
   device using its own provider credentials.
 - **Shape the context.** Edit, undo, trim, search, or compact a conversation with
-  a focus. Ask `/btw QUESTION` alongside a running reply in iOS or the interactive
+  a focus. Queue `/then LINE` in iOS or the CLI to run a message or command after
+  all tasks finish, one line at a time. `/then` lists pending lines; `/unthen`
+  clears them. Commands such as `/model MODEL` and `/skills prompt NAME [TEXT]`
+  run before the next queued message. iOS keeps each queued action in its original
+  chat; `/model` selects that chat's model on its current provider.
+  Ask `/btw QUESTION` alongside a running reply in iOS or the interactive
   CLI; it uses a fresh context without changing the main conversation.
 
 ### Put it to work

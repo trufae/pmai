@@ -57,6 +57,7 @@ extension AppStore {
         btwTasks[id] = nil
         responseBackgroundTasks.removeValue(forKey: id)?.finish()
         refreshBackgroundKeepAlive()
+        drainThenQueue()
         // Agent tools may have created a process for this transient context.
         stopAgentProcesses(for: id, reason: "Side question finished")
         if let index = btwQuestions.firstIndex(where: { $0.id == id }) {

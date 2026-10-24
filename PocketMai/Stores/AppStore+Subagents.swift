@@ -16,6 +16,7 @@ extension AppStore {
         await refreshAgentProcesses()
         if case .finished(let process) = event {
           await saveAgentProcessRecords(containing: process.pid)
+          drainThenQueue()
         }
       }
     }

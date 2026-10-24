@@ -323,6 +323,21 @@ if (ready) {
 EOF
 ```
 
+`/then LINE` queues a prompt or CLI command until every running task (including
+side questions and background agents) finishes. Lines run one at a time in FIFO
+order through the normal command dispatcher, never inside the current tool loop.
+Use `/then` to list pending lines and `/unthen` to clear them. An idle queue starts
+immediately. For example:
+
+```text
+/then summarize the changes
+/then /model myai::next-model
+/then /skills prompt review check the patch
+```
+
+The queue is session state. Exiting drops pending lines; stopping a running task
+allows the queue to continue once all tasks have stopped.
+
 `/btw PROMPT` asks a one-off question in a fresh context. By default it uses the
 active agent's model and settings. `/model -btw [PROVIDER::]MODEL` selects and saves
 a separate model for side questions; a saved agent ID also works. `/model -btw`
