@@ -250,7 +250,8 @@ def main():
                                 if prompt == 'background':
                                     # Finished conversations keep their focus so
                                     # the person can inspect or continue them.
-                                    wait_for(f'agent#{pid} ✗ killed')
+                                    wait_for(f'agent#{pid} ')
+                                    wait_for('✗ killed')
                                     wait_for(f'pmai#{pid}>')
                                     send('/jobs focus main\n')
                                     wait_for('Messages go to this chat again.')
