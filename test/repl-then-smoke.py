@@ -136,8 +136,14 @@ def main():
                            for m in body['messages']), body
                 assert requests.empty(), 'Deferred prompts overlapped'
                 gates['first'].set()
+                # /model assigns the tool specialist too: its stop decision
+                # hands the same turn to the primary model for the final reply.
+                request('second', model='next')
                 request('second', model='next')
                 request('SKILL-payload', model='next')
+                body = request('SKILL-payload', model='next')
+                assert any(m['role'] == 'assistant' and m.get('content') == 'DONE-second'
+                           for m in body['messages']), body
                 deadline = time.monotonic() + 15
                 while not (root / 'queued-version.txt').exists():
                     assert time.monotonic() < deadline, output.decode(errors='replace')
@@ -147,6 +153,7 @@ def main():
                 assert (root / 'queued-version.txt').read_text().strip()
                 # Idle queues start without waiting for another completion event.
                 send('/then idle')
+                request('idle', model='next')
                 request('idle', model='next')
                 wait('DONE-idle')
                 send('/exit')
