@@ -13457,16 +13457,14 @@ struct MaiCLI {
     /edit TARGET           Edit input, prompts, skills, agents, or settings
     /exit                  Exit the REPL
     /export FORMAT [PATH]  Export this chat or a portable archive
+    /fork [--empty] [TITLE] Fork into a child conversation and switch to it
     /help [COMMAND]        List commands or show detailed help
     /help keys             Keyboard shortcuts
     /help shell            Input, shell commands, redirects, and agent messages
     /history [COMMAND]     List, search, or delete saved inputs
     /image MODE PATH       Attach an image or extract text with OCR
     /import PATH           Import settings, skills, and chats
-    /fork [--empty] [TITLE] Fork into a child conversation and switch to it
-    /subagents [PID|main]  List or switch agent conversations
     /jobs                  Manage running and saved processes
-    /ps [-a] [-p]          Show shell processes and command history; -k PID kills one
     /mcp                   Manage MCP servers
     /memory                Show, edit, learn, or scope project memory
     /model [FLAG] [MODEL]  Select chat or task models; /help model
@@ -13480,6 +13478,7 @@ struct MaiCLI {
     /prompts               List prompts and skills
     /provider [ID]         Show or select a provider; /help provider for setup
     /providers             List registered providers
+    /ps [-a] [-p]          Show shell processes and command history; -k PID kills one
     /queue                 Manage messages waiting for an agent
     /remote                Serve, pair, or connect to remote hosts
     /reply [WIDTH]         Reply in $EDITOR with the last reply quoted
@@ -13487,6 +13486,7 @@ struct MaiCLI {
     /skills                Manage or send skills
     /stats                 Show model usage and performance
     /stop                  Interrupt the current turn
+    /subagents [PID|main]  List or switch agent conversations
     /theme                 List, apply, or customize terminal themes
     /todo                  Show or edit the project's todo list
     /tools                 List tool groups for this agent

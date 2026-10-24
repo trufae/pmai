@@ -253,9 +253,8 @@ public final class StdioJSONRPCTransport: JSONRPCTransport, @unchecked Sendable 
     let thread = Thread { [weak self] in
       guard let self else { return }
       var buffer = Data()
-      while true {
-        let chunk = self.input.availableData
-        if chunk.isEmpty { break }
+      // The throwing API handles close() racing this reader without an NSException.
+      while let chunk = try? self.input.read(upToCount: 64 * 1024), !chunk.isEmpty {
         buffer.append(chunk)
         // A network peer must not grow an unterminated frame without bound.
         guard buffer.count <= 16 * 1024 * 1024 else { self.close(); return }
@@ -293,9 +292,7 @@ public final class StdioJSONRPCTransport: JSONRPCTransport, @unchecked Sendable 
 
   private func drainErrors(from handle: FileHandle) {
     let thread = Thread { [weak self] in
-      while let self {
-        let chunk = handle.availableData
-        if chunk.isEmpty { break }
+      while let self, let chunk = try? handle.read(upToCount: 64 * 1024), !chunk.isEmpty {
         guard let text = String(data: chunk, encoding: .utf8) else { continue }
         self.stateLock.withLock {
           self.errorTail.append(contentsOf: text.split(separator: "\n").map(String.init))

@@ -197,18 +197,35 @@ func jsonRPCPeerRoundTrip() async throws {
   await server.close()
 }
 
-@Test("A stdio transport closed before reading returns a finished stream")
-func closedStdioTransportFinishesMessages() async {
+@Test("Closing a stdio transport finishes its stream before or after reading starts", arguments: [false, true])
+func closedStdioTransportFinishesMessages(startReading: Bool) async {
   let input = Pipe()
   let output = Pipe()
   let transport = StdioJSONRPCTransport(
     input: input.fileHandleForReading,
     output: output.fileHandleForWriting)
 
+  if startReading { _ = transport.messages() }
   transport.close()
+  try? input.fileHandleForWriting.close()
   var messages = transport.messages().makeAsyncIterator()
 
   #expect(await messages.next() == nil)
+}
+
+@Test("A closed stdio input finishes the stream without crashing")
+func closedStdioInputFinishesMessages() async throws {
+  let input = Pipe()
+  let output = Pipe()
+  let transport = StdioJSONRPCTransport(
+    input: input.fileHandleForReading,
+    output: output.fileHandleForWriting)
+  defer { transport.close() }
+  try input.fileHandleForReading.close()
+  var messages = transport.messages().makeAsyncIterator()
+
+  #expect(await messages.next() == nil)
+  #expect(!transport.isRunning)
 }
 
 @Test("A JSON-RPC request without a reply times out")
