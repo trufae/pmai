@@ -33,6 +33,7 @@ final class StubChatEndpoint: URLProtocol {
   nonisolated(unsafe) static var log: [Entry] = []
   nonisolated(unsafe) static var script: Script?
   nonisolated(unsafe) private static var searches: [String] = []
+  nonisolated(unsafe) private static var heldReplies: [@Sendable () -> Void] = []
   private static let lock = NSLock()
 
   static var requests: [[String: Any]] {
@@ -43,11 +44,23 @@ final class StubChatEndpoint: URLProtocol {
     lock.withLock { searches }
   }
 
+  static var heldReplyCount: Int { lock.withLock { heldReplies.count } }
+
+  /// Negative script delays hold replies until the test explicitly releases them.
+  static func releaseHeldReplies() {
+    let replies = lock.withLock {
+      defer { heldReplies.removeAll() }
+      return heldReplies
+    }
+    for reply in replies { reply() }
+  }
+
   static func install() {
     lock.withLock {
       log = []
       script = nil
       searches = []
+      heldReplies = []
     }
     URLProtocol.registerClass(StubChatEndpoint.self)
   }
@@ -96,7 +109,9 @@ final class StubChatEndpoint: URLProtocol {
       Self.lock.withLock { Self.log[index].answered = Date() }
       boxed.value.loader.finish(with: boxed.value.payload)
     }
-    if reply.delay > 0 {
+    if reply.delay < 0 {
+      Self.lock.withLock { Self.heldReplies.append(answer) }
+    } else if reply.delay > 0 {
       DispatchQueue.global().asyncAfter(deadline: .now() + reply.delay, execute: answer)
     } else {
       answer()
