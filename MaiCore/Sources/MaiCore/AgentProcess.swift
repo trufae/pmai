@@ -385,6 +385,11 @@ public struct AgentProcessTree: Equatable, Sendable {
 /// `parentRunID` names the record a child hangs off — nil for a direct child
 /// of the chat's own process — so a tree restores under fresh pids.
 public struct AgentProcessRecord: Codable, Equatable, Sendable, Identifiable {
+  /// Optional settings for continuing this conversation after a restart.
+  /// Messages live in `messages`; this snapshot keeps its message array empty.
+  public var conversationRequest: AgentRequest? = nil
+  /// Stable across the new run IDs assigned to follow-up turns.
+  public var conversationID: UUID? = nil
   public var runID: UUID
   public var parentRunID: UUID?
   public var pid: AgentPID
@@ -403,7 +408,7 @@ public struct AgentProcessRecord: Codable, Equatable, Sendable, Identifiable {
   public var failure: String?
   public var messages: [AgentMessage]
 
-  public var id: UUID { runID }
+  public var id: UUID { conversationID ?? runID }
 
   public init(process: AgentProcessInfo, messages: [AgentMessage], parentRunID: UUID? = nil) {
     runID = process.runID
@@ -426,6 +431,7 @@ public struct AgentProcessRecord: Codable, Equatable, Sendable, Identifiable {
   }
 
   private enum CodingKeys: String, CodingKey {
+    case conversationRequest, conversationID
     case runID, parentRunID, pid, parent, agentID, displayName, task, state, depth
     case startedAt, updatedAt, finishedAt, modelTurns, toolCalls, usage, failure, messages
   }
@@ -435,6 +441,8 @@ public struct AgentProcessRecord: Codable, Equatable, Sendable, Identifiable {
   /// the chat's process.
   public init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
+    conversationRequest = try container.decodeIfPresent(AgentRequest.self, forKey: .conversationRequest)
+    conversationID = try container.decodeIfPresent(UUID.self, forKey: .conversationID)
     runID = try container.decodeIfPresent(UUID.self, forKey: .runID) ?? UUID()
     parentRunID = try container.decodeIfPresent(UUID.self, forKey: .parentRunID)
     pid = try container.decode(AgentPID.self, forKey: .pid)
@@ -467,10 +475,10 @@ public struct AgentProcessRecord: Codable, Equatable, Sendable, Identifiable {
     var merged: [AgentProcessRecord] = []
     var indexByRunID: [UUID: Int] = [:]
     for record in saved + current {
-      if let index = indexByRunID[record.runID] {
+      if let index = indexByRunID[record.id] {
         merged[index] = record
       } else {
-        indexByRunID[record.runID] = merged.count
+        indexByRunID[record.id] = merged.count
         merged.append(record)
       }
     }

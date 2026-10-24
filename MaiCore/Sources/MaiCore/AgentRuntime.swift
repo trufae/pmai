@@ -13,6 +13,9 @@ public actor AgentRuntime {
   /// stay local to their run; hosts may replace these settings between model
   /// and tool calls without cancelling the work already in flight.
   var liveRequests: [AgentPID: AgentRequest] = [:]
+  /// Settings for continuing a finished conversation during this session.
+  var conversationRequests: [AgentPID: AgentRequest] = [:]
+  var conversationIDs: [AgentPID: UUID] = [:]
   var derivedRuns: [AgentPID: DerivedRun] = [:]
   var runBudgets: [AgentPID: RunBudget] = [:]
   /// Covers the tiny interval after a host starts a task but before the run
@@ -115,14 +118,21 @@ public actor AgentRuntime {
         depth: 0)
     }
     do {
+      let info = await supervisor.info(pid)
+      let parentRunID: UUID?
+      if let parent = info?.parent {
+        parentRunID = await supervisor.info(parent)?.runID
+      } else {
+        parentRunID = nil
+      }
       let redactor = contentRedactor(sessionID: request.sessionID ?? "process:\(pid.rawValue)")
       let result = try await ContentRedactor.$current.withValue(redactor) {
         try await runInternal(
           request,
           runID: runID,
           pid: pid,
-          parentRunID: nil,
-          depth: 0,
+          parentRunID: parentRunID,
+          depth: info?.depth ?? 0,
           budget: budget,
           emit: emit)
       }

@@ -208,6 +208,10 @@ extension AgentRuntime {
   }
 
   func clearLiveRequest(for pid: AgentPID) {
+    if var request = liveRequests[pid] {
+      request.messages = []
+      conversationRequests[pid] = request
+    }
     liveRequests[pid] = nil
     derivedRuns[pid] = nil
     runBudgets[pid] = nil

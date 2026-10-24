@@ -1127,7 +1127,7 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
   }
 }
 
-public struct AgentRequest: Sendable {
+public struct AgentRequest: Codable, Equatable, Sendable {
   /// A child's explicit narrowing caps every group and policy override.
   var restrictedToolNames: Set<String>? = nil
   /// Inbox entries held for a later run. New messages still steer this run.
