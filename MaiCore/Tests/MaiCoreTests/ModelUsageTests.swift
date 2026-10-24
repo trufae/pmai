@@ -64,12 +64,12 @@ func recorderCountsGeneratedEvents() {
   #expect(observation.lastTokenAt == start.addingTimeInterval(3))
 }
 
-@Test("Speed uses visible output tokens and needs a duration")
-func speedExcludesReasoningAndNeedsDuration() {
+@Test("Speed includes reasoning tokens and needs a duration")
+func speedIncludesReasoningAndNeedsDuration() {
   let stats = ModelCallStats(
     providerLabel: "p", modelID: "m", outputTokens: 300, reasoningTokens: 100,
     generationSeconds: 10)
-  #expect(abs((stats.tokensPerSecond ?? -1) - 20.0) < 0.0001)
+  #expect(abs((stats.tokensPerSecond ?? -1) - 30.0) < 0.0001)
   #expect(
     ModelCallStats(providerLabel: "p", modelID: "m", outputTokens: 300).tokensPerSecond == nil)
 
@@ -86,45 +86,40 @@ func speedExcludesReasoningAndNeedsDuration() {
   #expect(abs((burst.tokensPerSecond ?? -1) - 50.0) < 0.01)
 }
 
-@Test("Reported completions with unreported thinking do not inflate answer speed")
-func localCompletionSpeedUsesAnswerText() throws {
+@Test("Reported generation speed is independent of answer length and reasoning breakdown",
+  arguments: [0, 100, 40_000], [nil, 3_000] as [Int?])
+func reportedCompletionSpeedUsesAllTokens(outputCharacters: Int, reasoning: Int?) throws {
   var timing = StreamTimingObservation(requestStart: start)
   for offset in [1.0, 11.0, 21.0] {
     timing.noteTokenChunk(at: start.addingTimeInterval(offset))
   }
   let call = ModelCallStats.measured(
     providerLabel: "openai", modelID: "local",
-    usage: TokenUsage(inputTokens: 100, outputTokens: 4_000),
-    estimatedInputTokens: 100, outputCharacterCount: 100,
+    usage: TokenUsage(inputTokens: 100, outputTokens: 4_000, reasoningTokens: reasoning),
+    estimatedInputTokens: 100, outputCharacterCount: outputCharacters,
     timing: timing, end: start.addingTimeInterval(21.1))
   #expect(call.outputTokens == 4_000)
-  #expect(call.receivedTextTokens == 25)
-  #expect(call.visibleOutputTokensEstimated)
-  #expect(abs((call.tokensPerSecond ?? -1) - 1.25) < 0.0001)
-  #expect(call.summary.hasPrefix("~1.2 tok/s"))
+  #expect(!call.tokensEstimated)
+  #expect(abs((call.tokensPerSecond ?? -1) - 200) < 0.0001)
+  #expect(call.summary.hasPrefix("200.0 tok/s"))
 
   var ledger = ModelUsageLedger()
   ledger.record(call)
   let row = try #require(ledger.totals.first)
-  #expect(abs((row.averageTokensPerSecond ?? -1) - 1.25) < 0.0001)
-  #expect(ModelUsageReport(ledger).rows[0].value(.speed) == "~1.2 tok/s")
-  #expect(row.detailLines.contains("Last output speed: ~1.2 tok/s"))
-  #expect(try ModelUsageLedger.decode(ledger.encoded()).totals.first?.lastOutputSpeedEstimated == true)
-
-  var oldRow = row
-  oldRow.lastOutputTokensPerSecond = 200
-  oldRow.lastOutputSpeedEstimated = nil
-  #expect(!oldRow.detailLines.contains { $0.hasPrefix("Last output speed:") })
+  #expect(abs((row.averageTokensPerSecond ?? -1) - 200) < 0.0001)
+  #expect(ModelUsageReport(ledger).rows[0].value(.speed) == "200.0 tok/s")
+  #expect(row.detailLines.contains("Last output speed: 200.0 tok/s"))
+  #expect(try ModelUsageLedger.decode(ledger.encoded()).totals.first?.lastOutputSpeedEstimated == false)
 }
 
 @Test("Merging keeps the first round's first-token latency")
 func mergeKeepsEarliestFirstToken() {
   var first = ModelCallStats(
-    providerLabel: "p", modelID: "m", outputTokens: 10, generationSeconds: 2,
-    firstTokenSeconds: 0.9)
+    providerLabel: "p", modelID: "m", outputTokens: 10, receivedTextTokens: 1, reasoningTokens: 8,
+    generationSeconds: 2, firstTokenSeconds: 0.9)
   let second = ModelCallStats(
-    providerLabel: "p", modelID: "m", outputTokens: 20, generationSeconds: 8,
-    firstTokenSeconds: 0.2)
+    providerLabel: "p", modelID: "m", outputTokens: 20, receivedTextTokens: 1, reasoningTokens: 15,
+    generationSeconds: 8, firstTokenSeconds: 0.2)
   first.merge(second)
   #expect(abs((first.firstTokenSeconds ?? -1) - 0.9) < 0.0001)
   #expect(first.outputTokens == 30)
@@ -612,7 +607,7 @@ func summariesAndDetailLines() throws {
   #expect(lines.contains("Completion tokens: 4.0k tok"))
   #expect(lines.contains("Thinking tokens: 100 tok"))
   #expect(lines.contains("Requests: 1"))
-  #expect(lines.contains("Average output speed: 39.0 tok/s"))
+  #expect(lines.contains("Average output speed: 40.0 tok/s"))
   #expect(lines.contains("Average time to first token: 4.00s"))
   #expect(lines.contains("Time in use: 1m44s"))
   #expect(lines.contains("Efficiency: 48.1 tok/s/req"))
@@ -687,6 +682,8 @@ func measuredFromUsagePayload() {
   #expect(unreported.tokensEstimated)
   #expect(unreported.inputTokens == 99)
   #expect(unreported.outputTokens == 20)
+  #expect(unreported.tokensPerSecond == 20)
+  #expect(unreported.summary.hasPrefix("~20.0 tok/s"))
 }
 
 @Test("UserDefaults persistence round-trips a ledger under its key")

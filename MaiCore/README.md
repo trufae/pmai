@@ -626,9 +626,9 @@ provider call it makes — REPL turns, one-shot runs, tool-loop rounds, child
 agents — into `ModelUsageStore`, kept in
 `~/.pmai/stats.json` (`$PMAI_HOME` relocates it) so the totals span every
 project. Tokens come from the provider's usage payload, or are estimated from
-text length and marked `~` when it reports none; speed is visible output
-tokens over the first→last token window of the stream, time in use adds the
-wait for the first token, and efficiency is total tokens divided by seconds in
+text length and marked `~` when it reports none; speed is all output tokens
+(including reasoning and tool calls) over the first→last token window of the
+stream, time in use adds the wait for the first token, and efficiency is total tokens divided by seconds in
 use and by requests (`tokens / (seconds × requests)`, printed as `tok/s/req`).
 `/stats ranking`, `/stats speed`, `/stats time`, and `/stats efficiency` print one ranking.
 `Ranking` sums each model's position in the three measured categories, so the

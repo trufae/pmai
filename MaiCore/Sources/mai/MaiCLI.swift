@@ -4152,7 +4152,7 @@ struct MaiCLI {
           let estimated = subtree.contains { $0.usage?.isEstimated == true }
           took += " and \(ModelUsageFormat.tokens(tokens, estimated: estimated))"
           if let stats = modelStats, let speed = stats.tokensPerSecond {
-            took += " · avg \(ModelUsageFormat.speed(speed, estimated: stats.visibleOutputTokensEstimated))"
+            took += " · avg \(ModelUsageFormat.speed(speed, estimated: stats.tokensEstimated))"
           }
           if let elsewhere {
             took += " · saved in '\(elsewhere)'"
