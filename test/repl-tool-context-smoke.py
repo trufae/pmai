@@ -133,7 +133,7 @@ def main():
 
                 try:
                     wait_for(lambda: b'pmai>' in output)
-                    send('/model-compact local::tiny')
+                    send('/model -compact local::tiny')
                     wait_for(lambda: b'(saved)' in output)
                     send(f'/set ctx.strategy {mode}')
                     wait_for(lambda: f'= {mode}'.encode() in output)

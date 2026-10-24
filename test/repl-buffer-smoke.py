@@ -391,6 +391,53 @@ def main(binary):
                 assert json.loads(config.read_text())['ui']['mode'] == 'classic'
                 send('/set ui.mode buffer\r')
                 wait_for('\x1b[?1049h')
+                # Command Markdown is retained as a complete, independent block.
+                # Resizing must lay out its table again, rather than wrap old borders.
+                rows, columns = 60, 100
+                fcntl.ioctl(master, termios.TIOCSWINSZ,
+                            struct.pack('HHHH', rows, columns, 0, 0))
+                os.kill(process.pid, signal.SIGWINCH)
+                read_for()
+                send('/set ui.markdown on\r')
+                wait_for('Set ui.markdown = on.')
+                send('/clear\r')
+                wait_for('\x1b[2J')
+                send('/model\r')
+                wait_for('Current models')
+                wait_for('Changes are saved.')
+                wide = '\n'.join(output())
+                assert 'Effort' in wide and 'mock::fixture' in wide, screen
+                assert '| ---' not in wide and '`/model' not in wide, screen
+                for columns in (48, 100):
+                    screen.clear()
+                    fcntl.ioctl(master, termios.TIOCSWINSZ,
+                                struct.pack('HHHH', rows, columns, 0, 0))
+                    os.kill(process.pid, signal.SIGWINCH)
+                    read_for()
+                    visible = '\n'.join(output())
+                    assert 'Current models' in visible and 'Effort' in visible, screen
+                    assert '| ---' not in visible, screen
+                    if columns == 100:
+                        assert 'mock::fixture' in visible, screen
+                send('/set ui.markdown off\r')
+                wait_for('Set ui.markdown = off.')
+                assert '| Task | Model | Agent | Effort |' in '\n'.join(output()), screen
+                send('/set ui.markdown on\r')
+                wait_for('Set ui.markdown = on.')
+                assert '| ---' not in '\n'.join(output()), screen
+                send('/clear\r')
+                wait_for('\x1b[2J')
+                send('command-during-stream\r')
+                chunks.put('BEFORE_COMMAND\n')
+                wait_for('BEFORE_COMMAND')
+                send('/model\r')
+                wait_for('Changes are saved.')
+                chunks.put('AFTER_COMMAND\n')
+                chunks.put(None)
+                wait_for('✓ took')
+                visible = '\n'.join(output())
+                assert visible.index('BEFORE_COMMAND') < visible.index('Current models'), screen
+                assert visible.index('Current models') < visible.index('AFTER_COMMAND'), screen
                 send('/exit\r')
                 deadline = time.monotonic() + 10
                 while process.poll() is None:

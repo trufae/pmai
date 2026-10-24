@@ -34,7 +34,7 @@ public final class SystemOneProvider: ChatProvider, @unchecked Sendable {
     }
     guard !request.tools.isEmpty else {
       throw OpenAICompatibleProviderError.providerFailure(
-        "System One is a tool-decision provider. Select it with /model-tool and enable tool.systemone; use a chat model for answers and arguments."
+        "System One is a tool-decision provider. Select it with /model -tool and enable tool.systemone; use a chat model for answers and arguments."
       )
     }
     // Short state matters for Tev's small decision context. Keep the latest

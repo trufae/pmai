@@ -46,18 +46,18 @@ def main():
                           '/providers'])
             assert 'apple — Apple Intelligence' in output, output
             assert 'mlx — MLX Local' in output, output
-            output = run(['/provider use apple', '/model-chat'])
+            output = run(['/provider use apple', '/model -chat'])
             assert 'Chat: apple::on-device' in output, output
-            output = run(['/provider', '/model-chat'], env={'OPENAI_BASE_URL': 'not-a-url'})
+            output = run(['/provider', '/model -chat'], env={'OPENAI_BASE_URL': 'not-a-url'})
             assert 'Current provider: apple' in output, output
             assert 'Chat: apple::on-device' in output, output
-            output = run(['/provider use mlx', '/model-chat', '/models mlx'], allow_errors=True)
+            output = run(['/provider use mlx', '/model -chat', '/models mlx'], allow_errors=True)
             assert 'Chat: mlx::LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit' in output, output
             assert 'Unknown provider' not in output, output
             for provider, model in (('apple', 'on-device'),
                                     ('mlx', 'LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit')):
                 output = run(
-                    ['/provider', '/model-chat'], args=['--provider', provider],
+                    ['/provider', '/model -chat'], args=['--provider', provider],
                     config_path=None,
                     env={'HOME': str(root / f'fresh-{provider}'),
                          'OPENAI_BASE_URL': 'not-a-url',
@@ -76,7 +76,7 @@ def main():
         assert providers['personal-mlx']['kind'] == 'mlx', providers
         assert providers['personal-mlx']['defaultModel'] == 'mlx-community/LFM2-350M-MLX', providers
         assert all(not providers[name].get('baseURL') for name in ('personal-apple', 'personal-mlx'))
-        output = run(['/provider', '/model-chat'], env={'OPENAI_BASE_URL': 'not-a-url'})
+        output = run(['/provider', '/model -chat'], env={'OPENAI_BASE_URL': 'not-a-url'})
         assert 'Current provider: personal-mlx' in output, output
         assert 'Chat: personal-mlx::mlx-community/LFM2-350M-MLX' in output, output
 
@@ -85,7 +85,7 @@ def main():
                       '/provider add missing', '/provider add malformed --kind'])
         assert 'Usage: /provider add' in output, output
         assert json.loads(config.read_text())['providers'] == before
-        output = run(['/provider rename personal-mlx renamed-mlx', '/provider', '/model-chat'])
+        output = run(['/provider rename personal-mlx renamed-mlx', '/provider', '/model -chat'])
         assert 'Current provider: renamed-mlx' in output, output
         assert 'Chat: renamed-mlx::mlx-community/LFM2-350M-MLX' in output, output
         assert 'Current provider: renamed-mlx' in run(['/provider'], args=['--resume'])
@@ -93,7 +93,7 @@ def main():
 
         output = run(['/provider add chatgpt --kind chatgpt --model account-model',
                       '/provider add work --kind chatgpt', '/provider status chatgpt',
-                      '/provider use chatgpt', '/model-chat'],
+                      '/provider use chatgpt', '/model -chat'],
                      env={'OPENAI_API_KEY': 'unused-api-key', 'OPENAI_BASE_URL': 'not-a-url'})
         assert 'ChatGPT is signed out' in output, output
         assert 'Chat: chatgpt::account-model' in output, output
@@ -106,7 +106,7 @@ def main():
         run(['/provider rename chatgpt renamed-chatgpt', '/provider status renamed-chatgpt'])
         providers = {p['id']: p for p in json.loads(config.read_text())['providers']}
         assert providers['renamed-chatgpt']['options']['account'] == account
-        output = run(['/provider', '/model-chat'],
+        output = run(['/provider', '/model -chat'],
                      env={'OPENAI_BASE_URL': 'not-a-url', 'PMAI_API_KEY_FILE': str(root / 'missing-key')})
         assert 'Current provider: renamed-chatgpt' in output, output
         assert 'Chat: renamed-chatgpt::account-model' in output, output

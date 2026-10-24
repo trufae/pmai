@@ -461,6 +461,26 @@ actor TerminalWriter {
     if handle === FileHandle.standardOutput { outputEndedLine = true }
   }
 
+  /// Prints a complete command document without sharing the reply stream's
+  /// parser. Retain Markdown on the screen for resize and rendering changes;
+  /// pipes, captures, and disabled Markdown can use a plain-text alternative.
+  func markdown(_ value: String, plainText: String? = nil) {
+    guard let renderer = markdownRenderer else {
+      line(plainText ?? value)
+      return
+    }
+    finishReply()
+    closeRootLine()
+    let source = value.hasSuffix("\n") ? value : value + "\n"
+    let rendered = renderer.render(source)
+    if let screen {
+      screen.writeMarkdown(source, rendered: rendered)
+    } else {
+      emit(rendered, to: .standardOutput)
+    }
+    outputEndedLine = true
+  }
+
   /// A completed shell filter's bytes, with no extra newline or styling.
   func rawOutput(_ data: Data, to handle: FileHandle = .standardOutput) {
     guard !data.isEmpty else { return }

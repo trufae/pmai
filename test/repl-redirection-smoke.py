@@ -51,7 +51,7 @@ def main():
                                     '/chat last | cat > pipe.txt',
                                     '/chat last | head -c 1',
                                     '/version | ' + noisy_filter,
-                                    '/help > help.txt',
+                                    '/help shell > help.txt',
                                     '/btw banana side question > btw.txt',
                                     'ordinary > literal.txt | cat',
                                     '/chat last > ordinary.txt',

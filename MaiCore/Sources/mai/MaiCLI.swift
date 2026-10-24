@@ -3403,7 +3403,7 @@ struct MaiCLI {
           case "c", "cancel", "stop": decision = .cancelRun
           case "m", "model":
             await terminal.line(
-              "Use /model NAME to change all models, /model-chat NAME for chat only, or /model-compact NAME for the summarizer. Then choose y to summarize, p to prune available old tool output, or n to keep context."
+              "Use /model NAME to change all models, /model -chat NAME for chat only, or /model -compact NAME for the summarizer. Then choose y to summarize, p to prune available old tool output, or n to keep context."
             )
             await releaseIfIdle(workspace: workspace)
             return false
@@ -4259,7 +4259,7 @@ struct MaiCLI {
           }
           await terminal.line(
             (request.pruning == nil ? "" : "[p] prune old tool output · ")
-              + "[y] summarize older context · [n] keep context this response · [m] change model · [x] clear chat and continue · [c] stop\n/model, /model-chat, and /model-compact remain available before deciding."
+              + "[y] summarize older context · [n] keep context this response · [m] change model · [x] clear chat and continue · [c] stop\n/model, /model -chat, and /model -compact remain available before deciding."
           )
         }
         await refreshStatus()
@@ -5047,6 +5047,8 @@ struct MaiCLI {
         await terminal.line(replHelp)
       case "about", "/about":
         await terminal.line(aboutMessage)
+      case "model", "/model":
+        await terminal.markdown(modelHelp)
       case "keys", "/keys":
         await terminal.line(keysHelp)
       case "shell", "/shell":
@@ -5283,28 +5285,6 @@ struct MaiCLI {
     case "/model":
       await handleModelCommand(
         argument, session: &session, runtime: runtime, configuration: &configuration,
-        configurationPath: services.configurationPath, terminal: terminal)
-    case "/model-chat":
-      await handleModelCommand(
-        argument, chatOnly: true, session: &session, runtime: runtime,
-        configuration: &configuration, configurationPath: services.configurationPath,
-        terminal: terminal)
-    case "/model-compact":
-      await handleModelCommand(
-        "-compact " + argument, session: &session, runtime: runtime, configuration: &configuration,
-        configurationPath: services.configurationPath, terminal: terminal)
-    case "/model-aproval":
-      await handleModelCommand(
-        "-aproval " + argument, session: &session, runtime: runtime,
-        configuration: &configuration, configurationPath: services.configurationPath,
-        terminal: terminal)
-    case "/model-tool":
-      await handleModelCommand(
-        "-tool " + argument, session: &session, runtime: runtime, configuration: &configuration,
-        configurationPath: services.configurationPath, terminal: terminal)
-    case "/model-btw":
-      await handleModelCommand(
-        "-btw " + argument, session: &session, runtime: runtime, configuration: &configuration,
         configurationPath: services.configurationPath, terminal: terminal)
     case "/agents", "/agent":
       await handleAgentCommand(
@@ -7240,26 +7220,56 @@ struct MaiCLI {
     "'" + value.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
   }
 
+  private static func markdownTableCell(_ text: String) -> String {
+    let punctuation = "\\`*_{}[]<>()#+-.!|~$&"
+    return text.map { character in
+      if character.isNewline { return " " }
+      return punctuation.contains(character) ? "\\" + String(character) : String(character)
+    }.joined()
+  }
+
   private static func handleModelCommand(
-    _ argument: String, chatOnly: Bool = false, session: inout REPLSession, runtime: AgentRuntime,
+    _ argument: String, session: inout REPLSession, runtime: AgentRuntime,
     configuration: inout MaiConfiguration?, configurationPath: String?, terminal: TerminalWriter
   ) async {
-    let words = argument.split(whereSeparator: \Character.isWhitespace).map(String.init)
+    var words = argument.split(whereSeparator: \Character.isWhitespace).map(String.init)
+    let chatOnly = words.first == "-chat"
+    if chatOnly { words.removeFirst() }
     guard let first = words.first else {
       let selection = session.profile.provider.rawValue.isEmpty
         ? "no model selected" : "\(session.profile.provider)::\(session.profile.model)"
-      await terminal.line("Chat: \(selection)")
+      var plain = ["Chat: \(selection)"]
+      var rows = [["Chat", selection, session.profile.agentDefinition.id,
+                   session.profile.options.reasoningEffort ?? "auto"]]
       for task in AgentTask.allCases {
         let id = configuration?.taskAgents[task]
         let agent = configuration?.agents.first { $0.id == id }
         let detail = agent.map {
           "\($0.id) — \($0.provider)::\($0.model), effort \($0.options.reasoningEffort ?? "auto")"
         }
-        await terminal.line("\(task.rawValue): \(detail ?? "current agent")")
+        plain.append("\(task.rawValue): \(detail ?? "current agent")")
+        let title = switch task {
+        case .compact: "Compaction"
+        case .tool: "Tool decisions"
+        case .approval: "Smart approval"
+        case .btw: "Side questions"
+        case .voiceover: "Voiceover"
+        }
+        rows.append([
+          title,
+          agent.map { "\($0.provider)::\($0.model)" } ?? selection,
+          agent?.id ?? "current agent",
+          agent.map { $0.options.reasoningEffort ?? "auto" }
+            ?? session.profile.options.reasoningEffort ?? "auto",
+        ])
       }
-      await terminal.line(
-        "/model [PROVIDER::]MODEL (all models) · /model-chat [PROVIDER::]MODEL (chat only) · /model-compact [NAME] · /model-tool [NAME] · /model-aproval [NAME] · /model-btw [NAME] (no name clears)"
-      )
+      let table = (["| Task | Model | Agent | Effort |", "| --- | --- | --- | --- |"]
+        + rows.map { "| " + $0.map(markdownTableCell).joined(separator: " | ") + " |" })
+        .joined(separator: "\n")
+      await terminal.markdown(
+        "## Current models\n\n" + table,
+        plainText: plain.joined(separator: "\n"))
+      await terminal.markdown(modelHelp)
       return
     }
     guard var draft = configuration, let configurationPath else { return }
@@ -7283,9 +7293,7 @@ struct MaiCLI {
         message = "\(task.rawValue): \(draft.taskAgents[task] ?? "current agent") (saved)"
       } else {
         guard words.count == 1, !first.hasPrefix("-") else {
-          await terminal.line(
-            "Usage: /model [PROVIDER::]MODEL (all models) or /model-chat [PROVIDER::]MODEL (chat only) or /model-compact [NAME] or /model-tool [NAME] or /model-aproval [NAME] or /model-btw [NAME]"
-          )
+          await terminal.markdown(modelHelp)
           return
         }
         let selection = try draft.modelSelection(first, currentProvider: session.profile.provider)
@@ -12624,7 +12632,7 @@ struct MaiCLI {
   ) -> [String] {
     var values = [
       "/help", "/help set", "/exit", "/quit", "/set tool.aproval yolo", "/set tool.aproval ask",
-      "/help shell", "/help keys",
+      "/help shell", "/help keys", "/help model",
       "/help history", "/history", "/history list", "/history search ", "/history del ",
       "/history clear", "/history path", "/history help",
       "/help theme", "/theme", "/theme list", "/theme use ", "/theme save ", "/theme color",
@@ -12691,8 +12699,7 @@ struct MaiCLI {
       "/provider add local-mlx --kind mlx", "/provider add chatgpt --kind chatgpt",
       "/provider login ", "/provider logout ", "/provider status ",
       "/help provider",
-      "/model ", "/model-chat ",
-      "/model-compact ", "/model-tool ", "/model-aproval ", "/model-btw ", "/agent default ", "/agent effort ",
+      "/agent default ", "/agent effort ",
       "/prompts",
       "/prompt",
       "/prompt list", "/prompt show ", "/prompt add ", "/prompt set ", "/prompt edit ",
@@ -12736,6 +12743,7 @@ struct MaiCLI {
       "/chat clear", "/project", "/project info", "/project list", "/project name ",
       "/project tint ", "/project tint none", "/project del ",
     ]
+    values += REPLModelCatalog.commandPrefixes
     for tint in AgentProjectTint.presetNames {
       values.append("/project tint \(tint)")
     }
@@ -12752,10 +12760,7 @@ struct MaiCLI {
       values.append("/agent use \(agent.id)")
       values.append("/agent show \(agent.id)")
       values.append("/agent default \(agent.id)")
-      values.append("/model-compact \(agent.id)")
-      values.append("/model-tool \(agent.id)")
-      values.append("/model-aproval \(agent.id)")
-      values.append("/model-btw \(agent.id)")
+      values += REPLModelCatalog.taskPrefixes.map { $0 + agent.id }
       values.append("/chat new --agent \(agent.id) ")
     }
     for name in configuration?.prompts?.system.keys.sorted() ?? [] {
@@ -12766,9 +12771,7 @@ struct MaiCLI {
     for provider in configuration?.providers ?? [] {
       values.append("/provider \(provider.id)")
       values.append("/models \(provider.id)")
-      for prefix in [
-        "/model ", "/model-chat ", "/model-compact ", "/model-tool ", "/model-aproval ", "/model-btw ",
-      ] {
+      for prefix in REPLModelCatalog.commandPrefixes {
         values.append("\(prefix)\(provider.id)::")
       }
       values.append("/edit provider \(provider.id)")
@@ -13148,12 +13151,7 @@ struct MaiCLI {
     /jobs                  Manage running and saved processes
     /mcp                   Manage MCP servers
     /memory                Show, edit, learn, or scope project memory
-    /model [PROVIDER::]MODEL  Select the model for chat and tasks
-    /model-chat MODEL      Select this agent's chat model
-    /model-compact [NAME]  Select a compaction agent or model
-    /model-aproval [NAME]  Select a smart-approval agent or model
-    /model-tool [NAME]     Select a tool-decision agent or model
-    /model-btw [NAME]      Select a side-question agent or model
+    /model [FLAG] [MODEL]  Select chat or task models; /help model
     /models [PROVIDER]     List available models
     /nothink               Disable reasoning
     /path                  Show or change file access policies
@@ -13200,6 +13198,21 @@ struct MaiCLI {
       @* TEXT sends to every active agent, including the running main chat.
       @@ TEXT and bare @ TEXT are aliases for @* TEXT. @ alone shows usage.
       Child output uses agent#PID blocks; /set ui.subagents controls how much.
+    """
+
+  private static let modelHelp = """
+    Change models:
+
+    - `/model MODEL` — Chat and all tasks
+    - `/model -chat MODEL` — Chat only; keep task assignments
+    - `/model -compact [NAME]` — Compaction
+    - `/model -tool [NAME]` — Tool decisions
+    - `/model -aproval [NAME]` — Smart approval
+    - `/model -btw [NAME]` — Side questions
+
+    MODEL accepts `PROVIDER::MODEL` or a model on the current provider.
+    Task NAME also accepts a saved agent ID. Omit NAME (or use `-` or `default`)
+    to use the current chat agent for that task. Changes are saved.
     """
 
   private static let keysHelp = """
@@ -13321,7 +13334,7 @@ struct MaiCLI {
       /set debugfile <PATH|default> Save debug logs at PATH; default uses .pmai/debug.jsonl
       /set tool.                   List the tool calling settings
       /set tool.calling MODE       Use automatic/native tools, or text/XML/JSON emulation
-      /set tool.systemone BOOL     Route tools via the System One /model-tool provider (default false)
+      /set tool.systemone BOOL     Route tools via the System One /model -tool provider (default false)
       /set airplane on|off|toggle  Pause internet tools; ✈ marks offline mode
       /set tool.proxy MODE         Default exposure: on/hybrid (common tools direct), all, or off
       /set tool.auto BOOL          Automatically expose frequently used tools (default on)
@@ -13666,11 +13679,11 @@ struct MaiCLI {
       /agent default ID          Save the default for future chats and runs
       /agent effort ID LEVEL     Save an independent reasoning effort
       /model [PROVIDER::]MODEL  Set the chat and all task models, including side questions
-      /model-chat [PROVIDER::]MODEL  Change only this agent's chat model
-      /model-compact [NAME]     Assign a compaction agent or model; omit to clear
-      /model-aproval [NAME]     Assign a smart-approval agent or model; omit to clear
-      /model-tool [NAME]        Assign a tool-decision agent or model; omit to clear
-      /model-btw [NAME]         Assign a side-question agent or model; omit to clear
+      /model -chat [PROVIDER::]MODEL  Change only this agent's chat model
+      /model -compact [NAME]     Assign a compaction agent or model; omit to clear
+      /model -aproval [NAME]     Assign a smart-approval agent or model; omit to clear
+      /model -tool [NAME]        Assign a tool-decision agent or model; omit to clear
+      /model -btw [NAME]         Assign a side-question agent or model; omit to clear
       /agent add NAME MODEL GROUPS PROMPT [PROVIDER [BASE_URL]]
                                  GROUPS is a,b,c (see /tools) or -; PROMPT names a system
                                  prompt (see /prompts); PROVIDER defaults to this chat's, and

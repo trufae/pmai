@@ -39,8 +39,8 @@ Create an agent by copying the current one, then edit the fields you need:
 /prompt add tool-decisions Choose tools efficiently and preserve the facts needed to answer.
 /agent prompt fast tool-decisions
 /agent tools fast -
-/model-tool fast
-/model-compact fast
+/model -tool fast
+/model -compact fast
 ```
 
 The existing `/agent add NAME MODEL GROUPS PROMPT [PROVIDER [BASE_URL]]` form still works. `/edit agent fast` exposes the complete definition, including tool format and generation options. Assigning an agent to a task borrows its inference settings; its own tool list can be empty.
@@ -48,29 +48,29 @@ The existing `/agent add NAME MODEL GROUPS PROMPT [PROVIDER [BASE_URL]]` form st
 For a quick alternative model, these create or update ordinary task agents, which can then be edited with `/agent effort`, `/agent prompt`, or `/edit agent`:
 
 ```text
-/model-compact local::qwen3:8b
-/model-tool local::qwen3:8b
-/model-btw local::qwen3:8b
+/model -compact local::qwen3:8b
+/model -tool local::qwen3:8b
+/model -btw local::qwen3:8b
 ```
 
 A selector first matches a saved agent ID. Otherwise it names a model: `PROVIDER::MODEL` chooses both, and a bare model uses the current provider. The separator is deliberately `::`, so model IDs containing `/` or a single `:` keep their meaning.
 
 ```text
 /model                     # show main model and all task assignments
-/model-compact            # clear the compaction assignment
-/model-tool               # clear the tool assignment
-/model-aproval            # clear the approval assignment
-/model-btw                # use the current chat model for side questions
-/model-tool -             # also clears; "default" does the same
+/model -compact            # clear the compaction assignment
+/model -tool               # clear the tool assignment
+/model -aproval            # clear the approval assignment
+/model -btw                # use the current chat model for side questions
+/model -tool -             # also clears; "default" does the same
 /model remote::large-model # set chat and every task, including side questions, to this model
-/model-chat local::qwen3:8b # change only this conversation agent's provider and model
+/model -chat local::qwen3:8b # change only this conversation agent's provider and model
 /agent default main        # save the agent used for future chats and runs
 /agent use fast            # switch this chat to fast; existing command clears its history
 ```
 
 Slash commands save to the active configuration: `--config PATH`, a local `pmai.json`, or the default pmai configuration. No environment variables are needed to keep these choices.
 
-`/model MODEL` selects the model for chat and every task, replacing any task assignments with model-specific task agents. `/model-chat MODEL` keeps the task assignments unchanged. Both accept `PROVIDER::MODEL` or a bare model on the current provider; without a model they show the current selections. Selecting a model or using `/provider [use] ID` also saves the current agent as the default for future chats and runs. Use the individual task commands to override or clear one assignment afterward.
+`/model MODEL` selects the model for chat and every task, replacing any task assignments with model-specific task agents. `/model -chat MODEL` keeps the task assignments unchanged. Both accept `PROVIDER::MODEL` or a bare model on the current provider; without a model they show the current selections. Selecting a model or using `/provider [use] ID` also saves the current agent as the default for future chats and runs. Use the task flags to override or clear one assignment afterward.
 
 For one invocation:
 
@@ -109,7 +109,7 @@ other inference settings while retaining the conversation's tool permissions
 and limits. In pmai, the assigned agent's instructions supplement the active
 agent's system prompt; iOS uses the assigned agent's system prompt. The request
 contains only the side question, without the chat transcript or pending
-attachments. Clearing `/model-btw` restores the current conversation model.
+attachments. Clearing `/model -btw` restores the current conversation model.
 
 On iOS, side questions appear in a collapsible bar below the chat title. Expand
 it to read all answers, newest first, and stop or dismiss individual questions.
@@ -143,7 +143,7 @@ During a run, the REPL status line shows the live model context instead of the
 chat history saved at the previous turn. Its message and estimated token counts
 grow as tool output arrives and shrink when the model context is reduced.
 
-Interactive autocompaction asks before replacing history, including when `tool.aproval` is `yolo`. In the pmai REPL, choose `y` to compact, `n` to continue without compaction for the current response, `m` for model-change instructions, `x` to clear the chat, or `c` to stop with the transcript kept. While the decision is pending, `/model NAME` changes all models, `/model-chat NAME` changes only the conversation model, and `/model-compact NAME` changes the summarizer; then choose `y` or `n`. `/set ctx.compact 0` disables future automatic compaction. Piped and other noninteractive runs keep the configured automatic behavior.
+Interactive autocompaction asks before replacing history, including when `tool.aproval` is `yolo`. In the pmai REPL, choose `y` to compact, `n` to continue without compaction for the current response, `m` for model-change instructions, `x` to clear the chat, or `c` to stop with the transcript kept. While the decision is pending, `/model NAME` changes all models, `/model -chat NAME` changes only the conversation model, and `/model -compact NAME` changes the summarizer; then choose `y` or `n`. `/set ctx.compact 0` disables future automatic compaction. Piped and other noninteractive runs keep the configured automatic behavior.
 
 PocketMai shows the same decision before its MLX autocompaction. The prompt includes the chat's model settings, a compaction-agent picker, continue and stop actions, and a confirmed clear-chat action. Skipping applies to the current response; a later message may prompt again.
 
@@ -181,16 +181,16 @@ Omit a task key or set it to `null` to inherit. Existing configuration version 1
 
 System One uses a separate `systemone` provider kind for Ollama's `/v1/systemone` endpoint. Ollama 0.35 or later supports local Tev and Nimble decision models. See [Ollama's Tev documentation](https://ollama.com/library/tev1).
 
-Keep a regular chat model selected with `/model-chat`, then configure routing:
+Keep a regular chat model selected with `/model -chat`, then configure routing:
 
 ```text
 /provider add decisions http://127.0.0.1:11434 --kind systemone
 /models decisions
-/model-tool decisions::tev1:latest
+/model -tool decisions::tev1:latest
 /set tool.systemone true
 ```
 
-`tool.systemone` defaults to `false` and is saved with the conversation agent. `/set tool.systemone` displays it. To restore ordinary tool calling, set it to `false` and clear `/model-tool` or assign a regular chat specialist.
+`tool.systemone` defaults to `false` and is saved with the conversation agent. `/set tool.systemone` displays it. To restore ordinary tool calling, set it to `false` and clear `/model -tool` or assign a regular chat specialist.
 
 `/models decisions` and completion suggestions only list local GGUF models declaring the `decision` capability, including renamed models. Catalogs without capability metadata are checked through `/api/show`. A non-Ollama service with only `/v1/models` uses a conservative Tev/Nimble/Jev name filter; explicit model IDs remain usable.
 
@@ -208,16 +208,16 @@ read-only and proxy catalog tools, and permits editing the arguments. Explicit
 reviews each concrete tool and its arguments before execution:
 
 ```text
-/model-aproval decisions::tev1:latest
+/model -aproval decisions::tev1:latest
 /set tool.aproval smart
 ```
 
 This uses System One's `questions.harm` with type `noul`. A finite probability
 below 0.5 allows the call; 0.5 or above blocks it. An unavailable endpoint or
 unsupported model falls back to the conversation's chat model. To use a regular
-model directly, run `/model-aproval local::qwen3:8b`; to use the current model,
-clear the assignment with `/model-aproval -`. These choices work independently
-of `tool.systemone` and `/model-tool`.
+model directly, run `/model -aproval local::qwen3:8b`; to use the current model,
+clear the assignment with `/model -aproval -`. These choices work independently
+of `tool.systemone` and `/model -tool`.
 
 Regular reviewers receive a tools-disabled prompt requesting exactly
 `{"decision":"allow|block","reason":"..."}`. The state includes the tool and its

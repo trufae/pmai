@@ -317,6 +317,24 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     }
   }
 
+  /// A command document is a separate completed block, so later reply deltas
+  /// cannot be appended into its table or list.
+  func writeMarkdown(_ text: String, rendered: String) {
+    lock.withLock {
+      refreshSize()
+      let block = transcript.appendReply(text)
+      transcript.finishReply(block)
+      guard active else { return }
+      if ui.mode == .buffer {
+        drawOutputRows()
+      } else {
+        write(Self.restoreCursor + rendered + Self.saveCursor)
+      }
+      outputEndedLine = true
+      placeCaret()
+    }
+  }
+
   func finishReply(rendered: String) {
     lock.withLock {
       guard let replyBlock else { return }

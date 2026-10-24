@@ -105,8 +105,7 @@ elif action == 'fail':
             # Finish the current word before offering its arguments. Commands
             # inferred from longer candidates must appear only once in the menu.
             for prefix, options in (
-                ('/model', ('/model', '/model-aproval', '/model-btw', '/model-chat', '/model-compact',
-                            '/model-tool', '/models', '/model')),
+                ('/model', ('/model', '/models', '/model')),
                 ('/provider', ('/provider', '/providers', '/provider')),
                 ('/edit memory', ('memory', 'memory-prompt', 'memory')),
             ):
@@ -117,7 +116,7 @@ elif action == 'fail':
                 send(b'\x03')
                 wait_for('Nothing to cancel.')
             send(b'/model \t')
-            wait_for('hello\x1b[0m')
+            wait_for('-aproval\x1b[0m')
             send(b'\x03')
             wait_for('Nothing to cancel.')
             send(b'/mcp\t')

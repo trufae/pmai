@@ -115,7 +115,7 @@ def main():
                 send('main\n')
                 request('main')
                 wait('BEGIN-main')
-                send('/model-btw side::org/small:latest\n')
+                send('/model -btw side::org/small:latest\n')
                 wait('btw: task-btw (saved)')
                 for prompt in ('first', 'second'):
                     send(f'/btw {prompt}\n')
@@ -137,7 +137,7 @@ def main():
                 wait('✓ took')
 
                 # A chat can start while an idle /btw is still running.
-                send('/model-btw quick\n')
+                send('/model -btw quick\n')
                 wait('btw: quick (saved)')
                 send('/btw cancel-side\n')
                 request('cancel-side', isolated=True, model='named-small', provider='side', effort='low')
@@ -175,14 +175,14 @@ def main():
                 assert 'END-piped' in output and '✓ btw took' in output, output
                 request('piped', isolated=True, model='named-small', provider='side', effort='low')
                 print('PASS piped /btw waits for its answer before reading /exit')
-                for clear in ('/model-btw -', '/model-btw default', '/model-btw'):
+                for clear in ('/model -btw -', '/model -btw default', '/model -btw'):
                     run_repl(command + ['--no-stream'],
-                             ['/model-btw bare-small', '/btw bare', clear, '/btw fallback'],
+                             ['/model -btw bare-small', '/btw bare', clear, '/btw fallback'],
                              cwd=root, env=env)
                     request('bare', isolated=True, model='bare-small')
                     request('fallback', isolated=True)
                     assert 'btw' not in json.loads(config.read_text())['taskAgents']
-                print('PASS /model-btw: provider/model routing, saved agent effort, restart, bare model, reset')
+                print('PASS /model -btw: provider/model routing, saved agent effort, restart, bare model, reset')
             finally:
                 for gate in gates.values():
                     gate.set()

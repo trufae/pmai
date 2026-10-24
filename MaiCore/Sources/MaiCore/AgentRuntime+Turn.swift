@@ -71,17 +71,17 @@ extension AgentRuntime {
     if deciding {
       guard selectingTools, state.request.useSystemOne else {
         throw AgentRuntimeError.systemOneConfiguration(
-          "System One requires /set tool.systemone true and a /model-tool assignment; keep a chat provider as the primary model."
+          "System One requires /set tool.systemone true and a /model -tool assignment; keep a chat provider as the primary model."
         )
       }
       definitions = concreteDefinitions
     } else if selectingTools, state.request.useSystemOne {
       throw AgentRuntimeError.systemOneConfiguration(
-        "tool.systemone requires a System One provider in /model-tool.")
+        "tool.systemone requires a System One provider in /model -tool.")
     }
     if state.request.useSystemOne, taskAgents.tool == nil, !concreteDefinitions.isEmpty {
       throw AgentRuntimeError.systemOneConfiguration(
-        "Select a System One model with /model-tool PROVIDER::MODEL first.")
+        "Select a System One model with /model -tool PROVIDER::MODEL first.")
     }
     let supportsNativeTools =
       deciding || provider.descriptor.capabilities.contains(.nativeToolCalling)

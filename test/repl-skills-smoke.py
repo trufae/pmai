@@ -141,7 +141,7 @@ path.write_text(text)
                     config.write_text(json.dumps(base))
                     load_name = 'call-tool' if proxied else 'skills_alpha'
                     load_args = {'name': 'skills_alpha', 'arguments': {'arguments': 'input.txt'}} if proxied else {'arguments': 'input.txt'}
-                    primary = run(['/model-compact local::compact', 'Use alpha for input.txt'], [
+                    primary = run(['/model -compact local::compact', 'Use alpha for input.txt'], [
                         call(load_name, load_args, protocol),
                         call('files_read', {'path': 'input.txt'}, protocol), final])
                     assert len(primary) == 3, primary
@@ -161,7 +161,7 @@ path.write_text(text)
             base['agents'][0].update(context='smart', toolCallingStrategy='native', useToolProxy=False)
             for command in ('$alpha input.txt', '/skills prompt alpha input.txt'):
                 config.write_text(json.dumps(base))
-                primary = run(['/model-compact local::compact', command], [final])
+                primary = run(['/model -compact local::compact', command], [final])
                 loaded = [m for m in primary[0]['messages']
                           if BODY.replace('$ARGUMENTS', 'input.txt') in str(m.get('content'))]
                 assert len(loaded) == 1 and loaded[0]['role'] == 'system', primary

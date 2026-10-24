@@ -181,7 +181,7 @@ path.write_text(json.dumps(provider))
 
             # Edit another connection without selecting it.
             output = run(['/edit provider remote', '/provider',
-                          '/model-chat remote::org/model:tag', 'Edited endpoint.'],
+                          '/model -chat remote::org/model:tag', 'Edited endpoint.'],
                          env={'EDITOR': f'python3 {editor}',
                               'TEST_EDIT_URL': f'{base}/edited/v1'})
             assert "Current provider: local" in output, output
@@ -218,7 +218,7 @@ path.write_text(json.dumps(provider))
             check_request('/edited/v1', 'file-key', 'remote-default')
             run(args=['--provider', 'remote', 'Provider flag default model.'])
             check_request('/edited/v1', 'file-key', 'remote-default')
-            run(['/model-chat remote::org/model:tag'])
+            run(['/model -chat remote::org/model:tag'])
 
             # JSON editing preserves URL query values. Old setters cannot change the URL.
             query = f'{base}/query/v1?tenant=one&mode=two'

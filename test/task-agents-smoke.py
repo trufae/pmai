@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise saved task assignments and CLI-only overrides without a model server."""
 import json
+import re
 from smoke import clean_environment, run_repl
 from pathlib import Path
 import sys
@@ -35,6 +36,31 @@ def main():
         assert cheap['options']['reasoningEffort'] == 'low'
         assert 'compact: cheap' in run(['/model'])
         assert 'tool: cheap' in run(['/model'])
+        listing = run(['/model'])
+        assert '/model -chat MODEL' in listing and '/model -compact [NAME]' in listing, listing
+        assert all(len(line) < 80 for line in listing.split('Change models:', 1)[1].splitlines()), listing
+        assert '/model-' not in listing, listing
+        rendered = run(['/model'], ['--markdown'])
+        rendered = re.sub(r'\x1b\[[0-9;]*m', '', rendered)
+        assert 'Current models' in rendered and 'Effort' in rendered, rendered
+        assert 'cheap' in rendered and 'org/small:latest' in rendered, rendered
+        assert '| ---' not in rendered and '`/model' not in rendered, rendered
+        run(['/model > models.txt'], ['--markdown'])
+        redirected = (root / 'models.txt').read_text()
+        assert '\x1b' not in redirected and 'Chat: hello::original' in redirected, redirected
+        assert '/model -chat MODEL' in redirected, redirected
+        assert '/model-' not in run(['/help']), 'removed commands still appear in help'
+        original = config.read_bytes()
+        special = json.loads(original)
+        next(agent for agent in special['agents'] if agent['id'] == 'main')['model'] = 'a|*b*'
+        config.write_text(json.dumps(special))
+        rendered = re.sub(r'\x1b\[[0-9;]*m', '', run(['/model'], ['--markdown']))
+        assert 'hello::a|*b*' in rendered, rendered
+        config.write_bytes(original)
+        for command in ['/model -chat extra words', '/model -tool extra words',
+                        '/model -unknown', '/model -chat -compact cheap']:
+            run([command])
+            assert config.read_bytes() == original, (command, 'invalid flags changed settings')
         original = config.read_bytes()
         run(['/model'], ['--compact-agent', '-', '--tool-agent', '-', '--effort', 'off'])
         assert config.read_bytes() == original, 'temporary overrides persisted'
@@ -59,7 +85,7 @@ def main():
         assert 'Chat: another::other' in run(['/model'])
         print('PASS task agents: creation, model/effort, restart, reset, deletion, temporary and saved overrides')
 
-        run(['/model-compact cheap', '/model-tool cheap', '/model-aproval cheap', '/model-btw cheap'])
+        run(['/model -compact cheap', '/model -tool cheap', '/model -aproval cheap', '/model -btw cheap'])
         cheap = next(agent for agent in json.loads(config.read_text())['agents']
                      if agent['id'] == 'cheap')
         output = run(['/model hello::org/unified:latest', '/model'])
@@ -78,26 +104,26 @@ def main():
         tasks = saved['taskAgents']
         task_agents = {agent_id: agents[agent_id] for agent_id in tasks.values()}
 
-        output = run(['/model-chat local::chat-only', '/model'])
+        output = run(['/model -chat local::chat-only', '/model'])
         saved = json.loads(config.read_text())
         agents = {agent['id']: agent for agent in saved['agents']}
         assert agents['main']['provider'] == 'local' and agents['main']['model'] == 'chat-only'
         assert saved['taskAgents'] == tasks
         assert {agent_id: agents[agent_id] for agent_id in tasks.values()} == task_agents
         assert 'Chat: local::chat-only' in output, output
-        assert 'Chat: local::chat-only' in run(['/model-chat'])
+        assert 'Chat: local::chat-only' in run(['/model -chat'])
 
         # Bare names use the current provider and remain model IDs even when an agent matches.
-        run(['/model cheap', '/model-chat final-chat'])
+        run(['/model cheap', '/model -chat final-chat'])
         saved = json.loads(config.read_text())
         agents = {agent['id']: agent for agent in saved['agents']}
         assert agents['main']['model'] == 'final-chat'
         for agent_id in saved['taskAgents'].values():
             assert agents[agent_id]['provider'] == 'local' and agents[agent_id]['model'] == 'cheap'
         original = config.read_bytes()
-        run(['/model', '/model-chat'])
+        run(['/model', '/model -chat'])
         assert config.read_bytes() == original, 'showing models changed the configuration'
-        print('PASS /model updates all tasks; /model-chat preserves their assignments across restarts')
+        print('PASS /model updates all tasks; /model -chat preserves their assignments across restarts')
 
 
 if __name__ == '__main__':

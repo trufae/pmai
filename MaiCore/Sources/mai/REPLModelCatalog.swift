@@ -4,6 +4,9 @@ import MaiCore
 /// Model discovery never waits on the input thread. Tab reads the latest
 /// catalog, including a /models result that arrived while editing this line.
 final class REPLModelCatalog: @unchecked Sendable {
+  static let taskPrefixes = ["compact", "tool", "aproval", "btw"].map { "/model -\($0) " }
+  static let commandPrefixes = ["/model -chat "] + taskPrefixes + ["/model "]
+
   private let lock = NSLock()
   private var currentProvider: ProviderID = .openAI
   private var models: [ProviderID: [ModelDescriptor]] = [:]
@@ -44,15 +47,13 @@ final class REPLModelCatalog: @unchecked Sendable {
 
   func completions(for line: String, runtime: AgentRuntime) -> [String] {
     guard
-      let prefix = [
-        "/model-chat ", "/model-compact ", "/model-tool ", "/model-aproval ", "/model-btw ",
-        "/model ",
-      ].first(where: {
+      let prefix = Self.commandPrefixes.first(where: {
         line.hasPrefix($0)
       })
     else { return [] }
     let current = lock.withLock { currentProvider }
     let selector = String(line.dropFirst(prefix.count))
+    guard !selector.hasPrefix("-"), !selector.contains(where: \.isWhitespace) else { return [] }
     let provider =
       selector.range(of: "::").map {
         ProviderID(String(selector[..<$0.lowerBound]))

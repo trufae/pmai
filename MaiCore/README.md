@@ -4,7 +4,7 @@
 [Vim integration](../doc/vim.md) without needing a checkout. Select lines and
 press `m` to choose a prompt, review pmai's reply, and apply it to the buffer.
 
-Task-specific models are configured through saved agents in both pmai and iOS. See [providers, agents, and task defaults](../doc/task-agents.md) for `/model-compact`, `/model-tool`, `/model-btw`, persistent CLI overrides, and the iOS workflow.
+Task-specific models are configured through saved agents in both pmai and iOS. See [providers, agents, and task defaults](../doc/task-agents.md) for `/model -compact`, `/model -tool`, `/model -btw`, persistent CLI overrides, and the iOS workflow.
 
 
 MaiCore is the provider-neutral agent runtime shared by the `pmai` command-line
@@ -169,8 +169,11 @@ and works even when the existing JSON is invalid.
 Inside the REPL, `/models` queries the current provider's model catalog and
 `/models PROVIDER` queries another registered provider without switching the
 session. Use `/model NAME` to select a model for chat and all tasks, including
-side questions, or `/model-chat NAME` to change only the chat model. Both accept
-`PROVIDER::MODEL` and support Tab completion.
+side questions, or `/model -chat NAME` to change only the chat model. Both accept
+`PROVIDER::MODEL` and support Tab completion. Task selectors are flags under
+`/model`: `-compact`, `-tool`, `-aproval`, and `-btw`; each also completes saved
+agent IDs. `/model` shows the current assignments as a Markdown table and lists
+the available flags; `/help model` explains selection and reset behavior.
 For llama.cpp or llamafile, use an OpenAI-compatible provider with a base URL
 such as `http://127.0.0.1:8080/v1`; omit the API key unless the server requires
 one. Model and voice discovery have a 15-second total deadline (or the
@@ -241,7 +244,7 @@ sent to the model.
 
 `/chat recap` prints a short Markdown recap with emoji labels for goals,
 completed actions and results, and pending work. It uses the compact model
-selected by `/model-compact` (or the current model when unset), and leaves
+selected by `/model -compact` (or the current model when unset), and leaves
 history and pending attachments unchanged. It also includes context from
 earlier compaction summaries. `/edit prompt recap` edits its embedded default
 template; keep `{{transcript}}`, or clear the file to restore the default.
@@ -288,8 +291,8 @@ slash commands. Invalid answers keep the question open, and modal answers stay
 out of input history. File-access approvals offer only yes, no, and cancel;
 `/path allow PATH` grants ongoing access.
 
-Use `/model-aproval PROVIDER::MODEL` (or a saved agent ID) to select the reviewer;
-`/model-aproval -` restores the conversation model. A System One provider uses
+Use `/model -aproval PROVIDER::MODEL` (or a saved agent ID) to select the reviewer;
+`/model -aproval -` restores the conversation model. A System One provider uses
 its `harm` probability; a regular model returns a strict JSON allow/block
 verdict. The review includes the tool, arguments/command, user task, working
 directory, valid paths, and sandbox context. Reviewers receive no executable
@@ -318,14 +321,14 @@ EOF
 ```
 
 `/btw PROMPT` asks a one-off question in a fresh context. By default it uses the
-active agent's model and settings. `/model-btw [PROVIDER::]MODEL` selects and saves
-a separate model for side questions; a saved agent ID also works. `/model-btw`
+active agent's model and settings. `/model -btw [PROVIDER::]MODEL` selects and saves
+a separate model for side questions; a saved agent ID also works. `/model -btw`
 with no argument, `-`, or `default` restores the current chat model. `/model`
 shows the assignment. Side questions retain the active agent's system prompt,
 tools, limits, and durable memory, with the assigned agent's inference settings
 and additional instructions, but receive none of the current chat transcript
 or queued attachments. `/model MODEL` updates this assignment along with all
-other models; `/model-chat MODEL` preserves it.
+other models; `/model -chat MODEL` preserves it.
 In the interactive REPL it starts immediately, alongside any running turn.
 Its answer appears in a labelled block as soon as the side question finishes;
 it is not added to the current chat. Multiple side questions can run at once.
@@ -824,7 +827,7 @@ margin, lowers the compaction threshold and recent tail to fit, accounts for
 tool schemas and instructions before sending a request, and gives tools
 smaller output budgets. `/set ctx.window auto` clears the explicit setting;
 limits learned from provider errors remain available for the current process.
-Named agents, including a separate `/model-compact` agent, can declare their
+Named agents, including a separate `/model -compact` agent, can declare their
 own window in their `options` configuration.
 
 Manual `/chat compact`, `/chat recap`, automatic compaction, and smart/tool
@@ -862,7 +865,7 @@ resume the same input or active run.
 
 `/set ctx.strategy=smart` (config key `context: "smart"`) keeps small working
 conversations intact. Once the working context reaches about 16k estimated
-tokens, it uses `/model-compact` to summarize older exchanges, keeping about
+tokens, it uses `/model -compact` to summarize older exchanges, keeping about
 8k recent tokens and the newest complete tool exchange verbatim. Newly read
 code and tool results reach the acting model directly instead of through a
 lossy brief. The brief is reused until enough new evidence accumulates; queued

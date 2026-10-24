@@ -115,9 +115,9 @@ def main():
         run(['/agent add secondary', '/agent use secondary', '/model hello::secondary-model'])
         assert json.loads(config.read_text())['defaultAgent'] == 'secondary'
         assert 'Chat: hello::secondary-model' in run(['/model'])
-        run(['/agent default main', '/agent use secondary', '/model-chat hello::chat-model'])
+        run(['/agent default main', '/agent use secondary', '/model -chat hello::chat-model'])
         assert json.loads(config.read_text())['defaultAgent'] == 'secondary'
-        assert 'Chat: hello::chat-model' in run(['/model-chat'])
+        assert 'Chat: hello::chat-model' in run(['/model -chat'])
 
         # Provider selection on another agent has the same persistence rule.
         run(['/agent default main', '/agent use secondary', '/provider use local'])

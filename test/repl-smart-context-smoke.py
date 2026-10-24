@@ -53,7 +53,7 @@ def main():
                      '--no-stream', '--no-markdown', *(['--resume'] if resume else [])], commands,
                     cwd=root, env=environment, timeout=30)
 
-            output = run(['/model-compact local::tiny', '/set ctx.strategy=smart',
+            output = run(['/model -compact local::tiny', '/set ctx.strategy=smart',
                           '/set ctx.strategy', '/set', '/help set',
                           '/edit prompt smart', 'Fix the parser'])
             assert 'ctx.strategy = smart' in output, output

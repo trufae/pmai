@@ -153,7 +153,7 @@ def main():
             assert 'Nothing to recap yet.' in run(['/chat recap'], resume=False)
             assert not requests
             run(['Fix the parser and prepare a release.',
-                 '/model-compact summarizer::tiny', '/model-tool summarizer::tiny'])
+                 '/model -compact summarizer::tiny', '/model -tool summarizer::tiny'])
             saved = json.loads(config.read_text())
             assert saved['prompts']['system']['compact']
             assert saved['prompts']['system']['tool']
@@ -227,7 +227,7 @@ def main():
                     assert 'empty response' in output or 'empty summary' in output, output
                 assert_unchanged()
             reply_mode = 'normal'
-            run(['/model-compact -'])
+            run(['/model -compact -'])
             endpoint, body = recap()
             assert endpoint.startswith('/primary/') and body['model'] == 'large', (endpoint, body)
 
