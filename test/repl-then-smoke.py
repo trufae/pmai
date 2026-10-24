@@ -140,8 +140,12 @@ def main():
                 # hands the same turn to the primary model for the final reply.
                 request('second', model='next')
                 request('second', model='next')
-                request('SKILL-payload', model='next')
-                body = request('SKILL-payload', model='next')
+                # Skill instructions are extracted into system context; the
+                # user message keeps the invocation receipt and arguments.
+                request('Skill invocation arguments:\npayload', model='next')
+                body = request('Skill invocation arguments:\npayload', model='next')
+                assert any(m['role'] == 'system' and 'SKILL-payload' in m.get('content', '')
+                           for m in body['messages']), body
                 assert any(m['role'] == 'assistant' and m.get('content') == 'DONE-second'
                            for m in body['messages']), body
                 deadline = time.monotonic() + 15
