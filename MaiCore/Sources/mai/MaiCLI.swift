@@ -13538,8 +13538,6 @@ struct MaiCLI {
     /agent                 Alias for /agents
     /agents                List or edit saved agents
     /attach [MODE] PATH    Attach a file; /attach clear removes attachments
-    /then [LINE]           Queue a prompt or command until all tasks finish; no args lists it
-    /unthen                Clear all pending /then actions
     /btw PROMPT            Ask a side question in a fresh context
     /cd PATH               Change working directory
     /chat                  List, switch, fork, or edit chats
@@ -13581,8 +13579,10 @@ struct MaiCLI {
     /stop                  Interrupt the current turn
     /subagents [PID|main]  List or switch agent conversations
     /theme                 List, apply, or customize terminal themes
+    /then [LINE]           Queue a prompt or command until all tasks finish; no args lists it
     /todo                  Show or edit the project's todo list
     /tools                 List tool groups for this agent
+    /unthen                Clear all pending /then actions
     /vdb                   Index or search local documentation and code
     /version               Print the pmai version
     /view SOURCE           Read-only top split in buffer mode; /help view
