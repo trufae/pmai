@@ -7,6 +7,7 @@ from pathlib import Path
 import pty
 import queue
 import re
+import signal
 import struct
 import subprocess
 import sys
@@ -61,6 +62,8 @@ def main():
                                 'toolNames': ['files_write'], 'autocompact': {'tokens': 0}}],
                     'approvals': {'mode': 'ask'}, 'memory': {'enabled': False},
                     'use': {'plan': False},
+                    'ui': {'mode': 'buffer' if action == 'deny' else 'classic',
+                           'fgselection': '#ffffff', 'bgselection': '#123456'},
                 }))
                 history = root / 'history.json'
                 master, slave = pty.openpty()
@@ -88,6 +91,32 @@ def main():
                 def line(text):
                     output.clear()
                     send(text + '\r')
+
+                def check_question():
+                    # Resize forces the retained footer to repaint after any
+                    # inspection output. Both output modes must keep the question.
+                    output.clear()
+                    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', 26, 68, 0, 0))
+                    os.kill(process.pid, signal.SIGWINCH)
+                    painted = wait("Approve confirm tool 'files_write'?")
+                    read_pty(master, output, .1)
+                    painted += output.decode(errors='replace')
+                    moves = list(re.finditer(r'\x1b\[(\d+);(\d+)H', painted))
+                    footer = []
+                    for index, move in enumerate(moves):
+                        row = int(move.group(1))
+                        end = moves[index + 1].start() if index + 1 < len(moves) else len(painted)
+                        if 13 <= row < 25:
+                            footer.append(painted[move.end():end])
+                    pinned = ''.join(footer)
+                    assert "Approve confirm tool 'files_write'?" in pinned, repr(painted)
+                    assert 'approved.txt' in pinned, repr(painted)
+                    style = r'\x1b\[7m' if action == 'deny' else r'\x1b\[38;2;255;255;255;48;2;18;52;86m'
+                    assert re.search(style, pinned), repr(pinned)
+                    # Return to the original geometry for draft/caret assertions.
+                    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 64, 0, 0))
+                    os.kill(process.pid, signal.SIGWINCH)
+                    read_pty(master, output, .1)
 
                 def next_request():
                     return requests.get(timeout=15)
@@ -134,6 +163,7 @@ def main():
                     line('/set tool.aproval')
                     wait('tool.aproval = ask')
                     wait('approve [y/a/n/e/c]> ')
+                    check_question()
                     if action == 'edit':
                         # Tab offers modal answers, not chat history or prompt names.
                         send('e\t\r')
@@ -159,6 +189,12 @@ def main():
                     assert (root / 'approved.txt').exists() == (action == 'edit')
                     if action == 'edit':
                         assert (root / 'approved.txt').read_text() == 'edited'
+                    # Once resolved, a redraw must no longer paint the question panel.
+                    output.clear()
+                    send('\x0c')
+                    read_pty(master, output, .15)
+                    redrawn = output.decode(errors='replace')
+                    assert '48;2;18;52;86m' not in redrawn, repr(redrawn)
                     # Cursor was before Z; this edits the restored draft without retyping it.
                     send('\x7fY\r')
                     if action == 'heredoc':
