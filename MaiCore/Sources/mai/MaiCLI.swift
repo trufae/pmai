@@ -2484,11 +2484,19 @@ struct MaiCLI {
         return decision
       }
     }
+    let supervisorUpdates = REPLSupervisorUpdates()
     let supervisorFeed = Task {
       for await change in await runtime.supervisor.events() {
-        continuation.yield(.supervisor(change))
+        if supervisorUpdates.insert(change) {
+          Task {
+            try? await Task.sleep(for: .milliseconds(100))
+            continuation.yield(.supervisor)
+          }
+        }
       }
     }
+    let progressClock = ContinuousClock()
+    var nextSubagentSave = progressClock.now
     var loop = REPLLoop()
     var activityWasInterrupted = false
     var visibleChatID = session.id
@@ -2700,6 +2708,18 @@ struct MaiCLI {
       if screen != nil || !loop.hasTurns || !loop.compactions.isEmpty {
         await releaseReader(workspace: workspace)
       }
+    }
+
+    /// Local commands do not change providers, tools, or prompt settings.
+    /// Reuse the published prompt instead of waiting on busy agent actors.
+    func releaseLocalInput() async {
+      guard screen != nil else {
+        await releaseIfIdle(workspace: workspace)
+        return
+      }
+      guard loop.readerParked, !loop.exiting, !loop.drainingThen else { return }
+      loop.readerParked = false
+      reader.resume()
     }
 
     func mainProcess() async -> AgentPID {
@@ -3772,7 +3792,7 @@ struct MaiCLI {
             } catch {
               await terminal.line("error: \(error.localizedDescription)", to: .standardError)
             }
-            await releaseIfIdle(workspace: workspace)
+            await releaseLocalInput()
             return false
           }
           if name == "/remote" {
@@ -4011,7 +4031,7 @@ struct MaiCLI {
           }
           if name == "/version" {
             await terminal.line(MaiCLI.version)
-            await releaseIfIdle(workspace: workspace)
+            await releaseLocalInput()
             return false
           }
           if name == "/prompts" {
@@ -4590,25 +4610,23 @@ struct MaiCLI {
         loop.compactions.removeAll { $0.reply === reply }
         await refreshStatus()
 
-      case .supervisor(let change):
-        switch change {
-        case .finished(let info) where info.depth > 0:
+      case .supervisor:
+        let batch = supervisorUpdates.take()
+        for info in batch.finished.values.sorted(by: { $0.pid < $1.pid }) where info.depth > 0 {
           await terminal.processEnded(info)
-        case .attention where screen != nil:
+        }
+        if batch.needsAttention, screen != nil {
           await announceAgentAttention(
             runtime: runtime, announced: &announcedAttention, terminal: terminal,
             skippingApprovals: true)
-        default:
-          break
         }
         // Background children may finish after the main turn. Save their
-        // progress here too, while their parent chat is still identifiable.
-        let info: AgentProcessInfo
-        switch change {
-        case .started(let value), .changed(let value), .attention(let value), .finished(let value):
-          info = value
-        }
-        if info.depth > 0 {
+        // progress at most once a second, and always flush completions and
+        // attention. Saving every change makes 80 agents starve typed input.
+        let saveDue = progressClock.now >= nextSubagentSave
+        if batch.hasChildren, batch.needsAttention || !batch.finished.isEmpty || saveDue
+        {
+          nextSubagentSave = progressClock.now.advanced(by: .seconds(1))
           await recordSubagents()
           workspace.upsert(session.chat, selecting: true)
           await saveWorkspace(&workspace, store: store, terminal: terminal)

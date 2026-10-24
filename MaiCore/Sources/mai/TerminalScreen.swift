@@ -174,6 +174,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   func configure(ui: ConfiguredTerminalUI) {
     lock.withLock {
       refreshSize()
+      guard self.ui != ui else { return }
       let previousMode = self.ui.mode
       let previousUI = self.ui
       self.ui = ui
@@ -485,6 +486,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   func configureTools(_ display: ToolResultDisplay) {
     lock.withLock {
+      guard ui.tools != display else { return }
       ui.tools = display
       transcript.configureTools(display)
       guard active, ui.mode == .buffer else { return }
@@ -500,7 +502,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       let handle = nextToolBlock
       nextToolBlock += 1
       if result == nil { toolBlocks[handle] = index }
-      if active, ui.mode == .buffer {
+      if ui.mode == .buffer, prepareOutputDrawing() {
         outputEndedLine = true
         drawOutputRows()
         placeCaret()
