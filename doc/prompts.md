@@ -125,9 +125,11 @@ subcommands of `/prompts`, so a prompt with one of those names is sent with
 be sent inside a `<<EOF` heredoc.
 
 The iOS app keeps the same prompts under Settings: its system prompts and
-user prompts are the same MaiCore types, `/name rest` (or `$name rest`) in
-the composer resolves through the same catalog, and the builtin prompts are
-seeded into its user prompts, where they can be edited or deleted.
+user prompts are the same MaiCore types. Type `$` in the composer to autocomplete
+system and user prompts, including the editable builtin prompts. `$name rest`
+resolves through the same catalog; existing `/name rest` shortcuts still work.
+`/` autocompletes app commands: `/btw QUESTION` asks a side question, and
+`/version` shows the installed app's version and build without contacting a model.
 
 ## Registering an agent around a prompt
 

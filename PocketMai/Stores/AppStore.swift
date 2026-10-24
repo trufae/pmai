@@ -228,6 +228,7 @@ final class AppStore: ObservableObject {
   @Published private(set) var loadingLocalModelConversationIDs: Set<UUID> = []
   @Published private(set) var queuedUserMessagesByConversationID: [UUID: [QueuedChatMessage]] = [:]
   @Published var btwQuestions: [BTWQuestion] = []
+  @Published var showingVersion = false
   var btwTasks: [UUID: Task<Void, Never>] = [:]
   @Published private(set) var followUpSuggestionsByConversationID: [UUID: FollowUpSuggestionState] =
     [:]
@@ -299,6 +300,7 @@ final class AppStore: ObservableObject {
     attachments: [ChatAttachment] = [],
     in conversationID: UUID
   ) -> Bool {
+    if handleLocalChatCommand(rawPrompt) { return true }
     if let question = BTWQuestion.prompt(in: rawPrompt) {
       return startBTW(question, in: conversationID)
     }
@@ -2051,6 +2053,14 @@ final class AppStore: ObservableObject {
     activeWebXDCSession = nil
   }
 
+  private func handleLocalChatCommand(_ prompt: String) -> Bool {
+    guard prompt.trimmingCharacters(in: .whitespacesAndNewlines) == "/version" else {
+      return false
+    }
+    showingVersion = true
+    return true
+  }
+
   func send(
     prompt rawPrompt: String,
     displayText rawDisplayText: String? = nil,
@@ -2058,6 +2068,7 @@ final class AppStore: ObservableObject {
     attachments: [ChatAttachment] = [],
     promptShortcutSelection: PromptShortcutSelection? = nil
   ) async -> Bool {
+    if promptShortcutSelection == nil, handleLocalChatCommand(rawPrompt) { return true }
     if promptShortcutSelection == nil, let question = BTWQuestion.prompt(in: rawPrompt) {
       if currentConversation == nil { newConversation() }
       guard let conversationID = currentConversation?.id else { return false }
@@ -6413,6 +6424,7 @@ final class AppStoreViewObservation: ObservableObject {
       observe(store.$agentProcesses)
       observe(store.$queuedUserMessagesByConversationID)
       observe(store.$btwQuestions)
+      observe(store.$showingVersion)
       observe(store.$followUpSuggestionsByConversationID)
       observe(store.$generatingFollowUpSourceMessageIDsByConversationID)
       observe(store.$isCompacting)
