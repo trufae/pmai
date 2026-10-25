@@ -262,7 +262,15 @@ struct ChatChunkManifest: Codable {
     guard manifest.format == formatName, manifest.version == 1 else {
       throw ChatHistoryError.unsupportedVersion
     }
+    try manifest.validateShape()
     return manifest
+  }
+
+  private func validateShape() throws {
+    for chunk in chunks {
+      guard (1...64).contains(chunk.count), chunk.bytes > 0 else { throw ChatHistoryError.invalidFile }
+    }
+    for child in children { try child.validateShape() }
   }
 
   func pageRange(before: Int?, limit: Int) -> Range<Int> {
@@ -274,7 +282,7 @@ struct ChatChunkManifest: Codable {
     for chunk in chunks.reversed() {
       offset -= chunk.count
       guard offset < end, offset + chunk.count > start else { continue }
-      if bytes > 0 && bytes + chunk.bytes > 1024 * 1024 {
+      if bytes > 0 && chunk.bytes > max(0, 1024 * 1024 - bytes) {
         boundedStart = max(start, offset + chunk.count)
         break
       }
@@ -355,7 +363,8 @@ struct ChatChunkManifest: Codable {
       defer { offset = end }
       guard offset < wanted.upperBound, end > wanted.lowerBound else { continue }
       let data = try Data(contentsOf: directory.appendingPathComponent(chunk.filename))
-      let values = try JSONSerialization.jsonObject(with: data) as? [Any] ?? []
+      guard let values = try JSONSerialization.jsonObject(with: data) as? [Any], values.count == chunk.count
+      else { throw ChatHistoryError.invalidFile }
       let start = max(0, wanted.lowerBound - offset)
       let stop = min(values.count, wanted.upperBound - offset)
       for value in values[start..<stop] {
