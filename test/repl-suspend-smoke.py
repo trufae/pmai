@@ -361,6 +361,7 @@ elif action == 'fail':
                 wait_for('SLEEP_READY\r\n')
                 send(b'\x03')
                 wait_for('killed by signal 2')
+                print(f'PASS: {mode} shell stop/resume and interrupt', flush=True)
             if shutil.which('vim'):
                 ready = root / 'shell-vim-ready'
                 send((f'!vim -Nu NONE -n -i NONE -c "call writefile([\'ready\'], '
