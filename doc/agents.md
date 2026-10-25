@@ -464,8 +464,10 @@ With an empty prompt, Tab switches focus between the prompt and the view.
 Drag the separator up or down with the left mouse button to resize the panes.
 Both panes keep at least one row. The chosen view height is retained across
 source changes and clamped to fit when the terminal or prompt changes size.
-In the view, `j`/`k` or Down/Up scroll one row, and Page Up/Down and the mouse
-wheel scroll the focused pane. Typing and pasted text cannot change the
+In the view, `j`/`k` or Down/Up scroll one row; `J`/`K` page down/up like
+Page Down/Up. `v` moves the divider down one row (growing the view), and `V`
+moves it up (shrinking the view). `q` closes the split, like `/view off`.
+The mouse wheel scrolls the focused pane. Typing and pasted text cannot change the
 view or submit messages. Tab returns to the prompt; completion still works
 when it contains text. `/view off` closes the split. Switching to classic
 mode also closes it. On very short terminals the view hides until both panes

@@ -39,6 +39,8 @@ protocol LineEditorSurface: AnyObject {
   func toggleViewFocus() -> Bool
   func focusPrompt()
   func scrollView(lines: Int)
+  func resizeView(lines: Int)
+  func closeView()
   func handleMouse(_ event: TerminalMouseEvent)
   /// Text that belongs with the output, such as completion candidates.
   func emit(_ text: String)
@@ -61,6 +63,8 @@ extension LineEditorSurface {
   func toggleViewFocus() -> Bool { false }
   func focusPrompt() {}
   func scrollView(lines: Int) {}
+  func resizeView(lines: Int) {}
+  func closeView() {}
   func handleMouse(_ event: TerminalMouseEvent) {}
   func pendingInput() -> [UInt8] { [] }
   /// Surfaces with no status row simply do not show the menu.
@@ -465,8 +469,11 @@ final class TerminalLineEditor {
         switch key {
         case .byte(106), .down: surface?.scrollView(lines: 1); continue
         case .byte(107), .up: surface?.scrollView(lines: -1); continue
-        case .pageUp: surface?.scrollOutput(wheel: 0, pages: -1); continue
-        case .pageDown: surface?.scrollOutput(wheel: 0, pages: 1); continue
+        case .byte(75), .pageUp: surface?.scrollOutput(wheel: 0, pages: -1); continue
+        case .byte(74), .pageDown: surface?.scrollOutput(wheel: 0, pages: 1); continue
+        case .byte(118): surface?.resizeView(lines: 1); continue  // v: divider down
+        case .byte(86): surface?.resizeView(lines: -1); continue  // V: divider up
+        case .byte(113): surface?.closeView(); continue
         case .wheel(let direction): surface?.scrollOutput(wheel: direction, pages: 0); continue
         case .refreshPrompt, .switchAgent: break
         case .byte(3), .byte(4), .byte(12), .byte(26): surface?.focusPrompt()

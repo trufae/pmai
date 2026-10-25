@@ -308,6 +308,21 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     lock.withLock { ui.mode == .buffer && view?.focused == true && viewHeight > 0 }
   }
 
+  func closeView() { setView(nil) }
+
+  func resizeView(lines: Int) {
+    lock.withLock {
+      guard active, ui.mode == .buffer, view != nil else { return }
+      refreshSize()
+      guard viewHeight > 0 else { return }
+      let height = TerminalView.height(
+        availableRows: regionBottom, preferredHeight: viewHeight + lines)
+      guard height != viewHeight else { return }
+      view?.preferredHeight = height
+      redrawBuffer()
+    }
+  }
+
   func toggleViewFocus() -> Bool {
     lock.withLock {
       guard active, ui.mode == .buffer, view != nil, viewHeight > 0 else { return false }
@@ -1010,7 +1025,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     var visible = view?.buffer.visibleRows(width: width, height: height) ?? []
     if visible.isEmpty { visible = ["No matching output yet."] }
     visible += Array(repeating: "", count: max(0, height - visible.count))
-    let focus = view?.focused == true ? "view focused · j/k scroll · Tab prompt" : "Tab on empty prompt to focus"
+    let focus = view?.focused == true
+      ? "view focused · j/k scroll · J/K page · v/V resize · q close · Tab prompt"
+      : "Tab on empty prompt to focus"
     let label = "── view: \(view?.title ?? "") · \(focus) · drag to resize ──"
     visible.append("\u{1B}[\(view?.focused == true ? "7" : "2")m" + Self.truncated(label, width: width) + Self.reset)
     var out = ""
