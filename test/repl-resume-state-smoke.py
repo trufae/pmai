@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import uuid
-from smoke import clean_environment, run_repl
+from smoke import clean_environment, run_repl, read_chat
 
 
 def main():
@@ -40,13 +40,13 @@ def main():
 
         def chat_file(title):
             return next(path for path in (root / '.pmai/chats').glob('*.json')
-                        if json.loads(path.read_text())['title'] == title)
+                        if read_chat(path)['title'] == title)
 
         run(['/chat rename durable', '/model -aproval worker'],
             ['--base-url', 'http://launch.example/v1',
              '--compact-agent', 'tasks::compact-model', '--tool-agent', 'nested'])
         saved_path = chat_file('durable')
-        saved = json.loads(saved_path.read_text())
+        saved = read_chat(saved_path)
         snapshot = saved['runtimeConfiguration']
         providers = {p['id']: p for p in snapshot['providers']}
         assert providers['chat']['baseURL'] == 'http://launch.example/v1', providers
@@ -107,7 +107,7 @@ def main():
         # Seed more records than the supervisor's ordinary 32-process retention.
         # Children precede their parent in the file, and some were still running.
         run(args=['-r', 'durable', 'A saved conversation.'])
-        saved = json.loads(saved_path.read_text())
+        saved = read_chat(saved_path)
         parent_id = str(uuid.uuid4()).upper()
         records = []
         for index in range(48):
@@ -126,7 +126,7 @@ def main():
 
         # One-shot resume used to leave these records unrestored (still running).
         run(args=['-r', 'durable', 'Continue the saved conversation.'])
-        restored = json.loads(saved_path.read_text())['subagents']
+        restored = read_chat(saved_path)['subagents']
         assert len(restored) == 48
         assert all(r['state'] in ('completed', 'cancelled') for r in restored), restored
         by_id = {r['runID']: r for r in restored}
@@ -137,7 +137,7 @@ def main():
         assert '48 agents from earlier runs' in output, output
         for index in range(48):
             assert f'old-worker-{index}' in output, output
-        assert len(json.loads(saved_path.read_text())['subagents']) == 48
+        assert len(read_chat(saved_path)['subagents']) == 48
 
         # Listings separate definitions from durable processes; both canonical
         # spellings and the explicit old runtime commands still reach the tree.
@@ -156,11 +156,11 @@ def main():
         for output in run(('/jobs log 3 extra', '/job clear extra'),
                           ['-r', 'durable'], split=True):
             assert 'Usage: /jobs' in output, output
-            assert len(json.loads(saved_path.read_text())['subagents']) == 48
+            assert len(read_chat(saved_path)['subagents']) == 48
 
         # Clearing while focused elsewhere also clears the visited chat's saved records.
         run(['/chat use fresh-chat', '/job clear'], ['-r', 'durable'])
-        assert json.loads(saved_path.read_text())['subagents'] == []
+        assert read_chat(saved_path)['subagents'] == []
         output = run(['/jobs tree'], ['-r', 'durable'])
         assert 'old-worker-' not in output, output
         print('PASS complete resume: effective URLs, provider settings, task models, removed '
