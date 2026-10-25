@@ -68,12 +68,16 @@ def main(binary):
             editor.write_text("from pathlib import Path\nimport sys\n"
                               "Path(sys.argv[1]).write_text('buffer editor test')\n")
             shell = root / 'shell.py'
-            shell.write_text("import os, termios, tty\n"
+            shell.write_text("import os, sys, termios, tty\n"
                              "assert all(os.isatty(fd) for fd in (0, 1, 2))\n"
+                             "assert len({os.fstat(fd).st_rdev for fd in (0, 1, 2)}) == 1\n"
+                             "control = os.open('/dev/tty', os.O_RDWR)\n"
+                             "assert os.tcgetpgrp(0) == os.tcgetpgrp(control) == os.getpgrp()\n"
                              "assert termios.tcgetattr(0)[3] & termios.ICANON\n"
-                             "tty.setraw(0)\n"
+                             "tty.setraw(1)\n"
+                             "assert termios.tcgetattr(0) == termios.tcgetattr(control)\n"
                              "print('SHELL_INPUT_READY', flush=True)\n"
-                             "text = input()\n"
+                             "text = sys.stdin.read(len('interactive'))\n"
                              "assert not termios.tcgetattr(0)[3] & termios.ICANON\n"
                              "print('SHELL_REPLY_' + text, flush=True)\n")
             env = clean_environment() | {'TERM': 'xterm-256color',
@@ -276,7 +280,7 @@ def main(binary):
                 send(f'!{sys.executable} {shell}\r')
                 wait_for('SHELL_INPUT_READY')
                 assert b'\x1b[?1049l' in captured, captured
-                send('interactive\n')
+                send('interactive')
                 wait_for('\x1b[?1049h')
                 assert 'SHELL_REPLY_interactive' in '\n'.join(output()), screen
                 # A later redraw must retain the shell output too.
