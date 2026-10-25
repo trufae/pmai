@@ -304,7 +304,8 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
           "List and search GitHub repositories, and browse them without cloning: read files, commits, pull "
           + "requests with their diffs, issues, releases, and CI runs with their logs. Use it to review "
           + "a change, answer a question about a project, or fetch one file. An optional token enables "
-          + "private repositories and higher rate limits; all actions are read-only.",
+          + "private repositories and higher rate limits. With a writable token, post issue/PR comments, "
+          + "submit reviews with inline code suggestions, and create PRs from pushed branches.",
         toolNames: Set(MaiGitHubTool.toolNames),
         options: [
           .init(id: "githubAPIKey", label: "Personal access token", kind: .secret),

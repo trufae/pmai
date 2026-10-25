@@ -101,14 +101,15 @@ func githubFactoryCredentials() async throws {
 }
 
 @Test(
-  "Every GitHub action authenticates all requests only when a token is configured",
+  "Every GitHub read authenticates all requests only when a token is configured",
   arguments: ["", " \n", " secret "])
 func githubAuthenticatedRequests(token: String) async throws {
   let configuration = URLSessionConfiguration.ephemeral
   configuration.protocolClasses = [GitHubTestProtocol.self]
   let session = URLSession(configuration: configuration)
   defer { session.invalidateAndCancel() }
-  for name in MaiGitHubTool.toolNames {
+  for definition in MaiGitHubTool.definitions where definition.annotations.readOnly {
+    let name = definition.name
     let result = await MaiGitHubTool.execute(
       name: name,
       arguments: [

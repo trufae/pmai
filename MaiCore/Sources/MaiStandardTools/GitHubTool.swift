@@ -5,13 +5,17 @@ import MaiCore
   import FoundationNetworking
 #endif
 
-/// Read-only GitHub REST tools with optional token authentication.
+/// GitHub REST tools. Reads allow anonymous access; writes require a token.
 public struct MaiGitHubTool: AgentTool {
   public static let listReposName = "github_list_repos"
   public static let searchReposName = "github_search_repos"
   public static let listPRsName = "github_list_prs"
   public static let prName = "github_pr"
   public static let prDiffName = "github_pr_diff"
+  public static let prCommentsName = "github_pr_comments"
+  public static let commentName = "github_comment"
+  public static let reviewName = "github_review"
+  public static let createPRName = "github_create_pr"
   public static let listFilesName = "github_list_files"
   public static let readFileName = "github_read_file"
   public static let commitsName = "github_commits"
@@ -26,7 +30,10 @@ public struct MaiGitHubTool: AgentTool {
     listReposName, searchReposName,
     listPRsName, prName, prDiffName, listFilesName, readFileName,
     commitsName, commitName, issuesName, issueName, releasesName, ciStatusName, ciLogName,
+    prCommentsName, commentName, reviewName, createPRName,
   ]
+
+  private static let writeNames: Set<String> = [commentName, reviewName, createPRName]
 
   private static let repoParameter = ToolParameterDef(
     name: "repo", type: "string",
@@ -44,6 +51,10 @@ public struct MaiGitHubTool: AgentTool {
     name: "page", type: "integer",
     description: "Result page, starting at 1. Default: 1. Increase to fetch more results.",
     required: false)
+  private static let numberParameter = ToolParameterDef(
+    name: "number", type: "integer", description: "Issue or pull request number.", required: true)
+  private static let bodyParameter = ToolParameterDef(
+    name: "body", type: "string", description: "Markdown comment text.", required: true)
 
   public static let definitions: [ToolDefinition] = [
     ToolDefinition(
@@ -200,9 +211,73 @@ public struct MaiGitHubTool: AgentTool {
           name: "job_id", type: "integer",
           description: "GitHub Actions job ID from github_ci_status.", required: true),
       ]),
+    ToolDefinition(
+      name: prCommentsName,
+      description:
+        "Read PR conversation comments, reviews, and inline comments with IDs and reply relationships. Each category is paginated independently; increase page to read more.",
+      parameters: [repoParameter, numberParameter, pageParameter, limitParameter]),
+    ToolDefinition(
+      name: commentName,
+      description:
+        "Post a conversation comment on an issue or PR. Requires a GitHub token with Issues or Pull requests write access.",
+      parameters: [repoParameter, numberParameter, bodyParameter]),
+    ToolDefinition(
+      name: reviewName,
+      description:
+        "Submit a PR review with optional inline comments in one request. Read github_pr, github_pr_diff, and github_pr_comments first. Requires a token with Pull requests write access. Use fenced suggestion blocks in inline comment bodies for applicable code replacements.",
+      parameters: [],
+      inputSchemaJSON: #"""
+        {
+          "type":"object", "additionalProperties":false,
+          "required":["repo","number","commit_id"],
+          "properties":{
+            "repo":{"type":"string","description":"Repository as owner/name or a github.com URL."},
+            "number":{"type":"integer","minimum":1,"description":"Pull request number."},
+            "commit_id":{"type":"string","description":"Full head commit SHA returned by github_pr for the diff being reviewed."},
+            "body":{"type":"string","description":"Review summary. Required for COMMENT and REQUEST_CHANGES."},
+            "event":{"type":"string","enum":["COMMENT","APPROVE","REQUEST_CHANGES"],"description":"Review action. Default: COMMENT. Publishes immediately."},
+            "comments":{
+              "type":"array","description":"Inline comments to publish together in this review.",
+              "items":{
+                "type":"object","additionalProperties":false,"required":["path","line","body"],
+                "properties":{
+                  "path":{"type":"string","description":"Exact repository-relative file path from the PR diff."},
+                  "line":{"type":"integer","minimum":1,"description":"File line number in the diff; last line for a range."},
+                  "side":{"type":"string","enum":["LEFT","RIGHT"],"description":"LEFT for deletions, RIGHT for additions/context. Default: RIGHT."},
+                  "start_line":{"type":"integer","minimum":1,"description":"First line of a multiline range. Omit for a single line."},
+                  "start_side":{"type":"string","enum":["LEFT","RIGHT"],"description":"Side of start_line. Defaults to side. Requires start_line."},
+                  "body":{"type":"string","description":"Markdown comment. Use a fenced suggestion block to replace the selected RIGHT-side line or range."}
+                }
+              }
+            }
+          }
+        }
+        """#),
+    ToolDefinition(
+      name: createPRName,
+      description:
+        "Create a PR from an existing pushed branch. Requires a token with Pull requests write access. Use gh/git for branch creation, commits, and pushing.",
+      parameters: [
+        repoParameter,
+        ToolParameterDef(
+          name: "head", type: "string",
+          description: "Existing source branch; use owner:branch for a fork.", required: true),
+        ToolParameterDef(
+          name: "base", type: "string", description: "Existing target branch.", required: true),
+        ToolParameterDef(
+          name: "title", type: "string", description: "Pull request title.", required: true),
+        ToolParameterDef(
+          name: "body", type: "string", description: "Markdown pull request description.",
+          required: false),
+        ToolParameterDef(
+          name: "draft", type: "boolean", description: "Create as a draft. Default: false.",
+          required: false),
+      ]),
   ].map { definition in
     var definition = definition
     definition.annotations.requiresInternet = true
+    definition.annotations.readOnly = !writeNames.contains(definition.name)
+    definition.annotations.idempotent = definition.annotations.readOnly
     return definition
   }
 
@@ -270,7 +345,45 @@ public struct MaiGitHubTool: AgentTool {
     guard let repo = repoPath(arguments["repo"]?.stringValue ?? "") else {
       return "Error: repo is required as owner/name, such as torvalds/linux."
     }
+    if writeNames.contains(name), apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      return "Error: configure a GitHub token before posting comments, reviews, or pull requests."
+    }
     switch name {
+    case prCommentsName, commentName, reviewName:
+      guard let number = numberArgument(arguments, key: "number") else {
+        return "Error: number must be a positive integer."
+      }
+      if name == prCommentsName {
+        guard let page = arguments["page"] == nil ? 1 : numberArgument(arguments, key: "page")
+        else {
+          return "Error: page must be a positive integer."
+        }
+        return await service.pullRequestComments(
+          repo: repo, number: number, page: page, limit: limitArgument(arguments))
+      }
+      if name == commentName {
+        guard let body = arguments["body"]?.stringValue,
+          !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return "Error: body is required." }
+        return await service.post(
+          "/repos/\(repo)/issues/\(number)/comments", body: ["body": .string(body)])
+      }
+      return await service.review(repo: repo, number: number, arguments: arguments)
+    case createPRName:
+      for key in ["head", "base", "title"] {
+        guard let value = arguments[key]?.stringValue,
+          !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return "Error: \(key) is required." }
+      }
+      if let draft = arguments["draft"], draft.boolValue == nil {
+        return "Error: draft must be a boolean."
+      }
+      if let body = arguments["body"], body.stringValue == nil {
+        return "Error: body must be a string."
+      }
+      return await service.post(
+        "/repos/\(repo)/pulls",
+        body: arguments.filter { ["head", "base", "title", "body", "draft"].contains($0.key) })
     case listPRsName:
       return await service.listPullRequests(
         repo: repo, state: stateArgument(arguments), limit: limitArgument(arguments))
@@ -457,6 +570,107 @@ private struct GitHubService {
   }
 
   // MARK: - Pull requests
+
+  func pullRequestComments(repo: String, number: Int, page: Int, limit: Int) async -> String {
+    do {
+      var sections = [
+        "PR #\(number) of \(repo), discussion page \(page) (up to \(limit) per category). Increase page to read more."
+      ]
+      for (title, path) in [
+        ("Conversation comments", "/repos/\(repo)/issues/\(number)/comments"),
+        ("Reviews", "/repos/\(repo)/pulls/\(number)/reviews"),
+        ("Inline comments", "/repos/\(repo)/pulls/\(number)/comments"),
+      ] {
+        let data = try await get(
+          path,
+          query: [
+            URLQueryItem(name: "page", value: String(page)),
+            URLQueryItem(name: "per_page", value: String(limit)),
+          ])
+        guard let items = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+          return "Error: unexpected GitHub response for \(title)."
+        }
+        let comments = items.map { item -> String in
+          let id = intValue(item["id"]).map(String.init) ?? "?"
+          let author = stringValue((item["user"] as? [String: Any])?["login"]) ?? "?"
+          let date = stringValue(item["submitted_at"]) ?? stringValue(item["created_at"]) ?? ""
+          var lines = ["- id: \(id) @\(author) \(date)"]
+          for key in [
+            "html_url", "state", "path", "line", "side", "start_line", "start_side",
+            "original_line", "original_start_line", "commit_id", "original_commit_id",
+            "pull_request_review_id", "in_reply_to_id",
+          ] {
+            if let value = item[key], !(value is NSNull) { lines.append("  \(key): \(value)") }
+          }
+          lines.append(truncated(stringValue(item["body"]) ?? "", limit: maxBodyChars))
+          return lines.joined(separator: "\n")
+        }
+        sections.append(
+          "\(title):\n"
+            + (comments.isEmpty ? "None on this page." : comments.joined(separator: "\n\n")))
+      }
+      return sections.joined(separator: "\n\n")
+    } catch {
+      return "Error: \(error.localizedDescription)"
+    }
+  }
+
+  func review(repo: String, number: Int, arguments: [String: JSONValue]) async -> String {
+    let commit = arguments["commit_id"]?.stringValue ?? ""
+    guard commit.count == 40,
+      commit.unicodeScalars.allSatisfy({
+        CharacterSet(charactersIn: "0123456789abcdefABCDEF").contains($0)
+      })
+    else { return "Error: commit_id must be the full head SHA from github_pr." }
+    let event = arguments["event"]?.stringValue ?? "COMMENT"
+    guard ["COMMENT", "APPROVE", "REQUEST_CHANGES"].contains(event) else {
+      return "Error: event must be COMMENT, APPROVE, or REQUEST_CHANGES."
+    }
+    let body = arguments["body"]?.stringValue ?? ""
+    guard event == "APPROVE" || !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      return "Error: body is required for COMMENT and REQUEST_CHANGES."
+    }
+    if let value = arguments["body"], value.stringValue == nil {
+      return "Error: body must be a string."
+    }
+    if let value = arguments["comments"], value.arrayValue == nil {
+      return "Error: comments must be an array of inline comment objects."
+    }
+    var comments: [JSONValue] = []
+    for value in arguments["comments"]?.arrayValue ?? [] {
+      guard var comment = value.objectValue,
+        let path = comment["path"]?.stringValue, !path.isEmpty,
+        let text = comment["body"]?.stringValue,
+        !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        let line = comment["line"]?.intValue, line > 0
+      else { return "Error: each inline comment requires path, body, and a positive line." }
+      let side = comment["side"]?.stringValue ?? "RIGHT"
+      guard ["LEFT", "RIGHT"].contains(side) else {
+        return "Error: inline comment side must be LEFT or RIGHT."
+      }
+      comment["side"] = .string(side)
+      if let start = comment["start_line"] {
+        let startSide = comment["start_side"]?.stringValue ?? side
+        guard let startLine = start.intValue, startLine > 0,
+          ["LEFT", "RIGHT"].contains(startSide),
+          startSide != side || startLine < line
+        else {
+          return
+            "Error: invalid inline comment range; use start_line before line and a valid start_side."
+        }
+        comment["start_side"] = .string(startSide)
+      } else if comment["start_side"] != nil {
+        return "Error: start_side requires start_line."
+      }
+      comments.append(.object(comment))
+    }
+    return await post(
+      "/repos/\(repo)/pulls/\(number)/reviews",
+      body: [
+        "commit_id": .string(commit), "event": .string(event), "body": .string(body),
+        "comments": .array(comments),
+      ])
+  }
 
   func listPullRequests(repo: String, state: String, limit: Int) async -> String {
     do {
@@ -910,10 +1124,38 @@ private struct GitHubService {
 
   // MARK: - HTTP
 
+  func post(_ path: String, body: [String: JSONValue]) async -> String {
+    do {
+      let data = try await request(path, body: body)
+      guard let item = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+        let id = intValue(item["id"]), let url = stringValue(item["html_url"])
+      else {
+        return
+          "Error: unexpected GitHub write response. Check the discussion or PR list before retrying."
+      }
+      let number = intValue(item["number"]).map { " #\($0)" } ?? ""
+      return "Created\(number) (id: \(id)): \(url)"
+    } catch let error as URLError {
+      return
+        "Error: \(error.localizedDescription). The write outcome is unknown; check the discussion or PR list before retrying."
+    } catch {
+      return "Error: \(error.localizedDescription)"
+    }
+  }
+
   private func get(
     _ path: String,
     query: [URLQueryItem] = [],
     accept: String = "application/vnd.github+json"
+  ) async throws -> Data {
+    try await request(path, query: query, accept: accept)
+  }
+
+  private func request(
+    _ path: String,
+    query: [URLQueryItem] = [],
+    accept: String = "application/vnd.github+json",
+    body: [String: JSONValue]? = nil
   ) async throws -> Data {
     var components = URLComponents(string: "https://api.github.com")
     components?.path = path
@@ -928,6 +1170,11 @@ private struct GitHubService {
       throw RequestError(message: "invalid GitHub API URL.")
     }
     var request = URLRequest(url: url)
+    if let body {
+      request.httpMethod = "POST"
+      request.httpBody = try JSONEncoder().encode(body)
+      request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    }
     request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
     request.setValue(accept, forHTTPHeaderField: "Accept")
     let token = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -956,6 +1203,12 @@ private struct GitHubService {
         )
       }
       let body = String(data: data.prefix(300), encoding: .utf8) ?? ""
+      if http.statusCode == 401 || http.statusCode == 403 {
+        throw RequestError(
+          message:
+            "GitHub HTTP \(http.statusCode): \(body). Check token validity, repository access, and Issues/Pull requests write permissions for posting."
+        )
+      }
       throw RequestError(message: "GitHub HTTP \(http.statusCode): \(body)")
     }
     return data
@@ -1008,6 +1261,11 @@ final class GitHubRedirectDelegate: NSObject, URLSessionTaskDelegate {
     willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
     completionHandler: @escaping @Sendable (URLRequest?) -> Void
   ) {
+    // Never redirect a write: it could repost private review text to another host.
+    guard task.originalRequest?.httpMethod != "POST" else {
+      completionHandler(nil)
+      return
+    }
     var request = request
     if request.url?.scheme != "https" || request.url?.host != "api.github.com"
       || (request.url?.port ?? 443) != 443
