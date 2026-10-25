@@ -119,12 +119,15 @@ On a supported Mac, exercise actual native inference from an isolated working
 directory with:
 
     python3 test/repl-local-providers-live.py MaiCore/.build/debug/pmai --provider apple
+    python3 test/repl-local-providers-live.py MaiCore/.build/debug/pmai --provider apple --default-tools
     python3 test/repl-local-providers-live.py MaiCore/.build/debug/pmai --provider mlx
 
 The MLX live check downloads `mlx-community/LFM2-350M-MLX` into
 `/tmp/pmai-local-provider-models` by default; `--model` and `--cache` override it.
 Add `--stream` to check streaming output. The Apple check requires Apple
 Intelligence enabled and its model ready.
+`--default-tools` retains the main agent's default instructions and tool catalog
+to check their input cost; the minimal check disables tools entirely.
 
 Verification on 2026-10-06 passed native Apple and MLX inference in both streaming
 and non-streaming modes on macOS, the CLI setup and installer checks, 543 shared

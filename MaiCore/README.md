@@ -99,6 +99,13 @@ configuration with its own default model, use:
 
 Apple requires macOS 26 or later with Apple Intelligence enabled in
 **System Settings → Apple Intelligence & Siri** and its model download complete.
+Its 4,096-token context includes instructions, tool schemas, history, and the reply.
+With the tool proxy enabled, Apple loads inherited tool schemas through discovery
+instead of sending the hybrid file/shell schemas on every turn. Explicit direct
+tool settings and fixed exposure lists still take precedence. If an older build
+overflows even on `hi`, try `/set tool.proxy all` and start a fresh chat. Large
+custom instructions or current tool results may still need to be shortened;
+clearing history alone cannot reduce them.
 MLX requires an Apple silicon Mac. Its first inference downloads the selected
 MLX-ready Hugging Face repository; later requests reuse the cache. `HF_HOME` and
 `HF_HUB_CACHE` choose the cache location, and `HF_TOKEN` supplies authentication

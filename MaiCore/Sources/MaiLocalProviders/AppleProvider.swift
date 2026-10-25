@@ -31,7 +31,7 @@ public struct AppleProvider: ChatProvider {
     self.deviceOnly = deviceOnly
     descriptor = .init(
       id: id, displayName: displayName ?? "Apple Intelligence",
-      capabilities: [.streaming], defaultModel: Self.modelID)
+      capabilities: [.streaming, .compactToolCatalog], defaultModel: Self.modelID)
   }
 
   public static var unavailabilityMessage: String? { availabilityReport().unavailableMessage }
@@ -68,7 +68,7 @@ public struct AppleProvider: ChatProvider {
     if let reason = Self.availabilityReport(deviceOnly: deviceOnly).unavailableMessage {
       throw LocalProviderError(reason)
     }
-    return [.init(id: Self.modelID, displayName: "Apple on-device model", capabilities: [.streaming])]
+    return [.init(id: Self.modelID, displayName: "Apple on-device model", capabilities: descriptor.capabilities)]
   }
 
   public func complete(
@@ -108,7 +108,9 @@ public struct AppleProvider: ChatProvider {
             }
             if let available {
               guard available > 0 else {
-                throw LocalProviderError("Apple Intelligence context is full even without older history. Shorten the current request, context, or tool results.")
+                throw ProviderContextLimitError(
+                  message: "Apple Intelligence context is full even without older history. Reduce the agent instructions or tool catalog (/set tool.proxy all), current request, context, or tool results.",
+                  contextWindowTokens: model.contextSize)
               }
               maximumResponseTokens = min(maximumResponseTokens, available)
             }
@@ -141,8 +143,10 @@ public struct AppleProvider: ChatProvider {
             if let usage { await emit(.usage(usage)) }
             return .init(message: .assistant(response.content), usage: usage, stopReason: .stop)
           } catch {
-            guard attempts < 3, Self.isContextOverflowError(error),
-              input.trimForRetry(lastAttempt: attempts == 2) else { throw error }
+            guard Self.isContextOverflowError(error) else { throw error }
+            guard attempts < 3, input.trimForRetry(lastAttempt: attempts == 2) else {
+              throw ProviderContextLimitError(message: error.localizedDescription)
+            }
             attempts += 1
           }
         }
