@@ -1043,10 +1043,17 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     if visible.isEmpty { visible = ["No matching output yet."] }
     visible += Array(repeating: "", count: max(0, height - visible.count))
     let focus = view?.focused == true
-      ? "view focused · j/k scroll · J/K page · v/V resize · q close · Tab prompt"
+      ? "view focused · j/k scroll · J/K page · g/G top/bottom · v/V resize · q close · Tab prompt"
       : "Tab on empty prompt to focus"
     let label = "── view: \(view?.title ?? "") · \(focus) · drag to resize ──"
-    visible.append("\u{1B}[\(view?.focused == true ? "7" : "2")m" + Self.truncated(label, width: width) + Self.reset)
+    let text = Self.truncated(label, width: width)
+    let padded = text + String(repeating: " ", count: max(0, width - Self.displayWidth(text)))
+    let background = TerminalLineEditor.backgroundColorCode(ui.backgroundLine)
+    let foreground = TerminalLineEditor.foregroundColorCode(ui.foreground)
+    let emphasis = view?.focused == true ? "1" : nil
+    let codes = background == nil ? [view?.focused == true ? "7" : "2"]
+      : [background, foreground, emphasis].compactMap { $0 }
+    visible.append("\u{1B}[" + codes.joined(separator: ";") + "m" + padded + Self.reset)
     var out = ""
     for (index, text) in visible.enumerated() {
       if index < paintedViewRows.count, paintedViewRows[index] == text { continue }

@@ -72,6 +72,7 @@ def main(binary):
                 start_new_session=True)
             os.close(slave)
             screen = {}
+            styled_screen = {}
             captured = bytearray()
 
             def read_for(seconds=.15):
@@ -86,6 +87,7 @@ def main(binary):
                     end = moves[index + 1].start() if index + 1 < len(moves) else len(text)
                     content = text[move.end():end]
                     if column == 1 and '\x1b[2K' in content:
+                        styled_screen[row] = content
                         screen[row] = CSI.sub('', content).replace('\x1b7', '').replace('\x1b8', '')
 
             def wait_for(text):
@@ -150,6 +152,7 @@ def main(binary):
                 wait_for('\x1b[?1049h')
                 send('/view thinking\r')
                 wait_for('── view: thinking')
+                assert '\x1b[48;2;0;34;68m' in styled_screen[separator()], styled_screen
                 assert b'\x1b[?1002h' in captured, captured
                 assert 'No matching output yet.' in top(), screen
                 send('STREAM_REQUEST\r')
@@ -159,6 +162,17 @@ def main(binary):
                 original_top, original_bottom = top(), bottom()
                 send('\t')
                 wait_for('view focused')
+                assert '\x1b[48;2;0;34;68;1m' in styled_screen[separator()], styled_screen
+                send('g')
+                read_for()
+                assert top().startswith('THOUGHT_00\n') and bottom() == original_bottom, screen
+                first_page = top()
+                send('g')
+                read_for()
+                assert top() == first_page, screen
+                send('G')
+                read_for()
+                assert top() == original_top and bottom() == original_bottom, screen
                 send('kkk')
                 read_for()
                 assert top() != original_top and bottom() == original_bottom, screen
@@ -170,8 +184,10 @@ def main(binary):
                 chunks.put({'reasoning_content': 'LIVE_THOUGHT\n'})
                 read_for()
                 assert top() == anchored, screen  # Stream updates preserve the view's anchor.
-                send('jjjj')
+                send('G')
                 wait_for('LIVE_THOUGHT')
+                chunks.put({'reasoning_content': 'FOLLOWED_THOUGHT\n'})
+                wait_for('FOLLOWED_THOUGHT')
                 latest = top()
                 send('\x1b[5~')
                 read_for()
@@ -344,7 +360,7 @@ def main(binary):
                                  ['/view thinking', '/help view'], cwd=root, env=env, allow_errors=True)
                 assert 'error: /view requires ui.mode=buffer.' in output and '/view off' in output
                 print('PASS view: mode guard, sources, read-only focus, independent scrolling, live thinking/tools/diffs, '
-                      'background agents, J/K paging, v/V resizing, q close, separator dragging, mouse cleanup, '
+                      'background agents, J/K paging, g/G top/bottom, divider background, v/V resizing, q close, separator dragging, mouse cleanup, '
                       'resize, saved reasoning/results, off and cleanup')
             finally:
                 chunks.put(None)

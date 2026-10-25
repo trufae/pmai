@@ -13670,7 +13670,7 @@ struct MaiCLI {
       Ctrl+W delete word · Ctrl+C or /stop interrupt the run · Ctrl+Z suspend
       Ctrl+D exits when the input is empty
       Page Up/Down and the mouse wheel scroll the transcript in buffer mode
-      Tab on an empty prompt focuses /view; j/k scroll, J/K page, v/V resize, q closes
+      Tab on an empty prompt focuses /view; j/k scroll, J/K page, g/G top/bottom, v/V resize, q closes
       Alt+1…9 selects an agent slot · Ctrl+Left/Right cycles agent conversations
       Extended keyboards also support Ctrl+1…9 and Ctrl+Tab/Ctrl+Shift+Tab
     """

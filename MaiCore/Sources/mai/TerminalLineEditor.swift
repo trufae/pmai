@@ -471,6 +471,8 @@ final class TerminalLineEditor {
         case .byte(107), .up: surface?.scrollView(lines: -1); continue
         case .byte(75), .pageUp: surface?.scrollOutput(wheel: 0, pages: -1); continue
         case .byte(74), .pageDown: surface?.scrollOutput(wheel: 0, pages: 1); continue
+        case .byte(103): surface?.scrollView(lines: Int.min); continue  // g: top
+        case .byte(71): surface?.scrollView(lines: Int.max); continue  // G: bottom
         case .byte(118): surface?.resizeView(lines: 1); continue  // v: divider down
         case .byte(86): surface?.resizeView(lines: -1); continue  // V: divider up
         case .byte(113): surface?.closeView(); continue
