@@ -159,8 +159,11 @@ final class ConversationMessageRenderingTests: XCTestCase {
 
   @MainActor
   private func checkToolPartPrepending(readingEarlierMessage: Bool) async throws {
-    let tools = (0..<80).map { index in
-      "<tool_run>\nShell tool (step \(index)):\nresult \(index)\n</tool_run>"
+    // Interleave visible text so tool grouping does not collapse the fixture.
+    // Two batches plus one call exercise repeated prepends without a huge view.
+    let toolCount = ConversationMessageRenderWindow.batchSize * 2 + 1
+    let tools = (0..<toolCount).map { index in
+      "<tool_run>\nShell tool (step \(index)):\nresult \(index)\n</tool_run>\nStep \(index) finished."
     }.joined(separator: "\n")
     let message = ChatMessage(role: .assistant, text: tools + "\n\nFinal answer.")
     let fixture = ToolPartRenderFixture(message: message, hasEarlierMessage: readingEarlierMessage)
@@ -185,6 +188,7 @@ final class ConversationMessageRenderingTests: XCTestCase {
     let scroll = try XCTUnwrap(findScrollView(in: host.view))
     let answer = try XCTUnwrap(findAnswer(in: host.view))
     XCTAssertLessThan(scroll.contentSize.height, readingEarlierMessage ? 2_000 : 1_000)
+    let initialHeight = scroll.contentSize.height
     let minimum = -scroll.adjustedContentInset.top
     let bottom = max(
       minimum,
@@ -211,7 +215,8 @@ final class ConversationMessageRenderingTests: XCTestCase {
           answerViewportY, accuracy: 1)
       }
     }
-    XCTAssertGreaterThan(scroll.contentSize.height, 2_500)
+    XCTAssertEqual(fixture.renderWindow.partStartIndex(for: message.id), 0)
+    XCTAssertGreaterThan(scroll.contentSize.height, initialHeight)
   }
 
   @MainActor
