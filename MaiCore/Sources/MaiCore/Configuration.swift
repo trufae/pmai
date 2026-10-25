@@ -523,6 +523,8 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   public var markdown: Bool
   /// Show all results, important results in full, or a fixed number of leading lines.
   public var tools: ToolResultDisplay
+  /// Collapse consecutive tool calls into an expandable summary in buffer mode.
+  public var toolGroups: Bool
   /// What the text REPL prints while child agents run.
   public var subagentOutput: SubagentOutputLevel
   /// Send unaddressed REPL messages to every active process instead of the focus.
@@ -558,6 +560,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     bold: Bool = false,
     markdown: Bool = true,
     tools: ToolResultDisplay = .lines(0),
+    toolGroups: Bool = false,
     subagentOutput: SubagentOutputLevel = .all,
     broadcast: Bool = false,
     thinking: ThinkingDisplay = .status,
@@ -588,6 +591,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     self.bold = bold
     self.markdown = markdown
     self.tools = tools
+    self.toolGroups = toolGroups
     self.subagentOutput = subagentOutput
     self.broadcast = broadcast
     self.thinking = thinking
@@ -620,6 +624,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     case bold
     case markdown
     case tools
+    case toolGroups = "toolgroups"
     case subagentOutput = "subagents"
     case broadcast
     case thinking
@@ -676,6 +681,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
       tools: (try? container.decodeIfPresent(
         ToolResultDisplay.self, forKey: .tools))
         ?? (try? legacy.decodeIfPresent(ToolResultDisplay.self, forKey: .toolResultLines)) ?? .lines(0),
+      toolGroups: (try? container.decodeIfPresent(Bool.self, forKey: .toolGroups)) ?? false,
       subagentOutput: (try? container.decodeIfPresent(
         SubagentOutputLevel.self, forKey: .subagentOutput)) ?? .all,
       broadcast: (try? container.decodeIfPresent(Bool.self, forKey: .broadcast)) ?? false,

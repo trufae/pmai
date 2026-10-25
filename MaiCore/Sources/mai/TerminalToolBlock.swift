@@ -6,6 +6,7 @@ struct TerminalToolBlock {
   var call: ToolCall?
   var result: ToolResult?
   var prefix: String
+  var timing = ToolRunTiming()
 
   var hasAppliedDiff: Bool {
     guard let result, !result.isError,

@@ -43,6 +43,7 @@ enum AssistantToolLoop {
   private struct CallResult {
     let call: ParsedToolCall
     let result: String
+    var timing: ToolRunTiming? = nil
   }
 
   private enum RunHost {
@@ -803,6 +804,7 @@ enum AssistantToolLoop {
     // Calls past the cap: dropped, and taken out of the transcript.
     var dropped = Set<Int>()
     var launched = 0
+    let batchStartedAt = Date()
 
     func publishProgress() {
       guard case .live(let assistantID, let baselineText, _) = host else { return }
@@ -819,7 +821,8 @@ enum AssistantToolLoop {
         parseDefinitions: parseDefinitions,
         assistantID: assistantID,
         baselineText: baselineText,
-        store: store)
+        store: store,
+        startedAt: batchStartedAt)
     }
 
     try await withThrowingTaskGroup(of: (Int, CallResult).self) { group in
@@ -839,6 +842,7 @@ enum AssistantToolLoop {
           continue
         }
         launched += 1
+        let callStartedAt = Date()
         switch try await prepareToolCall(
           call,
           parseDefinitions: parseDefinitions,
@@ -846,7 +850,8 @@ enum AssistantToolLoop {
           host: host,
           store: store)
         {
-        case .answered(let result):
+        case .answered(var result):
+          result.timing = ToolRunTiming(startedAt: callStartedAt, finishedAt: Date())
           results[index] = result
         case .ready(let ready) where ready.concurrent:
           group.addTask {
@@ -911,7 +916,8 @@ enum AssistantToolLoop {
         continue
       }
       guard let result = results[index] else { continue }
-      let runBlock = AgentTooling.makeRunBlock(call: result.call, result: result.result)
+      let runBlock = AgentTooling.makeRunBlock(
+        call: result.call, result: result.result, timing: result.timing)
       if !replaceFirstOccurrence(of: call.rawBlock, in: &text, with: runBlock) {
         appended.append(runBlock)
       }
@@ -950,13 +956,15 @@ enum AssistantToolLoop {
     parseDefinitions: [ToolDefinition],
     assistantID: UUID,
     baselineText: String,
-    store: AppStore
+    store: AppStore,
+    startedAt: Date
   ) {
     let pendingText = pendingToolRunText(
       response: transcriptText,
       calls: pendingCalls,
       remainingToolCalls: remainingToolCalls,
-      parseDefinitions: parseDefinitions)
+      parseDefinitions: parseDefinitions,
+      startedAt: startedAt)
     let turnText = ([pendingText] + appendedRunBlocks)
       .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
       .filter { !$0.isEmpty }
@@ -973,7 +981,8 @@ enum AssistantToolLoop {
     response: String,
     calls: [ParsedToolCall],
     remainingToolCalls: Int,
-    parseDefinitions: [ToolDefinition]
+    parseDefinitions: [ToolDefinition],
+    startedAt: Date = Date()
   ) -> String {
     var transcriptText = response
     var appendedRunBlocks: [String] = []
@@ -986,7 +995,8 @@ enum AssistantToolLoop {
       let normalizedCall = AgentTooling.normalized(call: call, tools: parseDefinitions)
       let runBlock = AgentTooling.makeRunBlock(
         call: normalizedCall,
-        result: "Waiting for host tool result.")
+        result: "Waiting for host tool result.",
+        timing: ToolRunTiming(startedAt: startedAt))
       if !replaceFirstOccurrence(of: call.rawBlock, in: &transcriptText, with: runBlock) {
         appendedRunBlocks.append(runBlock)
       }
@@ -1300,11 +1310,17 @@ enum AssistantToolLoop {
     _ ready: ReadyToolCall,
     store: AppStore
   ) async throws -> CallResult {
+    let startedAt = Date()
+    func completed(_ result: String) -> CallResult {
+      CallResult(
+        call: ready.call, result: result,
+        timing: ToolRunTiming(startedAt: startedAt, finishedAt: Date()))
+    }
     // A child agent runs for as long as its own model calls take, each under
     // the same timeout prompt as this one; asking again about the parent's
     // wait for it would only double the questions.
     if SubagentTool.isAgentTool(ready.call.name) {
-      return CallResult(call: ready.call, result: await ready.execute())
+      return completed(await ready.execute())
     }
     do {
       let result = try await InteractiveOperationTimeout.run(
@@ -1312,11 +1328,9 @@ enum AssistantToolLoop {
         context: ready.context,
         onTimeout: timeoutHandler(store: store),
         operation: ready.execute)
-      return CallResult(call: ready.call, result: result)
+      return completed(result)
     } catch is LongRunningOperationSkipped {
-      return CallResult(
-        call: ready.call,
-        result: "Error: tool call skipped by user after timeout.")
+      return completed("Error: tool call skipped by user after timeout.")
     }
   }
 
