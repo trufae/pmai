@@ -335,12 +335,16 @@ struct ChatView: View {
           )
           .disabled(!canStartNewChat)
           .padding(8)
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+          .ignoresSafeArea(.container, edges: .trailing)
         }
       }
       .overlay(alignment: .bottomTrailing) {
         if isComposerCollapsed, showsComposer {
           landscapeComposerToggle
             .padding(8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+            .ignoresSafeArea(.container, edges: .trailing)
         }
       }
       .onChange(of: usesCompactLandscapeLayout) { _, _ in
@@ -2344,6 +2348,8 @@ struct ChatView: View {
           .padding(.bottom, 8)
       }
     }
+    // Use the landscape edge gutter for the toggle, keeping it aligned with New Chat.
+    .ignoresSafeArea(.container, edges: usesCompactLandscapeLayout ? .trailing : [])
   }
 }
 
