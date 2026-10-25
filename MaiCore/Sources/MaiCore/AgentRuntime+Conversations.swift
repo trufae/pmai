@@ -40,7 +40,8 @@ extension AgentRuntime {
     conversationRequests = conversationRequests.filter { known.contains($0.key) }
     conversationIDs = conversationIDs.filter { known.contains($0.key) }
     guard var request = liveRequests[pid] ?? conversationRequests[pid] else { return nil }
-    request.messages = await supervisor.transcript(pid)
+    guard let messages = try? await supervisor.loadTranscript(pid) else { return nil }
+    request.messages = messages
     return request
   }
 

@@ -29,6 +29,7 @@ public struct AgentChatSummary: ChatRecord, Decodable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case id, title, primaryAgent, messages, pendingContent, createdAt, updatedAt, isArchived
+    case storedMessageCount = "_pmaiMessageCount"
   }
 
   private enum AgentKeys: String, CodingKey {
@@ -55,8 +56,9 @@ public struct AgentChatSummary: ChatRecord, Decodable, Equatable, Sendable {
     createdAt = try container.decode(Date.self, forKey: .createdAt)
     updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
-    messageCount = try container.decode([RoleOnly].self, forKey: .messages)
-      .filter { $0.role != .system }.count
+    messageCount =
+      try container.decodeIfPresent(Int.self, forKey: .storedMessageCount)
+      ?? container.decode([RoleOnly].self, forKey: .messages).filter { $0.role != .system }.count
     hasPendingContent =
       !(try container.decodeIfPresent([Ignored].self, forKey: .pendingContent) ?? []).isEmpty
   }
@@ -105,10 +107,24 @@ extension ChatFileStore where Chat == AgentChat {
   /// `commit` writes only what the host changes.
   public func loadWorkspace(
     selecting selectedChatID: UUID? = nil,
+    paged: Bool = false,
     onFailure: ((ChatFileStoreError) -> Void)? = nil
   ) throws -> AgentChatWorkspace {
-    var workspace = AgentChatWorkspace(
-      chats: try loadChats(onFailure: onFailure), selectedChatID: selectedChatID)
+    var chats: [AgentChat] = []
+    if paged {
+      for id in try chatIDs() {
+        do {
+          if let chat = try loadChatPage(id: id, limit: 0), !chat.isDisposable {
+            chats.append(chat)
+          }
+        } catch {
+          onFailure?(.unreadable(fileURL(for: id), error))
+        }
+      }
+    } else {
+      chats = try loadChats(onFailure: onFailure)
+    }
+    var workspace = AgentChatWorkspace(chats: chats, selectedChatID: selectedChatID)
     workspace.markCommitted()
     return workspace
   }
@@ -121,6 +137,7 @@ extension ChatFileStore where Chat == AgentChat {
       try delete(id: id)
     }
     for chat in workspace.chats where workspace.modifiedChatIDs.contains(chat.id) {
+      guard chat.historyWindow == nil else { continue }
       if chat.isDisposable {
         try delete(id: chat.id)
       } else {

@@ -121,9 +121,9 @@ public enum ChatFileStoreError: LocalizedError, Sendable {
   }
 }
 
-/// Persists chats as one JSON file per chat inside a directory, the layout
-/// PocketMai has used since its first release, so hosts can list chats cheaply
-/// and load a transcript only when it is opened.
+/// Keeps small chats in their original JSON layout and large chats in a
+/// manifest with immutable chunks. Portable export retains the original schema;
+/// page readers can open a transcript without decoding all of its history.
 ///
 /// The shared rules live here. A disposable chat, an untouched placeholder, is
 /// never written, so an empty chat left behind on any platform leaves no file.
@@ -197,18 +197,45 @@ public struct ChatFileStore<Chat: StoredChat>: Sendable {
   /// An existing file is left alone either way; use `delete` to remove one.
   @discardableResult
   public func save(_ chat: Chat, evenIfDisposable: Bool = false) throws -> Bool {
-    guard evenIfDisposable || !chat.isDisposable else { return false }
+    return try ChatStorageAccess.withLock(at: fileURL(for: chat.id)) {
+      guard evenIfDisposable || !chat.isDisposable else { return false }
     try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
-    try coding.makeEncoder().encode(chat).write(to: fileURL(for: chat.id), options: .atomic)
-    return true
+      if let paged = chat as? any PagedStoredChat {
+        guard paged.historyWindow == nil else { throw ChatHistoryError.partialExport }
+        let url = fileURL(for: chat.id)
+        let alreadyChunked =
+          try FileManager.default.fileExists(atPath: url.path)
+          && (try ChatChunkManifest.read(at: url)) != nil
+        if try alreadyChunked || paged.needsChunkStorage(coding: coding) {
+          try paged.writeChunked(at: url, coding: coding)
+        } else {
+          let data = try coding.makeEncoder().encode(chat)
+          let same = (try? Data(contentsOf: url)).map { existing in
+            (try? ChatChunkManifest.canonicalMetadata(existing)) == (try? ChatChunkManifest.canonicalMetadata(data))
+          } ?? false
+          if !same { try data.write(to: url, options: .atomic) }
+          paged.historyChanges.committed(to: url, revision: UUID(), count: paged.historyMessageCount)
+        }
+      } else {
+        try coding.makeEncoder().encode(chat).write(to: fileURL(for: chat.id), options: .atomic)
+      }
+      return true
+    }
   }
 
   @discardableResult
   public func delete(id: UUID) throws -> Bool {
-    let url = fileURL(for: id)
+    return try ChatStorageAccess.withLock(at: fileURL(for: id)) {
+      let url = fileURL(for: id)
     guard FileManager.default.fileExists(atPath: url.path) else { return false }
     try FileManager.default.removeItem(at: url)
-    return true
+      for extra in [url.appendingPathExtension("parts"), url.appendingPathExtension("legacy")] {
+        if FileManager.default.fileExists(atPath: extra.path) {
+          try FileManager.default.removeItem(at: extra)
+        }
+      }
+      return true
+    }
   }
 
   public func decodeChat(from data: Data) throws -> Chat {
@@ -273,16 +300,37 @@ public struct ChatFileStore<Chat: StoredChat>: Sendable {
   }
 
   private func decode<Record: Decodable>(_ type: Record.Type, at url: URL) throws -> Record {
-    let data: Data
+    return try ChatStorageAccess.withLock(at: url) {
+      let data: Data
     do {
-      data = try Data(contentsOf: url)
-    } catch {
+        if let manifest = try ChatChunkManifest.read(at: url) {
+          let directory = try manifest.directory(relativeTo: url)
+          if type == Chat.self {
+            try manifest.checkFiles(in: directory)
+            // Full loads are reserved for inference/export/editing. Map the
+            // streamed portable document instead of allocating another huge Data.
+            let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(
+              UUID().uuidString)
+            _ = FileManager.default.createFile(atPath: temporary.path, contents: nil)
+            let handle = try FileHandle(forWritingTo: temporary)
+            defer { try? handle.close(); try? FileManager.default.removeItem(at: temporary) }
+            try manifest.write(in: directory) { try handle.write(contentsOf: $0) }
+            try handle.close()
+            data = try Data(contentsOf: temporary, options: .mappedIfSafe)
+          } else {
+            data = manifest.metadata
+          }
+        } else {
+          data = try Data(contentsOf: url, options: .mappedIfSafe)
+        }
+      } catch {
       throw ChatFileStoreError.unreadable(url, error)
     }
     do {
       return try coding.makeDecoder().decode(Record.self, from: data)
     } catch {
       throw ChatFileStoreError.undecodable(url, error)
+    }
     }
   }
 }
