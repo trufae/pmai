@@ -28,6 +28,8 @@ public struct ProviderCapabilities: OptionSet, Codable, Hashable, Sendable {
   public static let fileInput = ProviderCapabilities(rawValue: 1 << 6)
   /// Classifies the next tool; cannot generate chat text or arbitrary arguments.
   public static let toolDecision = ProviderCapabilities(rawValue: 1 << 7)
+  /// Prefer discovery over inherited direct schemas when the host enables the tool proxy.
+  public static let compactToolCatalog = ProviderCapabilities(rawValue: 1 << 8)
 }
 
 public struct ProviderDescriptor: Codable, Equatable, Sendable {

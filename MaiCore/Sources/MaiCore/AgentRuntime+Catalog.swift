@@ -197,9 +197,13 @@ extension AgentRuntime {
       || request.toolGroupNames?.contains(group.id) == true
       || request.toolGroupNames?.contains(group.catalogID) == true
     { enabled.formUnion(group.toolNames) }
+    // Small on-device models cannot afford the hybrid catalog's file/shell schemas.
+    // Keep explicit exposure settings and per-tool overrides authoritative.
+    let compactCatalog = providers[request.provider]?.descriptor.capabilities.contains(.compactToolCatalog) == true
+    let exposed = request.proxyExposedTools ?? (compactCatalog && request.useToolProxy ? [] : nil)
     var result = request.toolPolicy.modes(
       for: names, in: groups, enabledNames: enabled, useToolProxy: request.useToolProxy,
-      exposedTools: request.proxyExposedTools, usage: toolUsage)
+      exposedTools: exposed, usage: toolUsage)
     if let scope = request.restrictedToolNames {
       for name in names where !scope.contains(name) { result[name] = .disabled }
     }

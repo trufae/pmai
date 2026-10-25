@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import MaiCore
+@testable import MaiTestSupport
 
 private let githubPolicyGroup = ToolGroupDefinition(
   id: "github", sourceID: "standard", toolNames: ["github_pr", "github_issue", "github_ci_log"])
@@ -226,4 +227,65 @@ func toolUsagePersistenceFailure() async throws {
   let usage = await store.record("github_pr")
   #expect(usage.counts["github_pr"] == 1)
   #expect(await store.lastPersistenceError != nil)
+}
+
+@Test("Small-context providers discover inherited schemas while preserving explicit tool policies")
+func compactProviderToolCatalog() async throws {
+  for compact in [false, true] {
+    let provider = ScriptedProvider(responses: [], capabilities: compact ? [.compactToolCatalog] : [])
+    let runtime = AgentRuntime()
+    try await runtime.register(provider)
+    for name in ["files_read", "files_write", "files_hidden", "files_disabled", "promoted"] {
+      try await runtime.register(tool: ClosureTool(
+        definition: ToolDefinition(name: name, description: "Read fixture data."),
+        operation: { _, _ in ToolOutput(text: "Done") }))
+    }
+    for _ in 0..<5 { await runtime.recordToolUse("promoted") }
+    var request = AgentRequest(
+      provider: "scripted", messages: [.user("hi")],
+      toolNames: ["files_read", "files_write", "files_hidden", "files_disabled", "promoted"],
+      toolGroupNames: [], useToolProxy: true,
+      toolPolicy: .init(tools: ["files_write": .direct, "files_hidden": .hidden, "files_disabled": .disabled]))
+    let definitions = try await runtime.visibleDefinitions(for: request, depth: 0)
+    let exposed = await runtime.exposedTools(in: definitions, request: request)
+    #expect(exposed == (compact ? ["files_write"] : ["files_read", "files_write", "promoted"]))
+    #expect(!definitions.contains { $0.name == "files_disabled" })
+    let listed = await runtime.listedDefinitions(in: definitions, request: request)
+    #expect(!listed.contains { $0.name == "files_hidden" })
+    let hidden = await runtime.hiddenTools(for: request)
+    let proxy = ToolProxy.definitions(for: definitions, exposing: exposed, hiding: hidden)
+    let discovery = try #require(proxy.first { $0.name == ToolProxy.listName })
+    #expect(discovery.description.contains("files_read") == compact)
+    // Fixed exposure and disabling the proxy still override the provider preference.
+    request.proxyExposedTools = ["files_read"]
+    #expect(await runtime.exposedTools(in: definitions, request: request) == ["files_read", "files_write"])
+    request.proxyExposedTools = nil
+    request.useToolProxy = false
+    #expect(await runtime.exposedTools(in: definitions, request: request) == ["files_read", "files_write", "promoted"])
+  }
+}
+
+@Test("Compact catalogs keep inherited tools discoverable and executable through the text protocol")
+func compactProviderToolDiscovery() async throws {
+  let provider = ScriptedProvider(responses: [
+    .init(message: .assistant(#"{"name":"list-tools","arguments":{"keywords":"files_read"}}"#), stopReason: .stop),
+    .init(message: .assistant(#"{"name":"call-tool","arguments":{"name":"files_read","arguments":{}}}"#), stopReason: .stop),
+    .init(message: .assistant("Read the fixture."), stopReason: .stop),
+  ], capabilities: [.compactToolCatalog])
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  try await runtime.register(tool: ClosureTool(
+    definition: .init(
+      name: "files_read", description: "Full schema available through discovery.",
+      annotations: .init(approval: .automatic)),
+    operation: { _, _ in ToolOutput(text: "Fixture contents") }))
+  let result = try await runtime.run(AgentRequest(
+    provider: "scripted", messages: [.user("Read the fixture")], toolNames: ["files_read"],
+    toolGroupNames: [], useToolProxy: true))
+  let results = result.transcript.flatMap(\.toolResults)
+  #expect(results.contains { $0.text.contains("Full schema available through discovery.") && !$0.isError })
+  #expect(results.contains { $0.text == "Fixture contents" && !$0.isError })
+  #expect(result.transcript.last?.text == "Read the fixture.")
+  let request = try #require(await provider.requests.first)
+  #expect(!request.messages.contains { $0.text.contains("Full schema available through discovery.") })
 }
