@@ -287,7 +287,12 @@ def main():
                     assert time.monotonic() < deadline, ('/exit timed out', output.decode(errors='replace'))
                     read_for(.05)
                 assert process.returncode == 0, (process.returncode, output.decode(errors='replace'))
-                messages = json.loads(chat_file.read_text())['messages']
+                # Reopen through the CLI so the check covers persisted chunks and legacy JSON.
+                exported = subprocess.run(command + ['--resume'],
+                    input='/export json compacted.json\n/exit\n', cwd=root, env=environment,
+                    text=True, capture_output=True, timeout=20)
+                assert exported.returncode == 0, exported.stderr
+                messages = json.loads((root / 'compacted.json').read_text())['chat']['messages']
                 user_texts = [m['content'][0]['text']['_0'] for m in messages if m['role'] == 'user']
                 # Compaction keeps the latest request and stores its summary as conversation evidence.
                 assert user_texts == [
