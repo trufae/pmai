@@ -188,15 +188,17 @@ enum TerminalCommand {
         // WIFSTOPPED is a C macro, unavailable to Swift. The low status byte
         // is 0x7f for stops; do not mistake that for a signal termination.
         guard status & 0xff == 0x7f else { return status }
-        // Restore the real tty before stopping pmai's whole job. `fg`
-        // resumes direct children too; a captured session needs its own
-        // SIGCONT after pmai has resumed. SIGSTOP works on blocked workers.
-        capture?.pauseInput()
-        _ = tcsetattr(STDIN_FILENO, TCSADRAIN, &cooked)
-        _ = kill(-getpgrp(), SIGSTOP)
+        // Direct children share pmai's job. A captured session needs an
+        // explicit resume after fg. Target this worker with raise so it
+        // cannot resume the child before the process has actually stopped.
         if let capture {
+          capture.pauseInput()
+          _ = tcsetattr(STDIN_FILENO, TCSADRAIN, &cooked)
+          _ = raise(SIGSTOP)
           capture.resumeInput()
           _ = kill(-child, SIGCONT)
+        } else {
+          _ = kill(-getpgrp(), SIGSTOP)
         }
       }
     }
