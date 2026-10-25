@@ -81,6 +81,7 @@ struct ChatView: View {
   @ObservedObject var storeObservation: AppStoreViewObservation
   @State var remoteChat: RemoteAgentChat? = nil
   @Environment(\.scenePhase) private var scenePhase
+  @Environment(\.verticalSizeClass) private var verticalSizeClass
   @EnvironmentObject private var ttsPlayer: TTSPlayer
   @State private var showingRenameAlert = false
   @State private var showingProviderModelSheet = false
@@ -109,6 +110,7 @@ struct ChatView: View {
   @State private var historyNearBottom = false
   @State private var historyPageIsLoading = false
   @State private var keyboardOverlap: CGFloat = 0
+  @State private var landscapeComposerExpanded = false
   @State private var lastUpdatedVisibleConversationID: UUID?
   @State private var queuedMessagePendingEdit: QueuedChatMessage?
   @State private var userMessageNavigation = UserMessageNavigationState()
@@ -325,6 +327,34 @@ struct ChatView: View {
 
   private var chatViewWithToolbar: some View {
     chatLayout
+      .overlay(alignment: .topTrailing) {
+        if usesCompactLandscapeLayout {
+          FloatingActionIcon(
+            systemImage: "square.and.pencil", accessibilityLabel: "New Chat", compact: true,
+            action: onNewChat
+          )
+          .disabled(!canStartNewChat)
+          .padding(8)
+        }
+      }
+      .overlay(alignment: .bottomTrailing) {
+        if isComposerCollapsed, showsComposer {
+          landscapeComposerToggle
+            .padding(8)
+        }
+      }
+      .onChange(of: usesCompactLandscapeLayout) { _, _ in
+        landscapeComposerExpanded = false
+      }
+      .onChange(of: store.composerFocusRequestID) { _, _ in
+        landscapeComposerExpanded = true
+      }
+      .onChange(of: store.sharedImportRequestID) { _, _ in
+        if remoteChat == nil { landscapeComposerExpanded = true }
+      }
+      .onChange(of: queuedMessagePendingEdit) { _, message in
+        if message != nil { landscapeComposerExpanded = true }
+      }
       .animation(.snappy, value: ttsPlayer.isSpeaking)
       .animation(.snappy, value: isMessageSelectionMode)
       .navigationTitle("")
@@ -381,6 +411,33 @@ struct ChatView: View {
         }
         .hidingSharedBackground()
       }
+      .toolbar(usesCompactLandscapeLayout ? .hidden : .visible, for: .navigationBar)
+  }
+
+  // Size classes follow rotation without mistaking a portrait keyboard for landscape.
+  private var usesCompactLandscapeLayout: Bool {
+    UIDevice.current.userInterfaceIdiom == .phone && verticalSizeClass == .compact
+  }
+
+  private var isComposerCollapsed: Bool {
+    usesCompactLandscapeLayout && !landscapeComposerExpanded && !liveVoiceSession.isActive
+  }
+
+  private var showsComposer: Bool {
+    !chatSearch.isActive && !isLoadingConversation && !isMessageSelectionMode
+  }
+
+  private var landscapeComposerToggle: some View {
+    FloatingActionIcon(
+      systemImage: "bubble.left",
+      accessibilityLabel: isComposerCollapsed ? "Show composer" : "Hide composer",
+      isActive: !isComposerCollapsed, compact: true
+    ) {
+      withAnimation(.snappy) {
+        landscapeComposerExpanded.toggle()
+      }
+    }
+    .accessibilityValue(isComposerCollapsed ? "Collapsed" : "Expanded")
   }
 
   private var hasUnreadConversations: Bool {
@@ -697,14 +754,16 @@ struct ChatView: View {
       Image(systemName: "square.and.pencil")
     }
     .buttonStyle(.plain)
-    .disabled(
-      isLoadingConversation || isMessageSelectionMode
-        || (remoteChat != nil
-          && (currentConversationIsEmpty || remoteChat?.busy == true || store.settings.isOffline
-            || remoteChat?.bookmark.requiresApproval == true))
-    )
+    .disabled(!canStartNewChat)
     .accessibilityLabel("New Chat")
     .help("New Chat")
+  }
+
+  private var canStartNewChat: Bool {
+    !isLoadingConversation && !isMessageSelectionMode
+      && !(remoteChat != nil
+        && (currentConversationIsEmpty || remoteChat?.busy == true || store.settings.isOffline
+          || remoteChat?.bookmark.requiresApproval == true))
   }
 
   private func speakFromHere(_ message: ChatMessage) {
@@ -2259,16 +2318,32 @@ struct ChatView: View {
   }
 
   private var composer: some View {
-    ChatComposer(
-      store: store,
-      remoteChat: remoteChat,
-      placeholder: "Ask anything...",
-      conversationID: currentConversation?.id,
-      isResponding: currentChatIsResponding,
-      isKeyboardVisible: keyboardOverlap > 0,
-      queuedMessagePendingEdit: $queuedMessagePendingEdit,
-      liveVoiceSession: liveVoiceSession
-    )
+    HStack(alignment: .bottom, spacing: 0) {
+      ChatComposer(
+        store: store,
+        remoteChat: remoteChat,
+        placeholder: "Ask anything...",
+        conversationID: currentConversation?.id,
+        isResponding: currentChatIsResponding,
+        isKeyboardVisible: keyboardOverlap > 0,
+        isCollapsed: isComposerCollapsed,
+        onExpand: { landscapeComposerExpanded = true },
+        queuedMessagePendingEdit: $queuedMessagePendingEdit,
+        liveVoiceSession: liveVoiceSession
+      )
+      // Keep the composer mounted so rotation and toggling retain attachments and drafts.
+      .frame(height: isComposerCollapsed ? 0 : nil)
+      .clipped()
+      .opacity(isComposerCollapsed ? 0 : 1)
+      .allowsHitTesting(!isComposerCollapsed)
+      .accessibilityHidden(isComposerCollapsed)
+
+      if usesCompactLandscapeLayout, !isComposerCollapsed, !liveVoiceSession.isActive {
+        landscapeComposerToggle
+          .padding(.trailing, 8)
+          .padding(.bottom, 8)
+      }
+    }
   }
 }
 
@@ -2913,6 +2988,8 @@ private struct ChatComposer: View {
   let conversationID: UUID?
   let isResponding: Bool
   let isKeyboardVisible: Bool
+  let isCollapsed: Bool
+  let onExpand: () -> Void
   @Binding var queuedMessagePendingEdit: QueuedChatMessage?
   @ObservedObject var liveVoiceSession: LiveVoiceSession
   @FocusState private var composerFocused: Bool
@@ -3131,7 +3208,16 @@ private struct ChatComposer: View {
       }
       // A share that arrived before the composer was on screen, e.g. when the
       // share sheet launched the app.
-      if remoteChat == nil, store.hasQueuedSharedItems { beginSharedImport() }
+      if remoteChat == nil, store.hasQueuedSharedItems {
+        onExpand()
+        beginSharedImport()
+      }
+    }
+    .onChange(of: isCollapsed) { _, collapsed in
+      if collapsed { composerFocused = false }
+    }
+    .onChange(of: composerFocused) { _, focused in
+      if focused { onExpand() }
     }
     .onChange(of: store.sharedImportRequestID) { _, _ in
       if remoteChat == nil { beginSharedImport() }
