@@ -500,6 +500,8 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   public var mode: TerminalOutputMode
   /// Transcript lines scrolled per mouse-wheel event in buffer mode.
   public var scroll: Int
+  /// Scrollbar width in terminal columns; zero hides it. Only shown for overflow.
+  public var scrollbar: Int
   /// Optional label shown in the REPL prompt and used as the terminal window title.
   public var title: String
   public var backgroundLine: String
@@ -541,6 +543,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   public init(
     mode: TerminalOutputMode = .classic,
     scroll: Int = 1,
+    scrollbar: Int = 1,
     title: String = "",
     backgroundLine: String = "rgb:024",
     foreground: String = "",
@@ -572,6 +575,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   ) {
     self.mode = mode
     self.scroll = max(1, scroll)
+    self.scrollbar = max(0, scrollbar)
     self.title = title
     self.backgroundLine = backgroundLine
     self.foreground = foreground
@@ -605,6 +609,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   private enum CodingKeys: String, CodingKey {
     case mode
     case scroll
+    case scrollbar
     case title
     case backgroundLine = "bgline"
     case foreground = "fgcolor"
@@ -643,6 +648,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     self.init(
       mode: (try? container.decodeIfPresent(TerminalOutputMode.self, forKey: .mode)) ?? .classic,
       scroll: (try? container.decodeIfPresent(Int.self, forKey: .scroll)) ?? 1,
+      scrollbar: (try? container.decodeIfPresent(Int.self, forKey: .scrollbar)) ?? 1,
       title: (try? container.decodeIfPresent(String.self, forKey: .title)) ?? "",
       backgroundLine: (try? container.decodeIfPresent(String.self, forKey: .backgroundLine))
         ?? "rgb:024",

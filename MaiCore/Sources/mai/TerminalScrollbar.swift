@@ -1,6 +1,6 @@
 import Foundation
 
-/// Geometry shared by painting and hit-testing a one-column scrollbar.
+/// Geometry shared by painting and hit-testing a scrollbar.
 struct TerminalScrollbar: Equatable {
   let height: Int
   let maximum: Int
@@ -28,8 +28,10 @@ struct TerminalScrollbar: Equatable {
     return Int((Double(start) * Double(maximum) / Double(travel)).rounded())
   }
 
-  func cell(at row: Int) -> String {
+  func cell(at row: Int, width: Int = 1) -> String {
+    guard maximum > 0, width > 0 else { return "" }
     // Background-colored spaces form solid blocks, including in the last column.
-    "\u{1B}[\(thumb.contains(row) ? 47 : 100)m \u{1B}[0m"
+    return "\u{1B}[\(thumb.contains(row) ? 47 : 100)m"
+      + String(repeating: " ", count: width) + "\u{1B}[0m"
   }
 }
