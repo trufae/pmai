@@ -198,6 +198,11 @@ System One classifies supplied choices; it does not generate arbitrary argument 
 
 On iOS, add a connection in **Settings → Providers**, choose **API → System One (TEV / JEV)**, set its Ollama URL, and refresh models. In **Manage Agents**, configure a tool-decision agent with that connection and a filtered model selection, then assign it under **Tool decisions**. Enable **System One tool decisions** on the conversation agent. Keep the conversation agent on a chat provider for arguments and final answers. Provider backups preserve the API kind and agent backups preserve the routing toggle.
 
+In the CLI, `/set tool.calling off` disables native and emulated tool calls for
+the current agent and saves the choice across restarts. Use
+`/set tool.calling automatic` to enable tool calling again, or choose `native`,
+`text`, `xml`, or `json`. `/set` lists all settings alphabetically.
+
 ## Tool approval
 
 Tool selection and approval are independent. `/set tool.aproval` shows the mode;

@@ -10193,19 +10193,19 @@ struct MaiCLI {
       .split(whereSeparator: \Character.isWhitespace)
       .map(String.init)
     guard !parts.isEmpty else {
-      await terminal.line("tool.aproval = \(await approvalHandler.currentApprovalMode().rawValue)")
-      await terminal.line("debug = \(await approvalHandler.isDebugEnabled() ? "true" : "false")")
-      await terminal.line("debugfile = \(await approvalHandler.debugLogURL().path)")
-      await terminal.line("airplane = \(await runtime.internetAccessPolicy().airplaneModeEnabled ? "on ✈" : "off")")
-      await terminal.line("redact = \((configuration?.redact ?? .off).rawValue)")
-      await listLimitSettings(session.profile.limits, terminal: terminal)
-      await listRecoverySettings(session.profile, terminal: terminal)
-      await listToolSettings(session.profile, terminal: terminal)
-      await terminal.line("delegation = \(session.profile.toolDelegation.rawValue)")
-      await terminal.line(effortDescription(session.profile.options))
-      await listUISettings(configuration?.ui ?? .init(), terminal: terminal)
-      await listExportSettings(configuration?.documentExport ?? .init(), terminal: terminal)
-      await listUseSettings(configuration?.use ?? .init(), terminal: terminal)
+      let settings = [
+        "tool.aproval = \(await approvalHandler.currentApprovalMode().rawValue)",
+        "debug = \(await approvalHandler.isDebugEnabled() ? "true" : "false")",
+        "debugfile = \(await approvalHandler.debugLogURL().path)",
+        "airplane = \(await runtime.internetAccessPolicy().airplaneModeEnabled ? "on ✈" : "off")",
+        "redact = \((configuration?.redact ?? .off).rawValue)",
+        "delegation = \(session.profile.toolDelegation.rawValue)",
+        effortDescription(session.profile.options),
+      ] + limitSettings(session.profile.limits) + recoverySettings(session.profile)
+        + toolSettings(session.profile) + uiSettings(configuration?.ui ?? .init())
+        + exportSettings(configuration?.documentExport ?? .init())
+        + useSettings(configuration?.use ?? .init())
+      await listSettings(settings, terminal: terminal)
       return
     }
     let requestedKey = parts[0].lowercased()
@@ -10256,7 +10256,7 @@ struct MaiCLI {
       return
     }
     if key == "export" || key == "export." {
-      await listExportSettings(configuration?.documentExport ?? .init(), terminal: terminal)
+      await listSettings(exportSettings(configuration?.documentExport ?? .init()), terminal: terminal)
       return
     }
     if key == "export.tools" || key == "export.thinking" {
@@ -10400,11 +10400,11 @@ struct MaiCLI {
       return
     }
     if key == "ui" || key == "ui." {
-      await listUISettings(configuration?.ui ?? .init(), terminal: terminal)
+      await listSettings(uiSettings(configuration?.ui ?? .init()), terminal: terminal)
       return
     }
     if key == "use" || key == "use." {
-      await listUseSettings(configuration?.use ?? .init(), terminal: terminal)
+      await listSettings(useSettings(configuration?.use ?? .init()), terminal: terminal)
       return
     }
     if key == "use.agentsmd" {
@@ -10426,7 +10426,7 @@ struct MaiCLI {
       return
     }
     if key == "limits" || key == "limits." {
-      await listLimitSettings(session.profile.limits, terminal: terminal)
+      await listSettings(limitSettings(session.profile.limits), terminal: terminal)
       return
     }
     if let limitKey = limitSettingKeys[key] {
@@ -10461,7 +10461,7 @@ struct MaiCLI {
     }
     if key == "tool" || key == "tool." || key == "tools" || key == "tools." {
       await terminal.line("tool.aproval = \(await approvalHandler.currentApprovalMode().rawValue)")
-      await listToolSettings(session.profile, terminal: terminal)
+      await listSettings(toolSettings(session.profile), terminal: terminal)
       return
     }
     if toolCallingStrategyKeys.contains(key) {
@@ -10679,11 +10679,19 @@ struct MaiCLI {
     "tool.proxy", "tools.proxy", "toolproxy", "usetoolproxy",
   ]
 
-  private static func listToolSettings(_ profile: SessionProfile, terminal: TerminalWriter) async {
-    await terminal.line("tool.calling = \(profile.toolCallingStrategy.rawValue)")
-    await terminal.line("tool.proxy = \(toolProxySetting(profile))")
-    await terminal.line("tool.auto = \(profile.toolPolicy.automatic)")
-    await terminal.line("tool.systemone = \(profile.useSystemOne)")
+  private static func listSettings(_ settings: [String], terminal: TerminalWriter) async {
+    for setting in settings.sorted(by: { $0.lowercased() < $1.lowercased() }) {
+      await terminal.line(setting)
+    }
+  }
+
+  private static func toolSettings(_ profile: SessionProfile) -> [String] {
+    [
+      "tool.calling = \(profile.toolCallingStrategy.rawValue)",
+      "tool.proxy = \(toolProxySetting(profile))",
+      "tool.auto = \(profile.toolPolicy.automatic)",
+      "tool.systemone = \(profile.useSystemOne)",
+    ]
   }
 
   /// Approval policy is saved for the current project.
@@ -10810,7 +10818,7 @@ struct MaiCLI {
       rawValue == "auto" ? ToolCallingStrategy.automatic : ToolCallingStrategy(rawValue: rawValue)
     guard parts.count == 2, let strategy else {
       await terminal.line(
-        "Usage: /set tool.calling <automatic|native|text|xml|json>")
+        "Usage: /set tool.calling <off|automatic|native|text|xml|json>")
       return
     }
     session.profile.toolCallingStrategy = strategy
@@ -10840,10 +10848,8 @@ struct MaiCLI {
     "limits.maxSubagentDepth", "limits.maxTotalTokens", "limits.maxSeconds",
   ]
 
-  private static func listLimitSettings(_ limits: AgentRunLimits, terminal: TerminalWriter) async {
-    for key in limitSettingOrder {
-      await terminal.line("\(key) = \(limitValue(key, in: limits))")
-    }
+  private static func limitSettings(_ limits: AgentRunLimits) -> [String] {
+    limitSettingOrder.map { "\($0) = \(limitValue($0, in: limits))" }
   }
 
   private static func limitValue(_ key: String, in limits: AgentRunLimits) -> String {
@@ -10858,16 +10864,15 @@ struct MaiCLI {
     }
   }
 
-  private static func listRecoverySettings(_ profile: SessionProfile, terminal: TerminalWriter)
-    async
-  {
-    await terminal.line("retry.attempts = \(profile.retry.attempts)")
-    await terminal.line("retry.delay = \(durationSetting(profile.retry.delaySeconds))")
-    await terminal.line("ctx.compact = \(autocompactSetting(profile.autocompact))")
-    await terminal.line("ctx.recent = \(profile.autocompact.preserveRecentTokens.map(String.init) ?? "auto")")
-    await terminal.line(
-      "ctx.window = \(profile.options.contextWindowTokens.map(String.init) ?? "auto")")
-    await terminal.line("ctx.strategy = \(profile.context.rawValue)")
+  private static func recoverySettings(_ profile: SessionProfile) -> [String] {
+    [
+      "retry.attempts = \(profile.retry.attempts)",
+      "retry.delay = \(durationSetting(profile.retry.delaySeconds))",
+      "ctx.compact = \(autocompactSetting(profile.autocompact))",
+      "ctx.recent = \(profile.autocompact.preserveRecentTokens.map(String.init) ?? "auto")",
+      "ctx.window = \(profile.options.contextWindowTokens.map(String.init) ?? "auto")",
+      "ctx.strategy = \(profile.context.rawValue)",
+    ]
   }
 
   private static func durationSetting(_ seconds: Double) -> String {
@@ -11173,9 +11178,11 @@ struct MaiCLI {
     }
   }
 
-  private static func listUseSettings(_ use: ConfiguredUse, terminal: TerminalWriter) async {
-    await terminal.line("use.agentsmd = \(use.agentsmd.rawValue)")
-    await terminal.line("use.plan = \(use.plan ? "on" : "off")")
+  private static func useSettings(_ use: ConfiguredUse) -> [String] {
+    [
+      "use.agentsmd = \(use.agentsmd.rawValue)",
+      "use.plan = \(use.plan ? "on" : "off")",
+    ]
   }
 
   /// `/set use.plan [on|off]`: shows or changes whether an agent that can
@@ -11217,22 +11224,22 @@ struct MaiCLI {
           : "Agents delegate without planning first."))
   }
 
-  private static func listExportSettings(
-    _ options: DocumentExportOptions, terminal: TerminalWriter
-  ) async {
-    await terminal.line("export.tools = \(options.includeToolCalls ? "on" : "off")")
-    await terminal.line("export.thinking = \(options.includeThinking ? "on" : "off")")
+  private static func exportSettings(
+    _ options: DocumentExportOptions
+  ) -> [String] {
+    [
+      "export.tools = \(options.includeToolCalls ? "on" : "off")",
+      "export.thinking = \(options.includeThinking ? "on" : "off")",
+    ]
   }
 
-  private static func listUISettings(_ ui: ConfiguredTerminalUI, terminal: TerminalWriter) async {
+  private static func uiSettings(_ ui: ConfiguredTerminalUI) -> [String] {
     let keys = [
       "ui.mode", "ui.scroll", "ui.title", "ui.editor", "ui.markdown", "ui.tools", "ui.toolgroups",
       "ui.subagents", "ui.thinking",
       "ui.broadcast",
     ]
-    for key in keys {
-      await terminal.line("\(key) = \(uiSetting(key, in: ui))")
-    }
+    return keys.map { "\($0) = \(uiSetting($0, in: ui))" }
   }
 
   private static func uiSetting(_ key: String, in ui: ConfiguredTerminalUI) -> String {
@@ -13306,7 +13313,7 @@ struct MaiCLI {
       "/set ctx.strategy ", "/set ctx.strategy cache", "/set ctx.strategy size", "/set ctx.strategy smart",
       "/set ctx.strategy tools",
       "/continue", "/stop",
-      "/set tool.", "/set tool.calling automatic", "/set tool.calling native",
+      "/set tool.", "/set tool.calling off", "/set tool.calling automatic", "/set tool.calling native",
       "/set tool.calling text", "/set tool.calling xml", "/set tool.calling json",
       "/set tool.systemone true", "/set tool.systemone false",
       "/set airplane on", "/set airplane off", "/set airplane toggle",
@@ -13984,7 +13991,7 @@ struct MaiCLI {
       /set debug <true|false>       Log model calls, tool activity, and run events for this project
       /set debugfile <PATH|default> Save debug logs at PATH; default uses .pmai/debug.jsonl
       /set tool.                   List the tool calling settings
-      /set tool.calling MODE       Use automatic/native tools, or text/XML/JSON emulation
+      /set tool.calling MODE       off disables calls; automatic/native or text/XML/JSON enables them
       /set tool.systemone BOOL     Route tools via the System One /model -tool provider (default false)
       /set airplane on|off|toggle  Pause internet tools; ✈ marks offline mode
       /set tool.proxy MODE         Default exposure: on/hybrid (common tools direct), all, or off

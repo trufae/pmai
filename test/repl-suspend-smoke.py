@@ -132,7 +132,7 @@ elif action == 'fail':
             # the menu instead of retaining the old completion candidates.
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 32, 0, 0))
             send(b'/set tool.calling ')
-            for option in ('automatic', 'json', 'native', 'text', 'xml', 'automatic', 'json'):
+            for option in ('automatic', 'json', 'native', 'off', 'text', 'xml', 'automatic', 'json'):
                 send(b'\t')
                 wait_for(f'\x1b[97;44m{option}\x1b[0m')
             send(b'\r')
@@ -172,7 +172,7 @@ elif action == 'fail':
                     for key, option in (
                             (backtab, 'xml'), (backtab, 'text'), (b'\t', 'xml'),
                             (b'\t', 'automatic'), (backtab, 'xml'), (backtab, 'text'),
-                            (backtab, 'native'), (backtab, 'json'), (backtab, 'automatic'),
+                            (backtab, 'off'), (backtab, 'native'), (backtab, 'json'), (backtab, 'automatic'),
                             (backtab, 'xml'), (b'\t', 'automatic')):
                         send(key)
                         wait_for(f'\x1b[97;44m{option}\x1b[0m')

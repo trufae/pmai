@@ -5,6 +5,13 @@ extension AgentRuntime {
     _ call: ProviderCall, turn: ModelTurn, state: inout RunState
   ) async throws -> ProviderResponse? {
     var providerResponse = call.response
+    if state.request.toolCallingStrategy == .off {
+      providerResponse.message.content.removeAll {
+        if case .toolCall = $0 { return true }
+        return false
+      }
+      if providerResponse.stopReason == .toolCall { providerResponse.stopReason = .stop }
+    }
     try Task.checkCancellation()
     if state.request.context == .tools { state.toolContext.didRead(state.transcript) }
     let stats = await recordModelCall(

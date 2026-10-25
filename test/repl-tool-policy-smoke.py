@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise mixed native/MCP/skill policy and learned exposure through the CLI."""
 import json
+import re
 from smoke import JSONProvider, clean_environment, run_repl
 from pathlib import Path
 import sys
@@ -103,6 +104,24 @@ for line in sys.stdin:
             # Startup expands tool groups and saves decoded defaults before any command.
             run([], [])
             before = agent_settings()
+            output, _ = run(['/set'], [])
+            keys = re.findall(r'^([\w.]+) = ', output, re.MULTILINE)
+            assert len(keys) > 30 and len(keys) == len(set(keys)), keys
+            assert keys == sorted(keys, key=str.lower), keys
+
+            output, calls = run(['/set tool.calling off', '/set tool.calling',
+                                 'Chat without tool calling'], [final])
+            assert 'tool.calling = off' in output, output
+            assert not calls[0].get('tools'), calls[0]
+            assert json.loads(config.read_text())['agents'][0]['toolCallingStrategy'] == 'off'
+            output, calls = run(['Tool calling remains off after restart'], [
+                call('files_write', {'path': str(root / 'unexpected'), 'content': 'bad'})])
+            assert not calls[0].get('tools') and len(calls) == 1, calls
+            assert not (root / 'unexpected').exists()
+            output, calls = run(['/set tool.calling automatic', 'Tool calling restored'], [final])
+            assert calls[0].get('tools'), calls[0]
+            assert agent_settings() == before, 'off/on changed other agent settings'
+
             output, calls = run(['/tools off', '/tools', 'Chat without tools'], [final])
             assert 'All tools globally: off' in output, output
             assert not calls[0].get('tools'), calls[0]

@@ -98,7 +98,7 @@ extension AgentRuntime {
     let textToolMode: ToolCallingMode? =
       switch deciding ? .native : inference.toolCallingStrategy {
       case .automatic: definitions.isEmpty || supportsNativeTools ? nil : .json
-      case .native: nil
+      case .off, .native: nil
       case .text: definitions.isEmpty ? nil : .text
       case .xml: definitions.isEmpty ? nil : .xml
       case .json: definitions.isEmpty ? nil : .json

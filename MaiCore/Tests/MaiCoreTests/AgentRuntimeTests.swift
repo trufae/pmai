@@ -607,6 +607,37 @@ func textToolFallback() async throws {
   #expect(!leakedProtocol)
 }
 
+@Test("Off disables native calls and text tool parsing", arguments: [false, true])
+func disabledToolCalling(native: Bool) async throws {
+  let call = ToolCall(id: "unexpected", name: "echo", arguments: .object([:]))
+  let text = "<tool_call name=\"echo\"></tool_call>"
+  let provider = ScriptedProvider(
+    responses: [ProviderResponse(
+      message: AgentMessage(role: .assistant, content: [.text(text), .toolCall(call)]),
+      stopReason: .toolCall)],
+    capabilities: native ? [.nativeToolCalling] : [])
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  try await runtime.register(tool: ClosureTool(
+    definition: ToolDefinition(name: "echo", description: "Echo", inputSchema: .object([:]))
+  ) { _, _ in
+    Issue.record("Tool calling is off")
+    return ToolOutput(text: "unexpected execution")
+  })
+  let result = try await runtime.run(AgentRequest(
+    provider: "scripted", model: "fixture", messages: [.user("Chat without tools")],
+    toolNames: ["echo"], toolCallingStrategy: .off, useToolProxy: true,
+    useSystemOne: true))
+  #expect(result.response.text == text)
+  #expect(result.response.toolCalls.isEmpty)
+  #expect(result.toolCalls == 0)
+  let requests = await provider.requests
+  #expect(requests.count == 1)
+  #expect(requests.first?.tools.isEmpty == true)
+  #expect(requests.first?.toolChoice == ToolChoice.none)
+  #expect(requests.first?.messages.contains { $0.text.contains("fallback protocol") } == false)
+}
+
 @Test("Text, XML, and JSON strategies force the emulated tool loop")
 func forcedTextToolStrategies() async throws {
   let cases: [(ToolCallingStrategy, String, String)] = [

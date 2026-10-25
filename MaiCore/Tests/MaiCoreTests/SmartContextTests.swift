@@ -328,7 +328,7 @@ func smartContextSkills(fixture: (AgentContextMode, ToolCallingStrategy, Bool)) 
       }
       let message: AgentMessage
       switch strategy {
-      case .native, .automatic:
+      case .off, .native, .automatic:
         message = AgentMessage(role: .assistant, content: [.toolCall(call)])
       case .json:
         message = .assistant(
