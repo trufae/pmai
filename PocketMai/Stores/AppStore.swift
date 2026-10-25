@@ -1643,15 +1643,14 @@ final class AppStore: ObservableObject {
 
   /// A projection is read-only. Every mutation first obtains the full model on
   /// a worker, then retries the user's action on the main actor.
-  private func deferUntilConversationLoaded(_ id: UUID?, action: @escaping @MainActor () -> Void)
+  private func deferUntilConversationLoaded(_ id: UUID?, requiresSelection: Bool = false, action: @escaping @MainActor () -> Void)
     -> Bool
   {
     guard let id, conversation(withID: id)?.historyWindow != nil else { return false }
-    let selectedAtRequest = selectedConversationID
     Task { @MainActor in
       await ensureConversationLoaded(id)
-      guard conversation(withID: id)?.historyWindow == nil,
-        selectedAtRequest != id || selectedConversationID == id
+      guard self.conversation(withID: id)?.historyWindow == nil,
+        !requiresSelection || selectedConversationID == id
       else { return }
       action()
     }
@@ -1679,7 +1678,7 @@ final class AppStore: ObservableObject {
   }
 
   private func ensureConversationLoaded(_ id: UUID) async {
-    guard conversation(withID: id)?.historyWindow != nil || indexedConversationIndex(for: id) == nil
+    guard self.conversation(withID: id)?.historyWindow != nil || indexedConversationIndex(for: id) == nil
     else { return }
     let loadTask: Task<Conversation?, Never>
     if let existingTask = conversationLoadTasks[id] {
@@ -1703,7 +1702,7 @@ final class AppStore: ObservableObject {
       errorMessage = "Could not load the complete conversation. Please try again after syncing."
       return
     }
-    guard conversation(withID: id)?.historyWindow != nil || indexedConversationIndex(for: id) == nil
+    guard self.conversation(withID: id)?.historyWindow != nil || indexedConversationIndex(for: id) == nil
     else { return }
     conversation.isUnread = conversationSummary(withID: id)?.isUnread ?? conversation.isUnread
     let normalizedProvider = normalizeUnavailableAppleProviderIfNeeded(in: &conversation)
@@ -1789,7 +1788,7 @@ final class AppStore: ObservableObject {
 
   func updateCurrentConversation(_ update: @escaping (inout Conversation) -> Void) {
     if deferUntilConversationLoaded(
-      selectedConversationID, action: { self.updateCurrentConversation(update) })
+      selectedConversationID, requiresSelection: true, action: { self.updateCurrentConversation(update) })
     {
       return
     }
@@ -1808,7 +1807,7 @@ final class AppStore: ObservableObject {
 
   func updateCurrentConversationSettings(_ update: @escaping (inout Conversation) -> Void) {
     if deferUntilConversationLoaded(
-      selectedConversationID, action: { self.updateCurrentConversationSettings(update) })
+      selectedConversationID, requiresSelection: true, action: { self.updateCurrentConversationSettings(update) })
     {
       return
     }
@@ -1861,7 +1860,7 @@ final class AppStore: ObservableObject {
   }
 
   func deleteMessage(_ message: ChatMessage) {
-    if deferUntilConversationLoaded(selectedConversationID, action: { self.deleteMessage(message) })
+    if deferUntilConversationLoaded(selectedConversationID, requiresSelection: true, action: { self.deleteMessage(message) })
     {
       return
     }
@@ -1880,7 +1879,7 @@ final class AppStore: ObservableObject {
   }
 
   func deleteMessages(_ ids: Set<UUID>) {
-    if deferUntilConversationLoaded(selectedConversationID, action: { self.deleteMessages(ids) }) {
+    if deferUntilConversationLoaded(selectedConversationID, requiresSelection: true, action: { self.deleteMessages(ids) }) {
       return
     }
     guard let index = currentConversationIndex, !ids.isEmpty else { return }
@@ -2157,7 +2156,7 @@ final class AppStore: ObservableObject {
   private func voiceRecordingMessages(in conversationIDs: Set<UUID>) -> [ChatMessage] {
     guard !conversationIDs.isEmpty else { return [] }
     return conversationIDs.flatMap { id -> [ChatMessage] in
-      if let index = indexedConversationIndex(for: id) {
+      if let index = indexedConversationIndex(for: id), conversations[index].historyWindow == nil {
         return conversations[index].messages
       }
       return persistence.loadConversation(id: id)?.messages ?? []
@@ -3476,7 +3475,7 @@ final class AppStore: ObservableObject {
     guard !isCompacting, !isResponding else { return }
     guard let index = currentConversationIndex else { return }
     let conversation = conversations[index]
-    guard conversation.historyWindow == nil else { return nil }
+    guard conversation.historyWindow == nil else { return }
     let settingsSnapshot = settings
 
     isCompacting = true
@@ -4815,7 +4814,7 @@ final class AppStore: ObservableObject {
   private func releaseSavedConversationHistories(_ saved: [(UUID, Date, Data)]) {
     for (id, date, metadata) in saved {
       guard let index = indexedConversationIndex(for: id), conversations[index].updatedAt == date,
-        !respondingConversationIDs.contains(id), !preparingConversationIDs.contains(id),
+        !respondingConversationIDs.contains(id), !preparingConversationIDs.contains(id), !voiceover.isGenerating(in: id),
         conversations[index].historyWindow == nil,
         conversations[index].historyChanges.isCommitted(count: conversations[index].messages.count),
         (try? conversations[index].historyMetadata(coding: PersistenceStore.conversationCoding))
@@ -4828,7 +4827,7 @@ final class AppStore: ObservableObject {
         }.value
         guard let page, page.updatedAt == date, let index = indexedConversationIndex(for: id),
           conversations[index].updatedAt == date, !respondingConversationIDs.contains(id),
-          !preparingConversationIDs.contains(id),
+          !preparingConversationIDs.contains(id), !voiceover.isGenerating(in: id),
           conversations[index].historyChanges.isCommitted(
             count: conversations[index].messages.count),
           (try? conversations[index].historyMetadata(coding: PersistenceStore.conversationCoding))

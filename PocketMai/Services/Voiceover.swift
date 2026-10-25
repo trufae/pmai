@@ -82,6 +82,8 @@ final class VoiceoverController {
     }
   }
 
+  func isGenerating(in conversationID: UUID) -> Bool { tasks[conversationID] != nil }
+
   func wait(in conversationID: UUID) async {
     await tasks[conversationID]?.value
   }
