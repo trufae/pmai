@@ -328,6 +328,17 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     lock.withLock { view?.needsMessages == true }
   }
 
+  var viewNeedsTodo: Bool {
+    lock.withLock { view?.source == .todo }
+  }
+
+  func updateViewTodo(_ text: String) {
+    lock.withLock {
+      view?.updateTodo(text)
+      if active, ui.mode == .buffer { drawViewRows(); placeCaret() }
+    }
+  }
+
   func updateViewMessages(_ messages: [AgentMessage]) {
     lock.withLock {
       view?.updateMessages(messages)
@@ -1069,7 +1080,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   private func updateViewBuffer() {
     guard let source = view?.source else { return }
-    if view?.needsMessages == true { return }
+    if view?.needsMessages == true || source == .todo { return }
     if source == .conversations {
       var combined = TerminalOutputBuffer()
       for id in conversations.keys.sorted() where id != "initial" {

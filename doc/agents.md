@@ -466,6 +466,8 @@ view or selecting another source restores those blocks in the conversation
 according to `ui.thinking` and `ui.tools`.
 Pins and log also follow the selected agent, in transcript order, and include
 the complete saved history even when the conversation pane shows a bounded window.
+`/view todo` shows the current project's shared todo list using the same numbering,
+counts, and checkboxes as `/todo`. It refreshes as commands and tools run.
 
 With an empty prompt, Tab switches focus between the prompt and the view.
 Drag the separator up or down with the left mouse button to resize the panes.

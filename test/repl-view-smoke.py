@@ -148,6 +148,22 @@ def main(binary):
 
             try:
                 wait_for('pmai>')
+                send('/view tod\t')
+                wait_for('/view todo')
+                send('\r')
+                wait_for('── view: project todo')
+                assert 'No todos.' in top(), screen
+                send('/todo add VIEW_TODO_ITEM\r')
+                wait_for('Todo list saved')
+                assert 'Todo (1 pending, 0 done):' in top(), screen
+                assert '1. [ ] VIEW_TODO_ITEM' in top(), screen
+                send('/todo done 1\r')
+                wait_for('Todo list saved')
+                assert 'Todo (0 pending, 1 done):' in top(), screen
+                assert '1. [x] VIEW_TODO_ITEM' in top(), screen
+                send('/todo clear\r')
+                wait_for('Todo list cleared.')
+                assert 'No todos.' in top() and 'VIEW_TODO_ITEM' not in top(), screen
                 send('/view pins\r')
                 wait_for('── view: pinned messages')
                 assert 'No pinned messages.' in top(), screen
@@ -409,6 +425,17 @@ def main(binary):
                 send('/set ui.mode buffer\r')
                 wait_for('\x1b[?1049h')
                 assert all('── view:' not in screen.get(row, '') for row in range(1, rows)), screen
+                send('/tools enable todo\r')
+                wait_for("Tool selection 'todo': enable")
+                send('/view todo\r')
+                wait_for('── view: project todo')
+                send('TODO_REQUEST\r')
+                tool('todo_add', {'title': 'TOOL_TODO_ITEM'})
+                chunks.put('TODO_ANSWER\n')
+                chunks.put(None)
+                wait_for('✓ took')
+                assert '1. [ ] TOOL_TODO_ITEM' in top(), screen
+                assert 'TODO_ANSWER' not in top(), screen
                 quit_repl()
                 os.close(master)
                 master, slave = pty.openpty()
