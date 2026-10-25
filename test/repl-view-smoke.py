@@ -556,13 +556,35 @@ def main(binary):
                 send('/view off\r')
                 wait_for('GROUP_LINE')
                 assert 'files_patch' in '\n'.join(screen.values()), screen
+                send('/set ui.tools icons\r')
+                wait_for('Set ui.tools = icons.')
+                assert '🩹📖📖' in '\n'.join(screen.values()), screen
+                send('/view ico\t')
+                wait_for('/view iconlog')
+                send('\r')
+                wait_for('── view: tool icons')
+                assert top().strip() == '🩹📖📖', screen
+                assert '🩹' not in bottom_output() and '📖' not in bottom_output(), screen
+                send('/set ui.tools all\r')
+                wait_for('Set ui.tools = all.')
+                assert top().strip() == '🩹📖📖', screen
+                send('ICON_REQUEST\r')
+                tool('files_read', {'path': 'file.txt'})
+                wait_for('🩹📖📖📖')  # Live, before the provider returns its next reply.
+                assert 'files_read' not in bottom_output(), screen
+                chunks.put('ICON_ANSWER\n')
+                chunks.put(None)
+                wait_for('✓ took')
+                send('/view off\r')
+                wait_for('files_read')
+                assert 'GROUP_LINE' in '\n'.join(screen.values()), screen
                 quit_repl()
                 output = run_repl([binary, '--config', str(config), '--home', str(root / 'pipe-home')],
                                  ['/view thinking', '/help view'], cwd=root, env=env, allow_errors=True)
                 assert 'error: /view requires ui.mode=buffer.' in output and '/view off' in output
                 print('PASS view: mode guard, sources, pins, first-line message log, read-only focus, independent scrolling, live thinking/tools/diffs, '
                       'background agents, J/K paging, g/G top/bottom, divider background, v/V resizing, q close, separator dragging, mouse cleanup, '
-                      'live ui.tools previews, resize, saved reasoning/results, off and cleanup')
+                      'live ui.tools previews and iconlog, resize, saved reasoning/results, off and cleanup')
             finally:
                 chunks.put(None)
                 if process.poll() is None:

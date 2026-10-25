@@ -211,7 +211,7 @@ def main():
                 if not options:
                     for name in ('alpha', 'beta', 'gamma', 'manual', 'files', 'files_read'):
                         assert f'\x1b[1m{name}\x1b[0m' in output, output
-                    assert '  \x1b[1mfiles_read\x1b[0m [direct;' in output, output
+                    assert '  📖 \x1b[1mfiles_read\x1b[0m [direct;' in output, output
                     assert '\x1b[1mfiles_read\x1b[0m  [read-only' in output, output
                 else:
                     assert '\x1b[' not in output, output

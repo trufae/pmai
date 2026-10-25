@@ -29,13 +29,14 @@ func terminalViewSelectors() throws {
   #expect(try source("pins") == .pins)
   #expect(try source(" LOG ") == .log)
   #expect(try source(" TODO ") == .todo)
+  #expect(try source(" ICONLOG ") == .iconlog)
   #expect(try source("tools") == .tools(nil))
   for name in ["files_read", "tool files_read", "tools files_read"] {
     #expect(try source(name) == .tools("files_read"))
   }
   for name in [
     "", "missing", "tools missing", "thinking extra", "pins extra", "log extra", "off extra",
-    "agent", "todo extra",
+    "agent", "todo extra", "iconlog extra",
   ] {
     #expect(throws: (any Error).self) { try source(name) }
   }

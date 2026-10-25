@@ -1018,7 +1018,7 @@ still use explicit `options.additional` fields without frontend changes.
 
 Tools have three states: **direct** (their schema is listed), **proxy**
 (available through discovery), and **disabled** (unavailable). `/tools` lists
-plugin-defined groups with state totals and call counters; `/tools
+plugin-defined groups and their tools with emoji icons, state totals and call counters; `/tools
 show GROUP|TOOL` says
 what the group is for and prints every tool with its description, how it is
 approved, and its parameters, then the group's settings — the same schema the

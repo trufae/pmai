@@ -9345,8 +9345,13 @@ struct MaiCLI {
           group.sourceID == "mcp" ? group.catalogID : group.id, bold: true)
         let summary = AgentToolModeSummary(names: group.toolNames, modes: modesByName).description
         await terminal.line("\(label) — \(group.displayName) [\(summary); \(usage.count(for: group)) calls]")
+        for name in group.toolNames.sorted() {
+          let label = await terminal.paint(name, bold: true)
+          let mode = modesByName[name] ?? .disabled
+          await terminal.line("  \(ToolIcon.emoji(for: name)) \(label) [\(mode.rawValue); \(usage.counts[name, default: 0]) calls]")
+        }
       }
-      await terminal.line("/tools show GROUP lists each member; /tools direct|proxy|hide|disable|inherit GROUP|TOOL selects its state.")
+      await terminal.line("/tools show GROUP|TOOL shows schemas and settings; /tools direct|proxy|hide|disable|inherit GROUP|TOOL selects its state.")
       return
     }
 
@@ -9409,7 +9414,7 @@ struct MaiCLI {
       }
       let mode = modesByName[name] ?? .disabled
       let boldName = await terminal.paint(name, bold: true)
-      await terminal.line("\(boldName) [\(mode.rawValue); \(usage.counts[name, default: 0]) calls]")
+      await terminal.line("\(ToolIcon.emoji(for: name)) \(boldName) [\(mode.rawValue); \(usage.counts[name, default: 0]) calls]")
       for line in ToolGroupHelp.lines(for: tool, paint: { text, style in
         style == .tool ? boldName : text
       }) { await terminal.line(line) }
@@ -9450,7 +9455,7 @@ struct MaiCLI {
       for name in group.toolNames.sorted() {
         let mode = modesByName[name] ?? .disabled
         let boldName = await terminal.paint(name, bold: true)
-        await terminal.line("  \(boldName) [\(mode.rawValue); \(usage.counts[name, default: 0]) calls]")
+        await terminal.line("  \(ToolIcon.emoji(for: name)) \(boldName) [\(mode.rawValue); \(usage.counts[name, default: 0]) calls]")
       }
       let helpLines = ToolGroupHelp.lines(for: group, tools: tools) { text, style in
         switch style {
@@ -10585,7 +10590,7 @@ struct MaiCLI {
       ui.scroll = value
     } else if countKeys.contains(key) {
       guard let value = ToolResultDisplay(setting: parts[1]) else {
-        await terminal.line("Usage: /set ui.tools <all|relevant|N>")
+        await terminal.line("Usage: /set ui.tools <all|relevant|icons|N>")
         return
       }
       ui.tools = value
@@ -13336,7 +13341,7 @@ struct MaiCLI {
       "/set ui.scroll ",
       "/set ui.broadcast on", "/set ui.broadcast off",
       "/set ui.toolgroups on", "/set ui.toolgroups off",
-      "/set ui.tools all", "/set ui.tools relevant", "/set ui.tools ",
+      "/set ui.tools all", "/set ui.tools relevant", "/set ui.tools icons", "/set ui.tools ",
       "/set redact on", "/set redact off", "/set redact warn", "/edit redact",
       "/cwd", "/pwd", "/cd ", "/plugins",
       "/path", "/path list", "/path allow ", "/path deny ", "/path ask ",
@@ -13357,7 +13362,7 @@ struct MaiCLI {
       "/agent", "/agents", "/agents list", "/agents describe ", "/agents enable ",
       "/agents disable ",
       "/ps", "/ps -a", "/ps -p", "/ps -ap", "/ps -k ",
-      "/view", "/view off", "/view current", "/view main", "/view pins", "/view log", "/view todo", "/view thinking", "/view tools",
+      "/view", "/view off", "/view current", "/view main", "/view pins", "/view log", "/view todo", "/view iconlog", "/view thinking", "/view tools",
       "/view tools ", "/view diffs", "/view agents", "/view agent ", "/help view",
       "/job", "/jobs", "/jobs tree", "/jobs stop ", "/jobs continue ", "/jobs clear", "/jobs log ",
       "/jobs kill ", "/jobs focus ",
@@ -13827,7 +13832,7 @@ struct MaiCLI {
     /theme                 List, apply, or customize terminal themes
     /then [LINE]           Queue a prompt or command until all tasks finish; no args lists it
     /todo                  Show or edit the project's todo list
-    /tools                 List tool groups for this agent
+    /tools                 List tool groups and tool emojis for this agent
     /unthen                Clear all pending /then actions
     /vdb                   Index or search local documentation and code
     /version               Print the pmai version
@@ -14024,7 +14029,7 @@ struct MaiCLI {
       /set ui.markdown BOOL        Render replies as styled markdown (on/off)
                                    Buffer mode also redraws earlier replies with this setting
       /set ui.toolgroups <on|off>     Collapse consecutive tools into clickable summaries (enables buffer mode)
-      /set ui.tools <all|relevant|N>  Full results, full edits/errors with 3-line previews otherwise, or first N lines (0 hides them)
+      /set ui.tools <all|relevant|icons|N>  Full results, relevant previews, emoji rows, or first N lines (0 hides them)
                                    Buffer mode also updates earlier tool calls and results
       /set ui.thinking MODE        Thinking display: status, line, three, five, or full
                                    Buffer history: hide blocks, show their last 1/3/5 rows, or show all
@@ -14369,7 +14374,7 @@ struct MaiCLI {
   private static let toolHelp = """
     Tool selection commands:
       /tools on|off                  Switch all tools globally; keep individual settings
-      /tools list                    List groups with exposure states and call counters
+      /tools list                    List groups and tool icons with exposure states and call counters
       /tools show GROUP|TOOL         Show effective states, counters, schemas, and settings
       /tools enable GROUP|TOOL       Enable using the current exposure default
       /tools direct GROUP|TOOL       Offer schemas directly

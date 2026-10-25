@@ -12,6 +12,7 @@ func toolResultDisplayConfiguration() throws {
     (#"{"tools":"all"}"#, .all),
     (#"{"tools":0}"#, .lines(0)),
     (#"{"tools":"relevant"}"#, .relevant),
+    (#"{"tools":"icons"}"#, .icons),
     (#"{"tools":7,"toolResultLines":0}"#, .lines(7)),
     (#"{"toolResultLines":-1}"#, .all),
     (#"{"toolResultLines":-20}"#, .all),
@@ -28,8 +29,8 @@ func toolResultDisplayConfiguration() throws {
     #expect(try JSONDecoder().decode(ConfiguredTerminalUI.self, from: saved) == ui)
     let object = try #require(JSONSerialization.jsonObject(with: saved) as? [String: Any])
     #expect(object["toolResultLines"] == nil)
-    if expected == .relevant {
-      #expect(object["tools"] as? String == "relevant")
+    if expected == .relevant || expected == .icons {
+      #expect(object["tools"] as? String == expected.description)
     } else {
       #expect(object["tools"] is Int)
     }
@@ -40,6 +41,7 @@ func toolResultDisplayConfiguration() throws {
       ToolResultDisplay.self, from: Data(#""unknown""#.utf8))
   }
   #expect(ToolResultDisplay(setting: "RELEVANT") == .relevant)
+  #expect(ToolResultDisplay(setting: "ICONS") == .icons)
   #expect(ToolResultDisplay(setting: "0") == .lines(0))
   #expect(ToolResultDisplay(setting: "-1") == nil)
   #expect(ToolResultDisplay(setting: "unknown") == nil)

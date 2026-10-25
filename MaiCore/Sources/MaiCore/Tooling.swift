@@ -285,6 +285,7 @@ package enum ToolResultPreview {
     switch display {
     case .all: maxLines = -1
     case .relevant: maxLines = result.isError || result.importance == .important ? -1 : 3
+    case .icons: return ""
     case .lines(let count): maxLines = max(0, count)
     }
     return render(result, maxLines: maxLines)
