@@ -22,6 +22,19 @@ struct WebXDCAppInfo: Codable, Identifiable, Sendable, Equatable {
   }
 }
 
+struct WebXDCImportResult: Identifiable, Sendable, Equatable {
+  let id = UUID()
+  let app: WebXDCAppInfo
+  let alreadyImported: Bool
+
+  var title: String { alreadyImported ? "Already Imported" : "App Imported" }
+  var message: String {
+    alreadyImported
+      ? "\(app.name) is already in Apps. Your app data and permissions have been kept."
+      : "\(app.name) was added to Apps."
+  }
+}
+
 enum WebXDCError: LocalizedError {
   case message(String)
 
@@ -266,7 +279,7 @@ enum WebXDCLibrary {
     let root = revisionURL(app, revision: revision ?? app.currentRevision)
     guard
       let enumerator = FileManager.default.enumerator(
-        at: root, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])
+        at: root, includingPropertiesForKeys: [.isRegularFileKey], options: [])
     else { return [] }
     var paths: [String] = []
     for case let url as URL in enumerator {
@@ -379,13 +392,33 @@ enum WebXDCLibrary {
   }
 
   @discardableResult
-  static func importXDC(from url: URL, fallbackName: String) throws -> WebXDCAppInfo {
+  static func importXDC(from url: URL, fallbackName: String) throws -> WebXDCImportResult {
     let entries = try ZipArchiveReader.entries(at: url)
     guard entries.contains(where: { $0.path == "index.html" }) else {
       throw WebXDCError.message("The .xdc file has no index.html.")
     }
     guard entries.count <= maxAppFiles else {
       throw WebXDCError.message("The .xdc file has more than \(maxAppFiles) files.")
+    }
+    var files: [String: Data] = [:]
+    for entry in entries {
+      guard let relative = try? validatedRelativePath(entry.path) else { continue }
+      guard entry.data.count <= maxFileBytes else {
+        throw WebXDCError.message("File '\(relative)' exceeds the \(maxFileBytes) byte limit.")
+      }
+      guard files.updateValue(entry.data, forKey: relative) == nil else {
+        throw WebXDCError.message("The .xdc file repeats '\(relative)'.")
+      }
+    }
+    let apps = listApps()
+    // Compare extracted files, so ZIP timestamps, compression and entry order
+    // do not turn an identical app into a second installation.
+    let paths = Set(files.keys)
+    if let existing = apps.first(where: { app in
+      Set(listFiles(app)) == paths
+        && files.allSatisfy { (try? readFile(app, path: $0.key)) == $0.value }
+    }) {
+      return WebXDCImportResult(app: existing, alreadyImported: true)
     }
     var name = fallbackName
     var description = ""
@@ -394,6 +427,15 @@ enum WebXDCLibrary {
     {
       if let parsed = tomlValue(text, key: "name") { name = parsed }
       if let parsed = tomlValue(text, key: "description") { description = parsed }
+    }
+    name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    if name.isEmpty { name = "App" }
+    let baseName = name
+    let names = Set(apps.map { $0.name.lowercased() })
+    var suffix = 2
+    while names.contains(name.lowercased()) {
+      name = "\(baseName) (\(suffix))"
+      suffix += 1
     }
     try ensureRoot()
     var app = WebXDCAppInfo(
@@ -405,20 +447,18 @@ enum WebXDCLibrary {
       currentRevision: 1)
     let revURL = revisionURL(app, revision: 1)
     try FileManager.default.createDirectory(at: revURL, withIntermediateDirectories: true)
-    for entry in entries {
-      guard let relative = try? validatedRelativePath(entry.path) else { continue }
-      guard entry.data.count <= maxFileBytes else {
-        try? FileManager.default.removeItem(at: appURL(app.id))
-        throw WebXDCError.message("File '\(relative)' exceeds the \(maxFileBytes) byte limit.")
-      }
+    var installed = false
+    defer { if !installed { try? FileManager.default.removeItem(at: appURL(app.id)) } }
+    for (relative, data) in files {
       let destination = revURL.appendingPathComponent(relative)
       try FileManager.default.createDirectory(
         at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-      try entry.data.write(to: destination)
+      try data.write(to: destination)
     }
     app.revisions[0].date = Date()
     try save(app)
-    return app
+    installed = true
+    return WebXDCImportResult(app: app, alreadyImported: false)
   }
 
   private static func tomlValue(_ text: String, key: String) -> String? {

@@ -17,13 +17,16 @@ final class WebXDCPocketMaiTests: XCTestCase {
     XCTAssertEqual(WebXDCPermissions.load(app.id), grants)
     let export = try WebXDCLibrary.exportXDC(app)
     defer { try? FileManager.default.removeItem(at: export) }
-    let imported = try WebXDCLibrary.importXDC(from: export, fallbackName: "Imported")
-    defer { try? WebXDCLibrary.deleteApp(id: imported.id) }
-    XCTAssertEqual(WebXDCPermissions.load(imported.id), WebXDCPermissions())
     XCTAssertFalse(
       try ZipArchiveReader.entries(at: export).contains { $0.path.contains("permissions") })
     let revised = try WebXDCLibrary.beginRevision(app, note: "test")
     XCTAssertEqual(WebXDCPermissions.load(revised.id), grants)
+    // A fresh installation must not inherit the exporting device's grants.
+    // Importing identical files while the app is installed reuses its grants.
+    try WebXDCLibrary.deleteApp(id: app.id)
+    let imported = try WebXDCLibrary.importXDC(from: export, fallbackName: "Imported").app
+    defer { try? WebXDCLibrary.deleteApp(id: imported.id) }
+    XCTAssertEqual(WebXDCPermissions.load(imported.id), WebXDCPermissions())
   }
 
   func testAllSensitiveMethodsCheckNativePermissions() async {
