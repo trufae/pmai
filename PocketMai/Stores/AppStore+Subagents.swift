@@ -204,6 +204,12 @@ extension AppStore {
     await agentSupervisor.transcript(pid)
   }
 
+  func agentTranscriptPage(_ pid: AgentPID, before: Int? = nil) async -> AgentTranscriptPage? {
+    do { return try await agentSupervisor.transcriptPage(pid, before: before) } catch {
+      errorMessage = error.localizedDescription; return nil
+    }
+  }
+
   // MARK: - Controls
 
   func stopAgentProcess(_ pid: AgentPID) {

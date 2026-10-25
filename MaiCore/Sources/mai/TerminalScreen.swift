@@ -258,6 +258,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       if conversations[id] == nil {
         var calls: [String: Int] = [:]
         for message in messages where message.role != .system {
+          outputConversation.messageLines.append(
+            (message.id, max(0, transcript.logicalLineCount - 1)))
           if message.role == .assistant {
             if !message.reasoning.isEmpty {
               let block = transcript.appendThinking(message.reasoning)
@@ -278,6 +280,35 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
           }
         }
       }
+    }
+  }
+
+  func configureHistory(window: ChatHistoryWindow?, loader: @escaping @Sendable (Bool) -> Void) {
+    lock.withLock {
+      outputConversation.historyWindow = window
+      outputConversation.historyLoader = window == nil ? nil : loader
+    }
+  }
+
+  /// Replace a bounded transcript window, anchoring to a message shared by
+  /// both windows. Disk I/O is done by the REPL event loop before this call.
+  func replaceHistory(messages: [AgentMessage]) {
+    lock.withLock {
+      let old = outputConversation
+      let anchor = old.transcript.readingAnchor
+      let marker = anchor.flatMap { point in old.messageLines.last { $0.1 <= point.line } }
+      let id = selectedConversation
+      conversations[id] = nil
+      seedConversationLocked(id, messages: messages)
+      let current = outputConversation
+      if let anchor, let marker,
+        let line = current.messageLines.first(where: { $0.0 == marker.0 })?.1
+      {
+        current.transcript.restoreAnchor(line: line + anchor.line - marker.1, glyph: anchor.glyph)
+      }
+      current.historyWindow = old.historyWindow
+      current.historyLoader = old.historyLoader
+      if active, ui.mode == .buffer { redrawBuffer() }
     }
   }
 
@@ -862,6 +893,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   func scrollOutput(wheel: Int, pages: Int) {
+    let loader: (@Sendable (Bool) -> Void)? = lock.withLock {
+      outputConversation.historyLoader
+    }
+    var loadEarlier: Bool?
     lock.withLock {
       guard active, ui.mode == .buffer else { return }
       refreshSize()
@@ -878,10 +913,16 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
             width: max(1, columns - 1), height: outputHeight)
         }
       }
+      let conversation = outputConversation
+      if view?.focused != true, let window = conversation.historyWindow {
+        if wheel + pages < 0, transcript.isAtBeginning, window.hasEarlier { loadEarlier = true }
+        if wheel + pages > 0, transcript.isFollowing, window.hasLater { loadEarlier = false }
+      }
       drawOutputRows()
       drawStatusRow()
       placeCaret()
     }
+    if let loadEarlier { loader?(loadEarlier) }
   }
 
   func drawSeparator(styled: String?) {

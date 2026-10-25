@@ -759,7 +759,15 @@ struct REPLSession: Sendable {
   var sessionID: String
   var title: String
   var profile: SessionProfile
-  var history: AgentTranscript
+  var history: AgentTranscript {
+    didSet {
+      if !isKnownUniquelyReferenced(&historyChanges) { historyChanges = historyChanges.copy() }
+      historyChanges.changed(
+        from: zip(oldValue.messages, history.messages).prefix { $0 == $1 }.count)
+    }
+  }
+  var historyChanges = ChatHistoryChanges()
+  var historyWindow: ChatHistoryWindow? = nil
   var fileAccessLog: FileAccessLog
   var pendingContent: [ContentPart]
   var createdAt: Date
@@ -804,6 +812,8 @@ struct REPLSession: Sendable {
     title = chat.title
     profile = SessionProfile(definition: chat.primaryAgent)
     history = AgentTranscript(messages: chat.messages)
+    historyWindow = chat.historyWindow
+    historyChanges = chat.historyChanges
     fileAccessLog = FileAccessLog(paths: chat.accessedFiles)
     pendingContent = chat.pendingContent
     createdAt = chat.createdAt
@@ -816,7 +826,7 @@ struct REPLSession: Sendable {
   }
 
   var chat: AgentChat {
-    AgentChat(
+    var result = AgentChat(
       id: id,
       title: title,
       primaryAgent: profile.agentDefinition,
@@ -829,7 +839,10 @@ struct REPLSession: Sendable {
       sessionID: sessionID,
       subagents: redactor?.unredact(subagents) ?? subagents,
       commands: commands,
-      runtimeConfiguration: runtimeConfiguration)
+      runtimeConfiguration: runtimeConfiguration,
+      historyWindow: historyWindow)
+    result.historyChanges = historyChanges
+    return result
   }
 
   /// Names a placeholder chat after its first message; chosen titles stay.
@@ -1501,7 +1514,14 @@ struct MaiCLI {
       await runtime.configureProjectInstructionDirectory(
         configuration?.use.agentsmd == .on ? AgentExecutionScope.directory : nil)
       await runtime.configurePlanning(configuration?.use.plan ?? true)
-      var session = REPLSession(chat: workspace.selectedChat!)
+      let selectedChat: AgentChat
+      if options.initialPrompt != nil, workspace.selectedChat?.historyWindow != nil {
+        selectedChat =
+          try store.loadChatHistory(id: workspace.selectedChat!.id) ?? workspace.selectedChat!
+      } else {
+        selectedChat = workspace.selectedChat!
+      }
+      var session = REPLSession(chat: selectedChat)
       if let configuration {
         session.runtimeConfiguration = AgentChatConfiguration(
           configuration: configuration, providerBaseURLs: setup.providerBaseURLs)
@@ -2384,7 +2404,22 @@ struct MaiCLI {
     var catalogs = catalogs
     var project = project
     var store = store
-    var session = REPLSession(chat: workspace.selectedChat!)
+    var selectedChat = workspace.selectedChat!
+    if selectedChat.historyWindow != nil {
+      let initialStore = store
+      let id = selectedChat.id
+      do {
+        if let page = try await Task.detached(
+          priority: .userInitiated,
+          operation: {
+            try initialStore.loadChatPage(id: id)
+          }
+        ).value {
+          selectedChat = page
+        }
+      } catch { await terminal.line(error.localizedDescription, to: .standardError) }
+    }
+    var session = REPLSession(chat: selectedChat)
     let localProfile = session.profile
     var remoteReturnChatID: UUID?
     let executable = TailcatCLI.resolveExecutable(platformCommandLineArguments(environment: ProcessInfo.processInfo.environment)[0])
@@ -2500,6 +2535,7 @@ struct MaiCLI {
     var loop = REPLLoop()
     var activityWasInterrupted = false
     var visibleChatID = session.id
+    var agentHistoryWindows: [AgentPID: ChatHistoryWindow] = [:]
     if screen != nil {
       editor.onAgentSwitch = { selection in
         let handled = DispatchSemaphore(value: 0)
@@ -2507,6 +2543,32 @@ struct MaiCLI {
           return
         }
         handled.wait()
+      }
+    }
+
+    func loadSessionHistory() async -> Bool {
+      guard session.historyWindow != nil else { return true }
+      let id = session.id
+      let currentStore = store
+      do {
+        guard
+          let chat = try await Task.detached(
+            priority: .userInitiated,
+            operation: {
+              try currentStore.loadChatHistory(id: id)
+            }
+          ).value
+        else { return false }
+        session.history = AgentTranscript(messages: chat.messages)
+        session.subagents = chat.subagents
+        session.commands = chat.commands
+        session.historyWindow = nil
+        session.historyChanges = chat.historyChanges
+        return true
+      } catch {
+        await terminal.line(
+          "Could not load the complete chat: \(error.localizedDescription)", to: .standardError)
+        return false
       }
     }
 
@@ -2518,12 +2580,60 @@ struct MaiCLI {
       if case .agent(let pid) = loop.focus, await runtime.supervisor.info(pid) == nil {
         loop.focus = .main
       }
+      if session.historyWindow == nil, session.history.count > 64,
+        session.historyChanges.isCommitted(count: session.history.count),
+        loop.activeTurn?.chatID != session.id,
+        loop.conversationTurns.values.allSatisfy({ $0.chatID != session.id })
+      {
+        let currentStore = store
+        let id = session.id
+        if let page = try? await Task.detached(
+          priority: .utility,
+          operation: {
+            try currentStore.loadChatPage(id: id)
+          }
+        ).value {
+          session.history = AgentTranscript(messages: page.messages)
+          session.historyWindow = page.historyWindow
+          session.subagents = page.subagents
+          workspace.upsert(session.chat)
+          await runtime.supervisor.releaseFinishedTranscripts(page.subagents)
+          screen?.replaceHistory(messages: page.messages)
+        }
+      }
       guard let screen else { return }
+      if let window = session.historyWindow, window.range.isEmpty {
+        let currentStore = store
+        let id = session.id
+        do {
+          if let page = try await Task.detached(
+            priority: .userInitiated,
+            operation: {
+              try currentStore.loadChatPage(id: id)
+            }
+          ).value {
+            session.history = AgentTranscript(messages: page.messages)
+            session.historyWindow = page.historyWindow
+          }
+        } catch { await terminal.line(error.localizedDescription, to: .standardError) }
+      }
       if case .agent(let pid) = loop.focus {
-        let messages = await runtime.supervisor.transcript(pid)
-        screen.selectConversation("agent:\(pid.rawValue)", messages: session.redactor?.unredact(messages) ?? messages)
+        if let page = try? await runtime.supervisor.transcriptPage(
+          pid, before: agentHistoryWindows[pid]?.range.upperBound)
+        {
+          agentHistoryWindows[pid] = page.window
+          screen.selectConversation(
+            "agent:\(pid.rawValue)",
+            messages: session.redactor?.unredact(page.messages) ?? page.messages)
+          screen.configureHistory(window: page.window) { earlier in
+            continuation.yield(.historyPage(earlier))
+          }
+        }
       } else {
         screen.selectConversation("chat:\(session.id)", messages: session.history.messages)
+        screen.configureHistory(window: session.historyWindow) { earlier in
+          continuation.yield(.historyPage(earlier))
+        }
       }
     }
 
@@ -3592,6 +3702,43 @@ struct MaiCLI {
 
     func handleEvent(_ event: REPLEvent) async -> Bool {
       switch event {
+      case .historyPage(let earlier):
+        if case .agent(let pid) = loop.focus, let window = agentHistoryWindows[pid] {
+          let before =
+            earlier
+            ? window.range.lowerBound + 32 : min(window.totalCount, window.range.upperBound + 32)
+          do {
+            let page = try await runtime.supervisor.transcriptPage(pid, before: before)
+            agentHistoryWindows[pid] = page.window
+            screen?.replaceHistory(
+              messages: session.redactor?.unredact(page.messages) ?? page.messages)
+            screen?.configureHistory(window: page.window) { direction in
+              continuation.yield(.historyPage(direction))
+            }
+          } catch { await terminal.line(error.localizedDescription, to: .standardError) }
+          return false
+        }
+        guard case .main = loop.focus, let window = session.historyWindow,
+          earlier ? window.hasEarlier : window.hasLater
+        else { return false }
+        let currentStore = store
+        let id = session.id
+        let before =
+          earlier
+          ? window.range.lowerBound + 32 : min(window.totalCount, window.range.upperBound + 32)
+        do {
+          if let page = try await Task.detached(
+            priority: .userInitiated,
+            operation: {
+              try currentStore.loadChatPage(id: id, before: before)
+            }
+          ).value, session.id == id, session.historyWindow == window {
+            session.history = AgentTranscript(messages: page.messages)
+            session.historyWindow = page.historyWindow
+            screen?.replaceHistory(messages: page.messages)
+            await refreshConversation()
+          }
+        } catch { await terminal.line(error.localizedDescription, to: .standardError) }
       case .switchAgent(let selection, let reply):
         defer { reply() }
         guard loop.modalPrompt == nil, !loop.exiting else { return false }
@@ -3612,6 +3759,25 @@ struct MaiCLI {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
           await releaseIfIdle(workspace: workspace)
           return false
+        }
+        let commandFields = text.split(whereSeparator: \Character.isWhitespace).map(String.init)
+        let metadataCommands = [
+          "/help", "/history", "/version", "/about", "/then", "/unthen", "/stop", "/view",
+          "/projects", "/project", "/exit", "/quit",
+        ]
+        let chatNavigation =
+          commandFields.first == "/chat"
+          && [
+            "list", "chats", "ls", "use", "switch", "open", "next", "previous", "prev", "info",
+            "new",
+          ].contains(commandFields.dropFirst().first ?? "")
+        if session.historyWindow != nil, !metadataCommands.contains(commandFields.first ?? ""),
+          !chatNavigation
+        {
+          guard await loadSessionHistory() else {
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
         }
         if !heredoc, text == "/stop" {
           // Use the same event as Ctrl+C, including pending queue decisions.
@@ -12029,7 +12195,9 @@ struct MaiCLI {
     let status = chat.isArchived ? ", archived" : ""
     await terminal.line(
       "Switched to '\(chat.displayTitle)' (agent \(chat.primaryAgent.id)\(status)).")
-    let count = chat.conversationMessages.count
+    let count =
+      chat.historyWindow?.conversationCount ?? chat.historyWindow?.totalCount
+      ?? chat.conversationMessages.count
     await terminal.line(
       "Started: \(ChatDatePresentation.timestamp(chat.createdAt)) · \(count) message\(count == 1 ? "" : "s")")
   }
@@ -12260,7 +12428,9 @@ struct MaiCLI {
   private static func chatRow(_ chat: AgentChat, index: Int, selected: Bool, now: Date) -> String {
     let marker = selected ? "*" : " "
     let number = index < 10 ? " \(index)" : "\(index)"
-    let count = chat.conversationMessages.count
+    let count =
+      chat.historyWindow?.conversationCount ?? chat.historyWindow?.totalCount
+      ?? chat.conversationMessages.count
     let size = count == 0 ? "empty" : "\(count) msg"
     return [
       "\(marker) \(number)", String(chat.id.uuidString.prefix(8)),
@@ -12276,7 +12446,9 @@ struct MaiCLI {
     selectedID: UUID?
   ) -> String {
     let index = (workspace.orderedChats.firstIndex { $0.id == chat.id } ?? 0) + 1
-    let count = chat.conversationMessages.count
+    let count =
+      chat.historyWindow?.conversationCount ?? chat.historyWindow?.totalCount
+      ?? chat.conversationMessages.count
     var status = chat.isArchived ? "archived" : "active"
     if chat.id == selectedID { status += ", current" }
     var lines = [
@@ -12995,7 +13167,7 @@ struct MaiCLI {
     configuredAgents: [AgentDefinition],
     options: CLIOptions
   ) throws -> (workspace: AgentChatWorkspace, resumed: Bool) {
-    var workspace = try store.loadWorkspace { error in
+    var workspace = try store.loadWorkspace(paged: true) { error in
       FileHandle.standardError.write(
         Data("warning: skipped a chat file. \(error.localizedDescription)\n".utf8))
     }

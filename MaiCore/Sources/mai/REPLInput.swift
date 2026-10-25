@@ -15,6 +15,7 @@ enum REPLEvent: Sendable {
   case compaction(AutocompactionRequest, REPLCompactionReply)
   case compactionFinished(REPLCompactionReply)
   case supervisor
+  case historyPage(Bool)
   case switchAgent(REPLAgentSwitch, reply: @Sendable () -> Void)
 }
 

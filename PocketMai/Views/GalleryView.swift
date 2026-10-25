@@ -270,7 +270,7 @@ private enum GalleryShareBuilder {
   static func activityItems(for item: GalleryItem) -> [Any]? {
     switch item.kind {
     case .image:
-      guard let base64 = item.attachment?.dataBase64,
+      guard let base64 = item.attachment?.resolvedDataBase64,
         let data = Data(base64Encoded: base64)
       else { return nil }
       if let url = tempFile(named: item.displayName, data: data) { return [url] }

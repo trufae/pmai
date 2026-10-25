@@ -881,6 +881,13 @@ struct ChatAttachment: Identifiable, Codable, Equatable, Sendable {
   var mimeType: String
   var text: String?
   var dataBase64: String?
+  // Present only in a storage projection; full loads/export use inline bytes.
+  var storageDataURL: URL? = nil
+  var storedDataLength: Int? = nil
+  var resolvedDataBase64: String? {
+    dataBase64 ?? storageDataURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+  }
+  var imageDataLength: Int { storedDataLength ?? dataBase64?.utf8.count ?? 0 }
   var width: Int?
   var height: Int?
 
@@ -911,8 +918,54 @@ struct ChatAttachment: Identifiable, Codable, Equatable, Sendable {
   }
 
   var dataURL: String? {
-    guard kind == .image, let dataBase64, !dataBase64.isEmpty else { return nil }
+    guard kind == .image, let dataBase64 = resolvedDataBase64, !dataBase64.isEmpty else {
+      return nil
+    }
     return "data:\(mimeType);base64,\(dataBase64)"
+  }
+}
+
+extension ChatAttachment {
+  private enum CodingKeys: String, CodingKey {
+    case id, kind, filename, mimeType, text, dataBase64, width, height
+    case storageDataURL, storedDataLength
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(UUID.self, forKey: .id)
+    kind = try container.decode(ChatAttachmentKind.self, forKey: .kind)
+    filename = try container.decode(String.self, forKey: .filename)
+    mimeType = try container.decode(String.self, forKey: .mimeType)
+    text = try container.decodeIfPresent(String.self, forKey: .text)
+    dataBase64 = try container.decodeIfPresent(String.self, forKey: .dataBase64)
+    width = try container.decodeIfPresent(Int.self, forKey: .width)
+    height = try container.decodeIfPresent(Int.self, forKey: .height)
+    if let directory = decoder.userInfo[.pmaiChatStorageDirectory] as? URL,
+      let url = try container.decodeIfPresent(URL.self, forKey: .storageDataURL)
+    {
+      guard url.isFileURL,
+        url.deletingLastPathComponent().standardizedFileURL == directory.standardizedFileURL,
+        url.pathExtension == "blob",
+        UUID(uuidString: url.deletingPathExtension().lastPathComponent) != nil
+      else { throw ChatHistoryError.invalidFile }
+      storageDataURL = url
+      storedDataLength = try container.decodeIfPresent(Int.self, forKey: .storedDataLength)
+    }
+  }
+
+  func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(id, forKey: .id)
+    try container.encode(kind, forKey: .kind)
+    try container.encode(filename, forKey: .filename)
+    try container.encode(mimeType, forKey: .mimeType)
+    try container.encodeIfPresent(text, forKey: .text)
+    let encoded =
+      try dataBase64 ?? storageDataURL.map { try String(contentsOf: $0, encoding: .utf8) }
+    try container.encodeIfPresent(encoded, forKey: .dataBase64)
+    try container.encodeIfPresent(width, forKey: .width)
+    try container.encodeIfPresent(height, forKey: .height)
   }
 }
 
@@ -1044,7 +1097,7 @@ struct ChatMessageRenderKey: Equatable, Sendable {
       filename = attachment.filename
       mimeType = attachment.mimeType
       text = attachment.kind == .textFile ? attachment.text : nil
-      hasImageData = attachment.dataBase64?.isEmpty == false
+      hasImageData = attachment.imageDataLength > 0
       width = attachment.width
       height = attachment.height
     }
@@ -1409,7 +1462,15 @@ struct ConversationSummary: Identifiable, Codable, Equatable, Sendable {
 struct Conversation: Identifiable, Codable, Equatable, Sendable {
   var id: UUID = UUID()
   var title: String = AgentChat.placeholderTitle
-  var messages: [ChatMessage] = []
+  var messages: [ChatMessage] = [] {
+    didSet {
+      if !isKnownUniquelyReferenced(&historyChanges) { historyChanges = historyChanges.copy() }
+      let common = zip(oldValue, messages).prefix { $0 == $1 }.count
+      historyChanges.changed(from: common)
+    }
+  }
+  var historyChanges = ChatHistoryChanges()
+  var historyWindow: ChatHistoryWindow? = nil
   var createdAt: Date = Date()
   var updatedAt: Date = Date()
   var provider: ProviderKind = .mlx
@@ -1537,6 +1598,7 @@ struct Conversation: Identifiable, Codable, Equatable, Sendable {
   }
 
   func encode(to encoder: Encoder) throws {
+    guard historyWindow == nil else { throw ChatHistoryError.partialExport }
     var container = encoder.container(keyedBy: CodingKeys.self)
     try container.encode(id, forKey: .id)
     try container.encode(title, forKey: .title)
@@ -1574,6 +1636,24 @@ struct Conversation: Identifiable, Codable, Equatable, Sendable {
     }
   }
 
+  var historyMessageCount: Int { messages.count }
+
+  func historyMetadata(coding: MaiJSONCoding) throws -> Data {
+    var header = self
+    header.messages = []
+    header.subagents = []
+    header.historyWindow = nil
+    return try JSONSerialization.data(
+      withJSONObject: JSONSerialization.jsonObject(with: coding.makeEncoder().encode(header)),
+      options: [.sortedKeys])
+  }
+
+  func visitHistory(coding: MaiJSONCoding, startingAt: Int, _ visit: (Data) throws -> Void) throws {
+    for message in messages.dropFirst(startingAt) {
+      try visit(coding.makeEncoder().encode(message))
+    }
+  }
+
   var displayTitle: String {
     title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
       ? AgentChat.placeholderTitle : title
@@ -1604,7 +1684,7 @@ struct Conversation: Identifiable, Codable, Equatable, Sendable {
 
 /// Conversations are stored through MaiCore's `ChatFileStore`, sharing the
 /// file layout and the placeholder rule with pmai.
-extension Conversation: StoredChat {
+extension Conversation: PagedStoredChat {
   /// An untouched placeholder nobody pinned earns no file. The app keeps a
   /// placeholder alive on its own when a draft or a reply is pending.
   var isDisposable: Bool {

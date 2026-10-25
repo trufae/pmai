@@ -9,6 +9,9 @@ enum TerminalConversationScope {
 
 final class TerminalConversation {
   var transcript = TerminalOutputBuffer()
+  var messageLines: [(String, Int)] = []
+  var historyWindow: ChatHistoryWindow?
+  var historyLoader: (@Sendable (Bool) -> Void)?
   var thinkingBlock: Int?
   var replyBlock: Int?
   var toolBlocks: [Int: Int] = [:]

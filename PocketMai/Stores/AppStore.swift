@@ -1390,7 +1390,12 @@ final class AppStore: ObservableObject {
       selectedConversationIDs.removeAll()
       selectConversationFolder(summary.folderID)
     }
-    await ensureConversationLoaded(id)
+    // Read-only windows in other chats can be discarded immediately.
+    conversations.removeAll {
+      $0.id != id && $0.historyWindow != nil && !respondingConversationIDs.contains($0.id)
+    }
+    rebuildConversationIndexes()
+    await ensureConversationPageLoaded(id)
     guard selectionGeneration == conversationSelectionGeneration else { return }
     guard let index = indexedConversationIndex(for: id) else {
       if previousID != id, selectedConversationID == id {
@@ -1415,13 +1420,15 @@ final class AppStore: ObservableObject {
   }
 
   func loadStoredConversationsForSearch() async {
-    guard !hasLoadedPersistedConversations else { return }
+    guard
+      !hasLoadedPersistedConversations || conversations.contains(where: { $0.historyWindow != nil })
+    else { return }
     let generation = dataGeneration
     let persistence = self.persistence
     let loadedConversations = await Task.detached(priority: .userInitiated) {
       persistence.loadConversations()
     }.value
-    guard generation == dataGeneration, !hasLoadedPersistedConversations else { return }
+    guard generation == dataGeneration else { return }
     mergeLoadedConversations(loadedConversations)
   }
 
@@ -1511,6 +1518,12 @@ final class AppStore: ObservableObject {
   }
 
   func setMessagePinned(_ pinned: Bool, messageID: UUID, in conversationID: UUID) {
+    if deferUntilConversationLoaded(
+      conversationID,
+      action: { self.setMessagePinned(pinned, messageID: messageID, in: conversationID) })
+    {
+      return
+    }
     guard let index = indexedConversationIndex(for: conversationID),
       conversations[index].messages.setMessagePinned(pinned, id: messageID)
     else { return }
@@ -1585,6 +1598,14 @@ final class AppStore: ObservableObject {
     if let index = indexedConversationIndex(for: id) {
       guard conversations[index].isUnread != isUnread else { return }
       conversations[index].isUnread = isUnread
+      if conversations[index].historyWindow != nil {
+        if let summary = conversationSummaries.firstIndex(where: { $0.id == id }) {
+          conversationSummaries[summary].isUnread = isUnread
+          refreshRecentConversationSummaries()
+          persistence.saveConversationSummaries(conversationSummaries)
+        }
+        return
+      }
       upsertSummary(for: conversations[index])
       saveConversations()
       return
@@ -1606,15 +1627,67 @@ final class AppStore: ObservableObject {
     cloneConversation(conversation)
   }
 
-  private func ensureConversationLoaded(_ id: UUID) async {
+  private func ensureConversationPageLoaded(_ id: UUID) async {
     guard indexedConversationIndex(for: id) == nil else { return }
+    let persistence = self.persistence
+    do {
+      let page = try await Task.detached(priority: .userInitiated) {
+        try persistence.loadConversationPage(id: id)
+      }.value
+      guard var page, indexedConversationIndex(for: id) == nil else { return }
+      page.isUnread = conversationSummary(withID: id)?.isUnread ?? page.isUnread
+      conversations.append(page)
+      rebuildConversationIndexes()
+    } catch { errorMessage = error.localizedDescription }
+  }
+
+  /// A projection is read-only. Every mutation first obtains the full model on
+  /// a worker, then retries the user's action on the main actor.
+  private func deferUntilConversationLoaded(_ id: UUID?, action: @escaping @MainActor () -> Void)
+    -> Bool
+  {
+    guard let id, conversation(withID: id)?.historyWindow != nil else { return false }
+    let selectedAtRequest = selectedConversationID
+    Task { @MainActor in
+      await ensureConversationLoaded(id)
+      guard conversation(withID: id)?.historyWindow == nil,
+        selectedAtRequest != id || selectedConversationID == id
+      else { return }
+      action()
+    }
+    return true
+  }
+
+  func pageConversationHistory(earlier: Bool) async {
+    guard let id = selectedConversationID, let index = indexedConversationIndex(for: id),
+      let window = conversations[index].historyWindow,
+      earlier ? window.hasEarlier : window.hasLater
+    else { return }
+    let persistence = self.persistence
+    let before =
+      earlier ? window.range.lowerBound + 32 : min(window.totalCount, window.range.upperBound + 32)
+    do {
+      let page = try await Task.detached(priority: .userInitiated) {
+        try persistence.loadConversationPage(id: id, before: before)
+      }.value
+      guard selectedConversationID == id, let index = indexedConversationIndex(for: id),
+        conversations[index].historyWindow == window, var page
+      else { return }
+      page.isUnread = conversationSummary(withID: id)?.isUnread ?? page.isUnread
+      conversations[index] = page
+    } catch { errorMessage = error.localizedDescription }
+  }
+
+  private func ensureConversationLoaded(_ id: UUID) async {
+    guard conversation(withID: id)?.historyWindow != nil || indexedConversationIndex(for: id) == nil
+    else { return }
     let loadTask: Task<Conversation?, Never>
     if let existingTask = conversationLoadTasks[id] {
       loadTask = existingTask
     } else {
       let persistence = self.persistence
       let task = Task.detached(priority: .userInitiated) {
-        persistence.loadConversation(id: id)
+        persistence.loadConversationHistory(id: id)
       }
       conversationLoadTasks[id] = task
       loadTask = task
@@ -1622,16 +1695,27 @@ final class AppStore: ObservableObject {
 
     let loadedConversation = await loadTask.value
     conversationLoadTasks[id] = nil
+    guard
+      conversationSummaries.contains(where: { $0.id == id })
+        || indexedConversationIndex(for: id) != nil
+    else { return }
     guard var conversation = loadedConversation else {
+      errorMessage = "Could not load the complete conversation. Please try again after syncing."
       return
     }
-    guard indexedConversationIndex(for: id) == nil else { return }
+    guard conversation(withID: id)?.historyWindow != nil || indexedConversationIndex(for: id) == nil
+    else { return }
+    conversation.isUnread = conversationSummary(withID: id)?.isUnread ?? conversation.isUnread
     let normalizedProvider = normalizeUnavailableAppleProviderIfNeeded(in: &conversation)
     let insertionIndex =
       conversations.firstIndex {
         Self.conversationPrecedes(conversation, $0)
       } ?? conversations.endIndex
-    conversations.insert(conversation, at: insertionIndex)
+    if let index = indexedConversationIndex(for: id) {
+      conversations[index] = conversation
+    } else {
+      conversations.insert(conversation, at: insertionIndex)
+    }
     rebuildConversationIndexes()
     if normalizedProvider {
       saveConversations()
@@ -1703,7 +1787,12 @@ final class AppStore: ObservableObject {
     persistence.saveDrafts(conversationDrafts)
   }
 
-  func updateCurrentConversation(_ update: (inout Conversation) -> Void) {
+  func updateCurrentConversation(_ update: @escaping (inout Conversation) -> Void) {
+    if deferUntilConversationLoaded(
+      selectedConversationID, action: { self.updateCurrentConversation(update) })
+    {
+      return
+    }
     guard let index = currentConversationIndex else { return }
     let source = conversations[index].messages.last
     var conversation = conversations[index]
@@ -1717,7 +1806,12 @@ final class AppStore: ObservableObject {
     saveConversations()
   }
 
-  func updateCurrentConversationSettings(_ update: (inout Conversation) -> Void) {
+  func updateCurrentConversationSettings(_ update: @escaping (inout Conversation) -> Void) {
+    if deferUntilConversationLoaded(
+      selectedConversationID, action: { self.updateCurrentConversationSettings(update) })
+    {
+      return
+    }
     guard let index = currentConversationIndex else { return }
     var conversation = conversations[index]
     update(&conversation)
@@ -1737,6 +1831,11 @@ final class AppStore: ObservableObject {
   }
 
   private func renameLoadedConversation(id: UUID, to rawTitle: String) {
+    if deferUntilConversationLoaded(
+      id, action: { self.renameLoadedConversation(id: id, to: rawTitle) })
+    {
+      return
+    }
     guard let index = indexedConversationIndex(for: id) else { return }
     conversations[index].title = savedConversationTitle(rawTitle)
     conversations[index].updatedAt = Date()
@@ -1762,6 +1861,10 @@ final class AppStore: ObservableObject {
   }
 
   func deleteMessage(_ message: ChatMessage) {
+    if deferUntilConversationLoaded(selectedConversationID, action: { self.deleteMessage(message) })
+    {
+      return
+    }
     guard let index = currentConversationIndex else { return }
     let conversationID = conversations[index].id
     let removedMessages = conversations[index].messages.filter { $0.id == message.id }
@@ -1777,6 +1880,9 @@ final class AppStore: ObservableObject {
   }
 
   func deleteMessages(_ ids: Set<UUID>) {
+    if deferUntilConversationLoaded(selectedConversationID, action: { self.deleteMessages(ids) }) {
+      return
+    }
     guard let index = currentConversationIndex, !ids.isEmpty else { return }
     let conversationID = conversations[index].id
     let removedMessages = conversations[index].messages.filter { ids.contains($0.id) }
@@ -1915,6 +2021,7 @@ final class AppStore: ObservableObject {
   }
 
   func restartFromScratch(with message: ChatMessage) async {
+    if let id = selectedConversationID { await ensureConversationLoaded(id) }
     guard let index = currentConversationIndex else { return }
     let conversationID = conversations[index].id
     guard let source = restartSourceMessage(for: message),
@@ -2073,7 +2180,7 @@ final class AppStore: ObservableObject {
       conversations.flatMap { conversation in
         conversation.messages.compactMap(Self.normalizedVoiceRecordingFilename)
       })
-    let loadedIDs = Set(conversations.map(\.id))
+    let loadedIDs = Set(conversations.filter { $0.historyWindow == nil }.map(\.id))
     for summary in conversationSummaries where !loadedIDs.contains(summary.id) {
       guard let conversation = persistence.loadConversation(id: summary.id) else { continue }
       filenames.formUnion(conversation.messages.compactMap(Self.normalizedVoiceRecordingFilename))
@@ -2093,6 +2200,14 @@ final class AppStore: ObservableObject {
   }
 
   func cloneConversation(_ conversation: Conversation) {
+    if deferUntilConversationLoaded(
+      conversation.id,
+      action: {
+        if let full = self.conversation(withID: conversation.id) { self.cloneConversation(full) }
+      })
+    {
+      return
+    }
     let now = Date()
     let copyTitle: String = {
       let trimmed = conversation.displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2149,6 +2264,12 @@ final class AppStore: ObservableObject {
   }
 
   func togglePin(_ conversation: Conversation) {
+    if deferUntilConversationLoaded(
+      conversation.id,
+      action: { if let full = self.conversation(withID: conversation.id) { self.togglePin(full) } })
+    {
+      return
+    }
     guard let index = indexedConversationIndex(for: conversation.id) else { return }
     conversations[index].isPinned.toggle()
     conversations[index].updatedAt = Date()
@@ -2197,6 +2318,8 @@ final class AppStore: ObservableObject {
     if currentConversation == nil && targetConversationID == nil { newConversation() }
     guard let conversationID = targetConversationID ?? currentConversation?.id,
       indexedConversationIndex(for: conversationID) != nil else { return false }
+    await ensureConversationLoaded(conversationID)
+    guard conversation(withID: conversationID)?.historyWindow == nil else { return false }
     if promptShortcutSelection == nil {
       if handleThenCommand(rawPrompt, attachments: attachments, in: conversationID) { return true }
       if let question = BTWQuestion.prompt(in: rawPrompt) {
@@ -2824,6 +2947,7 @@ final class AppStore: ObservableObject {
   }
 
   func trimAndResubmit(from message: ChatMessage) async {
+    if let id = selectedConversationID { await ensureConversationLoaded(id) }
     guard let convIndex = currentConversationIndex else { return }
     let conversationID = conversations[convIndex].id
     guard
@@ -3348,9 +3472,11 @@ final class AppStore: ObservableObject {
   }
 
   func compactConversation() async {
+    if let id = selectedConversationID { await ensureConversationLoaded(id) }
     guard !isCompacting, !isResponding else { return }
     guard let index = currentConversationIndex else { return }
     let conversation = conversations[index]
+    guard conversation.historyWindow == nil else { return nil }
     let settingsSnapshot = settings
 
     isCompacting = true
@@ -3389,6 +3515,7 @@ final class AppStore: ObservableObject {
   }
 
   func compactPromptForCurrentConversation() async -> (conversationID: UUID, prompt: String)? {
+    if let id = selectedConversationID { await ensureConversationLoaded(id) }
     guard let conversation = currentConversation else { return nil }
     guard
       let prompt = await ConversationPromptBuilder.compactPrompt(
@@ -3411,6 +3538,7 @@ final class AppStore: ObservableObject {
     }
 
     let conversation = conversations[index]
+    guard conversation.historyWindow == nil else { return nil }
     let settingsSnapshot = settings
 
     isCompacting = true
@@ -3443,6 +3571,14 @@ final class AppStore: ObservableObject {
   }
 
   func replaceConversationWithCompactSummary(conversationID: UUID, summary: String) {
+    if deferUntilConversationLoaded(
+      conversationID,
+      action: {
+        self.replaceConversationWithCompactSummary(conversationID: conversationID, summary: summary)
+      })
+    {
+      return
+    }
     guard let index = indexedConversationIndex(for: conversationID) else { return }
     let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else {
@@ -3766,6 +3902,13 @@ final class AppStore: ObservableObject {
     _ conversation: Conversation,
     imageSize: AttachmentImageSize
   ) async throws -> ExportDocument {
+    if conversation.historyWindow != nil {
+      await ensureConversationLoaded(conversation.id)
+      guard let full = self.conversation(withID: conversation.id), full.historyWindow == nil else {
+        throw ChatHistoryError.incompleteSnapshot
+      }
+      return try await exportDocument(full, imageSize: imageSize)
+    }
     let options = settings.documentExport
     let catalog = try await ConversationExportContent.buildImageResourceCatalog(
       conversation: conversation,
@@ -3806,6 +3949,13 @@ final class AppStore: ObservableObject {
     format: ConversationExportFormat,
     imageSize: AttachmentImageSize = .full
   ) async -> URL? {
+    if conversation.historyWindow != nil {
+      await ensureConversationLoaded(conversation.id)
+      guard let full = self.conversation(withID: conversation.id), full.historyWindow == nil else {
+        return nil
+      }
+      return await exportConversationFile(full, format: format, imageSize: imageSize)
+    }
     switch format {
     case .txt, .markdown:
       return writeConversationExport(
@@ -3882,6 +4032,13 @@ final class AppStore: ObservableObject {
   }
 
   func exportConversationDebugJSONFile(_ conversation: Conversation) async -> URL? {
+    if conversation.historyWindow != nil {
+      await ensureConversationLoaded(conversation.id)
+      guard let full = self.conversation(withID: conversation.id), full.historyWindow == nil else {
+        return nil
+      }
+      return await exportConversationDebugJSONFile(full)
+    }
     let exportable = await conversationIncludingAgentRecords(conversation)
     let latestPrompt =
       exportable.messages.last(where: { $0.role == .user })
@@ -4655,16 +4812,63 @@ final class AppStore: ObservableObject {
     return nil
   }
 
+  private func releaseSavedConversationHistories(_ saved: [(UUID, Date, Data)]) {
+    for (id, date, metadata) in saved {
+      guard let index = indexedConversationIndex(for: id), conversations[index].updatedAt == date,
+        !respondingConversationIDs.contains(id), !preparingConversationIDs.contains(id),
+        conversations[index].historyWindow == nil,
+        conversations[index].historyChanges.isCommitted(count: conversations[index].messages.count),
+        (try? conversations[index].historyMetadata(coding: PersistenceStore.conversationCoding))
+          == metadata
+      else { continue }
+      let persistence = self.persistence
+      Task { @MainActor in
+        let page = try? await Task.detached(priority: .utility) {
+          try persistence.loadConversationPage(id: id)
+        }.value
+        guard let page, page.updatedAt == date, let index = indexedConversationIndex(for: id),
+          conversations[index].updatedAt == date, !respondingConversationIDs.contains(id),
+          !preparingConversationIDs.contains(id),
+          conversations[index].historyChanges.isCommitted(
+            count: conversations[index].messages.count),
+          (try? conversations[index].historyMetadata(coding: PersistenceStore.conversationCoding))
+            == metadata,
+          (try? page.historyMetadata(coding: PersistenceStore.conversationCoding)) == metadata
+        else { return }
+        if selectedConversationID == id {
+          conversations[index] = page
+        } else {
+          conversations.remove(at: index)
+          rebuildConversationIndexes()
+        }
+        await agentSupervisor.releaseFinishedTranscripts(page.subagents)
+      }
+    }
+  }
+
   func saveConversations() {
     let retained = retainedPlaceholderConversationIDs()
+    let saved = conversations.filter { $0.historyWindow == nil }.compactMap {
+      conversation -> (UUID, Date, Data)? in
+      guard
+        let metadata = try? conversation.historyMetadata(
+          coding: PersistenceStore.conversationCoding)
+      else { return nil }
+      return (conversation.id, conversation.updatedAt, metadata)
+    }
+    let completion: @Sendable () -> Void = { [weak self] in
+      Task { @MainActor in self?.releaseSavedConversationHistories(saved) }
+    }
     guard hasLoadedPersistedConversations else {
       pendingConversationSave = true
-      dirtyConversationIDsBeforeLoad.formUnion(conversations.map(\.id))
+      dirtyConversationIDsBeforeLoad.formUnion(
+        conversations.filter { $0.historyWindow == nil }.map(\.id))
       persistence.saveLoadedConversations(
-        conversations, summaries: conversationSummaries, retaining: retained)
+        conversations, summaries: conversationSummaries, retaining: retained, completion: completion
+      )
       return
     }
-    persistence.saveConversations(conversations, retaining: retained)
+    persistence.saveConversations(conversations, retaining: retained, completion: completion)
   }
 
   /// Stores the session supervisor's latest copy of child-agent records
@@ -4673,6 +4877,11 @@ final class AppStore: ObservableObject {
     _ current: [AgentProcessRecord],
     into conversationID: UUID
   ) {
+    if deferUntilConversationLoaded(
+      conversationID, action: { self.mergeAgentProcessRecords(current, into: conversationID) })
+    {
+      return
+    }
     guard let index = indexedConversationIndex(for: conversationID) else { return }
     let merged = AgentProcessRecord.merging(
       saved: conversations[index].subagents,
@@ -4688,6 +4897,12 @@ final class AppStore: ObservableObject {
     rootedAt rootRunIDs: Set<UUID>,
     from conversationID: UUID
   ) {
+    if deferUntilConversationLoaded(
+      conversationID,
+      action: { self.removeAgentProcessRecordSubtrees(rootedAt: rootRunIDs, from: conversationID) })
+    {
+      return
+    }
     guard let index = indexedConversationIndex(for: conversationID) else { return }
     var deletedRunIDs = rootRunIDs
     var foundDescendant = true
@@ -4816,7 +5031,9 @@ final class AppStore: ObservableObject {
     let loaded = loaded.filter { !deletedConversationIDsBeforeLoad.contains($0.id) }
     var byID = Dictionary(uniqueKeysWithValues: loaded.map { ($0.id, $0) })
     for conversation in conversations {
-      if dirtyConversationIDsBeforeLoad.contains(conversation.id) || byID[conversation.id] == nil {
+      if (conversation.historyWindow == nil
+        && dirtyConversationIDsBeforeLoad.contains(conversation.id)) || byID[conversation.id] == nil
+      {
         byID[conversation.id] = conversation
       }
     }
@@ -4863,6 +5080,7 @@ final class AppStore: ObservableObject {
   }
 
   private func upsertSummary(for conversation: Conversation) {
+    guard conversation.historyWindow == nil else { return }
     let summary = ConversationSummary(conversation: conversation)
     if let index = conversationSummaries.firstIndex(where: { $0.id == conversation.id }) {
       conversationSummaries[index] = summary
@@ -5877,6 +6095,12 @@ final class AppStore: ObservableObject {
   )
     async throws -> SettingsBackupEnvelope
   {
+    if selection.conversations {
+      for summary in conversationSummaries { await ensureConversationLoaded(summary.id) }
+      guard conversations.allSatisfy({ $0.historyWindow == nil }) else {
+        throw ChatHistoryError.incompleteSnapshot
+      }
+    }
     let baseConversations =
       selection.conversations
       ? (includePictures ? conversations : conversationsRemovingImageAttachments(conversations))

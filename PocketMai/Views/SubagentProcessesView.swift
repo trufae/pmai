@@ -274,6 +274,7 @@ struct SubagentProcessDetailView: View {
   let conversationID: UUID?
   let pid: AgentPID
   @State private var transcript: [AgentMessage] = []
+  @State private var historyWindow: ChatHistoryWindow?
   @State private var draft = ""
 
   private var process: AgentProcessInfo? {
@@ -347,6 +348,11 @@ struct SubagentProcessDetailView: View {
           }
         }
         Section {
+          if historyWindow?.hasEarlier == true {
+            Button("Earlier messages") {
+              Task { await loadTranscript(before: historyWindow?.range.lowerBound) }
+            }
+          }
           if renderedTranscript.isEmpty {
             Text("Nothing yet.")
               .foregroundStyle(.secondary)
@@ -370,6 +376,13 @@ struct SubagentProcessDetailView: View {
                 .listRowBackground(Color.clear)
             }
           }
+          if historyWindow?.hasLater == true, let window = historyWindow {
+            Button("Newer messages") {
+              Task {
+                await loadTranscript(before: min(window.totalCount, window.range.upperBound + 64))
+              }
+            }
+          }
         } header: {
           Text("Transcript")
         }
@@ -383,8 +396,14 @@ struct SubagentProcessDetailView: View {
     .navigationTitle(process?.displayName ?? pid.description)
     .navigationBarTitleDisplayMode(.inline)
     .task(id: transcriptRefreshKey) {
-      transcript = await store.agentTranscript(pid)
+      await loadTranscript()
     }
+  }
+
+  private func loadTranscript(before: Int? = nil) async {
+    guard let page = await store.agentTranscriptPage(pid, before: before) else { return }
+    transcript = page.messages
+    historyWindow = page.window
   }
 
   /// The transcript is re-read when the process reports progress, not on
