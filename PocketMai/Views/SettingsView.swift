@@ -1793,7 +1793,7 @@ struct SettingsView: View {
       .foregroundStyle(.secondary)
     case .github:
       Text(
-        "List and search GitHub repositories, and read files, commits, pull requests, diffs, issues, releases, and CI results. An optional personal access token enables private repositories, job logs, and higher rate limits. Leave empty for public access. For a fine-grained token, select repositories and grant read access to Contents, Pull requests, Issues, Checks, and Actions as needed. Disabled by default; each call asks for confirmation."
+        "Browse GitHub repositories, files, commits, PRs, discussions, issues, releases, and CI results. With a writable token, post comments, submit reviews with inline code suggestions, and create PRs from pushed branches. Leave the token empty for public reads. For a fine-grained token, select repositories and grant read access as needed to Contents, Pull requests, Issues, Checks, and Actions; grant Pull requests write access for reviews/PR creation, and Issues or Pull requests write access for comments. Disabled by default; calls follow your tool approval settings."
       )
       .font(.caption)
       .foregroundStyle(.secondary)

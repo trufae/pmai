@@ -94,9 +94,10 @@ there yet. The Android CLI is a separate terminal client.
   or remote files, create folders, and upload or download documents.
 - **Research and everyday tools — iOS + CLI.** Search the web, including through
   your own SearXNG instance, fetch readable pages, and download files. Browse
-  GitHub repositories, PR diffs, issues, releases, and CI logs with read-only
-  tools. Check weather, calculate, or search Mastodon and enable posting when
-  needed.
+  GitHub repositories, PR diffs, discussions, issues, releases, and CI logs.
+  With a writable token, post comments, review inline with code suggestions,
+  and create PRs from pushed branches. Check weather, calculate, or search
+  Mastodon and enable posting when needed.
 - **Documents in, documents out — iOS + CLI.** Import text, source, HTML,
   Markdown, DOCX, EPUB, JSON, and PDF; export conversations to Word, EPUB,
   Markdown, HTML, plain text, or JSON. Use local Apple Vision OCR on iOS and

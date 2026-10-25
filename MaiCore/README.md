@@ -1029,7 +1029,7 @@ they are for and how the tools work together: `agent_start`, `agent_status`,
 `skills_*` tools `skills` (`AgentRuntime.builtInToolGroups`); enable or
 disable each group independently on each agent.
 
-GitHub keeps the same read-only tools with optional authentication. Export
+GitHub reads work with optional authentication; posting requires a token. Export
 `GITHUB_TOKEN` before starting pmai, or save a token with
 `/tools set github githubAPIKey YOUR_TOKEN`; `/tools set github githubAPIKeyEnvironment GH_TOKEN`
 selects another environment variable. The selected environment variable takes
@@ -1041,8 +1041,43 @@ model tool argument. Private release links still require GitHub login in the bro
 uses the same endpoints with a bearer token. For a fine-grained token, select
 repositories and grant read permissions for Contents (files, commits, releases),
 Pull requests, Issues, Checks (CI results), and Actions (job logs), as needed.
+For posting, grant **Pull requests: write** for reviews and PR creation, and
+**Issues: write** or **Pull requests: write** for conversation comments.
 [Personal-token limits](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)
 are normally 5,000 requests/hour, compared with 60/hour for anonymous access.
+
+The review workflow uses four tools shared by CLI and iOS:
+
+| Tool | Arguments | Purpose |
+| --- | --- | --- |
+| `github_pr_comments` | `repo`, `number`, optional `page`, `limit` | Read conversation comments, reviews, and inline comments with IDs, locations, and reply relationships. Each category is paginated independently (10 entries by default, up to 30); increase `page` to continue. |
+| `github_comment` | `repo`, `number`, `body` | Post a Markdown conversation comment on an issue or PR. |
+| `github_review` | `repo`, `number`, `commit_id`, `body`, optional `event`, `comments` | Publish a review; `event` defaults to `COMMENT`, with `APPROVE` and `REQUEST_CHANGES` also supported. The summary `body` is required except for approvals. |
+| `github_create_pr` | `repo`, `head`, `base`, `title`, optional `body`, `draft` | Open a PR from an existing pushed branch; `head` accepts `owner:branch` for forks. |
+
+Before reviewing, read `github_pr`, `github_pr_diff`, and `github_pr_comments`.
+Pass the full head SHA as `commit_id`. Each inline comment has `path`, `line`,
+and `body`; `side` defaults to `RIGHT` (`LEFT` targets deleted lines). For a
+multiline range, add `start_line`; `start_side` defaults to `side`.
+Code suggestions use a fenced `suggestion` block in the inline body, for example:
+
+````json
+{
+  "repo": "owner/repo",
+  "number": 123,
+  "commit_id": "0123456789abcdef0123456789abcdef01234567",
+  "body": "Please handle the error before continuing.",
+  "comments": [{
+    "path": "src/main.c", "start_line": 20, "line": 21,
+    "body": "```suggestion\nif (!result) {\n  return false;\n}\n```"
+  }]
+}
+````
+
+All comments in `github_review` are published in one request. Writes follow
+the existing tool approval settings and return the created ID and URL. They
+are not retried automatically. Use `gh`/git for branches, commits, pushing,
+merging, and other GitHub operations.
 
 MCP tool names are namespaced as `<toolNamePrefix>::<remoteName>`, or
 `<server-id>::<remoteName>` when no prefix is configured. Connecting an enabled
