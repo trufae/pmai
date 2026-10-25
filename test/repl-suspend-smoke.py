@@ -345,6 +345,7 @@ elif action == 'fail':
                 send(f'/set ui.mode {mode}\r'.encode())
                 wait_for(f'Set ui.mode = {mode}')
                 if mode == 'buffer':
+                    wait_for(PROMPT)
                     send(b"!printf 'QUICK\\137TTY\\137OUTPUT\\n'\r")
                     quick = wait_for('QUICK_TTY_OUTPUT') + wait_for(PROMPT)
                     assert b'\x1b[?1049l' not in quick and b'\x1b[?1049h' not in quick, quick
