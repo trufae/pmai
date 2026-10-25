@@ -241,7 +241,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       scrollbarDrag = nil
       if let source = view?.source {
         switch source {
-        case .current, .pins, .log, .thinking, .tools, .diffs: view?.buffer.follow()
+        case .current, .pins, .log, .iconlog, .thinking, .tools, .diffs: view?.buffer.follow()
         default: break
         }
       }

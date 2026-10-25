@@ -25,6 +25,11 @@ struct TerminalToolBlock {
         return prefix + markers + line.text + (colors ? "\u{1B}[0m" : "")
       }.joined(separator: "\n")
     }
+    if display == .icons {
+      return styled(
+        ToolIcon.emoji(for: call?.name ?? ""),
+        color: result?.isError == true ? .errorForeground : .toolCallForeground)
+    }
     if display == .lines(0) {
       guard let result else { return "" }
       let label =

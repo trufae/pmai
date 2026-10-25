@@ -442,12 +442,14 @@ public enum SubagentOutputLevel: String, Codable, CaseIterable, Sendable {
 public enum ToolResultDisplay: Codable, Equatable, Sendable, CustomStringConvertible {
   case all
   case relevant
+  case icons
   case lines(Int)
 
   public init?(setting: String) {
     switch setting.lowercased() {
     case "all": self = .all
     case "relevant": self = .relevant
+    case "icons": self = .icons
     default:
       guard let count = Int(setting), count >= 0 else { return nil }
       self = .lines(count)
@@ -458,6 +460,7 @@ public enum ToolResultDisplay: Codable, Equatable, Sendable, CustomStringConvert
     switch self {
     case .all: "all"
     case .relevant: "relevant"
+    case .icons: "icons"
     case .lines(let count): String(max(0, count))
     }
   }
@@ -472,7 +475,7 @@ public enum ToolResultDisplay: Codable, Equatable, Sendable, CustomStringConvert
       self = value
     } else {
       throw DecodingError.dataCorruptedError(
-        in: container, debugDescription: "Expected all, relevant, or a nonnegative line count.")
+        in: container, debugDescription: "Expected all, relevant, icons, or a nonnegative line count.")
     }
   }
 
@@ -481,6 +484,7 @@ public enum ToolResultDisplay: Codable, Equatable, Sendable, CustomStringConvert
     switch self {
     case .all: try container.encode(-1)
     case .relevant: try container.encode("relevant")
+    case .icons: try container.encode("icons")
     case .lines(let count): try container.encode(max(0, count))
     }
   }
@@ -521,7 +525,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   public var bold: Bool
   /// Render assistant replies as styled markdown in the REPL.
   public var markdown: Bool
-  /// Show all results, important results in full, or a fixed number of leading lines.
+  /// Show results, a fixed number of leading lines, or compact tool icons.
   public var tools: ToolResultDisplay
   /// Collapse consecutive tool calls into an expandable summary in buffer mode.
   public var toolGroups: Bool

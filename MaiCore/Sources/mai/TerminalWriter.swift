@@ -40,6 +40,8 @@ actor TerminalWriter {
   /// Compact calls are printed once their outcome is known. Scope IDs by run
   /// because different agents can issue the same provider-generated call ID.
   private var compactToolCalls: [UUID: [String: String]] = [:]
+  private var iconToolCalls: [UUID: Set<String>] = [:]
+  private var iconLinePrefix: String?
   private var bufferToolCalls: [UUID: [String: Int]] = [:]
   private var ui = ConfiguredTerminalUI()
   private var subagentOutput = ConfiguredTerminalUI().subagentOutput
@@ -138,6 +140,7 @@ actor TerminalWriter {
   }
 
   func configureTools(_ display: ToolResultDisplay) {
+    if tools != display { finishIconLine() }
     tools = display
     screen?.configureTools(display)
   }
@@ -198,6 +201,7 @@ actor TerminalWriter {
   }
 
   func resetResponse() {
+    finishIconLine()
     finishThinking()
     wroteRootDelta = false
     rootLineOpen = false
@@ -296,7 +300,9 @@ actor TerminalWriter {
         "↻ retry \(attempt)/\(limit) in \(ModelUsageFormat.duration(delay)): \(error)",
         color: .warningForeground)
     case .finished(let context, let result) where context.depth == 0:
+      finishIconLine()
       compactToolCalls[context.runID] = nil
+      iconToolCalls[context.runID] = nil
       bufferToolCalls[context.runID] = nil
       finishThinking()
       let responseText = redactor?.unredact(result.response.text) ?? result.response.text
@@ -398,6 +404,7 @@ actor TerminalWriter {
         color: .warningForeground)
     case .finished(let context, let result):
       compactToolCalls[context.runID] = nil
+      iconToolCalls[context.runID] = nil
       bufferToolCalls[context.runID] = nil
       guard let pid = context.pid else { return }
       flushChildText(pid)
@@ -437,6 +444,7 @@ actor TerminalWriter {
       return
     }
     compactToolCalls[info.runID] = nil
+    iconToolCalls[info.runID] = nil
     guard info.depth > 0, !childrenEnded.contains(info.pid) else { return }
     childrenEnded.insert(info.pid)
     flushChildText(info.pid)
@@ -517,6 +525,7 @@ actor TerminalWriter {
   }
 
   func line(_ value: String = "", to handle: FileHandle = .standardOutput) {
+    finishIconLine()
     if capturesOutput {
       captured.append(value + "\n")
       return
@@ -576,7 +585,10 @@ actor TerminalWriter {
       return
     }
     let preview = ToolCallPreview.render(call)
-    if tools == .lines(0) {
+    if tools == .icons {
+      iconToolCalls[context.runID, default: []].insert(call.id)
+      toolIcon(ToolIcon.emoji(for: call.name), context: context)
+    } else if tools == .lines(0) {
       compactToolCalls[context.runID, default: [:]][call.id] = String(preview.dropFirst(2))
     } else {
       toolStatus(preview, context: context, color: .toolCallForeground)
@@ -596,6 +608,13 @@ actor TerminalWriter {
     let call = compactToolCalls[context.runID]?.removeValue(forKey: result.callID)
     if compactToolCalls[context.runID]?.isEmpty == true {
       compactToolCalls[context.runID] = nil
+    }
+    let wasIcon = iconToolCalls[context.runID]?.remove(result.callID) != nil
+    if iconToolCalls[context.runID]?.isEmpty == true { iconToolCalls[context.runID] = nil }
+    if wasIcon { return }
+    if tools == .icons {
+      toolIcon(ToolIcon.emoji(for: ""), context: context)
+      return
     }
     // Finish a compact call in the same format even if the display setting
     // changed while it ran. Some rejected calls arrive without a start event.
@@ -619,6 +638,23 @@ actor TerminalWriter {
     } else {
       status(text, color: color, diff: diff)
     }
+  }
+
+  /// Keep consecutive classic-mode calls on a single live output line.
+  private func toolIcon(_ icon: String, context: AgentEventContext) {
+    let prefix = context.depth > 0 ? context.pid.map { childPrefix($0) } ?? "" : ""
+    if iconLinePrefix != prefix { finishIconLine() }
+    let text = (iconLinePrefix == nil ? prefix : "") + icon
+    iconLinePrefix = prefix
+    if capturesOutput { captured.append(text) }
+    else { emit(text, to: .standardError, continuingIcons: true) }
+  }
+
+  private func finishIconLine() {
+    guard iconLinePrefix != nil else { return }
+    iconLinePrefix = nil
+    if capturesOutput { captured.append("\n") }
+    else { emit("\n", to: .standardError, continuingIcons: true) }
   }
 
   // MARK: - Child blocks
@@ -702,6 +738,7 @@ actor TerminalWriter {
   }
 
   private func writeReply(_ text: String) {
+    if !text.isEmpty { finishIconLine() }
     var output = text
     if var renderer = markdownRenderer {
       output = renderer.feed(text)
@@ -781,6 +818,7 @@ actor TerminalWriter {
 
   private func write(_ value: String) {
     guard !value.isEmpty else { return }
+    finishIconLine()
     outputEndedLine = value.hasSuffix("\n")
     if capturesOutput {
       captured.append(value)
@@ -789,7 +827,8 @@ actor TerminalWriter {
     emit(value, to: .standardOutput)
   }
 
-  private func emit(_ value: String, to handle: FileHandle) {
+  private func emit(_ value: String, to handle: FileHandle, continuingIcons: Bool = false) {
+    if !value.isEmpty && !continuingIcons { finishIconLine() }
     if handle === FileHandle.standardOutput, let redirection = REPLRedirection.current {
       redirection.write(value)
       return
@@ -802,6 +841,7 @@ actor TerminalWriter {
   }
 
   private func status(_ value: String, color: TerminalThemeStyle? = nil, diff: Bool = false) {
+    finishIconLine()
     if capturesOutput {
       captured.append(value + "\n")
       return
@@ -810,6 +850,7 @@ actor TerminalWriter {
   }
 
   private func emitStatus(_ styled: String) {
+    finishIconLine()
     if capturesOutput {
       captured.append(styled + "\n")
       return

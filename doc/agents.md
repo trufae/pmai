@@ -455,15 +455,28 @@ their streamed replies and tools update their own buffers.
 requires `ui.mode=buffer`; use `/set ui.mode buffer` to enable that mode.
 Sources include `current`, `main`, an agent's name or `agent#PID`, `agents`
 (retained conversations), `pins` (all pinned messages in full), `log` (the first
-line of every message as `role: text`), `thinking`, `tools [NAME]`, and `diffs` (successful
-file edits with unified diffs). A tool name can also be used directly.
-Thinking and tool views show the full retained output regardless of the
-normal preview limits. These filtered sources follow the selected agent;
+line of every message as `role: text`), `thinking`, `tools [NAME]`, `iconlog`
+(tool calls as emojis), and `diffs` (successful file edits with unified diffs). A tool name can also be used directly.
+The thinking view shows full retained reasoning; the tools view follows `ui.tools`.
+The iconlog view shows one emoji per call, in call order, independently of
+`ui.tools`. These filtered sources follow the selected agent;
 an explicit agent source keeps watching that agent while you work elsewhere.
-While a thinking or tools view is open, its matching blocks appear only in the
-view. The thinking view also replaces the live thinking preview. Closing the
+While a thinking, tools, or iconlog view is open, its matching blocks appear
+only in the view. The thinking view also replaces the live thinking preview. Closing the
 view or selecting another source restores those blocks in the conversation
 according to `ui.thinking` and `ui.tools`.
+
+`/set ui.tools icons` replaces consecutive tool calls and results with a compact
+emoji row in classic and buffer modes. Buffer mode also redraws retained calls;
+`ui.toolgroups` does not collapse these rows into a text summary. Emoji rows wrap
+to fit the terminal without splitting an icon. Switch to `ui.tools all` to inspect
+retained results and errors. `/view iconlog` collects the selected conversation's
+retained calls into one continuous emoji sequence, wrapping as needed, with the
+usual independent scrolling and live updates. `/tools`, `/tools show GROUP`, and
+`/tools show TOOL` display the same icons as a legend. Built-ins have distinct
+object emojis (for example 📖 read, 🩹 patch, 💻 shell); skills use 🎓, MCP tools
+use 🔌, and other external tools use 🔧.
+
 Pins and log also follow the selected agent, in transcript order, and include
 the complete saved history even when the conversation pane shows a bounded window.
 `/view todo` shows the current project's shared todo list using the same numbering,

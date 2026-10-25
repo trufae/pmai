@@ -99,8 +99,21 @@ struct TerminalOutputBuffer {
   /// Share retained blocks while keeping this pane's own scroll anchor.
   mutating func updateView(from source: TerminalOutputBuffer, selection: TerminalOutputSelection) {
     let anchor = top
+    if selection == .iconlog {
+      var output = TerminalOutputBuffer()
+      let icons = source.toolBlocks.keys.sorted().compactMap { index in
+        source.toolBlocks[index]?.call.map { ToolIcon.emoji(for: $0.name) }
+      }.joined()
+      if !icons.isEmpty { output.append(icons) }
+      self = output
+      top = anchor
+      return
+    }
     self = source
     top = anchor.flatMap { $0.line < lines.count ? $0 : nil }
+    if tools == .icons && self.selection != selection {
+      for index in toolBlocks.keys { lines[index].cachedWidth = 0 }
+    }
     self.selection = selection
     if selection != source.selection {
       for index in lines.indices { invalidateLine(index) }
@@ -156,6 +169,7 @@ struct TerminalOutputBuffer {
   private func isExcluded(_ index: Int) -> Bool {
     switch excludedSelection {
     case .thinking: return thinkingBlocks[index] != nil
+    case .iconlog: return toolBlocks[index] != nil
     case .tools(let name):
       return toolBlocks[index].map { name == nil || $0.call?.name == name } ?? false
     default: return false
@@ -222,7 +236,7 @@ struct TerminalOutputBuffer {
 
   /// Hit-test the rows just painted, without laying out the entire transcript.
   mutating func toggleToolGroup(row: Int) -> Bool {
-    guard groupTools, visiblePositions.indices.contains(row) else { return false }
+    guard groupTools, tools != .icons, visiblePositions.indices.contains(row) else { return false }
     let position = visiblePositions[row]
     let start = toolGroupStarts[position.line] ?? position.line
     guard position.glyph == 0, let end = toolGroupEnds[start],
@@ -370,6 +384,7 @@ struct TerminalOutputBuffer {
     guard !isExcluded(index) else { return [] }
     switch selection {
     case .all: break
+    case .iconlog: return []  // Materialized as one logical line by updateView.
     case .thinking:
       guard thinkingBlocks[index] != nil else { return [] }
     case .tools(let name):
@@ -379,15 +394,29 @@ struct TerminalOutputBuffer {
     }
     let originalStart = toolGroupStarts[index] ?? index
     let groupEnd = toolGroupEnds[originalStart] ?? index + 1
-    let groupIndices = groupTools && selection == .all
-      ? (originalStart..<groupEnd).filter { !isExcluded($0) } : [index]
+    let iconGroup = tools == .icons && toolBlocks[index] != nil
+    let groupIndices = iconGroup || groupTools && selection == .all
+      ? (originalStart..<groupEnd).filter {
+        if isExcluded($0) { return false }
+        if case .tools(let name) = selection { return name == nil || toolBlocks[$0]?.call?.name == name }
+        return true
+      } : [index]
     let groupStart = groupIndices.first ?? index
     let isGroup = groupTools && selection == .all && groupIndices.count > 1
+    if iconGroup && index != groupStart { return [] }
     if isGroup && index != groupStart && !expandedToolGroups.contains(originalStart) { return [] }
     if lines[index].cachedWidth == width { return lines[index].rows }
     if let tool = toolBlocks[index] {
       var text = tool.render(display: tools, colors: colors != nil)
-      let isHeader = isGroup && index == groupStart
+      if iconGroup {
+        text = tool.prefix + groupIndices.compactMap { toolBlocks[$0] }.map { block in
+          // Prefix once per row; each glyph keeps its own error styling.
+          var block = block
+          block.prefix = ""
+          return block.render(display: .icons, colors: colors != nil)
+        }.joined()
+      }
+      let isHeader = !iconGroup && isGroup && index == groupStart
       let expanded = expandedToolGroups.contains(originalStart)
       if isHeader {
         let blocks = groupIndices.compactMap { toolBlocks[$0] }

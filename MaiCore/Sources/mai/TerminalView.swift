@@ -10,6 +10,7 @@ enum TerminalViewSource: Equatable {
   case pins
   case log
   case todo
+  case iconlog
   case tools(String?)
   case diffs
 
@@ -17,6 +18,7 @@ enum TerminalViewSource: Equatable {
     switch self {
     case .thinking: .thinking
     case .tools(let name): .tools(name)
+    case .iconlog: .iconlog
     case .diffs: .diffs
     default: .all
     }
@@ -25,6 +27,7 @@ enum TerminalViewSource: Equatable {
 
 enum TerminalOutputSelection: Equatable {
   case all, thinking
+  case iconlog
   case tools(String?)
   case diffs
 }
