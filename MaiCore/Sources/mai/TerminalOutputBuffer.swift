@@ -81,6 +81,12 @@ struct TerminalOutputBuffer {
   private static let reset = "\u{1B}[0m"
 
   var isFollowing: Bool { top == nil }
+  var isAtBeginning: Bool { top?.line == 0 && top?.glyph == 0 }
+  var logicalLineCount: Int { lines.count }
+  var readingAnchor: (line: Int, glyph: Int)? { top.map { ($0.line, $0.glyph) } }
+  mutating func restoreAnchor(line: Int, glyph: Int) {
+    top = Position(line: min(max(0, line), lines.count - 1), glyph: max(0, glyph))
+  }
 
   mutating func follow() { top = nil }
 

@@ -1510,12 +1510,12 @@ actor AttachmentImageLoader {
     for attachment: ChatAttachment,
     maxPixelDimension: Int?
   ) -> String {
-    "\(attachment.id.uuidString):\(attachment.dataBase64?.count ?? 0):\(maxPixelDimension ?? 0)"
+    "\(attachment.id.uuidString):\(attachment.imageDataLength):\(maxPixelDimension ?? 0)"
   }
 
   func data(for attachment: ChatAttachment) async -> Data? {
     guard attachment.kind == .image,
-      let encoded = attachment.dataBase64,
+      let encoded = attachment.resolvedDataBase64,
       !encoded.isEmpty
     else {
       return nil
@@ -1546,7 +1546,7 @@ actor AttachmentImageLoader {
     guard attachment.kind == .image else { return nil }
     let attachmentKey = AttachmentKey(
       id: attachment.id,
-      encodedLength: attachment.dataBase64?.count ?? 0)
+      encodedLength: attachment.imageDataLength)
     let key = ImageKey(attachment: attachmentKey, maxPixelDimension: maxPixelDimension)
     if var cached = imageCache[key] {
       cached.access = nextAccess()

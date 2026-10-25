@@ -105,6 +105,9 @@ struct ChatView: View {
   @State private var messageRenderWindow = ConversationMessageRenderWindow()
   @State private var historyScrollSession = ConversationHistoryScrollSession()
   @State private var messageListIsScrolling = false
+  @State private var historyNearTop = false
+  @State private var historyNearBottom = false
+  @State private var historyPageIsLoading = false
   @State private var keyboardOverlap: CGFloat = 0
   @State private var lastUpdatedVisibleConversationID: UUID?
   @State private var queuedMessagePendingEdit: QueuedChatMessage?
@@ -814,7 +817,12 @@ struct ChatView: View {
           // A single response can be several viewports tall and changes height while streaming.
           // LazyVStack can retain a stale row estimate and scroll past the rendered content.
           VStack(spacing: 14) {
+            if conversation?.historyWindow?.hasEarlier == true {
+              Button("Earlier messages") { Task { await loadHistoryAtEdge(forceEarlier: true) } }
+                .disabled(historyPageIsLoading)
+            }
             if !renderedMessages.isEmpty, startIndex == 0,
+              conversation?.historyWindow?.hasEarlier != true,
               let startedAt = conversation?.createdAt
                 ?? currentConversationSummary?.createdAt
             {
@@ -942,6 +950,10 @@ struct ChatView: View {
                   .id("follow-ups-\(message.id.uuidString)")
                 }
               }
+              if conversation?.historyWindow?.hasLater == true {
+                Button("Newer messages") { Task { await loadHistoryAtEdge(forceLater: true) } }
+                  .disabled(historyPageIsLoading)
+              }
               if isPreviewingConversation {
                 compactLoadingFooter
               }
@@ -1049,6 +1061,8 @@ struct ChatView: View {
             hasScrollableContent: hasScrollableContent,
             viewport: ConversationScrollViewport(geometry))
         } action: { old, metrics in
+          historyNearTop = metrics.viewportMinY < 160
+          historyNearBottom = metrics.viewport.isAtBottom
           if !messageFontPinchSession.isActive {
             historyScrollSession.preserveBottomOnResize(from: old.viewport, to: metrics.viewport)
           }
@@ -1074,6 +1088,7 @@ struct ChatView: View {
             userMessageNavigationDestination = nil
             userMessageNavigationHiddenBySwipe = false
           } else if phase == .idle {
+            Task { await loadHistoryAtEdge() }
             if userMessageNavigationDestination == nil,
               userScrolledAfterLastMessage, !messageFontPinchSession.isActive,
               isAtChatBottom(context.geometry)
@@ -1443,13 +1458,10 @@ struct ChatView: View {
 
   @MainActor
   private func renderOlderMessages(for key: MessageHistoryLoadKey) async {
-    guard !Task.isCancelled, messageHistoryLoadKey == key else { return }
-    historyScrollSession.cancel()
-    // Previews already contain a small tail. Do not make their filtered IDs
-    // the render boundary when the complete history replaces them.
-    guard !key.isPreview else { return }
-    messageRenderWindow.reset(in: presentationMessages, conversationID: key.conversationID)
-    // A bookmark or search result can request an older message before loading finishes.
+    guard !Task.isCancelled, messageHistoryLoadKey == key, !key.isPreview else { return }
+    if messageRenderWindow.conversationID != key.conversationID {
+      messageRenderWindow.reset(in: presentationMessages, conversationID: key.conversationID)
+    }
     if let request = store.pendingMessageNavigation, request.conversationID == key.conversationID {
       messageRenderWindow.reveal(
         request.messageID, in: presentationMessages, conversationID: key.conversationID)
@@ -1459,34 +1471,41 @@ struct ChatView: View {
         match.messageID, in: presentationMessages, conversationID: key.conversationID)
     }
     prepareMessageParts(in: presentationMessages)
-    while !Task.isCancelled {
-      do {
-        try await Task.sleep(for: .milliseconds(100))
-      } catch {
-        return
-      }
-      guard !Task.isCancelled, messageHistoryLoadKey == key else { return }
-      let messages = presentationMessages
-      let partMessageID = messageRenderWindow.messageWithEarlierParts(
-        in: messages, conversationID: key.conversationID)
-      guard partMessageID != nil
-        || messageRenderWindow.startIndex(in: messages, conversationID: key.conversationID) > 0
+  }
+
+  @MainActor
+  private func loadHistoryAtEdge(forceEarlier: Bool = false, forceLater: Bool = false) async {
+    guard !historyPageIsLoading, !messageFontPinchSession.isActive, !currentChatIsResponding,
+      forceEarlier || forceLater || userScrolledAfterLastMessage
+    else { return }
+    let id = currentConversationID
+    let earlier = forceEarlier || (!forceLater && historyNearTop)
+    guard earlier || forceLater || historyNearBottom else { return }
+    historyPageIsLoading = true
+    defer { historyPageIsLoading = false }
+    let messages = presentationMessages
+    if earlier {
+      guard historyScrollSession.prepareForPrepend(revision: messageRenderWindow.revision + 1)
       else { return }
-      // Give gestures and streaming replies priority over offscreen history.
-      guard !messageListIsScrolling, !messageFontPinchSession.isActive,
-        !currentChatIsResponding,
-        historyScrollSession.prepareForPrepend(revision: messageRenderWindow.revision + 1)
-      else { continue }
-      var transaction = Transaction()
-      transaction.disablesAnimations = true
-      withTransaction(transaction) {
-        if let partMessageID {
-          messageRenderWindow.revealEarlierParts(for: partMessageID)
-        } else {
-          _ = messageRenderWindow.revealEarlier(in: messages, conversationID: key.conversationID)
-          prepareMessageParts(in: messages)
-        }
+      if let part = messageRenderWindow.messageWithEarlierParts(in: messages, conversationID: id) {
+        messageRenderWindow.revealEarlierParts(for: part)
+      } else if messageRenderWindow.revealEarlier(in: messages, conversationID: id) {
+        prepareMessageParts(in: messages)
+      } else if remoteChat == nil, currentConversation?.historyWindow?.hasEarlier == true {
+        await store.pageConversationHistory(earlier: true)
+        guard currentConversationID == id, let first = presentationMessages.first else { return }
+        messageRenderWindow.reveal(first.id, in: presentationMessages, conversationID: id)
+        prepareMessageParts(in: presentationMessages)
+      } else {
+        historyScrollSession.cancel()
       }
+    } else if remoteChat == nil, currentConversation?.historyWindow?.hasLater == true {
+      guard historyScrollSession.prepareForPrepend(revision: messageRenderWindow.revision + 1)
+      else { return }
+      await store.pageConversationHistory(earlier: false)
+      guard currentConversationID == id, let first = presentationMessages.first else { return }
+      messageRenderWindow.reveal(first.id, in: presentationMessages, conversationID: id)
+      prepareMessageParts(in: presentationMessages)
     }
   }
 
@@ -1610,7 +1629,12 @@ struct ChatView: View {
     cancelMessageSelection()
     userScrolledAfterLastMessage = true
     withAnimation(.snappy) {
-      chatSearch.begin(messages: currentConversation?.messages ?? [])
+      Task {
+        if let id = currentConversationID, remoteChat == nil {
+          await store.preloadConversation(id: id)
+        }
+        chatSearch.begin(messages: currentConversation?.messages ?? [])
+      }
     }
   }
 

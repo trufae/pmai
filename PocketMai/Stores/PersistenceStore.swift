@@ -121,7 +121,7 @@ final class PersistenceStore: @unchecked Sendable {
   private var pendingConversations: DispatchWorkItem?
   private var pendingDrafts: DispatchWorkItem?
   private var pendingBookmarks: DispatchWorkItem?
-  private var persistedConversationsByID: [UUID: Conversation] = [:]
+
 
   init(fileManager: FileManager = .default, localBaseURL: URL? = nil) {
     self.fileManager = fileManager
@@ -187,7 +187,6 @@ final class PersistenceStore: @unchecked Sendable {
     var conversations = loadConversations(from: localStorageURLs)
     conversations.append(contentsOf: loadConversations(from: iCloudStorageURLs()))
     conversations = Conversation.newest(of: conversations)
-    seedPersistedSnapshot(conversations)
     return conversations
   }
 
@@ -234,6 +233,25 @@ final class PersistenceStore: @unchecked Sendable {
       loadConversation(id: id, from: iCloudStorageURLs()),
     ].compactMap { $0 }
     return Conversation.newest(of: candidates).first
+  }
+
+  func loadConversationHistory(id: UUID) -> Conversation? {
+    prepareForAccess()
+    let candidates = [localStorageURLs, iCloudStorageURLs()].compactMap { storage in
+      try? storage.store.loadChatHistory(id: id)
+    }
+    return candidates.max { $0.updatedAt < $1.updatedAt }
+  }
+
+  func loadConversationPage(id: UUID, before: Int? = nil) throws -> Conversation? {
+    prepareForAccess()
+    var candidates: [Conversation] = []
+    for storage in [localStorageURLs, iCloudStorageURLs()] {
+      if let page = try storage.store.loadChatPage(id: id, before: before) {
+        candidates.append(page)
+      }
+    }
+    return candidates.max { $0.updatedAt < $1.updatedAt }
   }
 
   func loadBookmarks() -> [MessageBookmark] {
@@ -315,9 +333,6 @@ final class PersistenceStore: @unchecked Sendable {
         for id in ids {
           _ = try? storage.store.delete(id: id)
         }
-      }
-      self.persistedConversationsByID = self.persistedConversationsByID.filter {
-        !ids.contains($0.key)
       }
     }
   }
@@ -676,6 +691,12 @@ final class PersistenceStore: @unchecked Sendable {
     _ conversations: [Conversation], retaining retained: Set<UUID> = [],
     completion: (@Sendable () -> Void)? = nil
   ) {
+    if conversations.contains(where: { $0.historyWindow != nil }) {
+      saveLoadedConversations(
+        conversations, summaries: conversations.map(ConversationSummary.init),
+        retaining: retained, completion: completion)
+      return
+    }
     let snapshot = conversations
     let delay = debounce
     writeQueue.async { [weak self] in
@@ -683,19 +704,14 @@ final class PersistenceStore: @unchecked Sendable {
       self.prepareForAccess()
       let localStorage = self.localStorageURLs
       let iCloudStorage = self.iCloudStorageURLs()
-      let byID = Dictionary(uniqueKeysWithValues: snapshot.map { ($0.id, $0) })
       let localConversations = snapshot.filter { $0.folderID != ConversationFolder.iCloudID }
       let iCloudConversations = snapshot.filter { $0.folderID == ConversationFolder.iCloudID }
       self.pendingConversations?.cancel()
       let item = DispatchWorkItem { [weak self] in
         defer { completion?() }
         guard let self else { return }
-        let localChanged = localConversations.filter {
-          self.persistedConversationsByID[$0.id] != $0
-        }
-        let iCloudChanged = iCloudConversations.filter {
-          self.persistedConversationsByID[$0.id] != $0
-        }
+        let localChanged = localConversations
+        let iCloudChanged = iCloudConversations
         let persistedLocal = self.persistConversations(
           localChanged,
           summaries: localConversations.map(ConversationSummary.init),
@@ -711,7 +727,6 @@ final class PersistenceStore: @unchecked Sendable {
           retaining: retained
         )
         if persistedLocal && persistedICloud {
-          self.persistedConversationsByID = byID
           Self.persistLaunchConversationCache(
             snapshot.map(ConversationSummary.init),
             to: self.launchConversationCacheURL)
@@ -728,7 +743,7 @@ final class PersistenceStore: @unchecked Sendable {
     retaining retained: Set<UUID> = [],
     completion: (@Sendable () -> Void)? = nil
   ) {
-    let conversationSnapshot = conversations
+    let conversationSnapshot = conversations.filter { $0.historyWindow == nil }
     let summarySnapshot = summaries
     let delay = debounce
     writeQueue.async { [weak self] in
@@ -762,13 +777,6 @@ final class PersistenceStore: @unchecked Sendable {
           retaining: retained
         )
         if persistedLocal && persistedICloud {
-          let liveIDs = Set(summarySnapshot.map(\.id))
-          self.persistedConversationsByID = self.persistedConversationsByID.filter {
-            liveIDs.contains($0.key)
-          }
-          for conversation in conversationSnapshot {
-            self.persistedConversationsByID[conversation.id] = conversation
-          }
           Self.persistLaunchConversationCache(
             summarySnapshot,
             to: self.launchConversationCacheURL)
@@ -898,7 +906,6 @@ final class PersistenceStore: @unchecked Sendable {
       self.pendingDrafts = nil
       self.pendingBookmarks?.cancel()
       self.pendingBookmarks = nil
-      self.persistedConversationsByID.removeAll()
       try? self.fileManager.removeItem(at: localBaseURL)
       if iCloudBaseURL != localBaseURL {
         try? self.fileManager.removeItem(at: iCloudBaseURL)
@@ -1055,12 +1062,6 @@ final class PersistenceStore: @unchecked Sendable {
     _ = persisted
   }
 
-  private func seedPersistedSnapshot(_ conversations: [Conversation]) {
-    let byID = Dictionary(uniqueKeysWithValues: conversations.map { ($0.id, $0) })
-    writeQueue.async { [weak self] in
-      self?.persistedConversationsByID = byID
-    }
-  }
 
   private static func makeEncoder() -> JSONEncoder {
     let encoder = JSONEncoder()
