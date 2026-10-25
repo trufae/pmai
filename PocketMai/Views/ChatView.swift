@@ -1265,26 +1265,43 @@ struct ChatView: View {
     let previousDestination = userMessageNavigationTarget(for: .previous)
     let nextDestination = userMessageNavigationTarget(for: .next)
 
-    return VStack(spacing: 8) {
-      userMessageNavigationIndicator
+    let previousButton = userMessageNavigationButton(
+      systemImage: "chevron.up",
+      label: "Previous user message",
+      direction: .previous,
+      destination: previousDestination,
+      proxy: proxy)
 
-      userMessageNavigationButton(
-        systemImage: "chevron.up",
-        label: "Previous user message",
-        direction: .previous,
-        destination: previousDestination,
-        proxy: proxy)
+    let nextButton = userMessageNavigationButton(
+      systemImage: "chevron.down",
+      label: nextDestination == .bottom ? "Bottom of conversation" : "Next user message",
+      direction: .next,
+      destination: nextDestination,
+      proxy: proxy)
 
-      userMessageNavigationButton(
-        systemImage: "chevron.down",
-        label: nextDestination == .bottom ? "Bottom of conversation" : "Next user message",
-        direction: .next,
-        destination: nextDestination,
-        proxy: proxy)
+    return Group {
+      if usesCompactLandscapeLayout {
+        // Keep the arrows in the corner gutter, away from text and the camera cutout.
+        VStack(spacing: 8) {
+          previousButton
+          userMessageNavigationIndicator
+          Spacer(minLength: 8)
+          nextButton
+        }
+        .padding(.top, 64)
+        .padding(.bottom, isComposerCollapsed ? 64 : 12)
+        .padding(.trailing, 12)
+      } else {
+        VStack(spacing: 8) {
+          userMessageNavigationIndicator
+          previousButton
+          nextButton
+        }
+        .fixedSize()
+        .padding(.trailing, 12)
+        .padding(.bottom, 12)
+      }
     }
-    .fixedSize()
-    .padding(.trailing, 12)
-    .padding(.bottom, 12)
     .simultaneousGesture(
       DragGesture(minimumDistance: 16)
         .onEnded { value in
@@ -1293,6 +1310,11 @@ struct ChatView: View {
           userMessageNavigationHiddenBySwipe = true
         }
     )
+    .frame(
+      maxWidth: usesCompactLandscapeLayout ? .infinity : nil,
+      maxHeight: usesCompactLandscapeLayout ? .infinity : nil,
+      alignment: .trailing)
+    .ignoresSafeArea(.container, edges: usesCompactLandscapeLayout ? .trailing : [])
   }
 
   private var userMessageNavigationIndicator: some View {
