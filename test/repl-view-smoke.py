@@ -60,7 +60,7 @@ def main(binary):
                             'toolNames': ['files_patch', 'files_read'], 'toolGroupNames': [],
                             'retry': {'attempts': 0}}],
                 'approvals': {'mode': 'yolo'}, 'memory': {'enabled': False},
-                'use': {'plan': False}, 'ui': {'mode': 'buffer'},
+                'use': {'plan': False}, 'ui': {'mode': 'buffer', 'thinking': 'full'},
             }))
             (root / 'file.txt').write_text('OLD_LINE\n')
             env = clean_environment() | {'TERM': 'xterm-256color', 'NO_PROXY': '127.0.0.1,localhost'}
@@ -110,6 +110,10 @@ def main(binary):
 
             def bottom():
                 return '\n'.join(screen.get(row, '') for row in range(separator() + 1, rows - 2))
+
+            def bottom_output():
+                return '\n'.join(line for line in bottom().splitlines()
+                                 if not re.match(r'^pmai[^>]*> ', line))
 
             def resize(height, width):
                 nonlocal rows, columns
@@ -163,7 +167,13 @@ def main(binary):
                 send('STREAM_REQUEST\r')
                 chunks.put({'reasoning_content': ''.join(f'THOUGHT_{i:02d}\n' for i in range(40))})
                 wait_for('THOUGHT_39')
-                assert 'THOUGHT_' not in bottom(), screen  # ui.thinking=status
+                assert 'THOUGHT_' not in bottom(), screen
+                for mode in ('three', 'status', 'full'):
+                    send(f'/set ui.thinking {mode}\r')
+                    wait_for(f'Set ui.thinking = {mode}.')
+                    assert 'THOUGHT_39' in top(), screen
+                    below = '\n'.join(screen.get(row, '') for row in range(separator() + 1, rows))
+                    assert 'THOUGHT_' not in below and 'Thinking…' not in below, screen
                 original_top, original_bottom = top(), bottom()
                 send('\t')
                 wait_for('view focused')
@@ -216,6 +226,15 @@ def main(binary):
                 chunks.put('STREAM_ANSWER\n')
                 chunks.put(None)
                 wait_for('✓ took')
+                assert 'FOLLOWED_THOUGHT' not in bottom() and 'STREAM_ANSWER' in bottom(), screen
+                send('/view tools\r')
+                wait_for('── view: tools')
+                assert 'FOLLOWED_THOUGHT' in bottom(), screen
+                send('/view thinking\r')
+                wait_for('── view: thinking')
+                assert 'FOLLOWED_THOUGHT' not in bottom(), screen
+                send('/set ui.thinking status\r')
+                wait_for('Set ui.thinking = status.')
                 send('/vi\t')
                 wait_for('/view')
                 assert 'view focused' not in screen[separator()], screen
@@ -275,6 +294,7 @@ def main(binary):
                 wait_for('✓ took')
                 assert (root / 'file.txt').read_text() == 'NEW_LINE\n'
                 assert 'files_patch' in top() and 'EDIT_ANSWER' not in top(), screen
+                assert 'files_patch' not in bottom_output() and 'EDIT_ANSWER' in bottom(), screen
                 assert '+NEW_LINE' not in top() and '+NEW_LINE' not in bottom(), screen
                 send('/set ui.tools 1\r')
                 wait_for('Set ui.tools = 1.')
@@ -282,6 +302,7 @@ def main(binary):
                 send('/set ui.tools relevant\r')
                 wait_for('Set ui.tools = relevant.')
                 assert '+NEW_LINE' in top(), screen
+                assert 'files_patch' not in bottom_output() and '+NEW_LINE' not in bottom(), screen
                 send('/set ui.tools all\r')
                 wait_for('Set ui.tools = all.')
                 assert '+NEW_LINE' in top(), screen
@@ -311,6 +332,7 @@ def main(binary):
                 chunks.put(None)
                 wait_for('✓ took')
                 assert 'NEW_LINE' in top() and 'READ_ANSWER' not in top(), screen
+                assert 'files_read' not in bottom_output() and 'NEW_LINE' not in bottom(), screen
                 send('/view lo\t')
                 wait_for('/view log')
                 send('\r')
@@ -455,6 +477,34 @@ def main(binary):
                 send('/chat unpin 1\r')
                 wait_for('Unpinned message 1')
                 assert 'No pinned messages.' in top(), screen
+                # Filtering the first call must leave later calls grouped and clickable.
+                send('/set ui.toolgroups on\r')
+                wait_for('Set ui.toolgroups = on.')
+                send('/set ui.tools all\r')
+                wait_for('Set ui.tools = all.')
+                send('/clear\r')
+                read_for()
+                send('/view files_patch\r')
+                wait_for('── view: tool files_patch')
+                send('GROUP_REQUEST\r')
+                tool('files_patch', {'path': 'file.txt', 'find': 'NEW_LINE', 'replace': 'GROUP_LINE'})
+                tool('files_read', {'path': 'file.txt'})
+                tool('files_read', {'path': 'file.txt'})
+                chunks.put('GROUP_ANSWER\n')
+                chunks.put(None)
+                wait_for('✓ took')
+                assert '+GROUP_LINE' in top() and 'files_patch' not in bottom_output(), screen
+                group_row = next(row for row in range(separator() + 1, rows - 2)
+                                 if '▸ ' in screen.get(row, ''))
+                send(f'\x1b[<0;2;{group_row}M\x1b[<0;2;{group_row}m')
+                read_for()
+                assert 'files_read' in bottom_output() and 'files_patch' not in bottom_output(), screen
+                send('/view tools\r')
+                wait_for('── view: tools')
+                assert 'files_' not in bottom_output() and 'GROUP_LINE' not in bottom(), screen
+                send('/view off\r')
+                wait_for('GROUP_LINE')
+                assert 'files_patch' in '\n'.join(screen.values()), screen
                 quit_repl()
                 output = run_repl([binary, '--config', str(config), '--home', str(root / 'pipe-home')],
                                  ['/view thinking', '/help view'], cwd=root, env=env, allow_errors=True)
