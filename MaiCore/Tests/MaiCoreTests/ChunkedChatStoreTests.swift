@@ -20,20 +20,20 @@ private func chunkTestChat(count: Int) -> AgentChat {
 func chunkedHistoryPages() throws {
   let store = try chunkTestStore()
   defer { try? FileManager.default.removeItem(at: store.directoryURL) }
-  let chat = chunkTestChat(count: 193)
+  let chat = chunkTestChat(count: 129)
   try store.save(chat)
   let last = try #require(try store.loadChatPage(id: chat.id))
-  #expect(last.historyWindow?.range == 129..<193)
-  #expect(last.historyWindow?.totalCount == 193)
+  #expect(last.historyWindow?.range == 65..<129)
+  #expect(last.historyWindow?.totalCount == 129)
   #expect(last.messages == Array(chat.messages.suffix(64)))
-  let previous = try #require(try store.loadChatPage(id: chat.id, before: 129))
-  #expect(previous.historyWindow?.range == 65..<129)
-  #expect(previous.messages == Array(chat.messages[65..<129]))
+  let previous = try #require(try store.loadChatPage(id: chat.id, before: 65))
+  #expect(previous.historyWindow?.range == 1..<65)
+  #expect(previous.messages == Array(chat.messages[1..<65]))
   let first = try #require(try store.loadChatPage(id: chat.id, before: 32))
   #expect(first.historyWindow?.hasEarlier == false)
   #expect(first.historyWindow?.hasLater == true)
   #expect(try store.loadChatPage(id: chat.id, limit: 0)?.messages.isEmpty == true)
-  #expect(try store.loadSummaries().first?.messageCount == 193)
+  #expect(try store.loadSummaries().first?.messageCount == 129)
   #expect(try store.loadChat(id: chat.id) == chat)
 }
 
@@ -68,8 +68,9 @@ func chunkedHistoryWrites() throws {
 func chunkedLegacyRoundTrip() async throws {
   let store = try chunkTestStore()
   defer { try? FileManager.default.removeItem(at: store.directoryURL) }
-  var chat = chunkTestChat(count: 800)
-  chat.messages[20] = .user(String(repeating: "😀 { [ \\\" quote\n", count: 30_000))
+  var chat = chunkTestChat(count: 65)
+  // Cross the 64 KiB reader/inline boundary once, including escaped UTF-8.
+  chat.messages[0] = .user(String(repeating: "😀 { [ \\\" quote\n", count: 4_096))
   let supervisor = AgentSupervisor()
   let parent = await supervisor.register(
     runID: UUID(), parent: nil, agentID: "parent", task: "test", depth: 0)
@@ -104,7 +105,7 @@ func chunkedLegacyRoundTrip() async throws {
 func chunkedProjectionSafety() throws {
   let store = try chunkTestStore()
   defer { try? FileManager.default.removeItem(at: store.directoryURL) }
-  let chat = chunkTestChat(count: 150)
+  let chat = chunkTestChat(count: 65)
   try store.save(chat)
   var page = try #require(try store.loadChatPage(id: chat.id))
   page.messages.removeAll()
@@ -117,8 +118,9 @@ func chunkedProjectionSafety() throws {
 func chunkedLargeValues() throws {
   let store = try chunkTestStore()
   defer { try? FileManager.default.removeItem(at: store.directoryURL) }
-  var chat = chunkTestChat(count: 100)
-  chat.messages[90] = .assistant(String(repeating: "large output\n", count: 100_000))
+  var chat = chunkTestChat(count: 65)
+  // One byte above the inline limit is enough to exercise blob storage.
+  chat.messages[64] = .assistant(String(repeating: "x", count: 64 * 1024 + 1))
   try store.save(chat)
   let manifest = try #require(try ChatChunkManifest.read(at: store.fileURL(for: chat.id)))
   let directory = try manifest.directory(relativeTo: store.fileURL(for: chat.id))
@@ -126,9 +128,10 @@ func chunkedLargeValues() throws {
     #expect(
       try Data(contentsOf: directory.appendingPathComponent(chunk.filename)).count < 256 * 1024)
   }
+  #expect(manifest.chunks.flatMap { $0.blobs ?? [] }.count == 1)
   #expect(try store.loadChat(id: chat.id) == chat)
   let page = try #require(try store.loadChatPage(id: chat.id))
-  #expect(page.messages.count < 64)
+  #expect(page.messages.count == 64)
   #expect(page.messages == Array(chat.messages[page.historyWindow!.range]))
 }
 
@@ -136,7 +139,7 @@ func chunkedLargeValues() throws {
 func chunkedIncompleteSnapshot() throws {
   let store = try chunkTestStore()
   defer { try? FileManager.default.removeItem(at: store.directoryURL) }
-  let chat = chunkTestChat(count: 100)
+  let chat = chunkTestChat(count: 65)
   try store.save(chat)
   let url = store.fileURL(for: chat.id)
   let bytes = try Data(contentsOf: url)
@@ -154,8 +157,8 @@ func chunkedIncompleteSnapshot() throws {
 func chunkedReservedKeys() throws {
   let store = try chunkTestStore()
   defer { try? FileManager.default.removeItem(at: store.directoryURL) }
-  var chat = chunkTestChat(count: 100)
-  chat.messages[99].providerState = [
+  var chat = chunkTestChat(count: 65)
+  chat.messages[64].providerState = [
     "state": .object([
       "_pmaiBlob": .string("12345678-1234-1234-1234-123456789012.blob"),
       "_pmaiObject": .object(["nested": .string("literal")]),
@@ -177,11 +180,11 @@ func chunkedPinnedChildSnapshots() async throws {
   let messages: [AgentMessage] = [.user("old child"), .assistant("old answer")]
   await supervisor.note(pid, transcript: messages)
   await supervisor.complete(pid)
-  var chat = chunkTestChat(count: 100)
+  var chat = chunkTestChat(count: 65)
   chat.subagents = await supervisor.records(under: root)
   try store.save(chat)
   let pinned = try #require(try store.loadChatPage(id: chat.id))
-  for index in 0..<4 {
+  for index in 0..<3 {
     chat.subagents[0].messages = [.user("new child \(index)")]
     try store.save(chat)
   }
@@ -198,7 +201,7 @@ func chunkedPinnedChildSnapshots() async throws {
 func chunkedTailNeedsOnlyItsOwnFiles() throws {
   let store = try chunkTestStore()
   defer { try? FileManager.default.removeItem(at: store.directoryURL) }
-  let chat = chunkTestChat(count: 1000)
+  let chat = chunkTestChat(count: 129)
   try store.save(chat)
   let url = store.fileURL(for: chat.id)
   let manifest = try #require(try ChatChunkManifest.read(at: url))
@@ -221,4 +224,18 @@ func chunkedMalformedCounts() throws {
   let directory = try manifest.directory(relativeTo: url)
   try Data("[]".utf8).write(to: directory.appendingPathComponent(manifest.chunks[1].filename))
   #expect(throws: (any Error).self) { try store.loadChatPage(id: chat.id, limit: 1) }
+}
+
+@Test("Page budgets select chunk boundaries without allocating large payloads")
+func chunkedPageBudgetBoundaries() {
+  var manifest = ChatChunkManifest(metadata: Data())
+  manifest.chunks = [
+    .init(filename: "older.json", count: 64, bytes: 32),
+    .init(filename: "large.json", count: 64, bytes: 1024 * 1024),
+    .init(filename: "tail.json", count: 1, bytes: 1),
+  ]
+  #expect(manifest.pageRange(before: nil, limit: 64) == 128..<129)
+  // A single oversized message must remain reachable, rather than produce an empty page.
+  manifest.chunks[1] = .init(filename: "large.json", count: 1, bytes: 1024 * 1024 + 1)
+  #expect(manifest.pageRange(before: 65, limit: 64) == 64..<65)
 }

@@ -27,9 +27,10 @@ final class ConversationPagingTests: XCTestCase {
     defer { try? FileManager.default.removeItem(at: root) }
     let files = ChatFileStore<Conversation>(
       directoryURL: root, coding: PersistenceStore.conversationCoding)
-    var chat = conversation(count: 100)
-    let bytes = Data(repeating: 42, count: 512 * 1024)
-    chat.messages[99].attachments = [
+    var chat = conversation(count: 65)
+    // Base64 is four bytes over the 64 KiB inline threshold.
+    let bytes = Data(repeating: 42, count: 48 * 1024 + 1)
+    chat.messages[64].attachments = [
       .image(filename: "image.jpg", data: bytes, width: 100, height: 100)
     ]
     try files.save(chat)
@@ -51,7 +52,7 @@ final class ConversationPagingTests: XCTestCase {
     let root = try directory()
     defer { try? FileManager.default.removeItem(at: root) }
     let persistence = PersistenceStore(localBaseURL: root)
-    let chat = conversation(count: 180)
+    let chat = conversation(count: 129)
     let saved = expectation(description: "initial save")
     persistence.saveConversations([chat]) { saved.fulfill() }
     await fulfillment(of: [saved], timeout: 5)
@@ -62,10 +63,10 @@ final class ConversationPagingTests: XCTestCase {
     }
     await store.selectConversation(id: chat.id)
     XCTAssertEqual(store.currentConversation?.messages.count, 64)
-    XCTAssertEqual(store.currentConversation?.historyWindow?.range, 116..<180)
+    XCTAssertEqual(store.currentConversation?.historyWindow?.range, 65..<129)
     await store.pageConversationHistory(earlier: true)
     XCTAssertEqual(store.currentConversation?.messages.count, 64)
-    XCTAssertEqual(store.currentConversation?.historyWindow?.range, 84..<148)
+    XCTAssertEqual(store.currentConversation?.historyWindow?.range, 33..<97)
     let removed = try XCTUnwrap(store.currentConversation?.messages.first)
     store.deleteMessage(removed)
     let writeDeadline = Date().addingTimeInterval(5)
@@ -73,8 +74,8 @@ final class ConversationPagingTests: XCTestCase {
     repeat {
       try await Task.sleep(for: .milliseconds(50))
       persisted = persistence.loadConversation(id: chat.id)
-    } while persisted?.messages.count != 179 && Date() < writeDeadline
-    XCTAssertEqual(persisted?.messages.count, 179)
+    } while persisted?.messages.count != 128 && Date() < writeDeadline
+    XCTAssertEqual(persisted?.messages.count, 128)
     XCTAssertFalse(persisted?.messages.contains(where: { $0.id == removed.id }) ?? true)
     XCTAssertEqual(persisted?.messages.first?.id, chat.messages.first?.id)
     XCTAssertEqual(persisted?.messages.last?.id, chat.messages.last?.id)
