@@ -94,10 +94,18 @@ func chunkedLegacyRoundTrip() async throws {
   let exported = try MaiJSONCoding.default.makeDecoder().decode(
     AgentChat.self, from: Data(contentsOf: destination))
   #expect(Bool(exported == chat))
-  let context = try #require(try store.loadChatHistory(id: chat.id))
+  var context = try #require(try store.loadChatHistory(id: chat.id))
   #expect(context.messages == chat.messages)
   #expect(context.subagents[0].messages.isEmpty)
+  // The same directory can carry a different URL directory hint after a reload.
+  let reference = try #require(context.subagents[0].historyReference)
+  context.subagents[0].historyReference = try StoredAgentTranscript(
+    directory: URL(fileURLWithPath: reference.directory.path, isDirectory: true),
+    snapshot: reference.snapshot)
+  let migrated = try #require(try ChatChunkManifest.read(at: store.fileURL(for: chat.id)))
   try store.save(context)
+  let saved = try #require(try ChatChunkManifest.read(at: store.fileURL(for: chat.id)))
+  #expect(saved.children[0].sameContents(as: migrated.children[0]))
   #expect(try store.loadChat(id: chat.id)?.subagents == chat.subagents)
 }
 

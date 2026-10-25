@@ -570,7 +570,9 @@ extension PagedStoredChat {
         previousChildren[record.id] = child
       }
       manifest.children = try subagents.map { saved in
-        if let reference = saved.historyReference, reference.directory == directory {
+        if let reference = saved.historyReference,
+          reference.directory.standardizedFileURL.path == directory.standardizedFileURL.path
+        {
           return try reference.manifest()
         }
         var child = saved

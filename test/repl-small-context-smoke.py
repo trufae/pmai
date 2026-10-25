@@ -90,7 +90,8 @@ def main():
             assert all(body.get('max_tokens', 0) <= 2048 for body in requests)
             saved = json.loads(config.read_text())
             assert saved['agents'][0]['options']['contextWindowTokens'] == 32768, saved
-            compacted = json.loads(chat_file.read_text())
+            run(['/export json compacted.json'])
+            compacted = json.loads((root / 'compacted.json').read_text())['chat']
             text = json.dumps(compacted['messages'])
             for index in range(12):
                 assert f'KEEP-{index}' in text, text
@@ -104,7 +105,8 @@ def main():
             output = run(['/chat compact'])
             assert 'Partial summary failed' in output, output
             assert len(requests) == 2, len(requests)
-            assert json.loads(chat_file.read_text())['messages'] == chat['messages']
+            run(['/export json unchanged.json'])
+            assert json.loads((root / 'unchanged.json').read_text())['chat']['messages'] == chat['messages']
             print('PASS 32k chunked compaction, persisted context window, and atomic failure')
     finally:
         server.shutdown()
