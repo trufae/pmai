@@ -209,3 +209,16 @@ func chunkedTailNeedsOnlyItsOwnFiles() throws {
   #expect(page.messages == Array(chat.messages.suffix(64)))
   #expect(throws: (any Error).self) { try store.loadChatHistory(id: chat.id) }
 }
+
+@Test("Malformed chunk counts fail without indexing beyond the decoded array")
+func chunkedMalformedCounts() throws {
+  let store = try chunkTestStore()
+  defer { try? FileManager.default.removeItem(at: store.directoryURL) }
+  let chat = chunkTestChat(count: 128)
+  try store.save(chat)
+  let url = store.fileURL(for: chat.id)
+  let manifest = try #require(try ChatChunkManifest.read(at: url))
+  let directory = try manifest.directory(relativeTo: url)
+  try Data("[]".utf8).write(to: directory.appendingPathComponent(manifest.chunks[1].filename))
+  #expect(throws: (any Error).self) { try store.loadChatPage(id: chat.id, limit: 1) }
+}

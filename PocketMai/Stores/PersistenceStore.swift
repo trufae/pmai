@@ -246,12 +246,15 @@ final class PersistenceStore: @unchecked Sendable {
   func loadConversationPage(id: UUID, before: Int? = nil) throws -> Conversation? {
     prepareForAccess()
     var candidates: [Conversation] = []
+    var failure: (any Error)?
     for storage in [localStorageURLs, iCloudStorageURLs()] {
-      if let page = try storage.store.loadChatPage(id: id, before: before) {
-        candidates.append(page)
-      }
+      do {
+        if let page = try storage.store.loadChatPage(id: id, before: before) { candidates.append(page) }
+      } catch { failure = error }
     }
-    return candidates.max { $0.updatedAt < $1.updatedAt }
+    if let newest = candidates.max(by: { $0.updatedAt < $1.updatedAt }) { return newest }
+    if let failure { throw failure }
+    return nil
   }
 
   func loadBookmarks() -> [MessageBookmark] {
