@@ -236,7 +236,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       selectedConversation = id
       if let source = view?.source {
         switch source {
-        case .current, .thinking, .tools, .diffs: view?.buffer.follow()
+        case .current, .pins, .log, .thinking, .tools, .diffs: view?.buffer.follow()
         default: break
         }
       }
@@ -322,6 +322,17 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   var isBufferMode: Bool {
     lock.withLock { ui.mode == .buffer }
+  }
+
+  var viewNeedsMessages: Bool {
+    lock.withLock { view?.needsMessages == true }
+  }
+
+  func updateViewMessages(_ messages: [AgentMessage]) {
+    lock.withLock {
+      view?.updateMessages(messages)
+      if active, ui.mode == .buffer { drawViewRows(); placeCaret() }
+    }
   }
 
   func setView(_ source: TerminalViewSource?, title: String = "") {
@@ -1055,6 +1066,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   private func updateViewBuffer() {
     guard let source = view?.source else { return }
+    if view?.needsMessages == true { return }
     if source == .conversations {
       var combined = TerminalOutputBuffer()
       for id in conversations.keys.sorted() where id != "initial" {
