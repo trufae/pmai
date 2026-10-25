@@ -2668,6 +2668,9 @@ struct MaiCLI {
         }
         screen.updateViewMessages(messages)
       }
+      if screen.viewNeedsTodo {
+        screen.updateViewTodo(await terminal.renderTodoList(services.todo.current))
+      }
     }
 
     func conversationTabs() async -> [AgentProcessInfo] {
@@ -13354,7 +13357,7 @@ struct MaiCLI {
       "/agent", "/agents", "/agents list", "/agents describe ", "/agents enable ",
       "/agents disable ",
       "/ps", "/ps -a", "/ps -p", "/ps -ap", "/ps -k ",
-      "/view", "/view off", "/view current", "/view main", "/view pins", "/view log", "/view thinking", "/view tools",
+      "/view", "/view off", "/view current", "/view main", "/view pins", "/view log", "/view todo", "/view thinking", "/view tools",
       "/view tools ", "/view diffs", "/view agents", "/view agent ", "/help view",
       "/job", "/jobs", "/jobs tree", "/jobs stop ", "/jobs continue ", "/jobs clear", "/jobs log ",
       "/jobs kill ", "/jobs focus ",

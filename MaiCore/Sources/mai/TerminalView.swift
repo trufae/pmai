@@ -9,6 +9,7 @@ enum TerminalViewSource: Equatable {
   case thinking
   case pins
   case log
+  case todo
   case tools(String?)
   case diffs
 
@@ -43,9 +44,18 @@ struct TerminalView {
   var preferredHeight: Int?
   var buffer = TerminalOutputBuffer()
   var messages: [AgentMessage]?
+  var todoText: String?
 
   /// These sources use model messages, rather than rendered terminal output.
   var needsMessages: Bool { source == .pins || source == .log }
+
+  mutating func updateTodo(_ text: String) {
+    guard source == .todo, todoText != text else { return }
+    todoText = text
+    var output = TerminalOutputBuffer()
+    output.append(text)
+    buffer.updateView(from: output, selection: .all)
+  }
 
   mutating func updateMessages(_ messages: [AgentMessage]) {
     guard needsMessages, self.messages != messages else { return }

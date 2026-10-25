@@ -17,6 +17,7 @@ extension MaiCLI {
     case "main" where rest.isEmpty: return (.conversation(mainConversation), "main")
     case "pins" where rest.isEmpty: return (.pins, "pinned messages")
     case "log" where rest.isEmpty: return (.log, "message log")
+    case "todo" where rest.isEmpty: return (.todo, "project todo")
     case "thinking" where rest.isEmpty, "reasoning" where rest.isEmpty:
       return (.thinking, "thinking")
     case "diff" where rest.isEmpty, "diffs" where rest.isEmpty: return (.diffs, "applied diffs")
@@ -32,7 +33,7 @@ extension MaiCLI {
     let target = name == "agent" ? rest : argument
     guard !target.isEmpty else {
       throw JSONRPCError.invalidParams(
-        "Usage: /view <off|current|pins|log|thinking|tools [NAME]|diffs|agents|AGENT>. /help view")
+        "Usage: /view <off|current|pins|log|todo|thinking|tools [NAME]|diffs|agents|AGENT>. /help view")
     }
     let rawPID = target.replacingOccurrences(of: "agent#", with: "")
       .trimmingCharacters(in: CharacterSet(charactersIn: "#@"))
@@ -62,6 +63,7 @@ extension MaiCLI {
     /view agents           Show retained agent conversations, including the main chat
     /view pins             Show all pinned messages in full, in transcript order
     /view log              Show the first line of every message as role: text
+    /view todo             Show the project's todo list, as in /todo
     /view thinking         Show the current agent's full retained reasoning
     /view tools [NAME]     Show tool calls/results, optionally filtered by tool name
     /view TOOL_NAME        A tool name is also accepted directly
@@ -79,6 +81,7 @@ extension MaiCLI {
     The mouse wheel scrolls the focused pane. Tab returns to typing; completion works as usual
     when the prompt contains text. Agent message destinations stay the same.
     Pins/log/thinking/tools/diffs follow the selected agent; an explicit agent stays fixed.
+    Todo shows the current project's shared list and refreshes as commands and tools run.
     The tools view follows ui.tools, including changes made while the view is open.
     Thinking/tools views hide matching blocks in the conversation until the view closes
     or changes source. The thinking view also replaces the live thinking preview.

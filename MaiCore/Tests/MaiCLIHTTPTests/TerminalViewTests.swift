@@ -28,13 +28,14 @@ func terminalViewSelectors() throws {
   #expect(try source("agents") == .conversations)
   #expect(try source("pins") == .pins)
   #expect(try source(" LOG ") == .log)
+  #expect(try source(" TODO ") == .todo)
   #expect(try source("tools") == .tools(nil))
   for name in ["files_read", "tool files_read", "tools files_read"] {
     #expect(try source(name) == .tools("files_read"))
   }
   for name in [
     "", "missing", "tools missing", "thinking extra", "pins extra", "log extra", "off extra",
-    "agent",
+    "agent", "todo extra",
   ] {
     #expect(throws: (any Error).self) { try source(name) }
   }
@@ -43,6 +44,32 @@ func terminalViewSelectors() throws {
     try MaiCLI.viewSource(
       "worker", processes: processes + [duplicate], tools: [], mainConversation: "chat:test")
   }
+}
+
+@Test("Todo views show the command rendering and retain their scroll anchor on updates")
+func terminalViewTodo() async {
+  let terminal = TerminalWriter(capturesOutput: true)
+  var list = AgentTodoList()
+  var view = TerminalView(source: .todo, title: "project todo")
+  view.updateTodo(await terminal.renderTodoList(list))
+  #expect(view.buffer.visibleRows(width: 80, height: 10) == ["No todos."])
+  for index in 1...30 { list.add("Task \(index)") }
+  view.updateTodo(await terminal.renderTodoList(list))
+  view.buffer.scroll(lines: -10, width: 80, height: 4)
+  let anchor = view.buffer.visibleRows(width: 80, height: 4)
+  list.markDone(at: 29)
+  list.add("New task")
+  view.updateTodo(await terminal.renderTodoList(list))
+  #expect(view.buffer.visibleRows(width: 80, height: 4) == anchor)
+  view.buffer.follow()
+  #expect(
+    view.buffer.visibleRows(width: 80, height: 4).suffix(2) == [
+      "30. [x] Task 30", "31. [ ] New task",
+    ])
+  view.buffer.scroll(lines: -Int.max, width: 80, height: 4)
+  #expect(view.buffer.visibleRows(width: 80, height: 4).first == "Todo (30 pending, 1 done):")
+  view.updateTodo(await terminal.renderTodoList(AgentTodoList()))
+  #expect(view.buffer.visibleRows(width: 80, height: 10) == ["No todos."])
 }
 
 @Test("Message views keep transcript order, full pins and one first line per message")
