@@ -342,6 +342,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       let height = view?.preferredHeight
       view = source.map { TerminalView(source: $0, title: label, preferredHeight: height) }
       draggingViewSeparator = false
+      clampInputRows()
       guard active else { return }
       refreshSize()
       write(mouseTracking)
@@ -1052,7 +1053,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private func drawOutputRows() {
     drawViewRows()
     var visible = TerminalConversationScope.$id.withValue(nil) {
-      transcript.visibleRows(width: max(1, columns - 1), height: outputHeight)
+      let selection = viewHeight > 0 ? view?.source.selection : nil
+      transcript.configureExcluding(selection == .all ? nil : selection)
+      return transcript.visibleRows(width: max(1, columns - 1), height: outputHeight)
     }
     visible += Array(repeating: "", count: max(0, outputHeight - visible.count))
     var out = ""
@@ -1071,7 +1074,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       var combined = TerminalOutputBuffer()
       for id in conversations.keys.sorted() where id != "initial" {
         combined.append("── \(id) ──\n")
-        var buffer = conversations[id]!.transcript
+        var buffer = TerminalOutputBuffer()
+        buffer.updateView(from: conversations[id]!.transcript, selection: .all)
         buffer.follow()
         // Copy rendered rows through the same parser that strips terminal controls.
         combined.append(buffer.visibleRows(width: max(1, columns - 1), height: Int.max).joined(separator: "\n"))
@@ -1352,6 +1356,12 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     if let questionText {
       panelRows = REPLModalPrompt.questionRows(
         questionText, width: max(1, columns - 1), height: max(0, min(rows / 2, rows - 3)))
+      return
+    }
+    if ui.mode == .buffer, view?.source == .thinking,
+      TerminalView.height(availableRows: rows - 1 - inputRows.count) > 0
+    {
+      panelRows = []
       return
     }
     guard let thinkingText else {

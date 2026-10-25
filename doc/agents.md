@@ -460,6 +460,10 @@ file edits with unified diffs). A tool name can also be used directly.
 Thinking and tool views show the full retained output regardless of the
 normal preview limits. These filtered sources follow the selected agent;
 an explicit agent source keeps watching that agent while you work elsewhere.
+While a thinking or tools view is open, its matching blocks appear only in the
+view. The thinking view also replaces the live thinking preview. Closing the
+view or selecting another source restores those blocks in the conversation
+according to `ui.thinking` and `ui.tools`.
 Pins and log also follow the selected agent, in transcript order, and include
 the complete saved history even when the conversation pane shows a bounded window.
 

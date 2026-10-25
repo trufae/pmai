@@ -78,6 +78,7 @@ struct TerminalOutputBuffer {
   private var escape = ""
   private var top: Position?
   private var selection: TerminalOutputSelection = .all
+  private var excludedSelection: TerminalOutputSelection?
   private static let reset = "\u{1B}[0m"
 
   var isFollowing: Bool { top == nil }
@@ -96,6 +97,7 @@ struct TerminalOutputBuffer {
     self = source
     top = anchor.flatMap { $0.line < lines.count ? $0 : nil }
     self.selection = selection
+    configureExcluding(nil)
     if selection != .all { configureToolGroups(false) }
     if selection == .thinking { configureThinking(.full) }
     if selection == .diffs { configureTools(.all) }
@@ -130,6 +132,23 @@ struct TerminalOutputBuffer {
     guard display != thinkingDisplay else { return }
     thinkingDisplay = display
     for index in thinkingBlocks.keys { lines[index].cachedWidth = 0 }
+  }
+
+  /// Keep the source intact so closing a dedicated view restores its blocks.
+  mutating func configureExcluding(_ selection: TerminalOutputSelection?) {
+    guard excludedSelection != selection else { return }
+    excludedSelection = selection
+    for index in thinkingBlocks.keys { lines[index].cachedWidth = 0 }
+    for index in toolBlocks.keys { lines[index].cachedWidth = 0 }
+  }
+
+  private func isExcluded(_ index: Int) -> Bool {
+    switch excludedSelection {
+    case .thinking: return thinkingBlocks[index] != nil
+    case .tools(let name):
+      return toolBlocks[index].map { name == nil || $0.call?.name == name } ?? false
+    default: return false
+    }
   }
 
   @discardableResult
@@ -179,8 +198,14 @@ struct TerminalOutputBuffer {
   var hasRunningTools: Bool { !runningTools.isEmpty }
 
   mutating func refreshToolGroupTimes() {
-    for index in runningTools {
-      if let start = toolGroupStarts[index] { lines[start].cachedWidth = 0 }
+    for index in runningTools { invalidateToolGroup(containing: index) }
+  }
+
+  private mutating func invalidateToolGroup(containing index: Int) {
+    guard let start = toolGroupStarts[index], let end = toolGroupEnds[start] else { return }
+    lines[start].cachedWidth = 0
+    if let header = (start..<end).first(where: { !isExcluded($0) }) {
+      lines[header].cachedWidth = 0
     }
   }
 
@@ -188,8 +213,10 @@ struct TerminalOutputBuffer {
   mutating func toggleToolGroup(row: Int) -> Bool {
     guard groupTools, visiblePositions.indices.contains(row) else { return false }
     let position = visiblePositions[row]
-    let start = position.line
-    guard position.glyph == 0, let end = toolGroupEnds[start], end - start > 1 else {
+    let start = toolGroupStarts[position.line] ?? position.line
+    guard position.glyph == 0, let end = toolGroupEnds[start],
+      position.line == (start..<end).first(where: { !isExcluded($0) }),
+      (start..<end).filter({ !isExcluded($0) }).count > 1 else {
       return false
     }
     if top == nil { top = visiblePositions.first }
@@ -223,7 +250,7 @@ struct TerminalOutputBuffer {
       toolBlocks[index]?.timing.finishedAt = Date()
       runningTools.remove(index)
     }
-    if let start = toolGroupStarts[index] { lines[start].cachedWidth = 0 }
+    invalidateToolGroup(containing: index)
     lines[index].cachedWidth = 0
     return index
   }
@@ -329,6 +356,7 @@ struct TerminalOutputBuffer {
   }
 
   private mutating func wrappedLine(_ index: Int, width: Int) -> [Row] {
+    guard !isExcluded(index) else { return [] }
     switch selection {
     case .all: break
     case .thinking:
@@ -338,17 +366,20 @@ struct TerminalOutputBuffer {
     case .diffs:
       guard toolBlocks[index]?.hasAppliedDiff == true else { return [] }
     }
-    let groupStart = toolGroupStarts[index] ?? index
-    let groupEnd = toolGroupEnds[groupStart] ?? index + 1
-    let isGroup = groupTools && selection == .all && groupEnd - groupStart > 1
-    if isGroup && index != groupStart && !expandedToolGroups.contains(groupStart) { return [] }
+    let originalStart = toolGroupStarts[index] ?? index
+    let groupEnd = toolGroupEnds[originalStart] ?? index + 1
+    let groupIndices = groupTools && selection == .all
+      ? (originalStart..<groupEnd).filter { !isExcluded($0) } : [index]
+    let groupStart = groupIndices.first ?? index
+    let isGroup = groupTools && selection == .all && groupIndices.count > 1
+    if isGroup && index != groupStart && !expandedToolGroups.contains(originalStart) { return [] }
     if lines[index].cachedWidth == width { return lines[index].rows }
     if let tool = toolBlocks[index] {
       var text = tool.render(display: tools, colors: colors != nil)
       let isHeader = isGroup && index == groupStart
-      let expanded = expandedToolGroups.contains(groupStart)
+      let expanded = expandedToolGroups.contains(originalStart)
       if isHeader {
-        let blocks = (groupStart..<groupEnd).compactMap { toolBlocks[$0] }
+        let blocks = groupIndices.compactMap { toolBlocks[$0] }
         let failed = blocks.contains { $0.result?.isError == true }
         let color: TerminalThemeStyle = failed ? .errorForeground : .toolCallForeground
         let summary = tool.prefix + (colors != nil ? color.marker : "")

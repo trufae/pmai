@@ -80,6 +80,8 @@ extension MaiCLI {
     when the prompt contains text. Agent message destinations stay the same.
     Pins/log/thinking/tools/diffs follow the selected agent; an explicit agent stays fixed.
     The tools view follows ui.tools, including changes made while the view is open.
+    Thinking/tools views hide matching blocks in the conversation until the view closes
+    or changes source. The thinking view also replaces the live thinking preview.
     On very short terminals the view is hidden until there is room for both panes.
     Switching to classic mode closes the view.
     """
