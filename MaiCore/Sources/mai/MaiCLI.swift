@@ -2572,6 +2572,8 @@ struct MaiCLI {
       }
     }
 
+    var messageViewHistory: (id: UUID, updatedAt: Date, messages: [AgentMessage])?
+
     func refreshConversation() async {
       if visibleChatID != session.id {
         visibleChatID = session.id
@@ -2602,6 +2604,7 @@ struct MaiCLI {
         }
       }
       guard let screen else { return }
+      if !screen.viewNeedsMessages || session.historyWindow == nil { messageViewHistory = nil }
       if let window = session.historyWindow, window.range.isEmpty {
         let currentStore = store
         let id = session.id
@@ -2634,6 +2637,36 @@ struct MaiCLI {
         screen.configureHistory(window: session.historyWindow) { earlier in
           continuation.yield(.historyPage(earlier))
         }
+      }
+      if screen.viewNeedsMessages {
+        let messages: [AgentMessage]
+        if case .agent(let pid) = loop.focus {
+          let transcript = await runtime.supervisor.transcript(pid)
+          messages = session.redactor?.unredact(transcript) ?? transcript
+        } else if let turn = loop.activeTurn, turn.chatID == session.id {
+          let transcript = await runtime.supervisor.transcript(turn.pid)
+          messages = mergedTranscript(
+            current: session.history.messages, sent: turn.sent,
+            result: turn.redactor?.unredact(transcript) ?? transcript)
+        } else if session.historyWindow != nil {
+          if messageViewHistory?.id != session.id || messageViewHistory?.updatedAt != session.updatedAt {
+            let currentStore = store
+            let id = session.id
+            do {
+              let chat = try await Task.detached(priority: .userInitiated) {
+                try currentStore.loadChatHistory(id: id)
+              }.value
+              messageViewHistory = (id, session.updatedAt, chat?.messages ?? session.history.messages)
+            } catch {
+              await terminal.line("Could not load the complete chat: \(error.localizedDescription)", to: .standardError)
+              return
+            }
+          }
+          messages = messageViewHistory?.messages ?? session.history.messages
+        } else {
+          messages = session.history.messages
+        }
+        screen.updateViewMessages(messages)
       }
     }
 
@@ -13314,7 +13347,7 @@ struct MaiCLI {
       "/agent", "/agents", "/agents list", "/agents describe ", "/agents enable ",
       "/agents disable ",
       "/ps", "/ps -a", "/ps -p", "/ps -ap", "/ps -k ",
-      "/view", "/view off", "/view current", "/view main", "/view thinking", "/view tools",
+      "/view", "/view off", "/view current", "/view main", "/view pins", "/view log", "/view thinking", "/view tools",
       "/view tools ", "/view diffs", "/view agents", "/view agent ", "/help view",
       "/job", "/jobs", "/jobs tree", "/jobs stop ", "/jobs continue ", "/jobs clear", "/jobs log ",
       "/jobs kill ", "/jobs focus ",

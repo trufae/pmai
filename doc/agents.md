@@ -454,11 +454,14 @@ their streamed replies and tools update their own buffers.
 `/view SOURCE` opens a read-only horizontal split above the conversation. It
 requires `ui.mode=buffer`; use `/set ui.mode buffer` to enable that mode.
 Sources include `current`, `main`, an agent's name or `agent#PID`, `agents`
-(retained conversations), `thinking`, `tools [NAME]`, and `diffs` (successful
+(retained conversations), `pins` (all pinned messages in full), `log` (the first
+line of every message as `role: text`), `thinking`, `tools [NAME]`, and `diffs` (successful
 file edits with unified diffs). A tool name can also be used directly.
 Thinking and tool views show the full retained output regardless of the
 normal preview limits. These filtered sources follow the selected agent;
 an explicit agent source keeps watching that agent while you work elsewhere.
+Pins and log also follow the selected agent, in transcript order, and include
+the complete saved history even when the conversation pane shows a bounded window.
 
 With an empty prompt, Tab switches focus between the prompt and the view.
 Drag the separator up or down with the left mouse button to resize the panes.

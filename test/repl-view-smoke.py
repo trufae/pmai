@@ -144,6 +144,11 @@ def main(binary):
 
             try:
                 wait_for('pmai>')
+                send('/view pins\r')
+                wait_for('── view: pinned messages')
+                assert 'No pinned messages.' in top(), screen
+                send('/view log\r')
+                wait_for('── view: message log')
                 send('/set ui.mode classic\r')
                 wait_for('\x1b[?1049l')
                 send('/view thinking\r')
@@ -306,11 +311,29 @@ def main(binary):
                 chunks.put(None)
                 wait_for('✓ took')
                 assert 'NEW_LINE' in top() and 'READ_ANSWER' not in top(), screen
+                send('/view lo\t')
+                wait_for('/view log')
+                send('\r')
+                wait_for('── view: message log')
+                assert 'user: READ_REQUEST' in top() and 'assistant: READ_ANSWER' in top(), screen
+                assert '✓ took' not in top() and '/view' not in top(), screen
+                send('/chat pin\r')
+                wait_for('Pinned')
+                send('/view pi\t')
+                wait_for('/view pins')
+                send('\r')
+                wait_for('── view: pinned messages')
+                assert 'READ_ANSWER' in top() and 'EDIT_ANSWER' not in top(), screen
+                send('/chat unpin -1\r')
+                wait_for('Unpinned')
+                assert 'No pinned messages.' in top(), screen
+                send('/chat pin\r')
+                wait_for('Pinned')
                 send('/fork View child\r')
                 wait_for('and switched to it.')
                 send('/view main\r')
                 wait_for('── view: main')
-                assert 'READ_ANSWER' in top(), screen
+                assert '📌 Pinned message' in top(), screen
                 send('CHILD_REQUEST\r')
                 chunks.put('CHILD_INITIAL\n')
                 wait_for('CHILD_INITIAL')
@@ -324,6 +347,18 @@ def main(binary):
                 assert 'CHILD_BACKGROUND' in top() and 'CHILD_BACKGROUND' not in bottom(), screen
                 chunks.put(None)
                 wait_for('✓ took')
+                send('/view pins\r')
+                wait_for('── view: pinned messages')
+                assert 'READ_ANSWER' in top() and 'CHILD_BACKGROUND' not in top(), screen
+                send('/jobs focus 2\r')
+                wait_for('Messages go to agent#2')
+                send('/view log\r')
+                wait_for('── view: message log')
+                assert 'user: CHILD_REQUEST' in top() and 'assistant: CHILD_INITIAL' in top(), screen
+                assert 'CHILD_BACKGROUND' not in top(), screen  # Only the reply's first line.
+                send('/jobs focus main\r')
+                wait_for('Messages go to this chat again.')
+                assert 'user: CHILD_REQUEST' not in top(), screen
                 send('/view agents\r')
                 wait_for('── view: agent conversations')
                 send('/view off\r')
@@ -345,7 +380,7 @@ def main(binary):
                 resize(3, 60)  # No room for the split: focus must return to the prompt.
                 resize(30, 100)
                 assert 'view focused' not in screen[separator()], screen
-                assert 'READ_ANSWER' in top(), screen
+                assert 'Messages go to this chat again.' in top(), screen
                 send('/set ui.mode classic\r')
                 wait_for('\x1b[?1049l')
                 assert b'\x1b[?1002l' in captured, captured
@@ -363,6 +398,12 @@ def main(binary):
                 captured.clear()
                 screen.clear()
                 wait_for('pmai#1>')
+                send('/view pins\r')
+                wait_for('── view: pinned messages')
+                assert 'READ_ANSWER' in top(), screen
+                send('/view log\r')
+                wait_for('── view: message log')
+                assert 'user: READ_REQUEST' in top() and 'assistant: READ_ANSWER' in top(), screen
                 send('/view thinking\r')
                 wait_for('── view: thinking')
                 assert 'LIVE_THOUGHT' in top(), screen
@@ -373,10 +414,52 @@ def main(binary):
                 wait_for('── view: View child #')
                 assert 'CHILD_BACKGROUND' in top(), screen
                 quit_repl()
+                # Saved history larger than one page must still expose early pins and log entries.
+                saved = next((root / '.pmai/chats').glob('*.json'))
+                chat = json.loads(saved.read_text())
+                chat['messages'] = [{'id': f'paged-{i}',
+                    'role': 'user' if i % 2 == 0 else 'assistant',
+                    'content': [{'text': {'_0': f'PAGED_{i:03d}\nDETAIL_{i:03d}'}}],
+                    'isPinned': i == 0} for i in range(130)]
+                chat['subagents'] = []
+                chat['commands'] = []
+                saved.write_text(json.dumps(chat))
+                os.close(master)
+                master, slave = pty.openpty()
+                fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', rows, columns, 0, 0))
+                process = subprocess.Popen([binary, '--config', str(config), '--home', str(root / 'home'),
+                    '--no-markdown', '-r'], cwd=root, env=env, stdin=slave, stdout=slave, stderr=slave,
+                    start_new_session=True)
+                os.close(slave)
+                captured.clear()
+                screen.clear()
+                wait_for('pmai>')
+                send('/view pins\r')
+                wait_for('── view: pinned messages')
+                assert 'PAGED_000' in top() and 'DETAIL_000' in top(), screen
+                assert 'PAGED_000' not in bottom(), screen
+                send('/view log\r')
+                wait_for('── view: message log')
+                assert 'assistant: PAGED_129' in top() and 'DETAIL_' not in top(), screen
+                send('\t')
+                wait_for('view focused')
+                conversation = bottom()
+                send('g')
+                read_for()
+                assert top().startswith('user: PAGED_000\nassistant: PAGED_001'), screen
+                assert bottom() == conversation, screen
+                send('G\t')
+                read_for()
+                send('/view pins\r')
+                wait_for('── view: pinned messages')
+                send('/chat unpin 1\r')
+                wait_for('Unpinned message 1')
+                assert 'No pinned messages.' in top(), screen
+                quit_repl()
                 output = run_repl([binary, '--config', str(config), '--home', str(root / 'pipe-home')],
                                  ['/view thinking', '/help view'], cwd=root, env=env, allow_errors=True)
                 assert 'error: /view requires ui.mode=buffer.' in output and '/view off' in output
-                print('PASS view: mode guard, sources, read-only focus, independent scrolling, live thinking/tools/diffs, '
+                print('PASS view: mode guard, sources, pins, first-line message log, read-only focus, independent scrolling, live thinking/tools/diffs, '
                       'background agents, J/K paging, g/G top/bottom, divider background, v/V resizing, q close, separator dragging, mouse cleanup, '
                       'live ui.tools previews, resize, saved reasoning/results, off and cleanup')
             finally:

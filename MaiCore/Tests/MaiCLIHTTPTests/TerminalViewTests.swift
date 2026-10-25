@@ -26,11 +26,16 @@ func terminalViewSelectors() throws {
   #expect(try source("thinking") == .thinking)
   #expect(try source("diffs") == .diffs)
   #expect(try source("agents") == .conversations)
+  #expect(try source("pins") == .pins)
+  #expect(try source(" LOG ") == .log)
   #expect(try source("tools") == .tools(nil))
   for name in ["files_read", "tool files_read", "tools files_read"] {
     #expect(try source(name) == .tools("files_read"))
   }
-  for name in ["", "missing", "tools missing", "thinking extra", "off extra", "agent"] {
+  for name in [
+    "", "missing", "tools missing", "thinking extra", "pins extra", "log extra", "off extra",
+    "agent",
+  ] {
     #expect(throws: (any Error).self) { try source(name) }
   }
   let duplicate = AgentProcessInfo(pid: 3, parent: 1, runID: UUID(), agentID: "worker", depth: 1)
@@ -38,6 +43,73 @@ func terminalViewSelectors() throws {
     try MaiCLI.viewSource(
       "worker", processes: processes + [duplicate], tools: [], mainConversation: "chat:test")
   }
+}
+
+@Test("Message views keep transcript order, full pins and one first line per message")
+func terminalViewMessages() {
+  let messages: [AgentMessage] = [
+    .system("Instructions\nMore instructions"),
+    AgentMessage(role: .user, content: [.text("Question\r\nSECOND_USER_LINE")], isPinned: true),
+    .assistant("Answer\nSECOND_ASSISTANT_LINE\n\nLast paragraph"),
+    AgentMessage(
+      role: .assistant,
+      content: [
+        .toolCall(
+          ToolCall(id: "read", name: "files_read", arguments: .object([:])))
+      ]),
+    AgentMessage(
+      role: .tool,
+      content: [
+        .toolResult(
+          ToolResult(callID: "read", text: "Result\nSECOND_TOOL_LINE"))
+      ]),
+    AgentMessage(role: .assistant, content: [], isPinned: true),
+  ]
+  var log = TerminalView(source: .log, title: "log")
+  log.updateMessages(messages)
+  let rows = log.buffer.visibleRows(width: 160, height: 100)
+  #expect(
+    rows == [
+      "system: Instructions", "user: Question", "assistant: Answer",
+      "assistant: [tool call files_read {}]", "tool: [tool result] Result",
+      "assistant: [empty message]",
+    ])
+  var pins = TerminalView(source: .pins, title: "pins")
+  pins.updateMessages(messages)
+  let text = pins.buffer.visibleRows(width: 160, height: 100).joined(separator: "\n")
+  #expect(text.contains("[2] 📌 user:\nQuestion\nSECOND_USER_LINE"))
+  #expect(text.contains("[6] 📌 assistant:\n[empty message]"))
+  #expect(!text.contains("Answer") && !text.contains("Instructions"))
+  var changed = messages
+  changed[1].isPinned = false
+  changed[2].isPinned = true
+  pins.updateMessages(changed)
+  let updated = pins.buffer.visibleRows(width: 160, height: 100).joined(separator: "\n")
+  #expect(!updated.contains("Question"))
+  #expect(updated.contains("[3] 📌 assistant:\nAnswer\nSECOND_ASSISTANT_LINE\n\nLast paragraph"))
+  pins.updateMessages([])
+  #expect(pins.buffer.visibleRows(width: 160, height: 100).joined().contains("No pinned messages."))
+  log.updateMessages([])
+  #expect(log.buffer.visibleRows(width: 160, height: 100) == ["No conversation messages yet."])
+}
+
+@Test("Message views retain their scroll anchor as messages arrive and are edited")
+func terminalViewMessageScroll() {
+  var messages = (0..<100).map { AgentMessage.user("Message \($0)\nsecond line") }
+  var view = TerminalView(source: .log, title: "log")
+  view.updateMessages(messages)
+  view.buffer.scroll(lines: -15, width: 80, height: 4)
+  let anchor = view.buffer.visibleRows(width: 80, height: 4)
+  messages.append(.assistant("New reply"))
+  view.updateMessages(messages)
+  #expect(view.buffer.visibleRows(width: 80, height: 4) == anchor)
+  view.buffer.scroll(lines: -Int.max, width: 80, height: 4)
+  #expect(view.buffer.visibleRows(width: 80, height: 4).first == "user: Message 0")
+  messages[0] = .user("Edited message")
+  view.updateMessages(messages)
+  #expect(view.buffer.visibleRows(width: 80, height: 4).first == "user: Edited message")
+  view.buffer.follow()
+  #expect(view.buffer.visibleRows(width: 80, height: 4).last == "assistant: New reply")
 }
 
 @Test("View projections reveal hidden thinking and respect tool result settings")
@@ -58,7 +130,8 @@ func terminalViewProjections() {
   #expect(view.visibleRows(width: 80, height: 50).isEmpty)
   source.appendThinking(" streamed", to: thinking)
   source.appendTool(
-    call: nil, result: ToolResult(callID: "read", text: "result one\nresult two\nresult three\nresult four"),
+    call: nil,
+    result: ToolResult(callID: "read", text: "result one\nresult two\nresult three\nresult four"),
     to: tool)
   for (display, count) in [
     (ToolResultDisplay.lines(0), 0), (.lines(1), 1), (.relevant, 3), (.all, 4), (.lines(0), 0),
@@ -67,7 +140,8 @@ func terminalViewProjections() {
     for selection in [TerminalOutputSelection.tools(nil), .tools("files_read")] {
       view.updateView(from: source, selection: selection)
       let rows = view.visibleRows(width: 80, height: 50).joined(separator: "\n")
-      for (index, line) in ["result one", "result two", "result three", "result four"].enumerated() {
+      for (index, line) in ["result one", "result two", "result three", "result four"].enumerated()
+      {
         #expect(rows.contains(line) == (index < count))
       }
       #expect(rows.contains("files_read"))

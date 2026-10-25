@@ -1,4 +1,5 @@
 import Foundation
+import MaiCore
 
 /// A view either follows the conversation at the prompt or watches a fixed agent.
 enum TerminalViewSource: Equatable {
@@ -6,6 +7,8 @@ enum TerminalViewSource: Equatable {
   case conversation(String)
   case conversations
   case thinking
+  case pins
+  case log
   case tools(String?)
   case diffs
 
@@ -39,6 +42,38 @@ struct TerminalView {
   var focused = false
   var preferredHeight: Int?
   var buffer = TerminalOutputBuffer()
+  var messages: [AgentMessage]?
+
+  /// These sources use model messages, rather than rendered terminal output.
+  var needsMessages: Bool { source == .pins || source == .log }
+
+  mutating func updateMessages(_ messages: [AgentMessage]) {
+    guard needsMessages, self.messages != messages else { return }
+    self.messages = messages
+    let text: String
+    if source == .pins {
+      let pinned = messages.enumerated().filter { $0.element.isPinned }
+      text =
+        pinned.isEmpty
+        ? "No pinned messages. Use /chat pin INDEX or MESSAGE_ID."
+        : pinned.map { index, message in
+          let body = TranscriptCopy.render(message)
+          return
+            "[\(index + 1)] 📌 \(message.role.rawValue):\n\(body.isEmpty ? "[empty message]" : body)"
+        }.joined(separator: "\n\n")
+    } else {
+      text =
+        messages.isEmpty
+        ? "No conversation messages yet."
+        : messages.map { message in
+          let line = TranscriptCopy.render(message).components(separatedBy: .newlines).first ?? ""
+          return "\(message.role.rawValue): \(line.isEmpty ? "[empty message]" : line)"
+        }.joined(separator: "\n")
+    }
+    var output = TerminalOutputBuffer()
+    output.append(text)
+    buffer.updateView(from: output, selection: .all)
+  }
 
   /// Leave a separator and at least one row for the main conversation.
   static func height(availableRows: Int, preferredHeight: Int? = nil) -> Int {

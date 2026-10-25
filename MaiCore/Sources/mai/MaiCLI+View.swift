@@ -15,6 +15,8 @@ extension MaiCLI {
     case "current" where rest.isEmpty, "conversation" where rest.isEmpty:
       return (.current, "current conversation")
     case "main" where rest.isEmpty: return (.conversation(mainConversation), "main")
+    case "pins" where rest.isEmpty: return (.pins, "pinned messages")
+    case "log" where rest.isEmpty: return (.log, "message log")
     case "thinking" where rest.isEmpty, "reasoning" where rest.isEmpty:
       return (.thinking, "thinking")
     case "diff" where rest.isEmpty, "diffs" where rest.isEmpty: return (.diffs, "applied diffs")
@@ -30,7 +32,7 @@ extension MaiCLI {
     let target = name == "agent" ? rest : argument
     guard !target.isEmpty else {
       throw JSONRPCError.invalidParams(
-        "Usage: /view <off|current|thinking|tools [NAME]|diffs|agents|AGENT>. /help view")
+        "Usage: /view <off|current|pins|log|thinking|tools [NAME]|diffs|agents|AGENT>. /help view")
     }
     let rawPID = target.replacingOccurrences(of: "agent#", with: "")
       .trimmingCharacters(in: CharacterSet(charactersIn: "#@"))
@@ -58,6 +60,8 @@ extension MaiCLI {
     /view AGENT            Watch an agent's conversation by name, agent#PID, or PID
     /view agent NAME       Explicit agent selector (also accepts a display name)
     /view agents           Show retained agent conversations, including the main chat
+    /view pins             Show all pinned messages in full, in transcript order
+    /view log              Show the first line of every message as role: text
     /view thinking         Show the current agent's full retained reasoning
     /view tools [NAME]     Show tool calls/results, optionally filtered by tool name
     /view TOOL_NAME        A tool name is also accepted directly
@@ -74,7 +78,7 @@ extension MaiCLI {
     v/V move the divider down/up one row; q closes the view, like /view off.
     The mouse wheel scrolls the focused pane. Tab returns to typing; completion works as usual
     when the prompt contains text. Agent message destinations stay the same.
-    Thinking/tools/diffs follow the selected agent; an explicit agent stays fixed.
+    Pins/log/thinking/tools/diffs follow the selected agent; an explicit agent stays fixed.
     The tools view follows ui.tools, including changes made while the view is open.
     On very short terminals the view is hidden until there is room for both panes.
     Switching to classic mode closes the view.
