@@ -293,6 +293,19 @@ func blockRendering() {
   #expect(ascii.contains("| quote\n[ ] todo\n  1. sub\n--------------------\n```\ncode\n```"))
 }
 
+@Test("Terminal palettes replace Markdown colors without changing text or emphasis")
+func paletteOverrides() {
+  let source = "# Heading\n\n**bold** and `code` and a [link](https://example.com).\n"
+  var theme = MarkdownTerminalTheme()
+  theme.colorOverrides = ["95": "37", "32": "", "96": "38;2;10;20;30", "90": "37"]
+  let output = MarkdownTerminalRenderer.render(source, theme: theme)
+  #expect(output.contains("\u{1B}[37;1mHeading"))
+  #expect(output.contains("\u{1B}[1mbold"))
+  #expect(output.contains("\u{1B}[4;38;2;10;20;30mlink"))
+  #expect(!output.contains("\u{1B}[32m"))
+  #expect(stripANSI(output) == stripANSI(MarkdownTerminalRenderer.render(source)))
+}
+
 @Test("Terminal environment detection")
 func environmentDetection() {
   let dumb = MarkdownTerminalEnvironment.detect(["TERM": "dumb", "LANG": "en_US.UTF-8"])

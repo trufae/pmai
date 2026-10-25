@@ -40,7 +40,8 @@ def main():
             return json.loads(config.read_text())['ui']
 
         output = run('/theme', '/help theme')
-        assert 'codark\ncolit\ndefault\nember\nlight\norange\npink\nsky\nslime\n' in output, output
+        assert ('ansi\ncodark\ncolit\ndefault\nember\nlight\nmono\norange\npink\nplum\n'
+                'sand\nsky\nslime\n') in output, output
         assert 'PMAI_THEME=NAME' in output, output
         assert not themes.exists(), 'listing must not install built-in theme files'
 
@@ -66,11 +67,17 @@ def main():
         assert 'Use /theme color bold [VALUE].' in redirected, redirected
         assert config.read_bytes() == before, 'old color commands must only give guidance'
         for name in ('slime', 'light', 'ember', 'pink', 'orange', 'sky',
-                     'codark', 'colit'):
+                     'codark', 'colit', 'ansi', 'mono', 'plum', 'sand'):
             output = run(f'/theme use {name}')
             assert f"Applied theme '{name}'." in output, output
             assert ui() != original
-            assert all(ui()[key] != original[key] for key in colors), ui()
+            if name not in ('ansi', 'mono'):
+                assert all(ui()[key] != original[key] for key in colors), ui()
+            else:
+                allowed = {'black', 'white'} if name == 'mono' else {
+                    'black', 'red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white'}
+                assert all(ui()[key] in allowed for key in theme_colors), ui()
+                assert ui()['bold'] == (name == 'mono'), ui()
             for key in ('title', 'markdown', 'tools'):
                 assert ui()[key] == original[key], ui()
             run('/theme use default')
