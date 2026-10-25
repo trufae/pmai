@@ -467,6 +467,13 @@ according to `ui.thinking` and `ui.tools`.
 Pins and log also follow the selected agent, in transcript order, and include
 the complete saved history even when the conversation pane shows a bounded window.
 
+The rightmost terminal column contains a scrollbar for each pane (and for the
+chat alone when the view is closed). Background-colored spaces draw a dark
+track and a light handle sized to the visible fraction of the wrapped content.
+Drag the handle with the left mouse button or click the track to jump there.
+Each scrollbar moves only its own pane without changing focus or the draft;
+reaching the bottom resumes following new output.
+
 With an empty prompt, Tab switches focus between the prompt and the view.
 Drag the separator up or down with the left mouse button to resize the panes.
 Both panes keep at least one row. The chosen view height is retained across

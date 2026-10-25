@@ -57,6 +57,11 @@ struct TerminalOutputBuffer {
   }
 
   private var lines = [Line()]
+  // Keep exact wrapped-row counts without rewalking old text on each streamed delta.
+  private var rowCounts: [Int] = []
+  private var rowCountWidth = 0
+  private var totalRowCount = 0
+  private var dirtyRowCounts: Set<Int> = []
   /// Reasoning and reply blocks each occupy one logical line. Their source
   /// survives changes to visibility and Markdown rendering.
   private var thinkingBlocks: [Int: TerminalOutputBuffer] = [:]
@@ -97,6 +102,9 @@ struct TerminalOutputBuffer {
     self = source
     top = anchor.flatMap { $0.line < lines.count ? $0 : nil }
     self.selection = selection
+    if selection != source.selection {
+      for index in lines.indices { invalidateLine(index) }
+    }
     configureExcluding(nil)
     if selection != .all { configureToolGroups(false) }
     if selection == .thinking { configureThinking(.full) }
@@ -105,6 +113,9 @@ struct TerminalOutputBuffer {
 
   mutating func clear() {
     lines = [Line()]
+    rowCounts = []
+    totalRowCount = 0
+    dirtyRowCounts = []
     thinkingBlocks.removeAll()
     activeThinking.removeAll()
     replyBlocks.removeAll()
@@ -123,7 +134,7 @@ struct TerminalOutputBuffer {
   mutating func configureColors(_ ui: ConfiguredTerminalUI?) {
     guard colors != ui else { return }
     colors = ui
-    for index in lines.indices { lines[index].cachedWidth = 0 }
+    for index in lines.indices { invalidateLine(index) }
     for index in thinkingBlocks.keys { thinkingBlocks[index]?.configureColors(ui) }
     for index in replyBlocks.keys { replyBlocks[index]?.output.configureColors(ui) }
   }
@@ -131,15 +142,15 @@ struct TerminalOutputBuffer {
   mutating func configureThinking(_ display: ThinkingDisplay) {
     guard display != thinkingDisplay else { return }
     thinkingDisplay = display
-    for index in thinkingBlocks.keys { lines[index].cachedWidth = 0 }
+    for index in thinkingBlocks.keys { invalidateLine(index) }
   }
 
   /// Keep the source intact so closing a dedicated view restores its blocks.
   mutating func configureExcluding(_ selection: TerminalOutputSelection?) {
     guard excludedSelection != selection else { return }
     excludedSelection = selection
-    for index in thinkingBlocks.keys { lines[index].cachedWidth = 0 }
-    for index in toolBlocks.keys { lines[index].cachedWidth = 0 }
+    for index in thinkingBlocks.keys { invalidateLine(index) }
+    for index in toolBlocks.keys { invalidateLine(index) }
   }
 
   private func isExcluded(_ index: Int) -> Bool {
@@ -166,33 +177,33 @@ struct TerminalOutputBuffer {
       cursor = 0
     }
     thinkingBlocks[index]?.append(text)
-    lines[index].cachedWidth = 0
+    invalidateLine(index)
     return index
   }
 
   mutating func finishThinking(_ block: Int) {
     activeThinking.remove(block)
-    lines[block].cachedWidth = 0
+    invalidateLine(block)
   }
 
   mutating func configureMarkdown(_ renderer: MarkdownTerminalRenderer?) {
     markdownRenderer = renderer
     for index in replyBlocks.keys {
       replyBlocks[index]?.width = 0
-      lines[index].cachedWidth = 0
+      invalidateLine(index)
     }
   }
 
   mutating func configureTools(_ display: ToolResultDisplay) {
     guard tools != display else { return }
     tools = display
-    for index in toolBlocks.keys { lines[index].cachedWidth = 0 }
+    for index in toolBlocks.keys { invalidateLine(index) }
   }
 
   mutating func configureToolGroups(_ enabled: Bool) {
     guard groupTools != enabled else { return }
     groupTools = enabled
-    for index in toolBlocks.keys { lines[index].cachedWidth = 0 }
+    for index in toolBlocks.keys { invalidateLine(index) }
   }
 
   var hasRunningTools: Bool { !runningTools.isEmpty }
@@ -203,9 +214,9 @@ struct TerminalOutputBuffer {
 
   private mutating func invalidateToolGroup(containing index: Int) {
     guard let start = toolGroupStarts[index], let end = toolGroupEnds[start] else { return }
-    lines[start].cachedWidth = 0
+    invalidateLine(start)
     if let header = (start..<end).first(where: { !isExcluded($0) }) {
-      lines[header].cachedWidth = 0
+      invalidateLine(header)
     }
   }
 
@@ -221,7 +232,7 @@ struct TerminalOutputBuffer {
     }
     if top == nil { top = visiblePositions.first }
     if !expandedToolGroups.insert(start).inserted { expandedToolGroups.remove(start) }
-    for index in start..<end { lines[index].cachedWidth = 0 }
+    for index in start..<end { invalidateLine(index) }
     return true
   }
 
@@ -241,7 +252,7 @@ struct TerminalOutputBuffer {
       toolGroupEnds[start] = index + 1
       toolBlocks[index] = TerminalToolBlock(call: call, result: nil, prefix: prefix)
       runningTools.insert(index)
-      lines[start].cachedWidth = 0
+      invalidateLine(start)
       lines.append(Line())
       cursor = 0
     }
@@ -251,7 +262,7 @@ struct TerminalOutputBuffer {
       runningTools.remove(index)
     }
     invalidateToolGroup(containing: index)
-    lines[index].cachedWidth = 0
+    invalidateLine(index)
     return index
   }
 
@@ -268,7 +279,7 @@ struct TerminalOutputBuffer {
       cursor = 0
     }
     replyBlocks[index]?.append(text)
-    lines[index].cachedWidth = 0
+    invalidateLine(index)
     return index
   }
 
@@ -278,7 +289,7 @@ struct TerminalOutputBuffer {
       reply.finished = true
       replyBlocks[block] = reply
     }
-    lines[block].cachedWidth = 0
+    invalidateLine(block)
   }
 
   mutating func append(_ text: String) {
@@ -303,7 +314,7 @@ struct TerminalOutputBuffer {
               } else if parameters.isEmpty || parameters == "0" {
                 lines[last].glyphs.removeSubrange(cursor...)
               }
-              lines[last].cachedWidth = 0
+              invalidateLine(last)
             }
             escape = ""
           }
@@ -341,7 +352,7 @@ struct TerminalOutputBuffer {
       let combined = lines[last].glyphs[cursor - 1].text + text
       if combined.count == 1 {
         lines[last].glyphs[cursor - 1].text = combined
-        lines[last].cachedWidth = 0
+        invalidateLine(last)
         return
       }
     }
@@ -352,7 +363,7 @@ struct TerminalOutputBuffer {
       lines[last].glyphs.append(glyph)
     }
     cursor += 1
-    lines[last].cachedWidth = 0
+    invalidateLine(last)
   }
 
   private mutating func wrappedLine(_ index: Int, width: Int) -> [Row] {
@@ -502,6 +513,50 @@ struct TerminalOutputBuffer {
     let bottom = max(0, rows.count - height)
     let current = topIndex(in: rows, height: height)
     let index = current + max(-current, min(bottom - current, delta))
+    top = index == bottom || rows.isEmpty ? nil : rows[index].position
+  }
+
+  private mutating func invalidateLine(_ index: Int) {
+    lines[index].cachedWidth = 0
+    dirtyRowCounts.insert(index)
+  }
+
+  mutating func scrollbar(width: Int, height: Int) -> TerminalScrollbar {
+    let width = max(1, width)
+    let height = max(1, height)
+    if rowCountWidth != width {
+      rowCounts = []
+      totalRowCount = 0
+      rowCountWidth = width
+      dirtyRowCounts = []
+    }
+    for index in rowCounts.count..<lines.count {
+      rowCounts.append(0)
+      dirtyRowCounts.insert(index)
+    }
+    for index in dirtyRowCounts {
+      let count = wrappedLine(index, width: width).count
+      totalRowCount += count - rowCounts[index]
+      rowCounts[index] = count
+    }
+    dirtyRowCounts.removeAll(keepingCapacity: true)
+    let bottom = max(0, totalRowCount - height)
+    var offset = bottom
+    if let top {
+      let preceding = rowCounts.prefix(top.line).reduce(0, +)
+      let local =
+        wrappedLine(top.line, width: width)
+        .lastIndex(where: { $0.position.glyph <= top.glyph }).map { $0 + 1 } ?? 0
+      offset = min(bottom, max(0, preceding + local - 1))
+    }
+    return TerminalScrollbar(rows: totalRowCount, top: offset, height: height)
+  }
+
+  /// Set an absolute wrapped-row position, retaining the logical anchor on reflow.
+  mutating func scroll(to offset: Int, width: Int, height: Int) {
+    let rows = allRows(width: max(1, width))
+    let bottom = max(0, rows.count - max(1, height))
+    let index = min(bottom, max(0, offset))
     top = index == bottom || rows.isEmpty ? nil : rows[index].position
   }
 

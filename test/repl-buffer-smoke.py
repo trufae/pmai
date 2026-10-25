@@ -93,6 +93,7 @@ def main(binary):
             os.close(slave)
             screen = {}
             styled_screen = {}
+            scrollbar = {}
             captured = bytearray()
 
             def read_for(seconds=.25):
@@ -106,6 +107,10 @@ def main(binary):
                     assert 1 <= row <= rows and 1 <= column <= columns, (row, column, rows, columns)
                     end = moves[index + 1].start() if index + 1 < len(moves) else len(text)
                     content = text[move.end():end]
+                    if column == columns:
+                        match = re.search(r'\x1b\[(47|100)m ', content)
+                        if match:
+                            scrollbar[row] = int(match[1])
                     # The renderer clears and replaces each changed row in full.
                     if column == 1 and '\x1b[2K' in content:
                         styled_screen[row] = content
@@ -130,6 +135,7 @@ def main(binary):
             try:
                 wait_for('pmai> ')
                 assert b'\x1b[?1006h' in captured, captured
+                assert b'\x1b[?1002h' in captured, captured
                 send('/set ui.mode classic\r')
                 wait_for('\x1b[?1049l')
                 send('/clear\r')
@@ -300,6 +306,35 @@ def main(binary):
                 assert 'ROW69' not in '\n'.join(previous), screen
                 assert 'scroll' in screen[rows - 2], screen
                 assert 'draft last' in screen[rows], screen
+
+                # The reserved last column is a two-color, proportional scrollbar.
+                track = range(1, rows - 2)
+                handles = [row for row in track if scrollbar.get(row) == 47]
+                assert 0 < len(handles) < len(track), scrollbar
+                assert all(scrollbar.get(row) in (47, 100) for row in track), scrollbar
+                grab = handles[len(handles) // 2]
+                send(f'\x1b[<0;{columns};{grab}M')
+                read_for()
+                assert output() == previous, screen  # Grabbing must not jump.
+                send(f'\x1b[<0;{columns};{grab}m')
+                read_for()
+                assert output() == previous, screen  # Releasing in place must not jump either.
+                send(f'\x1b[<0;{columns};{grab}M')
+                read_for()
+                send(f'\x1b[<32;{columns - 5};1M\x1b[<0;{columns - 5};1m')
+                read_for()
+                assert output() != previous and scrollbar[1] == 47, screen
+                assert 'draft last' in screen[rows], screen
+                # Clicking below the handle resumes following at the bottom.
+                send(f'\x1b[<0;{columns};{rows - 3}M\x1b[<0;{columns};{rows - 3}m')
+                read_for()
+                assert 'ROW69' in '\n'.join(output()), screen
+                send(f'\x1b[<32;{columns};1M')  # Released drags are ignored.
+                read_for()
+                assert 'ROW69' in '\n'.join(output()), screen
+                send('\x1b[5~')
+                read_for()
+                previous = output()
 
                 # Live output must not displace history or the unfinished draft.
                 captured.clear()

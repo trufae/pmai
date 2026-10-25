@@ -73,6 +73,7 @@ def main(binary):
             os.close(slave)
             screen = {}
             styled_screen = {}
+            scrollbar = {}
             captured = bytearray()
 
             def read_for(seconds=.15):
@@ -86,6 +87,10 @@ def main(binary):
                     assert 1 <= row <= rows and 1 <= column <= columns, (row, column, rows, columns)
                     end = moves[index + 1].start() if index + 1 < len(moves) else len(text)
                     content = text[move.end():end]
+                    if column == columns:
+                        match = re.search(r'\x1b\[(47|100)m ', content)
+                        if match:
+                            scrollbar[row] = int(match[1])
                     if column == 1 and '\x1b[2K' in content:
                         styled_screen[row] = content
                         screen[row] = CSI.sub('', content).replace('\x1b7', '').replace('\x1b8', '')
@@ -174,6 +179,25 @@ def main(binary):
                     assert 'THOUGHT_39' in top(), screen
                     below = '\n'.join(screen.get(row, '') for row in range(separator() + 1, rows))
                     assert 'THOUGHT_' not in below and 'Thinking…' not in below, screen
+                # Drag the view scrollbar without focusing it; the chat stays put.
+                conversation = bottom()
+                handles = [row for row in range(1, separator()) if scrollbar.get(row) == 47]
+                assert 0 < len(handles) < separator() - 1, scrollbar
+                grab = handles[-1]
+                send(f'\x1b[<0;{columns};{grab}M\x1b[<32;{columns};1M\x1b[<0;{columns};1m')
+                read_for()
+                assert top().startswith('THOUGHT_00\n') and bottom() == conversation, screen
+                assert 'view focused' not in screen[separator()], screen
+                send(f'\x1b[<0;{columns};1M\x1b[<32;{columns};{separator()-1}M\x1b[<0;{columns};{separator()-1}m')
+                read_for()
+                assert 'THOUGHT_39' in top() and bottom() == conversation, screen
+                # Dragging the lower pane leaves the view at its own position.
+                watched = top()
+                send(f'\x1b[<0;{columns};{rows-3}M\x1b[<32;{columns};{separator()+1}M\x1b[<0;{columns};{separator()+1}m')
+                read_for()
+                assert top() == watched, screen
+                send(f'\x1b[<0;{columns};{rows-3}M\x1b[<0;{columns};{rows-3}m')
+                read_for()
                 original_top, original_bottom = top(), bottom()
                 send('\t')
                 wait_for('view focused')
@@ -385,7 +409,7 @@ def main(binary):
                 wait_for('── view: agent conversations')
                 send('/view off\r')
                 read_for()
-                assert b'\x1b[?1002l' in captured and b'\x1b[?1002h' not in captured, captured
+                assert b'\x1b[?1002h' in captured, captured
                 assert all('── view:' not in screen.get(row, '') for row in range(1, rows)), screen
                 send('/view current\r')
                 wait_for('── view: current conversation')
@@ -393,7 +417,7 @@ def main(binary):
                 wait_for('view focused')
                 send('q')
                 read_for()
-                assert b'\x1b[?1002l' in captured and b'\x1b[?1002h' not in captured, captured
+                assert b'\x1b[?1002h' in captured, captured
                 assert all('── view:' not in screen.get(row, '') for row in range(1, rows)), screen
                 send('/view current\r')  # q returns focus to the prompt without submitting anything.
                 wait_for('── view: current conversation')

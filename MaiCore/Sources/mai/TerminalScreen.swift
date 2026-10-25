@@ -134,6 +134,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var paintedOutputRows: [String] = []
   private var view: TerminalView?
   private var draggingViewSeparator = false
+  private var scrollbarDrag: (view: Bool, grab: Int, row: Int)?
   private var paintedViewRows: [String] = []
   private var active = false
   private var resizeSource: (any DispatchSourceProtocol)?
@@ -159,11 +160,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private static let leaveBuffer = "\u{1B}[r\u{1B}[?1049l"
   private static let enableMouse = "\u{1B}[?1000h\u{1B}[?1006h"
   private static let enableDragMouse = "\u{1B}[?1002h"
-  private static let disableDragMouse = "\u{1B}[?1002l"
   private static let disableMouse = "\u{1B}[?1002l\u{1B}[?1006l\u{1B}[?1000l"
 
   private var mouseTracking: String {
-    Self.disableDragMouse + Self.enableMouse + (view == nil ? "" : Self.enableDragMouse)
+    Self.enableMouse + Self.enableDragMouse
   }
 
   /// Nil unless both stdin and stdout are terminals; piped sessions keep the
@@ -179,7 +179,11 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       let previousMode = self.ui.mode
       let previousUI = self.ui
       self.ui = ui
-      if ui.mode != .buffer { view = nil; draggingViewSeparator = false }
+      if ui.mode != .buffer {
+        view = nil
+        draggingViewSeparator = false
+        scrollbarDrag = nil
+      }
       for conversation in conversations.values {
         conversation.transcript.configureThinking(ui.thinking)
         conversation.transcript.configureTools(ui.tools)
@@ -234,6 +238,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     lock.withLock {
       guard selectedConversation != id else { return }
       selectedConversation = id
+      scrollbarDrag = nil
       if let source = view?.source {
         switch source {
         case .current, .pins, .log, .thinking, .tools, .diffs: view?.buffer.follow()
@@ -342,6 +347,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       let height = view?.preferredHeight
       view = source.map { TerminalView(source: $0, title: label, preferredHeight: height) }
       draggingViewSeparator = false
+      scrollbarDrag = nil
       clampInputRows()
       guard active else { return }
       refreshSize()
@@ -402,10 +408,26 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   func handleMouse(_ event: TerminalMouseEvent) {
+    var historyRequest: (loader: @Sendable (Bool) -> Void, earlier: Bool)?
     lock.withLock {
       guard active, ui.mode == .buffer else { return }
       refreshSize()
-      if case .press = event.action, event.row >= outputOrigin, event.row <= regionBottom,
+      let targetsView = scrollbarDrag?.view ?? (event.row <= viewHeight)
+      if handleScrollbarMouse(event) {
+        if !targetsView, let conversation = conversations[selectedConversation],
+          let window = conversation.historyWindow, let loader = conversation.historyLoader
+        {
+          if event.row <= outputOrigin, conversation.transcript.isAtBeginning, window.hasEarlier {
+            historyRequest = (loader, true)
+          } else if event.row >= regionBottom, conversation.transcript.isFollowing, window.hasLater
+          {
+            historyRequest = (loader, false)
+          }
+        }
+        return
+      }
+      if case .press = event.action, event.column < columns,
+        event.row >= outputOrigin, event.row <= regionBottom,
         transcript.toggleToolGroup(row: event.row - outputOrigin)
       {
         drawOutputRows()
@@ -428,6 +450,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       view?.preferredHeight = height
       redrawBuffer()
     }
+    if let historyRequest { historyRequest.loader(historyRequest.earlier) }
   }
 
   /// Enters raw mode, reserves the bottom rows, and draws them. Call before the
@@ -527,6 +550,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private func deactivateLocked(leaveBuffer: Bool = true) {
     guard active else { return }
     draggingViewSeparator = false
+    scrollbarDrag = nil
     refreshSize()
     resizeSource?.cancel()
     resizeSource = nil
@@ -904,6 +928,59 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     write(text, to: .standardOutput)
   }
 
+  /// Called under the screen lock, before tool-group and divider hit-testing.
+  private func handleScrollbarMouse(_ event: TerminalMouseEvent) -> Bool {
+    if case .press = event.action {
+      scrollbarDrag = nil
+      guard event.column == columns else { return false }
+      let inView = event.row >= 1 && event.row <= viewHeight
+      let inOutput = event.row >= outputOrigin && event.row <= regionBottom
+      guard inView || inOutput else { return false }
+      draggingViewSeparator = false
+      if inView { updateViewBuffer() }
+      let height = inView ? viewHeight : outputHeight
+      let row = event.row - (inView ? 1 : outputOrigin)
+      let bar = TerminalConversationScope.$id.withValue(nil) {
+        inView
+          ? view!.buffer.scrollbar(width: max(1, columns - 1), height: height)
+          : transcript.scrollbar(width: max(1, columns - 1), height: height)
+      }
+      let grab = bar.thumb.contains(row) ? row - bar.thumb.lowerBound : bar.thumb.count / 2
+      scrollbarDrag = (inView, grab, event.row)
+      // Preserve the grabbed cell rather than jumping when pressing the handle.
+      if bar.thumb.contains(row) { return true }
+    }
+    guard let drag = scrollbarDrag else { return false }
+    if case .release = event.action { scrollbarDrag = nil }
+    switch event.action {
+    case .drag, .release:
+      if event.row == drag.row { return true }
+    case .press: break
+    }
+    scrollbarDrag?.row = event.row
+    let height = drag.view ? viewHeight : outputHeight
+    guard height > 0 else {
+      scrollbarDrag = nil
+      return true
+    }
+    TerminalConversationScope.$id.withValue(nil) {
+      let width = max(1, columns - 1)
+      let row = event.row - (drag.view ? 1 : outputOrigin)
+      if drag.view {
+        updateViewBuffer()
+        let bar = view!.buffer.scrollbar(width: width, height: height)
+        view?.buffer.scroll(to: bar.offset(at: row, grab: drag.grab), width: width, height: height)
+      } else {
+        let bar = transcript.scrollbar(width: width, height: height)
+        transcript.scroll(to: bar.offset(at: row, grab: drag.grab), width: width, height: height)
+      }
+    }
+    drawOutputRows()
+    drawStatusRow()
+    placeCaret()
+    return true
+  }
+
   func scrollOutput(wheel: Int, pages: Int) {
     let loader: (@Sendable (Bool) -> Void)? = lock.withLock {
       outputConversation.historyLoader
@@ -1003,6 +1080,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   /// rows back as blank ones below the output, where the next output lands.
   private func resizeRegion(inputRows previousCount: Int, to count: Int) {
     if ui.mode == .buffer {
+      scrollbarDrag = nil
       paintedOutputRows = []
       paintedViewRows = []
       write("\u{1B}[1;\(regionBottom)r")
@@ -1058,6 +1136,12 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       return transcript.visibleRows(width: max(1, columns - 1), height: outputHeight)
     }
     visible += Array(repeating: "", count: max(0, outputHeight - visible.count))
+    let bar = TerminalConversationScope.$id.withValue(nil) {
+      transcript.scrollbar(width: max(1, columns - 1), height: outputHeight)
+    }
+    visible = visible.enumerated().map { index, text in
+      text + Self.reset + move(row: outputOrigin + index, column: columns) + bar.cell(at: index)
+    }
     var out = ""
     for (index, text) in visible.enumerated() {
       if index < paintedOutputRows.count, paintedOutputRows[index] == text { continue }
@@ -1099,6 +1183,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     var visible = view?.buffer.visibleRows(width: width, height: height) ?? []
     if visible.isEmpty { visible = ["No matching output yet."] }
     visible += Array(repeating: "", count: max(0, height - visible.count))
+    let bar = view!.buffer.scrollbar(width: width, height: height)
+    visible = visible.enumerated().map { index, text in
+      text + Self.reset + move(row: index + 1, column: columns) + bar.cell(at: index)
+    }
     let focus = view?.focused == true
       ? "view focused · j/k scroll · J/K page · g/G top/bottom · v/V resize · q close · Tab prompt"
       : "Tab on empty prompt to focus"
@@ -1412,6 +1500,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     let previousColumns = columns
     measure()
     guard rows != previousRows || columns != previousColumns else { return }
+    scrollbarDrag = nil
     clampInputRows()
     if ui.mode == .buffer {
       redrawBuffer()
