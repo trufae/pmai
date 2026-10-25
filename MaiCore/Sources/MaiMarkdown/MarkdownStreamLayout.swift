@@ -16,7 +16,8 @@ public struct MarkdownLayoutOptions: Equatable, Sendable {
 
   /// The checkbox used by Markdown tasks and numbered todo listings.
   public func taskMarker(checked: Bool) -> String {
-    if unicode { return checked ? "􁁛" : "􀟈" }
+    // Pad the symbol glyph so it leaves a visible gap before the caller's separator.
+    if unicode { return checked ? "􁁛 " : "􀟈 " }
     return checked ? "[x]" : "[ ]"
   }
 }
