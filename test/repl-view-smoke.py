@@ -269,8 +269,23 @@ def main(binary):
                 chunks.put(None)
                 wait_for('✓ took')
                 assert (root / 'file.txt').read_text() == 'NEW_LINE\n'
-                assert '+NEW_LINE' in top() and 'EDIT_ANSWER' not in top(), screen
-                assert '+NEW_LINE' not in bottom(), screen  # ui.tools=0 remains compact below.
+                assert 'files_patch' in top() and 'EDIT_ANSWER' not in top(), screen
+                assert '+NEW_LINE' not in top() and '+NEW_LINE' not in bottom(), screen
+                send('/set ui.tools 1\r')
+                wait_for('Set ui.tools = 1.')
+                assert 'files_patch' in top() and '+NEW_LINE' not in top(), screen
+                send('/set ui.tools relevant\r')
+                wait_for('Set ui.tools = relevant.')
+                assert '+NEW_LINE' in top(), screen
+                send('/set ui.tools all\r')
+                wait_for('Set ui.tools = all.')
+                assert '+NEW_LINE' in top(), screen
+                send('/view tools\r')
+                wait_for('── view: tools')
+                assert '+NEW_LINE' in top(), screen
+                send('/set ui.tools 0\r')
+                wait_for('Set ui.tools = 0.')
+                assert 'files_patch' in top() and '+NEW_LINE' not in top(), screen
                 send('/view diffs\r')
                 wait_for('── view: applied diffs')
                 assert '-OLD_LINE' in top() and '+NEW_LINE' in top(), screen
@@ -280,6 +295,8 @@ def main(binary):
                 assert top() == diff_rows and bottom() != main_rows, screen
                 send('\x1b[6~')
                 read_for()
+                send('/set ui.tools all\r')
+                wait_for('Set ui.tools = all.')
                 send('/view files_read\r')
                 wait_for('── view: tool files_read')
                 assert 'No matching output yet.' in top(), screen
@@ -361,7 +378,7 @@ def main(binary):
                 assert 'error: /view requires ui.mode=buffer.' in output and '/view off' in output
                 print('PASS view: mode guard, sources, read-only focus, independent scrolling, live thinking/tools/diffs, '
                       'background agents, J/K paging, g/G top/bottom, divider background, v/V resizing, q close, separator dragging, mouse cleanup, '
-                      'resize, saved reasoning/results, off and cleanup')
+                      'live ui.tools previews, resize, saved reasoning/results, off and cleanup')
             finally:
                 chunks.put(None)
                 if process.poll() is None:

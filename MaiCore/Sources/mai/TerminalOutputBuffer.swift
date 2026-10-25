@@ -92,7 +92,6 @@ struct TerminalOutputBuffer {
     self.selection = selection
     if selection != .all { configureToolGroups(false) }
     if selection == .thinking { configureThinking(.full) }
-    if case .tools = selection { configureTools(.all) }
     if selection == .diffs { configureTools(.all) }
   }
 

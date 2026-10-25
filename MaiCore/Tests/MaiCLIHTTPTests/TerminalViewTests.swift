@@ -40,7 +40,7 @@ func terminalViewSelectors() throws {
   }
 }
 
-@Test("View projections reveal full hidden thinking and tools without changing their source")
+@Test("View projections reveal hidden thinking and respect tool result settings")
 func terminalViewProjections() {
   var source = TerminalOutputBuffer()
   source.configureThinking(.status)
@@ -55,14 +55,25 @@ func terminalViewProjections() {
   view.updateView(from: source, selection: .thinking)
   #expect(view.visibleRows(width: 80, height: 50) == ["thought one", "thought two"])
   view.updateView(from: source, selection: .tools(nil))
-  #expect(view.visibleRows(width: 80, height: 50) == ["→ files_read"])
+  #expect(view.visibleRows(width: 80, height: 50).isEmpty)
   source.appendThinking(" streamed", to: thinking)
   source.appendTool(
-    call: nil, result: ToolResult(callID: "read", text: "result one\nresult two"), to: tool)
-  view.updateView(from: source, selection: .tools("files_read"))
-  let rows = view.visibleRows(width: 80, height: 50).joined(separator: "\n")
-  #expect(rows.contains("result two"))
-  #expect(!rows.contains("answer") && !rows.contains("thought"))
+    call: nil, result: ToolResult(callID: "read", text: "result one\nresult two\nresult three\nresult four"),
+    to: tool)
+  for (display, count) in [
+    (ToolResultDisplay.lines(0), 0), (.lines(1), 1), (.relevant, 3), (.all, 4), (.lines(0), 0),
+  ] {
+    source.configureTools(display)
+    for selection in [TerminalOutputSelection.tools(nil), .tools("files_read")] {
+      view.updateView(from: source, selection: selection)
+      let rows = view.visibleRows(width: 80, height: 50).joined(separator: "\n")
+      for (index, line) in ["result one", "result two", "result three", "result four"].enumerated() {
+        #expect(rows.contains(line) == (index < count))
+      }
+      #expect(rows.contains("files_read"))
+      #expect(!rows.contains("answer") && !rows.contains("thought"))
+    }
+  }
   view.updateView(from: source, selection: .tools("missing"))
   #expect(view.visibleRows(width: 80, height: 50).isEmpty)
   view.scroll(lines: -10, width: 80, height: 5)

@@ -338,7 +338,7 @@ func terminalBufferToolGroups() {
   #expect(buffer.toggleToolGroup(row: 1) == false)
 }
 
-@Test("Prose, reasoning and agent prefixes break tool groups; tool views keep full details")
+@Test("Prose, reasoning and agent prefixes break tool groups; tool views keep calls ungrouped")
 func terminalBufferToolGroupBoundaries() {
   var buffer = TerminalOutputBuffer()
   buffer.configureToolGroups(true)

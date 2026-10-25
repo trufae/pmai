@@ -59,7 +59,7 @@ extension MaiCLI {
     /view agent NAME       Explicit agent selector (also accepts a display name)
     /view agents           Show retained agent conversations, including the main chat
     /view thinking         Show the current agent's full retained reasoning
-    /view tools [NAME]     Show full tool calls/results, optionally filtered by tool name
+    /view tools [NAME]     Show tool calls/results, optionally filtered by tool name
     /view TOOL_NAME        A tool name is also accepted directly
     /view diffs            Show successful tool results containing applied file diffs
     /view off              Close the view
@@ -75,6 +75,7 @@ extension MaiCLI {
     The mouse wheel scrolls the focused pane. Tab returns to typing; completion works as usual
     when the prompt contains text. Agent message destinations stay the same.
     Thinking/tools/diffs follow the selected agent; an explicit agent stays fixed.
+    The tools view follows ui.tools, including changes made while the view is open.
     On very short terminals the view is hidden until there is room for both panes.
     Switching to classic mode closes the view.
     """
