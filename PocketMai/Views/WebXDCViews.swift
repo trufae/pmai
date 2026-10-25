@@ -463,25 +463,6 @@ extension WebXDCRunningSession: WKNavigationDelegate {
 
 // MARK: - Runner sheet
 
-struct ImportedWebXDCRunnerSheet: View {
-  @EnvironmentObject private var store: AppStore
-  let app: WebXDCAppInfo
-  @State private var session: WebXDCRunningSession?
-
-  var body: some View {
-    Group {
-      if let session {
-        WebXDCRunnerSheet(session: session)
-      } else {
-        ProgressView()
-      }
-    }
-    .onAppear {
-      if session == nil { session = store.startWebXDCSession(app: app) }
-    }
-  }
-}
-
 struct WebXDCRunnerSheet: View {
   @EnvironmentObject private var store: AppStore
   @Environment(\.dismiss) private var dismiss
@@ -1033,13 +1014,15 @@ enum WebXDCRuntimePolicy {
 struct WebXDCAppsPanel: View {
   @EnvironmentObject private var store: AppStore
   @Environment(\.dismiss) private var dismiss
+  @State private var path: [UUID] = []
+  @State private var lastImportID: UUID?
   @State private var apps: [WebXDCAppInfo] = []
   @State private var showingImporter = false
   @State private var pendingDelete: WebXDCAppInfo?
   @State private var errorMessage: String?
 
   var body: some View {
-    NavigationStack {
+    NavigationStack(path: $path) {
       List {
         if apps.isEmpty {
           Text(
@@ -1063,7 +1046,10 @@ struct WebXDCAppsPanel: View {
       .navigationTitle("Apps")
       .navigationBarTitleDisplayMode(.inline)
       .navigationDestination(for: UUID.self) { id in
-        WebXDCAppDetailView(appID: id) { reload() }
+        WebXDCAppDetailView(
+          appID: id,
+          importResult: store.pendingWebXDCImports.last { $0.app.id == id }
+        ) { reload() }
       }
       .toolbar {
         ToolbarItem(placement: .cancellationAction) {
@@ -1105,7 +1091,13 @@ struct WebXDCAppsPanel: View {
         Text(errorMessage ?? "")
       }
       .onAppear { reload() }
-      .onChange(of: store.pendingWebXDCImport?.id) { _, _ in reload() }
+      .onChange(of: store.pendingWebXDCImports, initial: true) { _, results in
+        reload()
+        if let result = results.last, result.id != lastImportID {
+          lastImportID = result.id
+          path = [result.app.id]
+        }
+      }
     }
   }
 
@@ -1135,6 +1127,11 @@ struct WebXDCAppsPanel: View {
       VStack(alignment: .leading, spacing: 2) {
         Text(app.name)
           .font(.body.weight(.medium))
+        if let result = store.pendingWebXDCImports.last(where: { $0.app.id == app.id }) {
+          Text(result.title)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
         Text(
           app.appDescription.isEmpty
             ? "\(app.revisions.count) revision\(app.revisions.count == 1 ? "" : "s")"
@@ -1156,8 +1153,8 @@ struct WebXDCAppsPanel: View {
     defer { if accessing { url.stopAccessingSecurityScopedResource() } }
     do {
       let fallback = url.deletingPathExtension().lastPathComponent
-      _ = try WebXDCLibrary.importXDC(from: url, fallbackName: fallback)
-      reload()
+      let result = try WebXDCLibrary.importXDC(from: url, fallbackName: fallback)
+      store.pendingWebXDCImports.append(result)
     } catch {
       errorMessage = error.localizedDescription
     }
@@ -1282,6 +1279,7 @@ struct WebXDCAppDetailView: View {
   @Environment(\.dismiss) private var dismiss
 
   let appID: UUID
+  let importResult: WebXDCImportResult?
   let onChange: () -> Void
 
   @State private var app: WebXDCAppInfo?
@@ -1292,19 +1290,33 @@ struct WebXDCAppDetailView: View {
   @State private var newFilePath = ""
   @State private var shareURL: URL?
   @State private var runningSession: WebXDCRunningSession?
+  @State private var showingImportPrompt: Bool
+  @State private var showingPermissions = false
   @State private var showingIconImporter = false
   @State private var showingDeleteConfirmation = false
   @State private var showingDeleteOtherRevisionsConfirmation = false
   @State private var errorMessage: String?
 
-  init(appID: UUID, onChange: @escaping () -> Void = {}) {
+  init(
+    appID: UUID, importResult: WebXDCImportResult? = nil, onChange: @escaping () -> Void = {}
+  ) {
     self.appID = appID
+    self.importResult = importResult
     self.onChange = onChange
+    _showingImportPrompt = State(initialValue: importResult != nil)
   }
 
   var body: some View {
     Form {
       if let app {
+        if let importResult {
+          Section(importResult.title) {
+            Text(importResult.message)
+            Text("Review the icon, files and permissions below. Tap RUN when you want to start the app.")
+              .foregroundStyle(.secondary)
+            Button("Review Permissions") { showingPermissions = true }
+          }
+        }
         appSection(app)
         WebXDCPermissionsSection(appID: app.id)
         revisionSection(app)
@@ -1318,6 +1330,17 @@ struct WebXDCAppDetailView: View {
     .navigationTitle(app?.name ?? "App")
     .navigationBarTitleDisplayMode(.inline)
     .onAppear { reload() }
+    .alert(importResult?.title ?? "App Imported", isPresented: $showingImportPrompt) {
+      Button("Review App", role: .cancel) {}
+      Button("Run App") {
+        if let app { runningSession = store.startWebXDCSession(app: app) }
+      }
+    } message: {
+      Text("\(importResult?.message ?? "") Review the app's icon, code and permissions before running it, or start it now.")
+    }
+    .sheet(isPresented: $showingPermissions) {
+      if let app { WebXDCPermissionsSheet(app: app) }
+    }
     .sheet(item: $editingFile) { file in
       MessageTextSelectionSheet(
         title: file.path,
@@ -1731,7 +1754,7 @@ struct WebXDCAppLauncherSheet: View {
         }
       }
       .onAppear { apps = WebXDCLibrary.listApps() }
-      .onChange(of: store.pendingWebXDCImport?.id) { _, _ in
+      .onChange(of: store.pendingWebXDCImports) { _, _ in
         apps = WebXDCLibrary.listApps()
       }
     }

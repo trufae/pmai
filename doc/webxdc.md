@@ -371,3 +371,24 @@ not travel with a shared `.xdc`.
 For implementation checks, run `node test/webxdc-bridge-test.cjs` and the iOS
 `WebXDCPocketMaiTests` / `WebXDCImportTests` suites. Real microphone, installed
 speech assets, remote services and audible playback also need device validation.
+
+
+## Importing apps on iOS
+
+Open a `.xdc` document with **PocketMai**, import it from **Apps → Import**, or
+share it to PocketMai. Imports open **Apps → App details**, with an import notice
+and a choice to review the app or run it. You can inspect the icon and files,
+review permissions, and press **RUN** when ready. Importing never starts an app
+without your confirmation.
+
+An app with identical files is reported as **Already Imported** and reuses the
+existing installation, keeping its data and permissions. ZIP entry order,
+compression and timestamps do not affect this check. Different apps with the
+same name get the first free suffix: `Name (2)`, `Name (3)`, and so on. Matching
+names is case insensitive. This check compares the installed current revision;
+if you edited the installed files, importing the original creates a separate app.
+
+For immediate launch, use the document's **Open in PocketMai** action. iOS does
+not support launching the containing app from a Share extension; if the system
+refuses that request, the shared files remain queued until PocketMai next opens.
+See [Apple's app extension lifecycle documentation](https://developer.apple.com/library/archive/documentation/General/Conceptual/ExtensibilityPG/ExtensionOverview.html).

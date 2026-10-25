@@ -590,8 +590,9 @@ final class AppStore: ObservableObject {
   /// Conversation export files opened by iOS or handed over by the share
   /// extension. ContentView presents them one at a time.
   @Published private(set) var pendingConversationImportFiles: [PendingConversationImportFile] = []
-  /// Shared Webxdc apps are installed immediately, then opened by ContentView.
-  @Published var pendingWebXDCImport: WebXDCAppInfo?
+  /// Imports open the Apps panel for review, without starting a session.
+  @Published var pendingWebXDCImports: [WebXDCImportResult] = []
+  @Published var showingWebXDCApps = false
   /// Bumped to ask the composer to take keyboard focus (e.g. after a widget tap).
   @Published private(set) var composerFocusRequestID = 0
   @Published private(set) var composerDraftReplacement: ComposerDraftReplacement?
@@ -5162,7 +5163,8 @@ final class AppStore: ObservableObject {
     do {
       // Inbox URLs have a UUID prefix; keep the sender's name as the fallback.
       let fallback = (filename as NSString).deletingPathExtension
-      pendingWebXDCImport = try WebXDCLibrary.importXDC(from: url, fallbackName: fallback)
+      pendingWebXDCImports.append(try WebXDCLibrary.importXDC(from: url, fallbackName: fallback))
+      showingWebXDCApps = true
     } catch {
       errorMessage = "Could not import \(filename): \(error.localizedDescription)"
     }
@@ -6546,7 +6548,8 @@ final class AppStoreViewObservation: ObservableObject {
       observe(store.$settings)
       observe(store.$errorMessage)
       observe(store.$commandOutput)
-      observe(store.$pendingWebXDCImport)
+      observe(store.$pendingWebXDCImports)
+      observe(store.$showingWebXDCApps)
       observe(store.$toolCallApprovalRequests)
       observe(store.$autocompactionApprovalRequests)
       observe(store.$longRunningOperationTimeoutRequests)

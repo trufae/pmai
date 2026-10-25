@@ -24,7 +24,6 @@ struct ConversationFoldersView: View {
   var onBrowseFiles: (String) -> Void = { _ in }
   @State private var showingFolderManager = false
   @State private var showingGallery = false
-  @State private var showingAppsPanel = false
 
   var body: some View {
     let folders = store.conversationFolders
@@ -100,10 +99,6 @@ struct ConversationFoldersView: View {
         .environmentObject(store)
         .environmentObject(TTSPlayer.shared)
     }
-    .sheet(isPresented: $showingAppsPanel) {
-      WebXDCAppsPanel()
-        .environmentObject(store)
-    }
   }
 
   private var floatingActions: some View {
@@ -131,7 +126,7 @@ struct ConversationFoldersView: View {
           accessibilityLabel: "Apps",
           compact: compact
         ) {
-          showingAppsPanel = true
+          store.showingWebXDCApps = true
         }
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)

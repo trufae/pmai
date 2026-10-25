@@ -255,12 +255,13 @@ struct ContentView: View {
       }
       .environmentObject(store)
     }
-    .fullScreenCover(
-      item: Binding(
-        get: { store.pendingWebXDCImport },
-        set: { store.pendingWebXDCImport = $0 })
-    ) { app in
-      ImportedWebXDCRunnerSheet(app: app)
+    .sheet(
+      isPresented: Binding(
+        get: { store.showingWebXDCApps },
+        set: { store.showingWebXDCApps = $0 }),
+      onDismiss: { store.pendingWebXDCImports.removeAll() }
+    ) {
+      WebXDCAppsPanel()
         .environmentObject(store)
     }
     .onChange(of: showingSettings) { _, isShowing in
