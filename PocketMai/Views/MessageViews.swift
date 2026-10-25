@@ -331,9 +331,9 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
           .font(.caption)
           .foregroundStyle(.secondary)
       }
-      ForEach(
-        Array(prepared.parts.enumerated().dropFirst(partStart)), id: \.element.id
-      ) { index, part in
+      ForEach(prepared.groupedRanges(from: partStart), id: \.lowerBound) { range in
+        let index = range.lowerBound
+        let part = prepared.parts[index]
         switch part {
         case .visible(_, let visibleText):
           bubble(
@@ -347,11 +347,35 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
           )
           .id(ResponseScrollTarget(messageID: message.id, partID: part.id))
         case .tool(let partID, let entry, let section):
-          ToolCallRow(
-            entry: entry,
-            onEdit: toolEditAction(for: entry, partID: partID, in: prepared),
-            onDelete: toolDeleteAction(
-              for: entry, section: section, partID: partID, in: prepared))
+          if range.count > 1 {
+            ToolCallGroup(
+              timings: range.map { prepared.parts[$0].toolTiming },
+              hasErrors: range.contains { index in
+                if case .tool(_, let entry, _) = prepared.parts[index] {
+                  return entry.body.hasPrefix("Error:")
+                }
+                return false
+              },
+              isLive: isLiveAssistantResponse,
+              forceExpanded: isFullChatScreenshotRendering
+            ) {
+              ForEach(Array(prepared.parts[range])) { grouped in
+                if case .tool(let id, let item, let wrapper) = grouped {
+                  ToolCallRow(
+                    entry: item,
+                    onEdit: toolEditAction(for: item, partID: id, in: prepared),
+                    onDelete: toolDeleteAction(
+                      for: item, section: wrapper, partID: id, in: prepared))
+                }
+              }
+            }
+          } else {
+            ToolCallRow(
+              entry: entry,
+              onEdit: toolEditAction(for: entry, partID: partID, in: prepared),
+              onDelete: toolDeleteAction(
+                for: entry, section: section, partID: partID, in: prepared))
+          }
         case .reasoning(_, let section):
           let compactDisplay = isStreaming && thinkingDisplay == .full ? .five : thinkingDisplay
           FoldableMetaSection(
@@ -2301,6 +2325,24 @@ private struct PreparedMessageContent {
   let parts: [MessageRenderPart]
   let hideBubble: Bool
 
+  /// Keep canonical part IDs and paging offsets; grouping is presentation only.
+  func groupedRanges(from start: Int) -> [Range<Int>] {
+    var ranges: [Range<Int>] = []
+    var index = start
+    while index < parts.count {
+      let first = index
+      index += 1
+      if case .tool = parts[first] {
+        while index < parts.count {
+          guard case .tool = parts[index] else { break }
+          index += 1
+        }
+      }
+      ranges.append(first..<index)
+    }
+    return ranges
+  }
+
   var firstVisiblePartIndex: Int? {
     parts.firstIndex(where: \.isVisible)
   }
@@ -2322,6 +2364,11 @@ private enum MessageRenderPart: Identifiable {
       .transcript(let id, _):
       return id
     }
+  }
+
+  var toolTiming: ToolRunTiming? {
+    if case .tool(_, _, let section) = self { return section.toolTiming }
+    return nil
   }
 
   var isVisible: Bool {
@@ -3047,6 +3094,42 @@ private struct VoiceRecordingPlaybackButton: View {
     .buttonStyle(.borderless)
     .foregroundStyle(Color.accentColor)
     .accessibilityLabel(title)
+  }
+}
+
+private struct ToolCallGroup<Content: View>: View {
+  let timings: [ToolRunTiming?]
+  let hasErrors: Bool
+  let isLive: Bool
+  let forceExpanded: Bool
+  @ViewBuilder var content: () -> Content
+  @State private var expanded = false
+
+  var body: some View {
+    DisclosureGroup(isExpanded: Binding(
+      get: { expanded || forceExpanded }, set: { expanded = $0 }
+    )) {
+      VStack(alignment: .leading, spacing: 6, content: content)
+    } label: {
+      TimelineView(.animation(
+        minimumInterval: 1, paused: !isLive || timings.allSatisfy { $0?.finishedAt != nil }
+      )) { context in
+        Label(
+          ToolRunTiming.summary(
+            timings.map { timing in
+              // A restored interrupted call has no trustworthy end time.
+              guard isLive || timing?.finishedAt != nil else { return nil }
+              return timing
+            }, now: context.date) + (hasErrors ? " · error" : ""),
+          systemImage: "wrench.and.screwdriver")
+          .font(.caption.monospacedDigit())
+          .foregroundStyle(hasErrors ? Color.red : Color.secondary)
+          .lineLimit(1)
+      }
+    }
+    .padding(.horizontal, 10)
+    .padding(.vertical, 7)
+    .background(.thinMaterial.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
   }
 }
 

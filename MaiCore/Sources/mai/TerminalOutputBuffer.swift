@@ -64,6 +64,12 @@ struct TerminalOutputBuffer {
   private var thinkingDisplay: ThinkingDisplay = .full
   private var replyBlocks: [Int: ReplyBlock] = [:]
   private var toolBlocks: [Int: TerminalToolBlock] = [:]
+  private var toolGroupStarts: [Int: Int] = [:]
+  private var toolGroupEnds: [Int: Int] = [:]
+  private var expandedToolGroups: Set<Int> = []
+  private var runningTools: Set<Int> = []
+  private var groupTools = false
+  private var visiblePositions: [Position] = []
   private var tools = ConfiguredTerminalUI().tools
   private var markdownRenderer: MarkdownTerminalRenderer?
   private var colors: ConfiguredTerminalUI?
@@ -84,6 +90,7 @@ struct TerminalOutputBuffer {
     self = source
     top = anchor.flatMap { $0.line < lines.count ? $0 : nil }
     self.selection = selection
+    if selection != .all { configureToolGroups(false) }
     if selection == .thinking { configureThinking(.full) }
     if case .tools = selection { configureTools(.all) }
     if selection == .diffs { configureTools(.all) }
@@ -95,6 +102,11 @@ struct TerminalOutputBuffer {
     activeThinking.removeAll()
     replyBlocks.removeAll()
     toolBlocks.removeAll()
+    toolGroupStarts.removeAll()
+    toolGroupEnds.removeAll()
+    expandedToolGroups.removeAll()
+    runningTools.removeAll()
+    visiblePositions.removeAll()
     cursor = 0
     style = ""
     escape = ""
@@ -153,6 +165,34 @@ struct TerminalOutputBuffer {
     for index in toolBlocks.keys { lines[index].cachedWidth = 0 }
   }
 
+  mutating func configureToolGroups(_ enabled: Bool) {
+    guard groupTools != enabled else { return }
+    groupTools = enabled
+    for index in toolBlocks.keys { lines[index].cachedWidth = 0 }
+  }
+
+  var hasRunningTools: Bool { !runningTools.isEmpty }
+
+  mutating func refreshToolGroupTimes() {
+    for index in runningTools {
+      if let start = toolGroupStarts[index] { lines[start].cachedWidth = 0 }
+    }
+  }
+
+  /// Hit-test the rows just painted, without laying out the entire transcript.
+  mutating func toggleToolGroup(row: Int) -> Bool {
+    guard groupTools, visiblePositions.indices.contains(row) else { return false }
+    let position = visiblePositions[row]
+    let start = position.line
+    guard position.glyph == 0, let end = toolGroupEnds[start], end - start > 1 else {
+      return false
+    }
+    if top == nil { top = visiblePositions.first }
+    if !expandedToolGroups.insert(start).inserted { expandedToolGroups.remove(start) }
+    for index in start..<end { lines[index].cachedWidth = 0 }
+    return true
+  }
+
   @discardableResult
   mutating func appendTool(
     call: ToolCall?, result: ToolResult?, prefix: String = "", to block: Int? = nil
@@ -163,11 +203,22 @@ struct TerminalOutputBuffer {
     } else {
       if !lines[lines.count - 1].glyphs.isEmpty { append("\n") }
       index = lines.count - 1
+      let start = toolBlocks[index - 1]?.prefix == prefix
+        ? toolGroupStarts[index - 1] ?? index : index
+      toolGroupStarts[index] = start
+      toolGroupEnds[start] = index + 1
       toolBlocks[index] = TerminalToolBlock(call: call, result: nil, prefix: prefix)
+      runningTools.insert(index)
+      lines[start].cachedWidth = 0
       lines.append(Line())
       cursor = 0
     }
-    if let result { toolBlocks[index]?.result = result }
+    if let result {
+      toolBlocks[index]?.result = result
+      toolBlocks[index]?.timing.finishedAt = Date()
+      runningTools.remove(index)
+    }
+    if let start = toolGroupStarts[index] { lines[start].cachedWidth = 0 }
     lines[index].cachedWidth = 0
     return index
   }
@@ -282,13 +333,30 @@ struct TerminalOutputBuffer {
     case .diffs:
       guard toolBlocks[index]?.hasAppliedDiff == true else { return [] }
     }
+    let groupStart = toolGroupStarts[index] ?? index
+    let groupEnd = toolGroupEnds[groupStart] ?? index + 1
+    let isGroup = groupTools && selection == .all && groupEnd - groupStart > 1
+    if isGroup && index != groupStart && !expandedToolGroups.contains(groupStart) { return [] }
     if lines[index].cachedWidth == width { return lines[index].rows }
     if let tool = toolBlocks[index] {
-      let text = tool.render(display: tools, colors: colors != nil)
+      var text = tool.render(display: tools, colors: colors != nil)
+      let isHeader = isGroup && index == groupStart
+      let expanded = expandedToolGroups.contains(groupStart)
+      if isHeader {
+        let blocks = (groupStart..<groupEnd).compactMap { toolBlocks[$0] }
+        let failed = blocks.contains { $0.result?.isError == true }
+        let color: TerminalThemeStyle = failed ? .errorForeground : .toolCallForeground
+        let summary = tool.prefix + (colors != nil ? color.marker : "")
+          + (expanded ? "▾ " : "▸ ") + ToolRunTiming.summary(blocks.map(\.timing))
+          + (failed ? " · error" : "")
+        text = expanded ? summary + "\n" + text : summary
+      }
       var output = TerminalOutputBuffer()
       output.configureColors(colors)
       output.append(text)
-      if tools == .lines(0) { output.truncateLine(to: width) }
+      if isHeader && !expanded || !isHeader && tools == .lines(0) {
+        output.truncateLine(to: width)
+      }
       let result = text.isEmpty ? [] : Self.blockRows(&output, index: index, width: width)
       lines[index].cachedWidth = width
       lines[index].rows = result
@@ -402,13 +470,19 @@ struct TerminalOutputBuffer {
   }
 
   mutating func visibleRows(width: Int, height: Int) -> [String] {
+    let rows = visibleLayout(width: width, height: height)
+    visiblePositions = rows.map(\.position)
+    return rows.map(\.text)
+  }
+
+  private mutating func visibleLayout(width: Int, height: Int) -> [Row] {
     let width = max(1, width)
     let height = max(1, height)
     if top == nil {
       // Streaming only visits enough cached logical lines to fill the viewport.
-      var tail: [String] = []
+      var tail: [Row] = []
       for index in lines.indices.reversed() {
-        let rows = wrappedLine(index, width: width).map(\.text)
+        let rows = wrappedLine(index, width: width)
         tail.insert(contentsOf: rows.suffix(height - tail.count), at: 0)
         if tail.count == height { break }
       }
@@ -417,19 +491,19 @@ struct TerminalOutputBuffer {
     // Browsing a long transcript should not traverse its entire history for
     // every streamed token. Only lay out lines in the anchored viewport.
     if let top {
-      var visible: [String] = []
+      var visible: [Row] = []
       for index in top.line..<lines.count {
         let rows = wrappedLine(index, width: width)
         let first =
           index == top.line
           ? rows.lastIndex(where: { $0.position.glyph <= top.glyph }) ?? 0 : 0
-        visible += rows.dropFirst(first).prefix(height - visible.count).map(\.text)
+        visible += rows.dropFirst(first).prefix(height - visible.count)
         if visible.count == height { return visible }
       }
     }
     // Growing the window near the end may expose more rows above the anchor.
     let rows = allRows(width: width)
     let index = topIndex(in: rows, height: height)
-    return rows[index..<min(rows.count, index + height)].map(\.text)
+    return Array(rows[index..<min(rows.count, index + height)])
   }
 }

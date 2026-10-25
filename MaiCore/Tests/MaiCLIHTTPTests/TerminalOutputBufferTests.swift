@@ -300,3 +300,67 @@ func terminalBufferRelevantTools() {
     #expect(buffer.visibleRows(width: 80, height: 40) == full)
   }
 }
+
+@Test("Consecutive tools collapse, expand on click, and retain errors and full output")
+func terminalBufferToolGroups() {
+  var buffer = TerminalOutputBuffer()
+  buffer.configureToolGroups(true)
+  buffer.configureTools(.all)
+  buffer.append("prompt\n")
+  let first = buffer.appendTool(
+    call: ToolCall(id: "1", name: "files_read", arguments: .object([:])), result: nil)
+  let second = buffer.appendTool(
+    call: ToolCall(id: "2", name: "run", arguments: .object([:])), result: nil)
+  let live = buffer.visibleRows(width: 80, height: 20)
+  #expect(live.contains { $0.contains("2 tool calls") && $0.contains("running") })
+  buffer.appendTool(call: nil, result: ToolResult(callID: "1", text: "contents"), to: first)
+  buffer.appendTool(
+    call: nil, result: ToolResult(callID: "2", text: "failure details", isError: true), to: second)
+  let collapsed = buffer.visibleRows(width: 80, height: 20)
+  #expect(collapsed.count == 3)
+  #expect(collapsed[1].contains("2 tool calls") && collapsed[1].contains("error"))
+  #expect(!collapsed.joined().contains("contents"))
+  #expect(!collapsed.joined().contains("running"))
+  #expect(!buffer.hasRunningTools)
+  #expect(buffer.toggleToolGroup(row: 0) == false)
+  #expect(buffer.toggleToolGroup(row: 1) == true)
+  let expanded = buffer.visibleRows(width: 80, height: 20).joined(separator: "\n")
+  #expect(expanded.contains("contents") && expanded.contains("failure details"))
+  #expect(buffer.toggleToolGroup(row: 1) == true)
+  #expect(buffer.visibleRows(width: 80, height: 20) == collapsed)
+  buffer.configureToolGroups(false)
+  #expect(buffer.visibleRows(width: 80, height: 20).joined().contains("contents"))
+  buffer.configureToolGroups(true)
+  #expect(buffer.visibleRows(width: 8, height: 20).allSatisfy {
+    TerminalLineEditor.displayWidth(of: $0) <= 8
+  })
+  buffer.clear()
+  #expect(buffer.toggleToolGroup(row: 1) == false)
+}
+
+@Test("Prose, reasoning and agent prefixes break tool groups; tool views keep full details")
+func terminalBufferToolGroupBoundaries() {
+  var buffer = TerminalOutputBuffer()
+  buffer.configureToolGroups(true)
+  buffer.configureTools(.all)
+  func call(_ id: String) -> ToolCall {
+    ToolCall(id: id, name: "files_read", arguments: .object([:]))
+  }
+  buffer.appendTool(call: call("1"), result: ToolResult(callID: "1", text: "one"))
+  buffer.appendTool(call: call("2"), result: ToolResult(callID: "2", text: "two"))
+  buffer.appendReply("prose")
+  buffer.appendTool(call: call("3"), result: ToolResult(callID: "3", text: "three"))
+  buffer.appendTool(call: call("4"), result: ToolResult(callID: "4", text: "four"))
+  buffer.appendThinking("reasoning")
+  buffer.appendTool(call: call("5"), result: ToolResult(callID: "5", text: "five"))
+  buffer.appendTool(
+    call: call("6"), result: ToolResult(callID: "6", text: "six"), prefix: "agent#2 ")
+  let rows = buffer.visibleRows(width: 80, height: 40)
+  #expect(rows.filter { $0.contains("2 tool calls") }.count == 2)
+  #expect(rows.contains("prose") && rows.joined().contains("five") && rows.joined().contains("six"))
+  var view = TerminalOutputBuffer()
+  view.updateView(from: buffer, selection: .tools(nil))
+  let details = view.visibleRows(width: 80, height: 40).joined()
+  #expect(!details.contains("tool calls"))
+  #expect(details.contains("one") && details.contains("four"))
+}

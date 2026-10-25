@@ -2668,7 +2668,8 @@ struct MaiCLI {
       reader.update(inputPrompt())
       screen.setStatus(
         status.text, animating: status.animating, attention: loop.modalPrompt != nil,
-        question: loop.modalPrompt?.question)
+        question: loop.modalPrompt?.question,
+        waiting: status.animating || loop.activeTurn != nil || loop.foregroundCommand != nil)
     }
 
     /// Lets the input thread read the next line. Settings that the editor
@@ -2688,7 +2689,8 @@ struct MaiCLI {
       let status = await statusLine()
       screen?.setStatus(
         status.text, animating: status.animating, attention: loop.modalPrompt != nil,
-        question: loop.modalPrompt?.question)
+        question: loop.modalPrompt?.question,
+        waiting: status.animating || loop.activeTurn != nil || loop.foregroundCommand != nil)
       loop.readerParked = false
       let availableProviders = await runtime.availableProviders()
       reader.resume(
@@ -10341,7 +10343,7 @@ struct MaiCLI {
       await terminal.line("Use /theme color \(key.dropFirst(3)) [VALUE].")
       return
     }
-    let booleanKeys = ["ui.markdown", "ui.broadcast"]
+    let booleanKeys = ["ui.markdown", "ui.broadcast", "ui.toolgroups"]
     let countKeys = ["ui.tools", "ui.scroll"]
     let levelKeys = ["ui.subagents", "ui.thinking", "ui.mode"]
     let textKeys = ["ui.title", "ui.editor"]
@@ -10413,7 +10415,10 @@ struct MaiCLI {
         await terminal.line("Usage: /set \(key) <on|off>")
         return
       }
-      if key == "ui.broadcast" {
+      if key == "ui.toolgroups" {
+        ui.toolGroups = enabled
+        if enabled { ui.mode = .buffer }
+      } else if key == "ui.broadcast" {
         ui.broadcast = enabled
       } else {
         ui.markdown = enabled
@@ -11022,7 +11027,8 @@ struct MaiCLI {
 
   private static func listUISettings(_ ui: ConfiguredTerminalUI, terminal: TerminalWriter) async {
     let keys = [
-      "ui.mode", "ui.scroll", "ui.title", "ui.editor", "ui.markdown", "ui.tools", "ui.subagents", "ui.thinking",
+      "ui.mode", "ui.scroll", "ui.title", "ui.editor", "ui.markdown", "ui.tools", "ui.toolgroups",
+      "ui.subagents", "ui.thinking",
       "ui.broadcast",
     ]
     for key in keys {
@@ -11042,6 +11048,7 @@ struct MaiCLI {
       return ui.editor.isEmpty ? "\(resolvedEditor()) (from the environment)" : ui.editor
     case "ui.markdown": return ui.markdown ? "on" : "off"
     case "ui.tools": return ui.tools.description
+    case "ui.toolgroups": return ui.toolGroups ? "on" : "off"
     case "ui.thinking": return ui.thinking.rawValue
     case "ui.subagents": return ui.subagentOutput.rawValue
     case "ui.broadcast": return ui.broadcast ? "on" : "off"
@@ -13113,6 +13120,7 @@ struct MaiCLI {
       "/set ui.mode classic", "/set ui.mode buffer",
       "/set ui.scroll ",
       "/set ui.broadcast on", "/set ui.broadcast off",
+      "/set ui.toolgroups on", "/set ui.toolgroups off",
       "/set ui.tools all", "/set ui.tools relevant", "/set ui.tools ",
       "/set redact on", "/set redact off", "/set redact warn", "/edit redact",
       "/cwd", "/pwd", "/cd ", "/plugins",
@@ -13800,6 +13808,7 @@ struct MaiCLI {
       /set ui.editor COMMAND       Editor /edit opens (`none` falls back to $EDITOR, $VISUAL, vim)
       /set ui.markdown BOOL        Render replies as styled markdown (on/off)
                                    Buffer mode also redraws earlier replies with this setting
+      /set ui.toolgroups <on|off>     Collapse consecutive tools into clickable summaries (enables buffer mode)
       /set ui.tools <all|relevant|N>  Full results, full edits/errors with 3-line previews otherwise, or first N lines (0 hides them)
                                    Buffer mode also updates earlier tool calls and results
       /set ui.thinking MODE        Thinking display: status, line, three, five, or full

@@ -83,6 +83,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     let conversation = TerminalConversation()
     conversation.transcript.configureThinking(ui.thinking)
     conversation.transcript.configureTools(ui.tools)
+    conversation.transcript.configureToolGroups(ui.toolGroups)
     conversation.transcript.configureMarkdown(markdownTemplate)
     let colors = ProcessInfo.processInfo.environment["NO_COLOR"] == nil
       && ProcessInfo.processInfo.environment["TERM"] != "dumb"
@@ -182,12 +183,14 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       for conversation in conversations.values {
         conversation.transcript.configureThinking(ui.thinking)
         conversation.transcript.configureTools(ui.tools)
+        conversation.transcript.configureToolGroups(ui.toolGroups)
         let colors = ProcessInfo.processInfo.environment["NO_COLOR"] == nil
           && ProcessInfo.processInfo.environment["TERM"] != "dumb"
         conversation.transcript.configureColors(colors ? ui : nil)
       }
       transcript.configureThinking(ui.thinking)
       transcript.configureTools(ui.tools)
+      transcript.configureToolGroups(ui.toolGroups)
       let colors = ProcessInfo.processInfo.environment["NO_COLOR"] == nil
         && ProcessInfo.processInfo.environment["TERM"] != "dumb"
       transcript.configureColors(colors ? ui : nil)
@@ -359,6 +362,13 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     lock.withLock {
       guard active, ui.mode == .buffer else { return }
       refreshSize()
+      if case .press = event.action, event.row >= outputOrigin, event.row <= regionBottom,
+        transcript.toggleToolGroup(row: event.row - outputOrigin)
+      {
+        drawOutputRows()
+        placeCaret()
+        return
+      }
       guard viewHeight > 0 else { draggingViewSeparator = false; return }
       switch event.action {
       case .press:
@@ -663,15 +673,17 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   /// Replaces the status line above the input; an unchanged line is not redrawn.
   func setStatus(
-    _ text: String, animating: Bool = false, attention: Bool = false, question: String? = nil
+    _ text: String, animating: Bool = false, attention: Bool = false, question: String? = nil,
+    waiting: Bool? = nil
   ) {
-    setStatus(text, animating: animating, style: nil, attention: attention, question: question)
+    setStatus(
+      text, animating: animating, style: nil, attention: attention, question: question, waiting: waiting)
   }
 
   /// Replaces the status line and optionally switches the Braille animation style.
   func setStatus(
     _ text: String, animating: Bool, style: BrailleAnimator.Style?, attention: Bool = false,
-    question: String? = nil
+    question: String? = nil, waiting: Bool? = nil
   ) {
     lock.withLock {
       refreshSize()
@@ -691,8 +703,13 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       let animationChanged = animatingStatus != animating
       animatingStatus = animating
       activityRestarted = animationChanged && animating
+      let isWaiting = waiting ?? animating
+      let waitingChanged = isWaiting != (activityStartedAt != nil)
+      if waitingChanged {
+        activityStartedAt = isWaiting ? DispatchTime.now().uptimeNanoseconds : nil
+        displayedActivitySecond = 0
+      }
       if animationChanged {
-        activityStartedAt = animating ? DispatchTime.now().uptimeNanoseconds : nil
         activityFrame = 0
         displayedActivitySecond = 0
         if animating {
@@ -706,7 +723,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         activityRestarted = true
       }
       updateActivityTimer()
-      guard text != statusText || animationChanged || activityRestarted || attentionChanged || questionChanged
+      guard text != statusText || animationChanged || waitingChanged || activityRestarted || attentionChanged || questionChanged
       else { return }
       statusText = text
       activityRestarted = false
@@ -1084,17 +1101,21 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private func drawStatusLine(clear: Bool = true) {
     let width = max(1, columns - 1)
     let status: String
-    if animatingStatus, let activityStartedAt {
+    let timer: String
+    if let activityStartedAt {
       let elapsed = (DispatchTime.now().uptimeNanoseconds - activityStartedAt) / 1_000_000_000
-      let frame = animator.next()
-      status = "\(frame) \(elapsed / 60)m\(elapsed % 60)s" + String(statusText.dropFirst())
+      status = animatingStatus ? animator.next() + String(statusText.dropFirst()) : statusText
+      timer = " \(elapsed / 60)m\(elapsed % 60)s "
       displayedActivitySecond = elapsed
     } else {
       status = statusText
+      timer = ""
     }
     let scrollHint = ui.mode == .buffer && !transcript.isFollowing ? "↑ scroll · PgDn to latest · " : ""
-    let content = Self.truncated(" \(scrollHint)\(status) ", width: width)
-    let padding = String(repeating: " ", count: max(0, width - Self.displayWidth(content)))
+    let right = Self.truncated(timer, width: width)
+    let left = Self.truncated(" \(scrollHint)\(status) ", width: max(0, width - Self.displayWidth(right)))
+    let content = left + String(repeating: " ", count: max(0,
+      width - Self.displayWidth(left) - Self.displayWidth(right))) + right
     let colors = ProcessInfo.processInfo.environment["NO_COLOR"] == nil
     var out = ""
     out += move(row: regionBottom + panelRows.count + 1, column: 1)
@@ -1104,9 +1125,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     } else if statusNeedsAttention {
       let warning = colors ? TerminalLineEditor.foregroundColorCode(ui.warningForeground) : nil
       let codes = ["1", "7"] + [warning].compactMap { $0 }
-      out += "\u{1B}[" + codes.joined(separator: ";") + "m" + content + padding + Self.reset
+      out += "\u{1B}[" + codes.joined(separator: ";") + "m" + content + Self.reset
     } else if let background = TerminalLineEditor.backgroundColorCode(ui.backgroundLine) {
-      out += "\u{1B}[\(background)m" + content + padding + Self.reset
+      out += "\u{1B}[\(background)m" + content + Self.reset
     } else {
       out += "\u{1B}[2m" + content + Self.reset
     }
@@ -1166,7 +1187,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   private func updateActivityTimer() {
-    guard active, animatingStatus else {
+    guard active, activityStartedAt != nil else {
       activitySource?.cancel()
       activitySource = nil
       return
@@ -1184,21 +1205,27 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     lock.withLock {
       refreshSize()
       // The completion menu owns the row; its first cell must not blink.
-      guard active, animatingStatus, let activityStartedAt, completionMenu == nil,
+      guard active, let activityStartedAt, completionMenu == nil,
         columns > 2
       else { return }
       activityFrame = (activityFrame + 1) % 10
       let elapsed = (DispatchTime.now().uptimeNanoseconds - activityStartedAt) / 1_000_000_000
       if elapsed != displayedActivitySecond {
+        if ui.mode == .buffer, ui.toolGroups, transcript.hasRunningTools {
+          transcript.refreshToolGroupTimes()
+          drawOutputRows()
+        }
         drawStatusLine(clear: false)
         placeCaret()
         return
       }
+      guard animatingStatus else { return }
       let marker = animator.next()
       let style = TerminalLineEditor.backgroundColorCode(ui.backgroundLine) ?? "2"
       let scrollHintWidth = ui.mode == .buffer && !transcript.isFollowing
         ? Self.displayWidth("↑ scroll · PgDn to latest · ") : 0
-      guard 2 + scrollHintWidth < columns else { return }
+      let timerWidth = Self.displayWidth(" \(elapsed / 60)m\(elapsed % 60)s ")
+      guard 2 + scrollHintWidth < columns - timerWidth else { return }
       writeFixedRows(
         move(row: regionBottom + panelRows.count + 1, column: 2 + scrollHintWidth)
           + "\u{1B}[\(style)m" + marker + Self.reset)

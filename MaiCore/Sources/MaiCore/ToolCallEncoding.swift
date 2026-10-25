@@ -2,14 +2,18 @@ import Foundation
 
 /// Encodes tool calls and results for textual and provider-native protocols.
 extension AgentTooling {
-  public static func makeRunBlock(toolName: String, argumentsJSON: String, result: String) -> String
+  public static func makeRunBlock(
+    toolName: String, argumentsJSON: String, result: String, timing: ToolRunTiming? = nil
+  ) -> String
   {
     let body = result.trimmingCharacters(in: .whitespacesAndNewlines)
-    return "<tool_run>\n\(toolName) tool (\(argumentsJSON)):\n\(body)\n</tool_run>"
+    return "<tool_run\(timing?.attributes ?? "")>\n\(toolName) tool (\(argumentsJSON)):\n\(body)\n</tool_run>"
   }
 
-  public static func makeRunBlock(call: ParsedToolCall, result: String) -> String {
-    makeRunBlock(toolName: call.name, argumentsJSON: call.argsJSON, result: result)
+  public static func makeRunBlock(
+    call: ParsedToolCall, result: String, timing: ToolRunTiming? = nil
+  ) -> String {
+    makeRunBlock(toolName: call.name, argumentsJSON: call.argsJSON, result: result, timing: timing)
   }
 
   public static func editableToolCallText(for call: ParsedToolCall, mode: ToolCallingMode) -> String

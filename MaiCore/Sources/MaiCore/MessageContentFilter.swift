@@ -10,6 +10,7 @@ public struct HiddenMessageSection: Identifiable, Sendable {
   public let id: Int
   public let tag: String
   public let content: String
+  public let toolTiming: ToolRunTiming?
 }
 
 public struct RenderedMessagePart: Identifiable, Sendable {
@@ -129,7 +130,8 @@ public enum MessageContentFilter {
     while let block = nextHiddenBlock(in: text, from: cursor, hiding: hiddenTagSet) {
       cursor = block.range.upperBound
       guard block.tag == normalizedTag,
-        block.content.map({ String(text[$0]) }) == content
+        block.content.map({ String(text[$0]).trimmingCharacters(in: .whitespacesAndNewlines) })
+          == content.trimmingCharacters(in: .whitespacesAndNewlines)
       else { continue }
       if remaining > 0 {
         remaining -= 1
@@ -212,6 +214,8 @@ public enum MessageContentFilter {
         let section = appendHiddenSection(
           tag: block.tag,
           content: String(text[content]),
+          toolTiming: block.tag == "tool_run"
+            ? ToolRunTiming(openingTag: text[block.range.lowerBound..<content.lowerBound]) : nil,
           hiddenSections: &hiddenSections)
       {
         appendHiddenPart(section, parts: &parts)
@@ -564,11 +568,13 @@ public enum MessageContentFilter {
   private static func appendHiddenSection(
     tag: String,
     content: String,
+    toolTiming: ToolRunTiming?,
     hiddenSections: inout [HiddenMessageSection]
   ) -> HiddenMessageSection? {
     let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
-    let section = HiddenMessageSection(id: hiddenSections.count, tag: tag, content: trimmed)
+    let section = HiddenMessageSection(
+      id: hiddenSections.count, tag: tag, content: trimmed, toolTiming: toolTiming)
     hiddenSections.append(section)
     return section
   }

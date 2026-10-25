@@ -151,6 +151,15 @@ In Vim, select lines and press `m` to choose a prompt, review the reply, and app
 it. Use `pmai --vim update` to refresh the integration or `pmai --vim uninstall`
 to remove it. In the REPL, try `/projects` and `/help`.
 
+Consecutive tool calls in iOS start collapsed into one tappable row with the call
+count and elapsed wall time. Expand the row to access the usual individual calls.
+Old chats without recorded timings show “time unavailable”.
+
+In the CLI, `/set ui.toolgroups on` enables the same clickable summaries and
+switches to buffer mode. `/set ui.toolgroups off` restores individual rows;
+`/set ui.tools` still controls their result previews. The status bar shows the
+current prompt's elapsed time at the right, including time spent awaiting approval.
+
 ## Bring your workstation to your phone
 
 In the host's pmai REPL, share a project on your local network:
