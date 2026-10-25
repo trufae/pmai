@@ -1,4 +1,5 @@
 """Small helpers for isolated CLI sessions and loopback HTTP fixtures."""
+import base64
 import json
 import os
 import select
@@ -6,6 +7,37 @@ import subprocess
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler
+
+
+def read_chat(path):
+    """Read saved fixtures in legacy JSON or version 1 chunked storage."""
+    saved = json.loads(path.read_text())
+    if saved.get('format') != 'pmai-chunks':
+        return saved
+    assert saved['version'] == 1, saved['version']
+    directory = path.parent / saved['partsDirectory']
+
+    def expand(value):
+        if isinstance(value, list):
+            return [expand(item) for item in value]
+        if isinstance(value, dict):
+            if '_pmaiBlob' in value:
+                return (directory / value['_pmaiBlob']).read_text()
+            value = value.get('_pmaiObject', value)
+            return {key: expand(item) for key, item in value.items()}
+        return value
+
+    def transcript(manifest):
+        chat = json.loads(base64.b64decode(manifest['metadata']))
+        chat['messages'] = []
+        for chunk in manifest['chunks']:
+            messages = json.loads((directory / chunk['filename']).read_text())
+            assert len(messages) == chunk['count']
+            chat['messages'].extend(expand(messages))
+        chat['subagents'] = [transcript(child) for child in manifest['children']]
+        return chat
+
+    return transcript(saved)
 
 
 def clean_environment():

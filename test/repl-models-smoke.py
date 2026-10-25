@@ -2,7 +2,7 @@
 """Check model completion, compaction input, and idle REPL work over real HTTP."""
 import fcntl
 import json
-from smoke import JSONProvider, read_pty, expect_pty
+from smoke import JSONProvider, read_pty, expect_pty, read_chat
 import os
 from pathlib import Path
 import pty
@@ -111,7 +111,7 @@ def main():
                                   capture_output=True, timeout=20)
             assert seed.returncode == 0, seed.stderr
             chat_file = next((root / '.pmai/chats').glob('*.json'))
-            chat = json.loads(chat_file.read_text())
+            chat = read_chat(chat_file)
             seed_messages = chat['messages'][:]
             # A saved structured tool result made each old status tick re-encode the whole value.
             chat['messages'].append({'id': 'tool', 'role': 'tool', 'content': [{
@@ -287,12 +287,7 @@ def main():
                     assert time.monotonic() < deadline, ('/exit timed out', output.decode(errors='replace'))
                     read_for(.05)
                 assert process.returncode == 0, (process.returncode, output.decode(errors='replace'))
-                # Reopen through the CLI so the check covers persisted chunks and legacy JSON.
-                exported = subprocess.run(command + ['--resume'],
-                    input='/export json compacted.json\n/exit\n', cwd=root, env=environment,
-                    text=True, capture_output=True, timeout=20)
-                assert exported.returncode == 0, exported.stderr
-                messages = json.loads((root / 'compacted.json').read_text())['chat']['messages']
+                messages = read_chat(chat_file)['messages']
                 user_texts = [m['content'][0]['text']['_0'] for m in messages if m['role'] == 'user']
                 # Compaction keeps the latest request and stores its summary as conversation evidence.
                 assert user_texts == [

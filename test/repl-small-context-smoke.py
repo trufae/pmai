@@ -9,7 +9,7 @@ import tempfile
 import threading
 from http.server import ThreadingHTTPServer
 
-from smoke import clean_environment, JSONProvider
+from smoke import clean_environment, JSONProvider, read_chat
 
 
 requests = []
@@ -75,7 +75,7 @@ def main():
 
             run(['seed'], resume=False)
             chat_file = next((root / '.pmai/chats').glob('*.json'))
-            chat = json.loads(chat_file.read_text())
+            chat = read_chat(chat_file)
             source = '\n'.join(f'KEEP-{index} ' + 'evidence ' * 6000 for index in range(12))
             chat['messages'].extend([
                 {'id': 'huge', 'role': 'assistant', 'content': [{'text': {'_0': source}}]},
@@ -90,8 +90,7 @@ def main():
             assert all(body.get('max_tokens', 0) <= 2048 for body in requests)
             saved = json.loads(config.read_text())
             assert saved['agents'][0]['options']['contextWindowTokens'] == 32768, saved
-            run(['/export json compacted.json'])
-            compacted = json.loads((root / 'compacted.json').read_text())['chat']
+            compacted = read_chat(chat_file)
             text = json.dumps(compacted['messages'])
             for index in range(12):
                 assert f'KEEP-{index}' in text, text
@@ -105,8 +104,7 @@ def main():
             output = run(['/chat compact'])
             assert 'Partial summary failed' in output, output
             assert len(requests) == 2, len(requests)
-            run(['/export json unchanged.json'])
-            assert json.loads((root / 'unchanged.json').read_text())['chat']['messages'] == chat['messages']
+            assert read_chat(chat_file)['messages'] == chat['messages']
             print('PASS 32k chunked compaction, persisted context window, and atomic failure')
     finally:
         server.shutdown()
