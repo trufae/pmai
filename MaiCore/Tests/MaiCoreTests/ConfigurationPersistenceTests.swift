@@ -160,6 +160,22 @@ func terminalScrollSetting() throws {
     from: JSONEncoder().encode(configured)) == configured)
 }
 
+@Test("Terminal scrollbars default to one column and persist hidden and wider settings")
+func terminalScrollbarSetting() throws {
+  let decoder = JSONDecoder()
+  #expect(ConfiguredTerminalUI().scrollbar == 1)
+  for json in ["{}", #"{"scrollbar":"bad"}"#] {
+    #expect(try decoder.decode(ConfiguredTerminalUI.self, from: Data(json.utf8)).scrollbar == 1)
+  }
+  #expect(try decoder.decode(ConfiguredTerminalUI.self,
+    from: Data(#"{"scrollbar":-3}"#.utf8)).scrollbar == 0)
+  for width in [0, 1, 2, 5, Int.max] {
+    let configured = ConfiguredTerminalUI(scrollbar: width)
+    #expect(try decoder.decode(ConfiguredTerminalUI.self,
+      from: JSONEncoder().encode(configured)) == configured)
+  }
+}
+
 @Test("Compact prompt templates require the transcript placeholder")
 func compactPromptRequiresTranscript() {
   let configuration = MaiConfiguration(
