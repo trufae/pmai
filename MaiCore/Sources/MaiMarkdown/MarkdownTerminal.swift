@@ -6,6 +6,8 @@ public struct MarkdownTerminalTheme: Equatable, Sendable {
   public var colors: Bool
   /// Wrap links in OSC 8 hyperlink sequences.
   public var hyperlinks: Bool
+  /// Optional SGR color replacements supplied by the terminal's active palette.
+  public var colorOverrides: [String: String] = [:]
 
   public init(colors: Bool = true, hyperlinks: Bool = false) {
     self.colors = colors
@@ -27,7 +29,8 @@ public struct MarkdownTerminalTheme: Equatable, Sendable {
       if colors { parameters.append("96") }
     }
     if inline.contains(.code), colors { parameters.append("32") }
-    return parameters.joined(separator: ";")
+    return parameters.map { colorOverrides[$0] ?? $0 }
+      .filter { !$0.isEmpty }.joined(separator: ";")
   }
 
   private func colorParameters(for role: MarkdownTextRole) -> [String] {

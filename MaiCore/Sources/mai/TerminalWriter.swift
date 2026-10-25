@@ -124,6 +124,15 @@ actor TerminalWriter {
   /// Installs the renderer for replies. Captured output stays verbatim because
   /// it is shown by surfaces that do not interpret escape sequences.
   func configureMarkdown(_ renderer: MarkdownTerminalRenderer?) {
+    var renderer = renderer
+    renderer?.theme.colorOverrides = Dictionary(
+      uniqueKeysWithValues: [
+        ("90", ui.thinkingForeground), ("32", ui.toolCallForeground),
+        ("92", ui.toolCallForeground), ("93", ui.warningForeground),
+        ("94", ui.infoForeground), ("95", ui.promptForeground),
+        ("96", ui.diffHeaderForeground), ("34", ui.infoForeground),
+        ("36", ui.infoForeground),
+      ].map { ($0.0, TerminalLineEditor.foregroundColorCode($0.1) ?? "") })
     markdown = capturesOutput ? nil : renderer
     screen?.configureMarkdown(markdown)
   }
@@ -134,7 +143,9 @@ actor TerminalWriter {
   }
 
   func configureColors(_ ui: ConfiguredTerminalUI) {
+    guard self.ui != ui else { return }
     self.ui = ui
+    configureMarkdown(markdown)
   }
 
   func configureSubagentOutput(_ level: SubagentOutputLevel) {
@@ -227,6 +238,7 @@ actor TerminalWriter {
     }
     self.screen = screen
     self.ui = ui
+    self.markdown?.theme.colorOverrides = markdown?.theme.colorOverrides ?? [:]
     self.redactor = redactor
     tools = ui.tools
     thinkingDisplay = ui.thinking
@@ -663,19 +675,14 @@ actor TerminalWriter {
 
   private func childPrefix(_ pid: AgentPID) -> String {
     let label = "agent#\(pid.rawValue) "
-    guard colorsStatus, let code = TerminalLineEditor.foregroundColorCode(Self.childColor(pid))
-    else { return label }
-    return "\u{1B}[\(code)m\(label)\u{1B}[0m"
+    guard colorsStatus else { return label }
+    return styled(label, foreground: Self.childColors[abs(pid.rawValue) % Self.childColors.count])
   }
 
-  private static let childColors = [
-    "cyan", "magenta", "blue", "green", "bright-cyan", "bright-magenta", "bright-blue",
-    "bright-green",
+  private static let childColors: [TerminalThemeStyle] = [
+    .promptForeground, .infoForeground, .toolCallForeground, .successForeground,
+    .diffHeaderForeground, .toolResultForeground, .warningForeground, .thinkingForeground,
   ]
-
-  private static func childColor(_ pid: AgentPID) -> String {
-    childColors[abs(pid.rawValue) % childColors.count]
-  }
 
   // MARK: - Writing
 

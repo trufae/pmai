@@ -25,8 +25,15 @@ class Provider(BaseHTTPRequestHandler):
         request = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         last_user = max(i for i, m in enumerate(request['messages']) if m['role'] == 'user')
         results = request['messages'][last_user + 1:]
-        if any(m['role'] == 'tool' for m in results):
-            message = {'role': 'assistant', 'content': 'colors smoke done'}
+        if request['messages'][last_user]['content'] == 'spawn colors' and not results:
+            message = {'role': 'assistant', 'content': None, 'tool_calls': [{
+                'id': 'spawn', 'type': 'function', 'function': {'name': 'agent_start',
+                'arguments': json.dumps({'task': 'show colors', 'output': 'One line.',
+                                         'wait': True})}}]}
+        elif any(m['role'] == 'tool' for m in results):
+            message = {'role': 'assistant', 'content':
+                       '# colors smoke done\n\nUse **bold**, `code`, and a [link](https://example.com).\n'
+                       '> quote\n\n- item\n\n```text\ncode\n```'}
         else:
             message = {'role': 'assistant', 'content': None, 'tool_calls': [
                 {'id': f'read-{i}', 'type': 'function',
@@ -61,7 +68,7 @@ def main():
                 'toolSources': [{'id': 'standard', 'kind': 'standard-tools',
                                  'options': {'tools': ['files_read']}}],
                 'agents': [{'id': 'smoke', 'provider': 'smoke', 'model': 'smoke',
-                            'toolNames': ['files_read'], 'toolGroupNames': ['skills'],
+                            'toolNames': ['files_read'], 'toolGroupNames': ['skills', 'agents'],
                             'toolPolicy': {'tools': {'skills_alpha': 'direct',
                                                      'skills_beta': 'disabled',
                                                      'skills_gamma': 'proxy'}},
@@ -169,6 +176,21 @@ def main():
             assert '\x1b[36merror:' in output, output
             assert '\x1b[38;2;255;119;119merror:' in output, output
             assert "pmai> error: Unknown theme 'missing'." in output, output
+            for name in ('ansi', 'mono'):
+                output = run('/set ui.tools all', '/set ui.markdown on',
+                             '/theme use sky', f'/theme use {name}',
+                             '/theme use missing', 'spawn colors', extra_env={'PMAI_THEME': name})
+                output = output.split(f"Applied theme '{name}'.", 1)[1]
+                allowed = {0, 1, 3, 4, 9, 22, 23, 24, 39, 49}
+                allowed.update((30, 37, 40, 47) if name == 'mono' else
+                               (*range(30, 38), *range(40, 48)))
+                codes = re.findall(r'\x1b\[([\d;]*)m', output)
+                assert codes, output
+                assert all(int(code or 0) in allowed
+                           for group in codes for code in group.split(';')), output
+                assert 'colors smoke done' in output and '+new' in output, output
+                assert 'agent#' in output, output
+                assert f'\x1b[{37 if name == "mono" else 36};1mcolors smoke done' in output, output
             for options in ({'terminal': False}, {'extra_env': {'NO_COLOR': '1'}},
                             {'extra_env': {'TERM': 'dumb'}}):
                 output = run('/theme use missing', 'show colors', **options)
