@@ -22,7 +22,7 @@ public enum ChatSession {
 /// A durable chat transcript associated with one primary agent definition.
 /// Hosts can snapshot the inference setup so changes to installation defaults
 /// do not change the models or endpoints of a resumed chat.
-public struct AgentChat: StoredChat, Equatable {
+public struct AgentChat: PagedStoredChat, Equatable {
   /// Title given to a chat that has not received its first message yet. A chat
   /// keeping this title with no conversation is disposable, like the placeholder
   /// PocketMai creates on launch.
@@ -33,7 +33,15 @@ public struct AgentChat: StoredChat, Equatable {
   public var id: UUID
   public var title: String
   public var primaryAgent: AgentDefinition
-  public var messages: [AgentMessage]
+  public var messages: [AgentMessage] {
+    didSet {
+      if !isKnownUniquelyReferenced(&historyChanges) { historyChanges = historyChanges.copy() }
+      let common = zip(oldValue, messages).prefix { $0 == $1 }.count
+      historyChanges.changed(from: common)
+    }
+  }
+  public var historyChanges = ChatHistoryChanges()
+  public var historyWindow: ChatHistoryWindow? = nil
   public var pendingContent: [ContentPart]
   public var accessedFiles: [String]
   public var createdAt: Date
@@ -63,12 +71,14 @@ public struct AgentChat: StoredChat, Equatable {
     sessionID: String? = nil,
     subagents: [AgentProcessRecord] = [],
     commands: [AgentCommandRecord] = [],
-    runtimeConfiguration: AgentChatConfiguration? = nil
+    runtimeConfiguration: AgentChatConfiguration? = nil,
+    historyWindow: ChatHistoryWindow? = nil
   ) {
     self.id = id
     self.title = title
     self.primaryAgent = primaryAgent
     self.messages = messages ?? Self.initialHistory(for: primaryAgent)
+    self.historyWindow = historyWindow
     self.pendingContent = pendingContent
     self.accessedFiles = accessedFiles
     self.createdAt = createdAt
@@ -119,6 +129,45 @@ public struct AgentChat: StoredChat, Equatable {
       AgentChatConfiguration.self, forKey: .runtimeConfiguration)
   }
 
+  public func encode(to encoder: Encoder) throws {
+    guard historyWindow == nil else { throw ChatHistoryError.partialExport }
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(id, forKey: .id)
+    try container.encode(title, forKey: .title)
+    try container.encode(primaryAgent, forKey: .primaryAgent)
+    try container.encode(messages, forKey: .messages)
+    try container.encode(pendingContent, forKey: .pendingContent)
+    try container.encode(createdAt, forKey: .createdAt)
+    try container.encode(updatedAt, forKey: .updatedAt)
+    try container.encode(isArchived, forKey: .isArchived)
+    try container.encode(sessionID, forKey: .sessionID)
+    try container.encode(subagents, forKey: .subagents)
+    try container.encode(commands, forKey: .commands)
+    try container.encode(accessedFiles, forKey: .accessedFiles)
+    try container.encodeIfPresent(runtimeConfiguration, forKey: .runtimeConfiguration)
+  }
+
+  public var historyMessageCount: Int { messages.count }
+
+  public func historyMetadata(coding: MaiJSONCoding) throws -> Data {
+    var header = self
+    header.messages = []
+    header.subagents = []
+    header.historyWindow = nil
+    var object =
+      try JSONSerialization.jsonObject(with: coding.makeEncoder().encode(header)) as! [String: Any]
+    object["_pmaiMessageCount"] = messages.filter { $0.role != .system }.count
+    return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+  }
+
+  public func visitHistory(coding: MaiJSONCoding, startingAt: Int, _ visit: (Data) throws -> Void)
+    throws
+  {
+    for message in messages.dropFirst(startingAt) {
+      try visit(coding.makeEncoder().encode(message))
+    }
+  }
+
   /// The title shown to people; empty titles fall back to the placeholder.
   public var displayTitle: String {
     let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -136,7 +185,8 @@ public struct AgentChat: StoredChat, Equatable {
   }
 
   public var hasConversation: Bool {
-    messages.contains { $0.role != .system }
+    historyWindow.map { ($0.conversationCount ?? $0.totalCount) > 0 }
+      ?? messages.contains { $0.role != .system }
   }
 
   /// An untouched placeholder: nothing was said, and nobody renamed or

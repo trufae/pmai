@@ -406,6 +406,7 @@ public struct AgentProcessRecord: Codable, Equatable, Sendable, Identifiable {
   public var toolCalls: Int
   public var usage: TokenUsage?
   public var failure: String?
+  public var historyReference: StoredAgentTranscript? = nil
   public var messages: [AgentMessage]
 
   public var id: UUID { conversationID ?? runID }
@@ -461,6 +462,29 @@ public struct AgentProcessRecord: Codable, Equatable, Sendable, Identifiable {
     usage = try container.decodeIfPresent(TokenUsage.self, forKey: .usage)
     failure = try container.decodeIfPresent(String.self, forKey: .failure)
     messages = try container.decodeIfPresent([AgentMessage].self, forKey: .messages) ?? []
+  }
+
+  public func encode(to encoder: any Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encodeIfPresent(conversationRequest, forKey: .conversationRequest)
+    try container.encodeIfPresent(conversationID, forKey: .conversationID)
+    try container.encode(runID, forKey: .runID)
+    try container.encodeIfPresent(parentRunID, forKey: .parentRunID)
+    try container.encode(pid, forKey: .pid)
+    try container.encodeIfPresent(parent, forKey: .parent)
+    try container.encode(agentID, forKey: .agentID)
+    try container.encode(displayName, forKey: .displayName)
+    try container.encode(task, forKey: .task)
+    try container.encode(state, forKey: .state)
+    try container.encode(depth, forKey: .depth)
+    try container.encode(startedAt, forKey: .startedAt)
+    try container.encode(updatedAt, forKey: .updatedAt)
+    try container.encodeIfPresent(finishedAt, forKey: .finishedAt)
+    try container.encode(modelTurns, forKey: .modelTurns)
+    try container.encode(toolCalls, forKey: .toolCalls)
+    try container.encodeIfPresent(usage, forKey: .usage)
+    try container.encodeIfPresent(failure, forKey: .failure)
+    try container.encode(historyReference?.loadMessages() ?? messages, forKey: .messages)
   }
 
   /// `saved` brought up to date with `current`, the records of the processes

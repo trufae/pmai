@@ -38,6 +38,7 @@ public actor AgentSupervisor {
   private struct Entry {
     var info: AgentProcessInfo
     var handle: Task<AgentResult, Error>?
+    var historyReference: StoredAgentTranscript?
     var transcript: [AgentMessage] = []
     var result: AgentResult?
     /// Ephemeral task boundary: queued steering remains in this active run.
@@ -88,11 +89,38 @@ public actor AgentSupervisor {
   /// The child's own conversation, for `/jobs log`. Empty until it produces
   /// one; a finished process keeps the transcript it ended with.
   public func transcript(_ pid: AgentPID) -> [AgentMessage] {
-    entries[pid]?.transcript ?? []
+    (try? loadTranscript(pid)) ?? []
+  }
+
+  public func loadTranscript(_ pid: AgentPID) throws -> [AgentMessage] {
+    if let reference = entries[pid]?.historyReference { return try reference.loadMessages() }
+    return entries[pid]?.transcript ?? []
   }
 
   func activeTaskStartID(_ pid: AgentPID) -> String? {
     entries[pid]?.activeTaskStartID
+  }
+
+  public func transcriptPage(_ pid: AgentPID, before: Int? = nil) throws -> AgentTranscriptPage {
+    if let reference = entries[pid]?.historyReference {
+      return try reference.loadPage(before: before)
+    }
+    return AgentTranscriptPage(messages: entries[pid]?.transcript ?? [])
+  }
+
+  public func releaseFinishedTranscripts(_ saved: [AgentProcessRecord]) {
+    for record in saved {
+      guard let reference = record.historyReference,
+        let pid = entries.first(where: { $0.value.info.runID == record.runID })?.key,
+        var entry = entries[pid], entry.info.state.isTerminal, entry.info.isCollected,
+        entry.info.updatedAt == record.updatedAt
+      else { continue }
+      entry.historyReference = reference
+      entry.transcript = []
+      entry.result?.transcript = []
+      entry.handle = nil
+      entries[pid] = entry
+    }
   }
 
   /// Reopening a limit-interrupted process without a new user message resumes
@@ -112,7 +140,12 @@ public actor AgentSupervisor {
   }
 
   public func result(_ pid: AgentPID) -> AgentResult? {
-    entries[pid]?.result
+    guard var result = entries[pid]?.result else { return nil }
+    if entries[pid]?.historyReference != nil {
+      guard let messages = try? loadTranscript(pid) else { return nil }
+      result.transcript = messages
+    }
+    return result
   }
 
   /// A stream of table changes. Each subscriber gets its own buffered stream;
@@ -225,10 +258,12 @@ public actor AgentSupervisor {
     let snapshot = tree()
     return snapshot.subtree(of: pid).dropFirst().map { process in
       let parentRunID = process.parent.flatMap { $0 == pid ? nil : snapshot.info($0)?.runID }
-      return AgentProcessRecord(
+      var record = AgentProcessRecord(
         process: process,
         messages: entries[process.pid]?.transcript ?? [],
         parentRunID: parentRunID)
+      record.historyReference = entries[process.pid]?.historyReference
+      return record
     }
   }
 
@@ -286,7 +321,8 @@ public actor AgentSupervisor {
         usage: record.usage,
         failure: ended ? record.failure : Self.restoredWhileRunning,
         isCollected: true)
-      entries[pid] = Entry(info: info, transcript: record.messages)
+      entries[pid] = Entry(
+        info: info, historyReference: record.historyReference, transcript: record.messages)
       pidsByRunID[record.runID] = pid
       publish(.started(info))
     }
@@ -525,7 +561,7 @@ public actor AgentSupervisor {
     if let toolCalls { entry.info.toolCalls = toolCalls }
     if let usage { entry.info.usage = usage }
     if let activity { entry.info.activity = activity }
-    if let transcript { entry.transcript = transcript }
+    if let transcript { entry.transcript = transcript; entry.historyReference = nil }
     if let contextSize {
       entry.info.contextSize = contextSize
     } else if let transcript {
