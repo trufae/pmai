@@ -69,8 +69,9 @@ extension MaiCLI {
     Drag the separator with the left mouse button to resize the panes. Both
     panes keep at least one row; the chosen height is kept when sources change.
     Tab with an empty prompt switches focus between the prompt and the view.
-    In the view, j/k or Down/Up scroll one row; Page Up/Down and the mouse wheel
-    scroll the focused pane. Tab returns to typing; completion works as usual
+    In the view, j/k or Down/Up scroll one row; J/K page down/up like Page Down/Up.
+    v/V move the divider down/up one row; q closes the view, like /view off.
+    The mouse wheel scrolls the focused pane. Tab returns to typing; completion works as usual
     when the prompt contains text. Agent message destinations stay the same.
     Thinking/tools/diffs follow the selected agent; an explicit agent stays fixed.
     On very short terminals the view is hidden until there is room for both panes.

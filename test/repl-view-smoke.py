@@ -176,8 +176,15 @@ def main(binary):
                 send('\x1b[5~')
                 read_for()
                 assert top() != latest and bottom() == original_bottom, screen
+                previous_page = top()
                 send('\x1b[6~')
                 wait_for('LIVE_THOUGHT')
+                send('K')
+                read_for()
+                assert top() == previous_page and bottom() == original_bottom, screen
+                send('J')
+                wait_for('LIVE_THOUGHT')
+                assert top() == latest and bottom() == original_bottom, screen
                 send('\x1b[<64;2;2M')
                 read_for()
                 assert top() != latest and bottom() == original_bottom, screen
@@ -218,6 +225,18 @@ def main(binary):
                 wait_for('view focused')
                 drag_separator(8)
                 assert separator() == 8 and 'view focused' in screen[separator()], screen
+                send('v')
+                read_for()
+                assert separator() == 9 and 'view focused' in screen[separator()], screen
+                send('V')
+                read_for()
+                assert separator() == 8, screen
+                send('v' * rows)
+                read_for()
+                assert separator() == rows - 3, screen
+                send('V' * rows)
+                read_for()
+                assert separator() == 2, screen
                 send('\t')
                 wait_for('Tab on empty prompt')
                 drag_separator(12)
@@ -282,6 +301,14 @@ def main(binary):
                 wait_for('── view: current conversation')
                 send('\t')
                 wait_for('view focused')
+                send('q')
+                read_for()
+                assert b'\x1b[?1002l' in captured and b'\x1b[?1002h' not in captured, captured
+                assert all('── view:' not in screen.get(row, '') for row in range(1, rows)), screen
+                send('/view current\r')  # q returns focus to the prompt without submitting anything.
+                wait_for('── view: current conversation')
+                send('\t')
+                wait_for('view focused')
                 resize(3, 60)  # No room for the split: focus must return to the prompt.
                 resize(30, 100)
                 assert 'view focused' not in screen[separator()], screen
@@ -317,7 +344,8 @@ def main(binary):
                                  ['/view thinking', '/help view'], cwd=root, env=env, allow_errors=True)
                 assert 'error: /view requires ui.mode=buffer.' in output and '/view off' in output
                 print('PASS view: mode guard, sources, read-only focus, independent scrolling, live thinking/tools/diffs, '
-                      'background agents, separator dragging, mouse cleanup, resize, saved reasoning/results, off and cleanup')
+                      'background agents, J/K paging, v/V resizing, q close, separator dragging, mouse cleanup, '
+                      'resize, saved reasoning/results, off and cleanup')
             finally:
                 chunks.put(None)
                 if process.poll() is None:
