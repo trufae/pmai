@@ -302,6 +302,12 @@ enum TerminalCommand {
         lock.withLock {
           var raw = cooked
           cfmakeraw(&raw)
+          // poll readiness can be stale after fg consumes the shell's input.
+          // Never block in read while holding the relay lock.
+          withUnsafeMutableBytes(of: &raw.c_cc) {
+            $0[Int(VMIN)] = 0
+            $0[Int(VTIME)] = 0
+          }
           _ = tcsetattr(STDIN_FILENO, TCSANOW, &raw)
           forwardInput = true
         }
