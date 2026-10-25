@@ -344,6 +344,10 @@ elif action == 'fail':
             for mode in ('classic', 'buffer'):
                 send(f'/set ui.mode {mode}\r'.encode())
                 wait_for(f'Set ui.mode = {mode}')
+                if mode == 'buffer':
+                    send(b"!printf 'QUICK\\137TTY\\137OUTPUT\\n'\r")
+                    quick = wait_for('QUICK_TTY_OUTPUT') + wait_for(PROMPT)
+                    assert b'\x1b[?1049l' not in quick and b'\x1b[?1049h' not in quick, quick
                 send(b'!kill -STOP $$; echo SHELL_RESUMED\r')
                 wait_for('Stopped')
                 wait_for('SHELL_READY> ')
@@ -366,11 +370,32 @@ elif action == 'fail':
                     assert time.monotonic() < deadline
                     if select.select([master], [], [], .1)[0]:
                         output.extend(os.read(master, 65536))
-                send(b'iSHELL_VIM_EDIT\x1b:wq\r')
+                send(b'iSHELL_VIM_EDIT\x1b')
+                for _ in range(2):
+                    send(b'\x1a')
+                    wait_for('Stopped')
+                    wait_for('SHELL_READY> ')
+                    assert termios.tcgetattr(master) == cooked
+                    send(b'fg\n')
+                    wait_for(command)
+                    wait_for_foreground()
+                    time.sleep(.1)
+                send(b':wq\r')
                 wait_for('\x1b[?1049h')
                 wait_for(PROMPT)
                 assert (root / 'shell-notes.txt').read_text() == 'SHELL_VIM_EDIT\n'
                 print('PASS: buffer shell handoff preserves real Vim editing')
+            if shutil.which('less'):
+                # less reads commands from /dev/tty, even with a pipe on stdin.
+                # q must work as a single key, without waiting for a newline.
+                (root / 'pager.txt').write_text(''.join(f'PAGER_ROW_{i}\n' for i in range(200)))
+                send(b'!cat pager.txt | less\r')
+                wait_for('PAGER_ROW_0')
+                send(b'q')
+                wait_for(PROMPT)
+                send(b'/provider\r')
+                wait_for('Current provider: other')
+                print('PASS: buffer shell pipeline gives less a controlling tty and returns stdin to the REPL')
             send(b'/set ui.mode classic\r')
             wait_for('Set ui.mode = classic')
             send(b'/set ui.editor command-that-does-not-exist-pmai\r')

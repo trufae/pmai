@@ -8,6 +8,7 @@ let testProfile = Context.environment["PMAI_TEST_PROFILE"]
 let focusedTests = testProfile == "core" || testProfile == "chat"
 let cliDependencies: [Target.Dependency] = [
   "MaiCore", "MaiMCP", "MaiOpenAI", "MaiPluginHost", "MaiStandardTools", "MaiVisionOCR",
+  "CMaiTerminal",
   "MaiDocuments", "MaiMarkdown", "MaiACP", "MaiACPGateway", "MaiLocalProviders",
   .product(name: "Crypto", package: "swift-crypto"),
 ]
@@ -87,6 +88,7 @@ let package = Package(
   ],
   dependencies: packageDependencies,
   targets: [
+    .target(name: "CMaiTerminal"),
     .target(name: "MaiCore"),
     .target(name: "MaiMarkdown"),
     .target(name: "MaiOpenAI", dependencies: [

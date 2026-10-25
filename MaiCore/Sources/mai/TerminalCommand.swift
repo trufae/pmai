@@ -1,3 +1,4 @@
+import CMaiTerminal
 import Foundation
 
 #if canImport(Android)
@@ -10,9 +11,9 @@ import Foundation
   import Darwin
 #endif
 
-/// Runs a user command in pmai's foreground job, with the terminal restored.
-/// Unlike system(), this observes stopped children and does not pass a Swift
-/// worker thread's blocked signals on to an interactive editor.
+/// Runs a user command with the terminal restored. Captured commands get
+/// their own controlling PTY; direct handoffs share pmai's foreground job.
+/// Both observe stops and clear the worker thread's blocked signals.
 enum TerminalCommand {
   static func run(
     _ command: String, suspendTerminal: Bool = true, retainOutput: Bool = false
@@ -32,7 +33,7 @@ enum TerminalCommand {
           if capturesOutput {
             let capture = try OutputCapture()
             defer { output = capture.finish() }
-            return try Self.launch(command, outputDescriptor: capture.slave)
+            return try Self.launch(command, capture: capture)
           }
         #endif
         return try Self.launch(command)
@@ -64,7 +65,7 @@ enum TerminalCommand {
         result = Result {
           let capture = try OutputCapture(forwardOutput: false)
           defer { output = capture.finish() }
-          return try launch(command, outputDescriptor: capture.slave) { child in
+          return try launch(command, capture: capture) { child in
             let deadline = ProcessInfo.processInfo.systemUptime + 0.15
             repeat {
               var status: Int32 = 0
@@ -85,7 +86,7 @@ enum TerminalCommand {
   #endif
 
   private static func launch(
-    _ command: String, outputDescriptor: Int32? = nil,
+    _ command: String, capture: OutputCapture? = nil,
     beforeWait: (Int32) throws -> Int32? = { _ in nil }
   ) throws -> Int32 {
     #if os(Windows)
@@ -109,7 +110,26 @@ enum TerminalCommand {
       var cooked = termios()
       let hasTerminal = tcgetattr(STDIN_FILENO, &cooked) == 0
       defer {
-        if hasTerminal { _ = tcsetattr(STDIN_FILENO, TCSADRAIN, &cooked) }
+        if hasTerminal, capture == nil { _ = tcsetattr(STDIN_FILENO, TCSADRAIN, &cooked) }
+      }
+      #if canImport(Android)
+        let shell = "/system/bin/sh"
+      #else
+        let shell = "/bin/sh"
+      #endif
+      let arguments = [shell, "-c", command].map { $0.withCString { strdup($0) } } + [nil]
+      let environment =
+        ProcessInfo.processInfo.environment.map { strdup("\($0.key)=\($0.value)") }
+        + [nil]
+      defer {
+        for pointer in arguments + environment { free(pointer) }
+      }
+      if let capture {
+        let child = mai_terminal_spawn(capture.master, capture.slave, shell, command, environment)
+        guard child != -1 else { throw posixError(errno) }
+        capture.resumeInput()
+        defer { capture.pauseInput() }
+        return try wait(child, beforeWait: beforeWait, capture: capture, cooked: &cooked)
       }
       #if canImport(Android)
         // Bionic's initializer writes an optional handle; its other APIs
@@ -140,47 +160,23 @@ enum TerminalCommand {
         posix_spawnattr_setflags(
           &attributes, Int16(POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF)))
 
-      #if canImport(Android)
-        let shell = "/system/bin/sh"
-      #else
-        let shell = "/bin/sh"
-      #endif
-      let arguments = [shell, "-c", command].map { strdup($0) } + [nil]
-      let environment =
-        ProcessInfo.processInfo.environment.map { strdup("\($0.key)=\($0.value)") }
-        + [nil]
-      defer {
-        for pointer in arguments + environment { free(pointer) }
-      }
       var child: pid_t = 0
-      #if canImport(Android)
-        // Unlike spawn attributes, Bionic declares the initializer's output
-        // handle non-optional. Let it initialize storage before reading it.
-        var actions = try withUnsafeTemporaryAllocation(of: posix_spawn_file_actions_t.self, capacity: 1) {
-          try check(posix_spawn_file_actions_init($0.baseAddress!))
-          return $0[0]
-        }
-      #else
-        #if canImport(Darwin)
-          var actions: posix_spawn_file_actions_t?
-        #else
-          var actions = posix_spawn_file_actions_t()
-        #endif
-        try check(posix_spawn_file_actions_init(&actions))
-      #endif
-      defer { posix_spawn_file_actions_destroy(&actions) }
-      if let outputDescriptor {
-        try check(posix_spawn_file_actions_adddup2(&actions, outputDescriptor, STDOUT_FILENO))
-        try check(posix_spawn_file_actions_adddup2(&actions, outputDescriptor, STDERR_FILENO))
-      }
       #if canImport(Android)
         // posix_spawn accepts the nullable handle, unlike the setters above.
         initialized = attributes
-        var initializedActions: posix_spawn_file_actions_t? = actions
-        try check(posix_spawn(&child, shell, &initializedActions, &initialized, arguments, environment))
+        try check(posix_spawn(&child, shell, nil, &initialized, arguments, environment))
       #else
-        try check(posix_spawn(&child, shell, &actions, &attributes, arguments, environment))
+        try check(posix_spawn(&child, shell, nil, &attributes, arguments, environment))
       #endif
+      return try wait(child, beforeWait: beforeWait, cooked: &cooked)
+    #endif
+  }
+
+  #if !os(Windows)
+    private static func wait(
+      _ child: Int32, beforeWait: (Int32) throws -> Int32?,
+      capture: OutputCapture? = nil, cooked: inout termios
+    ) throws -> Int32 {
       if let status = try beforeWait(child) { return status }
       var status: Int32 = 0
       while true {
@@ -192,26 +188,32 @@ enum TerminalCommand {
         // WIFSTOPPED is a C macro, unavailable to Swift. The low status byte
         // is 0x7f for stops; do not mistake that for a signal termination.
         guard status & 0xff == 0x7f else { return status }
-        // A shell can stay in wait() while its editor stops. Stop the entire
-        // job so the user's shell regains the tty; `fg` resumes all of it.
-        // SIGSTOP also works when libdispatch has SIGTSTP blocked.
-        // Let `fg` send SIGCONT to the whole job. On Linux another thread
-        // can receive our SIGSTOP first, so continuing the child here can
-        // resume it before pmai has finished stopping.
+        // Restore the real tty before stopping pmai's whole job. `fg`
+        // resumes direct children too; a captured session needs its own
+        // SIGCONT after pmai has resumed. SIGSTOP works on blocked workers.
+        capture?.pauseInput()
+        _ = tcsetattr(STDIN_FILENO, TCSADRAIN, &cooked)
         _ = kill(-getpgrp(), SIGSTOP)
+        if let capture {
+          capture.resumeInput()
+          _ = kill(-child, SIGCONT)
+        }
       }
-    #endif
-  }
+    }
+  #endif
 
-  #if !os(Windows)
-    /// Tee a handoff's output through a tty so colors, terminal queries and
-    /// interactive programs still work. Input and job control use the real tty.
-    private final class OutputCapture: @unchecked Sendable {
+  /// One controlling tty for the child's stdin, stdout, stderr and /dev/tty.
+  /// Relay bytes with the real tty in raw mode; the child's line discipline
+  /// handles echo, editing and signals, including Ctrl+C and Ctrl+Z.
+  private final class OutputCapture: @unchecked Sendable {
+    #if !os(Windows)
       let master: Int32
       let slave: Int32
       private let lock = NSLock()
       private var stopping = false
       private var forwardOutput: Bool
+      private var forwardInput = false
+      private var cooked: termios
       private let reader = DispatchGroup()
       // The reader and beginForwarding() access bytes under the lock;
       // finish() joins the reader before returning them.
@@ -226,14 +228,14 @@ enum TerminalCommand {
         guard tcgetattr(STDIN_FILENO, &attributes) == 0,
           ioctl(STDOUT_FILENO, UInt(TIOCGWINSZ), &size) == 0
         else { throw posixError(errno) }
-        // The real tty still performs output processing when we forward bytes.
-        attributes.c_oflag &= ~tcflag_t(OPOST)
+        cooked = attributes
         guard openpty(&master, &slave, nil, &attributes, &size) == 0
         else { throw posixError(errno) }
         self.master = master
         self.slave = slave
         guard fcntl(master, F_SETFD, FD_CLOEXEC) == 0,
-          fcntl(slave, F_SETFD, FD_CLOEXEC) == 0
+          fcntl(slave, F_SETFD, FD_CLOEXEC) == 0,
+          fcntl(master, F_SETFL, O_NONBLOCK) == 0
         else {
           let code = errno
           close(slave)
@@ -244,15 +246,23 @@ enum TerminalCommand {
         DispatchQueue.global().async {
           defer { self.reader.leave() }
           var buffer = [UInt8](repeating: 0, count: 16384)
+          var pending = Data()
           while true {
             // The screen's resize watcher is paused during a handoff.
             var size = winsize()
             if ioctl(STDOUT_FILENO, UInt(TIOCGWINSZ), &size) == 0 {
               _ = ioctl(self.master, UInt(TIOCSWINSZ), &size)
             }
-            let stopping = self.lock.withLock { self.stopping }
-            var descriptor = pollfd(fd: self.master, events: Int16(POLLIN), revents: 0)
-            let ready = poll(&descriptor, 1, stopping ? 0 : 50)
+            let (stopping, input) = self.lock.withLock { (self.stopping, self.forwardInput) }
+            var descriptors = [
+              pollfd(
+                fd: self.master, events: Int16(POLLIN) | (pending.isEmpty ? 0 : Int16(POLLOUT)),
+                revents: 0),
+              pollfd(
+                fd: input && !stopping && pending.isEmpty ? STDIN_FILENO : -1,
+                events: Int16(POLLIN), revents: 0),
+            ]
+            let ready = poll(&descriptors, 2, stopping ? 0 : 50)
             if ready < 0 {
               if errno == EINTR { continue }
               break
@@ -261,16 +271,42 @@ enum TerminalCommand {
               if stopping { break }
               continue
             }
-            let count = read(self.master, &buffer, buffer.count)
-            if count < 0 && errno == EINTR { continue }
-            guard count > 0 else { break }
-            let data = Data(buffer.prefix(count))
-            self.lock.withLock {
-              self.bytes.append(data)
-              if self.forwardOutput { FileHandle.standardOutput.write(data) }
+            if descriptors[0].revents & Int16(POLLIN | POLLHUP) != 0 {
+              let count = read(self.master, &buffer, buffer.count)
+              if count < 0 && (errno == EINTR || errno == EAGAIN) { continue }
+              guard count > 0 else { break }
+              let data = Data(buffer.prefix(count))
+              self.lock.withLock {
+                self.bytes.append(data)
+                if self.forwardOutput { FileHandle.standardOutput.write(data) }
+              }
+            }
+            if descriptors[1].revents & Int16(POLLIN) != 0 {
+              self.lock.withLock {
+                guard self.forwardInput, !self.stopping else { return }
+                let count = read(STDIN_FILENO, &buffer, buffer.count)
+                if count > 0 { pending.append(contentsOf: buffer.prefix(count)) }
+              }
+            }
+            if !pending.isEmpty {
+              let count = pending.withUnsafeBytes { write(self.master, $0.baseAddress, $0.count) }
+              if count > 0 { pending.removeFirst(count) }
             }
           }
         }
+      }
+
+      func resumeInput() {
+        lock.withLock {
+          var raw = cooked
+          cfmakeraw(&raw)
+          _ = tcsetattr(STDIN_FILENO, TCSANOW, &raw)
+          forwardInput = true
+        }
+      }
+
+      func pauseInput() {
+        lock.withLock { forwardInput = false }
       }
 
       func beginForwarding() {
@@ -283,12 +319,13 @@ enum TerminalCommand {
       func finish() -> Data {
         lock.withLock { stopping = true }
         reader.wait()
+        _ = tcsetattr(STDIN_FILENO, TCSADRAIN, &cooked)
         close(slave)
         close(master)
         return bytes
       }
-    }
-  #endif
+    #endif
+  }
 
   private static func check(_ code: Int32) throws {
     if code != 0 { throw posixError(code) }
