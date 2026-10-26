@@ -10092,7 +10092,26 @@ struct MaiCLI {
     }
     if parts.isEmpty || parts == ["list"] {
       await terminal.line(TerminalTheme.names(directory: directory).joined(separator: "\n"))
-      await terminal.line("/theme use NAME · /theme color · /theme save NAME · \(directory.path)")
+      await terminal.line("/theme show [NAME] · /theme use NAME · /theme color · /theme save NAME · \(directory.path)")
+      return
+    }
+    if parts.first == "show", parts.count <= 2 {
+      let names = parts.count == 2 ? [parts[1]] : TerminalTheme.names(directory: directory)
+      let ui = configuration?.ui ?? .init()
+      let colors = await terminal.paintsOutput
+      var previews: [(name: String, ui: ConfiguredTerminalUI)] = []
+      for name in names {
+        do {
+          let previewUI = try TerminalTheme.load(name, directory: directory, ui: ui)
+          previews.append((name, previewUI))
+        } catch {
+          await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+        }
+      }
+      if !previews.isEmpty {
+        await terminal.line(TerminalTheme.showcase(previews,
+          columns: TerminalLineEditor.terminalColumns(), colors: colors))
+      }
       return
     }
     guard parts.count == 2, ["use", "save"].contains(parts[0]) else {
@@ -13294,7 +13313,7 @@ struct MaiCLI {
       "/help shell", "/help keys", "/help model",
       "/help history", "/history", "/history list", "/history search ", "/history del ",
       "/history clear", "/history path", "/history help",
-      "/help theme", "/theme", "/theme list", "/theme use ", "/theme save ", "/theme color",
+      "/help theme", "/theme", "/theme list", "/theme show", "/theme use ", "/theme save ", "/theme color",
       "/set tool.aproval smart",
       "/set debug true", "/set debug false",
       "/set debugfile ", "/set debugfile default",
@@ -13414,6 +13433,7 @@ struct MaiCLI {
     }
     values += TerminalTheme.keys.map { "/theme color \($0) " }
     values += TerminalTheme.names(directory: themesDirectory).map { "/theme use \($0)" }
+    values += TerminalTheme.names(directory: themesDirectory).map { "/theme show \($0)" }
     for (index, chat) in workspace.orderedChats.enumerated() {
       values.append("/chat use \(index + 1)")
       values.append("/chat use \(chat.id.uuidString.prefix(8))")
@@ -13922,6 +13942,7 @@ struct MaiCLI {
 
   private static let themeHelp = """
     /theme [list]        List built-in and saved themes
+    /theme show [NAME]   Preview all themes, or just NAME, without applying them
     /theme use NAME      Apply and persist a theme's UI settings
     /theme save NAME     Save current colors and bold as a theme (overwrites NAME)
     /theme color         List all current colors and bold

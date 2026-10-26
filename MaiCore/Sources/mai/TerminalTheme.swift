@@ -139,6 +139,73 @@ enum TerminalTheme {
 
   static var keys: [String] { colors.map(\.0) + ["bold"] }
 
+  static func showcase(_ themes: [(name: String, ui: ConfiguredTerminalUI)], columns: Int,
+    colors: Bool) -> String
+  {
+    let perRow = columns >= 79 && themes.count > 1 ? 2 : 1
+    let cardColumns = perRow == 2 ? (columns - 1) / 2 : columns
+    let cards = themes.map {
+      preview($0.name, ui: $0.ui, columns: cardColumns, colors: colors)
+        .components(separatedBy: "\n")
+    }
+    return stride(from: 0, to: cards.count, by: perRow).map { index in
+      if perRow == 2, index + 1 < cards.count {
+        return zip(cards[index], cards[index + 1]).map { $0 + "  " + $1 }.joined(separator: "\n")
+      }
+      return cards[index].joined(separator: "\n")
+    }.joined(separator: "\n\n")
+  }
+
+  /// Use literal colors so buffer recoloring keeps each preview's own palette.
+  private static func preview(_ name: String, ui: ConfiguredTerminalUI, columns: Int, colors: Bool)
+    -> String
+  {
+    let width = max(1, min(60, columns - 5))
+    func styled(_ text: String, foreground: String, background: String, bold: Bool = false)
+      -> String
+    {
+      guard colors else { return text }
+      let codes = [
+        "0", TerminalLineEditor.foregroundColorCode(foreground) ?? "39",
+        TerminalLineEditor.backgroundColorCode(background) ?? "49", bold ? "1" : "22",
+      ]
+      return "\u{1B}[\(codes.joined(separator: ";"))m" + text + "\u{1B}[0m"
+    }
+    func frame(_ text: String) -> String {
+      styled(text, foreground: ui.infoForeground, background: ui.background)
+    }
+    func row(_ text: String, foreground: String, background: String? = nil,
+      bold: Bool = false, prompt: Bool = false) -> String
+    {
+      // Names and sample text are ASCII, so character counts equal cell widths.
+      let text = String(text.prefix(width))
+      let padded = text + String(repeating: " ", count: width - text.count)
+      let content: String
+      if prompt {
+        let prefix = String(padded.prefix(6))
+        content = styled(prefix, foreground: ui.promptForeground, background: ui.promptBackground)
+          + styled(String(padded.dropFirst(prefix.count)), foreground: foreground,
+            background: background ?? ui.background, bold: bold)
+      } else {
+        content = styled(padded, foreground: foreground,
+          background: background ?? ui.background, bold: bold)
+      }
+      return frame("| ") + content + frame(" |")
+    }
+    let border = frame("+" + String(repeating: "-", count: width + 2) + "+")
+    return [
+      border,
+      row(name, foreground: ui.infoForeground, background: ui.backgroundLine, bold: true),
+      border,
+      row("pmai> List the project files", foreground: ui.foreground, bold: ui.bold, prompt: true),
+      row("Thinking... inspecting the project", foreground: ui.thinkingForeground),
+      row("-> files_list .", foreground: ui.toolCallForeground),
+      row("<- README.md  Sources/  Tests/", foreground: ui.toolResultForeground),
+      row("pmai: Project files listed. Ready!", foreground: ui.successForeground),
+      border,
+    ].joined(separator: "\n")
+  }
+
   static func value(_ key: String, in ui: ConfiguredTerminalUI) -> String? {
     if key == "bold" { return ui.bold ? "on" : "off" }
     guard let (_, path) = colors.first(where: { $0.0 == key }) else { return nil }

@@ -96,7 +96,7 @@ def main():
             command = [binary, '--config', str(config), '--home', str(root / 'home'),
                        '--no-stream', '--no-markdown']
 
-            def run(*commands, terminal=True, extra_env=None):
+            def run(*commands, terminal=True, extra_env=None, columns=80):
                 data = '\n'.join([*commands, '/exit', '']).encode()
                 environment = dict(env, **(extra_env or {}))
                 if not terminal:
@@ -105,6 +105,7 @@ def main():
                     assert result.returncode == 0, result.stderr
                     return (result.stdout + result.stderr).decode()
                 master, slave = pty.openpty()
+                fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, columns, 0, 0))
                 output = bytearray()
 
                 def drain():
@@ -135,6 +136,28 @@ def main():
                     return output.decode().replace('\r', '')
                 finally:
                     os.close(master)
+
+            run('/theme list')  # Let startup normalize the fixture configuration first.
+            before = config.read_bytes()
+            output = run('/theme show mono', '/theme use missing')
+            assert '\x1b[0;37;40;22mpmai> ' in output, output
+            assert '\x1b[0;37;40;1mList the project files' in output, output
+            assert '\x1b[38;2;18;52;86merror:' in output, 'preview changed active colors'
+            assert config.read_bytes() == before, 'preview saved configuration'
+            for columns in (80, 160, 48):
+                output = run('/theme show', columns=columns)
+                plain = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', output)
+                headers = [line for line in plain.splitlines() if line.startswith('| ansi ')]
+                assert len(headers) == 1, plain
+                assert ('|  | codark ' in headers[0]) == (columns >= 79), headers
+                frames = [line for line in plain.splitlines() if line.startswith(('| ', '+---'))]
+                assert frames and all(len(line) < columns for line in frames), frames
+                assert 'pmai: Project files listed. Ready!' in plain, plain
+            for options in ({'terminal': False}, {'extra_env': {'NO_COLOR': '1'}},
+                            {'extra_env': {'TERM': 'dumb'}}):
+                output = run('/theme show mono', **options)
+                assert '\x1b[' not in output, output
+                assert '| mono ' in output and '-> files_list .' in output, output
 
             output = run('/theme use missing', 'show colors',
                          extra_env={'PMAI_THEME': 'missing'})

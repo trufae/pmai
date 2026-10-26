@@ -691,6 +691,11 @@ white-background terminals, `ember` uses warm colors, and `pink`, `orange`, and
 Dark+ and Light+ colors. `ansi` uses only the eight basic ANSI colors, and `mono`
 uses black, white, and bold input. `plum` is dark violet, and `sand` uses parchment
 with dark text. Markdown and subagent labels also follow the selected palette.
+Use `/theme show` to compare all built-in and saved themes in named frames,
+each with a five-line sample session. `/theme show slime` previews just one theme.
+Wide terminals show two themes per row; narrow terminals stack the previews.
+Previews keep your current theme and configuration unchanged. Colors appear on
+color terminals; redirected output, `NO_COLOR`, and `TERM=dumb` stay plain.
 `/theme use slime`
 applies and saves all the theme's colors and bold setting together.
 Set `PMAI_THEME=light` in your environment to apply a theme at startup over
