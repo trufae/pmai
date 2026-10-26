@@ -24,9 +24,9 @@ func terminalScrollbarGeometry() {
   #expect(TerminalScrollbar(rows: 40, top: 0, height: 20).thumb.count == 10)
   let bar = TerminalScrollbar(rows: 100, top: 40, height: 20)
   #expect(bar.offset(at: bar.thumb.lowerBound + 2, grab: 2) == 40)
-  #expect(bar.cell(at: bar.thumb.lowerBound) == "\u{1B}[47m \u{1B}[0m")
-  #expect(bar.cell(at: 0) == "\u{1B}[100m \u{1B}[0m")
-  #expect(bar.cell(at: 0, width: 3) == "\u{1B}[100m   \u{1B}[0m")
+  #expect(bar.cell(at: bar.thumb.lowerBound) == "\u{1B}[7m \u{1B}[0m")
+  #expect(bar.cell(at: 0) == "\u{1B}[2;7m \u{1B}[0m")
+  #expect(bar.cell(at: 0, width: 3) == "\u{1B}[2;7m   \u{1B}[0m")
   #expect(bar.cell(at: 0, width: 0).isEmpty)
   #expect(TerminalScrollbar(rows: 20, top: 0, height: 20).cell(at: 0).isEmpty)
 }
@@ -107,4 +107,21 @@ func terminalScrollbarProjections() {
   #expect(expanded)
   #expect(source.scrollbar(width: 80, height: 10).maximum > 0)
   #expect(source.contentWidth(columns: 80, height: 10, scrollbar: 2) == 78)
+}
+
+@Test("Scrollbar colors follow builtin and custom theme changes")
+func terminalScrollbarColors() {
+  let bar = TerminalScrollbar(rows: 100, top: 40, height: 20)
+  for ui in TerminalTheme.builtins.values {
+    let handle = TerminalLineEditor.backgroundColorCode(ui.selectionBackground)!
+    let track = TerminalLineEditor.backgroundColorCode(ui.backgroundLine)!
+    #expect(bar.cell(at: bar.thumb.lowerBound, ui: ui) == "\u{1B}[\(handle)m \u{1B}[0m")
+    #expect(bar.cell(at: 0, width: 3, ui: ui) == "\u{1B}[\(track)m   \u{1B}[0m")
+  }
+  let custom = ConfiguredTerminalUI(backgroundLine: "#123456", selectionBackground: "#abcdef")
+  #expect(bar.cell(at: 0, ui: custom) == "\u{1B}[48;2;18;52;86m \u{1B}[0m")
+  #expect(bar.cell(at: bar.thumb.lowerBound, ui: custom) == "\u{1B}[48;2;171;205;239m \u{1B}[0m")
+  let uncolored = ConfiguredTerminalUI(backgroundLine: "", selectionBackground: "")
+  #expect(bar.cell(at: 0, ui: uncolored) == bar.cell(at: 0))
+  #expect(bar.cell(at: bar.thumb.lowerBound, ui: uncolored) == bar.cell(at: bar.thumb.lowerBound))
 }

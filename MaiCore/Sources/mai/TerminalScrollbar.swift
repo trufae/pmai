@@ -1,4 +1,5 @@
 import Foundation
+import MaiCore
 
 /// Geometry shared by painting and hit-testing a scrollbar.
 struct TerminalScrollbar: Equatable {
@@ -28,10 +29,14 @@ struct TerminalScrollbar: Equatable {
     return Int((Double(start) * Double(maximum) / Double(travel)).rounded())
   }
 
-  func cell(at row: Int, width: Int = 1) -> String {
+  func cell(at row: Int, width: Int = 1, ui: ConfiguredTerminalUI? = nil) -> String {
     guard maximum > 0, width > 0 else { return "" }
     // Background-colored spaces form solid blocks, including in the last column.
-    return "\u{1B}[\(thumb.contains(row) ? 47 : 100)m"
+    let handle = thumb.contains(row)
+    let color = ui.flatMap {
+      TerminalLineEditor.backgroundColorCode(handle ? $0.selectionBackground : $0.backgroundLine)
+    } ?? (handle ? "7" : "2;7")
+    return "\u{1B}[\(color)m"
       + String(repeating: " ", count: width) + "\u{1B}[0m"
   }
 }
