@@ -38,7 +38,7 @@ public struct ACPCatalogAgent: Sendable, Equatable {
     if !arguments.isEmpty { options["args"] = .array(arguments.map(JSONValue.string)) }
     return ConfiguredProvider(
       id: id, kind: ACPConfiguredProviderFactory.providerKind, displayName: displayName,
-      options: options)
+      defaultModel: id, options: options)
   }
 }
 
@@ -66,7 +66,7 @@ public enum ACPCatalog {
     ACPCatalogAgent(
       id: "claude", displayName: "Claude Code (adapter)",
       summary: "Claude Code through the ACP adapter.",
-      command: "claude-code-acp",
+      command: "claude-agent-acp",
       install: "npm install -g @agentclientprotocol/claude-agent-acp"),
     ACPCatalogAgent(
       id: "codex", displayName: "Codex (adapter)",

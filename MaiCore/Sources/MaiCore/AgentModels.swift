@@ -610,6 +610,9 @@ public enum ProviderEvent: Codable, Equatable, Sendable {
   case textDelta(String)
   case reasoningDelta(String)
   case toolCallDelta(ToolCallDelta)
+  /// Activity already executed by an agent provider; never execute it again.
+  case toolStarted(ToolCall)
+  case toolFinished(ToolResult)
   /// The call's token usage, sent once per call when the provider reports
   /// it — after the last delta of a stream — so a host may add these up.
   case usage(TokenUsage)

@@ -7,8 +7,8 @@ import MaiCore
 /// connection answers `complete` the way an LLM backend does, so an
 /// `AgentDefinition` pointing at it flows through `AgentRuntime`, `/agent`,
 /// subagents, and delegation with no special cases anywhere else. The external
-/// agent's own tools, model, and reasoning live behind the boundary; MaiCore
-/// only sees a reply.
+/// agent manages its native tool loop. MaiCore selects its model, forwards
+/// tool activity, and exposes local runtime tools through MCP.
 public actor ACPProvider: ChatProvider {
   public nonisolated let descriptor: ProviderDescriptor
 
@@ -18,6 +18,9 @@ public actor ACPProvider: ChatProvider {
   /// One live agent per working directory: a prompt from a child run in a
   /// different cwd must not land in the parent's session.
   private var clients: [String: ACPClient] = [:]
+  private var bridges: [String: ACPToolBridge] = [:]
+  private var activeKeys: Set<String> = []
+  private var userHistory: [String: [String]] = [:]
   private var internetAccess = InternetAccessPolicy()
 
   public init(
@@ -27,17 +30,26 @@ public actor ACPProvider: ChatProvider {
     self.descriptor = ProviderDescriptor(
       id: id,
       displayName: displayName,
-      // ACP agents stream, and they carry their own tools, so MaiCore never
-      // offers them its tool schema — tool calling stays behind the boundary.
-      capabilities: [.streaming, .reasoning])
+      // Local agents receive MaiCore tools over a per-session MCP bridge.
+      capabilities: [.streaming, .reasoning, .nativeToolCalling])
     self.configuration = configuration
     self.sessionFile = sessionFile
     self.onPermission = onPermission
   }
 
   public func availableModels() async throws -> [ModelDescriptor] {
-    // ACP does not enumerate models; the agent picks its own.
-    [ModelDescriptor(id: descriptor.id.rawValue, displayName: descriptor.displayName)]
+    let client = ACPClient(configuration: configuration, onPermission: onPermission)
+    await client.configureInternetAccess(internetAccess)
+    do {
+      let models = try await client.availableModels()
+      await client.close()
+      return models.isEmpty
+        ? [ModelDescriptor(id: descriptor.id.rawValue, displayName: descriptor.displayName)]
+        : models
+    } catch {
+      await client.close()
+      throw error
+    }
   }
 
   public func complete(
@@ -50,24 +62,65 @@ public actor ACPProvider: ChatProvider {
     let key = clientKey(
       for: configuration.workingDirectory ?? AgentExecutionScope.directory,
       sessionID: request.sessionID ?? AgentExecutionScope.current?.sessionID)
-    let client = try client(
-      key: key, workingDirectory: configuration.workingDirectory ?? AgentExecutionScope.directory)
+    guard activeKeys.insert(key).inserted else {
+      throw JSONRPCError.invalidParams("An ACP prompt is already running for this conversation")
+    }
+    defer { activeKeys.remove(key) }
+    let users = request.messages.filter { $0.role == .user }.map(\.text)
+    if let previous = userHistory[key], !users.starts(with: previous) {
+      await clients.removeValue(forKey: key)?.close()
+      await bridges.removeValue(forKey: key)?.close()
+      userHistory[key] = nil
+    }
+    let client = try await client(
+      key: key, workingDirectory: configuration.workingDirectory ?? AgentExecutionScope.directory,
+      forwardTools: request.toolChoice != .none && !request.tools.isEmpty)
+    await bridges[key]?.configure(
+      tools: request.toolChoice == .none ? [] : request.tools,
+      execute: ProviderToolScope.execute)
     await client.configureInternetAccess(internetAccess)
     // The runtime hands over the whole transcript each turn, but the ACP agent
     // keeps its own session, so only the latest user turn is new to it.
-    let text = ACPProvider.latestUserText(request.messages)
+    let text: String
+    if let previous = userHistory[key] {
+      text = users.dropFirst(previous.count).joined(separator: "\n\n")
+    } else if configuration.sessionID != nil || sessionFile != nil {
+      text = ACPProvider.latestUserText(request.messages)
+    } else {
+      text = request.messages.filter { $0.role != .system }.map {
+        "[\($0.role.rawValue)]\n\($0.text)"
+      }.joined(separator: "\n\n")
+    }
+    let instructions = request.messages.filter { $0.role == .system }.map(\.text).joined(
+      separator: "\n\n")
+    let prompt = instructions.isEmpty ? text : "[pmai instructions]\n\(instructions)\n\n\(text)"
     let collector = TextCollector()
-    if sessionFile != nil {
-      let remoteID = try await client.connect()
-      try saveSession(remoteID, key: key)
+    let stopReason: ProviderStopReason
+    do {
+      if !request.model.isEmpty, request.model != descriptor.id.rawValue {
+        try await client.selectModel(request.model)
+      }
+      if sessionFile != nil {
+        let remoteID = try await client.connect()
+        try saveSession(remoteID, key: key)
+      }
+      stopReason = try await client.prompt(prompt) { event in
+        switch event {
+        case .textDelta(let delta): await collector.append(delta)
+        case .reasoningDelta(let delta): await collector.appendReasoning(delta)
+        default: break
+        }
+        await emit(event)
+      }
+      userHistory[key] = users
+      await bridges[key]?.configure(tools: [], execute: nil)
+    } catch {
+      await bridges[key]?.configure(tools: [], execute: nil)
+      throw error
     }
-    let stopReason = try await client.prompt(text) { event in
-      if case .textDelta(let delta) = event { await collector.append(delta) }
-      await emit(event)
-    }
-    let answer = await collector.text
+    let message = await collector.message
     return ProviderResponse(
-      message: .assistant(answer),
+      message: message,
       usage: nil,
       stopReason: stopReason)
   }
@@ -76,6 +129,10 @@ public actor ACPProvider: ChatProvider {
     let previous = Array(clients.values)
     clients.removeAll()
     for client in previous { await client.close() }
+    let previousBridges = Array(bridges.values)
+    bridges.removeAll()
+    userHistory.removeAll()
+    for bridge in previousBridges { await bridge.close() }
   }
 
   public func configureInternetAccess(_ policy: InternetAccessPolicy) async {
@@ -90,14 +147,32 @@ public actor ACPProvider: ChatProvider {
     (workingDirectory?.standardizedFileURL.path ?? ".") + "\u{0}" + (sessionID ?? "default")
   }
 
-  private func client(key: String, workingDirectory: URL?) throws -> ACPClient {
-    if let existing = clients[key] { return existing }
+  private func client(key: String, workingDirectory: URL?, forwardTools: Bool) async throws
+    -> ACPClient
+  {
+    let needsBridge =
+      configuration.webSocketURL == nil && configuration.forwardTools
+      && forwardTools && ProviderToolScope.execute != nil
+    if let existing = clients[key] {
+      if !needsBridge || bridges[key] != nil { return existing }
+      await existing.close()
+      clients[key] = nil
+      userHistory[key] = nil
+    }
     var configuration = self.configuration
     if configuration.workingDirectory == nil { configuration.workingDirectory = workingDirectory }
     if let sessionFile, FileManager.default.fileExists(atPath: sessionFile.path) {
       configuration.sessionID = try JSONDecoder().decode(
         [String: String].self,
         from: Data(contentsOf: sessionFile))[key]
+    }
+    if needsBridge {
+      let bridge = ACPToolBridge()
+      do { configuration.mcpServers.append(try await bridge.start()) } catch {
+        await bridge.close()
+        throw error
+      }
+      bridges[key] = bridge
     }
     let client = ACPClient(configuration: configuration, onPermission: onPermission)
     clients[key] = client
@@ -131,8 +206,14 @@ public actor ACPProvider: ChatProvider {
 
 /// Accumulates streamed deltas into the authoritative final answer.
 private actor TextCollector {
-  private(set) var text = ""
+  private var text = ""
+  private var reasoning = ""
   func append(_ delta: String) { text += delta }
+  func appendReasoning(_ delta: String) { reasoning += delta }
+  var message: AgentMessage {
+    AgentMessage(
+      role: .assistant, content: (reasoning.isEmpty ? [] : [.reasoning(reasoning)]) + [.text(text)])
+  }
 }
 
 /// Registers the ACP provider factory, so a `kind: "acp"` provider in the
@@ -208,27 +289,29 @@ public struct ACPConfiguredProviderFactory: ConfiguredProviderFactory {
       try String(contentsOf: $0, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
     }
     let permissionHandler: (@Sendable (JSONValue) async throws -> String?)?
-    if configuration.id.hasPrefix("remote."), let onPermission {
+    if let onPermission {
       let name = configuration.displayName ?? configuration.id
       permissionHandler = { try await onPermission($0, name) }
     } else {
       permissionHandler = nil
     }
+    var clientConfiguration = ACPClient.Configuration(
+      command: command, arguments: arguments, environment: childEnvironment,
+      workingDirectory: workingDirectory, permission: permission,
+      promptTimeout: configuration.timeout ?? 600,
+      remoteWorkingDirectory: options["remoteCwd"]?.stringValue,
+      readClientFiles: options["readClientFiles"]?.boolValue ?? (url == nil),
+      webSocketURL: url,
+      bearerToken: options["tokenEnv"]?.stringValue.flatMap { environment[$0] }
+        ?? options["token"]?.stringValue ?? storedToken)
+    clientConfiguration.mcpServers = options["mcpServers"]?.arrayValue ?? []
+    clientConfiguration.forwardTools =
+      options["forwardTools"]?.boolValue
+      ?? (URL(fileURLWithPath: command).lastPathComponent != "ssh")
     return ACPProvider(
       id: ProviderID(configuration.id),
       displayName: configuration.displayName ?? configuration.id,
-      configuration: ACPClient.Configuration(
-        command: command,
-        arguments: arguments,
-        environment: childEnvironment,
-        workingDirectory: workingDirectory,
-        permission: permission,
-        promptTimeout: configuration.timeout ?? 600,
-        remoteWorkingDirectory: options["remoteCwd"]?.stringValue,
-        readClientFiles: options["readClientFiles"]?.boolValue ?? (url == nil),
-        webSocketURL: url,
-        bearerToken: options["tokenEnv"]?.stringValue.flatMap { environment[$0] }
-          ?? options["token"]?.stringValue ?? storedToken),
+      configuration: clientConfiguration,
       sessionFile: options["sessionFile"]?.stringValue.map { URL(fileURLWithPath: $0) },
       onPermission: permissionHandler)
   }

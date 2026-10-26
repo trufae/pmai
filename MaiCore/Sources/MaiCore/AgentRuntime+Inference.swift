@@ -220,21 +220,67 @@ extension AgentRuntime {
     let repairsEmptyReply =
       (state.toolCalls > 0 || (!turn.definitions.isEmpty && !turn.toolBudgetExhausted))
       && state.modelTurns < state.request.limits.maxModelTurns
+    let request = state.request
+    let budget = state.budget
+    let pid = state.pid
+    let modelTurn = state.modelTurns
+    let scope = AgentExecutionScope.current
+    let redactor = ContentRedactor.current
+    let toolCount = ProviderToolCount(used: state.toolCalls)
     do {
-      return try await complete(
-        turn.request, with: turn.provider, retry: turn.retry, budget: state.budget,
-        context: context, pid: state.pid, retriesEmptyReply: !repairsEmptyReply, emit: emit
-      ) { event in
-        if turn.selectingTools {
-          switch event {
-          case .textDelta, .reasoningDelta: return
-          default: break
+      let response = try await ProviderToolScope.$execute.withValue({ call in
+        try await self.holdWhilePaused(pid)
+        let current = await self.currentRequest(request, for: pid)
+        await budget.update(limits: current.limits)
+        guard !(await budget.deadlinePassed),
+          await toolCount.claim(limit: current.limits.maxToolCalls)
+        else {
+          return ToolResult(
+            callID: call.id, text: "Error: the run's tool or time budget is exhausted.",
+            isError: true)
+        }
+        let definitions = try await self.visibleDefinitions(for: current, depth: context.depth)
+        return try await AgentExecutionScope.$current.withValue(scope) {
+          try await ContentRedactor.$current.withValue(redactor) {
+            try await self.execute(
+              call, definitions: definitions, request: current,
+              execution: ToolExecutionContext(run: context, modelTurn: modelTurn), budget: budget,
+              emit: { event in
+                await toolCount.record(event)
+                await emit(event)
+              })
           }
         }
-        if turn.usesTextToolProtocol, case .textDelta = event { return }
-        await emit(.provider(context, event))
+      }) {
+        try await complete(
+          turn.request, with: turn.provider, retry: turn.retry, budget: state.budget,
+          context: context, pid: state.pid, retriesEmptyReply: !repairsEmptyReply, emit: emit
+        ) { event in
+          if turn.selectingTools {
+            switch event {
+            case .textDelta, .reasoningDelta: return
+            default: break
+            }
+          }
+          if turn.usesTextToolProtocol, case .textDelta = event { return }
+          switch event {
+          case .toolStarted(let call):
+            let activity = AgentEvent.toolStarted(context, call)
+            await toolCount.record(activity)
+            await emit(activity)
+          case .toolFinished(let result):
+            let activity = AgentEvent.toolFinished(context, result)
+            await toolCount.record(activity)
+            await emit(activity)
+          default: await emit(.provider(context, event))
+          }
+        }
       }
+      state.toolCalls = await toolCount.used
+      state.transcript += await toolCount.transcript
+      return response
     } catch let error as ProviderContextLimitError {
+      state.toolCalls = await toolCount.used
       guard state.contextRecoveryAttempts < 2 else { throw error }
       state.contextRecoveryAttempts += 1
       let window = contextWindow(
@@ -261,7 +307,8 @@ extension AgentRuntime {
       // A model that answers a tool result with nothing at all is told what
       // is expected of it, as after a malformed call; retrying the same
       // request twice and then failing the whole run threw the work away.
-      var feedback = state.toolCalls == 0
+      var feedback =
+        state.toolCalls == 0
         ? AgentToolLoopPolicy.emptyToolCallFeedback
         : AgentToolLoopPolicy.repairFeedbackAfterToolResult(mode: turn.textToolMode ?? .native)
       if state.request.usesToolProxy { feedback += "\n" + ToolProxy.repairHint }
@@ -323,3 +370,34 @@ struct ProviderEmptyReply: ProviderEmptyResponseError {}
 /// Thrown inside a run when `limits.maxSeconds` passes; never leaves the
 /// runtime, which turns it into a paused result.
 struct RunDeadlineExceeded: Error {}
+
+private actor ProviderToolCount {
+  private(set) var used: Int
+  private var calls: [ToolCall] = []
+  private var results: [ToolResult] = []
+
+  func record(_ event: AgentEvent) {
+    switch event {
+    case .toolStarted(_, let call): calls.append(call)
+    case .toolFinished(_, let result): results.append(result)
+    default: break
+    }
+  }
+
+  var transcript: [AgentMessage] {
+    let finished = Set(results.map(\.callID))
+    let completed = calls.filter { finished.contains($0.id) }
+    guard !completed.isEmpty else { return [] }
+    return [
+      AgentMessage(role: .assistant, content: completed.map { .toolCall($0) }),
+      AgentMessage(role: .tool, content: results.map { .toolResult($0) }),
+    ]
+  }
+
+  init(used: Int) { self.used = used }
+  func claim(limit: Int) -> Bool {
+    guard used < limit else { return false }
+    used += 1
+    return true
+  }
+}

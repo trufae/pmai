@@ -24,6 +24,8 @@ public actor ACPClient {
     public var bearerToken: String?
     public var sessionID: String?
     public var forwirohInvitation: String?
+    public var mcpServers: [JSONValue] = []
+    public var forwardTools = true
 
     public init(
       command: String,
@@ -67,6 +69,9 @@ public actor ACPClient {
   private var sessionLoaded = false
   private var sessionOptions: [RemoteSessionOption] = []
   private var legacyModes = false
+  private var legacyModels: [ModelDescriptor] = []
+  private var currentModel: String?
+  private var toolCalls: [String: ToolCall] = [:]
   private var supportsLoad = false
   private var supportsList = false
   private var supportsFiles = false
@@ -157,7 +162,46 @@ public actor ACPClient {
     _ = try await peer.request(ACP.Method.sessionRewind, params: .object(params), timeout: 60)
   }
 
+  public func availableModels() async throws -> [ModelDescriptor] {
+    let options = try await configurationOptions()
+    if let model = options.first(where: { $0.category == "model" || $0.id == "model" }) {
+      return model.choices.map { ModelDescriptor(id: $0.id, displayName: $0.name) }
+    }
+    return legacyModels
+  }
+
+  public func selectModel(_ id: String) async throws {
+    let options = try await configurationOptions()
+    if let option = options.first(where: { $0.category == "model" || $0.id == "model" }) {
+      if option.currentValue != .string(id) {
+        _ = try await setConfigurationOption(id: option.id, value: .string(id))
+      }
+    } else if !legacyModels.isEmpty {
+      guard legacyModels.contains(where: { $0.id == id }), !busy, let peer, let sessionID else {
+        throw JSONRPCError.invalidParams("Unknown ACP model '\(id)'")
+      }
+      if currentModel == id { return }
+      busy = true
+      defer { busy = false }
+      _ = try await peer.request(
+        "session/set_model",
+        params: .object([
+          "sessionId": .string(sessionID), "modelId": .string(id),
+        ]), timeout: 30)
+      currentModel = id
+    } else {
+      throw JSONRPCError.invalidParams("This ACP agent does not expose model selection")
+    }
+  }
+
   private func readSessionOptions(_ result: JSONValue) {
+    if let models = result.objectValue?["models"]?.objectValue {
+      currentModel = models["currentModelId"]?.stringValue
+      legacyModels = (models["availableModels"]?.arrayValue ?? []).compactMap {
+        guard let id = $0.objectValue?["modelId"]?.stringValue else { return nil }
+        return ModelDescriptor(id: id, displayName: $0.objectValue?["name"]?.stringValue)
+      }
+    }
     legacyModes = result.objectValue?["configOptions"] == nil
     sessionOptions = RemoteSessionOption.parse(result.objectValue?["configOptions"])
     if legacyModes, let modes = result.objectValue?["modes"]?.objectValue,
@@ -343,6 +387,7 @@ public actor ACPClient {
     defer { busy = false }
     let peer = try await connectedPeer()
     let sessionID = try await ensureSession(peer: peer)
+    toolCalls.removeAll()
     activeSink = emit
     defer { activeSink = nil }
     let params: JSONValue = .object([
@@ -360,9 +405,10 @@ public actor ACPClient {
       await disconnect()
       throw CancellationError()
     } catch {
-      // Do not resend a prompt: the worker may already have executed tools.
+      // The runtime retries ordinary transport failures. A prompt may already
+      // have executed tools, so this error must require explicit user action.
       await disconnect()
-      throw error
+      throw ProviderPolicyError(code: "acp_prompt_failed", message: error.localizedDescription)
     }
   }
 
@@ -492,6 +538,14 @@ public actor ACPClient {
       supportsPermissionEditing = pmaiCapabilities?["permissionEditing"]?.intValue == 1
       supportsYolo = pmaiCapabilities?["yolo"]?.intValue == 1
       supportsHistoryRewind = pmaiCapabilities?["historyRewind"]?.intValue == 1
+      if configuration.mcpServers.contains(where: { $0.objectValue?["type"]?.stringValue == "http" }
+      ),
+        initialized.objectValue?["agentCapabilities"]?.objectValue?["mcpCapabilities"]?
+          .objectValue?["http"]?.boolValue != true
+      {
+        throw JSONRPCError.invalidParams(
+          "This ACP agent does not support HTTP MCP servers; update its adapter to use pmai tools")
+      }
       guard initialized.objectValue?["protocolVersion"]?.intValue == ACP.protocolVersion else {
         throw JSONRPCError.invalidParams("The agent returned an unsupported ACP protocol version")
       }
@@ -514,7 +568,8 @@ public actor ACPClient {
       let result = try await peer.request(
         ACP.Method.sessionLoad,
         params: .object([
-          "sessionId": .string(sessionID), "cwd": .string(cwd), "mcpServers": .array([]),
+          "sessionId": .string(sessionID), "cwd": .string(cwd),
+          "mcpServers": .array(configuration.mcpServers),
         ]), timeout: 60)
       readSessionOptions(result)
       sessionLoaded = true
@@ -526,7 +581,7 @@ public actor ACPClient {
     }
     let result = try await peer.request(
       ACP.Method.sessionNew,
-      params: .object(["cwd": .string(cwd), "mcpServers": .array([])]),
+      params: .object(["cwd": .string(cwd), "mcpServers": .array(configuration.mcpServers)]),
       timeout: 60)
     guard let id = result.objectValue?["sessionId"]?.stringValue, !id.isEmpty else {
       throw ACPClientError.noSession(configuration.command)
@@ -570,6 +625,22 @@ public actor ACPClient {
       await sink(.textDelta(text))
     case .agentThoughtChunk where !text.isEmpty:
       await sink(.reasoningDelta(text))
+    case .toolCall, .toolCallUpdate:
+      guard let id = update["toolCallId"]?.stringValue else { return }
+      if toolCalls[id] == nil {
+        let call = ToolCall(
+          id: id, name: update["title"]?.stringValue ?? "ACP tool",
+          arguments: update["rawInput"] ?? .object([:]))
+        toolCalls[id] = call
+        await sink(.toolStarted(call))
+      }
+      if let status = update["status"]?.stringValue, ["completed", "failed"].contains(status) {
+        await sink(
+          .toolFinished(
+            ToolResult(
+              callID: id,
+              text: ACP.ContentBlock.text(from: update["content"]), isError: status == "failed")))
+      }
     default:
       break
     }
