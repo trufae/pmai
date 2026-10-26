@@ -104,8 +104,8 @@ extension MaiCLI {
     /set ui.scrollbar N sets its width: positive on the right, negative on the left,
     and 0 hides it. Drag its handle or click its track to scroll; the handle size
     reflects the amount of visible content.
-    Ctrl+W switches focus between the prompt and the view, keeping any draft.
-    Tab with an empty prompt also switches focus.
+    Tab with an empty prompt switches focus between the prompt and the view.
+    The focused view highlights the whole separator and hides the cursor.
     In the view, j/k or Down/Up scroll one row; J/K page down/up like Page Down/Up.
     g/G jump to the top/bottom; G resumes following new output.
     v/V grow/shrink the view by one row or column; q closes it, like /view off.

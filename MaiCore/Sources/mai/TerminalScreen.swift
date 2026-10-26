@@ -68,6 +68,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var inputRows = [""]
   private var caretRow = 0
   private var caretColumn = 0
+  private var cursorHidden = false
   private var outputEndedLine: Bool {
     get { outputConversation.outputEndedLine }
     set { outputConversation.outputEndedLine = newValue }
@@ -708,6 +709,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     draggingViewSeparator = false
     scrollbarDrag = nil
     refreshSize()
+    setCursorHidden(false)
     if view?.source == .diffs { stopViewTask() }
     resizeSource?.cancel()
     resizeSource = nil
@@ -1413,17 +1415,18 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       paneRow(text, row: index + 1, index: index, column: viewColumn,
         columns: viewColumns, width: width, bar: bar)
     }
-    let focus = view?.focused == true
-      ? "view focused · Space layout · Enter fullscreen · / search · j/k scroll · J/K page · g/G top/bottom · v/V resize · q close · Ctrl+W/Tab prompt"
-      : "Tab on empty prompt to focus · Ctrl+W to focus"
+    let focused = view?.focused == true
+    let focus = focused
+      ? "view focused · Space layout · Enter fullscreen · / search · j/k scroll · J/K page · g/G top/bottom · v/V resize · q close · Tab prompt"
+      : "Tab on empty prompt to focus"
     let label = "── view: \(view?.title ?? "") · \(focus) · drag to resize ──"
     let separatorWidth = columns
     let text = Self.truncated(label, width: separatorWidth)
     let padded = text + String(repeating: " ", count: max(0, separatorWidth - Self.displayWidth(text)))
-    let background = TerminalLineEditor.backgroundColorCode(ui.backgroundLine)
-    let foreground = TerminalLineEditor.foregroundColorCode(ui.foreground)
-    let emphasis = view?.focused == true ? "1" : nil
-    let codes = background == nil ? [view?.focused == true ? "7" : "2"]
+    let background = TerminalLineEditor.backgroundColorCode(focused ? ui.selectionBackground : ui.backgroundLine)
+    let foreground = TerminalLineEditor.foregroundColorCode(focused ? ui.selectionForeground : ui.foreground)
+    let emphasis = focused ? "1" : nil
+    let codes = background == nil ? [focused ? "7" : "2"]
       : [background, foreground, emphasis].compactMap { $0 }
     visible.append("\u{1B}[" + codes.joined(separator: ";") + "m" + padded + Self.reset)
     var out = ""
@@ -1637,14 +1640,19 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   private func placeCaret() {
-    if view?.focused == true, !viewSearching, viewHeight > 0 {
-      write(move(row: viewHeight + 1, column: 1))
-      return
-    }
+    let hidden = view?.focused == true && !viewSearching && viewHeight > 0
+    setCursorHidden(hidden)
+    guard !hidden else { return }
     write(
       move(
         row: min(rows, firstInputRow + caretRow),
         column: min(columns, max(1, 1 + caretColumn))))
+  }
+
+  private func setCursorHidden(_ hidden: Bool) {
+    guard hidden != cursorHidden else { return }
+    cursorHidden = hidden
+    write(hidden ? "\u{1B}[?25l" : "\u{1B}[?25h")
   }
 
   /// A resize can still happen between measuring and writing. Fixed rows must

@@ -502,13 +502,7 @@ final class TerminalLineEditor {
         continue
       }
       if activePrompt.isModal { surface?.focusPrompt() }
-      let switchesView: Bool
-      switch key {
-      case .byte(23): switchesView = true
-      case .byte(9): switchesView = bytes.isEmpty
-      default: switchesView = false
-      }
-      if !activePrompt.isModal, switchesView,
+      if !activePrompt.isModal, case .byte(9) = key, bytes.isEmpty,
         surface?.toggleViewFocus() == true
       {
         dismissCompletion()

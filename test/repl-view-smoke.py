@@ -85,13 +85,17 @@ def main(binary):
             scrollbar = {}
             scrollbar_spans = {}
             captured = bytearray()
+            cursor_visible = True
 
             def read_for(seconds=.15):
+                nonlocal cursor_visible
                 data = bytearray()
                 read_pty(master, data, seconds)
                 captured.extend(data)
                 assert b'Fatal access conflict' not in data, data.decode(errors='replace')
                 text = data.decode(errors='replace')
+                for visibility in re.finditer(r'\x1b\[\?25([hl])', text):
+                    cursor_visible = visibility[1] == 'h'
                 moves = list(MOVE.finditer(text))
                 for index, move in enumerate(moves):
                     row, column = map(int, move.groups())
@@ -189,14 +193,15 @@ def main(binary):
                 send('\r')
                 wait_for('── view: project todo')
                 assert 'No todos.' in top(), screen
-                send('DRAFT_WORD\x17')
-                wait_for('view focused')
-                assert 'DRAFT_WORD' in screen[rows], screen
-                send('j\x17')
-                wait_for('Tab on empty prompt')
-                assert 'DRAFT_WORD' in screen[rows], screen
-                send('\x7f' * len('DRAFT_WORD'))  # Clear the retained draft.
+                send('/todo add REMOVED_WORD\x17KEPT_WORD\r')
+                wait_for('Todo list saved')
+                assert 'KEPT_WORD' in top() and 'REMOVED_WORD' not in top(), screen
+                assert 'view focused' not in screen[separator()] and cursor_visible, screen
+                send('/todo clear\r')
+                wait_for('Todo list cleared.')
+                send('\x17')  # An empty prompt must also keep its focus.
                 read_for()
+                assert 'view focused' not in screen[separator()] and cursor_visible, screen
                 send('/todo add VIEW_TODO_ITEM\r')
                 wait_for('Todo list saved')
                 assert 'Todo (1 pending, 0 done):' in top(), screen
@@ -279,8 +284,12 @@ def main(binary):
                 original_top, original_bottom = top(), bottom()
                 send('\t')
                 wait_for('view focused')
-                assert '\x1b[48;2;0;34;68;1m' in styled_screen[separator()], styled_screen
+                assert '\x1b[44;97;1m' in styled_screen[separator()], styled_screen
                 assert len(screen[separator()]) == columns, screen[separator()]
+                assert not cursor_visible
+                send('\x17')  # Ctrl+W cannot toggle focus from the read-only view either.
+                read_for()
+                assert 'view focused' in screen[separator()] and not cursor_visible, screen
                 send('g')
                 read_for()
                 assert top().startswith('THOUGHT_00\n') and bottom() == original_bottom, screen
@@ -326,6 +335,8 @@ def main(binary):
                 wait_for('LIVE_THOUGHT')
                 send('\t')
                 wait_for('Tab on empty prompt')
+                assert cursor_visible
+                assert '\x1b[48;2;0;34;68m' in styled_screen[separator()], styled_screen
                 send('\x1b[6~' * 20)  # Resume following the conversation after its scrollbar tests.
                 read_for()
                 chunks.put('STREAM_ANSWER\n')
@@ -435,7 +446,7 @@ def main(binary):
                 # A timer refresh must keep the chosen viewport even when the diff grows.
                 (root / 'file.txt').write_text(''.join(f'NEW_DIFF_{i:02d}\n' for i in range(40)))
                 wait_for('+NEW_DIFF_00')
-                send('\x17' + 'j' * 10)
+                send('\t' + 'j' * 10)
                 read_for()
                 anchored = top()
                 with (root / 'file.txt').open('a') as output:
@@ -444,7 +455,7 @@ def main(binary):
                 assert top() == anchored, screen
                 send('G')
                 wait_for('+REFRESH_END')
-                send('g\x17')
+                send('g\t')
                 read_for()
                 (root / 'file.txt').write_text('NEW_LINE\n')
                 wait_for('+NEW_LINE')
@@ -528,6 +539,7 @@ def main(binary):
                 wait_for('view focused')
                 send('q')
                 read_for()
+                assert cursor_visible
                 assert b'\x1b[?1002h' in captured, captured
                 assert all('── view:' not in screen.get(row, '') for row in range(1, rows)), screen
                 send('/view current\r')  # q returns focus to the prompt without submitting anything.
@@ -535,6 +547,7 @@ def main(binary):
                 send('\t')
                 wait_for('view focused')
                 resize(3, 60)  # No room for the split: focus must return to the prompt.
+                assert cursor_visible
                 resize(30, 100)
                 assert 'view focused' not in screen[separator()], screen
                 assert 'Messages go to this chat again.' in top(), screen
@@ -630,8 +643,12 @@ def main(binary):
                 send('G/PAGED_000\r')
                 wait_for('Set ui.highlight = PAGED_000.')
                 assert 'PAGED_000' in top(), screen  # Repeating the same search jumps again.
-                send('/DISCARD\x1b')
+                send('/DISCARD')
                 read_for()
+                assert cursor_visible
+                send('\x1b')
+                read_for()
+                assert not cursor_visible
                 assert json.loads(config.read_text())['ui']['highlight'] == 'PAGED_000'
                 # Space rotates the panes; Enter expands/restores without sending a message.
                 send(' ')
@@ -651,11 +668,11 @@ def main(binary):
                 send('V')
                 read_for()
                 # Left scrollbars stay within the right-hand view and keep a one-column gutter.
-                send('\x17/set ui.scrollbar -1\r')
+                send('\t/set ui.scrollbar -1\r')
                 wait_for('Set ui.scrollbar = -1.')
                 painted = captured.decode(errors='replace')
                 assert re.search(r'\x1b\[1;36H\x1b\[[0-9;]+m \x1b\[0m\x1b\[1;37H', painted), painted
-                send('\x17')
+                send('\t')
                 read_for()
                 send(f'\x1b[<0;36;{rows-3}M\x1b[<0;36;{rows-3}m')
                 wait_for('PAGED_129')
@@ -663,9 +680,9 @@ def main(binary):
                 wait_for('PAGED_000')
                 assert all(int(move[2]) >= 35 for move in MOVE.finditer(captured.decode(errors='replace'))
                            if int(move[1]) < rows - 2), captured
-                send('\x17/set ui.scrollbar 1\r')
+                send('\t/set ui.scrollbar 1\r')
                 wait_for('Set ui.scrollbar = 1.')
-                send('\x17')
+                send('\t')
                 read_for()
                 send('\r')
                 read_for()
@@ -747,7 +764,7 @@ def main(binary):
                 output = run_repl([binary, '--config', str(config), '--home', str(root / 'pipe-home')],
                                  ['/view thinking', '/help view'], cwd=root, env=env, allow_errors=True)
                 assert 'error: /view requires ui.mode=buffer.' in output and '/view off' in output
-                print('PASS view: Markdown settings, horizontal/vertical layouts, fullscreen restore, highlight search/persistence/cancellation, mode guard, sources, pins, first-line message log, read-only focus, Ctrl+W draft retention, blank Enter, history, prompt, independent scrolling, live thinking/tools/diffs, '
+                print('PASS view: Markdown settings, horizontal/vertical layouts, fullscreen restore, highlight search/persistence/cancellation, mode guard, sources, pins, first-line message log, read-only focus, Ctrl+W word deletion, focus colors/cursor visibility, blank Enter, history, prompt, independent scrolling, live thinking/tools/diffs, '
                       'background agents, J/K paging, g/G top/bottom, divider background, v/V resizing, q close, separator dragging, mouse cleanup, '
                       'live ui.tools previews and iconlog, resize, saved reasoning/results, off and cleanup')
             finally:
