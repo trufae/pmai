@@ -111,9 +111,9 @@ def main(binary):
                     if column == 1 and '\x1b[2K' in content:
                         scrollbar.pop(row, None)
                         scrollbar_spans.pop(row, None)
-                    match = re.search(r'\x1b\[(47|100)m( +)', content)
-                    if match:
-                        scrollbar[row] = int(match[1])
+                    match = re.search(r'\x1b\[([0-9;]+)m( +)\x1b\[0m', content)
+                    if match and column > 1:
+                        scrollbar[row] = match[1]
                         scrollbar_spans[row] = (column, len(match[2]))
                     # The renderer clears and replaces each changed row in full.
                     if column == 1 and '\x1b[2K' in content:
@@ -316,9 +316,9 @@ def main(binary):
 
                 # The reserved last column is a two-color, proportional scrollbar.
                 track = range(1, rows - 2)
-                handles = [row for row in track if scrollbar.get(row) == 47]
+                handles = [row for row in track if scrollbar.get(row) == '44']
                 assert 0 < len(handles) < len(track), scrollbar
-                assert all(scrollbar.get(row) in (47, 100) for row in track), scrollbar
+                assert all(scrollbar.get(row) in ('44', '48;2;0;34;68') for row in track), scrollbar
                 grab = handles[len(handles) // 2]
                 send(f'\x1b[<0;{columns};{grab}M')
                 read_for()
@@ -330,7 +330,7 @@ def main(binary):
                 read_for()
                 send(f'\x1b[<32;{columns - 5};1M\x1b[<0;{columns - 5};1m')
                 read_for()
-                assert output() != previous and scrollbar[1] == 47, screen
+                assert output() != previous and scrollbar[1] == '44', screen
                 assert 'draft last' in screen[rows], screen
                 # Clicking below the handle resumes following at the bottom.
                 send(f'\x1b[<0;{columns};{rows - 3}M\x1b[<0;{columns};{rows - 3}m')
@@ -420,7 +420,7 @@ def main(binary):
                         # Both edges of a wider scrollbar respond to clicks.
                         send(f'\x1b[<0;{columns-width+1};1M\x1b[<0;{columns-width+1};1m')
                         read_for()
-                        assert scrollbar[1] == 47, scrollbar
+                        assert scrollbar[1] == '44', scrollbar
                         send(f'\x1b[<0;{columns};{rows-2}M\x1b[<0;{columns};{rows-2}m')
                         read_for()
                         assert 'STEP_ROW69' in '\n'.join(output()), screen
@@ -430,6 +430,16 @@ def main(binary):
                         send(f'\x1b[<0;{columns};1M\x1b[<32;{columns};{rows-2}M\x1b[<0;{columns};{rows-2}m')
                         read_for()
                         assert output() == previous, screen
+                # Repaint the existing scrollbar when a theme changes.
+                for theme, handle, track_color in (
+                        ('plum', '48;2;189;154;255', '48;2;48;33;63'),
+                        ('sand', '48;2;119;91;18', '48;2;232;217;181'),
+                        ('mono', '47', '40'),
+                        ('default', '44', '48;2;0;34;68')):
+                    send(f'/theme use {theme}\r')
+                    wait_for(f"Applied theme '{theme}'.")
+                    assert set(scrollbar.values()) == {handle, track_color}, scrollbar
+                    assert all(span == (columns, 1) for span in scrollbar_spans.values()), scrollbar_spans
                 for invalid in ('-1', 'nope', '1.5', '99999999999999999999'):
                     send(f'/set ui.scrollbar={invalid}\r')
                     wait_for('Usage: /set ui.scrollbar <nonnegative integer>')

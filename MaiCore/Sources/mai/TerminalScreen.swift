@@ -1169,10 +1169,11 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     let bar = TerminalConversationScope.$id.withValue(nil) {
       transcript.scrollbar(width: width, height: outputHeight)
     }
+    let colors = scrollbarColors
     visible = visible.enumerated().map { index, text in
       width < columns
         ? text + Self.reset + move(row: outputOrigin + index, column: width + 1)
-          + bar.cell(at: index, width: columns - width)
+          + bar.cell(at: index, width: columns - width, ui: colors)
         : text
     }
     var out = ""
@@ -1182,6 +1183,11 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     }
     paintedOutputRows = visible
     writeFixedRows(out)
+  }
+
+  private var scrollbarColors: ConfiguredTerminalUI? {
+    ProcessInfo.processInfo.environment["NO_COLOR"] == nil
+      && ProcessInfo.processInfo.environment["TERM"] != "dumb" ? ui : nil
   }
 
   private func updateViewBuffer() {
@@ -1217,10 +1223,11 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     if visible.isEmpty { visible = ["No matching output yet."] }
     visible += Array(repeating: "", count: max(0, height - visible.count))
     let bar = view!.buffer.scrollbar(width: width, height: height)
+    let colors = scrollbarColors
     visible = visible.enumerated().map { index, text in
       width < columns
         ? text + Self.reset + move(row: index + 1, column: width + 1)
-          + bar.cell(at: index, width: columns - width)
+          + bar.cell(at: index, width: columns - width, ui: colors)
         : text
     }
     let focus = view?.focused == true

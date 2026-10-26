@@ -91,9 +91,9 @@ def main(binary):
                     if column == 1 and '\x1b[2K' in content:
                         scrollbar.pop(row, None)
                         scrollbar_spans.pop(row, None)
-                    match = re.search(r'\x1b\[(47|100)m( +)', content)
-                    if match:
-                        scrollbar[row] = int(match[1])
+                    match = re.search(r'\x1b\[([0-9;]+)m( +)\x1b\[0m', content)
+                    if match and column > 1:
+                        scrollbar[row] = match[1]
                         scrollbar_spans[row] = (column, len(match[2]))
                     if column == 1 and '\x1b[2K' in content:
                         styled_screen[row] = content
@@ -221,7 +221,7 @@ def main(binary):
                         assert top() == watched, screen
                 # Drag the view scrollbar without focusing it; the chat stays put.
                 conversation = bottom()
-                handles = [row for row in range(1, separator()) if scrollbar.get(row) == 47]
+                handles = [row for row in range(1, separator()) if scrollbar.get(row) == '44']
                 assert 0 < len(handles) < separator() - 1, scrollbar
                 grab = handles[-1]
                 send(f'\x1b[<0;{columns};{grab}M\x1b[<32;{columns};1M\x1b[<0;{columns};1m')

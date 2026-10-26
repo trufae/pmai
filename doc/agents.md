@@ -487,8 +487,9 @@ right only when its wrapped content exceeds its height. `/set ui.scrollbar N`
 sets its width in characters: `0` hides it, `1` is the default, `2` uses two
 columns, and so on. The setting is saved and applies immediately to both panes.
 The width is clamped to leave at least one content column in narrow terminals;
-when hidden, the content uses the full width. Background-colored spaces draw a dark
-track and a light handle sized to the visible fraction of the wrapped content.
+when hidden, the content uses the full width. Background-colored spaces use the
+theme's `bgline` for the track and `bgselection` for the handle. The handle is
+sized to the visible fraction of the wrapped content.
 Drag the handle with the left mouse button or click the track to jump there.
 Each scrollbar moves only its own pane without changing focus or the draft;
 reaching the bottom resumes following new output.
