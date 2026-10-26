@@ -147,6 +147,15 @@ extension AgentRuntime {
     if let memorySection, depth == 0 {
       insertSystem(memorySection, into: &providerMessages)
     }
+    if includesWorkingDirectoryContext {
+      insertSystem(
+        """
+        <execution_context>
+        Current working directory: \(AgentExecutionScope.directory.path)
+        Shell commands without an explicit cwd start here. Use this directory for the current task unless the user explicitly names another target. This live directory takes precedence over working directories in earlier conversation or memory; do not reuse an earlier absolute path or cd back to it merely because it appears in history.
+        </execution_context>
+        """, into: &providerMessages)
+    }
     if depth == 0 {
       let soulPath = AgentHome.expandUserPath("~/.pmai/SOUL.md")
       if let soul = try? String(contentsOfFile: soulPath, encoding: .utf8).trimmingCharacters(

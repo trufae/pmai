@@ -82,6 +82,13 @@ extension AgentRuntime {
     memorySection = section?.trimmingCharacters(in: .whitespacesAndNewlines).nilWhenEmpty
   }
 
+  /// Reports the tools' live working directory on each model call. CLI hosts
+  /// enable this so /cd overrides paths in earlier conversation or memory;
+  /// scoped sessions report their own directory without changing process cwd.
+  public func configureWorkingDirectoryContext(_ enabled: Bool) {
+    includesWorkingDirectoryContext = enabled
+  }
+
   /// Installs the project's AGENTS.md text, already wrapped by
   /// `AgentInstructionsFile.promptSection`. Runs at every depth see it: a
   /// child working in the same tree needs the same rules. Nil removes it.

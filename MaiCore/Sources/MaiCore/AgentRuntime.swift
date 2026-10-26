@@ -41,6 +41,7 @@ public actor AgentRuntime {
   /// grepping a file does not need the user's standing preferences, so this
   /// never reaches one.
   var memorySection: String?
+  var includesWorkingDirectoryContext = false
   var instructionsSection: String?
   var instructionsDirectory: URL?
   var instructionContexts: [String: AgentInstructionsContext] = [:]

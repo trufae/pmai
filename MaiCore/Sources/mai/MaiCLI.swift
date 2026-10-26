@@ -1513,6 +1513,7 @@ struct MaiCLI {
       let terminal = TerminalWriter()
       await terminal.configureColors(configuration?.ui ?? .init())
       await runtime.configureMemory(memoryState.promptSection)
+      await runtime.configureWorkingDirectoryContext(true)
       await runtime.configureProjectInstructionDirectory(
         configuration?.use.agentsmd == .on ? AgentExecutionScope.directory : nil)
       await runtime.configurePlanning(configuration?.use.plan ?? true)
