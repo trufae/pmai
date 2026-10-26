@@ -90,7 +90,15 @@ printf '/agent acp add claude\n/agent default claude\n/exit\n' | pmai
 printf '/agent acp add opencode\n/agent default opencode\n/exit\n' | pmai
 ```
 
-To add only a provider and keep the current agent's settings, use:
+To add only a provider and keep the current agent's settings, these two commands
+register OpenCode as `oc` and select the model used in this example:
+
+```
+/provider add acp oc opencode acp
+/model oc::opencode/big-pickle
+```
+
+Or use a built-in catalog name:
 
 ```
 /provider add acp opencode
@@ -125,6 +133,10 @@ tools, and settings. `/agent acp add` additionally creates and selects an agent.
 Both use the same MaiCore provider implementation. For SSH, set
 `options.remoteCwd` to the remote workspace's absolute path with `/edit provider
 workstation` when it differs from your local path.
+
+An ACP provider completes its own tool loop. pmai displays its completed answer
+directly, including when `/model` assigns the ACP provider to every task model.
+Text tool modes inherited from another provider do not wrap ACP prompts.
 
 Local agents receive pmai tools through a loopback HTTP MCP endpoint. Tools still
 use maiCore's validation, approvals, working directory, offline rules, and run

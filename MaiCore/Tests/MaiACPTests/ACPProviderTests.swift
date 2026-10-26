@@ -108,10 +108,57 @@ func acpProviderCommands() throws {
   private actor ProviderActivity {
     var started = 0
     var finished = 0
+    var text = ""
+    var reasoning = ""
     func event(_ event: ProviderEvent) {
       if case .toolStarted = event { started += 1 }
       if case .toolFinished = event { finished += 1 }
+      if case .textDelta(let delta) = event { text += delta }
+      if case .reasoningDelta(let delta) = event { reasoning += delta }
     }
+  }
+
+  @Test(
+    "An ACP primary exposes its answer when also assigned as the tool model",
+    arguments: [ToolCallingStrategy.automatic, .xml])
+  func acpPrimaryToolAssignment(strategy: ToolCallingStrategy) async throws {
+    let provider = providerFixture()
+    let runtime = AgentRuntime()
+    try await runtime.register(provider)
+    try await runtime.register(
+      agent: AgentDefinition(id: "tool", provider: "test-acp", model: "large"))
+    await runtime.configureTaskAgents(.init(tool: "tool"))
+    try await runtime.register(
+      tool: ClosureTool(definition: ToolDefinition(name: "probe", description: "Read README")) {
+        _, _ in ToolOutput(text: "README: PocketMai is an agent runtime.")
+      })
+    let activity = ProviderActivity()
+    let request = AgentRequest(
+      provider: "test-acp", model: "large", messages: [.user("Summarize README in one sentence")],
+      toolNames: ["probe"], limits: .init(maxModelTurns: 3), toolCallingStrategy: strategy,
+      useToolProxy: false,
+      sessionID: "readme-chat")
+    let result = try await runtime.run(request) { event in
+      if case .provider(_, let delta) = event { await activity.event(delta) }
+    }
+    let value = try JSONDecoder().decode(JSONValue.self, from: Data(result.response.text.utf8))
+    #expect(result.modelTurns == 1)
+    #expect(value.objectValue?["turn"] == .integer(1))
+    #expect(value.objectValue?["prompt"]?.stringValue?.contains("Summarize README") == true)
+    #expect(value.objectValue?["prompt"]?.stringValue?.contains("fallback protocol") == false)
+    #expect(await activity.text == result.response.text)
+    #expect(await activity.reasoning == "thinking")
+    #expect(result.transcript.last?.text == result.response.text)
+
+    var followup = request
+    followup.messages = result.transcript + [.user("Show me that summary again")]
+    let next = try await runtime.run(followup)
+    let nextValue = try JSONDecoder().decode(JSONValue.self, from: Data(next.response.text.utf8))
+    #expect(next.modelTurns == 1)
+    #expect(nextValue.objectValue?["turn"] == .integer(2))
+    #expect(
+      nextValue.objectValue?["prompt"]?.stringValue?.contains("Show me that summary again") == true)
+    await provider.shutdown()
   }
 
   @Test(

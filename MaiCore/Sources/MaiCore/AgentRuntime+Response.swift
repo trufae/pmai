@@ -5,6 +5,7 @@ extension AgentRuntime {
     _ call: ProviderCall, turn: ModelTurn, state: inout RunState
   ) async throws -> ProviderResponse? {
     var providerResponse = call.response
+    let managesToolLoop = turn.provider.descriptor.capabilities.contains(.managedToolLoop)
     if state.request.toolCallingStrategy == .off {
       providerResponse.message.content.removeAll {
         if case .toolCall = $0 { return true }
@@ -46,7 +47,7 @@ extension AgentRuntime {
       return nil
     }
 
-    if !turn.definitions.isEmpty, !turn.toolBudgetExhausted,
+    if !managesToolLoop, !turn.definitions.isEmpty, !turn.toolBudgetExhausted,
       providerResponse.message.toolCalls.isEmpty
     {
       let feedback: String?
@@ -90,7 +91,7 @@ extension AgentRuntime {
     // through the same validation, approval and execution as native calls.
     let hasLFMEnvelope = LFMToolCallParser.hasEnvelope(
       in: MessageContentFilter.removingReasoningSections(from: providerResponse.message.text))
-    if turn.textToolMode != nil || hasLFMEnvelope, !turn.toolBudgetExhausted,
+    if !managesToolLoop, turn.textToolMode != nil || hasLFMEnvelope, !turn.toolBudgetExhausted,
       !turn.definitions.isEmpty,
       providerResponse.message.toolCalls.isEmpty
     {

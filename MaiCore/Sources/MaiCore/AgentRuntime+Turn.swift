@@ -36,8 +36,14 @@ extension AgentRuntime {
       default: definitions = []
       }
     }
+    // Agent providers finish their own tool loop. A specialist handoff would
+    // hide their completed answer and prompt the same session again without
+    // a new user turn when /model assigned the agent to every task.
+    let primaryManagesTools =
+      providers[state.request.provider]?.descriptor.capabilities.contains(.managedToolLoop) == true
     let selectingTools =
       routedDecision == nil && !state.usingPrimary && taskAgents.tool != nil
+      && !primaryManagesTools
       && !concreteDefinitions.isEmpty
       && state.toolCalls < state.request.limits.maxToolCalls && !state.repeatGuardTripped
     if state.request.context == .tools {
@@ -85,6 +91,7 @@ extension AgentRuntime {
     }
     let supportsNativeTools =
       deciding || provider.descriptor.capabilities.contains(.nativeToolCalling)
+    let managesToolLoop = provider.descriptor.capabilities.contains(.managedToolLoop)
     // A text-only primary can still finish after a native specialist. Give
     // it the text protocol if further work is needed at the handoff.
     if state.usingPrimary, inference.toolCallingStrategy == .native, !supportsNativeTools {
@@ -96,7 +103,7 @@ extension AgentRuntime {
       throw AgentRuntimeError.nativeToolCallingUnavailable(inference.provider)
     }
     let textToolMode: ToolCallingMode? =
-      switch deciding ? .native : inference.toolCallingStrategy {
+      switch deciding || managesToolLoop ? .native : inference.toolCallingStrategy {
       case .automatic: definitions.isEmpty || supportsNativeTools ? nil : .json
       case .off, .native: nil
       case .text: definitions.isEmpty ? nil : .text

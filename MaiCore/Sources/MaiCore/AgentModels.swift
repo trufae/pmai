@@ -31,6 +31,9 @@ public struct ProviderCapabilities: OptionSet, Codable, Hashable, Sendable {
   /// Prefer discovery over inherited direct schemas when the host enables the tool proxy.
   public static let compactToolCatalog = ProviderCapabilities(rawValue: 1 << 8)
   public static let audioOutput = ProviderCapabilities(rawValue: 1 << 9)
+  /// Runs tools internally and returns a completed agent turn. Hosts delegate
+  /// the tool loop and surface its completed answer directly.
+  public static let managedToolLoop = ProviderCapabilities(rawValue: 1 << 10)
 }
 
 public struct ProviderDescriptor: Codable, Equatable, Sendable {

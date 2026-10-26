@@ -35,11 +35,16 @@ def main():
         assert '/provider add myai https://api.example.com/v1 --api-key YOUR_API_KEY' in output
         assert '/agent acp add claude' in output and '/agent acp add opencode' in output
         assert '/provider del ID' in output and 'npm install -g opencode-ai' in output
+        assert '/provider add acp oc opencode acp' in output, output
+        assert '/model oc::opencode/big-pickle' in output, output
         assert 'No providers configured.' in output, output
         assert 'No provider selected.' in output, output
         assert 'Chat: no model selected' in output, output
         assert '/about' in output, output
         assert '/visual' not in output, output
+        for help_output in run(['/provider add', '/help provider'], split=True):
+            assert '/provider add acp oc opencode acp' in help_output, help_output
+            assert '/model oc::opencode/big-pickle' in help_output, help_output
         assert 'Unknown command. Type /help.' in run(['/visual'])
         saved = json.loads(config.read_text())
         assert saved['providers'] == [] and saved['agents'] == [], saved
@@ -225,6 +230,17 @@ def main():
             assert provider['options'].get('args', []) == arguments, provider
             assert f'Chat: {name}::{name}' in run(['/model'], home=acp_home,
                                                   env={'PATH': str(root / 'no-executables')})
+            if name == 'opencode':
+                run(['/provider add acp oc opencode acp', '/model oc::opencode/big-pickle'],
+                    home=acp_home, env={'PATH': str(root / 'no-executables')})
+                acp_config = json.loads((acp_home / '.config/pmai/config.json').read_text())
+                provider = next(p for p in acp_config['providers'] if p['id'] == 'oc')
+                assert provider['options']['command'] == 'opencode', provider
+                assert provider['options']['args'] == ['acp'], provider
+                agents = {a['id']: a for a in acp_config['agents']}
+                for agent_id in [acp_config['defaultAgent'], *acp_config['taskAgents'].values()]:
+                    assert agents[agent_id]['provider'] == 'oc', agents[agent_id]
+                    assert agents[agent_id]['model'] == 'opencode/big-pickle', agents[agent_id]
         print('PASS persistent defaults: clean setup, model/provider/settings, environment '
               'precedence, new projects, temporary flags, active agent, bootstrap, and ACP setup')
 

@@ -13975,6 +13975,10 @@ struct MaiCLI {
       npm install -g opencode-ai
     Authenticate with the agent's own CLI before using ACP.
 
+    OpenCode with a named ACP provider (keep this agent's settings):
+      /provider add acp oc opencode acp
+      /model oc::opencode/big-pickle
+
     For a local Ollama server:
       /provider add local http://127.0.0.1:11434/v1
       /models local
@@ -14171,6 +14175,9 @@ struct MaiCLI {
     /provider add acp NAME --url URL --cwd DIR [--token-env ENV]  Remote ACP WebSocket
 
     ACP: /models NAME discovers models; /model NAME::MODEL selects one.
+    OpenCode example (already installed and authenticated):
+      /provider add acp oc opencode acp
+      /model oc::opencode/big-pickle
     For one-command setup that also saves and selects a same-named agent:
       /agent acp add claude
       /agent acp add opencode

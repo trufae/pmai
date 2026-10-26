@@ -31,7 +31,7 @@ public actor ACPProvider: ChatProvider {
       id: id,
       displayName: displayName,
       // Local agents receive MaiCore tools over a per-session MCP bridge.
-      capabilities: [.streaming, .reasoning, .nativeToolCalling])
+      capabilities: [.streaming, .reasoning, .nativeToolCalling, .managedToolLoop])
     self.configuration = configuration
     self.sessionFile = sessionFile
     self.onPermission = onPermission
