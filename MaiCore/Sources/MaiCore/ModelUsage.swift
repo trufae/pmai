@@ -68,7 +68,7 @@ public final class StreamTimingRecorder: @unchecked Sendable {
   public func note(_ event: ProviderEvent, at date: Date = Date()) {
     switch event {
     case .textDelta, .reasoningDelta, .toolCallDelta: noteTokenChunk(at: date)
-    case .usage: break
+    case .usage, .toolStarted, .toolFinished: break
     }
   }
 
