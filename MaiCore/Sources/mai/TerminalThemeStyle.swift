@@ -62,12 +62,12 @@ enum TerminalThemeStyle: Int, CaseIterable {
     return codes.isEmpty ? "" : "\u{1B}[\(codes.joined(separator: ";"))m"
   }
 
-  /// Tool previews add a two-character prefix before the original diff marker.
-  static func lineRoles(_ value: String, color: Self?, diff: Bool)
+  /// Tool previews add a two-character prefix; raw Git diffs use a zero-length prefix.
+  static func lineRoles(_ value: String, color: Self?, diff: Bool, diffPrefixLength: Int = 2)
     -> [(text: String, foreground: Self?, background: Self?)]
   {
     let lines = value.components(separatedBy: "\n")
-    let content = diff ? lines.map { String($0.dropFirst(2)) } : lines
+    let content = diff ? lines.map { String($0.dropFirst(diffPrefixLength)) } : lines
     let unified =
       diff
       && content.indices.dropLast().contains { index in

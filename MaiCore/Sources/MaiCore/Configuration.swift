@@ -500,7 +500,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   public var mode: TerminalOutputMode
   /// Transcript lines scrolled per mouse-wheel event in buffer mode.
   public var scroll: Int
-  /// Scrollbar width in terminal columns; zero hides it. Only shown for overflow.
+  /// Scrollbar width: positive on the right, negative on the left, zero hidden. Only shown for overflow.
   public var scrollbar: Int
   /// Literal text highlighted throughout the terminal transcript. Empty disables it.
   public var highlight: String
@@ -578,7 +578,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   ) {
     self.mode = mode
     self.scroll = max(1, scroll)
-    self.scrollbar = max(0, scrollbar)
+    self.scrollbar = scrollbar
     self.highlight = highlight
     self.title = title
     self.backgroundLine = backgroundLine

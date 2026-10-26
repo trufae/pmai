@@ -614,7 +614,7 @@ struct TerminalOutputBuffer {
   /// scrollbar's cached counts at the actual drawing width for long transcripts.
   mutating func contentWidth(columns: Int, height: Int, scrollbar: Int) -> Int {
     let columns = max(1, columns)
-    let gutter = min(max(0, scrollbar), columns - 1)
+    let gutter = Int(min(scrollbar.magnitude, UInt(columns - 1)))
     guard gutter > 0, height > 0 else { return columns }
     var remaining = height
     for index in lines.indices {

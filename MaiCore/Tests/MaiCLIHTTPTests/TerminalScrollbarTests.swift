@@ -38,13 +38,13 @@ func terminalScrollbarContentWidth() {
   // Exactly two full-width rows fit, even though reserving a gutter would wrap
   // them to three rows. Measuring with the gutter must not force a scrollbar.
   buffer.append("abcdefghijklmnopqrst")
-  for gutter in [0, 1, 2, 5, Int.max] {
+  for gutter in [Int.min, -5, -2, -1, 0, 1, 2, 5, Int.max] {
     #expect(buffer.contentWidth(columns: 10, height: 2, scrollbar: gutter) == 10)
   }
   buffer.append("u")
-  for gutter in [0, 1, 2, 5, Int.max] {
+  for gutter in [Int.min, -5, -2, -1, 0, 1, 2, 5, Int.max] {
     let width = buffer.contentWidth(columns: 10, height: 2, scrollbar: gutter)
-    #expect(width == 10 - min(gutter, 9))
+    #expect(width == 10 - Int(min(gutter.magnitude, 9)))
     let rows = buffer.visibleRows(width: width, height: 2)
     #expect(rows.count == 2)
     #expect(buffer.scrollbar(width: width, height: 2).maximum > 0)

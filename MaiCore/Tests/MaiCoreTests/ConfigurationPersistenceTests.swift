@@ -168,8 +168,8 @@ func terminalScrollbarSetting() throws {
     #expect(try decoder.decode(ConfiguredTerminalUI.self, from: Data(json.utf8)).scrollbar == 1)
   }
   #expect(try decoder.decode(ConfiguredTerminalUI.self,
-    from: Data(#"{"scrollbar":-3}"#.utf8)).scrollbar == 0)
-  for width in [0, 1, 2, 5, Int.max] {
+    from: Data(#"{"scrollbar":-3}"#.utf8)).scrollbar == -3)
+  for width in [Int.min, -3, -1, 0, 1, 2, 5, Int.max] {
     let configured = ConfiguredTerminalUI(scrollbar: width)
     #expect(try decoder.decode(ConfiguredTerminalUI.self,
       from: JSONEncoder().encode(configured)) == configured)

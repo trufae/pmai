@@ -72,6 +72,7 @@ def main(binary):
             subprocess.run(['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.org',
                             'commit', '-qm', 'fixture'], cwd=root, check=True)
             env = clean_environment() | {'TERM': 'xterm-256color', 'NO_PROXY': '127.0.0.1,localhost'}
+            env.pop('NO_COLOR', None)
             master, slave = pty.openpty()
             rows, columns = 24, 120
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', rows, columns, 0, 0))
@@ -101,11 +102,15 @@ def main(binary):
                         scrollbar.pop(row, None)
                         scrollbar_spans.pop(row, None)
                     match = re.search(r'\x1b\[([0-9;]+)m( +)\x1b\[0m', content)
-                    if match and column > 1:
+                    if match and (column > 1 or row < rows - 1):
                         scrollbar[row] = match[1]
                         scrollbar_spans[row] = (column, len(match[2]))
                     if column == 1 and '\x1b[2K' in content:
                         styled_screen[row] = content
+                        screen[row] = CSI.sub('', content).replace('\x1b7', '').replace('\x1b8', '')
+                    span = scrollbar_spans.get(row)
+                    if span and span[0] == 1 and column == span[1] + 1:
+                        styled_screen[row] += content
                         screen[row] = CSI.sub('', content).replace('\x1b7', '').replace('\x1b8', '')
 
             def wait_for(text):
@@ -190,7 +195,7 @@ def main(binary):
                 send('j\x17')
                 wait_for('Tab on empty prompt')
                 assert 'DRAFT_WORD' in screen[rows], screen
-                send('\x15')  # Clear the retained draft.
+                send('\x7f' * len('DRAFT_WORD'))  # Clear the retained draft.
                 read_for()
                 send('/todo add VIEW_TODO_ITEM\r')
                 wait_for('Todo list saved')
@@ -229,19 +234,21 @@ def main(binary):
                     assert 'THOUGHT_39' in top(), screen
                     below = '\n'.join(screen.get(row, '') for row in range(separator() + 1, rows))
                     assert 'THOUGHT_' not in below and 'Thinking…' not in below, screen
-                for width in (0, 2, 1):
+                for width in (0, 2, -1, -2, 1):
                     send(f'/set ui.scrollbar {width}\r')
                     wait_for(f'Set ui.scrollbar = {width}.')
                     assert len(screen[separator()]) == columns, screen[separator()]
                     if width:
-                        assert all(scrollbar_spans.get(row) == (columns - width + 1, width)
+                        start = 1 if width < 0 else columns - width + 1
+                        end = start + abs(width) - 1
+                        assert all(scrollbar_spans.get(row) == (start, abs(width))
                                    for row in range(1, separator())), scrollbar_spans
-                        if width == 2:
+                        if abs(width) == 2:
                             conversation = bottom()
-                            send(f'\x1b[<0;{columns-1};1M\x1b[<0;{columns-1};1m')
+                            send(f'\x1b[<0;{start};1M\x1b[<0;{start};1m')
                             read_for()
                             assert top().startswith('THOUGHT_00\n') and bottom() == conversation, screen
-                            send(f'\x1b[<0;{columns};{separator()-1}M\x1b[<0;{columns};{separator()-1}m')
+                            send(f'\x1b[<0;{end};{separator()-1}M\x1b[<0;{end};{separator()-1}m')
                             read_for()
                             assert 'THOUGHT_39' in top() and bottom() == conversation, screen
                     else:
@@ -319,6 +326,8 @@ def main(binary):
                 wait_for('LIVE_THOUGHT')
                 send('\t')
                 wait_for('Tab on empty prompt')
+                send('\x1b[6~' * 20)  # Resume following the conversation after its scrollbar tests.
+                read_for()
                 chunks.put('STREAM_ANSWER\n')
                 chunks.put(None)
                 wait_for('✓ took')
@@ -418,6 +427,11 @@ def main(binary):
                 wait_for('── view: git diff')
                 wait_for('+NEW_LINE')
                 assert '-OLD_LINE' in top() and '+NEW_LINE' in top(), screen
+                added_row = next(row for row in range(1, separator()) if '+NEW_LINE' in screen.get(row, ''))
+                removed_row = next(row for row in range(1, separator()) if '-OLD_LINE' in screen.get(row, ''))
+                assert '\x1b[38;2;217;247;227m' in styled_screen[added_row], styled_screen[added_row]
+                assert '\x1b[48;2;22;58;36m' in styled_screen[added_row], styled_screen[added_row]
+                assert '\x1b[38;2;255;217;221m' in styled_screen[removed_row], styled_screen[removed_row]
                 # A timer refresh must keep the chosen viewport even when the diff grows.
                 (root / 'file.txt').write_text(''.join(f'NEW_DIFF_{i:02d}\n' for i in range(40)))
                 wait_for('+NEW_DIFF_00')
@@ -623,17 +637,35 @@ def main(binary):
                 send(' ')
                 read_for()
                 assert '│'.encode() in captured, captured
-                assert any(int(m[2]) == (columns - 1) // 2 + 2
-                           for m in MOVE.finditer(captured.decode(errors='replace')))
+                view_column = columns - (columns - 1) // 2 + 1
+                painted = captured.decode(errors='replace')
+                assert re.search(rf'\x1b\[1;{view_column}H[^H]*user: .*PAGED_000', painted), painted
                 # Drag the vertical divider; keyboard resizing uses columns in this layout.
-                divider = (columns - 1) // 2 + 1
+                divider = view_column - 1
                 send(f'\x1b[<0;{divider};4M\x1b[<32;35;4M\x1b[<0;35;4m')
                 read_for()
                 assert '\x1b[1;36H' in captured.decode(errors='replace'), captured
                 send('v')
                 read_for()
-                assert '\x1b[1;37H' in captured.decode(errors='replace'), captured
+                assert '\x1b[1;35H' in captured.decode(errors='replace'), captured
                 send('V')
+                read_for()
+                # Left scrollbars stay within the right-hand view and keep a one-column gutter.
+                send('\x17/set ui.scrollbar -1\r')
+                wait_for('Set ui.scrollbar = -1.')
+                painted = captured.decode(errors='replace')
+                assert re.search(r'\x1b\[1;36H\x1b\[[0-9;]+m \x1b\[0m\x1b\[1;37H', painted), painted
+                send('\x17')
+                read_for()
+                send(f'\x1b[<0;36;{rows-3}M\x1b[<0;36;{rows-3}m')
+                wait_for('PAGED_129')
+                send('\x1b[<0;36;1M\x1b[<0;36;1m')
+                wait_for('PAGED_000')
+                assert all(int(move[2]) >= 35 for move in MOVE.finditer(captured.decode(errors='replace'))
+                           if int(move[1]) < rows - 2), captured
+                send('\x17/set ui.scrollbar 1\r')
+                wait_for('Set ui.scrollbar = 1.')
+                send('\x17')
                 read_for()
                 send('\r')
                 read_for()

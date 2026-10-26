@@ -262,6 +262,29 @@ func terminalViewGitScroll() {
   #expect(view.buffer.visibleRows(width: 80, height: 4) == ["No unstaged changes to tracked files."])
 }
 
+@Test("Git views use live theme colors for headers, additions and removals")
+func terminalViewGitColors() {
+  var view = TerminalView(source: .diffs, title: "git diff")
+  view.updateText("diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1 +1 @@\n-old\n+new\n context")
+  let ui = ConfiguredTerminalUI(
+    diffAddedForeground: "green", diffAddedBackground: "black",
+    diffRemovedForeground: "red", diffRemovedBackground: "black",
+    diffHeaderForeground: "cyan")
+  view.buffer.configureColors(ui)
+  let rows = view.buffer.visibleRows(width: 80, height: 10)
+  #expect(rows[0].contains("\u{1B}[36m"))
+  #expect(rows[4].contains("\u{1B}[31m\u{1B}[40m-old"))
+  #expect(rows[5].contains("\u{1B}[32m\u{1B}[40m+new"))
+  var changed = ui
+  changed.diffAddedForeground = "blue"
+  view.buffer.configureColors(changed)
+  #expect(view.buffer.visibleRows(width: 80, height: 10)[5].contains("\u{1B}[34m"))
+  view.buffer.configureColors(nil)
+  let plain = view.buffer.visibleRows(width: 80, height: 10).joined(separator: "\n")
+  #expect(!plain.contains("\u{1B}[32m") && !plain.contains("\u{1B}[?"))
+  #expect(plain.contains("+new") && plain.contains("-old"))
+}
+
 @Test("Prompt views resolve builtins and overrides, preserving the reply placeholder")
 func terminalViewPromptTemplate() throws {
   let custom = UserPrompt(name: "tldr", text: "Short: $ARGUMENTS")

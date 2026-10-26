@@ -456,7 +456,9 @@ requires `ui.mode=buffer`; use `/set ui.mode buffer` to enable that mode.
 Sources include `current`, `main`, an agent's name or `agent#PID`, `agents`
 (retained conversations), `pins` (all pinned messages in full), `log` (the first
 line of every message as `role: text`), `thinking`, `tools [NAME]`, `iconlog`
-(tool calls as emojis), and `diffs` (successful file edits with unified diffs). A tool name can also be used directly.
+(tool calls as emojis), and `diffs` (the working tree's unstaged Git diff, refreshed
+every five seconds with themed header, added-line, and removed-line colors).
+A tool name can also be used directly.
 The thinking view shows full retained reasoning; the tools view follows `ui.tools`.
 The iconlog view shows one emoji per call, in call order, independently of
 `ui.tools`. These filtered sources follow the selected agent;
@@ -485,7 +487,8 @@ counts, and checkboxes as `/todo`. It refreshes as commands and tools run.
 Each pane (and the chat alone when the view is closed) shows a scrollbar on the
 right only when its wrapped content exceeds its height. `/set ui.scrollbar N`
 sets its width in characters: `0` hides it, `1` is the default, `2` uses two
-columns, and so on. The setting is saved and applies immediately to both panes.
+columns, and negative values place it on the left (`-1` uses one column).
+The setting is saved and applies immediately to both panes.
 The width is clamped to leave at least one content column in narrow terminals;
 when hidden, the content uses the full width. Background-colored spaces use the
 theme's `bgline` for the track and `bgselection` for the handle. The handle is
@@ -497,6 +500,7 @@ reaching the bottom resumes following new output.
 With an empty prompt, Tab switches focus between the prompt and the view.
 Drag the separator up or down with the left mouse button to resize the panes.
 Space while the view is focused toggles between top/bottom and left/right panes.
+In the vertical layout the conversation is on the left and the view is on the right.
 Enter toggles a fullscreen view above the prompt and restores the previous split.
 Drag the vertical divider left/right to resize; `v`/`V` grow/shrink the view in either
 layout. Both panes keep at least one row or column. Each layout retains its size

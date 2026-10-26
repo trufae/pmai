@@ -112,12 +112,16 @@ def main(binary):
                         scrollbar.pop(row, None)
                         scrollbar_spans.pop(row, None)
                     match = re.search(r'\x1b\[([0-9;]+)m( +)\x1b\[0m', content)
-                    if match and column > 1:
+                    if match and (column > 1 or row < rows - 1):
                         scrollbar[row] = match[1]
                         scrollbar_spans[row] = (column, len(match[2]))
                     # The renderer clears and replaces each changed row in full.
                     if column == 1 and '\x1b[2K' in content:
                         styled_screen[row] = content
+                        screen[row] = CSI.sub('', content).replace('\x1b7', '').replace('\x1b8', '')
+                    span = scrollbar_spans.get(row)
+                    if span and span[0] == 1 and column == span[1] + 1:
+                        styled_screen[row] += content
                         screen[row] = CSI.sub('', content).replace('\x1b7', '').replace('\x1b8', '')
                 return bytes(data)
 
@@ -414,18 +418,20 @@ def main(binary):
                 chunks.put(None)
                 wait_for('STEP_ROW69')
                 wait_for('✓ took')
-                for width in (0, 2, 4, 1):
+                for width in (0, 2, 4, -1, -3, 1):
                     send(f'/set ui.scrollbar={width}\r')
                     wait_for(f'Set ui.scrollbar = {width}.')
                     assert json.loads(config.read_text())['ui']['scrollbar'] == width
                     if width:
-                        assert all(scrollbar_spans.get(row) == (columns - width + 1, width)
+                        start = 1 if width < 0 else columns - width + 1
+                        end = start + abs(width) - 1
+                        assert all(scrollbar_spans.get(row) == (start, abs(width))
                                    for row in range(1, rows - 1)), scrollbar_spans
                         # Both edges of a wider scrollbar respond to clicks.
-                        send(f'\x1b[<0;{columns-width+1};1M\x1b[<0;{columns-width+1};1m')
+                        send(f'\x1b[<0;{start};1M\x1b[<0;{start};1m')
                         read_for()
                         assert scrollbar[1] == '44', scrollbar
-                        send(f'\x1b[<0;{columns};{rows-2}M\x1b[<0;{columns};{rows-2}m')
+                        send(f'\x1b[<0;{end};{rows-2}M\x1b[<0;{end};{rows-2}m')
                         read_for()
                         assert 'STEP_ROW69' in '\n'.join(output()), screen
                     else:
@@ -444,9 +450,9 @@ def main(binary):
                     wait_for(f"Applied theme '{theme}'.")
                     assert set(scrollbar.values()) == {handle, track_color}, scrollbar
                     assert all(span == (columns, 1) for span in scrollbar_spans.values()), scrollbar_spans
-                for invalid in ('-1', 'nope', '1.5', '99999999999999999999'):
+                for invalid in ('nope', '1.5', '99999999999999999999'):
                     send(f'/set ui.scrollbar={invalid}\r')
-                    wait_for('Usage: /set ui.scrollbar <nonnegative integer>')
+                    wait_for('Usage: /set ui.scrollbar <integer: positive right, negative left, 0 hidden>')
                     assert json.loads(config.read_text())['ui']['scrollbar'] == 1
                 send('\x1b[5~')
                 read_for()

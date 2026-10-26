@@ -94,14 +94,16 @@ extension MaiCLI {
 
     Requires /set ui.mode buffer and an interactive terminal. The read-only view
     starts in the top half of the output area, with the conversation below it.
-    With the view focused, Space toggles between top/bottom and left/right panes.
+    With the view focused, Space toggles between top/bottom and left/right panes,
+    with the view on the right and the conversation on the left.
     Enter toggles the view fullscreen above the prompt; Enter again restores the split.
     Drag the separator with the left mouse button to resize either layout. Both
     panes keep at least one row/column; sizes are kept when sources change.
     Replies, pinned messages, logs and thinking follow ui.markdown and reflow to fit.
     Overflowing panes show a scrollbar on the right (one character by default).
-    /set ui.scrollbar N changes its width; 0 hides it. Drag its handle or click
-    its track to scroll; the handle size reflects the amount of visible content.
+    /set ui.scrollbar N sets its width: positive on the right, negative on the left,
+    and 0 hides it. Drag its handle or click its track to scroll; the handle size
+    reflects the amount of visible content.
     Ctrl+W switches focus between the prompt and the view, keeping any draft.
     Tab with an empty prompt also switches focus.
     In the view, j/k or Down/Up scroll one row; J/K page down/up like Page Down/Up.

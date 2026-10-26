@@ -65,6 +65,13 @@ struct TerminalView {
       output.configureMarkdown(markdown)
       let block = output.appendReply(text)
       output.finishReply(block)
+    } else if source == .diffs {
+      let styled = TerminalThemeStyle.lineRoles(text, color: nil, diff: true, diffPrefixLength: 0)
+        .map { line in
+          let markers = [line.foreground, line.background].compactMap { $0?.marker }.joined()
+          return markers.isEmpty ? line.text : markers + line.text + "\u{1B}[0m"
+        }.joined(separator: "\n")
+      output.append(styled)
     } else {
       output.append(text)
     }
