@@ -37,6 +37,8 @@ struct TerminalOutputBuffer {
 
     mutating func append(_ text: String) {
       source += text
+      // Unseen conversations are laid out from source when first painted.
+      guard width > 0 else { return }
       output.append(renderer?.feed(text) ?? text)
     }
 
