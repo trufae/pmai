@@ -1234,7 +1234,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       ? "view focused · j/k scroll · J/K page · g/G top/bottom · v/V resize · q close · Tab prompt"
       : "Tab on empty prompt to focus"
     let label = "── view: \(view?.title ?? "") · \(focus) · drag to resize ──"
-    let separatorWidth = max(1, columns - 1)
+    let separatorWidth = columns
     let text = Self.truncated(label, width: separatorWidth)
     let padded = text + String(repeating: " ", count: max(0, separatorWidth - Self.displayWidth(text)))
     let background = TerminalLineEditor.backgroundColorCode(ui.backgroundLine)
@@ -1295,7 +1295,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   private func drawStatusLine(clear: Bool = true) {
-    let width = max(1, columns - 1)
+    let width = columns
     let status: String
     let timer: String
     if let activityStartedAt {

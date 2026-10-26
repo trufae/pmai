@@ -41,7 +41,10 @@ def check_rows(data, rows, columns, input_rows=1, thinking_rows=0):
         content = CSI.sub('', text[move.end():end]).replace('\x1b7', '').replace('\x1b8', '')
         if content:
             assert row >= rows - input_rows - thinking_rows, (row, repr(content))
-            assert column - 1 + width(content) <= columns - 1, (columns, repr(content))
+            limit = columns if row == rows - input_rows else columns - 1
+            assert column - 1 + width(content) <= limit, (columns, repr(content))
+            if row == rows - input_rows and column == 1:
+                assert width(content) == columns, (columns, repr(content))
             painted.add(row)
     assert rows - input_rows in painted, ('missing status/menu row', repr(text))
     assert rows in painted, ('missing input row', repr(text))

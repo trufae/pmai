@@ -202,6 +202,7 @@ def main(binary):
                 for width in (0, 2, 1):
                     send(f'/set ui.scrollbar {width}\r')
                     wait_for(f'Set ui.scrollbar = {width}.')
+                    assert len(screen[separator()]) == columns, screen[separator()]
                     if width:
                         assert all(scrollbar_spans.get(row) == (columns - width + 1, width)
                                    for row in range(1, separator())), scrollbar_spans
@@ -242,6 +243,7 @@ def main(binary):
                 send('\t')
                 wait_for('view focused')
                 assert '\x1b[48;2;0;34;68;1m' in styled_screen[separator()], styled_screen
+                assert len(screen[separator()]) == columns, screen[separator()]
                 send('g')
                 read_for()
                 assert top().startswith('THOUGHT_00\n') and bottom() == original_bottom, screen
