@@ -3,11 +3,14 @@ import Foundation
 extension AgentRuntime {
   public func conversationRecords(under pid: AgentPID) async -> [AgentProcessRecord] {
     var records = await supervisor.records(under: pid)
+    await pruneConversationState()
     for index in records.indices {
       let child = records[index].pid
       if conversationIDs[child] == nil { conversationIDs[child] = records[index].runID }
       records[index].conversationID = conversationIDs[child]
-      if var request = await conversationRequest(for: records[index].pid) {
+      // Checkpoints need settings only. Loading each continuation's transcript
+      // adds actor round trips and disk reads for bodies we immediately discard.
+      if var request = liveRequests[child] ?? conversationRequests[child] {
         request.messages = []
         records[index].conversationRequest = request
       }
@@ -36,13 +39,17 @@ extension AgentRuntime {
   /// A snapshot uses this process's actual settings, including a derived
   /// worker's tool restrictions, rather than guessing from its agent name.
   public func conversationRequest(for pid: AgentPID) async -> AgentRequest? {
-    let known = Set(await supervisor.processes().map(\.pid))
-    conversationRequests = conversationRequests.filter { known.contains($0.key) }
-    conversationIDs = conversationIDs.filter { known.contains($0.key) }
+    await pruneConversationState()
     guard var request = liveRequests[pid] ?? conversationRequests[pid] else { return nil }
     guard let messages = try? await supervisor.loadTranscript(pid) else { return nil }
     request.messages = messages
     return request
+  }
+
+  private func pruneConversationState() async {
+    let known = Set(await supervisor.processes().map(\.pid))
+    conversationRequests = conversationRequests.filter { known.contains($0.key) }
+    conversationIDs = conversationIDs.filter { known.contains($0.key) }
   }
 
   /// Creates an idle child without a provider call. The host can switch to it

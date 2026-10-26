@@ -3,6 +3,43 @@ import Testing
 @testable import MaiCore
 @testable import MaiTestSupport
 
+@Test("Progress snapshots keep continuation settings without reading stored transcripts")
+func conversationSnapshotSettings() async throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let runtime = AgentRuntime()
+  let parent = await runtime.allocateProcess(agentID: "main")
+  var request = AgentRequest(
+    agentID: "worker", provider: "scripted", model: "saved-model",
+    messages: [.user("Saved worker history")], toolNames: ["files_read"], useToolProxy: false)
+  request.restrictedToolNames = ["files_read"]
+  _ = try #require(await runtime.forkConversation(request, parent: parent, title: "Worker"))
+  let chat = AgentChat(
+    primaryAgent: .init(id: "main", provider: "scripted", model: "fixture"),
+    messages: (0..<65).map { .user("Message \($0)") },
+    subagents: await runtime.conversationRecords(under: parent))
+  let store = AgentChatStore(directoryURL: directory)
+  try store.save(chat)
+  let page = try #require(try store.loadChatPage(id: chat.id, limit: 0))
+  let reference = try #require(page.subagents.first?.historyReference)
+  let restored = AgentRuntime()
+  let restoredParent = await restored.allocateProcess(agentID: "main")
+  let children = await restored.restoreConversations(page.subagents, under: restoredParent)
+  let child = try #require(children.first)
+
+  // Settings snapshots must not depend on transcript I/O succeeding. Actual
+  // continuation still requires the body, and fails when its chunks disappear.
+  try FileManager.default.removeItem(at: reference.directory)
+  #expect(await restored.conversationRequest(for: child) == nil)
+  let records = await restored.conversationRecords(under: restoredParent)
+  let settings = try #require(records.first?.conversationRequest)
+  #expect(settings.model == "saved-model")
+  #expect(settings.restrictedToolNames == ["files_read"])
+  #expect(settings.messages.isEmpty)
+  #expect(records.first?.historyReference == reference)
+}
+
 @Test("Conversation forks keep lineage, independent transcripts and restricted settings across resume")
 func conversationForksAndResume() async throws {
   let provider = ScriptedProvider(responses: [

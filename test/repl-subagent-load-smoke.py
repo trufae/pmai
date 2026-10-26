@@ -25,7 +25,11 @@ def main(binary, mode):
 
     class Provider(JSONProvider):
         def do_POST(self):
-            request = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            size = int(self.headers['Content-Length'])
+            body = self.rfile.read(size)
+            if len(body) != size:  # Ctrl+C can close a request mid-upload.
+                return
+            request = json.loads(body)
             turns = sum(m['role'] == 'tool' for m in request['messages'])
             if request['model'] == 'root':
                 if turns:
@@ -125,9 +129,11 @@ def main(binary, mode):
                     ('/history', 'No input history.'),
                     ('/help history', '/history del N'),
                 ]:
+                    output.clear()
                     send(command)
                     wait(expected)
                 # Interrupt while child commands are still running, then type again.
+                output.clear()
                 os.write(master, b'\x03')
                 send('/history path')
                 wait(str(root / 'home/history.json'))
