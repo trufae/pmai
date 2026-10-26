@@ -369,3 +369,14 @@ func providerHeaderForms() throws {
     ProviderHeaders.expand(expected, sessionID: "chat-1")
       == ["x-opencode-session": "chat-1", "X-Tenant": "acme"])
 }
+
+@Test("Terminal highlight defaults to empty and round-trips literal text")
+func terminalHighlightConfiguration() throws {
+  let decoder = JSONDecoder()
+  for json in ["{}", #"{"highlight":null}"#, #"{"highlight":42}"#] {
+    #expect(try decoder.decode(ConfiguredTerminalUI.self, from: Data(json.utf8)).highlight.isEmpty)
+  }
+  let configured = ConfiguredTerminalUI(highlight: "café = needle")
+  #expect(try decoder.decode(ConfiguredTerminalUI.self,
+    from: JSONEncoder().encode(configured)).highlight == "café = needle")
+}

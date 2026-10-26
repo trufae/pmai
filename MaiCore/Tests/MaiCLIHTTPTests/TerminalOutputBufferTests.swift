@@ -364,3 +364,48 @@ func terminalBufferToolGroupBoundaries() {
   #expect(!details.contains("tool calls"))
   #expect(details.contains("one") && details.contains("four"))
 }
+
+@Test("Highlight matches cross styles and wraps, restore colors, and jump to the first hit")
+func terminalBufferHighlight() {
+  var buffer = TerminalOutputBuffer()
+  buffer.append("before\n\u{1B}[31mnee\u{1B}[1mdle\u{1B}[0m tail needle\n")
+  buffer.append((0..<20).map { "after \($0)" }.joined(separator: "\n"))
+  let original = buffer.visibleRows(width: 80, height: 30)
+  buffer.configureHighlight("needle")
+  let foundFirst = buffer.scrollToFirstHighlight(width: 4)
+  #expect(foundFirst)
+  let narrow = buffer.visibleRows(width: 4, height: 3).joined()
+  #expect(narrow.contains(TerminalOutputBuffer.highlightStyle))
+  #expect(!narrow.contains("before"))
+  buffer.scroll(lines: Int.min, width: 80, height: 30)
+  let rows = buffer.visibleRows(width: 80, height: 30)
+  #expect(rows[1].components(separatedBy: TerminalOutputBuffer.highlightStyle).count == 4)
+  #expect(rows[1].contains("\u{1B}[0m tail "))
+  buffer.configureHighlight("")
+  buffer.follow()
+  #expect(buffer.visibleRows(width: 80, height: 30) == original)
+  buffer.configureHighlight("missing")
+  let foundMissing = buffer.scrollToFirstHighlight(width: 80)
+  #expect(!foundMissing)
+}
+
+@Test("Highlight searches rendered Markdown, tools and Unicode literally during updates")
+func terminalBufferHighlightBlocks() {
+  var buffer = TerminalOutputBuffer()
+  buffer.configureMarkdown(MarkdownTerminalRenderer(theme: .plain))
+  let reply = buffer.appendReply("**café** café 🐈\n")
+  buffer.finishReply(reply)
+  buffer.appendTool(call: ToolCall(id: "read", name: "files_read", arguments: .object([:])),
+    result: ToolResult(callID: "read", text: "café [.*]"))
+  buffer.configureTools(.all)
+  buffer.configureHighlight("café")
+  let text = buffer.visibleRows(width: 80, height: 30).joined()
+  #expect(text.components(separatedBy: TerminalOutputBuffer.highlightStyle).count == 4)
+  #expect(!text.contains("**"))
+  buffer.configureHighlight("[.*]")
+  let foundLiteral = buffer.scrollToFirstHighlight(width: 80)
+  #expect(foundLiteral)
+  #expect(buffer.visibleRows(width: 80, height: 30).joined().contains(TerminalOutputBuffer.highlightStyle + "[.*]"))
+  buffer.configureHighlight("🐈")
+  #expect(buffer.visibleRows(width: 80, height: 30).joined().contains(TerminalOutputBuffer.highlightStyle + "🐈"))
+}

@@ -40,6 +40,9 @@ protocol LineEditorSurface: AnyObject {
   func focusPrompt()
   func scrollView(lines: Int)
   func resizeView(lines: Int)
+  func toggleViewLayout()
+  func toggleViewFullscreen()
+  func setViewSearching(_ searching: Bool)
   func closeView()
   func handleMouse(_ event: TerminalMouseEvent)
   /// Text that belongs with the output, such as completion candidates.
@@ -64,6 +67,9 @@ extension LineEditorSurface {
   func focusPrompt() {}
   func scrollView(lines: Int) {}
   func resizeView(lines: Int) {}
+  func toggleViewLayout() {}
+  func toggleViewFullscreen() {}
+  func setViewSearching(_ searching: Bool) {}
   func closeView() {}
   func handleMouse(_ event: TerminalMouseEvent) {}
   func pendingInput() -> [UInt8] { [] }
@@ -453,7 +459,42 @@ final class TerminalLineEditor {
       pasted.shift(startingAt: replaced.upperBound, by: bytes.count - previousBytes.count)
     }
 
+    var viewSearch: [UInt8]?
     while let key = readKey() {
+      if var query = viewSearch {
+        switch key {
+        case .byte(13):
+          surface?.setViewSearching(false)
+          redraw(prompt: prompt, bytes: bytes, cursor: cursor)
+          submittedPromptID = activePrompt.id
+          return "/highlight " + String(decoding: query, as: UTF8.self)
+        case .byte(3), .byte(7), .ignored:
+          viewSearch = nil
+          surface?.setViewSearching(false)
+          redraw(prompt: prompt, bytes: bytes, cursor: cursor)
+          continue
+        case .refreshPrompt, .switchAgent:
+          viewSearch = nil
+          surface?.setViewSearching(false)
+          redraw(prompt: prompt, bytes: bytes, cursor: cursor)
+        case .byte(127), .byte(8):
+          query.removeSubrange(previousCharacterStart(in: query, before: query.count)..<query.count)
+        case .byte(21): query = []
+        case .byte(let byte) where byte >= 32:
+          query += readCharacter(startingWith: byte)
+        case .text(let text): query += text
+        case .paste(let text):
+          query += normalizedPaste(text).filter { $0 >= 32 && $0 != 127 }
+        case .wheel(let direction): surface?.scrollOutput(wheel: direction, pages: 0)
+        case .mouse(let event): surface?.handleMouse(event)
+        default: continue
+        }
+        if viewSearch != nil {
+          viewSearch = query
+          redraw(prompt: "/", bytes: query, cursor: query.count)
+          continue
+        }
+      }
       if case .mouse(let event) = key {
         surface?.handleMouse(event)
         continue
@@ -467,6 +508,13 @@ final class TerminalLineEditor {
       }
       if surface?.viewHasFocus == true {
         switch key {
+        case .byte(32): surface?.toggleViewLayout(); continue
+        case .byte(13): surface?.toggleViewFullscreen(); continue
+        case .byte(47):
+          viewSearch = []
+          surface?.setViewSearching(true)
+          redraw(prompt: "/", bytes: [], cursor: 0)
+          continue
         case .byte(106), .down: surface?.scrollView(lines: 1); continue
         case .byte(107), .up: surface?.scrollView(lines: -1); continue
         case .byte(75), .pageUp: surface?.scrollOutput(wheel: 0, pages: -1); continue

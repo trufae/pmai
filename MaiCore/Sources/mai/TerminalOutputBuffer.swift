@@ -80,11 +80,14 @@ struct TerminalOutputBuffer {
   private var tools = ConfiguredTerminalUI().tools
   private var markdownRenderer: MarkdownTerminalRenderer?
   private var colors: ConfiguredTerminalUI?
+  private var highlight = ""
+  static let highlightStyle = "\u{1B}[0;30;47m"
   private var cursor = 0
   private var style = ""
   private var escape = ""
   private var top: Position?
   private var selection: TerminalOutputSelection = .all
+  private var renderThinkingMarkdown = false
   private var excludedSelection: TerminalOutputSelection?
   private static let reset = "\u{1B}[0m"
 
@@ -112,6 +115,10 @@ struct TerminalOutputBuffer {
       return
     }
     self = source
+    if !renderThinkingMarkdown {
+      renderThinkingMarkdown = true
+      for index in thinkingBlocks.keys { invalidateLine(index) }
+    }
     top = anchor.flatMap { $0.line < lines.count ? $0 : nil }
     if tools == .icons && self.selection != selection {
       for index in toolBlocks.keys { lines[index].cachedWidth = 0 }
@@ -204,6 +211,7 @@ struct TerminalOutputBuffer {
 
   mutating func configureMarkdown(_ renderer: MarkdownTerminalRenderer?) {
     markdownRenderer = renderer
+    for index in thinkingBlocks.keys { invalidateLine(index) }
     for index in replyBlocks.keys {
       replyBlocks[index]?.width = 0
       invalidateLine(index)
@@ -435,6 +443,7 @@ struct TerminalOutputBuffer {
       if isHeader && !expanded || !isHeader && tools == .lines(0) {
         output.truncateLine(to: width)
       }
+      output.configureHighlight(highlight)
       let result = text.isEmpty ? [] : Self.blockRows(&output, index: index, width: width)
       lines[index].cachedWidth = width
       lines[index].rows = result
@@ -444,6 +453,7 @@ struct TerminalOutputBuffer {
       if replyBlocks[index]!.width != width {
         replyBlocks[index]?.configure(markdownRenderer, width: width, colors: colors)
       }
+      replyBlocks[index]?.output.configureHighlight(highlight)
       let result = Self.blockRows(&replyBlocks[index]!.output, index: index, width: width)
       lines[index].cachedWidth = width
       lines[index].rows = result
@@ -454,7 +464,21 @@ struct TerminalOutputBuffer {
       if thinkingDisplay == .full
         || (thinkingDisplay != .status && !activeThinking.contains(index))
       {
-        result = Self.blockRows(&thinkingBlocks[index]!, index: index, width: width)
+        if renderThinkingMarkdown, let template = markdownRenderer {
+          let source = thinkingBlocks[index]!.lines.map { $0.glyphs.map(\.text).joined() }
+            .joined(separator: "\n")
+          var options = template.options
+          options.width = width
+          var renderer = MarkdownTerminalRenderer(theme: template.theme, options: options)
+          var output = TerminalOutputBuffer()
+          output.configureColors(colors)
+          output.configureHighlight(highlight)
+          output.append(renderer.feed(source) + renderer.flush())
+          result = Self.blockRows(&output, index: index, width: width)
+        } else {
+          thinkingBlocks[index]?.configureHighlight(highlight)
+          result = Self.blockRows(&thinkingBlocks[index]!, index: index, width: width)
+        }
         if thinkingDisplay != .full { result = Array(result.suffix(thinkingDisplay.lineCount)) }
       }
       lines[index].cachedWidth = width
@@ -466,6 +490,7 @@ struct TerminalOutputBuffer {
     var row = Row(position: Position(line: index, glyph: 0), text: base)
     var used = 0
     var rowStyle = ""
+    let matches = highlightedGlyphs(in: lines[index].glyphs)
     for (offset, glyph) in lines[index].glyphs.enumerated() {
       let cells = glyph.width
       if used > 0 && used + cells > width {
@@ -476,11 +501,12 @@ struct TerminalOutputBuffer {
       }
       // A wide character cannot be painted in a one-column viewport.
       guard cells <= width else { continue }
-      if rowStyle != glyph.style {
-        let styled = TerminalThemeStyle.resolve(glyph.style, ui: colors)
+      let glyphStyle = glyph.style + (matches.contains(offset) ? Self.highlightStyle : "")
+      if rowStyle != glyphStyle {
+        let styled = TerminalThemeStyle.resolve(glyphStyle, ui: colors)
           .replacingOccurrences(of: Self.reset, with: Self.reset + base)
         row.text += Self.reset + base + styled
-        rowStyle = glyph.style
+        rowStyle = glyphStyle
       }
       row.text += glyph.text
       used += cells
@@ -489,6 +515,36 @@ struct TerminalOutputBuffer {
     lines[index].cachedWidth = width
     lines[index].rows = result
     return result
+  }
+
+  mutating func configureHighlight(_ text: String) {
+    guard highlight != text else { return }
+    highlight = text
+    for index in lines.indices { invalidateLine(index) }
+  }
+
+  /// Match before wrapping and styling so ANSI transitions and narrow panes do not split hits.
+  private func highlightedGlyphs(in glyphs: [Glyph]) -> IndexSet {
+    guard !highlight.isEmpty else { return [] }
+    let text = glyphs.map(\.text).joined()
+    var matches = IndexSet()
+    var start = text.startIndex
+    while start < text.endIndex, let range = text.range(of: highlight, range: start..<text.endIndex) {
+      let lower = text.distance(from: text.startIndex, to: range.lowerBound)
+      let upper = text.distance(from: text.startIndex, to: range.upperBound)
+      matches.insert(integersIn: lower..<upper)
+      start = text.index(after: range.lowerBound)
+    }
+    return matches
+  }
+
+  @discardableResult
+  mutating func scrollToFirstHighlight(width: Int) -> Bool {
+    guard !highlight.isEmpty else { return false }
+    let rows = allRows(width: max(1, width))
+    guard let row = rows.first(where: { $0.text.contains(Self.highlightStyle) }) else { return false }
+    top = row.position
+    return true
   }
 
   /// Compact tool entries occupy one row. Clip parsed glyphs so ANSI colors,

@@ -81,6 +81,7 @@ def main(binary):
                 data = bytearray()
                 read_pty(master, data, seconds)
                 captured.extend(data)
+                assert b'Fatal access conflict' not in data, data.decode(errors='replace')
                 text = data.decode(errors='replace')
                 moves = list(MOVE.finditer(text))
                 for index, move in enumerate(moves):
@@ -101,7 +102,8 @@ def main(binary):
 
             def wait_for(text):
                 deadline = time.monotonic() + 15
-                while text.encode() not in captured:
+                while (text.encode() not in captured
+                       and text not in CSI.sub('', captured.decode(errors='replace'))):
                     assert process.poll() is None, captured.decode(errors='replace')
                     assert time.monotonic() < deadline, (text, captured.decode(errors='replace'))
                     read_for(.05)
@@ -258,9 +260,9 @@ def main(binary):
                 read_for()
                 assert top() != original_top and bottom() == original_bottom, screen
                 anchored = top()
-                send('cannot type\x1b[200~pasted\ntext\x1b[201~\r')
+                send('cannot_type\x1b[200~pasted\ntext\x1b[201~')
                 read_for()
-                assert 'cannot type' not in screen[rows] and 'pasted' not in screen[rows], screen
+                assert 'cannot_type' not in screen[rows] and 'pasted' not in screen[rows], screen
                 assert len(requests) == 1, requests
                 chunks.put({'reasoning_content': 'LIVE_THOUGHT\n'})
                 read_for()
@@ -548,8 +550,59 @@ def main(binary):
                 read_for()
                 assert top().startswith('user: PAGED_000\nassistant: PAGED_001'), screen
                 assert bottom() == conversation, screen
-                send('G\t')
+                send('G')
                 read_for()
+                # Search remains local, saves ui.highlight, and jumps from the tail to the first hit.
+                request_count = len(requests)
+                send('/PAGED_000\r')
+                wait_for('Set ui.highlight = PAGED_000.')
+                assert 'PAGED_000' in top(), screen
+                assert b'\x1b[0;30;47mPAGED_000' in captured, captured
+                assert json.loads(config.read_text())['ui']['highlight'] == 'PAGED_000'
+                assert len(requests) == request_count
+                send('G/PAGED_000\r')
+                wait_for('Set ui.highlight = PAGED_000.')
+                assert 'PAGED_000' in top(), screen  # Repeating the same search jumps again.
+                send('/DISCARD\x1b')
+                read_for()
+                assert json.loads(config.read_text())['ui']['highlight'] == 'PAGED_000'
+                # Space rotates the panes; Enter expands/restores without sending a message.
+                send(' ')
+                read_for()
+                assert '│'.encode() in captured, captured
+                assert any(int(m[2]) == (columns - 1) // 2 + 2
+                           for m in MOVE.finditer(captured.decode(errors='replace')))
+                # Drag the vertical divider; keyboard resizing uses columns in this layout.
+                divider = (columns - 1) // 2 + 1
+                send(f'\x1b[<0;{divider};4M\x1b[<32;35;4M\x1b[<0;35;4m')
+                read_for()
+                assert '\x1b[1;36H' in captured.decode(errors='replace'), captured
+                send('v')
+                read_for()
+                assert '\x1b[1;37H' in captured.decode(errors='replace'), captured
+                send('V')
+                read_for()
+                send('\r')
+                read_for()
+                assert separator() == rows - 2, screen
+                assert '│'.encode() not in captured, captured
+                send('\r')
+                read_for()
+                assert '│'.encode() in captured, captured
+                send(' ')
+                read_for()
+                assert separator() < rows - 2, screen
+                assert len(requests) == request_count
+                send('\t')
+                read_for()
+                send('/highlight\r')
+                wait_for('Set ui.highlight = none.')
+                assert json.loads(config.read_text())['ui']['highlight'] == ''
+                send('/set ui.highlight PAGED_004\r')
+                wait_for('Set ui.highlight = PAGED_004.')
+                assert b'\x1b[0;30;47mPAGED_004' in captured, captured
+                send('/set ui.highlight none\r')
+                wait_for('Set ui.highlight = none.')
                 send('/view pins\r')
                 wait_for('── view: pinned messages')
                 send('/chat unpin 1\r')
@@ -609,7 +662,7 @@ def main(binary):
                 output = run_repl([binary, '--config', str(config), '--home', str(root / 'pipe-home')],
                                  ['/view thinking', '/help view'], cwd=root, env=env, allow_errors=True)
                 assert 'error: /view requires ui.mode=buffer.' in output and '/view off' in output
-                print('PASS view: mode guard, sources, pins, first-line message log, read-only focus, independent scrolling, live thinking/tools/diffs, '
+                print('PASS view: Markdown settings, horizontal/vertical layouts, fullscreen restore, highlight search/persistence/cancellation, mode guard, sources, pins, first-line message log, read-only focus, independent scrolling, live thinking/tools/diffs, '
                       'background agents, J/K paging, g/G top/bottom, divider background, v/V resizing, q close, separator dragging, mouse cleanup, '
                       'live ui.tools previews and iconlog, resize, saved reasoning/results, off and cleanup')
             finally:
