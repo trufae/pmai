@@ -10,7 +10,7 @@ import time
 
 ROOT = Path(__file__).resolve().parent.parent
 SMOKE = '''installer openai-http project-approval project-debug projects-repl provider-routing remote-repl forwiroh-remote repl-defaults
-repl-chat repl-del repl-export repl-fork repl-history repl-local-providers repl-redact repl-resume repl-resume-routing
+repl-chat repl-del repl-export repl-fork repl-history repl-indexes repl-local-providers repl-redact repl-resume repl-resume-routing
 repl-resume-state repl-skills repl-small-context repl-smart-context repl-speed repl-tool-policy run-shell task-agents
 update vim web-fetch'''.split()
 TERMINAL = '''repl-agents repl-buffer repl-btw repl-then repl-chop repl-colors repl-compaction repl-conversations repl-interactive-run repl-modal repl-models repl-path

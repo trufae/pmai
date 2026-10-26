@@ -496,6 +496,8 @@ afterwards and the file is renamed `chats.json.imported`.
 only the latest N. Use `/history search TEXT` to find inputs, `/history del N`
 to delete one, `/history clear` to clear both saved inputs and live Up/Down
 and Ctrl+R recall, and `/history path` to locate the file. This history is
+numbered from one; `/history del -1` deletes its last entry, `-2` the one before it.
+History counts such as `/history list 5` remain positive. Input history is
 shared across projects and separate from chat transcripts. It keeps up to
 500 entries, including slash commands, but excludes consecutive duplicates,
 modal replies, `/remote pair`, and `/history` commands. `--history PATH` or
@@ -543,6 +545,11 @@ then dates), newest first, with their agent, size, and last-update time, and
 lists archived chats last; `/chat list active` and `/chat list archived` narrow
 it down. `/chat use INDEX|ID|TITLE` switches by list entry; `/chat previous`
 goes to an older chat and `/chat next` to a newer one, wrapping at either end.
+Chat, project, message, todo, and input-history entry indexes also accept negative
+numbers: `-1` is the last entry, `-2` the second-to-last. Chat indexes follow
+`/chat list all`, including archived chats, so `/chat use -1` or `pmai -r -1`
+selects the final chat in that list. `/projects open -1` selects the final project
+in `/projects`. Zero and positions beyond either end are invalid.
 Switching chats shows when the conversation started and how many messages it contains.
 `/chat fork [TITLE]` copies the current conversation and switches to the copy,
 preserving messages, attachments, agent settings, and saved subagent history.

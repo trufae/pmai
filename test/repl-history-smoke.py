@@ -57,7 +57,12 @@ def main():
         assert 'Deleted input history entry 2.' in output, output
         assert '2. /version' in output and '3. alpha last' in output, output
         assert json.loads(history.read_text()) == [seed[0], *seed[2:], '/exit']
-        for invalid in ('del 0', 'del -1', 'del 999', 'del', 'del 1 extra',
+        for number, index in [('-1', 3), ('-2', 2), ('-4', 0)]:
+            history.write_text(json.dumps(seed))
+            output = run(['/history del ' + number])
+            assert f'Deleted input history entry {index + 1}.' in output, output
+            assert json.loads(history.read_text()) == seed[:index] + seed[index + 1:] + ['/exit']
+        for invalid in ('del 0', 'del -5', 'del -9223372036854775808', 'del 999', 'del', 'del 1 extra',
                         '0', '-1', 'list 0', 'list extra', 'search', 'clear extra',
                         'path extra', 'unknown'):
             history.write_text(json.dumps(seed))

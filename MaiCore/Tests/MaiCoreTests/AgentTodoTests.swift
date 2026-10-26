@@ -69,6 +69,12 @@ func todoMatching() {
 
   #expect(list.index(matching: "2") == 1)
   #expect(list.index(matching: "#3") == 2)
+  #expect(list.index(matching: "-1") == 2)
+  #expect(list.index(matching: "#-2") == 1)
+  #expect(list.index(matching: "-3") == 0)
+  #expect(list.index(matching: "-4") == nil)
+  #expect(list.index(matching: "0") == nil)
+  #expect(list.index(matching: String(Int.min)) == nil)
   #expect(list.index(matching: "4") == nil)
   #expect(list.index(matching: "write tests") == 0)
   // A fragment prefers what is still pending over what is already done.

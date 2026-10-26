@@ -1,4 +1,5 @@
 import Foundation
+import MaiCore
 
 /// Runs while the input reader is parked, so edits also affect recall and Ctrl+R.
 enum REPLHistoryCommand {
@@ -10,6 +11,7 @@ enum REPLHistoryCommand {
     /history path        Print the input history file path
     /history help        Show this help
 
+    Negative entry numbers count from the end: /history del -1 deletes the latest.
     Input history is shared across projects and keeps up to 500 entries.
     Consecutive duplicates, modal replies, /remote pair, and /history commands
     are not added. Other slash commands are included. Multiline inputs keep
@@ -32,11 +34,11 @@ enum REPLHistoryCommand {
       try editor.clearInputHistory()
       return "Input history cleared."
     case "del":
-      guard let number = Int(value), number > 0, number <= entries.count else {
+      guard let index = ListIndex.resolve(value, count: entries.count) else {
         return "Usage: /history del N (choose a number from /history)"
       }
-      try editor.removeInputHistory(at: number - 1)
-      return "Deleted input history entry \(number)."
+      try editor.removeInputHistory(at: index)
+      return "Deleted input history entry \(index + 1)."
     case "search":
       guard !value.isEmpty else { return "Usage: /history search TEXT" }
       entries = entries.filter { $0.element.localizedCaseInsensitiveContains(value) }

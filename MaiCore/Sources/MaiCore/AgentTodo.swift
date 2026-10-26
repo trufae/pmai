@@ -110,14 +110,14 @@ public struct AgentTodoList: Codable, Equatable, Sendable {
   }
 
   /// Finds an item by its 1-based number, an id prefix of at least eight
-  /// characters, an exact title, or a title fragment — pending items first,
-  /// since those are the ones anyone asks about.
+  /// characters, an exact title, or a title fragment. Negative numbers count
+  /// from the end; fragments prefer pending items.
   public func index(matching query: String) -> Int? {
     let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
     let number = trimmed.hasPrefix("#") ? String(trimmed.dropFirst()) : trimmed
-    if let position = Int(number), position >= 1, position <= items.count {
-      return position - 1
+    if let index = ListIndex.resolve(number, count: items.count) {
+      return index
     }
     let lower = trimmed.lowercased()
     if lower.count >= 8,

@@ -165,7 +165,9 @@ private struct CLIOptions {
         approvalMode = mode
       case "-r", "--resume", "--continue":
         resume = true
-        if index + 1 < arguments.count, !arguments[index + 1].hasPrefix("-") {
+        if index + 1 < arguments.count,
+          !arguments[index + 1].hasPrefix("-") || Int(arguments[index + 1]) != nil
+        {
           index += 1
           resumeSelector = arguments[index]
         }
@@ -12471,8 +12473,8 @@ struct MaiCLI {
     -> AgentProject?
   {
     let ordered = index.orderedProjects
-    if let number = Int(selector), number >= 1, number <= ordered.count {
-      return ordered[number - 1]
+    if let position = ListIndex.resolve(selector, count: ordered.count) {
+      return ordered[position]
     }
     let path = AgentProject.standardizedPath(selector)
     if let match = index.project(atWorkingDirectory: path) { return match }
@@ -12640,8 +12642,8 @@ struct MaiCLI {
     in workspace: AgentChatWorkspace
   ) -> AgentChat? {
     let ordered = workspace.orderedChats
-    if let index = Int(selector), ordered.indices.contains(index - 1) {
-      return ordered[index - 1]
+    if let index = ListIndex.resolve(selector, count: ordered.count) {
+      return ordered[index]
     }
     if let id = UUID(uuidString: selector) {
       return ordered.first { $0.id == id }
@@ -12998,9 +13000,7 @@ struct MaiCLI {
   }
 
   private static func chatIndex(_ raw: String, count: Int) -> Int? {
-    guard let value = Int(raw), value != 0 else { return nil }
-    let index = value > 0 ? value - 1 : count + value
-    return (0..<count).contains(index) ? index : nil
+    ListIndex.resolve(raw, count: count)
   }
 
   private static func conversationLog(
@@ -14201,8 +14201,9 @@ struct MaiCLI {
       /chat recap         Print a short recap using the compact model; keep the history
       /chat clear         Clear the conversation and restore configured instructions
 
-    Message indexes are 1-based. Negative indexes count back from the end;
-    -1 selects the last message, -2 the second-to-last, and so on.
+    Message and chat list indexes are 1-based. Negative indexes count back from the end;
+    -1 selects the last entry, -2 the second-to-last, and so on. For chats this
+    follows /chat list all order, including archived chats; pmai -r -1 works too.
     /chat log quiet hides reasoning, tool calls, and tool outputs; verbose includes them.
     Log indexes keep their original positions, including messages hidden in quiet mode.
     /chat log short shows the first paragraph of every message with its original
@@ -14238,6 +14239,7 @@ struct MaiCLI {
     /projects del SELECTOR  Remove another project from the index; keep its files
 
     Select by list number, name, path, or ID prefix; quote names and paths with spaces.
+    Negative list numbers count from the end: -1 selects the last project, -2 the one before it.
     Opening a new directory registers it in ~/.pmai/projects.json. /remote serve
     shares this same index by default, and Refresh in PocketMai picks up changes.
     /project shows the current project's details. /cd changes only the tools'
@@ -14252,6 +14254,7 @@ struct MaiCLI {
       /project tint COLOR      Color the prompt: a preset such as mint, or #RRGGBB; none clears it
       /project del INDEX|PATH|NAME  Drop another project from the list; its files stay
 
+    Negative list numbers count from the end: -1 selects the last project.
     Chats live in .pmai/chats inside the project directory; the list of
     projects lives in ~/.pmai/projects.json (or under $PMAI_HOME). /cd changes
     where tools run, not which project the chats belong to.
@@ -14371,6 +14374,7 @@ struct MaiCLI {
       /todo clear                Remove every item
       /todo path                 Print where the file lives
 
+    Negative item numbers count from the end: /todo done -1 completes the last item.
     Enable the tools for an agent with /tools enable todo.
     """
 
