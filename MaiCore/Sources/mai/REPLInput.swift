@@ -152,7 +152,7 @@ final class REPLInputReader: @unchecked Sendable {
         let line = editor.readLine(
           prompt: prompt.presentation.text, completions: prompt.completions,
           additionalCompletions: prompt.additionalCompletions, separator: prompt.separator,
-          tracksPromptUpdates: true)
+          acceptEmptyInput: false, tracksPromptUpdates: true)
       else {
         continuation.yield(.endOfFile)
         return

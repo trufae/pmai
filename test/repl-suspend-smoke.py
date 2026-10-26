@@ -219,6 +219,23 @@ elif action == 'fail':
 
             print('PASS: 8 Ctrl+Z/fg cycles preserve input, editing, Enter and shell termios')
 
+            # Blank chat input is ignored, but heredoc blank/space-only lines
+            # belong to the message and must survive in both terminal modes.
+            for mode in ('classic', 'buffer'):
+                send(f'/set ui.mode {mode}\r'.encode())
+                wait_for(f'Set ui.mode = {mode}')
+                send(b'\r\r<<END\r')
+                wait_for('...> ')
+                for line in (b'first', b'', b'  ', b'last'):
+                    send(line + b'\r')
+                    wait_for('...> ')
+                send(b'END\r')
+                wait_for('Hello from MaiCore: first\r\n\r\n  \r\nlast')
+                wait_for('✓ took')
+            send(b'/set ui.mode classic\r')
+            wait_for('Set ui.mode = classic')
+            print('PASS: blank Enter keeps chat idle and heredoc lines intact')
+
             # An editor must inherit normal signals even when launched from a
             # Swift worker. Ctrl+Z must stop the whole job, including pmai.
             send(b'/edit provider other\r')

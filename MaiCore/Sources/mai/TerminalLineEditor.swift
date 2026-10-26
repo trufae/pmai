@@ -307,6 +307,7 @@ final class TerminalLineEditor {
     additionalCompletions: ((String) -> [String])? = nil,
     separator: String? = nil,
     rememberInput: Bool = true,
+    acceptEmptyInput: Bool = true,
     tracksPromptUpdates: Bool = false,
     continuationPrompt: String? = nil
   ) -> String? {
@@ -326,7 +327,7 @@ final class TerminalLineEditor {
       defer { surface = nil }
       return readInteractive(
         prompt: prompt, completions: completions, additionalCompletions: additionalCompletions,
-        separator: nil, rememberInput: rememberInput)
+        separator: nil, rememberInput: rememberInput, acceptEmptyInput: acceptEmptyInput)
     }
     guard isatty(STDIN_FILENO) != 0, isatty(STDOUT_FILENO) != 0 else {
       FileHandle.standardOutput.write(Data(prompt.utf8))
@@ -355,7 +356,7 @@ final class TerminalLineEditor {
     defer { surface = nil }
     return readInteractive(
       prompt: prompt, completions: completions, additionalCompletions: additionalCompletions,
-      separator: separator, rememberInput: rememberInput)
+      separator: separator, rememberInput: rememberInput, acceptEmptyInput: acceptEmptyInput)
   }
 
   private func readInteractive(
@@ -363,7 +364,8 @@ final class TerminalLineEditor {
     completions: [String],
     additionalCompletions: ((String) -> [String])?,
     separator: String?,
-    rememberInput: Bool
+    rememberInput: Bool,
+    acceptEmptyInput: Bool
   ) -> String? {
     var prompt = tracksPromptUpdates ? activePrompt.text : prompt
     var bytes: [UInt8] = []
@@ -653,7 +655,7 @@ final class TerminalLineEditor {
           drawSeparator(separator)
           redraw(prompt: prompt, bytes: bytes, cursor: cursor)
         case 13:  // Enter submits the whole input
-          if !activePrompt.isModal,
+          if !acceptEmptyInput, !activePrompt.isModal,
             String(decoding: bytes, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
           { continue }
           renderSubmittedLine(prompt: prompt, bytes: bytes)
