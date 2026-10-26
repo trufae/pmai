@@ -1457,7 +1457,6 @@ private struct ConversationFolderDefaultsView: View {
   let folder: ConversationFolder
   @State private var draft = ConversationFolderDefaults()
   @State private var didLoad = false
-  @State private var modelFilter = ""
   @State private var showingWorkingFolderImporter = false
   @State private var workingFolderError: String?
 
@@ -1503,7 +1502,6 @@ private struct ConversationFolderDefaultsView: View {
         Section {
           Button {
             draft = ConversationFolderDefaults()
-            modelFilter = ""
           } label: {
             Label("Reset to App Defaults", systemImage: "arrow.counterclockwise")
           }
@@ -1708,20 +1706,13 @@ private struct ConversationFolderDefaultsView: View {
         Text("No downloaded MLX models")
           .foregroundStyle(.secondary)
       } else {
-        Picker("Model", selection: mlxModelBinding) {
-          ForEach(modelIDs, id: \.self) { modelID in
-            Text(modelID).tag(modelID)
-          }
-        }
-        .pickerStyle(.menu)
+        FilteredModelPicker(
+          selection: mlxModelBinding, models: modelIDs.map { .init(id: $0) },
+          refresh: {
+            store.refreshLocalMLXModelsInBackground()
+          })
       }
 
-      Button {
-        store.refreshLocalMLXModels()
-        ensureDraftMLXModelSelectionIsAvailable()
-      } label: {
-        Label("Refresh Models", systemImage: "arrow.clockwise")
-      }
     }
   }
 
@@ -1731,29 +1722,9 @@ private struct ConversationFolderDefaultsView: View {
       Text(store.offlineProviderGuidance)
         .foregroundStyle(.secondary)
     } else if let endpoint = selectedEndpoint {
-      let models = store.endpointModels[endpoint.id] ?? []
-      if models.isEmpty {
-        TextField("Model", text: endpointModelBinding(default: endpoint.defaultModel))
-          .textInputAutocapitalization(.never)
-          .autocorrectionDisabled()
-      } else {
-        FilteredModelPicker(
-          selection: endpointModelBinding(default: endpoint.defaultModel),
-          filter: $modelFilter,
-          models: models
-        )
-      }
-
-      HStack {
-        endpointStatusLabel(store.endpointStatuses[endpoint.id] ?? .unknown)
-        Spacer()
-        Button {
-          Task { await store.refreshEndpoint(endpoint, force: true) }
-        } label: {
-          Label("Refresh Models", systemImage: "arrow.clockwise")
-        }
-        .disabled(isChecking(endpoint))
-      }
+      FilteredModelPicker(
+        selection: endpointModelBinding(default: endpoint.defaultModel), endpoint: endpoint
+      )
     } else {
       Text("Choose an enabled endpoint.")
         .foregroundStyle(.secondary)

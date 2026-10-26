@@ -6104,7 +6104,6 @@ struct ConversationModelSettingsView: View {
   @EnvironmentObject private var store: AppStore
   @Environment(\.dismiss) private var dismiss
   @State private var didSaveDefaults = false
-  @State private var modelFilter = ""
   @State private var showingNewFolder = false
   @State private var showingFolderManager = false
   @State private var showingCompactSheet = false
@@ -6395,28 +6394,9 @@ struct ConversationModelSettingsView: View {
         Label("Using ChatGPT plan", systemImage: "checkmark.circle")
         Link("Manage usage", destination: URL(string: "https://chatgpt.com/settings/usage")!)
       }
-      let models = store.endpointModels[endpoint.id] ?? []
-      if models.isEmpty {
-        TextField("Model", text: modelBinding(default: endpoint.defaultModel))
-          .textInputAutocapitalization(.never)
-      } else {
-        FilteredModelPicker(
-          selection: modelBinding(default: endpoint.defaultModel),
-          filter: $modelFilter,
-          models: models
-        )
-      }
-
-      HStack {
-        endpointStatusLabel(store.endpointStatuses[endpoint.id] ?? .unknown)
-        Spacer()
-        Button {
-          Task { await store.refreshEndpoint(endpoint, force: true) }
-        } label: {
-          Label("Refresh Models", systemImage: "arrow.clockwise")
-        }
-        .disabled(isChecking(endpoint))
-      }
+      FilteredModelPicker(
+        selection: modelBinding(default: endpoint.defaultModel), endpoint: endpoint
+      )
     } else {
       Text("Add and enable an endpoint in Settings.")
         .foregroundStyle(.secondary)
@@ -6433,19 +6413,11 @@ struct ConversationModelSettingsView: View {
         Text("No downloaded MLX models")
           .foregroundStyle(.secondary)
       } else {
-        Picker("Model", selection: mlxModelBinding) {
-          ForEach(modelIDs, id: \.self) { modelID in
-            Text(modelID).tag(modelID)
-          }
-        }
-        .pickerStyle(.menu)
-      }
-
-      Button {
-        store.refreshLocalMLXModelsInBackground()
-        ensureCurrentMLXModelSelectionIsAvailable()
-      } label: {
-        Label("Refresh Models", systemImage: "arrow.clockwise")
+        FilteredModelPicker(
+          selection: mlxModelBinding, models: modelIDs.map { .init(id: $0) },
+          refresh: {
+            store.refreshLocalMLXModelsInBackground()
+          })
       }
 
       Text(

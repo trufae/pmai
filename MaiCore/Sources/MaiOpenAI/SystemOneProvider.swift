@@ -198,7 +198,10 @@ public final class SystemOneProvider: ChatProvider, @unchecked Sendable {
       guard capabilities.contains("decision"), format == "gguf",
         metadata["remote_host"] == nil, metadata["remote_model"] == nil
       else { continue }
-      result.append(.init(id: name, capabilities: [.toolDecision]))
+      if let descriptor = ModelDescriptor.catalogEntry(
+        metadata, enriching: .init(id: name, capabilities: [.toolDecision])) {
+        result.append(descriptor)
+      }
     }
     return result.sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
   }

@@ -1012,6 +1012,10 @@ enum AppleFoundationProvider {
 
 enum OpenAICompatibleProvider {
   static func fetchModels(endpoint: OpenAIEndpoint) async throws -> [String] {
+    try await fetchModelDescriptors(endpoint: endpoint).map(\.id)
+  }
+
+  static func fetchModelDescriptors(endpoint: OpenAIEndpoint) async throws -> [MaiCore.ModelDescriptor] {
     let provider = try await PocketMaiPluginHost.shared.makeProvider(endpoint: endpoint)
     let decoded: [MaiCore.ModelDescriptor]
     do {
@@ -1033,9 +1037,8 @@ enum OpenAICompatibleProvider {
     }
     let models =
       decoded
-      .map(\.id)
-      .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-      .sorted()
+      .filter { !$0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+      .sorted { $0.id.localizedCaseInsensitiveCompare($1.id) == .orderedAscending }
     if models.isEmpty {
       throw ChatProviderError.providerRequestFailed("The endpoint returned no models.")
     }
@@ -1048,7 +1051,7 @@ enum OpenAICompatibleProvider {
       return endpoint.speechVoices(discovered: [])
     }
     do {
-      return try await coreProvider(endpoint: endpoint).availableVoices()
+      return try await coreProvider(endpoint: endpoint).availableVoices(model: endpoint.effectiveSpeechModel)
     } catch {
       throw mapCoreError(error)
     }

@@ -1741,3 +1741,25 @@ the model's response, execute the calls, return results, and continue until the
 model answers. The default, `automatic`, uses native calls when the provider
 advertises support and JSON emulation otherwise; it does not select XML.
 `native` requires provider-native tool calling.
+
+### Browse model capabilities
+
+`/models [PROVIDER] [SEARCH]` refreshes the provider catalog and lists models alphabetically,
+with colored labels for declared Tools, Vision, Reasoning, Decision, Voice, and context size.
+Combine filters such as `/models ollama llama --tools --vision`, `/models --voice`, or
+`/models --context 128K`. Labels remain readable in redirected output and with `NO_COLOR`.
+Use `/help models` for the complete syntax.
+
+MaiCore's `ModelDescriptor` and `ModelCatalogFilter` share these semantics with PocketMai's
+full-screen model browser. The browser has feature pills, a context-size filter, bottom search,
+and refresh; chat, provider, agent, folder, and speech settings expose one selection row.
+Speech selection starts with audio-output models; System One starts with decision models.
+Filters can be reset, and a model ID can be entered when discovery is unavailable.
+Selecting a model that declares tools defaults its tool format to Native.
+
+Discovery uses `/v1/models` (including pagination and compatible metadata extensions).
+Recognized Ollama endpoints additionally enrich entries with `/api/show` capabilities,
+context limits, and voices, using bounded concurrent requests and deadlines. Optional metadata
+failures leave the original model visible; unknown features do not match feature filters.
+Ollama speech uses `/v1/audio/speech` with WAV audio and model-specific `/api/show` voices,
+including the model's `default` voice when no voice catalog is supplied.

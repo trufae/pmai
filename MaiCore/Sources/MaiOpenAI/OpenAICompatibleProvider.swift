@@ -85,50 +85,78 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
       else { break }
       afterID = cursor
     } while true
-    return values.compactMap { value in
-      guard let object = value.objectValue,
-        let id = object["id"]?.stringValue ?? object["model"]?.stringValue
-          ?? object["name"]?.stringValue,
-        !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-      else { return nil }
-      var capabilities: ProviderCapabilities = []
-      let architecture = object["architecture"]?.objectValue
-      var declaredModalities =
-        architecture?["input_modalities"]?.arrayValue?.compactMap(\.stringValue)
-        ?? object["input_modalities"]?.arrayValue?.compactMap(\.stringValue)
-      let modality = architecture?["modality"]?.stringValue?.lowercased() ?? ""
-      if declaredModalities == nil, !modality.isEmpty {
-        declaredModalities = modality.split(separator: "-").first.map {
-          $0.split(separator: "+").map(String.init)
+    let models = values.compactMap { value -> ModelDescriptor? in
+      guard let object = value.objectValue, var model = ModelDescriptor.catalogEntry(object) else { return nil }
+      if OpenAISpeech.isDirectEndpoint(configuration.baseURL), OpenAISpeech.models.contains(model.id) {
+        model.capabilities.insert(.audioOutput)
+        model.voices = OpenAISpeech.voices(for: model.id)
+      } else if GroqSpeech.isDirectEndpoint(configuration.baseURL) {
+        if GroqSpeech.speechModels.contains(model.id) {
+          model.capabilities.insert(.audioOutput)
+          model.voices = GroqSpeech.voices(for: model.id)
+        } else if GroqSpeech.transcriptionModels.contains(model.id) {
+          model.capabilities.insert(.audioInput)
         }
       }
-      let nativeImageInput = object["capabilities"]?.objectValue?["image_input"]?
-        .objectValue?["supported"]?.boolValue
-      if declaredModalities == nil, let nativeImageInput {
-        declaredModalities = nativeImageInput ? ["text", "image"] : ["text"]
-      }
-      let inputModalities = declaredModalities ?? []
-      if inputModalities.contains(where: { $0.lowercased() == "image" })
-        || modality.split(separator: "-").first?.contains("image") == true
-      {
-        capabilities.insert(.imageInput)
-      }
-      if inputModalities.contains(where: { $0.lowercased() == "audio" })
-        || modality.split(separator: "-").first?.contains("audio") == true
-      {
-        capabilities.insert(.audioInput)
-      }
-      return ModelDescriptor(
-        id: id,
-        displayName: object["display_name"]?.stringValue ?? object["name"]?.stringValue,
-        ownedBy: object["owned_by"]?.stringValue ?? object["ownedBy"]?.stringValue,
-        capabilities: capabilities,
-        inputModalities: declaredModalities.map {
-          Set($0.map { $0.lowercased() })
-        })
-    }.sorted {
-      $0.id.localizedStandardCompare($1.id) == .orderedAscending
+      return model
     }
+    let isOllama = configuration.baseURL.port == 11434
+      || configuration.baseURL.host?.lowercased().contains("ollama") == true
+      || configuration.id.rawValue.lowercased().contains("ollama")
+      || configuration.displayName.lowercased().contains("ollama")
+      || models.contains { $0.ownedBy == "library" || $0.ownedBy == "ollama" }
+    guard isOllama else { return ModelCatalogFilter().applying(to: models) }
+    // A failed optional /show request must never hide a model from /v1/models.
+    // Bound fan-out and elapsed discovery time for large or slow installations.
+    let deadline = Date().addingTimeInterval(8)
+    let enriched = await withTaskGroup(of: (Int, ModelDescriptor).self) { group in
+      var result = models
+      var next = 0
+      func enqueue(_ index: Int) {
+        group.addTask {
+          let model = models[index]
+          let metadata = try? await self.ollamaModelInfo(model.id)
+          return (index, metadata.flatMap { ModelDescriptor.catalogEntry($0, enriching: model) } ?? model)
+        }
+      }
+      for index in 0..<min(4, models.count) { enqueue(index); next += 1 }
+      while let (index, model) = await group.next() {
+        result[index] = model
+        if next < models.count, Date() < deadline, !Task.isCancelled {
+          enqueue(next)
+          next += 1
+        }
+      }
+      return result
+    }
+    try Task.checkCancellation()
+    return ModelCatalogFilter().applying(to: enriched)
+  }
+
+  private func ollamaModelInfo(_ model: String) async throws -> [String: JSONValue] {
+    var url = try endpointURL("models").deletingLastPathComponent()
+    if url.lastPathComponent == "v1" || url.lastPathComponent == "api" {
+      url.deleteLastPathComponent()
+    }
+    url.appendPathComponent("api/show")
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.timeoutInterval = min(3, max(1, configuration.requestTimeout))
+    applyHeaders(to: &request)
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.httpBody = try JSONEncoder().encode(JSONValue.object(["model": .string(model)]))
+    let (data, response) = try await withThrowingTaskGroup(of: (Data, URLResponse).self) { group in
+      group.addTask { [request] in try await self.data(for: request) }
+      group.addTask { [request] in
+        try await Task.sleep(for: .seconds(request.timeoutInterval))
+        throw URLError(.timedOut)
+      }
+      defer { group.cancelAll() }
+      guard let result = try await group.next() else { throw CancellationError() }
+      return result
+    }
+    try validate(response: response, data: data)
+    return try decodeRoot(data)
   }
 
   /// Direct OpenAI has built-in voices; other providers retain `/voices` discovery.
@@ -139,6 +167,16 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     if GroqSpeech.isDirectEndpoint(configuration.baseURL) {
       return GroqSpeech.voices(
         for: model == OpenAISpeech.defaultModel ? GroqSpeech.defaultSpeechModel : model)
+    }
+    if configuration.baseURL.port == 11434
+      || configuration.baseURL.host?.lowercased().contains("ollama") == true
+      || configuration.id.rawValue.lowercased().contains("ollama")
+      || configuration.displayName.lowercased().contains("ollama") {
+      if let metadata = try? await ollamaModelInfo(model),
+        let descriptor = ModelDescriptor.catalogEntry(metadata, enriching: .init(id: model)),
+        descriptor.capabilities.contains(.audioOutput) {
+        return descriptor.voices.flatMap { $0.isEmpty ? nil : $0 } ?? ["default"]
+      }
     }
     let root = try await catalog("voices")
     let voices = (root["data"]?.arrayValue ?? []).compactMap { value in

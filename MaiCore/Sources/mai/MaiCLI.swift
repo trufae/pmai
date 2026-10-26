@@ -5624,6 +5624,8 @@ struct MaiCLI {
         await terminal.line(aboutMessage)
       case "model", "/model":
         await terminal.markdown(modelHelp)
+      case "models", "/models":
+        await terminal.line(REPLModelListOptions.usage)
       case "keys", "/keys":
         await terminal.line(keysHelp)
       case "shell", "/shell":
@@ -5752,21 +5754,25 @@ struct MaiCLI {
           "\(plugin.manifest.id) \(plugin.manifest.version) [\(capabilities)]\(origin)")
       }
     case "/models":
-      let providerID = argument.isEmpty ? session.profile.provider : ProviderID(argument)
+      if ["--help", "-h"].contains(argument) {
+        await terminal.line(REPLModelListOptions.usage)
+        return false
+      }
       do {
-        let models = try await runtime.availableModels(provider: providerID)
-        services.modelCatalog.store(models, for: providerID)
+        let providers = Set(await runtime.availableProviders().map(\.id))
+        let options = try REPLModelListOptions(argument, current: session.profile.provider, providers: providers)
+        let models = try await runtime.availableModels(provider: options.provider)
+        services.modelCatalog.store(models, for: options.provider)
+        let matches = options.filter.applying(to: models)
+        await terminal.line("\(matches.count) of \(models.count) models · \(options.provider)")
         if models.isEmpty {
-          await terminal.line("Provider '\(providerID)' returned no models.")
+          await terminal.line("Provider '\(options.provider)' returned no models.")
+        } else if matches.isEmpty {
+          await terminal.line("No matching models. Try fewer filters; missing metadata is unknown.")
         }
-        for model in models {
-          let selected =
-            providerID == session.profile.provider && model.id == session.profile.model
-            ? "*" : " "
-          let owner = model.ownedBy.map { " — \($0)" } ?? ""
-          let label =
-            model.displayName == model.id ? model.id : "\(model.id) (\(model.displayName))"
-          await terminal.line("\(selected) \(label)\(owner)")
+        for model in matches {
+          let selected = options.provider == session.profile.provider && model.id == session.profile.model
+          await terminal.line(await terminal.modelCatalogRow(model, selected: selected))
         }
       } catch {
         await terminal.line("error: \(error.localizedDescription)", to: .standardError)
@@ -13838,7 +13844,7 @@ struct MaiCLI {
     /mcp                   Manage MCP servers
     /memory                Show, edit, learn, or scope project memory
     /model [FLAG] [MODEL]  Select chat or task models; /help model
-    /models [PROVIDER]     List available models
+    /models [PROVIDER] [FILTERS]  Browse models; /models --help
     /nothink               Disable reasoning
     /path                  Show or change file access policies
     /plugins               List loaded plugins

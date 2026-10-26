@@ -2673,20 +2673,13 @@ private struct RoleVoiceSettingsView: View {
 
       if showsOpenAIVoiceSettings {
         Section {
-          TextField(
-            "Speech Model", text: speechModelBinding,
-            prompt: Text(
-              selectedOpenAIEndpoint?.isDirectOpenAI == true
-                ? OpenAISpeech.defaultModel : "Provider default")
-          )
-          .textInputAutocapitalization(.never)
-          .autocorrectionDisabled()
-          if let models = selectedSpeechModels, !models.isEmpty {
-            Menu("Choose Speech Model") {
-              ForEach(models, id: \.self) { model in
-                Button(model) { speechModelBinding.wrappedValue = model }
-              }
-            }
+          if let endpoint = selectedOpenAIEndpoint {
+            FilteredModelPicker(
+              selection: speechModelBinding, models: speechCatalog(endpoint), endpoint: nil,
+              title: "Speech Model", emptySelectionTitle: "Provider default",
+              initialFeatures: [.voice], requiredCapabilities: [.audioOutput],
+              refresh: { await store.refreshEndpoint(endpoint, force: true) })
+              .task(id: endpoint.connectionSignature) { await store.refreshEndpoint(endpoint) }
           }
         } footer: {
           Text(
@@ -2939,10 +2932,16 @@ private struct RoleVoiceSettingsView: View {
     ]
   }
 
-  private var selectedSpeechModels: [String]? {
-    guard let endpoint = selectedOpenAIEndpoint else { return nil }
-    let available = store.endpointModels[endpoint.id] ?? []
-    return endpoint.availableSpeechModels.filter { available.isEmpty || available.contains($0) }
+  private func speechCatalog(_ endpoint: OpenAIEndpoint) -> [MaiCore.ModelDescriptor] {
+    var models = store.endpointModelDescriptors[endpoint.id] ?? []
+    for id in endpoint.availableSpeechModels where !models.contains(where: { $0.id == id }) {
+      models.append(.init(id: id, capabilities: [.audioOutput]))
+    }
+    // Built-in speech catalogs have authoritative task metadata even when /models omits it.
+    for index in models.indices where endpoint.availableSpeechModels.contains(models[index].id) {
+      models[index].capabilities.insert(.audioOutput)
+    }
+    return models
   }
 
   private var speechModelBinding: Binding<String> {
@@ -3368,7 +3367,6 @@ private struct EndpointDetailView: View {
   @Environment(\.dismiss) private var dismiss
   @Binding private var savedEndpoint: OpenAIEndpoint
   @State private var endpoint: OpenAIEndpoint
-  @State private var modelFilter = ""
   @State private var toastMessage: String?
   @State private var shareFile: EndpointBackupSharedFile?
   @State private var isSigningIn = false
@@ -3425,6 +3423,7 @@ private struct EndpointDetailView: View {
           }
           endpoint.defaultModel = ""
           store.endpointModels[endpoint.id] = nil
+          store.endpointModelDescriptors[endpoint.id] = nil
           store.endpointVoices[endpoint.id] = nil
           store.endpointStatuses[endpoint.id] = .unknown
         }
@@ -3924,19 +3923,16 @@ private struct EndpointDetailView: View {
 
   @ViewBuilder
   private var modelField: some View {
-    let models = store.endpointModels[endpoint.id] ?? []
-    if models.isEmpty {
-      TextField("Model name", text: $endpoint.defaultModel)
-        .textInputAutocapitalization(.never)
-        .autocorrectionDisabled()
-    } else {
-      FilteredModelPicker(
-        selection: $endpoint.defaultModel,
-        filter: $modelFilter,
-        models: models,
-        emptySelectionTitle: "Select a model"
-      )
-    }
+    FilteredModelPicker(
+      selection: $endpoint.defaultModel, endpoint: endpoint,
+      emptySelectionTitle: "Select a model",
+      initialFeatures: endpoint.kind == .systemOne ? [.decision] : [],
+      onSelect: { model in
+        if model.capabilities.contains(.nativeToolCalling) {
+          store.settings.toolCallingMode = .native
+          store.saveSettings()
+        }
+      })
   }
 
   private var reasoningLevelField: some View {
