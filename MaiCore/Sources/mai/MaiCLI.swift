@@ -2837,6 +2837,10 @@ struct MaiCLI {
         status.text, animating: status.animating, attention: loop.modalPrompt != nil,
         question: loop.modalPrompt?.question,
         waiting: status.animating || loop.activeTurn != nil || loop.foregroundCommand != nil)
+      if screen?.viewNeedsHistory == true {
+        screen?.updateViewHistory((try? REPLHistoryCommand.run("", editor: editor)) ?? "No input history.")
+      }
+      screen?.watchViewDiffs(in: AgentExecutionScope.directory)
       loop.readerParked = false
       let availableProviders = await runtime.availableProviders()
       reader.resume(
@@ -2866,6 +2870,9 @@ struct MaiCLI {
         return
       }
       guard loop.readerParked, !loop.exiting, !loop.drainingThen else { return }
+      if screen?.viewNeedsHistory == true {
+        screen?.updateViewHistory((try? REPLHistoryCommand.run("", editor: editor)) ?? "No input history.")
+      }
       loop.readerParked = false
       reader.resume()
     }
@@ -3977,7 +3984,32 @@ struct MaiCLI {
                       "agent:\(process.pid.rawValue)",
                       messages: session.redactor?.unredact(messages) ?? messages)
                   }
-                  screen.setView(selection.source, title: selection.title)
+                  if selection.source == .prompt {
+                    let instructions = argument.split(maxSplits: 1, whereSeparator: \.isWhitespace)
+                    let template = try viewPromptTemplate(
+                      String(instructions[1]), catalog: configuration?.promptCatalog() ?? PromptCatalog())
+                    let messages: [AgentMessage]
+                    if case .agent(let pid) = loop.focus {
+                      messages = await runtime.supervisor.transcript(pid)
+                    } else if let turn = loop.activeTurn, turn.chatID == session.id {
+                      messages = await runtime.supervisor.transcript(turn.pid)
+                    } else {
+                      messages = session.history.messages
+                    }
+                    let reply = try TranscriptCopy.text(for: .lastAssistantReply, in: messages).text
+                    var request = chatRequest()
+                    request.messages = []
+                    let promptRequest = request
+                    let redactor = session.redactor
+                    screen.runViewPrompt(title: selection.title) {
+                      let output = try await runtime.summarize(reply, request: promptRequest) { source in
+                        UserPrompt.message(text: template, arguments: source)
+                      }
+                      return redactor?.unredact(output) ?? output
+                    }
+                  } else {
+                    screen.setView(selection.source, title: selection.title)
+                  }
                 } catch {
                   await terminal.line("error: \(error.localizedDescription)", to: .standardError)
                 }
@@ -13414,7 +13446,7 @@ struct MaiCLI {
       "/agents disable ",
       "/ps", "/ps -a", "/ps -p", "/ps -ap", "/ps -k ",
       "/view", "/view off", "/view current", "/view main", "/view pins", "/view log", "/view todo", "/view iconlog", "/view thinking", "/view tools",
-      "/view tools ", "/view diffs", "/view agents", "/view agent ", "/help view",
+      "/view tools ", "/view prompt ", "/view history", "/view diffs", "/view agents", "/view agent ", "/help view",
       "/job", "/jobs", "/jobs tree", "/jobs stop ", "/jobs continue ", "/jobs clear", "/jobs log ",
       "/jobs kill ", "/jobs focus ",
       "/jobs focus main", "/queue", "/queue push ", "/queue pop", "/queue del",
@@ -13504,6 +13536,7 @@ struct MaiCLI {
     let catalog = configuration?.promptCatalog(skills: skills) ?? PromptCatalog(skills: skills)
     for entry in catalog.entries {
       values.append("$\(entry.commandName) ")
+      if entry.kind != .skill { values.append("/view prompt $\(entry.commandName)") }
       values.append("/prompts \(entry.commandName) ")
       values.append("/prompts show \(entry.commandName)")
     }
@@ -13939,10 +13972,10 @@ struct MaiCLI {
       Ctrl+A/E or Home/End beginning/end of the line
       Ctrl+B/F move left/right like the arrow keys
       Ctrl+L clear the screen, keeping the input
-      Ctrl+W delete word · Ctrl+C or /stop interrupt the run · Ctrl+Z suspend
+      Ctrl+W delete word (when no view is open) · Ctrl+C or /stop interrupt the run · Ctrl+Z suspend
       Ctrl+D exits when the input is empty
       Page Up/Down and the mouse wheel scroll the transcript in buffer mode
-      Tab on an empty prompt focuses /view; j/k scroll, J/K page, g/G top/bottom, Space layout, Enter fullscreen, / search, v/V resize, q closes
+      Ctrl+W (or Tab on an empty prompt) focuses /view; j/k scroll, J/K page, g/G top/bottom, Space layout, Enter fullscreen, / search, v/V resize, q closes
       Alt+1…9 selects an agent slot · Ctrl+Left/Right cycles agent conversations
       Extended keyboards also support Ctrl+1…9 and Ctrl+Tab/Ctrl+Shift+Tab
     """
@@ -14585,3 +14618,4 @@ struct MaiCLI {
   }
 
 }
+
