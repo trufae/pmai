@@ -8049,6 +8049,27 @@ struct MaiCLI {
         await terminal.line(providerHelp)
         return
       }
+      if fields[1].lowercased() == "acp" {
+        do {
+          let provider = try ACPProviderCommand.configuration(Array(fields.dropFirst(2)))
+          guard var draft = configuration, let configurationPath else {
+            throw JSONRPCError.invalidParams("No writable configuration is active")
+          }
+          guard !draft.providers.contains(where: { $0.id == provider.id }) else {
+            throw MaiConfigurationError.duplicateIdentifier(kind: "provider", id: provider.id)
+          }
+          let instance = try await plugins.makeProvider(from: provider, environment: ProcessInfo.processInfo.environment)
+          draft.providers.append(provider)
+          try draft.save(to: URL(fileURLWithPath: configurationPath))
+          try await runtime.register(instance)
+          configuration = draft
+          if let catalog = ACPCatalog.agent(provider.id), !catalog.isInstalled, let install = catalog.install {
+            await terminal.line("Install the ACP adapter with: \(install)")
+          }
+          await terminal.line("ACP provider '\(provider.id)' saved. /provider use \(provider.id) selects it; /models \(provider.id) lists its models.")
+        } catch { await terminal.line("error: \(error.localizedDescription)", to: .standardError) }
+        return
+      }
       var offset = 2
       var url: URL?
       if fields.count > offset, !fields[offset].hasPrefix("--") {
@@ -9363,6 +9384,9 @@ struct MaiCLI {
         await terminal.line("error: \(error.localizedDescription)", to: .standardError)
       }
       return
+    }
+    if configuration?.providers.first(where: { $0.id == session.profile.provider.rawValue })?.kind == "acp" {
+      await terminal.line("ACP: these are pmai tools. Local agents access them through MCP; native agent tools run in the agent and appear in chat as activity. Remote agents use their host's tools.")
     }
     let groups: [ToolGroupDefinition]
     do {
@@ -13432,6 +13456,7 @@ struct MaiCLI {
       "/path sensitive ask", "/path sensitive deny", "/path sensitive allow",
       "/path hidden ask", "/path hidden deny", "/path hidden allow",
       "/providers", "/models ", "/provider ", "/provider add ", "/provider rename ",
+      "/provider add acp opencode", "/provider add acp claude", "/provider add acp codex",
       "/provider add local-apple --kind apple",
       "/provider add local-mlx --kind mlx", "/provider add chatgpt --kind chatgpt",
       "/provider login ", "/provider logout ", "/provider status ",
@@ -14049,6 +14074,16 @@ struct MaiCLI {
     /provider add ID --kind apple     Apple Intelligence; no URL or API key
     /provider add ID --kind mlx [--model org/model]  MLX on Apple silicon; no URL
     /provider add ID --kind chatgpt   Use a ChatGPT subscription; no URL or API key
+    /provider add acp NAME [CMD ARG ...]  Use opencode, claude, codex, or a custom ACP agent
+    /provider add acp NAME --url URL --cwd DIR [--token-env ENV]  Remote ACP WebSocket
+
+    ACP: /models NAME discovers models; /model NAME::MODEL selects one.
+    Install adapters: npm install -g @agentclientprotocol/claude-agent-acp @agentclientprotocol/codex-acp
+    Log in with the agent's own CLI first. ACP uses that agent's credentials.
+    Local agents receive enabled pmai tools through MCP over loopback HTTP.
+    /tools controls pmai tools; the ACP agent manages its own native tools and permissions.
+    Remote agents use host tools and MCP servers configured in provider options.mcpServers.
+    Agents must support MCP HTTP to call the local pmai tool bridge.
     /provider login [ID]             Continue with ChatGPT in your browser
     /provider logout [ID]            Sign out and revoke this ChatGPT session
     /provider status [ID]            Show the ChatGPT account and usage link

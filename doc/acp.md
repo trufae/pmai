@@ -14,9 +14,9 @@ differ.
 **A remote ACP agent is a `ChatProvider`.** That is the whole design. An ACP
 connection answers `complete` the way an LLM backend does, so an
 `AgentDefinition` pointing at it flows through `AgentRuntime`, `/agent`,
-subagents, delegation, and memory with no special case anywhere. The external
-agent's own tools, model, and reasoning stay behind the boundary; MaiCore only
-sees a reply.
+subagents, delegation, and memory with no special case anywhere. MaiCore discovers the agent's models, selects them, and streams reasoning,
+replies, and native tool activity. Local ACP agents can also call enabled pmai
+tools over a session-scoped MCP bridge.
 
 The mirror image is just as thin: **the ACP server is an adapter over
 `AgentRuntime.run`**. `session/prompt` becomes one run, provider deltas become
@@ -58,6 +58,60 @@ client, so the same runtime serves the REPL and an IDE unchanged.
 
 Point an editor at `pmai --acp`. Point another agent or an MCP client at
 `pmai --mcp`; it sees a single tool named after the agent that takes a `prompt`.
+
+## ACP providers in the normal prompt
+
+```
+/provider add acp opencode
+/provider add acp claude
+/provider add acp codex
+/provider use codex
+/models codex
+/model codex::MODEL_ID
+/tools
+```
+
+Use the model IDs returned by `/models`. Agents with no model catalog expose
+one default entry named after the provider. Model selection supports both
+`configOptions` and the older `models` / `session/set_model` API.
+
+Claude and Codex use adapters; install them and authenticate with their own CLI:
+
+```
+npm install -g @agentclientprotocol/claude-agent-acp @agentclientprotocol/codex-acp
+```
+
+A custom command or SSH connection works too:
+
+```
+/provider add acp worker /path/to/agent --acp
+/provider add acp workstation ssh user@host codex-acp
+/provider add acp remote --url wss://host/acp --cwd /work/project --token-env ACP_TOKEN
+```
+
+`/provider add` saves only the provider; your current agent keeps its instructions,
+tools, and settings. `/agent acp add` additionally creates and selects an agent.
+Both use the same MaiCore provider implementation. For SSH, set
+`options.remoteCwd` to the remote workspace's absolute path with `/edit provider
+workstation` when it differs from your local path.
+
+Local agents receive pmai tools through a loopback HTTP MCP endpoint. Tools still
+use maiCore's validation, approvals, working directory, offline rules, and run
+budgets. `/tools` changes their exposure as usual. The ACP adapter must advertise
+HTTP MCP support. The endpoint accepts calls only during an active prompt, and
+cancels outstanding tool calls when that prompt finishes or is cancelled.
+
+ACP-native tools execute inside the external agent. Their progress appears in
+chat; pmai never executes those notifications again. Their permissions and
+limits belong to the agent. `/tools off` disables pmai tools, not native agent
+tools. ACP has no standard endpoint to enumerate or disable arbitrary native
+tools. Remote agents use their own host tools; configure additional MCP servers
+in the provider's `options.mcpServers`. For SSH, that list is evaluated on the
+remote host and pmai tool forwarding is disabled. For custom remote wrappers,
+set `options.forwardTools` to `false` to avoid offering a local loopback endpoint.
+
+A failed prompt is not retried automatically because the agent may already have
+performed side effects. Authentication failures are reported with adapter stderr.
 
 ## pmai as a client — ACP agents as agents
 
