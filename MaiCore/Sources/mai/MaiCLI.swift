@@ -1357,7 +1357,8 @@ struct MaiCLI {
       // Chat history owns these records until /jobs clear. The runtime's
       // bounded default can evict a parent before its subtree is saved.
       let runtime = AgentRuntime(
-        approvalHandler: approvalHandler, supervisor: AgentSupervisor(finishedRetention: .max))
+        approvalHandler: approvalHandler, supervisor: AgentSupervisor(finishedRetention: .max),
+        pausesOnToolLimit: options.initialPrompt == nil && options.serve == nil)
       let promptFileAccess = PromptFileAccess(
         approvalHandler: approvalHandler, settings: configuration?.fileAccess ?? .init(),
         environment: environment)
@@ -2201,6 +2202,11 @@ struct MaiCLI {
     let interrupt: REPLInterruptID
   }
 
+  private struct REPLLimitDecision {
+    let reason: AgentRunInterruption
+    let id = UUID()
+  }
+
   private struct REPLLoop {
     var activeTurn: REPLTurn?
     var btwTurns: [AgentPID: REPLTurn] = [:]
@@ -2212,6 +2218,7 @@ struct MaiCLI {
     var approvals: [(request: ApprovalRequest, reply: REPLApprovalReply)] = []
     var editingApproval: (request: ApprovalRequest, reply: REPLApprovalReply)?
     var compactions: [(request: AutocompactionRequest, reply: REPLCompactionReply)] = []
+    var limitDecisions: [UUID: REPLLimitDecision] = [:]
     var pendingQueueMessage: String?
     var pendingQueueRedirection: REPLRedirection?
     var chatChop: REPLChatChop?
@@ -2221,7 +2228,7 @@ struct MaiCLI {
 
     var hasTurns: Bool { activeTurn != nil || !btwTurns.isEmpty || !conversationTurns.isEmpty }
 
-    var modalPrompt: REPLModalPrompt? {
+    func modalPrompt(for chatID: UUID) -> REPLModalPrompt? {
       if let chop = chatChop {
         return .chop(id: "\(chop.interrupt.rawValue)-\(chop.messageID)")
       }
@@ -2235,6 +2242,7 @@ struct MaiCLI {
       if let waiting = compactions.first {
         return .compaction(waiting.request, id: waiting.reply.id)
       }
+      if let decision = limitDecisions[chatID] { return .limit(decision.reason, id: decision.id) }
       return nil
     }
 
@@ -2723,7 +2731,7 @@ struct MaiCLI {
     }
 
     func statusLine() async -> (text: String, animating: Bool) {
-      if let modal = loop.modalPrompt {
+      if let modal = loop.modalPrompt(for: session.id) {
         return (modal.status, false)
       }
       var facts: [String] = []
@@ -2789,7 +2797,7 @@ struct MaiCLI {
     }
 
     func inputPrompt() -> TerminalPrompt {
-      if let modal = loop.modalPrompt { return modal.input }
+      if let modal = loop.modalPrompt(for: session.id) { return modal.input }
       let prompt: String
       if configuration?.ui.broadcast == true {
         prompt = "pmai@*> "
@@ -2816,8 +2824,8 @@ struct MaiCLI {
       let status = await statusLine()
       reader.update(inputPrompt())
       screen.setStatus(
-        status.text, animating: status.animating, attention: loop.modalPrompt != nil,
-        question: loop.modalPrompt?.question,
+        status.text, animating: status.animating, attention: loop.modalPrompt(for: session.id) != nil,
+        question: loop.modalPrompt(for: session.id)?.question,
         waiting: status.animating || loop.activeTurn != nil || loop.foregroundCommand != nil)
     }
 
@@ -2837,8 +2845,8 @@ struct MaiCLI {
       }
       let status = await statusLine()
       screen?.setStatus(
-        status.text, animating: status.animating, attention: loop.modalPrompt != nil,
-        question: loop.modalPrompt?.question,
+        status.text, animating: status.animating, attention: loop.modalPrompt(for: session.id) != nil,
+        question: loop.modalPrompt(for: session.id)?.question,
         waiting: status.animating || loop.activeTurn != nil || loop.foregroundCommand != nil)
       if screen?.viewNeedsHistory == true {
         screen?.updateViewHistory((try? REPLHistoryCommand.run("", editor: editor)) ?? "No input history.")
@@ -3023,6 +3031,7 @@ struct MaiCLI {
     }
 
     func beginTurn(_ request: AgentRequest, process pid: AgentPID, kind: REPLTurnKind) async {
+      if kind == .chat { loop.limitDecisions.removeValue(forKey: session.id) }
       let redirection = REPLRedirection.current
       if kind == .chat { screen?.bindConversation("chat:\(session.id)", to: pid) }
       shareStateWithPmaiTools()
@@ -3154,9 +3163,9 @@ struct MaiCLI {
     /// its last tool results and carries on. Queued messages go with it, the
     /// way they would with a typed one.
     @discardableResult
-    func continueTurn() async -> Bool {
+    func continueTurn(limits: AgentRunLimits? = nil, withoutTools: Bool = false) async -> Bool {
       let pid = await mainProcess()
-      if await runtime.supervisor.hasQueuedMessages(pid) {
+      if limits == nil, !withoutTools, await runtime.supervisor.hasQueuedMessages(pid) {
         await startTurn([])
         return true
       }
@@ -3164,12 +3173,20 @@ struct MaiCLI {
         await terminal.line("Nothing to continue yet: this chat has no messages.")
         return false
       }
-      if last.role == .assistant, last.toolCalls.isEmpty {
+      if last.role == .assistant, last.toolCalls.isEmpty, loop.limitDecisions[session.id] == nil {
         await terminal.line(
           "Nothing to continue: the last reply was complete. Type a message instead.")
         return false
       }
-      await beginTurn(chatRequest(), process: pid, kind: .chat)
+      var request = chatRequest()
+      if let limits { request.limits = limits }
+      if withoutTools {
+        request.limits.maxToolCalls = 0
+        request.limits.maxSubagents = 0
+        request.toolChoice = .none
+        request.useSystemOne = false
+      }
+      await beginTurn(request, process: pid, kind: .chat)
       return true
     }
 
@@ -3787,12 +3804,12 @@ struct MaiCLI {
         } catch { await terminal.line(error.localizedDescription, to: .standardError) }
       case .switchAgent(let selection, let reply):
         defer { reply() }
-        guard loop.modalPrompt == nil, !loop.exiting else { return false }
+        guard loop.modalPrompt(for: session.id) == nil, !loop.exiting else { return false }
         await switchAgent(selection)
       case .line(let raw, let heredoc, let promptID, _):
         if !loop.drainingThen { loop.readerParked = true }
         let typed = heredoc ? raw : raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !typed.hasPrefix("/"), promptID != loop.modalPrompt?.input.id {
+        if !typed.hasPrefix("/"), promptID != loop.modalPrompt(for: session.id)?.input.id {
           await terminal.note("The prompt changed before submission. Please answer the current prompt.", tone: .warning)
           await releaseIfIdle(workspace: workspace)
           return false
@@ -3855,6 +3872,42 @@ struct MaiCLI {
             await closeChatChop()
           } else {
             await answerChatChop(text)
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
+        }
+        if !heredoc, case .limit(let reason, _)? = loop.modalPrompt(for: session.id) {
+          let fields = text.lowercased().split(whereSeparator: \.isWhitespace)
+          switch fields.first {
+          case "extend", "e", "continue", "/continue":
+            var limits = session.profile.limits
+            if fields.count > 1 {
+              guard fields.count == 2, let value = Int(fields[1]), value > 0 else {
+                await terminal.line("Use extend or extend N, with a positive limit.")
+                await releaseIfIdle(workspace: workspace)
+                return false
+              }
+              switch reason {
+              case .modelTurns: limits.maxModelTurns = value
+              case .toolCalls: limits.maxToolCalls = value
+              case .totalTokens: limits.maxTotalTokens = value
+              case .time: limits.maxSeconds = value
+              }
+            }
+            await continueTurn(limits: limits)
+          case "answer", "a":
+            await continueTurn(withoutTools: true)
+          case "stop", "s":
+            loop.limitDecisions.removeValue(forKey: session.id)
+            await terminal.note("Stopped here. The work is saved; /continue resumes it.")
+          default:
+            if text.hasPrefix("/") { break }
+            await terminal.line("Choose extend [N], stop, or answer (continue without tools). Slash commands remain available.")
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
+          if ["extend", "e", "continue", "/continue", "answer", "a", "stop", "s"].contains(fields.first ?? "") {
+            await refreshStatus()
             await releaseIfIdle(workspace: workspace)
             return false
           }
@@ -4637,6 +4690,9 @@ struct MaiCLI {
           loop.pendingQueueMessage = nil
           loop.pendingQueueRedirection = nil
           await terminal.note("New message cancelled; the queue is unchanged.")
+        } else if case .limit? = loop.modalPrompt(for: session.id) {
+          loop.limitDecisions.removeValue(forKey: session.id)
+          await terminal.note("Stopped here. The work is saved; /continue resumes it.")
         } else if cancelledOperation != nil {
           // The input or signal path already cancelled exactly the operation
           // that was active when Ctrl+C arrived. Do not let a delayed event
@@ -4775,23 +4831,17 @@ struct MaiCLI {
           }
           // Entries deliberately ignored, or arriving after the last model
           // turn, stay queued until the person chooses to submit them.
+          if let paused, settled, let chatID = turn.chatID {
+            let decision = REPLLimitDecision(reason: paused)
+            loop.limitDecisions[chatID] = decision
+            if atPrompt {
+              await terminal.line(REPLModalPrompt.limit(paused, id: decision.id).question ?? "")
+            }
+          }
           if waiting > 0 {
             await terminal.note(
               "\(waiting) queued message\(waiting == 1 ? "" : "s") still waiting: /queue shows them; /continue submits them; a new message asks what to do."
             )
-          } else if let paused, atPrompt {
-            // A spent turn budget is a checkpoint, and with yolo on the person
-            // asked not to be consulted; time and token caps are theirs to lift.
-            if paused.isCheckpoint, await services.approvalHandler.permitsUnattendedExecution() {
-              await terminal.note(
-                "continuing: yolo is on, so a spent turn budget does not stop the task (/set tool.aproval ask to be asked)",
-                tone: .warning)
-              await continueTurn()
-            } else {
-              await terminal.note(
-                "/continue picks the task up where it stopped · /set \(paused.settingKey) N goes further in one go"
-              )
-            }
           } else if kept > 0, atPrompt {
             await terminal.note(
               "kept \(kept) message\(kept == 1 ? "" : "s") from the interrupted run · /continue resumes it"
@@ -4941,7 +4991,7 @@ struct MaiCLI {
       // Turns must have settled their transcripts, and background children
       // must also have finished, before the next line reaches the dispatcher.
       loop.drainingThen = true
-      while !loop.exiting, !loop.hasTurns, loop.modalPrompt == nil,
+      while !loop.exiting, !loop.hasTurns, loop.modalPrompt(for: session.id) == nil,
         !loop.thenLines.isEmpty,
         await runtime.supervisor.liveProcesses().allSatisfy({
           // Chat roots may have been allocated by /queue before their first

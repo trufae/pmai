@@ -968,6 +968,8 @@ public struct AgentAutocompact: Codable, Equatable, Sendable {
 public enum AgentRunInterruption: Equatable, Sendable {
   /// `limits.maxModelTurns` was reached.
   case modelTurns(limit: Int)
+  /// `limits.maxToolCalls` was reached in a host that pauses for a decision.
+  case toolCalls(limit: Int)
   /// `limits.maxTotalTokens` was reached.
   case totalTokens(limit: Int)
   /// `limits.maxSeconds` passed.
@@ -977,6 +979,7 @@ public enum AgentRunInterruption: Equatable, Sendable {
   public var summary: String {
     switch self {
     case .modelTurns(let limit): "model turn limit (\(limit)) reached"
+    case .toolCalls(let limit): "tool call limit (\(limit)) reached"
     case .totalTokens(let limit): "token budget (\(limit)) spent"
     case .time(let seconds): "time limit (\(ModelUsageFormat.duration(Double(seconds)))) reached"
     }
@@ -986,6 +989,7 @@ public enum AgentRunInterruption: Equatable, Sendable {
   public var settingKey: String {
     switch self {
     case .modelTurns: "limits.maxModelTurns"
+    case .toolCalls: "limits.maxToolCalls"
     case .totalTokens: "limits.maxTotalTokens"
     case .time: "limits.maxSeconds"
     }

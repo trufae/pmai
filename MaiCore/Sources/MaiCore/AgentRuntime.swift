@@ -28,6 +28,9 @@ public actor AgentRuntime {
   var internetAccess = InternetAccessPolicy()
   var toolsEnabled = true
   let approvalHandler: any ApprovalHandler
+  /// Interactive hosts can offer a choice before withdrawing tools. Other
+  /// hosts retain the automatic final answer when their tool budget is spent.
+  let pausesOnToolLimit: Bool
   /// Overrides for the delegation brief and the derived worker's instructions.
   /// Nil keeps the built-in text, so MaiCore works without configuration.
   var delegationTemplate: String?
@@ -64,10 +67,12 @@ public actor AgentRuntime {
 
   public init(
     approvalHandler: any ApprovalHandler = DenyInteractiveApprovals(),
-    supervisor: AgentSupervisor = AgentSupervisor()
+    supervisor: AgentSupervisor = AgentSupervisor(),
+    pausesOnToolLimit: Bool = false
   ) {
     self.approvalHandler = approvalHandler
     self.supervisor = supervisor
+    self.pausesOnToolLimit = pausesOnToolLimit
   }
 
   public func run(
@@ -232,6 +237,13 @@ public actor AgentRuntime {
         }
         if let interruption = await budget.exhausted() {
           return await finishRun(state, interruption: interruption)
+        }
+        if pausesOnToolLimit, depth == 0, state.request.limits.maxToolCalls > 0,
+          state.toolCalls >= state.request.limits.maxToolCalls, !definitions.isEmpty,
+          !state.repeatGuardTripped
+        {
+          return await finishRun(
+            state, interruption: .toolCalls(limit: state.request.limits.maxToolCalls))
         }
         let turn = try await prepareTurn(
           concreteDefinitions: listedDefinitions(in: concreteDefinitions, request: state.request),

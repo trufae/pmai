@@ -815,16 +815,20 @@ Reaching a limit no longer ends a task with an error. A run that spends
 120k`), or `limits.maxSeconds` (`/set limits.maxSeconds 10m`; a long model call
 is cut short at the deadline) pauses at a turn boundary: everything it did is
 kept in the chat, the REPL prints `⏸ took 4m2s · model turn limit (50) reached`,
-and `/continue` runs the conversation again with a fresh budget
-from exactly that point. A cancelled or failed turn is kept the same way, with
+and asks what to do next. `extend` resumes with a fresh run budget;
+`extend N` uses N as the reached limit for that continuation only (seconds for
+a time limit). `stop` keeps the work so far; `answer` continues with no more
+tool calls. The tool-call limit offers the same choice before asking the
+model for a final answer. Ctrl+C or `/stop` dismisses the choice, and
+`/continue` can resume the saved work later. Slash commands remain available
+at the decision prompt. A cancelled or failed turn is kept the same way, with
 any tool call it never answered marked as not executed, so Ctrl+C is no longer
 the end of the work. `/stop` is the command equivalent of Ctrl+C: it interrupts
 the current turn and preserves undelivered messages. A new message with a
 nonempty queue asks whether to submit it first, ignore it for that turn, or
 clear it. `/retry` has been removed; `/continue` is the single resume command.
-With `tool.aproval = yolo`, a spent turn budget is treated as a
-checkpoint and the task continues on its own; the token and time caps always
-stop, since they exist to bound the spend. A model call that fails — a dropped
+Run-limit decisions are also shown with `tool.aproval = yolo`.
+A model call that fails — a dropped
 connection, a 5xx — is repeated after `retry.delay` seconds up to
 `retry.attempts` times (`↻ retry 1/2 in 5s: …`) before the turn fails.
 Context-limit errors bypass these transport retries. The runtime learns a

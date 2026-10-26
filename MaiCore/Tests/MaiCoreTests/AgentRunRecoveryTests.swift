@@ -170,6 +170,35 @@ func modelTurnLimitPausesRun() async throws {
   #expect(resumedMessages.map(\.id) == paused.transcript.map(\.id))
 }
 
+@Test("Interactive tool limits pause before requesting a tool-free answer")
+func interactiveToolLimitPausesRun() async throws {
+  let provider = RecoveryProvider(responses: [echoCall("c1"), textReply("finished")])
+  let runtime = AgentRuntime(pausesOnToolLimit: true)
+  try await runtime.register(provider)
+  try await runtime.register(tool: echoTool())
+  var request = AgentRequest(
+    provider: "recovery", model: "fixture", messages: [.user("start")],
+    toolNames: ["echo"], limits: AgentRunLimits(maxToolCalls: 1), retry: .none)
+  let paused = try await runtime.run(request)
+  #expect(paused.interruption == .toolCalls(limit: 1))
+  #expect(paused.interruption?.settingKey == "limits.maxToolCalls")
+  #expect(paused.transcript.last?.role == .tool)
+  #expect(paused.toolCalls == 1)
+  #expect(await provider.requests.count == 1)
+
+  // Explicitly choosing a zero tool budget allows the final answer through.
+  request.messages = paused.transcript
+  request.limits.maxToolCalls = 0
+  let answered = try await runtime.run(request)
+  #expect(answered.isComplete)
+  #expect(answered.response.text == "finished")
+  let requests = await provider.requests
+  #expect(requests.count == 2)
+  #expect(requests[1].tools.isEmpty)
+  #expect(requests[1].toolChoice == .none)
+  #expect(requests[1].messages.contains { $0.text == AgentRuntime.toolBudgetExhaustedPrompt })
+}
+
 @Test("The token budget stops the next model call instead of failing the run")
 func tokenBudgetPausesRun() async throws {
   let usage = TokenUsage(inputTokens: 40, outputTokens: 20)

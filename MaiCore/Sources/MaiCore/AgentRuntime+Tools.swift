@@ -424,7 +424,7 @@ extension AgentRuntime {
         else {
           let result = AgentProcessTools.failure(
             callID: call.id,
-            "the tool call budget for this run (\(callRequest.limits.maxToolCalls)) is exhausted; this call was not executed. Answer with the information already gathered."
+            "the tool call budget for this run (\(callRequest.limits.maxToolCalls)) is exhausted; this call was not executed."
           )
           await emit(.toolFinished(context, result))
           results[index] = result

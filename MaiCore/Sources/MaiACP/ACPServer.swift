@@ -780,7 +780,7 @@ public actor ACPServer {
           switch interruption {
           case .modelTurns: .maxTurnRequests
           case .totalTokens: .maxTokens
-          case .time: .endTurn
+          case .time, .toolCalls: .endTurn
           }
         return .object(["stopReason": .string(stopReason.rawValue)])
       }

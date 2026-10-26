@@ -16,6 +16,7 @@ enum REPLModalPrompt {
   case approval(ApprovalRequest, id: UUID, editing: Bool)
   case compaction(AutocompactionRequest, id: UUID)
   case queue
+  case limit(AgentRunInterruption, id: UUID)
   case chop(id: String)
 
   static func approvalHelp(_ request: ApprovalRequest) -> String {
@@ -37,6 +38,8 @@ enum REPLModalPrompt {
       return TerminalPrompt(text: "compact [\(choices.joined(separator: "/"))]> ", id: "compaction-\(id)", choices: choices)
     case .queue:
       return TerminalPrompt(text: "queue [submit/ignore/clear]> ", id: "queue", choices: ["submit", "ignore", "clear"])
+    case .limit(_, let id):
+      return TerminalPrompt(text: "limit [extend/stop/answer]> ", id: "limit-\(id)", choices: ["extend", "stop", "answer"])
     case .chop(let id):
       return TerminalPrompt(text: "chop [n/b/p/e/d/x/q]> ", id: "chop-\(id)", choices: ["n", "b", "p", "e", "d", "x", "q"])
     }
@@ -55,6 +58,8 @@ enum REPLModalPrompt {
         + "y summarize · n keep context · m change model · x clear chat · c stop"
     case .queue:
       return "Submit queued messages before this message, ignore them for this turn, or clear them?\nsubmit · ignore · clear"
+    case .limit(let reason, _):
+      return "\(reason.summary). What should happen next?\nextend [N] renews the run budget (optionally with a new \(reason.settingKey)) · stop keeps the work so far · answer continues without tools"
     case .chop:
       return nil
     }
@@ -85,6 +90,8 @@ enum REPLModalPrompt {
       return "CONTEXT DECISION · \(request.run.agentID) · answer below · Ctrl+C cancels"
     case .queue:
       return "QUEUED MESSAGES · choose below · Ctrl+C cancels new message"
+    case .limit:
+      return "RUN LIMIT · choose below · Ctrl+C stops"
     case .chop:
       return "CHAT CHOP · n next · b previous · p pin/unpin · e edit · d delete · x chop after · q / Ctrl+C quit"
     }
