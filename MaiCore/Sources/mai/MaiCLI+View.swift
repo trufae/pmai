@@ -74,15 +74,23 @@ extension MaiCLI {
 
     Requires /set ui.mode buffer and an interactive terminal. The read-only view
     starts in the top half of the output area, with the conversation below it.
-    Drag the separator with the left mouse button to resize the panes. Both
-    panes keep at least one row; the chosen height is kept when sources change.
+    With the view focused, Space toggles between top/bottom and left/right panes.
+    Enter toggles the view fullscreen above the prompt; Enter again restores the split.
+    Drag the separator with the left mouse button to resize either layout. Both
+    panes keep at least one row/column; sizes are kept when sources change.
+    Replies, pinned messages, logs and thinking follow ui.markdown and reflow to fit.
     Overflowing panes show a scrollbar on the right (one character by default).
     /set ui.scrollbar N changes its width; 0 hides it. Drag its handle or click
     its track to scroll; the handle size reflects the amount of visible content.
     Tab with an empty prompt switches focus between the prompt and the view.
     In the view, j/k or Down/Up scroll one row; J/K page down/up like Page Down/Up.
     g/G jump to the top/bottom; G resumes following new output.
-    v/V move the divider down/up one row; q closes the view, like /view off.
+    v/V grow/shrink the view by one row or column; q closes it, like /view off.
+    / opens a search prompt: type literal text and Enter to highlight every match
+    and scroll the focused pane to the first hit. Escape or Ctrl+C cancels the search.
+    /highlight WORD at the normal prompt and /set ui.highlight WORD set the same
+    saved word for both panes. /highlight or /set ui.highlight none clears it.
+    Matching is case-sensitive, including within words, with black text on white.
     The mouse wheel scrolls the focused pane. Tab returns to typing; completion works as usual
     when the prompt contains text. Agent message destinations stay the same.
     Pins/log/iconlog/thinking/tools/diffs follow the selected agent; an explicit agent stays fixed.

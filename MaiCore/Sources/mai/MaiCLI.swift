@@ -3798,7 +3798,7 @@ struct MaiCLI {
         }
         let commandFields = text.split(whereSeparator: \Character.isWhitespace).map(String.init)
         let metadataCommands = [
-          "/help", "/history", "/version", "/about", "/then", "/unthen", "/stop", "/view",
+          "/help", "/history", "/version", "/about", "/then", "/unthen", "/stop", "/view", "/highlight",
           "/projects", "/project", "/exit", "/quit",
         ]
         let chatNavigation =
@@ -4526,7 +4526,7 @@ struct MaiCLI {
             let commandCatalogs = catalogs
             let commandChatProcess = chatProcessIDs[session.id]
             let changesInput =
-              name == "/theme" || name == "/set"
+              name == "/theme" || name == "/highlight" || name == "/set"
               && argument.split(whereSeparator: \.isWhitespace).first?.lowercased()
                 .hasPrefix("ui.") == true
             let commandText = text
@@ -4570,6 +4570,12 @@ struct MaiCLI {
           // A cancellation has an ordered interrupt event waiting behind this
           // command; that event releases exactly one prompt. Signalling here as
           // well would leave an extra semaphore permit and start two readers.
+          if name == "/highlight" || name == "/set"
+            && argument.lowercased().hasPrefix("ui.highlight")
+          {
+            screen?.configure(ui: tintedUI(configuration?.ui ?? .init(), project: project))
+            screen?.scrollToHighlight()
+          }
           if !commandWasInterrupted { await releaseIfIdle(workspace: workspace) }
           return false
         }
@@ -5710,9 +5716,11 @@ struct MaiCLI {
       await handleEffortCommand(
         "off", session: &session, runtime: runtime, configuration: &configuration,
         configurationPath: services.configurationPath, terminal: terminal)
-    case "/set":
+    case "/set", "/highlight":
+      let setting = parts[0] == "/highlight"
+        ? "ui.highlight " + (argument.isEmpty ? "none" : argument) : argument
       await handleSetCommand(
-        argument,
+        setting,
         session: &session,
         runtime: runtime,
         plugins: plugins,
@@ -10216,9 +10224,16 @@ struct MaiCLI {
       )
       return
     }
-    let parts = argument.replacingOccurrences(of: "=", with: " ")
-      .split(whereSeparator: \Character.isWhitespace)
-      .map(String.init)
+    let parts: [String]
+    let settingName = argument.prefix { !$0.isWhitespace && $0 != "=" }
+    if settingName.lowercased() == "ui.highlight" {
+      var value = argument.dropFirst(settingName.count).trimmingCharacters(in: .whitespacesAndNewlines)
+      if value.hasPrefix("=") { value = String(value.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines) }
+      parts = [String(settingName)] + (value.isEmpty ? [] : [value])
+    } else {
+      parts = argument.replacingOccurrences(of: "=", with: " ")
+        .split(whereSeparator: \Character.isWhitespace).map(String.init)
+    }
     guard !parts.isEmpty else {
       let settings = [
         "tool.aproval = \(await approvalHandler.currentApprovalMode().rawValue)",
@@ -10572,7 +10587,7 @@ struct MaiCLI {
     let booleanKeys = ["ui.markdown", "ui.broadcast", "ui.toolgroups"]
     let countKeys = ["ui.tools", "ui.scroll", "ui.scrollbar"]
     let levelKeys = ["ui.subagents", "ui.thinking", "ui.mode"]
-    let textKeys = ["ui.title", "ui.editor"]
+    let textKeys = ["ui.title", "ui.editor", "ui.highlight"]
     guard
       booleanKeys.contains(key) || countKeys.contains(key)
         || levelKeys.contains(key) || textKeys.contains(key)
@@ -10596,7 +10611,9 @@ struct MaiCLI {
       // "none" empties the setting: the title goes away, and the editor falls
       // back to $EDITOR again.
       let value = ["none", "off"].contains(text.lowercased()) ? "" : text
-      if key == "ui.editor" {
+      if key == "ui.highlight" {
+        ui.highlight = value
+      } else if key == "ui.editor" {
         ui.editor = value
       } else {
         ui.title = value
@@ -11268,7 +11285,7 @@ struct MaiCLI {
 
   private static func uiSettings(_ ui: ConfiguredTerminalUI) -> [String] {
     let keys = [
-      "ui.mode", "ui.scroll", "ui.scrollbar", "ui.title", "ui.editor", "ui.markdown", "ui.tools", "ui.toolgroups",
+      "ui.mode", "ui.scroll", "ui.scrollbar", "ui.highlight", "ui.title", "ui.editor", "ui.markdown", "ui.tools", "ui.toolgroups",
       "ui.subagents", "ui.thinking",
       "ui.broadcast",
     ]
@@ -11281,6 +11298,7 @@ struct MaiCLI {
     case "ui.mode": return ui.mode.rawValue
     case "ui.scroll": return String(ui.scroll)
     case "ui.scrollbar": return String(ui.scrollbar)
+    case "ui.highlight": value = ui.highlight
     case "ui.title": value = visibleUITitle(ui.title)
     // Unset is worth showing as what it resolves to, since that is the editor
     // that actually opens.
@@ -13365,7 +13383,7 @@ struct MaiCLI {
       "/set ui.markdown on", "/set ui.markdown off",
       "/set ui.mode classic", "/set ui.mode buffer",
       "/set ui.scroll ",
-      "/set ui.scrollbar ",
+      "/set ui.scrollbar ", "/set ui.highlight ", "/highlight", "/highlight ",
       "/set ui.broadcast on", "/set ui.broadcast off",
       "/set ui.toolgroups on", "/set ui.toolgroups off",
       "/set ui.tools all", "/set ui.tools relevant", "/set ui.tools icons", "/set ui.tools ",
@@ -13864,7 +13882,7 @@ struct MaiCLI {
     /unthen                Clear all pending /then actions
     /vdb                   Index or search local documentation and code
     /version               Print the pmai version
-    /view SOURCE           Read-only top split in buffer mode; /help view
+    /view SOURCE           Read-only split in buffer mode; /help view
     $NAME [TEXT]           Send a prompt or skill; /prompts lists names
     """
 
@@ -13918,7 +13936,7 @@ struct MaiCLI {
       Ctrl+W delete word · Ctrl+C or /stop interrupt the run · Ctrl+Z suspend
       Ctrl+D exits when the input is empty
       Page Up/Down and the mouse wheel scroll the transcript in buffer mode
-      Tab on an empty prompt focuses /view; j/k scroll, J/K page, g/G top/bottom, v/V resize, q closes
+      Tab on an empty prompt focuses /view; j/k scroll, J/K page, g/G top/bottom, Space layout, Enter fullscreen, / search, v/V resize, q closes
       Alt+1…9 selects an agent slot · Ctrl+Left/Right cycles agent conversations
       Extended keyboards also support Ctrl+1…9 and Ctrl+Tab/Ctrl+Shift+Tab
     """
@@ -14053,6 +14071,7 @@ struct MaiCLI {
       /set ui.                     List terminal behavior settings
       /set ui.mode MODE           classic (default) or buffer: scroll with Page Up/Down and mouse wheel
       /set ui.scroll N            Lines per mouse-wheel event in buffer mode (default 1)
+      /set ui.highlight WORD      Highlight literal matches; none clears (also /highlight WORD)
       /set ui.scrollbar N         Scrollbar width in characters: 0 hides it (default 1; only for overflow)
       /set ui.title TEXT           Set the prompt label and terminal/tab title (`none` clears it)
       /set ui.editor COMMAND       Editor /edit opens (`none` falls back to $EDITOR, $VISUAL, vim)

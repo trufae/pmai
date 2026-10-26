@@ -1,5 +1,6 @@
 import Foundation
 import MaiCore
+import MaiMarkdown
 import Testing
 
 @testable import MaiCLI
@@ -232,4 +233,31 @@ func terminalViewScroll() {
   #expect(TerminalView.height(availableRows: 2, preferredHeight: 6) == 0)
   #expect(TerminalView.height(availableRows: 22, preferredHeight: 0) == 1)
   #expect(TerminalView.height(availableRows: 22, preferredHeight: 100) == 20)
+}
+
+@Test("Thinking and pinned views render Markdown and reflow without changing the source")
+func terminalViewMarkdown() {
+  let renderer = MarkdownTerminalRenderer(theme: .plain)
+  var source = TerminalOutputBuffer()
+  source.configureMarkdown(renderer)
+  source.appendThinking("# Reasoning\n\n**needle** and `code`\n")
+  var projected = TerminalOutputBuffer()
+  projected.updateView(from: source, selection: .thinking)
+  let styled = projected.visibleRows(width: 80, height: 30).joined(separator: "\n")
+  #expect(styled.contains("Reasoning") && !styled.contains("# Reasoning"))
+  #expect(styled.contains("needle") && !styled.contains("**needle**"))
+  #expect(!styled.contains("`code`"))
+  #expect(source.visibleRows(width: 80, height: 30).joined().contains("**needle**"))
+  projected.updateView(from: source, selection: .all)
+  #expect(!projected.visibleRows(width: 80, height: 30).joined().contains("**needle**"))
+  projected.configureMarkdown(nil)
+  #expect(projected.visibleRows(width: 80, height: 30).joined().contains("**needle**"))
+
+  var pins = TerminalView(source: .pins, title: "pins", markdown: renderer)
+  pins.updateMessages([AgentMessage(role: .assistant, content: [.text("# Heading\n\n**bold** text")], isPinned: true)])
+  let text = pins.buffer.visibleRows(width: 80, height: 30).joined(separator: "\n")
+  #expect(text.contains("Heading") && !text.contains("# Heading"))
+  #expect(text.contains("bold") && !text.contains("**bold**"))
+  pins.configureMarkdown(nil)
+  #expect(pins.buffer.visibleRows(width: 80, height: 30).joined().contains("**bold**"))
 }

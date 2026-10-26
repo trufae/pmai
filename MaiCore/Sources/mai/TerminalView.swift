@@ -1,5 +1,6 @@
 import Foundation
 import MaiCore
+import MaiMarkdown
 
 /// A view either follows the conversation at the prompt or watches a fixed agent.
 enum TerminalViewSource: Equatable {
@@ -45,6 +46,10 @@ struct TerminalView {
   var title: String
   var focused = false
   var preferredHeight: Int?
+  var preferredWidth: Int?
+  var vertical = false
+  var fullscreen = false
+  var markdown: MarkdownTerminalRenderer?
   var buffer = TerminalOutputBuffer()
   var messages: [AgentMessage]?
   var todoText: String?
@@ -84,8 +89,19 @@ struct TerminalView {
         }.joined(separator: "\n")
     }
     var output = TerminalOutputBuffer()
-    output.append(text)
+    output.configureMarkdown(markdown)
+    if markdown != nil {
+      let block = output.appendReply(text)
+      output.finishReply(block)
+    } else {
+      output.append(text)
+    }
     buffer.updateView(from: output, selection: .all)
+  }
+
+  mutating func configureMarkdown(_ renderer: MarkdownTerminalRenderer?) {
+    markdown = renderer
+    buffer.configureMarkdown(renderer)
   }
 
   /// Leave a separator and at least one row for the main conversation.

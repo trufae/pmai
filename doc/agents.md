@@ -496,13 +496,22 @@ reaching the bottom resumes following new output.
 
 With an empty prompt, Tab switches focus between the prompt and the view.
 Drag the separator up or down with the left mouse button to resize the panes.
-Both panes keep at least one row. The chosen view height is retained across
-source changes and clamped to fit when the terminal or prompt changes size.
+Space while the view is focused toggles between top/bottom and left/right panes.
+Enter toggles a fullscreen view above the prompt and restores the previous split.
+Drag the vertical divider left/right to resize; `v`/`V` grow/shrink the view in either
+layout. Both panes keep at least one row or column. Each layout retains its size
+across source changes and clamps it to fit when the terminal or prompt changes size.
+Replies, pins, logs and thinking use `ui.markdown` and reflow to the pane width.
 In the view, `j`/`k` or Down/Up scroll one row; `J`/`K` page down/up like
 Page Down/Up. `v` moves the divider down one row (growing the view), and `V`
 moves it up (shrinking the view). `q` closes the split, like `/view off`.
-The mouse wheel scrolls the focused pane. Typing and pasted text cannot change the
-view or submit messages. Tab returns to the prompt; completion still works
+The mouse wheel scrolls the focused pane. `/` opens a search prompt in the focused
+view: type literal text and Enter to highlight all matches and scroll to the first
+hit. Escape or Ctrl+C cancels. `/highlight WORD` at the normal prompt and
+`/set ui.highlight WORD` update the same saved setting, applying black text on white
+in both buffer panes. Matching is case-sensitive and includes substrings. An empty
+`/highlight` or `/set ui.highlight none` clears it. Search does not submit a model
+message. Other typing and pasted text cannot change the view or submit messages. Tab returns to the prompt; completion still works
 when it contains text. `/view off` closes the split. Switching to classic
 mode also closes it. On very short terminals the view hides until both panes
 fit. `/help view` lists the selectors and controls.

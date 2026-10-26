@@ -225,7 +225,9 @@ The view check covers the buffer-only `/view` split, empty-prompt Tab focus,
 read-only input, independent scrolling, live thinking/tools/applied diffs,
 background agent conversations, short-terminal resize, and saved content.
 It also checks dragging the separator with SGR and legacy mouse packets,
-preserving drafts and focus, size bounds, release, and mouse-mode cleanup.
+preserving drafts and focus, size bounds, release, and mouse-mode cleanup. Space
+switches split layouts and Enter toggles fullscreen; focused `/` search checks
+highlight colors, first-hit scrolling, cancellation, and `ui.highlight` persistence.
 
     python3 test/repl-view-smoke.py MaiCore/.build/debug/pmai
 
