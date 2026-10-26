@@ -30,6 +30,7 @@ public struct ProviderCapabilities: OptionSet, Codable, Hashable, Sendable {
   public static let toolDecision = ProviderCapabilities(rawValue: 1 << 7)
   /// Prefer discovery over inherited direct schemas when the host enables the tool proxy.
   public static let compactToolCatalog = ProviderCapabilities(rawValue: 1 << 8)
+  public static let audioOutput = ProviderCapabilities(rawValue: 1 << 9)
 }
 
 public struct ProviderDescriptor: Codable, Equatable, Sendable {
@@ -58,23 +59,32 @@ public struct ModelDescriptor: Codable, Equatable, Identifiable, Sendable {
   public var capabilities: ProviderCapabilities
   /// Modalities explicitly declared by the model catalog. Nil means unknown.
   public var inputModalities: Set<String>?
+  public var outputModalities: Set<String>?
+  public var contextWindow: Int?
+  public var voices: [String]?
 
   public init(
     id: String,
     displayName: String? = nil,
     ownedBy: String? = nil,
     capabilities: ProviderCapabilities = [],
-    inputModalities: Set<String>? = nil
+    inputModalities: Set<String>? = nil,
+    outputModalities: Set<String>? = nil,
+    contextWindow: Int? = nil,
+    voices: [String]? = nil
   ) {
     self.id = id
     self.displayName = displayName ?? id
     self.ownedBy = ownedBy
     self.capabilities = capabilities
     self.inputModalities = inputModalities
+    self.outputModalities = outputModalities
+    self.contextWindow = contextWindow
+    self.voices = voices
   }
 
   private enum CodingKeys: String, CodingKey {
-    case id, displayName, ownedBy, capabilities, inputModalities
+    case id, displayName, ownedBy, capabilities, inputModalities, outputModalities, contextWindow, voices
   }
 
   public init(from decoder: Decoder) throws {
@@ -87,7 +97,10 @@ public struct ModelDescriptor: Codable, Equatable, Identifiable, Sendable {
       capabilities: try container.decodeIfPresent(
         ProviderCapabilities.self, forKey: .capabilities) ?? [],
       inputModalities: try container.decodeIfPresent(
-        Set<String>.self, forKey: .inputModalities))
+        Set<String>.self, forKey: .inputModalities),
+      outputModalities: try container.decodeIfPresent(Set<String>.self, forKey: .outputModalities),
+      contextWindow: try container.decodeIfPresent(Int.self, forKey: .contextWindow),
+      voices: try container.decodeIfPresent([String].self, forKey: .voices))
   }
 }
 

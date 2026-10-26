@@ -1,4 +1,5 @@
 import Foundation
+import MaiCore
 import MaiOpenAI
 
 extension AppStore {
@@ -9,7 +10,10 @@ extension AppStore {
     ]
     for endpoint in settings.openAIEndpoints
     where endpoint.isSelectableForSpeech && !settings.isOffline {
-      for model in endpointModels[endpoint.id] ?? [] where Self.isAudioModel(model) {
+      for model in endpointModels[endpoint.id] ?? [] {
+        let descriptor = endpointModelDescriptors[endpoint.id]?.first { $0.id == model }
+        guard descriptor?.features.contains(.voice) == true
+          || (descriptor?.features.isEmpty != false && Self.isAudioModel(model)) else { continue }
         models.append([
           "id": "\(endpoint.id.uuidString)::\(model)", "object": "model",
           "owned_by": endpoint.displayName,

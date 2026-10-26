@@ -205,6 +205,17 @@ def main():
                     else:
                         wait_for('test.gguf — llamacpp')
                     print(f'PASS model catalog {provider}', flush=True)
+                catalog['data'][0].update(capabilities=['tools', 'vision', 'thinking'], context_length=131072)
+                send('/models --tools --vision --context 128K test\n')
+                assert next_request()[0] == '/models'
+                wait_for('1 of 1 models')
+                wait_for('[Tools]')
+                wait_for('[Vision]')
+                wait_for('[128K context]')
+                send('/models --voice\n')
+                assert next_request()[0] == '/models'
+                wait_for('No matching models.')
+                print('PASS model feature, text and context filters', flush=True)
                 # /models refreshes the live cache, including a prompt already open.
                 catalog['data'] = [{'id': 'fresh.gguf', 'owned_by': 'llamacpp'}]
                 catalog['models'] = [{'model': 'fresh.gguf'}]

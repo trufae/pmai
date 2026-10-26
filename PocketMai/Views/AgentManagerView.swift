@@ -248,7 +248,6 @@ struct AgentEditorView: View {
   @State private var description = ""
   @State private var canSpawnSubagents = false
   @State private var loaded = false
-  @State private var modelFilter = ""
 
   private var isCreating: Bool { mode == .create }
 
@@ -316,20 +315,18 @@ struct AgentEditorView: View {
         }
         if let endpoint = store.settings.openAIEndpoints.first(where: {
           $0.id == agent.settings.selectedEndpointID
-        }),
-          endpoint.kind == .systemOne
-        {
+        }) {
           FilteredModelPicker(
-            selection: agentBinding(agent.id, \.openAIModelID), filter: $modelFilter,
-            models: store.endpointModels[endpoint.id] ?? [], emptySelectionTitle: "Provider default"
-          )
+            selection: agentBinding(agent.id, \.openAIModelID), endpoint: endpoint,
+            emptySelectionTitle: "Provider default",
+            initialFeatures: endpoint.kind == .systemOne ? [.decision] : [],
+            onSelect: { model in
+              if model.capabilities.contains(.nativeToolCalling) {
+                agentBinding(agent.id, \.toolCallingMode).wrappedValue = .native
+              }
+            })
           .task(id: endpoint.connectionSignature) { await store.refreshEndpoint(endpoint) }
         }
-        TextField(
-          "Model (empty uses provider default)", text: agentBinding(agent.id, \.openAIModelID)
-        )
-        .textInputAutocapitalization(.never)
-        .autocorrectionDisabled()
       } else if agent.settings.defaultProvider == .mlx {
         TextField("On-device model", text: agentBinding(agent.id, \.localMLXModelID))
           .textInputAutocapitalization(.never)

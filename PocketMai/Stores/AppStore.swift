@@ -565,6 +565,7 @@ final class AppStore: ObservableObject {
   private var autoCompactingConversationIDs: Set<UUID> = []
   @Published var endpointStatuses: [UUID: EndpointConnectionState] = [:]
   @Published var endpointModels: [UUID: [String]] = [:]
+  @Published var endpointModelDescriptors: [UUID: [MaiCore.ModelDescriptor]] = [:]
   @Published var endpointVoices: [UUID: [String]] = [:]
   @Published var localMLXModelIDs: [String] = []
   @Published var mcpStatuses: [UUID: EndpointConnectionState] = [:]
@@ -682,6 +683,7 @@ final class AppStore: ObservableObject {
     if settings.isOffline {
       endpointStatuses.removeAll()
       endpointModels.removeAll()
+      endpointModelDescriptors.removeAll()
       endpointVoices.removeAll()
       mcpStatuses.removeAll()
       mcpCatalogCache.removeAll()
@@ -1326,6 +1328,11 @@ final class AppStore: ObservableObject {
       conversation.modelID = defaultProvider.modelID
     }
     conversation.endpointID = defaultProvider.endpointID
+    if let endpointID = conversation.endpointID,
+      endpointModelDescriptors[endpointID]?.first(where: { $0.id == conversation.modelID })?
+        .capabilities.contains(.nativeToolCalling) == true {
+      conversation.toolCallingMode = .native
+    }
     conversation.reasoningLevel = settings.defaultReasoningLevel
     conversation.systemPromptID = effectiveSystemPromptID(forFolderID: folderID)
     conversation.enabledTools = settings.defaultEnabledTools
@@ -1814,6 +1821,14 @@ final class AppStore: ObservableObject {
     guard let index = currentConversationIndex else { return }
     var conversation = conversations[index]
     update(&conversation)
+    if conversation.modelID != conversations[index].modelID
+      || conversation.endpointID != conversations[index].endpointID {
+      if let endpointID = conversation.endpointID,
+        endpointModelDescriptors[endpointID]?.first(where: { $0.id == conversation.modelID })?
+          .capabilities.contains(.nativeToolCalling) == true {
+        conversation.toolCallingMode = .native
+      }
+    }
     conversations[index] = conversation
     if !conversation.voiceoverEnabled { cancelVoiceover(in: conversation.id) }
     saveConversations()
@@ -1971,6 +1986,7 @@ final class AppStore: ObservableObject {
     selectedConversationIDs.removeAll()
     endpointStatuses.removeAll()
     endpointModels.removeAll()
+    endpointModelDescriptors.removeAll()
     endpointVoices.removeAll()
     mcpStatuses.removeAll()
     mcpTools.removeAll()
@@ -4410,6 +4426,7 @@ final class AppStore: ObservableObject {
   func resetEndpointStatus(_ id: UUID) {
     endpointStatuses[id] = .unknown
     endpointModels[id] = nil
+    endpointModelDescriptors[id] = nil
     endpointVoices[id] = nil
     endpointModelCache[id] = nil
   }
@@ -4606,6 +4623,7 @@ final class AppStore: ObservableObject {
     guard !settings.isOffline else {
       endpointStatuses[endpoint.id] = .failed("Airplane mode is enabled.")
       endpointModels[endpoint.id] = nil
+      endpointModelDescriptors[endpoint.id] = nil
       endpointVoices[endpoint.id] = nil
       endpointModelCache[endpoint.id] = nil
       return
@@ -4618,12 +4636,14 @@ final class AppStore: ObservableObject {
     async let voiceResult = fetchEndpointVoicesResult(endpoint)
     let results = await (models: modelResult, voices: voiceResult)
 
-    let models = (try? results.models.get()) ?? []
+    let descriptors = (try? results.models.get()) ?? []
+    let models = descriptors.map(\.id)
     let voices = (try? results.voices.get()) ?? []
 
     // Built-in OpenAI voices indicate capability, not successful authentication.
     if !models.isEmpty || (!endpoint.isDirectOpenAI && !voices.isEmpty) {
       endpointModels[endpoint.id] = models
+      endpointModelDescriptors[endpoint.id] = descriptors
       endpointVoices[endpoint.id] = voices
       endpointStatuses[endpoint.id] = .available
       endpointModelCache[endpoint.id] = RemoteFetchCacheEntry(
@@ -4638,7 +4658,6 @@ final class AppStore: ObservableObject {
         saveSettings()
       }
     } else {
-      endpointModels[endpoint.id] = nil
       endpointVoices[endpoint.id] = nil
       endpointStatuses[endpoint.id] = .failed(endpointRefreshErrorMessage(results))
       endpointModelCache[endpoint.id] = nil
@@ -4768,10 +4787,10 @@ final class AppStore: ObservableObject {
   }
 
   private func fetchEndpointModelsResult(_ endpoint: OpenAIEndpoint) async -> Result<
-    [String], Error
+    [MaiCore.ModelDescriptor], Error
   > {
     do {
-      return .success(try await OpenAICompatibleProvider.fetchModels(endpoint: endpoint))
+      return .success(try await OpenAICompatibleProvider.fetchModelDescriptors(endpoint: endpoint))
     } catch {
       return .failure(error)
     }
@@ -4788,7 +4807,7 @@ final class AppStore: ObservableObject {
   }
 
   private func endpointRefreshErrorMessage(
-    _ results: (models: Result<[String], Error>, voices: Result<[String], Error>)
+    _ results: (models: Result<[MaiCore.ModelDescriptor], Error>, voices: Result<[String], Error>)
   ) -> String {
     let modelMessage = failureMessage(results.models)
     let voiceMessage = failureMessage(results.voices)
@@ -4804,7 +4823,7 @@ final class AppStore: ObservableObject {
     }
   }
 
-  private func failureMessage(_ result: Result<[String], Error>) -> String? {
+  private func failureMessage<T>(_ result: Result<T, Error>) -> String? {
     if case .failure(let error) = result {
       return error.localizedDescription
     }
@@ -5252,6 +5271,7 @@ final class AppStore: ObservableObject {
     let endpointID: UUID?
     let systemPromptID: UUID?
     let toolsEnabled: Bool
+    let toolCallingMode: ToolCallingMode?
     let enabledTools: Set<BuiltInToolID>
     let usesStreaming: Bool
     let voiceoverEnabled: Bool
@@ -5275,6 +5295,7 @@ final class AppStore: ObservableObject {
       endpointID = conversation.endpointID
       systemPromptID = conversation.systemPromptID
       toolsEnabled = conversation.toolsEnabled
+      toolCallingMode = conversation.toolCallingMode
       enabledTools = conversation.enabledTools
       usesStreaming = conversation.usesStreaming
       voiceoverEnabled = conversation.voiceoverEnabled
@@ -6448,6 +6469,7 @@ final class AppStore: ObservableObject {
     }
     endpointStatuses.removeAll()
     endpointModels.removeAll()
+    endpointModelDescriptors.removeAll()
     endpointVoices.removeAll()
   }
 
@@ -6471,6 +6493,7 @@ final class AppStore: ObservableObject {
     }
     endpointStatuses.removeAll()
     endpointModels.removeAll()
+    endpointModelDescriptors.removeAll()
     endpointVoices.removeAll()
   }
 
@@ -6655,6 +6678,7 @@ final class AppStore: ObservableObject {
     }
     endpointStatuses.removeAll()
     endpointModels.removeAll()
+    endpointModelDescriptors.removeAll()
     endpointVoices.removeAll()
     saveSettings()
   }
@@ -6793,6 +6817,7 @@ final class AppStoreViewObservation: ObservableObject {
       observe(store.$isCompacting)
       observe(store.$endpointStatuses)
       observe(store.$endpointModels)
+      observe(store.$endpointModelDescriptors)
       observe(store.$localMLXModelIDs)
       observe(store.$mcpStatuses)
       observe(store.$mcpTools)
@@ -6818,6 +6843,7 @@ final class AppStoreViewObservation: ObservableObject {
       observe(store.$respondingConversationIDs)
       observe(store.$endpointStatuses)
       observe(store.$endpointModels)
+      observe(store.$endpointModelDescriptors)
       observe(store.$localMLXModelIDs)
       observe(store.$appleAvailabilityReport)
       observe(store.$appleAvailabilityMessage)
@@ -6831,6 +6857,7 @@ final class AppStoreViewObservation: ObservableObject {
       observe(store.$conversationSummaries)
       observe(store.$endpointStatuses)
       observe(store.$endpointModels)
+      observe(store.$endpointModelDescriptors)
       observe(store.$endpointVoices)
       observe(store.$localMLXModelIDs)
       observe(store.$mcpStatuses)
