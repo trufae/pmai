@@ -50,6 +50,54 @@ func configuredProviderDefaultModel() async throws {
   #expect(provider.descriptor.defaultModel == "model-for-local")
 }
 
+@Test("Provider deletion preserves saved agents and rejects unknown connections")
+func providerDeletionConfiguration() throws {
+  var configuration = MaiConfiguration(
+    defaultAgent: "main", taskAgents: TaskAgentAssignments(compact: "summary"),
+    providers: [
+      ConfiguredProvider(id: "used", kind: .hello),
+      ConfiguredProvider(id: "unused", kind: .hello),
+    ],
+    agents: [
+      AgentDefinition(id: "main", provider: "used", model: "hello"),
+      AgentDefinition(id: "summary", provider: "used", model: "hello"),
+    ])
+  let unchanged = configuration
+  #expect(throws: MaiConfigurationError.self) { try configuration.removeProvider("used") }
+  #expect(throws: MaiConfigurationError.unknownProvider("missing")) {
+    try configuration.removeProvider("missing")
+  }
+  #expect(configuration == unchanged)
+  try configuration.removeProvider("unused")
+  #expect(configuration.providers.map(\.id) == ["used"])
+  #expect(configuration.agents == unchanged.agents)
+  #expect(configuration.taskAgents == unchanged.taskAgents)
+  try configuration.validate()
+  configuration.agents = []
+  configuration.defaultAgent = nil
+  configuration.taskAgents = TaskAgentAssignments()
+  try configuration.removeProvider("used")
+  #expect(configuration.providers.isEmpty)
+  try configuration.validate()
+}
+
+@Test("Unregistering a provider removes its catalog and allows reusing its ID")
+func providerDeletionRuntime() async throws {
+  let runtime = AgentRuntime()
+  try await runtime.register(HelloProvider(id: "removed"))
+  #expect(await runtime.unregister(providerID: "removed"))
+  #expect(!(await runtime.unregister(providerID: "removed")))
+  #expect(await runtime.availableProviders().isEmpty)
+  await #expect(throws: AgentRuntimeError.providerNotRegistered("removed")) {
+    try await runtime.run(
+      AgentRequest(provider: "removed", model: "hello", messages: [.user("Unregistered")]))
+  }
+  try await runtime.register(HelloProvider(id: "removed", prefix: "Replacement"))
+  let result = try await runtime.run(
+    AgentRequest(provider: "removed", model: "hello", messages: [.user("New connection")]))
+  #expect(result.response.text == "Replacement: New connection")
+}
+
 @Test("Renaming providers preserves connection settings and updates task agents")
 func providerRenameConfiguration() throws {
   let original = ConfiguredProvider(

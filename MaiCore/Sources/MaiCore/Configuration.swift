@@ -1095,6 +1095,20 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
 
   // MARK: - Catalog edits
 
+  /// Removes an unused connection without discarding saved agent settings.
+  public mutating func removeProvider(_ id: String) throws {
+    guard let index = providers.firstIndex(where: { $0.id == id }) else {
+      throw MaiConfigurationError.unknownProvider(id)
+    }
+    let users = agents.filter { $0.provider.rawValue == id }.map(\.id).sorted()
+    guard users.isEmpty else {
+      throw MaiConfigurationError.invalidFile(
+        "Provider '\(id)' is used by agents: \(users.joined(separator: ", ")). "
+          + "Reassign each with /agent provider ID OTHER, or remove it with /agent del ID first.")
+    }
+    providers.remove(at: index)
+  }
+
   /// Renames the connection and every configured agent that uses it, including
   /// task agents. The complete provider record and task assignments survive.
   public mutating func renameProvider(_ id: String, to newID: String) throws {

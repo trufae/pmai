@@ -61,6 +61,37 @@ Point an editor at `pmai --acp`. Point another agent or an MCP client at
 
 ## ACP providers in the normal prompt
 
+For a one-command setup inside pmai, choose either:
+
+```
+/agent acp add claude
+/agent acp add opencode
+```
+
+Each command saves the ACP provider and a same-named agent, then selects that
+agent for the current chat. Install the corresponding executable in your shell
+first:
+
+```sh
+npm install -g @agentclientprotocol/claude-agent-acp
+npm install -g opencode-ai
+```
+
+Authenticate Claude with its own CLI before connecting. OpenCode uses its saved
+provider credentials; run `opencode auth login` first. See the
+[Claude adapter](https://github.com/agentclientprotocol/claude-agent-acp) and
+[OpenCode ACP setup](https://opencode.ai/docs/acp/).
+
+Once installed and authenticated, these shell one-liners also make the agent
+the default for future pmai runs, then exit:
+
+```sh
+printf '/agent acp add claude\n/agent default claude\n/exit\n' | pmai
+printf '/agent acp add opencode\n/agent default opencode\n/exit\n' | pmai
+```
+
+To add only a provider and keep the current agent's settings, use:
+
 ```
 /provider add acp opencode
 /provider add acp claude

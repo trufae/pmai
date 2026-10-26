@@ -583,8 +583,13 @@ runtime and the change is saved when the editor closes. `/baseurl [ID]` shows th
 effective URL without changing it. `/provider rename OLD NEW` renames a
 connection and updates all configured agents, including task agents; omit OLD
 to rename the current provider. The active chat follows the rename, while other
-saved chats retain their independent snapshots. See
-`doc/edit.md` for everything `/edit` reaches.
+saved chats retain their independent snapshots.
+`/provider del ID` removes an unused connection from the configuration and live
+provider list (`delete` and `remove` are aliases). Switch away from the current
+provider with `/provider use OTHER` first. If saved agents still use it, reassign
+them with `/agent provider ID OTHER` or remove them with `/agent del ID`.
+Other saved chats keep their connection snapshots; external logins are retained.
+See `doc/edit.md` for everything `/edit` reaches.
 
 `/help` lists commands and the `$NAME [TEXT]` prompt/skill syntax. Use
 `/help shell` for input, shell commands, redirects, and agent messages, or

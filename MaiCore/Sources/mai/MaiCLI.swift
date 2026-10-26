@@ -8058,6 +8058,32 @@ struct MaiCLI {
       return
     }
 
+    if ["del", "delete", "remove"].contains(fields[0].lowercased()) {
+      guard fields.count == 2 else {
+        await terminal.line("Usage: /provider del ID")
+        return
+      }
+      guard var draft = configuration, let configurationPath else {
+        await terminal.line("error: No writable configuration is active.", to: .standardError)
+        return
+      }
+      let id = fields[1]
+      do {
+        guard session.profile.provider.rawValue != id else {
+          throw MaiConfigurationError.invalidFile(
+            "Provider '\(id)' is this chat's provider; switch with /provider use OTHER first.")
+        }
+        try draft.removeProvider(id)
+        try draft.save(to: URL(fileURLWithPath: configurationPath))
+        await runtime.unregister(providerID: ProviderID(id))
+        providerBaseURLs.set(nil, for: id)
+        configuration = draft
+        await terminal.line(
+          "Provider '\(id)' removed (saved). Other saved chats keep their own connection snapshots.")
+      } catch { await terminal.line("error: \(error.localizedDescription)", to: .standardError) }
+      return
+    }
+
     if fields[0].lowercased() == "rename" {
       guard (2...3).contains(fields.count), var draft = configuration, let configurationPath else {
         await terminal.line("Usage: /provider rename [OLD] NEW")
@@ -8214,7 +8240,7 @@ struct MaiCLI {
 
     guard fields.count == 1 || (fields[0].lowercased() == "use" && fields.count == 2) else {
       await terminal.line(
-        "Usage: /provider [use] ID · /provider add ID URL · /provider rename [OLD] NEW")
+        "Usage: /provider [use] ID · /provider add ID URL · /provider del ID · /provider rename [OLD] NEW")
       return
     }
     let selectedID = fields.count == 2 ? fields[1] : fields[0]
@@ -13506,7 +13532,7 @@ struct MaiCLI {
       "/path del ", "/path outside ask", "/path outside deny", "/help path",
       "/path sensitive ask", "/path sensitive deny", "/path sensitive allow",
       "/path hidden ask", "/path hidden deny", "/path hidden allow",
-      "/providers", "/models ", "/provider ", "/provider add ", "/provider rename ",
+      "/providers", "/models ", "/provider ", "/provider add ", "/provider del ", "/provider rename ",
       "/provider add acp opencode", "/provider add acp claude", "/provider add acp codex",
       "/provider add local-apple --kind apple",
       "/provider add local-mlx --kind mlx", "/provider add chatgpt --kind chatgpt",
@@ -13593,6 +13619,7 @@ struct MaiCLI {
       }
       values.append("/edit provider \(provider.id)")
       values.append("/provider rename \(provider.id) ")
+      values.append("/provider del \(provider.id)")
     }
     for provider in availableProviders {
       values.append("/provider use \(provider.id.rawValue)")
@@ -13933,16 +13960,31 @@ struct MaiCLI {
 
     Welcome to PocketMai! pmai \#(version)
 
-    Add a provider with your API URL and key:
+    Chat with models, run tools, and work with coding agents from your terminal.
+
+    Connect an API provider:
       /provider add myai https://api.example.com/v1 --api-key YOUR_API_KEY
       /models myai
       /model myai::MODEL
 
-    Replace the example URL and YOUR_API_KEY with your provider's settings.
-    Choose MODEL from /models. Your provider and model are saved for future chats.
-    Use --api-key-file PATH instead of --api-key to read the key from a file.
-    Type /help for commands, /help provider for local Apple/MLX setup,
-    or /about to show this message again.
+    Or select a coding agent over ACP (one command inside pmai):
+      /agent acp add claude
+      /agent acp add opencode
+    Install first in your shell:
+      npm install -g @agentclientprotocol/claude-agent-acp
+      npm install -g opencode-ai
+    Authenticate with the agent's own CLI before using ACP.
+
+    For a local Ollama server:
+      /provider add local http://127.0.0.1:11434/v1
+      /models local
+      /model local::MODEL
+
+    Replace the example URL, YOUR_API_KEY, and MODEL with your settings.
+    Use --api-key-file PATH to read a key from a file. Selections are saved.
+    /providers lists connections; /provider del ID removes an unused one.
+    /help lists commands; /help provider covers Apple/MLX, ChatGPT, and ACP.
+    /about shows this message again. https://github.com/trufae/pmai
     """#
 
   private static let replHelp = """
@@ -14129,6 +14171,9 @@ struct MaiCLI {
     /provider add acp NAME --url URL --cwd DIR [--token-env ENV]  Remote ACP WebSocket
 
     ACP: /models NAME discovers models; /model NAME::MODEL selects one.
+    For one-command setup that also saves and selects a same-named agent:
+      /agent acp add claude
+      /agent acp add opencode
     Install adapters: npm install -g @agentclientprotocol/claude-agent-acp @agentclientprotocol/codex-acp
     Log in with the agent's own CLI first. ACP uses that agent's credentials.
     Local agents receive enabled pmai tools through MCP over loopback HTTP.
@@ -14139,6 +14184,7 @@ struct MaiCLI {
     /provider logout [ID]            Sign out and revoke this ChatGPT session
     /provider status [ID]            Show the ChatGPT account and usage link
     /provider rename [OLD] NEW        Rename a connection and update configured agents
+    /provider del ID                  Remove an unused connection (aliases: delete, remove)
     /edit provider [ID]               Edit its URL, default model, credentials, headers, and options
 
     Providers are added explicitly. On macOS, set up native providers with:
@@ -14161,6 +14207,9 @@ struct MaiCLI {
     override the selected connection for one invocation. PROVIDER::MODEL selects
     that connection and sends only MODEL, including in environment model variables.
     A rename updates the active chat; other saved chats keep their own snapshots.
+    To delete this chat's provider, /provider use OTHER first. Reassign saved
+    agents with /agent provider ID OTHER or remove them with /agent del ID.
+    Deletion keeps other saved chats' connection snapshots and external logins.
     """
 
   private static let setHelp = """

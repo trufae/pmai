@@ -63,6 +63,13 @@ extension AgentRuntime {
     providers[descriptor.id] = provider
   }
 
+  /// Forgets a connection. Calls already in flight keep their existing instance.
+  @discardableResult
+  public func unregister(providerID: ProviderID) -> Bool {
+    contextWindows[providerID] = nil
+    return providers.removeValue(forKey: providerID) != nil
+  }
+
   /// Calls already in flight finish with their existing connection; subsequent
   /// calls and live agent references use the renamed provider.
   public func renameProvider(_ id: ProviderID, to provider: any ChatProvider) throws {

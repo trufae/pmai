@@ -33,6 +33,8 @@ def main():
         assert 'Welcome to PocketMai!' in output, output
         assert r'\___________/' in output, output
         assert '/provider add myai https://api.example.com/v1 --api-key YOUR_API_KEY' in output
+        assert '/agent acp add claude' in output and '/agent acp add opencode' in output
+        assert '/provider del ID' in output and 'npm install -g opencode-ai' in output
         assert 'No providers configured.' in output, output
         assert 'No provider selected.' in output, output
         assert 'Chat: no model selected' in output, output
@@ -207,8 +209,24 @@ def main():
         edited = json.loads((editor_home / '.config/pmai/config.json').read_text())
         assert edited['providers'] == [] and edited['agents'] == [], edited
         assert edited['fileAccess']['hidden'] == 'ask', edited
+        # ACP quick setup needs no prompt, API key, or running external agent.
+        for name, command, arguments in [('claude', 'claude-agent-acp', []),
+                                          ('opencode', 'opencode', ['acp'])]:
+            acp_home = root / (name + '-user')
+            acp_home.mkdir()
+            output = run([f'/agent acp add {name}', f'/agent default {name}', '/model'],
+                         home=acp_home, env={'PATH': str(root / 'no-executables')})
+            assert f"ACP agent '{name}' registered and selected" in output, output
+            assert f'Chat: {name}::{name}' in output, output
+            acp_config = json.loads((acp_home / '.config/pmai/config.json').read_text())
+            assert acp_config['defaultAgent'] == name, acp_config
+            provider = acp_config['providers'][0]
+            assert provider['kind'] == 'acp' and provider['options']['command'] == command
+            assert provider['options'].get('args', []) == arguments, provider
+            assert f'Chat: {name}::{name}' in run(['/model'], home=acp_home,
+                                                  env={'PATH': str(root / 'no-executables')})
         print('PASS persistent defaults: clean setup, model/provider/settings, environment '
-              'precedence, new projects, temporary flags, active agent, and bootstrap')
+              'precedence, new projects, temporary flags, active agent, bootstrap, and ACP setup')
 
 
 if __name__ == '__main__':

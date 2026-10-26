@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check provider selection, connection precedence, endpoint edits, and rename."""
+"""Check provider selection, connection precedence, endpoint edits, rename, and deletion."""
 import json
 import os
 from pathlib import Path
@@ -255,8 +255,39 @@ path.write_text(json.dumps(provider))
             run(['/provider rename final', '/model'])
             assert next(a for a in json.loads(config.read_text())['agents']
                         if a['id'] == 'main')['provider'] == 'final'
+
+            # Deletion protects the current chat and saved primary/task definitions.
+            before = config.read_bytes()
+            output = run(['/provider del final'], error=True)
+            assert '/provider use OTHER first' in output, output
+            assert config.read_bytes() == before
+            run(['/provider use local'])
+            before = config.read_bytes()
+            output = run(['/provider del final'], error=True)
+            assert 'used by agents: summary' in output, output
+            assert '/agent provider ID OTHER' in output, output
+            assert config.read_bytes() == before
+            run(['/agent provider summary local', '/provider del final'])
+            saved = json.loads(config.read_text())
+            assert all(p['id'] != 'final' for p in saved['providers']), saved
+            assert all(a['provider'] == 'local' for a in saved['agents']), saved
+            assert saved['taskAgents']['compact'] == 'summary', saved
+            output = run(['/provider final', '/models final'])
+            assert "Unknown provider 'final'" in output, output
+            before = config.read_bytes()
+            output = run(['/provider del missing'], error=True)
+            assert 'missing' in output, output
+            assert config.read_bytes() == before
+            output = run(['/provider del', '/provider del local extra'])
+            assert output.count('Usage: /provider del ID') == 2, output
+            assert config.read_bytes() == before
+            for alias in ('delete', 'remove', 'del'):
+                output = run([f'/provider add disposable {base}/disposable/v1',
+                              f'/provider {alias} disposable', '/provider disposable'])
+                assert "Provider 'disposable' removed (saved)." in output, output
+                assert "Unknown provider 'disposable'" in output, output
             print('PASS providers: qualified models, URL/key precedence, explicit overrides, '
-                  'provider editing, rename, task references, collision, and resume')
+                  'provider editing, rename, deletion, task references, collision, and resume')
     finally:
         server.shutdown()
         server.server_close()
