@@ -230,8 +230,16 @@ elif action == 'fail':
                     send(line + b'\r')
                     wait_for('...> ')
                 send(b'END\r')
-                wait_for('Hello from MaiCore: first\r\n\r\n  \r\nlast')
+                wait_for('Hello from MaiCore: first')
                 wait_for('✓ took')
+                exported = root / f'heredoc-{mode}.json'
+                send(f'/export json {exported}\r'.encode())
+                deadline = time.monotonic() + 15
+                while not exported.exists() or exported.stat().st_size == 0:
+                    assert time.monotonic() < deadline, output.decode(errors='replace')
+                    if select.select([master], [], [], .1)[0]:
+                        output.extend(os.read(master, 65536))
+                assert json.dumps('first\n\n  \nlast') in exported.read_text(), exported.read_text()
             send(b'/set ui.mode classic\r')
             wait_for('Set ui.mode = classic')
             print('PASS: blank Enter keeps chat idle and heredoc lines intact')
