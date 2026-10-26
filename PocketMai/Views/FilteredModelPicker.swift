@@ -27,7 +27,8 @@ struct FilteredModelPicker: View {
         Text(title).foregroundStyle(.primary)
         Spacer(minLength: 8)
         Text(selection.isEmpty ? (emptySelectionTitle ?? "Select a model") : selection)
-          .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+          .foregroundStyle(selection.isEmpty ? .secondary : .primary)
+          .lineLimit(1).truncationMode(.middle)
         Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
       }
       .frame(minHeight: 44)
@@ -78,6 +79,9 @@ struct ModelBrowser: View {
           ForEach(filter.applying(to: models)) { model in
             Button { choose(model) } label: { modelRow(model) }
               .buttonStyle(.plain)
+              .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+              .listRowBackground(model.id == selection
+                ? Color.accentColor.opacity(0.16) : Color(uiColor: .secondarySystemGroupedBackground))
               .accessibilityAddTraits(model.id == selection ? .isSelected : [])
           }
           if filter.applying(to: models).isEmpty {
@@ -171,7 +175,7 @@ struct ModelBrowser: View {
             Button("At least \(size / 1024)K") { filter.minimumContextWindow = size }
           }
         } label: {
-          Text(filter.minimumContextWindow.map { "\($0 / 1024)K+ context" } ?? "Context size")
+          Text(filter.minimumContextWindow.map { "\($0 / 1024)K+" } ?? "Context size")
             .font(.subheadline.weight(.medium)).padding(.horizontal, 14).frame(minHeight: 44)
             .background(.quaternary, in: Capsule())
         }
@@ -184,37 +188,35 @@ struct ModelBrowser: View {
   }
 
   private func modelRow(_ model: ModelDescriptor) -> some View {
-    HStack(alignment: .top, spacing: 12) {
-      VStack(alignment: .leading, spacing: 8) {
-        Text(model.displayName).font(.body.weight(.medium)).foregroundStyle(.primary)
-          .fixedSize(horizontal: false, vertical: true)
+    HStack(spacing: 8) {
+      VStack(alignment: .leading, spacing: 2) {
+        Text(model.displayName).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+          .lineLimit(1).truncationMode(.middle)
         if model.displayName != model.id {
           Text(model.id).font(.caption).foregroundStyle(.secondary)
+            .lineLimit(1).truncationMode(.middle)
         }
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 82), alignment: .leading)], alignment: .leading, spacing: 5) {
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      HStack(spacing: 6) {
+        if let context = model.contextWindow {
+          Text(context >= 1024 ? "\(context / 1024)K" : "\(context)")
+            .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+        }
+        HStack(spacing: 3) {
           ForEach(model.features, id: \.self) { feature in
-            pill(feature.title, color: feature.color)
+            Rectangle().fill(feature.color).frame(width: 8, height: 8)
           }
-          if let context = model.contextLabel { pill(context, color: .secondary) }
-        }
-        if model.featureLabels.isEmpty {
-          Text("Features unknown").font(.caption).foregroundStyle(.secondary)
         }
       }
-      Spacer(minLength: 0)
-      if model.id == selection {
-        Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint)
-      }
+      .fixedSize()
     }
-    .padding(.vertical, 6)
     .contentShape(Rectangle())
-  }
-
-  private func pill(_ title: String, color: Color) -> some View {
-    Text(title).font(.caption2.weight(.medium)).foregroundStyle(color)
-      .padding(.horizontal, 8).padding(.vertical, 4)
-      .background(color.opacity(0.12), in: Capsule())
-      .fixedSize(horizontal: false, vertical: true)
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(([model.displayName]
+      + (model.displayName != model.id ? [model.id] : [])
+      + (model.featureLabels.isEmpty ? ["Features unknown"] : model.featureLabels))
+      .joined(separator: ", "))
   }
 
   private func choose(_ model: ModelDescriptor) {
