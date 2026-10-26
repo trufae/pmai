@@ -194,6 +194,8 @@ def main(binary):
                     assert 'MARKDOWN_BOLD' in visible and 'MARKDOWN_CODE' in visible, screen
                     assert ('**MARKDOWN_BOLD**' in visible) == (enabled == 'off'), screen
                     assert ('`MARKDOWN_CODE`' in visible) == (enabled == 'off'), screen
+                send('/theme show mono\r')
+                wait_for('pmai: Project files listed. Ready!')
                 send('/theme use missing\r')
                 wait_for("error: Unknown theme 'missing'.")
                 for command, confirmation, prompt_color, error_color in (
@@ -217,6 +219,8 @@ def main(binary):
                                for plain, raw in history), (command, history)
                     assert any("error: Unknown theme 'missing'." in plain
                                and f'\x1b[{error_color}m' in raw for plain, raw in history), (command, history)
+                    assert any('pmai: Project files listed. Ready!' in plain
+                               and '\x1b[0;37;40;22m' in raw for plain, raw in history), (command, history)
                     assert not re.search(rb'\x1b\[\?90\d+m', captured), captured
                     send('\x0c')
                     read_for(.1)

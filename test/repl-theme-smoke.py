@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -44,6 +45,29 @@ def main():
                 'sand\nsky\nslime\n') in output, output
         assert 'PMAI_THEME=NAME' in output, output
         assert not themes.exists(), 'listing must not install built-in theme files'
+
+        def preview_names(output):
+            return [name for line in output.splitlines()
+                    for name in re.findall(r'\| ([\w.-]+) +\|', line)]
+
+        before = config.read_bytes()
+        preview = run('/theme show')
+        names = ['ansi', 'codark', 'colit', 'default', 'ember', 'light', 'mono',
+                 'orange', 'pink', 'plum', 'sand', 'sky', 'slime']
+        assert preview_names(preview) == names, preview
+        assert preview.count('pmai> List the project files') == len(names), preview
+        assert preview.count('pmai: Project files listed. Ready!') == len(names), preview
+        assert '| ansi' in preview and re.search(r'\| ansi +\|  \| codark +\|', preview), preview
+        assert '\x1b[' not in preview, 'piped previews must stay plain'
+        for name in names:
+            single = run(f'/theme show {name}')
+            assert preview_names(single) == [name], single
+            assert single.count('-> files_list .') == 1, single
+        assert config.read_bytes() == before, 'previews must not save configuration'
+        assert not themes.exists(), 'previews must not create theme files'
+        for invalid in ('missing', '../escape'):
+            assert 'error:' in run(f'/theme show {invalid}')
+        assert '/theme show [NAME]' in run('/theme show slime extra')
 
         run('/theme use default')
         original = ui()
@@ -93,6 +117,11 @@ def main():
         run('/theme use slime', '/theme use mine')
         assert ui() == light, 'saved themes must round-trip'
         assert 'mine' in run('/theme list').splitlines()
+        before = config.read_bytes()
+        saved_preview = run('/theme show mine')
+        assert preview_names(saved_preview) == ['mine'], saved_preview
+        assert config.read_bytes() == before
+        assert (themes / 'mine').read_text() == saved, 'previews must not rewrite saved themes'
 
         run('/theme use default')
         before = config.read_bytes()
@@ -141,6 +170,10 @@ def main():
             assert "Theme 'broken', line 2:" in output, output
             assert 'fgcolor = #123456' in output, output
             assert config.read_bytes() == before, 'invalid themes must not apply partially'
+        output = run('/theme show')
+        assert "Theme 'broken', line 2:" in output, output
+        assert 'slime' in preview_names(output), 'broken themes must not stop the gallery'
+        assert config.read_bytes() == before
         output = run('/theme color fgcolor', theme='broken')
         assert 'warning:' in output and 'fgcolor = #123456' in output, output
         for name in ('missing', '../escape', '/tmp/escape'):
