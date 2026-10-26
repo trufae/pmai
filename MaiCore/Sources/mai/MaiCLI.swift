@@ -1246,7 +1246,7 @@ private actor PromptFileAccess {
 
 @main
 struct MaiCLI {
-  private static let version = "1.12.4"
+  private static let version = "1.12.5"
 
   static func main() async {
     let environment = ProcessInfo.processInfo.environment
