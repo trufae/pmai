@@ -30,6 +30,10 @@ def main(binary):
     class Provider(JSONProvider):
         def do_POST(self):
             requests.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
+            if not requests[-1].get('stream'):
+                self.respond({'choices': [{'message': {'role': 'assistant', 'content': 'VIEW_SUMMARY'},
+                                          'finish_reason': 'stop'}]})
+                return
             self.send_response(200)
             self.send_header('Content-Type', 'text/event-stream')
             self.end_headers()
@@ -63,6 +67,10 @@ def main(binary):
                 'use': {'plan': False}, 'ui': {'mode': 'buffer', 'thinking': 'full'},
             }))
             (root / 'file.txt').write_text('OLD_LINE\n')
+            subprocess.run(['git', 'init', '-q'], cwd=root, check=True)
+            subprocess.run(['git', 'add', 'file.txt'], cwd=root, check=True)
+            subprocess.run(['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.org',
+                            'commit', '-qm', 'fixture'], cwd=root, check=True)
             env = clean_environment() | {'TERM': 'xterm-256color', 'NO_PROXY': '127.0.0.1,localhost'}
             master, slave = pty.openpty()
             rows, columns = 24, 120
@@ -159,11 +167,31 @@ def main(binary):
 
             try:
                 wait_for('pmai>')
+                send('/view history\r')
+                wait_for('── view: input history')
+                assert '/view history' in top(), screen
+                send('/history clear\r')
+                wait_for('Input history cleared.')
+                assert 'No input history.' in top(), screen
+                send('/view off\r')
+                read_for()
+                before_blank = dict(screen)
+                send('\r\r')
+                read_for()
+                assert screen == before_blank, (before_blank, screen)
                 send('/view tod\t')
                 wait_for('/view todo')
                 send('\r')
                 wait_for('── view: project todo')
                 assert 'No todos.' in top(), screen
+                send('DRAFT_WORD\x17')
+                wait_for('view focused')
+                assert 'DRAFT_WORD' in screen[rows], screen
+                send('j\x17')
+                wait_for('Tab on empty prompt')
+                assert 'DRAFT_WORD' in screen[rows], screen
+                send('\x15')  # Clear the retained draft.
+                read_for()
                 send('/todo add VIEW_TODO_ITEM\r')
                 wait_for('Todo list saved')
                 assert 'Todo (1 pending, 0 done):' in top(), screen
@@ -295,6 +323,12 @@ def main(binary):
                 chunks.put(None)
                 wait_for('✓ took')
                 assert 'FOLLOWED_THOUGHT' not in bottom() and 'STREAM_ANSWER' in bottom(), screen
+                send('/view prompt $tldr\r')
+                wait_for('VIEW_SUMMARY')
+                assert 'VIEW_SUMMARY' in top() and 'VIEW_SUMMARY' not in bottom(), screen
+                summary_request = requests[-1]
+                assert 'STREAM_ANSWER' in json.dumps(summary_request['messages']), summary_request
+                assert not summary_request.get('tools'), summary_request
                 send('/view tools\r')
                 wait_for('── view: tools')
                 assert 'FOLLOWED_THOUGHT' in bottom(), screen
@@ -381,8 +415,25 @@ def main(binary):
                 wait_for('Set ui.tools = 0.')
                 assert 'files_patch' in top() and '+NEW_LINE' not in top(), screen
                 send('/view diffs\r')
-                wait_for('── view: applied diffs')
+                wait_for('── view: git diff')
+                wait_for('+NEW_LINE')
                 assert '-OLD_LINE' in top() and '+NEW_LINE' in top(), screen
+                # A timer refresh must keep the chosen viewport even when the diff grows.
+                (root / 'file.txt').write_text(''.join(f'NEW_DIFF_{i:02d}\n' for i in range(40)))
+                wait_for('+NEW_DIFF_00')
+                send('\x17' + 'j' * 10)
+                read_for()
+                anchored = top()
+                with (root / 'file.txt').open('a') as output:
+                    output.write('REFRESH_END\n')
+                read_for(5.2)
+                assert top() == anchored, screen
+                send('G')
+                wait_for('+REFRESH_END')
+                send('g\x17')
+                read_for()
+                (root / 'file.txt').write_text('NEW_LINE\n')
+                wait_for('+NEW_LINE')
                 diff_rows, main_rows = top(), bottom()
                 send('\x1b[5~')
                 read_for()
@@ -432,6 +483,7 @@ def main(binary):
                 wait_for('Messages go to this chat again.')
                 send('/view View child\r')
                 wait_for('── view: View child #')
+                child_pid = re.search(r'View child #(\d+)', screen[separator()])[1]
                 assert 'CHILD_INITIAL' in top(), screen
                 chunks.put('CHILD_BACKGROUND\n')
                 wait_for('CHILD_BACKGROUND')
@@ -441,8 +493,8 @@ def main(binary):
                 send('/view pins\r')
                 wait_for('── view: pinned messages')
                 assert 'READ_ANSWER' in top() and 'CHILD_BACKGROUND' not in top(), screen
-                send('/jobs focus 2\r')
-                wait_for('Messages go to agent#2')
+                send(f'/jobs focus {child_pid}\r')
+                wait_for('Messages go to agent#')
                 send('/view log\r')
                 wait_for('── view: message log')
                 assert 'user: CHILD_REQUEST' in top() and 'assistant: CHILD_INITIAL' in top(), screen
@@ -510,7 +562,8 @@ def main(binary):
                 wait_for('── view: thinking')
                 assert 'LIVE_THOUGHT' in top(), screen
                 send('/view diffs\r')
-                wait_for('── view: applied diffs')
+                wait_for('── view: git diff')
+                wait_for('+NEW_LINE')
                 assert '+NEW_LINE' in top(), screen
                 send('/view View child\r')
                 wait_for('── view: View child #')
@@ -662,7 +715,7 @@ def main(binary):
                 output = run_repl([binary, '--config', str(config), '--home', str(root / 'pipe-home')],
                                  ['/view thinking', '/help view'], cwd=root, env=env, allow_errors=True)
                 assert 'error: /view requires ui.mode=buffer.' in output and '/view off' in output
-                print('PASS view: Markdown settings, horizontal/vertical layouts, fullscreen restore, highlight search/persistence/cancellation, mode guard, sources, pins, first-line message log, read-only focus, independent scrolling, live thinking/tools/diffs, '
+                print('PASS view: Markdown settings, horizontal/vertical layouts, fullscreen restore, highlight search/persistence/cancellation, mode guard, sources, pins, first-line message log, read-only focus, Ctrl+W draft retention, blank Enter, history, prompt, independent scrolling, live thinking/tools/diffs, '
                       'background agents, J/K paging, g/G top/bottom, divider background, v/V resizing, q close, separator dragging, mouse cleanup, '
                       'live ui.tools previews and iconlog, resize, saved reasoning/results, off and cleanup')
             finally:
@@ -677,3 +730,4 @@ def main(binary):
 
 if __name__ == '__main__':
     main(str(Path(sys.argv[1]).resolve()))
+

@@ -133,6 +133,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var nextToolBlock = 0
   private var paintedOutputRows: [String] = []
   private var view: TerminalView?
+  private var viewTask: Task<Void, Never>?
+  private var viewDiffDirectory: URL?
+  private var viewGeneration = UUID()
   private var viewSearching = false
   private var draggingViewSeparator = false
   private var scrollbarDrag: (view: Bool, grab: Int, row: Int)?
@@ -184,6 +187,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       if ui.scrollbar != previousUI.scrollbar { scrollbarDrag = nil }
       if ui.mode != .buffer {
         view = nil
+        stopViewTask()
         draggingViewSeparator = false
         scrollbarDrag = nil
       }
@@ -245,7 +249,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       scrollbarDrag = nil
       if let source = view?.source {
         switch source {
-        case .current, .pins, .log, .iconlog, .thinking, .tools, .diffs: view?.buffer.follow()
+        case .current, .pins, .log, .iconlog, .thinking, .tools: view?.buffer.follow()
         default: break
         }
       }
@@ -355,10 +359,76 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     }
   }
 
+  var viewNeedsHistory: Bool { lock.withLock { view?.source == .history } }
+
+  func updateViewHistory(_ text: String) {
+    lock.withLock {
+      guard view?.source == .history else { return }
+      view?.updateText(text)
+      if active, ui.mode == .buffer { drawViewRows(); placeCaret() }
+    }
+  }
+
+  /// Cancel and invalidate before replacing a view, including a same-source reopen.
+  private func stopViewTask() {
+    viewTask?.cancel()
+    viewTask = nil
+    viewGeneration = UUID()
+  }
+
+  func watchViewDiffs(in directory: URL) {
+    lock.withLock { watchViewDiffsLocked(in: directory) }
+  }
+
+  private func watchViewDiffsLocked(in directory: URL) {
+    guard active, view?.source == .diffs else { return }
+    guard viewTask == nil || viewDiffDirectory != directory else { return }
+    stopViewTask()
+    viewDiffDirectory = directory
+    let generation = viewGeneration
+    viewTask = Task.detached(priority: .utility) { [weak self] in
+      while !Task.isCancelled {
+        let text = await TerminalGitDiff.text(in: directory)
+        guard !Task.isCancelled else { return }
+        self?.updateViewDiff(text, generation: generation)
+        do { try await Task.sleep(for: .seconds(5)) } catch { return }
+      }
+    }
+  }
+
+  func runViewPrompt(title: String, operation: @escaping @Sendable () async throws -> String) {
+    setView(.prompt, title: title)
+    lock.withLock {
+      let generation = viewGeneration
+      view?.updateText("Running prompt…")
+      viewTask = Task { [weak self] in
+        let text: String
+        do { text = try await operation() }
+        catch { text = "Prompt failed: \(error.localizedDescription)" }
+        guard !Task.isCancelled else { return }
+        self?.updateViewText(text, source: .prompt, generation: generation)
+      }
+      if active, ui.mode == .buffer { drawViewRows(); placeCaret() }
+    }
+  }
+
+  private func updateViewDiff(_ text: String, generation: UUID) {
+    updateViewText(text, source: .diffs, generation: generation)
+  }
+
+  private func updateViewText(_ text: String, source: TerminalViewSource, generation: UUID) {
+    lock.withLock {
+      guard generation == viewGeneration, view?.source == source else { return }
+      view?.updateText(text)
+      if active, ui.mode == .buffer { drawViewRows(); placeCaret() }
+    }
+  }
+
   func setView(_ source: TerminalViewSource?, title: String = "") {
     lock.withLock {
       guard ui.mode == .buffer else { return }
       let label = title.components(separatedBy: .controlCharacters).joined(separator: " ")
+      stopViewTask()
       let previous = view
       view = source.map {
         TerminalView(source: $0, title: label, preferredHeight: previous?.preferredHeight,
@@ -552,6 +622,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     raw.c_iflag &= ~tcflag_t(IXON | ICRNL)
     guard tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == 0 else { return }
     active = true
+    if let directory = viewDiffDirectory { watchViewDiffsLocked(in: directory) }
     paintedPanelRows = []
     clampInputRows()
     if ui.mode == .buffer {
@@ -582,7 +653,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   /// Gives the whole terminal back: the region is released, the reserved rows
   /// are cleared, and the tty returns to the mode the shell left it in.
   func deactivate() {
-    lock.withLock { deactivateLocked() }
+    lock.withLock { stopViewTask(); deactivateLocked() }
   }
 
   /// Steps aside for another program that needs the tty, then comes back with
@@ -635,6 +706,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     draggingViewSeparator = false
     scrollbarDrag = nil
     refreshSize()
+    if view?.source == .diffs { stopViewTask() }
     resizeSource?.cancel()
     resizeSource = nil
     activitySource?.cancel()
@@ -1288,7 +1360,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   private func updateViewBuffer() {
     guard let source = view?.source else { return }
-    if view?.needsMessages == true || source == .todo { return }
+    if view?.needsMessages == true || source == .todo || source == .history || source == .diffs || source == .prompt { return }
     if source == .conversations {
       var combined = TerminalOutputBuffer()
       for id in conversations.keys.sorted() where id != "initial" {
@@ -1328,8 +1400,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         : text
     }
     let focus = view?.focused == true
-      ? "view focused · Space layout · Enter fullscreen · / search · j/k scroll · J/K page · g/G top/bottom · v/V resize · q close · Tab prompt"
-      : "Tab on empty prompt to focus"
+      ? "view focused · Space layout · Enter fullscreen · / search · j/k scroll · J/K page · g/G top/bottom · v/V resize · q close · Ctrl+W/Tab prompt"
+      : "Tab on empty prompt to focus · Ctrl+W to focus"
     let label = "── view: \(view?.title ?? "") · \(focus) · drag to resize ──"
     let separatorWidth = columns
     let text = Self.truncated(label, width: separatorWidth)
@@ -1723,3 +1795,4 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     TerminalLineEditor.displayWidth(of: value)
   }
 }
+

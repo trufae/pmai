@@ -14,13 +14,14 @@ enum TerminalViewSource: Equatable {
   case iconlog
   case tools(String?)
   case diffs
+  case history
+  case prompt
 
   var selection: TerminalOutputSelection {
     switch self {
     case .thinking: .thinking
     case .tools(let name): .tools(name)
     case .iconlog: .iconlog
-    case .diffs: .diffs
     default: .all
     }
   }
@@ -30,7 +31,6 @@ enum TerminalOutputSelection: Equatable {
   case all, thinking
   case iconlog
   case tools(String?)
-  case diffs
 }
 
 struct TerminalMouseEvent {
@@ -53,6 +53,26 @@ struct TerminalView {
   var buffer = TerminalOutputBuffer()
   var messages: [AgentMessage]?
   var todoText: String?
+  var text: String?
+
+  /// Snapshots are independent of the conversation transcript.
+  mutating func updateText(_ text: String) {
+    guard self.text != text else { return }
+    self.text = text
+    let anchor = source == .diffs ? buffer.viewportAnchor : buffer.readingAnchor
+    var output = TerminalOutputBuffer()
+    if source == .prompt {
+      output.configureMarkdown(markdown)
+      let block = output.appendReply(text)
+      output.finishReply(block)
+    } else {
+      output.append(text)
+    }
+    buffer.updateView(from: output, selection: .all)
+    if source == .diffs || source == .prompt {
+      buffer.restoreAnchor(line: anchor?.line ?? 0, glyph: anchor?.glyph ?? 0)
+    }
+  }
 
   /// These sources use model messages, rather than rendered terminal output.
   var needsMessages: Bool { source == .pins || source == .log }
@@ -110,3 +130,4 @@ struct TerminalView {
     return max(1, min(availableRows - 2, preferredHeight ?? (availableRows - 1) / 2))
   }
 }
+

@@ -94,6 +94,10 @@ struct TerminalOutputBuffer {
   var isFollowing: Bool { top == nil }
   var isAtBeginning: Bool { top?.line == 0 && top?.glyph == 0 }
   var logicalLineCount: Int { lines.count }
+  /// The last painted top row also pins a viewport that was following the tail.
+  var viewportAnchor: (line: Int, glyph: Int)? {
+    (top ?? visiblePositions.first).map { ($0.line, $0.glyph) }
+  }
   var readingAnchor: (line: Int, glyph: Int)? { top.map { ($0.line, $0.glyph) } }
   mutating func restoreAnchor(line: Int, glyph: Int) {
     top = Position(line: min(max(0, line), lines.count - 1), glyph: max(0, glyph))
@@ -130,7 +134,6 @@ struct TerminalOutputBuffer {
     configureExcluding(nil)
     if selection != .all { configureToolGroups(false) }
     if selection == .thinking { configureThinking(.full) }
-    if selection == .diffs { configureTools(.all) }
   }
 
   mutating func clear() {
@@ -399,8 +402,6 @@ struct TerminalOutputBuffer {
       guard thinkingBlocks[index] != nil else { return [] }
     case .tools(let name):
       guard let tool = toolBlocks[index], name == nil || tool.call?.name == name else { return [] }
-    case .diffs:
-      guard toolBlocks[index]?.hasAppliedDiff == true else { return [] }
     }
     let originalStart = toolGroupStarts[index] ?? index
     let groupEnd = toolGroupEnds[originalStart] ?? index + 1
@@ -700,3 +701,4 @@ struct TerminalOutputBuffer {
     return Array(rows[index..<min(rows.count, index + height)])
   }
 }
+

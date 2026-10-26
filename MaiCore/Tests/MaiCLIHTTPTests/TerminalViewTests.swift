@@ -26,6 +26,8 @@ func terminalViewSelectors() throws {
   }
   #expect(try source("thinking") == .thinking)
   #expect(try source("diffs") == .diffs)
+  #expect(try source("history") == .history)
+  #expect(try source("prompt $tldr") == .prompt)
   #expect(try source("agents") == .conversations)
   #expect(try source("pins") == .pins)
   #expect(try source(" LOG ") == .log)
@@ -37,7 +39,7 @@ func terminalViewSelectors() throws {
   }
   for name in [
     "", "missing", "tools missing", "thinking extra", "pins extra", "log extra", "off extra",
-    "agent", "todo extra", "iconlog extra",
+    "agent", "todo extra", "iconlog extra", "prompt", "history extra",
   ] {
     #expect(throws: (any Error).self) { try source(name) }
   }
@@ -187,27 +189,6 @@ func terminalViewProjections() {
   #expect(original.contains("answer"))
 }
 
-@Test("Diff views include successful applied changes and exclude errors, reads and no-ops")
-func terminalViewDiffs() {
-  var source = TerminalOutputBuffer()
-  let diff = "Updated file.txt\n--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+new"
-  for (changed, error, text) in [
-    (true, false, diff), (true, true, diff), (false, false, diff), (true, false, "no diff"),
-  ] {
-    source.appendTool(
-      call: ToolCall(id: "edit", name: "files_patch", arguments: .object([:])),
-      result: ToolResult(
-        callID: "edit", content: [.text(text)],
-        structuredContent: .object(["changed": .bool(changed)]), isError: error))
-  }
-  source.appendTool(call: nil, result: ToolResult(callID: "read", text: diff))
-  var view = TerminalOutputBuffer()
-  view.updateView(from: source, selection: .diffs)
-  let rows = view.visibleRows(width: 80, height: 100)
-  #expect(rows.filter { $0 == "  +new" }.count == 1)
-  #expect(!rows.joined().contains("no diff"))
-}
-
 @Test("View scrolling stays independent across live updates, reflow and clearing")
 func terminalViewScroll() {
   var source = TerminalOutputBuffer()
@@ -261,3 +242,69 @@ func terminalViewMarkdown() {
   pins.configureMarkdown(nil)
   #expect(pins.buffer.visibleRows(width: 80, height: 30).joined().contains("**bold**"))
 }
+
+
+@Test("Git snapshots retain a scrolled viewport when output changes or shrinks")
+func terminalViewGitScroll() {
+  var view = TerminalView(source: .diffs, title: "git diff")
+  let lines = (0..<40).map { "diff line \($0)" }
+  view.updateText(lines.joined(separator: "\n"))
+  #expect(view.buffer.visibleRows(width: 80, height: 4).first == "diff line 0")
+  view.buffer.scroll(lines: 12, width: 80, height: 4)
+  let before = view.buffer.visibleRows(width: 80, height: 4)
+  view.updateText((lines + ["new diff"]).joined(separator: "\n"))
+  #expect(view.buffer.visibleRows(width: 80, height: 4) == before)
+  view.buffer.follow()
+  let tail = view.buffer.visibleRows(width: 80, height: 4)
+  view.updateText((lines + ["new diff", "another diff"]).joined(separator: "\n"))
+  #expect(view.buffer.visibleRows(width: 80, height: 4) == tail)
+  view.updateText("No unstaged changes to tracked files.")
+  #expect(view.buffer.visibleRows(width: 80, height: 4) == ["No unstaged changes to tracked files."])
+}
+
+@Test("Prompt views resolve builtins and overrides, preserving the reply placeholder")
+func terminalViewPromptTemplate() throws {
+  let custom = UserPrompt(name: "tldr", text: "Short: $ARGUMENTS")
+  let template = try MaiCLI.viewPromptTemplate("$tldr", catalog: PromptCatalog(user: [custom]))
+  #expect(UserPrompt.message(text: template, arguments: "Last reply") == "Short: Last reply")
+  let builtin = try MaiCLI.viewPromptTemplate("$tldr", catalog: PromptCatalog())
+  #expect(!builtin.isEmpty)
+  #expect(try MaiCLI.viewPromptTemplate("Explain briefly", catalog: PromptCatalog()) == "Explain briefly")
+  #expect(throws: (any Error).self) {
+    try MaiCLI.viewPromptTemplate("$missing", catalog: PromptCatalog())
+  }
+  var view = TerminalView(source: .prompt, title: "prompt", markdown: .init(theme: .plain))
+  view.updateText("# Summary\n\n**short** reply")
+  let rows = view.buffer.visibleRows(width: 80, height: 10).joined(separator: "\n")
+  #expect(rows.contains("Summary") && !rows.contains("# Summary"))
+  #expect(rows.contains("short") && !rows.contains("**short**"))
+}
+
+#if os(macOS) || os(Linux)
+@Test("Git view captures working-tree diffs and reports an empty tree or Git errors")
+func terminalViewGitCommand() async throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent("view git \(UUID())")
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  func git(_ args: [String]) throws {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = ["git"] + args
+    process.currentDirectoryURL = directory
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    process.waitUntilExit()
+    #expect(process.terminationStatus == 0)
+  }
+  let error = await TerminalGitDiff.text(in: directory)
+  #expect(error.localizedCaseInsensitiveContains("not a git repository"))
+  try git(["init", "-q"])
+  #expect(await TerminalGitDiff.text(in: directory) == "No unstaged changes to tracked files.")
+  let file = directory.appendingPathComponent("file.txt")
+  try "old\n".write(to: file, atomically: true, encoding: .utf8)
+  try git(["add", "file.txt"])
+  try "new\n".write(to: file, atomically: true, encoding: .utf8)
+  let diff = await TerminalGitDiff.text(in: directory)
+  #expect(diff.contains("-old") && diff.contains("+new"))
+}
+#endif

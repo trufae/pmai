@@ -500,7 +500,13 @@ final class TerminalLineEditor {
         continue
       }
       if activePrompt.isModal { surface?.focusPrompt() }
-      if !activePrompt.isModal, bytes.isEmpty, case .byte(9) = key,
+      let switchesView: Bool
+      switch key {
+      case .byte(23): switchesView = true
+      case .byte(9): switchesView = bytes.isEmpty
+      default: switchesView = false
+      }
+      if !activePrompt.isModal, switchesView,
         surface?.toggleViewFocus() == true
       {
         dismissCompletion()
@@ -647,6 +653,9 @@ final class TerminalLineEditor {
           drawSeparator(separator)
           redraw(prompt: prompt, bytes: bytes, cursor: cursor)
         case 13:  // Enter submits the whole input
+          if !activePrompt.isModal,
+            String(decoding: bytes, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+          { continue }
           renderSubmittedLine(prompt: prompt, bytes: bytes)
           let line = String(decoding: bytes, as: UTF8.self)
           submittedPromptID = activePrompt.id
@@ -1612,3 +1621,4 @@ final class TerminalLineEditor {
     return (try? JSONDecoder().decode([String].self, from: data)) ?? []
   }
 }
+
