@@ -76,7 +76,8 @@ extension MaiCLI {
     starts in the top half of the output area, with the conversation below it.
     Drag the separator with the left mouse button to resize the panes. Both
     panes keep at least one row; the chosen height is kept when sources change.
-    Each pane has a scrollbar in the rightmost column. Drag its handle or click
+    Overflowing panes show a scrollbar on the right (one character by default).
+    /set ui.scrollbar N changes its width; 0 hides it. Drag its handle or click
     its track to scroll; the handle size reflects the amount of visible content.
     Tab with an empty prompt switches focus between the prompt and the view.
     In the view, j/k or Down/Up scroll one row; J/K page down/up like Page Down/Up.

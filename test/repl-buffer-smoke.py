@@ -94,6 +94,7 @@ def main(binary):
             screen = {}
             styled_screen = {}
             scrollbar = {}
+            scrollbar_spans = {}
             captured = bytearray()
 
             def read_for(seconds=.25):
@@ -107,10 +108,13 @@ def main(binary):
                     assert 1 <= row <= rows and 1 <= column <= columns, (row, column, rows, columns)
                     end = moves[index + 1].start() if index + 1 < len(moves) else len(text)
                     content = text[move.end():end]
-                    if column == columns:
-                        match = re.search(r'\x1b\[(47|100)m ', content)
-                        if match:
-                            scrollbar[row] = int(match[1])
+                    if column == 1 and '\x1b[2K' in content:
+                        scrollbar.pop(row, None)
+                        scrollbar_spans.pop(row, None)
+                    match = re.search(r'\x1b\[(47|100)m( +)', content)
+                    if match:
+                        scrollbar[row] = int(match[1])
+                        scrollbar_spans[row] = (column, len(match[2]))
                     # The renderer clears and replaces each changed row in full.
                     if column == 1 and '\x1b[2K' in content:
                         styled_screen[row] = content
@@ -134,6 +138,7 @@ def main(binary):
 
             try:
                 wait_for('pmai> ')
+                assert not scrollbar_spans, scrollbar_spans
                 assert b'\x1b[?1006h' in captured, captured
                 assert b'\x1b[?1002h' in captured, captured
                 send('/set ui.mode classic\r')
@@ -145,6 +150,8 @@ def main(binary):
                 assert json.loads(config.read_text())['ui']['mode'] == 'buffer'
                 send('/set ui.scroll\r')
                 wait_for('ui.scroll = 1')
+                send('/set ui.scrollbar\r')
+                wait_for('ui.scrollbar = 1')
                 # Reasoning retained while hidden can later be revealed and
                 # collapsed repeatedly without changing the answer.
                 send('thinking-test\r')
@@ -384,6 +391,7 @@ def main(binary):
                 send('\x0c')
                 read_for()
                 assert not any(line.strip() for line in output()), screen
+                assert not scrollbar_spans, scrollbar_spans
                 chunks.put('AFTER_CLEAR\n')
                 wait_for('AFTER_CLEAR')
 
@@ -402,6 +410,30 @@ def main(binary):
                 chunks.put(None)
                 wait_for('STEP_ROW69')
                 wait_for('✓ took')
+                for width in (0, 2, 4, 1):
+                    send(f'/set ui.scrollbar={width}\r')
+                    wait_for(f'Set ui.scrollbar = {width}.')
+                    assert json.loads(config.read_text())['ui']['scrollbar'] == width
+                    if width:
+                        assert all(scrollbar_spans.get(row) == (columns - width + 1, width)
+                                   for row in range(1, rows - 1)), scrollbar_spans
+                        # Both edges of a wider scrollbar respond to clicks.
+                        send(f'\x1b[<0;{columns-width+1};1M\x1b[<0;{columns-width+1};1m')
+                        read_for()
+                        assert scrollbar[1] == 47, scrollbar
+                        send(f'\x1b[<0;{columns};{rows-2}M\x1b[<0;{columns};{rows-2}m')
+                        read_for()
+                        assert 'STEP_ROW69' in '\n'.join(output()), screen
+                    else:
+                        assert not scrollbar_spans, scrollbar_spans
+                        previous = output()
+                        send(f'\x1b[<0;{columns};1M\x1b[<32;{columns};{rows-2}M\x1b[<0;{columns};{rows-2}m')
+                        read_for()
+                        assert output() == previous, screen
+                for invalid in ('-1', 'nope', '1.5', '99999999999999999999'):
+                    send(f'/set ui.scrollbar={invalid}\r')
+                    wait_for('Usage: /set ui.scrollbar <nonnegative integer>')
+                    assert json.loads(config.read_text())['ui']['scrollbar'] == 1
                 send('\x1b[5~')
                 read_for()
                 previous = output()

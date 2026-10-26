@@ -10551,7 +10551,7 @@ struct MaiCLI {
       return
     }
     let booleanKeys = ["ui.markdown", "ui.broadcast", "ui.toolgroups"]
-    let countKeys = ["ui.tools", "ui.scroll"]
+    let countKeys = ["ui.tools", "ui.scroll", "ui.scrollbar"]
     let levelKeys = ["ui.subagents", "ui.thinking", "ui.mode"]
     let textKeys = ["ui.title", "ui.editor"]
     guard
@@ -10588,6 +10588,12 @@ struct MaiCLI {
         return
       }
       ui.scroll = value
+    } else if key == "ui.scrollbar" {
+      guard let value = Int(parts[1]), value >= 0 else {
+        await terminal.line("Usage: /set ui.scrollbar <nonnegative integer>")
+        return
+      }
+      ui.scrollbar = value
     } else if countKeys.contains(key) {
       guard let value = ToolResultDisplay(setting: parts[1]) else {
         await terminal.line("Usage: /set ui.tools <all|relevant|icons|N>")
@@ -11243,7 +11249,7 @@ struct MaiCLI {
 
   private static func uiSettings(_ ui: ConfiguredTerminalUI) -> [String] {
     let keys = [
-      "ui.mode", "ui.scroll", "ui.title", "ui.editor", "ui.markdown", "ui.tools", "ui.toolgroups",
+      "ui.mode", "ui.scroll", "ui.scrollbar", "ui.title", "ui.editor", "ui.markdown", "ui.tools", "ui.toolgroups",
       "ui.subagents", "ui.thinking",
       "ui.broadcast",
     ]
@@ -11255,6 +11261,7 @@ struct MaiCLI {
     switch key.lowercased() {
     case "ui.mode": return ui.mode.rawValue
     case "ui.scroll": return String(ui.scroll)
+    case "ui.scrollbar": return String(ui.scrollbar)
     case "ui.title": value = visibleUITitle(ui.title)
     // Unset is worth showing as what it resolves to, since that is the editor
     // that actually opens.
@@ -13339,6 +13346,7 @@ struct MaiCLI {
       "/set ui.markdown on", "/set ui.markdown off",
       "/set ui.mode classic", "/set ui.mode buffer",
       "/set ui.scroll ",
+      "/set ui.scrollbar ",
       "/set ui.broadcast on", "/set ui.broadcast off",
       "/set ui.toolgroups on", "/set ui.toolgroups off",
       "/set ui.tools all", "/set ui.tools relevant", "/set ui.tools icons", "/set ui.tools ",
@@ -14024,6 +14032,7 @@ struct MaiCLI {
       /set ui.                     List terminal behavior settings
       /set ui.mode MODE           classic (default) or buffer: scroll with Page Up/Down and mouse wheel
       /set ui.scroll N            Lines per mouse-wheel event in buffer mode (default 1)
+      /set ui.scrollbar N         Scrollbar width in characters: 0 hides it (default 1; only for overflow)
       /set ui.title TEXT           Set the prompt label and terminal/tab title (`none` clears it)
       /set ui.editor COMMAND       Editor /edit opens (`none` falls back to $EDITOR, $VISUAL, vim)
       /set ui.markdown BOOL        Render replies as styled markdown (on/off)

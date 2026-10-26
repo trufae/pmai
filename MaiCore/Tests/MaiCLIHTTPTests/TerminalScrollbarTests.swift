@@ -26,6 +26,36 @@ func terminalScrollbarGeometry() {
   #expect(bar.offset(at: bar.thumb.lowerBound + 2, grab: 2) == 40)
   #expect(bar.cell(at: bar.thumb.lowerBound) == "\u{1B}[47m \u{1B}[0m")
   #expect(bar.cell(at: 0) == "\u{1B}[100m \u{1B}[0m")
+  #expect(bar.cell(at: 0, width: 3) == "\u{1B}[100m   \u{1B}[0m")
+  #expect(bar.cell(at: 0, width: 0).isEmpty)
+  #expect(TerminalScrollbar(rows: 20, top: 0, height: 20).cell(at: 0).isEmpty)
+}
+
+@Test("Scrollbar gutters appear only for overflow and leave a content column")
+func terminalScrollbarContentWidth() {
+  var buffer = TerminalOutputBuffer()
+  #expect(buffer.contentWidth(columns: 10, height: 2, scrollbar: 1) == 10)
+  // Exactly two full-width rows fit, even though reserving a gutter would wrap
+  // them to three rows. Measuring with the gutter must not force a scrollbar.
+  buffer.append("abcdefghijklmnopqrst")
+  for gutter in [0, 1, 2, 5, Int.max] {
+    #expect(buffer.contentWidth(columns: 10, height: 2, scrollbar: gutter) == 10)
+  }
+  buffer.append("u")
+  for gutter in [0, 1, 2, 5, Int.max] {
+    let width = buffer.contentWidth(columns: 10, height: 2, scrollbar: gutter)
+    #expect(width == 10 - min(gutter, 9))
+    let rows = buffer.visibleRows(width: width, height: 2)
+    #expect(rows.count == 2)
+    #expect(buffer.scrollbar(width: width, height: 2).maximum > 0)
+    buffer.scroll(to: 0, width: width, height: 2)
+    #expect(buffer.scrollbar(width: width, height: 2).thumb.lowerBound == 0)
+  }
+  #expect(buffer.contentWidth(columns: 1, height: 2, scrollbar: Int.max) == 1)
+  #expect(buffer.contentWidth(columns: 10, height: 3, scrollbar: 2) == 10)
+  #expect(buffer.contentWidth(columns: 11, height: 2, scrollbar: 2) == 11)
+  buffer.clear()
+  #expect(buffer.contentWidth(columns: 10, height: 2, scrollbar: 2) == 10)
 }
 
 @Test("Scrollbar counts wrapped rows and updates through streaming, reflow and clear")
@@ -53,9 +83,11 @@ func terminalScrollbarProjections() {
   #expect(source.scrollbar(width: 80, height: 10).maximum == 31)
   source.configureThinking(.status)
   #expect(source.scrollbar(width: 80, height: 10).maximum == 0)
+  #expect(source.contentWidth(columns: 80, height: 10, scrollbar: 2) == 80)
   var view = TerminalOutputBuffer()
   view.updateView(from: source, selection: .thinking)
   #expect(view.scrollbar(width: 80, height: 10).maximum == 30)
+  #expect(view.contentWidth(columns: 80, height: 10, scrollbar: 2) == 78)
   view.scroll(to: 0, width: 80, height: 10)
   source.append("answer")
   view.updateView(from: source, selection: .thinking)
@@ -74,4 +106,5 @@ func terminalScrollbarProjections() {
   let expanded = source.toggleToolGroup(row: 0)
   #expect(expanded)
   #expect(source.scrollbar(width: 80, height: 10).maximum > 0)
+  #expect(source.contentWidth(columns: 80, height: 10, scrollbar: 2) == 78)
 }

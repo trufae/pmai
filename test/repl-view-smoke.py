@@ -74,6 +74,7 @@ def main(binary):
             screen = {}
             styled_screen = {}
             scrollbar = {}
+            scrollbar_spans = {}
             captured = bytearray()
 
             def read_for(seconds=.15):
@@ -87,10 +88,13 @@ def main(binary):
                     assert 1 <= row <= rows and 1 <= column <= columns, (row, column, rows, columns)
                     end = moves[index + 1].start() if index + 1 < len(moves) else len(text)
                     content = text[move.end():end]
-                    if column == columns:
-                        match = re.search(r'\x1b\[(47|100)m ', content)
-                        if match:
-                            scrollbar[row] = int(match[1])
+                    if column == 1 and '\x1b[2K' in content:
+                        scrollbar.pop(row, None)
+                        scrollbar_spans.pop(row, None)
+                    match = re.search(r'\x1b\[(47|100)m( +)', content)
+                    if match:
+                        scrollbar[row] = int(match[1])
+                        scrollbar_spans[row] = (column, len(match[2]))
                     if column == 1 and '\x1b[2K' in content:
                         styled_screen[row] = content
                         screen[row] = CSI.sub('', content).replace('\x1b7', '').replace('\x1b8', '')
@@ -195,6 +199,26 @@ def main(binary):
                     assert 'THOUGHT_39' in top(), screen
                     below = '\n'.join(screen.get(row, '') for row in range(separator() + 1, rows))
                     assert 'THOUGHT_' not in below and 'Thinking…' not in below, screen
+                for width in (0, 2, 1):
+                    send(f'/set ui.scrollbar {width}\r')
+                    wait_for(f'Set ui.scrollbar = {width}.')
+                    if width:
+                        assert all(scrollbar_spans.get(row) == (columns - width + 1, width)
+                                   for row in range(1, separator())), scrollbar_spans
+                        if width == 2:
+                            conversation = bottom()
+                            send(f'\x1b[<0;{columns-1};1M\x1b[<0;{columns-1};1m')
+                            read_for()
+                            assert top().startswith('THOUGHT_00\n') and bottom() == conversation, screen
+                            send(f'\x1b[<0;{columns};{separator()-1}M\x1b[<0;{columns};{separator()-1}m')
+                            read_for()
+                            assert 'THOUGHT_39' in top() and bottom() == conversation, screen
+                    else:
+                        assert not scrollbar_spans, scrollbar_spans
+                        watched = top()
+                        send(f'\x1b[<0;{columns};1M\x1b[<32;{columns};{separator()-1}M\x1b[<0;{columns};{separator()-1}m')
+                        read_for()
+                        assert top() == watched, screen
                 # Drag the view scrollbar without focusing it; the chat stays put.
                 conversation = bottom()
                 handles = [row for row in range(1, separator()) if scrollbar.get(row) == 47]
@@ -366,6 +390,7 @@ def main(binary):
                 send('/view files_read\r')
                 wait_for('── view: tool files_read')
                 assert 'No matching output yet.' in top(), screen
+                assert not any(row in scrollbar_spans for row in range(1, separator())), scrollbar_spans
                 send('READ_REQUEST\r')
                 tool('files_read', {'path': 'file.txt'})
                 chunks.put('READ_ANSWER\n')

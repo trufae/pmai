@@ -550,6 +550,21 @@ struct TerminalOutputBuffer {
     dirtyRowCounts.insert(index)
   }
 
+  /// Measure overflow before reserving a gutter, so the scrollbar cannot create
+  /// its own need for scrolling. Stop after a screenful of rows, preserving the
+  /// scrollbar's cached counts at the actual drawing width for long transcripts.
+  mutating func contentWidth(columns: Int, height: Int, scrollbar: Int) -> Int {
+    let columns = max(1, columns)
+    let gutter = min(max(0, scrollbar), columns - 1)
+    guard gutter > 0, height > 0 else { return columns }
+    var remaining = height
+    for index in lines.indices {
+      remaining -= wrappedLine(index, width: columns).count
+      if remaining < 0 { return columns - gutter }
+    }
+    return columns
+  }
+
   mutating func scrollbar(width: Int, height: Int) -> TerminalScrollbar {
     let width = max(1, width)
     let height = max(1, height)
