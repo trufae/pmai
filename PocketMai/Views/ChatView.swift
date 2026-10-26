@@ -6185,6 +6185,19 @@ struct ConversationModelSettingsView: View {
               }
             }
             .pickerStyle(.menu)
+            Picker("System Prompt", selection: systemPromptBinding) {
+              ForEach(store.settings.systemPrompts) { prompt in
+                Text(prompt.displayName).tag(prompt.id)
+              }
+            }
+            .pickerStyle(.menu)
+            Picker("Language", selection: languageBinding) {
+              Text("Defaults").tag("")
+              ForEach(languageOptions, id: \.self) { identifier in
+                Text(SystemLanguageSupport.languageDisplayName(identifier)).tag(identifier)
+              }
+            }
+            .pickerStyle(.menu)
           }
 
           folderSection
@@ -6194,25 +6207,6 @@ struct ConversationModelSettingsView: View {
               level: reasoningBinding,
               model: store.currentConversation?.modelID ?? "",
               endpointName: selectedEndpoint?.name ?? "", baseURL: selectedEndpoint?.baseURL ?? "")
-          }
-
-          Section("System Prompt") {
-            Picker("Prompt", selection: systemPromptBinding) {
-              ForEach(store.settings.systemPrompts) { prompt in
-                Text(prompt.displayName).tag(prompt.id)
-              }
-            }
-            .pickerStyle(.menu)
-          }
-
-          Section("Language") {
-            Picker("Language", selection: languageBinding) {
-              Text("Defaults").tag("")
-              ForEach(languageOptions, id: \.self) { identifier in
-                Text(SystemLanguageSupport.languageDisplayName(identifier)).tag(identifier)
-              }
-            }
-            .pickerStyle(.menu)
           }
 
           Section("Context") {

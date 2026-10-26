@@ -689,40 +689,49 @@ struct SettingsView: View {
     Section {
       agentsContent
 
-      NavigationLink {
-        AgentSoulEditor()
-      } label: {
-        Label("SOUL.md", systemImage: "person.text.rectangle")
-      }
-
       SettingsLazyDisclosureGroup {
-        Toggle("Enable", isOn: settingsBinding(\.redaction.enabled))
-        NavigationLink("Edit Entries") {
-          RedactionRulesEditor(rules: settingsBinding(\.redaction.rules))
-        }
+        agentPromptsContent
       } label: {
-        Label("Redacted", systemImage: "eye.slash")
-      }
-
-      SettingsLazyDisclosureGroup {
-        promptContent
-      } label: {
-        Label("System Prompts", systemImage: "text.bubble")
-      }
-
-      SettingsLazyDisclosureGroup {
-        userPromptContent
-      } label: {
-        Label("User Prompts", systemImage: "text.quote")
-      }
-
-      SettingsLazyDisclosureGroup {
-        followUpOptionsContent
-      } label: {
-        Label("Follow-up Suggestions", systemImage: "text.bubble.fill")
+        Label("Prompts", systemImage: "text.bubble")
       }
     } header: {
       Text("Agent")
+    }
+  }
+
+  @ViewBuilder
+  private var agentPromptsContent: some View {
+    NavigationLink {
+      AgentSoulEditor()
+    } label: {
+      Label("SOUL.md", systemImage: "person.text.rectangle")
+    }
+
+    SettingsLazyDisclosureGroup {
+      Toggle("Enable", isOn: settingsBinding(\.redaction.enabled))
+      NavigationLink("Edit Entries") {
+        RedactionRulesEditor(rules: settingsBinding(\.redaction.rules))
+      }
+    } label: {
+      Label("Redacted", systemImage: "eye.slash")
+    }
+
+    SettingsLazyDisclosureGroup {
+      promptContent
+    } label: {
+      Label("System Prompts", systemImage: "text.bubble")
+    }
+
+    SettingsLazyDisclosureGroup {
+      userPromptContent
+    } label: {
+      Label("User Prompts", systemImage: "text.quote")
+    }
+
+    SettingsLazyDisclosureGroup {
+      followUpOptionsContent
+    } label: {
+      Label("Follow-up Suggestions", systemImage: "text.bubble.fill")
     }
   }
 
