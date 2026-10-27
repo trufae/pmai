@@ -2630,7 +2630,6 @@ struct MaiCLI {
           session.subagents = page.subagents
           workspace.upsert(session.chat)
           await runtime.supervisor.releaseFinishedTranscripts(page.subagents)
-          screen?.replaceHistory(messages: page.messages)
         }
       }
       guard let screen else { return }
@@ -2657,14 +2656,20 @@ struct MaiCLI {
           agentHistoryWindows[pid] = page.window
           screen.selectConversation(
             "agent:\(pid.rawValue)",
-            messages: session.redactor?.unredact(page.messages) ?? page.messages)
-          screen.configureHistory(window: page.window) { earlier in
+            messages: session.redactor?.unredact(page.messages) ?? page.messages, window: page.window)
+          screen.configureHistory(
+            window: page.window, totalCount: page.window?.totalCount ?? page.messages.count
+          ) { earlier in
             continuation.yield(.historyPage(earlier))
           }
         }
       } else {
-        screen.selectConversation("chat:\(session.id)", messages: session.history.messages)
-        screen.configureHistory(window: session.historyWindow) { earlier in
+        screen.selectConversation(
+          "chat:\(session.id)", messages: session.history.messages, window: session.historyWindow)
+        screen.configureHistory(
+          window: session.historyWindow,
+          totalCount: session.historyWindow?.totalCount ?? session.history.count
+        ) { earlier in
           continuation.yield(.historyPage(earlier))
         }
       }
@@ -3920,7 +3925,9 @@ struct MaiCLI {
         if voiceChatID != session.id { await stopVoice() }
         else { await startVoiceTurn(text) }
       case .historyPage(let earlier):
-        if case .agent(let pid) = loop.focus, let window = agentHistoryWindows[pid] {
+        if case .agent(let pid) = loop.focus,
+          let window = screen?.historyWindow ?? agentHistoryWindows[pid]
+        {
           let before =
             earlier
             ? window.range.lowerBound + 32 : min(window.totalCount, window.range.upperBound + 32)
@@ -3928,14 +3935,16 @@ struct MaiCLI {
             let page = try await runtime.supervisor.transcriptPage(pid, before: before)
             agentHistoryWindows[pid] = page.window
             screen?.replaceHistory(
-              messages: session.redactor?.unredact(page.messages) ?? page.messages)
-            screen?.configureHistory(window: page.window) { direction in
+              messages: session.redactor?.unredact(page.messages) ?? page.messages, window: page.window)
+            screen?.configureHistory(
+              window: page.window, totalCount: page.window?.totalCount ?? page.messages.count
+            ) { direction in
               continuation.yield(.historyPage(direction))
             }
           } catch { await terminal.line(error.localizedDescription, to: .standardError) }
           return false
         }
-        guard case .main = loop.focus, let window = session.historyWindow,
+        guard case .main = loop.focus, let window = screen?.historyWindow ?? session.historyWindow,
           earlier ? window.hasEarlier : window.hasLater
         else { return false }
         let currentStore = store
@@ -3949,10 +3958,10 @@ struct MaiCLI {
             operation: {
               try currentStore.loadChatPage(id: id, before: before)
             }
-          ).value, session.id == id, session.historyWindow == window {
+          ).value, session.id == id, (screen?.historyWindow ?? session.historyWindow) == window {
             session.history = AgentTranscript(messages: page.messages)
             session.historyWindow = page.historyWindow
-            screen?.replaceHistory(messages: page.messages)
+            screen?.replaceHistory(messages: page.messages, window: page.historyWindow)
             await refreshConversation()
           }
         } catch { await terminal.line(error.localizedDescription, to: .standardError) }

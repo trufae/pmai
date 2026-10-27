@@ -244,7 +244,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   /// Seed resumed and newly forked threads once; subsequent switches retain
   /// their streaming blocks, command output and exact scroll position.
-  func selectConversation(_ id: String, messages: [AgentMessage]) {
+  func selectConversation(
+    _ id: String, messages: [AgentMessage], window: ChatHistoryWindow? = nil
+  ) {
     lock.withLock {
       guard selectedConversation != id else { return }
       selectedConversation = id
@@ -255,7 +257,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         default: break
         }
       }
+      let isNew = conversations[id] == nil
       seedConversationLocked(id, messages: messages)
+      if isNew { outputConversation.historyWindow = window }
       layoutPanel()
       paintedPanelRows = []
       guard active, ui.mode == .buffer else { return }
@@ -298,16 +302,38 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     }
   }
 
-  func configureHistory(window: ChatHistoryWindow?, loader: @escaping @Sendable (Bool) -> Void) {
+  var historyWindow: ChatHistoryWindow? {
+    lock.withLock { conversations[selectedConversation]?.historyWindow }
+  }
+
+  func configureHistory(
+    window: ChatHistoryWindow?, totalCount: Int, loader: @escaping @Sendable (Bool) -> Void
+  ) {
     lock.withLock {
-      outputConversation.historyWindow = window
-      outputConversation.historyLoader = window == nil ? nil : loader
+      let conversation = outputConversation
+      if var window {
+        // Releasing inference context to disk must not change the page being
+        // read, or discard command output and replies retained on the screen.
+        let previous = conversation.historyWindow
+        let lower = min(previous?.range.lowerBound ?? 0, window.totalCount)
+        let upper: Int
+        if let previous, previous.hasLater {
+          upper = min(previous.range.upperBound, window.totalCount)
+        } else {
+          upper = window.totalCount
+        }
+        window.range = lower..<max(lower, upper)
+        conversation.historyWindow = window
+      } else if let previous = conversation.historyWindow, totalCount < previous.totalCount {
+        conversation.historyWindow = nil
+      }
+      conversation.historyLoader = conversation.historyWindow == nil ? nil : loader
     }
   }
 
   /// Replace a bounded transcript window, anchoring to a message shared by
   /// both windows. Disk I/O is done by the REPL event loop before this call.
-  func replaceHistory(messages: [AgentMessage]) {
+  func replaceHistory(messages: [AgentMessage], window: ChatHistoryWindow?) {
     lock.withLock {
       let old = outputConversation
       let anchor = old.transcript.readingAnchor
@@ -321,7 +347,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       {
         current.transcript.restoreAnchor(line: line + anchor.line - marker.1, glyph: anchor.glyph)
       }
-      current.historyWindow = old.historyWindow
+      current.historyWindow = window
       current.historyLoader = old.historyLoader
       if active, ui.mode == .buffer { redrawBuffer() }
     }

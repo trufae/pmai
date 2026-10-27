@@ -148,7 +148,9 @@ def main(binary):
                 send('CHILD_TWO_REQUEST\r')
                 wait_for('✓ took')
                 assert users(requests[-1]) == ['CHILD_TWO_REQUEST'], requests[-1]
-                assert requests[-1]['messages'][0]['content'] == 'SYSTEM_FOR_FORKS', requests[-1]
+                system = requests[-1]['messages'][0]
+                assert system['role'] == 'system', system
+                assert system['content'].split('\n\n<execution_context>', 1)[0] == 'SYSTEM_FOR_FORKS', system
                 # Drafts (including paste boundaries and cursor position) belong to a tab.
                 send('\x1b[200~two draft\x1b[201~\x1b[D')
                 read_for()
