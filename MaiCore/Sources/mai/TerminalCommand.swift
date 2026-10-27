@@ -19,7 +19,7 @@ enum TerminalCommand {
     _ command: String, suspendTerminal: Bool = true, retainOutput: Bool = false
   ) throws -> Int32 {
     var result: Result<Int32, Error> = .success(0)
-    var output = Data()
+    var output = ""
     let screen = TerminalScreen.current
     let capturesOutput = retainOutput && screen?.isBufferMode == true
     #if !os(Windows)
@@ -45,7 +45,7 @@ enum TerminalCommand {
       launch()
     }
     if !output.isEmpty {
-      screen?.write(String(decoding: output, as: UTF8.self), to: .standardOutput)
+      screen?.write(output, to: .standardOutput)
     }
     return try result.get()
   }
@@ -54,10 +54,10 @@ enum TerminalCommand {
     /// Keep quick commands on the current screen. A program that is still
     /// running after the grace period gets the normal interactive handoff.
     private static func runBuffered(_ command: String, screen: TerminalScreen) throws -> Int32 {
-      var output = Data()
+      var output = ""
       defer {
         if !output.isEmpty {
-          screen.write(String(decoding: output, as: UTF8.self), to: .standardOutput)
+          screen.write(output, to: .standardOutput)
         }
       }
       var result: Result<Int32, Error> = .success(0)
@@ -218,7 +218,7 @@ enum TerminalCommand {
       private var cooked: termios
       private let reader = DispatchGroup()
       // The reader and beginForwarding() access bytes under the lock;
-      // finish() joins the reader before returning them.
+      // finish() joins the reader before decoding them.
       private var bytes = Data()
 
       init(forwardOutput: Bool = true) throws {
@@ -324,13 +324,16 @@ enum TerminalCommand {
         }
       }
 
-      func finish() -> Data {
+      func finish() -> String {
         lock.withLock { stopping = true }
         reader.wait()
         _ = tcsetattr(STDIN_FILENO, TCSADRAIN, &cooked)
         close(slave)
         close(master)
-        return bytes
+        // Full-screen applications paint frames that do not belong in the transcript.
+        let output = String(decoding: bytes, as: UTF8.self)
+        let alternateScreen = #"\x1B\[\?(?:[0-9]+;)*(?:47|1047|1049)(?:;[0-9]+)*h"#
+        return output.range(of: alternateScreen, options: .regularExpression) == nil ? output : ""
       }
     #endif
   }

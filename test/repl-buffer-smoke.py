@@ -80,6 +80,17 @@ def main(binary):
                              "text = sys.stdin.read(len('interactive'))\n"
                              "assert not termios.tcgetattr(0)[3] & termios.ICANON\n"
                              "print('SHELL_REPLY_' + text, flush=True)\n")
+            fullscreen = root / 'fullscreen.py'
+            fullscreen.write_text("import os, sys, time, tty\n"
+                                  "tty.setraw(0)\n"
+                                  "mode = sys.argv[1]\n"
+                                  "os.write(1, b'\\x1b[?')\n"
+                                  "time.sleep(.05)\n"
+                                  "os.write(1, (mode + 'h\\x1b[2J\\x1b[HFULLSCREEN_FRAME_' + mode).encode())\n"
+                                  "if len(sys.argv) == 2:\n"
+                                  "    print('FULLSCREEN_READY', flush=True)\n"
+                                  "    assert os.read(0, 1) == b'q'\n"
+                                  "os.write(1, (f'\\x1b[?{mode}l').encode())\n")
             env = clean_environment() | {'TERM': 'xterm-256color',
                 'NO_PROXY': '127.0.0.1,localhost', 'EDITOR': f'{sys.executable} {editor}'}
             env.pop('NO_COLOR', None)
@@ -308,6 +319,23 @@ def main(binary):
                 send('\x0c')
                 read_for()
                 assert 'SHELL_REPLY_interactive' in '\n'.join(output()), screen
+                # Alternate-screen programs stay live while running, but their
+                # frames must never be replayed into the transcript after exit.
+                for mode in ('47', '1047', '1049', '1;1049;25'):
+                    send(f'!{sys.executable} {fullscreen} "{mode}"\r')
+                    wait_for('FULLSCREEN_READY')
+                    assert f'FULLSCREEN_FRAME_{mode}'.encode() in captured, captured
+                    send('q')
+                    wait_for('\x1b[?2004h')
+                    assert b'FULLSCREEN_FRAME_' not in captured, captured
+                    send('\x0c')
+                    read_for()
+                    assert 'FULLSCREEN_FRAME_' not in '\n'.join(output()), screen
+                    assert 'SHELL_REPLY_interactive' in '\n'.join(output()), screen
+                # A full-screen program can also exit during the grace period.
+                send(f'!{sys.executable} {fullscreen} 1049 quick\r')
+                wait_for('\x1b[?2004h')
+                assert b'FULLSCREEN_FRAME_' not in captured, captured
                 send('buffer-test\r')
                 chunks.put(''.join(f'ROW{i:02d} content for scrolling\n' for i in range(70)))
                 wait_for('ROW69')
