@@ -349,12 +349,25 @@ extension UUID {
 }
 
 extension MaiConfiguration {
-  /// The named system prompts as values, sorted by name.
+  /// The named system prompts, including built-in speech prompts, sorted by name.
   public var systemPrompts: [SystemPrompt] {
-    let catalog = prompts?.system ?? [:]
+    var catalog = prompts?.system ?? [:]
+    for task in [AgentTask.voice, .voiceover]
+    where PromptCatalog.resolvedName(task.rawValue, among: catalog.keys) == nil {
+      catalog[task.rawValue] = task.instructions
+    }
     return catalog.keys.sorted().map {
       SystemPrompt(id: .stable("system-prompt", name: $0), name: $0, text: catalog[$0] ?? "")
     }
+  }
+
+  /// Resolve configured or built-in system prompts with the catalog's name rules.
+  public func systemPrompt(named requested: String) -> SystemPrompt? {
+    let prompts = systemPrompts
+    guard let name = PromptCatalog.resolvedName(requested, among: prompts.map(\.name)) else {
+      return nil
+    }
+    return prompts.first { $0.name == name }
   }
 
   /// The user prompts kept under `prompts.user`, sorted by name.

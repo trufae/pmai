@@ -1820,13 +1820,20 @@ settings apply to voice too.
 
 `/model -voice AGENT|PROVIDER::MODEL` selects conversational inference using
 `taskAgents.voice`; it inherits the current agent's tools and policy. The separate
-speech prompt is `voice.instructions`; the task agent may also have its own named
-system prompt. The defaults request brief plain speech, with no Markdown, URLs,
+speech prompt is the named system prompt `voice`, listed by `/prompts` and edited
+with `/edit prompt voice`; `/prompts show voice` displays it. Existing custom
+`voice.instructions` values migrate to `prompts.system.voice`. The task agent may
+also have its own named system prompt. `voiceover` remains a separate prompt for
+summarizing finished replies, editable with `/edit prompt voiceover`. The voice
+defaults request brief plain speech, with no Markdown, URLs,
 or large exact numbers. The playback boundary additionally strips technical
 formatting, URLs and long numeric strings. Input transcripts remain verbatim.
 
 `/set`, `/set voice`, and `/set voice.` list the same voice settings as `voice.KEY = VALUE`
-lines; `/set | grep voice` works too. Tab completion includes every voice key.
+lines. Tab after `/set voice.voice ` completes the selected speech provider's
+voice IDs; Tab after `/set voice.language ` completes languages reported by the
+recognizer and speech voices. Catalog discovery runs in the background.
+`/set | grep voice` works too. Tab completion includes every voice key.
 `/voice voices [FILTER]` lists the selected speech provider's voices, and
 `/voice languages [FILTER]` lists recognition/speech languages when the providers
 publish catalogs. Native macOS lists installed voices with their quality and marks

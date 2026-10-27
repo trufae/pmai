@@ -957,6 +957,14 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
       // Older versions stored a rules filename here. Only the fixed redact.txt
       // file is supported now; obsolete values must not prevent startup.
       redact: (try? container.decodeIfPresent(RedactionMode.self, forKey: .redact)) ?? .off)
+    // Earlier versions kept the speech prompt beside the audio settings.
+    struct LegacyVoice: Decodable { var instructions: String? }
+    if let text = try container.decodeIfPresent(LegacyVoice.self, forKey: .voice)?.instructions,
+      text != VoicePrompt.instructions,
+      let previous = systemPrompt(named: "voice"), previous.text == VoicePrompt.instructions
+    {
+      setSystemPrompt(previous.name, text: text)
+    }
   }
 
   public static func load(from url: URL) throws -> MaiConfiguration {
@@ -1067,7 +1075,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
         throw MaiConfigurationError.unknownProvider(agent.provider.rawValue)
       }
       if let prompt = agent.systemPrompt,
-        prompts?.system[prompt] == nil
+        systemPrompt(named: prompt) == nil
       {
         throw MaiConfigurationError.unknownPrompt(prompt)
       }
@@ -1168,11 +1176,12 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
   /// instructions. Answers false when either is unknown.
   @discardableResult
   public mutating func assignSystemPrompt(_ name: String, to agentID: String) -> Bool {
-    guard let text = prompts?.system[name],
+    guard let prompt = systemPrompt(named: name),
       let index = agents.firstIndex(where: { $0.id == agentID })
     else { return false }
-    agents[index].systemPrompt = name
-    agents[index].instructions = text
+    setSystemPrompt(prompt.name, text: prompt.text)
+    agents[index].systemPrompt = prompt.name
+    agents[index].instructions = prompt.text
     return true
   }
 

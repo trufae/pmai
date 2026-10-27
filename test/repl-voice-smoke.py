@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import pty
 import queue
+import shlex
 import struct
 import subprocess
 import sys
@@ -14,7 +15,7 @@ import termios
 import threading
 import time
 from http.server import ThreadingHTTPServer
-from smoke import JSONProvider, clean_environment, expect_pty, read_pty
+from smoke import JSONProvider, clean_environment, expect_pty, read_pty, run_repl
 
 requests = queue.Queue()
 finish_first = threading.Event()
@@ -22,7 +23,8 @@ finish_first = threading.Event()
 
 class Provider(JSONProvider):
     def do_GET(self):
-        self.respond({'data': [{'id': 'test'}]})
+        self.respond({'data': [{'id': name} for name in
+                              (('fixture-one', 'fixture-two') if self.path.endswith('/voices') else ('test',))]})
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
@@ -72,13 +74,33 @@ def main():
                 'providers': [{'id': 'test', 'kind': 'openai', 'baseURL': f'http://127.0.0.1:{server.server_port}/v1'},
                               {'id': 'spoken', 'kind': 'openai', 'baseURL': f'http://127.0.0.1:{server.server_port}/spoken/v1'}],
                 'agents': [{'id': 'test', 'provider': 'test', 'model': 'test', 'toolNames': [], 'toolGroupNames': [], 'retry': {'attempts': 0}},
-                           {'id': 'voice-model', 'provider': 'spoken', 'model': 'voice-test', 'toolNames': [], 'retry': {'attempts': 0}}],
+                           {'id': 'voice-model', 'provider': 'spoken', 'model': 'voice-test',
+                            'instructions': 'VOICE_TASK_RULES', 'toolNames': [], 'retry': {'attempts': 0}}],
                 'taskAgents': {'voice': 'voice-model'},
-                'voice': {'language': 'ca-ES', 'input': 'command', 'output': 'command', 'silenceSeconds': .2,
+                'voice': {'language': 'ca-ES', 'input': 'command', 'output': 'command', 'provider': 'test', 'silenceSeconds': .2,
+                          'instructions': 'LEGACY_VOICE_INSTRUCTIONS',
                           'captureCommand': {'executable': sys.executable, 'arguments': [str(capture)]},
                           'transcriptionCommand': {'executable': sys.executable, 'arguments': [str(transcription), '{audio}', '{language}', str(root / 'count')]},
                           'speechCommand': {'executable': sys.executable, 'arguments': [str(speech), str(spoken)]}}
             }))
+            editor = root / 'edit-voice.py'
+            editor.write_text('from pathlib import Path\nimport sys\n'
+                              'p=Path(sys.argv[1])\n'
+                              'Path("voice-editor-input.txt").write_text(p.read_text())\n'
+                              'p.write_text("CUSTOM_VOICE_INSTRUCTIONS")\n')
+            env['EDITOR'] = shlex.join([sys.executable, str(editor)])
+            listing = run_repl(
+                [binary, '--config', str(config), '--home', str(root / 'home'), '--no-markdown'],
+                ['/prompts', '/prompts show voice', '/prompts show voiceover', '/edit prompt voice',
+                 '/prompts show voice', '/set voice.instructions Do not save this', '/set voice.'],
+                cwd=root, env=env)
+            assert 'LEGACY_VOICE_INSTRUCTIONS' in listing and 'CUSTOM_VOICE_INSTRUCTIONS' in listing, listing
+            assert (root / 'voice-editor-input.txt').read_text() == 'LEGACY_VOICE_INSTRUCTIONS'
+            assert 'spoken summary of one or two short sentences' in listing, listing
+            assert 'Use /edit prompt voice' in listing and 'voice.instructions =' not in listing, listing
+            saved = json.loads(config.read_text())
+            assert saved['prompts']['system']['voice'] == 'CUSTOM_VOICE_INSTRUCTIONS', saved
+            assert 'instructions' not in saved['voice'], saved
             master, slave = pty.openpty()
             fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 200, 0, 0))
             process = subprocess.Popen([binary, '--config', str(config), '--home', str(root / 'home'), '--no-markdown'],
@@ -111,6 +133,21 @@ def main():
 
             try:
                 wait('pmai>')
+                send('/set voice.output openai\n')
+                wait('Set voice.output')
+                send('/voice voices\n')
+                wait('fixture-two')
+                send('/set voice.voice fixture-o\t')
+                wait('/set voice.voice fixture-one')
+                send('\n')
+                wait('Set voice.voice')
+                assert json.loads(config.read_text())['voice']['voice'] == 'fixture-one'
+                send('/set voice.language ca\t')
+                wait('/set voice.language ca-ES')
+                send('\n')
+                wait('Set voice.language')
+                send('/set voice.output command\n')
+                wait('Set voice.output')
                 send('remember sapphire\n')
                 request('remember sapphire')
                 wait('took')
@@ -128,6 +165,8 @@ def main():
                 os.write(master, b'\x14')  # Ctrl+T finalizes transcription and sends.
 
                 first = request('voice-one', voice=True)
+                assert sum(str(m['content']).count('CUSTOM_VOICE_INSTRUCTIONS') for m in first['messages']) == 1, first
+                assert any(m['role'] == 'system' and 'VOICE_TASK_RULES' in str(m['content']) for m in first['messages']), first
                 assert any(m['content'] == 'remember sapphire' for m in first['messages']), first
                 assert any('Voice language: ca-ES' in str(m['content']) for m in first['messages']), first
                 assert {'voice_agents', 'voice_message'} <= {t['function']['name'] for t in first['tools']}, first
@@ -138,11 +177,15 @@ def main():
                 finish_first.set()
                 wait_spoken('Second spoken sentence.')
                 wait('walkie-talkie · paused')
+                send('/prompt set voice UPDATED_VOICE_INSTRUCTIONS\n')
+                wait("Saved system prompt 'voice'")
                 os.write(master, b'\x00')
                 wait('walkie-talkie · listening')
                 read_pty(master, output, .25)
                 os.write(master, b'\x1b[116;5u')  # Extended-keyboard Ctrl+T.
                 second = request('voice-two', voice=True)
+                assert any(m['role'] == 'system' and 'UPDATED_VOICE_INSTRUCTIONS' in str(m['content']) for m in second['messages']), second
+                assert not any('CUSTOM_VOICE_INSTRUCTIONS' in str(m['content']) for m in second['messages']), second
                 assert any(m['content'] == 'draft stays here' for m in second['messages']), second
                 assert sum(m['content'] == 'voice-one' for m in second['messages']) == 1, second
                 assert any(m['role'] == 'assistant' and 'First spoken sentence.' in str(m['content']) for m in second['messages']), second
@@ -158,6 +201,9 @@ def main():
                 saved = json.loads(config.read_text())
                 assert saved['voice']['language'] == 'en-US', saved
                 assert saved['voice']['speechCommand']['arguments'] == ['a=b'], saved
+                send('/prompt del voice\n/prompts show voice\n')
+                wait("Restored built-in system prompt 'voice'.")
+                wait('You are the voice agent in a conversation')
                 send('/exit\n')
                 deadline = time.monotonic() + 10
                 while process.poll() is None:

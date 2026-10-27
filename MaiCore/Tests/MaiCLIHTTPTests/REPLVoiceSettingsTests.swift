@@ -20,16 +20,17 @@ func replVoiceSettingsDiscoverability() throws {
   #expect(completions.contains("/set voice."))
   #expect(completions.contains("/voice voices"))
   #expect(completions.contains("/voice languages"))
+  #expect(!keys.contains("voice.instructions"))
+  #expect(completions.contains("/edit prompt voice"))
+  #expect(completions.contains("/edit prompt voiceover"))
   for key in keys { #expect(completions.contains("/set \(key) ")) }
 }
 
-@Test("Voice command values and multiline prompts stay on one settings line")
+@Test("Voice command values stay on one settings line")
 func replVoiceSettingsSingleLine() throws {
   var settings = ConfiguredVoice()
-  settings.instructions = "First line\nSecond line"
   settings.speechCommand = .init("say", arguments: ["{text}"])
   let lines = try MaiCLI.voiceSettings(settings)
   #expect(lines.allSatisfy { !$0.contains("\n") })
-  #expect(lines.contains(#"voice.instructions = "First line\nSecond line""#))
   #expect(lines.contains(#"voice.speechCommand = {"arguments":["{text}"],"executable":"say"}"#))
 }

@@ -127,10 +127,13 @@ extension MaiConfiguration {
     }
     // Reusing a shorthand keeps its independently edited effort and prompt.
     // An unrelated agent with the same name must never be overwritten.
+    let speechPrompt = task == .voice || task == .voiceover
+      ? systemPrompt(named: task.rawValue) : nil
     var agent =
       agents.first(where: { $0.id == id })
       ?? AgentDefinition(
-        id: id, instructions: task.instructions, provider: selection.provider,
+        id: id, instructions: speechPrompt?.text ?? task.instructions,
+        systemPrompt: speechPrompt?.name, provider: selection.provider,
         model: selection.model)
     agent.provider = selection.provider
     agent.model = selection.model

@@ -465,6 +465,7 @@ private struct REPLServices: Sendable {
   /// Tokens/s and time in use per provider:model, shared with the runtime.
   var usageStats: ModelUsageStore
   let modelCatalog = REPLModelCatalog()
+  let voiceCatalog = REPLVoiceCatalog()
 }
 
 /// Where the current project's todo list lives. The `todo_*` tools are
@@ -2859,6 +2860,8 @@ struct MaiCLI {
     func releaseReader(workspace: AgentChatWorkspace) async {
       if isatty(STDIN_FILENO) != 0 {
         services.modelCatalog.select(session.profile.provider, runtime: runtime)
+        services.voiceCatalog.select(
+          configuration ?? .init(), plugins: plugins, offline: await runtime.internetAccessPolicy().isOffline)
       }
       guard loop.readerParked, !loop.exiting, !loop.drainingThen else { return }
       await refreshTerminalSettings()
@@ -2907,6 +2910,7 @@ struct MaiCLI {
               return messages.filter(\.isPinned).map { "/chat unpin \($0.id)" }
             }
             return services.modelCatalog.completions(for: line, runtime: runtime)
+              + services.voiceCatalog.completions(for: line)
           },
           separator: screen == nil ? status.text : nil))
     }
@@ -3848,7 +3852,15 @@ struct MaiCLI {
       request.stream = true; request.context = .cache; request.responseFormat = .text
       request.toolNames.formUnion(VoiceAgentTools.names)
       for name in VoiceAgentTools.names { request.toolPolicy.tools[name] = .direct }
-      request.messages.append(.system(settings.instructions + "\nVoice language: " + settings.languageIdentifier))
+      let instructions = (configuration ?? .init()).systemPrompt(named: "voice")?.text
+        ?? VoicePrompt.instructions
+      if instructions != VoicePrompt.instructions {
+        request.messages.removeAll { $0.role == .system && $0.text == VoicePrompt.instructions }
+      }
+      if !request.messages.contains(where: { $0.role == .system && $0.text == instructions }) {
+        request.messages.append(.system(instructions))
+      }
+      request.messages.append(.system("Voice language: " + settings.languageIdentifier))
       request.messages += voiceHistory
       request.messages.append(contentsOf: await runtime.supervisor.drainInbox(pid))
       request.messages.append(.user(text))
@@ -5227,6 +5239,7 @@ struct MaiCLI {
     await MaiRunTerminalHost.shared.install(runner: nil)
     reader.stop()
     services.modelCatalog.cancel()
+    services.voiceCatalog.cancel()
     supervisorFeed.cancel()
     continuation.finish()
     await services.approvalHandler.setPrompter(nil)
@@ -6716,10 +6729,7 @@ struct MaiCLI {
     _ requested: String,
     configuration: MaiConfiguration?
   ) -> String? {
-    let names = configuration?.prompts?.system.keys ?? [String: String]().keys
-    if names.contains(requested) { return requested }
-    let matches = names.filter { $0.caseInsensitiveCompare(requested) == .orderedSame }
-    return matches.count == 1 ? matches[0] : nil
+    (configuration ?? .init()).systemPrompt(named: requested)?.name
   }
 
   private static func handleVectorDatabaseCommand(
@@ -7390,7 +7400,7 @@ struct MaiCLI {
     case "show", "cat":
       let requested = rest.isEmpty ? session.profile.systemPrompt ?? "" : rest
       guard let name = resolvedSystemPromptName(requested, configuration: configuration),
-        let text = configuration?.prompts?.system[name]
+        let text = (configuration ?? .init()).systemPrompt(named: name)?.text
       else {
         await terminal.line("Unknown system prompt '\(requested)'. /prompts lists them.")
         return
@@ -7449,7 +7459,9 @@ struct MaiCLI {
       do {
         try draft.save(to: URL(fileURLWithPath: configurationPath))
         configuration = draft
-        await terminal.line("Removed system prompt '\(name)'.")
+        await terminal.line(
+          draft.systemPrompt(named: name) == nil
+            ? "Removed system prompt '\(name)'." : "Restored built-in system prompt '\(name)'.")
       } catch {
         await terminal.line("error: \(error.localizedDescription)", to: .standardError)
       }
@@ -7493,7 +7505,7 @@ struct MaiCLI {
   ) async {
     guard
       let name = resolvedSystemPromptName(requested, configuration: configuration),
-      let instructions = configuration?.prompts?.system[name]
+      let instructions = (configuration ?? .init()).systemPrompt(named: name)?.text
     else {
       await terminal.line(
         "Unknown system prompt '\(requested)'. /prompts lists them; /prompt add NAME TEXT creates one."
@@ -7553,10 +7565,16 @@ struct MaiCLI {
         try applySystemInstructions(
           text, replacing: session.profile.instructions, session: &session)
       }
-      let usage =
-        refreshed.isEmpty
-        ? "no agent uses it yet; /agent prompt ID \(name) or /agent add picks it"
-        : "used by \(refreshed.joined(separator: ", "))"
+      let usage: String
+      if !refreshed.isEmpty {
+        usage = "used by \(refreshed.joined(separator: ", "))"
+      } else if name.lowercased() == "voice" {
+        usage = "used by /voice"
+      } else if name.lowercased() == "voiceover" {
+        usage = "used for voiceover"
+      } else {
+        usage = "no agent uses it yet; /agent prompt ID \(name) or /agent add picks it"
+      }
       await terminal.line("\(created ? "Created" : "Saved") system prompt '\(name)' (\(usage)).")
       return true
     } catch {
@@ -7603,7 +7621,7 @@ struct MaiCLI {
       return
     }
     let name = resolvedSystemPromptName(trimmed, configuration: configuration) ?? trimmed
-    let previous = configuration?.prompts?.system[name] ?? ""
+    let previous = (configuration ?? .init()).systemPrompt(named: name)?.text ?? ""
     guard
       let edited = await editTemporaryText(
         previous, suffix: "system-prompt.md", terminal: terminal)
@@ -8983,7 +9001,7 @@ struct MaiCLI {
         terminal: terminal
       ) { definition, draft in
         guard let name = resolvedSystemPromptName(requested, configuration: draft),
-          let text = draft.prompts?.system[name]
+          let text = draft.systemPrompt(named: name)?.text
         else {
           return
             "Unknown system prompt '\(requested)'. /prompts lists them; /prompt add NAME TEXT creates one."
@@ -9121,9 +9139,9 @@ struct MaiCLI {
     }
 
     guard let promptName = resolvedSystemPromptName(words[3], configuration: draft),
-      let instructions = draft.prompts?.system[promptName]
+      let instructions = draft.systemPrompt(named: promptName)?.text
     else {
-      let known = draft.prompts?.system.keys.sorted() ?? []
+      let known = draft.systemPrompts.map(\.name)
       await terminal.line(
         "Unknown system prompt '\(words[3])'. Create it first: /prompt add \(words[3]) TEXT, or /prompt edit \(words[3])."
           + (known.isEmpty ? "" : " Known: \(known.joined(separator: ", ")).")
@@ -9376,7 +9394,7 @@ struct MaiCLI {
       }
       if let name = definition.systemPrompt, name != current.systemPrompt,
         definition.instructions == current.instructions,
-        let text = draft.prompts?.system[name]
+        let text = draft.systemPrompt(named: name)?.text
       {
         definition.instructions = text
       }
@@ -10624,6 +10642,10 @@ struct MaiCLI {
           return
         }
         let requested = String(voiceKey.dropFirst(6))
+        if requested.lowercased() == "instructions" {
+          await terminal.line("Use /edit prompt voice to edit voice instructions; /prompts show voice displays them.")
+          return
+        }
         guard let key = ConfiguredVoice.settingNames.first(where: { $0.lowercased() == requested.lowercased() }) else {
           throw VoiceError.unavailable("Unknown voice setting. /set voice lists settings.")
         }
@@ -13902,7 +13924,7 @@ struct MaiCLI {
       values += REPLModelCatalog.taskPrefixes.map { $0 + agent.id }
       values.append("/chat new --agent \(agent.id) ")
     }
-    for name in configuration?.prompts?.system.keys.sorted() ?? [] {
+    for name in (configuration ?? .init()).systemPrompts.map(\.name) {
       values.append("/prompt \(name)")
       values.append("/edit prompt \(name)")
       values.append("/edit \(name)")
@@ -14696,6 +14718,8 @@ struct MaiCLI {
     /edit compact            Edit the global chat-compaction prompt template
     /edit smart              Edit the per-turn smart context template (also /edit prompt smart)
     /edit prompt recap       Edit the recap template (goals, actions, pending tasks)
+    /edit prompt voice       Edit instructions for the spoken conversation
+    /edit prompt voiceover   Edit instructions for short spoken summaries
     /edit prompt compact     Edit the generated compact agent's system prompt
     /edit prompt tool        Edit the generated tool agent's system prompt
     /edit memory             Edit this project's durable memory notes

@@ -33,7 +33,6 @@ public struct ConfiguredVoice: Codable, Equatable, Sendable {
   public var provider: String?
   public var transcriptionModel: String = "whisper-1"
   public var speechModel: String = "tts-1"
-  public var instructions: String = VoicePrompt.instructions
 
   /// Strip ICU preference extensions before selecting a recognizer or displaying a language.
   public var languageIdentifier: String {
@@ -46,7 +45,7 @@ public struct ConfiguredVoice: Codable, Equatable, Sendable {
   private enum CodingKeys: String, CodingKey, CaseIterable {
     case language, mode, input, output, voice, speed, silenceSeconds, speechThreshold,
       maximumRecordingSeconds, captureCommand, transcriptionCommand, speechCommand,
-      playbackCommand, provider, transcriptionModel, speechModel, instructions
+      playbackCommand, provider, transcriptionModel, speechModel
   }
   public init(from decoder: Decoder) throws {
     self.init()
@@ -71,7 +70,6 @@ public struct ConfiguredVoice: Codable, Equatable, Sendable {
     transcriptionModel =
       try c.decodeIfPresent(String.self, forKey: .transcriptionModel) ?? transcriptionModel
     speechModel = try c.decodeIfPresent(String.self, forKey: .speechModel) ?? speechModel
-    instructions = try c.decodeIfPresent(String.self, forKey: .instructions) ?? instructions
   }
   public func validate() throws {
     guard speed.isFinite, (0.25...4).contains(speed), silenceSeconds.isFinite,
