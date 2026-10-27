@@ -328,6 +328,12 @@ def main(binary):
                 send('J')
                 wait_for('LIVE_THOUGHT')
                 assert top() == latest and bottom() == original_bottom, screen
+                send('\x02')  # Ctrl+B pages back like K.
+                read_for()
+                assert top() == previous_page and bottom() == original_bottom, screen
+                send('\x06')
+                wait_for('LIVE_THOUGHT')
+                assert top() == latest and bottom() == original_bottom, screen
                 send('\x1b[<64;2;2M')
                 read_for()
                 assert top() != latest and bottom() == original_bottom, screen
@@ -765,7 +771,7 @@ def main(binary):
                                  ['/view thinking', '/help view'], cwd=root, env=env, allow_errors=True)
                 assert 'error: /view requires ui.mode=buffer.' in output and '/view off' in output
                 print('PASS view: Markdown settings, horizontal/vertical layouts, fullscreen restore, highlight search/persistence/cancellation, mode guard, sources, pins, first-line message log, read-only focus, Ctrl+W word deletion, focus colors/cursor visibility, blank Enter, history, prompt, independent scrolling, live thinking/tools/diffs, '
-                      'background agents, J/K paging, g/G top/bottom, divider background, v/V resizing, q close, separator dragging, mouse cleanup, '
+                      'background agents, J/K and Ctrl+B/F paging, g/G top/bottom, divider background, v/V resizing, q close, separator dragging, mouse cleanup, '
                       'live ui.tools previews and iconlog, resize, saved reasoning/results, off and cleanup')
             finally:
                 chunks.put(None)

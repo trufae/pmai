@@ -521,6 +521,8 @@ final class TerminalLineEditor {
         case .byte(107), .up: surface?.scrollView(lines: -1); continue
         case .byte(75), .pageUp: surface?.scrollOutput(wheel: 0, pages: -1); continue
         case .byte(74), .pageDown: surface?.scrollOutput(wheel: 0, pages: 1); continue
+        case .byte(6): surface?.scrollOutput(wheel: 0, pages: 1); continue  // Ctrl+F
+        case .byte(2): surface?.scrollOutput(wheel: 0, pages: -1); continue  // Ctrl+B
         case .byte(103): surface?.scrollView(lines: Int.min); continue  // g: top
         case .byte(71): surface?.scrollView(lines: Int.max); continue  // G: bottom
         case .byte(118): surface?.resizeView(lines: 1); continue  // v: divider down
@@ -579,9 +581,8 @@ final class TerminalLineEditor {
         case 1:  // Ctrl+A: start of the line
           cursor = lineStart(in: bytes, at: cursor)
           redraw(prompt: prompt, bytes: bytes, cursor: cursor)
-        case 2:  // Ctrl+B, like Left
-          cursor = previousCharacterStart(in: bytes, before: cursor)
-          redraw(prompt: prompt, bytes: bytes, cursor: cursor)
+        case 2:  // Ctrl+B: a page back in the frame that has focus
+          surface?.scrollOutput(wheel: 0, pages: -1)
         case 3:  // Ctrl+C
           wasInterrupted = true
           submittedPromptID = activePrompt.id
@@ -595,9 +596,8 @@ final class TerminalLineEditor {
         case 5:  // Ctrl+E: end of the line
           cursor = lineEnd(in: bytes, at: cursor)
           redraw(prompt: prompt, bytes: bytes, cursor: cursor)
-        case 6:  // Ctrl+F, like Right
-          cursor = nextCharacterEnd(in: bytes, after: cursor)
-          redraw(prompt: prompt, bytes: bytes, cursor: cursor)
+        case 6:  // Ctrl+F: a page forward in the frame that has focus
+          surface?.scrollOutput(wheel: 0, pages: 1)
         case 9:  // Tab
           completeInput()
         case 10:  // Ctrl+J: a line break, for terminals that send Enter for Shift+Enter

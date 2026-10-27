@@ -343,6 +343,16 @@ def main(binary):
                 wait_for('draft last')
                 assert 'draft first' in screen[rows - 1] and 'draft last' in screen[rows], screen
                 assert 'ROW69' in '\n'.join(output()), screen
+                # Ctrl+B and Ctrl+F page the chat frame like Page Up/Down.
+                send('\x02')
+                read_for()
+                previous = output()
+                assert 'ROW69' not in '\n'.join(previous), screen
+                assert 'scroll' in screen[rows - 2], screen
+                send('\x06')
+                read_for()
+                assert 'ROW69' in '\n'.join(output()), screen
+                assert 'draft last' in screen[rows], screen
                 send('\x1b[5~')
                 read_for()
                 previous = output()
@@ -565,7 +575,7 @@ def main(binary):
                 assert process.returncode == 0
                 assert b'\x1b[?1000l' in captured and b'\x1b[?1049l' in captured, captured
                 assert termios.tcgetattr(master) == original, 'raw tty mode leaked on exit'
-                print('PASS buffer: thinking, markdown, tools and theme settings, paging, configurable wheel steps, mouse packets, live history anchor, fixed multiline draft, '
+                print('PASS buffer: thinking, markdown, tools and theme settings, Ctrl+B/F and Page paging, configurable wheel steps, mouse packets, live history anchor, fixed multiline draft, '
                       'resize, follow, mode persistence, shell output and input, editor handoff '
                       'and terminal cleanup')
             finally:

@@ -14092,7 +14092,7 @@ struct MaiCLI {
       Tab selects the next completion · Shift+Tab selects the previous completion
       Up/Down or Ctrl+P/N move between lines, then history · Ctrl+R reverse search
       Ctrl+A/E or Home/End beginning/end of the line
-      Ctrl+B/F move left/right like the arrow keys
+      Ctrl+B/F page up/down in the focused frame, like Page Up/Down
       Ctrl+L clear the screen, keeping the input
       Ctrl+W delete word · Ctrl+C or /stop interrupt the run · Ctrl+Z suspend
       Ctrl+D exits when the input is empty
