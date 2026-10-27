@@ -6,6 +6,8 @@ import UIKit
 struct ContentView: View {
   let store: AppStore
   @Environment(\.scenePhase) private var scenePhase
+  @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @StateObject private var screenshotService = ChatScreenshotService()
   @StateObject private var contentStoreObservation = AppStoreViewObservation(scope: .content)
   @StateObject private var chatStoreObservation = AppStoreViewObservation(scope: .chat)
@@ -25,23 +27,31 @@ struct ContentView: View {
   @State private var drawerTransitionGeneration = 0
   @State private var sidebarSelectionGeneration = 0
   @State private var isShowingBookmarksFolder = false
+  @State private var sidebarIsCollapsed = false
 
   var body: some View {
     GeometryReader { proxy in
-      let panelWidth = min(max(proxy.size.width * 0.82, 300), 390)
-      let drawerDepth = showingHosts ? 3 : (showingFolders ? 2 : (showingHistory ? 1 : 0))
+      let layout = AdaptiveChatLayout(
+        width: proxy.size.width, isRegularWidth: horizontalSizeClass == .regular,
+        sidebarIsCollapsed: sidebarIsCollapsed)
+      let panelWidth = layout.panelWidth
+      let requestedDepth = showingHosts ? 3 : (showingFolders ? 2 : (showingHistory ? 1 : 0))
+      let drawerDepth = max(requestedDepth, layout.pinsSidebar ? 1 : 0)
       let basePanelOffset = CGFloat(drawerDepth) * panelWidth
       let panelOffset = min(max(basePanelOffset + historyDragOffset, 0), panelWidth * 3)
-      let sidebarOffset = max(panelOffset - panelWidth, 0)
-      let foldersOffset = max(panelOffset - panelWidth * 2, 0)
+      let sidebarOffset = layout.pinsSidebar ? 0 : max(panelOffset - panelWidth, 0)
+      let foldersOffset = layout.pinsSidebar ? 0 : max(panelOffset - panelWidth * 2, 0)
       let revealProgress = min(panelOffset / panelWidth, 1)
+      let hostsVisible = layout.pinsSidebar ? drawerDepth == 3 : panelOffset > panelWidth * 2
+      let foldersVisible = layout.pinsSidebar ? drawerDepth == 2 : panelOffset > panelWidth
+      let historyVisible = layout.pinsSidebar ? drawerDepth == 1 : panelOffset > 0
 
       ZStack(alignment: .leading) {
         if isHostsPanelMounted {
           HostsView(hosts: hosts, onSelectHost: selectHost)
             .frame(width: panelWidth).frame(maxHeight: .infinity)
             .background { SidebarBlurBackground() }
-            .opacity(panelOffset > panelWidth * 2 ? 1 : 0)
+            .opacity(hostsVisible ? 1 : 0)
             .allowsHitTesting(panelOffset >= panelWidth * 3)
             .accessibilityHidden(panelOffset < panelWidth * 3)
             .zIndex(-1)
@@ -55,7 +65,7 @@ struct ContentView: View {
                 onSelectFolder: { cwd in
                   hosts.selectFolder(cwd)
                   setDrawerDepth(1, animation: historyPanelAnimation)
-                }, isVisible: showingFolders && !showingHosts,
+                }, isVisible: foldersVisible && !showingHosts,
                 onBrowseFiles: { browseFiles(cwd: $0) },
                 onOpenTerminal: { showRemoteTerminal(cwd: $0) })
             } else {
@@ -81,7 +91,7 @@ struct ContentView: View {
           .frame(width: panelWidth)
           .frame(maxHeight: .infinity)
           .background { SidebarBlurBackground() }
-          .opacity(panelOffset > panelWidth ? 1 : 0)
+          .opacity(foldersVisible ? 1 : 0)
           .allowsHitTesting(panelOffset >= panelWidth * 2 && panelOffset < panelWidth * 3)
           .accessibilityHidden(panelOffset < panelWidth * 2 || panelOffset >= panelWidth * 3)
           .offset(x: foldersOffset)
@@ -99,14 +109,14 @@ struct ContentView: View {
                   closeHistoryPanel()
                 },
                 onShowSettings: { showingSettings = true },
-                isVisible: showingHistory && !showingFolders)
+                isVisible: historyVisible && !showingFolders)
             } else {
               SidebarView(
                 storeObservation: sidebarStoreObservation,
                 store: store,
                 showingSettings: $showingSettings,
                 isShowingBookmarks: $isShowingBookmarksFolder,
-                isVisible: showingHistory && !showingFolders,
+                isVisible: historyVisible && !showingFolders,
                 onSelectConversation: selectConversationFromSidebar,
                 onSelectBookmarkedMessage: selectBookmarkedMessageFromSidebar,
                 onNewChat: newLocalConversation,
@@ -121,7 +131,7 @@ struct ContentView: View {
           .modifier(SidebarPlaneEffect(progress: revealProgress))
           .background { SidebarBlurBackground() }
           .overlay { SidebarDistanceTone(progress: revealProgress) }
-          .opacity(panelOffset > 0 ? 1 : 0)
+          .opacity(historyVisible ? 1 : 0)
           .allowsHitTesting(panelOffset >= panelWidth && panelOffset < panelWidth * 2)
           .accessibilityHidden(panelOffset < panelWidth || panelOffset >= panelWidth * 2)
           .offset(x: sidebarOffset)
@@ -145,7 +155,8 @@ struct ContentView: View {
               .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                   Button(
-                    "Conversations", systemImage: "line.3.horizontal", action: toggleHistoryPanel
+                    "Conversations", systemImage: "line.3.horizontal",
+                    action: { toggleHistoryPanel(in: layout) }
                   )
                   .labelStyle(.iconOnly)
                 }
@@ -168,13 +179,15 @@ struct ContentView: View {
                 },
                 store: store,
                 renderInvalidationKey: ChatView.RenderInvalidationKey(
-                  isLandscape: proxy.size.width > proxy.size.height,
+                  isLandscape: layout.chatWidth > proxy.size.height,
                   selectedConversationID: store.selectedConversationID,
                   selectedConversationIsLoading: store.selectedConversationIsLoading,
                   appearance: store.settings.appearance,
                   renderMarkdownInChat: store.settings.renderMarkdownInChat,
-                  renderMarkdownImagesInChat: store.settings.renderMarkdownImagesInChat),
-                onShowHistory: toggleHistoryPanel,
+                  renderMarkdownImagesInChat: store.settings.renderMarkdownImagesInChat,
+                  sidebarIsPinned: layout.pinsSidebar,
+                  canPinSidebar: layout.canPinSidebar),
+                onShowHistory: { toggleHistoryPanel(in: layout) },
                 onNewChat: {
                   if hosts.selectedHost == nil {
                     newLocalConversation()
@@ -196,27 +209,38 @@ struct ContentView: View {
           .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .ignoresSafeArea(edges: .top)
-        .allowsHitTesting(panelOffset == 0)
+        .allowsHitTesting(layout.pinsSidebar || panelOffset == 0)
         .overlay {
-          Color.black.opacity(0.001 + Double(revealProgress) * 0.25)
-            .contentShape(Rectangle())
-            .allowsHitTesting(panelOffset > 0)
-            .onTapGesture {
-              closeHistoryPanel()
-            }
+          if !layout.pinsSidebar && panelOffset > 0 {
+            Color.black.opacity(Double(revealProgress) * 0.25)
+              .contentShape(Rectangle())
+              .onTapGesture { closeHistoryPanel() }
+          }
         }
-        .clipShape(RoundedRectangle(cornerRadius: panelOffset > 0 ? 28 : 0, style: .continuous))
-        .offset(x: panelOffset)
+        .clipShape(RoundedRectangle(
+          cornerRadius: layout.pinsSidebar ? 24 : (panelOffset > 0 ? 28 : 0),
+          style: .continuous))
+        .overlay {
+          if layout.pinsSidebar {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+              .strokeBorder(.primary.opacity(0.06), lineWidth: 1)
+              .allowsHitTesting(false)
+          }
+        }
+        .padding(.leading, layout.sidebarInset)
+        .padding(.vertical, layout.pinsSidebar ? 8 : 0)
+        .padding(.trailing, layout.pinsSidebar ? 8 : 0)
+        .offset(x: layout.pinsSidebar ? 0 : panelOffset)
         .zIndex(2)
       }
       .background(Color(uiColor: .systemGroupedBackground))
       .background {
         HistoryPanelPanBridge(
-          isEnabled: !showingSettings && store.activeToolCallApprovalRequest == nil
+          isEnabled: !layout.pinsSidebar && !showingSettings && store.activeToolCallApprovalRequest == nil
             && store.activeAutocompactionApprovalRequest == nil
             && store.activeLongRunningOperationTimeoutRequest == nil,
           drawerDepth: drawerDepth,
+          panelWidth: panelWidth,
           onChanged: { offset in
             // A new drag can reveal panels before the previous settling animation finishes.
             drawerTransitionGeneration += 1
@@ -235,8 +259,13 @@ struct ContentView: View {
           }
         )
       }
+      .onChange(of: layout.pinsSidebar, initial: true) { _, pinsSidebar in
+        // Keep ChatView in the same hierarchy so resizing preserves its composer,
+        // live voice session, and scroll position.
+        historyDragOffset = 0
+        if pinsSidebar { mountHistoryPanel() }
+      }
     }
-    .ignoresSafeArea(.container)
     .sheet(isPresented: $showingSettings) {
       SettingsView(store: store, storeObservation: settingsStoreObservation)
         .environmentObject(store)
@@ -483,12 +512,17 @@ struct ContentView: View {
     remoteTerminalLocation = .init(host: host, cwd: cwd ?? hosts.selectedFolderID ?? host.cwd)
   }
 
-  private func toggleHistoryPanel() {
-    setDrawerDepth(showingHistory ? 0 : 1, animation: .snappy)
+  private func toggleHistoryPanel(in layout: AdaptiveChatLayout) {
+    if layout.canPinSidebar {
+      withAnimation(historyPanelAnimation) { sidebarIsCollapsed.toggle() }
+      setDrawerDepth(0, animation: historyPanelAnimation)
+    } else {
+      setDrawerDepth(showingHistory ? 0 : 1, animation: historyPanelAnimation)
+    }
   }
 
   private var historyPanelAnimation: Animation {
-    .interactiveSpring(response: 0.32, dampingFraction: 0.86)
+    reduceMotion ? .linear(duration: 0) : .interactiveSpring(response: 0.32, dampingFraction: 0.86)
   }
 
   private func setDrawerDepth(
@@ -587,6 +621,23 @@ struct ContentView: View {
   }
 }
 
+/// Use the safe-area width of this window, including during Split View resizing.
+struct AdaptiveChatLayout {
+  let width: CGFloat
+  let isRegularWidth: Bool
+  var sidebarIsCollapsed = false
+
+  var canPinSidebar: Bool { isRegularWidth && width >= 740 }
+  var pinsSidebar: Bool { canPinSidebar && !sidebarIsCollapsed }
+  var panelWidth: CGFloat {
+    if pinsSidebar { return min(320, width * 0.36) }
+    // A narrow multitasking window must still leave a tappable piece of chat.
+    return max(1, min(max(width * 0.82, 280), 390, width - 44))
+  }
+  var sidebarInset: CGFloat { pinsSidebar ? panelWidth + 12 : 0 }
+  var chatWidth: CGFloat { max(0, width - sidebarInset - (pinsSidebar ? 8 : 0)) }
+}
+
 struct HistoryPanelDrag {
   let startingDepth: Int
   let panelWidth: CGFloat
@@ -608,6 +659,7 @@ struct HistoryPanelDrag {
 private struct HistoryPanelPanBridge: UIViewRepresentable {
   let isEnabled: Bool
   let drawerDepth: Int
+  let panelWidth: CGFloat
   let onChanged: (CGFloat) -> Void
   let onEnded: (Int) -> Void
 
@@ -615,6 +667,7 @@ private struct HistoryPanelPanBridge: UIViewRepresentable {
     Coordinator(
       isEnabled: isEnabled,
       drawerDepth: drawerDepth,
+      panelWidth: panelWidth,
       onChanged: onChanged,
       onEnded: onEnded)
   }
@@ -631,6 +684,7 @@ private struct HistoryPanelPanBridge: UIViewRepresentable {
   func updateUIView(_ view: HierarchyTrackingView, context: Context) {
     context.coordinator.isEnabled = isEnabled
     context.coordinator.drawerDepth = drawerDepth
+    context.coordinator.panelWidth = panelWidth
     context.coordinator.onChanged = onChanged
     context.coordinator.onEnded = onEnded
     context.coordinator.installIfNeeded(from: view)
@@ -646,6 +700,7 @@ private struct HistoryPanelPanBridge: UIViewRepresentable {
       didSet { panGesture?.isEnabled = isEnabled }
     }
     var drawerDepth: Int
+    var panelWidth: CGFloat
     var onChanged: (CGFloat) -> Void
     var onEnded: (Int) -> Void
 
@@ -656,11 +711,13 @@ private struct HistoryPanelPanBridge: UIViewRepresentable {
     init(
       isEnabled: Bool,
       drawerDepth: Int,
+      panelWidth: CGFloat,
       onChanged: @escaping (CGFloat) -> Void,
       onEnded: @escaping (Int) -> Void
     ) {
       self.isEnabled = isEnabled
       self.drawerDepth = drawerDepth
+      self.panelWidth = panelWidth
       self.onChanged = onChanged
       self.onEnded = onEnded
     }
@@ -698,7 +755,7 @@ private struct HistoryPanelPanBridge: UIViewRepresentable {
       case .began:
         drag = HistoryPanelDrag(
           startingDepth: drawerDepth,
-          panelWidth: resolvedPanelWidth(for: view.bounds.width))
+          panelWidth: panelWidth)
         dismissContextMenus(in: view)
         onChanged(0)
       case .changed:
@@ -732,7 +789,6 @@ private struct HistoryPanelPanBridge: UIViewRepresentable {
       let velocity = pan.velocity(in: view)
       let startX = location.x - translation.x
       let isHorizontal = abs(velocity.x) > abs(velocity.y) * 1.15
-      let panelWidth = resolvedPanelWidth(for: view.bounds.width)
       switch drawerDepth {
       case 0:
         return startX <= view.bounds.width / 3 && velocity.x > 0 && isHorizontal
@@ -766,10 +822,6 @@ private struct HistoryPanelPanBridge: UIViewRepresentable {
       guard let scrollView = gestureRecognizer.view as? UIScrollView else { return false }
       return gestureRecognizer === scrollView.panGestureRecognizer
     }
-
-    private func resolvedPanelWidth(for availableWidth: CGFloat) -> CGFloat {
-      min(max(availableWidth * 0.82, 300), 390)
-    }
   }
 }
 
@@ -795,13 +847,22 @@ private final class HierarchyTrackingView: UIView {
 }
 
 struct ChatScreenBackground: View {
+  @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
   var body: some View {
-    LinearGradient(
-      colors: [Color(uiColor: .systemBackground), Color.accentColor.opacity(0.05)],
-      startPoint: .top,
-      endPoint: .bottom
-    )
+    ZStack {
+      Color(uiColor: .systemBackground)
+      if !reduceTransparency {
+        EllipticalGradient(
+          colors: [Color.accentColor.opacity(0.12), .clear],
+          center: .topLeading, startRadiusFraction: 0, endRadiusFraction: 0.85)
+        EllipticalGradient(
+          colors: [Color.accentColor.opacity(0.06), .clear],
+          center: .bottomTrailing, startRadiusFraction: 0, endRadiusFraction: 0.7)
+      }
+    }
     .ignoresSafeArea()
+    .allowsHitTesting(false)
   }
 }
 

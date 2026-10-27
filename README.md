@@ -65,6 +65,10 @@ there yet. The Android CLI is a separate terminal client.
 
 ### Move between phone and terminal
 
+- **An adaptable workspace — iOS.** Keep conversations beside your chat on a
+  roomy display, or collapse the sidebar for more writing space. Narrow windows
+  use the swipeable drawer. The layout follows window size and safe areas when
+  opening or closing iPhone Duo or using Split View.
 - **Take your workstation with you.** Pair PocketMai or another pmai CLI with a
   running host to continue saved chats, switch projects, and browse or transfer
   files. Connect over your LAN or use encrypted OpenTunnel access across

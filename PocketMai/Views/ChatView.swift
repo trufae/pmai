@@ -39,6 +39,8 @@ struct ChatView: View {
     var appearance: AppearanceSettings
     var renderMarkdownInChat: Bool
     var renderMarkdownImagesInChat: Bool
+    var sidebarIsPinned = false
+    var canPinSidebar = false
   }
 
   private struct ConversationActivitySnapshot: Equatable {
@@ -82,6 +84,8 @@ struct ChatView: View {
   @State var remoteChat: RemoteAgentChat? = nil
   @Environment(\.scenePhase) private var scenePhase
   @Environment(\.verticalSizeClass) private var verticalSizeClass
+  @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
   @EnvironmentObject private var ttsPlayer: TTSPlayer
   @State private var showingRenameAlert = false
   @State private var showingProviderModelSheet = false
@@ -336,7 +340,6 @@ struct ChatView: View {
           .disabled(!canStartNewChat)
           .padding(8)
           .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-          .ignoresSafeArea(.container, edges: .trailing)
         }
       }
       .overlay(alignment: .bottomTrailing) {
@@ -344,7 +347,6 @@ struct ChatView: View {
           landscapeComposerToggle
             .padding(8)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-            .ignoresSafeArea(.container, edges: .trailing)
         }
       }
       .onChange(of: usesCompactLandscapeLayout) { _, _ in
@@ -420,7 +422,7 @@ struct ChatView: View {
 
   // Size classes follow rotation without mistaking a portrait keyboard for landscape.
   private var usesCompactLandscapeLayout: Bool {
-    UIDevice.current.userInterfaceIdiom == .phone && verticalSizeClass == .compact
+    horizontalSizeClass == .compact && verticalSizeClass == .compact
   }
 
   private var isComposerCollapsed: Bool {
@@ -501,6 +503,7 @@ struct ChatView: View {
         }
       bottomControls
     }
+    .background { ChatScreenBackground() }
   }
 
   /// The child agents of the chat on screen, live or finished, so a turn
@@ -896,8 +899,7 @@ struct ChatView: View {
             } else if !isPreviewingConversation && currentConversationIsEmpty
               && liveVoiceSession.previewMessage == nil
             {
-              emptyState
-                .containerRelativeFrame(.vertical)
+              emptyState(in: scrollGeometry.size)
             } else {
               ForEach(renderedMessages) { message in
                 let match = chatSearch.currentMatch
@@ -1314,7 +1316,6 @@ struct ChatView: View {
       maxWidth: usesCompactLandscapeLayout ? .infinity : nil,
       maxHeight: usesCompactLandscapeLayout ? .infinity : nil,
       alignment: .trailing)
-    .ignoresSafeArea(.container, edges: usesCompactLandscapeLayout ? .trailing : [])
   }
 
   private var userMessageNavigationIndicator: some View {
@@ -2210,53 +2211,58 @@ struct ChatView: View {
     .frame(maxWidth: .infinity)
   }
 
-  private var emptyState: some View {
-    GeometryReader { proxy in
-      let suggestions = remoteChat == nil ? store.previousConversationSuggestions : []
-      let showsLandscapeSuggestions = renderInvalidationKey.isLandscape && !suggestions.isEmpty
+  private func emptyState(in viewport: CGSize) -> some View {
+    let suggestions = remoteChat == nil ? store.previousConversationSuggestions : []
+    let showsColumns = viewport.width >= 700 && !dynamicTypeSize.isAccessibilitySize
+      && !suggestions.isEmpty
+    let layout = showsColumns
+      ? AnyLayout(HStackLayout(spacing: 40)) : AnyLayout(VStackLayout(spacing: 28))
 
-      let layout =
-        showsLandscapeSuggestions
-        ? AnyLayout(HStackLayout(spacing: 32)) : AnyLayout(VStackLayout(spacing: 20))
-      layout {
-        emptyStateBrand.frame(maxWidth: showsLandscapeSuggestions ? .infinity : nil)
-        if !suggestions.isEmpty {
-          PreviousConversationSuggestions(
-            store: store, suggestions: suggestions,
-            exportCoordinator: exportCoordinator
-          ) { id in
-            Task { await store.selectConversation(id: id) }
-          }
-          .frame(maxWidth: showsLandscapeSuggestions ? .infinity : nil)
+    return layout {
+      emptyStateBrand.frame(maxWidth: showsColumns ? .infinity : nil)
+      if !suggestions.isEmpty {
+        PreviousConversationSuggestions(
+          store: store, suggestions: suggestions,
+          exportCoordinator: exportCoordinator
+        ) { id in
+          Task { await store.selectConversation(id: id) }
         }
+        .frame(maxWidth: showsColumns ? .infinity : nil)
       }
-      .frame(maxWidth: showsLandscapeSuggestions ? 900 : 430)
-      .padding(.horizontal, 24)
-      .frame(width: proxy.size.width)
-      .position(
-        x: proxy.size.width / 2,
-        y: emptyStateCenterY(
-          in: proxy.size.height,
-          hasSuggestions: !suggestions.isEmpty))
     }
+    .frame(maxWidth: showsColumns ? 900 : 430)
+    .padding(.horizontal, 8)
+    .padding(.vertical, 24)
     .frame(maxWidth: .infinity)
+    // A minimum height centers short content but lets large text and a short
+    // multitasking window scroll, instead of positioning content offscreen.
+    .frame(minHeight: max(0, viewport.height - 33))
   }
 
   private var emptyStateBrand: some View {
-    VStack(spacing: 12) {
+    VStack(spacing: 14) {
       EmptyChatLogo()
+        .padding(20)
+        .background {
+          RoundedRectangle(cornerRadius: 32, style: .continuous)
+            .fill(.thinMaterial)
+            .shadow(color: .accentColor.opacity(0.12), radius: 24, y: 10)
+        }
+        .overlay {
+          RoundedRectangle(cornerRadius: 32, style: .continuous)
+            .strokeBorder(.primary.opacity(0.06), lineWidth: 1)
+        }
+        .padding(.bottom, 4)
+        .accessibilityHidden(true)
+      Text("PocketMai")
+        .font(.system(.largeTitle, design: .rounded, weight: .bold))
+        .accessibilityAddTraits(.isHeader)
       Text("Your pocket assistant")
-        .font(.title3)
-        .foregroundStyle(.primary)
+        .font(.title3.weight(.medium))
+        .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
     }
-  }
-
-  private func emptyStateCenterY(in height: CGFloat, hasSuggestions: Bool) -> CGFloat {
-    let baseY = height / 2
-    guard hasSuggestions, keyboardOverlap > 0 else { return baseY }
-    let lift = min(keyboardOverlap * 0.18, 64)
-    return max(height * 0.48, baseY - lift)
+    .multilineTextAlignment(.center)
   }
 
   private func updateKeyboardOverlap(from notification: Notification) {
@@ -2370,8 +2376,6 @@ struct ChatView: View {
           .padding(.bottom, 8)
       }
     }
-    // Use the landscape edge gutter for the toggle, keeping it aligned with New Chat.
-    .ignoresSafeArea(.container, edges: usesCompactLandscapeLayout ? .trailing : [])
   }
 }
 
@@ -2595,10 +2599,10 @@ private struct PreviousConversationSuggestions: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      Text("Continue previous conversations...")
+      Text("Pick up where you left off")
         .font(.subheadline.weight(.semibold))
         .foregroundStyle(.secondary)
-        .lineLimit(1)
+        .lineLimit(2)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 4)
 
@@ -2660,21 +2664,21 @@ private struct PreviousConversationSuggestionButton: View {
           .font(.caption.weight(.semibold))
           .foregroundStyle(.tertiary)
       }
-      .padding(.horizontal, 12)
-      .padding(.vertical, 10)
+      .padding(.horizontal, 14)
+      .padding(.vertical, 12)
       .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
       .background {
-        RoundedRectangle(cornerRadius: 8, style: .continuous)
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
           .fill(isMostRecent ? Color.accentColor.opacity(0.10) : Color.clear)
       }
-      .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+      .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
       .overlay {
-        RoundedRectangle(cornerRadius: 8, style: .continuous)
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
           .stroke(
             isMostRecent ? Color.accentColor.opacity(0.20) : Color.primary.opacity(0.08),
             lineWidth: 1)
       }
-      .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+      .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
     .buttonStyle(ConversationSuggestionButtonStyle())
     .accessibilityLabel(conversation.displayTitle)
