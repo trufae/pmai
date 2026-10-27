@@ -134,10 +134,12 @@ func smallContextPreflight() async throws {
     ]
   }
   messages.append(latest)
+  // Enable compaction above the transcript size so the model window triggers it.
   let result = try await runtime.run(
     AgentRequest(
       provider: "small", model: "fixture", messages: messages,
-      options: .init(contextWindowTokens: 32_768)))
+      options: .init(contextWindowTokens: 32_768),
+      autocompact: .init(tokens: 100_000)))
   #expect(result.response.text == "done")
   #expect(result.transcript.first == messages.first)
   #expect(result.transcript.contains(latest))
@@ -156,10 +158,12 @@ func smallContextRecoversOverflow() async throws {
     .user("Second task"), .assistant("KEEP-2 " + String(repeating: "evidence ", count: 6_000)),
     latest,
   ]
+  // Leave the window unknown until rejection; compaction is opt-in.
   let result = try await runtime.run(
     AgentRequest(
       provider: "small", model: "fixture", messages: messages,
-      retry: .init(attempts: 2, delaySeconds: 0)))
+      retry: .init(attempts: 2, delaySeconds: 0),
+      autocompact: .init(tokens: 100_000)))
   #expect(result.response.text == "done")
   #expect(result.transcript.contains(latest))
   #expect(await provider.rejections == 1)
@@ -216,7 +220,8 @@ func smallContextOverflowRespectsKeep() async throws {
         messages: [
           .user("Old task"), .assistant(String(repeating: "evidence ", count: 6_000)),
           .user("Continue"),
-        ], retry: .init(attempts: 2, delaySeconds: 0)))
+        ], retry: .init(attempts: 2, delaySeconds: 0),
+        autocompact: .init(tokens: 100_000)))
   }
   #expect(await provider.requests.count == 1)
 }

@@ -474,7 +474,7 @@ emoji row in classic and buffer modes. Buffer mode also redraws retained calls;
 to fit the terminal without splitting an icon. Switch to `ui.tools all` to inspect
 retained results and errors. `/view iconlog` collects the selected conversation's
 retained calls into one continuous emoji sequence, wrapping as needed, with the
-usual independent scrolling and live updates. `/tools`, `/tools show GROUP`, and
+usual independent scrolling and live updates. `/tools full`, `/tools show GROUP`, and
 `/tools show TOOL` display the same icons as a legend. Built-ins have distinct
 object emojis (for example 📖 read, 🩹 patch, 💻 shell); skills use 🎓, MCP tools
 use 🔌, and other external tools use 🔧.

@@ -984,7 +984,7 @@ private actor TerminalApprovalHandler: ApprovalHandler {
   }
 
   private var projectSettingsURL: URL
-  private let defaultApprovalMode: ToolApprovalMode
+  private var defaultApprovalMode: ToolApprovalMode
   private var projectSettings: ProjectSettings
   private var delegate: (any ApprovalHandler)?
   private var approvalMode: ToolApprovalMode
@@ -1064,6 +1064,18 @@ private actor TerminalApprovalHandler: ApprovalHandler {
       .write(to: projectSettingsURL, options: .atomic)
     projectSettings = draft
     debugEnabled = enabled
+  }
+
+  func resetSettings() throws {
+    var draft = ProjectSettings()
+    draft.approvalMode = ConfiguredApprovals().mode
+    draft.debug = false
+    try MaiJSONCoding.default.makeEncoder().encode(draft)
+      .write(to: projectSettingsURL, options: .atomic)
+    projectSettings = draft
+    defaultApprovalMode = ConfiguredApprovals().mode
+    approvalMode = defaultApprovalMode
+    debugEnabled = false
   }
 
   func setPrompter(_ prompter: Prompter?) {
@@ -2226,6 +2238,7 @@ struct MaiCLI {
     var pendingQueueMessage: String?
     var pendingQueueRedirection: REPLRedirection?
     var chatChop: REPLChatChop?
+    var resetID: UUID?
     /// True while the input thread waits for the loop before reading again.
     var readerParked = true
     var exiting = false
@@ -2233,6 +2246,7 @@ struct MaiCLI {
     var hasTurns: Bool { activeTurn != nil || !btwTurns.isEmpty || !conversationTurns.isEmpty }
 
     func modalPrompt(for chatID: UUID) -> REPLModalPrompt? {
+      if let resetID { return .reset(id: resetID) }
       if let chop = chatChop {
         return .chop(id: "\(chop.interrupt.rawValue)-\(chop.messageID)")
       }
@@ -4053,6 +4067,39 @@ struct MaiCLI {
           await releaseIfIdle(workspace: workspace)
           return false
         }
+        if loop.resetID != nil {
+          if !heredoc, typed.lowercased() == "reset" {
+            loop.resetID = nil
+            let before = REPLCommandSnapshot(session: session)
+            await adoptPmaiToolChanges()
+            if await resetSettings(
+              session: &session, runtime: runtime, plugins: plugins,
+              configuration: &configuration, configurationPath: services.configurationPath,
+              approvalHandler: services.approvalHandler, catalogs: &catalogs, terminal: terminal)
+            {
+              await stopVoice()
+              workspace.upsert(session.chat, selecting: true)
+              await saveWorkspace(&workspace, store: store, terminal: terminal)
+              await noteTurnEffects(since: before)
+              shareStateWithPmaiTools()
+            }
+            await refreshStatus()
+            await releaseIfIdle(workspace: workspace)
+            return false
+          } else if !heredoc, typed.lowercased() == "cancel" || typed.hasPrefix("/") {
+            loop.resetID = nil
+            await terminal.note("Reset cancelled.")
+            if !typed.hasPrefix("/") {
+              await refreshStatus()
+              await releaseIfIdle(workspace: workspace)
+              return false
+            }
+          } else {
+            await terminal.line("Choose reset or cancel. Ctrl+C cancels.")
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
+        }
         // `$NAME [TEXT]` is the short form of `/prompts NAME [TEXT]`.
         let text =
           !heredoc && loop.chatChop == nil && typed.hasPrefix("$")
@@ -4259,6 +4306,20 @@ struct MaiCLI {
           let argument =
             command.count > 1
             ? command[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+          if name == "/reset" {
+            if !argument.isEmpty {
+              await terminal.line("Usage: /reset (then choose reset or cancel)")
+            } else if configuration == nil || services.configurationPath == nil {
+              await terminal.line("error: No writable configuration is active.", to: .standardError)
+            } else {
+              let id = UUID()
+              loop.resetID = id
+              await terminal.line(REPLModalPrompt.reset(id: id).question ?? "")
+            }
+            await refreshStatus()
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
           if name == "/view" {
             if let screen, screen.isBufferMode {
               if argument.isEmpty || argument == "help" {
@@ -4921,6 +4982,13 @@ struct MaiCLI {
 
       case .interrupt(let cancelledOperation, let endedInput):
         if endedInput { loop.readerParked = true }
+        if loop.resetID != nil {
+          loop.resetID = nil
+          await terminal.note("Reset cancelled.")
+          await refreshStatus()
+          await releaseIfIdle(workspace: workspace)
+          return false
+        }
         if let chop = loop.chatChop, cancelledOperation == chop.interrupt {
           await closeChatChop()
           await refreshStatus()
@@ -5924,6 +5992,9 @@ struct MaiCLI {
       return
         "Only the person at the REPL can change the working directory and implicit Files workspace."
     }
+    if command.first == "/reset" {
+      return "Only the person at the REPL can reset settings. Type /reset, then choose reset or cancel."
+    }
     if command.first == "/tools", command.count > 1 {
       let options = command[1].split(whereSeparator: \Character.isWhitespace)
       if options.count == 1, ["on", "off"].contains(options[0].lowercased()) {
@@ -6032,6 +6103,8 @@ struct MaiCLI {
         await terminal.line(REPLHistoryCommand.help)
       case "set", "/set":
         await terminal.line(setHelp)
+      case "reset", "/reset":
+        await terminal.line(resetHelp)
       case "provider", "providers", "baseurl", "/provider", "/providers", "/baseurl":
         await terminal.line(providerHelp)
       case "theme", "/theme":
@@ -6124,6 +6197,8 @@ struct MaiCLI {
         configurationPath: services.configurationPath,
         catalogs: &catalogs,
         terminal: terminal)
+    case "/reset":
+      await terminal.line("Type /reset at the REPL prompt, then choose reset or cancel.")
     case "/theme":
       await handleThemeCommand(
         argument, configuration: &configuration, configurationPath: services.configurationPath,
@@ -9802,15 +9877,19 @@ struct MaiCLI {
     let globallyEnabled = await runtime.toolsAreEnabled()
     if !globallyEnabled { modesByName = modesByName.mapValues { _ in .disabled } }
     let names = Set(tools.map(\.name)).union(AgentRuntime.agentToolNames)
-    if action == "list" || fields.isEmpty {
-      await terminal.line("All tools globally: \(globallyEnabled ? "on" : "off"). /tools on|off changes the global switch.")
-      await terminal.line("Tool proxy default: \(toolProxySetting(session.profile)); automatic exposure: \(session.profile.toolPolicy.automatic ? "on" : "off"). Per-tool overrides take precedence.")
+    if action == "list" || action == "full" || fields.isEmpty {
+      let full = action == "full"
+      if full {
+        await terminal.line("All tools globally: \(globallyEnabled ? "on" : "off"). /tools on|off changes the global switch.")
+        await terminal.line("Tool proxy default: \(toolProxySetting(session.profile)); automatic exposure: \(session.profile.toolPolicy.automatic ? "on" : "off"). Per-tool overrides take precedence.")
+      }
       for group in groups {
         let label = await terminal.paint(
           group.sourceID == "mcp" ? group.catalogID : group.id, bold: true)
         let summary = AgentToolModeSummary(names: group.toolNames, modes: modesByName)
         let badge = await terminal.toolGroupBadge(summary)
         await terminal.line("\(label) \(badge) — \(group.displayName) [\(summary.description); \(usage.count(for: group)) calls]")
+        guard full else { continue }
         for name in group.toolNames.sorted() {
           let label = await terminal.paint(name, bold: true)
           let mode = modesByName[name] ?? .disabled
@@ -9818,7 +9897,7 @@ struct MaiCLI {
           await terminal.line("  \(ToolIcon.emoji(for: name)) \(label) \(badge) \(usage.counts[name, default: 0]) calls")
         }
       }
-      await terminal.line("/tools show GROUP|TOOL shows schemas and settings; /tools direct|proxy|hide|disable|inherit GROUP|TOOL selects its state.")
+      await terminal.line("/tools show GROUP lists a group's tools and details; /tools full lists all groups with their tools.")
       return
     }
 
@@ -10648,6 +10727,86 @@ struct MaiCLI {
     } catch {
       await terminal.line("error: \(error.localizedDescription)", to: .standardError)
     }
+  }
+
+  /// Called only after the person answers the REPL's reset confirmation.
+  private static func resetSettings(
+    session: inout REPLSession,
+    runtime: AgentRuntime,
+    plugins: PluginRegistry,
+    configuration: inout MaiConfiguration?,
+    configurationPath: String?,
+    approvalHandler: TerminalApprovalHandler,
+    catalogs: inout [MCPServerCatalog],
+    terminal: TerminalWriter
+  ) async -> Bool {
+    guard let original = configuration, let configurationPath else {
+      await terminal.line("error: No writable configuration is active.", to: .standardError)
+      return false
+    }
+    let defaults = MaiConfiguration()
+    var draft = original
+    draft.voice = defaults.voice
+    draft.ui = defaults.ui
+    draft.documentExport = defaults.documentExport
+    draft.use = defaults.use
+    draft.airplane = defaults.airplane
+    draft.redact = defaults.redact
+    draft.approvals.mode = defaults.approvals.mode
+    var profile = session.profile
+    profile.resetSettings()
+    // Do not create a configured agent on an install with no provider selected.
+    if !profile.provider.rawValue.isEmpty {
+      draft.upsertAgent(profile.agentDefinition)
+    }
+    let url = URL(fileURLWithPath: configurationPath)
+    do {
+      try draft.save(to: url)
+      do {
+        try await approvalHandler.resetSettings()
+      } catch {
+        try original.save(to: url)
+        throw error
+      }
+    } catch {
+      await terminal.line("error: Could not reset settings: \(error.localizedDescription)", to: .standardError)
+      return false
+    }
+    configuration = draft
+    session.profile = profile
+    session.touch()
+    if !profile.provider.rawValue.isEmpty {
+      do {
+        try await runtime.register(agent: profile.agentDefinition, replacingExisting: true)
+      } catch {
+        await terminal.line("warning: Settings were saved but the agent could not reload: \(error.localizedDescription)", to: .standardError)
+      }
+    }
+    await runtime.configureDebugLog(nil)
+    do { try await runtime.configureRedaction(draft.redact) }
+    catch { await terminal.line("warning: \(error.localizedDescription)", to: .standardError) }
+    await runtime.configureProjectInstructionDirectory(nil)
+    await runtime.configurePlanning(draft.use.plan)
+    session.redactor = await runtime.contentRedactor(sessionID: session.sessionID)
+    await terminal.configureRedactor(session.redactor)
+    await terminal.configureMarkdown(markdownRenderer(
+      enabled: draft.ui.markdown, forced: false, environment: ProcessInfo.processInfo.environment))
+    var internet = await runtime.internetAccessPolicy()
+    internet.setAirplaneMode(draft.airplane)
+    await runtime.configureInternetAccess(internet)
+    if !internet.isOffline {
+      for server in draft.mcpServers where server.enabled && !catalogs.contains(where: { $0.serverID == server.id }) {
+        do {
+          let source = try await plugins.makeMCPToolSource(
+            kind: server.kind, configuration: server, environment: ProcessInfo.processInfo.environment)
+          catalogs.append(try await runtime.register(mcp: source))
+        } catch {
+          await terminal.line("warning: MCP '\(server.id)' could not reconnect: \(error.localizedDescription)", to: .standardError)
+        }
+      }
+    }
+    await terminal.line("Reset all /set options to stock defaults. Voice is off; /voice on starts it with the defaults.")
+    return true
   }
 
   private static func handleSetCommand(
@@ -13864,7 +14023,7 @@ struct MaiCLI {
     themesDirectory: URL
   ) -> [String] {
     var values = [
-      "/help", "/help set", "/exit", "/quit", "/set tool.aproval yolo", "/set tool.aproval ask",
+      "/help", "/help set", "/help reset", "/reset", "/exit", "/quit", "/set tool.aproval yolo", "/set tool.aproval ask",
       "/help shell", "/help keys", "/help model",
       "/help history", "/history", "/history list", "/history search ", "/history del ",
       "/history clear", "/history path", "/history help",
@@ -13963,7 +14122,7 @@ struct MaiCLI {
       "/set ui.subagents stats", "/set ui.subagents none",
       "/agent use ",
       "/agent show ", "/agent add ", "/agent tools ", "/agent model ", "/agent prompt ",
-      "/agent provider ", "/agent del ", "/edit agent", "/tools", "/tools on", "/tools off",
+      "/agent provider ", "/agent del ", "/edit agent", "/tools", "/tools list", "/tools full", "/tools on", "/tools off",
       "/skills", "/skills list", "/skills show ", "/skills enable ", "/skills disable ",
       "/skills enable all", "/skills disable all", "/skills prompt ", "/skills path",
       "/skills reload", "/skills add ", "/skills edit ", "/skills del ",
@@ -14402,7 +14561,6 @@ struct MaiCLI {
     /agent                 Alias for /agents
     /agents                List or edit saved agents
     /attach [MODE] PATH    Attach a file; /attach clear removes attachments
-    /voice [MODE]         Voice agent: realtime or walkie-talkie; /voice help
     /btw PROMPT            Ask a side question in a fresh context
     /cd PATH               Change working directory
     /chat                  List, switch, fork, or edit chats
@@ -14438,6 +14596,7 @@ struct MaiCLI {
     /queue                 Manage messages waiting for an agent
     /remote                Serve, pair, or connect to remote hosts
     /reply [WIDTH]         Reply in $EDITOR with the last reply quoted
+    /reset                 Restore stock /set defaults after confirmation
     /set [SETTING VALUE]   Show or change settings
     /skills                Manage or send skills
     /stats                 Show model usage and performance
@@ -14446,11 +14605,12 @@ struct MaiCLI {
     /theme                 List, apply, or customize terminal themes
     /then [LINE]           Queue a prompt or command until all tasks finish; no args lists it
     /todo                  Show or edit the project's todo list
-    /tools                 List tool groups and tool emojis for this agent
+    /tools                 List tool groups for this agent; /tools full includes tools
     /unthen                Clear all pending /then actions
     /vdb                   Index or search local documentation and code
     /version               Print the pmai version
     /view SOURCE           Read-only split in buffer mode; /help view
+    /voice [MODE]          Voice agent: realtime or walkie-talkie; /voice help
     $NAME [TEXT]           Send a prompt or skill; /prompts lists names
     """
 
@@ -14630,6 +14790,7 @@ struct MaiCLI {
   private static let setHelp = """
     Settings commands:
       /set                         List current settings and their values
+      /reset                       Restore stock /set defaults after reset/cancel confirmation
       /set effort [LEVEL] [TEXT]   Show or set reasoning effort and optional guidance
       /set tool.aproval MODE       yolo, ask (default) for every tool, or smart model review; saved for this project
       /set debug <true|false>       Log model calls, tool activity, and run events for this project
@@ -14684,6 +14845,17 @@ struct MaiCLI {
     Debug entries append to the chosen file and may contain prompts and tool output.
     --tool-aproval MODE overrides approval for one run. Projects without a saved choice use approvals.mode from the
     active configuration. Agent, UI, and document export settings use the active configuration.
+    """
+
+  private static let resetHelp = """
+    /reset restores every /set option to its stock default: voice, UI, export,
+    use.*, airplane, redaction, the current agent's effort, limits, retry, context,
+    delegation and tool-calling settings, and this project's approval/debug settings.
+    Choose reset to apply, or cancel / Ctrl+C to keep your settings. Leaving the
+    prompt with another slash command also cancels. Active voice stops on reset;
+    /voice on starts it again with the stock settings.
+    Providers, credentials, chats, custom prompts, other agents, and tool selections
+    are preserved. Settings are saved and apply to the running agent's next call.
     """
 
   private static let chatHelp = """
@@ -15022,7 +15194,8 @@ struct MaiCLI {
   private static let toolHelp = """
     Tool selection commands:
       /tools on|off                  Switch all tools globally; keep individual settings
-      /tools list                    List groups and tool icons with exposure states and call counters
+      /tools [list]                  List groups with exposure states and call counters
+      /tools full                    List all groups and their tools with icons and counters
       /tools show GROUP|TOOL         Show effective states, counters, schemas, and settings
       /tools enable GROUP|TOOL       Enable using the current exposure default
       /tools direct GROUP|TOOL       Offer schemas directly

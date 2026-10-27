@@ -957,10 +957,15 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
       // Older versions stored a rules filename here. Only the fixed redact.txt
       // file is supported now; obsolete values must not prevent startup.
       redact: (try? container.decodeIfPresent(RedactionMode.self, forKey: .redact)) ?? .off)
+    // Refresh saved copies of the built-in voice prompt, preserving custom text.
+    if let previous = systemPrompt(named: "voice"), previous.text == VoicePrompt.previousInstructions {
+      setSystemPrompt(previous.name, text: VoicePrompt.instructions)
+    }
     // Earlier versions kept the speech prompt beside the audio settings.
     struct LegacyVoice: Decodable { var instructions: String? }
     if let text = try container.decodeIfPresent(LegacyVoice.self, forKey: .voice)?.instructions,
       text != VoicePrompt.instructions,
+      text != VoicePrompt.previousInstructions,
       let previous = systemPrompt(named: "voice"), previous.text == VoicePrompt.instructions
     {
       setSystemPrompt(previous.name, text: text)

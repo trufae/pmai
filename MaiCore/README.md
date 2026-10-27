@@ -1052,8 +1052,8 @@ still use explicit `options.additional` fields without frontend changes.
 
 Tools have three states: **direct** (their schema is listed), **proxy**
 (available through discovery), and **disabled** (unavailable). `/tools` lists
-plugin-defined groups and their tools with emoji icons, state totals and call counters; `/tools
-show GROUP|TOOL` says
+plugin-defined groups with state totals and call counters; `/tools full` also
+lists each group's tools with emoji icons. `/tools show GROUP|TOOL` says
 what the group is for and prints every tool with its description, how it is
 approved, and its parameters, then the group's settings — the same schema the
 model receives, readable. `/tools set GROUP OPTION VALUE` persists
@@ -1863,6 +1863,12 @@ settings and the last error, and indicates when saved settings differ. Explicit
 `/voice realtime` and `/voice walkie-talkie` restart in that mode for the session;
 `/set voice.mode MODE` sets the saved default. `/set voice.KEY` shows that setting's
 value and help. Invalid values are rejected before saving.
+
+Silence and empty recognition keep voice listening without submitting a turn.
+Native recognition timeouts restart capture automatically; pause, discard, or
+turn voice off to stop listening. The built-in voice prompt uses project and
+conversation context to interpret likely transcription errors, such as “comic”
+for “commit” or “rate me” for “README”, and asks when the intended action is unclear.
 
 | Setting | Value and use |
 | --- | --- |

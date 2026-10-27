@@ -18,6 +18,7 @@ enum REPLModalPrompt {
   case queue
   case limit(AgentRunInterruption, id: UUID)
   case chop(id: String)
+  case reset(id: UUID)
 
   static func approvalHelp(_ request: ApprovalRequest) -> String {
     request.tool.name == "files_path_access"
@@ -42,6 +43,8 @@ enum REPLModalPrompt {
       return TerminalPrompt(text: "limit [extend/stop/answer]> ", id: "limit-\(id)", choices: ["extend", "stop", "answer"])
     case .chop(let id):
       return TerminalPrompt(text: "chop [n/b/p/e/d/x/q]> ", id: "chop-\(id)", choices: ["n", "b", "p", "e", "d", "x", "q"])
+    case .reset(let id):
+      return TerminalPrompt(text: "reset [reset/cancel]> ", id: "reset-\(id)", choices: ["reset", "cancel"])
     }
   }
 
@@ -62,6 +65,8 @@ enum REPLModalPrompt {
       return "\(reason.summary). What should happen next?\nextend [N] renews the run budget (optionally with a new \(reason.settingKey)) · stop keeps the work so far · answer continues without tools"
     case .chop:
       return nil
+    case .reset:
+      return "Restore all /set options to stock defaults for the current agent, global settings, and this project's approval/debug settings?\nActive voice will stop. Providers, credentials, chats, prompts, and tool selections are kept.\nreset · cancel (Ctrl+C cancels)"
     }
   }
 
@@ -94,6 +99,8 @@ enum REPLModalPrompt {
       return "RUN LIMIT · choose below · Ctrl+C stops"
     case .chop:
       return "CHAT CHOP · n next · b previous · p pin/unpin · e edit · d delete · x chop after · q / Ctrl+C quit"
+    case .reset:
+      return "RESET SETTINGS · choose reset or cancel · Ctrl+C cancels"
     }
   }
 }

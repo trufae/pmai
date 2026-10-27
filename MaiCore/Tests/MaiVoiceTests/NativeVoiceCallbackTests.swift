@@ -57,6 +57,38 @@
       await fulfillment(of: [received], timeout: 2)
       request.endAudio()
     }
+
+    @MainActor func testNoSpeechEndsCaptureWithoutFailureButOtherErrorsRemainFailures() async throws {
+      for (domain, code, noSpeech) in [
+        ("kAFAssistantErrorDomain", 1110, true),
+        ("kAFAssistantErrorDomain", 1101, false),
+        ("fixture.other", 1110, false),
+      ] {
+        let input = NativeVoiceInput(settings: .init())
+        let received = expectation(description: "Recognition completion delivered")
+        let callback = input.recognitionCallback { event in
+          switch event {
+          case .ended:
+            XCTAssertTrue(noSpeech)
+            received.fulfill()
+          case .failure:
+            XCTAssertFalse(noSpeech)
+            received.fulfill()
+          default: break
+          }
+        }
+        await Task.detached {
+          callback(nil, NSError(domain: domain, code: code,
+            userInfo: [NSLocalizedDescriptionKey: "fixture recognition result"]))
+        }.value
+        await fulfillment(of: [received], timeout: 2)
+        if noSpeech {
+          let text = try await input.finish()
+          XCTAssertEqual(text, "")
+        }
+        input.stop()
+      }
+    }
   }
 #endif
 

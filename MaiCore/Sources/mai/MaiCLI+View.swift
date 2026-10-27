@@ -28,7 +28,7 @@ extension MaiCLI {
       return (.conversations, "agent conversations")
     case "tool", "tools":
       guard rest.isEmpty || tools.contains(rest) else {
-        throw JSONRPCError.invalidParams("Unknown tool '\(rest)'. /tools lists tool names.")
+        throw JSONRPCError.invalidParams("Unknown tool '\(rest)'. /tools full lists tool names.")
       }
       return (.tools(rest.isEmpty ? nil : rest), rest.isEmpty ? "tools" : "tool \(rest)")
     default: break
@@ -123,7 +123,7 @@ extension MaiCLI {
     The tools view follows ui.tools, including changes made while the view is open.
     Thinking/tools/iconlog views hide matching blocks in the conversation until the view closes
     or changes source. The thinking view also replaces the live thinking preview.
-    Iconlog always shows icons, independently of ui.tools. /tools lists their meanings.
+    Iconlog always shows icons, independently of ui.tools. /tools full lists their meanings.
     On very short terminals the view is hidden until there is room for both panes.
     Switching to classic mode closes the view.
     """

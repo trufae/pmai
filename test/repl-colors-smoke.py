@@ -225,7 +225,7 @@ def main():
             # of the skill description is indented. Pipes and NO_COLOR stay plain.
             for options in ({}, {'terminal': False}, {'extra_env': {'NO_COLOR': '1'}},
                             {'extra_env': {'TERM': 'dumb'}}):
-                output = run('/skills', '/tools', '/tools show files',
+                output = run('/skills', '/tools full', '/tools show files',
                              '/tools show files_read', **options)
                 plain = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', output).replace('\r', '')
                 for name, status in (('alpha', 'enabled'), ('beta', 'disabled'),

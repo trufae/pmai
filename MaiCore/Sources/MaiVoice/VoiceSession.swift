@@ -147,7 +147,11 @@ import MaiCore
         try Task.checkCancellation()
         guard generation == self.generation else { return }
         guard !text.isEmpty else {
-          fail(VoiceError.unavailable("No speech was recognized. Check voice.language and your microphone, then use /voice record to try again."))
+          // Silence and empty recognition are idle capture, not a failed turn.
+          // Pace restarts for backends that immediately return an empty result.
+          try await Task.sleep(for: .milliseconds(250))
+          guard generation == self.generation else { return }
+          record()
           return
         }
         transcript = text

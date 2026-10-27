@@ -163,8 +163,13 @@
       let generation = generation
       return { [weak self] result, error in
         let text = result?.bestTranscription.formattedString
-        let final = result?.isFinal ?? false
-        let failure = error?.localizedDescription
+        let recognitionError = error as NSError?
+        // An idle recognizer times out normally; finish this capture so the
+        // session can keep listening instead of treating silence as fatal.
+        let noSpeech = recognitionError?.domain == "kAFAssistantErrorDomain"
+          && recognitionError?.code == 1110
+        let final = (result?.isFinal ?? false) || noSpeech
+        let failure = noSpeech ? nil : error?.localizedDescription
         Task { @MainActor in
           guard let self, generation == self.generation else { return }
           if let text {

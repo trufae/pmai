@@ -16,6 +16,21 @@ func voicePromptCatalogDefaults() {
   #expect(configuration.systemPrompt(named: "voice")?.text == VoicePrompt.instructions)
 }
 
+@Test("Saved built-in voice prompts gain transcription guidance without replacing custom prompts")
+func voicePromptTranscriptionGuidanceMigration() throws {
+  for prompt in [VoicePrompt.previousInstructions, "Custom voice rules"] {
+    let data = try JSONSerialization.data(withJSONObject: [
+      "prompts": ["system": ["voice": prompt]],
+      "agents": [["id": "speaker", "provider": "hello", "model": "hello",
+                   "systemPrompt": "voice", "instructions": prompt]],
+    ])
+    let configuration = try JSONDecoder().decode(MaiConfiguration.self, from: data)
+    let expected = prompt == VoicePrompt.previousInstructions ? VoicePrompt.instructions : prompt
+    #expect(configuration.systemPrompt(named: "voice")?.text == expected)
+    #expect(configuration.agents[0].instructions == expected)
+  }
+}
+
 @Test("Legacy voice instructions migrate to the named prompt and round-trip")
 func voicePromptLegacyMigration() throws {
   let configuration = try JSONDecoder().decode(

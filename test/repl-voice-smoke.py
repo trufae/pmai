@@ -64,7 +64,7 @@ def main():
             capture = root / 'capture.py'
             capture.write_text('import sys,time,struct\nfor i in range(1000):\n sys.stdout.buffer.write(struct.pack("<h",5000 if i<3 else 0)*1600);sys.stdout.buffer.flush();time.sleep(.1)\n')
             transcription = root / 'transcribe.py'
-            transcription.write_text('import sys,wave,pathlib\nwith wave.open(sys.argv[1]) as w: assert w.getframerate()==16000 and w.getnframes()>0\nassert sys.argv[2]=="ca-ES"\np=pathlib.Path(sys.argv[3]);n=int(p.read_text())+1 if p.exists() else 1;p.write_text(str(n))\nprint("voice-one" if n==1 else "voice-two")\n')
+            transcription.write_text('import sys,wave,pathlib\nwith wave.open(sys.argv[1]) as w: assert w.getframerate()==16000 and w.getnframes()>0\nassert sys.argv[2]=="ca-ES"\np=pathlib.Path(sys.argv[3]);n=int(p.read_text())+1 if p.exists() else 1;p.write_text(str(n))\nprint("" if n==1 else "voice-one" if n==2 else "voice-two")\n')
             speech = root / 'speech.py'
             speech.write_text('import sys,pathlib\nwith pathlib.Path(sys.argv[1]).open("a") as f: f.write(sys.stdin.read()+"\\n");f.flush()\n')
             spoken = root / 'spoken.txt'
@@ -164,6 +164,15 @@ def main():
                 read_pty(master, output, .25)
                 os.write(master, b'\x14')  # Ctrl+T finalizes transcription and sends.
 
+                # Empty recognition keeps listening and preserves the typed draft.
+                wait('walkie-talkie · transcribing')
+                recovered = wait('walkie-talkie · listening')
+                assert ' · error · ' not in recovered, recovered
+                assert requests.empty(), 'Empty recognition started an agent turn'
+                assert (root / 'count').read_text() == '1'
+                read_pty(master, output, .25)
+                os.write(master, b'\x14')
+
                 first = request('voice-one', voice=True)
                 assert sum(str(m['content']).count('CUSTOM_VOICE_INSTRUCTIONS') for m in first['messages']) == 1, first
                 assert any(m['role'] == 'system' and 'VOICE_TASK_RULES' in str(m['content']) for m in first['messages']), first
@@ -204,6 +213,7 @@ def main():
                 send('/prompt del voice\n/prompts show voice\n')
                 wait("Restored built-in system prompt 'voice'.")
                 wait('You are the voice agent in a conversation')
+                wait('speech-to-text transcriptions')
                 send('/exit\n')
                 deadline = time.monotonic() + 10
                 while process.poll() is None:

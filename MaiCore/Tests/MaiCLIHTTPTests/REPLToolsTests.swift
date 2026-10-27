@@ -15,6 +15,8 @@ func replToolsCompleteCatalog() {
   let completions = Set(MaiCLI.completionCandidates(
     workspace: .init(), configuration: nil, availableProviders: [], toolGroups: groups,
     themesDirectory: FileManager.default.temporaryDirectory))
+  #expect(completions.contains("/tools list"))
+  #expect(completions.contains("/tools full"))
   for selector in ["agents", "chats", "custom", "mcp/custom"] {
     for action in ["show", "enable", "disable", "direct", "proxy", "hide", "inherit"] {
       #expect(completions.contains("/tools \(action) \(selector)"))

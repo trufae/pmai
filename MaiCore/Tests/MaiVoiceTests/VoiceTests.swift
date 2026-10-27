@@ -208,21 +208,54 @@ extension VoiceTests {
     XCTAssertEqual(input.finishes, 1)
   }
 
-  @MainActor func testEmptyTranscriptionReportsHowToRetry() async throws {
+  @MainActor func testEmptyCapturesKeepListeningUntilSpeechInEitherMode() async throws {
+    for mode in VoiceCaptureMode.allCases {
+      let input = TestInput()
+      input.text = "  "
+      let submitted = TestSubmissions()
+      var settings = ConfiguredVoice()
+      settings.mode = mode
+      let session = VoiceSession(settings: settings, input: input, output: TestOutput(),
+        changed: { _ in }, submit: { _, text in submitted.append(text) })
+      defer { session.stop() }
+      session.start()
+      try await waitFor { session.state == .listening }
+      for capture in 1...3 {
+        input.receive?(.ended)
+        try await waitFor { input.starts == capture + 1 && session.state == .listening }
+        XCTAssertTrue(submitted.texts.isEmpty)
+        XCTAssertNil(session.error)
+        XCTAssertTrue(session.canRecord)
+      }
+      input.text = "commit the README changes"
+      session.send()
+      try await waitFor { submitted.texts.count == 1 }
+      XCTAssertEqual(submitted.texts, [input.text])
+    }
+  }
+
+  @MainActor func testPauseAndStopCancelAnEmptyCaptureRestart() async throws {
     let input = TestInput()
-    input.text = "  "
+    input.text = ""
     let session = VoiceSession(settings: .init(), input: input, output: TestOutput(),
       changed: { _ in }, submit: { _, _ in XCTFail("Empty transcript submitted") })
     defer { session.stop() }
     session.start()
     try await waitFor { session.state == .listening }
     session.send()
-    try await waitFor { session.state == .error }
-    XCTAssertTrue(session.error?.contains("No speech was recognized") == true)
-    XCTAssertTrue(session.canRecord)
+    try await waitFor { input.finishes == 1 }
+    session.discard()
+    try await Task.sleep(for: .milliseconds(350))
+    XCTAssertEqual(session.state, .paused)
+    XCTAssertEqual(input.starts, 1)
     session.record()
     try await waitFor { session.state == .listening }
-    XCTAssertNil(session.error)
+    session.send()
+    try await waitFor { input.finishes == 2 }
+    session.stop()
+    try await Task.sleep(for: .milliseconds(350))
+    XCTAssertEqual(session.state, .off)
+    XCTAssertEqual(input.starts, 2)
   }
 
   func testLocalePreferenceSuffixIsNotUsedAsSpeechLanguage() {
