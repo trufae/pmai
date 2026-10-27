@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Check quiet/verbose chat logs and message editor aliases without a model server."""
 import json
+import os
 from pathlib import Path
 import shlex
+import subprocess
 import sys
 import tempfile
+import time
 
-from smoke import clean_environment, run_repl
+from smoke import clean_environment, expect_pty, read_pty, run_repl
 
 
 def main():
@@ -92,7 +95,10 @@ path.write_text('Edited in editor: ' + path.read_text())
                 assert text not in output, (text, output)
         for text in hidden + ['[structured content]', '## [3]', '## [5]', '## [6]']:
             assert text in verbose, (text, verbose)
-        assert '[3] Assistant:' in compact and '[reasoning] Hidden thought' in compact, compact
+        assert '[3] Assistant (id: thinking):' in compact and '[reasoning] Hidden thought' in compact, compact
+        for output in (quiet, explicit, verbose, compact):
+            for identifier in ('question', 'calls', 'answer'):
+                assert f'(id: {identifier})' in output, output
         for output in (invalid, extra):
             assert 'Usage: /chat log [quiet|verbose|short]' in output, output
         assert messages() == fixture, messages()
@@ -168,23 +174,30 @@ path.write_text('Edited in editor: ' + path.read_text())
             assert f'## [{index}] 📌 {role}' in listing, (index, listing)
         assert 'Total messages: 7' in short, short
         assert len(messages()) == len(fixture)
-        full_pins, short_pins = run(['/chat pins', '/chat pins short'])
+        full_pins, short_pins, pinlist = run(['/chat pins', '/chat pins short', '/chat pinlist'])
+        assert pinlist == short_pins, (pinlist, short_pins)
         for index, role in enumerate(('System', 'User', 'Assistant', 'Assistant', 'Tool', 'Tool', 'Assistant'), 1):
             assert f'## [{index}] 📌 {role}' in full_pins, (index, full_pins)
-            assert f'[{index}] 📌 {role}:' in short_pins, (index, short_pins)
+            expected = f'[{index}] 📌 {role} (id: {fixture[index - 1]["id"]}):'
+            assert expected in short_pins and expected in short, (index, short_pins, short)
+        run(['/chat pinlist > all-pins.txt'])
+        pin_rows = (root / 'all-pins.txt').read_text().splitlines()
+        assert len(pin_rows) == len(fixture), pin_rows
+        for row, original in zip(pin_rows, fixture):
+            assert f'(id: {original["id"]}):' in row, row
         for text in hidden:
             assert text in full_pins, (text, full_pins)
 
         for action in ('/chat pin 0', '/chat unpin 0', '/chat pin missing', '/chat pin 2 extra',
-                       '/chat pins invalid', '/chat pins short extra'):
+                       '/chat pins invalid', '/chat pins short extra', '/chat pinlist extra'):
             output = run([action])[0]
             assert 'Usage:' in output, (action, output)
             assert messages() == pinned
         output = run(['/chat unpin question'])[0]
         assert 'Unpinned message 2 ' in output, output
         assert not messages()[1].get('isPinned', False)
-        full_pins, short_pins = run(['/chat pins', '/chat pins short'])
-        for output in (full_pins, short_pins):
+        full_pins, short_pins, pinlist = run(['/chat pins', '/chat pins short', '/chat pinlist'])
+        for output in (full_pins, short_pins, pinlist):
             assert '[2]' not in output and '[3]' in output, output
         output = run(['/chat pin -6'])[0]
         assert '📌 Pinned message 2 ' in output, output
@@ -193,16 +206,17 @@ path.write_text('Edited in editor: ' + path.read_text())
         paragraphs[1]['content'][0] = part('text', '\r\nFirst line\r\ncontinued\r\n \r\nSECOND PARAGRAPH')
         reset(paragraphs)
         output = run(['/chat pin 2', '/chat log short'])[1]
-        assert '[2] 📌 User: First line continued' in output, output
+        assert '[2] 📌 User (id: question): First line continued' in output, output
         assert 'SECOND PARAGRAPH' not in output, output
         output = run(['/chat pins short'])[0]
-        assert '[2] 📌 User: First line continued' in output, output
+        assert '[2] 📌 User (id: question): First line continued' in output, output
         assert 'SECOND PARAGRAPH' not in output and '[1]' not in output, output
-        run(['/chat pins > pins.txt', '/chat pins short > pins-short.txt'])
+        run(['/chat pins > pins.txt', '/chat pins short > pins-short.txt', '/chat pinlist > pinlist.txt'])
         assert 'SECOND PARAGRAPH' in (root / 'pins.txt').read_text()
         assert 'SECOND PARAGRAPH' not in (root / 'pins-short.txt').read_text()
+        assert (root / 'pinlist.txt').read_text() == '[2] 📌 User (id: question): First line continued\n'
         run(['/chat log short > short.txt'])
-        assert '[2] 📌 User: First line continued' in (root / 'short.txt').read_text()
+        assert '[2] 📌 User (id: question): First line continued' in (root / 'short.txt').read_text()
 
         # Rewinding keeps the newest pin and drops everything newer; no pin is an error.
         reset()
@@ -229,7 +243,7 @@ path.write_text('Edited in editor: ' + path.read_text())
         assert 'Conversation cleared.' in output, output
         assert all(m['role'] == 'system' for m in messages()), messages()
         assert not any(m.get('isPinned', False) for m in messages())
-        for output in run(['/chat pins', '/chat pins short']):
+        for output in run(['/chat pins', '/chat pins short', '/chat pinlist']):
             assert 'No pinned messages.' in output, output
 
         reset([])
@@ -238,8 +252,87 @@ path.write_text('Edited in editor: ' + path.read_text())
         assert messages() == [], messages()
         for output in run(['/chat log', '/chat log verbose']):
             assert 'No conversation messages yet.' in output, output
+
+        if os.name != 'nt':
+            import fcntl
+            import pty
+            import struct
+            import termios
+
+            # Completion follows pin changes and chat switches on both surfaces,
+            # including an older pin outside the 64-message history window.
+            for mode in ('classic', 'buffer'):
+                reset([message(f'row-{index:03}', 'user', part('text', f'Row {index}'))
+                       | ({'isPinned': True} if index in (0, 70) else {})
+                       for index in range(80)])
+                settings = json.loads(config.read_text())
+                config.write_text(json.dumps(settings | {'ui': {'mode': mode}}))
+                master, slave = pty.openpty()
+                fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 120, 0, 0))
+                terminal_env = env | {'TERM': 'xterm-256color'}
+                terminal_env.pop('NO_COLOR', None)
+                process = subprocess.Popen(command, cwd=root, env=terminal_env,
+                                           stdin=slave, stdout=slave, stderr=slave)
+                os.close(slave)
+                output = bytearray()
+
+                def wait(text):
+                    return expect_pty(master, process, output, text, 15)
+
+                def send(text):
+                    os.write(master, text.encode())
+
+                try:
+                    wait('pmai> ')
+                    send('/chat unpin \t')
+                    wait('\x1b[97;44mrow-000\x1b[0m')
+                    send('\t')
+                    wait('\x1b[97;44mrow-070\x1b[0m')
+                    send('\t\r')
+                    wait('Unpinned message 1 (id: row-000).')
+                    wait('pmai> ')
+                    send('/chat unpin row-\t\r')
+                    wait('Unpinned message 71 (id: row-070).')
+                    wait('pmai> ')
+                    send('/chat pin row-050\r')
+                    wait('Pinned message 51 (id: row-050).')
+                    wait('pmai> ')
+                    send('/chat unpin \t\r')
+                    wait('Unpinned message 51 (id: row-050).')
+                    wait('pmai> ')
+                    send('/fork Pin child\r')
+                    wait('and switched to it.')
+                    wait('> ')
+                    send('/chat pin row-020\r')
+                    wait('Pinned message 21 (id: row-020).')
+                    wait('> ')
+                    send('/chat pinlist\r')
+                    wait('[21] 📌 User (id: row-020): Row 20')
+                    wait('> ')
+                    send('/chat unpin \t\r')
+                    wait('Unpinned message 21 (id: row-020).')
+                    wait('> ')
+                    send('/subagents main\r')
+                    wait('Messages go to this chat again.')
+                    wait('> ')
+                    send('/chat new Completion empty\r')
+                    wait('pmai> ')
+                    send('/chat unpin \t\r')
+                    wait('Usage: /chat unpin INDEX|MESSAGE_ID')
+                    wait('pmai> ')
+                    send('/exit\r')
+                    deadline = time.monotonic() + 15
+                    while process.poll() is None:
+                        assert time.monotonic() < deadline, output.decode(errors='replace')
+                        read_pty(master, output, .05)
+                    assert process.wait(timeout=5) == 0
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                        process.wait(timeout=5)
+                    os.close(master)
         print('PASS chat logs: quiet/verbose/short, first paragraphs, pins on all roles across repeated compaction, stable indexes, redirection, '
-              'rewind to the newest pin and its errors; editor aliases, inline text, attachment preservation, persistence and validation')
+              'pinlist, pinned ID completion, rewind to the newest pin and its errors; editor aliases, inline text, attachment preservation, persistence and validation')
 
 
 if __name__ == '__main__':

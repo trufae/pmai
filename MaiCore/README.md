@@ -210,7 +210,8 @@ Use `/chat messages` for a compact indexed history or `/chat log` for the
 conversation text and attachments. Logs are quiet by default: reasoning, tool
 calls, and tool outputs are hidden. `/chat log verbose` includes all of these,
 including structured MCP output; `/chat log quiet` explicitly selects the default.
-Message indexes retain their original positions even when messages are hidden.
+All log formats show message IDs. Message indexes retain their original positions
+even when messages are hidden.
 Message headers are bold in the theme's `fginfo` color, and text uses Markdown
 rendering when enabled. The current in-memory conversation can be changed at
 any point with `/chat edit INDEX [TEXT]` (opens the editor when TEXT is omitted,
@@ -796,12 +797,14 @@ text using your terminal's normal mouse selection. Saved conversations remain
 available separately through `/chat log` and the project's `.pmai/chats` files.
 
 `/chat log short` lists the first paragraph of every message with its original
-number; 📌 marks pinned messages. `/chat pin NUMBER` pins any message, including
+number and message ID; 📌 marks pinned messages. `/chat pin NUMBER` pins any message, including
 instructions and tool messages; negative numbers count from the end. A full
-message ID also works. `/chat pins` (or `/chat pin`) shows pinned messages in full;
+message ID also works. `/chat pins` shows pinned messages in full;
 `/chat pins short` lists their first paragraphs with the original message numbers.
+`/chat pinlist` lists each pinned message on one line with its ID and first paragraph.
 Inside `/chat chop`, `p` toggles the selected message's pin, and
-`/chat unpin NUMBER` removes a pin. Pins are saved with the conversation, survive compaction
+`/chat unpin NUMBER` removes a pin; press Tab after `/chat unpin ` to complete
+the available pinned message IDs. Pins are saved with the conversation, survive compaction
 and portable exports, and appear in PocketMai's pinned-message bar below the
 chat title. In PocketMai, use a message's **Pin Message** menu action; tap the bar
 to jump to it or use the bar's menu to choose another pin or unpin it. Global
