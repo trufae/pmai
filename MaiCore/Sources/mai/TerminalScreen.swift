@@ -45,6 +45,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var rows = 24
   private var columns = 80
   private var ui = ConfiguredTerminalUI()
+  private var voiceStatus: String?
   private var statusText = ""
   private var statusNeedsAttention = false
   /// The rotating tab-completion options that take over the status row, or
@@ -962,6 +963,25 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     }
   }
 
+  /// Voice gets a dedicated reserved row, preserving the editable text prompt.
+  func setVoiceStatus(_ text: String?) {
+    lock.withLock {
+      guard voiceStatus != text else { return }
+      refreshSize()
+      let previous = panelRows
+      voiceStatus = text
+      layoutPanel()
+      guard active else { return }
+      if previous.count != panelRows.count {
+        resizeRegion(inputRows: inputRows.count + previous.count,
+          to: inputRows.count + panelRows.count)
+        drawStatusRow()
+        drawInputRows()
+      } else { drawPanelRows() }
+      placeCaret()
+    }
+  }
+
   /// Emits an ANSI command without treating it as scrolling output.
   func emitControlSequence(_ sequence: String) {
     lock.withLock { write(sequence) }
@@ -1689,6 +1709,11 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   private func layoutPanel() {
+    defer {
+      if let voiceStatus, rows >= 4 {
+        panelRows.append(Self.truncated(voiceStatus, width: max(1, columns - 1)))
+      }
+    }
     if let questionText {
       panelRows = REPLModalPrompt.questionRows(
         questionText, width: max(1, columns - 1), height: max(0, min(rows / 2, rows - 3)))

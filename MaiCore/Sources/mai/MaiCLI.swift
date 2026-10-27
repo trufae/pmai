@@ -6,6 +6,7 @@ import MaiMCP
 import MaiMarkdown
 import MaiLocalProviders
 import MaiOpenAI
+import MaiVoice
 import MaiPluginHost
 import MaiStandardTools
 import MaiVisionOCR
@@ -1372,6 +1373,7 @@ struct MaiCLI {
         }
       }
       let plugins = PluginRegistry()
+      try await plugins.install(MaiVoicePlugin(), origin: "built-in")
       try await plugins.install(MaiCoreBuiltinsPlugin(), origin: "built-in")
       try await plugins.install(MaiMCPPlugin(), origin: "built-in")
       try await plugins.install(
@@ -2177,6 +2179,7 @@ struct MaiCLI {
     case chat
     case btw
     case conversation
+    case voice
   }
 
   /// One run in flight. A chat turn also remembers which chat it belongs to
@@ -2544,6 +2547,17 @@ struct MaiCLI {
     let progressClock = ContinuousClock()
     var nextSubagentSave = progressClock.now
     var loop = REPLLoop()
+    var voiceSession: VoiceSession?
+    var voiceID = UUID()
+    var voicePID: AgentPID?
+    var voiceChatID: UUID?
+    var voiceHistory: [AgentMessage] = []
+    var voiceContextCount = 0
+    var voiceResumeAfterCancel = false
+    editor.onVoiceControl = { continuation.yield(.voiceControl) }
+    for tool in VoiceAgentTools.tools(supervisor: runtime.supervisor) {
+      try? await runtime.register(tool: tool, replacingExisting: true)
+    }
     var activityWasInterrupted = false
     var visibleChatID = session.id
     var agentHistoryWindows: [AgentPID: ChatHistoryWindow] = [:]
@@ -2586,6 +2600,11 @@ struct MaiCLI {
     var messageViewHistory: (id: UUID, updatedAt: Date, messages: [AgentMessage])?
 
     func refreshConversation() async {
+      if voiceSession != nil, await runtime.internetAccessPolicy().isOffline,
+        configuration?.voice.input == "openai" || configuration?.voice.output == "openai" {
+        await stopVoice()
+      }
+      if voiceChatID != nil, voiceChatID != session.id { await stopVoice() }
       if visibleChatID != session.id {
         visibleChatID = session.id
         loop.focus = .main
@@ -3054,13 +3073,18 @@ struct MaiCLI {
           await output.attach(screen: screen)
         }
       }
-      if kind != .conversation { await output.resetResponse() }
+      if kind != .conversation && kind != .voice { await output.resetResponse() }
       let fileAccessLog = session.fileAccessLog
+      let voiceSink = pid == voicePID ? voiceSession : nil
+      await voiceSink?.beginReply()
       let task = Task {
         try await withTaskCancellationHandler {
           try await FileAccessLog.$current.withValue(fileAccessLog) {
             try await runtime.run(request, process: pid) { event in
               await output.consume(event)
+              if event.terminalContext.pid == pid {
+                await voiceSink?.consume(event)
+              }
             }
           }
         } onCancel: {
@@ -3076,7 +3100,7 @@ struct MaiCLI {
       )
       if kind == .btw {
         loop.btwTurns[pid] = turn
-      } else if kind == .conversation {
+      } else if kind == .conversation || kind == .voice {
         loop.conversationTurns[pid] = turn
         await runtime.supervisor.attach(task, to: pid)
       } else {
@@ -3356,6 +3380,10 @@ struct MaiCLI {
         }
         if pid == chatProcessIDs[session.id] {
           await deliver(text, to: .main)
+          return
+        }
+        if pid == voicePID, loop.conversationTurns[pid] == nil {
+          await startVoiceTurn(text)
           return
         }
         if info.depth > 0, info.state.isTerminal, loop.conversationTurns[pid] == nil {
@@ -3759,12 +3787,119 @@ struct MaiCLI {
       await saveWorkspace(&workspace, store: store, terminal: terminal)
     }
 
+    func stopVoice() async {
+      voiceID = UUID()
+      await voiceSession?.stop()
+      voiceSession = nil
+      if let pid = voicePID {
+        loop.conversationTurns[pid]?.task.cancel()
+        _ = await runtime.supervisor.stop(pid, reason: "Voice disabled")
+      }
+      voicePID = nil; voiceChatID = nil; voiceHistory = []; voiceResumeAfterCancel = false
+      screen?.setVoiceStatus(nil)
+    }
+
+    func startVoiceTurn(_ text: String) async {
+      guard voiceSession != nil, voiceChatID == session.id, let pid = voicePID else { return }
+      guard loop.conversationTurns[pid] == nil else {
+        await runtime.supervisor.post(.user(text), to: pid)
+        return
+      }
+      guard await loadSessionHistory() else { return }
+      var request = chatRequest()
+      if let parent = chatProcessIDs[session.id], loop.activeTurn?.pid == parent,
+        let snapshot = await runtime.conversationRequest(for: parent) { request.messages = snapshot.messages }
+      request.messages = AgentTranscriptEditor.answeringUnansweredToolCalls(
+        in: request.messages, reason: "voice snapshot while the text conversation continues")
+      do { request = try await runtime.taskRequest(.voice, from: request) }
+      catch {
+        await voiceSession?.finishReply(error: error.localizedDescription)
+        return
+      }
+      let settings = configuration?.voice ?? .init()
+      request.agentID = session.profile.agentID + ".voice"
+      request.stream = true; request.context = .cache; request.responseFormat = .text
+      request.toolNames.formUnion(VoiceAgentTools.names)
+      for name in VoiceAgentTools.names { request.toolPolicy.tools[name] = .direct }
+      request.messages.append(.system(settings.instructions + "\nVoice language: " + settings.language))
+      request.messages += voiceHistory
+      request.messages.append(contentsOf: await runtime.supervisor.drainInbox(pid))
+      request.messages.append(.user(text))
+      voiceContextCount = request.messages.count - voiceHistory.count - 1
+      await terminal.note("voice#\(pid.rawValue) you: \(text)")
+      await beginTurn(request, process: pid, kind: .voice)
+    }
+
+    func handleVoice(_ argument: String) async {
+      let command = argument.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+      if command == "help" {
+        await terminal.line(voiceHelp); return
+      }
+      if command == "off" || command == "stop" { await stopVoice(); return }
+      if command == "status" {
+        let state = await voiceSession?.state.rawValue ?? "off"
+        await terminal.line("Voice: \(state)\(voicePID.map { " · agent#\($0.rawValue)" } ?? "")")
+        return
+      }
+      if command == "pause" { await voiceSession?.pause(); return }
+      if command == "send" { await voiceSession?.send(); return }
+      if ["record", "resume"].contains(command), let voiceSession {
+        if let pid = voicePID, let turn = loop.conversationTurns[pid] {
+          voiceResumeAfterCancel = true
+          await voiceSession.pause()
+          turn.task.cancel()
+        } else { await voiceSession.record() }
+        return
+      }
+      guard ["", "on", "realtime", "walkie-talkie", "walkie", "ptt"].contains(command) else {
+        await terminal.line(voiceHelp); return
+      }
+      if command.isEmpty, voiceSession != nil { await stopVoice(); return }
+      await stopVoice()
+      guard await loadSessionHistory() else { return }
+      var settings = configuration?.voice ?? .init()
+      if command == "realtime" { settings.mode = .realtime }
+      if ["walkie-talkie", "walkie", "ptt"].contains(command) { settings.mode = .walkieTalkie }
+      do {
+        let inputFactory = try await plugins.voiceFactory(kind: settings.input)
+        let outputFactory = try await plugins.voiceFactory(kind: settings.output)
+        let config = configuration ?? .init()
+        let environment = ProcessInfo.processInfo.environment
+        let input = try await inputFactory.makeInput(settings: settings, configuration: config, environment: environment)
+        let output = try await outputFactory.makeOutput(settings: settings, configuration: config, environment: environment)
+        var request = try await runtime.taskRequest(.voice, from: chatRequest())
+        request.agentID = session.profile.agentID + ".voice"
+        let parent = await mainProcess()
+        guard let pid = await runtime.forkConversation(request, parent: parent, title: "Voice agent") else { return }
+        voicePID = pid; voiceChatID = session.id
+        let id = voiceID
+        voiceSession = await VoiceSession(settings: settings, input: input, output: output,
+          changed: { continuation.yield(.voiceStatus(id, $0)) },
+          submit: { continuation.yield(.voiceTranscript(id, $0)) })
+        await terminal.note("Voice agent#\(pid.rawValue) · \(settings.mode.rawValue). /voice send ends a recording; /voice pause or off stops capture. /subagents \(pid.rawValue) opens its text conversation.")
+        await voiceSession?.start()
+      } catch { await terminal.line("voice: \(error.localizedDescription)", to: .standardError) }
+    }
+
     await restoreSavedSubagents()
     reader.start()
     await releaseReader(workspace: workspace)
 
     func handleEvent(_ event: REPLEvent) async -> Bool {
       switch event {
+      case .voiceControl:
+        if let voiceSession {
+          if await voiceSession.state == .listening { await voiceSession.send() }
+          else { await handleVoice("record") }
+        }
+      case .voiceStatus(let id, let status):
+        guard id == voiceID else { return false }
+        screen?.setVoiceStatus(status)
+        if screen == nil, let status, !status.contains("listening") { await terminal.note(status) }
+      case .voiceTranscript(let id, let text):
+        guard id == voiceID else { return false }
+        if voiceChatID != session.id { await stopVoice() }
+        else { await startVoiceTurn(text) }
       case .historyPage(let earlier):
         if case .agent(let pid) = loop.focus, let window = agentHistoryWindows[pid] {
           let before =
@@ -4293,6 +4428,7 @@ struct MaiCLI {
             return false
           }
           if name == "/exit" || name == "/quit" {
+            await stopVoice()
             loop.beginExit()
             if loop.hasTurns { return false }
             return true
@@ -4396,6 +4532,11 @@ struct MaiCLI {
               message = await composeReply(argument, session: session, terminal: terminal)
             }
             if let message { await deliver(message, to: loop.focus) }
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
+          if name == "/voice" {
+            await handleVoice(argument)
             await releaseIfIdle(workspace: workspace)
             return false
           }
@@ -4713,6 +4854,7 @@ struct MaiCLI {
         await releaseIfIdle(workspace: workspace)
 
       case .endOfFile:
+        await stopVoice()
         loop.readerParked = true
         await closeChatChop()
         loop.beginExit()
@@ -4729,6 +4871,21 @@ struct MaiCLI {
           loop.activeTurn = nil
         } else {
           turn = loop.btwTurns.removeValue(forKey: pid) ?? loop.conversationTurns.removeValue(forKey: pid)
+        }
+        if pid == voicePID {
+          switch outcome {
+          case .success(let result):
+            voiceHistory = Array(result.transcript.dropFirst(voiceContextCount))
+            await voiceSession?.finishReply()
+          case .failure(let error):
+            voiceHistory = Array(await runtime.supervisor.transcript(pid).dropFirst(voiceContextCount))
+            if voiceResumeAfterCancel { await voiceSession?.finishReply() }
+            else { await voiceSession?.finishReply(error: error.localizedDescription) }
+          }
+          if voiceResumeAfterCancel {
+            voiceResumeAfterCancel = false
+            await voiceSession?.record()
+          }
         }
         let wasInterrupted = turn.map { interruptHandler.deactivate($0.interrupt) } ?? false
         if let remaining = loop.interruptTurn {
@@ -5011,6 +5168,7 @@ struct MaiCLI {
       await releaseIfIdle(workspace: workspace)
     }
 
+    await stopVoice()
     loop.beginExit()
     await remoteServer.stop()
     await ForwirohRemote.shared.close()
@@ -5428,6 +5586,27 @@ struct MaiCLI {
   /// Builds the throwaway context used by `/btw`: the active agent's system
   /// prompt plus this one question, with none of the chat's transcript or
   /// pending attachments.
+  private static let voiceHelp = """
+    /voice                  Toggle voice mode
+    /voice realtime         Listen; silence ends the turn (default)
+    /voice walkie-talkie    Record; /voice send ends each turn
+    /voice record|resume    Begin recording the next turn
+    /voice send             Finish recording and send (Ctrl+Space also toggles recording)
+    /voice pause            Mute capture and stop speech
+    /voice off              Stop voice and its agent
+    /voice status           Show state and voice agent PID
+    /model -voice SELECTOR  Choose the voice conversation agent/model
+    /set voice[.KEY VALUE]   Inspect or save MaiCore voice settings
+
+    MaiCore's voice settings select language, input/output plugin kinds (system,
+    command, openai), silenceSeconds, speechThreshold, voice and provider/models.
+    Native macOS uses on-device speech recognition and system voices. Linux uses
+    arecord for PCM capture and festival for system output. Command transcription
+    takes a WAV {audio} and {language}, printing text on stdout; speech programs
+    receive text on stdin, or in {text}. See MaiCore/README.md for configuration.
+    Text input remains available; /subagents PID opens the voice conversation.
+    """
+
   private static func btwRequest(_ text: String, profile: SessionProfile, sessionID: String)
     -> AgentRequest?
   {
@@ -5715,6 +5894,8 @@ struct MaiCLI {
         await terminal.line(aboutMessage)
       case "model", "/model":
         await terminal.markdown(modelHelp)
+      case "voice", "/voice":
+        await terminal.line(voiceHelp)
       case "models", "/models":
         await terminal.line(REPLModelListOptions.usage)
       case "keys", "/keys":
@@ -5870,6 +6051,8 @@ struct MaiCLI {
       } catch {
         await terminal.line("error: \(error.localizedDescription)", to: .standardError)
       }
+    case "/voice":
+      await terminal.line(voiceHelp)
     case "/btw":
       await handleBTWCommand(argument, session: session, runtime: runtime, terminal: terminal)
     case "/todo":
@@ -7934,6 +8117,7 @@ struct MaiCLI {
         case .approval: "Smart approval"
         case .btw: "Side questions"
         case .voiceover: "Voiceover"
+        case .voice: "Voice conversation"
         }
         rows.append([
           title,
@@ -7956,7 +8140,7 @@ struct MaiCLI {
     do {
       var chatDefinition: AgentDefinition?
       let message: String
-      if !chatOnly, ["-compact", "-tool", "-aproval", "-btw"].contains(first) {
+      if !chatOnly, ["-compact", "-tool", "-aproval", "-btw", "-voice"].contains(first) {
         guard words.count <= 2 else {
           await terminal.line("Usage: /model \(first) [AGENT|PROVIDER::MODEL|MODEL]")
           return
@@ -7965,6 +8149,7 @@ struct MaiCLI {
         case "-compact": .compact
         case "-tool": .tool
         case "-btw": .btw
+        case "-voice": .voice
         default: .approval
         }
         try draft.assignTask(
@@ -10363,6 +10548,39 @@ struct MaiCLI {
         providerValue, currentProvider: session.profile.provider,
         configuration: configuration, providerBaseURLs: providerBaseURLs, terminal: terminal
       )
+      return
+    }
+    let voiceKey = String(argument.prefix { !$0.isWhitespace && $0 != "=" })
+    if voiceKey.lowercased() == "voice" || voiceKey.lowercased().hasPrefix("voice.") {
+      do {
+        let settings = configuration?.voice ?? .init()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
+        if voiceKey.lowercased() == "voice" {
+          await terminal.line(String(decoding: try encoder.encode(settings), as: UTF8.self))
+          return
+        }
+        let requested = String(voiceKey.dropFirst(6))
+        guard let key = ConfiguredVoice.settingNames.first(where: { $0.lowercased() == requested.lowercased() }) else {
+          throw VoiceError.unavailable("Unknown voice setting. /set voice lists settings.")
+        }
+        var value = String(argument.dropFirst(voiceKey.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.hasPrefix("=") { value = String(value.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines) }
+        var object = try JSONDecoder().decode([String: JSONValue].self, from: encoder.encode(settings))
+        if value.isEmpty {
+          await terminal.line("voice.\(key) = \(String(decoding: try encoder.encode(object[key] ?? .null), as: UTF8.self))")
+          return
+        }
+        guard var draft = configuration, let configurationPath else {
+          throw VoiceError.unavailable("No writable configuration is active.")
+        }
+        object[key] = (try? JSONDecoder().decode(JSONValue.self, from: Data(value.utf8))) ?? .string(value)
+        draft.voice = try JSONDecoder().decode(ConfiguredVoice.self, from: encoder.encode(object))
+        try draft.voice.validate()
+        try draft.save(to: URL(fileURLWithPath: configurationPath))
+        configuration = draft
+        await terminal.line("Set voice.\(key). Restart /voice to apply audio settings.")
+      } catch { await terminal.line("voice: \(error.localizedDescription)", to: .standardError) }
       return
     }
     let parts: [String]
@@ -13480,6 +13698,11 @@ struct MaiCLI {
       "/set export.", "/set export.tools on", "/set export.tools off",
       "/set export.thinking on", "/set export.thinking off",
       "/fork", "/fork --empty", "/subagents", "/subagents main", "/subagents parent",
+      "/voice", "/voice on", "/voice off", "/voice realtime", "/voice walkie-talkie",
+      "/set voice", "/set voice.language ", "/set voice.input ", "/set voice.output ",
+      "/set voice.mode ", "/set voice.silenceSeconds ", "/set voice.provider ",
+      "/voice record", "/voice send", "/voice pause", "/voice resume", "/voice status", "/voice help",
+      "/model -voice ", "/help voice",
       "/subagents next", "/subagents prev", "/btw ", "/then ", "/unthen",
       "/help memory", "/help agents", "/help jobs", "/help ps", "/help chat", "/help edit", "/help tools",
       "/agent acp list", "/agent acp add ", "/agents acp list",
@@ -13996,6 +14219,7 @@ struct MaiCLI {
     /agent                 Alias for /agents
     /agents                List or edit saved agents
     /attach [MODE] PATH    Attach a file; /attach clear removes attachments
+    /voice [MODE]         Voice agent: realtime or walkie-talkie; /voice help
     /btw PROMPT            Ask a side question in a fresh context
     /cd PATH               Change working directory
     /chat                  List, switch, fork, or edit chats
@@ -14585,6 +14809,7 @@ struct MaiCLI {
       /model -compact [NAME]     Assign a compaction agent or model; omit to clear
       /model -aproval [NAME]     Assign a smart-approval agent or model; omit to clear
       /model -tool [NAME]        Assign a tool-decision agent or model; omit to clear
+      /model -voice [NAME]       Assign the voice conversation agent or model; omit to clear
       /model -btw [NAME]         Assign a side-question agent or model; omit to clear
       /agent add NAME MODEL GROUPS PROMPT [PROVIDER [BASE_URL]]
                                  GROUPS is a,b,c (see /tools) or -; PROMPT names a system

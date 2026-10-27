@@ -85,7 +85,7 @@ def main():
         assert 'Chat: another::other' in run(['/model'])
         print('PASS task agents: creation, model/effort, restart, reset, deletion, temporary and saved overrides')
 
-        run(['/model -compact cheap', '/model -tool cheap', '/model -aproval cheap', '/model -btw cheap'])
+        run(['/model -compact cheap', '/model -tool cheap', '/model -aproval cheap', '/model -btw cheap', '/model -voice cheap'])
         cheap = next(agent for agent in json.loads(config.read_text())['agents']
                      if agent['id'] == 'cheap')
         output = run(['/model hello::org/unified:latest', '/model'])
@@ -95,7 +95,7 @@ def main():
         agents = {agent['id']: agent for agent in saved['agents']}
         assert agents['main']['provider'] == 'hello'
         assert agents['main']['model'] == 'org/unified:latest'
-        assert set(saved['taskAgents']) == {'compact', 'tool', 'approval', 'btw', 'voiceover'}
+        assert set(saved['taskAgents']) == {'compact', 'tool', 'approval', 'btw', 'voiceover', 'voice'}
         for task, agent_id in saved['taskAgents'].items():
             agent = agents[agent_id]
             assert agent['provider'] == 'hello' and agent['model'] == 'org/unified:latest'

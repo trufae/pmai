@@ -24,6 +24,7 @@ public struct PluginCapability: RawRepresentable, Codable, Hashable, Sendable,
   public init(stringLiteral value: String) { self.init(value) }
   public var description: String { rawValue }
 
+  public static let voiceProvider: PluginCapability = "voice-provider"
   public static let chatProvider: PluginCapability = "chat-provider"
   public static let agentTool: PluginCapability = "agent-tool"
   public static let ocrProvider: PluginCapability = "ocr-provider"
@@ -395,6 +396,7 @@ public actor PluginRegistry {
     [ConfiguredProviderKind: Registered<any ConfiguredProviderFactory>] = [:]
   private var toolFactories: [String: Registered<any ConfiguredToolFactory>] = [:]
   private var ocrFactories: [String: Registered<any ConfiguredOCRProviderFactory>] = [:]
+  private var voiceFactories: [String: Registered<any ConfiguredVoiceProviderFactory>] = [:]
   private var mcpFactories: [String: Registered<any ConfiguredMCPToolSourceFactory>] = [:]
 
   public init() {}
@@ -467,6 +469,19 @@ public actor PluginRegistry {
     try register(
       mcpFactory, kind: mcpFactory.kind, capability: .mcpToolSource, owner: pluginID,
       into: &mcpFactories)
+  }
+
+  public func register(voiceFactory: any ConfiguredVoiceProviderFactory, from pluginID: PluginID) throws {
+    try requireInstallingPlugin(pluginID, capability: .voiceProvider)
+    try register(voiceFactory, kind: voiceFactory.kind, capability: .voiceProvider,
+      owner: pluginID, into: &voiceFactories)
+  }
+
+  public func voiceFactory(kind: String) throws -> any ConfiguredVoiceProviderFactory {
+    guard let factory = voiceFactories[kind] else {
+      throw PluginRegistryError.factoryNotRegistered(capability: .voiceProvider, kind: kind)
+    }
+    return factory.value
   }
 
   public func makeProvider(
@@ -564,6 +579,7 @@ public actor PluginRegistry {
   private func validateDeclaredCapabilities(for pluginID: PluginID) throws {
     guard let manifest = plugins[pluginID]?.manifest else { return }
     let capabilities: [PluginCapability?] = [
+      voiceFactories.values.contains { $0.owner == pluginID } ? PluginCapability.voiceProvider : nil,
       providerFactories.values.contains { $0.owner == pluginID }
         ? PluginCapability.chatProvider : nil,
       toolFactories.values.contains { $0.owner == pluginID } ? PluginCapability.agentTool : nil,
@@ -580,6 +596,7 @@ public actor PluginRegistry {
   }
 
   private func removeRegistrations(ownedBy pluginID: PluginID) {
+    voiceFactories = voiceFactories.filter { $0.value.owner != pluginID }
     providerFactories = providerFactories.filter { $0.value.owner != pluginID }
     toolFactories = toolFactories.filter { $0.value.owner != pluginID }
     ocrFactories = ocrFactories.filter { $0.value.owner != pluginID }

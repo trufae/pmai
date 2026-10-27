@@ -1785,3 +1785,103 @@ context limits, and voices, using bounded concurrent requests and deadlines. Opt
 failures leave the original model visible; unknown features do not match feature filters.
 Ollama speech uses `/v1/audio/speech` with WAV audio and model-specific `/api/show` voices,
 including the model's `default` voice when no voice catalog is supplied.
+
+### REPL voice conversations
+
+`/voice` toggles a separate voice agent while the text prompt stays available.
+`/voice realtime` sends each utterance after `voice.silenceSeconds` of silence;
+`/voice walkie-talkie` records until Ctrl+Space or `/voice send`. Ctrl+Space starts
+another recording, or interrupts the voice reply to let you speak. `/voice pause`
+mutes capture and playback; `/voice off` stops the voice agent. A dedicated status
+row shows recording, level, partial native transcription, thinking, speech, pause,
+and errors. Capture pauses during playback to avoid transcribing the speakers.
+This supports parallel text and voice conversations, with alternating microphone
+and speaker turns; acoustic echo cancellation and automatic spoken barge-in are
+not implemented.
+
+The voice process appears in `/subagents` and `/jobs`; `/subagents PID` opens its
+text conversation. Each voice turn sees the current text conversation plus its own
+prior exchanges. Its `voice_agents` tool can inspect complete transcripts of the
+text agent and sibling workers in the same conversation; `voice_message` queues
+user-requested tasks/corrections for them. Messages to idle agents stay queued
+until their next turn. Voice exchanges are saved with the conversation's subagents.
+Changing chats stops microphone capture. Normal tool approval and global tool
+settings apply to voice too.
+
+`/model -voice AGENT|PROVIDER::MODEL` selects conversational inference using
+`taskAgents.voice`; it inherits the current agent's tools and policy. The separate
+speech prompt is `voice.instructions`; the task agent may also have its own named
+system prompt. The defaults request brief plain speech, with no Markdown, URLs,
+or large exact numbers. The playback boundary additionally strips technical
+formatting, URLs and long numeric strings. Input transcripts remain verbatim.
+
+`/set voice` displays the shared MaiCore settings, and `/set voice.language ca-ES`
+(or any other `voice.KEY VALUE`) saves a change. Restart voice after changing its
+audio settings. Program settings accept a JSON object. They execute directly,
+without shell expansion. For example:
+
+```
+/set voice.input system
+/set voice.output system
+/set voice.language en-US
+/set voice.silenceSeconds 1.2
+/set voice.output command
+/set voice.speechCommand {"executable":"say","arguments":["-v","Samantha","{text}"]}
+```
+
+On macOS, `system` input uses Apple's on-device Speech recognizer with live
+partial transcripts, microphone energy detection and final recognition at the
+end of the utterance. Install the recognition language in macOS and grant
+Microphone and Speech Recognition access. `system` output uses native speech
+synthesis with `voice.language` and an optional voice identifier in `voice.voice`.
+SwiftPM embeds the required privacy descriptions in the CLI; custom executable
+packaging must preserve these. Native audio is registered by the `org.mai.voice`
+plugin, using MaiCore's `voice-provider` extension point. Other Swift plugins can
+register `ConfiguredVoiceProviderFactory` implementations for input and output.
+The native C plugin ABI does not yet expose voice factories.
+
+On Linux, use `command` input with a transcription program, or `openai` input.
+The default recorder is `arecord` (ALSA); it must emit signed 16-bit little-endian
+mono PCM at 16 kHz on stdout. `voice.captureCommand` can select another recorder
+with that output format, such as `sox` or `parec`. The same program capture backend
+is available on macOS, defaulting to `sox`. It detects silence from PCM, then sends
+the utterance as a WAV to the transcriber. These file-based backends display input
+levels during capture and return transcription after the utterance ends.
+
+A transcription command receives `{audio}` (a temporary WAV path) and `{language}`
+in arguments and must print only recognized text on stdout. For example, a
+whisper.cpp CLI build supporting text on stdout can be configured as:
+
+```json
+{
+  "voice": {
+    "language": "en",
+    "input": "command",
+    "output": "command",
+    "transcriptionCommand": {
+      "executable": "whisper-cli",
+      "arguments": ["-m", "/path/to/ggml-base.bin", "-f", "{audio}", "-l", "{language}", "-nt", "-np"]
+    },
+    "speechCommand": {"executable": "festival", "arguments": ["--tts"]}
+  }
+}
+```
+
+For Python Whisper or another CLI that writes transcript files, use a wrapper
+that prints that file's text to stdout. Speech programs receive sentence text on
+stdin unless an argument contains `{text}`; `{language}` and `{voice}` are also
+available. Configure language-specific Festival voices in the program or a wrapper.
+Programs must exit when finished; pause/off cancels owned processes. There is a
+configurable recording limit (60 seconds by default) and no microphone recording
+is retained on disk after transcription.
+
+For an OpenAI-compatible audio service, set `voice.input` and/or `voice.output`
+to `openai`, `voice.provider` to an existing configured provider ID, and
+`voice.transcriptionModel`, `voice.speechModel`, and `voice.voice` as appropriate.
+The service uses the provider's base URL, credentials, custom headers, and timeout;
+airplane mode disables remote voice. Remote input uses the program recorder above.
+Remote output requests WAV audio separately for each completed sentence and plays
+it immediately, while the conversation model continues generating. Playback uses
+`afplay` on macOS or `aplay` on Linux; override `voice.playbackCommand` with an
+`{audio}` argument for another player. Speech is queued in order, and never waits
+for the entire conversational response before beginning the first sentence.

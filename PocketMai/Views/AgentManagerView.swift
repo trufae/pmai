@@ -211,6 +211,7 @@ struct AgentManagerView: View {
     case .approval: "Tool approval"
     case .btw: "Side questions"
     case .voiceover: "Voiceover"
+    case .voice: "Voice conversation"
     }
   }
 

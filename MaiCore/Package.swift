@@ -5,12 +5,12 @@ import Foundation
 // The core profile omits executable and platform dependency graphs entirely;
 // --filter only selects tests after SwiftPM has built every test target.
 let testProfile = Context.environment["PMAI_TEST_PROFILE"]
-let focusedTests = ["core", "chat", "documents"].contains(testProfile ?? "")
+let focusedTests = ["core", "chat", "documents", "voice"].contains(testProfile ?? "")
 let xmlPackage = Package.Dependency.package(
   url: "https://github.com/compnerd/xylem", revision: "9881c95ce3a139f4ccfa584676201516c2a5751d")
 let cliDependencies: [Target.Dependency] = [
   "MaiCore", "MaiMCP", "MaiOpenAI", "MaiPluginHost", "MaiStandardTools", "MaiVisionOCR",
-  "CMaiTerminal",
+  "CMaiTerminal", "MaiVoice",
   "MaiDocuments", "MaiMarkdown", "MaiACP", "MaiACPGateway", "MaiLocalProviders",
   .product(name: "Crypto", package: "swift-crypto"),
 ]
@@ -75,6 +75,7 @@ let package = Package(
   ],
   products: [
     .library(name: "MaiCore", targets: ["MaiCore"]),
+    .library(name: "MaiVoice", targets: ["MaiVoice"]),
     .library(name: "MaiOpenAI", targets: ["MaiOpenAI"]),
     .library(name: "MaiLocalProviders", targets: ["MaiLocalProviders"]),
     .library(name: "MaiChat", targets: ["MaiChat"]),
@@ -93,6 +94,7 @@ let package = Package(
   targets: [
     .target(name: "CMaiTerminal"),
     .target(name: "MaiCore"),
+    .target(name: "MaiVoice", dependencies: ["MaiCore", "MaiOpenAI"]),
     .target(name: "MaiMarkdown"),
     .target(name: "MaiOpenAI", dependencies: [
       "MaiCore", .product(name: "Crypto", package: "swift-crypto"),
@@ -140,11 +142,16 @@ let package = Package(
       name: "MaiCLI",
       dependencies: cliDependencies,
       path: "Sources/mai",
+      exclude: ["VoiceInfo.plist"],
       linkerSettings: [
+        .unsafeFlags(["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist",
+          "-Xlinker", URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("Sources/mai/VoiceInfo.plist").path], .when(platforms: [.macOS])),
         .linkedLibrary("ssl", .when(platforms: [.android])),
         .linkedLibrary("crypto", .when(platforms: [.android])),
         .linkedLibrary("z", .when(platforms: [.android])),
       ]),
+    .testTarget(name: "MaiVoiceTests", dependencies: ["MaiVoice", "MaiCore"]),
     .testTarget(
       name: "MaiChatTests",
       dependencies: ["MaiChat", "MaiCore"]),
@@ -167,6 +174,7 @@ let package = Package(
 
 if focusedTests {
   let names = testProfile == "core" ? ["MaiCore", "MaiCoreTests", "MaiTestSupport"]
+    : testProfile == "voice" ? ["MaiCore", "MaiVoice", "MaiOpenAI", "MaiVoiceTests"]
     : testProfile == "documents" ? ["MaiCore", "MaiMarkdown", "MaiDocuments", "MaiDocumentsTests"]
     : ["MaiCore", "MaiOpenAI", "MaiChat", "MaiChatTests"]
   package.products = package.products.filter { names.contains($0.name) }

@@ -254,6 +254,7 @@ final class TerminalLineEditor {
   private var activePrompt = TerminalPrompt(text: "")
   private var tracksPromptUpdates = false
   private var continuationPrompt: String?
+  var onVoiceControl: (@Sendable () -> Void)?
   var onAgentSwitch: (@Sendable (REPLAgentSwitch) -> Void)?
   private var conversationDrafts: [String: (bytes: [UInt8], cursor: Int, pasted: IndexSet)] = [:]
   /// A surface that owns the tty for the whole session. While one is
@@ -578,6 +579,8 @@ final class TerminalLineEditor {
         redraw(prompt: prompt, bytes: bytes, cursor: cursor)
       case .byte(let byte):
         switch byte {
+        case 0:  // Ctrl+Space toggles voice capture without submitting the text draft.
+          if tracksPromptUpdates, !activePrompt.isModal { onVoiceControl?() }
         case 1:  // Ctrl+A: start of the line
           cursor = lineStart(in: bytes, at: cursor)
           redraw(prompt: prompt, bytes: bytes, cursor: cursor)
@@ -856,6 +859,7 @@ final class TerminalLineEditor {
       return .switchAgent(.slot(code - 48))
     }
     if held == 4 {
+      if code == 32 { return .byte(0) }
       if code == 57350 { return .switchAgent(.previous) }
       if code == 57351 || code == 9 { return .switchAgent(.next) }
     }

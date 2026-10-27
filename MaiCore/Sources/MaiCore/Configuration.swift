@@ -856,6 +856,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
   public var version: Int
   public var defaultAgent: String?
   public var taskAgents: TaskAgentAssignments
+  public var voice: ConfiguredVoice
   public var plugins: [ConfiguredPlugin]
   public var providers: [ConfiguredProvider]
   public var toolSources: [ConfiguredToolSource]
@@ -877,6 +878,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
     version: Int = 1,
     defaultAgent: String? = nil,
     taskAgents: TaskAgentAssignments = .init(),
+    voice: ConfiguredVoice = .init(),
     plugins: [ConfiguredPlugin] = [],
     providers: [ConfiguredProvider] = [],
     toolSources: [ConfiguredToolSource] = [],
@@ -897,6 +899,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
     self.version = version
     self.defaultAgent = defaultAgent
     self.taskAgents = taskAgents
+    self.voice = voice
     self.plugins = plugins
     self.providers = providers
     self.toolSources = toolSources
@@ -916,7 +919,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
   }
 
   private enum CodingKeys: String, CodingKey {
-    case version, defaultAgent, taskAgents, plugins, providers, toolSources, ocrProviders,
+    case version, defaultAgent, taskAgents, voice, plugins, providers, toolSources, ocrProviders,
       mcpServers, agents,
       prompts, memory, ui,
       approvals, fileAccess, use, documentExport, airplane, redact, toolsEnabled
@@ -929,6 +932,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
       defaultAgent: try container.decodeIfPresent(String.self, forKey: .defaultAgent),
       taskAgents: try container.decodeIfPresent(TaskAgentAssignments.self, forKey: .taskAgents)
         ?? .init(),
+      voice: try container.decodeIfPresent(ConfiguredVoice.self, forKey: .voice) ?? .init(),
       plugins: try container.decodeIfPresent([ConfiguredPlugin].self, forKey: .plugins) ?? [],
       providers: try container.decodeIfPresent([ConfiguredProvider].self, forKey: .providers) ?? [],
       toolSources: try container.decodeIfPresent([ConfiguredToolSource].self, forKey: .toolSources)
@@ -1001,6 +1005,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
   }
 
   public func validate() throws {
+    try voice.validate()
     guard version == 1 else { throw MaiConfigurationError.unsupportedVersion(version) }
     if let smart = prompts?.smart,
       let missing = AgentCompactionPrompt.missingPlaceholder(in: smart)
