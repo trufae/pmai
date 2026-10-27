@@ -5199,8 +5199,8 @@ struct MaiCLI {
         !loop.conversationTurns.values.contains(where: { $0.redirection === redirection }),
         loop.pendingQueueRedirection !== redirection || exits
       {
-        _ = await runForeground("redirection", resumeInput: false) {
-          await redirection.finish(terminal: terminal)
+        _ = await runForeground("redirection", resumeInput: false) { [inputGate = editor.inputGate] in
+          await redirection.finish(terminal: terminal, inputGate: inputGate)
         }
       }
       return exits

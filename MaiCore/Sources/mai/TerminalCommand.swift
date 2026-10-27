@@ -15,8 +15,11 @@ import Foundation
 /// their own controlling PTY; direct handoffs share pmai's foreground job.
 /// Both observe stops and clear the worker thread's blocked signals.
 enum TerminalCommand {
+  enum BufferHandoff { case afterDelay, terminalControl }
+
   static func run(
-    _ command: String, suspendTerminal: Bool = true, retainOutput: Bool = false
+    _ command: String, suspendTerminal: Bool = true, retainOutput: Bool = false,
+    bufferHandoff: BufferHandoff = .afterDelay
   ) throws -> Int32 {
     var result: Result<Int32, Error> = .success(0)
     var output = ""
@@ -24,7 +27,7 @@ enum TerminalCommand {
     let capturesOutput = retainOutput && screen?.isBufferMode == true
     #if !os(Windows)
       if capturesOutput, suspendTerminal, let screen {
-        return try runBuffered(command, screen: screen)
+        return try runBuffered(command, screen: screen, policy: bufferHandoff)
       }
     #endif
     let launch = {
@@ -51,9 +54,13 @@ enum TerminalCommand {
   }
 
   #if !os(Windows)
-    /// Keep quick commands on the current screen. A program that is still
-    /// running after the grace period gets the normal interactive handoff.
-    private static func runBuffered(_ command: String, screen: TerminalScreen) throws -> Int32 {
+    /// Shell commands may use a short grace period. Pipe filters only hand off
+    /// when they change terminal modes or enter an alternate screen, not because
+    /// producing their output takes longer than a fixed timeout.
+    private static func runBuffered(
+      _ command: String, screen: TerminalScreen,
+      policy: BufferHandoff
+    ) throws -> Int32 {
       var output = ""
       defer {
         if !output.isEmpty {
@@ -67,17 +74,26 @@ enum TerminalCommand {
           defer { output = capture.finish() }
           return try launch(command, capture: capture) { child in
             let deadline = ProcessInfo.processInfo.systemUptime + 0.15
-            repeat {
+            while true {
               var status: Int32 = 0
-              let waited = waitpid(child, &status, WNOHANG)
-              if waited == child { return status }
+              let waited = waitpid(child, &status, WNOHANG | WUNTRACED)
+              if waited == child {
+                if status & 0xff != 0x7f { return status }
+                handoff()
+                capture.beginForwarding()
+                capture.resumeAfterStop(child)
+                return nil
+              }
               if waited == -1 && errno != EINTR { throw posixError(errno) }
+              let timedOut =
+                policy == .afterDelay && ProcessInfo.processInfo.systemUptime >= deadline
+              if timedOut || policy == .terminalControl && capture.requestsTerminalControl {
+                handoff()
+                capture.beginForwarding()
+                return nil
+              }
               Thread.sleep(forTimeInterval: 0.005)
-            } while ProcessInfo.processInfo.systemUptime < deadline
-
-            handoff()
-            capture.beginForwarding()
-            return nil
+            }
           }
         }
       })
@@ -192,11 +208,7 @@ enum TerminalCommand {
         // explicit resume after fg. Target this worker with raise so it
         // cannot resume the child before the process has actually stopped.
         if let capture {
-          capture.pauseInput()
-          _ = tcsetattr(STDIN_FILENO, TCSADRAIN, &cooked)
-          _ = raise(SIGSTOP)
-          capture.resumeInput()
-          _ = kill(-child, SIGCONT)
+          capture.resumeAfterStop(child)
         } else {
           _ = kill(-getpgrp(), SIGSTOP)
         }
@@ -317,6 +329,29 @@ enum TerminalCommand {
         lock.withLock { forwardInput = false }
       }
 
+      func resumeAfterStop(_ child: Int32) {
+        pauseInput()
+        _ = tcsetattr(STDIN_FILENO, TCSADRAIN, &cooked)
+        _ = raise(SIGSTOP)
+        resumeInput()
+        _ = kill(-child, SIGCONT)
+      }
+
+      var requestsTerminalControl: Bool {
+        var attributes = termios()
+        if tcgetattr(slave, &attributes) == 0,
+          (attributes.c_lflag ^ cooked.c_lflag) & tcflag_t(ICANON | ECHO | ISIG) != 0
+        {
+          return true
+        }
+        return lock.withLock { Self.usesAlternateScreen(String(decoding: bytes, as: UTF8.self)) }
+      }
+
+      private static func usesAlternateScreen(_ output: String) -> Bool {
+        let pattern = #"\x1B\[\?(?:[0-9]+;)*(?:47|1047|1049)(?:;[0-9]+)*h"#
+        return output.range(of: pattern, options: .regularExpression) != nil
+      }
+
       func beginForwarding() {
         lock.withLock {
           FileHandle.standardOutput.write(bytes)
@@ -332,8 +367,7 @@ enum TerminalCommand {
         close(master)
         // Full-screen applications paint frames that do not belong in the transcript.
         let output = String(decoding: bytes, as: UTF8.self)
-        let alternateScreen = #"\x1B\[\?(?:[0-9]+;)*(?:47|1047|1049)(?:;[0-9]+)*h"#
-        return output.range(of: alternateScreen, options: .regularExpression) == nil ? output : ""
+        return Self.usesAlternateScreen(output) ? "" : output
       }
     #endif
   }

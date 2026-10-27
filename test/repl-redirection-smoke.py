@@ -34,6 +34,7 @@ def main():
             'agents': [{'id': 'main', 'provider': 'offline', 'model': 'hello',
                         'toolGroupNames': []}],
             'memory': {'enabled': False}, 'use': {'plan': False, 'agentsmd': 'off'},
+            'ui': {'mode': 'classic'},
         }))
         command = [binary, '--config', str(config), '--home', str(root / 'home'),
                    '--no-stream', '--no-markdown']

@@ -189,7 +189,27 @@ final class REPLRedirection: @unchecked Sendable {
     process.terminate()
   }
 
-  func finish(terminal: TerminalWriter) async {
+  /// Park the editor without pre-emptively releasing the buffer. The filter's
+  /// actual terminal use decides whether a pager needs the full-screen handoff.
+  private static func runFilter(_ command: String, inputGate: TerminalInputGate?) async throws
+    -> Int32
+  {
+    try await withCheckedThrowingContinuation { reply in
+      DispatchQueue.global(qos: .userInitiated).async {
+        do {
+          var status: Int32 = 0
+          let run = {
+            status = try TerminalCommand.run(
+              command, retainOutput: true, bufferHandoff: .terminalControl)
+          }
+          if let inputGate { try inputGate.withSuspendedInput(run) } else { try run() }
+          reply.resume(returning: status)
+        } catch { reply.resume(throwing: error) }
+      }
+    }
+  }
+
+  func finish(terminal: TerminalWriter, inputGate: TerminalInputGate? = nil) async {
     let didClose = lock.withLock {
       guard !closed else { return false }
       closed = true
@@ -201,10 +221,8 @@ final class REPLRedirection: @unchecked Sendable {
       defer { try? FileManager.default.removeItem(at: url) }
       let quoted = "'" + url.path.replacingOccurrences(of: "'", with: "'\"'\"'") + "'"
       do {
-        try await MaiRunTerminalHost.shared.run {
-          let status = try TerminalCommand.run("(\(command)) < \(quoted)", suspendTerminal: false)
-          if status != 0 { throw REPLRedirectError("pipe exited with status \(status >> 8)") }
-        }
+        let status = try await Self.runFilter("(\(command)) < \(quoted)", inputGate: inputGate)
+        if status != 0 { throw REPLRedirectError("pipe exited with status \(status >> 8)") }
       } catch {
         await terminal.note("redirection: \(error.localizedDescription)", tone: .error)
       }

@@ -30,6 +30,7 @@ def main():
             'agents': [{'id': 'smoke', 'provider': 'offline', 'model': 'hello',
                         'toolGroupNames': [], 'enabled': True}],
             'memory': {'enabled': False, 'scope': 'project'},
+            'ui': {'mode': 'classic'},
             'use': {'plan': False},
         }))
         editor = root / 'editor.py'
@@ -387,6 +388,17 @@ elif action == 'fail':
                 send(b'\x03')
                 wait_for('killed by signal 2')
                 print(f'PASS: {mode} shell stop/resume and interrupt', flush=True)
+            # A pipe may stop before requesting raw mode or a full-screen
+            # display. Its buffered wait must still allow the shell to run fg.
+            send(b'/version | kill -STOP 0; cat; echo PIPE_RESUMED\r')
+            wait_for('Stopped')
+            wait_for('SHELL_READY> ')
+            assert termios.tcgetattr(master) == cooked
+            send(b'fg\n')
+            wait_for('PIPE_RESUMED\r\n')
+            wait_for_foreground()
+            wait_for(PROMPT)
+            print('PASS: buffered slash-command pipe stop/resume', flush=True)
             if shutil.which('vim'):
                 ready = root / 'shell-vim-ready'
                 send((f'!vim -Nu NONE -n -i NONE -c "call writefile([\'ready\'], '
@@ -423,6 +435,11 @@ elif action == 'fail':
                 send(b'/provider\r')
                 wait_for('Current provider: other')
                 print('PASS: buffer shell pipeline gives less a controlling tty and returns stdin to the REPL')
+                send(b'/version | less\r')
+                wait_for('(END)')
+                send(b'q')
+                wait_for(PROMPT)
+                print('PASS: buffered slash-command pipe hands off to less', flush=True)
             send(b'/set ui.mode classic\r')
             wait_for('Set ui.mode = classic')
             send(b'/set ui.editor command-that-does-not-exist-pmai\r')

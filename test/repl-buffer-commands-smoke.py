@@ -91,6 +91,27 @@ def main(binary):
                 send('/set effort\r')
                 barrier('effort')
                 assert 'effort = low' in output(), (count, output())
+                if count == 8:
+                    # Terminal filters are retained, including slow ones; elapsed
+                    # time alone must not switch to an interactive screen.
+                    start = len(captured)
+                    send('/set | grep "^effort =" | sed "s/^/PIPE_FILTER: /"\r')
+                    wait('PIPE_FILTER: effort = low')
+                    barrier('pipe-filter')
+                    assert 'PIPE_FILTER: effort = low' in output(), output()
+                    send('/version | sh -c \'sleep 0.3; printf "SLOW\\137FILTER\\137RESULT: "; cat\'\r')
+                    wait('SLOW_FILTER_RESULT: ')
+                    barrier('slow-pipe-filter')
+                    assert 'SLOW_FILTER_RESULT: ' in output(), output()
+                    send('/version | sh -c \'cat >/dev/null; printf "PIPE_STDERR\\n" >&2; exit 7\'\r')
+                    wait('pipe exited with status 7')
+                    barrier('failed-pipe-filter')
+                    assert 'PIPE_STDERR' in output() and 'pipe exited with status 7' in output(), output()
+                    assert b'\x1b[?1049l' not in captured[start:], captured[start:]
+                    assert b'\x1b[?1049h' not in captured[start:], captured[start:]
+                    send('\x0c')
+                    read()
+                    assert 'SLOW_FILTER_RESULT: ' in output() and 'PIPE_STDERR' in output(), output()
                 if count > 64:
                     # Loading full context for a command must not move the
                     # displayed page or corrupt subsequent history navigation.
