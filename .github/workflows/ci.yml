@@ -73,7 +73,7 @@ jobs:
       - name: Build debug CLI
         run: |
           args=(--package-path MaiCore --disable-index-store --disable-prefetching)
-          if [ "$RUNNER_OS" = Linux ]; then args+=(--build-system native --jobs 2); fi
+          if [ "$RUNNER_OS" = Linux ]; then args+=(--build-system native --jobs 2 -Xswiftc -disable-batch-mode); fi
           swift build "${args[@]}" --product pmai
           cp "$(swift build "${args[@]}" --show-bin-path)/pmai" pmai
 
@@ -149,7 +149,7 @@ jobs:
         run: |
           # Swift Build also needs static modules while compiling so Foundation
           # emits its CoreFoundation and networking autolink dependencies.
-          args=(--package-path MaiCore --disable-prefetching --build-system native --jobs 2 --static-swift-stdlib -Xswiftc -static-stdlib)
+          args=(--package-path MaiCore --disable-prefetching --build-system native --jobs 2 -Xswiftc -disable-batch-mode --static-swift-stdlib -Xswiftc -static-stdlib)
           swift build "${args[@]}" --disable-index-store --product pmai
           cp "$(swift build "${args[@]}" --show-bin-path)/pmai" pmai
 
@@ -211,7 +211,7 @@ jobs:
       # Keep one optimized build to exercise the SDK/runtime without AVX.
       - name: Build fully static CLI
         run: |
-          args=(--package-path MaiCore --disable-prefetching --build-system native --jobs 2 --swift-sdk ${{ matrix.arch }}-swift-linux-musl ${{ matrix.build-args }})
+          args=(--package-path MaiCore --disable-prefetching --build-system native --jobs 2 -Xswiftc -disable-batch-mode --swift-sdk ${{ matrix.arch }}-swift-linux-musl ${{ matrix.build-args }})
           swift build "${args[@]}" --disable-index-store --product pmai
           cp "$(swift build "${args[@]}" --show-bin-path)/pmai" pmai
 
