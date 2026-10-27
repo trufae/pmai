@@ -87,6 +87,7 @@ def main():
                                 'limits': {'maxSubagents': 1, 'maxSubagentDepth': max_depth}}],
                     'approvals': {'mode': 'yolo'},
                     'memory': {'enabled': False}, 'use': {'plan': False},
+                    'ui': {'mode': 'classic'},
                 }))
                 master, slave = pty.openpty()
                 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 220, 0, 0))
