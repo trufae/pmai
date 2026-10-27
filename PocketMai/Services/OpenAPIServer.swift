@@ -49,6 +49,7 @@ struct OpenAPIServerHTTPResponse: Sendable {
   var headers: [String: String]
   var body: Data
   var stream: AsyncThrowingStream<Data, Error>? = nil
+  var onCancel: (@Sendable () -> Void)? = nil
 
   static func json(
     _ object: Any,
@@ -339,6 +340,7 @@ private final class OpenAPIServerConnection: @unchecked Sendable {
   }
 
   private func send(_ response: OpenAPIServerHTTPResponse) async {
+    defer { response.onCancel?() }
     do {
       try await sendPart(response.serialized(chunked: supportsChunked))
       if let stream = response.stream {
@@ -558,4 +560,130 @@ struct OpenAPIServerOpenAIChatRequest: Decodable, Sendable {
   var model: String?
   var messages: [OpenAPIServerInboundMessage]
   var stream: Bool?
+}
+
+@MainActor
+struct OpenAPIServerCompletionStream {
+  enum Format {
+    case openAI, ollamaChat, ollamaGenerate
+  }
+
+  let format: Format
+  let model: String
+  private let id = "chatcmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+  private let created = Int(Date().timeIntervalSince1970)
+  private var sent = ""
+
+  init(format: Format, model: String) {
+    self.format = format
+    self.model = model
+  }
+
+  static func response(
+    format: Format, model: String,
+    operation: @escaping @MainActor (@escaping @MainActor (String) -> Void) async throws
+      -> OpenAPIServerCompletionOutput
+  ) -> OpenAPIServerHTTPResponse {
+    let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
+    let task = Task { @MainActor in
+      var encoder = Self(format: format, model: model)
+      do {
+        let output = try await operation { text in
+          if let chunk = encoder.update(text) { continuation.yield(chunk) }
+        }
+        try Task.checkCancellation()
+        if let chunk = encoder.update(output.text) { continuation.yield(chunk) }
+        continuation.yield(encoder.finish(output))
+        continuation.finish()
+      } catch is CancellationError {
+        continuation.finish(throwing: CancellationError())
+      } catch {
+        continuation.yield(encoder.frame(["error": error.localizedDescription]))
+        continuation.finish()
+      }
+    }
+    let heartbeat = Task {
+      do {
+        while !Task.isCancelled {
+          try await Task.sleep(for: .seconds(15))
+          continuation.yield(Data((format == .openAI ? ": keep-alive\n\n" : "\n").utf8))
+        }
+      } catch {}
+    }
+    continuation.onTermination = { @Sendable _ in
+      task.cancel()
+      heartbeat.cancel()
+    }
+    return OpenAPIServerHTTPResponse(
+      statusCode: 200, reason: "OK",
+      headers: [
+        "Content-Type": format == .openAI
+          ? "text/event-stream; charset=utf-8" : "application/x-ndjson; charset=utf-8",
+        "Cache-Control": "no-cache",
+      ], body: Data(), stream: stream,
+      onCancel: {
+        task.cancel()
+        heartbeat.cancel()
+      })
+  }
+
+  mutating func update(_ text: String) -> Data? {
+    // Providers publish cumulative text; compare bytes so combining marks stay intact.
+    guard text.utf8.starts(with: sent.utf8), text.utf8.count > sent.utf8.count else { return nil }
+    let delta = String(decoding: text.utf8.dropFirst(sent.utf8.count), as: UTF8.self)
+    let first = sent.isEmpty
+    sent = text
+    switch format {
+    case .openAI:
+      var content = ["content": delta]
+      if first { content["role"] = "assistant" }
+      return frame(openAIChunk(delta: content, finished: false, model: model))
+    case .ollamaChat, .ollamaGenerate:
+      return frame(ollamaChunk(content: delta, finished: false, model: model))
+    }
+  }
+
+  func finish(_ output: OpenAPIServerCompletionOutput) -> Data {
+    var chunk = format == .openAI
+      ? openAIChunk(delta: [:], finished: true, model: output.model)
+      : ollamaChunk(content: "", finished: true, model: output.model)
+    if !output.toolRuns.isEmpty {
+      chunk["pocketmai_tool_calls"] = output.toolRuns.map {
+        ["name": $0.name, "arguments": $0.argumentsJSON, "result": $0.result,
+         "is_error": $0.isError] as [String: Any]
+      }
+    }
+    var data = frame(chunk)
+    if format == .openAI { data.append(Data("data: [DONE]\n\n".utf8)) }
+    return data
+  }
+
+  private func openAIChunk(delta: [String: String], finished: Bool, model: String) -> [String: Any] {
+    [
+      "id": id, "object": "chat.completion.chunk", "created": created, "model": model,
+      "choices": [["index": 0, "delta": delta,
+                   "finish_reason": finished ? "stop" as Any : NSNull()]],
+    ]
+  }
+
+  private func ollamaChunk(content: String, finished: Bool, model: String) -> [String: Any] {
+    var chunk: [String: Any] = [
+      "model": model, "created_at": ISO8601DateFormatter().string(from: Date()), "done": finished,
+    ]
+    if format == .ollamaChat {
+      chunk["message"] = ["role": "assistant", "content": content]
+    } else {
+      chunk["response"] = content
+    }
+    if finished { chunk["done_reason"] = "stop" }
+    return chunk
+  }
+
+  private func frame(_ object: [String: Any]) -> Data {
+    let json = (try? JSONSerialization.data(withJSONObject: object)) ?? Data("{}".utf8)
+    var data = format == .openAI ? Data("data: ".utf8) : Data()
+    data.append(json)
+    data.append(Data((format == .openAI ? "\n\n" : "\n").utf8))
+    return data
+  }
 }

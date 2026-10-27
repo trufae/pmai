@@ -124,3 +124,21 @@ and [transcription guide](https://console.groq.com/docs/speech-to-text).
 checks audio requests and chat routes without external providers. Run
 `python3 test/openai-http-smoke.py /path/to/pmai` for the full loopback HTTP test
 with a local fixture, including binary audio, authentication and provider errors.
+
+### iOS chat streaming
+
+With `stream: true`, `/v1/chat/completions` sends text deltas as SSE events,
+followed by a stop chunk and `[DONE]`. `/api/chat` and `/api/generate` send
+NDJSON deltas followed by `done: true`. Responses use HTTP chunked transfer;
+`stream: false` still returns a single JSON response.
+
+PocketMai forwards provider updates while generation is running. Providers that
+only return completed text, and requests with **Run PocketMai tools** enabled,
+return their answer once it is complete. Tool protocol messages are kept internal;
+`pocketmai_tool_calls` is included in the final chunk.
+
+Idle streams send an SSE comment or an empty NDJSON line every 15 seconds.
+Clients should ignore these keepalives. Failed writes and consumer cancellation
+cancel generation; keepalives also detect disconnected clients during inference.
+Errors after the response starts are sent as an `error` event/object, without a
+success terminator. The existing LLM timeout still applies.
