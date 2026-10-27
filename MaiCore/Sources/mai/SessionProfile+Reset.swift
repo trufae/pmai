@@ -7,6 +7,7 @@ extension SessionProfile {
     let defaults = SessionProfile(provider: provider, model: model, instructions: instructions, stream: stream)
     options.reasoningEffort = defaults.options.reasoningEffort
     options.reasoningGuidance = defaults.options.reasoningGuidance
+    options.contextWindowTokens = defaults.options.contextWindowTokens
     limits = defaults.limits
     retry = defaults.retry
     autocompact = defaults.autocompact

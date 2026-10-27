@@ -50,6 +50,10 @@ arriving during typing, history search, and heredoc input. It checks immediate
 prompt/status updates, answer validation, JSON editing, cancellation, draft and
 cursor restoration, and exclusion of modal replies from input history.
 
+`python3 test/repl-reset-smoke.py MaiCore/.build/debug/pmai` changes settings
+across every `/set` group, verifies reset/cancel confirmation and Ctrl+C in both
+terminal layouts, stops active voice, and checks stock defaults after restart.
+
 Sample coding tasks that pmai should solve, plus a harness that records every
 model call so the runs can be studied for wasted turns and tokens.
 

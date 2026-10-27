@@ -4078,6 +4078,7 @@ struct MaiCLI {
               approvalHandler: services.approvalHandler, catalogs: &catalogs, terminal: terminal)
             {
               await stopVoice()
+              await recordSubagents()
               workspace.upsert(session.chat, selecting: true)
               await saveWorkspace(&workspace, store: store, terminal: terminal)
               await noteTurnEffects(since: before)

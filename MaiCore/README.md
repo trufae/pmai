@@ -76,6 +76,13 @@ connection, use `--api-key KEY` or `--api-key-file /path/to/key` with
 Settings save to the active `--config`
 file, `./pmai.json`, or `~/.config/pmai/config.json` by default.
 
+Use `/reset` to recover from voice, context, or tool-calling settings problems.
+Choose `reset` to restore all `/set` options to stock defaults, or `cancel` / Ctrl+C
+to leave them unchanged. This resets global settings, the current agent's options,
+and this project's approval/debug settings, saves the defaults, and stops active
+voice. Providers, credentials, chats, custom prompts, other agents, and explicit
+tool selections are preserved. Use `/voice on` to start voice with the defaults.
+
 On macOS, add `apple` and `mlx` explicitly. `/providers` shows the availability
 of configured providers. These run natively and need no server URL or OpenAI key:
 
