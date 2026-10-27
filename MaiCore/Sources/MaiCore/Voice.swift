@@ -13,6 +13,12 @@ public struct VoiceCommand: Codable, Equatable, Sendable {
     self.executable = executable
     self.arguments = arguments
   }
+  private enum CodingKeys: String, CodingKey { case executable, arguments }
+  public init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    executable = try c.decode(String.self, forKey: .executable)
+    arguments = try c.decodeIfPresent([String].self, forKey: .arguments) ?? []
+  }
 }
 
 /// Shared by hosts; a task agent selects conversational inference independently of audio engines.
@@ -72,13 +78,36 @@ public struct ConfiguredVoice: Codable, Equatable, Sendable {
     speechModel = try c.decodeIfPresent(String.self, forKey: .speechModel) ?? speechModel
   }
   public func validate() throws {
-    guard speed.isFinite, (0.25...4).contains(speed), silenceSeconds.isFinite,
-      (0.2...10).contains(silenceSeconds),
-      speechThreshold.isFinite, (0.0001...1).contains(speechThreshold),
-      maximumRecordingSeconds.isFinite, (1...300).contains(maximumRecordingSeconds)
-    else {
-      throw VoiceError.unavailable(
-        "Invalid voice speed (0.25–4), silence, threshold, or recording limit settings.")
+    for (key, value, range) in [
+      ("speed", speed, 0.25...4), ("silenceSeconds", silenceSeconds, 0.2...10),
+      ("speechThreshold", speechThreshold, 0.0001...1),
+      ("maximumRecordingSeconds", maximumRecordingSeconds, 1.0...300),
+    ] {
+      guard value.isFinite, range.contains(value) else {
+        throw VoiceError.unavailable(
+          "voice.\(key) must be a number from \(range.lowerBound) to \(range.upperBound); got \(value).")
+      }
+    }
+    guard languageIdentifier.range(of: #"^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{2,8})*$"#,
+      options: .regularExpression) != nil else {
+      throw VoiceError.unavailable("voice.language must be a language tag such as ca-ES or en-US. Use /voice languages.")
+    }
+    for (key, value) in [
+      ("input", input), ("output", output), ("voice", voice),
+      ("transcriptionModel", transcriptionModel), ("speechModel", speechModel),
+      ("provider", provider ?? "default"),
+    ] {
+      guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        throw VoiceError.unavailable("voice.\(key) must not be empty.")
+      }
+    }
+    for (key, command) in [
+      ("captureCommand", captureCommand), ("transcriptionCommand", transcriptionCommand),
+      ("speechCommand", speechCommand), ("playbackCommand", playbackCommand),
+    ] {
+      if let command, command.executable.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        throw VoiceError.unavailable("voice.\(key).executable must not be empty.")
+      }
     }
   }
 }
@@ -112,11 +141,16 @@ public struct VoiceCatalogOption: Equatable, Sendable {
   public var name: String
   public var language: String?
   public var quality: String?
-  public init(id: String, name: String, language: String? = nil, quality: String? = nil) {
+  public var unavailableReason: String?
+  public var availabilityChecked: Bool
+  public init(id: String, name: String, language: String? = nil, quality: String? = nil,
+    unavailableReason: String? = nil, availabilityChecked: Bool = true) {
     self.id = id
     self.name = name
     self.language = language
     self.quality = quality
+    self.unavailableReason = unavailableReason
+    self.availabilityChecked = availabilityChecked
   }
 }
 
@@ -134,10 +168,16 @@ public struct VoiceProviderCatalog: Sendable {
   }
 }
 
+public enum VoiceProviderRole: Sendable { case input, output }
+
 public protocol ConfiguredVoiceProviderFactory: Sendable {
   var kind: String { get }
   @MainActor func catalog(
     settings: ConfiguredVoice, configuration: MaiConfiguration,
+    environment: [String: String]
+  ) async throws -> VoiceProviderCatalog
+  @MainActor func catalog(
+    for role: VoiceProviderRole, settings: ConfiguredVoice, configuration: MaiConfiguration,
     environment: [String: String]
   ) async throws -> VoiceProviderCatalog
   @MainActor func makeInput(
@@ -151,6 +191,13 @@ public protocol ConfiguredVoiceProviderFactory: Sendable {
 }
 
 extension ConfiguredVoiceProviderFactory {
+  @MainActor public func catalog(
+    for role: VoiceProviderRole, settings: ConfiguredVoice, configuration: MaiConfiguration,
+    environment: [String: String]
+  ) async throws -> VoiceProviderCatalog {
+    try await catalog(settings: settings, configuration: configuration, environment: environment)
+  }
+
   @MainActor public func catalog(
     settings: ConfiguredVoice, configuration: MaiConfiguration,
     environment: [String: String]

@@ -79,6 +79,10 @@
     @MainActor func testInstalledCatalogAndSpeechSelectionWithoutPlayingAudio() throws {
       let catalog = NativeVoiceCatalog.catalog(language: "en-US")
       XCTAssertTrue(catalog.languages.contains { $0.id == "en-US" })
+      for language in catalog.languages where language.availabilityChecked {
+        let recognizer = SFSpeechRecognizer(locale: Locale(identifier: language.id))
+        XCTAssertEqual(language.unavailableReason == nil, recognizer?.supportsOnDeviceRecognition == true)
+      }
       let voice = try XCTUnwrap(catalog.voices.first)
       var settings = ConfiguredVoice()
       settings.voice = voice.id
@@ -89,6 +93,28 @@
       XCTAssertGreaterThan(utterance.rate, AVSpeechUtteranceDefaultSpeechRate)
       settings.voice = "missing-voice-fixture"
       XCTAssertThrowsError(try NativeVoiceOutput(settings: settings).utterance("fixture"))
+      settings.voice = "en-US"
+      XCTAssertThrowsError(try NativeVoiceOutput(settings: settings).utterance("fixture"), "A language tag is not a voice ID")
+      settings.voice = "default"
+      settings.language = "zz-ZZ"
+      XCTAssertThrowsError(try NativeVoiceOutput(settings: settings).utterance("fixture"), "Do not silently speak in another language")
+    }
+
+    @MainActor func testUnavailableNativeLanguageFailsBeforeRequestingMicrophoneAccess() async throws {
+      guard let locale = SFSpeechRecognizer.supportedLocales().first(where: {
+        SFSpeechRecognizer(locale: $0)?.supportsOnDeviceRecognition != true
+      }) else { return }
+      var settings = ConfiguredVoice()
+      settings.language = locale.identifier
+      let input = NativeVoiceInput(settings: settings)
+      do {
+        try await input.start { _ in XCTFail("Unavailable recognizer started") }
+        XCTFail("Expected unavailable language")
+      } catch {
+        XCTAssertTrue(error.localizedDescription.contains("cannot recognize"))
+        XCTAssertTrue(error.localizedDescription.contains("on device"))
+      }
+      input.stop()
     }
   }
 #endif

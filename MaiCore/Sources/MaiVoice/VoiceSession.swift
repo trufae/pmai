@@ -10,7 +10,8 @@ import MaiCore
   public private(set) var mode: VoiceCaptureMode
   public private(set) var transcript = ""
   public private(set) var error: String?
-  private let settings: ConfiguredVoice
+  public let settings: ConfiguredVoice
+  public var canRecord: Bool { enabled && modelFinished }
   private let input: any VoiceInputProvider
   private let output: any VoiceOutputProvider
   private let changed: @Sendable (String?) -> Void
@@ -146,7 +147,7 @@ import MaiCore
         try Task.checkCancellation()
         guard generation == self.generation else { return }
         guard !text.isEmpty else {
-          ready()
+          fail(VoiceError.unavailable("No speech was recognized. Check voice.language and your microphone, then use /voice record to try again."))
           return
         }
         transcript = text

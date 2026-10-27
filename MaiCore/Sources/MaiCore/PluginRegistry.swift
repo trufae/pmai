@@ -484,6 +484,8 @@ public actor PluginRegistry {
     return factory.value
   }
 
+  public func voiceProviderKinds() -> [String] { voiceFactories.keys.sorted() }
+
   public func makeProvider(
     from configuration: ConfiguredProvider,
     environment: [String: String]

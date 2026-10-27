@@ -3871,17 +3871,35 @@ struct MaiCLI {
 
     func handleVoice(_ argument: String) async {
       let command = argument.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-      if ["voices", "languages"].contains(command.split(separator: " ").first.map(String.init) ?? "") {
+      if ["voices", "languages"].contains(command.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? "") {
         await showVoiceCatalog(argument, configuration: configuration, plugins: plugins, terminal: terminal)
+        services.voiceCatalog.invalidate()
         return
       }
       if command == "help" {
         await terminal.line(voiceHelp); return
       }
-      if command == "off" || command == "stop" { await stopVoice(); return }
+      if command == "off" || command == "stop" {
+        await stopVoice()
+        await terminal.line("Voice: off. Use /voice on to start with the configured settings.")
+        return
+      }
       if command == "status" {
         let state = await voiceSession?.state.rawValue ?? "off"
         await terminal.line("Voice: \(state)\(voicePID.map { " · agent#\($0.rawValue)" } ?? "")")
+        let settings = await voiceSession?.settings ?? configuration?.voice ?? .init()
+        await terminal.line("\(voiceSession == nil ? "Configured" : "Active"): mode=\(settings.mode.rawValue), language=\(settings.languageIdentifier), input=\(settings.input), output=\(settings.output), voice=\(settings.voice), speed=\(settings.speed)")
+        if settings.input == "openai" || settings.output == "openai" {
+          await terminal.line("Audio provider=\(settings.provider ?? "unset"), transcriptionModel=\(settings.transcriptionModel), speechModel=\(settings.speechModel)")
+        }
+        if let error = await voiceSession?.error { await terminal.line("voice: \(error)", to: .standardError) }
+        if voiceSession != nil, settings != (configuration?.voice ?? .init()) {
+          await terminal.line("Saved settings differ from active voice. Apply them with /voice off then /voice on.")
+        }
+        return
+      }
+      if ["discard", "cancel", "pause", "send", "record", "resume"].contains(command), voiceSession == nil {
+        await terminal.line("voice: Cannot \(command): voice is off. Start with /voice on, /voice realtime, or /voice walkie-talkie.", to: .standardError)
         return
       }
       if command == "discard" || command == "cancel" {
@@ -3894,25 +3912,48 @@ struct MaiCLI {
         return
       }
       if command == "pause" { await voiceSession?.pause(); return }
-      if command == "send" { await voiceSession?.send(); return }
+      if command == "send", let voiceSession {
+        guard await voiceSession.state == .listening else {
+          await terminal.line("voice: Nothing to send while \(await voiceSession.state.rawValue). Use /voice record to begin recording.", to: .standardError)
+          return
+        }
+        await voiceSession.send(); return
+      }
       if ["record", "resume"].contains(command), let voiceSession {
+        if await voiceSession.state == .listening {
+          await terminal.line("Voice is already recording. Use /voice send or /voice discard.")
+          return
+        }
         if let pid = voicePID, let turn = loop.conversationTurns[pid] {
           voiceResumeAfterCancel = true
           await voiceSession.pause()
           turn.task.cancel()
-        } else { await voiceSession.record() }
+        } else if await voiceSession.canRecord { await voiceSession.record() }
+        else {
+          await terminal.line("voice: Cannot record while \(await voiceSession.state.rawValue). Wait for the current turn or use /voice discard.", to: .standardError)
+        }
         return
       }
       guard ["", "on", "realtime", "walkie-talkie", "walkie", "ptt"].contains(command) else {
+        await terminal.line("voice: Unknown command '\(argument)'. Use /voice help.", to: .standardError)
         await terminal.line(voiceHelp); return
       }
-      if command.isEmpty, voiceSession != nil { await stopVoice(); return }
+      if command == "on", let voiceSession {
+        await terminal.line("Voice is already enabled (\(await voiceSession.state.rawValue)). Use /voice resume, or /voice off then /voice on to apply saved settings.")
+        return
+      }
+      if command.isEmpty, voiceSession != nil {
+        await stopVoice()
+        await terminal.line("Voice: off. Use /voice on to start with the configured settings.")
+        return
+      }
       await stopVoice()
       guard await loadSessionHistory() else { return }
       var settings = configuration?.voice ?? .init()
       if command == "realtime" { settings.mode = .realtime }
       if ["walkie-talkie", "walkie", "ptt"].contains(command) { settings.mode = .walkieTalkie }
       do {
+        try settings.validate()
         let inputFactory = try await plugins.voiceFactory(kind: settings.input)
         let outputFactory = try await plugins.voiceFactory(kind: settings.output)
         let config = configuration ?? .init()
@@ -3952,7 +3993,9 @@ struct MaiCLI {
       case .voiceStatus(let id, let status):
         guard id == voiceID else { return false }
         screen?.setVoiceStatus(status)
-        if screen == nil, let status, !status.contains("listening") { await terminal.note(status) }
+        if let status, status.contains(" · error · ") {
+          await terminal.line("voice: \(await voiceSession?.error ?? status)", to: .standardError)
+        } else if screen == nil, let status, !status.contains("listening") { await terminal.note(status) }
       case .voiceTranscript(let id, let token, let text):
         guard id == voiceID, await voiceSession?.acceptsSubmission(token) == true else { return false }
         if voiceChatID != session.id { await stopVoice() }
@@ -5653,6 +5696,7 @@ struct MaiCLI {
   /// pending attachments.
   private static let voiceHelp = """
     /voice                  Toggle voice mode
+    /voice on               Enable voice using saved settings; keeps active voice
     /voice realtime         Listen; silence ends the turn (default)
     /voice walkie-talkie    Record; /voice send ends each turn
     /voice record|resume    Begin recording the next turn
@@ -5661,14 +5705,24 @@ struct MaiCLI {
     Ctrl+Space              Start recording, or send the current recording
     /voice pause            Mute capture and stop speech
     /voice off              Stop voice and its agent
-    /voice status           Show state and voice agent PID
+    /voice status           Show active settings, state, agent PID and last error
     /voice voices [FILTER]  List available speech voice IDs and languages
-    /voice languages [FILTER] List available recognition and speech languages
+    /voice languages [FILTER] List languages with input availability and speech
     /model -voice SELECTOR  Choose the voice conversation agent/model
     /set voice.             List all voice settings (also included in /set)
+    /set voice.KEY          Show a value, accepted format and when it applies
     /set voice.voice ID     Choose a voice from /voice voices
     /set voice.language TAG Choose a language from /voice languages
     /set voice.speed N      Speech rate multiplier (0.25–4; default 1)
+
+    /set saves settings; apply changes to active voice with /voice off then /voice on.
+    Explicit /voice realtime or walkie-talkie restarts voice in that mode for this
+    session; /set voice.mode MODE selects the saved default. /voice by itself toggles.
+    voice.language selects recognition and the default speech voice. An explicit
+    voice.voice ID overrides speech language selection; default follows the language.
+    A speech voice does not provide an on-device recognition model for that language.
+    voice.provider selects the audio service for openai input/output; /model -voice
+    selects the conversation agent/model. They are separate settings.
 
     MaiCore's voice settings select language, input/output plugin kinds (system,
     command, openai), silenceSeconds, speechThreshold, voice and provider/models.
@@ -10638,7 +10692,11 @@ struct MaiCLI {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         if ["voice", "voice."].contains(voiceKey.lowercased()) {
+          guard argument.dropFirst(voiceKey.count).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw VoiceError.unavailable("Choose a setting: /set voice.KEY VALUE. Use /set voice. to list keys; /voice help explains controls.")
+          }
           await listSettings(try voiceSettings(settings), terminal: terminal)
+          await terminal.line("Use /set voice.KEY to see its value and help; /set voice.KEY VALUE saves it. /voice help explains controls.")
           return
         }
         let requested = String(voiceKey.dropFirst(6))
@@ -10651,20 +10709,47 @@ struct MaiCLI {
         }
         var value = String(argument.dropFirst(voiceKey.count)).trimmingCharacters(in: .whitespacesAndNewlines)
         if value.hasPrefix("=") { value = String(value.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines) }
-        var object = try JSONDecoder().decode([String: JSONValue].self, from: encoder.encode(settings))
+        let object = try JSONDecoder().decode([String: JSONValue].self, from: encoder.encode(settings))
         if value.isEmpty {
           await terminal.line("voice.\(key) = \(String(decoding: try encoder.encode(object[key] ?? .null), as: UTF8.self))")
+          await terminal.line(voiceSettingHelp(key, settings: settings))
           return
         }
         guard var draft = configuration, let configurationPath else {
           throw VoiceError.unavailable("No writable configuration is active.")
         }
-        object[key] = (try? JSONDecoder().decode(JSONValue.self, from: Data(value.utf8))) ?? .string(value)
-        draft.voice = try JSONDecoder().decode(ConfiguredVoice.self, from: encoder.encode(object))
-        try draft.voice.validate()
+        draft.voice = try updatedVoiceSettings(settings, key: key, value: value)
+        if key == "input" || key == "output" {
+          let kind = key == "input" ? draft.voice.input : draft.voice.output
+          let kinds = await plugins.voiceProviderKinds()
+          guard kinds.contains(kind) else {
+            throw VoiceError.unavailable("Unknown voice.\(key) backend '\(kind)'. Available: \(kinds.joined(separator: ", ")).")
+          }
+        }
+        if key == "provider", let id = draft.voice.provider,
+          !draft.providers.contains(where: { $0.id == id }) {
+          throw VoiceError.unavailable("Unknown voice.provider '\(id)'. Choose a configured provider ID from /providers, or null to clear it.")
+        }
+        if key == "voice", draft.voice.output == "system" {
+          let factory = try await plugins.voiceFactory(kind: "system")
+          _ = try await factory.makeOutput(settings: draft.voice, configuration: draft,
+            environment: ProcessInfo.processInfo.environment)
+        }
         try draft.save(to: URL(fileURLWithPath: configurationPath))
         configuration = draft
-        await terminal.line("Set voice.\(key). Restart /voice to apply audio settings.")
+        await terminal.line("Set voice.\(key). To apply to active voice: /voice off then /voice on.")
+        if ["language", "output"].contains(key), draft.voice.voice != "default" {
+          await terminal.line("Speech still uses voice ID '\(draft.voice.voice)'. Use /set voice.voice default to follow the language, or /voice voices to choose an ID for output=\(draft.voice.output).")
+        }
+        if ["language", "input"].contains(key), draft.voice.input == "system" {
+          let factory = try await plugins.voiceFactory(kind: "system")
+          let catalog = try await factory.catalog(for: .input, settings: draft.voice, configuration: draft,
+            environment: ProcessInfo.processInfo.environment)
+          if let language = catalog.languages.first(where: { $0.id == draft.voice.languageIdentifier }),
+            let reason = language.unavailableReason {
+            await terminal.line("Saved language \(language.id), but system input is unavailable: \(reason). Use /voice languages \(language.id) for details, or configure command/openai input.")
+          }
+        }
       } catch { await terminal.line("voice: \(error.localizedDescription)", to: .standardError) }
       return
     }
@@ -13903,6 +13988,16 @@ struct MaiCLI {
       "/project tint ", "/project tint none", "/project del ",
     ]
     values += ConfiguredVoice.settingNames.map { "/set voice.\($0) " }
+    for mode in VoiceCaptureMode.allCases { values.append("/set voice.mode \(mode.rawValue)") }
+    for key in ["input", "output"] {
+      for kind in ["system", "command", "openai"] { values.append("/set voice.\(key) \(kind)") }
+    }
+    for id in ["null"] + (configuration?.providers.map(\.id) ?? []) {
+      values.append("/set voice.provider \(id)")
+    }
+    for key in ConfiguredVoice.settingNames where key.hasSuffix("Command") {
+      values.append("/set voice.\(key) null")
+    }
     values += REPLModelCatalog.commandPrefixes
     for tint in AgentProjectTint.presetNames {
       values.append("/project tint \(tint)")

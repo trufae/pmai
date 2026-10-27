@@ -5,13 +5,36 @@
   import MaiCore
 
   @MainActor enum NativeVoiceCatalog {
-    static func catalog(language: String) -> VoiceProviderCatalog {
-      .init(
-        languages: SFSpeechRecognizer.supportedLocales().map { locale in
+    private static var recognitionSupport: [String: (date: Date, supported: Bool)] = [:]
+
+    static func catalog(language: String, role: VoiceProviderRole? = nil) -> VoiceProviderCatalog {
+      let tag = language.replacingOccurrences(of: "_", with: "-").lowercased()
+      let locales = role == .output ? [] : Array(SFSpeechRecognizer.supportedLocales())
+      let byTag = locales.contains {
+        let id = $0.identifier.replacingOccurrences(of: "_", with: "-").lowercased()
+        return id == tag || id.hasPrefix(tag + "-")
+      }
+      return .init(
+        languages: locales.map { locale in
           let id = locale.identifier.replacingOccurrences(of: "_", with: "-")
-          return .init(id: id, name: Locale.current.localizedString(forIdentifier: id) ?? id)
+          let name = Locale.current.localizedString(forIdentifier: id) ?? id
+          // Constructing a recognizer logs missing assets. Only inspect the selected
+          // language in the background; an explicit catalog request can inspect more.
+          let requested = tag.isEmpty || (byTag
+            ? id.lowercased() == tag || id.lowercased().hasPrefix(tag + "-")
+            : name.lowercased().contains(tag))
+          if let cached = recognitionSupport[id], Date().timeIntervalSince(cached.date) > 30 {
+            recognitionSupport[id] = nil
+          }
+          if requested, recognitionSupport[id] == nil {
+            recognitionSupport[id] = (Date(), SFSpeechRecognizer(locale: locale)?.supportsOnDeviceRecognition == true)
+          }
+          let support = recognitionSupport[id]?.supported
+          return .init(id: id, name: name,
+            unavailableReason: support == false ? "on-device recognition unavailable" : nil,
+            availabilityChecked: support != nil)
         }.sorted { $0.id < $1.id },
-        voices: AVSpeechSynthesisVoice.speechVoices().map {
+        voices: role == .input ? [] : AVSpeechSynthesisVoice.speechVoices().map {
           let quality: String =
             switch $0.quality {
             case .default: "standard"
@@ -21,7 +44,7 @@
             }
           return .init(id: $0.identifier, name: $0.name, language: $0.language, quality: quality)
         }.sorted { ($0.language ?? "", $0.id) < ($1.language ?? "", $1.id) },
-        defaultVoice: preferredVoice(language: language)?.identifier)
+        defaultVoice: role == .input ? nil : preferredVoice(language: language)?.identifier)
     }
     static func preferredVoice(language: String) -> AVSpeechSynthesisVoice? {
       let voices = AVSpeechSynthesisVoice.speechVoices()
@@ -35,6 +58,10 @@
         let preferred = voices.first(where: { $0.identifier == id })
       {
         return preferred
+      }
+      let primary = language.replacingOccurrences(of: "_", with: "-").lowercased().split(separator: "-").first
+      guard candidates.contains(where: { $0.language?.lowercased().split(separator: "-").first == primary }) else {
+        return nil
       }
       return AVSpeechSynthesisVoice(language: language)
     }
@@ -72,6 +99,11 @@
     func start(receive: @escaping @Sendable (VoiceInputEvent) -> Void) async throws {
       stop()
       let generation = self.generation
+      guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: settings.languageIdentifier)),
+        recognizer.supportsOnDeviceRecognition else {
+        throw VoiceError.unavailable(
+          "voice.input=system cannot recognize \(settings.languageIdentifier) on device on this Mac. A speaking voice does not provide recognition. Check macOS Dictation language downloads, choose another /set voice.language, or use /set voice.input command or openai with a configured transcriber.")
+      }
       // A CLI built outside SwiftPM must also carry these usage descriptions.
       guard Bundle.main.object(forInfoDictionaryKey: "NSMicrophoneUsageDescription") != nil,
         Bundle.main.object(forInfoDictionaryKey: "NSSpeechRecognitionUsageDescription") != nil
@@ -91,13 +123,9 @@
         throw VoiceError.unavailable(
           "Allow microphone and Speech Recognition access in macOS Privacy & Security settings.")
       }
-      guard
-        let recognizer = SFSpeechRecognizer(
-          locale: Locale(identifier: settings.languageIdentifier)),
-        recognizer.isAvailable, recognizer.supportsOnDeviceRecognition
-      else {
+      guard recognizer.isAvailable else {
         throw VoiceError.unavailable(
-          "No installed on-device speech recognizer for \(settings.language). Install that language or select command/openai input."
+          "Speech recognition for \(settings.languageIdentifier) is currently unavailable. Check macOS Speech Recognition permissions or use command/openai input."
         )
       }
       self.recognizer = recognizer
@@ -223,17 +251,22 @@
       super.init()
       synthesizer.delegate = self
     }
-    func utterance(_ text: String) throws -> AVSpeechUtterance {
-      let utterance = AVSpeechUtterance(string: text)
-      utterance.voice =
+    static func selectedVoice(_ settings: ConfiguredVoice) throws -> AVSpeechSynthesisVoice {
+      let voice =
         settings.voice == "default"
         ? NativeVoiceCatalog.preferredVoice(language: settings.languageIdentifier)
         : AVSpeechSynthesisVoice(identifier: settings.voice)
-          ?? AVSpeechSynthesisVoice(language: settings.voice)
-      if settings.voice != "default", utterance.voice == nil {
+      guard let voice else {
         throw VoiceError.unavailable(
-          "Unknown macOS voice '\(settings.voice)'. Use /voice voices to list installed voices.")
+          settings.voice == "default"
+            ? "No installed macOS speech voice for \(settings.languageIdentifier). Use /voice voices or install a voice in System Settings → Accessibility → Read & Speak (Spoken Content)."
+            : "Unknown macOS voice ID '\(settings.voice)'. Use /voice voices for IDs; set the language with /set voice.language TAG.")
       }
+      return voice
+    }
+    func utterance(_ text: String) throws -> AVSpeechUtterance {
+      let utterance = AVSpeechUtterance(string: text)
+      utterance.voice = try Self.selectedVoice(settings)
       utterance.rate = min(
         AVSpeechUtteranceMaximumSpeechRate,
         max(

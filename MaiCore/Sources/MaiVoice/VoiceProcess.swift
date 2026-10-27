@@ -14,6 +14,9 @@ import MaiCore
     private let lock = NSLock()
     private var cancelled = false
     let output = Pipe()
+    private let errorOutput = Pipe()
+    private var errorReader: Task<Data, Never>?
+    var wasStopped: Bool { lock.withLock { cancelled } }
     private let exitEvents = AsyncStream<Void>.makeStream()
 
     init(_ command: VoiceCommand, environment: [String: String], values: [String: String] = [:]) {
@@ -26,7 +29,7 @@ import MaiCore
       process.environment = environment
       process.standardInput = FileHandle.nullDevice
       process.standardOutput = output
-      process.standardError = FileHandle.nullDevice
+      process.standardError = errorOutput
       let exited = exitEvents.continuation
       process.terminationHandler = { _ in exited.finish() }
     }
@@ -35,6 +38,13 @@ import MaiCore
       try lock.withLock {
         guard !cancelled else { throw CancellationError() }
         try process.run()
+        errorReader = Task.detached { [self] in
+          var data = Data()
+          while let bytes = try? errorOutput.fileHandleForReading.read(upToCount: 8192), !bytes.isEmpty {
+            data.append(bytes.prefix(max(0, 4096 - data.count)))
+          }
+          return data
+        }
       }
     }
 
@@ -59,6 +69,14 @@ import MaiCore
       await Task.detached { [stream = exitEvents.stream] in
         for await _ in stream {}
       }.value
+    }
+
+    func failureMessage() async -> String {
+      let reader = lock.withLock { errorReader }
+      let data = await reader?.value ?? Data()
+      let detail = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+      return "Voice program failed (exit \(process.terminationStatus)): \(process.arguments?.first ?? "")."
+        + (detail.isEmpty ? "" : " " + detail)
     }
 
     func run(input: String? = nil) async throws -> Data {
@@ -90,9 +108,7 @@ import MaiCore
           await waitForExit()
           if lock.withLock({ cancelled }) { throw CancellationError() }
           guard process.terminationStatus == 0 else {
-            throw VoiceError.unavailable(
-              "Voice program failed (exit \(process.terminationStatus)): \(process.arguments?.first ?? "")."
-            )
+            throw VoiceError.unavailable(await failureMessage())
           }
           return data
         } catch {
@@ -181,6 +197,9 @@ import MaiCore
             }
           }
           await recorder.waitForExit()
+          if !Task.isCancelled, !recorder.wasStopped, recorder.process.terminationStatus != 0 {
+            throw VoiceError.unavailable(await recorder.failureMessage())
+          }
           if !Task.isCancelled { receive(.ended) }
           return data
         } catch {

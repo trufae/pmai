@@ -83,6 +83,17 @@ input and output stay out of model results, and exercises Ctrl+C, explicit
 timeouts, working directories, arguments, one-shot runs, and piped-session
 errors. It uses a local fixture provider and requires Vim on `PATH`.
 
+Voice settings and controls have two hardware-free terminal checks:
+
+    python3 test/repl-voice-settings-smoke.py MaiCore/.build/debug/pmai
+    python3 test/repl-voice-smoke.py MaiCore/.build/debug/pmai
+
+The settings check covers every persisted key, rejected values without config
+changes, JSON commands and resets, Tab completion, off-state controls, active
+versus saved settings, empty transcription, and recorder failure diagnostics.
+The streaming check covers capture, concurrent typed turns, speech playback,
+and send/discard controls using fixture audio programs and a loopback provider.
+
 Files sandbox policy commands and required prompts have their own check:
 
     python3 test/repl-path-smoke.py MaiCore/.build/debug/pmai

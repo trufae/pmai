@@ -1832,11 +1832,22 @@ formatting, URLs and long numeric strings. Input transcripts remain verbatim.
 `/set`, `/set voice`, and `/set voice.` list the same voice settings as `voice.KEY = VALUE`
 lines. Tab after `/set voice.voice ` completes the selected speech provider's
 voice IDs; Tab after `/set voice.language ` completes languages reported by the
-recognizer and speech voices. Catalog discovery runs in the background.
+recognizer and speech voices. A native language known to lack on-device recognition
+is excluded from language completion; background discovery checks only the selected
+language to avoid macOS logging missing assets for unrelated languages. Use
+`/voice languages TAG` to check another language before selecting it. When both catalogs publish languages and
+`voice.voice` is `default`, completion offers languages shared by input and speech.
+Catalog discovery runs in the background. Tab also completes capture modes,
+input/output backends and configured audio provider IDs.
 `/set | grep voice` works too. Tab completion includes every voice key.
 `/voice voices [FILTER]` lists the selected speech provider's voices, and
 `/voice languages [FILTER]` lists recognition/speech languages when the providers
-publish catalogs. Native macOS lists installed voices with their quality and marks
+publish catalogs, marking unavailable on-device input separately from speech.
+Apple's supported-language list does not guarantee on-device recognition: for
+example, `ca-ES` can have installed Catalan speech voices while native input is
+unavailable. macOS may log `No Assistant asset for language ca-ES` during that
+availability check. A speaking voice does not install a recognition model.
+Native macOS lists installed voices with their quality and marks
 the current selection. The default prefers installed premium or enhanced voices
 for the selected language, then falls back to the system's language default.
 Use `/set voice.voice ID` with an ID from that list and `/set voice.language ca-ES`
@@ -1846,7 +1857,33 @@ range. Remote speech receives the speed parameter; program backends can use the
 `{speed}` multiplier in their command arguments.
 
 Any `/set voice.KEY VALUE` saves a change. Restart voice after changing its
-audio settings. Program settings accept a JSON object. They execute directly,
+audio settings with `/voice off` then `/voice on`; `/voice` alone toggles voice,
+and `/voice on` keeps an already active session. `/voice status` shows active
+settings and the last error, and indicates when saved settings differ. Explicit
+`/voice realtime` and `/voice walkie-talkie` restart in that mode for the session;
+`/set voice.mode MODE` sets the saved default. `/set voice.KEY` shows that setting's
+value and help. Invalid values are rejected before saving.
+
+| Setting | Value and use |
+| --- | --- |
+| `input`, `output` | `system`, `command`, `openai`, or a registered voice backend |
+| `mode` | `realtime` or `walkie-talkie` |
+| `language` | Language tag such as `ca-ES`; underscores also work |
+| `voice` | Speech voice ID from `/voice voices`, or `default` to follow `language`. An explicit ID overrides speech language selection. |
+| `speed` | 0.25–4; 1 is normal |
+| `silenceSeconds` | 0.2–10 seconds before sending in realtime mode |
+| `speechThreshold` | 0.0001–1 microphone level that counts as speech |
+| `maximumRecordingSeconds` | 1–300 seconds; recording limit in either mode |
+| `provider` | Configured provider ID for `openai` audio; `null` clears it. Separate from `/model -voice`, which selects the conversation model. |
+| `transcriptionModel` | Audio model for `input=openai` |
+| `speechModel` | Audio model for `output=openai` |
+| `captureCommand` | PCM recorder for `command`/`openai` input; ignored by native input. `null` restores the platform default. |
+| `transcriptionCommand` | Required for `input=command`; WAV `{audio}` and normalized `{language}` in, transcript on stdout |
+| `speechCommand` | Required for `output=command`; also overrides Linux system speech. Text on stdin or `{text}` in arguments. |
+| `playbackCommand` | WAV `{audio}` playback for `output=openai`; `null` restores the platform default |
+
+Program settings accept a JSON object with `executable` and optional `arguments`
+(an array of strings); `null` clears the command. They execute directly,
 without shell expansion. For example:
 
 ```

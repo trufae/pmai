@@ -17,6 +17,19 @@ public struct MaiVoicePlugin: MaiPlugin {
 private struct VoiceFactory: ConfiguredVoiceProviderFactory {
   let kind: String
   @MainActor func catalog(
+    for role: VoiceProviderRole, settings: ConfiguredVoice, configuration: MaiConfiguration,
+    environment: [String: String]
+  ) async throws -> VoiceProviderCatalog {
+    #if os(macOS)
+      if kind == "system" {
+        return NativeVoiceCatalog.catalog(language: settings.languageIdentifier, role: role)
+      }
+    #endif
+    // Transcription does not use the speech synthesis model or its /voices endpoint.
+    if role == .input { return .init() }
+    return try await catalog(settings: settings, configuration: configuration, environment: environment)
+  }
+  @MainActor func catalog(
     settings: ConfiguredVoice, configuration: MaiConfiguration,
     environment: [String: String]
   ) async throws -> VoiceProviderCatalog {
@@ -72,7 +85,7 @@ private struct VoiceFactory: ConfiguredVoiceProviderFactory {
         defer { try? FileManager.default.removeItem(at: file) }
         let process = VoiceProcess(
           command, environment: environment,
-          values: ["audio": file.path, "language": settings.language])
+          values: ["audio": file.path, "language": settings.languageIdentifier])
         return String(decoding: try await process.run(), as: UTF8.self).trimmingCharacters(
           in: .whitespacesAndNewlines)
       }
@@ -85,9 +98,11 @@ private struct VoiceFactory: ConfiguredVoiceProviderFactory {
     settings: ConfiguredVoice, configuration: MaiConfiguration,
     environment: [String: String]
   ) throws -> any VoiceOutputProvider {
+    try settings.validate()
     #if os(macOS) || os(Linux)
       if kind == "system" {
         #if os(macOS)
+          _ = try NativeVoiceOutput.selectedVoice(settings)
           return NativeVoiceOutput(settings: settings)
         #else
           return ProgramVoiceOutput(

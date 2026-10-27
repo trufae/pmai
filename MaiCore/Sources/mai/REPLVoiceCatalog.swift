@@ -15,6 +15,7 @@ final class REPLVoiceCatalog: @unchecked Sendable {
   private var pending: Task<Void, Never>?
   private var voices: [String]?
   private var languages: [String]?
+  private var kinds: [String] = []
   private var retryAfter: Date?
 
   func select(_ configuration: MaiConfiguration, plugins: PluginRegistry, offline: Bool) {
@@ -33,22 +34,22 @@ final class REPLVoiceCatalog: @unchecked Sendable {
       let generation = generation
       pending = Task { [weak self] in
         let settings = configuration.voice
-        func catalog(_ kind: String) async -> VoiceProviderCatalog? {
+        let kinds = await plugins.voiceProviderKinds()
+        func catalog(_ kind: String, for role: VoiceProviderRole) async -> VoiceProviderCatalog? {
           guard !offline || ["system", "command"].contains(kind),
             let factory = try? await plugins.voiceFactory(kind: kind) else { return nil }
           return try? await factory.catalog(
-            settings: settings, configuration: configuration, environment: ProcessInfo.processInfo.environment)
+            for: role, settings: settings, configuration: configuration, environment: ProcessInfo.processInfo.environment)
         }
-        let output = await catalog(settings.output)
-        let input = settings.input == settings.output ? output : await catalog(settings.input)
+        let output = await catalog(settings.output, for: .output)
+        let input = await catalog(settings.input, for: .input)
         guard !Task.isCancelled, let self else { return }
         self.lock.withLock {
           guard self.generation == generation else { return }
-          self.voices = Array(Set(["default", settings.voice] + (output?.voices.map(\.id) ?? []))).sorted()
-          self.languages = Array(Set(
-            [settings.languageIdentifier] + (input?.languages.map(\.id) ?? [])
-              + (output?.languages.map(\.id) ?? []) + (output?.voices.compactMap(\.language) ?? [])
-          )).filter { !$0.isEmpty }.sorted()
+          let voiceIDs = output?.voices.map(\.id) ?? []
+          self.voices = Array(Set(["default"] + (voiceIDs.isEmpty ? [settings.voice] : voiceIDs))).sorted()
+          self.kinds = kinds
+          self.languages = Self.languageSuggestions(input: input, output: output, settings: settings)
           self.pending = nil
           self.retryAfter = output == nil || input == nil ? Date().addingTimeInterval(30) : nil
         }
@@ -56,12 +57,27 @@ final class REPLVoiceCatalog: @unchecked Sendable {
     }
   }
 
+  static func languageSuggestions(input: VoiceProviderCatalog?, output: VoiceProviderCatalog?,
+    settings: ConfiguredVoice) -> [String] {
+    let recognition = input?.languages ?? []
+    let speech = output?.voices.compactMap(\.language) ?? []
+    if !recognition.isEmpty {
+      return recognition.filter { language in
+        language.unavailableReason == nil && (speech.isEmpty || settings.voice != "default"
+          || speech.contains { $0 == language.id })
+      }.map(\.id).sorted()
+    }
+    return Array(Set(speech.isEmpty ? [settings.languageIdentifier] : speech)).sorted()
+  }
+
   func completions(for line: String) -> [String] {
-    for key in ["voice.voice", "voice.language"] {
+    for key in ["voice.voice", "voice.language", "voice.input", "voice.output"] {
       for separator in [" ", "="] {
         let prefix = "/set \(key)\(separator)"
         guard line.hasPrefix(prefix), !line.dropFirst(prefix.count).contains(where: \.isWhitespace) else { continue }
-        let values = lock.withLock { key == "voice.voice" ? voices : languages }
+        let values = lock.withLock {
+          key == "voice.voice" ? voices : key == "voice.language" ? languages : kinds
+        }
         return (values ?? []).map { prefix + $0 }
       }
     }
@@ -74,5 +90,9 @@ final class REPLVoiceCatalog: @unchecked Sendable {
       pending = nil
       generation = UUID()
     }
+  }
+
+  func invalidate() {
+    lock.withLock { selection = nil }
   }
 }

@@ -208,6 +208,23 @@ extension VoiceTests {
     XCTAssertEqual(input.finishes, 1)
   }
 
+  @MainActor func testEmptyTranscriptionReportsHowToRetry() async throws {
+    let input = TestInput()
+    input.text = "  "
+    let session = VoiceSession(settings: .init(), input: input, output: TestOutput(),
+      changed: { _ in }, submit: { _, _ in XCTFail("Empty transcript submitted") })
+    defer { session.stop() }
+    session.start()
+    try await waitFor { session.state == .listening }
+    session.send()
+    try await waitFor { session.state == .error }
+    XCTAssertTrue(session.error?.contains("No speech was recognized") == true)
+    XCTAssertTrue(session.canRecord)
+    session.record()
+    try await waitFor { session.state == .listening }
+    XCTAssertNil(session.error)
+  }
+
   func testLocalePreferenceSuffixIsNotUsedAsSpeechLanguage() {
     var settings = ConfiguredVoice()
     settings.language = "en_US@rg=adzzzz"
@@ -261,6 +278,43 @@ extension VoiceTests {
 
 #if os(macOS) || os(Linux)
   extension VoiceTests {
+    func testProgramFailureIncludesStderrAndDrainsLargeErrors() async throws {
+      let command = VoiceProcess(VoiceCommand("/bin/sh", arguments: ["-c",
+        "printf 'fixture microphone unavailable' >&2; dd if=/dev/zero bs=8192 count=20 >&2 2>/dev/null; exit 7"]),
+        environment: ProcessInfo.processInfo.environment)
+      do {
+        _ = try await command.run()
+        XCTFail("Expected program failure")
+      } catch {
+        XCTAssertTrue(error.localizedDescription.contains("exit 7"))
+        XCTAssertTrue(error.localizedDescription.contains("fixture microphone unavailable"))
+        XCTAssertLessThan(error.localizedDescription.utf8.count, 4300)
+      }
+    }
+
+    @MainActor func testRecorderFailureReportsActualErrorWithoutSubmitting() async throws {
+      var settings = ConfiguredVoice()
+      settings.captureCommand = .init("/bin/sh", arguments: ["-c", "printf 'fixture device missing' >&2; exit 9"])
+      let input = ProgramVoiceInput(settings: settings, environment: ProcessInfo.processInfo.environment,
+        transcribe: { _ in XCTFail("Failed capture transcribed"); return "" })
+      let session = VoiceSession(settings: settings, input: input, output: TestOutput(),
+        changed: { _ in }, submit: { _, _ in XCTFail("Failed capture submitted") })
+      defer { session.stop() }
+      session.start()
+      try await waitFor { session.state == .error }
+      XCTAssertTrue(session.error?.contains("exit 9") == true)
+      XCTAssertTrue(session.error?.contains("fixture device missing") == true)
+    }
+
+    func testInputCatalogDoesNotDependOnRemoteSpeechModelOrCredentials() async throws {
+      let registry = PluginRegistry()
+      try await registry.install(MaiVoicePlugin())
+      let factory = try await registry.voiceFactory(kind: "openai")
+      let catalog = try await factory.catalog(for: .input, settings: .init(), configuration: .init(), environment: [:])
+      XCTAssertTrue(catalog.languages.isEmpty)
+      XCTAssertTrue(catalog.voices.isEmpty)
+    }
+
     func testFastProgramExitsNeverWaitForAWorkerRunLoop() async throws {
       for number in 0..<30 {
         let command = VoiceProcess(
