@@ -1,5 +1,8 @@
-import CoreFoundation
 import Foundation
+
+#if canImport(CoreFoundation)
+  import CoreFoundation
+#endif
 
 #if canImport(SAXParser)
   import SAXParser
@@ -54,10 +57,35 @@ enum DocumentXML {
   }
 
   private static func stringEncoding(_ name: Substring) -> String.Encoding? {
-    let name = CFStringCreateWithCString(nil, String(name), CFStringBuiltInEncodings.UTF8.rawValue)
-    let identifier = CFStringConvertIANACharSetNameToEncoding(name)
-    guard identifier != kCFStringEncodingInvalidId else { return nil }
-    return String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(identifier))
+    #if canImport(CoreFoundation)
+      let name = CFStringCreateWithCString(nil, String(name), CFStringBuiltInEncodings.UTF8.rawValue)
+      let identifier = CFStringConvertIANACharSetNameToEncoding(name)
+      guard identifier != kCFStringEncodingInvalidId else { return nil }
+      return String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(identifier))
+    #else
+      switch name.lowercased().replacingOccurrences(of: "_", with: "-") {
+      case "utf-8", "utf8": return .utf8
+      case "utf-16", "utf16": return .utf16
+      case "utf-16be": return .utf16BigEndian
+      case "utf-16le": return .utf16LittleEndian
+      case "utf-32", "utf32": return .utf32
+      case "utf-32be": return .utf32BigEndian
+      case "utf-32le": return .utf32LittleEndian
+      case "us-ascii", "ascii": return .ascii
+      case "iso-8859-1", "latin1": return .isoLatin1
+      case "iso-8859-2", "latin2": return .isoLatin2
+      case "windows-1250": return .windowsCP1250
+      case "windows-1251": return .windowsCP1251
+      case "windows-1252": return .windowsCP1252
+      case "windows-1253": return .windowsCP1253
+      case "windows-1254": return .windowsCP1254
+      case "shift-jis", "sjis": return .shiftJIS
+      case "euc-jp": return .japaneseEUC
+      case "iso-2022-jp": return .iso2022JP
+      case "macintosh": return .macOSRoman
+      default: return nil
+      }
+    #endif
   }
 
   private static func decoded(_ data: Data) -> String? {
