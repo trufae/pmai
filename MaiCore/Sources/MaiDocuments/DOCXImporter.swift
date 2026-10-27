@@ -1,9 +1,5 @@
 import Foundation
 
-#if canImport(FoundationXML)
-  import FoundationXML
-#endif
-
 /// Converts a Word document (.docx) into Markdown so it can be attached as a text file.
 ///
 /// A .docx file is a zip container; the body lives in `word/document.xml` as
@@ -68,22 +64,11 @@ public enum DOCXImporter {
   }
 }
 
-// MARK: - Shared XML helpers
-
-private func localName(_ name: String) -> String {
-  guard let colon = name.lastIndex(of: ":") else { return name }
-  return String(name[name.index(after: colon)...])
-}
-
-private func attributeValue(_ attributes: [String: String], _ name: String) -> String? {
-  if let direct = attributes[name] { return direct }
-  for (key, value) in attributes where localName(key) == name { return value }
-  return nil
-}
+// MARK: - Word properties
 
 /// WordprocessingML toggles default to on when the value attribute is absent.
 private func isToggleOn(_ attributes: [String: String]) -> Bool {
-  guard let value = attributeValue(attributes, "val")?.lowercased() else { return true }
+  guard let value = attributes["val"]?.lowercased() else { return true }
   return value != "0" && value != "false" && value != "off" && value != "none"
 }
 
@@ -95,12 +80,10 @@ private struct NumberingIndex {
 
   init(xml: Data?) {
     guard let xml else { return }
-    let delegate = NumberingDelegate()
-    let parser = XMLParser(data: xml)
-    parser.delegate = delegate
-    guard parser.parse() else { return }
-    for (numberID, abstractID) in delegate.abstractIDsByNumberID {
-      orderedLevelsByNumberID[numberID] = delegate.orderedLevelsByAbstractID[abstractID] ?? [:]
+    let handler = NumberingHandler()
+    guard DocumentXML.parse(xml, handler: handler) else { return }
+    for (numberID, abstractID) in handler.abstractIDsByNumberID {
+      orderedLevelsByNumberID[numberID] = handler.orderedLevelsByAbstractID[abstractID] ?? [:]
     }
   }
 
@@ -110,7 +93,7 @@ private struct NumberingIndex {
   }
 }
 
-private final class NumberingDelegate: NSObject, XMLParserDelegate {
+private final class NumberingHandler: DocumentXMLHandler {
   private(set) var abstractIDsByNumberID: [String: String] = [:]
   private(set) var orderedLevelsByAbstractID: [String: [Int: Bool]] = [:]
 
@@ -118,27 +101,21 @@ private final class NumberingDelegate: NSObject, XMLParserDelegate {
   private var currentNumberID: String?
   private var currentLevel: Int?
 
-  func parser(
-    _ parser: XMLParser,
-    didStartElement elementName: String,
-    namespaceURI: String?,
-    qualifiedName: String?,
-    attributes: [String: String] = [:]
-  ) {
-    switch localName(elementName) {
+  func startElement(_ elementName: String, attributes: [String: String]) {
+    switch elementName {
     case "abstractNum":
-      currentAbstractID = attributeValue(attributes, "abstractNumId")
+      currentAbstractID = attributes["abstractNumId"]
     case "num":
-      currentNumberID = attributeValue(attributes, "numId")
+      currentNumberID = attributes["numId"]
     case "abstractNumId":
-      if let numberID = currentNumberID, let value = attributeValue(attributes, "val") {
+      if let numberID = currentNumberID, let value = attributes["val"] {
         abstractIDsByNumberID[numberID] = value
       }
     case "lvl":
-      currentLevel = attributeValue(attributes, "ilvl").flatMap { Int($0) }
+      currentLevel = attributes["ilvl"].flatMap { Int($0) }
     case "numFmt":
       guard let abstractID = currentAbstractID, let level = currentLevel,
-        let format = attributeValue(attributes, "val")?.lowercased()
+        let format = attributes["val"]?.lowercased()
       else { break }
       orderedLevelsByAbstractID[abstractID, default: [:]][level] =
         format != "bullet" && format != "none"
@@ -147,13 +124,8 @@ private final class NumberingDelegate: NSObject, XMLParserDelegate {
     }
   }
 
-  func parser(
-    _ parser: XMLParser,
-    didEndElement elementName: String,
-    namespaceURI: String?,
-    qualifiedName: String?
-  ) {
-    switch localName(elementName) {
+  func endElement(_ elementName: String) {
+    switch elementName {
     case "abstractNum":
       currentAbstractID = nil
     case "num":
@@ -174,11 +146,9 @@ private struct RelationshipIndex {
 
   init(xml: Data?) {
     guard let xml else { return }
-    let delegate = RelationshipDelegate()
-    let parser = XMLParser(data: xml)
-    parser.delegate = delegate
-    guard parser.parse() else { return }
-    targetsByID = delegate.targetsByID
+    let handler = RelationshipHandler()
+    guard DocumentXML.parse(xml, handler: handler) else { return }
+    targetsByID = handler.targetsByID
   }
 
   func target(forID id: String?) -> String? {
@@ -187,22 +157,16 @@ private struct RelationshipIndex {
   }
 }
 
-private final class RelationshipDelegate: NSObject, XMLParserDelegate {
+private final class RelationshipHandler: DocumentXMLHandler {
   private(set) var targetsByID: [String: String] = [:]
 
-  func parser(
-    _ parser: XMLParser,
-    didStartElement elementName: String,
-    namespaceURI: String?,
-    qualifiedName: String?,
-    attributes: [String: String] = [:]
-  ) {
-    guard localName(elementName) == "Relationship",
-      let id = attributeValue(attributes, "Id"),
-      let target = attributeValue(attributes, "Target")
+  func startElement(_ elementName: String, attributes: [String: String]) {
+    guard elementName == "Relationship",
+      let id = attributes["Id"],
+      let target = attributes["Target"]
     else { return }
     let isExternal =
-      attributeValue(attributes, "TargetMode")?.lowercased() == "external"
+      attributes["TargetMode"]?.lowercased() == "external"
       || target.contains("://")
       || target.lowercased().hasPrefix("mailto:")
     guard isExternal else { return }
@@ -212,7 +176,7 @@ private final class RelationshipDelegate: NSObject, XMLParserDelegate {
 
 // MARK: - Document body
 
-private final class DocumentParser: NSObject, XMLParserDelegate {
+private final class DocumentParser: DocumentXMLHandler {
   private struct RunStyle: Equatable {
     var bold = false
     var italic = false
@@ -260,38 +224,30 @@ private final class DocumentParser: NSObject, XMLParserDelegate {
   }
 
   func parse(_ data: Data) -> String? {
-    let parser = XMLParser(data: data)
-    parser.delegate = self
-    let parsed = parser.parse()
+    let parsed = DocumentXML.parse(data, handler: self)
     let rendered = Self.render(blockStack.first ?? [])
     guard parsed || !rendered.isEmpty else { return nil }
     return rendered
   }
 
-  // MARK: XMLParserDelegate
+  // MARK: XML events
 
-  func parser(
-    _ parser: XMLParser,
-    didStartElement elementName: String,
-    namespaceURI: String?,
-    qualifiedName: String?,
-    attributes: [String: String] = [:]
-  ) {
-    switch localName(elementName) {
+  func startElement(_ elementName: String, attributes: [String: String]) {
+    switch elementName {
     case "p":
       beginParagraph()
     case "pPr":
       isInsideParagraphProperties = true
     case "pStyle":
-      if isInsideParagraphProperties { paragraphStyle = attributeValue(attributes, "val") }
+      if isInsideParagraphProperties { paragraphStyle = attributes["val"] }
     case "ilvl":
       if isInsideParagraphProperties {
-        listLevel = attributeValue(attributes, "val").flatMap { Int($0) }
+        listLevel = attributes["val"].flatMap { Int($0) }
       }
     case "numId":
-      if isInsideParagraphProperties { listNumberID = attributeValue(attributes, "val") }
+      if isInsideParagraphProperties { listNumberID = attributes["val"] }
     case "hyperlink":
-      linkStack.append(relationships.target(forID: attributeValue(attributes, "id")))
+      linkStack.append(relationships.target(forID: attributes["id"]))
     case "r":
       isInsideRun = true
       runStyle = RunStyle(link: linkStack.last ?? nil)
@@ -302,7 +258,7 @@ private final class DocumentParser: NSObject, XMLParserDelegate {
     case "strike", "dstrike":
       if isInsideRun { runStyle.strikethrough = isToggleOn(attributes) }
     case "rStyle":
-      if isInsideRun, let style = attributeValue(attributes, "val")?.lowercased(),
+      if isInsideRun, let style = attributes["val"]?.lowercased(),
         style.contains("code") || style.contains("htmlcode") || style.contains("verbatim")
       {
         runStyle.code = true
@@ -325,18 +281,13 @@ private final class DocumentParser: NSObject, XMLParserDelegate {
     }
   }
 
-  func parser(_ parser: XMLParser, foundCharacters string: String) {
+  func text(_ string: String) {
     guard isCapturingText else { return }
     capturedText += string
   }
 
-  func parser(
-    _ parser: XMLParser,
-    didEndElement elementName: String,
-    namespaceURI: String?,
-    qualifiedName: String?
-  ) {
-    switch localName(elementName) {
+  func endElement(_ elementName: String) {
+    switch elementName {
     case "p":
       endParagraph()
     case "pPr":

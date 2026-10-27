@@ -882,9 +882,7 @@ func epubImportFailures() throws {
 
 @Test("Unknown HTML entities survive as text instead of failing the parse")
 func epubEntityNormalization() throws {
-  let normalized = String(
-    decoding: XHTMLEntities.normalized(Data("R&D &nbsp; &unknown; &amp; &#x41;".utf8)),
-    as: UTF8.self)
+  let normalized = XHTMLEntities.normalized("R&D &nbsp; &unknown; &amp; &#x41;")
   #expect(normalized == "R&amp;D &#160; &amp;unknown; &amp; &#x41;")
 }
 

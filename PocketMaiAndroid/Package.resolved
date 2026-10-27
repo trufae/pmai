@@ -144,6 +144,14 @@
         "revision" : "869129b7bf4ecc57b97d0193ad29690ca2134750",
         "version" : "1.8.1"
       }
+    },
+    {
+      "identity" : "xylem",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/compnerd/xylem",
+      "state" : {
+        "revision" : "9881c95ce3a139f4ccfa584676201516c2a5751d"
+      }
     }
   ],
   "version" : 3

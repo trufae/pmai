@@ -1,9 +1,5 @@
 import Foundation
 
-#if canImport(FoundationXML)
-  import FoundationXML
-#endif
-
 /// Converts an EPUB book (.epub) into Markdown so it can be attached as text.
 ///
 /// An .epub file is a zip container: `META-INF/container.xml` points at the
@@ -98,18 +94,7 @@ public enum EPUBImporter {
   }
 }
 
-// MARK: - Shared XML helpers
-
-private func localName(_ name: String) -> String {
-  guard let colon = name.lastIndex(of: ":") else { return name }
-  return String(name[name.index(after: colon)...])
-}
-
-private func attributeValue(_ attributes: [String: String], _ name: String) -> String? {
-  if let direct = attributes[name] { return direct }
-  for (key, value) in attributes where localName(key) == name { return value }
-  return nil
-}
+// MARK: - Package paths
 
 /// Resolves an href against the package document's folder, the way a reading
 /// system does: `../images/cover.xhtml` next to `OEBPS/text/` is
@@ -139,26 +124,18 @@ private struct ContainerIndex {
   let packagePath: String?
 
   init(xml: Data) {
-    let delegate = ContainerDelegate()
-    let parser = XMLParser(data: xml)
-    parser.delegate = delegate
-    _ = parser.parse()
-    packagePath = delegate.fullPath.map { resolvePath($0, relativeTo: "") }
+    let handler = ContainerHandler()
+    DocumentXML.parse(xml, handler: handler)
+    packagePath = handler.fullPath.map { resolvePath($0, relativeTo: "") }
   }
 }
 
-private final class ContainerDelegate: NSObject, XMLParserDelegate {
+private final class ContainerHandler: DocumentXMLHandler {
   private(set) var fullPath: String?
 
-  func parser(
-    _ parser: XMLParser,
-    didStartElement elementName: String,
-    namespaceURI: String?,
-    qualifiedName: String?,
-    attributes: [String: String] = [:]
-  ) {
-    guard localName(elementName) == "rootfile", fullPath == nil else { return }
-    fullPath = attributeValue(attributes, "full-path")
+  func startElement(_ elementName: String, attributes: [String: String]) {
+    guard elementName == "rootfile", fullPath == nil else { return }
+    fullPath = attributes["full-path"]
   }
 }
 
@@ -170,16 +147,14 @@ private struct PackageIndex {
   let readingOrder: [String]
 
   init(xml: Data, basePath: String) {
-    let delegate = PackageDelegate()
-    let parser = XMLParser(data: xml)
-    parser.delegate = delegate
-    _ = parser.parse()
+    let handler = PackageHandler()
+    DocumentXML.parse(xml, handler: handler)
 
-    title = delegate.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+    title = handler.title?.trimmingCharacters(in: .whitespacesAndNewlines)
     var seen: Set<String> = []
     var order: [String] = []
-    for reference in delegate.spine {
-      guard let item = delegate.manifest[reference] else { continue }
+    for reference in handler.spine {
+      guard let item = handler.manifest[reference] else { continue }
       guard item.isDocument else { continue }
       let path = resolvePath(item.href, relativeTo: basePath)
       guard !path.isEmpty, seen.insert(path).inserted else { continue }
@@ -188,8 +163,8 @@ private struct PackageIndex {
     // A book with an unusable spine still reads when its documents are taken
     // from the manifest in declaration order.
     if order.isEmpty {
-      for id in delegate.manifestOrder {
-        guard let item = delegate.manifest[id], item.isDocument else { continue }
+      for id in handler.manifestOrder {
+        guard let item = handler.manifest[id], item.isDocument else { continue }
         let path = resolvePath(item.href, relativeTo: basePath)
         guard !path.isEmpty, seen.insert(path).inserted else { continue }
         order.append(path)
@@ -212,7 +187,7 @@ private struct ManifestItem {
   }
 }
 
-private final class PackageDelegate: NSObject, XMLParserDelegate {
+private final class PackageHandler: DocumentXMLHandler {
   private(set) var manifest: [String: ManifestItem] = [:]
   private(set) var manifestOrder: [String] = []
   private(set) var spine: [String] = []
@@ -221,24 +196,18 @@ private final class PackageDelegate: NSObject, XMLParserDelegate {
   private var isCapturingTitle = false
   private var capturedTitle = ""
 
-  func parser(
-    _ parser: XMLParser,
-    didStartElement elementName: String,
-    namespaceURI: String?,
-    qualifiedName: String?,
-    attributes: [String: String] = [:]
-  ) {
-    switch localName(elementName) {
+  func startElement(_ elementName: String, attributes: [String: String]) {
+    switch elementName {
     case "item":
-      guard let id = attributeValue(attributes, "id"),
-        let href = attributeValue(attributes, "href")
+      guard let id = attributes["id"],
+        let href = attributes["href"]
       else { break }
       manifest[id] = ManifestItem(
         href: href,
-        mediaType: attributeValue(attributes, "media-type")?.lowercased() ?? "")
+        mediaType: attributes["media-type"]?.lowercased() ?? "")
       manifestOrder.append(id)
     case "itemref":
-      guard let id = attributeValue(attributes, "idref") else { break }
+      guard let id = attributes["idref"] else { break }
       spine.append(id)
     case "title":
       guard title == nil else { break }
@@ -249,18 +218,13 @@ private final class PackageDelegate: NSObject, XMLParserDelegate {
     }
   }
 
-  func parser(_ parser: XMLParser, foundCharacters string: String) {
+  func text(_ string: String) {
     guard isCapturingTitle else { return }
     capturedTitle += string
   }
 
-  func parser(
-    _ parser: XMLParser,
-    didEndElement elementName: String,
-    namespaceURI: String?,
-    qualifiedName: String?
-  ) {
-    guard localName(elementName) == "title", isCapturingTitle else { return }
+  func endElement(_ elementName: String) {
+    guard elementName == "title", isCapturingTitle else { return }
     isCapturingTitle = false
     let trimmed = capturedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
     if !trimmed.isEmpty { title = trimmed }
@@ -272,10 +236,10 @@ private final class PackageDelegate: NSObject, XMLParserDelegate {
 
 /// Turns one XHTML chapter into Markdown blocks.
 ///
-/// XMLParser reports balanced start/end pairs even for self-closing tags, so
+/// XML events include balanced start/end pairs even for self-closing tags, so
 /// every element pushes its inline style and pops it again; unknown tags simply
 /// inherit the style around them.
-final class HTMLToMarkdownParser: NSObject, XMLParserDelegate {
+final class HTMLToMarkdownParser: DocumentXMLHandler {
   private struct RunStyle: Equatable {
     var bold = false
     var italic = false
@@ -326,28 +290,19 @@ final class HTMLToMarkdownParser: NSObject, XMLParserDelegate {
   private var skipDepth = 0
 
   func parse(_ data: Data) -> String {
-    let parser = XMLParser(data: XHTMLEntities.normalized(data))
-    parser.shouldResolveExternalEntities = false
-    parser.delegate = self
-    _ = parser.parse()
+    DocumentXML.parse(data, handler: self, htmlEntities: true)
     flushBlock()
     return Self.render(blockStack.first ?? [])
   }
 
-  // MARK: XMLParserDelegate
+  // MARK: XML events
 
-  func parser(
-    _ parser: XMLParser,
-    didStartElement elementName: String,
-    namespaceURI: String?,
-    qualifiedName: String?,
-    attributes: [String: String] = [:]
-  ) {
+  func startElement(_ elementName: String, attributes: [String: String]) {
     if skipDepth > 0 {
       skipDepth += 1
       return
     }
-    let name = localName(elementName).lowercased()
+    let name = elementName.lowercased()
     if Self.skippedElements.contains(name) {
       skipDepth = 1
       return
@@ -364,7 +319,7 @@ final class HTMLToMarkdownParser: NSObject, XMLParserDelegate {
     case "code", "kbd", "samp", "tt":
       if preformattedDepth == 0 { style.code = true }
     case "a":
-      if let href = attributeValue(attributes, "href"), Self.isExternalLink(href) {
+      if let href = attributes["href"], Self.isExternalLink(href) {
         style.link = href
       }
     default:
@@ -417,7 +372,7 @@ final class HTMLToMarkdownParser: NSObject, XMLParserDelegate {
     }
   }
 
-  func parser(_ parser: XMLParser, foundCharacters string: String) {
+  func text(_ string: String) {
     guard skipDepth == 0 else { return }
     if preformattedDepth > 0 {
       preformattedText += string
@@ -431,17 +386,12 @@ final class HTMLToMarkdownParser: NSObject, XMLParserDelegate {
     fragments.append(.text(text, styleStack.last ?? RunStyle()))
   }
 
-  func parser(
-    _ parser: XMLParser,
-    didEndElement elementName: String,
-    namespaceURI: String?,
-    qualifiedName: String?
-  ) {
+  func endElement(_ elementName: String) {
     if skipDepth > 0 {
       skipDepth -= 1
       return
     }
-    let name = localName(elementName).lowercased()
+    let name = elementName.lowercased()
     if !styleStack.isEmpty { styleStack.removeLast() }
 
     switch name {
@@ -608,7 +558,7 @@ final class HTMLToMarkdownParser: NSObject, XMLParserDelegate {
   /// HTML folds every run of whitespace, newlines included, into one space.
   private static func collapsingWhitespace(_ text: String) -> String {
     var output = ""
-    output.reserveCapacity(text.count)
+    output.reserveCapacity(text.utf8.count)
     var pendingSpace = false
     for character in text {
       if character.isWhitespace || character == "\u{00A0}" {
@@ -628,14 +578,13 @@ final class HTMLToMarkdownParser: NSObject, XMLParserDelegate {
 
 // MARK: - Entities
 
-/// XMLParser only knows the five XML entities, but EPUB 2 books are full of
+/// XML only defines five named entities, but EPUB 2 books are full of
 /// HTML ones such as `&nbsp;` and `&mdash;`. Known names become numeric
 /// references and unknown ones become literal text, so a chapter is never lost
 /// to a parse error.
 enum XHTMLEntities {
-  static func normalized(_ data: Data) -> Data {
-    let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
-    guard text.contains("&") else { return data }
+  static func normalized(_ text: String) -> String {
+    guard text.contains("&") else { return text }
 
     var output = ""
     output.reserveCapacity(text.count)
@@ -666,7 +615,7 @@ enum XHTMLEntities {
       index = next
     }
     output += text[index...]
-    return Data(output.utf8)
+    return output
   }
 
   /// `&` on its own is common in older books; only a well-formed name is

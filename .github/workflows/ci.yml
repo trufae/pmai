@@ -131,16 +131,14 @@ jobs:
       - name: Show Swift version
         run: swift --version
 
-      # Build a small static libxml2 using Ubuntu's patched sources and glibc iconv.
       - name: Install static link dependencies
         run: |
           # Chrome's unrelated apt repository occasionally publishes an index
           # while its Release metadata is still being mirrored. We do not need
           # it for this build, so keep it out of apt-get update.
           sudo rm -f /etc/apt/sources.list.d/google-chrome.list
-          sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libcurl4-openssl-dev libxml2-dev liblzma-dev zlib1g-dev pkg-config dpkg-dev autoconf automake libtool
+          sudo apt-get install -y --no-install-recommends libcurl4-openssl-dev
 
       # Links the Swift runtime, Foundation and libdispatch into the
       # executable so it runs on machines without a Swift toolchain. The
@@ -149,10 +147,8 @@ jobs:
       - name: Build static debug CLI
         run: |
           # Swift Build also needs static modules while compiling so Foundation
-          # emits its CoreFoundation, XML and networking autolink dependencies.
+          # emits its CoreFoundation and networking autolink dependencies.
           args=(--package-path MaiCore --disable-prefetching --static-swift-stdlib -Xswiftc -static-stdlib)
-          bash sys/static-libxml2.sh "$RUNNER_TEMP/static-libxml2"
-          args+=(-L "$RUNNER_TEMP/static-libxml2")
           swift build "${args[@]}" --disable-index-store --product pmai
           cp "$(swift build "${args[@]}" --show-bin-path)/pmai" pmai
 
@@ -172,24 +168,12 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/work:ro" ubuntu:26.04 sh -ec '
             apt-get update
-            apt-get install -y --no-install-recommends libcurl4t64 libstdc++6 liblzma5 ca-certificates
+            apt-get install -y --no-install-recommends libcurl4t64 libstdc++6 ca-certificates
             /work/pmai --help
           '
 
-      - name: Limit static XML size overhead
-        run: |
-          args=(--package-path MaiCore --disable-prefetching --static-swift-stdlib -Xswiftc -static-stdlib)
-          swift build "${args[@]}" --disable-index-store --product pmai
-          cp "$(swift build "${args[@]}" --show-bin-path)/pmai" "$RUNNER_TEMP/pmai-shared-xml"
-          ldd "$RUNNER_TEMP/pmai-shared-xml" | grep -q 'libxml2.so'
-          cp pmai "$RUNNER_TEMP/pmai-static-xml"
-          strip -s "$RUNNER_TEMP/pmai-shared-xml" "$RUNNER_TEMP/pmai-static-xml"
-          overhead=$(( $(stat -c %s "$RUNNER_TEMP/pmai-static-xml") - $(stat -c %s "$RUNNER_TEMP/pmai-shared-xml") ))
-          echo "Static XML overhead: $overhead bytes"
-          if [ "$overhead" -gt $((2 * 1024 * 1024)) ]; then
-            echo "::error::static XML adds more than 2 MiB to pmai"
-            exit 1
-          fi
+      - name: Test document import and XML handling
+        run: python3 test/run-tests.py documents
 
   musl-cli:
     name: CLI (Linux musl ${{ matrix.name }})

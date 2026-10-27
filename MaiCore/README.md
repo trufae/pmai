@@ -394,7 +394,11 @@ sizes or OCR. `/attach clear` drops everything queued. The converters live in
 the `MaiDocuments` module, which PocketMai links as well, so the app and CLI
 share one implementation. `MaiDocuments` needs PDFKit for
 PDFs, so PDF conversion is unavailable on Linux while Word, EPUB, JSON, and
-text work everywhere. The same module holds the exporters (`ChatExport`, `TextExport`, `MarkdownExport`,
+text work everywhere. XML imports use Xylem's pure Swift SAX parser on Linux,
+Android and Windows, and the native Foundation parser on Apple platforms.
+Linux releases do not require system libxml2. Run the focused document suite
+with `python3 test/run-tests.py documents`.
+The same module holds the exporters (`ChatExport`, `TextExport`, `MarkdownExport`,
 `HTMLExport`, `EPUBExport`, `DOCXExport`): they write from a small `ExportDocument` that each
 host builds from its own chat model, so `/export` here and the share sheet in
 PocketMai produce the same files.

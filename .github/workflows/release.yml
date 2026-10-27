@@ -57,9 +57,8 @@ jobs:
           # while its Release metadata is still being mirrored. We do not need
           # it for this build, so keep it out of apt-get update.
           sudo rm -f /etc/apt/sources.list.d/google-chrome.list
-          sudo sed -i 's/^Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/ubuntu.sources
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libcurl4-openssl-dev libxml2-dev liblzma-dev zlib1g-dev pkg-config dpkg-dev autoconf automake libtool
+          sudo apt-get install -y --no-install-recommends libcurl4-openssl-dev
 
       - name: Build release CLI
         run: |
@@ -70,8 +69,6 @@ jobs:
           if [ "${{ runner.os }}" = "Linux" ]; then
             # Select static Foundation modules during compilation as well as linking.
             args+=(--static-swift-stdlib -Xswiftc -static-stdlib)
-            bash sys/static-libxml2.sh "$RUNNER_TEMP/static-libxml2"
-            args+=(-L "$RUNNER_TEMP/static-libxml2")
           fi
           swift build "${args[@]}"
           bin_dir="$(swift build "${args[@]}" --show-bin-path)"

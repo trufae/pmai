@@ -62,7 +62,7 @@ class DownloadProfiles(unittest.TestCase):
         self.assertEqual(local['dependencies'], [{'byName': ['MaiCore', None]}])
         dependencies = {d['sourceControl'][0]['identity'] for d in package['dependencies']
                         if 'sourceControl' in d}
-        self.assertEqual(dependencies, {'swift-crypto', 'swift-nio'})
+        self.assertEqual(dependencies, {'swift-crypto', 'swift-nio', 'xylem'})
 
 
 if __name__ == '__main__':
