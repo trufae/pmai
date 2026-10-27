@@ -29,9 +29,8 @@
       }
       let microphone = await AVCaptureDevice.requestAccess(for: .audio)
       let authorized = await withCheckedContinuation { continuation in
-        SFSpeechRecognizer.requestAuthorization {
-          continuation.resume(returning: $0 == .authorized)
-        }
+        SFSpeechRecognizer.requestAuthorization(
+          NativeVoiceCallbacks.authorizationReply { continuation.resume(returning: $0) })
       }
       try Task.checkCancellation()
       guard generation == self.generation else { throw CancellationError() }
@@ -39,7 +38,9 @@
         throw VoiceError.unavailable(
           "Allow microphone and Speech Recognition access in macOS Privacy & Security settings.")
       }
-      guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: settings.language)),
+      guard
+        let recognizer = SFSpeechRecognizer(
+          locale: Locale(identifier: settings.languageIdentifier)),
         recognizer.isAvailable, recognizer.supportsOnDeviceRecognition
       else {
         throw VoiceError.unavailable(
@@ -55,7 +56,31 @@
       latest = ""
       final = false
       failure = nil
-      recognition = recognizer.recognitionTask(with: request) { [weak self] result, error in
+      recognition = recognizer.recognitionTask(
+        with: request, resultHandler: recognitionCallback(receive: receive))
+      let engine = AVAudioEngine()
+      let input = engine.inputNode
+      let format = input.outputFormat(forBus: 0)
+      guard format.sampleRate > 0, format.channelCount > 0 else {
+        stop()
+        throw VoiceError.unavailable("No microphone input is available.")
+      }
+      input.installTap(
+        onBus: 0, bufferSize: 1600, format: format,
+        block: NativeVoiceCallbacks.audioTap(request: request, receive: receive))
+      self.engine = engine
+      engine.prepare()
+      do { try engine.start() } catch {
+        stop()
+        throw error
+      }
+    }
+    /// Speech invokes this handler on its own queue, regardless of the caller's actor.
+    func recognitionCallback(receive: @escaping @Sendable (VoiceInputEvent) -> Void)
+      -> @Sendable (SFSpeechRecognitionResult?, Error?) -> Void
+    {
+      let generation = generation
+      return { [weak self] result, error in
         let text = result?.bestTranscription.formattedString
         let final = result?.isFinal ?? false
         let failure = error?.localizedDescription
@@ -74,29 +99,8 @@
           }
         }
       }
-      let engine = AVAudioEngine()
-      let input = engine.inputNode
-      let format = input.outputFormat(forBus: 0)
-      guard format.sampleRate > 0, format.channelCount > 0 else {
-        stop()
-        throw VoiceError.unavailable("No microphone input is available.")
-      }
-      input.installTap(onBus: 0, bufferSize: 1600, format: format) { buffer, _ in
-        request.append(buffer)
-        guard let samples = buffer.floatChannelData else { return }
-        var peak = 0.0
-        for frame in 0..<Int(buffer.frameLength) {
-          peak = max(peak, abs(Double(samples[0][frame])))
-        }
-        receive(.level(peak))
-      }
-      self.engine = engine
-      engine.prepare()
-      do { try engine.start() } catch {
-        stop()
-        throw error
-      }
     }
+
     func finish() async throws -> String {
       let generation = generation
       engine?.inputNode.removeTap(onBus: 0)
@@ -128,6 +132,33 @@
     }
   }
 
+  /// Legacy Apple callbacks are not actor-bound. Construct them outside MainActor
+  /// and keep their types Sendable so Swift never inserts a main-queue assertion.
+  enum NativeVoiceCallbacks {
+    static func authorizationReply(_ reply: @escaping @Sendable (Bool) -> Void)
+      -> @Sendable (SFSpeechRecognizerAuthorizationStatus) -> Void
+    {
+      { status in reply(status == .authorized) }
+    }
+
+    static func audioTap(
+      request: SFSpeechAudioBufferRecognitionRequest,
+      receive: @escaping @Sendable (VoiceInputEvent) -> Void
+    )
+      -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void
+    {
+      { buffer, _ in
+        request.append(buffer)
+        guard let samples = buffer.floatChannelData else { return }
+        var peak = 0.0
+        for frame in 0..<Int(buffer.frameLength) {
+          peak = max(peak, abs(Double(samples[0][frame])))
+        }
+        receive(.level(peak))
+      }
+    }
+  }
+
   @MainActor
   final class NativeVoiceOutput: NSObject, VoiceOutputProvider, AVSpeechSynthesizerDelegate {
     private let synthesizer = AVSpeechSynthesizer()
@@ -145,7 +176,7 @@
       utterance.voice =
         settings.voice == "default"
         ? AVSpeechSynthesisVoice(
-          language: settings.language.replacingOccurrences(of: "_", with: "-"))
+          language: settings.languageIdentifier)
         : AVSpeechSynthesisVoice(identifier: settings.voice)
           ?? AVSpeechSynthesisVoice(language: settings.voice)
       let id = ObjectIdentifier(utterance)

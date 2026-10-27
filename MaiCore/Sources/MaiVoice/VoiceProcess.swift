@@ -14,6 +14,7 @@ import MaiCore
     private let lock = NSLock()
     private var cancelled = false
     let output = Pipe()
+    private let exitEvents = AsyncStream<Void>.makeStream()
 
     init(_ command: VoiceCommand, environment: [String: String], values: [String: String] = [:]) {
       process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
@@ -26,6 +27,8 @@ import MaiCore
       process.standardInput = FileHandle.nullDevice
       process.standardOutput = output
       process.standardError = FileHandle.nullDevice
+      let exited = exitEvents.continuation
+      process.terminationHandler = { _ in exited.finish() }
     }
 
     func start() throws {
@@ -49,34 +52,42 @@ import MaiCore
       }
     }
 
+    /// waitUntilExit spins a run loop and can miss a wakeup on a cooperative worker.
+    /// Foundation reports termination independently of whichever thread drains stdout.
+    func waitForExit() async {
+      // Reap the child even when the caller is already cancelled.
+      await Task.detached { [stream = exitEvents.stream] in
+        for await _ in stream {}
+      }.value
+    }
+
     func run(input: String? = nil) async throws -> Data {
       try await withTaskCancellationHandler {
         let stdin = input.map { _ in Pipe() }
         if let stdin { process.standardInput = stdin }
         try start()
-        return try await Task.detached { [self] in
-          defer {
-            if process.isRunning { stop() }
-            process.waitUntilExit()
-          }
-          if let input, let stdin {
-            #if os(macOS)
-              _ = fcntl(stdin.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
-            #else
-              signal(SIGPIPE, SIG_IGN)
-            #endif
-            try stdin.fileHandleForWriting.write(contentsOf: Data(input.utf8))
-            try stdin.fileHandleForWriting.close()
-          }
-          var data = Data()
-          while let chunk = try output.fileHandleForReading.read(upToCount: 8192), !chunk.isEmpty {
-            guard data.count + chunk.count <= 8 * 1024 * 1024 else {
-              stop()
-              throw VoiceError.unavailable("Voice program output exceeded 8 MiB.")
+        do {
+          let data = try await Task.detached { [self] in
+            if let input, let stdin {
+              #if os(macOS)
+                _ = fcntl(stdin.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+              #else
+                signal(SIGPIPE, SIG_IGN)
+              #endif
+              try stdin.fileHandleForWriting.write(contentsOf: Data(input.utf8))
+              try stdin.fileHandleForWriting.close()
             }
-            data.append(chunk)
-          }
-          process.waitUntilExit()
+            var data = Data()
+            while let chunk = try output.fileHandleForReading.read(upToCount: 8192), !chunk.isEmpty
+            {
+              guard data.count + chunk.count <= 8 * 1024 * 1024 else {
+                throw VoiceError.unavailable("Voice program output exceeded 8 MiB.")
+              }
+              data.append(chunk)
+            }
+            return data
+          }.value
+          await waitForExit()
           if lock.withLock({ cancelled }) { throw CancellationError() }
           guard process.terminationStatus == 0 else {
             throw VoiceError.unavailable(
@@ -84,7 +95,11 @@ import MaiCore
             )
           }
           return data
-        }.value
+        } catch {
+          stop()
+          await waitForExit()
+          throw error
+        }
       } onCancel: {
         self.stop()
       }
@@ -165,7 +180,7 @@ import MaiCore
               break
             }
           }
-          recorder.process.waitUntilExit()
+          await recorder.waitForExit()
           if !Task.isCancelled { receive(.ended) }
           return data
         } catch {

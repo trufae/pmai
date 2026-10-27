@@ -34,6 +34,12 @@ public struct ConfiguredVoice: Codable, Equatable, Sendable {
   public var speechModel: String = "tts-1"
   public var instructions: String = VoicePrompt.instructions
 
+  /// Strip ICU preference extensions before selecting a recognizer or displaying a language.
+  public var languageIdentifier: String {
+    String(language.split(separator: "@", maxSplits: 1).first ?? "")
+      .replacingOccurrences(of: "_", with: "-")
+  }
+
   public init() {}
   public static let settingNames = CodingKeys.allCases.map(\.rawValue)
   private enum CodingKeys: String, CodingKey, CaseIterable {

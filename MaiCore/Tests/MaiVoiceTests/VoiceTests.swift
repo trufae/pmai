@@ -41,12 +41,20 @@ final class VoiceTests: XCTestCase {
   var starts = 0
   var finishes = 0
   var text = "hello from the microphone"
+  var endDuringStart = false
+  var delayFinish = false
+  var pendingFinish: CheckedContinuation<String, Never>?
   func start(receive: @escaping @Sendable (VoiceInputEvent) -> Void) async throws {
     starts += 1
     self.receive = receive
+    if endDuringStart {
+      receive(.ended)
+      try await Task.sleep(for: .milliseconds(20))
+    }
   }
   func finish() async throws -> String {
     finishes += 1
+    if delayFinish { return await withCheckedContinuation { pendingFinish = $0 } }
     return text
   }
   func stop() { receive = nil }
@@ -62,8 +70,16 @@ final class VoiceTests: XCTestCase {
 private final class TestSubmissions: @unchecked Sendable {
   private let lock = NSLock()
   private var values: [String] = []
+  private var tokens: [UUID] = []
+  var lastToken: UUID? { lock.withLock { tokens.last } }
   var texts: [String] { lock.withLock { values } }
   func append(_ value: String) { lock.withLock { values.append(value) } }
+  func append(_ token: UUID, _ value: String) {
+    lock.withLock {
+      tokens.append(token)
+      values.append(value)
+    }
+  }
 }
 
 extension VoiceTests {
@@ -85,7 +101,7 @@ extension VoiceTests {
     settings.silenceSeconds = 0.2
     let session = VoiceSession(
       settings: settings, input: input, output: output,
-      changed: { _ in }, submit: { submitted.append($0) })
+      changed: { _ in }, submit: { _, text in submitted.append(text) })
     defer { session.stop() }
     session.start()
     try await waitFor { input.starts == 1 }
@@ -117,7 +133,7 @@ extension VoiceTests {
     settings.silenceSeconds = 0.2
     let session = VoiceSession(
       settings: settings, input: input, output: output,
-      changed: { _ in }, submit: { submitted.append($0) })
+      changed: { _ in }, submit: { _, text in submitted.append(text) })
     defer { session.stop() }
     session.start()
     try await waitFor { input.starts == 1 }
@@ -139,6 +155,65 @@ extension VoiceTests {
     input.receive?(.ended)
     XCTAssertEqual(session.state, .paused)
     XCTAssertTrue(output.stopped)
+  }
+
+  @MainActor func testDiscardRejectsLateTranscriptionAndQueuedSubmissions() async throws {
+    let input = TestInput()
+    let output = TestOutput()
+    let submitted = TestSubmissions()
+    var settings = ConfiguredVoice()
+    settings.mode = .walkieTalkie
+    let session = VoiceSession(
+      settings: settings, input: input, output: output,
+      changed: { _ in }, submit: { submitted.append($0, $1) })
+    defer { session.stop() }
+    session.start()
+    try await waitFor { session.state == .listening }
+    input.receive?(.transcript("unfinished words"))
+    try await waitFor { session.transcript == "unfinished words" }
+    input.delayFinish = true
+    session.send()
+    try await waitFor { input.pendingFinish != nil }
+    session.discard()
+    XCTAssertEqual(session.state, .paused)
+    XCTAssertEqual(session.transcript, "")
+    input.pendingFinish?.resume(returning: "discarded transcription")
+    input.pendingFinish = nil
+    input.delayFinish = false
+    session.record()
+    try await waitFor { session.state == .listening }
+    XCTAssertTrue(submitted.texts.isEmpty)
+    session.send()
+    try await waitFor { submitted.lastToken != nil }
+    let token = try XCTUnwrap(submitted.lastToken)
+    XCTAssertTrue(session.acceptsSubmission(token))
+    session.discard()
+    XCTAssertFalse(session.acceptsSubmission(token), "Queued recognition cannot send after discard")
+    XCTAssertEqual(session.transcript, "")
+  }
+
+  @MainActor func testInputEndingDuringStartupStillFinishesTranscription() async throws {
+    let input = TestInput()
+    let output = TestOutput()
+    let submitted = TestSubmissions()
+    input.endDuringStart = true
+    var settings = ConfiguredVoice()
+    settings.mode = .walkieTalkie
+    let session = VoiceSession(
+      settings: settings, input: input, output: output,
+      changed: { _ in }, submit: { _, text in submitted.append(text) })
+    defer { session.stop() }
+    session.start()
+    try await waitFor { submitted.texts.count == 1 }
+    XCTAssertEqual(input.finishes, 1)
+  }
+
+  func testLocalePreferenceSuffixIsNotUsedAsSpeechLanguage() {
+    var settings = ConfiguredVoice()
+    settings.language = "en_US@rg=adzzzz"
+    XCTAssertEqual(settings.languageIdentifier, "en-US")
+    settings.language = "ca-ES"
+    XCTAssertEqual(settings.languageIdentifier, "ca-ES")
   }
 
   func testPluginVoiceFactoryRegistration() async throws {
@@ -186,6 +261,16 @@ extension VoiceTests {
 
 #if os(macOS) || os(Linux)
   extension VoiceTests {
+    func testFastProgramExitsNeverWaitForAWorkerRunLoop() async throws {
+      for number in 0..<30 {
+        let command = VoiceProcess(
+          VoiceCommand("/bin/echo", arguments: [String(number)]),
+          environment: ProcessInfo.processInfo.environment)
+        let data = try await command.run()
+        XCTAssertEqual(String(decoding: data, as: UTF8.self), "\(number)\n")
+      }
+    }
+
     func testProgramArgumentsAreLiteralAndCancellationStopsChild() async throws {
       let literal = "hello; $(touch /tmp/this-must-not-run) `whoami`"
       let command = VoiceProcess(

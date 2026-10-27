@@ -119,7 +119,14 @@ def main():
                 time.sleep(.35)
                 assert requests.empty(), 'Walkie-talkie submitted automatically'
                 send('draft stays here')
+                os.write(master, b'\x07')  # Ctrl+G discards capture and keeps the typed draft.
+                wait('walkie-talkie · paused')
+                assert requests.empty(), 'Discard submitted voice'
                 os.write(master, b'\x00')
+                wait('walkie-talkie · listening')
+                read_pty(master, output, .25)
+                os.write(master, b'\x14')  # Ctrl+T finalizes transcription and sends.
+
                 first = request('voice-one', voice=True)
                 assert any(m['content'] == 'remember sapphire' for m in first['messages']), first
                 assert any('Voice language: ca-ES' in str(m['content']) for m in first['messages']), first
@@ -134,7 +141,7 @@ def main():
                 os.write(master, b'\x00')
                 wait('walkie-talkie · listening')
                 read_pty(master, output, .25)
-                os.write(master, b'\x00')
+                os.write(master, b'\x1b[116;5u')  # Extended-keyboard Ctrl+T.
                 second = request('voice-two', voice=True)
                 assert any(m['content'] == 'draft stays here' for m in second['messages']), second
                 assert sum(m['content'] == 'voice-one' for m in second['messages']) == 1, second

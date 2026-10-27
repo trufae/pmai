@@ -1797,8 +1797,11 @@ including the model's `default` voice when no voice catalog is supplied.
 
 `/voice` toggles a separate voice agent while the text prompt stays available.
 `/voice realtime` sends each utterance after `voice.silenceSeconds` of silence;
-`/voice walkie-talkie` records until Ctrl+Space or `/voice send`. Ctrl+Space starts
-another recording, or interrupts the voice reply to let you speak. `/voice pause`
+`/voice walkie-talkie` records until Ctrl+T or `/voice send`, which finishes
+transcription and sends the utterance. Ctrl+G or `/voice discard` drops the current
+recording and partial transcript without sending, then pauses voice. Both keys
+preserve your typed draft. Ctrl+Space starts another recording (or sends the
+current one), and interrupts the voice reply to let you speak. `/voice pause`
 mutes capture and playback; `/voice off` stops the voice agent. A dedicated status
 row shows recording, level, partial native transcription, thinking, speech, pause,
 and errors. Capture pauses during playback to avoid transcribing the speakers.

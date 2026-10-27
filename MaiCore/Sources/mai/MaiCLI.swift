@@ -2554,7 +2554,8 @@ struct MaiCLI {
     var voiceHistory: [AgentMessage] = []
     var voiceContextCount = 0
     var voiceResumeAfterCancel = false
-    editor.onVoiceControl = { continuation.yield(.voiceControl) }
+    var voiceDiscardAfterCancel = false
+    editor.onVoiceControl = { continuation.yield(.voiceControl($0)) }
     for tool in VoiceAgentTools.tools(supervisor: runtime.supervisor) {
       try? await runtime.register(tool: tool, replacingExisting: true)
     }
@@ -3819,7 +3820,7 @@ struct MaiCLI {
         loop.conversationTurns[pid]?.task.cancel()
         _ = await runtime.supervisor.stop(pid, reason: "Voice disabled")
       }
-      voicePID = nil; voiceChatID = nil; voiceHistory = []; voiceResumeAfterCancel = false
+      voicePID = nil; voiceChatID = nil; voiceHistory = []; voiceResumeAfterCancel = false; voiceDiscardAfterCancel = false
       screen?.setVoiceStatus(nil)
     }
 
@@ -3845,7 +3846,7 @@ struct MaiCLI {
       request.stream = true; request.context = .cache; request.responseFormat = .text
       request.toolNames.formUnion(VoiceAgentTools.names)
       for name in VoiceAgentTools.names { request.toolPolicy.tools[name] = .direct }
-      request.messages.append(.system(settings.instructions + "\nVoice language: " + settings.language))
+      request.messages.append(.system(settings.instructions + "\nVoice language: " + settings.languageIdentifier))
       request.messages += voiceHistory
       request.messages.append(contentsOf: await runtime.supervisor.drainInbox(pid))
       request.messages.append(.user(text))
@@ -3863,6 +3864,15 @@ struct MaiCLI {
       if command == "status" {
         let state = await voiceSession?.state.rawValue ?? "off"
         await terminal.line("Voice: \(state)\(voicePID.map { " · agent#\($0.rawValue)" } ?? "")")
+        return
+      }
+      if command == "discard" || command == "cancel" {
+        voiceResumeAfterCancel = false
+        await voiceSession?.discard()
+        if let pid = voicePID, let turn = loop.conversationTurns[pid] {
+          voiceDiscardAfterCancel = true
+          turn.task.cancel()
+        }
         return
       }
       if command == "pause" { await voiceSession?.pause(); return }
@@ -3899,8 +3909,8 @@ struct MaiCLI {
         let id = voiceID
         voiceSession = await VoiceSession(settings: settings, input: input, output: output,
           changed: { continuation.yield(.voiceStatus(id, $0)) },
-          submit: { continuation.yield(.voiceTranscript(id, $0)) })
-        await terminal.note("Voice agent#\(pid.rawValue) · \(settings.mode.rawValue). /voice send ends a recording; /voice pause or off stops capture. /subagents \(pid.rawValue) opens its text conversation.")
+          submit: { continuation.yield(.voiceTranscript(id, $0, $1)) })
+        await terminal.note("Voice agent#\(pid.rawValue) · \(settings.mode.rawValue). Ctrl+T sends · Ctrl+G discards · Ctrl+Space records/sends. /voice off stops voice; /subagents \(pid.rawValue) opens its text conversation.")
         await voiceSession?.start()
       } catch { await terminal.line("voice: \(error.localizedDescription)", to: .standardError) }
     }
@@ -3911,17 +3921,22 @@ struct MaiCLI {
 
     func handleEvent(_ event: REPLEvent) async -> Bool {
       switch event {
-      case .voiceControl:
+      case .voiceControl(let control):
         if let voiceSession {
-          if await voiceSession.state == .listening { await voiceSession.send() }
-          else { await handleVoice("record") }
+          switch control {
+          case .send: await voiceSession.send()
+          case .discard: await handleVoice("discard")
+          case .toggleCapture:
+            if await voiceSession.state == .listening { await voiceSession.send() }
+            else { await handleVoice("record") }
+          }
         }
       case .voiceStatus(let id, let status):
         guard id == voiceID else { return false }
         screen?.setVoiceStatus(status)
         if screen == nil, let status, !status.contains("listening") { await terminal.note(status) }
-      case .voiceTranscript(let id, let text):
-        guard id == voiceID else { return false }
+      case .voiceTranscript(let id, let token, let text):
+        guard id == voiceID, await voiceSession?.acceptsSubmission(token) == true else { return false }
         if voiceChatID != session.id { await stopVoice() }
         else { await startVoiceTurn(text) }
       case .historyPage(let earlier):
@@ -4906,10 +4921,13 @@ struct MaiCLI {
             voiceHistory = Array(result.transcript.dropFirst(voiceContextCount))
             await voiceSession?.finishReply()
           case .failure(let error):
-            voiceHistory = Array(await runtime.supervisor.transcript(pid).dropFirst(voiceContextCount))
-            if voiceResumeAfterCancel { await voiceSession?.finishReply() }
+            voiceHistory = AgentTranscriptEditor.answeringUnansweredToolCalls(
+              in: Array(await runtime.supervisor.transcript(pid).dropFirst(voiceContextCount)),
+              reason: "the voice reply was cancelled")
+            if voiceResumeAfterCancel || voiceDiscardAfterCancel { await voiceSession?.finishReply() }
             else { await voiceSession?.finishReply(error: error.localizedDescription) }
           }
+          voiceDiscardAfterCancel = false
           if voiceResumeAfterCancel {
             voiceResumeAfterCancel = false
             await voiceSession?.record()
@@ -5619,7 +5637,9 @@ struct MaiCLI {
     /voice realtime         Listen; silence ends the turn (default)
     /voice walkie-talkie    Record; /voice send ends each turn
     /voice record|resume    Begin recording the next turn
-    /voice send             Finish recording and send (Ctrl+Space also toggles recording)
+    /voice send             Finish transcription and send (Ctrl+T)
+    /voice discard          Discard capture/transcript and pause (Ctrl+G)
+    Ctrl+Space              Start recording, or send the current recording
     /voice pause            Mute capture and stop speech
     /voice off              Stop voice and its agent
     /voice status           Show state and voice agent PID
@@ -13732,7 +13752,7 @@ struct MaiCLI {
       "/voice", "/voice on", "/voice off", "/voice realtime", "/voice walkie-talkie",
       "/set voice", "/set voice.language ", "/set voice.input ", "/set voice.output ",
       "/set voice.mode ", "/set voice.silenceSeconds ", "/set voice.provider ",
-      "/voice record", "/voice send", "/voice pause", "/voice resume", "/voice status", "/voice help",
+      "/voice record", "/voice send", "/voice discard", "/voice cancel", "/voice pause", "/voice resume", "/voice status", "/voice help",
       "/model -voice ", "/help voice",
       "/subagents next", "/subagents prev", "/btw ", "/then ", "/unthen",
       "/help memory", "/help agents", "/help jobs", "/help ps", "/help chat", "/help edit", "/help tools",
@@ -14351,6 +14371,7 @@ struct MaiCLI {
       Ctrl+B/F page up/down in the focused frame, like Page Up/Down
       Ctrl+L clear the screen, keeping the input
       Ctrl+W delete word · Ctrl+C or /stop interrupt the run · Ctrl+Z suspend
+      Voice: Ctrl+T transcribes/sends · Ctrl+G discards · Ctrl+Space records/sends
       Ctrl+D exits when the input is empty
       Page Up/Down and the mouse wheel scroll the transcript in buffer mode
       Tab on an empty prompt focuses /view; j/k scroll, J/K page, g/G top/bottom, Space layout, Enter fullscreen, / search, v/V resize, q closes

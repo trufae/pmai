@@ -254,7 +254,7 @@ final class TerminalLineEditor {
   private var activePrompt = TerminalPrompt(text: "")
   private var tracksPromptUpdates = false
   private var continuationPrompt: String?
-  var onVoiceControl: (@Sendable () -> Void)?
+  var onVoiceControl: (@Sendable (REPLVoiceControl) -> Void)?
   var onAgentSwitch: (@Sendable (REPLAgentSwitch) -> Void)?
   private var conversationDrafts: [String: (bytes: [UInt8], cursor: Int, pasted: IndexSet)] = [:]
   /// A surface that owns the tty for the whole session. While one is
@@ -580,7 +580,7 @@ final class TerminalLineEditor {
       case .byte(let byte):
         switch byte {
         case 0:  // Ctrl+Space toggles voice capture without submitting the text draft.
-          if tracksPromptUpdates, !activePrompt.isModal { onVoiceControl?() }
+          if tracksPromptUpdates, !activePrompt.isModal { onVoiceControl?(.toggleCapture) }
         case 1:  // Ctrl+A: start of the line
           cursor = lineStart(in: bytes, at: cursor)
           redraw(prompt: prompt, bytes: bytes, cursor: cursor)
@@ -601,6 +601,10 @@ final class TerminalLineEditor {
           redraw(prompt: prompt, bytes: bytes, cursor: cursor)
         case 6:  // Ctrl+F: a page forward in the frame that has focus
           surface?.scrollOutput(wheel: 0, pages: 1)
+        case 7:  // Ctrl+G discards voice capture, preserving the typed draft.
+          if tracksPromptUpdates, !activePrompt.isModal { onVoiceControl?(.discard) }
+        case 20:  // Ctrl+T finishes transcription and sends the voice turn.
+          if tracksPromptUpdates, !activePrompt.isModal { onVoiceControl?(.send) }
         case 9:  // Tab
           completeInput()
         case 10:  // Ctrl+J: a line break, for terminals that send Enter for Shift+Enter

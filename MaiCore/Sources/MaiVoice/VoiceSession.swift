@@ -4,7 +4,7 @@ import MaiCore
 /// Audio owns no terminal input. Hosts deliver recognized turns through their normal event loop.
 @MainActor public final class VoiceSession {
   public enum State: String, Sendable {
-    case off, paused, listening, transcribing, thinking, speaking, error
+    case off, starting, paused, listening, transcribing, thinking, speaking, error
   }
   public private(set) var state: State = .off
   public private(set) var mode: VoiceCaptureMode
@@ -14,7 +14,7 @@ import MaiCore
   private let input: any VoiceInputProvider
   private let output: any VoiceOutputProvider
   private let changed: @Sendable (String?) -> Void
-  private let submit: @Sendable (String) -> Void
+  private let submit: @Sendable (UUID, String) -> Void
   private var captureTask: Task<Void, Never>?
   private var timer: Task<Void, Never>?
   private var playback: Task<Void, Never>?
@@ -27,6 +27,7 @@ import MaiCore
   private var enabled = false
   private var paused = false
   private var heardSpeech = false
+  private var endedDuringStart = false
   private var lastSound = ContinuousClock.now
   private var recordingStarted = ContinuousClock.now
   private var level = 0.0
@@ -35,7 +36,7 @@ import MaiCore
   public init(
     settings: ConfiguredVoice, input: any VoiceInputProvider,
     output: any VoiceOutputProvider, changed: @escaping @Sendable (String?) -> Void,
-    submit: @escaping @Sendable (String) -> Void
+    submit: @escaping @Sendable (UUID, String) -> Void
   ) {
     self.settings = settings
     self.mode = settings.mode
@@ -64,14 +65,13 @@ import MaiCore
     transcript = ""
     error = nil
     heardSpeech = false
+    endedDuringStart = false
     level = 0
     generation = UUID()
     captureGeneration = UUID()
     let generation = generation
     let capture = captureGeneration
-    recordingStarted = .now
-    lastSound = .now
-    state = .listening
+    state = .starting
     notify()
     captureTask = Task { [self] in
       do {
@@ -79,6 +79,14 @@ import MaiCore
           Task { @MainActor in self?.receive(event, generation: capture) }
         }
         guard generation == self.generation, !Task.isCancelled else { return }
+        recordingStarted = .now
+        lastSound = .now
+        state = .listening
+        notify()
+        if endedDuringStart {
+          send()
+          return
+        }
         timer = Task { [weak self] in
           while !Task.isCancelled {
             do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
@@ -103,10 +111,11 @@ import MaiCore
   }
 
   private func receive(_ event: VoiceInputEvent, generation: UUID) {
-    guard generation == captureGeneration, state == .listening else { return }
+    guard generation == captureGeneration, state == .listening || state == .starting else { return }
     switch event {
     case .level(let level):
-      self.level = level
+      guard level.isFinite else { return }
+      self.level = min(1, max(0, level))
       if level >= settings.speechThreshold {
         heardSpeech = true
         lastSound = .now
@@ -117,7 +126,8 @@ import MaiCore
         lastSound = .now
       }
       transcript = text
-    case .ended: send()
+    case .ended:
+      if state == .starting { endedDuringStart = true } else { send() }
     case .failure(let message): fail(VoiceError.unavailable(message))
     }
   }
@@ -144,12 +154,17 @@ import MaiCore
         modelFinished = false
         sentences = VoiceSentenceBuffer()
         notify()
-        submit(text)
+        submit(generation, text)
       } catch {
         guard generation == self.generation, !Task.isCancelled else { return }
         fail(error)
       }
     }
+  }
+
+  /// The REPL may receive a queued transcription after the user discarded it.
+  public func acceptsSubmission(_ token: UUID) -> Bool {
+    enabled && !paused && token == generation
   }
 
   /// Includes replies to typed turns in the voice agent's tab.
@@ -181,6 +196,7 @@ import MaiCore
   public func finishReply(error: String? = nil) {
     guard enabled else { return }
     if let error {
+      modelFinished = true
       fail(VoiceError.unavailable(error))
       return
     }
@@ -242,6 +258,16 @@ import MaiCore
     state = .paused
     notify()
   }
+  /// Drop capture and partial recognition without submitting a turn or touching typed input.
+  public func discard() {
+    pause()
+    transcript = ""
+    error = nil
+    heardSpeech = false
+    level = 0
+    sentences = VoiceSentenceBuffer()
+    notify()
+  }
   public func stop() {
     enabled = false
     pause()
@@ -263,13 +289,17 @@ import MaiCore
       case .listening: "● \(spinner)"
       case .speaking: "◉"
       case .paused: "Ⅱ"
-      case .thinking, .transcribing: spinner
+      case .starting, .thinking, .transcribing: spinner
       case .error: "⊗"
       case .off: "○"
       }
     let detail = state == .error ? error ?? "" : state == .listening ? "\(meter) \(transcript)" : ""
+    let controls =
+      state == .listening
+      ? "^T send · ^G discard · ^Space toggle" : "^Space record · ^G cancel"
+    let label = state == .starting ? "requesting access" : state.rawValue
     changed(
-      "\(icon) voice · \(mode.rawValue) · \(state.rawValue) · \(settings.language)  \(detail)  /voice record|send|pause|off"
+      "\(icon) voice · \(mode.rawValue) · \(label) · \(controls) · \(settings.languageIdentifier)  \(detail)"
     )
   }
 }

@@ -3,6 +3,8 @@ import MaiCore
 
 /// What the REPL loop reacts to. Lines come from the input thread; the rest
 /// from turns ending, tools asking for approval, and the process table.
+enum REPLVoiceControl: Sendable { case toggleCapture, send, discard }
+
 enum REPLEvent: Sendable {
   case line(String, heredoc: Bool, promptID: String?, pasted: IndexSet = [])
   /// A non-nil ID means the signal/input path already cancelled that exact
@@ -15,8 +17,8 @@ enum REPLEvent: Sendable {
   case compaction(AutocompactionRequest, REPLCompactionReply)
   case compactionFinished(REPLCompactionReply)
   case supervisor
-  case voiceControl
-  case voiceTranscript(UUID, String)
+  case voiceControl(REPLVoiceControl)
+  case voiceTranscript(UUID, UUID, String)
   case voiceStatus(UUID, String?)
   case historyPage(Bool)
   case switchAgent(REPLAgentSwitch, reply: @Sendable () -> Void)
