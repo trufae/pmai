@@ -197,10 +197,11 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     input: String,
     voice: String,
     responseFormat: String = "wav",
-    model: String? = nil
+    model: String? = nil,
+    speed: Double = 1
   ) async throws -> Data {
     let request = try makeSpeechRequest(
-      input: input, voice: voice, responseFormat: responseFormat, model: model)
+      input: input, voice: voice, responseFormat: responseFormat, model: model, speed: speed)
     let (data, response) = try await data(for: request)
     try validate(response: response, data: data)
     guard !data.isEmpty else { throw OpenAICompatibleProviderError.emptyResponse }
@@ -215,8 +216,11 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
   }
 
   func makeSpeechRequest(
-    input: String, voice: String, responseFormat: String = "wav", model: String? = nil
+    input: String, voice: String, responseFormat: String = "wav", model: String? = nil, speed: Double = 1
   ) throws -> URLRequest {
+    guard speed.isFinite, (0.25...4).contains(speed) else {
+      throw AudioAPIError.invalidRequest("Speech speed must be between 0.25 and 4.")
+    }
     var model = model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     let voice = voice.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !voice.isEmpty else {
@@ -244,6 +248,7 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     if !model.isEmpty {
       body["model"] = .string(model)
     }
+    if speed != 1 { body["speed"] = .number(speed) }
     var request = URLRequest(url: try endpointURL("audio/speech"))
     request.httpMethod = "POST"
     request.timeoutInterval = max(1, configuration.requestTimeout)

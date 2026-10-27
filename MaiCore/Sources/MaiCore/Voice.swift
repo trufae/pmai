@@ -22,6 +22,7 @@ public struct ConfiguredVoice: Codable, Equatable, Sendable {
   public var input: String = "system"
   public var output: String = "system"
   public var voice: String = "default"
+  public var speed: Double = 1
   public var silenceSeconds: Double = 1.2
   public var speechThreshold: Double = 0.015
   public var maximumRecordingSeconds: Double = 60
@@ -43,7 +44,7 @@ public struct ConfiguredVoice: Codable, Equatable, Sendable {
   public init() {}
   public static let settingNames = CodingKeys.allCases.map(\.rawValue)
   private enum CodingKeys: String, CodingKey, CaseIterable {
-    case language, mode, input, output, voice, silenceSeconds, speechThreshold,
+    case language, mode, input, output, voice, speed, silenceSeconds, speechThreshold,
       maximumRecordingSeconds, captureCommand, transcriptionCommand, speechCommand,
       playbackCommand, provider, transcriptionModel, speechModel, instructions
   }
@@ -55,6 +56,7 @@ public struct ConfiguredVoice: Codable, Equatable, Sendable {
     input = try c.decodeIfPresent(String.self, forKey: .input) ?? input
     output = try c.decodeIfPresent(String.self, forKey: .output) ?? output
     voice = try c.decodeIfPresent(String.self, forKey: .voice) ?? voice
+    speed = try c.decodeIfPresent(Double.self, forKey: .speed) ?? speed
     silenceSeconds = try c.decodeIfPresent(Double.self, forKey: .silenceSeconds) ?? silenceSeconds
     speechThreshold =
       try c.decodeIfPresent(Double.self, forKey: .speechThreshold) ?? speechThreshold
@@ -72,11 +74,13 @@ public struct ConfiguredVoice: Codable, Equatable, Sendable {
     instructions = try c.decodeIfPresent(String.self, forKey: .instructions) ?? instructions
   }
   public func validate() throws {
-    guard silenceSeconds.isFinite, (0.2...10).contains(silenceSeconds),
+    guard speed.isFinite, (0.25...4).contains(speed), silenceSeconds.isFinite,
+      (0.2...10).contains(silenceSeconds),
       speechThreshold.isFinite, (0.0001...1).contains(speechThreshold),
       maximumRecordingSeconds.isFinite, (1...300).contains(maximumRecordingSeconds)
     else {
-      throw VoiceError.unavailable("Invalid voice silence, threshold, or recording limit settings.")
+      throw VoiceError.unavailable(
+        "Invalid voice speed (0.25–4), silence, threshold, or recording limit settings.")
     }
   }
 }
@@ -105,8 +109,39 @@ public enum VoiceInputEvent: Sendable {
   func stop()
 }
 
+public struct VoiceCatalogOption: Equatable, Sendable {
+  public var id: String
+  public var name: String
+  public var language: String?
+  public var quality: String?
+  public init(id: String, name: String, language: String? = nil, quality: String? = nil) {
+    self.id = id
+    self.name = name
+    self.language = language
+    self.quality = quality
+  }
+}
+
+public struct VoiceProviderCatalog: Sendable {
+  public var languages: [VoiceCatalogOption]
+  public var voices: [VoiceCatalogOption]
+  public var defaultVoice: String?
+  public init(
+    languages: [VoiceCatalogOption] = [], voices: [VoiceCatalogOption] = [],
+    defaultVoice: String? = nil
+  ) {
+    self.languages = languages
+    self.voices = voices
+    self.defaultVoice = defaultVoice
+  }
+}
+
 public protocol ConfiguredVoiceProviderFactory: Sendable {
   var kind: String { get }
+  @MainActor func catalog(
+    settings: ConfiguredVoice, configuration: MaiConfiguration,
+    environment: [String: String]
+  ) async throws -> VoiceProviderCatalog
   @MainActor func makeInput(
     settings: ConfiguredVoice, configuration: MaiConfiguration,
     environment: [String: String]
@@ -115,6 +150,13 @@ public protocol ConfiguredVoiceProviderFactory: Sendable {
     settings: ConfiguredVoice, configuration: MaiConfiguration,
     environment: [String: String]
   ) throws -> any VoiceOutputProvider
+}
+
+extension ConfiguredVoiceProviderFactory {
+  @MainActor public func catalog(
+    settings: ConfiguredVoice, configuration: MaiConfiguration,
+    environment: [String: String]
+  ) async throws -> VoiceProviderCatalog { .init() }
 }
 
 public enum VoiceError: LocalizedError, Sendable {

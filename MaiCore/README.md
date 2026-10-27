@@ -1825,8 +1825,20 @@ system prompt. The defaults request brief plain speech, with no Markdown, URLs,
 or large exact numbers. The playback boundary additionally strips technical
 formatting, URLs and long numeric strings. Input transcripts remain verbatim.
 
-`/set voice` displays the shared MaiCore settings, and `/set voice.language ca-ES`
-(or any other `voice.KEY VALUE`) saves a change. Restart voice after changing its
+`/set`, `/set voice`, and `/set voice.` list the same voice settings as `voice.KEY = VALUE`
+lines; `/set | grep voice` works too. Tab completion includes every voice key.
+`/voice voices [FILTER]` lists the selected speech provider's voices, and
+`/voice languages [FILTER]` lists recognition/speech languages when the providers
+publish catalogs. Native macOS lists installed voices with their quality and marks
+the current selection. The default prefers installed premium or enhanced voices
+for the selected language, then falls back to the system's language default.
+Use `/set voice.voice ID` with an ID from that list and `/set voice.language ca-ES`
+to change the selection. `/set voice.speed 1.25` increases speech rate; `1` is normal
+and the accepted range is `0.25` to `4`. Native speech clamps rates to its supported
+range. Remote speech receives the speed parameter; program backends can use the
+`{speed}` multiplier in their command arguments.
+
+Any `/set voice.KEY VALUE` saves a change. Restart voice after changing its
 audio settings. Program settings accept a JSON object. They execute directly,
 without shell expansion. For example:
 
@@ -1835,6 +1847,9 @@ without shell expansion. For example:
 /set voice.output system
 /set voice.language en-US
 /set voice.silenceSeconds 1.2
+/voice voices en
+/voice languages en
+/set voice.speed 1.25
 /set voice.output command
 /set voice.speechCommand {"executable":"say","arguments":["-v","Samantha","{text}"]}
 ```

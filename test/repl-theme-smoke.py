@@ -89,11 +89,17 @@ def main():
         # Namespace queries use the same values and ordering as the full list.
         run('/set > settings.txt')
         all_settings = (root / 'settings.txt').read_text().splitlines(keepends=True)
-        for prefix in ('ctx.', 'CTX.', 'retry.', 'ui.', 'tool.', 'limits.', 'export.', 'use.'):
+        for prefix in ('ctx.', 'CTX.', 'retry.', 'ui.', 'tool.', 'limits.', 'export.', 'use.', 'voice.', 'VOICE.'):
             run(f'/set {prefix} > filtered-settings.txt')
             expected = ''.join(line for line in all_settings if line.startswith(prefix.lower()))
             assert expected, (prefix, all_settings)
             assert (root / 'filtered-settings.txt').read_text() == expected, prefix
+        run('/set voice > voice.txt', '/set | grep "^voice\\." > voice-pipe.txt')
+        expected_voice = ''.join(line for line in all_settings if line.startswith('voice.'))
+        assert (root / 'voice.txt').read_text() == expected_voice
+        assert (root / 'voice-pipe.txt').read_text() == expected_voice
+        assert 'voice.speed = 1' in expected_voice
+        assert 'voice.speechCommand = null' in expected_voice
         assert config.read_bytes() == before, 'listing setting prefixes must not save configuration'
         redirected = run('/set ui.fgerror cyan', '/set ui.bold on')
         assert 'Use /theme color fgerror [VALUE].' in redirected, redirected

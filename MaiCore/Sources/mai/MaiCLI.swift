@@ -3859,6 +3859,10 @@ struct MaiCLI {
 
     func handleVoice(_ argument: String) async {
       let command = argument.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+      if ["voices", "languages"].contains(command.split(separator: " ").first.map(String.init) ?? "") {
+        await showVoiceCatalog(argument, configuration: configuration, plugins: plugins, terminal: terminal)
+        return
+      }
       if command == "help" {
         await terminal.line(voiceHelp); return
       }
@@ -5645,8 +5649,13 @@ struct MaiCLI {
     /voice pause            Mute capture and stop speech
     /voice off              Stop voice and its agent
     /voice status           Show state and voice agent PID
+    /voice voices [FILTER]  List available speech voice IDs and languages
+    /voice languages [FILTER] List available recognition and speech languages
     /model -voice SELECTOR  Choose the voice conversation agent/model
-    /set voice[.KEY VALUE]   Inspect or save MaiCore voice settings
+    /set voice.             List all voice settings (also included in /set)
+    /set voice.voice ID     Choose a voice from /voice voices
+    /set voice.language TAG Choose a language from /voice languages
+    /set voice.speed N      Speech rate multiplier (0.25–4; default 1)
 
     MaiCore's voice settings select language, input/output plugin kinds (system,
     command, openai), silenceSeconds, speechThreshold, voice and provider/models.
@@ -10609,9 +10618,9 @@ struct MaiCLI {
       do {
         let settings = configuration?.voice ?? .init()
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
-        if voiceKey.lowercased() == "voice" {
-          await terminal.line(String(decoding: try encoder.encode(settings), as: UTF8.self))
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        if ["voice", "voice."].contains(voiceKey.lowercased()) {
+          await listSettings(try voiceSettings(settings), terminal: terminal)
           return
         }
         let requested = String(voiceKey.dropFirst(6))
@@ -10648,6 +10657,12 @@ struct MaiCLI {
         .split(whereSeparator: \Character.isWhitespace).map(String.init)
     }
     if parts.isEmpty || (parts.count == 1 && parts[0].hasSuffix(".")) {
+      let voice: [String]
+      do { voice = try voiceSettings(configuration?.voice ?? .init()) }
+      catch {
+        await terminal.line("voice: \(error.localizedDescription)", to: .standardError)
+        return
+      }
       let settings = [
         "tool.aproval = \(await approvalHandler.currentApprovalMode().rawValue)",
         "debug = \(await approvalHandler.isDebugEnabled() ? "true" : "false")",
@@ -10659,7 +10674,7 @@ struct MaiCLI {
       ] + limitSettings(session.profile.limits) + recoverySettings(session.profile)
         + toolSettings(session.profile) + uiSettings(configuration?.ui ?? .init())
         + exportSettings(configuration?.documentExport ?? .init())
-        + useSettings(configuration?.use ?? .init())
+        + useSettings(configuration?.use ?? .init()) + voice
       let prefix = parts.first?.lowercased() ?? ""
       let matching = settings.filter { $0.lowercased().hasPrefix(prefix) }
       if !matching.isEmpty {
@@ -13757,8 +13772,7 @@ struct MaiCLI {
       "/set export.thinking on", "/set export.thinking off",
       "/fork", "/fork --empty", "/subagents", "/subagents main", "/subagents parent",
       "/voice", "/voice on", "/voice off", "/voice realtime", "/voice walkie-talkie",
-      "/set voice", "/set voice.language ", "/set voice.input ", "/set voice.output ",
-      "/set voice.mode ", "/set voice.silenceSeconds ", "/set voice.provider ",
+      "/set voice", "/set voice.", "/voice voices", "/voice languages",
       "/voice record", "/voice send", "/voice discard", "/voice cancel", "/voice pause", "/voice resume", "/voice status", "/voice help",
       "/model -voice ", "/help voice",
       "/subagents next", "/subagents prev", "/btw ", "/then ", "/unthen",
@@ -13866,6 +13880,7 @@ struct MaiCLI {
       "/chat clear", "/project", "/project info", "/project list", "/project name ",
       "/project tint ", "/project tint none", "/project del ",
     ]
+    values += ConfiguredVoice.settingNames.map { "/set voice.\($0) " }
     values += REPLModelCatalog.commandPrefixes
     for tint in AgentProjectTint.presetNames {
       values.append("/project tint \(tint)")

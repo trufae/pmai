@@ -92,3 +92,15 @@ func groqSpeechChunks() {
   #expect(chunks.joined() == text)
   #expect(chunks.allSatisfy { !$0.isEmpty && $0.count <= 200 })
 }
+
+@Test("Speech speed is forwarded only when changed and rejects invalid rates")
+func providerSpeechSpeed() throws {
+  let provider = OpenAICompatibleProvider(configuration: .init(baseURL: URL(string: "https://speech.example.test/v1")!))
+  let changed = try provider.makeSpeechRequest(input: "Hello", voice: "default", speed: 1.25)
+  let body = try JSONDecoder().decode([String: JSONValue].self, from: #require(changed.httpBody))
+  #expect(body["speed"] == .number(1.25))
+  let normal = try provider.makeSpeechRequest(input: "Hello", voice: "default")
+  let defaults = try JSONDecoder().decode([String: JSONValue].self, from: #require(normal.httpBody))
+  #expect(defaults["speed"] == nil)
+  #expect(throws: AudioAPIError.self) { try provider.makeSpeechRequest(input: "Hello", voice: "default", speed: 0) }
+}

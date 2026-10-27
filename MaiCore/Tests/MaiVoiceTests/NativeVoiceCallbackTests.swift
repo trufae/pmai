@@ -59,3 +59,36 @@
     }
   }
 #endif
+
+#if os(macOS)
+  extension NativeVoiceCallbackTests {
+    @MainActor func testDefaultVoicePrefersInstalledHigherQualityForTheLanguage() {
+      let voices: [VoiceCatalogOption] = [
+        .init(id: "compact-us", name: "Compact", language: "en-US", quality: "standard"),
+        .init(id: "enhanced-us", name: "Enhanced", language: "en-US", quality: "enhanced"),
+        .init(id: "premium-gb", name: "Premium", language: "en-GB", quality: "premium"),
+        .init(id: "premium-ca", name: "Premium", language: "ca-ES", quality: "premium"),
+      ]
+      XCTAssertEqual(
+        NativeVoiceCatalog.preferredVoiceID(language: "en-US", voices: voices), "premium-gb")
+      XCTAssertEqual(
+        NativeVoiceCatalog.preferredVoiceID(language: "ca-ES", voices: voices), "premium-ca")
+      XCTAssertNil(NativeVoiceCatalog.preferredVoiceID(language: "ja-JP", voices: voices))
+    }
+
+    @MainActor func testInstalledCatalogAndSpeechSelectionWithoutPlayingAudio() throws {
+      let catalog = NativeVoiceCatalog.catalog(language: "en-US")
+      XCTAssertTrue(catalog.languages.contains { $0.id == "en-US" })
+      let voice = try XCTUnwrap(catalog.voices.first)
+      var settings = ConfiguredVoice()
+      settings.voice = voice.id
+      settings.speed = 1.25
+      let output = NativeVoiceOutput(settings: settings)
+      let utterance = try output.utterance("fixture")
+      XCTAssertEqual(utterance.voice?.identifier, voice.id)
+      XCTAssertGreaterThan(utterance.rate, AVSpeechUtteranceDefaultSpeechRate)
+      settings.voice = "missing-voice-fixture"
+      XCTAssertThrowsError(try NativeVoiceOutput(settings: settings).utterance("fixture"))
+    }
+  }
+#endif

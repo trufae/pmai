@@ -16,6 +16,23 @@ public struct MaiVoicePlugin: MaiPlugin {
 
 private struct VoiceFactory: ConfiguredVoiceProviderFactory {
   let kind: String
+  @MainActor func catalog(
+    settings: ConfiguredVoice, configuration: MaiConfiguration,
+    environment: [String: String]
+  ) async throws -> VoiceProviderCatalog {
+    #if os(macOS)
+      if kind == "system" {
+        return NativeVoiceCatalog.catalog(language: settings.languageIdentifier)
+      }
+    #endif
+    if kind == "openai" {
+      let voices = try await client(configuration, environment: environment, settings: settings)
+        .availableVoices(model: settings.speechModel)
+      return .init(voices: voices.map { .init(id: $0, name: $0) })
+    }
+    return .init()
+  }
+
   @MainActor func makeInput(
     settings: ConfiguredVoice, configuration: MaiConfiguration,
     environment: [String: String]
@@ -104,7 +121,7 @@ private struct VoiceFactory: ConfiguredVoiceProviderFactory {
       let url = provider.baseURL
     else {
       throw VoiceError.unavailable(
-        "Set voice.provider to an configured OpenAI-compatible provider with a baseURL.")
+        "Set voice.provider to a configured OpenAI-compatible provider with a baseURL.")
     }
     return OpenAICompatibleProvider(
       configuration: .init(
@@ -132,7 +149,7 @@ private struct VoiceFactory: ConfiguredVoiceProviderFactory {
       let audio = try await client.synthesizeSpeech(
         input: text,
         voice: settings.voice == "default" ? "alloy" : settings.voice,
-        responseFormat: "wav", model: settings.speechModel)
+        responseFormat: "wav", model: settings.speechModel, speed: settings.speed)
       try Task.checkCancellation()
       let file = FileManager.default.temporaryDirectory.appendingPathComponent(
         "pmai-speech-\(UUID()).wav")

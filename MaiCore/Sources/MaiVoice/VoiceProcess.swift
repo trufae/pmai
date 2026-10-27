@@ -224,7 +224,10 @@ import MaiCore
     func speak(_ text: String) async throws {
       let process = VoiceProcess(
         command, environment: environment,
-        values: ["text": text, "language": settings.language, "voice": settings.voice])
+        values: [
+          "text": text, "language": settings.languageIdentifier, "voice": settings.voice,
+          "speed": String(settings.speed),
+        ])
       self.process = process
       defer { if self.process === process { self.process = nil } }
       let usesArgument = command.arguments.contains { $0.contains("{text}") }

@@ -4,6 +4,59 @@
   @preconcurrency import Speech
   import MaiCore
 
+  @MainActor enum NativeVoiceCatalog {
+    static func catalog(language: String) -> VoiceProviderCatalog {
+      .init(
+        languages: SFSpeechRecognizer.supportedLocales().map { locale in
+          let id = locale.identifier.replacingOccurrences(of: "_", with: "-")
+          return .init(id: id, name: Locale.current.localizedString(forIdentifier: id) ?? id)
+        }.sorted { $0.id < $1.id },
+        voices: AVSpeechSynthesisVoice.speechVoices().map {
+          let quality: String =
+            switch $0.quality {
+            case .default: "standard"
+            case .enhanced: "enhanced"
+            case .premium: "premium"
+            @unknown default: "system"
+            }
+          return .init(id: $0.identifier, name: $0.name, language: $0.language, quality: quality)
+        }.sorted { ($0.language ?? "", $0.id) < ($1.language ?? "", $1.id) },
+        defaultVoice: preferredVoice(language: language)?.identifier)
+    }
+    static func preferredVoice(language: String) -> AVSpeechSynthesisVoice? {
+      let voices = AVSpeechSynthesisVoice.speechVoices()
+      let candidates = voices.map { voice -> VoiceCatalogOption in
+        .init(
+          id: voice.identifier, name: voice.name, language: voice.language,
+          quality: voice.quality == .premium
+            ? "premium" : voice.quality == .enhanced ? "enhanced" : "standard")
+      }
+      if let id = preferredVoiceID(language: language, voices: candidates),
+        let preferred = voices.first(where: { $0.identifier == id })
+      {
+        return preferred
+      }
+      return AVSpeechSynthesisVoice(language: language)
+    }
+
+    static func preferredVoiceID(language: String, voices: [VoiceCatalogOption]) -> String? {
+      let language = language.replacingOccurrences(of: "_", with: "-").lowercased()
+      let primary = language.split(separator: "-").first
+      func quality(_ voice: VoiceCatalogOption) -> Int {
+        voice.quality == "premium" ? 2 : voice.quality == "enhanced" ? 1 : 0
+      }
+      return voices.filter {
+        $0.language?.lowercased().split(separator: "-").first == primary && quality($0) > 0
+      }.sorted {
+        if quality($0) != quality($1) { return quality($0) > quality($1) }
+        let exact0 = $0.language?.lowercased() == language
+        let exact1 = $1.language?.lowercased() == language
+        if exact0 != exact1 { return exact0 }
+        return $0.id < $1.id
+      }.first?.id
+    }
+  }
+
   @MainActor final class NativeVoiceInput: VoiceInputProvider {
     let settings: ConfiguredVoice
     private var engine: AVAudioEngine?
@@ -170,15 +223,27 @@
       super.init()
       synthesizer.delegate = self
     }
-    func speak(_ text: String) async throws {
-      try Task.checkCancellation()
+    func utterance(_ text: String) throws -> AVSpeechUtterance {
       let utterance = AVSpeechUtterance(string: text)
       utterance.voice =
         settings.voice == "default"
-        ? AVSpeechSynthesisVoice(
-          language: settings.languageIdentifier)
+        ? NativeVoiceCatalog.preferredVoice(language: settings.languageIdentifier)
         : AVSpeechSynthesisVoice(identifier: settings.voice)
           ?? AVSpeechSynthesisVoice(language: settings.voice)
+      if settings.voice != "default", utterance.voice == nil {
+        throw VoiceError.unavailable(
+          "Unknown macOS voice '\(settings.voice)'. Use /voice voices to list installed voices.")
+      }
+      utterance.rate = min(
+        AVSpeechUtteranceMaximumSpeechRate,
+        max(
+          AVSpeechUtteranceMinimumSpeechRate,
+          AVSpeechUtteranceDefaultSpeechRate * Float(settings.speed)))
+      return utterance
+    }
+    func speak(_ text: String) async throws {
+      try Task.checkCancellation()
+      let utterance = try utterance(text)
       let id = ObjectIdentifier(utterance)
       try await withTaskCancellationHandler {
         try await withCheckedThrowingContinuation { continuation in
