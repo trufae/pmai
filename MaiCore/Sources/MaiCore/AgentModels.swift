@@ -939,7 +939,7 @@ public enum AgentContextMode: String, Codable, Equatable, Sendable {
 
 public struct AgentAutocompact: Codable, Equatable, Sendable {
   /// Estimated tokens at which the host asks whether to prune tool output,
-  /// summarize, keep context, or stop. Zero disables this prompt; automatic
+  /// summarize, keep context, or stop. Defaults to zero, disabling this prompt; automatic
   /// file-read pruning in `context: size` is independent.
   public var tokens: Int
   /// Recent exchanges retained verbatim during summarization. Nil reserves
@@ -947,7 +947,7 @@ public struct AgentAutocompact: Codable, Equatable, Sendable {
   /// exchange. The latest user request is always kept.
   public var preserveRecentTokens: Int?
 
-  public init(tokens: Int = 64_000, preserveRecentTokens: Int? = nil) {
+  public init(tokens: Int = 0, preserveRecentTokens: Int? = nil) {
     self.tokens = max(0, tokens)
     self.preserveRecentTokens = preserveRecentTokens.map { max(0, $0) }
   }
@@ -960,7 +960,7 @@ public struct AgentAutocompact: Codable, Equatable, Sendable {
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.init(
-      tokens: try container.decodeIfPresent(Int.self, forKey: .tokens) ?? 64_000,
+      tokens: try container.decodeIfPresent(Int.self, forKey: .tokens) ?? 0,
       preserveRecentTokens: try container.decodeIfPresent(Int.self, forKey: .preserveRecentTokens))
   }
 }

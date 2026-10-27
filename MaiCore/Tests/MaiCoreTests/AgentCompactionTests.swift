@@ -47,7 +47,11 @@ func compactionRetainsRecentExchanges() throws {
 func compactionTailConfiguration() throws {
   let defaults = try JSONDecoder().decode(AgentAutocompact.self, from: Data(#"{"tokens":16000}"#.utf8))
   #expect(defaults.recentTokenBudget == 4_000)
-  #expect(AgentAutocompact().recentTokenBudget == 8_000)
+  #expect(AgentAutocompact().recentTokenBudget == 0)
+  #expect(AgentAutocompact(tokens: 64_000).recentTokenBudget == 8_000)
+  let empty = try JSONDecoder().decode(AgentAutocompact.self, from: Data("{}".utf8))
+  #expect(empty == AgentAutocompact())
+  #expect(!empty.isEnabled)
   let explicit = AgentAutocompact(tokens: 16_000, preserveRecentTokens: 0)
   #expect(try JSONDecoder().decode(AgentAutocompact.self, from: JSONEncoder().encode(explicit)) == explicit)
 }

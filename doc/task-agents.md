@@ -143,7 +143,9 @@ During a run, the REPL status line shows the live model context instead of the
 chat history saved at the previous turn. Its message and estimated token counts
 grow as tool output arrives and shrink when the model context is reduced.
 
-Interactive autocompaction asks before replacing history, including when `tool.aproval` is `yolo`. In the pmai REPL, choose `y` to compact, `n` to continue without compaction for the current response, `m` for model-change instructions, `x` to clear the chat, or `c` to stop with the transcript kept. While the decision is pending, `/model NAME` changes all models, `/model -chat NAME` changes only the conversation model, and `/model -compact NAME` changes the summarizer; then choose `y` or `n`. `/set ctx.compact 0` disables future automatic compaction. Piped and other noninteractive runs keep the configured automatic behavior.
+Automatic compaction defaults to off (`/set ctx.compact off`). Enable it with a token threshold such as `/set ctx.compact 64k`.
+
+Interactive autocompaction asks before replacing history, including when `tool.aproval` is `yolo`. In the pmai REPL, choose `y` to compact, `n` to continue without compaction for the current response, `m` for model-change instructions, `x` to clear the chat, or `c` to stop with the transcript kept. While the decision is pending, `/model NAME` changes all models, `/model -chat NAME` changes only the conversation model, and `/model -compact NAME` changes the summarizer; then choose `y` or `n`. `/set ctx.compact off` disables future automatic compaction. Piped and other noninteractive runs keep the configured automatic behavior.
 
 PocketMai shows the same decision before its MLX autocompaction. The prompt includes the chat's model settings, a compaction-agent picker, continue and stop actions, and a confirmed clear-chat action. Skipping applies to the current response; a later message may prompt again.
 
