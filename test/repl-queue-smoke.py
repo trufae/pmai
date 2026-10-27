@@ -246,7 +246,8 @@ def main():
                                 wait_for('✓ took')
                             else:
                                 send('\x03')
-                                wait_for('✗ took')
+                                if prompt != 'background':
+                                    wait_for('✗ took')
                                 if prompt == 'background':
                                     # Finished conversations keep their focus so
                                     # the person can inspect or continue them.
