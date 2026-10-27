@@ -997,7 +997,8 @@ overridden, and a value that is not one of the levels (`custom`, say) is sent
 as `reasoning_effort` unchanged. The runtime also adds a system prompt section
 that says how much care the task deserves, followed by `TEXT` when given, so a
 model without a reasoning control hears it too. `/set effort` shows the current
-setting; `/set effort auto` normally restores provider defaults, but explicitly
+setting. New CLI setups start with `low`; saved agent settings take precedence.
+`/set effort auto` normally restores provider defaults, but explicitly
 disables thinking for DeepSeek Flash because that provider otherwise defaults to
 high effort. `/set effort off` (or
 `/nothink`) explicitly disables thinking where supported; models such as GPT-OSS

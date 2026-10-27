@@ -714,7 +714,7 @@ struct SessionProfile: Sendable {
     limits = .init()
     toolChoice = .automatic
     responseFormat = .text
-    options = .init()
+    options = .init(reasoningEffort: ReasoningEffort.low.rawValue)
     toolCallingStrategy = .automatic
     useToolProxy = true
     useSystemOne = false
@@ -14106,7 +14106,8 @@ struct MaiCLI {
             "github", "todo", "context", "vdb",
           ],
           subagentNames: ["researcher"],
-          limits: AgentRunLimits()),
+          limits: AgentRunLimits(),
+          options: GenerationOptions(reasoningEffort: ReasoningEffort.low.rawValue)),
         AgentDefinition(
           id: "researcher",
           description: "Investigates one question and answers in a few lines.",

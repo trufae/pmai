@@ -29,7 +29,7 @@ def main():
                 split=split)
 
         # Empty installs remain empty across restarts; /about repeats the welcome.
-        output = run(['/providers', '/provider', '/model', '/help'])
+        output = run(['/providers', '/provider', '/model', '/set effort', '/help'])
         assert 'Welcome to PocketMai!' in output, output
         assert r'\___________/' in output, output
         assert '/provider add myai https://api.example.com/v1 --api-key YOUR_API_KEY' in output
@@ -40,6 +40,7 @@ def main():
         assert 'No providers configured.' in output, output
         assert 'No provider selected.' in output, output
         assert 'Chat: no model selected' in output, output
+        assert 'effort = low' in output, output
         assert '/about' in output, output
         assert '/visual' not in output, output
         for help_output in run(['/provider add', '/help provider'], split=True):
@@ -54,6 +55,7 @@ def main():
                 for path in ['/etc', '/root', '~/.ssh', '~/.gnupg', '~/.config']]}, saved
         assert saved['approvals']['mode'] == 'ask', saved
         assert saved['ui']['tools'] == 0, saved
+        assert 'effort = high' in run(['/set effort'], args=('--effort', 'high'))
         original = config.read_bytes()
         welcome, about = run(['/providers', '/about'], split=True)
         assert 'Welcome to PocketMai!' in welcome and 'Welcome to PocketMai!' in about
@@ -75,6 +77,10 @@ def main():
         provider = json.loads(config.read_text())['providers'][0]
         assert provider['id'] == 'myai' and provider['apiKey'] == 'setup-key', provider
         assert provider['defaultModel'] == 'setup-model', provider
+        assert json.loads(config.read_text())['agents'][0]['options']['reasoningEffort'] == 'low'
+        assert 'effort = auto' in run(['/set effort auto', '/set effort'])
+        assert 'effort = auto' in run(['/set effort']), 'explicit auto must survive restart'
+        run(['/set effort low'])
         output = run(['/provider', '/model'])
         assert 'Current provider: myai' in output and 'Chat: myai::setup-model' in output, output
         assert 'Welcome to PocketMai!' not in output, output
