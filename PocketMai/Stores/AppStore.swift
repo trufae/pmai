@@ -2541,8 +2541,7 @@ final class AppStore: ObservableObject {
           prompt: nil,
           system: nil,
           stream: body.stream ?? true)
-        let output = try await completeOpenAPIServerRequest(input)
-        return ollamaChatResponse(output: output, stream: input.stream)
+        return try await openAPIServerCompletionResponse(input, format: .ollamaChat)
       case ("POST", "/api/generate"):
         let body = try request.decodedBody(OpenAPIServerOllamaGenerateRequest.self)
         let input = OpenAPIServerCompletionInput(
@@ -2551,8 +2550,7 @@ final class AppStore: ObservableObject {
           prompt: body.prompt,
           system: body.system,
           stream: body.stream ?? true)
-        let output = try await completeOpenAPIServerRequest(input)
-        return ollamaGenerateResponse(output: output, stream: input.stream)
+        return try await openAPIServerCompletionResponse(input, format: .ollamaGenerate)
       case ("POST", "/v1/audio/speech"), ("POST", "/v1/audio/transcriptions"),
         ("GET", "/v1/voices"):
         return try await audioServerResponse(request)
@@ -2566,8 +2564,7 @@ final class AppStore: ObservableObject {
           prompt: nil,
           system: nil,
           stream: body.stream ?? false)
-        let output = try await completeOpenAPIServerRequest(input)
-        return openAIChatCompletionsResponse(output: output, stream: input.stream)
+        return try await openAPIServerCompletionResponse(input, format: .openAI)
       default:
         return .error(statusCode: 404, message: "Unsupported endpoint \(request.path).")
       }
@@ -2587,42 +2584,24 @@ final class AppStore: ObservableObject {
     }
   }
 
-  private func completeOpenAPIServerRequest(_ input: OpenAPIServerCompletionInput) async throws
-    -> OpenAPIServerCompletionOutput
-  {
+  private func openAPIServerCompletionResponse(
+    _ input: OpenAPIServerCompletionInput,
+    format: OpenAPIServerCompletionStream.Format
+  ) async throws -> OpenAPIServerHTTPResponse {
+    let baseConversation: Conversation
     switch settings.openAPIServer.conversationScope {
     case .currentChat:
-      return try await completeCurrentChatOpenAPIServerRequest(input)
+      guard let selected = currentConversation else {
+        throw OpenAPIServerAppError.unavailable("No selected chat is available.")
+      }
+      baseConversation = selected
     case .defaultSettings:
-      return try await completeDefaultOpenAPIServerRequest(input)
+      baseConversation = makeNewConversation()
     }
-  }
-
-  private func completeCurrentChatOpenAPIServerRequest(
-    _ input: OpenAPIServerCompletionInput
-  ) async throws -> OpenAPIServerCompletionOutput {
-    guard let conversation = currentConversation else {
-      throw OpenAPIServerAppError.unavailable("No selected chat is available.")
-    }
-    return try await completeIsolatedOpenAPIServerRequest(input, baseConversation: conversation)
-  }
-
-  private func completeDefaultOpenAPIServerRequest(
-    _ input: OpenAPIServerCompletionInput
-  ) async throws -> OpenAPIServerCompletionOutput {
-    try await completeIsolatedOpenAPIServerRequest(input, baseConversation: makeNewConversation())
-  }
-
-  private func completeIsolatedOpenAPIServerRequest(
-    _ input: OpenAPIServerCompletionInput,
-    baseConversation: Conversation
-  ) async throws -> OpenAPIServerCompletionOutput {
     let allowTools = settings.openAPIServer.allowToolExecution
     let requestSettings = openAPIServerRequestSettings(allowTools: allowTools)
     let conversation = openAPIServerRequestConversation(
-      from: baseConversation,
-      input: input,
-      allowTools: allowTools)
+      from: baseConversation, input: input, allowTools: allowTools)
     guard !conversation.messages.isEmpty else { throw OpenAPIServerAppError.emptyPrompt }
     guard !input.latestUserText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       throw OpenAPIServerAppError.emptyPrompt
@@ -2634,6 +2613,28 @@ final class AppStore: ObservableObject {
       throw OpenAPIServerAppError.unavailable(message)
     }
 
+    if input.stream {
+      return OpenAPIServerCompletionStream.response(
+        format: format, model: effectiveModelName(for: conversation)
+      ) { onUpdate in
+        try await self.completeOpenAPIServerRequest(
+          conversation: conversation, settings: requestSettings,
+          allowTools: allowTools, onUpdate: onUpdate)
+      }
+    }
+    let output = try await completeOpenAPIServerRequest(
+      conversation: conversation, settings: requestSettings, allowTools: allowTools)
+    switch format {
+    case .openAI: return openAIChatCompletionsResponse(output: output)
+    case .ollamaChat: return ollamaChatResponse(output: output)
+    case .ollamaGenerate: return ollamaGenerateResponse(output: output)
+    }
+  }
+
+  private func completeOpenAPIServerRequest(
+    conversation: Conversation, settings requestSettings: AppSettings, allowTools: Bool,
+    onUpdate: @escaping @MainActor (String) -> Void = { _ in }
+  ) async throws -> OpenAPIServerCompletionOutput {
     if allowTools {
       let result = try await AssistantToolLoop.runIsolated(
         conversation: conversation,
@@ -2657,7 +2658,7 @@ final class AppStore: ObservableObject {
       settings: requestSettings,
       context: "",
       assistantMessageID: UUID())
-    let text = try await ChatProviderRouter.complete(request: request) { _ in }
+    let text = try await ChatProviderRouter.complete(request: request, onUpdate: onUpdate)
     return OpenAPIServerCompletionOutput(
       text: text,
       model: effectiveModelName(for: conversation))
@@ -2675,7 +2676,7 @@ final class AppStore: ObservableObject {
     conversation.updatedAt = Date()
     conversation.messages = input.chatMessagesForProxy()
     conversation.systemPromptID = Self.openAPIServerSystemPromptID
-    conversation.usesStreaming = false
+    conversation.usesStreaming = input.stream
     conversation.isPinned = false
     conversation.folderID = ConversationFolder.defaultID
     conversation.lastContextSignature = nil
@@ -2756,29 +2757,9 @@ final class AppStore: ObservableObject {
   }
 
   private func ollamaChatResponse(
-    output: OpenAPIServerCompletionOutput,
-    stream: Bool
+    output: OpenAPIServerCompletionOutput
   ) -> OpenAPIServerHTTPResponse {
     let timestamp = openAPIServerTimestamp()
-    if stream {
-      let contentChunk = jsonLine([
-        "model": output.model,
-        "created_at": timestamp,
-        "message": ["role": "assistant", "content": output.text],
-        "done": false,
-      ])
-      var done: [String: Any] = [
-        "model": output.model,
-        "created_at": timestamp,
-        "done": true,
-        "done_reason": "stop",
-      ]
-      addOpenAPIServerToolRuns(output, to: &done)
-      let doneChunk = jsonLine(done)
-      return .text(
-        contentChunk + doneChunk,
-        contentType: "application/x-ndjson; charset=utf-8")
-    }
     var body: [String: Any] = [
       "model": output.model,
       "created_at": timestamp,
@@ -2791,30 +2772,9 @@ final class AppStore: ObservableObject {
   }
 
   private func ollamaGenerateResponse(
-    output: OpenAPIServerCompletionOutput,
-    stream: Bool
+    output: OpenAPIServerCompletionOutput
   ) -> OpenAPIServerHTTPResponse {
     let timestamp = openAPIServerTimestamp()
-    if stream {
-      let contentChunk = jsonLine([
-        "model": output.model,
-        "created_at": timestamp,
-        "response": output.text,
-        "done": false,
-      ])
-      var done: [String: Any] = [
-        "model": output.model,
-        "created_at": timestamp,
-        "response": "",
-        "done": true,
-        "done_reason": "stop",
-      ]
-      addOpenAPIServerToolRuns(output, to: &done)
-      let doneChunk = jsonLine(done)
-      return .text(
-        contentChunk + doneChunk,
-        contentType: "application/x-ndjson; charset=utf-8")
-    }
     var body: [String: Any] = [
       "model": output.model,
       "created_at": timestamp,
@@ -2836,44 +2796,10 @@ final class AppStore: ObservableObject {
   }
 
   private func openAIChatCompletionsResponse(
-    output: OpenAPIServerCompletionOutput,
-    stream: Bool
+    output: OpenAPIServerCompletionOutput
   ) -> OpenAPIServerHTTPResponse {
     let id = "chatcmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
     let created = Int(Date().timeIntervalSince1970)
-    if stream {
-      let contentChunk = sseLine([
-        "id": id,
-        "object": "chat.completion.chunk",
-        "created": created,
-        "model": output.model,
-        "choices": [
-          [
-            "index": 0,
-            "delta": ["role": "assistant", "content": output.text],
-            "finish_reason": NSNull(),
-          ]
-        ],
-      ])
-      var stop: [String: Any] = [
-        "id": id,
-        "object": "chat.completion.chunk",
-        "created": created,
-        "model": output.model,
-        "choices": [
-          [
-            "index": 0,
-            "delta": [:],
-            "finish_reason": "stop",
-          ]
-        ],
-      ]
-      addOpenAPIServerToolRuns(output, to: &stop)
-      let stopChunk = sseLine(stop)
-      return .text(
-        contentChunk + stopChunk + "data: [DONE]\n\n",
-        contentType: "text/event-stream; charset=utf-8")
-    }
     var body: [String: Any] = [
       "id": id,
       "object": "chat.completion",
@@ -2946,19 +2872,6 @@ final class AppStore: ObservableObject {
 
   private func openAPIServerTimestamp() -> String {
     ISO8601DateFormatter().string(from: Date())
-  }
-
-  private func jsonLine(_ object: Any) -> String {
-    guard let data = try? JSONSerialization.data(withJSONObject: object),
-      let text = String(data: data, encoding: .utf8)
-    else {
-      return #"{"error":"Could not encode JSON."}"# + "\n"
-    }
-    return text + "\n"
-  }
-
-  private func sseLine(_ object: Any) -> String {
-    "data: \(jsonLine(object))\n"
   }
 
   func trimAndResubmit(from message: ChatMessage) async {
