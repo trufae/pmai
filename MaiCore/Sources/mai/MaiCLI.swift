@@ -707,7 +707,7 @@ struct SessionProfile: Sendable {
         + MaiTodoTools.toolNames + MaiContextTools.toolNames)
     toolGroupNames = [
       "datetime", "calc", "files", "run", "weather", "web", "mastodon", "github", "todo", "vdb",
-      "context", MaiSkillTools.groupID,
+      "context", MaiSkillTools.groupID, AgentRuntime.agentToolGroup.id,
     ]
     subagentNames = []
     self.stream = stream
@@ -2879,6 +2879,7 @@ struct MaiCLI {
       screen?.watchViewDiffs(in: AgentExecutionScope.directory)
       loop.readerParked = false
       let availableProviders = await runtime.availableProviders()
+      let availableToolGroups = await runtime.availableToolGroups()
       let completionSession = session
       let completionStore = store
       let focusedMessages: [AgentMessage]?
@@ -2894,6 +2895,7 @@ struct MaiCLI {
           completions: completionCandidates(
             workspace: workspace, configuration: configuration,
             availableProviders: availableProviders,
+            toolGroups: availableToolGroups,
             skills: services.skills.catalog.skills, themesDirectory: services.themesDirectory),
           additionalCompletions: { line in
             if line.hasPrefix("/chat unpin ") {
@@ -9725,12 +9727,14 @@ struct MaiCLI {
       for group in groups {
         let label = await terminal.paint(
           group.sourceID == "mcp" ? group.catalogID : group.id, bold: true)
-        let summary = AgentToolModeSummary(names: group.toolNames, modes: modesByName).description
-        await terminal.line("\(label) — \(group.displayName) [\(summary); \(usage.count(for: group)) calls]")
+        let summary = AgentToolModeSummary(names: group.toolNames, modes: modesByName)
+        let badge = await terminal.toolGroupBadge(summary)
+        await terminal.line("\(label) \(badge) — \(group.displayName) [\(summary.description); \(usage.count(for: group)) calls]")
         for name in group.toolNames.sorted() {
           let label = await terminal.paint(name, bold: true)
           let mode = modesByName[name] ?? .disabled
-          await terminal.line("  \(ToolIcon.emoji(for: name)) \(label) [\(mode.rawValue); \(usage.counts[name, default: 0]) calls]")
+          let badge = await terminal.toolModeBadge(mode)
+          await terminal.line("  \(ToolIcon.emoji(for: name)) \(label) \(badge) \(usage.counts[name, default: 0]) calls")
         }
       }
       await terminal.line("/tools show GROUP|TOOL shows schemas and settings; /tools direct|proxy|hide|disable|inherit GROUP|TOOL selects its state.")
@@ -9796,7 +9800,8 @@ struct MaiCLI {
       }
       let mode = modesByName[name] ?? .disabled
       let boldName = await terminal.paint(name, bold: true)
-      await terminal.line("\(ToolIcon.emoji(for: name)) \(boldName) [\(mode.rawValue); \(usage.counts[name, default: 0]) calls]")
+      let badge = await terminal.toolModeBadge(mode)
+      await terminal.line("\(ToolIcon.emoji(for: name)) \(boldName) \(badge) \(usage.counts[name, default: 0]) calls")
       for line in ToolGroupHelp.lines(for: tool, paint: { text, style in
         style == .tool ? boldName : text
       }) { await terminal.line(line) }
@@ -9806,13 +9811,13 @@ struct MaiCLI {
     switch action {
     case "show":
       let count = group.toolNames.count
-      let enabled = isToolGroupEnabled(group, profile: session.profile)
+      let badge = await terminal.toolGroupBadge(
+        AgentToolModeSummary(names: group.toolNames, modes: modesByName))
       let ui = configuration?.ui ?? .init()
       let heading = TerminalLineEditor.foregroundColorCode(ui.infoForeground)
       let tool = TerminalLineEditor.foregroundColorCode(ui.toolCallForeground)
       let warning = TerminalLineEditor.foregroundColorCode(ui.warningForeground)
       let error = TerminalLineEditor.foregroundColorCode(ui.errorForeground)
-      let success = TerminalLineEditor.foregroundColorCode(ui.successForeground)
       let colors = await terminal.paintsOutput
       let retainsThemeStyles = await terminal.retainsThemeStyles
       func paint(_ text: String, _ code: String?, role: TerminalThemeStyle? = nil) -> String {
@@ -9825,7 +9830,7 @@ struct MaiCLI {
         paint(group.displayName, heading.map { "1;" + $0 } ?? "1", role: .infoForeground) + " "
           + paint("(\(group.catalogID))", "2")
           + ": \(count) tool\(count == 1 ? "" : "s"), \(usage.count(for: group)) calls, "
-          + paint(enabled ? "enabled" : "disabled", enabled ? success : error, role: enabled ? .successForeground : .errorForeground)
+          + badge
           + " for agent \(session.profile.agentID)")
       // The agent family is synthesized per run rather than registered, so
       // its help comes from the definitions the model would see.
@@ -9837,7 +9842,8 @@ struct MaiCLI {
       for name in group.toolNames.sorted() {
         let mode = modesByName[name] ?? .disabled
         let boldName = await terminal.paint(name, bold: true)
-        await terminal.line("  \(ToolIcon.emoji(for: name)) \(boldName) [\(mode.rawValue); \(usage.counts[name, default: 0]) calls]")
+        let badge = await terminal.toolModeBadge(mode)
+        await terminal.line("  \(ToolIcon.emoji(for: name)) \(boldName) \(badge) \(usage.counts[name, default: 0]) calls")
       }
       let helpLines = ToolGroupHelp.lines(for: group, tools: tools) { text, style in
         switch style {
@@ -13727,10 +13733,11 @@ struct MaiCLI {
     }
   }
 
-  private static func completionCandidates(
+  static func completionCandidates(
     workspace: AgentChatWorkspace,
     configuration: MaiConfiguration?,
     availableProviders: [ProviderDescriptor],
+    toolGroups: [ToolGroupDefinition],
     skills: [AgentSkill] = [],
     themesDirectory: URL
   ) -> [String] {
@@ -13923,16 +13930,7 @@ struct MaiCLI {
       values.append("/edit user \(name)")
     }
     var groupNames = Set(workspace.chats.flatMap(\.primaryAgent.toolGroupNames))
-    if skills.contains(where: \.isModelInvocable) { groupNames.insert(MaiSkillTools.groupID) }
-    if configuration?.toolSources.contains(where: {
-      $0.enabled && $0.kind == MaiStandardToolsPlugin.factoryKind
-    }) == true {
-      groupNames.formUnion(
-        [
-          "datetime", "calc", "files", "run", "weather", "web", "mastodon", "github", "vdb",
-          "todo", "context",
-        ])
-    }
+    groupNames.formUnion(toolGroups.map { $0.sourceID == "mcp" ? $0.catalogID : $0.id })
     for level in ReasoningEffort.names {
       values.append("/set effort \(level)")
     }
@@ -13942,6 +13940,7 @@ struct MaiCLI {
       values.append("/mcp info \(server.id)")
     }
     let toolNames = Set(workspace.chats.flatMap(\.primaryAgent.toolNames))
+      .union(toolGroups.flatMap(\.toolNames))
       .union((configuration?.agents ?? []).flatMap(\.toolNames))
       .union(skills.filter(\.isModelInvocable).map(\.toolName))
     for name in toolNames {
@@ -14123,7 +14122,7 @@ struct MaiCLI {
               + MaiTodoTools.toolNames + MaiContextTools.toolNames),
           toolGroupNames: [
             "datetime", "calc", "files", "run", "weather", "web", "mastodon",
-            "github", "todo", "context", "vdb",
+            "github", "todo", "context", "vdb", AgentRuntime.agentToolGroup.id,
           ],
           subagentNames: ["researcher"],
           limits: AgentRunLimits(),

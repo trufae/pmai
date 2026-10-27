@@ -124,6 +124,7 @@ for line in sys.stdin:
 
             output, calls = run(['/tools off', '/tools', 'Chat without tools'], [final])
             assert 'All tools globally: off' in output, output
+            assert 'github [○ disabled]' in output, output
             assert not calls[0].get('tools'), calls[0]
             assert json.loads(config.read_text())['toolsEnabled'] is False
             assert agent_settings() == before, 'global off changed individual settings'
@@ -139,8 +140,8 @@ for line in sys.stdin:
                 '/tools disable github/ci_log', '/mcp direct fixture/search',
                 '/skills disable beta', '/tools show github', 'Show capabilities',
             ], [final])
-            assert 'github_pr [direct; 0 calls]' in output, output
-            assert 'github_ci_log [disabled; 0 calls]' in output, output
+            assert 'github_pr [● direct] 0 calls' in output, output
+            assert 'github_ci_log [○ disabled] 0 calls' in output, output
             offered = {t['function']['name'] for t in calls[0]['tools']}
             assert {'files_read', 'github_pr', 'github_issue', 'external_search',
                     'list_tools', 'call_tool'} <= offered, offered
@@ -163,9 +164,9 @@ for line in sys.stdin:
             folder.mkdir()
             (folder / 'SKILL.md').write_text('---\nname: gamma\ndescription: Review gamma\n---\nReview.\n')
             output, calls = run(['/skills', '/tools show skills', 'After restart'], [final])
-            assert 'skills_alpha [direct; 3 calls]' in output, output
-            assert 'skills_beta [disabled; 0 calls]' in output, output
-            assert 'skills_gamma [proxy; 0 calls]' in output, output
+            assert 'skills_alpha [● direct] 3 calls' in output, output
+            assert 'skills_beta [○ disabled] 0 calls' in output, output
+            assert 'skills_gamma [● proxy] 0 calls' in output, output
             assert 'alpha (enabled) [project; 3 calls]\n  Review alpha' in output, output
             assert 'beta (disabled) [project; 0 calls]\n  Review beta' in output, output
             assert 'gamma (proxied) [project; 0 calls]\n  Review gamma' in output, output
@@ -200,7 +201,7 @@ for line in sys.stdin:
             output, calls = run(['/tools hide github/issue', '/skills hide alpha',
                                  '/mcp hide fixture', '/tools show github/issue', '/skills',
                                  'Hidden tools'], [final])
-            assert 'github_issue [hidden; 0 calls]' in output, output
+            assert 'github_issue [◐ hidden] 0 calls' in output, output
             assert 'alpha (hidden)' in output, output
             offered = {t['function']['name'] for t in calls[0]['tools']}
             assert not {'github_issue', 'skills_alpha', 'external_search', 'external_read'} & offered
@@ -235,7 +236,7 @@ for line in sys.stdin:
             profile_before = agent_settings()
             output, calls = run(['/set airplane on', '/tools show github', 'Offline tools'], [final])
             assert 'airplane = on ✈' in output, output
-            assert 'github_pr [disabled; 0 calls]' in output, output
+            assert 'github_pr [○ disabled] 0 calls' in output, output
             offered = {t['function']['name'] for t in calls[0]['tools']}
             assert 'files_read' in offered, offered
             assert not any(name.startswith(('github_', 'weather', 'web_', 'mastodon')) for name in offered), offered

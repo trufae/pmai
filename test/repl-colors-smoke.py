@@ -76,7 +76,7 @@ def main():
                 'approvals': {'mode': 'yolo'},
                 'memory': {'enabled': False}, 'use': {'plan': False},
                 'ui': {'tools': -1, 'fgerror': '#123456', 'fgwarning': '#234567',
-                       'fgtoolcall': '#345678', 'fgtoolresult': '#456789',
+                       'fgtoolcall': '#345678', 'fgtoolresult': '#456789', 'fgsuccess': 'green',
                        'fgdiffadd': '#56789a', 'bgdiffadd': '#6789ab',
                        'fgdiffdel': '#789abc', 'bgdiffdel': '#89abcd',
                        'fgdiffheader': '#9abcde', 'fgthinking': '#abcdef',
@@ -220,6 +220,7 @@ def main():
                 assert '\x1b[' not in output, output
                 assert 'colors smoke done' in output and '+new' in output, output
 
+            config.write_bytes(before)  # Restore the custom palette for status badges.
             # Names are bold, status follows in parentheses, and every line
             # of the skill description is indented. Pipes and NO_COLOR stay plain.
             for options in ({}, {'terminal': False}, {'extra_env': {'NO_COLOR': '1'}},
@@ -231,10 +232,16 @@ def main():
                                      ('gamma', 'proxied'), ('manual', 'not callable')):
                     assert (f'{name} ({status}) [project; 0 calls]\n'
                             f'  Review {name}.\n  Preserve exact instructions.') in plain, plain
+                assert 'files [● enabled]' in plain, plain
+                assert 'skills [◐ mixed]' in plain, plain
+                assert 'skills_beta [○ disabled] 0 calls' in plain, plain
                 if not options:
+                    assert '\x1b[1;32m[● enabled]\x1b[0m' in output, output
+                    assert '\x1b[1;38;2;35;69;103m[◐ mixed]\x1b[0m' in output, output
+                    assert '\x1b[1;38;2;18;52;86m[○ disabled]\x1b[0m' in output, output
                     for name in ('alpha', 'beta', 'gamma', 'manual', 'files', 'files_read'):
                         assert f'\x1b[1m{name}\x1b[0m' in output, output
-                    assert '  📖 \x1b[1mfiles_read\x1b[0m [direct;' in output, output
+                    assert '  📖 \x1b[1mfiles_read\x1b[0m \x1b[1;32m[● direct]\x1b[0m' in output, output
                     assert '\x1b[1mfiles_read\x1b[0m  [read-only' in output, output
                 else:
                     assert '\x1b[' not in output, output

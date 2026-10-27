@@ -101,6 +101,26 @@ actor TerminalWriter {
     paint(text, role: .infoForeground, bold: true)
   }
 
+  func toolModeBadge(_ mode: AgentToolMode) -> String {
+    let symbol = mode == .disabled ? "○" : mode == .hidden ? "◐" : "●"
+    let role: TerminalThemeStyle = mode == .disabled ? .errorForeground
+      : mode == .hidden ? .warningForeground : .successForeground
+    return paint("[\(symbol) \(mode.rawValue)]", role: role, bold: true)
+  }
+
+  func toolGroupBadge(_ summary: AgentToolModeSummary) -> String {
+    if summary.enabled == 0 {
+      return paint("[○ disabled]", role: .errorForeground, bold: true)
+    }
+    if summary.disabled > 0 {
+      return paint("[◐ mixed]", role: .warningForeground, bold: true)
+    }
+    if summary.hidden == summary.total {
+      return paint("[◐ hidden]", role: .warningForeground, bold: true)
+    }
+    return paint("[● enabled]", role: .successForeground, bold: true)
+  }
+
   func drainCaptured() -> String {
     let text = captured.joined()
     captured.removeAll()
