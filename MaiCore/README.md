@@ -774,7 +774,7 @@ mode through `ToolAnnotations.resultImportance = .important`; unmarked tools use
 the normal preview. This only changes terminal display, not what the model receives.
 `/set ui.title TEXT` adds `[TEXT]` to the prompt and sets the terminal/tab title
 with an ANSI escape sequence; `/set ui.title none` clears the configured label.
-`/set ui.mode buffer` enables a full-screen output buffer. Page Up/Page Down
+`ui.mode` defaults to `buffer`, a full-screen output buffer. Page Up/Page Down
 (Re Pág/Av Pág) and the mouse wheel scroll the session transcript while the
 status bar and editable prompt stay fixed at the bottom. The wheel scrolls one
 line per event by default; `/set ui.scroll=3` changes this to three lines.
@@ -786,7 +786,7 @@ to the end resumes following it. Submitting input or pressing Ctrl+L also return
 to the latest output. Shell commands such as `!uname` retain stdout and stderr
 in the buffer after returning to the prompt; interactive commands still receive
 the terminal. The setting persists; `/set ui.mode classic` restores the
-default terminal scrollback behavior. Buffer mode restores the shell's screen
+terminal scrollback behavior. Buffer mode restores the shell's screen
 and mouse handling on exit and during terminal handoffs. Hold Shift to select
 text using your terminal's normal mouse selection. Saved conversations remain
 available separately through `/chat log` and the project's `.pmai/chats` files.
@@ -815,6 +815,7 @@ shows the per-run limits of the current
 chat's agent; `/set limits.maxToolCalls N` and `/set limits.maxModelTurns N`
 change them and persist the change into that agent's configuration. The
 `--max-tool-calls N` and `--max-turns N` flags override both for one launch.
+`limits.maxTotalTokens` defaults to `off` (no token cap per run).
 Reaching a limit no longer ends a task with an error. A run that spends
 `limits.maxModelTurns`, `limits.maxTotalTokens` (`/set limits.maxTotalTokens
 120k`), or `limits.maxSeconds` (`/set limits.maxSeconds 10m`; a long model call

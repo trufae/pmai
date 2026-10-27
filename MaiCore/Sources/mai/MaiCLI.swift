@@ -14250,7 +14250,7 @@ struct MaiCLI {
       /set export.tools BOOL       Include tool calls and results in documents (default off)
       /set export.thinking BOOL    Include thinking blocks in documents (default off)
       /set ui.                     List terminal behavior settings
-      /set ui.mode MODE           classic (default) or buffer: scroll with Page Up/Down and mouse wheel
+      /set ui.mode MODE           classic or buffer (default): scroll with Page Up/Down and mouse wheel
       /set ui.scroll N            Lines per mouse-wheel event in buffer mode (default 1)
       /set ui.highlight WORD      Highlight literal matches; none clears (also /highlight WORD)
       /set ui.scrollbar N         Scrollbar width: positive right, negative left, 0 hidden (default 1)

@@ -543,7 +543,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   public var editor: String
 
   public init(
-    mode: TerminalOutputMode = .classic,
+    mode: TerminalOutputMode = .buffer,
     scroll: Int = 1,
     scrollbar: Int = 1,
     highlight: String = "",
@@ -651,7 +651,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     let legacy = try decoder.container(keyedBy: LegacyCodingKeys.self)
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.init(
-      mode: (try? container.decodeIfPresent(TerminalOutputMode.self, forKey: .mode)) ?? .classic,
+      mode: (try? container.decodeIfPresent(TerminalOutputMode.self, forKey: .mode)) ?? .buffer,
       scroll: (try? container.decodeIfPresent(Int.self, forKey: .scroll)) ?? 1,
       scrollbar: (try? container.decodeIfPresent(Int.self, forKey: .scrollbar)) ?? 1,
       highlight: (try? container.decodeIfPresent(String.self, forKey: .highlight)) ?? "",
