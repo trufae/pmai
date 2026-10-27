@@ -70,10 +70,10 @@ jobs:
         run: python3 test/run-tests.py unit
 
       # Reuse the debug objects built by swift test on macOS.
-      - name: Build debug CLI
+      - name: Build CLI
         run: |
           args=(--package-path MaiCore --disable-index-store --disable-prefetching)
-          if [ "$RUNNER_OS" = Linux ]; then args+=(--build-system native --jobs 2 -Xswiftc -disable-batch-mode); fi
+          if [ "$RUNNER_OS" = Linux ]; then args+=(--build-system native --jobs 2 -c release -Xswiftc -Osize); fi
           swift build "${args[@]}" --product pmai
           cp "$(swift build "${args[@]}" --show-bin-path)/pmai" pmai
 
@@ -145,11 +145,11 @@ jobs:
       # executable so it runs on machines without a Swift toolchain. The
       # result still depends on glibc, libstdc++ and libcurl. The musl-cli job
       # below produces the fully static binary for Alpine and other musl distributions.
-      - name: Build static debug CLI
+      - name: Build static release CLI
         run: |
           # Swift Build also needs static modules while compiling so Foundation
           # emits its CoreFoundation and networking autolink dependencies.
-          args=(--package-path MaiCore --disable-prefetching --build-system native --jobs 2 -Xswiftc -disable-batch-mode --static-swift-stdlib -Xswiftc -static-stdlib)
+          args=(--package-path MaiCore --disable-prefetching --build-system native --jobs 2 -c release -Xswiftc -Osize --static-swift-stdlib -Xswiftc -static-stdlib)
           swift build "${args[@]}" --disable-index-store --product pmai
           cp "$(swift build "${args[@]}" --show-bin-path)/pmai" pmai
 
@@ -188,11 +188,9 @@ jobs:
           - os: ubuntu-24.04
             name: x64
             arch: x86_64
-            build-args: -c release -Xswiftc -Osize
           - os: ubuntu-24.04-arm
             name: arm64
             arch: aarch64
-            build-args: ""
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
@@ -211,7 +209,7 @@ jobs:
       # Keep one optimized build to exercise the SDK/runtime without AVX.
       - name: Build fully static CLI
         run: |
-          args=(--package-path MaiCore --disable-prefetching --build-system native --jobs 2 -Xswiftc -disable-batch-mode --swift-sdk ${{ matrix.arch }}-swift-linux-musl ${{ matrix.build-args }})
+          args=(--package-path MaiCore --disable-prefetching --build-system native --jobs 2 -c release -Xswiftc -Osize --swift-sdk ${{ matrix.arch }}-swift-linux-musl)
           swift build "${args[@]}" --disable-index-store --product pmai
           cp "$(swift build "${args[@]}" --show-bin-path)/pmai" pmai
 
