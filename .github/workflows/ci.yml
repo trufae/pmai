@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      terminal-stress:
+        description: Run the 80-agent terminal stress test
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -82,6 +87,12 @@ jobs:
           python3 test/repl-tool-context-smoke.py ./pmai
           python3 test/repl-colors-smoke.py ./pmai
 
+      - name: Test REPL suspend, resume and model discovery
+        if: matrix.name == 'Linux x64'
+        run: |
+          python3 test/repl-suspend-smoke.py ./pmai
+          python3 test/repl-models-smoke.py ./pmai
+
       - name: Test REPL queue choices
         if: matrix.name == 'Linux x64'
         run: |
@@ -90,9 +101,11 @@ jobs:
 
       - name: Test recursive agents and REPL trees
         if: matrix.name == 'Linux x64'
-        run: |
-          python3 test/repl-agents-smoke.py ./pmai
-          python3 test/repl-subagent-load-smoke.py ./pmai
+        run: python3 test/repl-agents-smoke.py ./pmai
+
+      - name: Stress test concurrent agents in the terminal
+        if: matrix.name == 'Linux x64' && inputs.terminal-stress
+        run: python3 test/repl-subagent-load-smoke.py ./pmai
 
   static-cli:
     name: CLI (Linux static ${{ matrix.name }})
@@ -205,12 +218,6 @@ jobs:
 
       - name: Test native updater and session lifetime
         run: python3 test/update-smoke.py ./pmai
-
-      - name: Test REPL suspend and resume
-        run: python3 test/repl-suspend-smoke.py ./pmai
-
-      - name: Test model discovery and idle REPL
-        run: python3 test/repl-models-smoke.py ./pmai
 
       # Nehalem has SSE4.2 but no AVX, like the N4120's relevant ISA ceiling.
       # Test the linked SDK/runtime too, not just instructions emitted by pmai.

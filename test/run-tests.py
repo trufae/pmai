@@ -11,13 +11,13 @@ import time
 ROOT = Path(__file__).resolve().parent.parent
 SMOKE = '''installer openai-http project-approval project-debug projects-repl provider-routing remote-repl forwiroh-remote repl-defaults
 repl-cd repl-chat repl-del repl-export repl-fork repl-history repl-indexes repl-local-providers repl-redact repl-resume repl-resume-routing
-repl-resume-state repl-skills repl-small-context repl-smart-context repl-speed repl-tool-policy run-shell task-agents
+repl-resume-state repl-skills repl-small-context repl-smart-context repl-speed repl-tool-context repl-tool-policy run-shell task-agents
 update vim web-fetch'''.split()
 TERMINAL = '''repl-agents repl-buffer repl-btw repl-then repl-chop repl-colors repl-compaction repl-conversations repl-interactive-run repl-modal repl-models repl-path
-repl-policy repl-queue repl-recap repl-redirection repl-resize repl-subagent-load repl-suspend repl-theme repl-thinking repl-tool-context repl-view'''.split()
+repl-policy repl-queue repl-recap repl-redirection repl-resize repl-subagent-load repl-suspend repl-theme repl-thinking repl-view'''.split()
 EXTERNAL = ['repl-reflow', 'tailcat']  # Ghostty and a separately built tailcat binary.
 PLATFORM = ['web-fetch', 'openai-http'] if os.name == 'nt' else [
-    'update', 'web-fetch', 'openai-http', 'project-approval', 'repl-defaults', 'repl-suspend', 'repl-models', 'repl-small-context']
+    'update', 'web-fetch', 'openai-http', 'project-approval', 'repl-defaults', 'repl-small-context']
 if sys.platform.startswith('linux'):
     PLATFORM.append('linux-network')
 

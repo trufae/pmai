@@ -19,6 +19,12 @@ scripts, and benchmark-accounting unit tests. Use `TEST_ARGS="--jobs 2"` for
 bounded smoke concurrency. After a full build, `TEST_ARGS="--skip-build"`
 reuses the prepared binaries. `TEST_PROFILE=smoke`, `terminal`, or `platform`
 selects a smaller CLI suite; the runner rejects unassigned smoke scripts.
+The platform profile checks portable behavior. CI runs suspend/resume and model
+PTY checks once on Linux x64 instead of repeating them on every native and musl
+build. The 80-agent terminal stress test is opt-in via the CI workflow's
+`terminal-stress` input, or directly with `repl-subagent-load-smoke.py`.
+The tool-context smoke uses piped input and checks provider requests and saved
+history; `ToolResultContextTests` owns exact live context-size checks.
 
 The remaining two smoke scripts require external fixtures:
 `python3 test/run-tests.py external --tailcat /path/to/tailcat --ghostty /path/to/ghostty-web`.
