@@ -86,6 +86,15 @@ def main():
         for key in (*theme_colors, 'bold'):
             assert f'ui.{key}' not in settings, settings
         assert 'ui.markdown' in settings and 'ui.editor' in settings, settings
+        # Namespace queries use the same values and ordering as the full list.
+        run('/set > settings.txt')
+        all_settings = (root / 'settings.txt').read_text().splitlines(keepends=True)
+        for prefix in ('ctx.', 'CTX.', 'retry.', 'ui.', 'tool.', 'limits.', 'export.', 'use.'):
+            run(f'/set {prefix} > filtered-settings.txt')
+            expected = ''.join(line for line in all_settings if line.startswith(prefix.lower()))
+            assert expected, (prefix, all_settings)
+            assert (root / 'filtered-settings.txt').read_text() == expected, prefix
+        assert config.read_bytes() == before, 'listing setting prefixes must not save configuration'
         redirected = run('/set ui.fgerror cyan', '/set ui.bold on')
         assert 'Use /theme color fgerror [VALUE].' in redirected, redirected
         assert 'Use /theme color bold [VALUE].' in redirected, redirected

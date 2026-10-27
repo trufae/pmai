@@ -10612,7 +10612,7 @@ struct MaiCLI {
       parts = argument.replacingOccurrences(of: "=", with: " ")
         .split(whereSeparator: \Character.isWhitespace).map(String.init)
     }
-    guard !parts.isEmpty else {
+    if parts.isEmpty || (parts.count == 1 && parts[0].hasSuffix(".")) {
       let settings = [
         "tool.aproval = \(await approvalHandler.currentApprovalMode().rawValue)",
         "debug = \(await approvalHandler.isDebugEnabled() ? "true" : "false")",
@@ -10625,8 +10625,12 @@ struct MaiCLI {
         + toolSettings(session.profile) + uiSettings(configuration?.ui ?? .init())
         + exportSettings(configuration?.documentExport ?? .init())
         + useSettings(configuration?.use ?? .init())
-      await listSettings(settings, terminal: terminal)
-      return
+      let prefix = parts.first?.lowercased() ?? ""
+      let matching = settings.filter { $0.lowercased().hasPrefix(prefix) }
+      if !matching.isEmpty {
+        await listSettings(matching, terminal: terminal)
+        return
+      }
     }
     let requestedKey = parts[0].lowercased()
     let key = requestedKey == "ui.toolresultlines" ? "ui.tools" : requestedKey
@@ -13738,7 +13742,7 @@ struct MaiCLI {
       "/help vdb", "/vdb", "/vdb index ", "/vdb query ", "/vdb status", "/vdb del ", "/vdb clear",
       "/set limits.", "/set limits.maxToolCalls ", "/set limits.maxModelTurns ",
       "/set limits.maxSubagents ", "/set limits.maxSeconds ", "/set limits.maxTotalTokens ",
-      "/set retry.attempts ", "/set retry.delay ", "/set ctx.compact ",
+      "/set retry.", "/set retry.attempts ", "/set retry.delay ", "/set ctx.", "/set ctx.compact ",
       "/set ctx.compact off",
       "/set ctx.recent ", "/set ctx.recent auto",
       "/set ctx.window ", "/set ctx.window auto",
@@ -14484,6 +14488,7 @@ struct MaiCLI {
       /set limits.maxSeconds <off|N|Nm|Nh>   Wall-clock time a run may take before it pauses
       /set retry.attempts N        Times a failed model call is repeated (default 2)
       /set retry.delay SECONDS     Wait before each retry (default 5)
+      /set ctx.                    List context settings and their current values
       /set ctx.compact <off|N|Nk>  Prompt to prune tool output or summarize older context at ~N tokens
       /set ctx.recent <auto|N|Nk>  Recent tokens kept verbatim when summarizing (auto: up to 8k)
       /set ctx.window <auto|N|Nk>  Model context size including reply space (e.g. 32768)

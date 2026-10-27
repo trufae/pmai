@@ -852,6 +852,9 @@ An OpenAI `cyber_policy` error stops immediately, including when it arrives duri
 streaming. Its message, code, and available HTTP status/request ID are retained.
 Completed tool work and the conversation remain available after the rejection;
 no automatic retry is sent. `/export debug PATH` saves the chat for local review.
+
+`/set ctx.` lists the current settings whose keys start with `ctx.`, using the
+same format as `/set`. Other setting prefixes, such as `/set retry.`, work too.
 `/set ctx.compact 64k` enables a context action prompt before a model turn
 once the conversation reaches about that many tokens (using the provider's
 count when available). Choose **prune old tool output**, **summarize older
