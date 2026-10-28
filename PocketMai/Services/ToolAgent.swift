@@ -231,6 +231,15 @@ enum BuiltInToolCatalog {
 
 @MainActor
 enum ToolAgentRegistry {
+  private struct CatalogSnapshot {
+    var conversation: Conversation
+    var settings: AppSettings
+    var tools: [UUID: [MCPToolDescriptor]]
+    var resources: [UUID: [MCPResourceDescriptor]]
+    var statuses: [UUID: EndpointConnectionState]
+    var catalog: AgentToolCatalog
+  }
+  private static var snapshots: [CatalogSnapshot] = []
   /// Restore values at the execution boundary, before proxy resolution,
   /// validation and approval. Provider requests mask them again on the way out.
   static func restoredCall(_ call: ParsedToolCall) -> ParsedToolCall {
@@ -277,6 +286,22 @@ enum ToolAgentRegistry {
     mcpResources: [UUID: [MCPResourceDescriptor]] = [:],
     mcpStatuses: [UUID: EndpointConnectionState] = [:]
   ) -> AgentToolCatalog {
+    // Transcript and activity changes do not alter discovery. Keep only a
+    // bounded set of metadata snapshots, shared by otherwise identical chats.
+    var metadata = conversation
+    metadata.messages = []
+    metadata.subagents = []
+    metadata.historyWindow = nil
+    metadata.id = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
+    metadata.title = ""
+    metadata.sessionID = ""
+    metadata.createdAt = .distantPast
+    metadata.updatedAt = .distantPast
+    metadata.lastContextSignature = nil
+    if let snapshot = snapshots.last(where: {
+      $0.conversation == metadata && $0.settings == settings && $0.tools == mcpTools
+        && $0.resources == mcpResources && $0.statuses == mcpStatuses
+    }) { return snapshot.catalog }
     var groups: [ToolGroupDefinition] = []
     var definitions: [ToolDefinition] = []
     var enabledNames = Set<String>()
@@ -385,8 +410,12 @@ enum ToolAgentRegistry {
     if !conversation.toolsEnabled {
       modes = modes.mapValues { _ in .disabled }
     }
-    return AgentToolCatalog(groups: groups, tools: definitions, modes: modes,
+    let catalog = AgentToolCatalog(groups: groups, tools: definitions, modes: modes,
       internetAccess: settings.internetAccessPolicy)
+    if snapshots.count >= 32 { snapshots.removeFirst() }
+    snapshots.append(CatalogSnapshot(conversation: metadata, settings: settings,
+      tools: mcpTools, resources: mcpResources, statuses: mcpStatuses, catalog: catalog))
+    return catalog
   }
 
   private static func cleanedToolDescription(_ text: String, fallback: String) -> String {

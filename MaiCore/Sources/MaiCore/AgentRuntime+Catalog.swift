@@ -1,6 +1,11 @@
 import Foundation
 
 extension AgentRuntime {
+  private func invalidateToolCatalog() {
+    cachedToolDefinitions = nil
+    cachedToolGroups = nil
+    cachedToolModes = nil
+  }
   public static let agentStartToolName = AgentProcessTools.startToolName
   public static let agentStatusToolName = AgentProcessTools.statusToolName
   public static let agentResultToolName = AgentProcessTools.resultToolName
@@ -61,11 +66,13 @@ extension AgentRuntime {
       throw AgentRuntimeError.providerAlreadyRegistered(descriptor.id)
     }
     providers[descriptor.id] = provider
+    cachedToolModes = nil
   }
 
   /// Forgets a connection. Calls already in flight keep their existing instance.
   @discardableResult
   public func unregister(providerID: ProviderID) -> Bool {
+    cachedToolModes = nil
     contextWindows[providerID] = nil
     return providers.removeValue(forKey: providerID) != nil
   }
@@ -106,6 +113,7 @@ extension AgentRuntime {
       registeredMCPs[owner]?.toolNames.remove(name)
     }
     tools[name] = tool
+    invalidateToolCatalog()
   }
 
   @discardableResult
@@ -147,6 +155,7 @@ extension AgentRuntime {
       source: source,
       toolNames: names,
       networkRequirement: source.requiresInternet ? .internet : .offline)
+    invalidateToolCatalog()
     return catalog
   }
 
@@ -157,6 +166,7 @@ extension AgentRuntime {
     if let owner = mcpToolOwners.removeValue(forKey: name) {
       registeredMCPs[owner]?.toolNames.remove(name)
     }
+    invalidateToolCatalog()
     return tools.removeValue(forKey: name) != nil
   }
 
@@ -164,6 +174,7 @@ extension AgentRuntime {
   @discardableResult
   public func unregisterMCP(serverID: String) async -> Set<String> {
     guard let registration = registeredMCPs.removeValue(forKey: serverID) else { return [] }
+    invalidateToolCatalog()
     for name in registration.toolNames where mcpToolOwners[name] == serverID {
       tools[name] = nil
       mcpToolOwners[name] = nil
@@ -188,18 +199,24 @@ extension AgentRuntime {
   }
 
   public func availableTools() -> [ToolDefinition] {
-    tools.values.map(\.definition).sorted {
+    if let cachedToolDefinitions { return cachedToolDefinitions }
+    let definitions = tools.values.map(\.definition).sorted {
       $0.name.localizedStandardCompare($1.name) == .orderedAscending
     }
+    cachedToolDefinitions = definitions
+    return definitions
   }
 
   /// Install plugin-defined memberships; inferred and MCP groups are kept
   /// current by the runtime. Replacing this list also drops stale memberships.
   public func configureToolGroups(_ groups: [ToolGroupDefinition]) {
     configuredToolGroups = groups
+    cachedToolGroups = nil
+    cachedToolModes = nil
   }
 
   public func availableToolGroups() -> [ToolGroupDefinition] {
+    if let cachedToolGroups { return cachedToolGroups }
     let definitions = availableTools()
     let mcpGroups = registeredMCPs.map { id, registration in
       ToolGroupDefinition(
@@ -209,7 +226,9 @@ extension AgentRuntime {
         networkRequirement: registration.networkRequirement)
     }.sorted { $0.catalogID < $1.catalogID }
     let known = Self.builtInToolGroups(for: definitions) + configuredToolGroups + mcpGroups
-    return ToolGroupDefinition.catalog(known: known, tools: definitions)
+    let catalog = ToolGroupDefinition.catalog(known: known, tools: definitions)
+    cachedToolGroups = catalog
+    return catalog
   }
 
   public func configureToolUsage(_ store: AgentToolUsageStore) async {
@@ -228,6 +247,12 @@ extension AgentRuntime {
   }
 
   private func toolModes(for request: AgentRequest) -> [String: AgentToolMode] {
+    var key = request
+    key.messages = []
+    key.sessionID = nil
+    key.ignoredQueuedMessageIDs = []
+    if let cached = cachedToolModes, cached.request == key,
+      cached.internet == internetAccess, cached.recent == toolUsage.recent { return cached.modes }
     let groups = availableToolGroups()
     let names = Set(tools.keys).union(Self.agentToolNames)
     var enabled = request.toolNames
@@ -247,7 +272,9 @@ extension AgentRuntime {
     if let scope = request.restrictedToolNames {
       for name in names where !scope.contains(name) { result[name] = .disabled }
     }
-    return internetAccess.restricting(result, tools: availableTools(), groups: groups)
+    result = internetAccess.restricting(result, tools: availableTools(), groups: groups)
+    cachedToolModes = (key, internetAccess, toolUsage.recent, result)
+    return result
   }
 
   func exposedTools(in definitions: [ToolDefinition], request: AgentRequest) -> Set<String> {

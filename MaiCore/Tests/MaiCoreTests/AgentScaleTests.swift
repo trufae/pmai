@@ -124,3 +124,25 @@ func agentConversationMetadata() async throws {
   await runtime.supervisor.note(child, transcript: [.assistant("new content")])
   #expect(await runtime.supervisor.info(child)?.transcriptRevision != revision)
 }
+
+@Test("Catalog snapshots observe registry, membership and live policy changes")
+func agentCatalogSnapshots() async throws {
+  let runtime = AgentRuntime()
+  func tool(_ text: String) -> ClosureTool {
+    ClosureTool(definition: ToolDefinition(name: "alpha", description: text)) { _, _ in
+      ToolOutput(text: text)
+    }
+  }
+  try await runtime.register(tool: tool("first"))
+  var request = AgentRequest(provider: "fixture", messages: [], toolNames: ["alpha"])
+  #expect(try await runtime.visibleDefinitions(for: request).first?.description == "first")
+  _ = await runtime.availableToolGroups()
+  try await runtime.register(tool: tool("replacement"), replacingExisting: true)
+  #expect(try await runtime.visibleDefinitions(for: request).first?.description == "replacement")
+  request.toolPolicy.tools["alpha"] = .disabled
+  #expect(try await runtime.visibleDefinitions(for: request).isEmpty)
+  await runtime.configureToolGroups([ToolGroupDefinition(id: "custom", toolNames: ["alpha"])])
+  #expect(await runtime.availableToolGroups().contains { $0.id == "custom" })
+  await runtime.unregister(toolNamed: "alpha")
+  #expect(await runtime.availableTools().isEmpty)
+}

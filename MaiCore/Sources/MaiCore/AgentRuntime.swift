@@ -25,6 +25,10 @@ public actor AgentRuntime {
   var contextWindows: [ProviderID: [String: Int]] = [:]
   var registeredMCPs: [String: RegisteredMCP] = [:]
   var mcpToolOwners: [String: String] = [:]
+  var cachedToolDefinitions: [ToolDefinition]?
+  var cachedToolGroups: [ToolGroupDefinition]?
+  var cachedToolModes: (request: AgentRequest, internet: InternetAccessPolicy,
+    recent: [String], modes: [String: AgentToolMode])?
   var configuredToolGroups: [ToolGroupDefinition] = []
   var internetAccess = InternetAccessPolicy()
   var toolsEnabled = true
