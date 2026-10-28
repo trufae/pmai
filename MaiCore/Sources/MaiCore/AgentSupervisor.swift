@@ -55,6 +55,7 @@ public actor AgentSupervisor {
   private var transcriptEdits: [AgentPID: [AgentTranscriptEdit]] = [:]
   /// Processes a person has held; their runs wait at the next turn boundary.
   private var paused: Set<AgentPID> = []
+  private var pausedWhileQueued: Set<AgentPID> = []
   private var nextPID = 1
   private var subscribers: [UUID: AsyncStream<AgentSupervisorEvent>.Continuation] = [:]
 
@@ -191,6 +192,7 @@ public actor AgentSupervisor {
     for process in tree().subtree(of: pid)
     where !process.state.isTerminal && !paused.contains(process.pid) {
       paused.insert(process.pid)
+      if process.state == .queued { pausedWhileQueued.insert(process.pid) }
       held.append(process.pid)
       guard var entry = entries[process.pid], entry.info.attention == nil else { continue }
       entry.info.state = .paused
@@ -210,7 +212,7 @@ public actor AgentSupervisor {
       paused.remove(process.pid)
       released.append(process.pid)
       guard var entry = entries[process.pid], entry.info.state == .paused else { continue }
-      entry.info.state = .running
+      entry.info.state = pausedWhileQueued.remove(process.pid) != nil ? .queued : .running
       entry.info.updatedAt = Date()
       entries[process.pid] = entry
       publish(.changed(entry.info))
@@ -509,6 +511,7 @@ public actor AgentSupervisor {
   /// order and a stopped child simply stops asking.
   public func admit(_ pid: AgentPID, limit: Int) -> Bool {
     guard var entry = entries[pid], !entry.info.state.isTerminal else { return false }
+    guard !paused.contains(pid) else { return false }
     guard let parent = entry.info.parent else {
       return true
     }
@@ -516,7 +519,9 @@ public actor AgentSupervisor {
     let siblings = entries.values.lazy.map(\.info).filter {
       $0.parent == parent && $0.pid != pid && !$0.state.isTerminal
     }
-    let running = siblings.filter { $0.state != .queued }.count
+    let running = siblings.filter {
+      $0.state != .queued && !self.pausedWhileQueued.contains($0.pid)
+    }.count
     let olderWaiting = siblings.contains { $0.state == .queued && $0.pid < pid }
     if running < limit, !olderWaiting {
       guard entry.info.state == .queued else { return true }
@@ -666,6 +671,7 @@ public actor AgentSupervisor {
     inboxes[pid] = nil
     transcriptEdits[pid] = nil
     paused.remove(pid)
+    pausedWhileQueued.remove(pid)
   }
 
   // MARK: - Internals
@@ -687,7 +693,7 @@ public actor AgentSupervisor {
       // "thinking" or a tool name describes a run in progress, not one that ended.
       entry.info.activity = ""
     }
-    if state.isTerminal { paused.remove(pid) }
+    if state.isTerminal { paused.remove(pid); pausedWhileQueued.remove(pid) }
     entries[pid] = entry
     publish(finished ? .finished(entry.info) : .changed(entry.info))
     if attention != nil { publish(.attention(entry.info)) }
