@@ -126,7 +126,9 @@ extension MarkdownSpan {
 }
 
 /// Terminal cell widths: wide East Asian and emoji glyphs take two cells,
-/// combining marks and zero-width characters take none.
+/// combining marks and zero-width characters take none. Emoji outside the
+/// CJK ranges are wide only with emoji presentation: text-default ones such
+/// as 🕳 or 🗑 take one cell unless followed by U+FE0F.
 public enum MarkdownDisplayWidth {
   public static func width(of text: String) -> Int {
     var total = 0
@@ -159,7 +161,7 @@ public enum MarkdownDisplayWidth {
     default:
       break
     }
-    return isWide(value) ? 2 : 1
+    return isWide(value) || scalar.properties.isEmojiPresentation ? 2 : 1
   }
 
   private static func isWide(_ value: UInt32) -> Bool {
@@ -178,7 +180,6 @@ public enum MarkdownDisplayWidth {
     0x2E80...0x303E, 0x3041...0x33FF, 0x3400...0x4DBF, 0x4E00...0x9FFF, 0xA000...0xA4CF,
     0xA960...0xA97F, 0xAC00...0xD7A3, 0xF900...0xFAFF, 0xFE10...0xFE19, 0xFE30...0xFE6F,
     0xFF00...0xFF60, 0xFFE0...0xFFE6, 0x1F004...0x1F004, 0x1F0CF...0x1F0CF, 0x1F18E...0x1F18E,
-    0x1F191...0x1F19A, 0x1F200...0x1F251, 0x1F300...0x1F64F, 0x1F680...0x1F6FF,
-    0x1F7E0...0x1F7EB, 0x1F90C...0x1F9FF, 0x1FA70...0x1FAFF, 0x20000...0x3FFFD,
+    0x1F191...0x1F19A, 0x1F200...0x1F251, 0x20000...0x3FFFD,
   ]
 }

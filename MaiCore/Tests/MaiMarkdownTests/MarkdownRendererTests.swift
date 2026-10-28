@@ -329,4 +329,8 @@ func displayWidth() {
   #expect(MarkdownDisplayWidth.width(of: "日本") == 4)
   #expect(MarkdownDisplayWidth.width(of: "e\u{301}") == 1)
   #expect(MarkdownDisplayWidth.width(of: "🙂") == 2)
+  #expect(MarkdownDisplayWidth.width(of: "🕳") == 1)
+  #expect(MarkdownDisplayWidth.width(of: "🗑") == 1)
+  #expect(MarkdownDisplayWidth.width(of: "🗑\u{FE0F}") == 2)
+  #expect(MarkdownDisplayWidth.width(of: "🈚") == 2)
 }
