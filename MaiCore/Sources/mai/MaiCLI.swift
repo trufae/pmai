@@ -2725,6 +2725,15 @@ struct MaiCLI {
       if screen.viewNeedsTodo {
         screen.updateViewTodo(await terminal.renderTodoList(services.todo.current))
       }
+      if screen.viewNeedsPrompt {
+        if case .agent(let pid) = loop.focus {
+          if await runtime.supervisor.info(pid)?.state.isTerminal == true {
+            screen.updateViewPrompt(await runtime.supervisor.transcript(pid))
+          }
+        } else if loop.activeTurn?.chatID != session.id {
+          screen.updateViewPrompt(session.history.messages)
+        }
+      }
     }
 
     func conversationTabs() async -> [AgentProcessInfo] {
@@ -4356,20 +4365,11 @@ struct MaiCLI {
                     let instructions = argument.split(maxSplits: 1, whereSeparator: \.isWhitespace)
                     let template = try viewPromptTemplate(
                       String(instructions[1]), catalog: configuration?.promptCatalog() ?? PromptCatalog())
-                    let messages: [AgentMessage]
-                    if case .agent(let pid) = loop.focus {
-                      messages = await runtime.supervisor.transcript(pid)
-                    } else if let turn = loop.activeTurn, turn.chatID == session.id {
-                      messages = await runtime.supervisor.transcript(turn.pid)
-                    } else {
-                      messages = session.history.messages
-                    }
-                    let reply = try TranscriptCopy.text(for: .lastAssistantReply, in: messages).text
                     var request = chatRequest()
                     request.messages = []
                     let promptRequest = request
                     let redactor = session.redactor
-                    screen.runViewPrompt(title: selection.title) {
+                    screen.runViewPrompt(title: selection.title) { reply in
                       let output = try await runtime.summarize(reply, request: promptRequest) { source in
                         UserPrompt.message(text: template, arguments: source)
                       }

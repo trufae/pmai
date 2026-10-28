@@ -31,7 +31,8 @@ def main(binary):
         def do_POST(self):
             requests.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
             if not requests[-1].get('stream'):
-                self.respond({'choices': [{'message': {'role': 'assistant', 'content': 'VIEW_SUMMARY'},
+                count = sum(not request.get('stream') for request in requests)
+                self.respond({'choices': [{'message': {'role': 'assistant', 'content': f'VIEW_SUMMARY_{count}'},
                                           'finish_reason': 'stop'}]})
                 return
             self.send_response(200)
@@ -224,6 +225,14 @@ def main(binary):
                 wait_for('error: /view requires ui.mode=buffer.')
                 send('/set ui.mode buffer\r')
                 wait_for('\x1b[?1049h')
+                send('/view prompt $tldr\r')
+                wait_for('Waiting for a completed reply')
+                assert not requests, requests
+                send('FIRST_PROMPT_VIEW_REQUEST\r')
+                chunks.put('FIRST_PROMPT_VIEW_ANSWER\n')
+                chunks.put(None)
+                wait_for('VIEW_SUMMARY_1')
+                assert 'VIEW_SUMMARY_1' in top() and 'FIRST_PROMPT_VIEW_ANSWER' in bottom(), screen
                 send('/view thinking\r')
                 wait_for('── view: thinking')
                 assert '\x1b[48;2;0;34;68m' in styled_screen[separator()], styled_screen
@@ -307,7 +316,7 @@ def main(binary):
                 send('cannot_type\x1b[200~pasted\ntext\x1b[201~')
                 read_for()
                 assert 'cannot_type' not in screen[rows] and 'pasted' not in screen[rows], screen
-                assert len(requests) == 1, requests
+                assert len(requests) == 3, requests
                 chunks.put({'reasoning_content': 'LIVE_THOUGHT\n'})
                 read_for()
                 assert top() == anchored, screen  # Stream updates preserve the view's anchor.
@@ -361,6 +370,30 @@ def main(binary):
                 send('/view thinking\r')
                 wait_for('── view: thinking')
                 assert 'FOLLOWED_THOUGHT' not in bottom(), screen
+                send('/view prompt $tldr\r')
+                wait_for('VIEW_SUMMARY_3')
+                for count in (4, 5):
+                    send(f'PROMPT_REFRESH_{count}\r')
+                    chunks.put('REPEATED_ANSWER\n')
+                    wait_for('REPEATED_ANSWER')
+                    assert sum(not request.get('stream') for request in requests) == count - 1, requests
+                    chunks.put(None)
+                    wait_for(f'VIEW_SUMMARY_{count}')
+                    assert f'VIEW_SUMMARY_{count}' in top() and f'VIEW_SUMMARY_{count}' not in bottom(), screen
+                    assert 'REPEATED_ANSWER' in json.dumps(requests[-1]['messages']), requests[-1]
+                    assert not requests[-1].get('tools'), requests[-1]
+                send('/todo\r')
+                read_for()
+                assert sum(not request.get('stream') for request in requests) == 5, requests
+                send('/view tools\r')
+                wait_for('── view: tools')
+                send('PROMPT_VIEW_REPLACED\r')
+                chunks.put('NO_PROMPT_REFRESH\n')
+                chunks.put(None)
+                wait_for('✓ took')
+                assert sum(not request.get('stream') for request in requests) == 5, requests
+                send('/view thinking\r')
+                wait_for('── view: thinking')
                 send('/set ui.thinking status\r')
                 wait_for('Set ui.thinking = status.')
                 send('/vi\t')

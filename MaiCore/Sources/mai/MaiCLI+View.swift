@@ -88,8 +88,8 @@ extension MaiCLI {
     /view tools [NAME]     Show tool calls/results, optionally filtered by tool name
     /view TOOL_NAME        A tool name is also accepted directly
     /view diffs            Show git diff (unstaged tracked changes), refreshed every 5 seconds
-    /view prompt $NAME     Apply a saved prompt to the last reply (e.g. $tldr)
-    /view prompt TEXT      Apply instructions to the last reply, using the compact model
+    /view prompt $NAME     Apply a saved prompt after each reply (e.g. $tldr)
+    /view prompt TEXT      Apply instructions after each reply, using the compact model
     /view off              Close the view
 
     Requires /set ui.mode buffer and an interactive terminal. The read-only view
@@ -117,7 +117,8 @@ extension MaiCLI {
     The mouse wheel scrolls the focused pane. Tab returns to typing; completion works as usual
     when the prompt contains text. Agent message destinations stay the same.
     Pins/log/iconlog/thinking/tools follow the selected agent; an explicit agent stays fixed.
-    Prompt output stays in the view; closing or replacing the view cancels the request.
+    Prompt views run on the last completed reply and refresh after each turn of the selected agent.
+    With no reply yet, they wait for one. Output stays in the view; closing or replacing it cancels the request.
     History refreshes after commands; diffs uses the current directory and keeps its scroll position.
     Todo shows the current project's shared list and refreshes as commands and tools run.
     The tools view follows ui.tools, including changes made while the view is open.

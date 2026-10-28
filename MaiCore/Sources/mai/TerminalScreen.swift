@@ -152,6 +152,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var viewTask: Task<Void, Never>?
   private var viewDiffDirectory: URL?
   private var viewGeneration = UUID()
+  private var viewPromptOperation: (@Sendable (String) async throws -> String)?
+  private var viewPromptReply: (conversation: String, id: String, text: String)?
   private var viewSearching = false
   private var draggingViewSeparator = false
   private var scrollbarDrag: (view: Bool, grab: Int, row: Int)?
@@ -207,6 +209,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       if ui.mode != .buffer {
         view = nil
         stopViewTask()
+        viewPromptOperation = nil
+        viewPromptReply = nil
         draggingViewSeparator = false
         scrollbarDrag = nil
       }
@@ -466,14 +470,35 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     }
   }
 
-  func runViewPrompt(title: String, operation: @escaping @Sendable () async throws -> String) {
+  var viewNeedsPrompt: Bool { lock.withLock { view?.source == .prompt } }
+
+  func runViewPrompt(title: String, operation: @escaping @Sendable (String) async throws -> String) {
     setView(.prompt, title: title)
     lock.withLock {
+      guard view?.source == .prompt else { return }
+      viewPromptOperation = operation
+      view?.updateText("Waiting for a completed reply…")
+      if active, ui.mode == .buffer { drawViewRows(); placeCaret() }
+    }
+  }
+
+  /// Called with the selected conversation's transcript after its turn settles.
+  /// Message identity ensures identical replies in separate turns still run the prompt.
+  func updateViewPrompt(_ messages: [AgentMessage]) {
+    lock.withLock {
+      guard view?.source == .prompt, let operation = viewPromptOperation,
+        let reply = try? TranscriptCopy.text(for: .lastAssistantReply, in: messages),
+        let message = reply.messages.first else { return }
+      if let previous = viewPromptReply,
+        previous.conversation == selectedConversation, previous.id == message.id,
+        previous.text == reply.text { return }
+      stopViewTask()
+      viewPromptReply = (selectedConversation, message.id, reply.text)
       let generation = viewGeneration
       view?.updateText("Running prompt…")
       viewTask = Task { [weak self] in
         let text: String
-        do { text = try await operation() }
+        do { text = try await operation(reply.text) }
         catch { text = "Prompt failed: \(error.localizedDescription)" }
         guard !Task.isCancelled else { return }
         self?.updateViewText(text, source: .prompt, generation: generation)
@@ -499,6 +524,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       guard ui.mode == .buffer else { return }
       let label = title.components(separatedBy: .controlCharacters).joined(separator: " ")
       stopViewTask()
+      viewPromptOperation = nil
+      viewPromptReply = nil
       aggregateSections = [:]
       aggregateOrder = []
       let previous = view

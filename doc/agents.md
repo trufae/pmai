@@ -459,6 +459,11 @@ line of every message as `role: text`), `thinking`, `tools [NAME]`, `iconlog`
 (tool calls as emojis), and `diffs` (the working tree's unstaged Git diff, refreshed
 every five seconds with themed header, added-line, and removed-line colors).
 A tool name can also be used directly.
+`/view prompt $tldr` applies a saved prompt to the selected agent's last completed
+reply, then reruns it after each subsequent turn. `/view prompt TEXT` uses inline
+instructions instead. Both use the compact model and keep their output in the
+view. Opening one before the first reply waits for that reply; closing or
+replacing the view cancels its request and stops these updates.
 The thinking view shows full retained reasoning; the tools view follows `ui.tools`.
 The iconlog view shows one emoji per call, in call order, independently of
 `ui.tools`. These filtered sources follow the selected agent;
