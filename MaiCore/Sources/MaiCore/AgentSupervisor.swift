@@ -59,6 +59,15 @@ public actor AgentSupervisor {
   private var pausedWhileQueued: Set<AgentPID> = []
   private var nextPID = 1
   private var subscribers: [UUID: AsyncStream<AgentSupervisorEvent>.Continuation] = [:]
+  public nonisolated let changes = AgentChangeSignal()
+  private var schedulingState: [AgentPID: (AgentProcessState, Int)] = [:]
+  private var concurrentLimit: Int?
+
+  /// Optional session-wide cap in addition to each parent's child limit.
+  public func configureConcurrencyLimit(_ maximum: Int?) {
+    concurrentLimit = maximum.map { max(1, $0) }
+    changes.notify()
+  }
 
   public init(finishedRetention: Int = 32) {
     self.finishedRetention = max(1, finishedRetention)
@@ -510,9 +519,8 @@ public actor AgentSupervisor {
   /// Lets a registered child run when fewer than `limit` of its parent
   /// agent's other children are running and no older sibling is still
   /// waiting; otherwise marks it `queued` and answers false. The runtime asks
-  /// again from the child's own task until the answer is yes, the way a
-  /// paused run polls `isPaused`, so a slot that frees up is taken in pid
-  /// order and a stopped child simply stops asking.
+  /// again after an admission notification. Slots are taken in sibling PID
+  /// order, and paused queued children retain their place without running.
   public func admit(_ pid: AgentPID, limit: Int) -> Bool {
     guard var entry = entries[pid], !entry.info.state.isTerminal else { return false }
     guard !paused.contains(pid) else { return false }
@@ -527,7 +535,13 @@ public actor AgentSupervisor {
       $0.state != .queued && !self.pausedWhileQueued.contains($0.pid)
     }.count
     let olderWaiting = siblings.contains { $0.state == .queued && $0.pid < pid }
-    if running < limit, !olderWaiting {
+    let sessionFull = concurrentLimit.map { maximum in
+      entries.values.lazy.filter {
+        $0.info.parent != nil && $0.info.pid != pid && !$0.info.state.isTerminal
+          && $0.info.state != .queued && !self.pausedWhileQueued.contains($0.info.pid)
+      }.count >= maximum
+    } ?? false
+    if running < limit, !olderWaiting, !sessionFull {
       guard entry.info.state == .queued else { return true }
       entry.info.state = .starting
       // The wait was not the run; what a listing shows as elapsed starts now.
@@ -672,6 +686,8 @@ public actor AgentSupervisor {
 
   public func forget(_ pid: AgentPID) {
     cachedTree = nil
+    schedulingState[pid] = nil
+    changes.notify()
     entries[pid] = nil
     inboxes[pid] = nil
     transcriptEdits[pid] = nil
@@ -716,6 +732,16 @@ public actor AgentSupervisor {
 
   private func publish(_ event: AgentSupervisorEvent) {
     cachedTree = nil
+    let info: AgentProcessInfo
+    switch event {
+    case .started(let value), .changed(let value), .attention(let value), .finished(let value):
+      info = value
+    }
+    let previous = schedulingState[info.pid]
+    if previous?.0 != info.state || previous?.1 != info.queuedMessages {
+      schedulingState[info.pid] = (info.state, info.queuedMessages)
+      changes.notify()
+    }
     for continuation in subscribers.values { continuation.yield(event) }
   }
 

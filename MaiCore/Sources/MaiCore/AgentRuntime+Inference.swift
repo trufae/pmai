@@ -329,6 +329,7 @@ extension AgentRuntime {
     budget: RunBudget
   ) async throws -> AgentRetryPolicy {
     while true {
+      let revision = supervisor.changes.revision
       let policy = liveRequests[pid]?.retry ?? fallback
       if attempt > policy.attempts { return policy }
       if await budget.deadlinePassed { throw RunDeadlineExceeded() }
@@ -337,7 +338,8 @@ extension AgentRuntime {
       {
         return policy
       }
-      try await Task.sleep(for: .milliseconds(50))
+      try await supervisor.changes.wait(after: revision,
+        until: min(started + .seconds(policy.delaySeconds), await budget.deadline ?? (started + .seconds(policy.delaySeconds))))
     }
   }
 
@@ -352,8 +354,9 @@ extension AgentRuntime {
       group.addTask { try await body() }
       group.addTask {
         while true {
+          let revision = budget.changes.revision
           if await budget.deadlinePassed { throw RunDeadlineExceeded() }
-          try await Task.sleep(for: .milliseconds(50))
+          try await budget.changes.wait(after: revision, until: await budget.deadline)
         }
       }
       defer { group.cancelAll() }

@@ -143,6 +143,7 @@ extension AppStore {
     // rather than one turn per child — unless a person's message is waiting,
     // in the chat's own queue or in the process's inbox, which wins.
     while true {
+      let revision = agentSupervisor.changes.revision
       if hasQueuedUserMessages(in: conversationID) {
         return injectQueuedUserMessagesAndAppendAssistant(in: conversationID)
       }
@@ -157,7 +158,7 @@ extension AppStore {
         guard !queued.isEmpty else { return nil }
         break
       }
-      try await Task.sleep(for: .milliseconds(100))
+      try await agentSupervisor.changes.wait(after: revision)
     }
     let delivered = await agentSupervisor.drainInbox(pid).filter { $0.role == .user }
     for message in delivered {

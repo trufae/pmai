@@ -386,6 +386,7 @@ public enum AgentProcessTools {
     background: Bool,
     queueDeadline: QueueDeadline? = nil,
     queueInterruption: (@Sendable () async -> AgentRunInterruption?)? = nil,
+    queueDeadlineInstant: (@Sendable () async -> ContinuousClock.Instant?)? = nil,
     onAdmitted: @escaping @Sendable () async -> Void = {},
     body: @escaping @Sendable () async throws -> AgentResult
   ) async throws -> AgentResult {
@@ -393,7 +394,7 @@ public enum AgentProcessTools {
       if !admitted {
         try await awaitSlot(
           pid, supervisor: supervisor, limit: dynamicLimit, deadline: queueDeadline,
-          interruption: queueInterruption)
+          interruption: queueInterruption, dynamicDeadline: queueDeadlineInstant)
         await onAdmitted()
       }
       let child = try await body()
@@ -465,25 +466,31 @@ public enum AgentProcessTools {
     return Launch(pid: pid, task: handle, queued: !admitted)
   }
 
-  /// Where a queued child waits for a subagent slot, in its own task: it asks
-  /// the supervisor again every 100ms until it is admitted, so stopping it
-  /// ends the wait like any other cancellation, and a run's deadline applies
-  /// to time spent waiting as well.
+  /// A queued child suspends until admission state or its live settings change.
+  /// Cancellation and the exact run deadline also end the wait.
   private static func awaitSlot(
     _ pid: AgentPID,
     supervisor: AgentSupervisor,
     limit: @escaping @Sendable () async -> Int,
     deadline: QueueDeadline?,
-    interruption: (@Sendable () async -> AgentRunInterruption?)?
+    interruption: (@Sendable () async -> AgentRunInterruption?)?,
+    dynamicDeadline: (@Sendable () async -> ContinuousClock.Instant?)?
   ) async throws {
-    while !(await supervisor.admit(pid, limit: await limit())) {
+    while true {
+      let revision = supervisor.changes.revision
+      if await supervisor.admit(pid, limit: await limit()) { return }
+      try Task.checkCancellation()
+      guard let info = await supervisor.info(pid), !info.state.isTerminal else {
+        throw CancellationError()
+      }
       if let interruption, let reason = await interruption() {
         throw QueueDeadlineExceeded(message: "\(reason.summary) while queued")
       }
       if let deadline, ContinuousClock.now >= deadline.instant {
         throw QueueDeadlineExceeded(message: "\(deadline.interruption.summary) while queued")
       }
-      try await Task.sleep(for: .milliseconds(100))
+      let instant = dynamicDeadline != nil ? await dynamicDeadline!() : deadline?.instant
+      try await supervisor.changes.wait(after: revision, until: instant)
     }
   }
 
@@ -562,12 +569,13 @@ public enum AgentProcessTools {
     excluding held: Set<UUID> = []
   ) async throws -> Bool {
     while true {
+      let revision = supervisor.changes.revision
       try Task.checkCancellation()
       let queued = await supervisor.queuedMessages(for: pid).filter { !held.contains($0.id) }
       if queued.contains(where: { deliveredChildPID(of: $0.message) == nil }) { return true }
       let working = await supervisor.tree().children(of: pid).contains { !$0.state.isTerminal }
       guard working else { return !queued.isEmpty }
-      try await Task.sleep(for: .milliseconds(100))
+      try await supervisor.changes.wait(after: revision)
     }
   }
 

@@ -226,7 +226,9 @@ final class AppStore: ObservableObject {
   private var networkMonitor: NetworkAvailabilityMonitor?
   @Published var respondingConversationIDs: Set<UUID> = []
   @Published private(set) var loadingLocalModelConversationIDs: Set<UUID> = []
-  @Published private(set) var queuedUserMessagesByConversationID: [UUID: [QueuedChatMessage]] = [:]
+  @Published private(set) var queuedUserMessagesByConversationID: [UUID: [QueuedChatMessage]] = [:] {
+    didSet { agentSupervisor.changes.notify() }
+  }
   private struct ThenAction {
     let conversationID: UUID
     let message: QueuedChatMessage

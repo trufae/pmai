@@ -16,21 +16,26 @@ actor RunBudget {
   }
   private var tokens = 0
   private let startedAt = ContinuousClock.now
+  nonisolated let changes = AgentChangeSignal()
 
   init(limits: AgentRunLimits) {
     self.limits = limits
   }
 
   var deadlinePassed: Bool {
-    limits.maxSeconds.map { ContinuousClock.now >= startedAt + .seconds($0) } ?? false
+    deadline.map { ContinuousClock.now >= $0 } ?? false
   }
+
+  var deadline: ContinuousClock.Instant? { limits.maxSeconds.map { startedAt + .seconds($0) } }
 
   var timeInterruption: AgentRunInterruption {
     .time(limitSeconds: limits.maxSeconds ?? 0)
   }
 
   func update(limits: AgentRunLimits) {
+    guard self.limits != limits else { return }
     self.limits = limits
+    changes.notify()
   }
 
   /// Nil once a turn is claimed; otherwise the limit that stops the run.

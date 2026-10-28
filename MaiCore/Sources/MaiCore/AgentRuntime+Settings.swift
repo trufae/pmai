@@ -41,6 +41,7 @@ extension AgentRuntime {
       await runBudgets[pid]?.update(limits: request.limits)
     }
     await refreshDerivedBudgets()
+    supervisor.changes.notify()
   }
 
   /// Every registered definition, disabled ones included, so a host can list
@@ -73,6 +74,7 @@ extension AgentRuntime {
     } else {
       pendingReconfigurations[process] = request
     }
+    supervisor.changes.notify()
     return true
   }
 

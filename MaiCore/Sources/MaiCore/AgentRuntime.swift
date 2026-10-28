@@ -165,8 +165,10 @@ public actor AgentRuntime {
     guard await supervisor.isPaused(pid) else { return }
     // "thinking" or a tool name would describe work that is not happening.
     await supervisor.note(pid, activity: "")
-    while await supervisor.isPaused(pid) {
-      try await Task.sleep(for: .milliseconds(100))
+    while true {
+      let revision = supervisor.changes.revision
+      guard await supervisor.isPaused(pid) else { return }
+      try await supervisor.changes.wait(after: revision)
     }
   }
 

@@ -622,8 +622,10 @@ enum AssistantToolLoop {
   private static func holdWhilePaused(_ process: AgentPID, store: AppStore) async throws {
     guard await store.agentSupervisor.isPaused(process) else { return }
     await store.agentSupervisor.note(process, activity: "")
-    while await store.agentSupervisor.isPaused(process) {
-      try await Task.sleep(for: .milliseconds(200))
+    while true {
+      let revision = store.agentSupervisor.changes.revision
+      guard await store.agentSupervisor.isPaused(process) else { return }
+      try await store.agentSupervisor.changes.wait(after: revision)
     }
   }
 

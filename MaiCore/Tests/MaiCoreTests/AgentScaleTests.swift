@@ -80,3 +80,30 @@ func supervisorPausedQueueSlots() async {
   await supervisor.complete(third)
   #expect(await supervisor.admit(second, limit: 1))
 }
+
+@Test("Change waiters do not lose early notifications and cancel without polling")
+func agentChangeWaiters() async throws {
+  let signal = AgentChangeSignal()
+  let revision = signal.revision
+  signal.notify()
+  try await signal.wait(after: revision)
+  let waiting = Task { try await signal.wait(after: signal.revision) }
+  waiting.cancel()
+  do { try await waiting.value; Issue.record("Cancelled waiter returned") }
+  catch is CancellationError {} catch { Issue.record("Unexpected error: \(error)") }
+  try await signal.wait(after: signal.revision, until: .now + .milliseconds(5))
+}
+
+@Test("A session concurrency limit applies across independent parents")
+func supervisorSessionSlots() async {
+  let supervisor = AgentSupervisor()
+  await supervisor.configureConcurrencyLimit(1)
+  let first = await supervisor.register(runID: UUID(), parent: nil, agentID: "main", depth: 0)
+  let second = await supervisor.register(runID: UUID(), parent: nil, agentID: "main", depth: 0)
+  let a = await supervisor.register(runID: UUID(), parent: first, agentID: "worker", depth: 1)
+  #expect(await supervisor.admit(a, limit: 3))
+  let b = await supervisor.register(runID: UUID(), parent: second, agentID: "worker", depth: 1)
+  #expect(!(await supervisor.admit(b, limit: 3)))
+  await supervisor.complete(a)
+  #expect(await supervisor.admit(b, limit: 3))
+}

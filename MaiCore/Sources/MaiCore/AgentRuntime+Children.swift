@@ -133,6 +133,7 @@ extension AgentRuntime {
           await self.queuedInterruption(
             for: childPID, fallback: childRequest, budget: childBudget)
         },
+        queueDeadlineInstant: { await childBudget.deadline },
         onAdmitted: { await emit(.childStarted(parent, child: childContext)) }
       ) {
         try await self.runInternal(
