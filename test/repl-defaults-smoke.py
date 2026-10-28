@@ -155,11 +155,17 @@ def main():
             assert '/help jobs explains process control' in help_text, help_text
         for help_text in run(('/help jobs', '/help job', '/help /jobs', '/help /job'), split=True):
             assert 'Job commands (/job is an alias)' in help_text, help_text
-            assert '/jobs stop PID' in help_text and 'requests cancellation' in help_text
+            for command in ('/jobs pause PID', '/jobs resume PID', '/jobs cancel PID [REASON]'):
+                assert command in help_text, help_text
+            assert 'requests cancellation' in help_text, help_text
+            assert '/jobs stop remains a compatibility alias for pause' in help_text, help_text
         usage = (
                 ('/jobs unknown', 'Job commands'), ('/jobs log', 'Usage: /jobs log PID'),
-                ('/job stop bad', 'Usage: /jobs stop PID'),
+                ('/jobs pause bad', 'Usage: /jobs pause PID'),
+                ('/job stop bad', 'Usage: /jobs pause PID'),
+                ('/jobs resume', 'Usage: /jobs continue PID'),
                 ('/jobs continue', 'Usage: /jobs continue PID'),
+                ('/jobs cancel', 'Usage: /jobs kill PID'),
                 ('/jobs kill', 'Usage: /jobs kill PID'),
                 ('/jobs tree extra', 'Usage: /jobs [tree]'),
                 ('/jobs clear extra', 'Usage: /jobs clear'))
