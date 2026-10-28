@@ -28,8 +28,11 @@ class Provider(JSONProvider):
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-        requests.put((self.path, body))
-        prompt = body['messages'][-1]['content']
+        last_user = max(i for i, message in enumerate(body['messages']) if message['role'] == 'user')
+        prompt = body['messages'][last_user]['content']
+        has_tools = any(message['role'] == 'tool' for message in body['messages'][last_user + 1:])
+        if not has_tools:
+            requests.put((self.path, body))
         try:
             self.send_response(200)
             self.send_header('Content-Type', 'text/event-stream')
@@ -39,7 +42,13 @@ class Provider(JSONProvider):
                 self.wfile.write(('data: ' + json.dumps({'choices': [{'index': 0, 'delta': {'content': text}}]}) + '\n\n').encode())
                 self.wfile.flush()
 
-            if prompt == 'voice-one':
+            if prompt == 'voice-two' and not has_tools:
+                delta = {'tool_calls': [{'index': 0, 'id': 'voice-list', 'type': 'function',
+                         'function': {'name': 'voice_agents', 'arguments': '{}'}}]}
+                self.wfile.write(('data: ' + json.dumps({'choices': [{'index': 0, 'delta': delta,
+                    'finish_reason': 'tool_calls'}]}) + '\n\n').encode())
+                self.wfile.flush()
+            elif prompt == 'voice-one':
                 chunk('First spoken sentence. ')
                 finish_first.wait(20)
                 chunk('Second spoken sentence.')
@@ -70,7 +79,8 @@ def main():
             spoken = root / 'spoken.txt'
             config = root / 'config.json'
             config.write_text(json.dumps({
-                'version': 1, 'defaultAgent': 'test', 'ui': {'mode': 'buffer'},
+                'version': 1, 'defaultAgent': 'test', 'ui': {'mode': 'buffer', 'tools': -1},
+                'approvals': {'mode': 'yolo'},
                 'providers': [{'id': 'test', 'kind': 'openai', 'baseURL': f'http://127.0.0.1:{server.server_port}/v1'},
                               {'id': 'spoken', 'kind': 'openai', 'baseURL': f'http://127.0.0.1:{server.server_port}/spoken/v1'}],
                 'agents': [{'id': 'test', 'provider': 'test', 'model': 'test', 'toolNames': [], 'toolGroupNames': [], 'retry': {'attempts': 0}},
@@ -180,11 +190,17 @@ def main():
                 assert any('Voice language: ca-ES' in str(m['content']) for m in first['messages']), first
                 assert {'voice_agents', 'voice_message'} <= {t['function']['name'] for t in first['tools']}, first
                 wait_spoken('First spoken sentence.')
+                wait('First spoken sentence.')  # Visible in the text frame before the model finishes.
                 assert not finish_first.is_set(), 'Speech waited for the full response'
                 send('\n')
                 request('draft stays here')
+                wait('Reply to draft stays here.')
+                send('/view voice\n')
+                frame = wait('view: voice')
+                assert 'First spoken sentence.' in frame and 'you: voice-one' in frame, frame
                 finish_first.set()
                 wait_spoken('Second spoken sentence.')
+                wait('Second spoken sentence.')
                 wait('walkie-talkie · paused')
                 send('/prompt set voice UPDATED_VOICE_INSTRUCTIONS\n')
                 wait("Saved system prompt 'voice'")
@@ -198,11 +214,26 @@ def main():
                 assert any(m['content'] == 'draft stays here' for m in second['messages']), second
                 assert sum(m['content'] == 'voice-one' for m in second['messages']) == 1, second
                 assert any(m['role'] == 'assistant' and 'First spoken sentence.' in str(m['content']) for m in second['messages']), second
+                wait('voice_agents')
+                wait('test.voice [')  # The tool result is visible in the voice frame too.
                 wait_spoken('Reply to voice-two.')
                 wait('walkie-talkie · paused')
+                send('/view off\n')
+                wait('pmai>')
                 send('/voice off\n/voice realtime\n')
                 wait('realtime · listening')
                 request('voice-two', voice=True)  # Energy followed by silence commits without a key.
+                wait('voice_agents')
+                wait('test.voice [')
+                wait('Reply to voice-two.')
+                send('/voice off\n/set ui.mode classic\n/voice walkie-talkie\n')
+                wait('walkie-talkie · listening')
+                read_pty(master, output, .25)
+                os.write(master, b'\x14')
+                request('voice-two', voice=True)
+                wait('voice_agents')
+                wait('test.voice [')
+                wait('Reply to voice-two.')
                 send('/voice off\n/set voice.language en-US\n')
                 wait('Set voice.language')
                 send('/set voice.speechCommand {"executable":"cat","arguments":["a=b"]}\n')

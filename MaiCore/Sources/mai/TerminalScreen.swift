@@ -48,6 +48,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private let colorsEnabled: Bool
   private let bufferColorsEnabled: Bool
   private var voiceStatus: String?
+  private var voiceConversation: String?
+  private var voiceParentConversation: String?
   private var statusText = ""
   private var statusNeedsAttention = false
   /// The rotating tab-completion options that take over the status row, or
@@ -106,6 +108,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       if ui.mode == .buffer, let source = view?.source {
         if source == .conversations {
           requestScrollDraw()
+        } else if source == .voice, voiceConversation == TerminalConversationScope.id {
+          requestScrollDraw()
         } else if case .conversation(let watched) = source,
           watched == TerminalConversationScope.id {
           requestScrollDraw()
@@ -128,8 +132,17 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     set { outputConversation.thinkingBlock = newValue }
   }
   private var replyBlock: Int? {
-    get { outputConversation.replyBlock }
-    set { outputConversation.replyBlock = newValue }
+    get {
+      if let owner = TerminalConversationScope.replyOwner {
+        return outputConversation.auxiliaryReplyBlocks[owner]
+      }
+      return outputConversation.replyBlock
+    }
+    set {
+      if let owner = TerminalConversationScope.replyOwner {
+        outputConversation.auxiliaryReplyBlocks[owner] = newValue
+      } else { outputConversation.replyBlock = newValue }
+    }
   }
   private var toolBlocks: [Int: Int] {
     get { outputConversation.toolBlocks }
@@ -274,6 +287,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private func evictArchivedConversations() {
     guard view?.source != .conversations else { return }
     for id in archivedConversations where id != selectedConversation {
+      if id == voiceConversation { continue }
       if view?.source == .conversation(id) { continue }
       // A deliberately anchored reading position stays pinned until released.
       if conversations[id]?.transcript.isFollowing == true { conversations[id] = nil }
@@ -645,7 +659,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       guard active, ui.mode == .buffer, viewHeight > 0 else { return }
       refreshSize()
       updateViewBuffer()
-      let height = viewHeight
+      let height = viewContentHeight
       let width = paneContentWidth(inView: true)
       view?.buffer.scroll(lines: lines, width: width, height: height)
       drawViewRows()
@@ -1065,7 +1079,25 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     }
   }
 
-  /// Voice gets a dedicated reserved row, preserving the editable text prompt.
+  func setVoiceConversation(_ id: String, parent: String) {
+    lock.withLock {
+      voiceConversation = id
+      voiceParentConversation = parent
+      seedConversationLocked(id, messages: [])
+      if active, ui.mode == .buffer { redrawBuffer() }
+    }
+  }
+
+  /// Echo voice activity into the text conversation unless it is already being watched.
+  var voiceOutputDestination: String? {
+    lock.withLock {
+      guard !(view?.source == .voice && viewHeight > 0),
+        selectedConversation != voiceConversation else { return nil }
+      return voiceParentConversation
+    }
+  }
+
+  /// Voice gets a dedicated reserved row, or a fixed header in its view.
   func setVoiceStatus(_ text: String?) {
     lock.withLock {
       guard voiceStatus != text else { return }
@@ -1080,6 +1112,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         drawStatusRow()
         drawInputRows()
       } else { drawPanelRows() }
+      if ui.mode == .buffer, view?.source == .voice { drawViewRows() }
       placeCaret()
     }
   }
@@ -1189,6 +1222,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         transcript.clear()
         thinkingBlock = nil
         replyBlock = nil
+        outputConversation.auxiliaryReplyBlocks.removeAll()
         toolBlocks.removeAll()
       }
       if ui.mode == .buffer {
@@ -1225,8 +1259,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       let barColumn = origin + (ui.scrollbar < 0 ? 0 : width)
       guard event.column >= barColumn, event.column < barColumn + paneWidth - width else { return false }
       draggingViewSeparator = false
-      let height = inView ? viewHeight : outputHeight
-      let row = event.row - (inView ? 1 : outputOrigin)
+      let height = inView ? viewContentHeight : outputHeight
+      let row = event.row - (inView ? 1 + viewHeaderRows : outputOrigin)
+      guard row >= 0 else { return false }
       let bar = TerminalConversationScope.$id.withValue(nil) {
         inView
           ? view!.buffer.scrollbar(width: width, height: height)
@@ -1245,7 +1280,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     case .press: break
     }
     scrollbarDrag?.row = event.row
-    let height = drag.view ? viewHeight : outputHeight
+    let height = drag.view ? viewContentHeight : outputHeight
     if drag.view { updateViewBuffer() }
     let width = paneContentWidth(inView: drag.view)
     guard height > 0, width < (drag.view ? viewColumns : outputColumns) else {
@@ -1253,7 +1288,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       return true
     }
     TerminalConversationScope.$id.withValue(nil) {
-      let row = event.row - (drag.view ? 1 : outputOrigin)
+      let row = event.row - (drag.view ? 1 + viewHeaderRows : outputOrigin)
       if drag.view {
         let bar = view!.buffer.scrollbar(width: width, height: height)
         view?.buffer.scroll(to: bar.offset(at: row, grab: drag.grab), width: width, height: height)
@@ -1279,7 +1314,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       let changed: Bool
       if view?.focused == true, viewHeight > 0 {
         updateViewBuffer()
-        let height = viewHeight
+        let height = viewContentHeight
         let width = paneContentWidth(inView: true)
         changed = view?.buffer.scroll(
           lines: wheel * max(1, ui.scroll) + pages * max(1, height - 1),
@@ -1367,6 +1402,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     return TerminalView.height(availableRows: regionBottom, preferredHeight: view.preferredHeight)
   }
 
+  private var viewHeaderRows: Int { view?.source == .voice ? 1 : 0 }
+  private var viewContentHeight: Int { max(1, viewHeight - viewHeaderRows) }
+
   private var viewColumns: Int {
     isVerticalView ? max(1, min(columns - 2, view?.preferredWidth ?? (columns - 1) / 2)) : columns
   }
@@ -1387,7 +1425,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private func paneContentWidth(inView: Bool) -> Int {
     TerminalConversationScope.$id.withValue(nil) {
       if inView {
-        let height = viewHeight
+        let height = viewContentHeight
         let columns = viewColumns
         return view?.buffer.contentWidth(
           columns: columns, height: height, scrollbar: ui.scrollbar) ?? columns
@@ -1532,7 +1570,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       }
     } else {
       let id: String
-      if case .conversation(let watched) = source { id = watched }
+      if source == .voice { id = voiceConversation ?? "voice:off" }
+      else if case .conversation(let watched) = source { id = watched }
       else { id = selectedConversation }
       view?.buffer.updateView(
         from: conversations[id]?.transcript ?? TerminalOutputBuffer(), selection: source.selection)
@@ -1546,12 +1585,19 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     if view?.source == .diffs { view?.buffer.configureColors(scrollbarColors) }
     view?.buffer.configureHighlight(ui.highlight)
     let width = paneContentWidth(inView: true)
-    var visible = view?.buffer.visibleRows(width: width, height: height) ?? []
+    let voiceHeader = view?.source == .voice
+      ? Self.truncated(voiceStatus ?? "Voice is off. Use /voice on to start.", width: width) : nil
+    let headerRows = voiceHeader == nil ? 0 : 1
+    let contentHeight = max(1, height - headerRows)
+    var visible = height > headerRows
+      ? view?.buffer.visibleRows(width: width, height: contentHeight) ?? [] : []
+    if let voiceHeader { visible.insert(voiceHeader, at: 0) }
     if visible.isEmpty { visible = [Self.truncated("No matching output yet.", width: width)] }
     visible += Array(repeating: "", count: max(0, height - visible.count))
-    let bar = view!.buffer.scrollbar(width: width, height: height)
+    let bar = view!.buffer.scrollbar(width: width, height: contentHeight)
     visible = visible.enumerated().map { index, text in
-      paneRow(text, row: index + 1, index: index, column: viewColumn,
+      if index < headerRows { return text }
+      return paneRow(text, row: index + 1, index: index - headerRows, column: viewColumn,
         columns: viewColumns, width: width, bar: bar)
     }
     let focused = view?.focused == true
@@ -1875,7 +1921,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   private func layoutPanel() {
     defer {
-      if let voiceStatus, rows >= 4 {
+      if let voiceStatus, rows >= 4,
+        !(ui.mode == .buffer && view?.source == .voice
+          && TerminalView.height(availableRows: rows - 1 - inputRows.count) > 0) {
         panelRows.append(Self.truncated(voiceStatus, width: max(1, columns - 1)))
       }
     }

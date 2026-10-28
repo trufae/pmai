@@ -5,6 +5,7 @@ import MaiCore
 /// selected conversation. The screen lock protects all retained buffers.
 enum TerminalConversationScope {
   @TaskLocal static var id: String?
+  @TaskLocal static var replyOwner: String?
 }
 
 final class TerminalConversation {
@@ -14,6 +15,7 @@ final class TerminalConversation {
   var historyLoader: (@Sendable (Bool) -> Void)?
   var thinkingBlock: Int?
   var replyBlock: Int?
+  var auxiliaryReplyBlocks: [String: Int] = [:]
   var toolBlocks: [Int: Int] = [:]
   var thinkingText: String?
   var thinkingDisplay: ThinkingDisplay = .status

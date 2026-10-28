@@ -8,6 +8,7 @@ enum TerminalViewSource: Equatable {
   case conversation(String)
   case conversations
   case thinking
+  case voice
   case pins
   case log
   case todo

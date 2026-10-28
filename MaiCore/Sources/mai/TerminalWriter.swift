@@ -71,6 +71,30 @@ actor TerminalWriter {
   /// repeat what the run's own event already said.
   private var childrenEnded: Set<AgentPID> = []
   private var conversationWriters: [AgentPID: TerminalWriter] = [:]
+  private var voiceProcess: AgentPID?
+  private var voiceOutput: TerminalWriter?
+  private var conversationConfigured = false
+  private var replyOwner: String?
+
+  func setVoiceProcess(_ pid: AgentPID?, parent: String? = nil) {
+    voiceProcess = pid
+    voiceOutput = nil
+    if let pid, let parent { screen?.setVoiceConversation("agent:\(pid.rawValue)", parent: parent) }
+  }
+
+  func voiceInput(_ text: String, pid: AgentPID) {
+    if let screen, screen.isBufferMode {
+      TerminalConversationScope.$id.withValue("agent:\(pid.rawValue)") {
+        status("you: \(text)", color: .promptForeground)
+      }
+      guard let destination = screen.voiceOutputDestination else { return }
+      TerminalConversationScope.$id.withValue(destination) {
+        status("voice#\(pid.rawValue) you: \(text)", color: .promptForeground)
+      }
+    } else {
+      status("voice#\(pid.rawValue) you: \(text)", color: .promptForeground)
+    }
+  }
 
   init(capturesOutput: Bool = false) {
     self.capturesOutput = capturesOutput
@@ -245,6 +269,13 @@ actor TerminalWriter {
   func consume(_ event: AgentEvent) async {
     let context = event.terminalContext
     let destination = screen?.conversationID(for: context)
+    if let voiceProcess, context.pid == voiceProcess, context.depth > 0, screen?.isBufferMode != true {
+      if voiceOutput == nil { voiceOutput = TerminalWriter() }
+      await voiceOutput?.consumeConversation(
+        event.terminalForegroundEvent, destination: nil, screen: screen,
+        ui: ui, markdown: markdown, redactor: redactor)
+      return
+    }
     if case .started = event, let destination { screen?.activateConversation(destination) }
     if context.depth == 0 { rootDestination = destination }
     if let screen, screen.isBufferMode, context.depth > 0,
@@ -263,28 +294,39 @@ actor TerminalWriter {
       await writer.consumeConversation(
         event.terminalForegroundEvent, destination: destination, screen: screen,
         ui: ui, markdown: markdown, redactor: redactor)
+      if let voiceProcess, context.pid == voiceProcess, let echo = screen.voiceOutputDestination {
+        if voiceOutput == nil { voiceOutput = TerminalWriter() }
+        await voiceOutput?.consumeConversation(
+          event.terminalForegroundEvent, destination: echo, screen: screen,
+          ui: ui, markdown: markdown, redactor: redactor, replyOwner: "voice:\(voiceProcess.rawValue)")
+      }
       return
     }
     TerminalConversationScope.$id.withValue(destination) { consumeEvent(event) }
   }
 
   private func consumeConversation(
-    _ event: AgentEvent, destination: String?, screen: TerminalScreen,
-    ui: ConfiguredTerminalUI, markdown: MarkdownTerminalRenderer?, redactor: ContentRedactor?
+    _ event: AgentEvent, destination: String?, screen: TerminalScreen?,
+    ui: ConfiguredTerminalUI, markdown: MarkdownTerminalRenderer?, redactor: ContentRedactor?,
+    replyOwner: String? = nil
   ) {
-    if self.screen == nil {
+    if !conversationConfigured {
       self.markdown = markdown.map { MarkdownTerminalRenderer(theme: $0.theme, options: $0.options) }
+      conversationConfigured = true
     }
     self.screen = screen
     self.ui = ui
     self.markdown?.theme.colorOverrides = markdown?.theme.colorOverrides ?? [:]
     self.redactor = redactor
+    self.replyOwner = replyOwner
     tools = ui.tools
     thinkingDisplay = ui.thinking
     subagentOutput = ui.subagentOutput
     TerminalConversationScope.$id.withValue(destination) {
-      if case .started = event { resetResponse() }
-      consumeEvent(event)
+      TerminalConversationScope.$replyOwner.withValue(replyOwner) {
+        if case .started = event { resetResponse() }
+        consumeEvent(event)
+      }
     }
   }
 
@@ -788,6 +830,7 @@ actor TerminalWriter {
   }
 
   private func showThinking(_ delta: String) {
+    guard replyOwner == nil else { return }
     if !thinkingActive {
       finishReply()
       closeRootLine()

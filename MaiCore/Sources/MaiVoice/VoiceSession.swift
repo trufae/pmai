@@ -18,6 +18,7 @@ import MaiCore
   private let submit: @Sendable (UUID, String) -> Void
   private var captureTask: Task<Void, Never>?
   private var timer: Task<Void, Never>?
+  private var animation: Task<Void, Never>?
   private var playback: Task<Void, Never>?
   private var generation = UUID()
   private var captureGeneration = UUID()
@@ -51,6 +52,17 @@ import MaiCore
     enabled = true
     paused = false
     record()
+    animation?.cancel()
+    animation = Task { [weak self] in
+      while !Task.isCancelled {
+        do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+        guard let self, self.enabled else { return }
+        if self.state != .paused && self.state != .error {
+          self.frame += 1
+          self.notify()
+        }
+      }
+    }
   }
 
   public func record() {
@@ -92,8 +104,6 @@ import MaiCore
           while !Task.isCancelled {
             do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
             guard let self, self.state == .listening, generation == self.generation else { return }
-            self.frame += 1
-            self.notify()
             if self.recordingStarted.duration(to: .now)
               >= .seconds(self.settings.maximumRecordingSeconds)
               || (self.mode == .realtime && self.heardSpeech
@@ -275,6 +285,8 @@ import MaiCore
   }
   public func stop() {
     enabled = false
+    animation?.cancel()
+    animation = nil
     pause()
     state = .off
     changed(nil)
@@ -292,7 +304,7 @@ import MaiCore
     let icon: String =
       switch state {
       case .listening: "● \(spinner)"
-      case .speaking: "◉"
+      case .speaking: "◉ \(spinner)"
       case .paused: "Ⅱ"
       case .starting, .thinking, .transcribing: spinner
       case .error: "⊗"

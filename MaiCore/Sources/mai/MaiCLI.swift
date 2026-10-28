@@ -3837,6 +3837,7 @@ struct MaiCLI {
       voiceID = UUID()
       await voiceSession?.stop()
       voiceSession = nil
+      await terminal.setVoiceProcess(nil)
       if let pid = voicePID {
         loop.conversationTurns[pid]?.task.cancel()
         _ = await runtime.supervisor.stop(pid, reason: "Voice disabled")
@@ -3880,7 +3881,7 @@ struct MaiCLI {
       request.messages.append(contentsOf: await runtime.supervisor.drainInbox(pid))
       request.messages.append(.user(text))
       voiceContextCount = request.messages.count - voiceHistory.count - 1
-      await terminal.note("voice#\(pid.rawValue) you: \(text)")
+      await terminal.voiceInput(text, pid: pid)
       await beginTurn(request, process: pid, kind: .voice)
     }
 
@@ -3980,6 +3981,7 @@ struct MaiCLI {
         let parent = await mainProcess()
         guard let pid = await runtime.forkConversation(request, parent: parent, title: "Voice agent") else { return }
         voicePID = pid; voiceChatID = session.id
+        await terminal.setVoiceProcess(pid, parent: "chat:\(session.id)")
         let id = voiceID
         voiceSession = await VoiceSession(settings: settings, input: input, output: output,
           changed: { continuation.yield(.voiceStatus(id, $0)) },
@@ -5830,6 +5832,8 @@ struct MaiCLI {
     arecord for PCM capture and festival for system output. Command transcription
     takes a WAV {audio} and {language}, printing text on stdout; speech programs
     receive text on stdin, or in {text}. See MaiCore/README.md for configuration.
+    Voice replies and tool activity are shown as text as well as spoken.
+    /view voice puts the animation, input, replies and tools in a dedicated frame.
     Text input remains available; /subagents PID opens the voice conversation.
     """
 
@@ -14235,7 +14239,7 @@ struct MaiCLI {
       "/agent", "/agents", "/agents list", "/agents describe ", "/agents enable ",
       "/agents disable ",
       "/ps", "/ps -a", "/ps -p", "/ps -ap", "/ps -k ",
-      "/view", "/view off", "/view current", "/view main", "/view pins", "/view log", "/view todo", "/view iconlog", "/view thinking", "/view tools",
+      "/view", "/view off", "/view current", "/view main", "/view pins", "/view log", "/view todo", "/view iconlog", "/view thinking", "/view voice", "/view tools",
       "/view tools ", "/view prompt ", "/view history", "/view diffs", "/view agents", "/view agent ", "/help view",
       "/job", "/jobs", "/jobs tree", "/jobs stop ", "/jobs continue ", "/jobs clear", "/jobs log ",
       "/jobs kill ", "/jobs focus ",

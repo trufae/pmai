@@ -19,6 +19,7 @@ extension MaiCLI {
     case "pins" where rest.isEmpty: return (.pins, "pinned messages")
     case "history" where rest.isEmpty: return (.history, "input history")
     case "log" where rest.isEmpty: return (.log, "message log")
+    case "voice" where rest.isEmpty: return (.voice, "voice")
     case "todo" where rest.isEmpty: return (.todo, "project todo")
     case "iconlog" where rest.isEmpty: return (.iconlog, "tool icons")
     case "thinking" where rest.isEmpty, "reasoning" where rest.isEmpty:
@@ -36,7 +37,7 @@ extension MaiCLI {
     let target = name == "agent" ? rest : argument
     guard !target.isEmpty else {
       throw JSONRPCError.invalidParams(
-        "Usage: /view <off|current|pins|log|history|todo|iconlog|thinking|tools [NAME]|diffs|prompt TEXT|agents|AGENT>. /help view")
+        "Usage: /view <off|current|pins|log|history|todo|iconlog|thinking|voice|tools [NAME]|diffs|prompt TEXT|agents|AGENT>. /help view")
     }
     let rawPID = target.replacingOccurrences(of: "agent#", with: "")
       .trimmingCharacters(in: CharacterSet(charactersIn: "#@"))
@@ -85,6 +86,7 @@ extension MaiCLI {
     /view todo             Show the project's todo list, as in /todo
     /view iconlog          Show tool calls as a continuous row of emojis
     /view thinking         Show the current agent's full retained reasoning
+    /view voice            Show voice animation, input, replies and tool calls/results
     /view tools [NAME]     Show tool calls/results, optionally filtered by tool name
     /view TOOL_NAME        A tool name is also accepted directly
     /view diffs            Show git diff (unstaged tracked changes), refreshed every 5 seconds
@@ -121,6 +123,7 @@ extension MaiCLI {
     With no reply yet, they wait for one. Output stays in the view; closing or replacing it cancels the request.
     History refreshes after commands; diffs uses the current directory and keeps its scroll position.
     Todo shows the current project's shared list and refreshes as commands and tools run.
+    Voice follows the voice agent independently of the selected text agent. Start it with /voice on.
     The tools view follows ui.tools, including changes made while the view is open.
     Thinking/tools/iconlog views hide matching blocks in the conversation until the view closes
     or changes source. The thinking view also replaces the live thinking preview.
