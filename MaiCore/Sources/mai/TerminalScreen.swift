@@ -102,7 +102,14 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private func prepareOutputDrawing() -> Bool {
     guard active else { return false }
     guard isOutputVisible else {
-      if ui.mode == .buffer { drawViewRows(); placeCaret() }
+      if ui.mode == .buffer, let source = view?.source {
+        if source == .conversations {
+          requestScrollDraw()
+        } else if case .conversation(let watched) = source,
+          watched == TerminalConversationScope.id {
+          requestScrollDraw()
+        }
+      }
       return false
     }
     return true
@@ -139,6 +146,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var scrollDrawGeneration: UInt64 = 0
   private var outputBatch: String?
   private var view: TerminalView?
+  private var aggregateSections: [String: (Int, TerminalOutputBuffer.Version)] = [:]
+  private var aggregateOrder: [String] = []
   private var viewTask: Task<Void, Never>?
   private var viewDiffDirectory: URL?
   private var viewGeneration = UUID()
@@ -460,6 +469,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       guard ui.mode == .buffer else { return }
       let label = title.components(separatedBy: .controlCharacters).joined(separator: " ")
       stopViewTask()
+      aggregateSections = [:]
+      aggregateOrder = []
       let previous = view
       view = source.map {
         TerminalView(source: $0, title: label, preferredHeight: previous?.preferredHeight,
@@ -789,8 +800,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       if result == nil { toolBlocks[handle] = index }
       if ui.mode == .buffer, prepareOutputDrawing() {
         outputEndedLine = true
-        drawOutputRows()
-        placeCaret()
+        requestScrollDraw()
+        if ui.mode != .buffer { placeCaret() }
       }
       return handle
     }
@@ -814,12 +825,12 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       guard prepareOutputDrawing() else { return }
       if ui.mode == .buffer {
         outputEndedLine = true
-        drawOutputRows()
+        requestScrollDraw()
       } else if !rendered.isEmpty {
         write(Self.restoreCursor + rendered + Self.saveCursor)
         outputEndedLine = rendered.hasSuffix("\n")
       }
-      placeCaret()
+      if ui.mode != .buffer { placeCaret() }
     }
   }
 
@@ -832,12 +843,12 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       transcript.finishReply(block)
       guard prepareOutputDrawing() else { return }
       if ui.mode == .buffer {
-        drawOutputRows()
+        requestScrollDraw()
       } else {
         write(Self.restoreCursor + rendered + Self.saveCursor)
       }
       outputEndedLine = true
-      placeCaret()
+      if ui.mode != .buffer { placeCaret() }
     }
   }
 
@@ -848,12 +859,12 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       self.replyBlock = nil
       guard prepareOutputDrawing() else { return }
       if ui.mode == .buffer {
-        drawOutputRows()
+        requestScrollDraw()
       } else if !rendered.isEmpty {
         write(Self.restoreCursor + rendered + Self.saveCursor)
         outputEndedLine = rendered.hasSuffix("\n")
       }
-      placeCaret()
+      if ui.mode != .buffer { placeCaret() }
     }
   }
 
@@ -867,12 +878,12 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       guard prepareOutputDrawing() else { return }
       if ui.mode == .buffer {
         outputEndedLine = true
-        drawOutputRows()
+        requestScrollDraw()
       } else if full {
         write(Self.restoreCursor + text + Self.saveCursor)
         outputEndedLine = text.hasSuffix("\n")
       }
-      placeCaret()
+      if ui.mode != .buffer { placeCaret() }
     }
   }
 
@@ -883,12 +894,12 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       self.thinkingBlock = nil
       guard prepareOutputDrawing() else { return }
       if ui.mode == .buffer {
-        drawOutputRows()
+        requestScrollDraw()
       } else if !outputEndedLine {
         write(Self.restoreCursor + "\n" + Self.saveCursor)
         outputEndedLine = true
       }
-      placeCaret()
+      if ui.mode != .buffer { placeCaret() }
     }
   }
 
@@ -898,8 +909,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       let block = transcript.appendThinking(text)
       transcript.finishThinking(block)
       guard ui.mode == .buffer, prepareOutputDrawing() else { return }
-      drawOutputRows()
-      placeCaret()
+      requestScrollDraw()
+      if ui.mode != .buffer { placeCaret() }
     }
   }
 
@@ -1439,18 +1450,28 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     guard let source = view?.source else { return }
     if view?.needsMessages == true || source == .todo || source == .history || source == .diffs || source == .prompt { return }
     if source == .conversations {
-      var combined = TerminalOutputBuffer()
-      for id in conversations.keys.sorted() where id != "initial" {
-        combined.append("── \(id) ──\n")
-        var buffer = TerminalOutputBuffer()
-        buffer.updateView(from: conversations[id]!.transcript, selection: .all)
-        buffer.follow()
-        // Copy rendered rows through the same parser that strips terminal controls.
-        let gutter = Int(min(ui.scrollbar.magnitude, UInt(max(0, viewColumns - 1))))
-        combined.append(buffer.visibleRows(width: viewColumns - gutter, height: Int.max).joined(separator: "\n"))
-        combined.append("\n")
+      let ids = Set(conversations.keys.filter { $0 != "initial" })
+      if aggregateOrder.contains(where: { !ids.contains($0) }) {
+        view?.buffer.clear()
+        aggregateSections = [:]
+        aggregateOrder = []
       }
-      view?.buffer.updateView(from: combined, selection: .all)
+      for id in ids.subtracting(aggregateOrder).sorted(by: {
+        $0.localizedStandardCompare($1) == .orderedAscending
+      }) {
+        view?.buffer.append("── \(id) ──\n")
+        let buffer = conversations[id]!.transcript
+        if let block = view?.buffer.retain(buffer) {
+          aggregateSections[id] = (block, buffer.contentVersion)
+          aggregateOrder.append(id)
+        }
+      }
+      for id in aggregateOrder {
+        guard let section = aggregateSections[id], let buffer = conversations[id]?.transcript,
+          section.1 != buffer.contentVersion else { continue }
+        view?.buffer.retain(buffer, at: section.0)
+        aggregateSections[id] = (section.0, buffer.contentVersion)
+      }
     } else {
       let id: String
       if case .conversation(let watched) = source { id = watched }
@@ -1767,9 +1788,11 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     // One write carries the viewport, footer and caret together, reducing
     // syscalls and preventing intermediate frames from reaching the terminal.
     outputBatch = ""
-    drawOutputRows()
-    drawStatusRow()
-    placeCaret()
+    TerminalConversationScope.$id.withValue(nil) {
+      drawOutputRows()
+      drawStatusRow()
+      placeCaret()
+    }
     let frame = outputBatch!
     outputBatch = nil
     write(frame)

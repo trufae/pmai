@@ -5,6 +5,31 @@ import Testing
 
 @testable import MaiCLI
 
+@Test("Aggregate views retain independent sections and reflow nested blocks")
+func terminalAggregateSections() {
+  var first = TerminalOutputBuffer()
+  let reply = first.appendReply("abcdefghijklmnop\nsecond line")
+  first.finishReply(reply)
+  var second = TerminalOutputBuffer()
+  second.append("last section")
+  var aggregate = TerminalOutputBuffer()
+  aggregate.append("first\n")
+  let block = aggregate.retain(first)
+  aggregate.append("second\n")
+  aggregate.retain(second)
+  for width in [4, 80, 7] {
+    let rows = aggregate.visibleRows(width: width, height: 100)
+    aggregate.scroll(to: 0, width: width, height: 3)
+    #expect(aggregate.visibleRows(width: width, height: 3) == Array(rows.prefix(3)))
+    aggregate.follow()
+  }
+  first.append("\nnew output")
+  aggregate.retain(first, at: block)
+  let text = aggregate.visibleRows(width: 80, height: 100).joined(separator: "\n")
+  #expect(text.contains("new output"))
+  #expect(text.contains("last section"))
+}
+
 @Test("View snapshots preserve pane state and track edits and source replacement")
 func terminalViewSnapshotUpdates() {
   var source = TerminalOutputBuffer()

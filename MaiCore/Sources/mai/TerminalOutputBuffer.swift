@@ -6,6 +6,11 @@ import MaiMarkdown
 /// Logical lines retain styling and are wrapped again when the window changes size.
 /// Only SGR styling is replayed: output cannot move the cursor into the fixed footer.
 struct TerminalOutputBuffer {
+  struct Version: Equatable {
+    var identity: UUID
+    var revision: UInt64
+  }
+  var contentVersion: Version { Version(identity: identity, revision: revision) }
   private let identity = UUID()
   private var revision: UInt64 = 0
   private var projection: (identity: UUID, revision: UInt64, selection: TerminalOutputSelection)?
@@ -76,6 +81,7 @@ struct TerminalOutputBuffer {
   private var activeThinking: Set<Int> = []
   private var thinkingDisplay: ThinkingDisplay = .full
   private var replyBlocks: [Int: ReplyBlock] = [:]
+  private var retainedBlocks: [Int: TerminalOutputBuffer] = [:]
   private var toolBlocks: [Int: TerminalToolBlock] = [:]
   private var toolGroupStarts: [Int: Int] = [:]
   private var toolGroupEnds: [Int: Int] = [:]
@@ -159,6 +165,7 @@ struct TerminalOutputBuffer {
     thinkingBlocks.removeAll()
     activeThinking.removeAll()
     replyBlocks.removeAll()
+    retainedBlocks.removeAll()
     toolBlocks.removeAll()
     toolGroupStarts.removeAll()
     toolGroupEnds.removeAll()
@@ -389,6 +396,22 @@ struct TerminalOutputBuffer {
     }
   }
 
+  /// Compose retained sections without serializing styled rows back into text.
+  @discardableResult
+  mutating func retain(_ buffer: TerminalOutputBuffer, at block: Int? = nil) -> Int {
+    let index: Int
+    if let block { index = block }
+    else {
+      if !lines[lines.count - 1].glyphs.isEmpty { append("\n") }
+      index = lines.count - 1
+      lines.append(Line())
+      cursor = 0
+    }
+    retainedBlocks[index] = buffer
+    invalidateLine(index)
+    return index
+  }
+
   private mutating func put(_ text: String) {
     let last = lines.count - 1
     // A provider may split an accent or an emoji sequence across deltas.
@@ -434,6 +457,13 @@ struct TerminalOutputBuffer {
     if iconGroup && index != groupStart { return [] }
     if isGroup && index != groupStart && !expandedToolGroups.contains(originalStart) { return [] }
     if lines[index].cachedWidth == width { return lines[index].rows }
+    if retainedBlocks[index] != nil {
+      retainedBlocks[index]?.configureHighlight(highlight)
+      let result = Self.blockRows(&retainedBlocks[index]!, index: index, width: width)
+      lines[index].cachedWidth = width
+      lines[index].rows = result
+      return result
+    }
     if let tool = toolBlocks[index] {
       var text = tool.render(display: tools, colors: colors != nil)
       if iconGroup {
@@ -585,9 +615,13 @@ struct TerminalOutputBuffer {
     -> [Row]
   {
     let rows = buffer.allRows(width: width)
+    var spans = buffer.lines.map { $0.glyphs.count }
+    for row in rows {
+      spans[row.position.line] = max(spans[row.position.line], row.position.glyph + 1)
+    }
     var offsets = [0]
-    for line in buffer.lines {
-      offsets.append(offsets.last! + line.glyphs.count + 1)
+    for span in spans {
+      offsets.append(offsets.last! + span + 1)
     }
     var result = rows.map { row in
       Row(
