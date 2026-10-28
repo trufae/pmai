@@ -50,10 +50,11 @@ struct SubagentProcessesSheet: View {
   @ObservedObject var storeObservation: AppStoreViewObservation
   let conversationID: UUID?
   @Environment(\.dismiss) private var dismiss
+  @State private var showArchived = false
   @State private var agentPendingDeletion: AgentProcessInfo?
 
   private var processes: [AgentProcessInfo] {
-    store.agentChildren(of: conversationID)
+    store.agentChildren(of: conversationID).filter { showArchived || !$0.isArchived }
   }
 
   var body: some View {
@@ -81,9 +82,9 @@ struct SubagentProcessesSheet: View {
                   Button(role: .destructive) {
                     store.stopAgentProcess(process.pid)
                   } label: {
-                    Label("Stop", systemImage: "stop.fill")
+                    Label(AgentProcessAction.cancel.title, systemImage: "stop.fill")
                   }
-                  if process.state == .paused {
+                  if AgentProcessAction.resume.isAvailable(for: process) {
                     Button {
                       store.resumeAgentProcess(process.pid)
                     } label: {
@@ -102,7 +103,7 @@ struct SubagentProcessesSheet: View {
               }
               .contextMenu {
                 if !process.state.isTerminal {
-                  if process.state == .paused {
+                  if AgentProcessAction.resume.isAvailable(for: process) {
                     Button {
                       store.resumeAgentProcess(process.pid)
                     } label: {
@@ -118,7 +119,7 @@ struct SubagentProcessesSheet: View {
                   Button(role: .destructive) {
                     store.stopAgentProcess(process.pid)
                   } label: {
-                    Label("Interrupt", systemImage: "stop.fill")
+                    Label(AgentProcessAction.cancel.title, systemImage: "stop.fill")
                   }
                   Divider()
                 }
@@ -140,10 +141,16 @@ struct SubagentProcessesSheet: View {
         }
         ToolbarItem(placement: .primaryAction) {
           Menu {
+            Toggle("Show Archived", isOn: $showArchived)
             Button {
+              store.archiveFinishedAgentProcesses(in: conversationID)
+            } label: {
+              Label("Archive Finished", systemImage: "archivebox")
+            }
+            Button(role: .destructive) {
               store.clearFinishedAgentProcesses(in: conversationID)
             } label: {
-              Label("Clear Finished", systemImage: "trash")
+              Label("Delete Finished", systemImage: "trash")
             }
             .disabled(!processes.contains(where: \.state.isTerminal))
             Button(role: .destructive) {
@@ -151,7 +158,7 @@ struct SubagentProcessesSheet: View {
                 store.stopAgentProcess(process.pid)
               }
             } label: {
-              Label("Stop All", systemImage: "stop.circle")
+              Label("Cancel All", systemImage: "stop.circle")
             }
             .disabled(!processes.contains(where: { !$0.state.isTerminal }))
           } label: {
@@ -308,8 +315,10 @@ struct SubagentProcessDetailView: View {
               TextField("Message for its next turn", text: $draft, axis: .vertical)
                 .lineLimit(1...4)
               Button {
-                store.sendMessageToAgentProcess(pid, text: draft)
-                draft = ""
+                let message = draft
+                Task {
+                  if await store.sendMessageToAgentProcess(pid, text: message), draft == message { draft = "" }
+                }
               } label: {
                 Image(systemName: "arrow.up.circle.fill")
                   .font(.title2)
@@ -319,7 +328,7 @@ struct SubagentProcessDetailView: View {
               .accessibilityLabel("Send message to agent")
             }
             HStack {
-              if process.state == .paused {
+              if AgentProcessAction.resume.isAvailable(for: process) {
                 Button {
                   store.resumeAgentProcess(pid)
                 } label: {
@@ -336,7 +345,7 @@ struct SubagentProcessDetailView: View {
               Button(role: .destructive) {
                 store.stopAgentProcess(pid)
               } label: {
-                Label("Stop", systemImage: "stop.fill")
+                Label(AgentProcessAction.cancel.title, systemImage: "stop.fill")
               }
             }
             .buttonStyle(.borderless)
@@ -344,7 +353,7 @@ struct SubagentProcessDetailView: View {
             Text("Steer")
           } footer: {
             Text(
-              "A message is read before the agent's next model turn. Pause holds it at the next turn boundary; Stop ends it and anything it started."
+              "A message is read before the agent's next model turn. Pause holds it at the next turn boundary; Cancel ends it and anything it started."
             )
           }
         }

@@ -18,7 +18,7 @@ extension MaiCLI {
 
   private static let legacyJobActions: Set<String> = [
     "tree", "ps", "log", "kill", "stop", "pause", "suspend", "continue", "cont", "resume",
-    "clear", "focus",
+    "clear", "focus", "cancel", "archive",
   ]
 
   /// Process operations shared by the prompt and command host. Focus and
@@ -34,11 +34,11 @@ extension MaiCLI {
 
     switch action {
     case "", "tree", "ps":
-      guard fields.count <= 1 else {
+      guard fields.count <= 2, fields.count == 1 || fields.isEmpty || fields[1] == "--all" else {
         await terminal.line("Usage: /jobs [tree]")
         return
       }
-      let lines = await jobsTreeLines(runtime: runtime)
+      let lines = await jobsTreeLines(runtime: runtime, includeArchived: fields.contains("--all"))
       await terminal.line(lines.isEmpty ? "No jobs recorded." : lines.joined(separator: "\n"))
 
     case "clear":
@@ -73,7 +73,16 @@ extension MaiCLI {
       }
       await terminal.line(lines.joined(separator: "\n"))
 
-    case "kill":
+    case "archive":
+      guard fields.count <= 2, fields.count < 2 || AgentPID(text: fields[1]) != nil else {
+        await terminal.line("Usage: /jobs archive [PID]")
+        return
+      }
+      let pid = fields.count == 2 ? AgentPID(text: fields[1]) : nil
+      let archived = await runtime.supervisor.archiveFinished(under: pid, includingRoot: pid != nil)
+      await terminal.line("Archived \(archived.count) finished agents; /jobs tree --all includes them.")
+
+    case "kill", "cancel":
       guard fields.count >= 2, let pid = AgentPID(text: fields[1]) else {
         await terminal.line("Usage: /jobs kill PID [REASON]")
         return
@@ -88,8 +97,11 @@ extension MaiCLI {
         "Stopped \(stopped.map(\.description).joined(separator: ", ")).")
 
     case "stop", "pause", "suspend":
+      if action == "stop" {
+        await terminal.note("/jobs stop is the legacy pause alias; use /jobs pause or /jobs cancel.")
+      }
       guard fields.count == 2, let pid = AgentPID(text: fields[1]) else {
-        await terminal.line("Usage: /jobs stop PID")
+        await terminal.line("Usage: /jobs pause PID")
         return
       }
       guard let info = await runtime.supervisor.info(pid) else {
@@ -105,7 +117,7 @@ extension MaiCLI {
           "\(pid) (\(info.agentID)) has finished; /jobs log \(pid.rawValue) shows what it did.")
         return
       }
-      let held = await runtime.supervisor.pause(pid)
+      let held = await runtime.supervisor.perform(.pause, on: pid)
       guard !held.isEmpty else {
         await terminal.line(
           "\(pid) (\(info.agentID)) is already paused; /jobs continue \(pid.rawValue) lets it go on."
@@ -125,7 +137,7 @@ extension MaiCLI {
         await terminal.line("No agent \(pid).")
         return
       }
-      let released = await runtime.supervisor.resume(pid)
+      let released = await runtime.supervisor.perform(.resume, on: pid)
       guard !released.isEmpty else {
         await terminal.line(
           info.state.isTerminal
@@ -143,8 +155,9 @@ extension MaiCLI {
     }
   }
 
-  private static func jobsTreeLines(runtime: AgentRuntime) async -> [String] {
-    let tree = await runtime.supervisor.tree()
+  private static func jobsTreeLines(runtime: AgentRuntime, includeArchived: Bool = false) async -> [String] {
+    let processes = await runtime.supervisor.processes()
+    let tree = AgentProcessTree(processes.filter { includeArchived || !$0.isArchived })
     guard !tree.isEmpty else { return [] }
     return ["Jobs:"] + tree.lines() + [jobTreeTotal(tree)]
   }
@@ -168,16 +181,19 @@ extension MaiCLI {
       /jobs                     List the process tree, including finished and saved jobs
       /jobs tree                Same as /jobs; /jobs ps also works
       /jobs log PID             Print a process's transcript
-      /jobs stop PID            Pause a child and its descendants after their current step
-      /jobs continue PID        Resume paused processes and deliver queued messages
-      /jobs kill PID [REASON]   Cancel a process and its descendants
+      /jobs pause PID           Pause a child and its descendants after their current step
+      /jobs resume PID          Resume paused processes and deliver queued messages
+      /jobs cancel PID [REASON] Cancel a process and its descendants
       /jobs focus [PID|main]    Switch input and the buffer to an agent conversation
-      /jobs clear               Forget finished processes and their saved chat records
+      /jobs archive [PID]       Hide finished jobs while keeping their transcripts
+      /jobs tree --all          Include archived jobs
+      /jobs clear               Delete finished processes and their saved chat records
 
     PIDs accept 4 or #4. Tree states include run, paused, queued, done, failed,
     killed, stopped, blocked, approve?, and input?. /help queue explains addressing.
     Pausing waits at runtime boundaries; killing requests cancellation.
-    /jobs stop does not pause the main chat; Ctrl+C cancels its turn.
+    /jobs stop remains a compatibility alias for pause. /jobs kill aliases cancel.
+    /jobs pause does not pause the main chat; Ctrl+C cancels its turn.
     Finished conversations accept new messages. Saved conversations with runtime
     settings can start new turns; older jobs remain available for inspection.
 

@@ -219,8 +219,9 @@ public actor AgentSupervisor {
       paused.insert(process.pid)
       if process.state == .queued { pausedWhileQueued.insert(process.pid) }
       held.append(process.pid)
-      guard var entry = entries[process.pid], entry.info.attention == nil else { continue }
-      entry.info.state = .paused
+      guard var entry = entries[process.pid] else { continue }
+      entry.info.pauseRequested = true
+      if entry.info.attention == nil { entry.info.state = .paused }
       entry.info.updatedAt = Date()
       entries[process.pid] = entry
       publish(.changed(entry.info))
@@ -236,8 +237,10 @@ public actor AgentSupervisor {
     for process in tree().subtree(of: pid) where paused.contains(process.pid) {
       paused.remove(process.pid)
       released.append(process.pid)
-      guard var entry = entries[process.pid], entry.info.state == .paused else { continue }
-      entry.info.state = pausedWhileQueued.remove(process.pid) != nil ? .queued : .running
+      guard var entry = entries[process.pid] else { continue }
+      entry.info.pauseRequested = false
+      let queued = pausedWhileQueued.remove(process.pid) != nil
+      if entry.info.state == .paused { entry.info.state = queued ? .queued : .running }
       entry.info.updatedAt = Date()
       entries[process.pid] = entry
       publish(.changed(entry.info))
@@ -275,6 +278,24 @@ public actor AgentSupervisor {
     let removable = removableFinished().filter { within.contains($0.pid) }
     for process in removable { forget(process.pid) }
     return removable.map(\.pid)
+  }
+
+  /// Archive keeps durable results addressable and hides them from default lists.
+  @discardableResult
+  public func archiveFinished(under pid: AgentPID? = nil, includingRoot: Bool = false) -> [AgentPID] {
+    let within = pid.map { Set(tree().subtree(of: $0).map(\.pid)) }
+    let candidates = removableFinished().filter {
+      !$0.isArchived && (within?.contains($0.pid) ?? true)
+        && ($0.depth > 0 || includingRoot) && (includingRoot || $0.pid != pid)
+    }
+    for process in candidates {
+      guard var entry = entries[process.pid] else { continue }
+      entry.info.isArchived = true
+      entry.info.updatedAt = Date()
+      entries[process.pid] = entry
+      publish(.changed(entry.info))
+    }
+    return candidates.map(\.pid)
   }
 
   // MARK: - Saving and restoring
@@ -332,7 +353,7 @@ public actor AgentSupervisor {
       let parentPID = record.parentRunID.flatMap { pidsByRunID[$0] } ?? parent
       let depth = (entries[parentPID]?.info.depth ?? root.info.depth) + 1
       let ended = record.state.isTerminal
-      let info = AgentProcessInfo(
+      var info = AgentProcessInfo(
         pid: pid,
         parent: parentPID,
         runID: record.runID,
@@ -350,6 +371,7 @@ public actor AgentSupervisor {
         usage: record.usage,
         failure: ended ? record.failure : Self.restoredWhileRunning,
         isCollected: true)
+      info.isArchived = record.isArchived
       entries[pid] = Entry(
         info: info, historyReference: record.historyReference, transcript: record.messages)
       pidsByRunID[record.runID] = pid
@@ -373,6 +395,12 @@ public actor AgentSupervisor {
     inboxes[pid, default: []].append(queued)
     noteInboxChanged(pid)
     return queued
+  }
+
+  /// Interactive steering must not accept a message after its run has ended.
+  public func postIfRunning(_ message: AgentMessage, to pid: AgentPID) -> AgentQueuedMessage? {
+    guard let info = entries[pid]?.info, !info.state.isTerminal else { return nil }
+    return post(message, to: pid)
   }
 
   /// What is waiting for one process, oldest first.
@@ -506,6 +534,7 @@ public actor AgentSupervisor {
   public func reopen(_ pid: AgentPID, runID: UUID, task: String) -> Bool {
     guard var entry = entries[pid] else { return false }
     entry.info.runID = runID
+    entry.info.isArchived = false
     entry.info.task = task
     entry.info.state = effectiveState(.running, for: pid)
     entry.info.attention = nil
@@ -731,6 +760,7 @@ public actor AgentSupervisor {
     entry.info.attention = attention
     entry.info.updatedAt = Date()
     if finished {
+      entry.info.pauseRequested = false
       entry.info.finishedAt = Date()
       // "thinking" or a tool name describes a run in progress, not one that ended.
       entry.info.activity = ""

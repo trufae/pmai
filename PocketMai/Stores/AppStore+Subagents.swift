@@ -256,15 +256,15 @@ extension AppStore {
   // MARK: - Controls
 
   func stopAgentProcess(_ pid: AgentPID) {
-    Task { await agentSupervisor.stop(pid, reason: "Stopped from the chat") }
+    Task { await agentSupervisor.perform(.cancel, on: pid) }
   }
 
   func pauseAgentProcess(_ pid: AgentPID) {
-    Task { await agentSupervisor.pause(pid) }
+    Task { await agentSupervisor.perform(.pause, on: pid) }
   }
 
   func resumeAgentProcess(_ pid: AgentPID) {
-    Task { await agentSupervisor.resume(pid) }
+    Task { await agentSupervisor.perform(.resume, on: pid) }
   }
 
   /// Stops and removes one child subtree from both the live supervisor and
@@ -290,30 +290,38 @@ extension AppStore {
   }
 
   /// Queues a message a running child reads before its next model turn.
-  func sendMessageToAgentProcess(_ pid: AgentPID, text: String) {
+  func sendMessageToAgentProcess(_ pid: AgentPID, text: String) async -> Bool {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { return }
-    Task { await agentSupervisor.post(.user(trimmed), to: pid) }
+    guard !trimmed.isEmpty, let info = await agentSupervisor.info(pid), !info.state.isTerminal else {
+      errorMessage = "This agent is no longer running. Your message has been kept."
+      return false
+    }
+    guard await agentSupervisor.postIfRunning(.user(trimmed), to: pid) != nil else {
+      errorMessage = "This agent finished before accepting the message. Your draft has been kept."
+      return false
+    }
+    return true
   }
 
   /// Forgets the finished children of a conversation, so its process list
   /// shows only what is running.
   func clearFinishedAgentProcesses(in conversationID: UUID?) {
-    let tree = AgentProcessTree(agentProcesses)
-    // A finished child whose background children still run stays listed
-    // with them, so nothing is orphaned.
-    let finished = agentChildren(of: conversationID).filter { child in
-      tree.subtree(of: child.pid).allSatisfy(\.state.isTerminal)
-    }
-    guard !finished.isEmpty else { return }
+    guard let conversationID, let root = agentProcessIDs[conversationID] else { return }
     Task {
-      if let conversationID, let root = agentProcessIDs[conversationID] {
-        await saveAgentProcessRecords(for: conversationID, under: root)
-      }
-      for process in finished.reversed() {
-        await agentSupervisor.forget(process.pid)
-      }
+      await saveAgentProcessRecords(for: conversationID, under: root)
+      let snapshot = await agentSupervisor.tree()
+      let removed = Set(await agentSupervisor.clearFinished(under: root))
+      let runIDs = Set(snapshot.processes.filter { removed.contains($0.pid) }.map(\.runID))
       await refreshAgentProcesses()
+      removeAgentProcessRecordSubtrees(rootedAt: runIDs, from: conversationID)
+    }
+  }
+
+  func archiveFinishedAgentProcesses(in conversationID: UUID?) {
+    guard let conversationID, let root = agentProcessIDs[conversationID] else { return }
+    Task {
+      await agentSupervisor.archiveFinished(under: root)
+      await saveAgentProcessRecords(for: conversationID, under: root)
     }
   }
 }

@@ -162,3 +162,26 @@ func agentTranscriptPagingAndRemoval() async throws {
   var iterator = events.makeAsyncIterator()
   #expect(await iterator.next() == .removed(pid))
 }
+
+@Test("Archive survives restart and terminal processes reject stale steering")
+func agentArchiveAndActions() async throws {
+  let supervisor = AgentSupervisor()
+  let root = await supervisor.register(runID: UUID(), parent: nil, agentID: "main", depth: 0)
+  let child = await supervisor.register(runID: UUID(), parent: root, agentID: "worker", depth: 1)
+  await supervisor.perform(.pause, on: child)
+  let paused = try #require(await supervisor.info(child))
+  #expect(AgentProcessAction.resume.isAvailable(for: paused))
+  #expect(!AgentProcessAction.pause.isAvailable(for: paused))
+  await supervisor.perform(.resume, on: child)
+  await supervisor.complete(child)
+  #expect(await supervisor.postIfRunning(.user("too late"), to: child) == nil)
+  #expect(await supervisor.archiveFinished(under: root) == [child])
+  let records = await supervisor.records(under: root)
+  let data = try JSONEncoder().encode(records)
+  let decoded = try JSONDecoder().decode([AgentProcessRecord].self, from: data)
+  let restored = AgentSupervisor()
+  let restoredRoot = await restored.register(runID: UUID(), parent: nil, agentID: "main", depth: 0)
+  let pids = await restored.restore(decoded, under: restoredRoot)
+  #expect(await restored.info(pids[0])?.isArchived == true)
+  #expect(await supervisor.info(child) != nil)
+}
