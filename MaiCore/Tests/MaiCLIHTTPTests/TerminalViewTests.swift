@@ -5,6 +5,31 @@ import Testing
 
 @testable import MaiCLI
 
+@Test("View snapshots preserve pane state and track edits and source replacement")
+func terminalViewSnapshotUpdates() {
+  var source = TerminalOutputBuffer()
+  source.append((0..<40).map { "row \($0)" }.joined(separator: "\n"))
+  var view = TerminalOutputBuffer()
+  view.updateView(from: source, selection: .all)
+  view.scroll(to: 5, width: 20, height: 5)
+  view.configureHighlight("row")
+  let before = view.visibleRows(width: 20, height: 5)
+  view.updateView(from: source, selection: .all)
+  #expect(view.visibleRows(width: 20, height: 5) == before)
+  source.append("\nnew row")
+  view.updateView(from: source, selection: .all)
+  #expect(view.visibleRows(width: 20, height: 5).first == "row 5")
+  view.follow()
+  #expect(view.visibleRows(width: 20, height: 5).last == "new row")
+  source.clear()
+  view.updateView(from: source, selection: .all)
+  #expect(view.visibleRows(width: 20, height: 5) == [""])
+  var replacement = TerminalOutputBuffer()
+  replacement.append("replacement")
+  view.updateView(from: replacement, selection: .all)
+  #expect(view.visibleRows(width: 20, height: 5) == ["replacement"])
+}
+
 @Test("View selectors resolve agents and tools without changing the conversation")
 func terminalViewSelectors() throws {
   let processes = [

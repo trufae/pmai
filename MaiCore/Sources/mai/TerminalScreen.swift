@@ -45,6 +45,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var rows = 24
   private var columns = 80
   private var ui = ConfiguredTerminalUI()
+  private let colorsEnabled: Bool
+  private let bufferColorsEnabled: Bool
   private var voiceStatus: String?
   private var statusText = ""
   private var statusNeedsAttention = false
@@ -87,9 +89,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     conversation.transcript.configureTools(ui.tools)
     conversation.transcript.configureToolGroups(ui.toolGroups)
     conversation.transcript.configureMarkdown(markdownTemplate)
-    let colors = ProcessInfo.processInfo.environment["NO_COLOR"] == nil
-      && ProcessInfo.processInfo.environment["TERM"] != "dumb"
-    conversation.transcript.configureColors(colors ? ui : nil)
+    conversation.transcript.configureColors(bufferColorsEnabled ? ui : nil)
     conversations[id] = conversation
     return conversation
   }
@@ -134,6 +134,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   /// Tool handles remain unique across conversations and /clear.
   private var nextToolBlock = 0
   private var paintedOutputRows: [String] = []
+  private var lastOutputDraw: UInt64 = 0
+  private var scrollDrawScheduled = false
+  private var scrollDrawGeneration: UInt64 = 0
+  private var outputBatch: String?
   private var view: TerminalView?
   private var viewTask: Task<Void, Never>?
   private var viewDiffDirectory: URL?
@@ -176,6 +180,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   /// plain one-line-at-a-time prompt.
   init?() {
     guard isatty(STDIN_FILENO) != 0, isatty(STDOUT_FILENO) != 0 else { return nil }
+    let environment = ProcessInfo.processInfo.environment
+    colorsEnabled = environment["NO_COLOR"] == nil
+    bufferColorsEnabled = colorsEnabled && environment["TERM"] != "dumb"
   }
 
   func configure(ui: ConfiguredTerminalUI) {
@@ -197,16 +204,12 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         conversation.transcript.configureThinking(ui.thinking)
         conversation.transcript.configureTools(ui.tools)
         conversation.transcript.configureToolGroups(ui.toolGroups)
-        let colors = ProcessInfo.processInfo.environment["NO_COLOR"] == nil
-          && ProcessInfo.processInfo.environment["TERM"] != "dumb"
-        conversation.transcript.configureColors(colors ? ui : nil)
+        conversation.transcript.configureColors(bufferColorsEnabled ? ui : nil)
       }
       transcript.configureThinking(ui.thinking)
       transcript.configureTools(ui.tools)
       transcript.configureToolGroups(ui.toolGroups)
-      let colors = ProcessInfo.processInfo.environment["NO_COLOR"] == nil
-        && ProcessInfo.processInfo.environment["TERM"] != "dumb"
-      transcript.configureColors(colors ? ui : nil)
+      transcript.configureColors(bufferColorsEnabled ? ui : nil)
       guard active else { return }
       if ui.mode != previousMode {
         transcript.follow()
@@ -586,6 +589,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     lock.withLock {
       guard active, ui.mode == .buffer else { return }
       refreshSize()
+      // Mouse hit-testing must use the viewport after any queued wheel reports.
+      if scrollDrawScheduled { drawScrollFrame() }
       let targetsView = scrollbarDrag?.view ?? isInView(event)
       if handleScrollbarMouse(event) {
         if !targetsView, let conversation = conversations[selectedConversation],
@@ -733,6 +738,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   private func deactivateLocked(leaveBuffer: Bool = true) {
     guard active else { return }
+    scrollDrawScheduled = false
+    scrollDrawGeneration &+= 1
     draggingViewSeparator = false
     scrollbarDrag = nil
     refreshSize()
@@ -1200,17 +1207,18 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     lock.withLock {
       guard active, ui.mode == .buffer else { return }
       refreshSize()
+      let changed: Bool
       if view?.focused == true, viewHeight > 0 {
         updateViewBuffer()
         let height = viewHeight
         let width = paneContentWidth(inView: true)
-        view?.buffer.scroll(
+        changed = view?.buffer.scroll(
           lines: wheel * max(1, ui.scroll) + pages * max(1, height - 1),
-          width: width, height: height)
+          width: width, height: height) ?? false
       } else {
-        TerminalConversationScope.$id.withValue(nil) {
+        changed = TerminalConversationScope.$id.withValue(nil) {
           let width = paneContentWidth(inView: false)
-          transcript.scroll(
+          return transcript.scroll(
             lines: wheel * max(1, ui.scroll) + pages * max(1, outputHeight - 1),
             width: width, height: outputHeight)
         }
@@ -1220,9 +1228,13 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         if wheel + pages < 0, transcript.isAtBeginning, window.hasEarlier { loadEarlier = true }
         if wheel + pages > 0, transcript.isFollowing, window.hasLater { loadEarlier = false }
       }
-      drawOutputRows()
-      drawStatusRow()
-      placeCaret()
+      if changed {
+        if wheel != 0 && pages == 0 {
+          requestScrollDraw()
+        } else {
+          drawScrollFrame()
+        }
+      }
     }
     if let loadEarlier { loader?(loadEarlier) }
   }
@@ -1375,6 +1387,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   private func drawOutputRows() {
+    scrollDrawScheduled = false
+    scrollDrawGeneration &+= 1
+    lastOutputDraw = DispatchTime.now().uptimeNanoseconds
     drawViewRows()
     guard outputHeight > 0 else { paintedOutputRows = []; return }
     var width = outputColumns
@@ -1404,8 +1419,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   private var scrollbarColors: ConfiguredTerminalUI? {
-    ProcessInfo.processInfo.environment["NO_COLOR"] == nil
-      && ProcessInfo.processInfo.environment["TERM"] != "dumb" ? ui : nil
+    bufferColorsEnabled ? ui : nil
   }
 
   private func paneRow(
@@ -1505,7 +1519,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     }
     var out = ""
     var painted: [String] = []
-    let colors = ProcessInfo.processInfo.environment["NO_COLOR"] == nil
+    let colors = colorsEnabled
     for (index, line) in panelRows.enumerated() {
       let content = Self.truncated(line, width: width)
       let padded =
@@ -1557,7 +1571,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     let left = Self.truncated(" \(scrollHint)\(status) ", width: max(0, width - Self.displayWidth(right)))
     let content = left + String(repeating: " ", count: max(0,
       width - Self.displayWidth(left) - Self.displayWidth(right))) + right
-    let colors = ProcessInfo.processInfo.environment["NO_COLOR"] == nil
+    let colors = colorsEnabled
     var out = ""
     out += move(row: regionBottom + panelRows.count + 1, column: 1)
     if clear { out += Self.clearLine }
@@ -1714,7 +1728,51 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   private func write(_ text: String) {
+    guard !text.isEmpty else { return }
+    if outputBatch != nil {
+      outputBatch! += text
+      return
+    }
     FileHandle.standardOutput.write(Data(TerminalThemeStyle.resolve(text).utf8))
+  }
+
+  /// Keep the first wheel response immediate and paint queued reports at up to
+  /// 120 Hz. Each event still updates its anchor, including direction changes
+  /// and clamping at the ends; only redundant terminal frames are coalesced.
+  private func requestScrollDraw() {
+    let now = DispatchTime.now().uptimeNanoseconds
+    let interval: UInt64 = 8_333_333
+    let elapsed = now - lastOutputDraw
+    if elapsed >= interval {
+      drawScrollFrame()
+      return
+    }
+    guard !scrollDrawScheduled else { return }
+    scrollDrawScheduled = true
+    scrollDrawGeneration &+= 1
+    let generation = scrollDrawGeneration
+    DispatchQueue.global().asyncAfter(deadline: .now() + .nanoseconds(Int(interval - elapsed))) { [weak self] in
+      guard let self else { return }
+      self.lock.withLock {
+        guard self.scrollDrawScheduled, self.scrollDrawGeneration == generation else { return }
+        self.scrollDrawScheduled = false
+        guard self.active, self.ui.mode == .buffer else { return }
+        self.refreshSize()
+        self.drawScrollFrame()
+      }
+    }
+  }
+
+  private func drawScrollFrame() {
+    // One write carries the viewport, footer and caret together, reducing
+    // syscalls and preventing intermediate frames from reaching the terminal.
+    outputBatch = ""
+    drawOutputRows()
+    drawStatusRow()
+    placeCaret()
+    let frame = outputBatch!
+    outputBatch = nil
+    write(frame)
   }
 
   private func measure() {

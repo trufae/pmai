@@ -28,6 +28,14 @@ history; `ToolResultContextTests` owns exact live context-size checks.
 
 The remaining two smoke scripts require external fixtures:
 `python3 test/run-tests.py external --tailcat /path/to/tailcat --ghostty /path/to/ghostty-web`.
+Buffer scrolling has an opt-in, offline PTY benchmark:
+`python3 test/bench/terminal-scroll.py MaiCore/.build/debug/pmai --lines 200 --events 100`.
+Use the release binary for the same comparison, or increase both sizes to check
+long transcripts and queued wheel bursts. It reports elapsed scrolling time,
+terminal bytes, and process CPU time (including startup). Output is drained
+without emulating a terminal, so these are application throughput measurements.
+On macOS, `--sample /tmp/pmai-scroll.sample` captures stacks during scrolling;
+measure timings separately because sampling adds overhead.
 Live-provider checks and coding benchmarks remain explicit commands below.
 `python3 test/repl-history-smoke.py MaiCore/.build/debug/pmai` checks input
 history listing, search, deletion, clearing, persistence, path overrides,

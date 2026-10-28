@@ -46,7 +46,9 @@ enum TerminalThemeStyle: Int, CaseIterable {
   }
 
   static func resolve(_ text: String, ui: ConfiguredTerminalUI? = nil) -> String {
-    guard text.contains("\u{1B}[?") else { return text }
+    // Ordinary DEC controls (autowrap, mouse tracking, cursor visibility) also
+    // start with CSI ?. Avoid seventeen replacement passes for every frame.
+    guard text.contains("\u{1B}[?9") else { return text }
     return allCases.reduce(text) { result, role in
       result.replacingOccurrences(
         of: role.marker, with: ui.map { "\u{1B}[\(role.code(in: $0))m" } ?? "")

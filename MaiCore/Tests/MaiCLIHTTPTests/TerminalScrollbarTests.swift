@@ -125,3 +125,74 @@ func terminalScrollbarColors() {
   #expect(bar.cell(at: 0, ui: uncolored) == bar.cell(at: 0))
   #expect(bar.cell(at: bar.thumb.lowerBound, ui: uncolored) == bar.cell(at: bar.thumb.lowerBound))
 }
+
+@Test("Indexed navigation agrees with complete layout across hidden blocks and reflow")
+func terminalScrollbarIndexedNavigation() {
+  var source = TerminalOutputBuffer()
+  source.append("first\nabcdefghijk\n")
+  let thinking = source.appendThinking("thought one\nthought two\n")
+  source.finishThinking(thinking)
+  for index in 0..<8 {
+    source.appendTool(
+      call: ToolCall(id: "\(index)", name: "files_read", arguments: .object([:])),
+      result: ToolResult(callID: "\(index)", text: "result \(index)"))
+  }
+  let reply = source.appendReply((0..<40).map { "reply \($0) abcdef" }.joined(separator: "\n"))
+  source.finishReply(reply)
+  source.append("last")
+
+  func check(_ source: TerminalOutputBuffer) {
+    var buffer = source
+    for width in [1, 7, 40] {
+      buffer.follow()
+      let all = buffer.visibleRows(width: width, height: Int.max)
+      for height in [1, 5, 1000] {
+        let bottom = max(0, all.count - height)
+        for offset in [Int.min, 0, 1, bottom / 2, bottom, Int.max] {
+          buffer.scroll(to: offset, width: width, height: height)
+          var current = min(bottom, max(0, offset))
+          #expect(buffer.visibleRows(width: width, height: height)
+            == Array(all.dropFirst(current).prefix(height)))
+          for delta in [Int.min, 1, 3, Int.max, -1, -5] {
+            buffer.scroll(lines: delta, width: width, height: height)
+            current += max(-current, min(bottom - current, delta))
+            #expect(buffer.visibleRows(width: width, height: height)
+              == Array(all.dropFirst(current).prefix(height)))
+            #expect(buffer.scrollbar(width: width, height: height).maximum == bottom)
+          }
+        }
+      }
+    }
+  }
+
+  check(source)
+  source.configureThinking(.status)
+  source.configureToolGroups(true)
+  check(source)
+  source.append("\nnew output\n")
+  check(source)
+  var filtered = TerminalOutputBuffer()
+  filtered.updateView(from: source, selection: .tools("files_read"))
+  check(filtered)
+  source.clear()
+  check(source)
+}
+
+@Test("Overflow measurement updates when content, visibility or geometry changes")
+func terminalScrollbarOverflowInvalidation() {
+  var buffer = TerminalOutputBuffer()
+  let block = buffer.appendReply("short")
+  #expect(buffer.contentWidth(columns: 20, height: 3, scrollbar: 1) == 20)
+  buffer.appendReply(String(repeating: "\nline", count: 12), to: block)
+  #expect(buffer.contentWidth(columns: 20, height: 3, scrollbar: 1) == 19)
+  #expect(buffer.contentWidth(columns: 20, height: 30, scrollbar: 1) == 20)
+  buffer.clear()
+  #expect(buffer.contentWidth(columns: 20, height: 3, scrollbar: 1) == 20)
+  buffer.append("\n\n\n")
+  #expect(buffer.contentWidth(columns: 20, height: 3, scrollbar: 1) == 19)
+  buffer.clear()
+  buffer.append("abcdefghijklmnopq")
+  #expect(buffer.contentWidth(columns: 4, height: 2, scrollbar: 1) == 3)
+  buffer.append("\r\u{1B}[2Kx")
+  #expect(buffer.contentWidth(columns: 4, height: 2, scrollbar: 1) == 4)
+}

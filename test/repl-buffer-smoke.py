@@ -402,6 +402,17 @@ def main(binary):
                 send('\x1b[<65;10;5M')
                 read_for()
                 assert output() == previous, (previous, output())
+                # Queued reports may share a frame, but every step must apply
+                # and the final viewport must paint even without another key.
+                send('\x1b[<64;10;5M' * 5)
+                read_for()
+                assert output()[5:] == previous[:-5], (previous, output())
+                send('\x1b[<65;10;5M' * 5)
+                read_for()
+                assert output() == previous, (previous, output())
+                send(('\x1b[<64;10;5M' + '\x1b[<65;10;5M') * 5)
+                read_for()
+                assert output() == previous, (previous, output())
                 # Click/release packets must be consumed without editing input.
                 send('\x1b[<0;10;5M\x1b[<0;10;5m\x1b[M' + chr(32) + chr(42) + chr(37))
                 read_for()

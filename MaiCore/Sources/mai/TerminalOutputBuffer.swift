@@ -6,6 +6,9 @@ import MaiMarkdown
 /// Logical lines retain styling and are wrapped again when the window changes size.
 /// Only SGR styling is replayed: output cannot move the cursor into the fixed footer.
 struct TerminalOutputBuffer {
+  private let identity = UUID()
+  private var revision: UInt64 = 0
+  private var projection: (identity: UUID, revision: UInt64, selection: TerminalOutputSelection)?
   private struct Glyph {
     var text: String
     var style: String
@@ -61,9 +64,12 @@ struct TerminalOutputBuffer {
   private var lines = [Line()]
   // Keep exact wrapped-row counts without rewalking old text on each streamed delta.
   private var rowCounts: [Int] = []
+  /// Prefix counts support navigation without flattening the retained transcript.
+  private var rowOffsets = [0]
   private var rowCountWidth = 0
   private var totalRowCount = 0
   private var dirtyRowCounts: Set<Int> = []
+  private var overflowMeasurement: (columns: Int, height: Int, overflows: Bool, throughLine: Int)?
   /// Reasoning and reply blocks each occupy one logical line. Their source
   /// survives changes to visibility and Markdown rendering.
   private var thinkingBlocks: [Int: TerminalOutputBuffer] = [:]
@@ -107,6 +113,8 @@ struct TerminalOutputBuffer {
 
   /// Share retained blocks while keeping this pane's own scroll anchor.
   mutating func updateView(from source: TerminalOutputBuffer, selection: TerminalOutputSelection) {
+    if let projection, projection.identity == source.identity,
+      projection.revision == source.revision, projection.selection == selection { return }
     let anchor = top
     if selection == .iconlog {
       var output = TerminalOutputBuffer()
@@ -116,6 +124,7 @@ struct TerminalOutputBuffer {
       if !icons.isEmpty { output.append(icons) }
       self = output
       top = anchor
+      projection = (source.identity, source.revision, selection)
       return
     }
     self = source
@@ -125,7 +134,7 @@ struct TerminalOutputBuffer {
     }
     top = anchor.flatMap { $0.line < lines.count ? $0 : nil }
     if tools == .icons && self.selection != selection {
-      for index in toolBlocks.keys { lines[index].cachedWidth = 0 }
+      for index in toolBlocks.keys { invalidateLine(index) }
     }
     self.selection = selection
     if selection != source.selection {
@@ -134,13 +143,19 @@ struct TerminalOutputBuffer {
     configureExcluding(nil)
     if selection != .all { configureToolGroups(false) }
     if selection == .thinking { configureThinking(.full) }
+    // Preserve this pane's layout caches and anchor until the source changes.
+    projection = (source.identity, source.revision, selection)
   }
 
   mutating func clear() {
+    revision &+= 1
+    projection = nil
     lines = [Line()]
     rowCounts = []
+    rowOffsets = [0]
     totalRowCount = 0
     dirtyRowCounts = []
+    overflowMeasurement = nil
     thinkingBlocks.removeAll()
     activeThinking.removeAll()
     replyBlocks.removeAll()
@@ -358,6 +373,8 @@ struct TerminalOutputBuffer {
       case "\u{1B}": escape = String(character)
       case "\n", "\r\n":
         lines.append(Line())
+        revision &+= 1
+        invalidateOverflow(from: lines.count - 1)
         cursor = 0
       case "\r": cursor = 0
       case "\u{8}": cursor = max(0, cursor - 1)
@@ -596,17 +613,30 @@ struct TerminalOutputBuffer {
     return min(index, bottom)
   }
 
-  mutating func scroll(lines delta: Int, width: Int, height: Int) {
-    let rows = allRows(width: max(1, width))
-    let bottom = max(0, rows.count - height)
-    let current = topIndex(in: rows, height: height)
+  @discardableResult
+  mutating func scroll(lines delta: Int, width: Int, height: Int) -> Bool {
+    let previous = top
+    let width = max(1, width)
+    updateRowCounts(width: width)
+    let bottom = max(0, totalRowCount - max(1, height))
+    let current = scrollOffset(width: width, bottom: bottom)
     let index = current + max(-current, min(bottom - current, delta))
-    top = index == bottom || rows.isEmpty ? nil : rows[index].position
+    top = index == bottom ? nil : position(at: index, width: width)
+    return top != previous
   }
 
   private mutating func invalidateLine(_ index: Int) {
+    revision &+= 1
     lines[index].cachedWidth = 0
     dirtyRowCounts.insert(index)
+    invalidateOverflow(from: index)
+  }
+
+  private mutating func invalidateOverflow(from index: Int) {
+    // Once a stable prefix fills the screen, later output cannot make it fit.
+    // Keep that proof while replies or command output append below it.
+    if let measured = overflowMeasurement,
+      !measured.overflows || index <= measured.throughLine { overflowMeasurement = nil }
   }
 
   /// Measure overflow before reserving a gutter, so the scrollbar cannot create
@@ -616,51 +646,99 @@ struct TerminalOutputBuffer {
     let columns = max(1, columns)
     let gutter = Int(min(scrollbar.magnitude, UInt(columns - 1)))
     guard gutter > 0, height > 0 else { return columns }
+    if let measured = overflowMeasurement, measured.columns == columns, measured.height == height {
+      return measured.overflows ? columns - gutter : columns
+    }
+    // Probing the full width and then drawing with a gutter used to reflow
+    // entire reply blocks twice on every wheel event. Only probe after edits
+    // or geometry changes; scrolling does not change whether content fits.
     var remaining = height
     for index in lines.indices {
       remaining -= wrappedLine(index, width: columns).count
-      if remaining < 0 { return columns - gutter }
+      if remaining < 0 {
+        overflowMeasurement = (columns, height, true, index)
+        return columns - gutter
+      }
     }
+    overflowMeasurement = (columns, height, false, lines.count - 1)
     return columns
   }
 
-  mutating func scrollbar(width: Int, height: Int) -> TerminalScrollbar {
-    let width = max(1, width)
-    let height = max(1, height)
+  private mutating func updateRowCounts(width: Int) {
     if rowCountWidth != width {
       rowCounts = []
+      rowOffsets = [0]
       totalRowCount = 0
       rowCountWidth = width
       dirtyRowCounts = []
     }
     for index in rowCounts.count..<lines.count {
       rowCounts.append(0)
+      rowOffsets.append(totalRowCount)
       dirtyRowCounts.insert(index)
     }
+    var firstChanged = rowCounts.count
     for index in dirtyRowCounts {
       let count = wrappedLine(index, width: width).count
+      if count != rowCounts[index] { firstChanged = min(firstChanged, index) }
       totalRowCount += count - rowCounts[index]
       rowCounts[index] = count
     }
     dirtyRowCounts.removeAll(keepingCapacity: true)
-    let bottom = max(0, totalRowCount - height)
-    var offset = bottom
-    if let top {
-      let preceding = rowCounts.prefix(top.line).reduce(0, +)
-      let local =
-        wrappedLine(top.line, width: width)
-        .lastIndex(where: { $0.position.glyph <= top.glyph }).map { $0 + 1 } ?? 0
-      offset = min(bottom, max(0, preceding + local - 1))
+    for index in firstChanged..<rowCounts.count {
+      rowOffsets[index + 1] = rowOffsets[index] + rowCounts[index]
     }
+  }
+
+  /// Last row starting at or before an anchor, also for blocks with many rows.
+  private func localRow(_ rows: [Row], glyph: Int) -> Int {
+    var lower = 0
+    var upper = rows.count
+    while lower < upper {
+      let middle = lower + (upper - lower) / 2
+      if rows[middle].position.glyph <= glyph { lower = middle + 1 }
+      else { upper = middle }
+    }
+    return max(0, lower - 1)
+  }
+
+  private mutating func scrollOffset(width: Int, bottom: Int) -> Int {
+    guard let top else { return bottom }
+    let rows = wrappedLine(top.line, width: width)
+    // Hidden logical lines anchor to the last preceding visible row.
+    let local = rows.isEmpty ? -1 : localRow(rows, glyph: top.glyph)
+    return min(bottom, max(0, rowOffsets[top.line] + local))
+  }
+
+  private mutating func position(at offset: Int, width: Int) -> Position? {
+    guard totalRowCount > 0 else { return nil }
+    var lower = 0
+    var upper = rowCounts.count
+    while lower < upper {
+      let middle = lower + (upper - lower) / 2
+      if rowOffsets[middle + 1] <= offset { lower = middle + 1 }
+      else { upper = middle }
+    }
+    let rows = wrappedLine(lower, width: width)
+    return rows[offset - rowOffsets[lower]].position
+  }
+
+  mutating func scrollbar(width: Int, height: Int) -> TerminalScrollbar {
+    let width = max(1, width)
+    let height = max(1, height)
+    updateRowCounts(width: width)
+    let bottom = max(0, totalRowCount - height)
+    let offset = scrollOffset(width: width, bottom: bottom)
     return TerminalScrollbar(rows: totalRowCount, top: offset, height: height)
   }
 
   /// Set an absolute wrapped-row position, retaining the logical anchor on reflow.
   mutating func scroll(to offset: Int, width: Int, height: Int) {
-    let rows = allRows(width: max(1, width))
-    let bottom = max(0, rows.count - max(1, height))
+    let width = max(1, width)
+    updateRowCounts(width: width)
+    let bottom = max(0, totalRowCount - max(1, height))
     let index = min(bottom, max(0, offset))
-    top = index == bottom || rows.isEmpty ? nil : rows[index].position
+    top = index == bottom ? nil : position(at: index, width: width)
   }
 
   mutating func visibleRows(width: Int, height: Int) -> [String] {
@@ -690,7 +768,7 @@ struct TerminalOutputBuffer {
         let rows = wrappedLine(index, width: width)
         let first =
           index == top.line
-          ? rows.lastIndex(where: { $0.position.glyph <= top.glyph }) ?? 0 : 0
+          ? localRow(rows, glyph: top.glyph) : 0
         visible += rows.dropFirst(first).prefix(height - visible.count)
         if visible.count == height { return visible }
       }
