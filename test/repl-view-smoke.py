@@ -523,17 +523,17 @@ def main(binary):
                 wait_for('── view: message log')
                 assert 'user: READ_REQUEST' in top() and 'assistant: READ_ANSWER' in top(), screen
                 assert '✓ took' not in top() and '/view' not in top(), screen
-                send('/chat pin\r')
+                send('/msg pin\r')
                 wait_for('Pinned')
                 send('/view pi\t')
                 wait_for('/view pins')
                 send('\r')
                 wait_for('── view: pinned messages')
                 assert 'READ_ANSWER' in top() and 'EDIT_ANSWER' not in top(), screen
-                send('/chat unpin -1\r')
+                send('/msg unpin -1\r')
                 wait_for('Unpinned')
                 assert 'No pinned messages.' in top(), screen
-                send('/chat pin\r')
+                send('/msg pin\r')
                 wait_for('Pinned')
                 send('/fork View child\r')
                 wait_for('and switched to it.')
@@ -746,7 +746,7 @@ def main(binary):
                 wait_for('Set ui.highlight = none.')
                 send('/view pins\r')
                 wait_for('── view: pinned messages')
-                send('/chat unpin 1\r')
+                send('/msg unpin 1\r')
                 wait_for('Unpinned message 1')
                 assert 'No pinned messages.' in top(), screen
                 # Filtering the first call must leave later calls grouped and clickable.

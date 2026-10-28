@@ -82,6 +82,19 @@ def main():
         restored, info = run(['/chat unarchive -1', '/chat info Archived'])
         assert "Restored 'Archived'" in restored, restored
         assert 'Status:   active' in info, info
+        reset()
+        deleted, listing, moved = run(['/chat del -2', '/chat list', '/chat close confirm'])
+        assert "Deleted 'Oldest'." in deleted, deleted
+        assert 'Oldest' not in listing and 'Middle' in listing, listing
+        assert '/chat del' in moved, moved
+        assert not (saved.parent / (chats[2]['id'].upper() + '.json')).exists()
+        assert messages() == fixture
+        reset()
+        deleted = run(['/chat del Newest', '/chat info'])
+        assert "Deleted 'Newest'; switched to" in deleted[0], deleted
+        assert not saved.exists()
+        reset()
+        assert 'Message actions moved to /msg' in run(['/chat pin'])[0]
         for selector in ('0', '-5', '5', '-9223372036854775808', '9223372036854775807'):
             reset()
             output = run(['/chat use ' + selector])[0]
@@ -91,22 +104,22 @@ def main():
             assert result.returncode != 0, (selector, result.stdout, result.stderr)
 
         reset()
-        outputs = run(['/chat pin -1', '/chat unpin -1', '/chat pin -2'])
+        outputs = run(['/msg pin -1', '/msg unpin -1', '/msg pin -2'])
         for output, expected in zip(outputs, ('Pinned message 3', 'Unpinned message 3', 'Pinned message 2')):
             assert expected in output, output
         assert [message.get('isPinned', False) for message in messages()] == [False, True, False]
-        for action, expected in [('/chat del -1', ['first', 'second']),
-                                 ('/chat undo -2', ['first', 'last']),
-                                 ('/chat trim -2', ['first', 'second'])]:
+        for action, expected in [('/msg del -1', ['first', 'second']),
+                                 ('/msg undo -2', ['first', 'last']),
+                                 ('/msg trim -2', ['first', 'second'])]:
             reset()
             run([action])
             assert [message['id'] for message in messages()] == expected, (action, messages())
         reset()
-        run(['/chat edit -2 Replacement'])
+        run(['/msg edit -2 Replacement'])
         assert messages()[1]['content'] == [{'text': {'_0': 'Replacement'}}]
         for selector in ('0', '-4', '-9223372036854775808'):
             reset()
-            assert 'Usage: /chat pin' in run(['/chat pin ' + selector])[0]
+            assert 'Usage: /msg pin' in run(['/msg pin ' + selector])[0]
             assert messages() == fixture
 
         # Startup opens the current project first, so the remaining projects keep

@@ -57,8 +57,8 @@ def main():
         assert_original_unchanged()
 
         # The command switches immediately: edits and messages belong to the copy.
-        output = run(['/chat fork Alternative branch', '/chat edit 2 Changed only here.',
-                      'Continue the fork.', '/chat use Original', '/chat log'],
+        output = run(['/chat fork Alternative branch', '/msg edit 2 Changed only here.',
+                      'Continue the fork.', '/chat use Original', '/msg log'],
                      ['-r', 'Original'], split=True)
         assert 'Changed only here.' not in output[-1], output[-1]
         assert 'Continue the fork.' not in output[-1], output[-1]

@@ -229,7 +229,7 @@ def main(binary):
                 wait_for('ANSWER_RESUMED_CHILD')
                 send('/continue\r')
                 wait_for('Nothing to continue: the last reply was complete.')
-                send('/chat edit 2 Edited shared history\r')
+                send('/msg edit 2 Edited shared history\r')
                 wait_for('Edited message 2.')
                 send('EDITED_CHILD_FOLLOWUP\r')
                 wait_for('✓ took')

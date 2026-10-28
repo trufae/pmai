@@ -537,7 +537,7 @@ a separate saved chat.
 `/subagents parent`, `next`, and `prev` navigate the tree. Finished agents remain
 selected, and sending another message starts another turn with their existing
 history. `/copy`, `/last`, `/continue`, and transcript actions such as
-`/chat log`, `edit`, `del`, and `clear` use the selected agent. Transcript edits
+`/msg log`, `edit`, `del`, and `/chat clear` use the selected agent. Transcript edits
 require that agent's turn to have finished. Chat management commands such as
 `/chat use` still select a saved chat.
 

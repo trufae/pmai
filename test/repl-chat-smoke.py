@@ -82,8 +82,8 @@ path.write_text('Edited in editor: ' + path.read_text())
 
         reset()
         quiet, explicit, verbose, compact, invalid, extra = run([
-            '/chat log', '/chat log quiet', '/chat log verbose', '/chat messages',
-            '/chat log invalid', '/chat log verbose extra',
+            '/msg log', '/msg log quiet', '/msg log verbose', '/msg list',
+            '/msg log invalid', '/msg log verbose extra',
         ])
         hidden = ['Hidden thought', 'Mixed thought', 'fixture_tool', 'Tool arguments',
                   'Tool output', 'Structured output', 'Legacy tool output']
@@ -100,16 +100,16 @@ path.write_text('Edited in editor: ' + path.read_text())
             for identifier in ('question', 'calls', 'answer'):
                 assert f'(id: {identifier})' in output, output
         for output in (invalid, extra):
-            assert 'Usage: /chat log [quiet|verbose|short]' in output, output
+            assert 'Usage: /msg log [quiet|verbose|short]' in output, output
         assert messages() == fixture, messages()
 
-        run(['/chat log > quiet.txt', '/chat log verbose > verbose.txt'])
+        run(['/msg log > quiet.txt', '/msg log verbose > verbose.txt'])
         for text in hidden:
             assert text not in (root / 'quiet.txt').read_text(), text
             assert text in (root / 'verbose.txt').read_text(), text
 
         # Each spelling uses the same editor, preserves IDs and attachments, and persists.
-        for action in ['/chat edit 2', '/chat edit -6', '/edit chat 2',
+        for action in ['/msg edit 2', '/msg edit -6', '/edit chat 2',
                        '/edit chat -6', '/edit chat question', '/edit 2']:
             reset()
             output = run([action])[0]
@@ -121,7 +121,7 @@ path.write_text('Edited in editor: ' + path.read_text())
 
         reset()
         (root / 'editor-input.txt').unlink()
-        output = run(['/chat edit 2 Inline text with spaces'])[0]
+        output = run(['/msg edit 2 Inline text with spaces'])[0]
         assert 'Edited message 2.' in output, output
         expected = json.loads(json.dumps(fixture))
         expected[1]['content'][0] = part('text', 'Inline text with spaces')
@@ -129,7 +129,7 @@ path.write_text('Edited in editor: ' + path.read_text())
         assert not (root / 'editor-input.txt').exists()
 
         reset()
-        for action in ['/chat edit', '/chat edit 0', '/chat edit 100',
+        for action in ['/msg edit', '/msg edit 0', '/msg edit 100',
                        '/edit chat', '/edit chat missing', '/edit chat 2 extra']:
             output = run([action])[0]
             assert 'Usage:' in output, (action, output)
@@ -139,7 +139,7 @@ path.write_text('Edited in editor: ' + path.read_text())
         # Pins belong to individual messages, including system, reasoning and tool rows.
         for last in (fixture[-1], fixture[1], fixture[4], fixture[2], fixture[0]):
             reset([message('earlier', 'user', part('text', 'Earlier message')), last])
-            output, repeated = run(['/chat pin', '/chat pin'])
+            output, repeated = run(['/msg pin', '/msg pin'])
             for text in (output, repeated):
                 assert f'📌 Pinned message 2 (id: {last["id"]}).' in text, text
             assert not messages()[0].get('isPinned', False), messages()
@@ -148,7 +148,7 @@ path.write_text('Edited in editor: ' + path.read_text())
         # Manual compaction keeps pinned rows verbatim, including linked tools.
         for index, original in enumerate(fixture, 1):
             reset()
-            run([f'/chat pin {index}'])
+            run([f'/msg pin {index}'])
             expected = original | {'isPinned': True}
             for _ in range(2):
                 output = run(['/chat compact'])[0]
@@ -157,30 +157,30 @@ path.write_text('Edited in editor: ' + path.read_text())
                 assert [m for m in compacted if m['id'] == original['id']] == [expected], compacted
                 assert any(m['content'][0].get('text', {}).get('_0', '').startswith(
                     'Summary of earlier parts of this conversation') for m in compacted), compacted
-            listing = run(['/chat pins'])[0]
+            listing = run(['/msg pins'])[0]
             assert f'(id: {original["id"]})' in listing, listing
             assert expected in messages(), messages()
 
         reset()
         for index in range(1, len(fixture) + 1):
-            output = run([f'/chat pin {index}'])[0]
+            output = run([f'/msg pin {index}'])[0]
             assert f'📌 Pinned message {index} ' in output, output
         pinned = messages()
         assert all(m['isPinned'] for m in pinned), pinned
         assert [{k: v for k, v in m.items() if k != 'isPinned'} for m in pinned] == fixture
-        short, listing, repeated = run(['/chat log short', '/chat pins', '/chat pin 2'])
+        short, listing, repeated = run(['/msg log short', '/msg pins', '/msg pin 2'])
         for index, role in enumerate(('System', 'User', 'Assistant', 'Assistant', 'Tool', 'Tool', 'Assistant'), 1):
             assert f'[{index}] 📌 {role}' in short, (index, short)
             assert f'## [{index}] 📌 {role}' in listing, (index, listing)
         assert 'Total messages: 7' in short, short
         assert len(messages()) == len(fixture)
-        full_pins, short_pins, pinlist = run(['/chat pins', '/chat pins short', '/chat pinlist'])
+        full_pins, short_pins, pinlist = run(['/msg pins', '/msg pins short', '/msg pinlist'])
         assert pinlist == short_pins, (pinlist, short_pins)
         for index, role in enumerate(('System', 'User', 'Assistant', 'Assistant', 'Tool', 'Tool', 'Assistant'), 1):
             assert f'## [{index}] 📌 {role}' in full_pins, (index, full_pins)
             expected = f'[{index}] 📌 {role} (id: {fixture[index - 1]["id"]}):'
             assert expected in short_pins and expected in short, (index, short_pins, short)
-        run(['/chat pinlist > all-pins.txt'])
+        run(['/msg pinlist > all-pins.txt'])
         pin_rows = (root / 'all-pins.txt').read_text().splitlines()
         assert len(pin_rows) == len(fixture), pin_rows
         for row, original in zip(pin_rows, fixture):
@@ -188,53 +188,53 @@ path.write_text('Edited in editor: ' + path.read_text())
         for text in hidden:
             assert text in full_pins, (text, full_pins)
 
-        for action in ('/chat pin 0', '/chat unpin 0', '/chat pin missing', '/chat pin 2 extra',
-                       '/chat pins invalid', '/chat pins short extra', '/chat pinlist extra'):
+        for action in ('/msg pin 0', '/msg unpin 0', '/msg pin missing', '/msg pin 2 extra',
+                       '/msg pins invalid', '/msg pins short extra', '/msg pinlist extra'):
             output = run([action])[0]
             assert 'Usage:' in output, (action, output)
             assert messages() == pinned
-        output = run(['/chat unpin question'])[0]
+        output = run(['/msg unpin question'])[0]
         assert 'Unpinned message 2 ' in output, output
         assert not messages()[1].get('isPinned', False)
-        full_pins, short_pins, pinlist = run(['/chat pins', '/chat pins short', '/chat pinlist'])
+        full_pins, short_pins, pinlist = run(['/msg pins', '/msg pins short', '/msg pinlist'])
         for output in (full_pins, short_pins, pinlist):
             assert '[2]' not in output and '[3]' in output, output
-        output = run(['/chat pin -6'])[0]
+        output = run(['/msg pin -6'])[0]
         assert '📌 Pinned message 2 ' in output, output
 
         paragraphs = json.loads(json.dumps(fixture))
         paragraphs[1]['content'][0] = part('text', '\r\nFirst line\r\ncontinued\r\n \r\nSECOND PARAGRAPH')
         reset(paragraphs)
-        output = run(['/chat pin 2', '/chat log short'])[1]
+        output = run(['/msg pin 2', '/msg log short'])[1]
         assert '[2] 📌 User (id: question): First line continued' in output, output
         assert 'SECOND PARAGRAPH' not in output, output
-        output = run(['/chat pins short'])[0]
+        output = run(['/msg pins short'])[0]
         assert '[2] 📌 User (id: question): First line continued' in output, output
         assert 'SECOND PARAGRAPH' not in output and '[1]' not in output, output
-        run(['/chat pins > pins.txt', '/chat pins short > pins-short.txt', '/chat pinlist > pinlist.txt'])
+        run(['/msg pins > pins.txt', '/msg pins short > pins-short.txt', '/msg pinlist > pinlist.txt'])
         assert 'SECOND PARAGRAPH' in (root / 'pins.txt').read_text()
         assert 'SECOND PARAGRAPH' not in (root / 'pins-short.txt').read_text()
         assert (root / 'pinlist.txt').read_text() == '[2] 📌 User (id: question): First line continued\n'
-        run(['/chat log short > short.txt'])
+        run(['/msg log short > short.txt'])
         assert '[2] 📌 User (id: question): First line continued' in (root / 'short.txt').read_text()
 
         # Rewinding keeps the newest pin and drops everything newer; no pin is an error.
         reset()
-        output = run_repl(command, ['/chat rewind'], cwd=root, env=env, allow_errors=True)
+        output = run_repl(command, ['/msg rewind'], cwd=root, env=env, allow_errors=True)
         assert 'error: No pinned message to rewind to' in output, output
-        usage = run(['/chat rewind extra'])[0]
-        assert 'Usage: /chat rewind' in usage, usage
+        usage = run(['/msg rewind extra'])[0]
+        assert 'Usage: /msg rewind' in usage, usage
         assert messages() == fixture, messages()
-        run(['/chat pin 2'])
-        output, repeated = run(['/chat rewind', '/chat rewind'])
+        run(['/msg pin 2'])
+        output, repeated = run(['/msg rewind', '/msg rewind'])
         assert 'Rewound to pinned message 2; removed 5 newer messages.' in output, output
         assert '📌 User: Question' in output, output
         assert [m['id'] for m in messages()] == ['system', 'question'], messages()
         assert messages()[1]['isPinned'], messages()
         assert 'Already at pinned message 2; nothing to rewind.' in repeated, repeated
         reset()
-        run(['/chat pin 4'])
-        output = run(['/chat rewind'])[0]
+        run(['/msg pin 4'])
+        output = run(['/msg rewind'])[0]
         assert 'Rewound to pinned message 4; removed 4 newer messages.' in output, output
         assert 'unfinished tool transaction' in output, output
         assert [m['id'] for m in messages()] == ['system', 'question', 'thinking'], messages()
@@ -243,14 +243,14 @@ path.write_text('Edited in editor: ' + path.read_text())
         assert 'Conversation cleared.' in output, output
         assert all(m['role'] == 'system' for m in messages()), messages()
         assert not any(m.get('isPinned', False) for m in messages())
-        for output in run(['/chat pins', '/chat pins short', '/chat pinlist']):
+        for output in run(['/msg pins', '/msg pins short', '/msg pinlist']):
             assert 'No pinned messages.' in output, output
 
         reset([])
-        output = run(['/chat pin'])[0]
+        output = run(['/msg pin'])[0]
         assert 'No messages to pin.' in output, output
         assert messages() == [], messages()
-        for output in run(['/chat log', '/chat log verbose']):
+        for output in run(['/msg log', '/msg log verbose']):
             assert 'No conversation messages yet.' in output, output
 
         if os.name != 'nt':
@@ -284,32 +284,32 @@ path.write_text('Edited in editor: ' + path.read_text())
 
                 try:
                     wait('pmai> ')
-                    send('/chat unpin \t')
+                    send('/msg unpin \t')
                     wait('\x1b[97;44mrow-000\x1b[0m')
                     send('\t')
                     wait('\x1b[97;44mrow-070\x1b[0m')
                     send('\t\r')
                     wait('Unpinned message 1 (id: row-000).')
                     wait('pmai> ')
-                    send('/chat unpin row-\t\r')
+                    send('/msg unpin row-\t\r')
                     wait('Unpinned message 71 (id: row-070).')
                     wait('pmai> ')
-                    send('/chat pin row-050\r')
+                    send('/msg pin row-050\r')
                     wait('Pinned message 51 (id: row-050).')
                     wait('pmai> ')
-                    send('/chat unpin \t\r')
+                    send('/msg unpin \t\r')
                     wait('Unpinned message 51 (id: row-050).')
                     wait('pmai> ')
                     send('/fork Pin child\r')
                     wait('and switched to it.')
                     wait('> ')
-                    send('/chat pin row-020\r')
+                    send('/msg pin row-020\r')
                     wait('Pinned message 21 (id: row-020).')
                     wait('> ')
-                    send('/chat pinlist\r')
+                    send('/msg pinlist\r')
                     wait('[21] 📌 User (id: row-020): Row 20')
                     wait('> ')
-                    send('/chat unpin \t\r')
+                    send('/msg unpin \t\r')
                     wait('Unpinned message 21 (id: row-020).')
                     wait('> ')
                     send('/subagents main\r')
@@ -317,8 +317,8 @@ path.write_text('Edited in editor: ' + path.read_text())
                     wait('> ')
                     send('/chat new Completion empty\r')
                     wait('pmai> ')
-                    send('/chat unpin \t\r')
-                    wait('Usage: /chat unpin INDEX|MESSAGE_ID')
+                    send('/msg unpin \t\r')
+                    wait('Usage: /msg unpin INDEX|MESSAGE_ID')
                     wait('pmai> ')
                     send('/exit\r')
                     deadline = time.monotonic() + 15

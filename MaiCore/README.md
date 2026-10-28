@@ -213,36 +213,36 @@ the other configured providers.
 API-key endpoints use the provider kind `openai`. Legacy `openAICompatible`
 records are accepted and written back as `openai` when saved.
 
-Use `/chat messages` for a compact indexed history or `/chat log` for the
+Use `/msg list` for a compact indexed history or `/msg log` for the
 conversation text and attachments. Logs are quiet by default: reasoning, tool
-calls, and tool outputs are hidden. `/chat log verbose` includes all of these,
-including structured MCP output; `/chat log quiet` explicitly selects the default.
+calls, and tool outputs are hidden. `/msg log verbose` includes all of these,
+including structured MCP output; `/msg log quiet` explicitly selects the default.
 All log formats show message IDs. Message indexes retain their original positions
 even when messages are hidden.
 Message headers are bold in the theme's `fginfo` color, and text uses Markdown
 rendering when enabled. The current in-memory conversation can be changed at
-any point with `/chat edit INDEX [TEXT]` (opens the editor when TEXT is omitted,
-the same as `/edit chat INDEX` or `/edit INDEX`), `/chat del INDEX`,
-`/chat undo [INDEX]`, `/chat trim INDEX`, `/chat rewind`, `/chat compact
+any point with `/msg edit INDEX [TEXT]` (opens the editor when TEXT is omitted,
+the same as `/edit chat INDEX` or `/edit INDEX`), `/msg del INDEX`,
+`/msg undo [INDEX]`, `/msg trim INDEX`, `/msg rewind`, `/chat compact
 [FOCUS]`, and `/chat clear`. Positive message indexes are 1-based; negative
 indexes count back from the end, so `-1` selects the last message. Compaction
 accepts optional guidance describing the information the summary should
 prioritize. Trimming keeps
 messages through the selected index and removes newer ones; linked tool-call
 transactions are kept structurally valid when removing or trimming messages.
-`/chat rewind` does the same through the newest pinned message, so a pin acts as
+`/msg rewind` does the same through the newest pinned message, so a pin acts as
 a rewind point; it reports an error when the chat has no pins.
 
-`/chat last` prints the latest assistant response. Slash commands support
+`/msg last` prints the latest assistant response. Slash commands support
 stdout redirection: `>` overwrites a file, `>>` appends, and `|` sends the output
 to a shell command. Redirected output is plain text; diagnostics stay on the
 terminal. Quote filenames containing spaces. For example:
 
 ```text
-/chat log > log.txt
-/chat last >> "saved replies.txt"
-/chat last | grep banana
-/chat log | grep banana > matches.txt
+/msg log > log.txt
+/msg last >> "saved replies.txt"
+/msg last | grep banana
+/msg log | grep banana > matches.txt
 ```
 
 These operators only apply to slash commands entered at the REPL prompt.
@@ -250,13 +250,13 @@ Ordinary messages and heredocs remain literal. Quoted or backslash-escaped
 operators, and operators received through bracketed paste, are also literal;
 you can paste a command and then type its redirection suffix.
 
-`/chat chop` opens a modal prompt at the newest conversation message and shows
+`/msg chop` opens a modal prompt at the newest conversation message and shows
 its index, role, and full Markdown text. Enter `n` for the next message, `b` for
 the previous message, `p` to pin or unpin it, `e` to edit it in the configured
 editor, `d` to delete it, or `x` to chop everything after it. Editing keeps the current selection and
 preserves attachments. After deletion it selects the next surviving message,
 or the previous one at the end. Changes are saved immediately and use the same linked-tool rules as
-`/chat del` and `/chat trim`. Enter `q` or press Ctrl+C to leave; slash commands
+`/msg del` and `/msg trim`. Enter `q` or press Ctrl+C to leave; slash commands
 also leave the prompt. Modal answers are kept out of input history and never
 sent to the model.
 
@@ -570,9 +570,11 @@ title is the original title followed by `(fork)`. Later messages and edits stay
 in the selected copy, and `/chat use` returns to the original.
 `/chat info` shows when a chat started and was last updated, `/chat archive`
 moves a chat out of the active list (archiving the current chat starts a new
-one), `/chat unarchive` brings it back, and `new`, `rename`, and `close` manage
-chats, while `messages`, `log`, `edit`, `del`, `undo`, `trim`, and `clear`
-operate on the active transcript. `/clear` clears the terminal screen while
+one), `/chat unarchive` brings it back, `/chat del INDEX|ID|TITLE` permanently
+deletes a chat (deleting the current one switches to another), and `new` and
+`rename` manage chats. `/chat` always acts on the list of chats; `/msg` acts on
+messages inside the current chat: `/msg list`, `log`, `pin`, `edit`, `del`,
+`undo`, `trim`, `rewind`, and `chop`. `/clear` clears the terminal screen while
 keeping the conversation; `/chat clear` clears the conversation and restores
 configured instructions. Tab completes commands, chat selectors,
 agents, and providers: one match is typed out, and several open a rotating
@@ -801,16 +803,16 @@ the terminal. The setting persists; `/set ui.mode classic` restores the
 terminal scrollback behavior. Buffer mode restores the shell's screen
 and mouse handling on exit and during terminal handoffs. Hold Shift to select
 text using your terminal's normal mouse selection. Saved conversations remain
-available separately through `/chat log` and the project's `.pmai/chats` files.
+available separately through `/msg log` and the project's `.pmai/chats` files.
 
-`/chat log short` lists the first paragraph of every message with its original
-number and message ID; 📌 marks pinned messages. `/chat pin NUMBER` pins any message, including
+`/msg log short` lists the first paragraph of every message with its original
+number and message ID; 📌 marks pinned messages. `/msg pin NUMBER` pins any message, including
 instructions and tool messages; negative numbers count from the end. A full
-message ID also works. `/chat pins` shows pinned messages in full;
-`/chat pins short` lists their first paragraphs with the original message numbers.
-`/chat pinlist` lists each pinned message on one line with its ID and first paragraph.
-Inside `/chat chop`, `p` toggles the selected message's pin, and
-`/chat unpin NUMBER` removes a pin; press Tab after `/chat unpin ` to complete
+message ID also works. `/msg pins` shows pinned messages in full;
+`/msg pins short` lists their first paragraphs with the original message numbers.
+`/msg pinlist` lists each pinned message on one line with its ID and first paragraph.
+Inside `/msg chop`, `p` toggles the selected message's pin, and
+`/msg unpin NUMBER` removes a pin; press Tab after `/msg unpin ` to complete
 the available pinned message IDs. Pins are saved with the conversation, survive compaction
 and portable exports, and appear in PocketMai's pinned-message bar below the
 chat title. In PocketMai, use a message's **Pin Message** menu action; tap the bar

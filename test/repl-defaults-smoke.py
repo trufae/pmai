@@ -188,7 +188,7 @@ def main():
         for shell in run(('/help shell', '/help /shell'), split=True):
             assert '<<WORD' in shell and '!COMMAND' in shell, shell
             assert '/COMMAND > FILE' in shell and '/COMMAND >> FILE' in shell, shell
-            assert '/chat last | grep banana' in shell, shell
+            assert '/msg last | grep banana' in shell, shell
             assert 'quoted, escaped, or pasted operators stay literal' in shell, shell
             assert '@2,3 TEXT' in shell and '@* TEXT' in shell, shell
             assert 'Messages are queued for the next model turn' in shell, shell

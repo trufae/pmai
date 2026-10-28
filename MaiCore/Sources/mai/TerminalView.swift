@@ -100,7 +100,7 @@ struct TerminalView {
       let pinned = messages.enumerated().filter { $0.element.isPinned }
       text =
         pinned.isEmpty
-        ? "No pinned messages. Use /chat pin INDEX or MESSAGE_ID."
+        ? "No pinned messages. Use /msg pin INDEX or MESSAGE_ID."
         : pinned.map { index, message in
           let body = TranscriptCopy.render(message)
           return

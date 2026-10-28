@@ -175,10 +175,10 @@ the exception, because it rebuilds the one provider it edited.
 `/edit N` opens message N of the current chat; indexes are 1-based and count
 from the end when negative, so `/edit -1` is the last message. The text
 comes back as the message body and any attachments stay. `/edit chat N` and
-`/chat edit N` open the same editor. `/chat edit INDEX TEXT` replaces the text
-in one line. `/chat messages` shows the indexes. Inside `/chat chop`, `e` opens
+`/msg edit N` open the same editor. `/msg edit INDEX TEXT` replaces the text
+in one line. `/msg list` shows the indexes. Inside `/msg chop`, `e` opens
 the selected message in the same editor and saves changes immediately.
-`/chat del`, `/chat undo`, `/chat trim`, and `/chat rewind` cover deleting rather
+`/msg del`, `/msg undo`, `/msg trim`, and `/msg rewind` cover deleting rather
 than editing.
 
 ### Writing a message

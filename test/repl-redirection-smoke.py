@@ -44,18 +44,18 @@ def main():
         result = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True,
                                 input='\n'.join([
                                     'banana café',
-                                    '/chat last > "last response.txt"',
+                                    '/msg last > "last response.txt"',
                                     '/version > version.txt',
                                     '/version >> version.txt',
-                                    '/chat log > history.txt',
-                                    '/chat last | grep banana | tr a-z A-Z',
-                                    '/chat last | cat > pipe.txt',
-                                    '/chat last | head -c 1',
+                                    '/msg log > history.txt',
+                                    '/msg last | grep banana | tr a-z A-Z',
+                                    '/msg last | cat > pipe.txt',
+                                    '/msg last | head -c 1',
                                     '/version | ' + noisy_filter,
                                     '/help shell > help.txt',
                                     '/btw banana side question > btw.txt',
                                     'ordinary > literal.txt | cat',
-                                    '/chat last > ordinary.txt',
+                                    '/msg last > ordinary.txt',
                                     '/version > missing/directory/file.txt',
                                     '/version | sh -c "cat >/dev/null; exit 7"',
                                     '/version >',
@@ -102,26 +102,26 @@ def main():
             os.write(master, b'banana terminal\r')
             wait('✓ took')
             if shutil.which('less'):
-                os.write(master, b'/chat log|less\r')
+                os.write(master, b'/msg log|less\r')
                 wait('(END)')
                 os.write(master, b'q')
                 wait('pmai#1> ')
                 submit(b'/version > after-pager.txt')
                 assert (root / 'after-pager.txt').read_text() == version
-            submit(paste('/chat last > pasted.txt'))
+            submit(paste('/msg last > pasted.txt'))
             assert not (root / 'pasted.txt').exists()
-            submit(paste('/chat last > literal.txt') + b' > typed.txt')
+            submit(paste('/msg last > literal.txt') + b' > typed.txt')
             assert not (root / 'literal.txt').exists()
             assert 'banana terminal' in (root / 'typed.txt').read_text()
-            submit(b'/chat last > ' + paste('"pasted filename.txt"'))
+            submit(b'/msg last > ' + paste('"pasted filename.txt"'))
             assert 'banana terminal' in (root / 'pasted filename.txt').read_text()
-            submit(paste('/chat last > shifted.txt') + b'\x01  ')
+            submit(paste('/msg last > shifted.txt') + b'\x01  ')
             assert not (root / 'shifted.txt').exists()
-            submit(b'xx' + paste('/chat last > deleted.txt') + b'\x01\x1b[3~\x1b[3~')
+            submit(b'xx' + paste('/msg last > deleted.txt') + b'\x01\x1b[3~\x1b[3~')
             assert not (root / 'deleted.txt').exists()
             # Operators inside quoted/escaped text do not start a process or file.
-            submit(b'/chat last "| cat > quoted.txt"')
-            submit(b'/chat last \\> escaped.txt')
+            submit(b'/msg last "| cat > quoted.txt"')
+            submit(b'/msg last \\> escaped.txt')
             assert not (root / 'quoted.txt').exists() and not (root / 'escaped.txt').exists()
             os.write(master, b'/version | touch pipe-ready; sleep 30\r')
             deadline = time.monotonic() + 10

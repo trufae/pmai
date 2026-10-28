@@ -84,13 +84,13 @@ path.write_text(path.read_text() + ' edited')
 
         # Pinning keeps the selection and content, persists, and can be toggled off.
         reset()
-        output = run(['/chat chop', 'p', 'q'])
+        output = run(['/msg chop', 'p', 'q'])
         assert '📌 Pinned message 8 (id: last).' in output, output
         assert '## [8/8] 📌 Assistant (id: last)' in output, output
         expected = json.loads(json.dumps(fixture))
         expected[-1]['isPinned'] = True
         assert messages() == expected, messages()
-        output = run(['/chat chop', 'p', 'b', 'p', 'q'])
+        output = run(['/msg chop', 'p', 'b', 'p', 'q'])
         assert 'Unpinned message 8 (id: last).' in output, output
         assert '📌 Pinned message 7 (id: second).' in output, output
         expected[-1].pop('isPinned')
@@ -100,7 +100,7 @@ path.write_text(path.read_text() + ' edited')
 
         # Editing stays on the selected message, preserves attachments, and is durable.
         reset()
-        output = run(['/chat chop', 'e', 'b', 'edit', 'n', 'q'])
+        output = run(['/msg chop', 'e', 'b', 'edit', 'n', 'q'])
         assert 'e edit' in output, output
         assert 'Edited message 8 (id: last).' in output, output
         assert 'Edited message 7 (id: second).' in output, output
@@ -112,7 +112,7 @@ path.write_text(path.read_text() + ' edited')
         assert 'Hello from MaiCore:' not in output, output
 
         reset()
-        output = run(['/chat chop', 'n', 'b', 'd', 'b', 'b', 'd', 'x', 'b', 'x', 'b', 'b', 'q'])
+        output = run(['/msg chop', 'n', 'b', 'd', 'b', 'b', 'd', 'x', 'b', 'x', 'b', 'b', 'q'])
         assert '## [8/8] Assistant' in output and 'Already at the last message.' in output, output
         assert 'Removed 3 messages (including linked tool messages).' in output, output
         assert '## [3/4] Assistant (id: answer)' in output, output
@@ -123,20 +123,20 @@ path.write_text(path.read_text() + ' edited')
         # A cut inside a tool transaction removes the incomplete transaction,
         # and selects the last retained message instead of an invalid index.
         reset()
-        output = run(['/chat chop', 'b', 'b', 'b', 'b', 'x', 'q'])
+        output = run(['/msg chop', 'b', 'b', 'b', 'b', 'x', 'q'])
         assert 'Trimmed 6 messages; kept through message 2.' in output, output
         assert '## [2/2] User (id: first)' in output, output
         assert ids() == ['system', 'first'], messages()
 
         reset([fixture[1], fixture[-1]])
-        output = run(['/chat chop', 'd', 'd', '/chat chop'])
+        output = run(['/msg chop', 'd', 'd', '/msg chop'])
         assert 'No conversation messages left.' in output and 'No conversation messages to chop.' in output, output
         assert messages() == [], messages()
         reset(fixture[:1])
-        assert 'No conversation messages to chop.' in run(['/chat chop'])
+        assert 'No conversation messages to chop.' in run(['/msg chop'])
         reset()
-        output = run(['/chat chop invalid', '/chat chop', '/chat new Another chat', '/chat chop'])
-        assert 'Usage: /chat chop' in output and 'Chat chop closed.' in output, output
+        output = run(['/msg chop invalid', '/msg chop', '/chat new Another chat', '/msg chop'])
+        assert 'Usage: /msg chop' in output and 'Chat chop closed.' in output, output
         assert 'No conversation messages to chop.' in output and messages() == fixture, output
 
         # Real terminal input exercises the modal prompt, Tab, Markdown,
@@ -158,7 +158,7 @@ path.write_text(path.read_text() + ' edited')
             os.write(master, value.encode())
 
         def open_chop():
-            send('/chat chop\r')
+            send('/msg chop\r')
             return wait('chop [n/b/p/e/d/x/q]> ')
 
         try:

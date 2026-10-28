@@ -136,7 +136,7 @@ def main(binary):
                         if f'HISTORY_{count - 1:03}' in output():
                             break
                     assert f'HISTORY_{count - 1:03}' in output(), (count, output())
-                send('/chat log\r')
+                send('/msg log\r')
                 barrier('log')
                 assert f'Total messages: {count}' in output(), (count, output())
                 assert f'(id: message-{count - 1})' in output(), (count, output())
@@ -147,7 +147,7 @@ def main(binary):
                     barrier('child-effort')
                     assert 'effort = low' in output(), output()
                     assert 'HISTORY_' not in output(), output()
-                    send('/chat log\r')
+                    send('/msg log\r')
                     barrier('child-log')
                     assert 'HISTORY_' not in output(), output()
                     send('/subagents main\r')

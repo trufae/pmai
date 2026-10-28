@@ -129,7 +129,7 @@ def main():
                     if action == 'edit':
                         # Leaving chat chop must not cancel the provider call
                         # still waiting behind it; approval will arrive below.
-                        line('/chat chop')
+                        line('/msg chop')
                         wait('chop [n/b/p/e/d/x/q]> ')
                         send('\x03')
                         wait('Chat chop closed.')

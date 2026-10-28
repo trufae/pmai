@@ -142,7 +142,7 @@ for line in sys.stdin:
                       '/agent add disposable-agent', '/agent del disposable-agent',
                       '/vdb index notes.txt', '/vdb del notes.txt', '/vdb status',
                       '/queue push Queued text', '/queue del', '/queue',
-                      'A chat message', '/chat del 1', '/stats del hello'], split=True)
+                      'A chat message', '/msg del 1', '/stats del hello'], split=True)
         assert 'Keep' in output[3] and 'Discard' not in output[3], output[3]
         assert "Removed user prompt 'disposable-user'" in output[5], output[5]
         assert "Removed system prompt 'disposable-system'" in output[7], output[7]
