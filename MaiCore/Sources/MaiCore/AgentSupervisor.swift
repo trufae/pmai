@@ -59,6 +59,8 @@ public actor AgentSupervisor {
   private var pausedWhileQueued: Set<AgentPID> = []
   private var nextPID = 1
   private var subscribers: [UUID: AsyncStream<AgentSupervisorEvent>.Continuation] = [:]
+  private var pendingProgress: [AgentPID: AgentProcessInfo] = [:]
+  private var progressFlush: Task<Void, Never>?
   public nonisolated let changes = AgentChangeSignal()
   private var schedulingState: [AgentPID: (AgentProcessState, Int)] = [:]
   private var concurrentLimit: Int?
@@ -693,6 +695,7 @@ public actor AgentSupervisor {
   public func forget(_ pid: AgentPID) {
     cachedTree = nil
     schedulingState[pid] = nil
+    pendingProgress[pid] = nil
     changes.notify()
     entries[pid] = nil
     inboxes[pid] = nil
@@ -748,7 +751,29 @@ public actor AgentSupervisor {
       schedulingState[info.pid] = (info.state, info.queuedMessages)
       changes.notify()
     }
-    for continuation in subscribers.values { continuation.yield(event) }
+    if case .changed = event {
+      pendingProgress[info.pid] = info
+      if progressFlush == nil {
+        progressFlush = Task { [weak self] in
+          do { try await Task.sleep(for: .milliseconds(16)) } catch { return }
+          await self?.flushProgress()
+        }
+      }
+    } else {
+      // A lifecycle record carries the latest full state and supersedes any
+      // older replaceable progress for the same process.
+      pendingProgress[info.pid] = nil
+      for continuation in subscribers.values { continuation.yield(event) }
+    }
+  }
+
+  private func flushProgress() {
+    progressFlush = nil
+    let updates = pendingProgress.values.sorted { $0.pid < $1.pid }
+    pendingProgress.removeAll(keepingCapacity: true)
+    for info in updates {
+      for continuation in subscribers.values { continuation.yield(.changed(info)) }
+    }
   }
 
   private func unsubscribe(_ id: UUID) {

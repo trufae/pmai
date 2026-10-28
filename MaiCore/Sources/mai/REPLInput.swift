@@ -31,6 +31,7 @@ final class REPLSupervisorUpdates: @unchecked Sendable {
     var finished: [UUID: AgentProcessInfo] = [:]
     var hasChildren = false
     var needsAttention = false
+    var changedPIDs: Set<AgentPID> = []
   }
 
   private let lock = NSLock()
@@ -52,6 +53,7 @@ final class REPLSupervisorUpdates: @unchecked Sendable {
         batch.finished[value.runID] = value
       }
       batch.hasChildren = batch.hasChildren || info.depth > 0
+      batch.changedPIDs.insert(info.pid)
       pending = batch
       return wakes
     }

@@ -2968,7 +2968,7 @@ struct MaiCLI {
     /// what runs under a chat's process, live or finished, replaces its
     /// saved copy, and what the table has since forgotten stays as saved.
     /// Called wherever the workspace is about to be written.
-    func recordSubagents() async {
+    func recordSubagents(only changedChats: Set<UUID>? = nil) async {
       let commands = runtime.commandHistory.records(sessionID: session.sessionID, saved: session.commands)
       if commands != session.commands {
         session.commands = commands
@@ -2985,7 +2985,7 @@ struct MaiCLI {
         session.runtimeConfiguration = AgentChatConfiguration(
           configuration: configuration, providerBaseURLs: services.providerBaseURLs.snapshot())
       }
-      for (chatID, pid) in chatProcessIDs {
+      for (chatID, pid) in chatProcessIDs where changedChats?.contains(chatID) ?? true {
         guard
           let chat = chatID == session.id
             ? session.chat : workspace.chats.first(where: { $0.id == chatID })
@@ -4748,7 +4748,8 @@ struct MaiCLI {
                 }
                 await recordSubagents()
                 workspace.upsert(session.chat, selecting: true)
-                try store.commit(&workspace)
+                let write = await REPLWorkspaceWriter.shared.enqueue(workspace, store: store)
+                workspace = try await write.value
                 let previousSession = session
                 let previousWorkspace = workspace
                 session = REPLSession(chat: nextWorkspace.selectedChat!)
@@ -5256,9 +5257,17 @@ struct MaiCLI {
         if batch.hasChildren, batch.needsAttention || !batch.finished.isEmpty || saveDue
         {
           nextSubagentSave = progressClock.now.advanced(by: .seconds(1))
-          await recordSubagents()
+          let tree = await runtime.supervisor.tree()
+          var roots = Set<AgentPID>()
+          for pid in batch.changedPIDs {
+            var current = tree.info(pid)
+            while let parent = current?.parent { current = tree.info(parent) }
+            if let root = current?.pid { roots.insert(root) }
+          }
+          let changedChats = Set(chatProcessIDs.compactMap { roots.contains($0.value) ? $0.key : nil })
+          await recordSubagents(only: changedChats)
           workspace.upsert(session.chat, selecting: true)
-          await saveWorkspace(&workspace, store: store, terminal: terminal)
+          await saveWorkspace(&workspace, store: store, terminal: terminal, background: true)
         }
         await refreshStatus()
       }
@@ -14005,15 +14014,20 @@ struct MaiCLI {
     _ workspace: inout AgentChatWorkspace,
     store: AgentChatStore,
     terminal: TerminalWriter,
-    closing: Bool = false
+    closing: Bool = false, background: Bool = false
   ) async {
     workspace.removeDisposableChats(keeping: closing ? nil : workspace.selectedChatID)
-    do {
-      try store.commit(&workspace)
-    } catch {
-      await terminal.line(
-        "warning: chats were not saved: \(error.localizedDescription)",
-        to: .standardError)
+    let write = await REPLWorkspaceWriter.shared.enqueue(workspace, store: store)
+    if background {
+      Task {
+        do { _ = try await write.value }
+        catch { await terminal.line("warning: chats were not saved: \(error.localizedDescription)", to: .standardError) }
+      }
+      return
+    }
+    do { workspace = try await write.value }
+    catch {
+      await terminal.line("warning: chats were not saved: \(error.localizedDescription)", to: .standardError)
     }
   }
 

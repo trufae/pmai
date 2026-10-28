@@ -13,9 +13,39 @@ extension AppStore {
       guard let self else { return }
       let events = await agentSupervisor.events()
       for await event in events {
-        await refreshAgentProcesses()
+        let process: AgentProcessInfo
+        switch event {
+        case .started(let value), .changed(let value), .attention(let value), .finished(let value):
+          process = value
+        }
+        if let index = agentProcessIndexes[process.pid], agentProcesses.indices.contains(index),
+          agentProcesses[index].pid == process.pid {
+          if agentProcesses[index] != process { agentProcesses[index] = process }
+        } else {
+          agentProcessIndexes[process.pid] = agentProcesses.count
+          agentProcesses.append(process)
+        }
         if case .finished(let process) = event {
-          await saveAgentProcessRecords(containing: process.pid)
+          dirtyAgentRecords.insert(process.pid)
+          if agentRecordSaveTask == nil {
+            agentRecordSaveTask = Task { [weak self] in
+              do { try await Task.sleep(for: .milliseconds(50)) } catch { return }
+              guard let self else { return }
+              let completed = dirtyAgentRecords
+              dirtyAgentRecords = []
+              agentRecordSaveTask = nil
+              let tree = await agentSupervisor.tree()
+              var roots = Set<AgentPID>()
+              for pid in completed {
+                var current = tree.info(pid)
+                while let parent = current?.parent { current = tree.info(parent) }
+                if let root = current?.pid { roots.insert(root) }
+              }
+              for (conversationID, root) in agentProcessIDs where roots.contains(root) {
+                await saveAgentProcessRecords(for: conversationID, under: root)
+              }
+            }
+          }
           drainThenQueue()
         }
       }
@@ -26,6 +56,8 @@ extension AppStore {
     let processes = await agentSupervisor.processes()
     if processes != agentProcesses {
       agentProcesses = processes
+      agentProcessIndexes = Dictionary(uniqueKeysWithValues:
+        processes.enumerated().map { ($0.element.pid, $0.offset) })
     }
   }
 

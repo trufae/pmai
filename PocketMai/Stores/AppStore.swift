@@ -265,6 +265,9 @@ final class AppStore: ObservableObject {
   let agentSupervisor = AgentSupervisor()
   /// Written only by the supervisor feed; views read it.
   @Published var agentProcesses: [AgentProcessInfo] = []
+  var agentProcessIndexes: [AgentPID: Int] = [:]
+  var dirtyAgentRecords: Set<AgentPID> = []
+  var agentRecordSaveTask: Task<Void, Never>?
   /// The process a conversation runs as — the root its children hang off —
   /// and, while a child runs, the process its own conversation is.
   var agentProcessIDs: [UUID: AgentPID] = [:]
