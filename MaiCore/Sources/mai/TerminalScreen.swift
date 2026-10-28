@@ -78,6 +78,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
   /// Retained in both modes so switching to buffer includes earlier output.
   private var conversations: [String: TerminalConversation] = [:]
+  private var archivedConversations: Set<String> = []
   private var selectedConversation = "initial"
   private var processConversations: [AgentPID: String] = [:]
   private var markdownTemplate: MarkdownTerminalRenderer?
@@ -247,6 +248,34 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     lock.withLock { processConversations[pid] = id }
   }
 
+  func activateConversation(_ id: String) {
+    lock.withLock { archivedConversations.remove(id) }
+  }
+
+  func releaseConversation(for pid: AgentPID, removing: Bool) {
+    lock.withLock {
+      let id = processConversations[pid] ?? "agent:\(pid.rawValue)"
+      archivedConversations.insert(id)
+      if removing {
+        processConversations[pid] = nil
+        conversations[id] = nil
+        archivedConversations.remove(id)
+        if selectedConversation == id { selectedConversation = "initial" }
+      } else {
+        evictArchivedConversations()
+      }
+    }
+  }
+
+  private func evictArchivedConversations() {
+    guard view?.source != .conversations else { return }
+    for id in archivedConversations where id != selectedConversation {
+      if view?.source == .conversation(id) { continue }
+      // A deliberately anchored reading position stays pinned until released.
+      if conversations[id]?.transcript.isFollowing == true { conversations[id] = nil }
+    }
+  }
+
   func conversationID(for context: AgentEventContext) -> String? {
     lock.withLock {
       guard let pid = context.pid else { return nil }
@@ -262,6 +291,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     lock.withLock {
       guard selectedConversation != id else { return }
       selectedConversation = id
+      evictArchivedConversations()
       scrollbarDrag = nil
       if let source = view?.source {
         switch source {
@@ -477,6 +507,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
           preferredWidth: previous?.preferredWidth, vertical: previous?.vertical ?? false,
           fullscreen: previous?.fullscreen ?? false, markdown: markdownTemplate)
       }
+      evictArchivedConversations()
       draggingViewSeparator = false
       scrollbarDrag = nil
       clampInputRows()

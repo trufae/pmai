@@ -5242,6 +5242,8 @@ struct MaiCLI {
 
       case .supervisor:
         let batch = supervisorUpdates.take()
+        for pid in batch.archived { await terminal.releaseProcess(pid, removing: false) }
+        for pid in batch.removed { await terminal.releaseProcess(pid, removing: true) }
         for info in batch.finished.values.sorted(by: { $0.pid < $1.pid }) where info.depth > 0 {
           await terminal.processEnded(info)
         }
@@ -14017,7 +14019,8 @@ struct MaiCLI {
     closing: Bool = false, background: Bool = false
   ) async {
     workspace.removeDisposableChats(keeping: closing ? nil : workspace.selectedChatID)
-    let write = await REPLWorkspaceWriter.shared.enqueue(workspace, store: store)
+    let write = await REPLWorkspaceWriter.shared.enqueue(
+      workspace, store: store, supervisor: await terminal.checkpointSupervisor())
     if background {
       Task {
         do { _ = try await write.value }

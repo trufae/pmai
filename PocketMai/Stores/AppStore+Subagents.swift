@@ -12,15 +12,25 @@ extension AppStore {
     Task { [weak self] in
       guard let self else { return }
       let events = await agentSupervisor.events()
+      await refreshAgentProcesses()
       for await event in events {
+        if case .removed(let pid) = event {
+          agentProcesses.removeAll { $0.pid == pid }
+          agentProcessIndexes = Dictionary(uniqueKeysWithValues:
+            agentProcesses.enumerated().map { ($0.element.pid, $0.offset) })
+          continue
+        }
         let process: AgentProcessInfo
         switch event {
-        case .started(let value), .changed(let value), .attention(let value), .finished(let value):
+        case .started(let value), .changed(let value), .attention(let value), .finished(let value), .archived(let value):
           process = value
+        case .removed: continue
         }
         if let index = agentProcessIndexes[process.pid], agentProcesses.indices.contains(index),
           agentProcesses[index].pid == process.pid {
-          if agentProcesses[index] != process { agentProcesses[index] = process }
+          if agentProcesses[index].updatedAt <= process.updatedAt, agentProcesses[index] != process {
+            agentProcesses[index] = process
+          }
         } else {
           agentProcessIndexes[process.pid] = agentProcesses.count
           agentProcesses.append(process)

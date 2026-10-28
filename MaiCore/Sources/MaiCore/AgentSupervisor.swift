@@ -8,6 +8,9 @@ public enum AgentSupervisorEvent: Equatable, Sendable {
   /// it stops needing one.
   case attention(AgentProcessInfo)
   case finished(AgentProcessInfo)
+  /// The body is durable and may be evicted from presentation caches.
+  case archived(AgentProcessInfo)
+  case removed(AgentPID)
 }
 
 /// A user message waiting for the next model turn of one process.
@@ -121,7 +124,12 @@ public actor AgentSupervisor {
     if let reference = entries[pid]?.historyReference {
       return try reference.loadPage(before: before)
     }
-    return AgentTranscriptPage(messages: entries[pid]?.transcript ?? [])
+    let messages = entries[pid]?.transcript ?? []
+    guard messages.count > 64 || before != nil else { return AgentTranscriptPage(messages: messages) }
+    let upper = min(messages.count, max(0, before ?? messages.count))
+    let range = max(0, upper - 64)..<upper
+    return AgentTranscriptPage(messages: Array(messages[range]), window: ChatHistoryWindow(
+      range: range, totalCount: messages.count, revision: entries[pid]?.info.runID ?? UUID()))
   }
 
   public func releaseFinishedTranscripts(_ saved: [AgentProcessRecord]) {
@@ -129,13 +137,15 @@ public actor AgentSupervisor {
       guard let reference = record.historyReference,
         let pid = tree().info(runID: record.runID)?.pid,
         var entry = entries[pid], entry.info.state.isTerminal, entry.info.isCollected,
-        entry.info.updatedAt == record.updatedAt
+        entry.info.updatedAt == record.updatedAt,
+        entry.historyReference != reference || !entry.transcript.isEmpty
       else { continue }
       entry.historyReference = reference
       entry.transcript = []
       entry.result?.transcript = []
       entry.handle = nil
       entries[pid] = entry
+      publish(.archived(entry.info))
     }
   }
 
@@ -693,6 +703,7 @@ public actor AgentSupervisor {
   }
 
   public func forget(_ pid: AgentPID) {
+    guard entries[pid] != nil else { return }
     cachedTree = nil
     schedulingState[pid] = nil
     pendingProgress[pid] = nil
@@ -702,6 +713,7 @@ public actor AgentSupervisor {
     transcriptEdits[pid] = nil
     paused.remove(pid)
     pausedWhileQueued.remove(pid)
+    publish(.removed(pid))
   }
 
   // MARK: - Internals
@@ -741,10 +753,15 @@ public actor AgentSupervisor {
 
   private func publish(_ event: AgentSupervisorEvent) {
     cachedTree = nil
+    if case .removed = event {
+      for continuation in subscribers.values { continuation.yield(event) }
+      return
+    }
     let info: AgentProcessInfo
     switch event {
-    case .started(let value), .changed(let value), .attention(let value), .finished(let value):
+    case .started(let value), .changed(let value), .attention(let value), .finished(let value), .archived(let value):
       info = value
+    case .removed: return
     }
     let previous = schedulingState[info.pid]
     if previous?.0 != info.state || previous?.1 != info.queuedMessages {

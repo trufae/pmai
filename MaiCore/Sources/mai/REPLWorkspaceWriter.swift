@@ -7,7 +7,7 @@ actor REPLWorkspaceWriter {
   static let shared = REPLWorkspaceWriter()
   private var writers: [URL: (UUID, Task<AgentChatWorkspace, any Error>)] = [:]
 
-  func enqueue(_ workspace: AgentChatWorkspace, store: AgentChatStore)
+  func enqueue(_ workspace: AgentChatWorkspace, store: AgentChatStore, supervisor: AgentSupervisor? = nil)
     -> Task<AgentChatWorkspace, any Error>
   {
     let path = store.directoryURL.standardizedFileURL
@@ -17,6 +17,13 @@ actor REPLWorkspaceWriter {
       if let previous { _ = await previous.result }
       var snapshot = workspace
       try store.commit(&snapshot)
+      if let supervisor {
+        for chat in snapshot.chats where workspace.modifiedChatIDs.contains(chat.id) {
+          if let page = try? store.loadChatPage(id: chat.id) {
+            await supervisor.releaseFinishedTranscripts(page.subagents)
+          }
+        }
+      }
       return snapshot
     }
     writers[path] = (id, task)

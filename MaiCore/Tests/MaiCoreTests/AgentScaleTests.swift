@@ -146,3 +146,19 @@ func agentCatalogSnapshots() async throws {
   await runtime.unregister(toolNamed: "alpha")
   #expect(await runtime.availableTools().isEmpty)
 }
+
+@Test("Live transcript pages are bounded and explicit removal is observable")
+func agentTranscriptPagingAndRemoval() async throws {
+  let supervisor = AgentSupervisor()
+  let pid = await supervisor.register(runID: UUID(), parent: nil, agentID: "main", depth: 0)
+  await supervisor.note(pid, transcript: (0..<200).map { .user("message \($0)") })
+  let page = try await supervisor.transcriptPage(pid)
+  #expect(page.messages.count == 64)
+  #expect(page.window?.range == 136..<200)
+  let earlier = try await supervisor.transcriptPage(pid, before: 136)
+  #expect(earlier.window?.range == 72..<136)
+  let events = await supervisor.events()
+  await supervisor.forget(pid)
+  var iterator = events.makeAsyncIterator()
+  #expect(await iterator.next() == .removed(pid))
+}

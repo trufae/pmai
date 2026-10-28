@@ -133,6 +133,20 @@ actor TerminalWriter {
     self.screen?.configureMarkdown(markdown)
   }
 
+  func checkpointSupervisor() -> AgentSupervisor? { supervisor }
+
+  func releaseProcess(_ pid: AgentPID, removing: Bool) {
+    conversationWriters[pid] = nil
+    childText[pid] = nil
+    childReasoning[pid] = nil
+    childAgents[pid] = nil
+    childToolCalls[pid] = nil
+    childTokens[pid] = nil
+    childCallTokens[pid] = nil
+    childrenEnded.remove(pid)
+    screen?.releaseConversation(for: pid, removing: removing)
+  }
+
   func clearScreen() {
     guard terminalOutput, REPLRedirection.current == nil else { return }
     if let screen {
@@ -231,6 +245,7 @@ actor TerminalWriter {
   func consume(_ event: AgentEvent) async {
     let context = event.terminalContext
     let destination = screen?.conversationID(for: context)
+    if case .started = event, let destination { screen?.activateConversation(destination) }
     if context.depth == 0 { rootDestination = destination }
     if let screen, screen.isBufferMode, context.depth > 0,
       let pid = context.pid, REPLRedirection.current == nil

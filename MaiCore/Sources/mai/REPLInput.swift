@@ -32,6 +32,8 @@ final class REPLSupervisorUpdates: @unchecked Sendable {
     var hasChildren = false
     var needsAttention = false
     var changedPIDs: Set<AgentPID> = []
+    var archived: Set<AgentPID> = []
+    var removed: Set<AgentPID> = []
   }
 
   private let lock = NSLock()
@@ -42,6 +44,11 @@ final class REPLSupervisorUpdates: @unchecked Sendable {
     lock.withLock {
       let wakes = pending == nil
       var batch = pending ?? Batch()
+      if case .removed(let pid) = event {
+        batch.removed.insert(pid)
+        pending = batch
+        return wakes
+      }
       let info: AgentProcessInfo
       switch event {
       case .started(let value), .changed(let value): info = value
@@ -51,6 +58,10 @@ final class REPLSupervisorUpdates: @unchecked Sendable {
       case .finished(let value):
         info = value
         batch.finished[value.runID] = value
+      case .archived(let value):
+        info = value
+        batch.archived.insert(value.pid)
+      case .removed: return wakes
       }
       batch.hasChildren = batch.hasChildren || info.depth > 0
       batch.changedPIDs.insert(info.pid)
