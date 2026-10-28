@@ -273,8 +273,9 @@ struct SubagentProcessDetailView: View {
   @ObservedObject var storeObservation: AppStoreViewObservation
   let conversationID: UUID?
   let pid: AgentPID
-  @State private var transcript: [AgentMessage] = []
   @State private var historyWindow: ChatHistoryWindow?
+  @State private var displayedTranscript: [ChatMessage] = []
+  @State private var transcriptLoadID = UUID()
   @State private var draft = ""
 
   private var process: AgentProcessInfo? {
@@ -286,7 +287,7 @@ struct SubagentProcessDetailView: View {
   }
 
   private var renderedTranscript: [ChatMessage] {
-    ChatMessage.conversationMessages(from: transcript)
+    displayedTranscript
   }
 
   var body: some View {
@@ -396,19 +397,23 @@ struct SubagentProcessDetailView: View {
     .navigationTitle(process?.displayName ?? pid.description)
     .navigationBarTitleDisplayMode(.inline)
     .task(id: transcriptRefreshKey) {
-      await loadTranscript()
+      await loadTranscript(preservingPage: true)
     }
   }
 
-  private func loadTranscript(before: Int? = nil) async {
-    guard let page = await store.agentTranscriptPage(pid, before: before) else { return }
-    transcript = page.messages
+  private func loadTranscript(before: Int? = nil, preservingPage: Bool = false) async {
+    let loadID = UUID()
+    transcriptLoadID = loadID
+    let offset = preservingPage && historyWindow?.hasLater == true
+      ? historyWindow?.range.upperBound : before
+    guard let page = await store.agentTranscriptPage(pid, before: offset),
+      !Task.isCancelled, transcriptLoadID == loadID else { return }
+    displayedTranscript = ChatMessage.conversationMessages(from: page.messages)
     historyWindow = page.window
   }
 
-  /// The transcript is re-read when the process reports progress, not on
-  /// every table change elsewhere.
-  private var transcriptRefreshKey: Date? {
-    process?.updatedAt
+  /// Activity, queue and timer updates leave the inspected transcript alone.
+  private var transcriptRefreshKey: UInt64? {
+    process?.transcriptRevision
   }
 }
