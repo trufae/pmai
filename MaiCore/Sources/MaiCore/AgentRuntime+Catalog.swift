@@ -102,6 +102,9 @@ extension AgentRuntime {
     guard replacingExisting || tools[name] == nil else {
       throw AgentToolError.duplicateName(name)
     }
+    if let owner = mcpToolOwners.removeValue(forKey: name) {
+      registeredMCPs[owner]?.toolNames.remove(name)
+    }
     tools[name] = tool
   }
 
@@ -113,12 +116,36 @@ extension AgentRuntime {
     guard internetAccess.allows(source) else { throw InternetAccessError.offline }
     let catalog = try await source.connect()
     let agentTools = try await source.agentTools()
+    // Discovery may suspend. Validate against the registry after it returns,
+    // then commit the entire catalog without another suspension point.
+    var names = Set<String>()
     for tool in agentTools {
-      try register(tool: tool, replacingExisting: replacingExistingTools)
+      let name = tool.definition.name
+      guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        throw AgentToolError.invalidName
+      }
+      guard !Self.agentToolNames.contains(name),
+        !AgentProcessTools.legacyStartToolNames.contains(name)
+      else { throw AgentRuntimeError.reservedToolName(name) }
+      guard names.insert(name).inserted,
+        replacingExistingTools || tools[name] == nil || mcpToolOwners[name] == catalog.serverID
+      else { throw AgentToolError.duplicateName(name) }
+    }
+    if let previous = registeredMCPs[catalog.serverID] {
+      for name in previous.toolNames where mcpToolOwners[name] == catalog.serverID {
+        tools[name] = nil
+        mcpToolOwners[name] = nil
+      }
+    }
+    for tool in agentTools {
+      let name = tool.definition.name
+      if let owner = mcpToolOwners[name] { registeredMCPs[owner]?.toolNames.remove(name) }
+      tools[name] = tool
+      mcpToolOwners[name] = catalog.serverID
     }
     registeredMCPs[catalog.serverID] = RegisteredMCP(
       source: source,
-      toolNames: Set(agentTools.map { $0.definition.name }),
+      toolNames: names,
       networkRequirement: source.requiresInternet ? .internet : .offline)
     return catalog
   }
@@ -127,14 +154,20 @@ extension AgentRuntime {
   /// Tools that came with an MCP server leave with `unregisterMCP` instead.
   @discardableResult
   public func unregister(toolNamed name: String) -> Bool {
-    tools.removeValue(forKey: name) != nil
+    if let owner = mcpToolOwners.removeValue(forKey: name) {
+      registeredMCPs[owner]?.toolNames.remove(name)
+    }
+    return tools.removeValue(forKey: name) != nil
   }
 
   /// Disconnects an MCP source and removes the tools discovered from it.
   @discardableResult
   public func unregisterMCP(serverID: String) async -> Set<String> {
     guard let registration = registeredMCPs.removeValue(forKey: serverID) else { return [] }
-    for name in registration.toolNames { tools[name] = nil }
+    for name in registration.toolNames where mcpToolOwners[name] == serverID {
+      tools[name] = nil
+      mcpToolOwners[name] = nil
+    }
     await registration.source.close()
     return registration.toolNames
   }

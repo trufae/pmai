@@ -24,6 +24,7 @@ public actor AgentRuntime {
   /// Limits learned from rejected requests are scoped to the exact backend and model.
   var contextWindows: [ProviderID: [String: Int]] = [:]
   var registeredMCPs: [String: RegisteredMCP] = [:]
+  var mcpToolOwners: [String: String] = [:]
   var configuredToolGroups: [ToolGroupDefinition] = []
   var internetAccess = InternetAccessPolicy()
   var toolsEnabled = true
