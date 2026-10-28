@@ -269,22 +269,43 @@ public struct AgentProcessInfo: Equatable, Sendable, Identifiable {
 
 /// A snapshot of the process table, arranged as the tree it really is.
 public struct AgentProcessTree: Equatable, Sendable {
-  public var processes: [AgentProcessInfo]
+  public var processes: [AgentProcessInfo] {
+    didSet { indexProcesses() }
+  }
+  private var byPID: [AgentPID: AgentProcessInfo] = [:]
+  private var byParent: [AgentPID?: [AgentProcessInfo]] = [:]
+  private var byRunID: [UUID: AgentPID] = [:]
 
   public init(_ processes: [AgentProcessInfo] = []) {
     self.processes = processes.sorted { $0.pid < $1.pid }
+    indexProcesses()
+  }
+
+  private mutating func indexProcesses() {
+    byPID.removeAll(keepingCapacity: true)
+    byParent.removeAll(keepingCapacity: true)
+    byRunID.removeAll(keepingCapacity: true)
+    for process in processes where byPID[process.pid] == nil {
+      byPID[process.pid] = process
+      byParent[process.parent, default: []].append(process)
+      byRunID[process.runID] = process.pid
+    }
   }
 
   public var isEmpty: Bool { processes.isEmpty }
 
   public func info(_ pid: AgentPID) -> AgentProcessInfo? {
-    processes.first { $0.pid == pid }
+    byPID[pid]
+  }
+
+  public func info(runID: UUID) -> AgentProcessInfo? {
+    byRunID[runID].flatMap { byPID[$0] }
   }
 
   public func contains(_ pid: AgentPID) -> Bool { info(pid) != nil }
 
   public func children(of pid: AgentPID?) -> [AgentProcessInfo] {
-    processes.filter { $0.parent == pid }
+    byParent[pid] ?? []
   }
 
   public var roots: [AgentProcessInfo] {
@@ -298,9 +319,12 @@ public struct AgentProcessTree: Equatable, Sendable {
   public func subtree(of pid: AgentPID) -> [AgentProcessInfo] {
     guard let root = info(pid) else { return [] }
     var collected = [root]
+    var seen: Set<AgentPID> = [pid]
     var index = 0
     while index < collected.count {
-      collected.append(contentsOf: children(of: collected[index].pid))
+      collected.append(contentsOf: children(of: collected[index].pid).filter {
+        seen.insert($0.pid).inserted
+      })
       index += 1
     }
     return collected
@@ -329,7 +353,8 @@ public struct AgentProcessTree: Equatable, Sendable {
 
   public func isDescendant(_ pid: AgentPID, of ancestor: AgentPID) -> Bool {
     var current = info(pid)?.parent
-    while let parent = current {
+    var seen: Set<AgentPID> = [pid]
+    while let parent = current, seen.insert(parent).inserted {
       if parent == ancestor { return true }
       current = info(parent)?.parent
     }

@@ -49,6 +49,7 @@ public actor AgentSupervisor {
   /// identities survive eviction so inspection and navigation stay stable.
   private let finishedRetention: Int
   private var entries: [AgentPID: Entry] = [:]
+  private var cachedTree: AgentProcessTree?
   /// Messages posted to a process that its run has not read yet, oldest first.
   private var inboxes: [AgentPID: [AgentQueuedMessage]] = [:]
   /// Context edits a process asked for and its run has not applied yet.
@@ -66,11 +67,14 @@ public actor AgentSupervisor {
   // MARK: - Host API
 
   public func tree() -> AgentProcessTree {
-    AgentProcessTree(entries.values.map(\.info))
+    if let cachedTree { return cachedTree }
+    let snapshot = AgentProcessTree(entries.values.map(\.info))
+    cachedTree = snapshot
+    return snapshot
   }
 
   public func processes() -> [AgentProcessInfo] {
-    entries.values.map(\.info).sorted { $0.pid < $1.pid }
+    tree().processes
   }
 
   public func info(_ pid: AgentPID) -> AgentProcessInfo? {
@@ -112,7 +116,7 @@ public actor AgentSupervisor {
   public func releaseFinishedTranscripts(_ saved: [AgentProcessRecord]) {
     for record in saved {
       guard let reference = record.historyReference,
-        let pid = entries.first(where: { $0.value.info.runID == record.runID })?.key,
+        let pid = tree().info(runID: record.runID)?.pid,
         var entry = entries[pid], entry.info.state.isTerminal, entry.info.isCollected,
         entry.info.updatedAt == record.updatedAt
       else { continue }
@@ -667,6 +671,7 @@ public actor AgentSupervisor {
   }
 
   public func forget(_ pid: AgentPID) {
+    cachedTree = nil
     entries[pid] = nil
     inboxes[pid] = nil
     transcriptEdits[pid] = nil
@@ -710,6 +715,7 @@ public actor AgentSupervisor {
   }
 
   private func publish(_ event: AgentSupervisorEvent) {
+    cachedTree = nil
     for continuation in subscribers.values { continuation.yield(event) }
   }
 
@@ -738,11 +744,17 @@ public actor AgentSupervisor {
   /// and nobody has queued a message they would read at their next turn.
   private func removableFinished() -> [AgentProcessInfo] {
     let snapshot = tree()
-    return snapshot.processes.filter { process in
-      guard process.state.isTerminal, inboxes[process.pid, default: []].isEmpty else {
-        return false
+    var protected = Set<AgentPID>()
+    for process in snapshot.processes
+    where !process.state.isTerminal || !(inboxes[process.pid]?.isEmpty ?? true) {
+      var parent = process.parent
+      while let pid = parent, protected.insert(pid).inserted {
+        parent = snapshot.info(pid)?.parent
       }
-      return !snapshot.subtree(of: process.pid).dropFirst().contains { !$0.state.isTerminal }
+    }
+    return snapshot.processes.filter { process in
+      process.state.isTerminal && !protected.contains(process.pid)
+        && (inboxes[process.pid]?.isEmpty ?? true)
     }
   }
 

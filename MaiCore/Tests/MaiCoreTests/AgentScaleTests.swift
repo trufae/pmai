@@ -5,24 +5,38 @@ import Testing
 
 @Test("A slow supervisor subscriber retains every lifecycle event")
 func supervisorLifecycleBurst() async {
-  let supervisor = AgentSupervisor(finishedRetention: 100)
+  let supervisor = AgentSupervisor(finishedRetention: 1000)
   let stream = await supervisor.events()
-  for _ in 0..<80 {
+  for _ in 0..<500 {
     let pid = await supervisor.register(runID: UUID(), parent: nil, agentID: "worker", depth: 0)
     await supervisor.complete(pid)
   }
   var iterator = stream.makeAsyncIterator()
   var started = Set<AgentPID>()
   var finished = Set<AgentPID>()
-  for _ in 0..<160 {
+  for _ in 0..<1000 {
     switch await iterator.next() {
     case .started(let info): started.insert(info.pid)
     case .finished(let info): finished.insert(info.pid)
     default: Issue.record("Unexpected lifecycle event")
     }
   }
-  #expect(started.count == 80)
+  #expect(started.count == 500)
   #expect(finished == started)
+}
+
+@Test("Process indexes follow mutations and bound malformed ancestry")
+func processTreeIndexes() {
+  let root = AgentProcessInfo(pid: 1, runID: UUID(), agentID: "main")
+  var child = AgentProcessInfo(pid: 2, parent: 1, runID: UUID(), agentID: "worker", depth: 1)
+  var tree = AgentProcessTree([child, root])
+  #expect(tree.children(of: 1).map(\.pid) == [2])
+  #expect(tree.info(runID: child.runID)?.pid == 2)
+  child.parent = 2
+  tree.processes[1] = child
+  #expect(tree.children(of: 1).isEmpty)
+  #expect(tree.subtree(of: 2).count == 1)
+  #expect(!tree.isDescendant(2, of: 1))
 }
 
 @Test("Retention preserves unread and uncheckpointed jobs and their transcripts")
