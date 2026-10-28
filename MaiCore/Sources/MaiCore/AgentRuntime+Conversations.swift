@@ -46,6 +46,15 @@ extension AgentRuntime {
     return request
   }
 
+  /// Status and settings do not need a conversation's potentially disk-backed
+  /// transcript. Hosts can obtain the same operational settings without I/O.
+  public func conversationSettings(for pid: AgentPID) async -> AgentRequest? {
+    guard await supervisor.info(pid) != nil,
+      var request = liveRequests[pid] ?? conversationRequests[pid] else { return nil }
+    request.messages = []
+    return request
+  }
+
   private func pruneConversationState() async {
     let known = Set(await supervisor.processes().map(\.pid))
     conversationRequests = conversationRequests.filter { known.contains($0.key) }

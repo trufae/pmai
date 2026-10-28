@@ -107,3 +107,20 @@ func supervisorSessionSlots() async {
   await supervisor.complete(a)
   #expect(await supervisor.admit(b, limit: 3))
 }
+
+@Test("Metadata lookup leaves transcript bodies separate from status revisions")
+func agentConversationMetadata() async throws {
+  let runtime = AgentRuntime()
+  let root = await runtime.allocateProcess(agentID: "main")
+  let request = AgentRequest(agentID: "worker", provider: "fixture", model: "test",
+    messages: [.user("private transcript")])
+  let child = try #require(await runtime.forkConversation(request, parent: root, title: "worker"))
+  #expect(await runtime.conversationSettings(for: child)?.messages.isEmpty == true)
+  #expect(await runtime.conversationSettings(for: child)?.model == "test")
+  let revision = await runtime.supervisor.info(child)?.transcriptRevision
+  await runtime.supervisor.note(child, activity: "status update")
+  #expect(await runtime.supervisor.info(child)?.transcriptRevision == revision)
+  #expect(await runtime.conversationRequest(for: child)?.messages == request.messages)
+  await runtime.supervisor.note(child, transcript: [.assistant("new content")])
+  #expect(await runtime.supervisor.info(child)?.transcriptRevision != revision)
+}

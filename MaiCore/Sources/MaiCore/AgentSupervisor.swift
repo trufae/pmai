@@ -586,7 +586,11 @@ public actor AgentSupervisor {
     if let toolCalls { entry.info.toolCalls = toolCalls }
     if let usage { entry.info.usage = usage }
     if let activity { entry.info.activity = activity }
-    if let transcript { entry.transcript = transcript; entry.historyReference = nil }
+    if let transcript {
+      entry.transcript = transcript
+      entry.historyReference = nil
+      entry.info.transcriptRevision &+= 1
+    }
     if let contextSize {
       entry.info.contextSize = contextSize
     } else if let transcript {
@@ -625,6 +629,8 @@ public actor AgentSupervisor {
   public func finish(_ pid: AgentPID, result: AgentResult, announce: Bool) {
     guard var entry = entries[pid] else { return }
     entry.transcript = result.transcript
+    entry.info.transcriptRevision &+= 1
+    entry.info.contextSize = AgentContextSize(messages: result.transcript)
     entry.result = result
     entry.info.modelTurns = result.modelTurns
     entry.info.toolCalls = result.toolCalls

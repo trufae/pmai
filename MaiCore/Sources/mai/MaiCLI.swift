@@ -2780,11 +2780,10 @@ struct MaiCLI {
       var identitySession = session
       if case .agent(let pid) = loop.focus {
         liveContext = await runtime.supervisor.info(pid)?.contextSize
-        if let request = await runtime.conversationRequest(for: pid) {
+        if let request = await runtime.conversationSettings(for: pid) {
           identitySession.profile.agentID = request.agentID
           identitySession.profile.provider = request.provider
           identitySession.profile.model = request.model
-          identitySession.history.replaceAll(with: request.messages)
         }
       } else if let turn = loop.activeTurn, turn.chatID == session.id {
         liveContext = await runtime.supervisor.info(turn.pid)?.contextSize
@@ -2831,7 +2830,7 @@ struct MaiCLI {
       }.joined() + "]" : ""
       let detail = facts.isEmpty ? "" : " · " + facts.joined(separator: " · ")
       return (
-        "\(activityMarker)\(strip) \(currentDirectoryName()) \(promptIdentity(identitySession, contextSize: liveContext))\(detail)",
+        "\(activityMarker)\(strip) \(currentDirectoryName()) \(promptIdentity(identitySession, contextSize: liveContext, includeContext: loop.focus == .main || liveContext != nil))\(detail)",
         running
       )
     }
@@ -5862,13 +5861,14 @@ struct MaiCLI {
   /// The agent, estimated context, and provider/model a chat runs on. The
   /// context sits immediately before the model so it stays easy to compare.
   private static func promptIdentity(
-    _ session: REPLSession, contextSize: AgentContextSize? = nil
+    _ session: REPLSession, contextSize: AgentContextSize? = nil, includeContext: Bool = true
   ) -> String {
     let profile = session.profile
     let model = profile.model.isEmpty
       ? (profile.provider.rawValue.isEmpty ? "no model selected" : profile.provider.rawValue)
       : "\(profile.provider.rawValue)::\(profile.model)"
-    return "[\(profile.agentID)] · \(promptContextStatus(session, contextSize: contextSize)) · \(model)"
+    let context = includeContext ? " · \(promptContextStatus(session, contextSize: contextSize))" : ""
+    return "[\(profile.agentID)]\(context) · \(model)"
   }
 
   /// The final component of the working directory, with a useful root label.

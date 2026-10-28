@@ -170,6 +170,8 @@ public struct AgentProcessInfo: Equatable, Sendable, Identifiable {
   public var isCollected: Bool
   /// Messages a person queued for this process that it has not read yet.
   public var queuedMessages: Int
+  /// Changes only when transcript content is published, independently of activity.
+  public var transcriptRevision: UInt64 = 0
 
   public var id: AgentPID { pid }
 
