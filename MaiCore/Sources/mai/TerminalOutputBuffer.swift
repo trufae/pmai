@@ -85,6 +85,8 @@ struct TerminalOutputBuffer {
   private var toolBlocks: [Int: TerminalToolBlock] = [:]
   private var toolGroupStarts: [Int: Int] = [:]
   private var toolGroupEnds: [Int: Int] = [:]
+  private var toolGroupMembers: [Int: [Int]] = [:]
+  private var toolGroupSummaries: [Int: (text: String, failed: Bool)] = [:]
   private var expandedToolGroups: Set<Int> = []
   private var runningTools: Set<Int> = []
   private var groupTools = false
@@ -144,6 +146,7 @@ struct TerminalOutputBuffer {
     }
     self.selection = selection
     if selection != source.selection {
+      toolGroupMembers = [:]
       for index in lines.indices { invalidateLine(index) }
     }
     configureExcluding(nil)
@@ -169,6 +172,8 @@ struct TerminalOutputBuffer {
     toolBlocks.removeAll()
     toolGroupStarts.removeAll()
     toolGroupEnds.removeAll()
+    toolGroupMembers.removeAll()
+    toolGroupSummaries.removeAll()
     expandedToolGroups.removeAll()
     runningTools.removeAll()
     visiblePositions.removeAll()
@@ -196,6 +201,8 @@ struct TerminalOutputBuffer {
   mutating func configureExcluding(_ selection: TerminalOutputSelection?) {
     guard excludedSelection != selection else { return }
     excludedSelection = selection
+    toolGroupMembers = [:]
+    toolGroupSummaries = [:]
     for index in thinkingBlocks.keys { invalidateLine(index) }
     for index in toolBlocks.keys { invalidateLine(index) }
   }
@@ -258,13 +265,27 @@ struct TerminalOutputBuffer {
   var hasRunningTools: Bool { !runningTools.isEmpty }
 
   mutating func refreshToolGroupTimes() {
-    for index in runningTools { invalidateToolGroup(containing: index) }
+    for start in Set(runningTools.compactMap { toolGroupStarts[$0] }) {
+      invalidateToolGroup(containing: start)
+    }
+  }
+
+  private mutating func groupMembers(start: Int, end: Int) -> [Int] {
+    if let members = toolGroupMembers[start] { return members }
+    let members = (start..<end).filter {
+      guard !isExcluded($0) else { return false }
+      if case .tools(let name) = selection { return name == nil || toolBlocks[$0]?.call?.name == name }
+      return true
+    }
+    toolGroupMembers[start] = members
+    return members
   }
 
   private mutating func invalidateToolGroup(containing index: Int) {
     guard let start = toolGroupStarts[index], let end = toolGroupEnds[start] else { return }
+    toolGroupSummaries[start] = nil
     invalidateLine(start)
-    if let header = (start..<end).first(where: { !isExcluded($0) }) {
+    if let header = groupMembers(start: start, end: end).first, header != start {
       invalidateLine(header)
     }
   }
@@ -274,9 +295,9 @@ struct TerminalOutputBuffer {
     guard groupTools, tools != .icons, visiblePositions.indices.contains(row) else { return false }
     let position = visiblePositions[row]
     let start = toolGroupStarts[position.line] ?? position.line
-    guard position.glyph == 0, let end = toolGroupEnds[start],
-      position.line == (start..<end).first(where: { !isExcluded($0) }),
-      (start..<end).filter({ !isExcluded($0) }).count > 1 else {
+    guard position.glyph == 0, let end = toolGroupEnds[start] else { return false }
+    let members = groupMembers(start: start, end: end)
+    guard position.line == members.first, members.count > 1 else {
       return false
     }
     if top == nil { top = visiblePositions.first }
@@ -299,6 +320,7 @@ struct TerminalOutputBuffer {
         ? toolGroupStarts[index - 1] ?? index : index
       toolGroupStarts[index] = start
       toolGroupEnds[start] = index + 1
+      toolGroupMembers[start] = nil
       toolBlocks[index] = TerminalToolBlock(call: call, result: nil, prefix: prefix)
       runningTools.insert(index)
       invalidateLine(start)
@@ -447,11 +469,7 @@ struct TerminalOutputBuffer {
     let groupEnd = toolGroupEnds[originalStart] ?? index + 1
     let iconGroup = tools == .icons && toolBlocks[index] != nil
     let groupIndices = iconGroup || groupTools && selection == .all
-      ? (originalStart..<groupEnd).filter {
-        if isExcluded($0) { return false }
-        if case .tools(let name) = selection { return name == nil || toolBlocks[$0]?.call?.name == name }
-        return true
-      } : [index]
+      ? groupMembers(start: originalStart, end: groupEnd) : [index]
     let groupStart = groupIndices.first ?? index
     let isGroup = groupTools && selection == .all && groupIndices.count > 1
     if iconGroup && index != groupStart { return [] }
@@ -477,13 +495,19 @@ struct TerminalOutputBuffer {
       let isHeader = !iconGroup && isGroup && index == groupStart
       let expanded = expandedToolGroups.contains(originalStart)
       if isHeader {
-        let blocks = groupIndices.compactMap { toolBlocks[$0] }
-        let failed = blocks.contains { $0.result?.isError == true }
+        let summary: (text: String, failed: Bool)
+        if let cached = toolGroupSummaries[originalStart] { summary = cached }
+        else {
+          let blocks = groupIndices.compactMap { toolBlocks[$0] }
+          summary = (ToolRunTiming.summary(blocks.map(\.timing)), blocks.contains { $0.result?.isError == true })
+          toolGroupSummaries[originalStart] = summary
+        }
+        let failed = summary.failed
         let color: TerminalThemeStyle = failed ? .errorForeground : .toolCallForeground
-        let summary = tool.prefix + (colors != nil ? color.marker : "")
-          + (expanded ? "▾ " : "▸ ") + ToolRunTiming.summary(blocks.map(\.timing))
+        let header = tool.prefix + (colors != nil ? color.marker : "")
+          + (expanded ? "▾ " : "▸ ") + summary.text
           + (failed ? " · error" : "")
-        text = expanded ? summary + "\n" + text : summary
+        text = expanded ? header + "\n" + text : header
       }
       var output = TerminalOutputBuffer()
       output.configureColors(colors)

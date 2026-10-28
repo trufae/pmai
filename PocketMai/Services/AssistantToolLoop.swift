@@ -40,10 +40,29 @@ enum AssistantToolLoop {
     let results: [CallResult]
   }
 
-  private struct CallResult {
+  private struct CallResult: Sendable {
     let call: ParsedToolCall
     let result: String
     var timing: ToolRunTiming? = nil
+  }
+
+  @MainActor
+  private final class ToolBatchProgress {
+    var results: [CallResult?]
+    var blocks: [String?]
+    var dropped = Set<Int>()
+    var launched = 0
+    var publication: Task<Void, Never>?
+    var onChange: (@MainActor @Sendable () -> Void)?
+    init(count: Int) {
+      results = Array(repeating: nil, count: count)
+      blocks = Array(repeating: nil, count: count)
+    }
+    func complete(_ result: CallResult, at index: Int) {
+      results[index] = result
+      blocks[index] = AgentTooling.makeRunBlock(call: result.call, result: result.result, timing: result.timing)
+      onChange?()
+    }
   }
 
   private enum RunHost {
@@ -799,32 +818,46 @@ enum AssistantToolLoop {
     // order. A call to a concurrent tool, the agent family above all, is then
     // started and left running while the calls after it go on, so children
     // started in one reply work side by side; the others run one at a time
-    // in between. The results join the transcript in call order once the
+    // in between. The progress.results join the transcript in call order once the
     // last of them is in.
     var assistantContent = response
-    var results = [CallResult?](repeating: nil, count: calls.count)
-    // Calls past the cap: dropped, and taken out of the transcript.
-    var dropped = Set<Int>()
-    var launched = 0
+    let progress = ToolBatchProgress(count: calls.count)
     let batchStartedAt = Date()
 
-    func publishProgress() {
+    let renderProgress: @MainActor @Sendable () -> Void = {
       guard case .live(let assistantID, let baselineText, _) = host else { return }
       let assembled = assembleRunBlocks(
-        response: response, calls: calls, results: results, dropped: dropped)
+        response: response, calls: calls, results: progress.results, dropped: progress.dropped, renderedBlocks: progress.blocks)
       let pending = calls.indices
-        .filter { results[$0] == nil && !dropped.contains($0) }
+        .filter { progress.results[$0] == nil && !progress.dropped.contains($0) }
         .map { calls[$0] }
       publishToolRunProgress(
         transcriptText: assembled.text,
         appendedRunBlocks: assembled.appended,
         pendingCalls: pending,
-        remainingToolCalls: max(0, remainingToolCalls - launched),
+        remainingToolCalls: max(0, remainingToolCalls - progress.launched),
         parseDefinitions: parseDefinitions,
         assistantID: assistantID,
         baselineText: baselineText,
         store: store,
         startedAt: batchStartedAt)
+    }
+
+    let publishProgress: @MainActor @Sendable () -> Void = {
+      guard case .live = host else { return }
+      guard progress.publication == nil else { return }
+      progress.publication = Task { @MainActor in
+        do { try await Task.sleep(for: .milliseconds(16)) } catch { return }
+        progress.publication = nil
+        renderProgress()
+      }
+    }
+    progress.onChange = publishProgress
+    defer {
+      progress.onChange = nil
+      progress.publication?.cancel()
+      progress.publication = nil
+      renderProgress()
     }
 
     try await withThrowingTaskGroup(of: (Int, CallResult).self) { group in
@@ -839,11 +872,11 @@ enum AssistantToolLoop {
           break
         }
         replaceFirstOccurrence(of: call.rawBlock, in: &assistantContent, with: "")
-        guard launched < remainingToolCalls else {
-          dropped.insert(index)
+        guard progress.launched < remainingToolCalls else {
+          progress.dropped.insert(index)
           continue
         }
-        launched += 1
+        progress.launched += 1
         let callStartedAt = Date()
         switch try await prepareToolCall(
           call,
@@ -854,25 +887,24 @@ enum AssistantToolLoop {
         {
         case .answered(var result):
           result.timing = ToolRunTiming(startedAt: callStartedAt, finishedAt: Date())
-          results[index] = result
+          progress.complete(result, at: index)
         case .ready(let ready) where ready.concurrent:
           group.addTask {
-            (index, try await executeToolCall(ready, store: store))
+            let result = try await executeToolCall(ready, store: store)
+            await progress.complete(result, at: index)
+            return (index, result)
           }
         case .ready(let ready):
-          results[index] = try await executeToolCall(ready, store: store)
+          progress.complete(try await executeToolCall(ready, store: store), at: index)
         }
         publishProgress()
       }
-      for try await (index, result) in group {
-        results[index] = result
-        publishProgress()
-      }
+      for try await _ in group {}
     }
 
     let assembled = assembleRunBlocks(
-      response: response, calls: calls, results: results, dropped: dropped)
-    let ordered = results.compactMap { $0 }
+      response: response, calls: calls, results: progress.results, dropped: progress.dropped, renderedBlocks: progress.blocks)
+    let ordered = progress.results.compactMap { $0 }
     let text =
       ([assembled.text.trimmingCharacters(in: .whitespacesAndNewlines)] + assembled.appended)
       .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -908,7 +940,7 @@ enum AssistantToolLoop {
     response: String,
     calls: [ParsedToolCall],
     results: [CallResult?],
-    dropped: Set<Int>
+    dropped: Set<Int>, renderedBlocks: [String?]? = nil
   ) -> (text: String, appended: [String]) {
     var text = response
     var appended: [String] = []
@@ -918,7 +950,7 @@ enum AssistantToolLoop {
         continue
       }
       guard let result = results[index] else { continue }
-      let runBlock = AgentTooling.makeRunBlock(
+      let runBlock = renderedBlocks?[index] ?? AgentTooling.makeRunBlock(
         call: result.call, result: result.result, timing: result.timing)
       if !replaceFirstOccurrence(of: call.rawBlock, in: &text, with: runBlock) {
         appended.append(runBlock)
