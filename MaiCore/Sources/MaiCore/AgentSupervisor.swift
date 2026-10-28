@@ -69,6 +69,8 @@ public actor AgentSupervisor {
   private var concurrentLimit: Int?
 
   /// Optional session-wide cap in addition to each parent's child limit.
+  /// A descendant can borrow its ancestors' slots so nested delegation cannot
+  /// deadlock while those ancestors wait for their child's result.
   public func configureConcurrencyLimit(_ maximum: Int?) {
     concurrentLimit = maximum.map { max(1, $0) }
     changes.notify()
@@ -576,10 +578,16 @@ public actor AgentSupervisor {
       $0.state != .queued && !self.pausedWhileQueued.contains($0.pid)
     }.count
     let olderWaiting = siblings.contains { $0.state == .queued && $0.pid < pid }
+    var ancestors = Set<AgentPID>()
+    var ancestor: AgentPID? = concurrentLimit == nil ? nil : parent
+    while let current = ancestor, ancestors.insert(current).inserted {
+      ancestor = entries[current]?.info.parent
+    }
     let sessionFull = concurrentLimit.map { maximum in
       entries.values.lazy.filter {
         $0.info.parent != nil && $0.info.pid != pid && !$0.info.state.isTerminal
           && $0.info.state != .queued && !self.pausedWhileQueued.contains($0.info.pid)
+          && !ancestors.contains($0.info.pid)
       }.count >= maximum
     } ?? false
     if running < limit, !olderWaiting, !sessionFull {

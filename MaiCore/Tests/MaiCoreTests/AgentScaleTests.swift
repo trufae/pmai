@@ -108,6 +108,24 @@ func supervisorSessionSlots() async {
   #expect(await supervisor.admit(b, limit: 3))
 }
 
+@Test("A session slot held by a delegating parent admits its nested child")
+func supervisorNestedSessionSlots() async {
+  let supervisor = AgentSupervisor()
+  await supervisor.configureConcurrencyLimit(1)
+  let root = await supervisor.register(runID: UUID(), parent: nil, agentID: "main", depth: 0)
+  let parent = await supervisor.register(runID: UUID(), parent: root, agentID: "worker", depth: 1)
+  #expect(await supervisor.admit(parent, limit: 2))
+  let sibling = await supervisor.register(runID: UUID(), parent: root, agentID: "worker", depth: 1)
+  #expect(!(await supervisor.admit(sibling, limit: 2)))
+  let child = await supervisor.register(runID: UUID(), parent: parent, agentID: "worker", depth: 2)
+  #expect(await supervisor.admit(child, limit: 2))
+  #expect(!(await supervisor.admit(sibling, limit: 2)))
+  await supervisor.complete(child)
+  #expect(!(await supervisor.admit(sibling, limit: 2)))
+  await supervisor.complete(parent)
+  #expect(await supervisor.admit(sibling, limit: 2))
+}
+
 @Test("Metadata lookup leaves transcript bodies separate from status revisions")
 func agentConversationMetadata() async throws {
   let runtime = AgentRuntime()
