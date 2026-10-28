@@ -1678,6 +1678,7 @@ struct MaiCLI {
         session.touch()
         workspace.upsert(session.chat, selecting: true)
         try store.commit(&workspace)
+        await runtime.flushToolUsage()
         if !succeeded { exit(1) }
         return
       }
@@ -1696,6 +1697,7 @@ struct MaiCLI {
         pmaiBridge: pmaiBridge,
         promptFileAccess: promptFileAccess,
         terminal: terminal)
+      await runtime.flushToolUsage()
     } catch {
       FileHandle.standardError.write(Data("error: \(error.localizedDescription)\n".utf8))
       exit(2)

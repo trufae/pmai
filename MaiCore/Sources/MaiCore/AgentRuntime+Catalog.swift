@@ -238,6 +238,8 @@ extension AgentRuntime {
 
   public func toolUsageSnapshot() -> AgentToolUsage { toolUsage }
 
+  public func flushToolUsage() async { await toolUsageStore?.flush() }
+
   func recordToolUse(_ name: String) async {
     if let toolUsageStore {
       toolUsage = await toolUsageStore.record(name)

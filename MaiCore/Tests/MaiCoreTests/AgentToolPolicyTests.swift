@@ -211,6 +211,8 @@ func toolUsagePersistence() async throws {
       group.addTask { for _ in 0..<10 { await store.record("github_pr") } }
     }
   }
+  await first.flush()
+  await second.flush()
   let reloaded = AgentToolUsageStore(url: url)
   #expect(await reloaded.usage.counts["github_pr"] == 20)
   #expect(await reloaded.usage.promotedTools(among: ["github_pr"]) == ["github_pr"])
@@ -226,6 +228,7 @@ func toolUsagePersistenceFailure() async throws {
   let store = AgentToolUsageStore(url: file.appendingPathComponent("usage.json"))
   let usage = await store.record("github_pr")
   #expect(usage.counts["github_pr"] == 1)
+  await store.flush()
   #expect(await store.lastPersistenceError != nil)
 }
 
