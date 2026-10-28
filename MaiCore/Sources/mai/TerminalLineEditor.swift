@@ -250,6 +250,7 @@ final class TerminalLineEditor {
   private let promptLock = NSLock()
   private var publishedPrompt: TerminalPrompt?
   private var pendingPrompt: TerminalPrompt?
+  private var recoveredInput: String?
   // Only the input thread touches the active prompt and saved chat draft.
   private var activePrompt = TerminalPrompt(text: "")
   private var tracksPromptUpdates = false
@@ -284,6 +285,12 @@ final class TerminalLineEditor {
 
   func install(surface: LineEditorSurface?) {
     persistentSurface = surface
+  }
+
+  /// Called while the reader is parked. Recovery becomes an editable normal
+  /// draft, never an answer to a modal that arrived in the meantime.
+  func recoverInput(_ text: String) {
+    promptLock.withLock { recoveredInput = text }
   }
 
   /// Publish from the event loop; the input thread applies it on its next poll.
@@ -378,6 +385,17 @@ final class TerminalLineEditor {
       bytes = saved.bytes
       cursor = saved.cursor
       pasted = saved.pasted
+    }
+    if tracksPromptUpdates, !activePrompt.isModal {
+      let recovered = promptLock.withLock {
+        defer { recoveredInput = nil }
+        return recoveredInput
+      }
+      if let recovered {
+        bytes = Array(recovered.utf8)
+        cursor = bytes.count
+        pasted = []
+      }
     }
     var historyIndex: Int?
     var draft: [UInt8] = []

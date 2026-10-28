@@ -7,11 +7,12 @@ struct SubagentsBar: View {
   let processes: [AgentProcessInfo]
   let onOpen: () -> Void
 
-  private var live: [AgentProcessInfo] { processes.filter { !$0.state.isTerminal } }
+  private var live: [AgentProcessInfo] { processes.filter { !$0.state.isTerminal && !$0.isArchived } }
+  private var counts: AgentProcessCounts { AgentProcessCounts(processes) }
 
   var body: some View {
     ChatTitleBar(title: headline, subtitle: detail, systemImage: "person.2", onTap: onOpen) {
-      if !live.isEmpty { ProgressView().controlSize(.small) }
+      if counts.running > 0 { ProgressView().controlSize(.small) }
       Button(action: onOpen) {
         Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
       }
@@ -21,17 +22,11 @@ struct SubagentsBar: View {
   }
 
   private var headline: String {
-    let waiting = live.filter(\.needsAttention).count
-    if live.isEmpty {
-      return "\(processes.count) agent\(processes.count == 1 ? "" : "s") finished"
-    }
-    var text = "\(live.count) agent\(live.count == 1 ? "" : "s") running"
-    if waiting > 0 { text += ", \(waiting) waiting for you" }
-    return text
+    counts.summary + (counts.attention > 0 ? " · \(counts.attention) need attention" : "")
   }
 
   private var detail: String? {
-    guard let newest = live.max(by: { $0.updatedAt < $1.updatedAt }) else {
+    guard let newest = live.first(where: \.needsAttention) ?? live.first else {
       return processes.last.map { "\($0.displayName): \($0.state.shortLabel)" }
     }
     let activity = newest.attention?.summary ?? newest.failure ?? newest.activity
@@ -51,10 +46,17 @@ struct SubagentProcessesSheet: View {
   let conversationID: UUID?
   @Environment(\.dismiss) private var dismiss
   @State private var showArchived = false
+  @State private var search = ""
+  @State private var filter: AgentProcessFilter = .all
   @State private var agentPendingDeletion: AgentProcessInfo?
 
   private var processes: [AgentProcessInfo] {
-    store.agentChildren(of: conversationID).filter { showArchived || !$0.isArchived }
+    store.agentChildren(of: conversationID).filter { process in
+      (showArchived || !process.isArchived) && filter.includes(process)
+        && (search.isEmpty || process.displayName.localizedCaseInsensitiveContains(search)
+          || process.task.localizedCaseInsensitiveContains(search)
+          || process.pid.description.contains(search))
+    }
   }
 
   var body: some View {
@@ -133,6 +135,12 @@ struct SubagentProcessesSheet: View {
           }
         }
       }
+      .searchable(text: $search, prompt: "Agent, task, or PID")
+      .searchScopes($filter) {
+        ForEach(AgentProcessFilter.allCases, id: \.self) { value in
+          Text(value.title).tag(value)
+        }
+      }
       .navigationTitle("Agents")
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
@@ -204,12 +212,18 @@ struct SubagentProcessRow: View {
             .foregroundStyle(.secondary)
             .lineLimit(2)
         }
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-          Text(facts(at: context.date))
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.secondary)
-            .lineLimit(2)
+        Group {
+          if process.state.isTerminal {
+            Text(facts(at: process.finishedAt ?? process.updatedAt))
+          } else {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+              Text(facts(at: context.date))
+            }
+          }
         }
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(.secondary)
+        .lineLimit(2)
       }
     }
     .padding(.leading, CGFloat(max(0, process.depth - 1)) * 16)

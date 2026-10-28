@@ -236,7 +236,9 @@ extension AppStore {
   /// the order they were started.
   func agentChildren(of conversationID: UUID?) -> [AgentProcessInfo] {
     guard let conversationID, let root = agentProcessIDs[conversationID] else { return [] }
-    return Array(AgentProcessTree(agentProcesses).subtree(of: root).dropFirst())
+    let tree = cachedAgentProcessTree ?? AgentProcessTree(agentProcesses)
+    cachedAgentProcessTree = tree
+    return Array(tree.subtree(of: root).dropFirst())
   }
 
   func hasLiveAgentChildren(in conversationID: UUID?) -> Bool {

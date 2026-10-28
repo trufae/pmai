@@ -185,3 +185,24 @@ func agentArchiveAndActions() async throws {
   #expect(await restored.info(pids[0])?.isArchived == true)
   #expect(await supervisor.info(child) != nil)
 }
+
+@Test("Agent counts separate queued, paused, waiting and idle roots")
+func agentPresentationCounts() {
+  var processes = (1...500).map {
+    AgentProcessInfo(pid: AgentPID($0), runID: UUID(), agentID: "worker", depth: 1)
+  }
+  processes[0].state = .queued
+  processes[1].state = .paused
+  processes[2].state = .waitingForApproval
+  processes[3].state = .completed
+  processes[4].isArchived = true
+  processes.append(AgentProcessInfo(pid: 501, runID: UUID(), agentID: "idle root"))
+  let counts = AgentProcessCounts(processes)
+  #expect(counts.running == 495)
+  #expect(counts.queued == 1 && counts.paused == 1 && counts.waiting == 1 && counts.finished == 1)
+  let strip = AgentProcessNavigation.strip(processes, selected: 450)
+  #expect(strip.contains("#450"))
+  #expect(strip.count < 40)
+  #expect(AgentProcessFilter.active.includes(processes[0]))
+  #expect(!AgentProcessFilter.active.includes(processes[3]))
+}

@@ -264,7 +264,10 @@ final class AppStore: ObservableObject {
   /// records and transcripts live with their conversations.
   let agentSupervisor = AgentSupervisor()
   /// Written only by the supervisor feed; views read it.
-  @Published var agentProcesses: [AgentProcessInfo] = []
+  @Published var agentProcesses: [AgentProcessInfo] = [] {
+    didSet { cachedAgentProcessTree = nil }
+  }
+  var cachedAgentProcessTree: AgentProcessTree?
   var agentProcessIndexes: [AgentPID: Int] = [:]
   var dirtyAgentRecords: Set<AgentPID> = []
   var agentRecordSaveTask: Task<Void, Never>?

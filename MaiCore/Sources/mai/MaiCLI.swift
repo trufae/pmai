@@ -2233,6 +2233,7 @@ struct MaiCLI {
     var thenLines: [String] = []
     var drainingThen = false
     var focus: REPLMessageTarget = .main
+    var recoveredInputs = REPLRecoveredInput()
     var approvals: [(request: ApprovalRequest, reply: REPLApprovalReply)] = []
     var editingApproval: (request: ApprovalRequest, reply: REPLApprovalReply)?
     var compactions: [(request: AutocompactionRequest, reply: REPLCompactionReply)] = []
@@ -2728,7 +2729,7 @@ struct MaiCLI {
 
     func conversationTabs() async -> [AgentProcessInfo] {
       guard let root = chatProcessIDs[session.id] else { return [] }
-      return await runtime.supervisor.tree().subtree(of: root).sorted { $0.pid < $1.pid }
+      return await runtime.supervisor.tree().subtree(of: root).filter { !$0.isArchived }.sorted { $0.pid < $1.pid }
     }
 
     func refreshTerminalSettings() async {
@@ -2791,30 +2792,21 @@ struct MaiCLI {
         liveContext = await runtime.supervisor.info(turn.pid)?.contextSize
       }
       let liveProcesses = await runtime.supervisor.liveProcesses()
-      let running =
-        loop.foregroundCommand != nil || (!activityWasInterrupted && !liveProcesses.isEmpty)
+      let counts = AgentProcessCounts(liveProcesses)
+      let running = loop.foregroundCommand != nil || (!activityWasInterrupted && counts.running > 0)
       let activityMarker = running ? "●" : "○"
-      if let turn = loop.activeTurn {
-        let activity = await runtime.supervisor.info(turn.pid)?.activity ?? ""
-        facts.append(
-          activity.isEmpty || activity == "thinking" ? "thinking" : "running \(activity)"
-        )
+      let activityPID: AgentPID? = if case .agent(let pid) = loop.focus { pid } else { loop.activeTurn?.pid }
+      if let activityPID, let process = await runtime.supervisor.info(activityPID), !process.state.isTerminal {
+        if process.pauseRequested || process.state == .paused { facts.append("paused") }
+        else if process.state.isWaiting || process.state == .queued { facts.append(process.state.shortLabel) }
+        else { facts.append(process.activity.isEmpty || process.activity == "thinking" ? "thinking" : "running \(process.activity)") }
       }
       if !loop.btwTurns.isEmpty {
         facts.append("\(loop.btwTurns.count) btw running")
       }
       if let command = loop.foregroundCommand { facts.append("running \(command)") }
       let children = liveProcesses.filter { $0.depth > 0 }
-      if !children.isEmpty {
-        let paused = children.filter { $0.state == .paused }.count
-        let queued = children.filter { $0.state == .queued }.count
-        var notes: [String] = []
-        if paused > 0 { notes.append("\(paused) paused") }
-        if queued > 0 { notes.append("\(queued) queued") }
-        facts.append(
-          "\(children.count) agent\(children.count == 1 ? "" : "s")"
-            + (notes.isEmpty ? "" : " (\(notes.joined(separator: ", ")))"))
-      }
+      if !children.isEmpty { facts.append(AgentProcessCounts(children).summary) }
       let queued = await runtime.supervisor.queuedMessages().count
       if queued > 0 { facts.append("\(queued) queued") }
       if configuration?.ui.broadcast == true {
@@ -2824,12 +2816,7 @@ struct MaiCLI {
       }
       let tabs = await conversationTabs()
       let selected: AgentPID? = if case .agent(let pid) = loop.focus { pid } else { chatProcessIDs[session.id] }
-      let strip = tabs.count > 1 ? " [" + tabs.enumerated().map { index, info in
-        if info.pid == selected { return index < 9 ? String(index + 1) : "*" }
-        if info.needsAttention { return "!" }
-        if info.state == .paused { return "‖" }
-        return info.state.isTerminal ? "." : "●"
-      }.joined() + "]" : ""
+      let strip = AgentProcessNavigation.strip(tabs, selected: selected)
       let detail = facts.isEmpty ? "" : " · " + facts.joined(separator: " · ")
       return (
         "\(activityMarker)\(strip) \(currentDirectoryName()) \(promptIdentity(identitySession, contextSize: liveContext, includeContext: loop.focus == .main || liveContext != nil))\(detail)",
@@ -4064,7 +4051,30 @@ struct MaiCLI {
         if !loop.drainingThen { loop.readerParked = true }
         let typed = heredoc ? raw : raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if !typed.hasPrefix("/"), promptID != loop.modalPrompt(for: session.id)?.input.id {
-          await terminal.note("The prompt changed before submission. Please answer the current prompt.", tone: .warning)
+          loop.recoveredInputs.keep(raw, promptID: promptID)
+          await terminal.note("The prompt changed before submission. Input kept as recovery item \(loop.recoveredInputs.entries.count); /recover lists it for review.", tone: .warning)
+          await releaseIfIdle(workspace: workspace)
+          return false
+        }
+        if typed == "/recover" || typed.hasPrefix("/recover ") {
+          let argument = typed.dropFirst("/recover".count).trimmingCharacters(in: .whitespaces)
+          if argument == "clear" {
+            loop.recoveredInputs.clear()
+            await terminal.note("Recovered inputs cleared.")
+          } else if let number = Int(argument) {
+            if loop.modalPrompt(for: session.id) != nil {
+              await terminal.note("Finish or cancel the current prompt before restoring a draft. Your input is still kept.")
+            } else if let text = loop.recoveredInputs.take(number) {
+              editor.recoverInput(text)
+              await terminal.note("Recovered input restored as an editable draft.")
+            } else { await terminal.note("No recovered input \(number). /recover lists the available items.") }
+          } else {
+            let entries = loop.recoveredInputs.entries
+            await terminal.line(entries.isEmpty ? "No recovered input." : entries.enumerated().map {
+              "\($0.offset + 1). [\($0.element.promptID ?? "message")] \($0.element.text)"
+            }.joined(separator: "\n"))
+            if !entries.isEmpty { await terminal.note("/recover N restores a draft for review; /recover clear discards kept inputs.") }
+          }
           await releaseIfIdle(workspace: workspace)
           return false
         }
@@ -14043,7 +14053,7 @@ struct MaiCLI {
     themesDirectory: URL
   ) -> [String] {
     var values = [
-      "/help", "/help set", "/help reset", "/reset", "/exit", "/quit", "/set tool.aproval yolo", "/set tool.aproval ask",
+      "/recover", "/recover clear", "/help", "/help set", "/help reset", "/reset", "/exit", "/quit", "/set tool.aproval yolo", "/set tool.aproval ask",
       "/help shell", "/help keys", "/help model",
       "/help history", "/history", "/history list", "/history search ", "/history del ",
       "/history clear", "/history path", "/history help",
