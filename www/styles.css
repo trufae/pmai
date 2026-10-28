@@ -151,6 +151,10 @@ details > p { max-width: 920px; margin: 0 0 24px; color: var(--muted); font-size
 .command-box code { font-size: 13px; }
 .copy-button { justify-self: start; min-height: 36px; padding: 5px 14px; border: 1px solid #ffffff70; border-radius: 3px; color: var(--paper); background: transparent; font-size: 13px; cursor: pointer; }
 .copy-button:hover, .copy-button.copied { border-color: var(--accent); color: var(--accent); }
+.quick-install { display: flex; align-items: stretch; gap: 16px; padding-block: 20px; border-bottom: 1px solid var(--line); }
+.quick-install .command-box { display: flex; flex: 1; min-width: 0; align-items: center; gap: 16px; margin: 0; color: var(--paper); }
+.quick-install code { flex: 1; min-width: 0; overflow-x: auto; overflow-wrap: normal; white-space: nowrap; }
+.quick-install .copy-button, .quick-install > .button { flex-shrink: 0; }
 .android-mark { display: grid; width: 56px; height: 56px; place-items: center; margin-bottom: 25px; border: 1px solid var(--ink); border-radius: 10px; background: #dce7cb; font: 700 15px var(--mono); }
 .download-links { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 16px; font-size: 13px; text-underline-offset: 4px; }
 .closing { display: flex; align-items: center; gap: 30px; padding-block: 65px; }
@@ -201,6 +205,8 @@ details > p { max-width: 920px; margin: 0 0 24px; color: var(--muted); font-size
   .download-card { padding: 32px; }
   .download-card .button { width: auto; margin-top: 12px; }
   .command-box { max-width: 550px; }
+  .quick-install { flex-wrap: wrap; gap: 12px; }
+  .quick-install .command-box { flex-basis: 100%; max-width: none; }
   .download-card > img, .android-mark { margin-bottom: 18px; }
 }
 @media (max-width: 540px) {

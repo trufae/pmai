@@ -26,7 +26,11 @@
       <nav class="site-nav" id="site-nav" aria-label="Main navigation" data-nav><a href="#why">Why pmai</a><a href="#workflow">Phone + terminal</a><a href="#tools">Tools</a><a href="https://github.com/trufae/pmai">GitHub ↗</a><a class="nav-download" href="#get">Get pmai ↓</a></nav>
     </header>
     <main id="main">
-      <section class="hero section-shell" id="top">
+      <div class="quick-install section-shell" id="top" aria-label="Get PocketMai and pmai">
+        <div class="command-box"><code id="quick-install-command">curl -fsSL https://raw.githubusercontent.com/trufae/pmai/main/www/install.sh | sh</code><button class="copy-button" type="button" data-copy="quick-install-command" aria-label="Copy CLI install command"><span data-copy-label>Copy</span></button></div>
+        <a class="button button-dark" href="https://apps.apple.com/es/app/pocketmai/id6764296742">Get it on the App Store ↗</a>
+      </div>
+      <section class="hero section-shell">
         <div class="hero-copy">
           <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> Open source. Native Swift. Your choice of model.</p>
           <h1>Your agent.<br>On <em>your terms.</em></h1>
@@ -114,7 +118,7 @@
           <div class="section-heading"><p class="kicker">Get started</p><h2>Pick your pocket.<br>Or your terminal.</h2><p>Open source, built with Swift. Bring the model provider that suits you.</p></div>
           <div class="download-grid" id="platforms">
             <article class="download-card ios-download"><img src="icon-192.png" alt="PocketMai app icon" width="56" height="56"><p class="kicker">Native iOS app</p><h3>PocketMai</h3><p>Voice, native tools, documents, WebXDC apps, and remote projects.</p><a class="button button-dark" href="https://apps.apple.com/es/app/pocketmai/id6764296742">Get it on the App Store ↗</a><small>iOS 18+ · some features need a newer OS or supported hardware.</small></article>
-            <article class="download-card cli-download" id="cli-install"><img src="pmai-logo-noai.png" alt="pmai CLI icon" width="56" height="56"><p class="kicker">macOS · Linux · Android</p><h3>pmai CLI</h3><p>A terminal agent with projects, shell tools, skills, MCP, ACP, and Vim integration.</p><div class="command-box"><code id="install-command">curl -fsSL https://raw.githubusercontent.com/trufae/pmai/main/www/install.sh | sh</code><button class="copy-button" type="button" data-copy aria-label="Copy CLI install command"><span data-copy-label>Copy</span></button></div><small>No root needed · checksummed release download.<br>Update an existing installation with <code>pmai -U</code>.</small><a class="inline-link" href="https://github.com/trufae/pmai/blob/main/MaiCore/README.md">CLI guide ↗</a></article>
+            <article class="download-card cli-download" id="cli-install"><img src="pmai-logo-noai.png" alt="pmai CLI icon" width="56" height="56"><p class="kicker">macOS · Linux · Android</p><h3>pmai CLI</h3><p>A terminal agent with projects, shell tools, skills, MCP, ACP, and Vim integration.</p><div class="command-box"><code id="install-command">curl -fsSL https://raw.githubusercontent.com/trufae/pmai/main/www/install.sh | sh</code><button class="copy-button" type="button" data-copy="install-command" aria-label="Copy CLI install command"><span data-copy-label>Copy</span></button></div><small>No root needed · checksummed release download.<br>Update an existing installation with <code>pmai -U</code>.</small><a class="inline-link" href="https://github.com/trufae/pmai/blob/main/MaiCore/README.md">CLI guide ↗</a></article>
             <article class="download-card android-download"><span class="android-mark" aria-hidden="true">APK</span><p class="kicker">Native Android preview</p><h3>PocketMai for Android</h3><p>Provider setup, custom prompts, streaming chat, and saved history. A smaller app, growing with the same Swift core.</p><a class="button button-dark" href="downloads/PocketMai-Android.apk" download>Download Android APK ↓</a><small>Latest successful main-branch development build · arm64 + x86_64. Updating debug builds may require reinstalling.</small><div class="download-links"><a href="downloads/PocketMai-Android.apk.sha256">SHA-256</a><a href="https://github.com/trufae/pmai/blob/main/PocketMaiAndroid/README.md">Android guide ↗</a></div></article>
           </div>
         </div>

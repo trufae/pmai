@@ -43,10 +43,6 @@
     if (toolCount) toolCount.textContent = `${count} ${count === 1 ? "capability" : "capabilities"}`;
   }));
 
-  const installCommand = document.querySelector("#install-command");
-  const copyButton = document.querySelector("[data-copy]");
-  const copyLabel = document.querySelector("[data-copy-label]");
-
   const legacyCopy = (text) => {
     const input = document.createElement("textarea");
     input.value = text;
@@ -60,7 +56,9 @@
     return copied;
   };
 
-  copyButton?.addEventListener("click", async () => {
+  document.querySelectorAll("[data-copy]").forEach((copyButton) => copyButton.addEventListener("click", async () => {
+    const installCommand = document.getElementById(copyButton.dataset.copy);
+    const copyLabel = copyButton.querySelector("[data-copy-label]");
     const text = installCommand?.textContent?.trim();
     if (!text) return;
 
@@ -79,7 +77,7 @@
       copyButton.classList.remove("copied");
       if (copyLabel) copyLabel.textContent = "Copy";
     }, 1800);
-  });
+  }));
 
   const year = document.querySelector("[data-year]");
   if (year) year.textContent = String(new Date().getFullYear());
