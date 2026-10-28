@@ -48,6 +48,8 @@ public struct AgentChat: PagedStoredChat, Equatable {
   public var updatedAt: Date
   /// Archived chats are kept for reference but listed apart from active ones.
   public var isArchived: Bool
+  /// Pinned chats are kept and shown in their own listing group.
+  public var isPinned: Bool
   /// The session this chat presents to providers; see `ChatSession`.
   public var sessionID: String
   /// The agents this chat's runs started, parents before children, each
@@ -68,6 +70,7 @@ public struct AgentChat: PagedStoredChat, Equatable {
     createdAt: Date = Date(),
     updatedAt: Date = Date(),
     isArchived: Bool = false,
+    isPinned: Bool = false,
     sessionID: String? = nil,
     subagents: [AgentProcessRecord] = [],
     commands: [AgentCommandRecord] = [],
@@ -84,6 +87,7 @@ public struct AgentChat: PagedStoredChat, Equatable {
     self.createdAt = createdAt
     self.updatedAt = updatedAt
     self.isArchived = isArchived
+    self.isPinned = isPinned
     self.sessionID = sessionID ?? ChatSession.newID()
     self.subagents = subagents
     self.commands = commands
@@ -92,7 +96,7 @@ public struct AgentChat: PagedStoredChat, Equatable {
 
   private enum CodingKeys: String, CodingKey {
     case id, title, primaryAgent, messages, pendingContent, createdAt, updatedAt, isArchived
-    case sessionID, subagents, commands, runtimeConfiguration, accessedFiles
+    case sessionID, subagents, commands, runtimeConfiguration, accessedFiles, isPinned
   }
 
   public init(from decoder: Decoder) throws {
@@ -110,6 +114,7 @@ public struct AgentChat: PagedStoredChat, Equatable {
     createdAt = try container.decode(Date.self, forKey: .createdAt)
     updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
+    isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
     subagents =
       try container.decodeIfPresent([AgentProcessRecord].self, forKey: .subagents) ?? []
     if let saved = try container.decodeIfPresent([AgentCommandRecord].self, forKey: .commands) {
@@ -140,6 +145,7 @@ public struct AgentChat: PagedStoredChat, Equatable {
     try container.encode(createdAt, forKey: .createdAt)
     try container.encode(updatedAt, forKey: .updatedAt)
     try container.encode(isArchived, forKey: .isArchived)
+    try container.encode(isPinned, forKey: .isPinned)
     try container.encode(sessionID, forKey: .sessionID)
     try container.encode(subagents, forKey: .subagents)
     try container.encode(commands, forKey: .commands)
@@ -190,14 +196,14 @@ public struct AgentChat: PagedStoredChat, Equatable {
   }
 
   /// An untouched placeholder: nothing was said, and nobody renamed or
-  /// archived it. Queued attachments do not count; a chat that never received
-  /// a message is dropped instead of piling up as an empty entry.
+  /// archived or pinned it. Queued attachments do not count; a chat that never
+  /// received a message is dropped instead of piling up as an empty entry.
   public var isDisposable: Bool {
     Self.isDisposable(
       title: title,
       hasConversation: hasConversation,
       isBusy: false,
-      isKept: isArchived)
+      isKept: isArchived || isPinned)
   }
 
   /// The rule every host applies before listing or persisting a chat: an
@@ -258,6 +264,7 @@ public struct AgentChat: PagedStoredChat, Equatable {
     chat.createdAt = date
     chat.updatedAt = date
     chat.isArchived = false
+    chat.isPinned = false
     return chat
   }
 
@@ -347,7 +354,7 @@ public struct AgentChatWorkspace: Codable, Equatable, Sendable {
   }
 
   /// Chats in the order a sidebar shows them: active chats newest first,
-  /// then archived chats newest first. Listing indexes refer to this order.
+  /// then archived chats newest first. The CLI uses creation order for indexes.
   public var orderedChats: [AgentChat] {
     activeChats + archivedChats
   }

@@ -221,6 +221,40 @@ def main():
                 assert 'colors smoke done' in output and '+new' in output, output
 
             config.write_bytes(before)  # Restore the custom palette for status badges.
+            for options in ({}, {'terminal': False}, {'extra_env': {'NO_COLOR': '1'}},
+                            {'extra_env': {'TERM': 'dumb'}}):
+                output = run('/chat rename Pinned color chat', '/chat pin',
+                             '/chat new Current color chat', '/chat list',
+                             '/chat list > chats.txt', **options)
+                plain = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', output)
+                assert 'Pinned\n' in plain and '📌 Pinned color chat' in plain, plain
+                assert 'Today\n' in plain and 'Current color chat' in plain, plain
+                if not options:
+                    assert '\x1b[1;38;2;35;69;103m📌 Pinned color chat' in output, output
+                    assert '\x1b[1;32mCurrent color chat' in output, output
+                    assert re.search(r'\x1b\[1;[\d;]+mPinned\x1b\[0m', output), output
+                    assert '\x1b[38;2;171;205;239m' in output, output
+                else:
+                    assert '\x1b[' not in output, output
+                redirected = (root / 'chats.txt').read_text()
+                assert '📌 Pinned color chat' in redirected and '\x1b[' not in redirected, redirected
+            for options in ({}, {'terminal': False}, {'extra_env': {'NO_COLOR': '1'}},
+                            {'extra_env': {'TERM': 'dumb'}}):
+                output = run('/chat new Message color chat', 'show colors', '/msg pin',
+                             '/msg list', '/msg list > messages.txt', **options)
+                plain = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', output)
+                assert 'Conversation log:\n' in plain and '📌 Assistant (id:' in plain, plain
+                assert 'User (id:' in plain and 'Tool (id:' in plain, plain
+                if not options:
+                    assert re.search(r'\x1b\[1;[\d;]+mUser\x1b\[0m', output), output
+                    assert '\x1b[1;32mAssistant\x1b[0m' in output, output
+                    assert '\x1b[1;38;2;52;86;120mTool\x1b[0m' in output, output
+                    assert '\x1b[1;38;2;35;69;103m📌 ' in output, output
+                    assert '\x1b[38;2;171;205;239m(id:' in output, output
+                else:
+                    assert '\x1b[' not in output, output
+                redirected = (root / 'messages.txt').read_text()
+                assert '📌 Assistant (id:' in redirected and '\x1b[' not in redirected, redirected
             # Names are bold, status follows in parentheses, and every line
             # of the skill description is indented. Pipes and NO_COLOR stay plain.
             for options in ({}, {'terminal': False}, {'extra_env': {'NO_COLOR': '1'}},

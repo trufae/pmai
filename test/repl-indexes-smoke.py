@@ -2,6 +2,7 @@
 """Check indexes from either end in messages, saved chats, projects, and todos."""
 import copy
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -44,7 +45,8 @@ def main():
             prefix = ('aaaaaaaa', 'bbbbbbbb', 'cccccccc', 'dddddddd')[index]
             chat.update(id=f'{prefix}-0000-4000-8000-000000000001', title=title,
                         messages=fixture, isArchived=index == 3,
-                        updatedAt=f'200{4 - index}-01-01T00:00:00Z')
+                        createdAt=f'200{5 if index == 3 else 4 - index}-01-01T00:00:00Z',
+                        updatedAt=f'201{index}-01-01T00:00:00Z')
             chats.append(chat)
         saved = saved.parent / (chats[0]['id'].upper() + '.json')
 
@@ -53,15 +55,16 @@ def main():
                 (saved.parent / (chat['id'].upper() + '.json')).write_text(json.dumps(chat))
 
         def run(commands, args=('-r', 'Newest'), allow_errors=False, split=True):
-            return run_repl(command + list(args), commands, cwd=current, env=env,
-                            split=split, allow_errors=allow_errors)
+            output = run_repl(command + list(args), commands, cwd=current, env=env,
+                              split=split, allow_errors=allow_errors)
+            return [part.split('pmai> ', 1)[-1] for part in output] if split else output
 
         def messages():
             return read_chat(saved)['messages']
 
         # The same ordering governs info, switching, launch-time resume, and archiving.
-        for selector, title in [('-1', 'Archived'), ('-2', 'Oldest'), ('-4', 'Newest'),
-                                ('1', 'Newest'), ('4', 'Archived')]:
+        for selector, title in [('-1', 'Archived'), ('-2', 'Newest'), ('-4', 'Oldest'),
+                                ('1', 'Oldest'), ('4', 'Archived')]:
             reset()
             info, switched = run(['/chat info ' + selector, '/chat use ' + selector])
             assert f'Title:    {title}' in info, info
@@ -75,7 +78,7 @@ def main():
             output = run(['/chat info'], args=(alias, '-1', '--no-markdown'))[0]
             assert 'Title:    Archived' in output, output
         reset()
-        archived, info = run(['/chat archive -2', '/chat info Oldest'])
+        archived, info = run(['/chat archive 1', '/chat info Oldest'])
         assert "Archived 'Oldest'." in archived, archived
         assert 'Status:   archived' in info, info
         reset()
@@ -83,7 +86,7 @@ def main():
         assert "Restored 'Archived'" in restored, restored
         assert 'Status:   active' in info, info
         reset()
-        deleted, listing, moved = run(['/chat del -2', '/chat list', '/chat close confirm'])
+        deleted, listing, moved = run(['/chat del 1', '/chat list', '/chat close confirm'])
         assert "Deleted 'Oldest'." in deleted, deleted
         assert 'Oldest' not in listing and 'Middle' in listing, listing
         assert '/chat del' in moved, moved
@@ -94,7 +97,50 @@ def main():
         assert "Deleted 'Newest'; switched to" in deleted[0], deleted
         assert not saved.exists()
         reset()
-        assert 'Message actions moved to /msg' in run(['/chat pin'])[0]
+        listing = run(['/chat list'])[0]
+        assert listing.index('Oldest') < listing.index('Middle') < listing.index('Newest'), listing
+        assert listing.index('2002') < listing.index('2003') < listing.index('2004'), listing
+        assert re.findall(r'^\*?\s+(\d+)\s+[A-Fa-f0-9]{8}', listing, re.M) == ['1', '2', '3', '4'], listing
+        pinned, listing, info = run(['/chat pin', '/chat list', '/chat info'])
+        assert "📌 Pinned 'Newest'." in pinned, pinned
+        assert listing.startswith('Pinned\n') and '📌 Newest' in listing, listing
+        assert listing.count('Newest') == 1 and listing.index('Newest') < listing.index('Oldest'), listing
+        assert 'Index:    3' in info and 'Status:   active, pinned, current' in info, info
+        assert read_chat(saved)['isPinned'] is True
+        # Pin state survives reload and unrelated saves; selectors retain creation order.
+        info, switched, pinned, listing = run([
+            '/chat info', '/chat use 1', '/chat pin bbbbbbbb', '/chat list active'])
+        assert 'active, pinned, current' in info, info
+        assert "Switched to 'Oldest'" in switched, switched
+        assert "Pinned 'Middle'" in pinned, pinned
+        assert listing.index('Middle') < listing.index('Newest') < listing.index('Oldest'), listing
+        assert listing.count('Pinned\n') == 1 and 'Archived' not in listing, listing
+        assert read_chat(saved)['isPinned'] is True
+        unpinned, info, listing = run(['/chat unpin -2', '/chat info 3', '/chat list'])
+        assert "Unpinned 'Newest'" in unpinned, unpinned
+        assert 'Index:    3' in info and 'pinned' not in info, info
+        assert '📌 Newest' not in listing and listing.index('Oldest') < listing.index('Newest'), listing
+        reset()
+        output = run(['/chat use 1', '/chat next', '/chat previous'])
+        assert "Switched to 'Middle'" in output[1] and "Switched to 'Oldest'" in output[2], output
+        # Bulk deletion uses the original indexes, removes duplicate selectors once,
+        # and switches only after every target has been removed.
+        reset()
+        deleted, info = run(['/chat del 1 2 cccccccc -2', '/chat info'])
+        assert deleted.count("Deleted 'Oldest'") == 1, deleted
+        assert "Deleted 'Middle'" in deleted and "Deleted 'Newest'; switched to 'Archived'" in deleted, deleted
+        assert 'Title:    Archived' in info, info
+        assert len(list(saved.parent.glob('*.json'))) == 1
+        reset()
+        deleted, info = run(['/chat del 1 2 3 4', '/chat info'])
+        assert 'started a new chat' in deleted and 'Title:    New chat' in info, (deleted, info)
+        assert not list(saved.parent.glob('*.json'))
+        reset()
+        output = run(['/chat del 1 missing-chat'])[0]
+        assert 'Usage: /chat del' in output and len(list(saved.parent.glob('*.json'))) == 4, output
+        reset()
+        output = run(['/chat rename Title with spaces', '/chat del Title with spaces'])
+        assert "Deleted 'Title with spaces'" in output[1], output
         for selector in ('0', '-5', '5', '-9223372036854775808', '9223372036854775807'):
             reset()
             output = run(['/chat use ' + selector])[0]

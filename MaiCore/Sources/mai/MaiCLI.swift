@@ -777,6 +777,7 @@ struct REPLSession: Sendable {
   var createdAt: Date
   var updatedAt: Date
   var isArchived: Bool
+  var isPinned: Bool
   /// The agents this chat's runs started, with their transcripts, as saved
   /// with the chat. The REPL brings them up to date from the supervisor as
   /// runs end and puts them back in the process table when the chat is
@@ -805,6 +806,7 @@ struct REPLSession: Sendable {
     self.createdAt = createdAt
     self.updatedAt = updatedAt
     isArchived = false
+    isPinned = false
     subagents = []
     commands = []
     redactor = nil
@@ -823,6 +825,7 @@ struct REPLSession: Sendable {
     createdAt = chat.createdAt
     updatedAt = chat.updatedAt
     isArchived = chat.isArchived
+    isPinned = chat.isPinned
     subagents = chat.subagents
     commands = chat.commands
     runtimeConfiguration = chat.runtimeConfiguration
@@ -840,6 +843,7 @@ struct REPLSession: Sendable {
       createdAt: createdAt,
       updatedAt: updatedAt,
       isArchived: isArchived,
+      isPinned: isPinned,
       sessionID: sessionID,
       subagents: redactor?.unredact(subagents) ?? subagents,
       commands: commands,
@@ -1331,7 +1335,7 @@ struct MaiCLI {
           FileHandle.standardError.write(
             Data("warning: skipped a chat file. \(error.localizedDescription)\n".utf8))
         }
-        print(chatListing(workspace, scope: .all, selectedID: nil))
+        print(await chatListing(workspace, scope: .all, selectedID: nil, terminal: TerminalWriter()))
         return
       }
 
@@ -12829,7 +12833,7 @@ struct MaiCLI {
         await terminal.line("Usage: /chat list [active|archived|all]")
         return
       }
-      await terminal.line(chatListing(workspace, scope: scope, selectedID: session.id))
+      await terminal.line(chatListing(workspace, scope: scope, selectedID: session.id, terminal: terminal))
     case "new":
       var profile = session.profile
       var title = rest
@@ -12875,15 +12879,14 @@ struct MaiCLI {
         to: chat, session: &session, workspace: &workspace,
         terminal: terminal)
     case "next", "previous", "prev":
-      let ordered = workspace.orderedChats
+      let ordered = chronologicalChats(workspace)
       guard ordered.count > 1,
         let current = ordered.firstIndex(where: { $0.id == session.id })
       else {
         await terminal.line("There is only one chat.")
         return
       }
-      // The list is newest first: previous goes to an older chat, next to a newer one.
-      let offset = action == "next" ? -1 : 1
+      let offset = action == "next" ? 1 : -1
       let chat = ordered[(current + offset + ordered.count) % ordered.count]
       await switchSession(
         to: chat, session: &session, workspace: &workspace,
@@ -12918,6 +12921,24 @@ struct MaiCLI {
       session.touch()
       workspace.upsert(session.chat, selecting: true)
       await terminal.line("Chat renamed to '\(rest)'.")
+    case "pin", "unpin":
+      guard var chat = rest.isEmpty ? session.chat : resolveChat(rest, in: workspace) else {
+        await terminal.line("Usage: /chat \(action) [INDEX|ID|TITLE]")
+        return
+      }
+      let pinned = action == "pin"
+      guard chat.isPinned != pinned else {
+        await terminal.line("'\(chat.displayTitle)' is already \(pinned ? "pinned" : "unpinned").")
+        return
+      }
+      chat.isPinned = pinned
+      chat.touch()
+      if chat.id == session.id {
+        session.isPinned = pinned
+        session.updatedAt = chat.updatedAt
+      }
+      workspace.upsert(chat)
+      await terminal.line("\(pinned ? "📌 Pinned" : "Unpinned") '\(chat.displayTitle)'.")
     case "archive":
       guard let chat = rest.isEmpty ? session.chat : resolveChat(rest, in: workspace) else {
         await terminal.line("Usage: /chat archive [INDEX|ID|TITLE]")
@@ -12960,23 +12981,34 @@ struct MaiCLI {
       }
       await terminal.line("Restored '\(chat.displayTitle)' to the active chats.")
     case "del", "delete", "rm":
-      guard !rest.isEmpty, let chat = resolveChat(rest, in: workspace) else {
-        await terminal.line("Usage: /chat del INDEX|ID|TITLE (permanent; /chat archive keeps it)")
+      // Preserve an exact title containing spaces; otherwise resolve every
+      // selector before mutating the workspace so numeric indexes cannot shift.
+      let selectors = resolveChat(rest, in: workspace) != nil
+        ? [rest] : rest.split(whereSeparator: \.isWhitespace).map(String.init)
+      let matches = selectors.compactMap { resolveChat($0, in: workspace) }
+      guard !selectors.isEmpty, matches.count == selectors.count else {
+        await terminal.line("Usage: /chat del INDEX|ID|TITLE [...] (permanent; /chat archive keeps it)")
         return
       }
-      _ = workspace.removeChat(id: chat.id)
-      guard chat.id == session.id else {
-        await terminal.line("Deleted '\(chat.displayTitle)'.")
+      var deletedIDs: Set<UUID> = []
+      for chat in matches where deletedIDs.insert(chat.id).inserted {
+        _ = workspace.removeChat(id: chat.id)
+        if chat.id != session.id {
+          await terminal.line("Deleted '\(chat.displayTitle)'.")
+        }
+      }
+      guard deletedIDs.contains(session.id) else {
         return
       }
+      let title = session.chat.displayTitle
       if let next = workspace.activeChats.first ?? workspace.orderedChats.first {
         _ = workspace.selectChat(id: next.id)
         session = REPLSession(chat: next)
-        await terminal.line("Deleted '\(chat.displayTitle)'; switched to '\(session.title)'.")
+        await terminal.line("Deleted '\(title)'; switched to '\(session.title)'.")
       } else {
         session = REPLSession(
           chat: workspace.startNewChat(primaryAgent: session.profile.agentDefinition))
-        await terminal.line("Deleted '\(chat.displayTitle)'; started a new chat.")
+        await terminal.line("Deleted '\(title)'; started a new chat.")
       }
     case "files":
       guard rest.isEmpty else {
@@ -12999,8 +13031,8 @@ struct MaiCLI {
     case "help":
       await terminal.line(chatHelp)
     case "close":
-      await terminal.line("/chat close is now /chat del INDEX|ID|TITLE.")
-    case "messages", "log", "last", "pin", "pins", "pinlist", "unpin", "edit", "undo", "trim", "rewind", "chop":
+      await terminal.line("/chat close is now /chat del INDEX|ID|TITLE [...].")
+    case "messages", "log", "last", "pins", "pinlist", "edit", "undo", "trim", "rewind", "chop":
       await terminal.line("Message actions moved to /msg: use /msg \(action == "messages" ? "list" : action).")
     default:
       await terminal.line("Unknown /chat action '\(action)'.\n\n\(chatHelp)")
@@ -13038,9 +13070,6 @@ struct MaiCLI {
     }
   }
 
-  /// Chats grouped the way the PocketMai sidebar groups them: active chats
-  /// under Today / Yesterday / This week / Last week / date headers, newest
-  /// first, then the archived ones. Indexes match `/chat use N`.
   private static func handleProjectCommand(
     _ argument: String,
     project: inout AgentProject,
@@ -13215,40 +13244,55 @@ struct MaiCLI {
     return "…" + shown.suffix(width - 1)
   }
 
+  /// Numeric selectors follow creation order, independent of pin/archive state
+  /// and subsequent activity. Grouping only changes where a row is displayed.
+  private static func chronologicalChats(_ workspace: AgentChatWorkspace) -> [AgentChat] {
+    workspace.chats.sorted {
+      if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
+      return $0.id.uuidString < $1.id.uuidString
+    }
+  }
+
   private static func chatListing(
     _ workspace: AgentChatWorkspace,
     scope: ChatListScope,
     selectedID: UUID?,
-    now: Date = Date()
-  ) -> String {
-    let ordered = workspace.orderedChats
+    now: Date = Date(),
+    terminal: TerminalWriter
+  ) async -> String {
+    let ordered = chronologicalChats(workspace)
     var lines: [String] = []
-    func append(_ chats: [AgentChat], header: (AgentChat) -> String) {
+    func append(_ chats: [AgentChat], header: (AgentChat) -> String) async {
       var previous: String?
       for chat in chats {
         let title = header(chat)
         if title != previous {
-          lines.append(title)
+          lines.append(await terminal.paintHeading(title))
           previous = title
         }
         let index = (ordered.firstIndex { $0.id == chat.id } ?? 0) + 1
-        lines.append(chatRow(chat, index: index, selected: chat.id == selectedID, now: now))
+        lines.append(await chatRow(chat, index: index, selected: chat.id == selectedID, now: now, terminal: terminal))
       }
     }
     if scope != .archived {
-      let active = workspace.activeChats
+      let active = ordered.filter { !$0.isArchived }
       if active.isEmpty { lines.append("No active chats.") }
-      append(active) { ChatDatePresentation.groupTitle(for: $0.updatedAt, relativeTo: now) }
+      await append(active.filter(\.isPinned)) { _ in "Pinned" }
+      await append(active.filter { !$0.isPinned }) {
+        ChatDatePresentation.groupTitle(for: $0.createdAt, relativeTo: now)
+      }
     }
     if scope != .active {
-      let archived = workspace.archivedChats
+      let archived = ordered.filter(\.isArchived)
       if archived.isEmpty, scope == .archived { lines.append("No archived chats.") }
-      append(archived) { _ in "Archived" }
+      await append(archived) { _ in "Archived" }
     }
     return lines.joined(separator: "\n")
   }
 
-  private static func chatRow(_ chat: AgentChat, index: Int, selected: Bool, now: Date) -> String {
+  private static func chatRow(
+    _ chat: AgentChat, index: Int, selected: Bool, now: Date, terminal: TerminalWriter
+  ) async -> String {
     let marker = selected ? "*" : " "
     let number = index < 10 ? " \(index)" : "\(index)"
     let count =
@@ -13256,10 +13300,16 @@ struct MaiCLI {
       ?? chat.conversationMessages.count
     let size = count == 0 ? "empty" : "\(count) msg"
     return [
-      "\(marker) \(number)", String(chat.id.uuidString.prefix(8)),
-      padded(chat.displayTitle, width: 40), padded(chat.primaryAgent.id, width: 10),
-      padded(size, width: 8),
-      ChatDatePresentation.compactTimestamp(chat.updatedAt, relativeTo: now),
+      await terminal.paint("\(marker) \(number)", role: selected ? .successForeground : .infoForeground, bold: selected),
+      await terminal.paint(String(chat.id.uuidString.prefix(8)), role: .thinkingForeground),
+      await terminal.paint(
+        padded((chat.isPinned ? "📌 " : "") + chat.displayTitle, width: 40),
+        role: selected ? .successForeground : chat.isPinned ? .warningForeground : .foreground,
+        bold: selected || chat.isPinned),
+      await terminal.paint(padded(chat.primaryAgent.id, width: 10), role: .toolCallForeground),
+      await terminal.paint(padded(size, width: 8), role: .thinkingForeground),
+      await terminal.paint(
+        ChatDatePresentation.compactTimestamp(chat.createdAt, relativeTo: now), role: .thinkingForeground),
     ].joined(separator: "  ")
   }
 
@@ -13268,11 +13318,12 @@ struct MaiCLI {
     workspace: AgentChatWorkspace,
     selectedID: UUID?
   ) -> String {
-    let index = (workspace.orderedChats.firstIndex { $0.id == chat.id } ?? 0) + 1
+    let index = (chronologicalChats(workspace).firstIndex { $0.id == chat.id } ?? 0) + 1
     let count =
       chat.historyWindow?.conversationCount ?? chat.historyWindow?.totalCount
       ?? chat.conversationMessages.count
     var status = chat.isArchived ? "archived" : "active"
+    if chat.isPinned { status += ", pinned" }
     if chat.id == selectedID { status += ", current" }
     var lines = [
       "Title:    \(chat.displayTitle)",
@@ -13308,7 +13359,7 @@ struct MaiCLI {
     _ selector: String,
     in workspace: AgentChatWorkspace
   ) -> AgentChat? {
-    let ordered = workspace.orderedChats
+    let ordered = chronologicalChats(workspace)
     if let index = ListIndex.resolve(selector, count: ordered.count) {
       return ordered[index]
     }
@@ -13706,9 +13757,9 @@ struct MaiCLI {
     var lines = [
       full
         ? await terminal.paintHeading(includeDetails ? "# Full conversation log" : "# Conversation log")
-        : "Conversation log:"
+        : await terminal.paintHeading("Conversation log:")
     ]
-    if !full { lines.append("-----------------") }
+    if !full { lines.append(await terminal.paint("-----------------", role: .thinkingForeground)) }
     for (index, storedMessage) in session.history.messages.enumerated() {
       var message = storedMessage
       if full && !includeDetails && !short {
@@ -13731,10 +13782,21 @@ struct MaiCLI {
           "\n" + (await renderChatMessage(message, index: index, terminal: terminal)))
         lines.append("--------------------")
       } else {
-        lines.append("[\(index + 1)] \(pin)\(role) (id: \(message.id)): \(messagePreview(message))")
+        let roleColor: TerminalThemeStyle = switch message.role {
+        case .user: .infoForeground
+        case .assistant: .successForeground
+        case .tool: .toolCallForeground
+        case .system, .developer: .thinkingForeground
+        }
+        let number = await terminal.paint("[\(index + 1)]", role: .infoForeground, bold: true)
+        let pinMarker = await terminal.paint(pin, role: .warningForeground, bold: true)
+        let label = await terminal.paint(role, role: roleColor, bold: true)
+        let identifier = await terminal.paint("(id: \(message.id))", role: .thinkingForeground)
+        lines.append("\(number) \(pinMarker)\(label) \(identifier): \(messagePreview(message))")
       }
     }
-    lines.append("\nTotal messages: \(session.history.count)")
+    let total = "Total messages: \(session.history.count)"
+    lines.append("\n" + (full ? total : await terminal.paint(total, role: .thinkingForeground)))
     if !session.pendingContent.isEmpty {
       lines.append(
         "Pending for next message: \(session.pendingContent.map(renderCompactContent).joined(separator: ", "))"
@@ -14206,6 +14268,7 @@ struct MaiCLI {
       "/chat list active", "/chat list archived", "/chat list all", "/chat new ", "/chat fork",
       "/chat use ", "/chat next", "/chat previous", "/chat info", "/chat session",
       "/chat session new", "/chat rename ",
+      "/chat pin", "/chat pin ", "/chat unpin", "/chat unpin ",
       "/chat archive", "/chat unarchive ", "/chat del ",
       "/chat files", "/msg", "/msg list", "/msg log", "/msg log quiet", "/msg log verbose", "/msg log short", "/msg pin", "/msg pin ", "/msg pins", "/msg pins short", "/msg pinlist", "/msg unpin ", "/msg last", "/msg edit ", "/msg del ", "/msg undo", "/msg chop", "/msg trim ", "/msg rewind",
       "/chat clear", "/project", "/project info", "/project list", "/project name ",
@@ -14229,11 +14292,12 @@ struct MaiCLI {
     values += TerminalTheme.keys.map { "/theme color \($0) " }
     values += TerminalTheme.names(directory: themesDirectory).map { "/theme use \($0)" }
     values += TerminalTheme.names(directory: themesDirectory).map { "/theme show \($0)" }
-    for (index, chat) in workspace.orderedChats.enumerated() {
+    for (index, chat) in chronologicalChats(workspace).enumerated() {
       values.append("/chat use \(index + 1)")
       values.append("/chat use \(chat.id.uuidString.prefix(8))")
       values.append("/chat use \(chat.displayTitle)")
       values.append("/chat info \(index + 1)")
+      values.append("/chat \(chat.isPinned ? "unpin" : "pin") \(index + 1)")
       values.append(chat.isArchived ? "/chat unarchive \(index + 1)" : "/chat archive \(index + 1)")
     }
     for agent in configuration?.agents ?? [] {
@@ -14926,7 +14990,7 @@ struct MaiCLI {
 
   private static let chatHelp = """
     Chat list commands (messages inside the current chat: /msg):
-      /chat list [active|archived|all]  List chats by day, newest first; archived last
+      /chat list [active|archived|all]  Pinned first, then by start date, oldest first; archived last
       /chat new [TITLE]             Start a fresh chat using the current agent
       /chat new --agent ID [TITLE]  Start a fresh chat using a configured agent
       /chat fork [TITLE]           Clone the current chat and continue in the copy
@@ -14935,17 +14999,22 @@ struct MaiCLI {
       /chat info [INDEX|ID|TITLE]   Show a chat's agent, session, size, and timestamps
       /chat session [new]           Show the session id providers see, or start a fresh one
       /chat rename TITLE            Rename the active chat
+      /chat pin [INDEX|ID|TITLE]     Pin a chat (defaults to the current chat)
+      /chat unpin [INDEX|ID|TITLE]   Return a pinned chat to its date group
       /chat archive [INDEX|ID|TITLE]  Archive a chat; archiving the active one starts fresh
       /chat unarchive INDEX|ID|TITLE  Return an archived chat to the active list
-      /chat del INDEX|ID|TITLE      Permanently delete a chat; deleting the active one switches
+      /chat del INDEX|ID|TITLE [...]  Permanently delete chats; deleting the active one switches
       /chat files                   List files accessed in this conversation
       /chat compact [FOCUS]  Summarize the chat, prioritizing what FOCUS says to preserve
       /chat recap         Print a short recap using the compact model; keep the history
       /chat clear         Clear the conversation and restore configured instructions
 
     Chat list indexes are 1-based. Negative indexes count back from the end;
-    -1 selects the last entry. They follow /chat list all order, including
-    archived chats; pmai -r -1 works too.
+    -1 selects the newest chat. Indexes follow creation order, oldest first,
+    including archived chats, and stay the same when chats are pinned or updated.
+    Pinning changes the display group only; pmai -r -1 works too.
+    /chat del resolves all arguments before deleting, so indexes do not shift.
+    A single exact title may contain spaces; use indexes or IDs for bulk deletion.
     /chat files keeps a sorted, unique record of Files content reads (including
     grep scans), writes, renames, deletions, and attachments across resumed turns,
     compaction, and child agents. Shell-internal file accesses are not observable.

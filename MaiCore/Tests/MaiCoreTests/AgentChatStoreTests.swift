@@ -17,6 +17,28 @@ private func scratchDirectory(_ name: String) -> URL {
     .appendingPathComponent("maicore-\(name)-\(UUID().uuidString)", isDirectory: true)
 }
 
+@Test("Pinned placeholders persist in full chats, summaries, and paged metadata")
+func pinnedChatPersistence() throws {
+  let directory = scratchDirectory("pinned")
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let store = AgentChatStore(directoryURL: directory)
+  let chat = AgentChat(
+    primaryAgent: storeAgent, createdAt: storeEpoch, updatedAt: storeEpoch, isPinned: true)
+  #expect(!chat.isDisposable)
+  #expect(try store.save(chat))
+  #expect(try store.loadChat(id: chat.id)?.isPinned == true)
+  #expect(try store.loadSummaries().first?.isPinned == true)
+  #expect(try store.loadWorkspace(paged: true).selectedChat?.isPinned == true)
+  #expect(!chat.forked().isPinned)
+
+  var object = try #require(JSONSerialization.jsonObject(
+    with: MaiJSONCoding.default.makeEncoder().encode(chat)) as? [String: Any])
+  object.removeValue(forKey: "isPinned")
+  let legacy = try JSONSerialization.data(withJSONObject: object)
+  #expect(try MaiJSONCoding.default.makeDecoder().decode(AgentChat.self, from: legacy).isPinned == false)
+  #expect(try MaiJSONCoding.default.makeDecoder().decode(AgentChatSummary.self, from: legacy).isPinned == false)
+}
+
 @Test("The disposable rule is shared: untouched placeholders only")
 func sharedDisposableRule() {
   #expect(AgentChat.isDisposable(

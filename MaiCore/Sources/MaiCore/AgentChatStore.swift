@@ -10,6 +10,7 @@ public struct AgentChatSummary: ChatRecord, Decodable, Equatable, Sendable {
   public var createdAt: Date
   public var updatedAt: Date
   public var isArchived: Bool
+  public var isPinned: Bool
   /// Messages exchanged with the model, excluding configured instructions.
   public var messageCount: Int
   public var hasPendingContent: Bool
@@ -23,6 +24,7 @@ public struct AgentChatSummary: ChatRecord, Decodable, Equatable, Sendable {
     createdAt = chat.createdAt
     updatedAt = chat.updatedAt
     isArchived = chat.isArchived
+    isPinned = chat.isPinned
     messageCount = chat.conversationMessages.count
     hasPendingContent = !chat.pendingContent.isEmpty
   }
@@ -30,6 +32,7 @@ public struct AgentChatSummary: ChatRecord, Decodable, Equatable, Sendable {
   private enum CodingKeys: String, CodingKey {
     case id, title, primaryAgent, messages, pendingContent, createdAt, updatedAt, isArchived
     case storedMessageCount = "_pmaiMessageCount"
+    case isPinned
   }
 
   private enum AgentKeys: String, CodingKey {
@@ -56,6 +59,7 @@ public struct AgentChatSummary: ChatRecord, Decodable, Equatable, Sendable {
     createdAt = try container.decode(Date.self, forKey: .createdAt)
     updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
+    isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
     messageCount =
       try container.decodeIfPresent(Int.self, forKey: .storedMessageCount)
       ?? container.decode([RoleOnly].self, forKey: .messages).filter { $0.role != .system }.count
@@ -75,7 +79,7 @@ public struct AgentChatSummary: ChatRecord, Decodable, Equatable, Sendable {
       title: title,
       hasConversation: hasConversation,
       isBusy: false,
-      isKept: isArchived)
+      isKept: isArchived || isPinned)
   }
 
   private static func newestFirst(_ lhs: AgentChatSummary, _ rhs: AgentChatSummary) -> Bool {
