@@ -45,8 +45,8 @@ public actor AgentSupervisor {
     var activeTaskStartID: String?
   }
 
-  /// How many finished processes to keep for inspection before the oldest are
-  /// dropped. A finished process with live descendants is always kept.
+  /// Resident transcript budget for checkpointed, collected processes. Job
+  /// identities survive eviction so inspection and navigation stay stable.
   private let finishedRetention: Int
   private var entries: [AgentPID: Entry] = [:]
   /// Messages posted to a process that its run has not read yet, oldest first.
@@ -714,13 +714,17 @@ public actor AgentSupervisor {
   /// Drops the oldest terminal processes past the retention limit, never one
   /// that still has a live descendant hanging off it.
   private func pruneFinished() {
-    let removable = removableFinished()
+    let removable = removableFinished().filter {
+      $0.isCollected && entries[$0.pid]?.historyReference != nil
+    }
     guard removable.count > finishedRetention else { return }
     let ordered = removable.sorted {
       ($0.finishedAt ?? $0.updatedAt) < ($1.finishedAt ?? $1.updatedAt)
     }
     for process in ordered.prefix(removable.count - finishedRetention) {
-      forget(process.pid)
+      entries[process.pid]?.transcript = []
+      entries[process.pid]?.result?.transcript = []
+      entries[process.pid]?.handle = nil
     }
   }
 

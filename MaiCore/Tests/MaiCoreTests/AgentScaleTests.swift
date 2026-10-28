@@ -24,3 +24,24 @@ func supervisorLifecycleBurst() async {
   #expect(started.count == 80)
   #expect(finished == started)
 }
+
+@Test("Retention preserves unread and uncheckpointed jobs and their transcripts")
+func supervisorRetentionProtectsJobs() async {
+  let supervisor = AgentSupervisor(finishedRetention: 1)
+  let root = await supervisor.register(runID: UUID(), parent: nil, agentID: "main", depth: 0)
+  var children: [AgentPID] = []
+  for index in 0..<40 {
+    let pid = await supervisor.register(runID: UUID(), parent: root, agentID: "worker", depth: 1)
+    await supervisor.note(pid, transcript: [.assistant("answer \(index)")])
+    await supervisor.complete(pid)
+    children.append(pid)
+  }
+  for (index, pid) in children.enumerated() {
+    #expect(await supervisor.transcript(pid).last?.text == "answer \(index)")
+    await supervisor.collect(pid)
+  }
+  await supervisor.prune()
+  #expect(await supervisor.processes().count == 41)
+  #expect(await supervisor.transcript(children[0]).last?.text == "answer 0")
+  #expect(await supervisor.clearFinished() == children)
+}
