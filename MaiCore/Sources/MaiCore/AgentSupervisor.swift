@@ -152,7 +152,9 @@ public actor AgentSupervisor {
   /// dropping it unsubscribes.
   public func events() -> AsyncStream<AgentSupervisorEvent> {
     let id = UUID()
-    return AsyncStream(bufferingPolicy: .bufferingNewest(64)) { continuation in
+    // Lifecycle events are acknowledgements, not replaceable animation frames.
+    // A slow host must still receive every completion and attention change.
+    return AsyncStream(bufferingPolicy: .unbounded) { continuation in
       subscribers[id] = continuation
       continuation.onTermination = { [weak self] _ in
         Task { await self?.unsubscribe(id) }
