@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check model completion, compaction input, and idle REPL work over real HTTP."""
+"""Check model completion and cancellable compaction over real HTTP."""
 import fcntl
 import json
 from smoke import JSONProvider, read_pty, expect_pty, read_chat
@@ -18,7 +18,6 @@ from http.server import ThreadingHTTPServer
 
 
 requests = queue.Queue()
-release = threading.Event()
 catalog_release = threading.Event()
 compact_release = threading.Event()
 shutdown = threading.Event()
@@ -63,10 +62,7 @@ class Provider(JSONProvider):
     def do_POST(self):
         length = int(self.headers['Content-Length'])
         body = json.loads(self.rfile.read(length))
-        if body['messages'][-1]['content'] == 'slow':
-            requests.put(('chat', length, None))
-            release.wait(30)
-        elif body['messages'][-1]['content'].startswith('Compact the transcript below'):
+        if body['messages'][-1]['content'].startswith('Compact the transcript below'):
             requests.put(('compact', length, body['model']))
             compact_release.wait(30)
         self.respond({'choices': [{'message': {'role': 'assistant', 'content': 'answer'},
@@ -113,11 +109,10 @@ def main():
             chat_file = next((root / '.pmai/chats').glob('*.json'))
             chat = read_chat(chat_file)
             seed_messages = chat['messages'][:]
-            # A saved structured tool result made each old status tick re-encode the whole value.
+            # Compaction must discard old structured tool evidence too.
             chat['messages'].append({'id': 'tool', 'role': 'tool', 'content': [{
                 'toolResult': {'_0': {'callID': 'fixture', 'isError': False, 'content': [],
-                                     'structuredContent': [{'id': i, 'text': 'x' * 100}
-                                                           for i in range(10000)]}},
+                                     'structuredContent': {'text': 'old tool evidence'}}},
             }]})
             chat_file.write_text(json.dumps(chat))
             master, slave = pty.openpty()
@@ -145,30 +140,6 @@ def main():
                     read_for(.05)
                 return requests.get_nowait()
 
-            def sample(label, idle=False):
-                if idle:
-                    # Command output precedes saving the large history and the
-                    # final status update. Measure only once the REPL is idle.
-                    wait_for(' ○')
-                read_for(.5)
-                output.clear()
-                stat = Path(f'/proc/{process.pid}/stat')
-
-                def cpu_seconds():
-                    if not stat.exists():
-                        return None
-                    fields = stat.read_text().rsplit(')', 1)[1].split()
-                    return (int(fields[11]) + int(fields[12])) / os.sysconf('SC_CLK_TCK')
-
-                before = cpu_seconds()
-                read_for(2)
-                cpu = f'{(cpu_seconds() - before) * 50:.1f}%' if before is not None else 'not measured'
-                assert b'\x1b[2K' not in output, (
-                    label, 'Waiting redrew whole status/thinking rows', bytes(output))
-                if idle:
-                    assert not output, (label, 'Idle prompt still animates', bytes(output))
-                print(f'PASS {label}: CPU {cpu}, {len(output)} terminal bytes', flush=True)
-
             try:
                 wait_for('pmai>')
                 read_for(.2)
@@ -193,15 +164,6 @@ def main():
                 wait_for('Model: openai::test.gguf')
                 assert requests.empty(), 'Completion started duplicate discovery requests'
                 print('PASS cold model cache: background discovery and live completion', flush=True)
-                sample('idle large history', idle=True)
-                # /btw leaves the large saved history on screen without sending it.
-                send('/btw slow\n')
-                request = next_request(timeout=10)
-                assert request[0] == 'chat'
-                sample(f'waiting for provider ({request[1]} request bytes)')
-                release.set()
-                wait_for('✓ btw took')
-                sample('idle after provider reply', idle=True)
                 for provider, path in [('openai', '/models'), ('v1', '/v1/models'),
                                        ('completion', '/v1/models'), ('native', '/native/models')]:
                     send(f'/models {provider}\n')
@@ -274,7 +236,6 @@ def main():
                 wait_for('· openai::changed.gguf ')
                 send('/model -chat chat-only.gguf\n')
                 wait_for('Model: openai::chat-only.gguf (saved for agent test)')
-                sample('idle after cancellation', idle=True)
                 # The summary is deliberately stalled while the editor accepts text.
                 send('/chat compact\n')
                 request = next_request()
@@ -316,7 +277,6 @@ def main():
                 assert not any(m['id'] == 'tool' for m in messages), 'Compaction kept the old tool result'
                 print('PASS manual compaction: cancellation, summary, retained task, and saved draft', flush=True)
             finally:
-                release.set()
                 catalog_release.set()
                 compact_release.set()
                 if process.poll() is None:
@@ -324,7 +284,6 @@ def main():
                     process.wait()
                 os.close(master)
     finally:
-        release.set()
         catalog_release.set()
         compact_release.set()
         shutdown.set()

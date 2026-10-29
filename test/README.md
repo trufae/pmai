@@ -14,11 +14,22 @@ that Forwiroh declares only its selected artifact and that disabling MLX omits
 the full inference dependency graph. Build and test commands disable SwiftPM
 prefetching so unused pins from another platform are not cloned.
 
-`make test-cli` builds once, runs the Swift suite, all 36 self-contained smoke
-scripts, and benchmark-accounting unit tests. Use `TEST_ARGS="--jobs 2"` for
-bounded smoke concurrency. After a full build, `TEST_ARGS="--skip-build"`
-reuses the prepared binaries. `TEST_PROFILE=smoke`, `terminal`, or `platform`
-selects a smaller CLI suite; the runner rejects unassigned smoke scripts.
+`make test-cli` builds once and runs the small `platform` suite. Use
+`TEST_ARGS="--skip-build"` to reuse a current binary. Select `TEST_PROFILE=smoke`
+or `terminal` for broader CLI checks. `TEST_PROFILE=full` explicitly runs the
+Swift suite, smoke and terminal scripts, and benchmark-accounting unit tests;
+it excludes stress tests and external fixtures. PTY suites run serially by
+default. The runner rejects unassigned smoke scripts.
+
+Choose tests by the user-visible failure they prevent. Idle CPU sampling,
+terminal silence, redraw counts, and measured throughput ranges are not
+correctness gates. Timing calculations use fixed timestamps in unit tests;
+performance measurements belong in opt-in benchmarks. See the repository's
+[testing rules](../AGENTS.md) for test selection and flaky-test maintenance.
+The separate redraw/idle and wall-clock speed smoke checks have been removed.
+Buffer/view integration tests retain visible resize and thinking coverage;
+`ModelUsageTests` covers speed calculations with fixed timestamps.
+
 The queue PTY smoke owns input, cancellation and approval shutdown in classic
 mode. It synchronizes on chat requests and queue decisions, without model
 catalog assumptions. Catalog loading and cancellation belong to the models
@@ -26,7 +37,8 @@ and startup suites; pure queue ordering is covered by `AgentInboxTests`.
 The platform profile checks portable behavior. CI runs suspend/resume and model
 PTY checks once on Linux x64 instead of repeating them on every native and musl
 build. The 80-agent terminal stress test is opt-in via the CI workflow's
-`terminal-stress` input, or directly with `repl-subagent-load-smoke.py`.
+`terminal-stress` input, or `python3 test/run-tests.py stress`. It is excluded
+from the `terminal` and `full` profiles.
 The tool-context smoke uses piped input and checks provider requests and saved
 history; `ToolResultContextTests` owns exact live context-size checks.
 
@@ -265,12 +277,6 @@ task finished. The complete post-fix live matrix remains unverified.
   `proxy.jsonl`, `stdout.txt`, `stderr.txt`, `meta.json`, `pmai.json`.
 
 ## Running
-
-The resize smoke test uses a local mock provider and a PTY to check long status
-lines, styled drafts, completion, animation, and multiline input while shrinking
-the terminal, including redraws before the resize signal is delivered:
-
-    python3 test/repl-resize-smoke.py MaiCore/.build/debug/pmai
 
 The buffer-mode check covers Page Up/Down and mouse-wheel navigation during
 streamed output, a fixed multiline draft, resize reflow, persisted mode changes,

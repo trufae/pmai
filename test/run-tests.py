@@ -11,10 +11,11 @@ import time
 ROOT = Path(__file__).resolve().parent.parent
 SMOKE = '''installer openai-http project-approval project-debug projects-repl provider-routing remote-repl forwiroh-remote repl-defaults
 repl-cd repl-chat repl-del repl-export repl-fork repl-history repl-indexes repl-local-providers repl-redact repl-resume repl-resume-routing
-repl-resume-state repl-reset repl-skills repl-small-context repl-smart-context repl-speed repl-tool-context repl-tool-policy run-shell task-agents
+repl-resume-state repl-reset repl-skills repl-small-context repl-smart-context repl-tool-context repl-tool-policy run-shell task-agents
 update vim web-fetch'''.split()
 TERMINAL = '''repl-agents repl-buffer repl-buffer-commands repl-btw repl-then repl-chop repl-compaction repl-conversations repl-interactive-run repl-modal repl-models repl-path
-repl-policy repl-queue repl-recap repl-redirection repl-resize repl-startup repl-subagent-load repl-suspend repl-thinking repl-view repl-voice repl-voice-settings'''.split()
+repl-policy repl-queue repl-recap repl-redirection repl-startup repl-suspend repl-view repl-voice repl-voice-settings'''.split()
+STRESS = ['repl-subagent-load']  # Explicit opt-in, including when running full.
 EXTERNAL = ['repl-reflow', 'tailcat']  # Ghostty and a separately built tailcat binary.
 PLATFORM = ['web-fetch', 'openai-http'] if os.name == 'nt' else [
     'update', 'web-fetch', 'openai-http', 'project-approval', 'repl-defaults', 'repl-small-context']
@@ -24,7 +25,7 @@ if sys.platform.startswith('linux'):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('profile', choices=['core', 'chat', 'documents', 'unit', 'smoke', 'terminal', 'platform', 'full', 'external'])
+    parser.add_argument('profile', choices=['core', 'chat', 'documents', 'unit', 'smoke', 'terminal', 'platform', 'full', 'stress', 'external'])
     parser.add_argument('--binary', type=Path, default=ROOT / 'MaiCore/.build/debug/pmai')
     parser.add_argument('--skip-build', action='store_true', help='Reuse prepared tests and CLI binary')
     parser.add_argument('--jobs', type=int, default=1, help='Maximum concurrent smoke scripts (default: 1)')
@@ -35,10 +36,10 @@ def main():
         parser.error('--jobs must be positive')
     if args.profile == 'external' and (not args.tailcat or not args.ghostty):
         parser.error('The external profile requires --tailcat and --ghostty')
-    if args.profile in ('terminal', 'full', 'external') and os.name == 'nt':
+    if args.profile in ('terminal', 'full', 'stress', 'external') and os.name == 'nt':
         parser.error('PTY suites require a POSIX host; use the platform profile on Windows')
-    # New deterministic scripts must have an explicit owner instead of silently missing CI.
-    known = set(SMOKE + TERMINAL + EXTERNAL + ['acp-gateway', 'linux-network'])
+    # Every script has a suite; stress and external suites remain opt-in.
+    known = set(SMOKE + TERMINAL + STRESS + EXTERNAL + ['acp-gateway', 'linux-network'])
     found = {p.name.removesuffix('-smoke.py') for p in (ROOT / 'test').glob('*-smoke.py')}
     if found != known:
         parser.error(f'Update suite ownership: unlisted={found-known}, missing={known-found}')
@@ -69,7 +70,7 @@ def main():
     binary = args.binary.resolve()
     if not binary.is_file():
         parser.error(f'CLI binary missing: {binary}')
-    suites = dict(smoke=SMOKE, terminal=TERMINAL, platform=PLATFORM, external=EXTERNAL,
+    suites = dict(smoke=SMOKE, terminal=TERMINAL, platform=PLATFORM, stress=STRESS, external=EXTERNAL,
                   full=SMOKE + TERMINAL + ['linux-network', 'acp-gateway'])
 
     def run(name):

@@ -34,7 +34,7 @@ BINDIR ?= $(HOME)/.local/bin
 
 .PHONY: all build test list run uninstall repl repl-build repl-install repl-uninstall repl-musl plugin-fixture fmt clean check-shared-tooling aitest-build
 .PHONY: android android-test test-core test-unit test-cli
-TEST_PROFILE ?= full
+TEST_PROFILE ?= platform
 TEST_ARGS ?=
 
 all: build
