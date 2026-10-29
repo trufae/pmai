@@ -838,11 +838,12 @@ public struct ProviderResponse: Codable, Equatable, Sendable {
 /// at its next turn boundary with `AgentResult.interruption` set and a
 /// transcript a host can continue from, so a long task is paused, not lost.
 public struct AgentRunLimits: Codable, Equatable, Sendable {
-  public static let defaultMaxToolCalls = 50
+  public static let defaultMaxToolCalls = 300
   /// Text tool protocols use one model turn per call and still need a final reply.
   public static let defaultMaxModelTurns = defaultMaxToolCalls + 10
 
   public var maxModelTurns: Int
+  /// Tool calls allowed per prompt; each new prompt starts a fresh counter.
   public var maxToolCalls: Int
   /// Children that may run at once per parent process. Excess children wait
   /// in the `queued` state for a slot instead of being refused.

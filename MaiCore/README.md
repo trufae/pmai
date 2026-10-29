@@ -827,10 +827,12 @@ as in `/set ui.editor code -w`, and the file path is appended to it.
 In the default theme, successful tool results are yellow, tool starts are green, and
 failed results are red. Unified diff removals and additions, including output
 from `files_patch`, use dark red and dark green backgrounds. `/set limits.`
-shows the per-run limits of the current
+shows the per-prompt limits of the current
 chat's agent; `/set limits.maxToolCalls N` and `/set limits.maxModelTurns N`
 change them and persist the change into that agent's configuration. The
 `--max-tool-calls N` and `--max-turns N` flags override both for one launch.
+`limits.maxToolCalls` defaults to 300 per prompt, not per conversation; each
+new prompt gets a fresh allowance. `limits.maxModelTurns` defaults to 310.
 `limits.maxTotalTokens` defaults to `off` (no token cap per run).
 Reaching a limit no longer ends a task with an error. A run that spends
 `limits.maxModelTurns`, `limits.maxTotalTokens` (`/set limits.maxTotalTokens
