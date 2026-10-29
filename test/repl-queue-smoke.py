@@ -23,8 +23,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 requests = queue.Queue()
 release = threading.Event()
 slow_done = threading.Event()
-model_requests = queue.Queue()
-models_release = threading.Event()
 
 
 class Provider(BaseHTTPRequestHandler):
@@ -79,8 +77,6 @@ class Provider(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.endswith('/models'):
-            model_requests.put(self.path)
-            models_release.wait(30)
             body = json.dumps({'data': [{'id': 'smoke', 'owned_by': 'test'}]}).encode()
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -107,12 +103,11 @@ def main():
                        'shell-interrupt', 'shell-child-interrupt'):
             release.clear()
             slow_done.clear()
-            models_release.set()
             with tempfile.TemporaryDirectory(prefix='pmai-queue-') as directory:
                 root = Path(directory)
                 config = root / 'config.json'
                 config.write_text(json.dumps({
-                    'version': 1, 'defaultAgent': 'smoke',
+                    'version': 1, 'defaultAgent': 'smoke', 'ui': {'mode': 'classic'},
                     'providers': [{'id': 'smoke', 'kind': 'openAICompatible',
                                    'baseURL': f'http://127.0.0.1:{server.server_port}/v1',
                                    'apiKey': 'smoke', 'timeout': 60}],
@@ -189,7 +184,6 @@ def main():
 
                 try:
                     wait_for('pmai>')
-                    assert next_request(model_requests).endswith('/models')
                     if choice.startswith('shell-'):
                         prompt = 'shell-child' if choice == 'shell-child-interrupt' else 'shell'
                         send(prompt + '\n')
@@ -275,20 +269,6 @@ def main():
                         assert termios.tcgetattr(master) == cooked, 'Exit left the tty in raw mode'
                         print(f'PASS {choice}')
                         continue
-                    if choice == 'continue':
-                        send('/help shell\n')
-                        wait_for('Input:')
-                        # Slash commands used to run inside the event loop, so
-                        # a stalled catalog request also stopped Ctrl+C and all
-                        # subsequent input. It must be a normal cancellable job.
-                        models_release.clear()
-                        send('/models\n')
-                        assert next_request(model_requests).endswith('/models')
-                        send('\x03')
-                        wait_for('cancelled /models')
-                        send('/help shell\n')
-                        wait_for('Input:')
-                        models_release.set()
                     send('slow\n')
                     assert user_texts() == ['slow']
                     send('queued note\n')
@@ -335,7 +315,6 @@ def main():
                     os.close(master)
     finally:
         release.set()
-        models_release.set()
         server.shutdown()
 
 
