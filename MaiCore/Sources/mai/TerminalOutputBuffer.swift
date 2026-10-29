@@ -491,7 +491,7 @@ struct TerminalOutputBuffer {
       return result
     }
     if let tool = toolBlocks[index] {
-      var text = tool.render(display: tools, calls: toolCalls, colors: colors != nil)
+      var text = tool.render(display: tools, calls: toolCalls, colors: colors != nil, width: width)
       if iconGroup {
         text = tool.prefix + groupIndices.compactMap { toolBlocks[$0] }.map { block in
           // Prefix once per row; each glyph keeps its own error styling.

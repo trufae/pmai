@@ -180,7 +180,8 @@ Use `/set ui.toolcalls first` to read the complete first line of tool arguments,
 wrapped to the terminal width, or `/set ui.toolcalls 5` to show the first five
 source lines of each argument (including heredoc scripts). Hidden lines are
 counted after the preview. `/set ui.toolcalls truncate` restores the default
-short previews. This setting is saved and updates existing calls in buffer mode;
+single-row previews clipped to the available terminal columns. Resizing the
+terminal updates existing previews in buffer mode. This setting is saved;
 `ui.tools` controls result visibility separately, and `ui.tools icons` keeps calls
 as icons.
 

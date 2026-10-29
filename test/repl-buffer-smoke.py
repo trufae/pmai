@@ -63,7 +63,8 @@ def main(binary):
                 'memory': {'enabled': False}, 'use': {'plan': False},
                 'ui': {'mode': 'buffer'},
             }))
-            (root / 'tool-output.txt').write_text(''.join(f'TOOL_ROW{i}\n' for i in range(8)))
+            tool_path = 'tool-' + 'abcdefghij' * 16 + '-output.txt'
+            (root / tool_path).write_text(''.join(f'TOOL_ROW{i}\n' for i in range(8)))
             editor = root / 'editor.py'
             editor.write_text("from pathlib import Path\nimport sys\n"
                               "Path(sys.argv[1]).write_text('buffer editor test')\n")
@@ -231,13 +232,13 @@ def main(binary):
                 wait_for('ui.tools = 0')
                 send('tool-test\r')
                 chunks.put({'tool_calls': [{'index': 0, 'id': 'read-output', 'type': 'function',
-                    'function': {'name': 'files_read', 'arguments': json.dumps({'path': 'tool-output.txt'})}}]})
+                    'function': {'name': 'files_read', 'arguments': json.dumps({'path': tool_path})}}]})
                 chunks.put(None)
                 chunks.put('TOOL_ANSWER\n')
                 chunks.put(None)
                 wait_for('✓ took')
                 assert 'TOOL_ROW' not in '\n'.join(output()), screen
-                for columns in (18, 80):
+                for columns in (18, 80, 240, 40, 240, 80):
                     screen.clear()
                     fcntl.ioctl(master, termios.TIOCSWINSZ,
                                 struct.pack('HHHH', rows, columns, 0, 0))
@@ -245,9 +246,11 @@ def main(binary):
                     read_for()
                     compact = [line for line in output() if '✔ files_read' in line]
                     assert len(compact) == 1, screen
-                    assert ('…' in compact[0]) == (columns == 18), screen
-                    if columns == 80:
-                        assert 'tool-output.txt' in compact[0], screen
+                    full = '✔ files_read ' + tool_path
+                    row = next(row for row, line in screen.items() if line == compact[0])
+                    available = columns - scrollbar_spans.get(row, (0, 0))[1]
+                    expected = full[:available - 1] + '…' if len(full) > available else full
+                    assert compact[0].rstrip() == expected, (columns, compact, screen)
                 for mode in ('first', 'truncate'):
                     send(f'/set ui.toolcalls {mode}\r')
                     wait_for(f'Set ui.toolcalls = {mode}.')
@@ -257,7 +260,7 @@ def main(binary):
                                 struct.pack('HHHH', rows, columns, 0, 0))
                     os.kill(process.pid, signal.SIGWINCH)
                     read_for()
-                    assert ('tool-output.txt' in ''.join(output())) == (mode == 'first'), screen
+                    assert (tool_path in ''.join(output())) == (mode == 'first'), screen
                     columns = 80
                     screen.clear()
                     fcntl.ioctl(master, termios.TIOCSWINSZ,

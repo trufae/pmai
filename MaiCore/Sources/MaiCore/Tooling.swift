@@ -241,15 +241,13 @@ public struct ToolOutput: Codable, Equatable, Sendable {
   }
 }
 
-/// Readable tool arguments with path-like ones first. By default long values
-/// are cut and multiline values folded; configured source lines stay complete.
+/// Readable tool arguments with path-like ones first. Multiline values are
+/// folded by default; terminal surfaces clip complete previews to their width.
 package enum ToolCallPreview {
   /// Arguments shown first, and shown bare when they are the only one.
   static let leadingKeys = ["path", "name", "query", "command", "script", "keywords", "task"]
-  static let maximumValueLength = 60
-
   package static func render(
-    _ call: ToolCall, display: ToolCallDisplay = .truncate, maxLength: Int = 160
+    _ call: ToolCall, display: ToolCallDisplay = .truncate, maxLength: Int = .max
   ) -> String {
     let arguments = call.arguments.objectValue ?? [:]
     var line = "→ \(call.name)"
@@ -281,10 +279,7 @@ package enum ToolCallPreview {
     case .truncate: count = 1
     case .lines(let limit): count = max(1, limit)
     }
-    var selected = lines.prefix(count).joined(separator: "\n")
-    if display == .truncate, selected.count > maximumValueLength {
-      selected = String(selected.prefix(maximumValueLength)) + "…"
-    }
+    let selected = lines.prefix(count).joined(separator: "\n")
     let quoted = selected.isEmpty || selected.contains(" ") || selected.contains("=") || selected.contains("\n")
     var shown = quoted ? "\"\(selected)\"" : selected
     if lines.count > count { shown += " (+\(lines.count - count) lines)" }

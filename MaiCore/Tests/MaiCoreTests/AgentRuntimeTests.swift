@@ -281,7 +281,7 @@ func toolCallPreview() {
     id: "4", name: "files_write",
     arguments: .object(["path": .string("a.py"), "content": .string(String(repeating: "x", count: 200) + "\ny")]))
   let rendered = ToolCallPreview.render(long)
-  #expect(rendered == "→ files_write path=a.py content=" + String(repeating: "x", count: 60) + "… (+1 lines)")
+  #expect(rendered == "→ files_write path=a.py content=" + String(repeating: "x", count: 200) + " (+1 lines)")
   #expect(ToolCallPreview.render(ToolCall(id: "5", name: "run_shell", arguments: .object(["script": .string("make -s && ./app")]))) == "→ run_shell \"make -s && ./app\"")
   #expect(ToolCallPreview.render(patch, maxLength: 20) == "→ files_patch path=s…")
 }

@@ -28,15 +28,16 @@ func toolCallDisplayConfiguration() throws {
   }
 }
 
-@Test("Complete tool call source lines bypass both character limits and sanitize controls")
+@Test("Tool call previews retain complete source lines and sanitize controls")
 func toolCallDisplaySourceLines() {
   let first = "adb shell " + String(repeating: "com.example.package ", count: 30)
   let call = ToolCall(id: "shell", name: "run_shell", arguments: .object([
     "script": .string(first + "\n\n  heredoc body\nEOF"), "timeout_seconds": .number(540),
   ]))
   let compact = ToolCallPreview.render(call)
-  #expect(compact.contains("…"))
-  #expect(!compact.contains(first))
+  #expect(!compact.contains("…"))
+  #expect(compact.contains(first))
+  #expect(!compact.contains("heredoc body"))
   #expect(ToolCallPreview.render(call, display: .lines(1))
     == "→ run_shell script=\"\(first)\" (+3 lines) timeout_seconds=540")
   #expect(ToolCallPreview.render(call, display: .lines(3))
