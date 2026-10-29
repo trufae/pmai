@@ -270,23 +270,32 @@ def main():
                 assert '📌 Assistant (id:' in redirected and '\x1b[' not in redirected, redirected
             # Names are bold, status follows in parentheses, and every line
             # of the skill description is indented. Pipes and NO_COLOR stay plain.
+            output = run('/set ui.markdown on', '/tools', columns=140)
+            plain = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', output).replace('\r', '')
+            assert re.search(r'Group\s+Status\s+Direct', plain), plain
+            assert '┌' not in plain and '| Group' not in plain, plain
+            assert '\x1b[1mfiles\x1b[0m' in output, output
+            output = run('/set ui.markdown on', '/set ui.tableborders on', '/tools', columns=140)
+            plain = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', output).replace('\r', '')
+            assert '┌' in plain and '│ Group' in plain, plain
+            run('/set ui.tableborders off')
             for options in ({}, {'terminal': False}, {'extra_env': {'NO_COLOR': '1'}},
                             {'extra_env': {'TERM': 'dumb'}}):
-                output = run('/skills', '/tools full', '/tools show files',
+                output = run('/skills', '/tools full', '/tools show skills', '/tools show files',
                              '/tools show files_read', **options)
                 plain = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', output).replace('\r', '')
                 for name, status in (('alpha', 'enabled'), ('beta', 'disabled'),
                                      ('gamma', 'proxied'), ('manual', 'not callable')):
                     assert (f'{name} ({status}) [project; 0 calls]\n'
                             f'  Review {name}.\n  Preserve exact instructions.') in plain, plain
-                assert 'files [● enabled]' in plain, plain
-                assert 'skills [◐ mixed]' in plain, plain
+                assert re.search(r'^files\s+● enabled\s+', plain, re.MULTILINE), plain
+                assert re.search(r'^skills\s+◐ mixed\s+', plain, re.MULTILINE), plain
                 assert 'skills_beta [○ disabled] 0 calls' in plain, plain
                 if not options:
                     assert '\x1b[1;32m[● enabled]\x1b[0m' in output, output
                     assert '\x1b[1;38;2;35;69;103m[◐ mixed]\x1b[0m' in output, output
                     assert '\x1b[1;38;2;18;52;86m[○ disabled]\x1b[0m' in output, output
-                    for name in ('alpha', 'beta', 'gamma', 'manual', 'files', 'files_read'):
+                    for name in ('alpha', 'beta', 'gamma', 'manual', 'files_read'):
                         assert f'\x1b[1m{name}\x1b[0m' in output, output
                     assert '  📖 \x1b[1mfiles_read\x1b[0m \x1b[1;32m[● direct]\x1b[0m' in output, output
                     assert '\x1b[1mfiles_read\x1b[0m  [read-only' in output, output

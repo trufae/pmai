@@ -3,6 +3,18 @@ import Testing
 
 @testable import MaiCore
 
+@Test("Terminal table borders default off and persist when enabled")
+func terminalTableBordersConfiguration() throws {
+  let decoder = JSONDecoder()
+  #expect(!ConfiguredTerminalUI().tableBorders)
+  #expect(try !decoder.decode(ConfiguredTerminalUI.self, from: Data("{}".utf8)).tableBorders)
+  let ui = ConfiguredTerminalUI(tableBorders: true)
+  let data = try JSONEncoder().encode(ui)
+  #expect(try decoder.decode(ConfiguredTerminalUI.self, from: data) == ui)
+  let saved = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+  #expect(saved["tableborders"] as? Bool == true)
+}
+
 @Test("Obsolete redaction filenames do not prevent loading the configuration")
 func configurationLegacyRedaction() throws {
   for value in ["safe2.txt", "/tmp/rules", "", "future-mode"] {

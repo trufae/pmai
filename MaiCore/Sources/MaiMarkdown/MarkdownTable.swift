@@ -19,6 +19,26 @@ public struct MarkdownTable: Equatable, Sendable {
     self.rows = rows
   }
 
+  /// Standard pipe-table source, preserving inline Markdown in each cell.
+  public var markdown: String {
+    func row(_ cells: [String]) -> String {
+      "| " + cells.map {
+        $0.replacingOccurrences(of: "|", with: "&#124;")
+          .replacingOccurrences(of: "\r\n", with: "\n")
+          .replacingOccurrences(of: "\r", with: "\n")
+          .replacingOccurrences(of: "\n", with: "<br>")
+      }.joined(separator: " | ") + " |"
+    }
+    let separators = headers.indices.map { column in
+      switch column < alignments.count ? alignments[column] : .leading {
+      case .leading: "---"
+      case .center: ":---:"
+      case .trailing: "---:"
+      }
+    }
+    return ([row(headers), row(separators)] + rows.map(row)).joined(separator: "\n")
+  }
+
   /// Whether a line could belong to a table: it has pipes at its edges or at
   /// least two of them, and is not a code fence.
   public static func isCandidateLine(_ line: String) -> Bool {
@@ -107,14 +127,15 @@ public struct MarkdownTable: Equatable, Sendable {
   }
 }
 
-/// Lays a table out as bordered lines that fit a width, wrapping cells at
+/// Lays a table out as lines that fit a width, wrapping cells at
 /// word boundaries while keeping every span's style.
 public enum MarkdownTableLayout {
   public static func lines(
     for table: MarkdownTable,
     width: Int,
     unicode: Bool,
-    linkDestinations: Bool = true
+    linkDestinations: Bool = true,
+    borders: Bool = true
   ) -> [MarkdownStyledLine] {
     let columns = table.headers.count
     guard columns > 0 else { return [] }
@@ -124,24 +145,30 @@ public enum MarkdownTableLayout {
     let body = table.rows.map { row in
       row.map { cellSpans($0, role: .body, linkDestinations: linkDestinations) }
     }
-    let widths = columnWidths(header: header, rows: body, available: width)
-    let glyphs = unicode ? Glyphs.unicode : Glyphs.ascii
+    let widths = columnWidths(header: header, rows: body, available: width, borders: borders)
+    let glyphs: Glyphs? = borders ? (unicode ? .unicode : .ascii) : nil
 
     var lines: [MarkdownStyledLine] = []
-    lines.append(border(widths, glyphs.topLeft, glyphs.topMiddle, glyphs.topRight, glyphs))
+    if let glyphs {
+      lines.append(border(widths, glyphs.topLeft, glyphs.topMiddle, glyphs.topRight, glyphs))
+    }
     lines += rowLines(header, widths: widths, alignments: table.alignments, glyphs: glyphs)
-    lines.append(border(widths, glyphs.middleLeft, glyphs.cross, glyphs.middleRight, glyphs))
+    if let glyphs {
+      lines.append(border(widths, glyphs.middleLeft, glyphs.cross, glyphs.middleRight, glyphs))
+    }
     let rows = body.map {
       rowLines($0, widths: widths, alignments: table.alignments, glyphs: glyphs)
     }
     let separateRows = rows.contains { $0.count > 1 }
     for (index, row) in rows.enumerated() {
-      if index > 0, separateRows {
+      if index > 0, separateRows, let glyphs {
         lines.append(border(widths, glyphs.middleLeft, glyphs.cross, glyphs.middleRight, glyphs))
       }
       lines += row
     }
-    lines.append(border(widths, glyphs.bottomLeft, glyphs.bottomMiddle, glyphs.bottomRight, glyphs))
+    if let glyphs {
+      lines.append(border(widths, glyphs.bottomLeft, glyphs.bottomMiddle, glyphs.bottomRight, glyphs))
+    }
     return lines
   }
 
@@ -184,7 +211,8 @@ public enum MarkdownTableLayout {
   private static func columnWidths(
     header: [[MarkdownSpan]],
     rows: [[[MarkdownSpan]]],
-    available: Int
+    available: Int,
+    borders: Bool
   ) -> [Int] {
     var widths = [Int](repeating: minimumColumnWidth, count: header.count)
     for row in [header] + rows {
@@ -192,9 +220,9 @@ public enum MarkdownTableLayout {
         widths[column] = max(widths[column], naturalWidth(of: cell))
       }
     }
-    let minimum = renderedWidth(widths.map { _ in minimumColumnWidth })
+    let minimum = renderedWidth(widths.map { _ in minimumColumnWidth }, borders: borders)
     let limit = max(available, minimum)
-    while renderedWidth(widths) > limit {
+    while renderedWidth(widths, borders: borders) > limit {
       var widest = 0
       for column in widths.indices where widths[column] > widths[widest] { widest = column }
       guard widths[widest] > minimumColumnWidth else { break }
@@ -220,8 +248,8 @@ public enum MarkdownTableLayout {
     return max(widest, current)
   }
 
-  private static func renderedWidth(_ widths: [Int]) -> Int {
-    widths.reduce(1) { $0 + $1 + 3 }
+  private static func renderedWidth(_ widths: [Int], borders: Bool) -> Int {
+    widths.reduce(0, +) + (borders ? 3 * widths.count + 1 : 2 * max(0, widths.count - 1))
   }
 
   private static func border(
@@ -243,7 +271,7 @@ public enum MarkdownTableLayout {
     _ cells: [[MarkdownSpan]],
     widths: [Int],
     alignments: [MarkdownTableAlignment],
-    glyphs: Glyphs
+    glyphs: Glyphs?
   ) -> [MarkdownStyledLine] {
     var wrapped: [[[MarkdownSpan]]] = []
     for (column, width) in widths.enumerated() {
@@ -253,14 +281,21 @@ public enum MarkdownTableLayout {
     let height = wrapped.map(\.count).max() ?? 1
     var lines: [MarkdownStyledLine] = []
     for row in 0..<height {
-      var line: MarkdownStyledLine = [MarkdownSpan(glyphs.vertical, role: .tableBorder)]
+      var line: MarkdownStyledLine = []
+      if let glyphs { line.append(MarkdownSpan(glyphs.vertical, role: .tableBorder)) }
       for (column, width) in widths.enumerated() {
         let content = row < wrapped[column].count ? wrapped[column][row] : []
         let alignment = column < alignments.count ? alignments[column] : .leading
-        line.append(MarkdownSpan(" "))
+        if glyphs != nil {
+          line.append(MarkdownSpan(" "))
+        } else if column > 0 {
+          line.append(MarkdownSpan("  "))
+        }
         line += aligned(content, width: width, alignment: alignment)
-        line.append(MarkdownSpan(" "))
-        line.append(MarkdownSpan(glyphs.vertical, role: .tableBorder))
+        if let glyphs {
+          line.append(MarkdownSpan(" "))
+          line.append(MarkdownSpan(glyphs.vertical, role: .tableBorder))
+        }
       }
       lines.append(line)
     }

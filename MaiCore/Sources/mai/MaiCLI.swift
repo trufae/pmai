@@ -10020,18 +10020,12 @@ struct MaiCLI {
         await terminal.line("All tools globally: \(globallyEnabled ? "on" : "off"). /tools on|off changes the global switch.")
         await terminal.line("Tool proxy default: \(toolProxySetting(session.profile)); automatic exposure: \(session.profile.toolPolicy.automatic ? "on" : "off"). Per-tool overrides take precedence.")
       }
-      for group in groups {
-        let label = await terminal.paint(
-          group.sourceID == "mcp" ? group.catalogID : group.id, bold: true)
-        let summary = AgentToolModeSummary(names: group.toolNames, modes: modesByName)
-        let badge = await terminal.toolGroupBadge(summary)
-        await terminal.line("\(label) \(badge) — \(group.displayName) [\(summary.description); \(usage.count(for: group)) calls]")
-        guard full else { continue }
-        for name in group.toolNames.sorted() {
-          let label = await terminal.paint(name, bold: true)
-          let mode = modesByName[name] ?? .disabled
-          let badge = await terminal.toolModeBadge(mode)
-          await terminal.line("  \(ToolIcon.emoji(for: name)) \(label) \(badge) \(usage.counts[name, default: 0]) calls")
+      await terminal.table(toolGroupsTable(groups, modes: modesByName, usage: usage))
+      if full {
+        for group in groups {
+          await terminal.line()
+          await terminal.line(await terminal.paintHeading(group.catalogID))
+          await terminal.table(toolDetailsTable(group, modes: modesByName, usage: usage))
         }
       }
       await terminal.line("/tools show GROUP lists a group's tools and details; /tools full lists all groups with their tools.")
@@ -11417,7 +11411,7 @@ struct MaiCLI {
       await terminal.line("Use /theme color \(key.dropFirst(3)) [VALUE].")
       return
     }
-    let booleanKeys = ["ui.markdown", "ui.broadcast", "ui.toolgroups"]
+    let booleanKeys = ["ui.markdown", "ui.tableborders", "ui.broadcast", "ui.toolgroups"]
     let countKeys = ["ui.tools", "ui.scroll", "ui.scrollbar"]
     let levelKeys = ["ui.subagents", "ui.thinking", "ui.mode"]
     let textKeys = ["ui.title", "ui.editor", "ui.highlight"]
@@ -11502,6 +11496,8 @@ struct MaiCLI {
         if enabled { ui.mode = .buffer }
       } else if key == "ui.broadcast" {
         ui.broadcast = enabled
+      } else if key == "ui.tableborders" {
+        ui.tableBorders = enabled
       } else {
         ui.markdown = enabled
         await terminal.configureMarkdown(
@@ -12142,7 +12138,7 @@ struct MaiCLI {
   private static func uiSettings(_ ui: ConfiguredTerminalUI) -> [String] {
     let keys = [
       "ui.mode", "ui.scroll", "ui.scrollbar", "ui.highlight", "ui.title", "ui.editor", "ui.markdown", "ui.tools", "ui.toolgroups",
-      "ui.subagents", "ui.thinking",
+      "ui.subagents", "ui.thinking", "ui.tableborders",
       "ui.broadcast",
     ]
     return keys.map { "\($0) = \(uiSetting($0, in: ui))" }
@@ -12161,6 +12157,7 @@ struct MaiCLI {
     case "ui.editor":
       return ui.editor.isEmpty ? "\(resolvedEditor()) (from the environment)" : ui.editor
     case "ui.markdown": return ui.markdown ? "on" : "off"
+    case "ui.tableborders": return ui.tableBorders ? "on" : "off"
     case "ui.tools": return ui.tools.description
     case "ui.toolgroups": return ui.toolGroups ? "on" : "off"
     case "ui.thinking": return ui.thinking.rawValue
@@ -14331,6 +14328,7 @@ struct MaiCLI {
       "/set use.plan on", "/set use.plan off",
       "/theme color bold on", "/theme color bold off",
       "/set ui.markdown on", "/set ui.markdown off",
+      "/set ui.tableborders on", "/set ui.tableborders off",
       "/set ui.mode classic", "/set ui.mode buffer",
       "/set ui.scroll ",
       "/set ui.scrollbar ", "/set ui.highlight ", "/highlight", "/highlight ",
@@ -15089,6 +15087,7 @@ struct MaiCLI {
       /set ui.editor COMMAND       Editor /edit opens (`none` falls back to $EDITOR, $VISUAL, vim)
       /set ui.markdown BOOL        Render replies as styled markdown (on/off)
                                    Buffer mode also redraws earlier replies with this setting
+      /set ui.tableborders BOOL    Draw table frames and separators (on/off; default off)
       /set ui.toolgroups <on|off>     Collapse consecutive tools into clickable summaries (enables buffer mode)
       /set ui.tools <all|relevant|icons|N>  Full results, relevant previews, emoji rows, or first N lines (0 hides them)
                                    Buffer mode also updates earlier tool calls and results

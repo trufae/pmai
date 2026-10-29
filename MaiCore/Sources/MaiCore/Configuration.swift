@@ -529,6 +529,8 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   public var bold: Bool
   /// Render assistant replies as styled markdown in the REPL.
   public var markdown: Bool
+  /// Draw frames and separators around terminal Markdown tables.
+  public var tableBorders: Bool
   /// Show results, a fixed number of leading lines, or compact tool icons.
   public var tools: ToolResultDisplay
   /// Collapse consecutive tool calls into an expandable summary in buffer mode.
@@ -569,6 +571,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     selectionBackground: String = "blue",
     bold: Bool = false,
     markdown: Bool = true,
+    tableBorders: Bool = false,
     tools: ToolResultDisplay = .lines(0),
     toolGroups: Bool = false,
     subagentOutput: SubagentOutputLevel = .all,
@@ -602,6 +605,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     self.selectionBackground = selectionBackground
     self.bold = bold
     self.markdown = markdown
+    self.tableBorders = tableBorders
     self.tools = tools
     self.toolGroups = toolGroups
     self.subagentOutput = subagentOutput
@@ -637,6 +641,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     case selectionBackground = "bgselection"
     case bold
     case markdown
+    case tableBorders = "tableborders"
     case tools
     case toolGroups = "toolgroups"
     case subagentOutput = "subagents"
@@ -694,6 +699,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
         String.self, forKey: .selectionBackground)) ?? "blue",
       bold: (try? container.decodeIfPresent(Bool.self, forKey: .bold)) ?? false,
       markdown: (try? container.decodeIfPresent(Bool.self, forKey: .markdown)) ?? true,
+      tableBorders: (try? container.decodeIfPresent(Bool.self, forKey: .tableBorders)) ?? false,
       tools: (try? container.decodeIfPresent(
         ToolResultDisplay.self, forKey: .tools))
         ?? (try? legacy.decodeIfPresent(ToolResultDisplay.self, forKey: .toolResultLines)) ?? .lines(0),

@@ -7,11 +7,17 @@ public struct MarkdownLayoutOptions: Equatable, Sendable {
   public var unicode: Bool
   /// Print link destinations after link text.
   public var linkDestinations: Bool
+  /// Draw table frames and separators; false uses two spaces between columns.
+  public var tableBorders: Bool
 
-  public init(width: Int = 80, unicode: Bool = true, linkDestinations: Bool = true) {
+  public init(
+    width: Int = 80, unicode: Bool = true, linkDestinations: Bool = true,
+    tableBorders: Bool = true
+  ) {
     self.width = width
     self.unicode = unicode
     self.linkDestinations = linkDestinations
+    self.tableBorders = tableBorders
   }
 
   /// The checkbox used by Markdown tasks and numbered todo listings.
@@ -217,7 +223,8 @@ public struct MarkdownStreamLayout: Equatable, Sendable {
         for: parsed,
         width: options.width,
         unicode: options.unicode,
-        linkDestinations: options.linkDestinations)
+        linkDestinations: options.linkDestinations,
+        borders: options.tableBorders)
       return laidOut.flatMap { [.spans($0), .lineBreak] }
     }
     var events: [MarkdownLayoutEvent] = []

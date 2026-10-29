@@ -106,12 +106,25 @@ for line in sys.stdin:
             before = agent_settings()
             for command in ('/tools', '/tools list'):
                 output, _ = run([command], [])
-                assert 'files [● enabled]' in output, output
+                assert re.search(r'^files\s+● enabled\s+', output, re.MULTILINE), output
+                assert re.search(r'\bGroup\s+Status\s+Direct\s+Proxy\s+Hidden\s+Disabled\s+Calls\s+Description',
+                                 output, re.MULTILINE), output
+                assert ' direct,' not in output, output
                 assert 'mcp/fixture ' in output, output
                 assert 'files_read' not in output and 'external::search' not in output, output
                 assert '/tools show GROUP' in output and '/tools full' in output, output
             output, _ = run(['/tools full'], [])
             assert 'files_read' in output and 'external::search' in output, output
+            output, _ = run(['/set ui.tableborders', '/set ui.tableborders on', '/tools'], [])
+            assert 'ui.tableborders = off' in output, output
+            assert re.search(r'[│|] Group\s+[│|] Status', output), output
+            assert json.loads(config.read_text())['ui']['tableborders'] is True
+            output, _ = run(['/set ui.tableborders', '/set ui.tableborders invalid'], [])
+            assert 'ui.tableborders = on' in output, output
+            assert 'Usage: /set ui.tableborders <on|off>' in output, output
+            output, _ = run(['/set ui.tableborders off', '/tools'], [])
+            assert re.search(r'\bGroup\s+Status', output), output
+            assert json.loads(config.read_text())['ui']['tableborders'] is False
             output, _ = run(['/set'], [])
             keys = re.findall(r'^([\w.]+) = ', output, re.MULTILINE)
             assert len(keys) > 30 and len(keys) == len(set(keys)), keys
@@ -132,7 +145,7 @@ for line in sys.stdin:
 
             output, calls = run(['/tools off', '/tools', 'Chat without tools'], [final])
             assert 'All tools globally: off' in output, output
-            assert 'github [○ disabled]' in output, output
+            assert re.search(r'^github\s+○ disabled\s+', output, re.MULTILINE), output
             assert not calls[0].get('tools'), calls[0]
             assert json.loads(config.read_text())['toolsEnabled'] is False
             assert agent_settings() == before, 'global off changed individual settings'

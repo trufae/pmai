@@ -1,5 +1,6 @@
 import Foundation
 import MaiCore
+import MaiMarkdown
 import Testing
 
 @testable import MaiCLI
@@ -53,4 +54,44 @@ func replToolsStatusBadges() async {
   #expect(await terminal.toolGroupBadge(summary(.hidden, .hidden)) == "[◐ hidden]")
   #expect(await terminal.toolGroupBadge(summary(.direct, .disabled)) == "[◐ mixed]")
   #expect(await terminal.toolGroupBadge(summary(.disabled, .disabled)) == "[○ disabled]")
+}
+
+@Test("Tool summary tables count modes and usage and preserve qualified catalog labels")
+func replToolsTable() async {
+  let groups = [
+    ToolGroupDefinition(id: "files", displayName: "Files", toolNames: ["read", "write"]),
+    ToolGroupDefinition(id: "remote", sourceID: "mcp", displayName: "A | **B**", toolNames: ["remote::a"]),
+  ]
+  let modes: [String: AgentToolMode] = ["read": .direct, "write": .hidden]
+  var usage = AgentToolUsage()
+  usage.record("read")
+  usage.record("read")
+  let table = MaiCLI.toolGroupsTable(groups, modes: modes, usage: usage)
+  #expect(table.rows[0] == ["**files**", "● enabled", "1", "0", "1", "0", "2", "Files"])
+  #expect(table.rows[1][0] == "**mcp/remote**")
+  #expect(table.rows[1][1...6] == ["○ disabled", "0", "0", "0", "1", "0"])
+
+  let terminal = TerminalWriter(capturesOutput: true)
+  await terminal.table(table)
+  let output = await terminal.drainCaptured()
+  #expect(!output.contains("\u{1B}") && !output.contains("**files"))
+  #expect(output.contains("A | **B**"))
+  #expect(output.split(separator: "\n").count == groups.count + 1)
+  let details = MaiCLI.toolDetailsTable(groups[0], modes: modes, usage: usage)
+  #expect(details.rows.map { $0[1] } == ["direct", "hidden"])
+  #expect(details.rows.map { $0[2] } == ["2", "0"])
+
+  var buffer = TerminalOutputBuffer()
+  let block = buffer.appendReply(table.markdown)
+  buffer.finishReply(block)
+  buffer.configureMarkdown(MarkdownTerminalRenderer(options: .init(tableBorders: false)))
+  let compact = buffer.visibleRows(width: 130, height: 50).joined(separator: "\n")
+  #expect(!compact.contains("┌"))
+  #expect(compact.contains("mcp/remote") && compact.contains("A | **B**"))
+  buffer.configureMarkdown(MarkdownTerminalRenderer(options: .init(tableBorders: true)))
+  #expect(buffer.visibleRows(width: 130, height: 50).joined().contains("┌"))
+  buffer.configureMarkdown(MarkdownTerminalRenderer(options: .init(tableBorders: false)))
+  #expect(buffer.visibleRows(width: 130, height: 50).joined(separator: "\n") == compact)
+  let narrow = buffer.visibleRows(width: 60, height: 50)
+  #expect(narrow.count > groups.count + 1)
 }

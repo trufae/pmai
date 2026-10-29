@@ -185,6 +185,7 @@ actor TerminalWriter {
   /// it is shown by surfaces that do not interpret escape sequences.
   func configureMarkdown(_ renderer: MarkdownTerminalRenderer?) {
     var renderer = renderer
+    renderer?.options.tableBorders = ui.tableBorders
     renderer?.theme.colorOverrides = Dictionary(
       uniqueKeysWithValues: [
         ("90", ui.thinkingForeground), ("32", ui.toolCallForeground),
@@ -641,6 +642,18 @@ actor TerminalWriter {
       emit(rendered, to: .standardOutput)
     }
     outputEndedLine = true
+  }
+
+  /// Command tables share reply layout and remain reflowable in buffer mode.
+  /// Captures, redirects and Markdown-off output still get aligned plain text.
+  func table(_ table: MarkdownTable) {
+    let plain = MarkdownTableLayout.lines(
+      for: table,
+      width: terminalOutput ? TerminalLineEditor.terminalColumns() : Int.max,
+      unicode: MarkdownTerminalEnvironment.detect(ProcessInfo.processInfo.environment).unicode,
+      borders: ui.tableBorders
+    ).map { $0.map(\.text).joined() }.joined(separator: "\n")
+    markdown(table.markdown, plainText: plain)
   }
 
   /// A completed shell filter's bytes, with no extra newline or styling.

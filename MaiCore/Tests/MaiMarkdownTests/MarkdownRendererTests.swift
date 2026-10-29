@@ -266,6 +266,41 @@ func tableWrapping() {
   #expect(lines.filter { $0 == "+-----+--------------------------+" }.count == 4)
 }
 
+@Test("Frameless tables use column gaps, keep alignment and omit every rule")
+func framelessTableRendering() throws {
+  let source = "| Name | N | Note |\n|---|---:|:---:|\n| **one** | 7 | x |\n| two | 123 | xy |\n"
+  let options = MarkdownLayoutOptions(width: 40, tableBorders: false)
+  let output = MarkdownTerminalRenderer.render(source, theme: .plain, options: options)
+  #expect(stripANSI(output) == "Name    N  Note\none     7   x  \ntwo   123   xy \n")
+  #expect(output.contains("\u{1B}[1mone\u{1B}[0m"))
+  var renderer = MarkdownTerminalRenderer(theme: .plain, options: options)
+  let streamed = source.map { renderer.feed(String($0)) }.joined() + renderer.flush()
+  #expect(streamed == output)
+
+  let table = try #require(MarkdownTable.parse([
+    "| Name | Description |", "|---|---|",
+    "| 界 | a **long description** that wraps |", "| two | end |",
+  ]))
+  let framed = MarkdownTableLayout.lines(for: table, width: 24, unicode: true)
+  let compact = MarkdownTableLayout.lines(for: table, width: 24, unicode: true, borders: false)
+  #expect(compact.count < framed.count)
+  #expect(compact.allSatisfy { MarkdownDisplayWidth.width(of: $0) <= 24 })
+  #expect(compact.flatMap { $0 }.allSatisfy { $0.style.role != .tableBorder })
+  #expect(compact.map { $0.map(\.text).joined() }.joined().contains("end"))
+}
+
+@Test("Generated Markdown tables preserve pipes, line breaks and inline styles")
+func generatedTableMarkdown() {
+  let table = MarkdownTable(
+    headers: ["Name", "N"], alignments: [.leading, .trailing],
+    rows: [["**one** | two<br>three\nfour", "123"]])
+  let options = MarkdownLayoutOptions(width: 40, tableBorders: false)
+  let output = MarkdownTerminalRenderer.render(table.markdown, theme: .plain, options: options)
+  let direct = MarkdownTableLayout.lines(for: table, width: 40, unicode: true, borders: false)
+    .map { $0.map(\.text).joined() }.joined(separator: "\n") + "\n"
+  #expect(stripANSI(output) == direct)
+}
+
 @Test("Block elements render with markers, colours, and ASCII fallbacks")
 func blockRendering() {
   let source = """

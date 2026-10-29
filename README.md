@@ -170,6 +170,12 @@ switches to buffer mode. `/set ui.toolgroups off` restores individual rows;
 `/set ui.tools` still controls their result previews. The status bar shows the
 current prompt's elapsed time at the right, including time spent awaiting approval.
 
+`/tools` lists groups in an aligned table with shared mode and call-count columns;
+`/tools full` adds each group's individual tools. Terminal Markdown tables are
+frameless by default to save space. Use `/set ui.tableborders on` to draw frames
+and separators, or `off` to remove them. This applies to command output and
+replies, including existing tables in buffer mode.
+
 ## Bring your workstation to your phone
 
 In the host's pmai REPL, share a project on your local network:
