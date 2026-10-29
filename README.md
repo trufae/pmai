@@ -154,6 +154,8 @@ The selection is saved for future runs. You can also use
 To use an installed, authenticated coding agent over ACP, enter either
 `/agent acp add claude` or `/agent acp add opencode` inside pmai. Each command
 saves and selects the agent. See [ACP setup and shell one-liners](doc/acp.md#acp-providers-in-the-normal-prompt).
+The [Claude guide](doc/claude.md) covers installation, model selection, reasoning
+effort, and disabling commit attribution.
 Use `/providers` to list connections and `/provider del ID` to remove an unused
 one; `/about` shows setup options and `/help provider` explains provider commands.
 

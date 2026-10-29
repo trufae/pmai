@@ -61,6 +61,9 @@ Point an editor at `pmai --acp`. Point another agent or an MCP client at
 
 ## ACP providers in the normal prompt
 
+For Claude installation, model selection, reasoning effort, and disabling commit
+attribution, see [Claude Code through ACP](claude.md).
+
 For a one-command setup inside pmai, choose either:
 
 ```
