@@ -122,6 +122,96 @@ final class BTWTests: XCTestCase {
     XCTAssertFalse(store.currentConversation?.messages.contains { $0.text.contains("stop me") } ?? true)
   }
 
+  // Prevent losing a partial reply or silently replaying work after suspension.
+  func testBackgroundExpirationSavesPartialReplyAndStopsMainAndSideQuestions() async throws {
+    defer { StubChatEndpoint.releaseHeldReplies() }
+    StubChatEndpoint.script = { _ in (StubChatEndpoint.completion(content: "Done"), -1) }
+    let id = try XCTUnwrap(store.currentConversation?.id)
+    _ = await store.send(prompt: "main")
+    _ = await store.send(prompt: "/btw side")
+    try await waitUntil { StubChatEndpoint.heldReplyCount == 2 }
+    let assistantID = try XCTUnwrap(store.currentConversation?.messages.last?.id)
+    store.receiveStreamingAssistantText("Partial reply", for: assistantID, vibrate: false)
+
+    store.handleScenePhaseChange(.background)
+    let persistence = PersistenceStore(localBaseURL: root)
+    XCTAssertEqual(
+      persistence.loadConversations().first { $0.id == id }?.messages.last?.text,
+      "Partial reply", "Background entry must save the streaming buffer before suspension")
+
+    store.handleBackgroundExecutionExpired()
+    let saved = try XCTUnwrap(
+      persistence.loadConversations().first { $0.id == id }?.messages.last)
+    XCTAssertTrue(saved.text.hasPrefix("Partial reply\n\n"))
+    XCTAssertTrue(saved.text.contains("background time expired"))
+    try await waitUntil { !self.store.isResponding && self.store.btwTasks.isEmpty }
+    XCTAssertEqual(store.currentConversation?.messages.last?.text, saved.text)
+    XCTAssertEqual(store.btwQuestions.first?.error, "Stopped")
+
+    store.handleScenePhaseChange(.active)
+    // A fresh explicit request also confirms the app remains usable after cancellation.
+    StubChatEndpoint.script = { _ in (StubChatEndpoint.completion(content: "Fresh reply"), 0) }
+    _ = await store.send(prompt: "continue explicitly")
+    try await waitUntil { !self.store.isResponding }
+    XCTAssertEqual(store.currentConversation?.messages.last?.text, "Fresh reply")
+    XCTAssertEqual(StubChatEndpoint.requests.count, 3)
+  }
+
+  func testThenQueueWaitsForForegroundAfterBackgroundExpiration() async throws {
+    defer { StubChatEndpoint.releaseHeldReplies() }
+    StubChatEndpoint.script = { _ in (StubChatEndpoint.completion(content: "Done"), -1) }
+    _ = await store.send(prompt: "main")
+    _ = await store.send(prompt: "/then follow up")
+    try await waitUntil { StubChatEndpoint.heldReplyCount == 1 }
+    store.handleScenePhaseChange(.background)
+    store.handleBackgroundExecutionExpired()
+    try await waitUntil { !self.store.isResponding }
+    _ = await store.send(prompt: "/then")
+    XCTAssertEqual(store.commandOutput, "1. follow up")
+    XCTAssertEqual(StubChatEndpoint.requests.count, 1)
+
+    StubChatEndpoint.script = { _ in (StubChatEndpoint.completion(content: "Queued reply"), 0) }
+    store.handleScenePhaseChange(.active)
+    try await waitUntil { StubChatEndpoint.requests.count == 2 && !self.store.isResponding }
+    XCTAssertEqual(store.currentConversation?.messages.last?.text, "Queued reply")
+    XCTAssertEqual(StubChatEndpoint.requests.count, 2)
+  }
+
+  func testExpirationAfterReturningToForegroundDoesNotInterruptReply() async throws {
+    defer { StubChatEndpoint.releaseHeldReplies() }
+    StubChatEndpoint.script = { _ in (StubChatEndpoint.completion(content: "Finished reply"), -1) }
+    _ = await store.send(prompt: "main")
+    try await waitUntil { StubChatEndpoint.heldReplyCount == 1 }
+    store.handleScenePhaseChange(.background)
+    store.handleScenePhaseChange(.active)
+    store.handleBackgroundExecutionExpired()
+    StubChatEndpoint.releaseHeldReplies()
+    try await waitUntil { !self.store.isResponding }
+    XCTAssertEqual(store.currentConversation?.messages.last?.text, "Finished reply")
+    XCTAssertEqual(StubChatEndpoint.requests.count, 1)
+  }
+
+  func testBackgroundTimeoutWaitsForAnExplicitDecision() async throws {
+    store.handleScenePhaseChange(.background)
+    let decision = Task {
+      await self.store.requestLongRunningOperationDecision(
+        LongRunningOperationContext(
+          kind: .modelResponse, conversationID: self.store.currentConversation?.id,
+          assistantMessageID: nil, operationName: "Reply", conversationTitle: nil,
+          timeoutInterval: 600))
+    }
+    defer { decision.cancel() }
+    try await waitUntil { self.store.activeLongRunningOperationTimeoutRequest != nil }
+    store.handleScenePhaseChange(.active)
+    let request = try XCTUnwrap(store.activeLongRunningOperationTimeoutRequest)
+    store.interruptLongRunningOperation(id: request.id)
+    let result = await decision.value
+    guard case .interrupt = result else {
+      XCTFail("Leaving the app must not consent to extending the timeout")
+      return
+    }
+  }
+
   func testRequestKeepsProfileButDropsTranscriptAttachmentsAndSession() throws {
     var source = try XCTUnwrap(store.currentConversation)
     source.toolsEnabled = true

@@ -14,7 +14,7 @@ final class AssistantActivityController {
   /// How long a finished card stays on the Lock Screen when the user is away.
   private static let finishedDismissalDelay: TimeInterval = 3 * 60
 
-  var isEnabled = true {
+  var isEnabled = false {
     didSet {
       guard !isEnabled else { return }
       endActivity(dismissalPolicy: .immediate)
@@ -88,15 +88,9 @@ final class AssistantActivityController {
     requestFlush(urgent: true)
   }
 
-  /// The user is back in the app: finished turns no longer need a card, and
-  /// anything the expired background allowance paused is about to resume.
+  /// The user is back in the app: finished turns no longer need a card.
   func appDidBecomeActive() {
     pruneFinishedTasks()
-    for (id, var task) in tasksByID where task.phase == .paused {
-      task.phase = .thinking
-      task.detail = ""
-      tasksByID[id] = task
-    }
     if tasksByID.isEmpty {
       endActivity(dismissalPolicy: .immediate)
       // A card that ended while the phone was locked is still on the Lock

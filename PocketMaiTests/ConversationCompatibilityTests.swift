@@ -108,6 +108,25 @@ final class ConversationCompatibilityTests: XCTestCase {
     }
   }
 
+  func testBackgroundStatusDefaultsOffAndRetainsExistingPreferences() throws {
+    let decoder = JSONDecoder()
+    let defaults = try decoder.decode(BackgroundActivitySettings.self, from: Data("{}".utf8))
+    XCTAssertFalse(defaults.liveActivityEnabled)
+    XCTAssertFalse(defaults.notifyWhenResponseFinishes)
+    XCTAssertFalse(defaults.notifyWhenApprovalNeeded)
+    let legacy = Data("""
+      {"liveActivityEnabled":true,"notifyWhenResponseFinishes":true,
+       "notifyWhenApprovalNeeded":false,"extendedBackgroundProcessing":true}
+      """.utf8)
+    let restored = try decoder.decode(BackgroundActivitySettings.self, from: legacy)
+    XCTAssertTrue(restored.liveActivityEnabled)
+    XCTAssertTrue(restored.notifyWhenResponseFinishes)
+    XCTAssertFalse(restored.notifyWhenApprovalNeeded)
+    XCTAssertEqual(
+      try decoder.decode(BackgroundActivitySettings.self, from: JSONEncoder().encode(restored)),
+      restored)
+  }
+
   func testPersistenceStoreLoadsEveryReleasedFixture() throws {
     for name in fixtures.keys.sorted() {
       try XCTContext.runActivity(named: name) { _ in

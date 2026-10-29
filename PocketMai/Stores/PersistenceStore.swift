@@ -122,6 +122,18 @@ final class PersistenceStore: @unchecked Sendable {
   private var pendingDrafts: DispatchWorkItem?
   private var pendingBookmarks: DispatchWorkItem?
 
+  /// Drain debounced saves before UIKit withdraws background execution time.
+  /// Call from outside writeQueue; completion callbacks must not wait on the caller.
+  func flushPendingWrites() {
+    writeQueue.sync {
+      let items = [pendingSettings, pendingConversations, pendingDrafts, pendingBookmarks]
+      for item in items {
+        item?.perform()
+        // Prevent the delayed dispatch from executing the same save again.
+        item?.cancel()
+      }
+    }
+  }
 
   init(fileManager: FileManager = .default, localBaseURL: URL? = nil) {
     self.fileManager = fileManager
@@ -713,6 +725,7 @@ final class PersistenceStore: @unchecked Sendable {
       let item = DispatchWorkItem { [weak self] in
         defer { completion?() }
         guard let self else { return }
+        defer { self.pendingConversations = nil }
         let localChanged = localConversations
         let iCloudChanged = iCloudConversations
         let persistedLocal = self.persistConversations(
@@ -765,6 +778,7 @@ final class PersistenceStore: @unchecked Sendable {
       let item = DispatchWorkItem { [weak self] in
         defer { completion?() }
         guard let self else { return }
+        defer { self.pendingConversations = nil }
         let persistedLocal = self.persistConversations(
           localConversations,
           summaries: summarySnapshot.filter { $0.folderID != ConversationFolder.iCloudID },
@@ -838,7 +852,10 @@ final class PersistenceStore: @unchecked Sendable {
       guard let self else { return }
       self.prepareForAccess()
       self.pendingSettings?.cancel()
-      let item = DispatchWorkItem { Self.persist(snapshot, to: url, dir: dir) }
+      let item = DispatchWorkItem { [weak self] in
+        Self.persist(snapshot, to: url, dir: dir)
+        self?.pendingSettings = nil
+      }
       self.pendingSettings = item
       self.writeQueue.asyncAfter(deadline: .now() + delay, execute: item)
     }
@@ -868,10 +885,11 @@ final class PersistenceStore: @unchecked Sendable {
       guard let self else { return }
       self.prepareForAccess()
       self.pendingDrafts?.cancel()
-      let item = DispatchWorkItem {
+      let item = DispatchWorkItem { [weak self] in
         let snapshot = PersistedDrafts(
           drafts: Dictionary(uniqueKeysWithValues: drafts.map { ($0.key.uuidString, $0.value) }))
         Self.persist(snapshot, to: url, dir: dir)
+        self?.pendingDrafts = nil
       }
       self.pendingDrafts = item
       self.writeQueue.asyncAfter(deadline: .now() + delay, execute: item)
@@ -887,8 +905,9 @@ final class PersistenceStore: @unchecked Sendable {
       guard let self else { return }
       self.prepareForAccess()
       self.pendingBookmarks?.cancel()
-      let item = DispatchWorkItem {
+      let item = DispatchWorkItem { [weak self] in
         Self.persist(PersistedBookmarks(bookmarks: bookmarks), to: url, dir: dir)
+        self?.pendingBookmarks = nil
       }
       self.pendingBookmarks = item
       self.writeQueue.asyncAfter(deadline: .now() + delay, execute: item)

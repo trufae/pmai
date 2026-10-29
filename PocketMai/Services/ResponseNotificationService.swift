@@ -9,6 +9,9 @@ private let conversationIDUserInfoKey = "conversationID"
 @MainActor
 final class ResponseNotificationService: NSObject, UNUserNotificationCenterDelegate {
   static let shared = ResponseNotificationService()
+  // UserNotifications can perform synchronous XPC even for its void APIs.
+  // Serialize delivery and cleanup without blocking the app's main thread.
+  private let notificationQueue = DispatchQueue(label: "dev.mai.response-notifications")
 
   enum Kind: String, CaseIterable {
     case completed
@@ -50,21 +53,20 @@ final class ResponseNotificationService: NSObject, UNUserNotificationCenterDeleg
 
   func post(_ kind: Kind, conversationID: UUID, title: String, body: String) {
     guard !isAppInForeground else { return }
-    let content = UNMutableNotificationContent()
-    content.title = title
-    content.body = body
-    content.sound = .default
-    content.threadIdentifier = conversationID.uuidString
-    content.userInfo = [conversationIDUserInfoKey: conversationID.uuidString]
-    let request = UNNotificationRequest(
-      identifier: Self.identifier(kind, conversationID),
-      content: content,
-      trigger: nil)
-    let center = UNUserNotificationCenter.current()
-    // A newer outcome for the same chat supersedes whatever is still showing.
-    center.removeDeliveredNotifications(withIdentifiers: Self.identifiers(for: conversationID))
-    Task {
-      try? await center.add(request)
+    let identifier = Self.identifier(kind, conversationID)
+    let superseded = Self.identifiers(for: conversationID)
+    notificationQueue.async {
+      let content = UNMutableNotificationContent()
+      content.title = title
+      content.body = body
+      content.sound = .default
+      content.threadIdentifier = conversationID.uuidString
+      content.userInfo = [conversationIDUserInfoKey: conversationID.uuidString]
+      let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
+      let center = UNUserNotificationCenter.current()
+      // A newer outcome for the same chat supersedes whatever is still showing.
+      center.removeDeliveredNotifications(withIdentifiers: superseded)
+      center.add(request) { _ in }
     }
   }
 
@@ -77,9 +79,11 @@ final class ResponseNotificationService: NSObject, UNUserNotificationCenterDeleg
   }
 
   private func clear(_ identifiers: [String]) {
-    let center = UNUserNotificationCenter.current()
-    center.removeDeliveredNotifications(withIdentifiers: identifiers)
-    center.removePendingNotificationRequests(withIdentifiers: identifiers)
+    notificationQueue.async {
+      let center = UNUserNotificationCenter.current()
+      center.removeDeliveredNotifications(withIdentifiers: identifiers)
+      center.removePendingNotificationRequests(withIdentifiers: identifiers)
+    }
   }
 
   private static func identifier(_ kind: Kind, _ conversationID: UUID) -> String {

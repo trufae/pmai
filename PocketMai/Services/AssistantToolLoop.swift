@@ -273,6 +273,7 @@ enum AssistantToolLoop {
         store: store,
         hasToolResults: state.toolCallCount > 0,
         remainingToolCalls: maxToolCalls - state.toolCallCount)
+      try Task.checkCancellation()
 
       switch outcome {
       case .final(let turnText):
@@ -692,6 +693,7 @@ enum AssistantToolLoop {
         request: request,
         timeoutHandler: timeoutHandler(store: store)
       ) { [weak store] streamed in
+        guard !Task.isCancelled, store?.responseOutcomes[conversation.id] != .stopped else { return }
         latestStreamedResponse = streamed
         guard case .live = host, !requestState.isToolAgent else { return }
         let turnText =

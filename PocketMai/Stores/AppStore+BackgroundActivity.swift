@@ -2,8 +2,7 @@ import SwiftUI
 import UIKit
 
 /// Glue between the assistant turn lifecycle and the pieces that report on it
-/// while the app is not on screen: the Live Activity, local notifications, and
-/// the opt-in audio keep-alive.
+/// while the app is not on screen. Status reporting does not extend runtime.
 extension AppStore {
   // MARK: - Turn lifecycle
 
@@ -21,9 +20,6 @@ extension AppStore {
     phase: AssistantActivityTask.Phase,
     detail: String = ""
   ) {
-    if phase == .runningTool {
-      responseBackgroundTasks[conversationID]?.recordProgress()
-    }
     guard settings.background.liveActivityEnabled else { return }
     assistantActivity.setPhase(id: conversationID, phase: phase, detail: detail)
   }
@@ -37,7 +33,6 @@ extension AppStore {
       else {
         continue
       }
-      responseBackgroundTasks[conversationID]?.recordProgress()
       if settings.background.liveActivityEnabled {
         assistantActivity.setStreamingText(id: conversationID, text: text)
       }
@@ -60,7 +55,6 @@ extension AppStore {
         title: conversation?.displayTitle ?? "PocketMai",
         body: summary.isEmpty ? fallback : summary)
     }
-    refreshBackgroundKeepAlive()
   }
 
   /// A turn that was dropped without finishing (edited, regenerated, deleted).
@@ -69,7 +63,6 @@ extension AppStore {
     responseOutcomes[conversationID] = nil
     assistantActivity.remove(id: conversationID)
     ResponseNotificationService.shared.clearNotification(.approval, for: conversationID)
-    refreshBackgroundKeepAlive()
   }
 
   func activityApprovalRequested(conversationID: UUID, toolName: String) {
@@ -100,7 +93,7 @@ extension AppStore {
   func handleScenePhaseChange(_ phase: ScenePhase) {
     switch phase {
     case .active:
-      backgroundKeepAlive.stop()
+      isInBackground = false
       for task in responseBackgroundTasks.values {
         task.renewFiniteTask()
       }
@@ -108,11 +101,13 @@ extension AppStore {
       if let selectedConversationID {
         ResponseNotificationService.shared.clearNotifications(for: selectedConversationID)
       }
+      drainThenQueue()
     case .background:
-      for request in longRunningOperationTimeoutRequests {
-        continueLongRunningOperation(id: request.id)
+      isInBackground = true
+      for task in responseBackgroundTasks.values {
+        task.renewFiniteTask()
       }
-      refreshBackgroundKeepAlive(enteringBackground: true)
+      checkpointBackgroundResponses()
     case .inactive:
       break
     @unknown default:
@@ -120,33 +115,8 @@ extension AppStore {
     }
   }
 
-  /// Starts the silent audio session when a reply is running in the background
-  /// and the user opted in; stops it as soon as either condition goes away.
-  func refreshBackgroundKeepAlive(enteringBackground: Bool = false) {
-    let inBackground = enteringBackground || UIApplication.shared.applicationState == .background
-    guard settings.background.extendedBackgroundProcessing,
-      isResponding || !btwTasks.isEmpty, inBackground else {
-      backgroundKeepAlive.stop()
-      return
-    }
-    backgroundKeepAlive.start()
-  }
-
-  /// Asks for notification permission the first time a reply that could finish
-  /// in the background starts, which is when the prompt makes sense to the user.
-  func prepareNotificationsForResponse() {
-    let background = settings.background
-    guard background.notifyWhenResponseFinishes || background.notifyWhenApprovalNeeded else {
-      return
-    }
-    Task {
-      await ResponseNotificationService.shared.requestAuthorizationIfNeeded()
-    }
-  }
-
   func applyBackgroundActivitySettings() {
     assistantActivity.isEnabled = settings.background.liveActivityEnabled
-    refreshBackgroundKeepAlive()
   }
 
   // MARK: - Helpers

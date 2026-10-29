@@ -56,7 +56,6 @@ extension AppStore {
       defer {
         btwTasks[id] = nil
         responseBackgroundTasks.removeValue(forKey: id)?.finish()
-        refreshBackgroundKeepAlive()
         drainThenQueue()
         // Agent tools may have created a process for this transient context.
         stopAgentProcesses(for: id, reason: "Side question finished")
@@ -83,13 +82,11 @@ extension AppStore {
         }
       }
     }
-    let background = ResponseBackgroundTask(
-      onExpiration: {}, onCancellation: { [weak self] in self?.stopBTW(id) })
+    let background = ResponseBackgroundTask { [weak self] in
+      self?.handleBackgroundExecutionExpired()
+    }
     responseBackgroundTasks[id] = background
-    background.start(
-      title: "Side question", useContinuedProcessing: settings.background.liveActivityEnabled
-        && conversation.provider == .openAICompatible)
-    refreshBackgroundKeepAlive()
+    background.renewFiniteTask()
     return true
   }
 

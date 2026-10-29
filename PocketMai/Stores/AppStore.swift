@@ -279,7 +279,7 @@ final class AppStore: ObservableObject {
   let voiceover: VoiceoverController
   var responseBackgroundTasks: [UUID: ResponseBackgroundTask] = [:]
   let assistantActivity = AssistantActivityController()
-  let backgroundKeepAlive = BackgroundKeepAlive()
+  var isInBackground = UIApplication.shared.applicationState == .background
   /// Recorded by the turn runner so the finish hook can tell a failed or
   /// stopped reply from a completed one.
   var responseOutcomes: [UUID: AssistantActivityTask.Phase] = [:]
@@ -360,7 +360,7 @@ final class AppStore: ObservableObject {
   }
 
   private var canRunThen: Bool {
-    !isResponding && btwTasks.isEmpty && !isCompacting && !isUpdatingMemory
+    !isInBackground && !isResponding && btwTasks.isEmpty && !isCompacting && !isUpdatingMemory
       && followUpTasks.isEmpty && preparingConversationIDs.isEmpty
   }
 
@@ -3109,8 +3109,6 @@ final class AppStore: ObservableObject {
     respondingConversationIDs.insert(conversationID)
     responseTaskTokens[conversationID] = responseTaskToken
     activityTurnStarted(conversationID: conversationID)
-    prepareNotificationsForResponse()
-    refreshBackgroundKeepAlive()
     reopenAgentProcess(for: conversationID)
     let task = Task { @MainActor [weak self] in
       guard let self else { return }
@@ -3121,9 +3119,9 @@ final class AppStore: ObservableObject {
           loadingLocalModelConversationIDs.remove(conversationID)
           responseTasks[conversationID] = nil
           responseTaskTokens[conversationID] = nil
-          endResponseBackgroundTask(
-            for: conversationID, success: responseOutcomes[conversationID] == nil)
           saveConversations()
+          if isInBackground { persistence.flushPendingWrites() }
+          endResponseBackgroundTask(for: conversationID)
           if responseOutcomes[conversationID] == nil, !Task.isCancelled {
             scheduleVoiceover(for: conversationID)
           }
@@ -3249,44 +3247,50 @@ final class AppStore: ObservableObject {
 
   private func beginResponseBackgroundTask(for conversationID: UUID) {
     endResponseBackgroundTask(for: conversationID)
-    let task = ResponseBackgroundTask(
-      onExpiration: { [weak self] in
-        self?.handleResponseBackgroundTaskExpired(for: conversationID)
-      },
-      onCancellation: { [weak self] in
-        guard let self else { return }
-        if let messageID = latestAssistantMessageID(in: conversationID) {
-          checkpointStreamingAssistantMessage(id: messageID)
-        }
-        cancelResponse(in: conversationID)
-      })
-    responseBackgroundTasks[conversationID] = task
-    task.start(
-      title: conversation(withID: conversationID)?.displayTitle ?? "PocketMai",
-      // MLX uses the GPU, which needs a separate device capability/entitlement.
-      useContinuedProcessing: settings.background.liveActivityEnabled
-        && conversation(withID: conversationID)?.provider == .openAICompatible)
-  }
-
-  private func handleResponseBackgroundTaskExpired(for conversationID: UUID) {
-    // Expiration only ends the extra background execution allowance. Cancelling
-    // here used to discard an otherwise resumable in-progress assistant turn.
-    guard respondingConversationIDs.contains(conversationID) else { return }
-    guard !responseBackgroundTasks.values.contains(where: \.isContinuing) else { return }
-    if backgroundKeepAlive.isActive { return }
-    // The process is about to be suspended mid-reply. Keep what streamed so far
-    // and tell the Lock Screen card why nothing moves until the app reopens.
-    if let messageID = latestAssistantMessageID(in: conversationID) {
-      checkpointStreamingAssistantMessage(id: messageID)
+    let task = ResponseBackgroundTask { [weak self] in
+      self?.handleBackgroundExecutionExpired()
     }
-    activityPhaseChanged(
-      conversationID: conversationID,
-      phase: .paused,
-      detail: "Open PocketMai to continue")
+    responseBackgroundTasks[conversationID] = task
+    task.renewFiniteTask()
   }
 
-  private func endResponseBackgroundTask(for conversationID: UUID, success: Bool = false) {
-    responseBackgroundTasks.removeValue(forKey: conversationID)?.finish(success: success)
+  /// UIKit's background budget is shared by the process, not by conversation.
+  /// Cancel without replaying a prompt or tool whose result may be unknown.
+  func handleBackgroundExecutionExpired() {
+    guard isInBackground || UIApplication.shared.applicationState == .background else { return }
+    isInBackground = true
+    for conversationID in respondingConversationIDs {
+      cancelResponse(in: conversationID)
+      responseOutcomes[conversationID] = .stopped
+      let lastMessage = conversation(withID: conversationID)?.messages.last
+      let messageID = lastMessage?.role == .assistant
+        ? lastMessage?.id : appendAssistantMessage(to: conversationID)
+      if let messageID {
+        markAssistantStopped(
+          id: messageID,
+          reason: "[interrupted: background time expired. Send a new message to continue.]")
+      }
+      assistantActivity.finish(id: conversationID, phase: .stopped, detail: "Background time expired")
+    }
+    for task in btwTasks.values { task.cancel() }
+    for task in followUpTasks.values { task.cancel() }
+    stopAllAgentProcesses(reason: "Background time expired")
+    checkpointBackgroundResponses()
+    endAllResponseBackgroundTasks()
+  }
+
+  func checkpointBackgroundResponses() {
+    for conversationID in respondingConversationIDs {
+      if let messageID = latestAssistantMessageID(in: conversationID) {
+        checkpointStreamingAssistantMessage(id: messageID)
+      }
+    }
+    saveConversations()
+    persistence.flushPendingWrites()
+  }
+
+  private func endResponseBackgroundTask(for conversationID: UUID) {
+    responseBackgroundTasks.removeValue(forKey: conversationID)?.finish()
   }
 
   private func endAllResponseBackgroundTasks() {
@@ -3302,18 +3306,19 @@ final class AppStore: ObservableObject {
     saveConversations()
   }
 
-  func markAssistantStopped(id: UUID) {
+  func markAssistantStopped(id: UUID, reason: String = "[stopped]") {
     let current = currentTextOfMessage(id: id)
     let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
     if trimmed.isEmpty {
-      setAssistantMessage(id: id, text: "[stopped]", role: .error)
+      setAssistantMessage(id: id, text: reason, role: .error)
     } else {
       setAssistantMessage(
-        id: id, text: "\(current)\n\n[stopped]", role: .assistant)
+        id: id, text: "\(current)\n\n\(reason)", role: .assistant)
     }
   }
 
   func markLatestAssistantStopped(in conversationID: UUID, fallbackID: UUID) {
+    guard responseOutcomes[conversationID] != .stopped else { return }
     responseOutcomes[conversationID] = .stopped
     markAssistantStopped(id: latestAssistantMessageID(in: conversationID) ?? fallbackID)
   }
@@ -4134,9 +4139,8 @@ final class AppStore: ObservableObject {
     _ context: LongRunningOperationContext
   ) async -> LongRunningOperationDecision {
     guard !Task.isCancelled else { return .interrupt }
-    // A background reply cannot answer an alert. Keep the same operation
-    // running; the normal timeout prompt is available when the app is active.
-    guard UIApplication.shared.applicationState == .active else { return .continue }
+    // Leave the decision pending while away. Switching apps must not consent
+    // to extending an operation; completion or cancellation dismisses it.
     if let assistantMessageID = context.assistantMessageID {
       checkpointStreamingAssistantMessage(id: assistantMessageID)
     }

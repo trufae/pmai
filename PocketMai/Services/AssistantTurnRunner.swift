@@ -18,11 +18,14 @@ enum AssistantTurnRunner {
         assistantID: assistantID,
         baseContext: context,
         store: store)
+      try Task.checkCancellation()
     } catch is CancellationError {
       store.markLatestAssistantStopped(in: conversationID, fallbackID: assistantID)
     } catch {
       let nsError = error as NSError
-      if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
+      if Task.isCancelled
+        || (nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled)
+      {
         store.markLatestAssistantStopped(in: conversationID, fallbackID: assistantID)
       } else {
         let text = error.localizedDescription

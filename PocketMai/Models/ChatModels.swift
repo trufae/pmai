@@ -3200,21 +3200,18 @@ struct FollowUpSettings: Codable, Equatable, Sendable {
 
 struct BackgroundActivitySettings: Codable, Equatable, Sendable {
   /// Mirror running replies into a Live Activity (Lock Screen and Dynamic Island).
-  var liveActivityEnabled: Bool = true
+  var liveActivityEnabled: Bool = false
   /// Local notification when a reply finishes or fails while the app is not on screen.
-  var notifyWhenResponseFinishes: Bool = true
+  var notifyWhenResponseFinishes: Bool = false
   /// Local notification when a tool call waits for approval while the app is not on screen.
-  var notifyWhenApprovalNeeded: Bool = true
-  /// Keep the process alive with a silent audio session while a reply runs in the background.
-  var extendedBackgroundProcessing: Bool = false
+  var notifyWhenApprovalNeeded: Bool = false
 
   static let defaults = BackgroundActivitySettings()
 
   init() {}
 
   enum CodingKeys: String, CodingKey {
-    case liveActivityEnabled, notifyWhenResponseFinishes, notifyWhenApprovalNeeded,
-      extendedBackgroundProcessing
+    case liveActivityEnabled, notifyWhenResponseFinishes, notifyWhenApprovalNeeded
   }
 
   init(from decoder: Decoder) throws {
@@ -3228,9 +3225,6 @@ struct BackgroundActivitySettings: Codable, Equatable, Sendable {
     notifyWhenApprovalNeeded =
       (try? c.decode(Bool.self, forKey: .notifyWhenApprovalNeeded))
       ?? defaults.notifyWhenApprovalNeeded
-    extendedBackgroundProcessing =
-      (try? c.decode(Bool.self, forKey: .extendedBackgroundProcessing))
-      ?? defaults.extendedBackgroundProcessing
   }
 }
 

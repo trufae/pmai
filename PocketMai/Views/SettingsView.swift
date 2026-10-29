@@ -842,7 +842,9 @@ struct SettingsView: View {
   private var backgroundActivityContent: some View {
     Toggle("Live Activity", isOn: settingsBinding(\.background.liveActivityEnabled))
       .task { await refreshNotificationAuthorizationStatus() }
-    Text("Follow running replies from the Lock Screen and the Dynamic Island.")
+    Text(
+      "Show reply status on the Lock Screen and the Dynamic Island. This does not extend background runtime."
+    )
       .font(.caption)
       .foregroundStyle(.secondary)
     Toggle(
@@ -859,15 +861,12 @@ struct SettingsView: View {
         .font(.caption)
         .foregroundStyle(.secondary)
     } else {
-      Text("Sent only while PocketMai is in the background or the device is locked.")
+      Text("Sent only if a reply finishes or needs approval before iOS suspends PocketMai.")
         .font(.caption)
         .foregroundStyle(.secondary)
     }
-    Toggle(
-      "Keep working when locked",
-      isOn: settingsBinding(\.background.extendedBackgroundProcessing))
     Text(
-      "Plays silence in the background so long replies and tool runs keep going after the screen locks. Uses more battery."
+      "Replies can finish during a short background allowance. When it expires, PocketMai saves the partial reply and stops. Reopen the chat to continue with a new message."
     )
     .font(.caption)
     .foregroundStyle(.secondary)
