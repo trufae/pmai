@@ -15,6 +15,7 @@ public enum ToolIcon {
     "files_list": "📁", "files_find": "🔎", "files_grep": "🔬", "files_read": "📖",
     "files_read_index": "🗂️", "files_get_function": "🧩", "files_set_function": "🔩",
     "files_read_range": "📏", "files_replace_range": "🪡", "files_patch": "🩹",
+    "files_zip": "🧳", "files_unzip": "🪆",
     "files_mkdir": "🗃️", "files_write": "✏️", "files_rename": "🏷️", "files_delete": "🗑️",
     "agent_start": "🚀", "agent_status": "📡", "agent_result": "📦", "agent_stop": "🛑",
     "context_list": "📜", "context_remove": "✂️", "context_rewrite": "🖋️",

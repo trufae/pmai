@@ -3048,7 +3048,8 @@ private struct ChatComposer: View {
   @State private var viewingPendingImageAttachment: ChatAttachment?
   @State private var pendingImageSizePrompt: PendingImageAttachmentImport?
   @State private var pendingPDFImport: PendingPDFImport?
-  @State private var pendingHTMLImport: PendingHTMLImport?
+  @State private var pendingHTMLImport: PendingDocumentImport?
+  @State private var pendingWorkspaceImport: PendingDocumentImport?
   @State private var attachmentConversionMessage: String?
   @State private var attachmentNotice: String?
   @State private var attachmentError: String?
@@ -3181,6 +3182,20 @@ private struct ChatComposer: View {
         Button("OK", role: .cancel) { attachmentError = nil }
       } message: { message in
         Text(message)
+      }
+      .confirmationDialog(
+        "Save File to Working Folder",
+        isPresented: workspaceImportBinding,
+        titleVisibility: .visible,
+        presenting: pendingWorkspaceImport
+      ) { pending in
+        Button(filesToolsNeedEnabling ? "Enable Files Tools and Save" : "Save File") {
+          saveUnsupportedFile(pending)
+        }
+        Button("Cancel", role: .cancel) { dismissWorkspaceImport() }
+      } message: { pending in
+        Text("\(pending.filename) cannot be attached as text. Save it to \(currentWorkspaceName) so this chat can access it?"
+          + (filesToolsNeedEnabling ? " This will enable Tools and Files access for this chat." : ""))
       }
       .imageSizeConfirmationDialog(
         isPresented: imageSizePromptBinding,
@@ -3380,6 +3395,46 @@ private struct ChatComposer: View {
       })
   }
 
+  private var workspaceImportBinding: Binding<Bool> {
+    Binding(
+      get: { pendingWorkspaceImport != nil },
+      set: { if !$0 { dismissWorkspaceImport() } })
+  }
+
+  private var filesToolsNeedEnabling: Bool {
+    guard let conversation = store.currentConversation else { return true }
+    return !conversation.toolsEnabled || !conversation.enabledTools.contains(.files)
+      || !store.settings.toolSettings.filesWorkspaceAccessEnabled
+  }
+
+  private func dismissWorkspaceImport() {
+    pendingWorkspaceImport = nil
+    resumeSharedImportAfterAnswer()
+  }
+
+  private func saveUnsupportedFile(_ pending: PendingDocumentImport) {
+    pendingWorkspaceImport = nil
+    defer { resumeSharedImportAfterAnswer() }
+    guard remoteChat == nil, let conversation = store.currentConversation else { return }
+    do {
+      let resolved = try FileWorkspaceTool.context(for: conversation, settings: store.settings)
+      if let bookmark = resolved.refreshedBookmarkData {
+        store.refreshWorkingFolderBookmark(conversationID: conversation.id, bookmarkData: bookmark)
+      }
+      let destination = try FileWorkspaceService.importFile(
+        data: pending.data, filename: pending.filename, in: resolved.context)
+      store.enableFilesTools()
+      pendingAttachments.append(.textFile(
+        filename: destination.lastPathComponent + ".txt",
+        text: "Saved file in the working folder: \(destination.lastPathComponent). Use Files tools to access it. ZIP and XDC archives can be unpacked with files_unzip and repacked with files_zip.",
+        mimeType: "text/plain"))
+      showAttachmentNotice("Saved \(destination.lastPathComponent) to \(resolved.context.displayName).")
+      composerFocused = true
+    } catch {
+      attachmentError = error.localizedDescription
+    }
+  }
+
   private func attachSharedImages(
     _ pending: PendingImageAttachmentImport,
     size: AttachmentImageSize
@@ -3413,20 +3468,19 @@ private struct ChatComposer: View {
     resumeSharedImportAfterAnswer()
   }
 
-  private func attachHTML(_ pending: PendingHTMLImport, mode: HTMLAttachmentMode) {
+  private func attachHTML(_ pending: PendingDocumentImport, mode: HTMLAttachmentMode) {
     pendingHTMLImport = nil
-    if case .failed(let message) = appendDocumentAttachment(
-      data: pending.data,
-      filename: pending.filename,
-      mimeType: pending.mimeType,
-      htmlMode: mode)
+    switch appendDocumentAttachment(
+      data: pending.data, filename: pending.filename, mimeType: pending.mimeType, htmlMode: mode)
     {
-      attachmentError = message
+    case .awaitingAnswer: return
+    case .failed(let message): attachmentError = message
+    case .attached: break
     }
     resumeSharedImportAfterAnswer()
   }
 
-  private func copyHTMLToWorkspace(_ pending: PendingHTMLImport) {
+  private func copyHTMLToWorkspace(_ pending: PendingDocumentImport) {
     pendingHTMLImport = nil
     defer { resumeSharedImportAfterAnswer() }
     guard let conversation = store.currentConversation else {
@@ -4275,7 +4329,7 @@ private struct ChatComposer: View {
 
   /// Let Files offer any data file. MaiDocuments inspects its MIME type and
   /// bytes after selection, accepting arbitrary UTF-8 source/text files and
-  /// rejecting unsupported binary data with a useful error.
+  /// offering to save unsupported binary data to the working folder.
   private static let documentAttachmentTypes: [UTType] = [.data]
 
   private func importTextAttachment(_ result: Result<URL, Error>) {
@@ -4321,7 +4375,7 @@ private struct ChatComposer: View {
         pendingPDFImport = pending
         return .awaitingAnswer
       case .html:
-        pendingHTMLImport = PendingHTMLImport(
+        pendingHTMLImport = PendingDocumentImport(
           data: data, filename: filename, mimeType: mimeType)
         return .awaitingAnswer
       default:
@@ -4350,6 +4404,18 @@ private struct ChatComposer: View {
         .textFile(filename: imported.name, text: text, mimeType: file.mimeType))
       composerFocused = true
       return .attached
+    } catch let error as DocumentImportError {
+      switch error {
+      case .binaryFile, .notUTF8, .textTooLarge:
+        if remoteChat == nil, store.currentConversation != nil {
+          pendingWorkspaceImport = PendingDocumentImport(
+            data: data, filename: filename, mimeType: mimeType)
+          return .awaitingAnswer
+        }
+      default:
+        break
+      }
+      return .failed(error.localizedDescription)
     } catch {
       return .failed(error.localizedDescription)
     }
@@ -4855,7 +4921,7 @@ private struct PendingPDFImport {
   let canAttachImages: Bool
 }
 
-private struct PendingHTMLImport {
+private struct PendingDocumentImport {
   let data: Data
   let filename: String
   let mimeType: String?

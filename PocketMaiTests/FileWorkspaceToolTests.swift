@@ -106,6 +106,27 @@ final class FileWorkspaceToolTests: XCTestCase {
       FileManager.default.fileExists(atPath: root.appendingPathComponent("disabled").path))
   }
 
+  func testChatPacksAndExtractsXDCWithoutAdvancedTools() async throws {
+    for proxy in [false, true] {
+      settings.useToolProxy = proxy
+      let suffix = proxy ? "proxy" : "direct"
+      let definitions = ToolAgentRegistry.definitions(for: conversation, settings: settings)
+      XCTAssertTrue(definitions.contains { $0.name == "files_zip" })
+      XCTAssertTrue(definitions.contains { $0.name == "files_unzip" })
+      let data = Data([0, 0xff, 42])
+      try data.write(to: root.appendingPathComponent("asset.bin"))
+      let packed = await call("files_zip", [
+        "path": .string("asset.bin"), "destination": .string("app-\(suffix).xdc"),
+      ])
+      XCTAssertFalse(packed.hasPrefix("Error:"), packed)
+      let extracted = await call("files_unzip", [
+        "path": .string("app-\(suffix).xdc"), "destination": .string("app-\(suffix)"),
+      ])
+      XCTAssertFalse(extracted.hasPrefix("Error:"), extracted)
+      XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("app-\(suffix)/asset.bin")), data)
+    }
+  }
+
   func testAdvertisedFunctionToolDispatchesThroughFilesHandler() async throws {
     settings.toolSettings.filesAdvancedToolsEnabled = true
     try Data("int answer() { return 42; }\n".utf8).write(
