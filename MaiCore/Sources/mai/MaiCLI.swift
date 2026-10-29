@@ -5607,36 +5607,57 @@ struct MaiCLI {
     let state = access.policy.snapshot()
     switch command {
     case "list", "ls":
-      await terminal.line("Files path policy (saved in configuration; directories include descendants):")
-      await terminal.line("Current directory: \(FileManager.default.currentDirectoryPath)")
-      let root = files.effectiveRootURL
-      await terminal.line(
-        "\(access.policy.access(to: root, insideWorkspace: true).rawValue) \(root.path) [Files workspace\(files.followsProcessWorkingDirectory ? "; follows /cd" : "; fixed root")]"
-      )
-      for url in files.additionalAllowedURLs {
-        let policy = access.policy.access(to: url, insideWorkspace: true)
-        await terminal.line("\(policy.rawValue) \(url.path) [granted from prompt]")
+      let badges = [
+        "allow": await terminal.paint("allow", role: .successForeground, bold: true),
+        "ask": await terminal.paint("ask", role: .warningForeground, bold: true),
+        "deny": await terminal.paint("deny", role: .errorForeground, bold: true),
+      ]
+      func badge(_ policy: MaiFileAccessPolicy.Access) -> String {
+        badges[policy.rawValue] ?? policy.rawValue
       }
+      func row(_ policy: MaiFileAccessPolicy.Access, _ path: String) -> String {
+        "  " + String(repeating: " ", count: 5 - policy.rawValue.count) + badge(policy) + " " + path
+      }
+      let root = files.effectiveRootURL
+      let rootPolicy = access.policy.access(to: root, insideWorkspace: true)
+      let rootMode = await terminal.paint(
+        files.followsProcessWorkingDirectory ? "[follows /cd]" : "[fixed root]",
+        role: .thinkingForeground)
+      var lines = [
+        await terminal.paintHeading("Workspace"),
+        "  Current directory: \(FileManager.default.currentDirectoryPath)",
+        "  Files workspace:   \(root.path) \(rootMode)",
+        "  Workspace access:  \(badge(rootPolicy))",
+        "",
+        await terminal.paintHeading("Defaults"),
+        "  Outside allowed paths: \(badge(state.outside))",
+        "  Hidden paths:          \(badge(state.hidden))",
+        "  Sensitive paths:       \(badge(state.sensitive))",
+        "  Prompt path grants:    \(state.outsideConfigured ? badge(state.outside) : "tool approval")",
+        "",
+        await terminal.paintHeading("Additional paths"),
+      ]
       for url in access.policy.defaultAllowedURLs {
         let policy = access.policy.access(to: url, insideWorkspace: false)
-        await terminal.line("\(policy.rawValue) \(url.path) [temporary files; allowed by default]")
+        let label = await terminal.paint("[temporary; default]", role: .thinkingForeground)
+        lines.append(row(policy, url.path) + " " + label)
       }
+      for url in files.additionalAllowedURLs {
+        let policy = access.policy.access(to: url, insideWorkspace: true)
+        let label = await terminal.paint("[session grant]", role: .thinkingForeground)
+        lines.append(row(policy, url.path) + " " + label)
+      }
+      if access.policy.defaultAllowedURLs.isEmpty && files.additionalAllowedURLs.isEmpty {
+        lines.append("  (none)")
+      }
+      lines += ["", await terminal.paintHeading("Saved rules")]
       for rule in state.rules.sorted(by: { $0.url.path < $1.url.path }) {
-        await terminal.line(
-          "\(rule.access.rawValue) \(rule.url.path) [\(rule.descendants ? "directory/subtree" : "file") rule]"
-        )
+        let scope = await terminal.paint(rule.descendants ? "[subtree]" : "[file]", role: .thinkingForeground)
+        lines.append(row(rule.access, rule.url.path) + " " + scope)
       }
-      await terminal.line(
-        "Outside allowed paths: \(state.outside.rawValue). Deny rules override ask and allow rules; ask requires confirmation unless path yolo is enabled with a or s."
-      )
-      await terminal.line("Hidden paths: \(state.hidden.rawValue) (dotfiles and dot directories; explicit rules override this default).")
-      await terminal.line("Sensitive paths: \(state.sensitive.rawValue) (keys, credential stores, and encrypted files; explicit rules override this default).")
-      if !state.outsideConfigured {
-        await terminal.line("Explicit prompt paths may add grants using tool approval; /path outside deny disables automatic additions.")
-      }
-      await terminal.line(
-        "These checks cover Files and vdb tools. Shell commands and other tools retain their own permissions. /help path lists policy commands."
-      )
+      if state.rules.isEmpty { lines.append("  (none)") }
+      lines += ["", await terminal.paint("/help path — commands and policy details", role: .thinkingForeground)]
+      await terminal.line(lines.joined(separator: "\n"))
       return
     case "help":
       await terminal.line(pathHelp)

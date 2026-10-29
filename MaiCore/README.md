@@ -1617,7 +1617,11 @@ model can reuse a path a shell command printed; a path error names the directory
 so the model can correct itself.
 
 `/path` lists the current directory, effective Files workspace, external paths
-granted from prompts, and access rules. On first startup, the CLI saves `ask`
+granted from prompts, and access rules, grouped into Workspace, Defaults,
+Additional paths, and Saved rules. Access labels use the theme's success (`allow`),
+warning (`ask`), and error (`deny`) colors; pipes, redirects, and `NO_COLOR` stay
+plain. `/help path` contains the commands and policy explanations.
+On first startup, the CLI saves `ask`
 rules for `/etc`, `~/.ssh`, and `~/.config`, plus an `ask` default for hidden
 paths (dotfiles and dot directories, including newly created ones). Existing
 configurations without `fileAccess` settings receive these defaults once.

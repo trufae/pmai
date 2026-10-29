@@ -98,7 +98,7 @@ def main():
                     '--no-stream', '--no-markdown'], ['Create a script', 'Read the script', '/path'],
                     cwd=root, env=env)
                 assert scratch_file.read_text() == "print('scratch')", output
-                assert 'temporary files; allowed by default' in output, output
+                assert '[temporary; default]' in output, output
                 assert "print('scratch')" in json.dumps(requests[-1]), requests[-1]
                 requests.clear()
 
@@ -110,7 +110,7 @@ def main():
             assert canonical(f'allow {external}') in canonical(output) and canonical(f'deny {root / "private"}') in canonical(output), output
             assert canonical(f'ask {root}') in canonical(output) and 'Outside allowed paths: deny' in output, output
             assert canonical(f'Current directory: {root / "new-cwd"}') in canonical(output), output
-            assert 'Hidden paths: ask' in output, output
+            assert 'Hidden paths:          ask' in output, output
             settings = json.loads(config.read_text())['fileAccess']
             assert settings['hidden'] == 'ask' and settings['outside'] == 'deny', settings
             assert any(rule['path'].endswith('/etc') and rule['access'] == 'ask'
@@ -126,7 +126,11 @@ def main():
             assert canonical(f'deny {root / "private"}') in canonical(output), output
             assert 'Outside allowed paths: deny' in output, output
             output = run_repl(command, ['/path'], cwd=root, env=env)
-            assert 'Hidden paths: deny' in output, output
+            assert 'Hidden paths:          deny' in output, output
+            assert all(title in output for title in ('Workspace', 'Defaults', 'Additional paths', 'Saved rules')), output
+            assert 'Deny rules override' not in output and 'Shell commands and other tools' not in output, output
+            assert '/help path — commands and policy details' in output, output
+            assert '\x1b[' not in output, output
             assert json.loads(config.read_text())['fileAccess']['rules'] == [], config.read_text()
 
             # Startup defaults require a person even for hidden prompt-named paths in yolo.
@@ -138,7 +142,7 @@ def main():
             tool_messages = [json.dumps(m) for req in requests for m in req['messages'] if m['role'] == 'tool']
             assert sum('was not approved' in m for m in tool_messages) >= 3, tool_messages
             assert not any('HIDDEN SECRET' in m or 'PRIVATE KEY FIXTURE' in m for m in tool_messages), tool_messages
-            assert '[granted from prompt]' not in run_repl(command, ['/path'], cwd=root, env=env)
+            assert '[session grant]' not in run_repl(command, ['/path'], cwd=root, env=env)
             requests.clear()
 
             # Noninteractive policy prompts fail closed even with normal tool approval in yolo.
@@ -167,7 +171,7 @@ def main():
             enqueue(call('files_read', path=str(base / 'outside.txt')))
             output = run_repl(command, ['Inspect ' + str(base / 'outside.txt'), '/path'], cwd=root, env=env)
             assert 'Use /path to review, deny, or require prompts' in output, output
-            assert '[granted from prompt]' in output, output
+            assert '[session grant]' in output, output
             assert 'PROMPT GRANT' in json.dumps(requests[-1]), requests[-1]
             requests.clear()
 
@@ -190,7 +194,7 @@ def main():
             fixed_config.write_text(json.dumps(fixed))
             output = run_repl([binary, '--config', str(fixed_config), '--home', str(base / 'fixed-home')],
                               ['/path'], cwd=root, env=env)
-            assert canonical(f'allow {external}') in canonical(output) and 'fixed root' in output, output
+            assert canonical(f'Files workspace:   {external}') in canonical(output) and '[fixed root]' in output, output
 
             # Real terminal: yolo cannot auto-approve asks or release pending path prompts.
             config.write_text(original_config)
@@ -247,7 +251,7 @@ def main():
                 expect('Use /path to review, deny, or require prompts')
                 expect('GRANT FINISHED')
                 send('/path')
-                expect(f'allow {base / "outside.txt"} [granted from prompt]')
+                expect(f'allow {base / "outside.txt"} [session grant]')
                 send('/path del ' + str(base / 'outside.txt'))
                 expect('Removed explicit Files rule/grant')
 

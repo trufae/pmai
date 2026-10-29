@@ -138,6 +138,19 @@ def main():
                     os.close(master)
 
             run('/theme list')  # Let startup normalize the fixture configuration first.
+            for options in ({}, {'terminal': False}, {'extra_env': {'NO_COLOR': '1'}},
+                            {'extra_env': {'TERM': 'dumb'}}):
+                output = run('/path', **options)
+                plain = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', output)
+                assert all(title in plain for title in
+                           ('Workspace', 'Defaults', 'Additional paths', 'Saved rules')), plain
+                if not options:
+                    for badge in ('\x1b[1;32mallow\x1b[0m',
+                                  '\x1b[1;38;2;35;69;103mask\x1b[0m',
+                                  '\x1b[1;38;2;18;52;86mdeny\x1b[0m'):
+                        assert badge in output, (badge, output)
+                else:
+                    assert '\x1b[' not in output, output
             before = config.read_bytes()
             output = run('/theme show mono', '/theme use missing')
             assert '\x1b[0;37;40;22mpmai> ' in output, output
