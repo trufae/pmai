@@ -714,7 +714,8 @@ contain prompts, tool output, and other private data.
 `default` preserves the original styling, `slime` is green, `light` suits
 white-background terminals, `ember` uses warm colors, and `pink` and `night`
 provide pink and blue palettes. `codark` and `colit` use VS Code
-Dark+ and Light+ colors. `ansi` uses only the eight basic ANSI colors, and `mono`
+Dark+ and Light+ colors. `ansi` uses only the eight basic ANSI colors with no
+explicit background colors, and `mono`
 uses black, white, and bold input. `plum` is dark violet, and `sand` uses parchment
 with dark text. Markdown and subagent labels also follow the selected palette.
 Use `/theme show` to compare all built-in and saved themes in named frames,
@@ -754,7 +755,7 @@ Old configuration files and saved themes using `/set ui.COLOR VALUE` remain vali
 | Settings | REPL output |
 | --- | --- |
 | `bgline` | Input/status-line background |
-| `fgcolor`, `bgcolor` | Input text |
+| `fgcolor`, `bgcolor` | Text foreground and background (including empty space in buffer mode) |
 | `fgprompt`, `bgprompt` | Prompt |
 | `fgtoolcall`, `fgtoolresult` | Tool calls and successful results |
 | `fgerror` | Errors and failed tool results |

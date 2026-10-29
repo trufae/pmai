@@ -6,15 +6,15 @@ enum TerminalTheme {
   static let builtins: [String: ConfiguredTerminalUI] = [
     "default": .init(),
     "ansi": .init(
-      backgroundLine: "blue", foreground: "white", background: "",
+      backgroundLine: "", foreground: "white", background: "",
       promptForeground: "yellow", promptBackground: "",
       toolResultForeground: "yellow", toolCallForeground: "green",
       errorForeground: "red", warningForeground: "yellow", successForeground: "green",
       infoForeground: "white", thinkingForeground: "cyan",
       diffAddedForeground: "green", diffAddedBackground: "",
       diffRemovedForeground: "red", diffRemovedBackground: "",
-      diffHeaderForeground: "cyan", selectionForeground: "black",
-      selectionBackground: "white"),
+      diffHeaderForeground: "cyan", selectionForeground: "",
+      selectionBackground: ""),
     "mono": .init(
       backgroundLine: "black", foreground: "white", background: "",
       promptForeground: "white", promptBackground: "",
@@ -89,10 +89,10 @@ enum TerminalTheme {
       diffAddedForeground: "rgb:bfe", diffAddedBackground: "rgb:133",
       diffRemovedForeground: "rgb:fbd", diffRemovedBackground: "rgb:324",
       diffHeaderForeground: "rgb:7cf", selectionForeground: "rgb:013",
-      selectionBackground: "rgb:7cf"),
+      selectionBackground: "rgb:5ac"),
     // Inspired by Visual Studio Code's Dark+ and Light+ palettes.
     "codark": .init(
-      backgroundLine: "#252526", foreground: "#d4d4d4", background: "#1e1e1e",
+      backgroundLine: "#252526", foreground: "#d4d4d4", background: "",
       promptForeground: "#569cd6", promptBackground: "#252526",
       toolResultForeground: "#ce9178", toolCallForeground: "#9cdcfe",
       errorForeground: "#f44747", warningForeground: "#dcdcaa", successForeground: "#4ec9b0",

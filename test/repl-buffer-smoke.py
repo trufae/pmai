@@ -156,6 +156,24 @@ def main(binary):
                 assert not scrollbar_spans, scrollbar_spans
                 assert b'\x1b[?1006h' in captured, captured
                 assert b'\x1b[?1002h' in captured, captured
+                # The theme background fills short lines and empty output rows,
+                # as well as the last input column reserved for the caret.
+                send('/theme color bgcolor #123456\r')
+                wait_for('Set theme color bgcolor = #123456.')
+                background = '\x1b[48;2;18;52;86m'
+                cleared = '\x1b[0m' + background + '\x1b[2K'
+                assert all(styled_screen[row].startswith(cleared)
+                           for row in range(1, rows - 1)), styled_screen
+                assert styled_screen[rows].startswith(cleared), styled_screen[rows]
+                send("!printf 'THEME_SHORT\\n\\n'\r")
+                wait_for('THEME_SHORT')
+                assert any('THEME_SHORT' in screen.get(row, '') and
+                           styled_screen[row].startswith(cleared)
+                           for row in range(1, rows - 1)), styled_screen
+                send('/theme color bgcolor none\r')
+                wait_for('Set theme color bgcolor = none.')
+                assert all(styled_screen[row].startswith('\x1b[0m\x1b[2K')
+                           for row in range(1, rows - 1)), styled_screen
                 send('/set ui.mode classic\r')
                 wait_for('\x1b[?1049l')
                 send('/clear\r')

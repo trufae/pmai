@@ -14967,7 +14967,7 @@ struct MaiCLI {
     Color settings:
       /theme color bgline COLOR       Input/status-line background
       /theme color fgcolor COLOR      Input foreground
-      /theme color bgcolor COLOR      Input background
+      /theme color bgcolor COLOR      Text and buffer background
       /theme color fgprompt COLOR     Prompt foreground
       /theme color bgprompt COLOR     Prompt background
       /theme color fgtoolresult COLOR Successful tool-result output

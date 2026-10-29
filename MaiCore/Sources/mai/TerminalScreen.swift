@@ -1585,7 +1585,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     let height = viewHeight
     guard height > 0 else { view?.focused = false; draggingViewSeparator = false; return }
     updateViewBuffer()
-    if view?.source == .diffs { view?.buffer.configureColors(scrollbarColors) }
+    view?.buffer.configureColors(scrollbarColors)
     view?.buffer.configureHighlight(ui.highlight)
     let width = paneContentWidth(inView: true)
     let voiceHeader = view?.source == .voice
@@ -1626,16 +1626,24 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     }
     if isVerticalView {
       for row in 1...height {
-        out += move(row: row, column: viewColumn - 1) + Self.reset + "│"
+        out += move(row: row, column: viewColumn - 1) + Self.reset + backgroundStyle + "│"
       }
     }
     paintedViewRows = visible
     writeFixedRows(out)
   }
 
+  private var backgroundStyle: String {
+    guard bufferColorsEnabled,
+      let code = TerminalLineEditor.backgroundColorCode(ui.background)
+    else { return "" }
+    return "\u{1B}[\(code)m"
+  }
+
   private func clearPaneRow(row: Int, column: Int, width: Int) -> String {
     let origin = move(row: row, column: column)
-    return origin + Self.reset + (isVerticalView && width < columns
+    // Erase blank cells with the theme background too, including empty rows.
+    return origin + Self.reset + backgroundStyle + (isVerticalView && width < columns
       ? String(repeating: " ", count: width) + origin : Self.clearLine)
   }
 
@@ -1659,7 +1667,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       let suffix = zip(previous.dropFirst(prefix).reversed(), padded.dropFirst(prefix).reversed())
         .prefix { $0 == $1 }.count
       let column = Self.displayWidth(String(padded.prefix(prefix))) + 1
-      out += move(row: origin + index, column: column) + Self.reset
+      out += move(row: origin + index, column: column) + Self.reset + backgroundStyle
       if questionText != nil {
         let codes = colors ? [
           TerminalLineEditor.foregroundColorCode(ui.selectionForeground),
@@ -1672,8 +1680,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       }
       // Overwrite only the changed span. Padding removes stale glyphs without
       // clearing a visible row before its replacement reaches the terminal.
-      out += padded.dropFirst(prefix).dropLast(suffix) + Self.reset
-      if previous.isEmpty { out += "\u{1B}[K" }
+      out += padded.dropFirst(prefix).dropLast(suffix)
+      if previous.isEmpty { out += Self.reset + backgroundStyle + "\u{1B}[K" }
+      out += Self.reset
     }
     paintedPanelRows = painted
     paintedPanelOrigin = origin
@@ -1702,6 +1711,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     let colors = colorsEnabled
     var out = ""
     out += move(row: regionBottom + panelRows.count + 1, column: 1)
+    out += Self.reset + backgroundStyle
     if clear { out += Self.clearLine }
     if let menu = completionMenu {
       out += completionMenuRow(menu, width: width, colors: colors)
@@ -1762,7 +1772,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       if index == menu.selected {
         out += selection
       }
-      out += shown + Self.reset
+      out += shown + Self.reset + backgroundStyle
       used += Self.displayWidth(shown)
     }
     let pad = String(repeating: " ", count: max(0, width - used))
@@ -1811,7 +1821,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       guard 2 + scrollHintWidth < columns - timerWidth else { return }
       writeFixedRows(
         move(row: regionBottom + panelRows.count + 1, column: 2 + scrollHintWidth)
-          + "\u{1B}[\(style)m" + marker + Self.reset)
+          + backgroundStyle + "\u{1B}[\(style)m" + marker + Self.reset)
       placeCaret()
     }
   }

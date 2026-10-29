@@ -696,6 +696,19 @@ def main(binary):
                 view_column = columns - (columns - 1) // 2 + 1
                 painted = captured.decode(errors='replace')
                 assert re.search(rf'\x1b\[1;{view_column}H[^H]*user: .*PAGED_000', painted), painted
+                # Both vertical panes and their divider use the full background,
+                # even where a short row leaves blank cells beside its text.
+                send('\t/theme color bgcolor #123456\r')
+                wait_for('Set theme color bgcolor = #123456.')
+                painted = captured.decode(errors='replace')
+                background = '\x1b[0m\x1b[48;2;18;52;86m'
+                assert f'\x1b[1;1H{background}' in painted, painted
+                assert f'\x1b[1;{view_column}H{background}' in painted, painted
+                assert f'\x1b[1;{view_column - 1}H{background}│' in painted, painted
+                send('/theme color bgcolor none\r')
+                wait_for('Set theme color bgcolor = none.')
+                send('\t')
+                wait_for('view focused')
                 # Drag the vertical divider; keyboard resizing uses columns in this layout.
                 divider = view_column - 1
                 send(f'\x1b[<0;{divider};4M\x1b[<32;35;4M\x1b[<0;35;4m')
