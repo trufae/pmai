@@ -16,6 +16,8 @@ func fileWorkspaceRangeEditingRequiresOptIn(writeEnabled: Bool, includeAdvancedT
   #expect(names.contains(.readRange) == includeAdvancedTools)
   #expect(names.contains(.patch) == (writeEnabled && includeAdvancedTools))
   #expect(names.contains(.setFunction) == (writeEnabled && includeAdvancedTools))
+  #expect(names.contains(.zip) == writeEnabled)
+  #expect(names.contains(.unzip) == writeEnabled)
   #expect(names.contains(.mkdir) == writeEnabled)
   #expect(names.contains(.delete) == writeEnabled)
 

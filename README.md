@@ -95,7 +95,13 @@ there yet. The Android CLI is a separate terminal client.
   within your configured workspace. Index documents and source with `vdb` to
   retrieve passages with file and line references; default retrieval runs locally
   without an embedding-model download. On iOS, browse, preview, and edit local
-  or remote files, create folders, and upload or download documents.
+  or remote files, create folders, and upload or download documents. Unsupported
+  chat attachments can be saved to the working folder, with a prompt to enable
+  Files tools when needed. `files_zip` and `files_unzip` pack and extract ZIP/XDC
+  archives without a shell; extraction creates a new folder and never overwrites
+  existing files. Archives are limited to 50 MB, expanding to 100 MB and 10,000
+  files. Packing uses stored compression and does not preserve empty folders or
+  file permissions.
 - **Research and everyday tools — iOS + CLI.** Search the web, including through
   your own SearXNG instance, fetch readable pages, and download files. Browse
   GitHub repositories, PR diffs, discussions, issues, releases, and CI logs.

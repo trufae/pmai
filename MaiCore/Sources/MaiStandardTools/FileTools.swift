@@ -65,12 +65,14 @@ public struct MaiFileWorkspaceTool: AgentTool {
     case write = "files_write"
     case rename = "files_rename"
     case delete = "files_delete"
+    case zip = "files_zip"
+    case unzip = "files_unzip"
 
     var changesFiles: Bool {
       switch self {
       case .list, .find, .grep, .read, .readIndex, .getFunction, .readRange:
         false
-      case .setFunction, .replaceRange, .patch, .mkdir, .write, .rename, .delete: true
+      case .setFunction, .replaceRange, .patch, .mkdir, .write, .rename, .delete, .zip, .unzip: true
       }
     }
   }
@@ -152,7 +154,9 @@ public struct MaiFileWorkspaceTool: AgentTool {
       var path = arguments["path"]?.stringValue ?? "."
       if operation == .list, let split = MaiGlob.splitPath(path) { path = split.directory }
       var paths = [path]
-      if operation == .rename, let destination = arguments["new_path"]?.stringValue {
+      if [.rename, .zip, .unzip].contains(operation),
+        let destination = arguments[operation == .rename ? "new_path" : "destination"]?.stringValue
+      {
         paths.append(destination)
       }
       let authorized = try await configuration.authorizing(
@@ -198,6 +202,8 @@ public struct MaiFileWorkspaceTool: AgentTool {
         return try workspace.rename(arguments)
       case .delete:
         return try workspace.delete(arguments)
+      case .zip, .unzip:
+        return try await workspace.archive(arguments, extracting: operation == .unzip)
       }
     } catch is CancellationError {
       throw CancellationError()
@@ -478,6 +484,21 @@ public struct MaiFileWorkspaceTool: AgentTool {
         parameters: [
           path,
           ToolParameterDef(name: "new_path", type: "string", description: "New path.", required: true),
+        ],
+        annotations: ToolAnnotations(
+          readOnly: false, idempotent: false, openWorld: false, approval: .confirm,
+          resultImportance: .important))
+    case .zip, .unzip:
+      return ToolDefinition(
+        name: operation.rawValue,
+        description: operation == .zip
+          ? "Pack a file or a folder's contents into a new ZIP archive (including .xdc). Folder contents go at the archive root. Uses stored compression; preserves binary data. Packs regular files; empty folders and file permissions are not retained. Rejects symbolic links. Limited to 50 MB and 10,000 entries."
+          : "Extract a ZIP or .xdc archive into a new folder. Never overwrites an existing destination. Rejects unsafe entry paths. Archives are limited to 50 MB, expanding to 100 MB and 10,000 files.",
+        parameters: [
+          path,
+          ToolParameterDef(name: "destination", type: "string",
+            description: operation == .zip ? "New archive path, e.g. app.xdc." : "New folder path, e.g. app.",
+            required: true),
         ],
         annotations: ToolAnnotations(
           readOnly: false, idempotent: false, openWorld: false, approval: .confirm,
@@ -1439,6 +1460,123 @@ struct MaiFileWorkspace: Sendable {
       "Renamed \(displayPath(rawPath)) to \(displayPath(newPath))",
       path: newPath,
       extra: ["previousPath": .string(displayPath(rawPath))])
+  }
+
+  private static let maximumArchiveBytes = 50_000_000
+  private static let maximumArchiveOutputBytes = 100_000_000
+  private static let maximumArchiveEntries = 10_000
+
+  func archive(_ arguments: [String: JSONValue], extracting: Bool) async throws -> ToolOutput {
+    try requireWriteAccess()
+    let path = try requiredPath(arguments, key: "path")
+    let destinationPath = try requiredPath(arguments, key: "destination")
+    let source = try resolve(path, allowRoot: !extracting, mustExist: true, followFinalSymlink: false)
+    guard (try? FileManager.default.destinationOfSymbolicLink(atPath: source.path)) == nil else {
+      throw MaiFileWorkspaceError.outsideWorkspace(path)
+    }
+    let destination = try resolve(destinationPath, allowRoot: false, mustExist: false)
+    let manager = FileManager.default
+    guard !manager.fileExists(atPath: destination.path),
+      (try? manager.destinationOfSymbolicLink(atPath: destination.path)) == nil
+    else { throw MaiFileWorkspaceError.alreadyExists(destinationPath) }
+    let operation = extracting ? "files_unzip" : "files_zip"
+    let entries: [ZipArchiveEntry]
+    if extracting {
+      let values = try source.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+      guard values.isRegularFile == true else { throw MaiFileWorkspaceError.notFile(path) }
+      guard (values.fileSize ?? 0) <= Self.maximumArchiveBytes else { throw ZipArchiveError.tooLarge }
+      let data = try readData(at: source)
+      guard data.count <= Self.maximumArchiveBytes else { throw ZipArchiveError.tooLarge }
+      entries = try ZipArchiveReader.entries(
+        in: data, maximumUncompressedBytes: Self.maximumArchiveOutputBytes)
+    } else {
+      let sourceIsDirectory = try source.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true
+      var files = [source]
+      if sourceIsDirectory {
+        var enumerationError: Error?
+        guard let enumerator = manager.enumerator(
+          at: source, includingPropertiesForKeys: Array(Self.searchResourceKeys),
+          errorHandler: { _, error in
+            enumerationError = error
+            return false
+          })
+        else { throw MaiFileWorkspaceError.notDirectory(path) }
+        files = []
+        var visited = 0
+        while let url = enumerator.nextObject() as? URL {
+          try Task.checkCancellation()
+          visited += 1
+          guard visited <= Self.maximumArchiveEntries else { throw ZipArchiveError.tooLarge }
+          guard !isInHiddenRootEntry(url) else {
+            enumerator.skipDescendants()
+            continue
+          }
+          let values = try url.resourceValues(forKeys: Self.searchResourceKeys)
+          guard values.isSymbolicLink != true else {
+            throw MaiFileWorkspaceError.outsideWorkspace(url.path)
+          }
+          if values.isDirectory != true { files.append(url) }
+        }
+        if let enumerationError { throw enumerationError }
+      }
+      let authorized = try await configuration.authorizing(paths: files.map(\.path), operation: operation)
+      let workspace = try MaiFileWorkspace(configuration: authorized)
+      var packed: [ZipArchiveEntry] = []
+      var total = 0
+      for file in files.sorted(by: { $0.path < $1.path }) {
+        try Task.checkCancellation()
+        let checked = try workspace.resolve(file.path, allowRoot: false, mustExist: true)
+        let values = try checked.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard values.isRegularFile == true else { throw MaiFileWorkspaceError.notFile(file.path) }
+        guard (values.fileSize ?? 0) <= Self.maximumArchiveBytes - total else {
+          throw ZipArchiveError.tooLarge
+        }
+        let data = try readData(at: checked)
+        guard data.count <= Self.maximumArchiveBytes - total else { throw ZipArchiveError.tooLarge }
+        total += data.count
+        let name = sourceIsDirectory
+          ? String(file.path.dropFirst(source.path == "/" ? 1 : source.path.count + 1)) : file.lastPathComponent
+        packed.append(ZipArchiveEntry(path: name, data: data))
+      }
+      entries = packed
+    }
+    guard entries.count <= Self.maximumArchiveEntries else { throw ZipArchiveError.tooLarge }
+    var names = Set<String>()
+    for entry in entries {
+      let components = entry.path.components(separatedBy: "/")
+      guard !entry.path.hasPrefix("~"), !entry.path.contains("\0"), !entry.path.contains("\\"), !entry.path.contains(":"),
+        !components.contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }),
+        entry.path.utf8.count <= Int(UInt16.max), names.insert(entry.path).inserted
+      else { throw ZipArchiveError.corruptEntry(entry.path) }
+    }
+    if extracting {
+      let paths = entries.map { destination.appendingPathComponent($0.path).path }
+      let authorized = try await configuration.authorizing(paths: paths, operation: operation)
+      let workspace = try MaiFileWorkspace(configuration: authorized)
+      for path in paths { _ = try workspace.resolve(path, allowRoot: false, mustExist: false) }
+    }
+    try requireCreatedParentsAllowed(destination.deletingLastPathComponent())
+    try manager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+    if extracting {
+      let staging = destination.deletingLastPathComponent().appendingPathComponent(".unzip-\(UUID().uuidString)")
+      try manager.createDirectory(at: staging, withIntermediateDirectories: false)
+      defer { try? manager.removeItem(at: staging) }
+      for entry in entries {
+        try Task.checkCancellation()
+        let file = staging.appendingPathComponent(entry.path)
+        try manager.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try entry.data.write(to: file, options: [.withoutOverwriting])
+      }
+      try manager.moveItem(at: staging, to: destination)
+    } else {
+      let data = ZipArchiveWriter.archive(entries: entries.map { (path: $0.path, data: $0.data) })
+      guard data.count <= Self.maximumArchiveBytes else { throw ZipArchiveError.tooLarge }
+      try data.write(to: destination, options: [.withoutOverwriting])
+    }
+    FileAccessLog.current?.record(destination)
+    return mutationOutput(
+      "\(extracting ? "Extracted" : "Packed") \(entries.count) files to \(displayPath(destinationPath))",
+      path: destinationPath, extra: ["files": .integer(entries.count)])
   }
 
   private func requireCreatedParentsAllowed(_ directory: URL) throws {

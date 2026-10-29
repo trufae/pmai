@@ -841,7 +841,7 @@ final class AppStore: ObservableObject {
     }
   }
 
-  private func enableFilesTools(_ update: @escaping (inout Conversation) -> Void) {
+  func enableFilesTools(_ update: @escaping (inout Conversation) -> Void = { _ in }) {
     updateCurrentConversation { conversation in
       update(&conversation)
       conversation.toolsEnabled = true
