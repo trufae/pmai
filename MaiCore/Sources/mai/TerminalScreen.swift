@@ -1816,9 +1816,12 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private func drawInputRows() {
     var out = ""
     let width = max(1, columns - 1)
+    let base = colorsEnabled ? TerminalThemeStyle.base(ui) : ""
     for (index, row) in inputRows.enumerated() {
+      // Erase with the input background, including the final column reserved
+      // for the caret. The editor's padded text stops one cell short of it.
       out +=
-        move(row: firstInputRow + index, column: 1) + Self.clearLine
+        move(row: firstInputRow + index, column: 1) + Self.reset + base + Self.clearLine
         + Self.clippedInputRow(row, width: width) + Self.reset
     }
     writeFixedRows(out)

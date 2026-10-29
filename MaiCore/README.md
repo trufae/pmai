@@ -710,10 +710,10 @@ tool calls and results, and run events. The setting survives restarts in
 `.pmai/settings.json`. The log is readable only by the current user and can
 contain prompts, tool output, and other private data.
 
-`/theme` (or `/theme list`) lists terminal themes. Thirteen are built in:
+`/theme` (or `/theme list`) lists terminal themes. Twelve are built in:
 `default` preserves the original styling, `slime` is green, `light` suits
-white-background terminals, `ember` uses warm colors, and `pink`, `orange`, and
-`sky` provide pink, orange, and blue palettes. `codark` and `colit` use VS Code
+white-background terminals, `ember` uses warm colors, and `pink` and `night`
+provide pink and blue palettes. `codark` and `colit` use VS Code
 Dark+ and Light+ colors. `ansi` uses only the eight basic ANSI colors, and `mono`
 uses black, white, and bold input. `plum` is dark violet, and `sand` uses parchment
 with dark text. Markdown and subagent labels also follow the selected palette.

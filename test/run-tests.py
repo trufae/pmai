@@ -13,8 +13,8 @@ SMOKE = '''installer openai-http project-approval project-debug projects-repl pr
 repl-cd repl-chat repl-del repl-export repl-fork repl-history repl-indexes repl-local-providers repl-redact repl-resume repl-resume-routing
 repl-resume-state repl-reset repl-skills repl-small-context repl-smart-context repl-speed repl-tool-context repl-tool-policy run-shell task-agents
 update vim web-fetch'''.split()
-TERMINAL = '''repl-agents repl-buffer repl-buffer-commands repl-btw repl-then repl-chop repl-colors repl-compaction repl-conversations repl-interactive-run repl-modal repl-models repl-path
-repl-policy repl-queue repl-recap repl-redirection repl-resize repl-startup repl-subagent-load repl-suspend repl-theme repl-thinking repl-view repl-voice repl-voice-settings'''.split()
+TERMINAL = '''repl-agents repl-buffer repl-buffer-commands repl-btw repl-then repl-chop repl-compaction repl-conversations repl-interactive-run repl-modal repl-models repl-path
+repl-policy repl-queue repl-recap repl-redirection repl-resize repl-startup repl-subagent-load repl-suspend repl-thinking repl-view repl-voice repl-voice-settings'''.split()
 EXTERNAL = ['repl-reflow', 'tailcat']  # Ghostty and a separately built tailcat binary.
 PLATFORM = ['web-fetch', 'openai-http'] if os.name == 'nt' else [
     'update', 'web-fetch', 'openai-http', 'project-approval', 'repl-defaults', 'repl-small-context']

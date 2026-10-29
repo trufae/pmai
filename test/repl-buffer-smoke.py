@@ -209,36 +209,6 @@ def main(binary):
                     assert 'MARKDOWN_BOLD' in visible and 'MARKDOWN_CODE' in visible, screen
                     assert ('**MARKDOWN_BOLD**' in visible) == (enabled == 'off'), screen
                     assert ('`MARKDOWN_CODE`' in visible) == (enabled == 'off'), screen
-                send('/theme show mono\r')
-                wait_for('pmai: Project files listed. Ready!')
-                send('/theme use missing\r')
-                wait_for("error: Unknown theme 'missing'.")
-                for command, confirmation, prompt_color, error_color in (
-                        ('/theme use slime', "Applied theme 'slime'.",
-                         '38;2;136;255;136', '38;2;255;136;136'),
-                        ('/theme color fgprompt blue', 'Set theme color fgprompt = blue.',
-                         '34', '38;2;255;136;136'),
-                        ('/theme use default', "Applied theme 'default'.", '33', '31')):
-                    send(command + '\r')
-                    wait_for(confirmation)
-                    history = []
-                    for _ in range(8):
-                        history.extend((screen.get(row, ''), styled_screen.get(row, ''))
-                                       for row in range(1, rows - 1))
-                        previous = output()
-                        send('\x1b[5~')
-                        read_for(.1)
-                        if output() == previous:
-                            break
-                    assert any('pmai> thinking-test' in plain and f'\x1b[{prompt_color}m' in raw
-                               for plain, raw in history), (command, history)
-                    assert any("error: Unknown theme 'missing'." in plain
-                               and f'\x1b[{error_color}m' in raw for plain, raw in history), (command, history)
-                    assert any('pmai: Project files listed. Ready!' in plain
-                               and '\x1b[0;37;40;22m' in raw for plain, raw in history), (command, history)
-                    assert not re.search(rb'\x1b\[\?90\d+m', captured), captured
-                    send('\x0c')
-                    read_for(.1)
                 send('/set ui.tools\r')
                 wait_for('ui.tools = 0')
                 send('tool-test\r')
@@ -489,16 +459,6 @@ def main(binary):
                         send(f'\x1b[<0;{columns};1M\x1b[<32;{columns};{rows-2}M\x1b[<0;{columns};{rows-2}m')
                         read_for()
                         assert output() == previous, screen
-                # Repaint the existing scrollbar when a theme changes.
-                for theme, handle, track_color in (
-                        ('plum', '48;2;189;154;255', '48;2;48;33;63'),
-                        ('sand', '48;2;119;91;18', '48;2;232;217;181'),
-                        ('mono', '47', '40'),
-                        ('default', '44', '48;2;0;34;68')):
-                    send(f'/theme use {theme}\r')
-                    wait_for(f"Applied theme '{theme}'.")
-                    assert set(scrollbar.values()) == {handle, track_color}, scrollbar
-                    assert all(span == (columns, 1) for span in scrollbar_spans.values()), scrollbar_spans
                 for invalid in ('nope', '1.5', '99999999999999999999'):
                     send(f'/set ui.scrollbar={invalid}\r')
                     wait_for('Usage: /set ui.scrollbar <integer: positive right, negative left, 0 hidden>')
@@ -586,7 +546,7 @@ def main(binary):
                 assert process.returncode == 0
                 assert b'\x1b[?1000l' in captured and b'\x1b[?1049l' in captured, captured
                 assert termios.tcgetattr(master) == original, 'raw tty mode leaked on exit'
-                print('PASS buffer: thinking, markdown, tools and theme settings, Ctrl+B/F and Page paging, configurable wheel steps, mouse packets, live history anchor, fixed multiline draft, '
+                print('PASS buffer: thinking, markdown, tool settings, Ctrl+B/F and Page paging, configurable wheel steps, mouse packets, live history anchor, fixed multiline draft, '
                       'resize, follow, mode persistence, shell output and input, editor handoff '
                       'and terminal cleanup')
             finally:

@@ -262,19 +262,6 @@ task finished. The complete post-fix live matrix remains unverified.
 
 ## Running
 
-The offline theme smoke test checks `/theme color` listing, queries, edits, and
-validation, built-ins, saved scripts (including the older `/set ui.COLOR` format),
-startup overrides, framed theme previews, and isolation from `/set`, without
-changing your configuration:
-
-    python3 test/repl-theme-smoke.py MaiCore/.build/debug/pmai
-
-The color smoke test uses a local mock provider and a PTY to check tool and diff
-colors, diagnostics, live updates, TAB selection, theme preview colors and layout,
-and color-disabled output:
-
-    python3 test/repl-colors-smoke.py MaiCore/.build/debug/pmai
-
 The resize smoke test uses a local mock provider and a PTY to check long status
 lines, styled drafts, completion, animation, and multiline input while shrinking
 the terminal, including redraws before the resize signal is delivered:

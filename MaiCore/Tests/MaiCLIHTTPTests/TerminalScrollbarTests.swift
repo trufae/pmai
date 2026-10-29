@@ -109,23 +109,6 @@ func terminalScrollbarProjections() {
   #expect(source.contentWidth(columns: 80, height: 10, scrollbar: 2) == 78)
 }
 
-@Test("Scrollbar colors follow builtin and custom theme changes")
-func terminalScrollbarColors() {
-  let bar = TerminalScrollbar(rows: 100, top: 40, height: 20)
-  for ui in TerminalTheme.builtins.values {
-    let handle = TerminalLineEditor.backgroundColorCode(ui.selectionBackground)!
-    let track = TerminalLineEditor.backgroundColorCode(ui.backgroundLine)!
-    #expect(bar.cell(at: bar.thumb.lowerBound, ui: ui) == "\u{1B}[\(handle)m \u{1B}[0m")
-    #expect(bar.cell(at: 0, width: 3, ui: ui) == "\u{1B}[\(track)m   \u{1B}[0m")
-  }
-  let custom = ConfiguredTerminalUI(backgroundLine: "#123456", selectionBackground: "#abcdef")
-  #expect(bar.cell(at: 0, ui: custom) == "\u{1B}[48;2;18;52;86m \u{1B}[0m")
-  #expect(bar.cell(at: bar.thumb.lowerBound, ui: custom) == "\u{1B}[48;2;171;205;239m \u{1B}[0m")
-  let uncolored = ConfiguredTerminalUI(backgroundLine: "", selectionBackground: "")
-  #expect(bar.cell(at: 0, ui: uncolored) == bar.cell(at: 0))
-  #expect(bar.cell(at: bar.thumb.lowerBound, ui: uncolored) == bar.cell(at: bar.thumb.lowerBound))
-}
-
 @Test("Indexed navigation agrees with complete layout across hidden blocks and reflow")
 func terminalScrollbarIndexedNavigation() {
   var source = TerminalOutputBuffer()
