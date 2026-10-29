@@ -600,6 +600,12 @@ def main(binary):
                 visible = '\n'.join(output())
                 assert visible.index('BEFORE_COMMAND') < visible.index('Current models'), screen
                 assert visible.index('Current models') < visible.index('AFTER_COMMAND'), screen
+                # A light status bar must use the theme's dark foreground,
+                # rather than the terminal's default (often white) text.
+                send('/theme use colit\r')
+                wait_for("Applied theme 'colit'.")
+                assert '38;2;51;51;51' in styled_screen[rows - 1], styled_screen[rows - 1]
+                assert '48;2;243;243;243' in styled_screen[rows - 1], styled_screen[rows - 1]
                 send('/exit\r')
                 deadline = time.monotonic() + 10
                 while process.poll() is None:

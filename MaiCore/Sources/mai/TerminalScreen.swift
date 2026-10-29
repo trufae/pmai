@@ -1722,7 +1722,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     let colors = colorsEnabled
     var out = ""
     out += move(row: regionBottom + panelRows.count + 1, column: 1)
-    out += Self.reset + backgroundStyle
+    out += Self.reset + (colors ? TerminalThemeStyle.base(ui) : "")
     if clear { out += Self.clearLine }
     if let menu = completionMenu {
       out += completionMenuRow(menu, width: width, colors: colors)
@@ -1730,12 +1730,17 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       let warning = colors ? TerminalLineEditor.foregroundColorCode(ui.warningForeground) : nil
       let codes = ["1", "7"] + [warning].compactMap { $0 }
       out += "\u{1B}[" + codes.joined(separator: ";") + "m" + content + Self.reset
-    } else if let background = TerminalLineEditor.backgroundColorCode(ui.backgroundLine) {
-      out += "\u{1B}[\(background)m" + content + Self.reset
     } else {
-      out += "\u{1B}[2m" + content + Self.reset
+      out += statusLineStyle + content + Self.reset
     }
     writeFixedRows(out)
+  }
+
+  private var statusLineStyle: String {
+    let foreground = colorsEnabled ? TerminalLineEditor.foregroundColorCode(ui.foreground) : nil
+    let background = TerminalLineEditor.backgroundColorCode(ui.backgroundLine)
+    let codes = [background ?? "2", foreground].compactMap { $0 }
+    return "\u{1B}[" + codes.joined(separator: ";") + "m"
   }
 
   /// One row of completion options, joined by two spaces. Each option is shown
@@ -1783,7 +1788,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       if index == menu.selected {
         out += selection
       }
-      out += shown + Self.reset + backgroundStyle
+      out += shown + Self.reset + (colors ? TerminalThemeStyle.base(ui) : "")
       used += Self.displayWidth(shown)
     }
     let pad = String(repeating: " ", count: max(0, width - used))
@@ -1825,14 +1830,13 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       }
       guard animatingStatus else { return }
       let marker = animator.next()
-      let style = TerminalLineEditor.backgroundColorCode(ui.backgroundLine) ?? "2"
       let scrollHintWidth = ui.mode == .buffer && !transcript.isFollowing
         ? Self.displayWidth("↑ scroll · PgDn to latest · ") : 0
       let timerWidth = Self.displayWidth(" \(elapsed / 60)m\(elapsed % 60)s ")
       guard 2 + scrollHintWidth < columns - timerWidth else { return }
       writeFixedRows(
         move(row: regionBottom + panelRows.count + 1, column: 2 + scrollHintWidth)
-          + backgroundStyle + "\u{1B}[\(style)m" + marker + Self.reset)
+          + backgroundStyle + statusLineStyle + marker + Self.reset)
       placeCaret()
     }
   }

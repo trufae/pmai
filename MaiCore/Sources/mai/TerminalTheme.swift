@@ -74,7 +74,7 @@ enum TerminalTheme {
       diffAddedForeground: "rgb:dfb", diffAddedBackground: "rgb:231",
       diffRemovedForeground: "rgb:fcb", diffRemovedBackground: "rgb:421",
       diffHeaderForeground: "rgb:fb7", selectionForeground: "rgb:310",
-      selectionBackground: "rgb:f95"),
+      selectionBackground: "rgb:b74"),
     "pink": .init(
       backgroundLine: "#4a1837", foreground: "#ffe0f1", background: "#2a1021",
       promptForeground: "#ff7fc0", promptBackground: "#4a1837",
@@ -104,8 +104,8 @@ enum TerminalTheme {
       infoForeground: "rgb:aaf", thinkingForeground: "rgb:89a",
       diffAddedForeground: "rgb:bfe", diffAddedBackground: "rgb:133",
       diffRemovedForeground: "rgb:fbd", diffRemovedBackground: "rgb:324",
-      diffHeaderForeground: "rgb:7cf", selectionForeground: "rgb:013",
-      selectionBackground: "rgb:5ac"),
+      diffHeaderForeground: "rgb:7cf", selectionForeground: "rgb:def",
+      selectionBackground: "rgb:367"),
     // Dark+ charcoal with Tango accents and darker diff backgrounds.
     "codark": .init(
       backgroundLine: "#2e3436", foreground: "#d3d7cf", background: "#1e1e1e",
