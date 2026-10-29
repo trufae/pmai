@@ -1535,7 +1535,7 @@ struct MaiFileWorkspace: Sendable {
         guard data.count <= Self.maximumArchiveBytes - total else { throw ZipArchiveError.tooLarge }
         total += data.count
         let name = sourceIsDirectory
-          ? String(file.path.dropFirst(source.path == "/" ? 1 : source.path.count + 1)) : file.lastPathComponent
+          ? String(checked.path.dropFirst(source.path == "/" ? 1 : source.path.count + 1)) : file.lastPathComponent
         packed.append(ZipArchiveEntry(path: name, data: data))
       }
       entries = packed
@@ -2055,7 +2055,7 @@ struct MaiFileWorkspace: Sendable {
 
   private func isWorkspaceRoot(_ url: URL) -> Bool {
     let resolved = url.resolvingSymlinksInPath().standardizedFileURL
-    return resolved == rootURL || additionalDirectoryURLs.contains(resolved)
+    return resolved.path == rootURL.path || additionalDirectoryURLs.contains { $0.path == resolved.path }
   }
 
   private func isInHiddenRootEntry(_ url: URL) -> Bool {

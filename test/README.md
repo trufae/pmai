@@ -19,6 +19,10 @@ scripts, and benchmark-accounting unit tests. Use `TEST_ARGS="--jobs 2"` for
 bounded smoke concurrency. After a full build, `TEST_ARGS="--skip-build"`
 reuses the prepared binaries. `TEST_PROFILE=smoke`, `terminal`, or `platform`
 selects a smaller CLI suite; the runner rejects unassigned smoke scripts.
+The queue PTY smoke owns input, cancellation and approval shutdown in classic
+mode. It synchronizes on chat requests and queue decisions, without model
+catalog assumptions. Catalog loading and cancellation belong to the models
+and startup suites; pure queue ordering is covered by `AgentInboxTests`.
 The platform profile checks portable behavior. CI runs suspend/resume and model
 PTY checks once on Linux x64 instead of repeating them on every native and musl
 build. The 80-agent terminal stress test is opt-in via the CI workflow's
