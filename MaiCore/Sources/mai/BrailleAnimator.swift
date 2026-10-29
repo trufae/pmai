@@ -8,6 +8,7 @@ import Foundation
 final class BrailleAnimator: @unchecked Sendable {
   enum Style: String, CaseIterable, Sendable {
     case random, circle, snake, spiral, square, topWave, bottomWave, scanline
+    case snakeGame = "snakegame"
   }
 
   private let style: Style
@@ -55,6 +56,8 @@ final class BrailleAnimator: @unchecked Sendable {
         dot = Self.circle[index % Self.circle.count]
       case .snake:
         dot = Self.snake[index % Self.snake.count]
+      case .snakeGame:
+        dot = Self.snakeGame[index % Self.snakeGame.count]
       case .spiral:
         dot = Self.spiral[index % Self.spiral.count]
       case .square:
@@ -131,6 +134,19 @@ final class BrailleAnimator: @unchecked Sendable {
   /// weaving down through all four rows.
   private static let snake: [UInt8] = [
     dots[0], dots[1], dots[3], dots[2], dots[4], dots[5], dots[7], dots[6],
+  ]
+
+  /// A three-dot snake turns around the grid, advancing its head and tail
+  /// by one adjacent dot per frame, including when the animation loops.
+  private static let snakeGame: [UInt8] = [
+    dots[4] | dots[2] | dots[0],
+    dots[2] | dots[0] | dots[1],
+    dots[0] | dots[1] | dots[3],
+    dots[1] | dots[3] | dots[5],
+    dots[3] | dots[5] | dots[7],
+    dots[5] | dots[7] | dots[6],
+    dots[7] | dots[6] | dots[4],
+    dots[6] | dots[4] | dots[2],
   ]
 
   // MARK: - Spiral

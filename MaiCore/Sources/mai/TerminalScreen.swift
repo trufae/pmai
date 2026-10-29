@@ -1714,9 +1714,11 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       status = statusText
       timer = ""
     }
-    let scrollHint = ui.mode == .buffer && !transcript.isFollowing ? "↑ scroll · PgDn to latest · " : ""
+    let scrollHint = ui.mode == .buffer && !transcript.isFollowing ? " ↑ scroll · PgDn to latest · " : ""
     let right = Self.truncated(timer, width: width)
-    let left = Self.truncated(" \(scrollHint)\(status) ", width: max(0, width - Self.displayWidth(right)))
+    // Keep the activity indicator in the same cell when the scroll hint appears.
+    let left = Self.truncated(" \(status.prefix(1))\(scrollHint)\(status.dropFirst()) ",
+      width: max(0, width - Self.displayWidth(right)))
     let content = left + String(repeating: " ", count: max(0,
       width - Self.displayWidth(left) - Self.displayWidth(right))) + right
     let colors = colorsEnabled
@@ -1830,12 +1832,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       }
       guard animatingStatus else { return }
       let marker = animator.next()
-      let scrollHintWidth = ui.mode == .buffer && !transcript.isFollowing
-        ? Self.displayWidth("↑ scroll · PgDn to latest · ") : 0
       let timerWidth = Self.displayWidth(" \(elapsed / 60)m\(elapsed % 60)s ")
-      guard 2 + scrollHintWidth < columns - timerWidth else { return }
+      guard 2 < columns - timerWidth else { return }
       writeFixedRows(
-        move(row: regionBottom + panelRows.count + 1, column: 2 + scrollHintWidth)
+        move(row: regionBottom + panelRows.count + 1, column: 2)
           + backgroundStyle + statusLineStyle + marker + Self.reset)
       placeCaret()
     }
