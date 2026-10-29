@@ -98,7 +98,7 @@ def main():
                 error = None
                 try:
                     run = subprocess.run([str(args.binary.resolve()), "--config", str(config_path),
-                                          "--home", str(root / "home"), "--tool-aproval", "yolo",
+                                          "--home", str(root / "home"), "--tool-approval", "yolo",
                                           "--no-markdown", prompt], cwd=root, env=env,
                                          capture_output=True, text=True, timeout=180)
                     output = run.stdout + "\n" + run.stderr

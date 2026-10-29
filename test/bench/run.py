@@ -174,7 +174,7 @@ def run_case(name, args, upstream, key):
     env = clean_env()
     env["PMAI_HOME"] = str(out_dir / "home")
     cmd = [str(args.pmai), "--config", str(config_path), "--state", str(out_dir / "state"),
-           "--agent", "coder", "--tool-aproval", "yolo", "--no-markdown", prompt]
+           "--agent", "coder", "--tool-approval", "yolo", "--no-markdown", prompt]
     with (out_dir / "proxy.err").open("w") as proxy_errors:
         proxy = subprocess.Popen([sys.executable, str(PROXY)], env=proxy_env,
                                  stdout=subprocess.DEVNULL, stderr=proxy_errors)

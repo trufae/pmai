@@ -158,10 +158,10 @@ private struct CLIOptions {
         pluginPaths.append(try Self.value(after: argument, in: arguments, index: &index))
       case "--no-stream":
         stream = false
-      case "--tool-aproval":
+      case "--tool-approval", "--tool-aproval":
         let value = try Self.value(after: argument, in: arguments, index: &index)
         guard let mode = ToolApprovalMode(rawValue: value) else {
-          throw CLIError.unknownOption("--tool-aproval expects yolo, ask, or smart")
+          throw CLIError.unknownOption("--tool-approval expects yolo, ask, or smart")
         }
         approvalMode = mode
       case "-r", "--resume", "--continue":
@@ -3653,7 +3653,7 @@ struct MaiCLI {
       case "s", "session":
         await services.approvalHandler.setApprovalMode(.yolo)
         waiting.reply.resume(with: .approve(arguments: waiting.request.call.arguments))
-        await terminal.note("approved \(tool); tool.aproval = yolo for this session, including path approvals (not saved)")
+        await terminal.note("approved \(tool); tool.approval = yolo for this session, including path approvals (not saved)")
       case "n", "no":
         waiting.reply.resume(with: .deny(reason: "Denied by user."))
         await terminal.note("denied \(tool)")
@@ -3695,7 +3695,7 @@ struct MaiCLI {
       }
       if !pending.isEmpty {
         await terminal.note(
-          "approved \(pending.count) waiting tool call\(pending.count == 1 ? "" : "s"); tool.aproval = yolo"
+          "approved \(pending.count) waiting tool call\(pending.count == 1 ? "" : "s"); tool.approval = yolo"
         )
       }
     }
@@ -8483,7 +8483,7 @@ struct MaiCLI {
     do {
       var chatDefinition: AgentDefinition?
       let message: String
-      if !chatOnly, ["-compact", "-tool", "-aproval", "-btw", "-voice"].contains(first) {
+      if !chatOnly, ["-compact", "-tool", "-approval", "-aproval", "-btw", "-voice"].contains(first) {
         guard words.count <= 2 else {
           await terminal.line("Usage: /model \(first) [AGENT|PROVIDER::MODEL|MODEL]")
           return
@@ -11059,7 +11059,7 @@ struct MaiCLI {
         return
       }
       let settings = [
-        "tool.aproval = \(await approvalHandler.currentApprovalMode().rawValue)",
+        "tool.approval = \(await approvalHandler.currentApprovalMode().rawValue)",
         "debug = \(await approvalHandler.isDebugEnabled() ? "true" : "false")",
         "debugfile = \(await approvalHandler.debugLogURL().path)",
         "airplane = \(await runtime.internetAccessPolicy().airplaneModeEnabled ? "on ✈" : "off")",
@@ -11329,7 +11329,7 @@ struct MaiCLI {
       return
     }
     if key == "tool" || key == "tool." || key == "tools" || key == "tools." {
-      await terminal.line("tool.aproval = \(await approvalHandler.currentApprovalMode().rawValue)")
+      await terminal.line("tool.approval = \(await approvalHandler.currentApprovalMode().rawValue)")
       await listSettings(toolSettings(session.profile), terminal: terminal)
       return
     }
@@ -11399,7 +11399,7 @@ struct MaiCLI {
         terminal: terminal)
       return
     }
-    if key == "tool.aproval" {
+    if key == "tool.approval" || key == "tool.aproval" {
       await setToolApproval(
         parts: parts,
         approvalHandler: approvalHandler,
@@ -11420,7 +11420,7 @@ struct MaiCLI {
         || levelKeys.contains(key) || textKeys.contains(key)
     else {
       await terminal.line(
-        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, airplane, effort, tool.aproval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, limits.runTimeoutSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.window, ctx.strategy, \((textKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), export.tools, export.thinking, redact, use.agentsmd, use.plan"
+        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, airplane, effort, tool.approval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, limits.runTimeoutSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.window, ctx.strategy, \((textKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), export.tools, export.thinking, redact, use.agentsmd, use.plan"
       )
       return
     }
@@ -11580,26 +11580,26 @@ struct MaiCLI {
     terminal: TerminalWriter
   ) async {
     guard parts.count > 1 else {
-      await terminal.line("tool.aproval = \(await approvalHandler.currentApprovalMode().rawValue)")
+      await terminal.line("tool.approval = \(await approvalHandler.currentApprovalMode().rawValue)")
       return
     }
     guard (parts.count == 2 || (parts.count == 3 && parts[2].lowercased() == "session")),
       let mode = ToolApprovalMode(rawValue: parts[1].lowercased())
     else {
-      await terminal.line("Usage: /set tool.aproval <yolo|ask|smart> [session]")
+      await terminal.line("Usage: /set tool.approval <yolo|ask|smart> [session]")
       return
     }
     if parts.count == 3 {
       await approvalHandler.setApprovalMode(mode)
-      await terminal.line("tool.aproval = \(mode.rawValue) for this session (not saved\(mode == .yolo ? "; includes path approvals" : ""))")
+      await terminal.line("tool.approval = \(mode.rawValue) for this session (not saved\(mode == .yolo ? "; includes path approvals" : ""))")
       return
     }
     do {
       try await approvalHandler.saveApprovalMode(mode)
-      await terminal.line("tool.aproval = \(mode.rawValue) (saved for this project)")
+      await terminal.line("tool.approval = \(mode.rawValue) (saved for this project)")
     } catch {
       await terminal.line(
-        "Could not save tool.aproval = \(mode.rawValue): \(error.localizedDescription)",
+        "Could not save tool.approval = \(mode.rawValue): \(error.localizedDescription)",
         to: .standardError)
     }
   }
@@ -14269,12 +14269,12 @@ struct MaiCLI {
     themesDirectory: URL
   ) -> [String] {
     var values = [
-      "/recover", "/recover clear", "/help", "/help set", "/help reset", "/reset", "/exit", "/quit", "/set tool.aproval yolo", "/set tool.aproval ask",
+      "/recover", "/recover clear", "/help", "/help set", "/help reset", "/reset", "/exit", "/quit", "/set tool.approval yolo", "/set tool.approval ask",
       "/help shell", "/help keys", "/help model",
       "/help history", "/history", "/history list", "/history search ", "/history del ",
       "/history clear", "/history path", "/history help",
       "/help theme", "/theme", "/theme list", "/theme show", "/theme use ", "/theme save ", "/theme color",
-      "/set tool.aproval smart", "/set tool.aproval yolo session", "/set tool.aproval ask session",
+      "/set tool.approval smart", "/set tool.approval yolo session", "/set tool.approval ask session",
       "/set debug true", "/set debug false",
       "/set debugfile ", "/set debugfile default",
       "/set ui.", "/set effort", "/set effort off", "/set effort auto", "/nothink",
@@ -14760,7 +14760,7 @@ struct MaiCLI {
     is allowed by default, even with saved configurations; explicit rules override it.
     At tool or path prompts, a enables yolo for tools and path asks and saves it
     for this project; s enables it for this session only. Ordinary saved tool yolo
-    settings keep path prompts active. /set tool.aproval yolo session also approves
+    settings keep path prompts active. /set tool.approval yolo session also approves
     asks for this session only.
     Explicit deny rules still apply. Without a terminal, unresolved asks are rejected.
     Only the person at the REPL can
@@ -14902,7 +14902,7 @@ struct MaiCLI {
     - `/model -chat MODEL` — Chat only; keep task assignments
     - `/model -compact [NAME]` — Compaction
     - `/model -tool [NAME]` — Tool decisions
-    - `/model -aproval [NAME]` — Smart approval
+    - `/model -approval [NAME]` — Smart approval
     - `/model -btw [NAME]` — Side questions
 
     MODEL accepts `PROVIDER::MODEL` or a model on the current provider.
@@ -15050,7 +15050,7 @@ struct MaiCLI {
       /set                         List current settings and their values
       /reset                       Restore stock /set defaults after reset/cancel confirmation
       /set effort [LEVEL] [TEXT]   Show or set reasoning effort and optional guidance
-      /set tool.aproval MODE [session]  yolo, ask (default), or smart; saved for this project unless session is given
+      /set tool.approval MODE [session]  yolo, ask (default), or smart; saved for this project unless session is given
       /set debug <true|false>       Log model calls, tool activity, and run events for this project
       /set debugfile <PATH|default> Save debug logs at PATH; default uses .pmai/debug.jsonl
       /set tool.                   List the tool calling settings
@@ -15101,12 +15101,12 @@ struct MaiCLI {
       /set use.plan BOOL           Ask an agent that can start children to open a request of
                                    several steps with a numbered plan before delegating (on/off)
 
-    tool.aproval, debug, and debugfile are saved in the opened project's .pmai/settings.json.
-    /set tool.aproval yolo session and s at approval prompts enable yolo for tools
+    tool.approval, debug, and debugfile are saved in the opened project's .pmai/settings.json.
+    /set tool.approval yolo session and s at approval prompts enable yolo for tools
     and path asks until exit; nothing is saved. Explicit path denials still apply.
     At approval prompts, a saves yolo for tools and path asks in the current project.
     Debug entries append to the chosen file and may contain prompts and tool output.
-    --tool-aproval MODE overrides approval for one run. Projects without a saved choice use approvals.mode from the
+    --tool-approval MODE overrides approval for one run. Projects without a saved choice use approvals.mode from the
     active configuration. Agent, UI, and document export settings use the active configuration.
     """
 
@@ -15444,7 +15444,7 @@ struct MaiCLI {
       /model [PROVIDER::]MODEL  Set the chat and all task models, including side questions
       /model -chat [PROVIDER::]MODEL  Change only this agent's chat model
       /model -compact [NAME]     Assign a compaction agent or model; omit to clear
-      /model -aproval [NAME]     Assign a smart-approval agent or model; omit to clear
+      /model -approval [NAME]    Assign a smart-approval agent or model; omit to clear
       /model -tool [NAME]        Assign a tool-decision agent or model; omit to clear
       /model -voice [NAME]       Assign the voice conversation agent or model; omit to clear
       /model -btw [NAME]         Assign a side-question agent or model; omit to clear
@@ -15592,7 +15592,7 @@ struct MaiCLI {
         --vim ACTION        install, update, or uninstall the bundled Vim integration
         --vim-dir DIR       Vim runtime directory (default: ~/.vim; ~/vimfiles on Windows)
         -v, --version       print the pmai version
-        --tool-aproval MODE yolo, ask, or smart for this run; /set tool.aproval saves the project default
+        --tool-approval MODE yolo, ask, or smart for this run; /set tool.approval saves the project default
 
       Config discovery:
         --config, PMAI_CONFIG, ./pmai.json, ~/.config/pmai/config.json

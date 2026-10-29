@@ -220,7 +220,7 @@ def main():
                 send('invalid')
                 expect('Answer y/a/s/n/c for files_path_access')
                 assert len(requests) == 1, requests
-                send('/set tool.aproval yolo')
+                send('/set tool.approval yolo')
                 expect('yolo')
                 assert len(requests) == 1, requests
                 send('y')
@@ -272,7 +272,7 @@ def main():
                 assert config.read_bytes() == saved_config
 
                 # Session ask restores prompts; s also works at a normal tool prompt.
-                send('/set tool.aproval ask session')
+                send('/set tool.approval ask session')
                 expect('ask for this session')
                 enqueue(call('files_read', path='private/secret.txt'), 'SESSION TOOL YOLO')
                 send('Read private')

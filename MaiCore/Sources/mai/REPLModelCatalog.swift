@@ -4,7 +4,7 @@ import MaiCore
 /// Model discovery never waits on the input thread. Tab reads the latest
 /// catalog, including a /models result that arrived while editing this line.
 final class REPLModelCatalog: @unchecked Sendable {
-  static let taskPrefixes = ["compact", "tool", "aproval", "btw"].map { "/model -\($0) " }
+  static let taskPrefixes = ["compact", "tool", "approval", "btw"].map { "/model -\($0) " }
   static let commandPrefixes = ["/model -chat "] + taskPrefixes + ["/model "]
 
   private let lock = NSLock()

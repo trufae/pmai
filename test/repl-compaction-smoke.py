@@ -30,7 +30,7 @@ def main(clear_action):
             'memory': {'enabled': False}, 'use': {'plan': False},
         }))
         command = [binary, '--config', str(config), '--home', str(root / 'home'),
-                   '--no-stream', '--no-markdown', '--tool-aproval', 'yolo']
+                   '--no-stream', '--no-markdown', '--tool-approval', 'yolo']
         seed = subprocess.run(command + ['OLD-CONTEXT ' * 300], cwd=root, env=environment,
                               capture_output=True, timeout=20)
         assert seed.returncode == 0, seed.stderr

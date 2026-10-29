@@ -187,7 +187,7 @@ public enum MaiPmaiCommands {
       displayName: "pmai commands",
       description:
         "Run pmai's own slash commands — the ones the person types at the prompt — and read back "
-        + "what they printed. pmai_run runs one (`/set tool.aproval smart`, `/mcp add …`, "
+        + "what they printed. pmai_run runs one (`/set tool.approval smart`, `/mcp add …`, "
         + "`/model gpt-5`, `/theme use NAME`, `/tools enable …`); pmai_help returns a command's "
         + "usage without running it. Use them to read and change this installation. Ask the person "
         + "before running one that changes something, and check pmai_help first when unsure of the "
@@ -241,7 +241,7 @@ public struct MaiPmaiRunTool: AgentTool {
         + "and /model for the model, /providers and /provider for chat providers and their base "
         + "URLs, /tools for which tools an agent may call, /mcp to list, add, remove, enable or disable MCP servers, "
         + "/theme to list, apply, save or customize a color theme, /agents for saved definitions, /jobs for processes, /stats "
-        + "for token use. Example: pmai_run with command \"/set tool.aproval smart\". Changes are "
+        + "for token use. Example: pmai_run with command \"/set tool.approval smart\". Changes are "
         + "saved and take effect from the next turn, so run one that changes something only after "
         + "the person has asked for it. pmai_help gives a command's exact syntax. " + scope,
       inputSchema: .object([

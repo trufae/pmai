@@ -150,7 +150,7 @@ def main():
                         "memory": {"enabled": False, "scope": "project"}, "use": {"plan": False},
                     }))
                     args = ["--config", str(config), "--home", str(root / "home"),
-                            "--no-markdown", "--tool-aproval", "yolo"]
+                            "--no-markdown", "--tool-approval", "yolo"]
                     if not stream:
                         args.append("--no-stream")
                     result = subprocess.run(command + args + ["hello"], cwd=root,

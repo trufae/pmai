@@ -85,7 +85,8 @@ def main():
         assert 'Chat: another::other' in run(['/model'])
         print('PASS task agents: creation, model/effort, restart, reset, deletion, temporary and saved overrides')
 
-        run(['/model -compact cheap', '/model -tool cheap', '/model -aproval cheap', '/model -btw cheap', '/model -voice cheap'])
+        run(['/model -compact cheap', '/model -tool cheap', '/model -approval cheap', '/model -btw cheap', '/model -voice cheap'])
+        assert 'approval: cheap (saved)' in run(['/model -aproval cheap'])
         cheap = next(agent for agent in json.loads(config.read_text())['agents']
                      if agent['id'] == 'cheap')
         output = run(['/model hello::org/unified:latest', '/model'])

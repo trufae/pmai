@@ -133,7 +133,7 @@ def main():
                 env.update(TERM='xterm-256color', NO_PROXY='127.0.0.1,localhost')
                 process = subprocess.Popen(
                     [binary, '--config', str(config), '--home', str(root / 'home'),
-                     '--no-stream', '--no-markdown'] + (['--tool-aproval', 'yolo'] if choice.startswith('shell-') else []), cwd=root, env=env,
+                     '--no-stream', '--no-markdown'] + (['--tool-approval', 'yolo'] if choice.startswith('shell-') else []), cwd=root, env=env,
                     stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
                 os.close(slave)
                 output = bytearray()
