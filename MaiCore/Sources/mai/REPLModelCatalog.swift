@@ -13,9 +13,8 @@ final class REPLModelCatalog: @unchecked Sendable {
   private var pending: [ProviderID: Task<Void, Never>] = [:]
   private var retryAfter: [ProviderID: Date] = [:]
 
-  func select(_ provider: ProviderID, runtime: AgentRuntime) {
+  func select(_ provider: ProviderID) {
     lock.withLock { currentProvider = provider }
-    prefetch(provider, runtime: runtime)
   }
 
   /// Explicit listings replace the cache; an older background fetch must

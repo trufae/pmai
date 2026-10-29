@@ -53,6 +53,42 @@ retained diagnostics, and preserved chat history after the failed turn.
 Every smoke script also remains independently runnable. `smoke.py` shares only
 environment isolation, REPL response delimiters, PTY waits, and HTTP responses.
 
+`python3 test/repl-startup-smoke.py MaiCore/.build/debug/pmai` reports time to
+the first prompt and first local command in both terminal layouts. It verifies
+that startup makes no model/voice catalog requests, stalled discovery leaves
+commands usable, explicit voice listings populate completion, and input handoffs
+do not scan skill files. Catalogs are fetched on the first relevant Tab request;
+press Tab again after discovery finishes to use the results.
+
+To compare startup before and after a change, build both revisions with the
+same toolchain and flags, then run
+`python3 test/bench/startup.py BEFORE AFTER --runs 15 --output /tmp/startup.json`.
+It measures process launch to the first prompt and first local command reply in
+both layouts, with zero and 300 skills. Two warmups per binary precede 15
+alternating samples; the printed values are medians and the JSON retains every
+sample. Fixtures use the offline provider and command voice backends, so no
+network or native audio initialization is involved. These are warm filesystem
+measurements; terminal rendering and cold OS cache costs are not measured.
+For phase timings within one binary, including Android/Termux, use
+`PMAI_STARTUP_TIMING=1 pmai`; see the [startup diagnostics](../README.md#build)
+in the main README.
+
+Measured on 2026-10-29, comparing `d6b3cbd` with the startup changes on macOS 27
+arm64 using Swift 6.4. Both binaries used debug builds, `PMAI_NO_MLX=1`, the
+native build system, and identical dependency revisions. The benchmark above
+produced these medians across 15 alternating samples after two warmups:
+
+| Layout | Skills | Prompt before | Prompt after | First reply before | First reply after |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| classic | 0 | 44.8 ms | 42.8 ms | 47.8 ms | 45.8 ms |
+| classic | 300 | 91.4 ms | 70.4 ms | 94.8 ms | 73.7 ms |
+| buffer | 0 | 45.6 ms | 44.1 ms | 49.0 ms | 47.6 ms |
+| buffer | 300 | 91.3 ms | 69.6 ms | 95.4 ms | 73.0 ms |
+
+Android timings still need measurement on a device. The diagnostic environment
+variable starts its clock at `main`; the external benchmark also includes
+process creation and loading before `main`.
+
 `python3 test/repl-modal-smoke.py MaiCore/.build/debug/pmai` exercises approvals
 arriving during typing, history search, and heredoc input. It checks immediate
 prompt/status updates, answer validation, JSON editing, cancellation, draft and

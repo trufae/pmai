@@ -83,7 +83,7 @@ extension MaiCLI {
 
   static func showVoiceCatalog(
     _ argument: String, configuration: MaiConfiguration?,
-    plugins: PluginRegistry, terminal: TerminalWriter
+    plugins: PluginRegistry, terminal: TerminalWriter, cache: REPLVoiceCatalog? = nil
   ) async {
     let fields = argument.split(whereSeparator: \.isWhitespace)
     let voices = fields.first?.lowercased() == "voices"
@@ -100,6 +100,7 @@ extension MaiCLI {
       if voices { return }
     }
     if voices {
+      cache?.store(output: output, configuration: configuration, offline: configuration.airplane)
       await terminal.line(
         "Speech voices (\(settings.output)); * is configured. Use /set voice.voice ID.")
       let tag = filter.replacingOccurrences(of: "_", with: "-")
@@ -141,6 +142,7 @@ extension MaiCLI {
       } catch {
         await terminal.line("voice.input=\(settings.input): \(error.localizedDescription)", to: .standardError)
       }
+      cache?.store(output: output, input: input, configuration: configuration, offline: configuration.airplane)
       var options: [String: (name: String, input: Bool, speech: Bool, reason: String?, checked: Bool)] = [:]
       for language in input.languages {
         options[language.id] = (language.name, true, false, language.unavailableReason, language.availabilityChecked)

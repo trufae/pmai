@@ -97,6 +97,11 @@ extension AgentRuntime {
     }
   }
 
+  /// Register a catalog in one actor hop while retaining single-tool validation.
+  public func register(tools: [any AgentTool], replacingExisting: Bool = false) throws {
+    for tool in tools { try register(tool: tool, replacingExisting: replacingExisting) }
+  }
+
   public func register(
     tool: any AgentTool,
     replacingExisting: Bool = false

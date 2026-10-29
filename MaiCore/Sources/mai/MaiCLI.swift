@@ -453,6 +453,21 @@ private final class ProviderBaseURLStore: @unchecked Sendable {
   }
 }
 
+/// Build the prompt's static candidates on its first Tab, then reuse them.
+private final class REPLCompletionCache: @unchecked Sendable {
+  private let lock = NSLock()
+  private var stored: [String]?
+
+  func values(_ build: () -> [String]) -> [String] {
+    lock.withLock {
+      if let stored { return stored }
+      let values = build()
+      stored = values
+      return values
+    }
+  }
+}
+
 private struct REPLServices: Sendable {
   var approvalHandler: TerminalApprovalHandler
   var promptFileAccess: PromptFileAccess
@@ -1267,7 +1282,10 @@ struct MaiCLI {
   private static let version = "1.12.9"
 
   static func main() async {
+    let started = ContinuousClock.now
     let environment = ProcessInfo.processInfo.environment
+    let startup = CLIStartupTiming(started: started, environment: environment)
+    startup.mark("main entered")
     let commandLineArguments = platformCommandLineArguments(environment: environment)
     if commandLineArguments.dropFirst().first == "acp-gateway" {
       do {
@@ -1361,6 +1379,7 @@ struct MaiCLI {
         configuration = existing
       }
       let home = resolvedHome(options: options, environment: environment)
+      startup.mark("configuration loaded")
       try await ForwirohRemote.shared.configure(
         directory: home.rootURL.appendingPathComponent("forwiroh-client"),
         name: ProcessInfo.processInfo.hostName)
@@ -1372,6 +1391,7 @@ struct MaiCLI {
         projectSettingsURL: home.storageDirectory(for: project).appendingPathComponent(
           "settings.json"),
         mode: options.approvalMode)
+      startup.mark("project opened")
       // Chat history owns these records until /jobs clear. The runtime's
       // bounded default can evict a parent before its subtree is saved.
       let runtime = AgentRuntime(
@@ -1424,6 +1444,7 @@ struct MaiCLI {
         environment: environment,
         host: nativePluginHost,
         registry: plugins)
+      startup.mark("plugins installed")
       let memoryState = MemoryState(
         home: resolvedHome(options: options, environment: environment))
       let todoState = TodoState(
@@ -1437,20 +1458,19 @@ struct MaiCLI {
         environment: environment)
       try await registerMemoryTools(in: runtime, state: memoryState)
       try await registerTodoTools(in: runtime, state: todoState)
-      for tool in MaiContextTools.makeTools(supervisor: runtime.supervisor) {
-        try await runtime.register(tool: tool)
-      }
+      try await runtime.register(tools: MaiContextTools.makeTools(supervisor: runtime.supervisor))
       try await registerSkillTools(in: runtime, state: skillState)
+      startup.mark("tools and skills registered")
       try await synchronizeToolGroupSelections(
         configuration: &configuration,
         configurationPath: configurationPath,
         plugins: plugins,
-        runtime: runtime,
-        environment: environment)
+        runtime: runtime)
       let ocrProvider = await configuredOCRProvider(
         plugins: plugins,
         configuration: configuration,
         environment: environment)
+      startup.mark("tool groups and OCR configured")
       if let provider = options.providerOverride, let url = options.baseURLOverride,
         var draft = configuration, !draft.providers.contains(where: { $0.id == provider.rawValue })
       {
@@ -1471,6 +1491,7 @@ struct MaiCLI {
         configuredAgents: configuration?.agents ?? [],
         options: options)
       var workspace = restored.workspace
+      startup.mark("chat workspace loaded")
       profile = SessionProfile(definition: workspace.selectedChat!.primaryAgent)
       if let saved = workspace.selectedChat?.runtimeConfiguration {
         configuration = saved.applying(to: configuration ?? MaiConfiguration())
@@ -1482,7 +1503,8 @@ struct MaiCLI {
         options: options,
         selectedProvider: profile.provider,
         resumingChat: restored.resumed,
-        environment: environment)
+        environment: environment, startup: startup)
+      startup.mark("providers and MCP configured")
       if configuration == nil
         || configuration?.providers.isEmpty == true && !setup.implicitProviders.isEmpty
       {
@@ -1599,6 +1621,7 @@ struct MaiCLI {
       session.redactor = await runtime.contentRedactor(sessionID: session.sessionID)
       await terminal.configureRedactor(session.redactor)
       configureEditor(configuration?.ui.editor ?? "")
+      startup.mark("session and terminal configured")
 
       if let mode = options.serve {
         try await runServer(
@@ -1700,7 +1723,7 @@ struct MaiCLI {
         services: services,
         pmaiBridge: pmaiBridge,
         promptFileAccess: promptFileAccess,
-        terminal: terminal)
+        terminal: terminal, startup: startup)
       await runtime.flushToolUsage()
     } catch {
       FileHandle.standardError.write(Data("error: \(error.localizedDescription)\n".utf8))
@@ -1760,13 +1783,13 @@ struct MaiCLI {
       let tools = try await plugins.makeTools(
         kind: MaiStandardToolsPlugin.factoryKind,
         context: PluginFactoryContext(id: "standard-tools", environment: environment))
-      for tool in tools { try await runtime.register(tool: tool) }
+      try await runtime.register(tools: tools)
     } else {
       for source in configuredStandardTools where source.enabled {
         let tools = try await plugins.makeTools(
           kind: source.kind,
           context: source.context(environment: environment))
-        for tool in tools { try await runtime.register(tool: tool) }
+        try await runtime.register(tools: tools)
       }
     }
 
@@ -1775,7 +1798,7 @@ struct MaiCLI {
       let tools = try await plugins.makeTools(
         kind: source.kind,
         context: source.context(environment: environment))
-      for tool in tools { try await runtime.register(tool: tool) }
+      try await runtime.register(tools: tools)
     }
   }
 
@@ -1790,8 +1813,7 @@ struct MaiCLI {
     configuration: inout MaiConfiguration?,
     configurationPath: String,
     plugins: PluginRegistry,
-    runtime: AgentRuntime,
-    environment: [String: String]
+    runtime: AgentRuntime
   ) async throws {
     let catalog = try await toolGroupCatalog(
       runtime: runtime, plugins: plugins, configuration: configuration)
@@ -1799,13 +1821,9 @@ struct MaiCLI {
     var toolsByGroup: [String: Set<String>] = [
       AgentRuntime.agentToolGroup.id: AgentRuntime.agentToolGroup.toolNames
     ]
-    for source in draft.toolSources where source.enabled {
-      for group in try await plugins.toolGroups(
-        kind: source.kind,
-        context: source.context(environment: environment))
-      {
-        toolsByGroup[group.id, default: []].formUnion(group.toolNames)
-      }
+    let sourceIDs = Set(draft.toolSources.filter(\.enabled).map(\.id))
+    for group in catalog where sourceIDs.contains(group.sourceID) {
+      toolsByGroup[group.id, default: []].formUnion(group.toolNames)
     }
     // Tools pmai registers itself — todo, chats — belong to no plugin, so
     // their groups are inferred the way /tools lists them; otherwise a group
@@ -2021,7 +2039,7 @@ struct MaiCLI {
     options: CLIOptions,
     selectedProvider: ProviderID,
     resumingChat: Bool,
-    environment: [String: String]
+    environment: [String: String], startup: CLIStartupTiming
   ) async throws -> RuntimeSetup {
     await runtime.configureInternetAccess(.init(airplaneModeEnabled: configuration?.airplane ?? false))
     await runtime.configureToolsEnabled(configuration?.toolsEnabled ?? true)
@@ -2089,6 +2107,7 @@ struct MaiCLI {
       }
       providerBaseURLs[provider.id] = provider.baseURL
       try await runtime.register(plugins.makeProvider(from: provider, environment: environment))
+      startup.mark("provider \(provider.id) registered")
     }
     var catalogs: [MCPServerCatalog] = []
     if let configuration {
@@ -2097,6 +2116,7 @@ struct MaiCLI {
           kind: server.kind, configuration: server, environment: environment)
         if !(await runtime.internetAccessPolicy()).allows(source) { continue }
         catalogs.append(try await runtime.register(mcp: source))
+        startup.mark("MCP \(server.id) connected")
       }
       await runtime.configureDelegation(
         prompt: configuration.prompts?.delegation,
@@ -2434,8 +2454,9 @@ struct MaiCLI {
     services: REPLServices,
     pmaiBridge: PmaiCommandBridge,
     promptFileAccess: PromptFileAccess,
-    terminal: TerminalWriter
+    terminal: TerminalWriter, startup: CLIStartupTiming
   ) async {
+    startup.mark("REPL entered")
     var configuration = configuration
     var catalogs = catalogs
     var project = project
@@ -2861,7 +2882,7 @@ struct MaiCLI {
     func refreshStatus() async {
       await refreshConversation()
       guard let screen else { return }
-      services.modelCatalog.select(session.profile.provider, runtime: runtime)
+      services.modelCatalog.select(session.profile.provider)
       let status = await statusLine()
       reader.update(inputPrompt())
       screen.setStatus(
@@ -2874,9 +2895,7 @@ struct MaiCLI {
     /// reads are refreshed here, while the thread is parked and cannot race.
     func releaseReader(workspace: AgentChatWorkspace) async {
       if isatty(STDIN_FILENO) != 0 {
-        services.modelCatalog.select(session.profile.provider, runtime: runtime)
-        services.voiceCatalog.select(
-          configuration ?? .init(), plugins: plugins, offline: await runtime.internetAccessPolicy().isOffline)
+        services.modelCatalog.select(session.profile.provider)
       }
       guard loop.readerParked, !loop.exiting, !loop.drainingThen else { return }
       await refreshTerminalSettings()
@@ -2900,6 +2919,10 @@ struct MaiCLI {
       let availableToolGroups = await runtime.availableToolGroups()
       let completionSession = session
       let completionStore = store
+      let completionWorkspace = workspace
+      let completionConfiguration = configuration
+      let completionOffline = await runtime.internetAccessPolicy().isOffline
+      let completionCache = REPLCompletionCache()
       let focusedMessages: [AgentMessage]?
       if case .agent(let pid) = loop.focus {
         let messages = await runtime.supervisor.transcript(pid)
@@ -2910,11 +2933,9 @@ struct MaiCLI {
       reader.resume(
         with: REPLInputReader.Prompt(
           presentation: inputPrompt(),
-          completions: completionCandidates(
-            workspace: workspace, configuration: configuration,
-            availableProviders: availableProviders,
-            toolGroups: availableToolGroups,
-            skills: services.skills.catalog.skills, themesDirectory: services.themesDirectory),
+          // Skill and theme discovery belongs to Tab, not the first prompt
+          // or every subsequent input handoff.
+          completions: [],
           additionalCompletions: { line in
             if line.hasPrefix("/msg unpin ") {
               // Paged histories may have pins outside the visible window.
@@ -2924,8 +2945,15 @@ struct MaiCLI {
                 ?? completionSession.history.messages
               return messages.filter(\.isPinned).map { "/msg unpin \($0.id)" }
             }
-            return services.modelCatalog.completions(for: line, runtime: runtime)
-              + services.voiceCatalog.completions(for: line)
+            return completionCache.values {
+              completionCandidates(
+                workspace: completionWorkspace, configuration: completionConfiguration,
+                availableProviders: availableProviders, toolGroups: availableToolGroups,
+                skills: services.skills.catalog.skills, themesDirectory: services.themesDirectory)
+            }
+              + services.modelCatalog.completions(for: line, runtime: runtime)
+              + services.voiceCatalog.completions(for: line, configuration: completionConfiguration ?? .init(),
+                plugins: plugins, offline: completionOffline)
           },
           separator: screen == nil ? status.text : nil))
     }
@@ -3888,8 +3916,8 @@ struct MaiCLI {
     func handleVoice(_ argument: String) async {
       let command = argument.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
       if ["voices", "languages"].contains(command.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? "") {
-        await showVoiceCatalog(argument, configuration: configuration, plugins: plugins, terminal: terminal)
-        services.voiceCatalog.invalidate()
+        await showVoiceCatalog(argument, configuration: configuration, plugins: plugins, terminal: terminal,
+          cache: services.voiceCatalog)
         return
       }
       if command == "help" {
@@ -3994,6 +4022,7 @@ struct MaiCLI {
     await restoreSavedSubagents()
     reader.start()
     await releaseReader(workspace: workspace)
+    startup.mark("prompt input released")
 
     func handleEvent(_ event: REPLEvent) async -> Bool {
       switch event {
@@ -10335,9 +10364,7 @@ struct MaiCLI {
     in runtime: AgentRuntime,
     state: SkillState
   ) async throws {
-    for tool in MaiSkillTools.makeTools(catalog: { state.catalog }) {
-      try await runtime.register(tool: tool, replacingExisting: true)
-    }
+    try await runtime.register(tools: MaiSkillTools.makeTools(catalog: { state.catalog }), replacingExisting: true)
   }
 
   /// Brings the runtime's skill tools in line with the folders on disk: new
@@ -14294,8 +14321,9 @@ struct MaiCLI {
       values.append("/project tint \(tint)")
     }
     values += TerminalTheme.keys.map { "/theme color \($0) " }
-    values += TerminalTheme.names(directory: themesDirectory).map { "/theme use \($0)" }
-    values += TerminalTheme.names(directory: themesDirectory).map { "/theme show \($0)" }
+    let themeNames = TerminalTheme.names(directory: themesDirectory)
+    values += themeNames.map { "/theme use \($0)" }
+    values += themeNames.map { "/theme show \($0)" }
     for (index, chat) in chronologicalChats(workspace).enumerated() {
       values.append("/chat use \(index + 1)")
       values.append("/chat use \(chat.id.uuidString.prefix(8))")

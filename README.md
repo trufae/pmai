@@ -394,6 +394,12 @@ make run                 # installs and launches Xcode's latest signed device bu
 make fmt                 # swift-format the sources
 ```
 
+For startup diagnostics on any CLI platform (including Android/Termux), run
+`PMAI_STARTUP_TIMING=1 pmai`. It prints cumulative and per-phase milliseconds to
+stderr through the first input handoff, including plugin setup, tools/skills,
+chat loading, and each configured provider or MCP connection. Normal launches
+do not print these timings.
+
 The CLI and iOS app reuse `MaiLocalProviders` for Apple Intelligence and MLX.
 On macOS, add a native provider with `/provider add apple --kind apple` or
 `/provider add mlx --kind mlx`, then `/model apple::on-device` or

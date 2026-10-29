@@ -166,9 +166,11 @@ def main():
 
             try:
                 wait_for('pmai>')
+                read_for(.2)
+                assert requests.empty(), 'Startup fetched a model catalog before it was requested'
                 # Cold-cache discovery must leave both typing and commands live.
-                assert next_request()[0] == '/models'
                 send('/model te\t')
+                assert next_request()[0] == '/models'
                 wait_for('/model te')
                 send('\x03')
                 wait_for('Nothing to cancel.')

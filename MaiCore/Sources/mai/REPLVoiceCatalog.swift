@@ -1,7 +1,8 @@
 import Foundation
 import MaiCore
 
-/// Fetch provider catalogs away from the input thread; Tab reads a snapshot.
+/// Discover voices only when requested. Native speech discovery uses the main
+/// actor, so even a background prefetch can delay the first prompt.
 final class REPLVoiceCatalog: @unchecked Sendable {
   private struct Selection: Equatable {
     var settings: ConfiguredVoice
@@ -18,7 +19,7 @@ final class REPLVoiceCatalog: @unchecked Sendable {
   private var kinds: [String] = []
   private var retryAfter: Date?
 
-  func select(_ configuration: MaiConfiguration, plugins: PluginRegistry, offline: Bool) {
+  private func prefetch(_ configuration: MaiConfiguration, plugins: PluginRegistry, offline: Bool, key: String) {
     let wanted = Selection(settings: configuration.voice, providers: configuration.providers, offline: offline)
     lock.withLock {
       if selection != wanted {
@@ -30,11 +31,21 @@ final class REPLVoiceCatalog: @unchecked Sendable {
         languages = nil
         retryAfter = nil
       }
-      guard pending == nil, voices == nil || retryAfter.map({ $0 <= Date() }) == true else { return }
+      let missing = key == "voice.voice" ? voices == nil : key == "voice.language" ? languages == nil : kinds.isEmpty
+      guard pending == nil, missing || retryAfter.map({ $0 <= Date() }) == true else { return }
       let generation = generation
       pending = Task { [weak self] in
         let settings = configuration.voice
         let kinds = await plugins.voiceProviderKinds()
+        if key == "voice.input" || key == "voice.output" {
+          guard !Task.isCancelled, let self else { return }
+          self.lock.withLock {
+            guard self.generation == generation else { return }
+            self.kinds = kinds
+            self.pending = nil
+          }
+          return
+        }
         func catalog(_ kind: String, for role: VoiceProviderRole) async -> VoiceProviderCatalog? {
           guard !offline || ["system", "command"].contains(kind),
             let factory = try? await plugins.voiceFactory(kind: kind) else { return nil }
@@ -57,6 +68,20 @@ final class REPLVoiceCatalog: @unchecked Sendable {
     }
   }
 
+  /// Reuse explicit /voice listings instead of querying the same backend again.
+  func store(output: VoiceProviderCatalog, input: VoiceProviderCatalog? = nil,
+    configuration: MaiConfiguration, offline: Bool) {
+    lock.withLock {
+      pending?.cancel()
+      pending = nil
+      generation = UUID()
+      selection = Selection(settings: configuration.voice, providers: configuration.providers, offline: offline)
+      voices = Array(Set(["default", configuration.voice.voice] + output.voices.map(\.id))).sorted()
+      languages = input.map { Self.languageSuggestions(input: $0, output: output, settings: configuration.voice) }
+      retryAfter = nil
+    }
+  }
+
   static func languageSuggestions(input: VoiceProviderCatalog?, output: VoiceProviderCatalog?,
     settings: ConfiguredVoice) -> [String] {
     let recognition = input?.languages ?? []
@@ -70,15 +95,19 @@ final class REPLVoiceCatalog: @unchecked Sendable {
     return Array(Set(speech.isEmpty ? [settings.languageIdentifier] : speech)).sorted()
   }
 
-  func completions(for line: String) -> [String] {
+  func completions(for line: String, configuration: MaiConfiguration,
+    plugins: PluginRegistry, offline: Bool) -> [String] {
     for key in ["voice.voice", "voice.language", "voice.input", "voice.output"] {
       for separator in [" ", "="] {
         let prefix = "/set \(key)\(separator)"
         guard line.hasPrefix(prefix), !line.dropFirst(prefix.count).contains(where: \.isWhitespace) else { continue }
+        prefetch(configuration, plugins: plugins, offline: offline, key: key)
         let values = lock.withLock {
           key == "voice.voice" ? voices : key == "voice.language" ? languages : kinds
         }
-        return (values ?? []).map { prefix + $0 }
+        let fallback = key == "voice.language" ? [configuration.voice.languageIdentifier]
+          : key == "voice.voice" ? ["default", configuration.voice.voice] : []
+        return (values ?? fallback).map { prefix + $0 }
       }
     }
     return []

@@ -40,22 +40,25 @@ func replVoiceCatalogCompletion() async throws {
   configuration.voice.input = "input"
   configuration.voice.output = "output"
   configuration.voice.language = "fr_FR"
+  func completions(_ line: String) -> [String] {
+    catalog.completions(for: line, configuration: configuration, plugins: plugins, offline: false)
+  }
+  #expect(completions("ordinary input").isEmpty)
   for model in ["first", "second"] {
     configuration.voice.speechModel = model
-    catalog.select(configuration, plugins: plugins, offline: false)
     let deadline = ContinuousClock.now.advanced(by: .seconds(3))
-    while !catalog.completions(for: "/set voice.voice ").contains("/set voice.voice \(model)-voice") {
+    while !completions("/set voice.voice ").contains("/set voice.voice \(model)-voice") {
       try #require(ContinuousClock.now < deadline)
       try await Task.sleep(for: .milliseconds(10))
     }
-    #expect(Set(catalog.completions(for: "/set voice.voice ")) == ["/set voice.voice default", "/set voice.voice \(model)-voice"])
-    #expect(Set(catalog.completions(for: "/set voice.language ")) == [
+    #expect(Set(completions("/set voice.voice ")) == ["/set voice.voice default", "/set voice.voice \(model)-voice"])
+    #expect(Set(completions("/set voice.language ")) == [
       "/set voice.language ca-ES",
     ])
-    #expect(catalog.completions(for: "/set voice.input ") == ["/set voice.input input", "/set voice.input output"])
-    #expect(catalog.completions(for: "/set voice.voice=").contains("/set voice.voice=\(model)-voice"))
-    #expect(!catalog.completions(for: "/set voice.voice ").contains("/set voice.voice first-voice") || model == "first")
-    #expect(catalog.completions(for: "/set voice.voice default extra").isEmpty)
+    #expect(completions("/set voice.input ") == ["/set voice.input input", "/set voice.input output"])
+    #expect(completions("/set voice.voice=").contains("/set voice.voice=\(model)-voice"))
+    #expect(!completions("/set voice.voice ").contains("/set voice.voice first-voice") || model == "first")
+    #expect(completions("/set voice.voice default extra").isEmpty)
   }
 }
 
