@@ -338,6 +338,12 @@ if (ready) {
 EOF
 ```
 
+`. FILE` reads a UTF-8 file and sends its whole contents as one literal prompt,
+preserving line breaks. For example, `. prompt.txt` or `. "my prompt.txt"`.
+Relative paths use the current directory, and `~` expands to your home directory.
+Tab completes file and directory paths in `.`, file arguments, and output redirects;
+directories keep their trailing `/` so you can continue into them.
+
 `/then LINE` queues a prompt or CLI command until every running task (including
 side questions and background agents) finishes. Lines run one at a time in FIFO
 order through the normal command dispatcher, never inside the current tool loop.

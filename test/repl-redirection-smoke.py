@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check slash-command stdout redirection and bracketed-paste provenance."""
+"""Check file prompts, slash-command stdout redirection, and paste provenance."""
 import fcntl
 import json
 import os
@@ -78,6 +78,43 @@ def main():
         assert '/COMMAND >> FILE' in (root / 'help.txt').read_text()
         assert 'redirection:' in result.stderr and 'pipe exited with status 7' in result.stderr
 
+        # Source whole files as literal user messages, including command-like text.
+        prompts = ['first line\ncafé second line\n', '/exit\n!touch unwanted\n$prompt\n@2 text\n. missing\n']
+        for index, prompt in enumerate(prompts):
+            (root / f'prompt {index}.txt').write_text(prompt)
+        (root / 'empty.txt').write_text(' \n\t')
+        (root / 'invalid.txt').write_bytes(b'\xff')
+        source = subprocess.run(command, cwd=root, env=env, capture_output=True, text=True,
+                                input='\n'.join([
+                                    '. "prompt 0.txt"', '/msg last > source0.txt',
+                                    '. prompt\\ 1.txt', '/msg last > source1.txt',
+                                    '. empty.txt', '/msg last > after-empty.txt',
+                                    '.', '. ""', '. missing.txt', '. invalid.txt', '. .',
+                                    '. one two', '. "unclosed',
+                                    '.not-a-command', '/msg last > literal-dot.txt',
+                                    '. ' + shlex.quote(str(root / 'prompt 0.txt')),
+                                    '/msg last > absolute-source.txt',
+                                    '/cd home', '. "../prompt 0.txt"',
+                                    '/msg last > ../after-cd.txt',
+                                    '/help > ../commands.txt', '/exit', '',
+                                ]), timeout=30)
+        assert source.returncode == 0, source.stdout + source.stderr
+        for index, prompt in enumerate(prompts):
+            assert (root / f'source{index}.txt').read_text() == 'Hello from MaiCore: ' + prompt.rstrip() + '\n'
+        assert (root / 'after-empty.txt').read_text() == (root / 'source1.txt').read_text()
+        assert (root / 'after-cd.txt').read_text() == (root / 'source0.txt').read_text()
+        assert (root / 'absolute-source.txt').read_text() == (root / 'source0.txt').read_text()
+        assert '.not-a-command' in (root / 'literal-dot.txt').read_text()
+        assert not (root / 'unwanted').exists()
+        assert source.stderr.count('source:') == 7, source.stderr
+        help_lines = (root / 'commands.txt').read_text().splitlines()
+        agent_line = next(i for i, line in enumerate(help_lines) if line.startswith('@PID'))
+        assert help_lines[agent_line + 1].startswith('. FILE'), help_lines
+
+        nested = root / 'nested folder'
+        nested.mkdir()
+        (nested / 'source prompt.txt').write_text('TAB COMPLETED PROMPT')
+        (root / 'completion reply.txt').touch()
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 160, 0, 0))
         process = subprocess.Popen(command, cwd=root, env=env,
@@ -133,6 +170,12 @@ def main():
             wait('pipe exited with status')
             submit(b'/version > after-cancel.txt')
             assert (root / 'after-cancel.txt').read_text() == version
+            submit(b'. "nes\tso\t')
+            submit(b'/copy completion\t')
+            assert (root / 'completion reply.txt').read_text() == 'Hello from MaiCore: TAB COMPLETED PROMPT\n'
+            submit(b'/cd nes\t')
+            submit(b'. so\t')
+            submit(b'/cd ..')
             os.write(master, b'/exit\r')
             read_pty(master, pending, .5)
             assert process.wait(timeout=10) == 0
@@ -141,7 +184,7 @@ def main():
                 process.kill()
                 process.wait()
             os.close(master)
-    print('PASS: overwrite, append, shell filters, errors, literal messages, and paste-aware redirection')
+    print('PASS: file prompts, overwrite, append, shell filters, errors, literal messages, and paste-aware redirection')
 
 
 if __name__ == '__main__':

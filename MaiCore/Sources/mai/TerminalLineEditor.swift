@@ -473,6 +473,7 @@ final class TerminalLineEditor {
         ? activePrompt.choices : completions + (additionalCompletions?(query) ?? [])
       complete(
         prompt: prompt, bytes: &bytes, cursor: &cursor, candidates: candidates,
+        paths: activePrompt.isModal && !query.hasPrefix("/") ? [] : REPLPathCompletion.candidates(for: query),
         backwards: backwards)
       // Completion replaces one range; retain provenance on its unchanged
       // prefix and suffix, marking only the inserted completion as typed.
@@ -1142,6 +1143,7 @@ final class TerminalLineEditor {
     bytes: inout [UInt8],
     cursor: inout Int,
     candidates: [String],
+    paths: [String] = [],
     backwards: Bool = false
   ) {
     guard cursor == bytes.count, !bytes.contains(10) else {
@@ -1156,7 +1158,7 @@ final class TerminalLineEditor {
       guard candidate.hasPrefix(line) else { return nil }
       let match = line + candidate.dropFirst(line.count).prefix { !$0.isWhitespace }
       return match.last?.isWhitespace == false ? match : nil
-    }).sorted()
+    } + paths).sorted()
     if let menu = completionMenu, !completionMatches.isEmpty, matches == completionMatches {
       let step = backwards ? completionMatches.count - 1 : 1
       let applied = (menu.selected + step) % completionMatches.count
@@ -1176,7 +1178,8 @@ final class TerminalLineEditor {
       return
     }
     if matches.count == 1 {
-      let value = matches[0] + (matches[0].hasSuffix(" ") || matches[0].hasSuffix("::") ? "" : " ")
+      let value = matches[0] + (matches[0].hasSuffix(" ") || matches[0].hasSuffix("::")
+        || paths.contains(matches[0]) && matches[0].hasSuffix("/") ? "" : " ")
       bytes = Array(value.utf8)
       cursor = bytes.count
       redraw(prompt: prompt, bytes: bytes, cursor: cursor)

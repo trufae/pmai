@@ -4134,7 +4134,8 @@ struct MaiCLI {
         defer { reply() }
         guard loop.modalPrompt(for: session.id) == nil, !loop.exiting else { return false }
         await switchAgent(selection)
-      case .line(let raw, let heredoc, let promptID, _):
+      case .line(let raw, let isHeredoc, let promptID, _):
+        var heredoc = isHeredoc
         if !loop.drainingThen { loop.readerParked = true }
         let typed = heredoc ? raw : raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if !typed.hasPrefix("/"), promptID != loop.modalPrompt(for: session.id)?.input.id {
@@ -4200,7 +4201,7 @@ struct MaiCLI {
           }
         }
         // `$NAME [TEXT]` is the short form of `/prompts NAME [TEXT]`.
-        let text =
+        var text =
           !heredoc && loop.chatChop == nil && typed.hasPrefix("$")
           ? ("/prompts " + typed.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
           : typed
@@ -4367,6 +4368,27 @@ struct MaiCLI {
             }
             waiting.reply.resume(with: decision)
             await refreshStatus()
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
+        }
+        if !heredoc, text.split(whereSeparator: \.isWhitespace).first == "." {
+          do {
+            let paths = try shellWords(String(text.dropFirst()))
+            guard paths.count == 1, let path = paths.first, !path.isEmpty else {
+              throw JSONRPCError.invalidParams("Usage: . FILE (quote paths containing spaces)")
+            }
+            let expanded = NSString(string: path).expandingTildeInPath
+            let url = URL(fileURLWithPath: expanded, relativeTo: AgentExecutionScope.directory)
+            text = try String(contentsOf: url, encoding: .utf8)
+            // File contents form one literal prompt, like a heredoc message.
+            heredoc = true
+          } catch {
+            await terminal.line("source: \(error.localizedDescription)", to: .standardError)
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
+          guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             await releaseIfIdle(workspace: workspace)
             return false
           }
@@ -8570,7 +8592,12 @@ struct MaiCLI {
     credentialsDirectory: URL,
     terminal: TerminalWriter
   ) async {
-    let fields = argument.split(whereSeparator: \Character.isWhitespace).map(String.init)
+    let fields: [String]
+    do { fields = try shellWords(argument) }
+    catch {
+      await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+      return
+    }
     if let command = fields.first, ["login", "logout", "status"].contains(command) {
       let id = fields.count == 2 ? fields[1] : session.profile.provider.rawValue
       guard fields.count <= 2,
@@ -14903,6 +14930,8 @@ struct MaiCLI {
     /view SOURCE           Read-only split in buffer mode; /help view
     /voice [MODE]          Voice agent: realtime or walkie-talkie; /voice help
     $NAME [TEXT]           Send a prompt or skill; /prompts lists names
+    @PID TEXT              Send a message to an agent; @* TEXT broadcasts
+    . FILE                 Read a file and send its contents as a prompt
     """
 
   private static let shellHelp = """
@@ -14925,6 +14954,8 @@ struct MaiCLI {
       @2,3 TEXT or @2 @3 TEXT sends to several agents.
       @* TEXT sends to every active agent, including the running main chat.
       @@ TEXT and bare @ TEXT are aliases for @* TEXT. @ alone shows usage.
+      . FILE reads a UTF-8 file and sends its whole contents as one literal prompt.
+      Quote paths containing spaces; ~ expands to your home directory.
       Child output uses agent#PID blocks; /set ui.subagents controls how much.
     """
 
@@ -14948,6 +14979,7 @@ struct MaiCLI {
       Shift+Enter adds a line (Alt+Enter or Ctrl+J where the terminal sends Enter for it)
       A paste keeps its lines · Enter sends the whole text
       Tab selects the next completion · Shift+Tab selects the previous completion
+      File arguments complete paths; a directory's trailing / lets you keep browsing
       Up/Down or Ctrl+P/N move between lines, then history · Ctrl+R reverse search
       Ctrl+A/E or Home/End beginning/end of the line
       Ctrl+B/F page up/down in the focused frame, like Page Up/Down
