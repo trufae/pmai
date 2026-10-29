@@ -14869,7 +14869,7 @@ struct MaiCLI {
       /set tool.auto BOOL          Automatically expose frequently used tools (default on)
       /set delegation MODE         off: runs every tool itself; subagent: may also hand work to a child
       /set limits.                 List the tool, turn, and subagent limits
-      /set limits.maxToolCalls N   Tool calls allowed per run
+      /set limits.maxToolCalls N   Tool calls allowed per prompt (default: 300)
       /set limits.maxModelTurns N  Model turns allowed per run
       /set limits.maxSubagents N   Child agents allowed at once (0 disables delegation)
       /set limits.maxSubagentDepth N  Maximum depth of the agent tree
