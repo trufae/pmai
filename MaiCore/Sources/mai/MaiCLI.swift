@@ -11359,7 +11359,7 @@ struct MaiCLI {
         || levelKeys.contains(key) || textKeys.contains(key)
     else {
       await terminal.line(
-        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, airplane, effort, tool.aproval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.window, ctx.strategy, \((textKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), export.tools, export.thinking, redact, use.agentsmd, use.plan"
+        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, airplane, effort, tool.aproval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, limits.runTimeoutSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.window, ctx.strategy, \((textKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), export.tools, export.thinking, redact, use.agentsmd, use.plan"
       )
       return
     }
@@ -11468,6 +11468,7 @@ struct MaiCLI {
     "limits.maxtotaltokens": "limits.maxTotalTokens",
     "limits.maxtokens": "limits.maxTotalTokens",
     "limits.maxseconds": "limits.maxSeconds",
+    "limits.runtimeoutseconds": "limits.runTimeoutSeconds",
     "limits.maxtime": "limits.maxSeconds",
   ]
 
@@ -11662,6 +11663,7 @@ struct MaiCLI {
   private static let limitSettingOrder = [
     "limits.maxToolCalls", "limits.maxModelTurns", "limits.maxSubagents",
     "limits.maxSubagentDepth", "limits.maxTotalTokens", "limits.maxSeconds",
+    "limits.runTimeoutSeconds",
   ]
 
   private static func limitSettings(_ limits: AgentRunLimits) -> [String] {
@@ -11676,6 +11678,8 @@ struct MaiCLI {
     case "limits.maxTotalTokens": limits.maxTotalTokens.map(String.init) ?? "off"
     case "limits.maxSeconds":
       limits.maxSeconds.map { ModelUsageFormat.duration(Double($0)) } ?? "off"
+    case "limits.runTimeoutSeconds":
+      limits.runTimeoutSeconds.map { ModelUsageFormat.duration(Double($0)) } ?? "default"
     default: String(limits.maxModelTurns)
     }
   }
@@ -11829,6 +11833,18 @@ struct MaiCLI {
     let raw = parts.count == 2 ? parts[1].lowercased() : ""
     let cleared = ["off", "none", "unlimited", "0"].contains(raw)
     switch key {
+    case "limits.runTimeoutSeconds":
+      if raw == "default" {
+        limits.runTimeoutSeconds = nil
+      } else if let seconds = parseDurationSeconds(raw),
+        seconds <= Int(MaiRunConfiguration.maximumTimeout)
+      {
+        limits.runTimeoutSeconds = seconds
+      } else {
+        await terminal.line(
+          "Usage: /set limits.runTimeoutSeconds <default|N|Nm>  (1-600 seconds per shell call)")
+        return
+      }
     case "limits.maxSeconds":
       if cleared {
         limits.maxSeconds = nil
@@ -12170,6 +12186,7 @@ struct MaiCLI {
           "limits.maxSubagentDepth": String(profile.limits.maxSubagentDepth),
           "limits.maxTotalTokens": limitValue("limits.maxTotalTokens", in: profile.limits),
           "limits.maxSeconds": limitValue("limits.maxSeconds", in: profile.limits),
+          "limits.runTimeoutSeconds": limitValue("limits.runTimeoutSeconds", in: profile.limits),
           "retry.attempts": String(profile.retry.attempts),
           "retry.delay": durationSetting(profile.retry.delaySeconds),
           "ctx.compact": autocompactSetting(profile.autocompact),
@@ -14216,6 +14233,7 @@ struct MaiCLI {
       "/help vdb", "/vdb", "/vdb index ", "/vdb query ", "/vdb status", "/vdb del ", "/vdb clear",
       "/set limits.", "/set limits.maxToolCalls ", "/set limits.maxModelTurns ",
       "/set limits.maxSubagents ", "/set limits.maxSeconds ", "/set limits.maxTotalTokens ",
+      "/set limits.runTimeoutSeconds ",
       "/set retry.", "/set retry.attempts ", "/set retry.delay ", "/set ctx.", "/set ctx.compact ",
       "/set ctx.compact off",
       "/set ctx.recent ", "/set ctx.recent auto",
@@ -14971,6 +14989,7 @@ struct MaiCLI {
       /set limits.maxSubagentDepth N  Maximum depth of the agent tree
       /set limits.maxTotalTokens <off|N|Nk>  Tokens a run may spend before it pauses
       /set limits.maxSeconds <off|N|Nm|Nh>   Wall-clock time a run may take before it pauses
+      /set limits.runTimeoutSeconds <default|N|Nm>  Default shell timeout (1-600 seconds)
       /set retry.attempts N        Times a failed model call is repeated (default 2)
       /set retry.delay SECONDS     Wait before each retry (default 5)
       /set ctx.                    List context settings and their current values

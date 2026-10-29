@@ -184,11 +184,17 @@ public struct ToolExecutionContext: Codable, Equatable, Sendable {
   public var modelTurn: Int
   /// Suggested default for paged tools. Explicit page sizes still take precedence.
   public var suggestedOutputBytes: Int?
+  /// Agent override for the shell tool's default timeout, in seconds.
+  public var runTimeoutSeconds: Int?
 
-  public init(run: AgentEventContext, modelTurn: Int, suggestedOutputBytes: Int? = nil) {
+  public init(
+    run: AgentEventContext, modelTurn: Int, suggestedOutputBytes: Int? = nil,
+    runTimeoutSeconds: Int? = nil
+  ) {
     self.run = run
     self.modelTurn = modelTurn
     self.suggestedOutputBytes = suggestedOutputBytes
+    self.runTimeoutSeconds = runTimeoutSeconds
   }
 
   /// Share half the remaining compaction budget across this turn's tools.

@@ -514,13 +514,14 @@ func recoverySettingsRoundTrip() throws {
     instructions: "Work.",
     provider: "p",
     model: "m",
-    limits: AgentRunLimits(maxModelTurns: 80, maxSeconds: 600),
+    limits: AgentRunLimits(maxModelTurns: 80, maxSeconds: 600, runTimeoutSeconds: 300),
     retry: AgentRetryPolicy(attempts: 3, delaySeconds: 2.5),
     autocompact: AgentAutocompact(tokens: 120_000))
   let data = try JSONEncoder().encode(definition)
   let decoded = try JSONDecoder().decode(AgentDefinition.self, from: data)
   #expect(decoded == definition)
   #expect(decoded.limits.maxSeconds == 600)
+  #expect(decoded.limits.runTimeoutSeconds == 300)
 
   let minimal = try JSONDecoder().decode(
     AgentDefinition.self, from: Data(#"{"id":"a","provider":"p"}"#.utf8))
@@ -529,6 +530,7 @@ func recoverySettingsRoundTrip() throws {
   #expect(!minimal.autocompact.isEnabled)
   #expect(minimal.autocompact.tokens == 0)
   #expect(minimal.limits.maxSeconds == nil)
+  #expect(minimal.limits.runTimeoutSeconds == nil)
   #expect(minimal.toolCallingStrategy == .automatic)
   #expect(definition.toolCallingStrategy == .automatic)
   #expect(AgentRequest(provider: "p", model: "m", messages: []).toolCallingStrategy == .automatic)

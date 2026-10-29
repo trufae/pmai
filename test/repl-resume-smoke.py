@@ -46,6 +46,7 @@ def main():
              '/set effort high Think carefully.', '/set limits.maxToolCalls 7',
              '/set limits.maxModelTurns 9', '/set limits.maxSubagents 2',
              '/set limits.maxSeconds 10m', '/set retry.attempts 4',
+             '/set limits.runTimeoutSeconds 5m',
              '/set ctx.compact 64k', '/set ctx.recent 4k', '/set ctx.strategy size',
              '/set tool.calling xml', '/set tool.proxy all'],
             ['--system', 'Saved instructions.'])
@@ -54,6 +55,7 @@ def main():
         retained = json.loads(retained_path.read_text())
         assert retained['primaryAgent']['model'] == 'chosen', retained
         assert retained['primaryAgent']['limits']['maxToolCalls'] == 7, retained
+        assert retained['primaryAgent']['limits']['runTimeoutSeconds'] == 300, retained
         assert retained['primaryAgent']['autocompact']['preserveRecentTokens'] == 4000, retained
         assert retained['primaryAgent']['context'] == 'size', retained
 
@@ -84,6 +86,7 @@ def main():
             output = run(['/model', '/set', '/baseurl'], ['-r', selector], env)
             assert 'Chat: hello::chosen' in output, output
             assert 'limits.maxToolCalls = 7' in output, output
+            assert 'limits.runTimeoutSeconds = 5m' in output, output
             assert 'ctx.recent = 4000' in output, output
             assert 'ctx.strategy = size\n' in output, output
             assert 'ctx.context' not in output, output

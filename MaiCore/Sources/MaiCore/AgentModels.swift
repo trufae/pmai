@@ -853,6 +853,8 @@ public struct AgentRunLimits: Codable, Equatable, Sendable {
   /// Wall-clock seconds the whole run, children included, may take. Nil
   /// leaves it open-ended.
   public var maxSeconds: Int?
+  /// Default seconds per captured shell call. Nil uses the tool-source setting.
+  public var runTimeoutSeconds: Int?
 
   public init(
     maxModelTurns: Int = defaultMaxModelTurns,
@@ -860,7 +862,8 @@ public struct AgentRunLimits: Codable, Equatable, Sendable {
     maxSubagents: Int = 5,
     maxSubagentDepth: Int = 5,
     maxTotalTokens: Int? = nil,
-    maxSeconds: Int? = nil
+    maxSeconds: Int? = nil,
+    runTimeoutSeconds: Int? = nil
   ) {
     self.maxModelTurns = max(1, maxModelTurns)
     self.maxToolCalls = max(0, maxToolCalls)
@@ -868,10 +871,12 @@ public struct AgentRunLimits: Codable, Equatable, Sendable {
     self.maxSubagentDepth = max(0, maxSubagentDepth)
     self.maxTotalTokens = maxTotalTokens.map { max(1, $0) }
     self.maxSeconds = maxSeconds.flatMap { $0 > 0 ? $0 : nil }
+    self.runTimeoutSeconds = runTimeoutSeconds.map { max(1, $0) }
   }
 
   private enum CodingKeys: String, CodingKey {
     case maxModelTurns, maxToolCalls, maxSubagents, maxSubagentDepth, maxTotalTokens, maxSeconds
+    case runTimeoutSeconds
   }
 
   public init(from decoder: Decoder) throws {
@@ -884,7 +889,8 @@ public struct AgentRunLimits: Codable, Equatable, Sendable {
       maxSubagents: try container.decodeIfPresent(Int.self, forKey: .maxSubagents) ?? 5,
       maxSubagentDepth: try container.decodeIfPresent(Int.self, forKey: .maxSubagentDepth) ?? 5,
       maxTotalTokens: try container.decodeIfPresent(Int.self, forKey: .maxTotalTokens),
-      maxSeconds: try container.decodeIfPresent(Int.self, forKey: .maxSeconds))
+      maxSeconds: try container.decodeIfPresent(Int.self, forKey: .maxSeconds),
+      runTimeoutSeconds: try container.decodeIfPresent(Int.self, forKey: .runTimeoutSeconds))
   }
 }
 

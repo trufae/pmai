@@ -35,7 +35,8 @@ extension AgentRuntime {
       return ToolResult(callID: call.id, text: "Error: all tools are disabled globally (/tools off).", isError: true)
     }
     let context = ToolExecutionContext(
-      run: .init(runID: UUID(), parentRunID: nil, agentID: agent.id, depth: 0), modelTurn: 0)
+      run: .init(runID: UUID(), parentRunID: nil, agentID: agent.id, depth: 0), modelTurn: 0,
+      runTimeoutSeconds: request.limits.runTimeoutSeconds)
     do {
       let scope = AgentCommandScope(
         history: commandHistory,
@@ -118,6 +119,8 @@ extension AgentRuntime {
     launched: @escaping @Sendable () -> Void = {},
     emit: @escaping AgentEventHandler
   ) async throws -> ToolResult {
+    var execution = execution
+    execution.runTimeoutSeconds = request.limits.runTimeoutSeconds
     let context = execution.run
     guard toolsEnabled else {
       return await fail(call, "all tools are disabled globally (/tools off).", parent: context, emit: emit)

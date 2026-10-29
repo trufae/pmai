@@ -412,7 +412,8 @@ func runInteractiveRequiresTerminalHost() async throws {
 
 private func call(
   _ tool: MaiRunTool,
-  _ arguments: [String: JSONValue]
+  _ arguments: [String: JSONValue],
+  runTimeoutSeconds: Int? = nil
 ) async throws -> ToolOutput {
   try await tool.call(
     arguments: .object(arguments),
@@ -422,7 +423,23 @@ private func call(
         parentRunID: nil,
         agentID: "run-test",
         depth: 0),
-      modelTurn: 1))
+      modelTurn: 1, runTimeoutSeconds: runTimeoutSeconds))
+}
+
+@Test("Agent shell timeouts override the source default and explicit calls override the agent")
+func runToolsAgentTimeout() async throws {
+  let tool = MaiRunTool(configuration: .init(defaultTimeout: 3))
+  let script: JSONValue = .string("sleep 1.2; printf finished")
+  let timedOut = try await call(tool, ["script": script], runTimeoutSeconds: 1)
+  #expect(timedOut.structuredContent?.objectValue?["timedOut"] == .bool(true))
+  #expect(timedOut.text.contains("timed out after 1 seconds"))
+  let explicit = try await call(
+    tool, ["script": script, "timeout_seconds": .integer(3)], runTimeoutSeconds: 1)
+  #expect(!explicit.isError)
+  #expect(explicit.text == "finished")
+  let source = try await call(tool, ["script": script])
+  #expect(!source.isError)
+  #expect(source.text == "finished")
 }
 
 @Test("Run tools reap finished, killed, and backgrounded children", arguments: ["finished", "killed", "backgrounded"])

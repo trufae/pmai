@@ -87,7 +87,7 @@ public struct MaiRunTool: AgentTool {
       let arguments = arguments.objectValue ?? [:]
       do {
         try Task.checkCancellation()
-        return try await execute(arguments)
+        return try await execute(arguments, defaultTimeout: context.runTimeoutSeconds)
       } catch is CancellationError {
         throw CancellationError()
       } catch {
@@ -110,7 +110,9 @@ public struct MaiRunTool: AgentTool {
       case none
     }
 
-    private func execute(_ arguments: [String: JSONValue]) async throws -> ToolOutput {
+    private func execute(
+      _ arguments: [String: JSONValue], defaultTimeout: Int?
+    ) async throws -> ToolOutput {
       let interactive = arguments["interactive"]?.boolValue ?? false
       var environment = ProcessInfo.processInfo.environment
       // Pipes are not terminals, but many CLIs honour one of these even when
@@ -127,7 +129,8 @@ public struct MaiRunTool: AgentTool {
       let workingDirectory = try Self.workingDirectory(arguments["cwd"]?.stringValue)
       let timeout = min(
         max(
-          arguments["timeout_seconds"]?.numberValue ?? configuration.defaultTimeout, 1),
+          arguments["timeout_seconds"]?.numberValue
+            ?? defaultTimeout.map(TimeInterval.init) ?? configuration.defaultTimeout, 1),
         MaiRunConfiguration.maximumTimeout)
       let stdin = arguments["stdin"]?.stringValue
       let script = try Self.requiredText(arguments, key: "script", alias: "command")
@@ -355,7 +358,7 @@ public struct MaiRunTool: AgentTool {
     properties["timeout_seconds"] = .object([
       "type": .string("number"),
       "description": .string(
-        "Seconds before the process is killed, 1-\(Int(MaiRunConfiguration.maximumTimeout)). Default: \(Int(configuration.defaultTimeout)) for captured runs; interactive runs have no timeout unless explicitly set."),
+        "Seconds before the process is killed, 1-\(Int(MaiRunConfiguration.maximumTimeout)). Captured runs use the agent's limits.runTimeoutSeconds when set, otherwise \(Int(configuration.defaultTimeout)); interactive runs have no timeout unless explicitly set."),
     ])
     properties["output"] = .object([
       "type": .string("string"),

@@ -834,6 +834,10 @@ change them and persist the change into that agent's configuration. The
 `limits.maxToolCalls` defaults to 300 per prompt, not per conversation; each
 new prompt gets a fresh allowance. `limits.maxModelTurns` defaults to 310.
 `limits.maxTotalTokens` defaults to `off` (no token cap per run).
+`/set limits.runTimeoutSeconds 5m` sets the default timeout for each captured
+`run_shell` call (1–600 seconds). Use `default` to inherit the tool-source
+`runTimeoutSeconds` setting (60 seconds by default). An explicit tool-call
+`timeout_seconds` overrides it; interactive calls still have no default timeout.
 Reaching a limit no longer ends a task with an error. A run that spends
 `limits.maxModelTurns`, `limits.maxTotalTokens` (`/set limits.maxTotalTokens
 120k`), or `limits.maxSeconds` (`/set limits.maxSeconds 10m`; a long model call
@@ -1680,8 +1684,9 @@ terminal and is unavailable in piped/server sessions.
 `output: "auto"` (the default) returns small output but saves any stream larger
 than 24 KB to a temporary file and reports its path; use `inline` to drop the
 excess, `file` to save both streams immediately, or `none` to suppress them.
-Captured runs are killed after the timeout
-(`runTimeoutSeconds`, default 60), and `Ctrl+C` terminates it. The tool is
+Captured runs are killed after the timeout (`/set limits.runTimeoutSeconds 5m`
+overrides the tool-source `runTimeoutSeconds`, default 60), and `Ctrl+C`
+terminates it. The tool is
 marked dangerous, so it follows the `dangerous` approval setting, and the group
 is absent on iOS. Use `/tools disable run` to remove it from an agent.
 Streamable HTTP support is supplied by `MaiMCPPlugin`, so the transport is not a
