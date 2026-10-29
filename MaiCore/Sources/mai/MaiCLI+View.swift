@@ -93,43 +93,6 @@ extension MaiCLI {
     /view prompt $NAME     Apply a saved prompt after each reply (e.g. $tldr)
     /view prompt TEXT      Apply instructions after each reply, using the compact model
     /view off              Close the view
-
-    Requires /set ui.mode buffer and an interactive terminal. The read-only view
-    starts in the top half of the output area, with the conversation below it.
-    With the view focused, Space toggles between top/bottom and left/right panes,
-    with the view on the right and the conversation on the left.
-    Enter toggles the view fullscreen above the prompt; Enter again restores the split.
-    Drag the separator with the left mouse button to resize either layout. Both
-    panes keep at least one row/column; sizes are kept when sources change.
-    Replies, pinned messages, logs and thinking follow ui.markdown and reflow to fit.
-    Overflowing panes show a scrollbar on the right (one character by default).
-    /set ui.scrollbar N sets its width: positive on the right, negative on the left,
-    and 0 hides it. Drag its handle or click its track to scroll; the handle size
-    reflects the amount of visible content.
-    Tab with an empty prompt switches focus between the prompt and the view.
-    The focused view highlights the whole separator and hides the cursor.
-    In the view, j/k or Down/Up scroll one row; J/K page down/up like Page Down/Up.
-    g/G jump to the top/bottom; G resumes following new output.
-    v/V grow/shrink the view by one row or column; q closes it, like /view off.
-    / opens a search prompt: type literal text and Enter to highlight every match
-    and scroll the focused pane to the first hit. Escape or Ctrl+C cancels the search.
-    /highlight WORD at the normal prompt and /set ui.highlight WORD set the same
-    saved word for both panes. /highlight or /set ui.highlight none clears it.
-    Matching is case-sensitive, including within words, with black text on white.
-    The mouse wheel scrolls the focused pane. Tab returns to typing; completion works as usual
-    when the prompt contains text. Agent message destinations stay the same.
-    Pins/log/iconlog/thinking/tools follow the selected agent; an explicit agent stays fixed.
-    Prompt views run on the last completed reply and refresh after each turn of the selected agent.
-    With no reply yet, they wait for one. Output stays in the view; closing or replacing it cancels the request.
-    History refreshes after commands; diffs uses the current directory and keeps its scroll position.
-    Todo shows the current project's shared list and refreshes as commands and tools run.
-    Voice follows the voice agent independently of the selected text agent. Start it with /voice on.
-    The tools view follows ui.tools, including changes made while the view is open.
-    Thinking/tools/iconlog views hide matching blocks in the conversation until the view closes
-    or changes source. The thinking view also replaces the live thinking preview.
-    Iconlog always shows icons, independently of ui.tools. /tools full lists their meanings.
-    On very short terminals the view is hidden until there is room for both panes.
-    Switching to classic mode closes the view.
     """
 }
 
