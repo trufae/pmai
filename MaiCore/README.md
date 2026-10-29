@@ -942,7 +942,8 @@ incremental reverse search; type to narrow it, press `Ctrl+R` again for an older
 match, Return to submit it, or `Ctrl+G` to restore the original input. `Ctrl+A`
 and `Ctrl+E` move to the beginning and end; `Ctrl+B` and `Ctrl+F` scroll a page
 back and forward in the frame that has focus, like Page Up and Page Down, and
-`Ctrl+W` deletes the previous word,
+`Ctrl+<` and `Ctrl+Shift+>` jump to its beginning and end on terminals supporting
+extended keyboard protocols. `Ctrl+W` deletes the previous word,
 and `Ctrl+C` cancels the active model or tool run without leaving the REPL.
 `Ctrl+L` clears the screen and redraws the prompt, keeping the current input,
 cursor position and history search. It does not clear the conversation.

@@ -35,6 +35,8 @@ protocol LineEditorSurface: AnyObject {
   func clearScreen()
   /// Scrolls by wheel events or pages; plain terminal surfaces ignore it.
   func scrollOutput(wheel: Int, pages: Int)
+  /// Jumps to the beginning or end of the focused output frame.
+  func scrollOutput(toEnd: Bool)
   var viewHasFocus: Bool { get }
   func toggleViewFocus() -> Bool
   func focusPrompt()
@@ -62,6 +64,7 @@ protocol LineEditorSurface: AnyObject {
 
 extension LineEditorSurface {
   func scrollOutput(wheel: Int, pages: Int) {}
+  func scrollOutput(toEnd: Bool) {}
   var viewHasFocus: Bool { false }
   func toggleViewFocus() -> Bool { false }
   func focusPrompt() {}
@@ -227,6 +230,7 @@ final class TerminalLineEditor {
     case text([UInt8])
     case up, down, left, right, home, end, delete
     case pageUp, pageDown
+    case outputBoundary(toEnd: Bool)
     case backTab
     case switchAgent(REPLAgentSwitch)
     case wheel(Int)
@@ -482,6 +486,10 @@ final class TerminalLineEditor {
 
     var viewSearch: [UInt8]?
     while let key = readKey() {
+      if case .outputBoundary(let toEnd) = key {
+        surface?.scrollOutput(toEnd: toEnd)
+        continue
+      }
       if var query = viewSearch {
         switch key {
         case .byte(13):
@@ -733,7 +741,7 @@ final class TerminalLineEditor {
         let end = nextCharacterEnd(in: bytes, after: cursor)
         remove(cursor..<end)
         redraw(prompt: prompt, bytes: bytes, cursor: cursor)
-      case .mouse, .ignored:
+      case .mouse, .ignored, .outputBoundary:
         continue
       }
     }
@@ -877,6 +885,11 @@ final class TerminalLineEditor {
     let shift = held & 1 != 0
     let ctrl = held & 4 != 0
     let others = held & ~5 != 0
+    if ctrl, !others {
+      let character = shift ? shifted ?? code : code
+      if character == 60 || (shift && shifted == nil && code == 44) { return .outputBoundary(toEnd: false) }
+      if character == 62 || (shift && shifted == nil && code == 46) { return .outputBoundary(toEnd: true) }
+    }
     if (held == 4 || held == 2), (49...57).contains(code) {
       return .switchAgent(.slot(code - 48))
     }
@@ -1076,6 +1089,8 @@ final class TerminalLineEditor {
         surface?.scrollOutput(wheel: 0, pages: -1)
       case .pageDown:
         surface?.scrollOutput(wheel: 0, pages: 1)
+      case .outputBoundary(let toEnd):
+        surface?.scrollOutput(toEnd: toEnd)
       case .wheel(let direction):
         surface?.scrollOutput(wheel: direction, pages: 0)
       case .mouse(let event):

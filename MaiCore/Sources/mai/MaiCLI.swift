@@ -14951,6 +14951,7 @@ struct MaiCLI {
       Up/Down or Ctrl+P/N move between lines, then history · Ctrl+R reverse search
       Ctrl+A/E or Home/End beginning/end of the line
       Ctrl+B/F page up/down in the focused frame, like Page Up/Down
+      Ctrl+< / Ctrl+Shift+> jump to the beginning/end of the focused frame (extended keyboards)
       Ctrl+L clear the screen, keeping the input
       Ctrl+W delete word · Ctrl+C or /stop interrupt the run · Ctrl+Z suspend
       Voice: Ctrl+T transcribes/sends · Ctrl+G discards · Ctrl+Space records/sends

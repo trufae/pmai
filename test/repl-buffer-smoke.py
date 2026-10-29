@@ -357,6 +357,34 @@ def main(binary):
                 read_for()
                 assert 'ROW69' in '\n'.join(output()), screen
                 assert 'draft last' in screen[rows], screen
+                # Ctrl+< / Ctrl+Shift+> jump to the boundaries without editing
+                # the draft. Cover CSI-u, kitty shifted keys and modifyOtherKeys.
+                for start, end in (
+                    ('\x1b[60;5u', '\x1b[62;6u'),
+                    ('\x1b[44:60;6u', '\x1b[46:62;6u'),
+                    ('\x1b[44;6u', '\x1b[46;6u'),
+                    ('\x1b[27;5;60~', '\x1b[27;6;62~'),
+                ):
+                    send(start)
+                    read_for()
+                    assert scrollbar[1] == '44', scrollbar
+                    assert 'ROW69' not in '\n'.join(output()), screen
+                    assert 'scroll' in screen[rows - 2], screen
+                    assert 'draft first' in screen[rows - 1] and 'draft last' in screen[rows], screen
+                    top = output()
+                    send(start)
+                    read_for()
+                    assert output() == top, (top, output())
+                    send(end)
+                    read_for()
+                    assert 'ROW69' in '\n'.join(output()), screen
+                    assert 'scroll' not in screen[rows - 2], screen
+                    assert 'draft first' in screen[rows - 1] and 'draft last' in screen[rows], screen
+                # Releases and unrelated modifiers must not trigger a jump.
+                previous = output()
+                send('\x1b[60;5:3u\x1b[60;7u')
+                read_for()
+                assert output() == previous, (previous, output())
                 send('\x1b[5~')
                 read_for()
                 previous = output()

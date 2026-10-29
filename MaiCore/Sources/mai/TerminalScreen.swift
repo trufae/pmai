@@ -1307,6 +1307,14 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   func scrollOutput(wheel: Int, pages: Int) {
+    scrollOutput(wheel: wheel, pages: pages, toEnd: nil)
+  }
+
+  func scrollOutput(toEnd: Bool) {
+    scrollOutput(wheel: 0, pages: 0, toEnd: toEnd)
+  }
+
+  private func scrollOutput(wheel: Int, pages: Int, toEnd: Bool?) {
     let loader: (@Sendable (Bool) -> Void)? = lock.withLock {
       outputConversation.historyLoader
     }
@@ -1320,20 +1328,23 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         let height = viewContentHeight
         let width = paneContentWidth(inView: true)
         changed = view?.buffer.scroll(
-          lines: wheel * max(1, ui.scroll) + pages * max(1, height - 1),
+          lines: toEnd.map { $0 ? Int.max : Int.min }
+            ?? (wheel * max(1, ui.scroll) + pages * max(1, height - 1)),
           width: width, height: height) ?? false
       } else {
         changed = TerminalConversationScope.$id.withValue(nil) {
           let width = paneContentWidth(inView: false)
           return transcript.scroll(
-            lines: wheel * max(1, ui.scroll) + pages * max(1, outputHeight - 1),
+            lines: toEnd.map { $0 ? Int.max : Int.min }
+              ?? (wheel * max(1, ui.scroll) + pages * max(1, outputHeight - 1)),
             width: width, height: outputHeight)
         }
       }
       let conversation = outputConversation
       if view?.focused != true, let window = conversation.historyWindow {
-        if wheel + pages < 0, transcript.isAtBeginning, window.hasEarlier { loadEarlier = true }
-        if wheel + pages > 0, transcript.isFollowing, window.hasLater { loadEarlier = false }
+        let direction = toEnd.map { $0 ? 1 : -1 } ?? (wheel + pages)
+        if direction < 0, transcript.isAtBeginning, window.hasEarlier { loadEarlier = true }
+        if direction > 0, transcript.isFollowing, window.hasLater { loadEarlier = false }
       }
       if changed {
         if wheel != 0 && pages == 0 {
