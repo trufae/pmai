@@ -335,6 +335,7 @@ struct TerminalOutputBuffer {
       lines.append(Line())
       cursor = 0
     }
+    if let call { toolBlocks[index]?.call = call }
     if let result {
       toolBlocks[index]?.result = result
       toolBlocks[index]?.timing.finishedAt = Date()

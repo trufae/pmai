@@ -91,7 +91,9 @@ public actor ACPProvider: ChatProvider {
         "[\($0.role.rawValue)]\n\($0.text)"
       }.joined(separator: "\n\n")
     }
-    let instructions = request.messages.filter { $0.role == .system }.map(\.text).joined(
+    let messages = ReasoningEffort.messages(
+      request.messages, options: request.options, model: request.model)
+    let instructions = messages.filter { $0.role == .system }.map(\.text).joined(
       separator: "\n\n")
     let prompt = instructions.isEmpty ? text : "[pmai instructions]\n\(instructions)\n\n\(text)"
     let collector = TextCollector()
@@ -100,6 +102,7 @@ public actor ACPProvider: ChatProvider {
       if !request.model.isEmpty, request.model != descriptor.id.rawValue {
         try await client.selectModel(request.model)
       }
+      try await client.selectReasoningEffort(request.options.reasoningEffort)
       if sessionFile != nil {
         let remoteID = try await client.connect()
         try saveSession(remoteID, key: key)

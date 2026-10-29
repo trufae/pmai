@@ -114,6 +114,17 @@ Use the model IDs returned by `/models`. Agents with no model catalog expose
 one default entry named after the provider. Model selection supports both
 `configOptions` and the older `models` / `session/set_model` API.
 
+`/set effort LEVEL` selects the agent's advertised `thought_level` setting
+after selecting the model. Claude calls this setting `effort`; Codex calls it
+`reasoning_effort`. pmai uses a supported level: `max` selects the highest
+available level, and other levels fall back to the nearest lower level (or
+the lowest available level). Positive levels keep reasoning enabled when the
+agent offers that choice. `auto` restores the session's original setting,
+or the adapter's explicit default choice when available. Agents without an
+effort selector receive prompt guidance only. Other generation settings such
+as temperature and token limits have no standard ACP control and remain
+managed by the external agent.
+
 Claude and Codex use adapters; install them and authenticate with their own CLI:
 
 ```
@@ -145,7 +156,9 @@ HTTP MCP support. The endpoint accepts calls only during an active prompt, and
 cancels outstanding tool calls when that prompt finishes or is cancelled.
 
 ACP-native tools execute inside the external agent. Their progress appears in
-chat; pmai never executes those notifications again. Their permissions and
+chat, including parameters supplied in later tool updates; the final arguments
+are retained in the transcript. Non-object inputs appear as `input=...`.
+pmai never executes those notifications again. Their permissions and
 limits belong to the agent. `/tools off` disables pmai tools, not native agent
 tools. ACP has no standard endpoint to enumerate or disable arbitrary native
 tools. Remote agents use their own host tools; configure additional MCP servers

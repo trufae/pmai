@@ -32,7 +32,7 @@ extension AgentEvent {
     switch self {
     case .started(let c, _), .modelStarted(let c, _), .provider(let c, _),
       .approvalRequested(let c, _), .approvalDecided(let c, _), .toolStarted(let c, _),
-      .toolFinished(let c, _), .childStarted(let c, _), .childQueued(let c, _),
+      .toolUpdated(let c, _), .toolFinished(let c, _), .childStarted(let c, _), .childQueued(let c, _),
       .childFinished(let c, _), .userMessage(let c, _), .transcriptEdited(let c, _),
       .compactionStarted(let c, _), .compactionFailed(let c, _), .finished(let c, _),
       .retrying(let c, _, _, _, _): return c
@@ -50,6 +50,7 @@ extension AgentEvent {
     case .approvalRequested(_, let v): return .approvalRequested(c, v)
     case .approvalDecided(_, let v): return .approvalDecided(c, v)
     case .toolStarted(_, let v): return .toolStarted(c, v)
+    case .toolUpdated(_, let v): return .toolUpdated(c, v)
     case .toolFinished(_, let v): return .toolFinished(c, v)
     case .childStarted(_, let v): return .childStarted(c, child: v)
     case .childQueued(_, let v): return .childQueued(c, child: v)

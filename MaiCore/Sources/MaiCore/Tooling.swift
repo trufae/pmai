@@ -249,7 +249,7 @@ package enum ToolCallPreview {
   package static func render(
     _ call: ToolCall, display: ToolCallDisplay = .truncate, maxLength: Int = .max
   ) -> String {
-    let arguments = call.arguments.objectValue ?? [:]
+    let arguments = call.arguments.objectValue ?? ["input": call.arguments]
     var line = "→ \(call.name)"
     guard !arguments.isEmpty else { return line }
     let ordered = arguments.keys.sorted { a, b in

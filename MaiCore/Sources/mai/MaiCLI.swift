@@ -15160,6 +15160,13 @@ struct MaiCLI {
     /provider add acp NAME --url URL --cwd DIR [--token-env ENV]  Remote ACP WebSocket
 
     ACP: /models NAME discovers models; /model NAME::MODEL selects one.
+    /set effort LEVEL selects a supported ACP effort; auto restores the agent's default.
+    Built-in Claude and Codex adapters (already installed and authenticated):
+      /provider add acp claude
+      /provider add acp codex
+      /provider use claude
+      /models claude
+      /model claude::MODEL_ID
     OpenCode example (already installed and authenticated):
       /provider add acp oc opencode acp
       /model oc::opencode/big-pickle

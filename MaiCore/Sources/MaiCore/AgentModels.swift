@@ -615,6 +615,8 @@ public enum ProviderEvent: Codable, Equatable, Sendable {
   case toolCallDelta(ToolCallDelta)
   /// Activity already executed by an agent provider; never execute it again.
   case toolStarted(ToolCall)
+  /// Updated metadata or complete arguments for an already running remote tool.
+  case toolUpdated(ToolCall)
   case toolFinished(ToolResult)
   /// The call's token usage, sent once per call when the provider reports
   /// it — after the last delta of a stream — so a host may add these up.
@@ -1324,6 +1326,7 @@ public enum AgentEvent: Equatable, Sendable {
   case approvalRequested(AgentEventContext, ApprovalRequest)
   case approvalDecided(AgentEventContext, ApprovalDecision)
   case toolStarted(AgentEventContext, ToolCall)
+  case toolUpdated(AgentEventContext, ToolCall)
   case toolFinished(AgentEventContext, ToolResult)
   case childStarted(AgentEventContext, child: AgentEventContext)
   /// A child was registered but every subagent slot is taken; it starts on

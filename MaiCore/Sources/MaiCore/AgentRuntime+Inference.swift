@@ -19,6 +19,8 @@ extension AgentRuntime {
       break
     case .toolStarted(let context, let call):
       await debugLog.record("tool.started", context: context, value: call)
+    case .toolUpdated(let context, let call):
+      await debugLog.record("tool.updated", context: context, value: call)
     case .toolFinished(let context, let result):
       await debugLog.record("tool.finished", context: context, value: result)
     case .approvalRequested(let context, let request):
@@ -272,6 +274,10 @@ extension AgentRuntime {
             let activity = AgentEvent.toolFinished(context, result)
             await toolCount.record(activity)
             await emit(activity)
+          case .toolUpdated(let call):
+            let activity = AgentEvent.toolUpdated(context, call)
+            await toolCount.record(activity)
+            await emit(activity)
           default: await emit(.provider(context, event))
           }
         }
@@ -382,6 +388,8 @@ private actor ProviderToolCount {
   func record(_ event: AgentEvent) {
     switch event {
     case .toolStarted(_, let call): calls.append(call)
+    case .toolUpdated(_, let call):
+      if let index = calls.firstIndex(where: { $0.id == call.id }) { calls[index] = call }
     case .toolFinished(_, let result): results.append(result)
     default: break
     }

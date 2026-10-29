@@ -72,6 +72,8 @@ public actor ACPClient {
   private var legacyModels: [ModelDescriptor] = []
   private var currentModel: String?
   private var toolCalls: [String: ToolCall] = [:]
+  private var toolNames: [String: String] = [:]
+  private var effortDefaults: [String: JSONValue] = [:]
   private var supportsLoad = false
   private var supportsList = false
   private var supportsFiles = false
@@ -174,6 +176,12 @@ public actor ACPClient {
     let options = try await configurationOptions()
     if let option = options.first(where: { $0.category == "model" || $0.id == "model" }) {
       if option.currentValue != .string(id) {
+        guard option.accepts(.string(id)) else {
+          throw JSONRPCError.invalidParams("Unknown ACP model '\(id)'")
+        }
+        // Codex carries the current effort into the new model. Clear our
+        // override first so it cannot become that model's saved auto value.
+        try await selectReasoningEffort(nil)
         _ = try await setConfigurationOption(id: option.id, value: .string(id))
       }
     } else if !legacyModels.isEmpty {
@@ -181,6 +189,7 @@ public actor ACPClient {
         throw JSONRPCError.invalidParams("Unknown ACP model '\(id)'")
       }
       if currentModel == id { return }
+      try await selectReasoningEffort(nil)
       busy = true
       defer { busy = false }
       _ = try await peer.request(
@@ -191,6 +200,45 @@ public actor ACPClient {
       currentModel = id
     } else {
       throw JSONRPCError.invalidParams("This ACP agent does not expose model selection")
+    }
+  }
+
+  /// Use the agent's advertised controls, whose IDs and supported levels differ
+  /// between adapters and models. Keep the original value so auto undoes a
+  /// previous explicit selection in a reused session.
+  public func selectReasoningEffort(_ value: String?) async throws {
+    let options = try await configurationOptions()
+    guard let option = options.first(where: {
+      $0.category == "thought_level" || ["reasoning_effort", "effort"].contains($0.id)
+    }), !option.isBoolean else { return }
+    let model = options.first(where: { $0.category == "model" || $0.id == "model" })?
+      .currentValue.stringValue ?? currentModel ?? "default"
+    let key = model + "\u{0}" + option.id
+    if effortDefaults[key] == nil { effortDefaults[key] = option.currentValue }
+    let choices = option.choices.map(\.id)
+    let effort = value.flatMap(ReasoningEffort.init(name:))
+    let selected: String?
+    if value == nil || effort == .automatic {
+      selected = choices.first { ["auto", "automatic", "default"].contains($0) }
+        ?? effortDefaults[key]?.stringValue.flatMap { choices.contains($0) ? $0 : nil }
+    } else if let value, choices.contains(value) {
+      selected = value
+    } else if let effort {
+      let supported = option.choices.compactMap { choice -> (String, Int)? in
+        guard let level = ReasoningEffort(name: choice.id), level != .automatic,
+          let rank = ReasoningEffort.allCases.firstIndex(of: level)
+        else { return nil }
+        return (choice.id, rank)
+      }.sorted { $0.1 < $1.1 }
+      let enabled = supported.filter { ReasoningEffort(name: $0.0) != .disabled }
+      let levels = effort != .disabled && !enabled.isEmpty ? enabled : supported
+      if effort == .max { selected = levels.last?.0 }
+      else if let rank = ReasoningEffort.allCases.firstIndex(of: effort) {
+        selected = levels.last(where: { $0.1 <= rank })?.0 ?? levels.first?.0
+      } else { selected = nil }
+    } else { selected = nil }
+    if let selected, option.currentValue != .string(selected) {
+      _ = try await setConfigurationOption(id: option.id, value: .string(selected))
     }
   }
 
@@ -388,6 +436,7 @@ public actor ACPClient {
     let peer = try await connectedPeer()
     let sessionID = try await ensureSession(peer: peer)
     toolCalls.removeAll()
+    toolNames.removeAll()
     activeSink = emit
     defer { activeSink = nil }
     let params: JSONValue = .object([
@@ -425,6 +474,7 @@ public actor ACPClient {
     reader?.cancel()
     reader = nil
     sessionLoaded = false
+    effortDefaults.removeAll()
     supportsPermissionEditing = false
     supportsYolo = false
     supportsHistoryRewind = false
@@ -627,12 +677,18 @@ public actor ACPClient {
       await sink(.reasoningDelta(text))
     case .toolCall, .toolCallUpdate:
       guard let id = update["toolCallId"]?.stringValue else { return }
-      if toolCalls[id] == nil {
-        let call = ToolCall(
-          id: id, name: update["title"]?.stringValue ?? "ACP tool",
-          arguments: update["rawInput"] ?? .object([:]))
-        toolCalls[id] = call
+      let previous = toolCalls[id]
+      if let name = update["name"]?.stringValue { toolNames[id] = name }
+      // rawInput is a replacement snapshot, not a JSON merge or text delta.
+      // Claude commonly starts with {} and sends its arguments in an update.
+      let call = ToolCall(
+        id: id, name: toolNames[id] ?? update["title"]?.stringValue ?? previous?.name ?? "ACP tool",
+        arguments: update["rawInput"] ?? previous?.arguments ?? .object([:]))
+      toolCalls[id] = call
+      if previous == nil {
         await sink(.toolStarted(call))
+      } else if previous != call {
+        await sink(.toolUpdated(call))
       }
       if let status = update["status"]?.stringValue, ["completed", "failed"].contains(status) {
         await sink(

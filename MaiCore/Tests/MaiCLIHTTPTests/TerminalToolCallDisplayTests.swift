@@ -61,6 +61,31 @@ func terminalToolCallDisplayClassic() async {
   }
 }
 
+@Test("Late ACP arguments appear in retained and classic tool previews")
+func terminalToolCallUpdates() async {
+  let context = AgentEventContext(runID: UUID(), parentRunID: nil, agentID: "main", depth: 0)
+  let initial = ToolCall(id: "remote", name: "Bash", arguments: .object([:]))
+  let complete = ToolCall(id: initial.id, name: initial.name, arguments: .object([
+    "command": .string("ls /workspace"),
+  ]))
+  for display in [ToolResultDisplay.all, .lines(0)] {
+    var buffer = TerminalOutputBuffer()
+    buffer.configureTools(display)
+    let block = buffer.appendTool(call: initial, result: nil)
+    buffer.appendTool(call: complete, result: nil, to: block)
+    buffer.appendTool(call: nil, result: .init(callID: initial.id, text: "files"), to: block)
+    let rows = buffer.visibleRows(width: 120, height: 20).joined(separator: "\n")
+    #expect(rows.contains("ls /workspace"))
+
+    let writer = TerminalWriter(capturesOutput: true)
+    await writer.configureTools(display)
+    await writer.consume(.toolStarted(context, initial))
+    await writer.consume(.toolUpdated(context, complete))
+    await writer.consume(.toolFinished(context, .init(callID: initial.id, text: "files")))
+    #expect(await writer.drainCaptured().contains("ls /workspace"))
+  }
+}
+
 @Test("Truncated tool calls use current columns and recover their source after resizing")
 func terminalToolCallDisplayResize() {
   let script = "echo " + String(repeating: "abcdefghij", count: 30)

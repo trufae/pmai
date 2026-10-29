@@ -51,4 +51,12 @@ func toolCallDisplaySourceLines() {
   let safe = ToolCallPreview.render(unsafe, display: .lines(2))
   #expect(safe.contains("cat  file\n"))
   #expect(!safe.contains("\u{1B}") && !safe.contains("\r"))
+  for (input, text) in [
+    (JSONValue.string("ls /workspace"), "ls /workspace"),
+    (.array([.string("file.txt")]), "file.txt"), (.bool(true), "true"), (.null, "null"),
+  ] {
+    let remote = ToolCall(id: "remote", name: "ACP tool", arguments: input)
+    #expect(ToolCallPreview.render(remote).contains("input="))
+    #expect(ToolCallPreview.render(remote).contains(text))
+  }
 }

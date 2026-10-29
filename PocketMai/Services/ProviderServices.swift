@@ -1308,7 +1308,7 @@ final class CoreProviderEventAccumulator {
       timing.noteTokenChunk()
     case .toolCallDelta:
       timing.noteTokenChunk()
-    case .usage, .toolStarted, .toolFinished:
+    case .usage, .toolStarted, .toolUpdated, .toolFinished:
       break
     }
     let now = Date()

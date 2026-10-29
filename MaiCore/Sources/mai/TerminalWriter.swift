@@ -356,6 +356,8 @@ actor TerminalWriter {
       toolStarted(call, context: context)
     case .toolFinished(let context, let result) where context.depth == 0:
       toolFinished(result, context: context)
+    case .toolUpdated(let context, let call) where context.depth == 0:
+      toolStarted(call, context: context, updating: true)
     case .userMessage(let context, let message) where context.depth == 0:
       finishReply()
       closeRootLine()
@@ -455,6 +457,9 @@ actor TerminalWriter {
         return
       }
       toolFinished(result, context: context)
+    case .toolUpdated(let context, let call):
+      guard context.pid != nil, subagentOutput == .all || subagentOutput == .tools else { return }
+      toolStarted(call, context: context, updating: true)
     case .userMessage(let context, let message):
       guard let pid = context.pid else { return }
       flushChildText(pid)
@@ -667,17 +672,19 @@ actor TerminalWriter {
 
   // MARK: - Tool output
 
-  private func toolStarted(_ call: ToolCall, context: AgentEventContext) {
+  private func toolStarted(_ call: ToolCall, context: AgentEventContext, updating: Bool = false) {
     if let screen, screen.isBufferMode, REPLRedirection.current == nil {
       finishReply()
       closeRootLine()
       let prefix = context.depth > 0 ? context.pid.map { childPrefix($0) } ?? "" : ""
-      let block = screen.writeTool(call: call, result: nil, prefix: prefix, block: nil)
+      let previous = updating ? bufferToolCalls[context.runID]?[call.id] : nil
+      let block = screen.writeTool(call: call, result: nil, prefix: prefix, block: previous)
       bufferToolCalls[context.runID, default: [:]][call.id] = block
       return
     }
     let preview = ToolCallPreview.render(call, display: ui.toolCalls)
     if tools == .icons {
+      if updating { return }
       iconToolCalls[context.runID, default: []].insert(call.id)
       toolIcon(ToolIcon.emoji(for: call.name), context: context)
     } else if tools == .lines(0) {

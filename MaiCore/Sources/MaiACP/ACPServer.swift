@@ -825,6 +825,8 @@ public actor ACPServer {
       await update(session: id, kind: .agentThoughtChunk, text: text)
     case .toolStarted(let context, let call) where context.depth == 0:
       await toolUpdate(session: id, call: call)
+    case .toolUpdated(let context, let call) where context.depth == 0:
+      await toolUpdate(session: id, call: call, kind: .toolCallUpdate)
     case .toolFinished(let context, let result) where context.depth == 0:
       await toolFinished(session: id, result: result)
     default:
@@ -875,15 +877,16 @@ public actor ACPServer {
       ]))
   }
 
-  private func toolUpdate(session id: String, call: ToolCall) async {
+  private func toolUpdate(session id: String, call: ToolCall, kind: ACP.Update = .toolCall) async {
     try? peer?.notify(
       ACP.Method.sessionUpdate,
       params: .object([
         "sessionId": .string(id),
         "update": .object([
-          "sessionUpdate": .string(ACP.Update.toolCall.rawValue),
+          "sessionUpdate": .string(kind.rawValue),
           "toolCallId": .string(call.id),
           "title": .string(call.name),
+          "name": .string(call.name),
           "rawInput": call.arguments,
           "status": .string("in_progress"),
         ]),
