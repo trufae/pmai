@@ -17,9 +17,23 @@ func pinnedApprovalQuestion() throws {
   #expect(question.contains("files_write"))
   #expect(question.contains("file.txt"))
   #expect(question.contains("y (yes)"))
+  #expect(question.contains("a (always yolo, saved for project)"))
+  #expect(question.contains("s (yolo, this session)"))
   let edit = try #require(REPLModalPrompt.approval(request, id: id, editing: true).question)
   #expect(edit.contains("file.txt"))
   #expect(edit.contains("JSON object"))
+}
+
+@Test("Path approvals offer persistent and session yolo without editing paths")
+func pathApprovalChoices() throws {
+  let request = ApprovalRequest(
+    run: .init(runID: UUID(), parentRunID: nil, agentID: "path-access", depth: 0),
+    tool: .init(name: "files_path_access", description: "Approve a path"),
+    call: .init(id: "path", name: "files_path_access", arguments: .object(["path": .string("/tmp/gen.py")])))
+  let modal = REPLModalPrompt.approval(request, id: UUID(), editing: false)
+  #expect(modal.input.choices == ["y", "a", "s", "n", "c"])
+  #expect(modal.question?.contains("saved for project") == true)
+  #expect(modal.question?.contains("this session") == true)
 }
 
 @Test("Other decisions supply pinned questions without replacing chat chop")

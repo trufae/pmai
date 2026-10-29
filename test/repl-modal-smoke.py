@@ -146,8 +146,8 @@ def main():
                     output.clear()
                     release.set()
                     shown = wait('APPROVAL REQUIRED')
-                    if 'approve [y/a/n/e/c]> ' not in shown:
-                        shown += wait('approve [y/a/n/e/c]> ')
+                    if 'approve [y/a/s/n/e/c]> ' not in shown:
+                        shown += wait('approve [y/a/s/n/e/c]> ')
                     assert re.search(r'\x1b\[1;7(?:;[^m]*)?m', shown), repr(shown)
                     # No keystroke was needed to repaint the prompt; the draft is hidden.
                     read_pty(master, output, .05)
@@ -156,13 +156,13 @@ def main():
                     assert 'draftXZ' not in input_row, repr(input_row)
                     assert not (root / 'approved.txt').exists()
                     line('this is not a decision')
-                    wait('Answer y/a/n/e/c')
-                    wait('approve [y/a/n/e/c]> ')
+                    wait('Answer y/a/s/n/e/c')
+                    wait('approve [y/a/s/n/e/c]> ')
                     assert requests.empty(), 'Invalid modal input reached the model'
                     # Inspection commands return to the same question.
                     line('/set tool.aproval')
                     wait('tool.aproval = ask')
-                    wait('approve [y/a/n/e/c]> ')
+                    wait('approve [y/a/s/n/e/c]> ')
                     check_question()
                     if action == 'edit':
                         # Tab offers modal answers, not chat history or prompt names.

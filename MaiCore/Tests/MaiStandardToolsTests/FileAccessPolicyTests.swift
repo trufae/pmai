@@ -51,6 +51,43 @@ private func policyCall(_ tool: MaiFileWorkspaceTool, _ args: [String: JSONValue
       run: .init(runID: UUID(), parentRunID: nil, agentID: "test", depth: 0), modelTurn: 0))
 }
 
+@Test("CLI scratch defaults permit /tmp writes and aliases while preserving rules and resolved boundaries")
+func filePathPolicyTemporaryDefaults() async throws {
+  let fixture = try PathFixture()
+  defer { fixture.cleanup() }
+  let scratch = URL(fileURLWithPath: "/tmp").appendingPathComponent("pmai-policy-\(UUID())")
+  defer { try? FileManager.default.removeItem(at: scratch) }
+  let confirmations = PathConfirmations()
+  let policy = MaiFileAccessPolicy(
+    outside: .deny, hidden: .ask,
+    defaultAllowedURLs: ConfiguredFileAccess.defaultAllowedPaths.map { URL(fileURLWithPath: $0) }
+  ) { url, _ in await confirmations.decide(url) }
+  let file = scratch.appendingPathComponent("gen.py")
+  let written = try await policyCall(fixture.tool(.write, policy: policy), [
+    "path": .string(file.path), "content": .string("print('scratch')"),
+  ])
+  #expect(!written.isError)
+  #expect(try String(contentsOf: file, encoding: .utf8) == "print('scratch')")
+  let resolved = file.resolvingSymlinksInPath()
+  #expect(!(try await policyCall(fixture.tool(.read, policy: policy), ["path": .string(resolved.path)])).isError)
+  #expect(await confirmations.urls.isEmpty)
+  #expect(policy.access(to: URL(fileURLWithPath: "/tmp-other/gen.py"), insideWorkspace: false) == .deny)
+  #expect(policy.access(to: URL(fileURLWithPath: "/tmp/../etc/gen.py"), insideWorkspace: false) == .deny)
+  let alias = scratch.appendingPathComponent("escape")
+  try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: URL(fileURLWithPath: "/etc"))
+  #expect(policy.access(to: alias.appendingPathComponent("hosts"), insideWorkspace: false) == .deny)
+  #expect((try await policyCall(fixture.tool(.write, policy: policy), [
+    "path": .string(alias.appendingPathComponent("pmai-policy-\(UUID()).py").path),
+    "content": .string("print('escape')"),
+  ])).isError)
+  policy.set(.init(url: scratch, access: .ask))
+  #expect(!(try await policyCall(fixture.tool(.read, policy: policy), ["path": .string(file.path)])).isError)
+  #expect(await confirmations.urls.count == 1)
+  policy.set(.init(url: scratch, access: .deny))
+  #expect((try await policyCall(fixture.tool(.read, policy: policy), ["path": .string(file.path)])).isError)
+  #expect(await confirmations.urls.count == 1)
+}
+
 @Test("Path denials apply to existing tool instances, symlink aliases, and searches")
 func filePathPolicyDenials() async throws {
   let fixture = try PathFixture()

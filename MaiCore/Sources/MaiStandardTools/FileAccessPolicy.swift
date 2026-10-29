@@ -23,6 +23,7 @@ public final class MaiFileAccessPolicy: @unchecked Sendable, Equatable {
   }
 
   public typealias Confirmation = @Sendable (URL, String) async throws -> Bool
+  public let defaultAllowedURLs: [URL]
   private let lock = NSLock()
   private var rules: [Rule] = []
   private var outside: Access
@@ -34,11 +35,15 @@ public final class MaiFileAccessPolicy: @unchecked Sendable, Equatable {
 
   public init(
     outside: Access = .deny, hidden: Access = .allow, sensitive: Access = .ask,
+    defaultAllowedURLs: [URL] = [],
     confirmation: @escaping Confirmation
   ) {
     self.outside = outside
     self.hidden = hidden
     self.sensitive = sensitive
+    self.defaultAllowedURLs = defaultAllowedURLs.map {
+      $0.standardizedFileURL.resolvingSymlinksInPath()
+    }
     self.confirmation = confirmation
   }
 
@@ -97,6 +102,7 @@ public final class MaiFileAccessPolicy: @unchecked Sendable, Equatable {
     if matches.contains(where: { $0.access == .deny }) { return .deny }
     if matches.contains(where: { $0.access == .ask }) { return .ask }
     if matches.contains(where: { $0.access == .allow }) { return .allow }
+    if defaultAllowedURLs.contains(where: { Self.contains(resolved, in: $0) }) { return .allow }
     if state.hidden != .allow, Self.isHidden(url) || Self.isHidden(resolved) { return state.hidden }
     if state.sensitive != .allow, Self.isSensitive(url) || Self.isSensitive(resolved) { return state.sensitive }
     if insideWorkspace { return .allow }

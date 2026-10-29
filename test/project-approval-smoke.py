@@ -114,6 +114,10 @@ def main():
             assert states(run(second, ['/set tool.aproval'], args=['--tool-aproval', 'yolo'])) == ['yolo']
             assert states(run(second, ['/set tool.aproval'])) == ['ask']
             assert not (second / '.pmai' / 'settings.json').exists(), '--tool-aproval became persistent'
+            output = run(second, ['/set tool.aproval yolo session', '/set tool.aproval'])
+            assert states(output) == ['yolo', 'yolo'] and 'not saved' in output, output
+            assert states(run(second, ['/set tool.aproval'])) == ['ask']
+            assert not (second / '.pmai' / 'settings.json').exists(), 'Session mode became persistent'
             output = run(first, ['/set tool.aproval invalid', '/set tool.aproval'])
             assert 'Usage: /set tool.aproval <yolo|ask|smart>' in output and states(output) == ['ask'], output
 

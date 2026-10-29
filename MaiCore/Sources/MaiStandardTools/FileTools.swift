@@ -120,6 +120,7 @@ public struct MaiFileWorkspaceTool: AgentTool {
     return .init(
       workingDirectory: root.path,
       allowedPaths: [root.path] + configuration.additionalAllowedURLs.map(\.path)
+        + (configuration.pathAccessPolicy?.defaultAllowedURLs.map(\.path) ?? [])
         + (configuration.pathAccessPolicy?.snapshot().rules.filter { $0.access == .allow }.map {
           $0.url.path
         } ?? []),

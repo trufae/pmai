@@ -85,6 +85,23 @@ def main():
             command = [binary, '--config', str(config), '--home', str(base / 'home'),
                        '--no-stream', '--no-markdown']
 
+            # Built-in /tmp access also works with old saved policies and outside deny.
+            with tempfile.TemporaryDirectory(prefix='pmai-scratch-', dir='/tmp') as scratch:
+                scratch_file = Path(scratch) / 'gen.py'
+                legacy = json.loads(original_config)
+                legacy['fileAccess'] = {'outside': 'deny', 'hidden': 'ask', 'rules': []}
+                legacy_config = base / 'legacy-path.json'
+                legacy_config.write_text(json.dumps(legacy))
+                enqueue(call('files_write', path=str(scratch_file), content="print('scratch')"))
+                enqueue(call('files_read', path=str(scratch_file.resolve())))
+                output = run_repl([binary, '--config', str(legacy_config), '--home', str(base / 'home'),
+                    '--no-stream', '--no-markdown'], ['Create a script', 'Read the script', '/path'],
+                    cwd=root, env=env)
+                assert scratch_file.read_text() == "print('scratch')", output
+                assert 'temporary files; allowed by default' in output, output
+                assert "print('scratch')" in json.dumps(requests[-1]), requests[-1]
+                requests.clear()
+
             output = run_repl(command, ['/pwd', '/path', '/help path',
                 '/path allow "../external dir"', '/path deny private', '/path ask .',
                 '/path outside deny', '/path', '/path del .', '/path del "../external dir"',
@@ -194,10 +211,10 @@ def main():
                 enqueue(call('files_read', path='private/secret.txt'), 'FIRST FINISHED')
                 send('Read private')
                 shown = expect('answer y (yes, this access)')
-                if 'approve [y/n/c]> ' not in shown:
-                    expect('approve [y/n/c]> ')
-                send('a')
-                expect('Answer y/n/c for files_path_access')
+                if 'approve [y/a/s/n/c]> ' not in shown:
+                    expect('approve [y/a/s/n/c]> ')
+                send('invalid')
+                expect('Answer y/a/s/n/c for files_path_access')
                 assert len(requests) == 1, requests
                 send('/set tool.aproval yolo')
                 expect('yolo')
@@ -233,6 +250,43 @@ def main():
                 expect(f'allow {base / "outside.txt"} [granted from prompt]')
                 send('/path del ' + str(base / 'outside.txt'))
                 expect('Removed explicit Files rule/grant')
+
+                # s at a path prompt approves future asks without saving yolo.
+                saved_config = config.read_bytes()
+                settings = root / '.pmai/settings.json'
+                saved_settings = settings.read_bytes()
+                enqueue(call('files_read', path='private/secret.txt'), 'SESSION PATH YOLO')
+                send('Read private')
+                expect('approve [y/a/s/n/c]> ')
+                send('s')
+                expect('SESSION PATH YOLO')
+                enqueue(call('files_read', path='.env'), 'SESSION HIDDEN YOLO')
+                send('Read hidden')
+                expect('SESSION HIDDEN YOLO')
+                assert 'HIDDEN SECRET' in json.dumps(requests[-1]), requests[-1]
+                assert settings.read_bytes() == saved_settings
+                assert config.read_bytes() == saved_config
+
+                # Session ask restores prompts; s also works at a normal tool prompt.
+                send('/set tool.aproval ask session')
+                expect('ask for this session')
+                enqueue(call('files_read', path='private/secret.txt'), 'SESSION TOOL YOLO')
+                send('Read private')
+                expect('approve [y/a/s/n/e/c]> ')
+                send('s')
+                expect('SESSION TOOL YOLO')
+                assert settings.read_bytes() == saved_settings
+                assert config.read_bytes() == saved_config
+
+                # Explicit denies remain effective while session yolo is active.
+                send('/path deny private')
+                expect(f'Files policy: deny {root / "private"}')
+                enqueue(call('files_read', path='private/secret.txt'), 'SESSION DENIED')
+                send('Read private')
+                expect('SESSION DENIED')
+                assert 'Files access denied' in json.dumps(requests[-1]), requests[-1]
+                send('/path ask private')
+                expect(f'Files policy: ask {root / "private"}')
                 send('/exit')
                 deadline = time.monotonic() + 10
                 while process.poll() is None and time.monotonic() < deadline:
@@ -243,6 +297,44 @@ def main():
                     process.kill()
                     process.wait()
                 os.close(master)
+
+            # Session yolo disappears after restarting, even though tool yolo is saved.
+            requests.clear()
+            enqueue(call('files_read', path='private/secret.txt'))
+            run_repl(command, ['Read private'], cwd=root, env=env)
+            assert 'was not approved' in json.dumps(requests[-1]), requests[-1]
+
+            # a at a path prompt persists yolo for this project, including paths.
+            requests.clear()
+            master, slave = pty.openpty()
+            process = subprocess.Popen(command, cwd=root, env=env, stdin=slave,
+                                       stdout=slave, stderr=slave, start_new_session=True)
+            os.close(slave)
+            pending = bytearray()
+            saved_config = config.read_bytes()
+            try:
+                expect('pmai>')
+                enqueue(call('files_read', path='private/secret.txt'), 'ALWAYS PATH YOLO')
+                send('Read private')
+                expect('approve [y/a/s/n/c]> ')
+                send('a')
+                expect('ALWAYS PATH YOLO')
+                assert json.loads(settings.read_text())['pathYolo'] is True
+                assert config.read_bytes() == saved_config
+                send('/exit')
+                deadline = time.monotonic() + 10
+                while process.poll() is None and time.monotonic() < deadline:
+                    read_pty(master, pending, .1)
+                assert process.returncode == 0
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+                os.close(master)
+            requests.clear()
+            enqueue(call('files_read', path='private/secret.txt'))
+            run_repl(command, ['Read private'], cwd=root, env=env)
+            assert 'LOCAL SECRET' in json.dumps(requests[-1]), requests[-1]
     finally:
         server.shutdown()
         server.server_close()

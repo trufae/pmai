@@ -24,6 +24,10 @@ public struct ConfiguredFileAccess: Codable, Equatable, Sendable {
   public var sensitive: Access
   public var rules: [Rule]
 
+  /// Built-in scratch space remains available with older saved configurations.
+  /// Explicit path rules can still require confirmation or deny access.
+  public static let defaultAllowedPaths = ["/tmp"]
+
   public static let defaultRules: [Rule] = [
     .init(path: "/etc", access: .ask),
     .init(path: "/root", access: .ask),

@@ -22,8 +22,8 @@ enum REPLModalPrompt {
 
   static func approvalHelp(_ request: ApprovalRequest) -> String {
     request.tool.name == "files_path_access"
-      ? "y (yes, this access) · n (no) · c (cancel run); /path allow PATH grants ongoing access"
-      : "y (yes) · a (always) · n (no) · e (edit arguments) · c (cancel run)"
+      ? "y (yes, this access) · a (always yolo, saved for project) · s (yolo, this session) · n (no) · c (cancel run); /path allow PATH grants ongoing access"
+      : "y (yes) · a (always yolo, saved for project) · s (yolo, this session) · n (no) · e (edit arguments) · c (cancel run); yolo includes path approvals"
   }
 
   var input: TerminalPrompt {
@@ -32,7 +32,7 @@ enum REPLModalPrompt {
       if editing {
         return TerminalPrompt(text: "json> ", id: "edit-\(id)")
       }
-      let choices = request.tool.name == "files_path_access" ? ["y", "n", "c"] : ["y", "a", "n", "e", "c"]
+      let choices = request.tool.name == "files_path_access" ? ["y", "a", "s", "n", "c"] : ["y", "a", "s", "n", "e", "c"]
       return TerminalPrompt(text: "approve [\(choices.joined(separator: "/"))]> ", id: "approval-\(id)", choices: choices)
     case .compaction(let request, let id):
       let choices = request.pruning == nil ? ["y", "n", "m", "x", "c"] : ["p", "y", "n", "m", "x", "c"]
