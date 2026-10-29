@@ -8,6 +8,9 @@ public struct MarkdownTerminalTheme: Equatable, Sendable {
   public var hyperlinks: Bool
   /// Optional SGR color replacements supplied by the terminal's active palette.
   public var colorOverrides: [String: String] = [:]
+  /// Optional SGR foreground parameters for inline emphasis. Bold wins when both apply.
+  public var boldColor: String = ""
+  public var italicColor: String = ""
 
   public init(colors: Bool = true, hyperlinks: Bool = false) {
     self.colors = colors
@@ -19,18 +22,25 @@ public struct MarkdownTerminalTheme: Equatable, Sendable {
   /// SGR parameters for a style, joined with `;`. Empty means default text.
   public func parameters(for style: MarkdownSpanStyle) -> String {
     var parameters =
-      colors ? colorParameters(for: style.role) : attributeParameters(for: style.role)
+      (colors ? colorParameters(for: style.role) : attributeParameters(for: style.role))
+      .map { colorOverrides[$0] ?? $0 }
     let inline = style.inline
     if inline.contains(.bold) { parameters.append("1") }
     if inline.contains(.italic) { parameters.append("3") }
+    if colors {
+      if inline.contains(.bold), !boldColor.isEmpty {
+        parameters.append(boldColor)
+      } else if inline.contains(.italic), !italicColor.isEmpty {
+        parameters.append(italicColor)
+      }
+    }
     if inline.contains(.strikethrough) { parameters.append("9") }
     if inline.contains(.link) {
       parameters.append("4")
-      if colors { parameters.append("96") }
+      if colors { parameters.append(colorOverrides["96"] ?? "96") }
     }
-    if inline.contains(.code), colors { parameters.append("32") }
-    return parameters.map { colorOverrides[$0] ?? $0 }
-      .filter { !$0.isEmpty }.joined(separator: ";")
+    if inline.contains(.code), colors { parameters.append(colorOverrides["32"] ?? "32") }
+    return parameters.filter { !$0.isEmpty }.joined(separator: ";")
   }
 
   private func colorParameters(for role: MarkdownTextRole) -> [String] {

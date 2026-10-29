@@ -341,6 +341,34 @@ func paletteOverrides() {
   #expect(stripANSI(output) == stripANSI(MarkdownTerminalRenderer.render(source)))
 }
 
+@Test("Emphasis colors preserve font attributes, precedence and color opt-out")
+func emphasisColors() {
+  var theme = MarkdownTerminalTheme()
+  theme.boldColor = "36"
+  theme.italicColor = "35"
+  // Explicit emphasis colors must not be remapped through unrelated palette roles.
+  theme.colorOverrides = ["36": "31", "35": "34"]
+  func parameters(_ inline: MarkdownInlineStyle) -> [Substring] {
+    theme.parameters(for: MarkdownSpanStyle(inline: inline)).split(separator: ";")
+  }
+  #expect(parameters(.bold).contains("1"))
+  #expect(parameters(.bold).last == "36")
+  #expect(parameters(.italic).contains("3"))
+  #expect(parameters(.italic).last == "35")
+  #expect(parameters([.bold, .italic]).contains("1"))
+  #expect(parameters([.bold, .italic]).contains("3"))
+  #expect(parameters([.bold, .italic]).last == "36")
+  #expect(parameters([.bold, .link]).last == "96")
+  #expect(parameters([.italic, .code]).last == "32")
+  #expect(parameters([]).isEmpty)
+  theme.colors = false
+  #expect(Set(parameters([.bold, .italic])) == ["1", "3"])
+  theme.colors = true
+  theme.boldColor = ""
+  theme.italicColor = ""
+  #expect(Set(parameters([.bold, .italic])) == ["1", "3"])
+}
+
 @Test("Terminal environment detection")
 func environmentDetection() {
   let dumb = MarkdownTerminalEnvironment.detect(["TERM": "dumb", "LANG": "en_US.UTF-8"])

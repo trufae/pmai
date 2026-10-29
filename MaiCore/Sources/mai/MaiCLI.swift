@@ -11523,7 +11523,10 @@ struct MaiCLI {
       return
     }
 
-    if key.hasPrefix("ui."), TerminalTheme.keys.contains(String(key.dropFirst(3))) {
+    let emphasisColorKeys = ["ui.fgbold", "ui.fgitalic"]
+    if key.hasPrefix("ui."), TerminalTheme.keys.contains(String(key.dropFirst(3))),
+      !emphasisColorKeys.contains(key)
+    {
       await terminal.line("Use /theme color \(key.dropFirst(3)) [VALUE].")
       return
     }
@@ -11532,7 +11535,7 @@ struct MaiCLI {
     let levelKeys = ["ui.subagents", "ui.thinking", "ui.mode"]
     let textKeys = ["ui.title", "ui.editor", "ui.highlight"]
     guard
-      booleanKeys.contains(key) || countKeys.contains(key)
+      emphasisColorKeys.contains(key) || booleanKeys.contains(key) || countKeys.contains(key)
         || levelKeys.contains(key) || textKeys.contains(key)
     else {
       await terminal.line(
@@ -11549,7 +11552,14 @@ struct MaiCLI {
       await terminal.line("Usage: /set \(key) VALUE")
       return
     }
-    if textKeys.contains(key) {
+    if emphasisColorKeys.contains(key) {
+      do {
+        try TerminalTheme.set(String(key.dropFirst(3)), value: parts[1], in: &ui)
+      } catch {
+        await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+        return
+      }
+    } else if textKeys.contains(key) {
       let text = parts.dropFirst().joined(separator: " ")
       // "none" empties the setting: the title goes away, and the editor falls
       // back to $EDITOR again.
@@ -12262,6 +12272,7 @@ struct MaiCLI {
       "ui.mode", "ui.scroll", "ui.scrollbar", "ui.highlight", "ui.title", "ui.editor", "ui.markdown", "ui.tools", "ui.toolcalls", "ui.toolgroups",
       "ui.subagents", "ui.thinking", "ui.tableborders",
       "ui.broadcast",
+      "ui.fgbold", "ui.fgitalic",
     ]
     return keys.map { "\($0) = \(uiSetting($0, in: ui))" }
   }
@@ -12279,6 +12290,8 @@ struct MaiCLI {
     case "ui.editor":
       return ui.editor.isEmpty ? "\(resolvedEditor()) (from the environment)" : ui.editor
     case "ui.markdown": return ui.markdown ? "on" : "off"
+    case "ui.fgbold", "ui.fgitalic":
+      return TerminalTheme.value(String(key.dropFirst(3)), in: ui) ?? "none"
     case "ui.tableborders": return ui.tableBorders ? "on" : "off"
     case "ui.tools": return ui.tools.description
     case "ui.toolcalls": return ui.toolCalls.description
@@ -14451,6 +14464,8 @@ struct MaiCLI {
       "/set use.plan on", "/set use.plan off",
       "/theme color bold on", "/theme color bold off",
       "/set ui.markdown on", "/set ui.markdown off",
+      "/set ui.fgbold ", "/set ui.fgbold none",
+      "/set ui.fgitalic ", "/set ui.fgitalic none",
       "/set ui.tableborders on", "/set ui.tableborders off",
       "/set ui.mode classic", "/set ui.mode buffer",
       "/set ui.scroll ",
@@ -15108,6 +15123,8 @@ struct MaiCLI {
       /theme color fgsuccess COLOR    Successful run status
       /theme color fginfo COLOR       Context notices, tool-help headings, and chat-log headers
       /theme color fgthinking COLOR   Thinking text
+      /theme color fgbold COLOR       Markdown bold text (keeps bold)
+      /theme color fgitalic COLOR     Markdown italic text (keeps italic)
       /theme color fgdiffadd COLOR    Added diff-line foreground
       /theme color bgdiffadd COLOR    Added diff-line background
       /theme color fgdiffdel COLOR    Removed diff-line foreground
@@ -15229,6 +15246,8 @@ struct MaiCLI {
       /set ui.editor COMMAND       Editor /edit opens (`none` falls back to $EDITOR, $VISUAL, vim)
       /set ui.markdown BOOL        Render replies as styled markdown (on/off)
                                    Buffer mode also redraws earlier replies with this setting
+      /set ui.fgbold COLOR         Add color to Markdown bold text (none disables color)
+      /set ui.fgitalic COLOR       Add color to Markdown italic text (none disables color)
       /set ui.tableborders BOOL    Draw table frames and separators (on/off; default off)
       /set ui.toolgroups <on|off>     Collapse consecutive tools into clickable summaries (enables buffer mode)
       /set ui.tools <all|relevant|icons|N>  Full results, relevant previews, emoji rows, or first N lines (0 hides them)

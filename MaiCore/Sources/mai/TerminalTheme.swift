@@ -14,7 +14,8 @@ enum TerminalTheme {
       diffAddedForeground: "green", diffAddedBackground: "",
       diffRemovedForeground: "red", diffRemovedBackground: "",
       diffHeaderForeground: "cyan", selectionForeground: "",
-      selectionBackground: ""),
+      selectionBackground: "",
+      boldForeground: "cyan", italicForeground: "magenta"),
     "mono": .init(
       backgroundLine: "black", foreground: "white", background: "",
       promptForeground: "white", promptBackground: "",
@@ -24,7 +25,8 @@ enum TerminalTheme {
       diffAddedForeground: "white", diffAddedBackground: "",
       diffRemovedForeground: "white", diffRemovedBackground: "",
       diffHeaderForeground: "white", selectionForeground: "black",
-      selectionBackground: "white", bold: true),
+      selectionBackground: "white",
+      boldForeground: "", italicForeground: "", bold: true),
     "plum": .init(
       backgroundLine: "#30213f", foreground: "#e6dcf5", background: "#1c1428",
       promptForeground: "#bd9aff", promptBackground: "#30213f",
@@ -35,7 +37,8 @@ enum TerminalTheme {
       diffAddedForeground: "#c8ead3", diffAddedBackground: "#263a32",
       diffRemovedForeground: "#f2c0cd", diffRemovedBackground: "#482939",
       diffHeaderForeground: "#c7b4ff", selectionForeground: "#1c1428",
-      selectionBackground: "#bd9aff"),
+      selectionBackground: "#bd9aff",
+      boldForeground: "#d5b4ff", italicForeground: "#c4a0e8"),
     "sand": .init(
       backgroundLine: "#e8d9b5", foreground: "#463a28", background: "#f6eedb",
       promptForeground: "#775b12", promptBackground: "#e8d9b5",
@@ -45,7 +48,8 @@ enum TerminalTheme {
       diffAddedForeground: "#34502b", diffAddedBackground: "#dfe8c8",
       diffRemovedForeground: "#86382e", diffRemovedBackground: "#f1d8c7",
       diffHeaderForeground: "#775b12", selectionForeground: "#f6eedb",
-      selectionBackground: "#775b12"),
+      selectionBackground: "#775b12",
+      boldForeground: "#775b12", italicForeground: "#6f557b"),
     "slime": .init(
       backgroundLine: "rgb:021", foreground: "rgb:afa", promptForeground: "rgb:8f8",
       toolResultForeground: "rgb:8c8", toolCallForeground: "rgb:8f8",
@@ -54,7 +58,8 @@ enum TerminalTheme {
       diffAddedForeground: "rgb:bfd", diffAddedBackground: "rgb:132",
       diffRemovedForeground: "rgb:fbb", diffRemovedBackground: "rgb:321",
       diffHeaderForeground: "rgb:8cc", selectionForeground: "rgb:021",
-      selectionBackground: "rgb:8f8", bold: true),
+      selectionBackground: "rgb:8f8",
+      boldForeground: "rgb:8f8", italicForeground: "rgb:8cc", bold: true),
     "summer": .init(
       backgroundLine: "#ffe5a3", foreground: "#49371c", background: "#fffdf5",
       promptForeground: "#9a4d08", promptBackground: "#ffe5a3",
@@ -65,7 +70,8 @@ enum TerminalTheme {
       diffAddedForeground: "#365629", diffAddedBackground: "#e7f0d2",
       diffRemovedForeground: "#963e2c", diffRemovedBackground: "#ffe7d5",
       diffHeaderForeground: "#9a4d08", selectionForeground: "#fffdf5",
-      selectionBackground: "#956113"),
+      selectionBackground: "#956113",
+      boldForeground: "#9a4d08", italicForeground: "#6f557b"),
     "ember": .init(
       backgroundLine: "rgb:310", foreground: "rgb:fdb", promptForeground: "rgb:f95",
       toolResultForeground: "rgb:c96", toolCallForeground: "rgb:fb7",
@@ -74,7 +80,8 @@ enum TerminalTheme {
       diffAddedForeground: "rgb:dfb", diffAddedBackground: "rgb:231",
       diffRemovedForeground: "rgb:fcb", diffRemovedBackground: "rgb:421",
       diffHeaderForeground: "rgb:fb7", selectionForeground: "rgb:310",
-      selectionBackground: "rgb:b74"),
+      selectionBackground: "rgb:b74",
+      boldForeground: "rgb:fb7", italicForeground: "rgb:eb9"),
     "pink": .init(
       backgroundLine: "#4a1837", foreground: "#ffe0f1", background: "#2a1021",
       promptForeground: "#ff7fc0", promptBackground: "#4a1837",
@@ -85,7 +92,8 @@ enum TerminalTheme {
       diffAddedForeground: "#c8f5df", diffAddedBackground: "#153b30",
       diffRemovedForeground: "#ffc1de", diffRemovedBackground: "#4d2036",
       diffHeaderForeground: "#ff7fc0", selectionForeground: "#2a1021",
-      selectionBackground: "#e86aaa"),
+      selectionBackground: "#e86aaa",
+      boldForeground: "#ff9fce", italicForeground: "#e7a0ed"),
     "blood": .init(
       backgroundLine: "#4b101b", foreground: "#fff1f1", background: "#21090d",
       promptForeground: "#ffb2b2", promptBackground: "#4b101b",
@@ -96,7 +104,8 @@ enum TerminalTheme {
       diffAddedForeground: "#fff1f1", diffAddedBackground: "#402127",
       diffRemovedForeground: "#ff9999", diffRemovedBackground: "#4b111b",
       diffHeaderForeground: "#ffb2b2", selectionForeground: "#fff1f1",
-      selectionBackground: "#9f2339"),
+      selectionBackground: "#9f2339",
+      boldForeground: "#ffb2b2", italicForeground: "#ff9696"),
     "night": .init(
       backgroundLine: "rgb:013", foreground: "rgb:def", promptForeground: "rgb:7cf",
       toolResultForeground: "rgb:9bd", toolCallForeground: "rgb:9df",
@@ -105,7 +114,8 @@ enum TerminalTheme {
       diffAddedForeground: "rgb:bfe", diffAddedBackground: "rgb:133",
       diffRemovedForeground: "rgb:fbd", diffRemovedBackground: "rgb:324",
       diffHeaderForeground: "rgb:7cf", selectionForeground: "rgb:def",
-      selectionBackground: "rgb:367"),
+      selectionBackground: "rgb:367",
+      boldForeground: "rgb:7cf", italicForeground: "rgb:aaf"),
     // Dark+ charcoal with Tango accents and darker diff backgrounds.
     "codark": .init(
       backgroundLine: "#2e3436", foreground: "#d3d7cf", background: "#1e1e1e",
@@ -117,7 +127,8 @@ enum TerminalTheme {
       diffAddedForeground: "#8ae234", diffAddedBackground: "#253022",
       diffRemovedForeground: "#ef5c5c", diffRemovedBackground: "#322323",
       diffHeaderForeground: "#729fcf", selectionForeground: "#eeeeec",
-      selectionBackground: "#3465a4"),
+      selectionBackground: "#3465a4",
+      boldForeground: "#e9b96e", italicForeground: "#ad7fa8"),
     // Inspired by Visual Studio Code's Light+ palette.
     "colit": .init(
       backgroundLine: "#f3f3f3", foreground: "#333333", background: "#ffffff",
@@ -128,7 +139,8 @@ enum TerminalTheme {
       diffAddedForeground: "#006400", diffAddedBackground: "#e6ffec",
       diffRemovedForeground: "#a31515", diffRemovedBackground: "#ffeef0",
       diffHeaderForeground: "#0451a5", selectionForeground: "#000000",
-      selectionBackground: "#add6ff"),
+      selectionBackground: "#add6ff",
+      boldForeground: "#005fb8", italicForeground: "#795e26"),
   ]
 
   static var colors: [(String, WritableKeyPath<ConfiguredTerminalUI, String>)] {
@@ -140,6 +152,7 @@ enum TerminalTheme {
       ("bgtoolresult", \.toolResultBackground), ("bgtoolcall", \.toolCallBackground),
       ("fgwarning", \.warningForeground), ("fgsuccess", \.successForeground),
       ("fginfo", \.infoForeground), ("fgthinking", \.thinkingForeground),
+      ("fgbold", \.boldForeground), ("fgitalic", \.italicForeground),
       ("fgdiffadd", \.diffAddedForeground), ("bgdiffadd", \.diffAddedBackground),
       ("fgdiffdel", \.diffRemovedForeground), ("bgdiffdel", \.diffRemovedBackground),
       ("fgdiffheader", \.diffHeaderForeground),
@@ -175,13 +188,15 @@ enum TerminalTheme {
     -> String
   {
     let width = max(1, min(60, columns - 5))
-    func styled(_ text: String, foreground: String, background: String, bold: Bool = false)
+    func styled(_ text: String, foreground: String, background: String, bold: Bool = false,
+      italic: Bool = false)
       -> String
     {
       guard colors else { return text }
       let codes = [
         "0", TerminalLineEditor.foregroundColorCode(foreground) ?? "39",
         TerminalLineEditor.backgroundColorCode(background) ?? "49", bold ? "1" : "22",
+        italic ? "3" : "23",
       ]
       return "\u{1B}[\(codes.joined(separator: ";"))m" + text + "\u{1B}[0m"
     }
@@ -189,7 +204,7 @@ enum TerminalTheme {
       styled(text, foreground: ui.infoForeground, background: ui.background)
     }
     func row(_ text: String, foreground: String, background: String? = nil,
-      bold: Bool = false, prompt: Bool = false) -> String
+      bold: Bool = false, italic: Bool = false, prompt: Bool = false) -> String
     {
       // Names and sample text are ASCII, so character counts equal cell widths.
       let text = String(text.prefix(width))
@@ -202,7 +217,7 @@ enum TerminalTheme {
             background: background ?? ui.background, bold: bold)
       } else {
         content = styled(padded, foreground: foreground,
-          background: background ?? ui.background, bold: bold)
+          background: background ?? ui.background, bold: bold, italic: italic)
       }
       return frame("| ") + content + frame(" |")
     }
@@ -219,6 +234,12 @@ enum TerminalTheme {
       row("<- README.md  Sources/  Tests/", foreground: ui.toolResultForeground,
         background: ui.toolResultBackground.isEmpty ? ui.background : ui.toolResultBackground),
       row("pmai: Project files listed. Ready!", foreground: ui.successForeground),
+      row("Bold Markdown emphasis",
+        foreground: ui.boldForeground.isEmpty ? ui.foreground : ui.boldForeground,
+        bold: true),
+      row("Italic Markdown emphasis",
+        foreground: ui.italicForeground.isEmpty ? ui.foreground : ui.italicForeground,
+        italic: true),
       border,
     ].joined(separator: "\n")
   }

@@ -186,6 +186,8 @@ actor TerminalWriter {
   func configureMarkdown(_ renderer: MarkdownTerminalRenderer?) {
     var renderer = renderer
     renderer?.options.tableBorders = ui.tableBorders
+    renderer?.theme.boldColor = TerminalLineEditor.foregroundColorCode(ui.boldForeground) ?? ""
+    renderer?.theme.italicColor = TerminalLineEditor.foregroundColorCode(ui.italicForeground) ?? ""
     renderer?.theme.colorOverrides = Dictionary(
       uniqueKeysWithValues: [
         ("90", ui.thinkingForeground), ("32", ui.toolCallForeground),
@@ -317,7 +319,7 @@ actor TerminalWriter {
     }
     self.screen = screen
     self.ui = ui
-    self.markdown?.theme.colorOverrides = markdown?.theme.colorOverrides ?? [:]
+    if let theme = markdown?.theme { self.markdown?.theme = theme }
     self.redactor = redactor
     self.replyOwner = replyOwner
     tools = ui.tools

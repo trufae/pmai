@@ -511,6 +511,13 @@ Drag the vertical divider left/right to resize; `v`/`V` grow/shrink the view in 
 layout. Both panes keep at least one row or column. Each layout retains its size
 across source changes and clamps it to fit when the terminal or prompt changes size.
 Replies, pins, logs and thinking use `ui.markdown` and reflow to the pane width.
+Markdown bold and italic keep their font attributes and add theme colors.
+Set them with `/set ui.fgbold COLOR` and `/set ui.fgitalic COLOR`, or
+`/theme color fgbold COLOR` and `/theme color fgitalic COLOR`. Colors accept
+ANSI names, `rgb:RGB`, or `#RRGGBB`; `none` disables the added color while
+preserving bold or italic. Bold's color takes precedence when both apply;
+links and inline code keep their own colors. Built-in themes supply matching
+values, and `/theme save NAME` saves both colors with the rest of the palette.
 In the view, `j`/`k` or Down/Up scroll one row; `J`/`K` page down/up like
 Page Down/Up. `v` moves the divider down one row (growing the view), and `V`
 moves it up (shrinking the view). `q` closes the split, like `/view off`.

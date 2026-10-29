@@ -22,11 +22,12 @@ def main():
         key_file = root / 'key'
         key_file.write_text('saved-key\n')
 
-        def run(commands=(), args=(), env=None, cwd=project, home=user_home, split=False):
+        def run(commands=(), args=(), env=None, cwd=project, home=user_home, split=False,
+                allow_errors=False):
             return run_repl(
                 [binary, '--no-stream', '--no-markdown', *args],
                 commands, cwd=cwd, env=environment | {'HOME': str(home)} | (env or {}),
-                split=split)
+                split=split, allow_errors=allow_errors)
 
         # Empty installs remain empty across restarts; /about repeats the welcome.
         output = run(['/providers', '/provider', '/model', '/set effort', '/help'])
@@ -57,6 +58,20 @@ def main():
         assert saved['ui']['tools'] == 0, saved
         assert saved['ui']['toolcalls'] == 'truncate', saved
         assert 'ui.toolcalls = truncate' in run(['/set ui.'])
+        # Emphasis overrides survive restarts and custom-theme save/load; none
+        # removes only the color. Invalid input must leave saved settings intact.
+        output = run(['/set ui.fgbold #123456', '/set ui.fgitalic none', '/set ui.'])
+        assert 'ui.fgbold = #123456' in output and 'ui.fgitalic = none' in output, output
+        saved_ui = json.loads(config.read_text())['ui']
+        assert saved_ui['fgbold'] == '#123456' and saved_ui['fgitalic'] == '', saved_ui
+        output = run(['/set ui.fgbold', '/set ui.fgitalic', '/theme save emphasis',
+                      '/theme use mono', '/theme use emphasis', '/theme color fgbold'])
+        assert 'ui.fgbold = #123456' in output and 'ui.fgitalic = none' in output, output
+        assert 'fgbold = #123456' in output, output
+        assert json.loads(config.read_text())['ui'] == saved_ui
+        original = config.read_bytes()
+        assert 'Unknown color' in run(['/set ui.fgitalic invalid-color'], allow_errors=True)
+        assert config.read_bytes() == original
         for value, stored, displayed in [('first', 1, 'first'), ('5', 5, '5'),
                                          ('truncate', 'truncate', 'truncate')]:
             assert f'Set ui.toolcalls = {displayed}.' in run([f'/set ui.toolcalls {value}'])

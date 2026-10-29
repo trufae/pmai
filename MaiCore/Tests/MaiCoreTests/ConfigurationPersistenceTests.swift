@@ -94,6 +94,8 @@ func configurationSaveRoundTrip() throws {
       toolResultBackground: "#2b2620",
       toolCallBackground: "#233028",
       toolCallBold: true,
+      boldForeground: "#729fcf",
+      italicForeground: "",
       bold: true,
       tools: .lines(7)))
 

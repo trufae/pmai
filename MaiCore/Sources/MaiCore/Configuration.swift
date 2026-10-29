@@ -573,6 +573,9 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   public var diffHeaderForeground: String
   public var selectionForeground: String
   public var selectionBackground: String
+  /// Optional foreground colors for Markdown emphasis; empty keeps the surrounding color.
+  public var boldForeground: String
+  public var italicForeground: String
   public var bold: Bool
   /// Render assistant replies as styled markdown in the REPL.
   public var markdown: Bool
@@ -621,6 +624,8 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     diffHeaderForeground: String = "cyan",
     selectionForeground: String = "bright-white",
     selectionBackground: String = "blue",
+    boldForeground: String = "cyan",
+    italicForeground: String = "magenta",
     bold: Bool = false,
     markdown: Bool = true,
     tableBorders: Bool = false,
@@ -659,6 +664,8 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     self.diffHeaderForeground = diffHeaderForeground
     self.selectionForeground = selectionForeground
     self.selectionBackground = selectionBackground
+    self.boldForeground = boldForeground
+    self.italicForeground = italicForeground
     self.bold = bold
     self.markdown = markdown
     self.tableBorders = tableBorders
@@ -699,6 +706,8 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     case diffHeaderForeground = "fgdiffheader"
     case selectionForeground = "fgselection"
     case selectionBackground = "bgselection"
+    case boldForeground = "fgbold"
+    case italicForeground = "fgitalic"
     case bold
     case markdown
     case tableBorders = "tableborders"
@@ -763,6 +772,10 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
         String.self, forKey: .selectionForeground)) ?? "bright-white",
       selectionBackground: (try? container.decodeIfPresent(
         String.self, forKey: .selectionBackground)) ?? "blue",
+      boldForeground: (try? container.decodeIfPresent(
+        String.self, forKey: .boldForeground)) ?? "cyan",
+      italicForeground: (try? container.decodeIfPresent(
+        String.self, forKey: .italicForeground)) ?? "magenta",
       bold: (try? container.decodeIfPresent(Bool.self, forKey: .bold)) ?? false,
       markdown: (try? container.decodeIfPresent(Bool.self, forKey: .markdown)) ?? true,
       tableBorders: (try? container.decodeIfPresent(Bool.self, forKey: .tableBorders)) ?? false,
