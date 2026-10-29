@@ -366,7 +366,7 @@ public struct MaiRunTool: AgentTool {
     return ToolDefinition(
       name: name,
       description:
-        "Run a shell command line or script with '\(configuration.shell)' from the current directory. Normally captures stdout, stderr, and exit code with colors/ANSI escapes removed. Supports interactive programs: when the person asks to open vim or another terminal program, set interactive=true to hand them the terminal, then continue after they exit. Example: {\"command\":\"vim notes.md\",\"interactive\":true}.",
+        "Run a shell command line or script with '\(configuration.shell)' from the current directory. Normally captures stdout, stderr, and exit code with colors/ANSI escapes removed. For repository searches, prefer git grep -n --untracked in Git worktrees, then rg -n if Git is unsuitable or unavailable; use recursive grep only when neither is available. Scope searches to relevant paths. Supports interactive programs: when the person asks to open vim or another terminal program, set interactive=true to hand them the terminal, then continue after they exit. Example: {\"command\":\"vim notes.md\",\"interactive\":true}.",
       inputSchema: objectSchema(properties: properties, required: []),
       annotations: ToolAnnotations(
         readOnly: false,

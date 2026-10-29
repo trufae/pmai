@@ -262,7 +262,7 @@ public struct MaiFileWorkspaceTool: AgentTool {
       return ToolDefinition(
         name: operation.rawValue,
         description:
-          "Search file contents. Returns up to 100 matching lines; skips ignored and hidden files. Case-insensitive unless query contains uppercase.",
+          "Search file contents. Returns up to 100 matching lines; skips ignored and hidden files. Case-insensitive unless query contains uppercase. For fast repository-wide searches when run_shell is available, prefer git grep -n --untracked in Git worktrees, then rg -n if Git is unsuitable or unavailable. Use recursive grep only when neither is available.",
         parameters: [
           ToolParameterDef(
             name: "query",
@@ -855,13 +855,25 @@ struct MaiFileWorkspace: Sendable {
         !looksBinary(data),
         let text = String(data: data, encoding: .utf8)
       else { return true }
-      for (index, line) in text.split(separator: "\n", omittingEmptySubsequences: false)
-        .enumerated()
-      where rows.count < limit {
+      // Most files do not match. Search them once rather than invoking the
+      // literal matcher separately for every line.
+      if expression == nil {
+        let containsQuery = caseSensitive
+          ? text.contains(query) : text.localizedCaseInsensitiveContains(query)
+        guard containsQuery else { return true }
+      }
+      var start = text.startIndex
+      var index = 0
+      var matchedPath: String?
+      // Split incrementally: reaching the match limit must not split the
+      // remainder of a large file or allocate an array containing every line.
+      while rows.count < limit {
         if index.isMultiple(of: 64) { try Task.checkCancellation() }
-        let line = String(line)
+        let end = text[start...].firstIndex(of: "\n") ?? text.endIndex
+        let line = text[start..<end]
         let matched: Bool
         if let expression {
+          let line = String(line)
           matched =
             expression.firstMatch(
               in: line,
@@ -871,16 +883,22 @@ struct MaiFileWorkspace: Sendable {
         } else {
           matched = line.localizedCaseInsensitiveContains(query)
         }
-        guard matched else { continue }
-        let clipped = line.count > 500 ? String(line.prefix(500)) + "…" : line
-        let path = relativePath(url)
-        rendered.append("\(path):\(index + 1): \(clipped)")
-        rows.append(
-          .object([
-            "path": .string(path),
-            "line": .integer(index + 1),
-            "text": .string(clipped),
-          ]))
+        if matched {
+          let prefix = line.prefix(501)
+          let clipped = prefix.count > 500 ? String(prefix.prefix(500)) + "…" : String(prefix)
+          let path = matchedPath ?? relativePath(url)
+          matchedPath = path
+          rendered.append("\(path):\(index + 1): \(clipped)")
+          rows.append(
+            .object([
+              "path": .string(path),
+              "line": .integer(index + 1),
+              "text": .string(clipped),
+            ]))
+        }
+        guard end != text.endIndex else { break }
+        start = text.index(after: end)
+        index += 1
       }
       if rows.count == limit { hitLimit = true }
       return rows.count < limit

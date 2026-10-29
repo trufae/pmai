@@ -264,6 +264,46 @@ func fileWorkspaceSearchUsesCodingFriendlyDefaults() async throws {
   #expect(capped.structuredContent?.objectValue?["truncated"] == .bool(true))
 }
 
+@Test("Files grep preserves line numbers, Unicode matching, and trailing empty lines",
+  arguments: [
+    ("needle", false, [2, 4]),
+    ("Needle", false, []),
+    ("café", false, [5, 6]),
+    ("^$", true, [1, 3, 7]),
+    ("^needle$", true, [2, 4]),
+    ("needle\nNEEDLE", false, []),
+  ])
+func fileWorkspaceGrepLineMatching(query: String, regex: Bool, lines: [Int]) async throws {
+  let root = FileManager.default.temporaryDirectory
+    .appendingPathComponent("mai-files-grep-lines-\(UUID().uuidString)", isDirectory: true)
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  try Data("\nneedle\n\nNEEDLE\ncafé\nCAFE\u{301}\n".utf8)
+    .write(to: root.appendingPathComponent("sample.txt"))
+  let grep = MaiFileWorkspaceTool(operation: .grep, configuration: .init(rootURL: root))
+  let output = try await call(grep, [
+    "path": .string("sample.txt"), "query": .string(query), "regex": .bool(regex),
+  ])
+  #expect(!output.isError)
+  let matches = try #require(output.structuredContent?.objectValue?["matches"]?.arrayValue)
+  #expect(matches.compactMap { $0.objectValue?["line"]?.intValue } == lines)
+}
+
+@Test("Files grep clips long matching lines at 500 characters")
+func fileWorkspaceGrepClipsLongLines() async throws {
+  let root = FileManager.default.temporaryDirectory
+    .appendingPathComponent("mai-files-grep-long-\(UUID().uuidString)", isDirectory: true)
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let line = "needle " + String(repeating: "👩🏽‍💻", count: 10_000)
+  try Data(line.utf8).write(to: root.appendingPathComponent("sample.txt"))
+  let grep = MaiFileWorkspaceTool(operation: .grep, configuration: .init(rootURL: root))
+  let output = try await call(grep, ["path": .string("sample.txt"), "query": .string("needle")])
+  let matches = try #require(output.structuredContent?.objectValue?["matches"]?.arrayValue)
+  #expect(matches.count == 1)
+  #expect(matches.first?.objectValue?["text"] == .string(String(line.prefix(500)) + "…"))
+}
+
 #if os(macOS) || os(Linux)
   @Test("Files search includes tracked and new non-ignored Git files")
   func fileWorkspaceSearchUsesGitIgnoreRules() async throws {
