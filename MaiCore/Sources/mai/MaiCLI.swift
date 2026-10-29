@@ -7352,8 +7352,8 @@ struct MaiCLI {
     }
   }
 
-  /// `/prompts`: every prompt a name can run here, by kind, then the
-  /// templates that are not run by name.
+  /// `/prompts`: prompts by source, with builtin and user prompts last
+  /// so the most commonly sent messages stay close to the input.
   private static func showPrompts(
     session: REPLSession,
     configuration: MaiConfiguration?,
@@ -7363,38 +7363,37 @@ struct MaiCLI {
     let catalog =
       configuration?.promptCatalog(skills: skills.skills) ?? PromptCatalog(skills: skills.skills)
     let width = max(10, catalog.entries.map { $0.commandName.count }.max() ?? 0)
-    func row(_ marker: String, _ name: String, _ detail: String) -> String {
-      "\(marker) \(name.padding(toLength: width, withPad: " ", startingAt: 0))  \(detail)"
+    func row(_ marker: String, _ name: String, _ detail: String, color: TerminalThemeStyle) async
+      -> String
+    {
+      let label = "\(marker) \(name.padding(toLength: width, withPad: " ", startingAt: 0))"
+      return await terminal.paint(label, role: color) + "  \(detail)"
     }
     var lines = [
-      "System prompts — an agent's instructions (/prompt manages them; $NAME switches this agent to one):"
+      await terminal.paint(
+        "System prompts — an agent's instructions (/prompt manages them; $NAME switches this agent to one):",
+        role: .infoForeground, bold: true)
     ]
     let system = catalog.entries(of: .system)
     for entry in system {
       let selected = session.profile.systemPrompt == entry.name ? "*" : " "
       let agents = configuration?.agentsUsingSystemPrompt(entry.name) ?? []
       lines.append(
-        row(
+        await row(
           selected, entry.commandName,
-          agents.isEmpty ? "unused" : "agents: \(agents.joined(separator: ", "))"))
+          agents.isEmpty ? "unused" : "agents: \(agents.joined(separator: ", "))",
+          color: .infoForeground))
     }
     if system.isEmpty { lines.append("  None; /prompt add NAME TEXT creates one.") }
+    lines.append("")
     lines.append(
-      "User prompts — messages sent by name (prompts.user; /prompts add NAME TEXT, /edit user NAME):"
-    )
-    let user = catalog.entries(of: .user)
-    for entry in user { lines.append(row(" ", entry.commandName, entry.summary)) }
-    if user.isEmpty { lines.append("  None yet.") }
-    let userCommands = Set(user.map { PromptSlashCommand.normalized($0.commandName) })
-    lines.append("Builtin prompts — MaiCore's; a user prompt of the same name replaces one:")
-    for entry in catalog.entries(of: .builtin) {
-      let replaced = userCommands.contains(PromptSlashCommand.normalized(entry.commandName))
-      lines.append(
-        row(" ", entry.commandName, replaced ? "replaced by the user prompt above" : entry.summary))
-    }
-    lines.append("Skills — /skills; $NAME sends one when its tool is enabled for this agent:")
+      await terminal.paint(
+        "Skills — /skills; $NAME sends one when its tool is enabled for this agent:",
+        role: .toolCallForeground, bold: true))
     let skillEntries = catalog.entries(of: .skill)
-    for entry in skillEntries { lines.append(row(" ", entry.commandName, entry.summary)) }
+    for entry in skillEntries {
+      lines.append(await row(" ", entry.commandName, entry.summary, color: .toolCallForeground))
+    }
     if skillEntries.isEmpty { lines.append("  None found; /skills path lists the folders read.") }
     let templates: [(String, String?)] = [
       ("compact", configuration?.prompts?.compact),
@@ -7404,13 +7403,39 @@ struct MaiCLI {
       ("worker", configuration?.prompts?.worker),
       ("memory", configuration?.prompts?.memory),
     ]
+    lines.append("")
     lines.append(
-      "Templates — not sent by name; /edit compact, /edit smart, /edit prompt recap, /edit delegation, /edit worker, /edit memory-prompt:"
-    )
+      await terminal.paint(
+        "Templates — not sent by name; /edit compact, /edit smart, /edit prompt recap, /edit delegation, /edit worker, /edit memory-prompt:",
+        role: .thinkingForeground, bold: true))
     for (name, text) in templates {
       let custom = text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-      lines.append(row(" ", name, custom ? "custom" : "built-in"))
+      lines.append(await row(" ", name, custom ? "custom" : "built-in", color: .thinkingForeground))
     }
+    let user = catalog.entries(of: .user)
+    let userCommands = Set(user.map { PromptSlashCommand.normalized($0.commandName) })
+    lines.append("")
+    lines.append(
+      await terminal.paint(
+        "Builtin prompts — MaiCore's; a user prompt of the same name replaces one:",
+        role: .successForeground, bold: true))
+    for entry in catalog.entries(of: .builtin) {
+      let replaced = userCommands.contains(PromptSlashCommand.normalized(entry.commandName))
+      lines.append(
+        await row(
+          " ", entry.commandName, replaced ? "replaced by the user prompt below" : entry.summary,
+          color: .successForeground))
+    }
+    lines.append("")
+    lines.append(
+      await terminal.paint(
+        "User prompts — messages sent by name (prompts.user; /prompts add NAME TEXT, /edit user NAME):",
+        role: .promptForeground, bold: true))
+    for entry in user {
+      lines.append(await row(" ", entry.commandName, entry.summary, color: .promptForeground))
+    }
+    if user.isEmpty { lines.append("  None yet.") }
+    lines.append("")
     lines.append(
       "$NAME [TEXT] sends a prompt with TEXT after it (/prompts NAME [TEXT] is the long form); /prompts show NAME prints one."
     )
