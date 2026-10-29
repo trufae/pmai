@@ -121,6 +121,34 @@ func filePathPolicyHiddenDefaults() async throws {
   #expect((try await policyCall(read, ["path": .string(".env")])).isError)
 }
 
+@Test("Workspace .tmp files need no hidden approval, while secrets, escapes, and rules still apply")
+func filePathPolicyScratchDirectory() async throws {
+  let fixture = try PathFixture()
+  defer { fixture.cleanup() }
+  let confirmations = PathConfirmations()
+  let policy = MaiFileAccessPolicy(hidden: .ask) { url, _ in await confirmations.decide(url) }
+  let path = fixture.root.appendingPathComponent(".tmp/gen_open_md.py")
+  let written = try await policyCall(fixture.tool(.write, policy: policy), [
+    "path": .string(path.path), "content": .string("print('scratch')"),
+  ])
+  #expect(!written.isError)
+  #expect(await confirmations.urls.isEmpty)
+  #expect(policy.access(to: path, insideWorkspace: true) == .allow)
+  #expect(policy.access(to: path, insideWorkspace: false) == .deny)
+  let secret = path.deletingLastPathComponent().appendingPathComponent(".env")
+  #expect(policy.access(to: secret, insideWorkspace: true) == .ask)
+  let hiddenParent = fixture.root.appendingPathComponent(".private/.tmp/script.py")
+  #expect(policy.access(to: hiddenParent, insideWorkspace: true) == .ask)
+  let alias = fixture.root.appendingPathComponent(".tmp/outside")
+  try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: fixture.external)
+  #expect(
+    policy.access(to: alias.appendingPathComponent("outside.txt"), insideWorkspace: false) == .deny)
+  policy.set(.init(url: path.deletingLastPathComponent(), access: .ask))
+  #expect(policy.access(to: path, insideWorkspace: true) == .ask)
+  policy.set(.init(url: path.deletingLastPathComponent(), access: .deny))
+  #expect(policy.access(to: path, insideWorkspace: true) == .deny)
+}
+
 @Test("Directory mutations authorize hidden descendants, including through visible symlinks")
 func filePathPolicyHiddenTreeMutations() async throws {
   let fixture = try PathFixture()

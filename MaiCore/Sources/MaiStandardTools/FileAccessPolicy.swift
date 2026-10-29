@@ -115,7 +115,9 @@ public final class MaiFileAccessPolicy: @unchecked Sendable, Equatable {
   }
 
   public static func isHidden(_ url: URL) -> Bool {
-    url.standardizedFileURL.pathComponents.contains { $0.hasPrefix(".") }
+    // Workspace scratch directories are ordinary working files. Other hidden
+    // ancestors and sensitive filenames still get their usual checks.
+    url.standardizedFileURL.pathComponents.contains { $0.hasPrefix(".") && $0 != ".tmp" }
   }
 
   public func confirm(_ url: URL, operation: String) async throws -> Bool {

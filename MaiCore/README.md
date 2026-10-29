@@ -1634,6 +1634,8 @@ spaces. A trailing `/` marks a directory that does not yet exist.
 rules override it, so `/path allow .env` can permit one hidden file. An explicit
 parent grant also covers its hidden descendants. Searches still skip hidden
 entries. Moving or deleting a directory checks its protected hidden descendants.
+The `.tmp` scratch directory name is exempt from the hidden-path default;
+sensitive filenames, other hidden ancestors, and explicit path rules still apply.
 
 `/path outside ask|deny` controls paths outside the allowed scope (default: deny).
 Path prompts require a person even in `yolo` mode; unattended calls are rejected.
