@@ -42,7 +42,7 @@ def main():
             return next(path for path in (root / '.pmai/chats').glob('*.json')
                         if read_chat(path)['title'] == title)
 
-        run(['/chat rename durable', '/model -aproval worker'],
+        run(['/chat rename durable', '/model -approval worker'],
             ['--base-url', 'http://launch.example/v1',
              '--compact-agent', 'tasks::compact-model', '--tool-agent', 'nested'])
         saved_path = chat_file('durable')
@@ -99,7 +99,7 @@ def main():
         assert config.read_bytes() == config_bytes
 
         # Restored named prompts must also form a valid editable configuration.
-        run(['/model -aproval worker'], ['-r', 'durable'])
+        run(['/model -approval worker'], ['-r', 'durable'])
         edited = json.loads(config.read_text())
         assert edited['prompts']['system']['worker'] == 'Saved worker instructions.'
         config.write_bytes(config_bytes)

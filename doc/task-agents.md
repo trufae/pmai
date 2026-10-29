@@ -59,7 +59,7 @@ A selector first matches a saved agent ID. Otherwise it names a model: `PROVIDER
 /model                     # show main model and all task assignments
 /model -compact            # clear the compaction assignment
 /model -tool               # clear the tool assignment
-/model -aproval            # clear the approval assignment
+/model -approval           # clear the approval assignment
 /model -btw                # use the current chat model for side questions
 /model -tool -             # also clears; "default" does the same
 /model remote::large-model # set chat and every task, including side questions, to this model
@@ -145,7 +145,7 @@ grow as tool output arrives and shrink when the model context is reduced.
 
 Automatic compaction defaults to off (`/set ctx.compact off`). Enable it with a token threshold such as `/set ctx.compact 64k`.
 
-Interactive autocompaction asks before replacing history, including when `tool.aproval` is `yolo`. In the pmai REPL, choose `y` to compact, `n` to continue without compaction for the current response, `m` for model-change instructions, `x` to clear the chat, or `c` to stop with the transcript kept. While the decision is pending, `/model NAME` changes all models, `/model -chat NAME` changes only the conversation model, and `/model -compact NAME` changes the summarizer; then choose `y` or `n`. `/set ctx.compact off` disables future automatic compaction. Piped and other noninteractive runs keep the configured automatic behavior.
+Interactive autocompaction asks before replacing history, including when `tool.approval` is `yolo`. In the pmai REPL, choose `y` to compact, `n` to continue without compaction for the current response, `m` for model-change instructions, `x` to clear the chat, or `c` to stop with the transcript kept. While the decision is pending, `/model NAME` changes all models, `/model -chat NAME` changes only the conversation model, and `/model -compact NAME` changes the summarizer; then choose `y` or `n`. `/set ctx.compact off` disables future automatic compaction. Piped and other noninteractive runs keep the configured automatic behavior.
 
 PocketMai shows the same decision before its MLX autocompaction. The prompt includes the chat's model settings, a compaction-agent picker, continue and stop actions, and a confirmed clear-chat action. Skipping applies to the current response; a later message may prompt again.
 
@@ -207,23 +207,23 @@ the current agent and saves the choice across restarts. Use
 
 ## Tool approval
 
-Tool selection and approval are independent. `/set tool.aproval` shows the mode;
-`/set tool.aproval yolo|ask|smart` saves it for the current project. The default
+Tool selection and approval are independent. `/set tool.approval` shows the mode;
+`/set tool.approval yolo|ask|smart` saves it for the current project. The default
 `ask` prompts before every call, including
 read-only and proxy catalog tools, and permits editing the arguments. Explicit
 `yolo` runs tools without general approval; Files path policies still apply. `smart`
 reviews each concrete tool and its arguments before execution:
 
 ```text
-/model -aproval decisions::tev1:latest
-/set tool.aproval smart
+/model -approval decisions::tev1:latest
+/set tool.approval smart
 ```
 
 This uses System One's `questions.harm` with type `noul`. A finite probability
 below 0.5 allows the call; 0.5 or above blocks it. An unavailable endpoint or
 unsupported model falls back to the conversation's chat model. To use a regular
-model directly, run `/model -aproval local::qwen3:8b`; to use the current model,
-clear the assignment with `/model -aproval -`. These choices work independently
+model directly, run `/model -approval local::qwen3:8b`; to use the current model,
+clear the assignment with `/model -approval -`. These choices work independently
 of `tool.systemone` and `/model -tool`.
 
 Regular reviewers receive a tools-disabled prompt requesting exactly
@@ -236,7 +236,7 @@ expand the host's permissions. Model review does not provide OS isolation.
 CLI review calls count towards run budgets and usage.
 
 The shared CLI configuration stores `approvals.mode` and
-`taskAgents.approval`. `--tool-aproval MODE` overrides the mode for one run. Old
+`taskAgents.approval`. `--tool-approval MODE` overrides the mode for one run. Old
 `yolo` booleans migrate on load (`true` → `yolo`, `false` → `ask`); they are no
 longer written or exposed as settings or command-line flags.
 

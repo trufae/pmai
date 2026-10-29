@@ -250,7 +250,7 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
         displayName: "pmai commands",
         description:
           "Run pmai's own slash commands — the ones the person types at the prompt — and read back "
-          + "what they printed. pmai_run runs one (`/set tool.aproval smart`, `/mcp add …`, "
+          + "what they printed. pmai_run runs one (`/set tool.approval smart`, `/mcp add …`, "
           + "`/model gpt-5`, `/theme use NAME`, `/tools enable …`); pmai_help returns a command's "
           + "usage without running it. Use them to read and change this installation. Ask the person "
           + "before running one that changes something, and check pmai_help first when unsure of the "

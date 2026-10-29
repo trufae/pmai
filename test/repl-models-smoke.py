@@ -227,8 +227,7 @@ def main():
                 send('/model fre\t\n')
                 wait_for('Model: openai::fresh.gguf')
                 for task in ('compact', 'tool', 'approval', 'btw'):
-                    command = 'aproval' if task == 'approval' else task
-                    send(f'/model -{command} fre\t\n')
+                    send(f'/model -{task} fre\t\n')
                     wait_for(f'{task}: task-{task} (saved)')
                 send('/model -compact tes\t\n')
                 wait_for('compact: test (saved)')

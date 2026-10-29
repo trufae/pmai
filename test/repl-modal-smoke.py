@@ -160,8 +160,8 @@ def main():
                     wait('approve [y/a/s/n/e/c]> ')
                     assert requests.empty(), 'Invalid modal input reached the model'
                     # Inspection commands return to the same question.
-                    line('/set tool.aproval')
-                    wait('tool.aproval = ask')
+                    line('/set tool.approval')
+                    wait('tool.approval = ask')
                     wait('approve [y/a/s/n/e/c]> ')
                     check_question()
                     if action == 'edit':

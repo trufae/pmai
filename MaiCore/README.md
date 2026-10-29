@@ -188,7 +188,7 @@ Inside the REPL, `/models` queries the current provider's model catalog and
 session. Use `/model NAME` to select a model for chat and all tasks, including
 side questions, or `/model -chat NAME` to change only the chat model. Both accept
 `PROVIDER::MODEL` and support Tab completion. Task selectors are flags under
-`/model`: `-compact`, `-tool`, `-aproval`, and `-btw`; each also completes saved
+`/model`: `-compact`, `-tool`, `-approval`, and `-btw`; each also completes saved
 agent IDs. `/model` shows the current assignments as a Markdown table and lists
 the available flags; `/help model` explains selection and reset behavior.
 For llama.cpp or llamafile, use an OpenAI-compatible provider with a base URL
@@ -298,10 +298,10 @@ The generated task agents' system prompts are edited with `/edit prompt compact`
 and `/edit prompt tool`. Older `task-compact` and `task-tool` prompt names migrate
 automatically, preserving custom text and agent IDs; a suffix avoids name conflicts.
 
-`/set tool.aproval yolo|ask|smart` controls every tool execution. `yolo` is the
+`/set tool.approval yolo|ask|smart` controls every tool execution. `yolo` is the
 default and runs tools without prompting. `ask` prompts to approve, edit the
 arguments, reject, or cancel. `smart` asks a model to allow or block each call.
-The spelling `aproval` is intentional in the setting and command names.
+The old `aproval` spellings remain accepted as compatibility aliases.
 
 On a terminal, pending approvals, argument edits, context decisions, and queue
 choices take over the input with a labelled prompt and a highlighted status bar.
@@ -312,8 +312,8 @@ slash commands. Invalid answers keep the question open, and modal answers stay
 out of input history. File-access approvals offer only yes, no, and cancel;
 `/path allow PATH` grants ongoing access.
 
-Use `/model -aproval PROVIDER::MODEL` (or a saved agent ID) to select the reviewer;
-`/model -aproval -` restores the conversation model. A System One provider uses
+Use `/model -approval PROVIDER::MODEL` (or a saved agent ID) to select the reviewer;
+`/model -approval -` restores the conversation model. A System One provider uses
 its `harm` probability; a regular model returns a strict JSON allow/block
 verdict. The review includes the tool, arguments/command, user task, working
 directory, valid paths, and sandbox context. Reviewers receive no executable
@@ -321,7 +321,7 @@ tools. Missing/unsupported System One endpoints or models fall back to the
 conversation's chat model; malformed decisions or other failures block the
 call. See [task agents](../doc/task-agents.md) for setup and details.
 
-The mode is saved in the project's `.pmai/settings.json`; `--tool-aproval MODE`
+The mode is saved in the project's `.pmai/settings.json`; `--tool-approval MODE`
 overrides it for one invocation. The shared default is `approvals.mode` in the
 configuration. The old `yolo` setting and `-y`/`--yolo` flags have been removed.
 Existing saved booleans migrate to `yolo` or `ask`, and subsequent saves write
@@ -873,7 +873,7 @@ the end of the work. `/stop` is the command equivalent of Ctrl+C: it interrupts
 the current turn and preserves undelivered messages. A new message with a
 nonempty queue asks whether to submit it first, ignore it for that turn, or
 clear it. `/retry` has been removed; `/continue` is the single resume command.
-Run-limit decisions are also shown with `tool.aproval = yolo`.
+Run-limit decisions are also shown with `tool.approval = yolo`.
 A model call that fails — a dropped
 connection, a 5xx — is repeated after `retry.delay` seconds up to
 `retry.attempts` times (`↻ retry 1/2 in 5s: …`) before the turn fails.
@@ -1287,7 +1287,7 @@ that should start with no history at all belongs in a child agent
 (`agent_start`). The tools live in
 `MaiCore` (`MaiContextTools`), are part of the default agent's set, and
 `/tools enable context` adds them to another. The three editing tools follow
-`tool.aproval`, like other tools. The edited conversation is what gets saved, so what an agent
+`tool.approval`, like other tools. The edited conversation is what gets saved, so what an agent
 removes is gone from the chat.
 
 ### Todo list

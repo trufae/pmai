@@ -74,7 +74,7 @@ def main():
                 return output
 
             def states(output):
-                return re.findall(r'tool\.aproval = (yolo|ask|smart)', output)
+                return re.findall(r'tool\.approval = (yolo|ask|smart)', output)
 
             def write(project, allowed, **kwargs):
                 marker = project / 'yolo-proof.txt'
@@ -85,16 +85,18 @@ def main():
                 if allowed:
                     assert marker.read_text() == 'project choice honored'
 
+            assert states(run(first, ['/set tool.approval'])) == ['ask']
             assert states(run(first, ['/set tool.aproval'])) == ['ask']
+            assert states(run(first, ['/set tool.approval'], args=['--tool-aproval', 'smart'])) == ['smart']
             original = config.read_bytes()
-            output = run(first, ['/set tool.aproval yolo', '/project name Renamed', '/set tool.aproval'])
+            output = run(first, ['/set tool.approval yolo', '/project name Renamed', '/set tool.approval'])
             assert states(output) == ['yolo', 'yolo'], output
             settings = first / '.pmai' / 'settings.json'
             assert settings.is_file(), 'Approval mode was not saved inside the project .pmai'
             assert json.loads(settings.read_text())['approvalMode'] == 'yolo'
             assert config.read_bytes() == original, 'Project choice changed shared configuration'
-            assert states(run(first, ['/set tool.aproval'])) == ['yolo']
-            assert states(run(second, ['/set tool.aproval'])) == ['ask']
+            assert states(run(first, ['/set tool.approval'])) == ['yolo']
+            assert states(run(second, ['/set tool.approval'])) == ['ask']
             write(first, True)
             write(second, False)
 
@@ -104,41 +106,41 @@ def main():
             value['approvals'] = {'yolo': True}
             legacy.write_text(json.dumps(value))
             write(second, True, configuration=legacy)
-            run(first, ['/set tool.aproval ask'], configuration=legacy)
+            run(first, ['/set tool.approval ask'], configuration=legacy)
             assert json.loads(settings.read_text())['approvalMode'] == 'ask'
             write(first, False, configuration=legacy)
-            write(first, True, configuration=legacy, args=['--tool-aproval', 'yolo'])
-            assert states(run(first, ['/set tool.aproval'], configuration=legacy)) == ['ask']
+            write(first, True, configuration=legacy, args=['--tool-approval', 'yolo'])
+            assert states(run(first, ['/set tool.approval'], configuration=legacy)) == ['ask']
             assert json.loads(legacy.read_text())['approvals']['yolo'] is True
 
-            assert states(run(second, ['/set tool.aproval'], args=['--tool-aproval', 'yolo'])) == ['yolo']
-            assert states(run(second, ['/set tool.aproval'])) == ['ask']
-            assert not (second / '.pmai' / 'settings.json').exists(), '--tool-aproval became persistent'
-            output = run(second, ['/set tool.aproval yolo session', '/set tool.aproval'])
+            assert states(run(second, ['/set tool.approval'], args=['--tool-approval', 'yolo'])) == ['yolo']
+            assert states(run(second, ['/set tool.approval'])) == ['ask']
+            assert not (second / '.pmai' / 'settings.json').exists(), '--tool-approval became persistent'
+            output = run(second, ['/set tool.approval yolo session', '/set tool.approval'])
             assert states(output) == ['yolo', 'yolo'] and 'not saved' in output, output
-            assert states(run(second, ['/set tool.aproval'])) == ['ask']
+            assert states(run(second, ['/set tool.approval'])) == ['ask']
             assert not (second / '.pmai' / 'settings.json').exists(), 'Session mode became persistent'
-            output = run(first, ['/set tool.aproval invalid', '/set tool.aproval'])
-            assert 'Usage: /set tool.aproval <yolo|ask|smart>' in output and states(output) == ['ask'], output
+            output = run(first, ['/set tool.approval invalid', '/set tool.approval'])
+            assert 'Usage: /set tool.approval <yolo|ask|smart>' in output and states(output) == ['ask'], output
 
-            run(first, ['/set tool.aproval smart'])
+            run(first, ['/set tool.approval smart'])
             assert json.loads(settings.read_text())['approvalMode'] == 'smart'
-            assert states(run(first, ['/set tool.aproval'])) == ['smart']
+            assert states(run(first, ['/set tool.approval'])) == ['smart']
 
             # Old project settings still load, then save using the new key.
             for enabled, mode in ((True, 'yolo'), (False, 'ask')):
                 settings.write_text(json.dumps({'yolo': enabled}))
-                assert states(run(first, ['/set tool.aproval'])) == [mode]
+                assert states(run(first, ['/set tool.approval'])) == [mode]
                 write(first, enabled)
-            run(first, ['/set tool.aproval ask'])
+            run(first, ['/set tool.approval ask'])
             assert json.loads(settings.read_text()) == {'approvalMode': 'ask'}
 
             # /cd changes tool cwd; settings still belong to the opened project.
-            run(first, [f'/cd {second}', '/set tool.aproval yolo'], args=['--state', str(root / 'chats')])
+            run(first, [f'/cd {second}', '/set tool.approval yolo'], args=['--state', str(root / 'chats')])
             assert json.loads(settings.read_text())['approvalMode'] == 'yolo'
-            assert states(run(second, ['/set tool.aproval'])) == ['ask']
+            assert states(run(second, ['/set tool.approval'])) == ['ask']
             assert config.read_bytes() == original
-            print('PASS project approval persistence, isolation, legacy settings and --tool-aproval')
+            print('PASS project approval persistence, isolation, legacy settings and --tool-approval')
     finally:
         server.shutdown()
         server.server_close()

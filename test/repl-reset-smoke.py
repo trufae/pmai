@@ -48,7 +48,7 @@ def main():
         assert len(stock) > 40, stock
         original = json.loads(config.read_text())
         changes = [
-            'effort max Extra reasoning guidance', 'tool.aproval yolo', 'debug true',
+            'effort max Extra reasoning guidance', 'tool.approval yolo', 'debug true',
             f'debugfile {root / "custom-debug.jsonl"}', 'airplane on', 'redact warn',
             'delegation subagent', 'tool.calling xml', 'tool.proxy all', 'tool.systemone true',
             'tool.auto off', 'limits.maxToolCalls 9', 'limits.maxModelTurns 7',

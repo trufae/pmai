@@ -78,7 +78,7 @@ def main():
             log = project / '.pmai' / 'debug.jsonl'
             assert 'debug = false' in run(project, '/set debug')
             assert not log.exists()
-            output = run(project, '/set debug true', '/set tool.aproval yolo', 'first prompt')
+            output = run(project, '/set debug true', '/set tool.approval yolo', 'first prompt')
             assert 'debug smoke done' in output, output
             assert (project / 'debug-proof.txt').read_text() == 'logged tool call'
             settings = json.loads((project / '.pmai' / 'settings.json').read_text())
