@@ -14997,6 +14997,8 @@ struct MaiCLI {
       /theme color bgprompt COLOR     Prompt background
       /theme color fgtoolresult COLOR Successful tool-result output
       /theme color fgtoolcall COLOR   Tool-call previews
+      /theme color bgtoolcall COLOR   Tool-call background
+      /theme color bgtoolresult COLOR Tool-result background
       /theme color fgerror COLOR      Errors and failed tool results
       /theme color fgwarning COLOR    Warnings, retries, and approval requests
       /theme color fgsuccess COLOR    Successful run status
@@ -15010,11 +15012,14 @@ struct MaiCLI {
       /theme color fgselection COLOR  Selected TAB-completion foreground
       /theme color bgselection COLOR  Selected TAB-completion background
       /theme color bold on|off        Render input in bold
+      /theme color boldtoolcall on|off Render tool calls in bold
 
     COLOR accepts a named ANSI color, rgb:RGB, #RRGGBB, or none.
 
-    Built-ins: default, slime (green), light (white terminals), ember (warm),
-    pink, night (blue), codark and colit (Visual Studio Code).
+    Built-ins: default, ansi, mono, slime (green), summer (sunny cream), ember (warm),
+    pink, blood (red and white), night (blue), plum, sand, codark (Tango accents),
+    colit (Visual Studio Code).
+    The old light name is an alias for summer.
     PMAI_THEME=NAME selects a theme at startup, overriding configured colors and bold.
     Custom themes live in ~/.pmai/themes/NAME ($PMAI_HOME or --home relocates it)
     and take precedence over built-ins. Each line is /theme color KEY VALUE;
@@ -15632,7 +15637,7 @@ struct MaiCLI {
         --config, PMAI_CONFIG, ./pmai.json, ~/.config/pmai/config.json
 
       Terminal theme:
-        PMAI_THEME=default|slime|light|ember|pink|night or a name in ~/.pmai/themes
+        PMAI_THEME=default|slime|summer|ember|pink|night or a name in ~/.pmai/themes
 
       Ad-hoc provider defaults:
         PMAI_PROVIDER, PMAI_MODEL, PMAI_BASE_URL, and PMAI_API_KEY, or

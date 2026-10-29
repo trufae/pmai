@@ -10,6 +10,8 @@ enum TerminalThemeStyle: Int, CaseIterable {
   case successForeground, infoForeground, thinkingForeground
   case diffAddedForeground, diffAddedBackground, diffRemovedForeground, diffRemovedBackground
   case diffHeaderForeground
+  case toolResultBackground, toolCallBackground
+  case toolCallBold
 
   var marker: String { "\u{1B}[?\(rawValue)m" }
 
@@ -19,9 +21,11 @@ enum TerminalThemeStyle: Int, CaseIterable {
     case .background: ui.background
     case .promptForeground: ui.promptForeground
     case .promptBackground: ui.promptBackground
-    case .bold: ""
+    case .bold, .toolCallBold: ""
     case .toolResultForeground: ui.toolResultForeground
     case .toolCallForeground: ui.toolCallForeground
+    case .toolResultBackground: ui.toolResultBackground
+    case .toolCallBackground: ui.toolCallBackground
     case .errorForeground: ui.errorForeground
     case .warningForeground: ui.warningForeground
     case .successForeground: ui.successForeground
@@ -38,6 +42,10 @@ enum TerminalThemeStyle: Int, CaseIterable {
   private func code(in ui: ConfiguredTerminalUI) -> String {
     switch self {
     case .bold: return ui.bold ? "1" : "22"
+    case .toolCallBold: return ui.toolCallBold ? "1" : "22"
+    case .toolResultBackground, .toolCallBackground:
+      return TerminalLineEditor.backgroundColorCode(value(in: ui))
+        ?? TerminalLineEditor.backgroundColorCode(ui.background) ?? "49"
     case .background, .promptBackground, .diffAddedBackground, .diffRemovedBackground:
       return TerminalLineEditor.backgroundColorCode(value(in: ui)) ?? "49"
     default:
@@ -47,7 +55,7 @@ enum TerminalThemeStyle: Int, CaseIterable {
 
   static func resolve(_ text: String, ui: ConfiguredTerminalUI? = nil) -> String {
     // Ordinary DEC controls (autowrap, mouse tracking, cursor visibility) also
-    // start with CSI ?. Avoid seventeen replacement passes for every frame.
+    // start with CSI ?. Avoid replacement passes for every frame.
     guard text.contains("\u{1B}[?9") else { return text }
     return allCases.reduce(text) { result, role in
       result.replacingOccurrences(
@@ -65,7 +73,8 @@ enum TerminalThemeStyle: Int, CaseIterable {
   }
 
   /// Tool previews add a two-character prefix; raw Git diffs use a zero-length prefix.
-  static func lineRoles(_ value: String, color: Self?, diff: Bool, diffPrefixLength: Int = 2)
+  static func lineRoles(_ value: String, color: Self?, background: Self? = nil,
+    diff: Bool, diffPrefixLength: Int = 2)
     -> [(text: String, foreground: Self?, background: Self?)]
   {
     let lines = value.components(separatedBy: "\n")
@@ -81,7 +90,7 @@ enum TerminalThemeStyle: Int, CaseIterable {
         if marker.hasPrefix("--- ") || marker.hasPrefix("+++ ") || marker.hasPrefix("@@ ")
           || marker.hasPrefix("diff --git ") || marker.hasPrefix("index ")
         {
-          return (lines[index], .diffHeaderForeground, nil)
+          return (lines[index], .diffHeaderForeground, background)
         }
         if marker.hasPrefix("-") {
           return (lines[index], .diffRemovedForeground, .diffRemovedBackground)
@@ -90,7 +99,7 @@ enum TerminalThemeStyle: Int, CaseIterable {
           return (lines[index], .diffAddedForeground, .diffAddedBackground)
         }
       }
-      return (lines[index], color, nil)
+      return (lines[index], color, background)
     }
   }
 }

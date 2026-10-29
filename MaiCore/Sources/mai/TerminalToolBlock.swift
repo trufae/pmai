@@ -11,10 +11,13 @@ struct TerminalToolBlock {
   func render(
     display: ToolResultDisplay, calls: ToolCallDisplay = .truncate, colors: Bool
   ) -> String {
-    func styled(_ text: String, color: TerminalThemeStyle, diff: Bool = false) -> String {
-      TerminalThemeStyle.lineRoles(text, color: color, diff: diff).map { line in
+    func styled(_ text: String, color: TerminalThemeStyle,
+      background: TerminalThemeStyle = .toolCallBackground, diff: Bool = false) -> String {
+      TerminalThemeStyle.lineRoles(text, color: color, background: background, diff: diff).map { line in
         let markers =
-          colors ? [line.foreground, line.background].compactMap { $0?.marker }.joined() : ""
+          colors ? [line.background,
+            background == .toolCallBackground ? .toolCallBold : nil, line.foreground]
+            .compactMap { $0?.marker }.joined() : ""
         return prefix + markers + line.text + (colors ? "\u{1B}[0m" : "")
       }.joined(separator: "\n")
     }
@@ -40,7 +43,8 @@ struct TerminalToolBlock {
       output.append(
         styled(
           ToolResultPreview.render(result, display: display),
-          color: result.isError ? .errorForeground : .toolResultForeground, diff: true))
+          color: result.isError ? .errorForeground : .toolResultForeground,
+          background: .toolResultBackground, diff: true))
     }
     return output.joined(separator: "\n")
   }

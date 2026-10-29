@@ -681,7 +681,7 @@ actor TerminalWriter {
     } else if tools == .lines(0) {
       compactToolCalls[context.runID, default: [:]][call.id] = String(preview.dropFirst(2))
     } else {
-      toolStatus(preview, context: context, color: .toolCallForeground)
+      toolStatus(preview, context: context, color: .toolCallForeground, background: .toolCallBackground)
     }
   }
 
@@ -712,21 +712,24 @@ actor TerminalWriter {
       let marker = result.isError ? "✘" : "✔"
       toolStatus(
         "\(marker) \(call ?? (result.isError ? "error" : "done"))",
-        context: context, color: result.isError ? .errorForeground : .toolCallForeground)
+        context: context, color: result.isError ? .errorForeground : .toolCallForeground,
+        background: .toolCallBackground)
     } else {
       toolStatus(
         ToolResultPreview.render(result, display: tools), context: context,
-        color: result.isError ? .errorForeground : .toolResultForeground, diff: true)
+        color: result.isError ? .errorForeground : .toolResultForeground,
+        background: .toolResultBackground, diff: true)
     }
   }
 
   private func toolStatus(
-    _ text: String, context: AgentEventContext, color: TerminalThemeStyle, diff: Bool = false
+    _ text: String, context: AgentEventContext, color: TerminalThemeStyle,
+    background: TerminalThemeStyle, diff: Bool = false
   ) {
     if context.depth > 0, let pid = context.pid {
-      childBlock(pid, text, color: color, diff: diff)
+      childBlock(pid, text, color: color, background: background, diff: diff)
     } else {
-      status(text, color: color, diff: diff)
+      status(text, color: color, background: background, diff: diff)
     }
   }
 
@@ -788,12 +791,13 @@ actor TerminalWriter {
   /// One block from one child: every line carries the pid, and the whole
   /// block is written in one go so nothing else lands in the middle of it.
   private func childBlock(
-    _ pid: AgentPID, _ text: String, color: TerminalThemeStyle? = nil, italic: Bool = false, diff: Bool = false
+    _ pid: AgentPID, _ text: String, color: TerminalThemeStyle? = nil,
+    background: TerminalThemeStyle? = nil, italic: Bool = false, diff: Bool = false
   ) {
     finishReply()
     closeRootLine()
     let prefix = childPrefix(pid)
-    let body = styledLines(text, color: color, diff: diff).map { line in
+    let body = styledLines(text, color: color, background: background, diff: diff).map { line in
       prefix + (italic && colorsStatus ? "\u{1B}[3m\(line)\u{1B}[23m" : line)
     }.joined(separator: "\n")
     emitStatus(body)
@@ -931,13 +935,14 @@ actor TerminalWriter {
     }
   }
 
-  private func status(_ value: String, color: TerminalThemeStyle? = nil, diff: Bool = false) {
+  private func status(_ value: String, color: TerminalThemeStyle? = nil,
+    background: TerminalThemeStyle? = nil, diff: Bool = false) {
     finishIconLine()
     if capturesOutput {
       captured.append(value + "\n")
       return
     }
-    emitStatus(styledLines(value, color: color, diff: diff).joined(separator: "\n"))
+    emitStatus(styledLines(value, color: color, background: background, diff: diff).joined(separator: "\n"))
   }
 
   private func emitStatus(_ styled: String) {
@@ -955,20 +960,24 @@ actor TerminalWriter {
     _ text: String, foreground: TerminalThemeStyle?, background: TerminalThemeStyle? = nil,
     italic: Bool = false
   ) -> String {
+    let toolCall = background == .toolCallBackground
     let annotation = retainsThemeStyles
-      ? [foreground, background].compactMap { $0?.marker }.joined() : ""
+      ? [foreground, background, toolCall ? .toolCallBold : nil].compactMap { $0?.marker }.joined() : ""
     return Self.styled(text, foreground: foreground?.value(in: ui),
-      background: background?.value(in: ui), italic: italic, annotation: annotation)
+      background: background?.value(in: ui), bold: toolCall && ui.toolCallBold,
+      italic: italic, annotation: annotation)
   }
 
   private static func styled(
-    _ text: String, foreground: String?, background: String? = nil, italic: Bool = false, annotation: String = ""
+    _ text: String, foreground: String?, background: String? = nil, bold: Bool = false,
+    italic: Bool = false, annotation: String = ""
   ) -> String {
     var codes = [
       foreground.flatMap(TerminalLineEditor.foregroundColorCode),
       background.flatMap(TerminalLineEditor.backgroundColorCode),
     ].compactMap { $0 }
     if italic { codes.insert("3", at: 0) }
+    if bold { codes.insert("1", at: 0) }
     guard !codes.isEmpty || !annotation.isEmpty else { return text }
     let style = codes.isEmpty ? "" : "\u{1B}[\(codes.joined(separator: ";"))m"
     return style + annotation + text + "\u{1B}[0m"
@@ -976,10 +985,11 @@ actor TerminalWriter {
 
   /// Tool previews add a two-character prefix. Remove only that prefix when
   /// inspecting a diff, preserving its context marker and source indentation.
-  private func styledLines(_ value: String, color: TerminalThemeStyle?, diff: Bool) -> [String] {
+  private func styledLines(_ value: String, color: TerminalThemeStyle?,
+    background: TerminalThemeStyle? = nil, diff: Bool) -> [String] {
     let lines = value.components(separatedBy: "\n")
     guard colorsStatus else { return lines }
-    return TerminalThemeStyle.lineRoles(value, color: color, diff: diff).map {
+    return TerminalThemeStyle.lineRoles(value, color: color, background: background, diff: diff).map {
       styled($0.text, foreground: $0.foreground, background: $0.background)
     }
   }

@@ -214,6 +214,56 @@ func terminalBufferThemeHistory() {
   #expect(buffer.visibleRows(width: 80, height: 20)[0].contains("\u{1B}[32mreasoning"))
 }
 
+@Test("Tool backgrounds fill wrapped rows and bold calls recolor without styling replies")
+func terminalBufferToolAppearance() throws {
+  var ui = ConfiguredTerminalUI(background: "#1e1e1e",
+    toolResultBackground: "#2b2620", toolCallBackground: "#233028", toolCallBold: true)
+  var buffer = TerminalOutputBuffer()
+  buffer.configureColors(ui)
+  buffer.configureTools(.all)
+  buffer.appendTool(
+    call: ToolCall(id: "read", name: "files_read", arguments: .object(["path": .string("界.txt")])),
+    result: ToolResult(callID: "read", text: "TOOL_VALUE"))
+  func plain(_ text: String) -> String {
+    text.replacingOccurrences(of: "\u{1B}\\[[0-?]*[ -/]*[@-~]", with: "", options: .regularExpression)
+  }
+  let rows = buffer.visibleRows(width: 18, height: 30)
+  #expect(rows[0].contains("\u{1B}[48;2;35;48;40m"))
+  #expect(rows[0].contains("\u{1B}[1m"))
+  let toolRows = rows.filter { !plain($0).isEmpty }
+  #expect(toolRows.allSatisfy { TerminalLineEditor.displayWidth(of: plain($0)) == 18 })
+  let result = try #require(rows.first { $0.contains("TOOL_VALUE") })
+  #expect(result.contains("\u{1B}[48;2;43;38;32m"))
+  #expect(!result.contains("\u{1B}[1m"))
+
+  ui.toolCallBold = false
+  ui.toolCallBackground = ""
+  ui.toolResultBackground = ""
+  buffer.configureColors(ui)
+  let unfilled = buffer.visibleRows(width: 80, height: 30)
+  #expect(!unfilled.joined().contains("\u{1B}[1m"))
+  #expect(unfilled.allSatisfy { !plain($0).hasSuffix(" ") })
+  #expect(!unfilled.joined().contains("\u{1B}[49m"))
+
+  buffer.configureColors(nil)
+  #expect(!buffer.visibleRows(width: 80, height: 30).joined().contains("\u{1B}"))
+}
+
+@Test("Theme switches clear tool overrides and preserve the old light name")
+func terminalThemeToolSettings() throws {
+  let directory = URL(fileURLWithPath: "/nonexistent-pmai-test-themes")
+  let summer = try TerminalTheme.load("summer", directory: directory, ui: .init())
+  #expect(try TerminalTheme.load("light", directory: directory, ui: .init()) == summer)
+  #expect(!summer.background.isEmpty)
+  let codark = try TerminalTheme.load("codark", directory: directory, ui: summer)
+  #expect(codark.toolCallBold)
+  #expect(TerminalTheme.script(codark).contains("/theme color boldtoolcall on\n"))
+  let ansi = try TerminalTheme.load("ansi", directory: directory, ui: codark)
+  #expect(!ansi.toolCallBold)
+  #expect(ansi.toolCallBackground.isEmpty && ansi.toolResultBackground.isEmpty)
+  #expect(ansi.background.isEmpty)
+}
+
 @Test(
   "Tool previews retain complete results when switching between compact, limited and full output")
 func terminalBufferTools() {

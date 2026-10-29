@@ -558,6 +558,9 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   /// Foreground color used for successful tool-result previews in the text REPL.
   public var toolResultForeground: String
   public var toolCallForeground: String
+  public var toolResultBackground: String
+  public var toolCallBackground: String
+  public var toolCallBold: Bool
   public var errorForeground: String
   public var warningForeground: String
   public var successForeground: String
@@ -603,6 +606,9 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     promptBackground: String = "",
     toolResultForeground: String = "yellow",
     toolCallForeground: String = "green",
+    toolResultBackground: String = "",
+    toolCallBackground: String = "",
+    toolCallBold: Bool = false,
     errorForeground: String = "red",
     warningForeground: String = "yellow",
     successForeground: String = "cyan",
@@ -638,6 +644,9 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     self.promptBackground = promptBackground
     self.toolResultForeground = toolResultForeground
     self.toolCallForeground = toolCallForeground
+    self.toolResultBackground = toolResultBackground
+    self.toolCallBackground = toolCallBackground
+    self.toolCallBold = toolCallBold
     self.errorForeground = errorForeground
     self.warningForeground = warningForeground
     self.successForeground = successForeground
@@ -675,6 +684,9 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     case promptBackground = "bgprompt"
     case toolResultForeground = "fgtoolresult"
     case toolCallForeground = "fgtoolcall"
+    case toolResultBackground = "bgtoolresult"
+    case toolCallBackground = "bgtoolcall"
+    case toolCallBold = "boldtoolcall"
     case errorForeground = "fgerror"
     case warningForeground = "fgwarning"
     case successForeground = "fgsuccess"
@@ -722,6 +734,11 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
         String.self, forKey: .toolResultForeground)) ?? "yellow",
       toolCallForeground: (try? container.decodeIfPresent(
         String.self, forKey: .toolCallForeground)) ?? "green",
+      toolResultBackground: (try? container.decodeIfPresent(
+        String.self, forKey: .toolResultBackground)) ?? "",
+      toolCallBackground: (try? container.decodeIfPresent(
+        String.self, forKey: .toolCallBackground)) ?? "",
+      toolCallBold: (try? container.decodeIfPresent(Bool.self, forKey: .toolCallBold)) ?? false,
       errorForeground: (try? container.decodeIfPresent(String.self, forKey: .errorForeground))
         ?? "red",
       warningForeground: (try? container.decodeIfPresent(

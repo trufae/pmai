@@ -710,14 +710,17 @@ tool calls and results, and run events. The setting survives restarts in
 `.pmai/settings.json`. The log is readable only by the current user and can
 contain prompts, tool output, and other private data.
 
-`/theme` (or `/theme list`) lists terminal themes. Twelve are built in:
-`default` preserves the original styling, `slime` is green, `light` suits
-white-background terminals, `ember` uses warm colors, and `pink` and `night`
-provide pink and blue palettes. `codark` and `colit` use VS Code
-Dark+ and Light+ colors. `ansi` uses only the eight basic ANSI colors with no
-explicit background colors, and `mono`
-uses black, white, and bold input. `plum` is dark violet, and `sand` uses parchment
+`/theme` (or `/theme list`) lists terminal themes. Thirteen are built in:
+`default` preserves the original styling, `slime` is green, `summer` uses a sunny
+cream background, `ember` uses warm colors, and `pink` and `night`
+provide pink and blue palettes. `codark` combines a dark grey background with
+Tango-inspired colors; `colit` uses VS Code Light+ colors. `ansi` uses only the
+eight basic ANSI colors with no explicit background colors, and `mono` uses
+black, white, and bold input. `blood` uses red and white on a dark red background.
+`plum` is dark violet, and `sand` uses parchment
 with dark text. Markdown and subagent labels also follow the selected palette.
+`summer`, `codark`, `plum`, `pink`, and `blood` use bold tool calls and subtle backgrounds
+for tool calls and results. `light` remains an alias for `summer`.
 Use `/theme show` to compare all built-in and saved themes in named frames,
 each with a five-line sample session. `/theme show slime` previews just one theme.
 Wide terminals show two themes per row; narrow terminals stack the previews.
@@ -725,12 +728,13 @@ Previews keep your current theme and configuration unchanged. Colors appear on
 color terminals; redirected output, `NO_COLOR`, and `TERM=dumb` stay plain.
 `/theme use slime`
 applies and saves all the theme's colors and bold setting together.
-Set `PMAI_THEME=light` in your environment to apply a theme at startup over
+Set `PMAI_THEME=summer` in your environment to apply a theme at startup over
 the configured styling; startup selection alone does not write the configuration.
 
 `/theme color` lists every theme setting, and `/theme color fgerror` shows one.
 Use `/theme color fgerror bright-red` or `/theme color fgerror=bright-red` to change
-and save it. `/theme color bold on` enables bold input. These colors and bold
+and save it. `/theme color bold on` enables bold input;
+`/theme color boldtoolcall on` enables bold tool calls. These colors and bold settings
 are managed entirely by `/theme`; `/set` contains behavior settings.
 
 After tweaking colors with `/theme color`, `/theme save mine` writes the current
@@ -748,7 +752,7 @@ scripts with one `/theme color` per line; for example:
 
 Use `/theme use mine` or `PMAI_THEME=mine` to load it. User files take
 precedence over built-ins of the same name. Themes accept all the color settings
-listed below and `bold`; omitted settings keep their current values. Blank
+listed below, `bold`, and `boldtoolcall`; omitted settings keep their current values. Blank
 lines and `#` comment lines are ignored, and invalid scripts leave the UI unchanged.
 Old configuration files and saved themes using `/set ui.COLOR VALUE` remain valid.
 
@@ -758,6 +762,7 @@ Old configuration files and saved themes using `/set ui.COLOR VALUE` remain vali
 | `fgcolor`, `bgcolor` | Text foreground and background (including empty space in buffer mode) |
 | `fgprompt`, `bgprompt` | Prompt |
 | `fgtoolcall`, `fgtoolresult` | Tool calls and successful results |
+| `bgtoolcall`, `bgtoolresult` | Tool-call and result backgrounds (full rows in buffer mode) |
 | `fgerror` | Errors and failed tool results |
 | `fgwarning` | Warnings, retries, interruptions, and approval requests |
 | `fgsuccess` | Successful run status |
@@ -774,6 +779,9 @@ removes the background from added diff lines. `/theme save mine` saves these
 choices along with the prompt and input colors. TAB selection falls back to
 reverse video when both selection colors are `none` or colors are disabled.
 Colored output respects `NO_COLOR`, `TERM=dumb`, and redirected output.
+Use `/theme color bgtoolcall none` or `/theme color bgtoolresult none` to remove
+the tool tint and inherit the theme's main background. Diff additions and removals
+keep their own colors.
 
 All theme colors accept named ANSI colors, `rgb:RGB`, `#RRGGBB`, or `none`.
 `/set ui.` lists persisted terminal behavior settings. `ui.markdown` and

@@ -95,6 +95,7 @@ struct TerminalOutputBuffer {
   private var toolCalls = ConfiguredTerminalUI().toolCalls
   private var markdownRenderer: MarkdownTerminalRenderer?
   private var colors: ConfiguredTerminalUI?
+  private var fillsLineBackgrounds = false
   private var highlight = ""
   static let highlightStyle = "\u{1B}[0;30;47m"
   private var cursor = 0
@@ -511,13 +512,15 @@ struct TerminalOutputBuffer {
         }
         let failed = summary.failed
         let color: TerminalThemeStyle = failed ? .errorForeground : .toolCallForeground
-        let header = tool.prefix + (colors != nil ? color.marker : "")
+        let header = tool.prefix + (colors != nil ? color.marker
+          + TerminalThemeStyle.toolCallBackground.marker + TerminalThemeStyle.toolCallBold.marker : "")
           + (expanded ? "▾ " : "▸ ") + summary.text
           + (failed ? " · error" : "")
         text = expanded ? header + "\n" + text : header
       }
       var output = TerminalOutputBuffer()
       output.configureColors(colors)
+      output.fillsLineBackgrounds = true
       output.append(text)
       if isHeader && !expanded || !isHeader && tools == .lines(0) && toolCalls == .truncate {
         output.truncateLine(to: width)
@@ -565,7 +568,20 @@ struct TerminalOutputBuffer {
       return result
     }
     var result: [Row] = []
-    let base = TerminalThemeStyle.base(colors)
+    let backgrounds: [TerminalThemeStyle] = [
+      .diffAddedBackground, .diffRemovedBackground, .toolCallBackground, .toolResultBackground,
+    ]
+    let background = fillsLineBackgrounds ? backgrounds.first { role in
+      lines[index].glyphs.contains { $0.style.contains(role.marker) }
+    }.flatMap { role in
+      colors.flatMap { TerminalLineEditor.backgroundColorCode(role.value(in: $0)) }
+    } : nil
+    let base = TerminalThemeStyle.base(colors) + (background.map { "\u{1B}[\($0)m" } ?? "")
+    func filled(_ row: Row, used: Int) -> Row {
+      guard background != nil else { return row }
+      return Row(position: row.position,
+        text: row.text + Self.reset + base + String(repeating: " ", count: max(0, width - used)))
+    }
     var row = Row(position: Position(line: index, glyph: 0), text: base)
     var used = 0
     var rowStyle = ""
@@ -573,7 +589,7 @@ struct TerminalOutputBuffer {
     for (offset, glyph) in lines[index].glyphs.enumerated() {
       let cells = glyph.width
       if used > 0 && used + cells > width {
-        result.append(row)
+        result.append(filled(row, used: used))
         row = Row(position: Position(line: index, glyph: offset), text: base)
         used = 0
         rowStyle = ""
@@ -590,7 +606,7 @@ struct TerminalOutputBuffer {
       row.text += glyph.text
       used += cells
     }
-    result.append(row)
+    result.append(filled(row, used: used))
     lines[index].cachedWidth = width
     lines[index].rows = result
     return result

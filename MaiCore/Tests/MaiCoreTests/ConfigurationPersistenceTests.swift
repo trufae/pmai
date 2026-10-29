@@ -91,6 +91,9 @@ func configurationSaveRoundTrip() throws {
       foreground: "bright-white",
       promptForeground: "cyan",
       toolResultForeground: "bright-yellow",
+      toolResultBackground: "#2b2620",
+      toolCallBackground: "#233028",
+      toolCallBold: true,
       bold: true,
       tools: .lines(7)))
 
@@ -108,6 +111,9 @@ func configurationPromptDefaults() throws {
 
   #expect(configuration.prompts == nil)
   #expect(configuration.ui.title.isEmpty)
+  #expect(configuration.ui.toolCallBackground.isEmpty)
+  #expect(configuration.ui.toolResultBackground.isEmpty)
+  #expect(!configuration.ui.toolCallBold)
   #expect(configuration.documentExport == DocumentExportOptions())
   #expect(configuration.fileAccess == nil)
 }
