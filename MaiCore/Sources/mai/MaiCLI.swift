@@ -1306,7 +1306,7 @@ private actor PromptFileAccess {
 
 @main
 struct MaiCLI {
-  private static let version = "1.12.12"
+  private static let version = "1.13.0"
 
   static func main() async {
     let started = ContinuousClock.now
