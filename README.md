@@ -176,6 +176,14 @@ switches to buffer mode. `/set ui.toolgroups off` restores individual rows;
 `/set ui.tools` still controls their result previews. The status bar shows the
 current prompt's elapsed time at the right, including time spent awaiting approval.
 
+Use `/set ui.toolcalls first` to read the complete first line of tool arguments,
+wrapped to the terminal width, or `/set ui.toolcalls 5` to show the first five
+source lines of each argument (including heredoc scripts). Hidden lines are
+counted after the preview. `/set ui.toolcalls truncate` restores the default
+short previews. This setting is saved and updates existing calls in buffer mode;
+`ui.tools` controls result visibility separately, and `ui.tools icons` keeps calls
+as icons.
+
 `/tools` lists groups in an aligned table with shared mode and call-count columns;
 `/tools full` adds each group's individual tools. Terminal Markdown tables are
 frameless by default to save space. Use `/set ui.tableborders on` to draw frames

@@ -92,6 +92,7 @@ struct TerminalOutputBuffer {
   private var groupTools = false
   private var visiblePositions: [Position] = []
   private var tools = ConfiguredTerminalUI().tools
+  private var toolCalls = ConfiguredTerminalUI().toolCalls
   private var markdownRenderer: MarkdownTerminalRenderer?
   private var colors: ConfiguredTerminalUI?
   private var highlight = ""
@@ -253,6 +254,12 @@ struct TerminalOutputBuffer {
   mutating func configureTools(_ display: ToolResultDisplay) {
     guard tools != display else { return }
     tools = display
+    for index in toolBlocks.keys { invalidateLine(index) }
+  }
+
+  mutating func configureToolCalls(_ display: ToolCallDisplay) {
+    guard toolCalls != display else { return }
+    toolCalls = display
     for index in toolBlocks.keys { invalidateLine(index) }
   }
 
@@ -483,7 +490,7 @@ struct TerminalOutputBuffer {
       return result
     }
     if let tool = toolBlocks[index] {
-      var text = tool.render(display: tools, colors: colors != nil)
+      var text = tool.render(display: tools, calls: toolCalls, colors: colors != nil)
       if iconGroup {
         text = tool.prefix + groupIndices.compactMap { toolBlocks[$0] }.map { block in
           // Prefix once per row; each glyph keeps its own error styling.
@@ -512,7 +519,7 @@ struct TerminalOutputBuffer {
       var output = TerminalOutputBuffer()
       output.configureColors(colors)
       output.append(text)
-      if isHeader && !expanded || !isHeader && tools == .lines(0) {
+      if isHeader && !expanded || !isHeader && tools == .lines(0) && toolCalls == .truncate {
         output.truncateLine(to: width)
       }
       output.configureHighlight(highlight)

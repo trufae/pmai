@@ -8,7 +8,9 @@ struct TerminalToolBlock {
   var prefix: String
   var timing = ToolRunTiming()
 
-  func render(display: ToolResultDisplay, colors: Bool) -> String {
+  func render(
+    display: ToolResultDisplay, calls: ToolCallDisplay = .truncate, colors: Bool
+  ) -> String {
     func styled(_ text: String, color: TerminalThemeStyle, diff: Bool = false) -> String {
       TerminalThemeStyle.lineRoles(text, color: color, diff: diff).map { line in
         let markers =
@@ -24,14 +26,16 @@ struct TerminalToolBlock {
     if display == .lines(0) {
       guard let result else { return "" }
       let label =
-        call.map { String(ToolCallPreview.render($0).dropFirst(2)) }
+        call.map { String(ToolCallPreview.render($0, display: calls).dropFirst(2)) }
         ?? (result.isError ? "error" : "done")
       return styled(
         "\(result.isError ? "✘" : "✔") \(label)",
         color: result.isError ? .errorForeground : .toolCallForeground)
     }
     var output: [String] = []
-    if let call { output.append(styled(ToolCallPreview.render(call), color: .toolCallForeground)) }
+    if let call {
+      output.append(styled(ToolCallPreview.render(call, display: calls), color: .toolCallForeground))
+    }
     if let result {
       output.append(
         styled(

@@ -490,6 +490,50 @@ public enum ToolResultDisplay: Codable, Equatable, Sendable, CustomStringConvert
   }
 }
 
+/// Source lines shown per tool argument; complete lines wrap to the terminal width.
+public enum ToolCallDisplay: Codable, Equatable, Sendable, CustomStringConvertible {
+  case truncate
+  case lines(Int)
+
+  public init?(setting: String) {
+    switch setting.lowercased() {
+    case "truncate": self = .truncate
+    case "first": self = .lines(1)
+    default:
+      guard let count = Int(setting), count > 0 else { return nil }
+      self = .lines(count)
+    }
+  }
+
+  public var description: String {
+    switch self {
+    case .truncate: "truncate"
+    case .lines(1): "first"
+    case .lines(let count): String(max(1, count))
+    }
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.singleValueContainer()
+    if let count = try? container.decode(Int.self), count > 0 {
+      self = .lines(count)
+    } else if let setting = try? container.decode(String.self), let value = Self(setting: setting) {
+      self = value
+    } else {
+      throw DecodingError.dataCorruptedError(
+        in: container, debugDescription: "Expected truncate, first, or a positive line count.")
+    }
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.singleValueContainer()
+    switch self {
+    case .truncate: try container.encode("truncate")
+    case .lines(let count): try container.encode(max(1, count))
+    }
+  }
+}
+
 public enum TerminalOutputMode: String, Codable, Sendable {
   case classic
   case buffer
@@ -533,6 +577,8 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   public var tableBorders: Bool
   /// Show results, a fixed number of leading lines, or compact tool icons.
   public var tools: ToolResultDisplay
+  /// Truncated arguments or a fixed number of complete source lines per argument.
+  public var toolCalls: ToolCallDisplay
   /// Collapse consecutive tool calls into an expandable summary in buffer mode.
   public var toolGroups: Bool
   /// What the text REPL prints while child agents run.
@@ -573,6 +619,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     markdown: Bool = true,
     tableBorders: Bool = false,
     tools: ToolResultDisplay = .lines(0),
+    toolCalls: ToolCallDisplay = .truncate,
     toolGroups: Bool = false,
     subagentOutput: SubagentOutputLevel = .all,
     broadcast: Bool = false,
@@ -607,6 +654,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     self.markdown = markdown
     self.tableBorders = tableBorders
     self.tools = tools
+    self.toolCalls = toolCalls
     self.toolGroups = toolGroups
     self.subagentOutput = subagentOutput
     self.broadcast = broadcast
@@ -643,6 +691,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     case markdown
     case tableBorders = "tableborders"
     case tools
+    case toolCalls = "toolcalls"
     case toolGroups = "toolgroups"
     case subagentOutput = "subagents"
     case broadcast
@@ -703,6 +752,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
       tools: (try? container.decodeIfPresent(
         ToolResultDisplay.self, forKey: .tools))
         ?? (try? legacy.decodeIfPresent(ToolResultDisplay.self, forKey: .toolResultLines)) ?? .lines(0),
+      toolCalls: (try? container.decodeIfPresent(ToolCallDisplay.self, forKey: .toolCalls)) ?? .truncate,
       toolGroups: (try? container.decodeIfPresent(Bool.self, forKey: .toolGroups)) ?? false,
       subagentOutput: (try? container.decodeIfPresent(
         SubagentOutputLevel.self, forKey: .subagentOutput)) ?? .all,

@@ -3172,8 +3172,8 @@ struct MaiCLI {
         await output.configureThinking(ui.thinking)
         await output.configureTools(ui.tools)
         await output.configureSubagentOutput(ui.subagentOutput)
+        await output.configureColors(ui)
         if redirection != nil {
-          await output.configureColors(ui)
           await output.attach(screen: screen)
         }
       }
@@ -11412,7 +11412,7 @@ struct MaiCLI {
       return
     }
     let booleanKeys = ["ui.markdown", "ui.tableborders", "ui.broadcast", "ui.toolgroups"]
-    let countKeys = ["ui.tools", "ui.scroll", "ui.scrollbar"]
+    let countKeys = ["ui.tools", "ui.toolcalls", "ui.scroll", "ui.scrollbar"]
     let levelKeys = ["ui.subagents", "ui.thinking", "ui.mode"]
     let textKeys = ["ui.title", "ui.editor", "ui.highlight"]
     guard
@@ -11457,7 +11457,13 @@ struct MaiCLI {
         return
       }
       ui.scrollbar = value
-    } else if countKeys.contains(key) {
+    } else if key == "ui.toolcalls" {
+      guard let value = ToolCallDisplay(setting: parts[1]) else {
+        await terminal.line("Usage: /set ui.toolcalls <truncate|first|N> (N > 0)")
+        return
+      }
+      ui.toolCalls = value
+    } else if key == "ui.tools" {
       guard let value = ToolResultDisplay(setting: parts[1]) else {
         await terminal.line("Usage: /set ui.tools <all|relevant|icons|N>")
         return
@@ -12137,7 +12143,7 @@ struct MaiCLI {
 
   private static func uiSettings(_ ui: ConfiguredTerminalUI) -> [String] {
     let keys = [
-      "ui.mode", "ui.scroll", "ui.scrollbar", "ui.highlight", "ui.title", "ui.editor", "ui.markdown", "ui.tools", "ui.toolgroups",
+      "ui.mode", "ui.scroll", "ui.scrollbar", "ui.highlight", "ui.title", "ui.editor", "ui.markdown", "ui.tools", "ui.toolcalls", "ui.toolgroups",
       "ui.subagents", "ui.thinking", "ui.tableborders",
       "ui.broadcast",
     ]
@@ -12159,6 +12165,7 @@ struct MaiCLI {
     case "ui.markdown": return ui.markdown ? "on" : "off"
     case "ui.tableborders": return ui.tableBorders ? "on" : "off"
     case "ui.tools": return ui.tools.description
+    case "ui.toolcalls": return ui.toolCalls.description
     case "ui.toolgroups": return ui.toolGroups ? "on" : "off"
     case "ui.thinking": return ui.thinking.rawValue
     case "ui.subagents": return ui.subagentOutput.rawValue
@@ -14335,6 +14342,7 @@ struct MaiCLI {
       "/set ui.broadcast on", "/set ui.broadcast off",
       "/set ui.toolgroups on", "/set ui.toolgroups off",
       "/set ui.tools all", "/set ui.tools relevant", "/set ui.tools icons", "/set ui.tools ",
+      "/set ui.toolcalls truncate", "/set ui.toolcalls first", "/set ui.toolcalls ",
       "/set redact on", "/set redact off", "/set redact warn", "/edit redact",
       "/cwd", "/pwd", "/cd ", "/plugins",
       "/path", "/path list", "/path allow ", "/path deny ", "/path ask ",
@@ -15090,6 +15098,7 @@ struct MaiCLI {
       /set ui.tableborders BOOL    Draw table frames and separators (on/off; default off)
       /set ui.toolgroups <on|off>     Collapse consecutive tools into clickable summaries (enables buffer mode)
       /set ui.tools <all|relevant|icons|N>  Full results, relevant previews, emoji rows, or first N lines (0 hides them)
+      /set ui.toolcalls <truncate|first|N>  Truncate arguments (default), wrap the full first line, or show N source lines per argument
                                    Buffer mode also updates earlier tool calls and results
       /set ui.thinking MODE        Thinking display: status, line, three, five, or full
                                    Buffer history: hide blocks, show their last 1/3/5 rows, or show all

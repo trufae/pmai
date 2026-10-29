@@ -90,6 +90,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     let conversation = TerminalConversation()
     conversation.transcript.configureThinking(ui.thinking)
     conversation.transcript.configureTools(ui.tools)
+    conversation.transcript.configureToolCalls(ui.toolCalls)
     conversation.transcript.configureToolGroups(ui.toolGroups)
     conversation.transcript.configureMarkdown(markdownTemplate)
     conversation.transcript.configureColors(bufferColorsEnabled ? ui : nil)
@@ -230,11 +231,13 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       for conversation in conversations.values {
         conversation.transcript.configureThinking(ui.thinking)
         conversation.transcript.configureTools(ui.tools)
+        conversation.transcript.configureToolCalls(ui.toolCalls)
         conversation.transcript.configureToolGroups(ui.toolGroups)
         conversation.transcript.configureColors(bufferColorsEnabled ? ui : nil)
       }
       transcript.configureThinking(ui.thinking)
       transcript.configureTools(ui.tools)
+      transcript.configureToolCalls(ui.toolCalls)
       transcript.configureToolGroups(ui.toolGroups)
       transcript.configureColors(bufferColorsEnabled ? ui : nil)
       guard active else { return }

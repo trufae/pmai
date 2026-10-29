@@ -674,7 +674,7 @@ actor TerminalWriter {
       bufferToolCalls[context.runID, default: [:]][call.id] = block
       return
     }
-    let preview = ToolCallPreview.render(call)
+    let preview = ToolCallPreview.render(call, display: ui.toolCalls)
     if tools == .icons {
       iconToolCalls[context.runID, default: []].insert(call.id)
       toolIcon(ToolIcon.emoji(for: call.name), context: context)

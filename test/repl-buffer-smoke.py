@@ -230,6 +230,22 @@ def main(binary):
                     assert ('…' in compact[0]) == (columns == 18), screen
                     if columns == 80:
                         assert 'tool-output.txt' in compact[0], screen
+                for mode in ('first', 'truncate'):
+                    send(f'/set ui.toolcalls {mode}\r')
+                    wait_for(f'Set ui.toolcalls = {mode}.')
+                    columns = 18
+                    screen.clear()
+                    fcntl.ioctl(master, termios.TIOCSWINSZ,
+                                struct.pack('HHHH', rows, columns, 0, 0))
+                    os.kill(process.pid, signal.SIGWINCH)
+                    read_for()
+                    assert ('tool-output.txt' in ''.join(output())) == (mode == 'first'), screen
+                    columns = 80
+                    screen.clear()
+                    fcntl.ioctl(master, termios.TIOCSWINSZ,
+                                struct.pack('HHHH', rows, columns, 0, 0))
+                    os.kill(process.pid, signal.SIGWINCH)
+                    read_for()
                 for display, count in (('all', 8), ('2', 2), ('relevant', 3), ('0', 0), ('all', 8)):
                     send(f'/set ui.tools {display}\r')
                     wait_for(f'Set ui.tools = {display}.')

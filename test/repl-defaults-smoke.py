@@ -55,6 +55,17 @@ def main():
                 for path in ['/etc', '/root', '~/.ssh', '~/.gnupg', '~/.config']]}, saved
         assert saved['approvals']['mode'] == 'ask', saved
         assert saved['ui']['tools'] == 0, saved
+        assert saved['ui']['toolcalls'] == 'truncate', saved
+        assert 'ui.toolcalls = truncate' in run(['/set ui.'])
+        for value, stored, displayed in [('first', 1, 'first'), ('5', 5, '5'),
+                                         ('truncate', 'truncate', 'truncate')]:
+            assert f'Set ui.toolcalls = {displayed}.' in run([f'/set ui.toolcalls {value}'])
+            assert json.loads(config.read_text())['ui']['toolcalls'] == stored
+            assert f'ui.toolcalls = {displayed}' in run(['/set ui.toolcalls'])
+        original = config.read_bytes()
+        for invalid in ['0', '-1', 'unknown']:
+            assert 'Usage: /set ui.toolcalls' in run([f'/set ui.toolcalls {invalid}'])
+            assert config.read_bytes() == original, 'invalid tool-call setting changed configuration'
         assert 'effort = high' in run(['/set effort'], args=('--effort', 'high'))
         original = config.read_bytes()
         welcome, about = run(['/providers', '/about'], split=True)

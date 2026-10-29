@@ -241,16 +241,16 @@ public struct ToolOutput: Codable, Equatable, Sendable {
   }
 }
 
-/// One line for a tool call as a person reads it: the tool name, then the
-/// arguments with the path-like ones first, long values cut and multi-line
-/// values folded to their first line. `→ files_patch shapes.py find="def
-/// area…" replace="def area…"` says what happened; the JSON did not.
+/// Readable tool arguments with path-like ones first. By default long values
+/// are cut and multiline values folded; configured source lines stay complete.
 package enum ToolCallPreview {
   /// Arguments shown first, and shown bare when they are the only one.
   static let leadingKeys = ["path", "name", "query", "command", "script", "keywords", "task"]
   static let maximumValueLength = 60
 
-  package static func render(_ call: ToolCall, maxLength: Int = 160) -> String {
+  package static func render(
+    _ call: ToolCall, display: ToolCallDisplay = .truncate, maxLength: Int = 160
+  ) -> String {
     let arguments = call.arguments.objectValue ?? [:]
     var line = "→ \(call.name)"
     guard !arguments.isEmpty else { return line }
@@ -260,24 +260,34 @@ package enum ToolCallPreview {
       return ia == ib ? a < b : ia < ib
     }
     let parts = ordered.map { key -> String in
-      let value = summary(of: arguments[key] ?? .null)
+      let value = summary(of: arguments[key] ?? .null, display: display)
       let bare = arguments.count == 1 && leadingKeys.contains(key)
       return bare ? value : "\(key)=\(value)"
     }
     line += " " + parts.joined(separator: " ")
-    return ToolResultPreview.safeLine(line, maximumLength: max(1, maxLength))
+    if display == .truncate {
+      return ToolResultPreview.safeLine(line, maximumLength: max(1, maxLength))
+    }
+    return line.components(separatedBy: "\n").enumerated().map { index, line in
+      (index == 0 ? "" : "  ") + ToolResultPreview.safeLine(line, maximumLength: .max)
+    }.joined(separator: "\n")
   }
 
-  static func summary(of value: JSONValue) -> String {
+  static func summary(of value: JSONValue, display: ToolCallDisplay) -> String {
     guard case .string(let text) = value else { return value.compactJSONString }
     let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-    var first = String(lines.first ?? "")
-    if first.count > maximumValueLength {
-      first = String(first.prefix(maximumValueLength)) + "…"
+    let count: Int
+    switch display {
+    case .truncate: count = 1
+    case .lines(let limit): count = max(1, limit)
     }
-    let quoted = first.isEmpty || first.contains(" ") || first.contains("=")
-    var shown = quoted ? "\"\(first)\"" : first
-    if lines.count > 1 { shown += " (+\(lines.count - 1) lines)" }
+    var selected = lines.prefix(count).joined(separator: "\n")
+    if display == .truncate, selected.count > maximumValueLength {
+      selected = String(selected.prefix(maximumValueLength)) + "…"
+    }
+    let quoted = selected.isEmpty || selected.contains(" ") || selected.contains("=") || selected.contains("\n")
+    var shown = quoted ? "\"\(selected)\"" : selected
+    if lines.count > count { shown += " (+\(lines.count - count) lines)" }
     return shown
   }
 }
