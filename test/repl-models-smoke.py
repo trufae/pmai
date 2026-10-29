@@ -146,6 +146,10 @@ def main():
                 return requests.get_nowait()
 
             def sample(label, idle=False):
+                if idle:
+                    # Command output precedes saving the large history and the
+                    # final status update. Measure only once the REPL is idle.
+                    wait_for(' ○')
                 read_for(.5)
                 output.clear()
                 stat = Path(f'/proc/{process.pid}/stat')
@@ -159,9 +163,10 @@ def main():
                 before = cpu_seconds()
                 read_for(2)
                 cpu = f'{(cpu_seconds() - before) * 50:.1f}%' if before is not None else 'not measured'
-                assert b'\x1b[2K' not in output, 'Waiting redrew whole status/thinking rows'
+                assert b'\x1b[2K' not in output, (
+                    label, 'Waiting redrew whole status/thinking rows', bytes(output))
                 if idle:
-                    assert not output, 'Idle prompt still animates'
+                    assert not output, (label, 'Idle prompt still animates', bytes(output))
                 print(f'PASS {label}: CPU {cpu}, {len(output)} terminal bytes', flush=True)
 
             try:
