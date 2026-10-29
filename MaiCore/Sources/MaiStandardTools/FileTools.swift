@@ -225,7 +225,7 @@ public struct MaiFileWorkspaceTool: AgentTool {
       return ToolDefinition(
         name: operation.rawValue,
         description:
-          "List one folder of the workspace '\(workspaceName)'. Paths are relative to the current directory or absolute inside it. The last component may be a pattern such as src/*.c; for the whole tree use files_find with query *.",
+          "List one folder of the workspace '\(workspaceName)' directly, without a recursive search or shell ls. Use this when the folder path is known. Paths are relative to the current directory or absolute inside it. The last component may be a pattern such as src/*.c. Use files_find only to locate unknown paths below a folder.",
         parameters: [
           ToolParameterDef(
             name: "path",
@@ -239,7 +239,7 @@ public struct MaiFileWorkspaceTool: AgentTool {
       return ToolDefinition(
         name: operation.rawValue,
         description:
-          "Find files and folders by approximate name or glob (* lists the whole tree). An optional filter keeps only paths containing that literal text. Skips ignored, hidden, build, and dependency paths.",
+          "Locate unknown file or folder paths by approximate name or glob. If a path is already given, use files_read or files_list directly. Set path to the narrowest known folder; searches stop after 10000 entries and return at most 100 matches. Skips ignored, hidden, build, and dependency paths; does not descend through directory symlinks. An optional filter keeps only paths containing that literal text.",
         parameters: [
           ToolParameterDef(
             name: "query",
@@ -263,7 +263,7 @@ public struct MaiFileWorkspaceTool: AgentTool {
       return ToolDefinition(
         name: operation.rawValue,
         description:
-          "Search file contents. Returns up to 100 matching lines; skips ignored and hidden files. Case-insensitive unless query contains uppercase. For fast repository-wide searches when run_shell is available, prefer git grep -n --untracked in Git worktrees, then rg -n if Git is unsuitable or unavailable. Use recursive grep only when neither is available.",
+          "Search text in a known file or folder; set path to the narrowest relevant location and glob to limit files. Prefer this for a targeted text lookup instead of a shell pipeline. Returns up to 100 matching lines; skips ignored and hidden files. Case-insensitive unless query contains uppercase. For large repository-wide searches when run_shell is available, prefer git grep -n --untracked in Git worktrees, then rg -n if Git is unsuitable or unavailable. Use recursive grep only when neither is available.",
         parameters: [
           ToolParameterDef(
             name: "query",
@@ -292,7 +292,7 @@ public struct MaiFileWorkspaceTool: AgentTool {
     case .read:
       return ToolDefinition(
         name: operation.rawValue,
-        description: "Read a file as text. PDF, DOCX and EPUB convert to Markdown; images use OCR. Use format=markdown to convert HTML too, or format=text for original UTF-8 source. Continue long results with offset and the same format. For large source files, use files_grep or files_read_index first, then read a range/function; delegate independent extraction tasks when agent_start is available.",
+        description: "Read a known file directly by path; prefer this over shell cat, head, or sed. No preliminary listing or search is needed when the path is given. Results are bounded; continue with offset and the same format, or use files_read_range for specific lines. PDF, DOCX and EPUB convert to Markdown; images use OCR. Use format=markdown to convert HTML too, or format=text for original UTF-8 source. For large source files, use files_grep or files_read_index first, then read a range/function.",
         parameters: [
           path,
           ToolParameterDef(
@@ -371,7 +371,7 @@ public struct MaiFileWorkspaceTool: AgentTool {
       return ToolDefinition(
         name: operation.rawValue,
         description:
-          "Read a file using absolute, 1-based line numbers, including both endpoints. Requires end_line >= start_line. To read 100 lines starting at line 2600, use start_line=2600 and end_line=2699. Returns at most 1000 lines, stopping at the end of the file.",
+          "Read specific lines of a known file directly, instead of shell sed or head. Uses absolute, 1-based line numbers, including both endpoints. Requires end_line >= start_line. To read 100 lines starting at line 2600, use start_line=2600 and end_line=2699. Returns at most 1000 lines, stopping at the end of the file.",
         parameters: [
           path,
           ToolParameterDef(
@@ -740,6 +740,12 @@ struct MaiFileWorkspace: Sendable {
         ?? "No files matched '\(query)'."
       : selected.map { relativePath($0.url) + ($0.kind == "directory" ? "/" : "") }
         .joined(separator: "\n")
+    if hitScanLimit {
+      if selected.isEmpty { text = "No matches found in the scanned portion." }
+      text += "\nSearch incomplete: stopped after \(Self.maximumSearchEntries) entries. Set path to a narrower folder, or use files_read/files_list directly for a known path."
+    } else if matches.count > selected.count {
+      text += "\nTruncated: showing \(selected.count) of \(matches.count) matches. Narrow path, query, or filter."
+    }
     if selected.isEmpty, let glob, glob.matchesPath, !glob.pattern.contains("**") {
       text +=
         " A pattern with a slash must match the whole relative path below \(base == "." ? "the search folder" : base); **/ matches any depth, as in **/*.c."

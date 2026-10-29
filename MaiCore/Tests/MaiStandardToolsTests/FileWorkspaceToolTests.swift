@@ -264,6 +264,42 @@ func fileWorkspaceSearchUsesCodingFriendlyDefaults() async throws {
   #expect(capped.structuredContent?.objectValue?["truncated"] == .bool(true))
 }
 
+@Test("Files find reports incomplete searches in its text, including empty results",
+  arguments: [101, 10_001])
+func fileWorkspaceFindReportsTruncation(entryCount: Int) async throws {
+  let root = FileManager.default.temporaryDirectory
+    .appendingPathComponent("mai-find-limits-\(UUID().uuidString)", isDirectory: true)
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  for index in 0..<entryCount {
+    try Data("report\n".utf8).write(to: root.appendingPathComponent("report-\(index).md"))
+  }
+  let tools = MaiFileWorkspaceTool.makeTools(configuration: .init(rootURL: root))
+  let find = tool(tools, .find)
+  let matches = try await call(find, ["query": .string("*.md")])
+  #expect(!matches.isError)
+  #expect(matches.structuredContent?.objectValue?["truncated"] == .bool(true))
+  if entryCount > 10_000 {
+    #expect(matches.text.contains("Search incomplete: stopped after 10000 entries"))
+    let missing = try await call(find, ["query": .string("absent.txt")])
+    #expect(missing.structuredContent?.objectValue?["matches"] == .array([]))
+    #expect(missing.structuredContent?.objectValue?["truncated"] == .bool(true))
+    #expect(missing.text.contains("No matches found in the scanned portion."))
+    #expect(missing.text.contains("Search incomplete:"))
+    #expect(!missing.text.contains("No files matched"))
+  } else {
+    #expect(matches.text.contains("Truncated: showing 100 of 101 matches"))
+    let missing = try await call(find, ["query": .string("absent.txt")])
+    #expect(missing.structuredContent?.objectValue?["truncated"] == .bool(false))
+    #expect(missing.text.contains("No files matched"))
+    #expect(!missing.text.contains("Search incomplete:"))
+  }
+  // A known path remains directly readable even when discovery is truncated.
+  let read = try await call(tool(tools, .read), ["path": .string("report-0.md")])
+  #expect(!read.isError)
+  #expect(read.text.contains("report"))
+}
+
 @Test("Files grep preserves line numbers, Unicode matching, and trailing empty lines",
   arguments: [
     ("needle", false, [2, 4]),

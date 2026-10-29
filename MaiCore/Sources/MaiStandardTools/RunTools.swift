@@ -207,6 +207,7 @@ public struct MaiRunTool: AgentTool {
       }
       if outcome.timedOut {
         sections.append("[timed out after \(Int(timeout)) seconds; the process was killed]")
+        sections.append("[Before retrying, split combined commands to isolate the slow step or narrow the search. Increase timeout_seconds only for work expected to take longer; use files_read/files_read_range for known files and files_list for a single folder when available.]")
       } else if interactive || outcome.exitCode != 0 {
         sections.append("[exit code \(outcome.exitCode)]")
       }
@@ -354,11 +355,11 @@ public struct MaiRunTool: AgentTool {
       "description": .string(
         "Hand the terminal to the person for vim, nano, less, REPLs, or other interactive programs. Default false. Waits until they exit, then returns the exit status; terminal input/output is not captured. Requires a CLI terminal. Omit stdin and output."),
     ])
-    properties["cwd"] = stringProperty("Working directory. Default: the current directory.")
+    properties["cwd"] = stringProperty("Working directory. Default: the current directory. Set this instead of prefixing the script with cd.")
     properties["timeout_seconds"] = .object([
       "type": .string("number"),
       "description": .string(
-        "Seconds before the process is killed, 1-\(Int(MaiRunConfiguration.maximumTimeout)). Captured runs use the agent's limits.runTimeoutSeconds when set, otherwise \(Int(configuration.defaultTimeout)); interactive runs have no timeout unless explicitly set."),
+        "Optional execution limit in seconds, 1-\(Int(MaiRunConfiguration.maximumTimeout)). Omit for ordinary commands, reads, listings, and searches. Set only when the command is expected to need a different limit, such as a long build or test. After a search times out, narrow or split it before retrying. Captured runs use the agent's limits.runTimeoutSeconds when set, otherwise \(Int(configuration.defaultTimeout)); interactive runs have no timeout unless explicitly set."),
     ])
     properties["output"] = .object([
       "type": .string("string"),
@@ -369,7 +370,7 @@ public struct MaiRunTool: AgentTool {
     return ToolDefinition(
       name: name,
       description:
-        "Run a shell command line or script with '\(configuration.shell)' from the current directory. Normally captures stdout, stderr, and exit code with colors/ANSI escapes removed. For repository searches, prefer git grep -n --untracked in Git worktrees, then rg -n if Git is unsuitable or unavailable; use recursive grep only when neither is available. Scope searches to relevant paths. Supports interactive programs: when the person asks to open vim or another terminal program, set interactive=true to hand them the terminal, then continue after they exit. Example: {\"command\":\"vim notes.md\",\"interactive\":true}.",
+        "Execute programs, builds, tests, Git commands, or scripts with '\(configuration.shell)' from the current directory. When available, prefer files_read for a known file, files_read_range for line ranges, files_list for a folder, and files_grep for targeted text lookups; use shell when the task needs command execution. Normally captures stdout, stderr, and exit code with colors/ANSI escapes removed. For repository-wide searches, prefer git grep -n --untracked in Git worktrees, then rg -n if Git is unsuitable or unavailable; use recursive grep only when neither is available. Scope searches to relevant paths. Keep a direct read separate from a broad search so the search cannot delay it. Supports interactive programs: when the person asks to open vim or another terminal program, set interactive=true to hand them the terminal, then continue after they exit. Example: {\"command\":\"vim notes.md\",\"interactive\":true}.",
       inputSchema: objectSchema(properties: properties, required: []),
       annotations: ToolAnnotations(
         readOnly: false,
