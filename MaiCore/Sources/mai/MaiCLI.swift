@@ -4427,10 +4427,8 @@ struct MaiCLI {
           let argument =
             command.count > 1
             ? command[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
-          if name == "/reset" {
-            if !argument.isEmpty {
-              await terminal.line("Usage: /reset (then choose reset or cancel)")
-            } else if configuration == nil || services.configurationPath == nil {
+          if name == "/reset", argument.isEmpty {
+            if configuration == nil || services.configurationPath == nil {
               await terminal.line("error: No writable configuration is active.", to: .standardError)
             } else {
               let id = UUID()
@@ -5038,7 +5036,7 @@ struct MaiCLI {
             let commandCatalogs = catalogs
             let commandChatProcess = chatProcessIDs[session.id]
             let changesInput =
-              name == "/theme" || name == "/highlight" || name == "/set"
+              name == "/theme" || name == "/reset" || name == "/highlight" || name == "/set"
               && argument.split(whereSeparator: \.isWhitespace).first?.lowercased()
                 .hasPrefix("ui.") == true
             let commandText = text
@@ -5082,7 +5080,7 @@ struct MaiCLI {
           // A cancellation has an ordered interrupt event waiting behind this
           // command; that event releases exactly one prompt. Signalling here as
           // well would leave an extra semaphore permit and start two readers.
-          if name == "/highlight" || name == "/set"
+          if name == "/highlight" || (name == "/set" || name == "/reset")
             && argument.lowercased().hasPrefix("ui.highlight")
           {
             screen?.configure(ui: tintedUI(configuration?.ui ?? .init(), project: project))
@@ -6355,7 +6353,28 @@ struct MaiCLI {
         catalogs: &catalogs,
         terminal: terminal)
     case "/reset":
-      await terminal.line("Type /reset at the REPL prompt, then choose reset or cancel.")
+      guard !argument.isEmpty else {
+        await terminal.line("Type /reset at the REPL prompt, then choose reset or cancel.")
+        break
+      }
+      do {
+        let setting = try resetSetting(argument, profile: session.profile)
+        if setting.theme {
+          await handleThemeColorCommand(
+            [setting.key, setting.value], configuration: &configuration,
+            configurationPath: services.configurationPath, terminal: terminal)
+        } else {
+          if setting.key == "tool.proxy" { session.profile.proxyExposedTools = nil }
+          await handleSetCommand(
+            "\(setting.key) \(setting.value)", session: &session, runtime: runtime,
+            plugins: plugins, providerBaseURLs: services.providerBaseURLs,
+            approvalHandler: services.approvalHandler, configuration: &configuration,
+            configurationPath: services.configurationPath, catalogs: &catalogs, terminal: terminal,
+            restoringDefault: true)
+        }
+      } catch {
+        await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+      }
     case "/theme":
       await handleThemeCommand(
         argument, configuration: &configuration, configurationPath: services.configurationPath,
@@ -10910,6 +10929,50 @@ struct MaiCLI {
     }
   }
 
+  /// Use the same defaults and setters as a full reset, without changing sibling settings.
+  static func resetSetting(_ argument: String, profile: SessionProfile) throws
+    -> (key: String, value: String, theme: Bool)
+  {
+    let words = argument.split(whereSeparator: \.isWhitespace)
+    guard words.count == 1 else {
+      throw JSONRPCError.invalidParams("Usage: /reset SETTING (or /reset to reset everything)")
+    }
+    let requested = String(words[0]).lowercased()
+    var key = (limitSettingKeys[requested] ?? recoverySettingKeys[requested] ?? requested).lowercased()
+    if delegationSettingKeys.contains(key) { key = "delegation" }
+    if toolCallingStrategyKeys.contains(key) { key = "tool.calling" }
+    if toolProxyKeys.contains(key) { key = "tool.proxy" }
+    if ["tools.auto", "tool.automatic"].contains(key) { key = "tool.auto" }
+    if key == "ui.toolresultlines" { key = "ui.tools" }
+    let configuration = MaiConfiguration()
+    let themeKey = key.hasPrefix("ui.") ? String(key.dropFirst(3)) : key
+    if let value = TerminalTheme.value(themeKey, in: configuration.ui) {
+      return (themeKey, value, true)
+    }
+    var defaults = profile
+    defaults.resetSettings()
+    let special = [
+      "tool.aproval": configuration.approvals.mode.rawValue,
+      "debug": "false", "debugfile": "default", "airplane": "off",
+      "redact": configuration.redact.rawValue, "delegation": defaults.toolDelegation.rawValue,
+      "effort": defaults.options.reasoningEffort ?? "auto", "ui.editor": "none",
+      "ctx.compact": defaults.autocompact.isEnabled ? String(defaults.autocompact.tokens) : "off",
+    ]
+    if let value = special[key] { return (key, value, false) }
+    let settings = limitSettings(defaults.limits) + recoverySettings(defaults)
+      + toolSettings(defaults) + uiSettings(configuration.ui)
+      + exportSettings(configuration.documentExport) + useSettings(configuration.use)
+      + (try voiceSettings(configuration.voice))
+    for setting in settings {
+      guard let separator = setting.range(of: " = ") else { continue }
+      let name = String(setting[..<separator.lowerBound])
+      if name.lowercased() == key {
+        return (name, String(setting[separator.upperBound...]), false)
+      }
+    }
+    throw JSONRPCError.invalidParams("Unknown setting '\(argument)'. /set lists settings.")
+  }
+
   /// Called only after the person answers the REPL's reset confirmation.
   private static func resetSettings(
     session: inout REPLSession,
@@ -11000,7 +11063,8 @@ struct MaiCLI {
     configuration: inout MaiConfiguration?,
     configurationPath: String?,
     catalogs: inout [MCPServerCatalog],
-    terminal: TerminalWriter
+    terminal: TerminalWriter,
+    restoringDefault: Bool = false
   ) async {
     // Recognize old provider URL spellings so they point to the editor rather
     // than being mistaken for an unrelated setting.
@@ -11059,7 +11123,7 @@ struct MaiCLI {
           throw VoiceError.unavailable("No writable configuration is active.")
         }
         draft.voice = try updatedVoiceSettings(settings, key: key, value: value)
-        if key == "input" || key == "output" {
+        if !restoringDefault && (key == "input" || key == "output") {
           let kind = key == "input" ? draft.voice.input : draft.voice.output
           let kinds = await plugins.voiceProviderKinds()
           guard kinds.contains(kind) else {
@@ -11070,7 +11134,7 @@ struct MaiCLI {
           !draft.providers.contains(where: { $0.id == id }) {
           throw VoiceError.unavailable("Unknown voice.provider '\(id)'. Choose a configured provider ID from /providers, or null to clear it.")
         }
-        if key == "voice", draft.voice.output == "system" {
+        if !restoringDefault, key == "voice", draft.voice.output == "system" {
           let factory = try await plugins.voiceFactory(kind: "system")
           _ = try await factory.makeOutput(settings: draft.voice, configuration: draft,
             environment: ProcessInfo.processInfo.environment)
@@ -11081,7 +11145,7 @@ struct MaiCLI {
         if ["language", "output"].contains(key), draft.voice.voice != "default" {
           await terminal.line("Speech still uses voice ID '\(draft.voice.voice)'. Use /set voice.voice default to follow the language, or /voice voices to choose an ID for output=\(draft.voice.output).")
         }
-        if ["language", "input"].contains(key), draft.voice.input == "system" {
+        if !restoringDefault, ["language", "input"].contains(key), draft.voice.input == "system" {
           let factory = try await plugins.voiceFactory(kind: "system")
           let catalog = try await factory.catalog(for: .input, settings: draft.voice, configuration: draft,
             environment: ProcessInfo.processInfo.environment)
@@ -14466,6 +14530,13 @@ struct MaiCLI {
     for key in ConfiguredVoice.settingNames where key.hasSuffix("Command") {
       values.append("/set voice.\(key) null")
     }
+    let resetKeys = Set(values.compactMap { candidate -> String? in
+      let words = candidate.split(whereSeparator: \.isWhitespace)
+      guard words.first == "/set", words.count > 1, !words[1].hasSuffix(".") else { return nil }
+      return String(words[1])
+    })
+    values += resetKeys.sorted().map { "/reset \($0)" }
+    values += TerminalTheme.keys.map { "/reset ui.\($0)" }
     values += REPLModelCatalog.commandPrefixes
     for tint in AgentProjectTint.presetNames {
       values.append("/project tint \(tint)")
@@ -14914,7 +14985,7 @@ struct MaiCLI {
     /queue                 Manage messages waiting for an agent
     /remote                Serve, pair, or connect to remote hosts
     /reply [WIDTH]         Reply in $EDITOR with the last reply quoted
-    /reset                 Restore stock /set defaults after confirmation
+    /reset [SETTING]       Restore one default, or all defaults after confirmation
     /set [SETTING VALUE]   Show or change settings
     /skills                Manage or send skills
     /stats                 Show model usage and performance
@@ -15119,7 +15190,7 @@ struct MaiCLI {
   private static let setHelp = """
     Settings commands:
       /set                         List current settings and their values
-      /reset                       Restore stock /set defaults after reset/cancel confirmation
+      /reset [SETTING]             Restore one default, or all after reset/cancel confirmation
       /set effort [LEVEL] [TEXT]   Show or set reasoning effort and optional guidance
       /set tool.aproval MODE [session]  yolo, ask (default), or smart; saved for this project unless session is given
       /set debug <true|false>       Log model calls, tool activity, and run events for this project
@@ -15183,6 +15254,11 @@ struct MaiCLI {
     """
 
   private static let resetHelp = """
+    /reset SETTING restores just that setting to its stock default, without confirmation.
+    Examples: /reset effort, /reset ui.scrollbar, /reset voice.speed.
+    Theme colors also accept their UI key, for example /reset ui.bgcolor.
+    Other settings and active voice are kept; voice settings apply after restarting voice.
+
     /reset restores every /set option to its stock default: voice, UI, export,
     use.*, airplane, redaction, the current agent's effort, limits, retry, context,
     delegation and tool-calling settings, and this project's approval/debug settings.

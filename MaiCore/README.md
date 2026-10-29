@@ -77,6 +77,9 @@ Settings save to the active `--config`
 file, `./pmai.json`, or `~/.config/pmai/config.json` by default.
 
 Use `/reset` to recover from voice, context, or tool-calling settings problems.
+Use `/reset NAME`, such as `/reset effort`, `/reset ui.scrollbar`, or
+`/reset voice.speed`, to restore just one setting immediately. Theme colors also
+accept their UI key, such as `/reset ui.bgcolor`. Other settings stay as they are.
 Choose `reset` to restore all `/set` options to stock defaults, or `cancel` / Ctrl+C
 to leave them unchanged. This resets global settings, the current agent's options,
 and this project's approval/debug settings, saves the defaults, and stops active

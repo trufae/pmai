@@ -41,8 +41,8 @@ def main():
         }))
         args = [binary, '--config', str(config), '--home', str(root / 'home'), '--no-markdown']
 
-        def run(commands):
-            return run_repl(args, commands, cwd=root, env=env)
+        def run(commands, allow_errors=False):
+            return run_repl(args, commands, cwd=root, env=env, allow_errors=allow_errors)
 
         stock = settings(run(['/set']))
         assert len(stock) > 40, stock
@@ -72,10 +72,31 @@ def main():
         run(['/set ' + change for change in changes])
         modified = settings(run(['/set']))
         assert modified != stock
+        # Reset each exposed setting individually, preserving every other one.
+        expected = modified.copy()
+        for key in stock:
+            output = run(['/reset ' + key, '/set'])
+            assert 'reset · cancel' not in output, (key, output)
+            expected[key] = stock[key]
+            current = settings(output)
+            assert current == expected, (key, expected, current, output)
+        # Theme colors use their UI keys and reset independently too.
+        run(['/theme color bgcolor #123456', '/theme color fgprompt cyan'])
+        themed = json.loads(config.read_text())
+        run(['/reset ui.bgcolor'])
+        themed['ui']['bgcolor'] = ''
+        assert json.loads(config.read_text()) == themed
+        before_invalid = config.read_bytes()
+        for command in ['/reset unknown', '/reset ui.', '/reset voice', '/reset ui.scroll 2', '/reset reset']:
+            output = run([command], allow_errors=True)
+            assert 'error:' in output and 'reset · cancel' not in output, output
+            assert config.read_bytes() == before_invalid, command
+        run(['/set ' + change for change in changes])
+        assert settings(run(['/set'])) == modified
         before = config.read_bytes()
         for commands in [
             ['/reset', 'cancel'], ['/reset'], ['/reset', 'yes', 'cancel'],
-            ['/reset', '/set effort'], ['/reset reset'],
+            ['/reset', '/set effort'],
         ]:
             output = run(commands)
             assert 'Reset all /set options to stock defaults.' not in output, output
@@ -172,7 +193,7 @@ def main():
                           ['/reset', 'reset'], cwd=root, env=env)
         assert 'Reset all /set options to stock defaults.' in output, output
         assert json.loads(empty.read_text())['agents'] == []
-    print('PASS /reset: stock defaults, confirmation, cancel, EOF, Ctrl+C, both layouts, persistence')
+    print('PASS /reset: individual defaults and colors, stock defaults, confirmation, cancel, EOF, Ctrl+C, both layouts, persistence')
 
 
 if __name__ == '__main__':
