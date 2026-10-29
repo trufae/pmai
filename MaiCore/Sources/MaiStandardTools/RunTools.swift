@@ -98,6 +98,12 @@ public struct MaiRunTool: AgentTool {
     #endif
   }
 
+  func timeoutSeconds(arguments: [String: JSONValue], agentDefault: Int?) -> TimeInterval {
+    min(max(arguments["timeout_seconds"]?.numberValue
+      ?? agentDefault.map(TimeInterval.init) ?? configuration.defaultTimeout, 1),
+      MaiRunConfiguration.maximumTimeout)
+  }
+
   #if os(macOS) || os(Linux) || os(Android)
     enum OutputMode: String {
       /// Return output up to the configured limit; spill any excess to a file.
@@ -127,11 +133,7 @@ public struct MaiRunTool: AgentTool {
       }
       let launcher = try MaiHostProcess.resolve(configuration.shell, environment: environment)
       let workingDirectory = try Self.workingDirectory(arguments["cwd"]?.stringValue)
-      let timeout = min(
-        max(
-          arguments["timeout_seconds"]?.numberValue
-            ?? defaultTimeout.map(TimeInterval.init) ?? configuration.defaultTimeout, 1),
-        MaiRunConfiguration.maximumTimeout)
+      let timeout = timeoutSeconds(arguments: arguments, agentDefault: defaultTimeout)
       let stdin = arguments["stdin"]?.stringValue
       let script = try Self.requiredText(arguments, key: "script", alias: "command")
       let outputMode = try Self.outputMode(arguments["output"]?.stringValue)
