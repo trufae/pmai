@@ -12,7 +12,7 @@ public final class MaiFileAccessPolicy: @unchecked Sendable, Equatable {
     public var descendants: Bool
 
     public init(url: URL, access: Access, descendants: Bool = true) {
-      self.url = url.standardizedFileURL.resolvingSymlinksInPath()
+      self.url = MaiFileAccessPolicy.resolvedURL(url)
       self.access = access
       self.descendants = descendants
     }
@@ -29,18 +29,21 @@ public final class MaiFileAccessPolicy: @unchecked Sendable, Equatable {
   private var outside: Access
   private var hidden: Access
   private var sensitive: Access
+  private var symlinks: Access
   private var outsideConfigured = false
   private var revision = 0
   private let confirmation: Confirmation
 
   public init(
     outside: Access = .deny, hidden: Access = .allow, sensitive: Access = .ask,
+    symlinks: Access = .ask,
     defaultAllowedURLs: [URL] = [],
     confirmation: @escaping Confirmation
   ) {
     self.outside = outside
     self.hidden = hidden
     self.sensitive = sensitive
+    self.symlinks = symlinks
     self.defaultAllowedURLs = defaultAllowedURLs.map {
       $0.standardizedFileURL.resolvingSymlinksInPath()
     }
@@ -52,9 +55,10 @@ public final class MaiFileAccessPolicy: @unchecked Sendable, Equatable {
   }
 
   public func snapshot() -> (
-    rules: [Rule], outside: Access, outsideConfigured: Bool, hidden: Access, sensitive: Access, revision: Int
+    rules: [Rule], outside: Access, outsideConfigured: Bool, hidden: Access, sensitive: Access,
+    symlinks: Access, revision: Int
   ) {
-    lock.withLock { (rules, outside, outsideConfigured, hidden, sensitive, revision) }
+    lock.withLock { (rules, outside, outsideConfigured, hidden, sensitive, symlinks, revision) }
   }
 
   public func setOutside(_ access: Access) {
@@ -79,6 +83,13 @@ public final class MaiFileAccessPolicy: @unchecked Sendable, Equatable {
     }
   }
 
+  public func setSymlinks(_ access: Access) {
+    lock.withLock {
+      symlinks = access
+      revision += 1
+    }
+  }
+
   public func set(_ rule: Rule) {
     lock.withLock {
       rules.removeAll { $0.url == rule.url }
@@ -88,24 +99,30 @@ public final class MaiFileAccessPolicy: @unchecked Sendable, Equatable {
   }
 
   public func remove(_ url: URL) {
-    let resolved = url.standardizedFileURL.resolvingSymlinksInPath()
+    let resolved = Self.resolvedURL(url)
     lock.withLock {
       rules.removeAll { $0.url == resolved }
       revision += 1
     }
   }
 
-  public func access(to url: URL, insideWorkspace: Bool) -> Access {
-    let resolved = url.standardizedFileURL.resolvingSymlinksInPath()
+  public func access(
+    to url: URL, insideWorkspace: Bool, throughWorkspaceSymlink: Bool = false
+  ) -> Access {
+    let resolved = Self.resolvedURL(url)
     let state = snapshot()
-    let matches = state.rules.filter { $0.contains(resolved) }
+    let matches = state.rules.filter {
+      $0.contains(resolved) || ($0.access != .allow && $0.contains(url.standardizedFileURL))
+    }
     if matches.contains(where: { $0.access == .deny }) { return .deny }
     if matches.contains(where: { $0.access == .ask }) { return .ask }
     if matches.contains(where: { $0.access == .allow }) { return .allow }
     if defaultAllowedURLs.contains(where: { Self.contains(resolved, in: $0) }) { return .allow }
+    if throughWorkspaceSymlink, state.symlinks == .deny { return .deny }
     if state.hidden != .allow, Self.isHidden(url) || Self.isHidden(resolved) { return state.hidden }
     if state.sensitive != .allow, Self.isSensitive(url) || Self.isSensitive(resolved) { return state.sensitive }
     if insideWorkspace { return .allow }
+    if throughWorkspaceSymlink { return state.symlinks }
     return state.outside
   }
 
@@ -137,6 +154,25 @@ public final class MaiFileAccessPolicy: @unchecked Sendable, Equatable {
     let parent = directory.path == "/" ? "/" : directory.path + "/"
     return url.path == directory.path || url.path.hasPrefix(parent)
   }
+
+  /// Foundation may leave a nonexistent destination unresolved. Resolve its
+  /// existing ancestor so creating a file through a link uses the same policy
+  /// as reading it. Preserve dangling symlink entries for rename/delete checks.
+  static func resolvedURL(_ url: URL) -> URL {
+    var ancestor = url.standardizedFileURL
+    var suffix: [String] = []
+    while !FileManager.default.fileExists(atPath: ancestor.path),
+      (try? FileManager.default.destinationOfSymbolicLink(atPath: ancestor.path)) == nil
+    {
+      let parent = ancestor.deletingLastPathComponent()
+      if parent == ancestor { break }
+      suffix.append(ancestor.lastPathComponent)
+      ancestor = parent
+    }
+    return suffix.reversed().reduce(ancestor.resolvingSymlinksInPath().standardizedFileURL) {
+      $0.appendingPathComponent($1)
+    }.standardizedFileURL
+  }
 }
 
 extension MaiFileWorkspaceConfiguration {
@@ -146,7 +182,7 @@ extension MaiFileWorkspaceConfiguration {
   }
 
   public func containsAllowedPath(_ url: URL) -> Bool {
-    let resolved = url.standardizedFileURL.resolvingSymlinksInPath()
+    let resolved = MaiFileAccessPolicy.resolvedURL(url)
     if MaiFileAccessPolicy.contains(resolved, in: effectiveRootURL) { return true }
     return additionalAllowedURLs.contains { allowed in
       let allowed = allowed.standardizedFileURL.resolvingSymlinksInPath()
@@ -157,14 +193,34 @@ extension MaiFileWorkspaceConfiguration {
     }
   }
 
+  /// Check the spelling under an allowed directory before resolving its links.
+  /// Default scratch paths are not workspace roots and cannot grant link escapes.
+  public func followsWorkspaceSymlink(_ url: URL) -> Bool {
+    let lexical = url.standardizedFileURL
+    guard !containsAllowedPath(lexical) else { return false }
+    let grantedDirectories = pathAccessPolicy?.snapshot().rules
+      .filter { $0.access == .allow && $0.descendants }.map(\.url) ?? []
+    return ([effectiveRootURL] + additionalAllowedURLs + grantedDirectories).contains { root in
+      let root = root.standardizedFileURL.resolvingSymlinksInPath()
+      var directory: ObjCBool = false
+      return FileManager.default.fileExists(atPath: root.path, isDirectory: &directory)
+        && directory.boolValue && MaiFileAccessPolicy.contains(lexical, in: root)
+    }
+  }
+
   func permits(_ url: URL) -> Bool {
     guard let pathAccessPolicy else { return containsAllowedPath(url) }
-    switch pathAccessPolicy.access(to: url, insideWorkspace: containsAllowedPath(url)) {
+    let resolved = MaiFileAccessPolicy.resolvedURL(url)
+    let throughSymlink = followsWorkspaceSymlink(url)
+      || (confirmedPolicyRevision == pathAccessPolicy.snapshot().revision
+        && followedSymlinks.contains { MaiFileAccessPolicy.contains(resolved, in: $0.target) })
+    switch pathAccessPolicy.access(
+      to: url, insideWorkspace: containsAllowedPath(url), throughWorkspaceSymlink: throughSymlink)
+    {
     case .allow: return true
     case .deny: return false
     case .ask:
       guard confirmedPolicyRevision == pathAccessPolicy.snapshot().revision else { return false }
-      let resolved = url.standardizedFileURL.resolvingSymlinksInPath()
       return confirmedPathURLs.contains {
         if pathAccessPolicy.snapshot().sensitive != .allow, MaiFileAccessPolicy.isSensitive(resolved) {
           return resolved == $0
@@ -189,7 +245,7 @@ extension MaiFileWorkspaceConfiguration {
         (expanded.hasPrefix("/")
         ? URL(fileURLWithPath: expanded) : effectiveRootURL.appendingPathComponent(expanded))
         .standardizedFileURL
-      let resolvedTarget = target.resolvingSymlinksInPath().standardizedFileURL
+      let resolvedTarget = MaiFileAccessPolicy.resolvedURL(target)
       var targets = [target]
       if recursive || mutatingTree {
         for rule in pathAccessPolicy.snapshot().rules
@@ -209,16 +265,31 @@ extension MaiFileWorkspaceConfiguration {
         }
       }
       for url in targets {
-        switch pathAccessPolicy.access(to: url, insideWorkspace: containsAllowedPath(url)) {
+        let throughSymlink = followsWorkspaceSymlink(url)
+        let resolved = MaiFileAccessPolicy.resolvedURL(url)
+        switch pathAccessPolicy.access(
+          to: url, insideWorkspace: containsAllowedPath(url), throughWorkspaceSymlink: throughSymlink)
+        {
         case .deny: throw MaiFileAccessError.denied(url.path)
-        case .allow: continue
+        case .allow: break
         case .ask:
-          let resolved = url.resolvingSymlinksInPath().standardizedFileURL
-          if result.confirmedPathURLs.contains(resolved) { continue }
-          guard try await pathAccessPolicy.confirm(resolved, operation: operation) else {
-            throw MaiFileAccessError.notApproved(url.path)
+          if !result.confirmedPathURLs.contains(resolved) {
+            let description = throughSymlink ? "\(operation) (follow symlink from \(url.path))" : operation
+            guard try await pathAccessPolicy.confirm(resolved, operation: description) else {
+              throw MaiFileAccessError.notApproved(url.path)
+            }
+            result.confirmedPathURLs.append(resolved)
           }
-          result.confirmedPathURLs.append(resolved)
+        }
+        // Tool implementations use canonical URLs after resolving the request.
+        // Keep this provenance only for this operation, never as a session grant.
+        if throughSymlink {
+          var source = url
+          while followsWorkspaceSymlink(source.deletingLastPathComponent()) {
+            source.deleteLastPathComponent()
+          }
+          result.followedSymlinks.append(.init(
+            source: source, target: MaiFileAccessPolicy.resolvedURL(source)))
         }
       }
       // Searches omit hidden entries. Tree mutations still affect them, so
@@ -259,7 +330,7 @@ extension MaiFileWorkspaceConfiguration {
             case .allow: continue
             case .deny: throw MaiFileAccessError.denied(affectedURL.path)
             case .ask:
-              let resolved = affectedURL.resolvingSymlinksInPath().standardizedFileURL
+              let resolved = MaiFileAccessPolicy.resolvedURL(affectedURL)
               if !result.confirmedPathURLs.contains(where: {
                 MaiFileAccessPolicy.contains(resolved, in: $0)
               }) {

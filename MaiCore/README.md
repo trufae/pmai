@@ -1665,12 +1665,19 @@ The `.tmp` scratch directory name is exempt from the hidden-path default;
 sensitive filenames, other hidden ancestors, and explicit path rules still apply.
 
 `/path outside ask|deny` controls paths outside the allowed scope (default: deny).
+`/path symlinks ask|allow|deny` controls links inside the workspace or an approved
+directory that resolve outside allowed paths (default: ask). `ask` shows the link
+path and resolved target for each operation; `allow` treats access through those
+links as workspace access; `deny` rejects it. Explicit target rules and hidden or
+sensitive path checks still apply. Following a link does not grant session access
+to its target through a direct outside path. Searches still do not descend through
+directory symlinks; an explicitly requested linked directory can be listed or searched.
 Path prompts require a person even in `yolo` mode; unattended calls are rejected.
 Paths explicitly named in prompts retain normal tool approval: `yolo` adds them
 automatically, while `ask` and `smart` ask the person. Each addition prints a
 `/path` hint so the grant can be reviewed, denied, or changed to ask. Setting
 `outside deny` blocks these automatic additions; `outside ask` requires a person.
-Rules, the hidden-path default, and the outside policy are saved under
+Rules and the hidden, sensitive, symlink, and outside policies are saved under
 `fileAccess` in the active configuration and survive restarts. Automatic prompt
 grants remain session-only. The policy applies to Files and `vdb` tools including
 child agents, and checks resolved symlink targets. Searches omit denied subtrees, and

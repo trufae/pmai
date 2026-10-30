@@ -20,6 +20,11 @@ public struct MaiFileWorkspaceConfiguration: Equatable, Sendable {
   /// Optional live, host-owned policy shared by all Files tools and child agents.
   public var pathAccessPolicy: MaiFileAccessPolicy?
   var confirmedPathURLs: [URL] = []
+  struct FollowedSymlink: Equatable, Sendable {
+    var source: URL
+    var target: URL
+  }
+  var followedSymlinks: [FollowedSymlink] = []
   var confirmedPolicyRevision: Int?
 
   public init(
@@ -130,7 +135,7 @@ public struct MaiFileWorkspaceTool: AgentTool {
         "File paths are checked by the Files tool against its workspace and approved paths, including symlinks. Write enabled: \(configuration.writeEnabled). Approval never bypasses those checks."
         + (configuration.pathAccessPolicy.map { policy in
           let state = policy.snapshot()
-          return " Outside paths: \(state.outside.rawValue). Hidden paths: \(state.hidden.rawValue). Path rules: "
+          return " Outside paths: \(state.outside.rawValue). Hidden paths: \(state.hidden.rawValue). Workspace symlinks: \(state.symlinks.rawValue). Path rules: "
             + state.rules.map { "\($0.access.rawValue) \($0.url.path)" }.joined(separator: ", ")
         } ?? "")
     )
@@ -2135,8 +2140,17 @@ struct MaiFileWorkspace: Sendable {
   private func relativePath(_ url: URL) -> String {
     // Listings must name the entry itself so deleting a listed link cannot
     // accidentally turn into deleting its target.
-    let resolvedPath = url.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
+    var resolvedPath = url.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
       .appendingPathComponent(url.lastPathComponent).standardizedFileURL.path
+    // Keep subsequent tool calls on the authorized workspace spelling, including
+    // paths returned by listings and continuation hints for partial reads.
+    if let link = configuration.followedSymlinks
+      .filter({ MaiFileAccessPolicy.contains(URL(fileURLWithPath: resolvedPath), in: $0.target) })
+      .max(by: { $0.target.path.count < $1.target.path.count })
+    {
+      let suffix = resolvedPath.dropFirst(link.target.path == "/" ? 1 : link.target.path.count + 1)
+      resolvedPath = link.source.appendingPathComponent(String(suffix)).standardizedFileURL.path
+    }
     if resolvedPath == rootURL.path { return "." }
     if resolvedPath.hasPrefix(rootURL.path + "/") {
       return String(resolvedPath.dropFirst(rootURL.path.count + 1))

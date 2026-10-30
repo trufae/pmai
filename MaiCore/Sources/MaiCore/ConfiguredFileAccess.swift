@@ -22,6 +22,8 @@ public struct ConfiguredFileAccess: Codable, Equatable, Sendable {
   public var outside: Access?
   public var hidden: Access
   public var sensitive: Access
+  /// Access through workspace symlinks whose targets are outside allowed paths.
+  public var symlinks: Access
   public var rules: [Rule]
 
   /// Built-in scratch space remains available with older saved configurations.
@@ -38,15 +40,17 @@ public struct ConfiguredFileAccess: Codable, Equatable, Sendable {
 
   public init(
     outside: Access? = nil, hidden: Access = .ask, sensitive: Access = .ask,
+    symlinks: Access = .ask,
     rules: [Rule] = ConfiguredFileAccess.defaultRules
   ) {
     self.outside = outside
     self.hidden = hidden
     self.sensitive = sensitive
+    self.symlinks = symlinks
     self.rules = rules
   }
 
-  private enum CodingKeys: String, CodingKey { case outside, hidden, sensitive, rules }
+  private enum CodingKeys: String, CodingKey { case outside, hidden, sensitive, symlinks, rules }
 
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -54,6 +58,7 @@ public struct ConfiguredFileAccess: Codable, Equatable, Sendable {
       outside: try container.decodeIfPresent(Access.self, forKey: .outside),
       hidden: try container.decodeIfPresent(Access.self, forKey: .hidden) ?? .ask,
       sensitive: try container.decodeIfPresent(Access.self, forKey: .sensitive) ?? .ask,
+      symlinks: try container.decodeIfPresent(Access.self, forKey: .symlinks) ?? .ask,
       rules: try container.decodeIfPresent([Rule].self, forKey: .rules) ?? Self.defaultRules)
   }
 }

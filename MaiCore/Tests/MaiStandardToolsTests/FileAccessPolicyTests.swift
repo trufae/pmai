@@ -315,7 +315,7 @@ func filePathPolicySymlinkScope() async throws {
   let fixture = try PathFixture()
   defer { fixture.cleanup() }
   let confirmations = PathConfirmations()
-  let policy = MaiFileAccessPolicy(outside: .ask) { url, _ in await confirmations.decide(url) }
+  let policy = MaiFileAccessPolicy { url, _ in await confirmations.decide(url) }
   let file = fixture.external.appendingPathComponent("outside.txt")
   try FileManager.default.createSymbolicLink(
     at: fixture.root.appendingPathComponent("link.txt"), withDestinationURL: file)
@@ -323,6 +323,15 @@ func filePathPolicySymlinkScope() async throws {
     !(try await policyCall(fixture.tool(.read, policy: policy), ["path": .string("link.txt")]))
       .isError)
   #expect(await confirmations.urls == [file.standardizedFileURL.resolvingSymlinksInPath()])
+  try FileManager.default.createSymbolicLink(
+    at: fixture.root.appendingPathComponent("linked"), withDestinationURL: fixture.external)
+  let listed = try await policyCall(fixture.tool(.list, policy: policy), ["path": .string("linked")])
+  #expect(!listed.isError)
+  #expect(listed.text.contains("linked/outside.txt"))
+  await confirmations.reject()
+  #expect((try await policyCall(fixture.tool(.read, policy: policy), ["path": .string("link.txt")])).isError)
+  #expect((try await policyCall(fixture.tool(.read, policy: policy), ["path": .string(file.path)])).isError)
+  #expect(await confirmations.urls.count == 3)
   policy.setOutside(.deny)
   policy.set(.init(url: fixture.external, access: .allow))
   let sibling = fixture.base.appendingPathComponent("external-other.txt")
@@ -330,6 +339,56 @@ func filePathPolicySymlinkScope() async throws {
   #expect(
     (try await policyCall(fixture.tool(.read, policy: policy), ["path": .string(sibling.path)]))
       .isError)
+}
+
+@Test("Allowed workspace links support listings and edits without granting direct outside access or bypassing rules")
+func filePathPolicyAllowedSymlinks() async throws {
+  let fixture = try PathFixture()
+  defer { fixture.cleanup() }
+  let policy = MaiFileAccessPolicy(hidden: .deny, symlinks: .allow) { _, _ in
+    Issue.record("Allowed links and denied targets must not prompt")
+    return false
+  }
+  let link = fixture.root.appendingPathComponent("linked")
+  try FileManager.default.createSymbolicLink(at: link, withDestinationURL: fixture.external)
+  let listed = try await policyCall(fixture.tool(.list, policy: policy), ["path": .string("linked")])
+  #expect(!listed.isError)
+  #expect(listed.text.contains("linked/outside.txt"))
+  let written = try await policyCall(fixture.tool(.write, policy: policy), [
+    "path": .string("linked/new.txt"), "content": .string("through link"),
+  ])
+  #expect(!written.isError)
+  #expect(try String(contentsOf: fixture.external.appendingPathComponent("new.txt"), encoding: .utf8) == "through link")
+  let nested = try await policyCall(fixture.tool(.write, policy: policy), [
+    "path": .string("linked/nested/new.txt"), "content": .string("nested through link"),
+  ])
+  #expect(!nested.isError)
+  #expect(try String(contentsOf: fixture.external.appendingPathComponent("nested/new.txt"), encoding: .utf8) == "nested through link")
+  #expect((try await policyCall(fixture.tool(.read, policy: policy), [
+    "path": .string(fixture.external.appendingPathComponent("new.txt").path),
+  ])).isError)
+  let read = fixture.tool(.read, policy: policy)
+  policy.set(.init(url: fixture.external.appendingPathComponent("outside.txt"), access: .deny))
+  #expect((try await policyCall(read, ["path": .string("linked/outside.txt")])).isError)
+  try Data("hidden".utf8).write(to: fixture.external.appendingPathComponent(".hidden"))
+  #expect((try await policyCall(read, ["path": .string("linked/.hidden")])).isError)
+  policy.setSensitive(.deny)
+  try Data("secret".utf8).write(to: fixture.external.appendingPathComponent("key.pem"))
+  #expect((try await policyCall(read, ["path": .string("linked/key.pem")])).isError)
+  try FileManager.default.createSymbolicLink(
+    at: fixture.secret.appendingPathComponent("escape"), withDestinationURL: fixture.external)
+  policy.set(.init(url: fixture.secret, access: .deny))
+  #expect((try await policyCall(read, ["path": .string("private/escape/new.txt")])).isError)
+  policy.setSymlinks(.deny)
+  #expect((try await policyCall(read, ["path": .string("linked/new.txt")])).isError)
+  policy.setSymlinks(.allow)
+  policy.remove(fixture.external.appendingPathComponent("outside.txt"))
+  policy.setHidden(.allow)
+  policy.setSensitive(.allow)
+  let deleted = try await policyCall(fixture.tool(.delete, policy: policy), ["path": .string("linked")])
+  #expect(!deleted.isError)
+  #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) == nil)
+  #expect(FileManager.default.fileExists(atPath: fixture.external.appendingPathComponent("new.txt").path))
 }
 
 @Test("VDB respects revoked source paths and protected index files")

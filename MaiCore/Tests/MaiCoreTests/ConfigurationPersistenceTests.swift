@@ -125,7 +125,9 @@ func configuredFileAccessRoundTrip() throws {
   let decoder = JSONDecoder()
   #expect(try decoder.decode(ConfiguredFileAccess.self, from: Data("{}".utf8)) == .init())
   let settings = try decoder.decode(ConfiguredFileAccess.self, from: Data(
-    #"{"outside":"deny","hidden":"allow","rules":[]}"#.utf8))
+    #"{"outside":"deny","hidden":"allow","symlinks":"allow","rules":[]}"#.utf8))
+  #expect(settings.symlinks == .allow)
+  #expect(try decoder.decode(ConfiguredFileAccess.self, from: Data(#"{"outside":"deny"}"#.utf8)).symlinks == .ask)
   #expect(settings.rules.isEmpty)
   let configuration = MaiConfiguration(fileAccess: settings)
   #expect(try decoder.decode(MaiConfiguration.self,

@@ -1309,11 +1309,11 @@ private actor PromptFileAccess {
     environment: [String: String]
   ) {
     policy = MaiFileAccessPolicy(
-      hidden: settings.hidden, sensitive: settings.sensitive,
+      hidden: settings.hidden, sensitive: settings.sensitive, symlinks: settings.symlinks,
       defaultAllowedURLs: ConfiguredFileAccess.defaultAllowedPaths.map { URL(fileURLWithPath: $0) }
     ) { url, operation in
       try await approvalHandler.decidePromptPathAccess(
-        url, operation: operation, preparingTurn: operation == "/vdb", forceConfirmation: true)
+        url, operation: operation, preparingTurn: operation.hasPrefix("/vdb"), forceConfirmation: true)
     }
     if let outside = settings.outside { policy.setOutside(outside) }
     for rule in settings.rules {
@@ -2058,7 +2058,7 @@ struct MaiCLI {
       // Direct browsing has no agent session to request a tool approval in.
       // Ask rules remain inaccessible until the host explicitly allows them.
       let policy = MaiFileAccessPolicy(
-        hidden: access.hidden, sensitive: access.sensitive,
+        hidden: access.hidden, sensitive: access.sensitive, symlinks: access.symlinks,
         defaultAllowedURLs: ConfiguredFileAccess.defaultAllowedPaths.map { URL(fileURLWithPath: $0) }
       ) { _, _ in false }
       for rule in access.rules {
@@ -5075,7 +5075,7 @@ struct MaiCLI {
             let commandCatalogs = catalogs
             let commandChatProcess = chatProcessIDs[session.id]
             let changesInput =
-              name == "/theme" || name == "/reset" || name == "/highlight" || name == "/set"
+              name == "/vdb" || name == "/theme" || name == "/reset" || name == "/highlight" || name == "/set"
               && argument.split(whereSeparator: \.isWhitespace).first?.lowercased()
                 .hasPrefix("ui.") == true
             let commandText = text
@@ -5603,7 +5603,7 @@ struct MaiCLI {
       let url = (path.hasPrefix("/")
         ? URL(fileURLWithPath: path)
         : directory.appendingPathComponent(path))
-        .standardizedFileURL.resolvingSymlinksInPath()
+        .standardizedFileURL
       var isDirectory: ObjCBool = false
       guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
         FileManager.default.isReadableFile(atPath: url.path), !seen.contains(url)
@@ -5692,6 +5692,7 @@ struct MaiCLI {
         "  Outside allowed paths: \(badge(state.outside))",
         "  Hidden paths:          \(badge(state.hidden))",
         "  Sensitive paths:       \(badge(state.sensitive))",
+        "  Workspace symlinks:    \(badge(state.symlinks))",
         "  Prompt path grants:    \(state.outsideConfigured ? badge(state.outside) : "tool approval")",
         "",
         await terminal.paintHeading("Additional paths"),
@@ -5721,12 +5722,13 @@ struct MaiCLI {
     case "help":
       await terminal.line(pathHelp)
       return
-    case "hidden", "sensitive":
+    case "hidden", "sensitive", "symlinks":
       guard let policy = MaiFileAccessPolicy.Access(rawValue: value.lowercased()) else {
         await terminal.line("Usage: /path \(command) ask|deny|allow")
         return
       }
       if command == "hidden" { access.policy.setHidden(policy) }
+      else if command == "symlinks" { access.policy.setSymlinks(policy) }
       else { access.policy.setSensitive(policy) }
       await terminal.note("Files \(command) path access: \(policy.rawValue)")
     case "outside":
@@ -5783,6 +5785,7 @@ struct MaiCLI {
       let state = access.policy.snapshot()
       draft.fileAccess = .init(
         outside: state.outsideConfigured ? state.outside : nil, hidden: state.hidden, sensitive: state.sensitive,
+        symlinks: state.symlinks,
         rules: state.rules.map {
           .init(path: $0.url.path, access: $0.access, descendants: $0.descendants)
         })
@@ -5819,9 +5822,15 @@ struct MaiCLI {
       .standardizedFileURL.resolvingSymlinksInPath()
     var scopedConfiguration = fileConfiguration
     scopedConfiguration.additionalAllowedURLs = await promptFileAccess.all()
+    scopedConfiguration.pathAccessPolicy = promptFileAccess.policy
     let paths = promptPaths(in: text, relativeTo: workspace)
     var changed = false
-    for url in paths where !(await promptFileAccess.contains(url)) {
+    for path in paths {
+      // Naming a workspace link must not turn its per-operation approval into
+      // a direct external session grant, even when ordinary tools use yolo.
+      if scopedConfiguration.followsWorkspaceSymlink(path) { continue }
+      let url = path.resolvingSymlinksInPath().standardizedFileURL
+      if await promptFileAccess.contains(url) { continue }
       let access = promptFileAccess.policy.access(
         to: url, insideWorkspace: scopedConfiguration.containsAllowedPath(url))
       if access == .allow { continue }
@@ -14619,6 +14628,7 @@ struct MaiCLI {
       "/path", "/path list", "/path allow ", "/path deny ", "/path ask ",
       "/path del ", "/path outside ask", "/path outside deny", "/help path",
       "/path sensitive ask", "/path sensitive deny", "/path sensitive allow",
+      "/path symlinks ask", "/path symlinks deny", "/path symlinks allow",
       "/path hidden ask", "/path hidden deny", "/path hidden allow",
       "/providers", "/models ", "/provider ", "/provider add ", "/provider del ", "/provider rename ",
       "/provider add acp opencode", "/provider add acp claude", "/provider add acp codex",
@@ -15034,6 +15044,7 @@ struct MaiCLI {
     /path outside ask|deny Prompt or reject paths outside the allowed scope (default: deny)
     /path hidden ask|deny|allow Set the default for dotfiles and dot directories (default: ask)
     /path sensitive ask|deny|allow Set the default for key, credential, and encrypted files (default: ask)
+    /path symlinks ask|deny|allow Follow workspace symlinks to outside targets (default: ask)
 
     Paths resolve relative to the Files workspace; ~, absolute paths, and quoted
     paths with spaces work. Existing directories cover descendants. Add a trailing
@@ -15051,6 +15062,11 @@ struct MaiCLI {
     settings keep path prompts active. /set tool.approval yolo session also approves
     asks for this session only.
     Explicit deny rules still apply. Without a terminal, unresolved asks are rejected.
+    Symlinks inside the workspace or an approved directory can reach outside
+    targets: ask prompts for each operation, allow treats them as workspace paths,
+    and deny rejects them. Resolved target rules and hidden/sensitive checks still
+    apply. Direct outside paths keep the outside policy; following a link grants
+    no session access to its target. Searches do not descend through directory links.
     Only the person at the REPL can
     change these policies.
     Explicit prompt paths use normal tool approval to add a session grant and

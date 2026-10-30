@@ -68,6 +68,7 @@ def main():
             (root / '.env').write_text('HIDDEN SECRET')
             (root / 'server.pem').write_text('PRIVATE KEY FIXTURE')
             (external / 'outside.txt').write_text('EXTERNAL SECRET')
+            (root / 'linked').symlink_to(external, target_is_directory=True)
             (base / 'outside.txt').write_text('PROMPT GRANT')
             (root / 'new-cwd').mkdir()
             config = base / 'config.json'
@@ -132,6 +133,26 @@ def main():
             assert '/help path — commands and policy details' in output, output
             assert '\x1b[' not in output, output
             assert json.loads(config.read_text())['fileAccess']['rules'] == [], config.read_text()
+
+            # Link policy persists and only permits access through workspace paths.
+            config.write_text(original_config)
+            enqueue(call('files_list', path='linked'))
+            enqueue(call('files_read', path=str(external / 'outside.txt')))
+            output = run_repl(command, ['/path symlinks allow', 'List the link',
+                'Read direct outside', '/path'], cwd=root, env=env)
+            assert 'linked/outside.txt' in json.dumps(requests[-2]), requests[-2]
+            assert 'Files access denied' in json.dumps(requests[-1]), requests[-1]
+            assert 'Workspace symlinks:    allow' in output, output
+            assert json.loads(config.read_text())['fileAccess']['symlinks'] == 'allow'
+            output = run_repl(command, ['/path'], cwd=root, env=env)
+            assert 'Workspace symlinks:    allow' in output, output
+            requests.clear()
+            enqueue(call('files_read', path='linked/outside.txt'))
+            output = run_repl(command, ['/path symlinks ask', 'Inspect ./linked/outside.txt', '/path'],
+                              cwd=root, env=env)
+            assert 'was not approved' in json.dumps(requests[-1]), requests[-1]
+            assert '[session grant]' not in output, output
+            requests.clear()
 
             # Startup defaults require a person even for hidden prompt-named paths in yolo.
             config.write_text(original_config)
@@ -210,6 +231,26 @@ def main():
                 return expect_pty(master, process, pending, canonical(text), 20)
             try:
                 expect('pmai>')
+                # /vdb must keep the REPL reader parked while asking for access.
+                send('/vdb index linked')
+                expect('follow symlink from')
+                expect('approve [y/a/s/n/c]> ')
+                send('n')
+                expect('was not approved')
+                expect('pmai>')
+                # External workspace links prompt by default, including with outside deny.
+                for answer, final in [('y', 'LINK APPROVED'), ('n', 'LINK REJECTED')]:
+                    enqueue(call('files_read', path='linked/outside.txt'), final)
+                    send('Read ./linked/outside.txt')
+                    expect('follow symlink from')
+                    expect('approve [y/a/s/n/c]> ')
+                    send(answer)
+                    expect(final)
+                    if answer == 'y':
+                        assert 'EXTERNAL SECRET' in json.dumps(requests[-1]), requests[-1]
+                    else:
+                        assert 'was not approved' in json.dumps(requests[-1]), requests[-1]
+                requests.clear()
                 send('/path ask private')
                 expect(f'Files policy: ask {root / "private"}')
                 enqueue(call('files_read', path='private/secret.txt'), 'FIRST FINISHED')
