@@ -51,7 +51,7 @@ def main():
         saved = json.loads(config.read_text())
         assert saved['providers'] == [] and saved['agents'] == [], saved
         assert saved['fileAccess'] == {
-            'hidden': 'ask', 'sensitive': 'ask', 'rules': [
+            'hidden': 'ask', 'sensitive': 'ask', 'symlinks': 'ask', 'rules': [
                 {'path': path, 'access': 'ask', 'descendants': True}
                 for path in ['/etc', '/root', '~/.ssh', '~/.gnupg', '~/.config']]}, saved
         assert saved['approvals']['mode'] == 'ask', saved
