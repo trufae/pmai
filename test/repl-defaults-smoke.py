@@ -268,6 +268,20 @@ def main():
             assert provider['options'].get('args', []) == arguments, provider
             assert f'Chat: {name}::{name}' in run(['/model'], home=acp_home,
                                                   env={'PATH': str(root / 'no-executables')})
+            if name == 'claude':
+                # ACP's separate per-turn limit survives restarts on the provider.
+                acp_path = acp_home / '.config/pmai/config.json'
+                output = run(['/set acp.timeout 30m', '/set acp.'], home=acp_home)
+                assert 'acp.timeout = 30m' in output, output
+                assert json.loads(acp_path.read_text())['providers'][0]['timeout'] == 1800
+                assert 'acp.timeout = 30m' in run(['/set acp.timeout'], home=acp_home)
+                original = acp_path.read_bytes()
+                assert 'Usage: /set acp.timeout' in run(['/set acp.timeout -1'], home=acp_home)
+                assert acp_path.read_bytes() == original, 'invalid ACP timeout changed configuration'
+                for clear in ['/set acp.timeout off', '/reset acp.timeout']:
+                    run(['/set acp.timeout 1h', clear], home=acp_home)
+                    assert json.loads(acp_path.read_text())['providers'][0].get('timeout') is None
+                    assert 'acp.timeout = off' in run(['/set acp.timeout'], home=acp_home)
             if name == 'opencode':
                 run(['/provider add acp oc opencode acp', '/model oc::opencode/big-pickle'],
                     home=acp_home, env={'PATH': str(root / 'no-executables')})

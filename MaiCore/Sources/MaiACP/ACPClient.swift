@@ -19,7 +19,8 @@ public actor ACPClient {
     public var remoteWorkingDirectory: String?
     public var readClientFiles: Bool
     public var permission: ACPPermissionPolicy
-    public var promptTimeout: TimeInterval
+    /// Optional limit for the whole agent turn, including its tool loop.
+    public var promptTimeout: TimeInterval?
     public var webSocketURL: URL?
     public var bearerToken: String?
     public var sessionID: String?
@@ -33,7 +34,7 @@ public actor ACPClient {
       environment: [String: String]? = nil,
       workingDirectory: URL? = nil,
       permission: ACPPermissionPolicy = .auto,
-      promptTimeout: TimeInterval = 600,
+      promptTimeout: TimeInterval? = nil,
       remoteWorkingDirectory: String? = nil,
       readClientFiles: Bool = true,
       webSocketURL: URL? = nil,
@@ -457,7 +458,17 @@ public actor ACPClient {
       // The runtime retries ordinary transport failures. A prompt may already
       // have executed tools, so this error must require explicit user action.
       await disconnect()
-      throw ProviderPolicyError(code: "acp_prompt_failed", message: error.localizedDescription)
+      let message: String
+      if case JSONRPCTransportError.timedOut(ACP.Method.sessionPrompt) = error,
+        let timeout = configuration.promptTimeout
+      {
+        message = "ACP turn exceeded the configured provider timeout (\(timeout.formatted()) seconds). "
+          + "Increase the provider's timeout or set it to null for no turn limit. "
+          + "The agent may already have executed tools."
+      } else {
+        message = error.localizedDescription
+      }
+      throw ProviderPolicyError(code: "acp_prompt_failed", message: message)
     }
   }
 

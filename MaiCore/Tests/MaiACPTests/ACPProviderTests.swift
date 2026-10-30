@@ -11,6 +11,7 @@ import Testing
 
 @Test("ACP provider commands resolve adapters and validate remote options")
 func acpProviderCommands() throws {
+  #expect(ACPClient.Configuration(command: "claude-agent-acp").promptTimeout == nil)
   let opencode = try ACPProviderCommand.configuration(["opencode"])
   #expect(opencode.kind == "acp" && opencode.defaultModel == "opencode")
   #expect(opencode.options["args"] == .array([.string("acp")]))
@@ -68,7 +69,8 @@ func acpProviderCommands() throws {
         method, params = req.get('method'), req.get('params',{})
         if method == 'initialize':
             result = {'protocolVersion':1,'agentCapabilities':{'mcpCapabilities':{'http':True}}}
-        elif method == 'session/new':
+            if adapter == 'claude': result['agentCapabilities']['loadSession'] = True
+        elif method in ('session/new', 'session/load'):
             bridge = next((s['url'] for s in params['mcpServers'] if s['name']=='pmai'),None)
             if bridge: rpc('initialize',{})
             result = {'sessionId':'s'}
@@ -92,6 +94,8 @@ func acpProviderCommands() throws {
             text = params['prompt'][0]['text']
             if 'FAIL_PROMPT' in text:
                 send({'jsonrpc':'2.0','id':req['id'],'error':{'code':-32603,'message':'failed after side effect'}})
+                continue
+            if 'HANG_PROMPT' in text:
                 continue
             native = {'toolCallId':'native','title':'Starting search',
                       'rawInput':{'query':'needle'} if legacy else {},'status':'in_progress'}
@@ -309,6 +313,30 @@ func acpProviderCommands() throws {
     await #expect(throws: ProviderPolicyError.self) {
       _ = try await provider.complete(.init(model: "large", messages: [.user("FAIL_PROMPT")]))
     }
+    await provider.shutdown()
+  }
+
+  @Test(
+    "An explicit ACP timeout stops an unanswered turn and allows a fresh request after reconnecting",
+    .timeLimit(.minutes(1)))
+  func acpConfiguredPromptTimeout() async throws {
+    let provider = try #require(ACPConfiguredProviderFactory().makeProvider(
+      from: .init(
+        id: "test-acp", kind: "acp", timeout: 5,
+        options: [
+          "command": .string("/usr/bin/env"),
+          "args": .array(["python3", "-u", "-c", providerAgentScript, "claude"].map(JSONValue.string)),
+        ]), environment: ProcessInfo.processInfo.environment) as? ACPProvider)
+    do {
+      _ = try await provider.complete(.init(model: "large", messages: [.user("HANG_PROMPT")]))
+      Issue.record("Expected the configured turn timeout")
+    } catch let error as ProviderPolicyError {
+      #expect(error.code == "acp_prompt_failed")
+      #expect(error.message.contains("configured provider timeout"))
+      #expect(error.message.contains("null for no turn limit"))
+    }
+    let response = try await provider.complete(.init(model: "large", messages: [.user("Retry")]))
+    #expect(response.message.text.contains("Retry"))
     await provider.shutdown()
   }
 #endif

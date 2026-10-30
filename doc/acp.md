@@ -117,6 +117,17 @@ Use the model IDs returned by `/models`. Agents with no model catalog expose
 one default entry named after the provider. Model selection supports both
 `configOptions` and the older `models` / `session/set_model` API.
 
+ACP turns have no default time limit, since one turn can include a long tool
+loop. Use `/set acp.timeout 30m` to limit each turn to 30 minutes,
+`/set acp.timeout off` to remove the limit, and `/set acp.timeout` to see it.
+The setting is saved for the selected ACP provider and applies to new requests;
+each request starts a fresh timer. It is separate from `/set limits.maxSeconds`,
+which limits the whole run. `/reset acp.timeout` restores the default of off.
+The provider's top-level `timeout` stores the duration in seconds; absent or
+`null` means no turn limit.
+Cancellation and configured runtime deadlines still stop the run. Failed ACP
+prompts are not retried automatically because tools may already have executed.
+
 `/set effort LEVEL` selects the agent's advertised `thought_level` setting
 after selecting the model. Claude calls this setting `effort`; Codex calls it
 `reasoning_effort`. pmai uses a supported level: `max` selects the highest

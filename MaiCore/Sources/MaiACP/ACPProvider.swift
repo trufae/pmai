@@ -301,7 +301,7 @@ public struct ACPConfiguredProviderFactory: ConfiguredProviderFactory {
     var clientConfiguration = ACPClient.Configuration(
       command: command, arguments: arguments, environment: childEnvironment,
       workingDirectory: workingDirectory, permission: permission,
-      promptTimeout: configuration.timeout ?? 600,
+      promptTimeout: configuration.timeout,
       remoteWorkingDirectory: options["remoteCwd"]?.stringValue,
       readClientFiles: options["readClientFiles"]?.boolValue ?? (url == nil),
       webSocketURL: url,

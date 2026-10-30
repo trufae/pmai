@@ -560,9 +560,11 @@ actor TerminalWriter {
     closeRootLine()
     let message = redactor?.unredact(error.localizedDescription) ?? error.localizedDescription
     status("error: \(message)", color: .errorForeground)
-    if error is ProviderPolicyError {
+    if let error = error as? ProviderPolicyError {
       status(
-        "Automatic retries skipped for this policy rejection.",
+        error.code == "acp_prompt_failed"
+          ? "Automatic retries skipped because the agent may already have executed tools."
+          : "Automatic retries skipped for this policy rejection.",
         color: .warningForeground)
     }
   }

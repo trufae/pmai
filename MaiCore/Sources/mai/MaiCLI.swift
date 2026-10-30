@@ -10954,6 +10954,7 @@ struct MaiCLI {
     let special = [
       "tool.aproval": configuration.approvals.mode.rawValue,
       "debug": "false", "debugfile": "default", "airplane": "off",
+      "acp.timeout": "off",
       "redact": configuration.redact.rawValue, "delegation": defaults.toolDelegation.rawValue,
       "effort": defaults.options.reasoningEffort ?? "auto", "ui.editor": "none",
       "ctx.compact": defaults.autocompact.isEnabled ? String(defaults.autocompact.tokens) : "off",
@@ -11004,7 +11005,15 @@ struct MaiCLI {
       draft.upsertAgent(profile.agentDefinition)
     }
     let url = URL(fileURLWithPath: configurationPath)
+    var resetProvider: (any ChatProvider)?
     do {
+      if let index = draft.providers.firstIndex(where: {
+        $0.id == profile.provider.rawValue && $0.kind == ACPConfiguredProviderFactory.providerKind
+      }), draft.providers[index].timeout != nil {
+        draft.providers[index].timeout = nil
+        resetProvider = try await plugins.makeProvider(
+          from: draft.providers[index], environment: ProcessInfo.processInfo.environment)
+      }
       try draft.save(to: url)
       do {
         try await approvalHandler.resetSettings()
@@ -11017,6 +11026,12 @@ struct MaiCLI {
       return false
     }
     configuration = draft
+    if let resetProvider {
+      do { try await runtime.register(resetProvider, replacingExisting: true) }
+      catch {
+        await terminal.line("warning: Settings were saved but the ACP provider could not reload: \(error.localizedDescription)", to: .standardError)
+      }
+    }
     session.profile = profile
     session.touch()
     if !profile.provider.rawValue.isEmpty {
@@ -11182,7 +11197,8 @@ struct MaiCLI {
         "redact = \((configuration?.redact ?? .off).rawValue)",
         "delegation = \(session.profile.toolDelegation.rawValue)",
         effortDescription(session.profile.options),
-      ] + limitSettings(session.profile.limits) + recoverySettings(session.profile)
+      ] + acpSettings(provider: session.profile.provider, configuration: configuration)
+        + limitSettings(session.profile.limits) + recoverySettings(session.profile)
         + toolSettings(session.profile) + uiSettings(configuration?.ui ?? .init())
         + exportSettings(configuration?.documentExport ?? .init())
         + useSettings(configuration?.use ?? .init()) + voice
@@ -11196,6 +11212,47 @@ struct MaiCLI {
     let requestedKey = parts[0].lowercased()
     let key = requestedKey == "ui.toolresultlines" ? "ui.tools" : requestedKey
     let displayedKey = key
+    if key == "acp.timeout" {
+      guard var draft = configuration,
+        let index = draft.providers.firstIndex(where: {
+          $0.id == session.profile.provider.rawValue
+            && $0.kind == ACPConfiguredProviderFactory.providerKind
+        })
+      else {
+        await terminal.line("acp.timeout requires a selected ACP provider. Use /provider or /model to select one.")
+        return
+      }
+      guard parts.count > 1 else {
+        await listSettings(acpSettings(provider: session.profile.provider, configuration: draft), terminal: terminal)
+        await terminal.line("Whole ACP turn timeout, separate from limits.maxSeconds. Use off or a duration such as 30m; saved for this provider.")
+        return
+      }
+      let raw = parts.count == 2 ? parts[1].lowercased() : ""
+      if ["off", "none", "unlimited", "0", "default"].contains(raw) {
+        draft.providers[index].timeout = nil
+      } else if let seconds = parseDurationSeconds(raw) {
+        draft.providers[index].timeout = TimeInterval(seconds)
+      } else {
+        await terminal.line("Usage: /set acp.timeout <off|N|Nm|Nh>")
+        return
+      }
+      guard let configurationPath else {
+        await terminal.line("error: No writable configuration is active.", to: .standardError)
+        return
+      }
+      do {
+        let provider = try await plugins.makeProvider(
+          from: draft.providers[index], environment: ProcessInfo.processInfo.environment)
+        try draft.save(to: URL(fileURLWithPath: configurationPath))
+        try await runtime.register(provider, replacingExisting: true)
+        configuration = draft
+        await listSettings(acpSettings(provider: session.profile.provider, configuration: draft), terminal: terminal)
+        await terminal.line("Saved for provider '\(draft.providers[index].id)'; applies to new requests with a fresh timeout.")
+      } catch {
+        await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+      }
+      return
+    }
     if key == "airplane" {
       guard parts.count > 1 else {
         await terminal.line("airplane = \(await runtime.internetAccessPolicy().airplaneModeEnabled ? "on ✈" : "off")")
@@ -11539,7 +11596,7 @@ struct MaiCLI {
         || levelKeys.contains(key) || textKeys.contains(key)
     else {
       await terminal.line(
-        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, airplane, effort, tool.approval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, limits.runTimeoutSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.window, ctx.strategy, \((textKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), export.tools, export.thinking, redact, use.agentsmd, use.plan"
+        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, airplane, effort, acp.timeout, tool.approval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, limits.runTimeoutSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.window, ctx.strategy, \((textKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), export.tools, export.thinking, redact, use.agentsmd, use.plan"
       )
       return
     }
@@ -11695,6 +11752,15 @@ struct MaiCLI {
     for setting in settings.sorted(by: { $0.lowercased() < $1.lowercased() }) {
       await terminal.line(setting)
     }
+  }
+
+  private static func acpSettings(
+    provider: ProviderID, configuration: MaiConfiguration?
+  ) -> [String] {
+    guard let configured = configuration?.providers.first(where: {
+      $0.id == provider.rawValue && $0.kind == ACPConfiguredProviderFactory.providerKind
+    }) else { return [] }
+    return ["acp.timeout = \(configured.timeout.map { ModelUsageFormat.duration($0) } ?? "off")"]
   }
 
   private static func toolSettings(_ profile: SessionProfile) -> [String] {
@@ -14441,6 +14507,7 @@ struct MaiCLI {
       "/set limits.", "/set limits.maxToolCalls ", "/set limits.maxModelTurns ",
       "/set limits.maxSubagents ", "/set limits.maxSeconds ", "/set limits.maxTotalTokens ",
       "/set limits.runTimeoutSeconds ",
+      "/set acp.", "/set acp.timeout ", "/set acp.timeout off",
       "/set retry.", "/set retry.attempts ", "/set retry.delay ", "/set ctx.", "/set ctx.compact ",
       "/set ctx.compact off",
       "/set ctx.recent ", "/set ctx.recent auto",
@@ -15234,6 +15301,7 @@ struct MaiCLI {
       /set limits.maxTotalTokens <off|N|Nk>  Tokens a run may spend before it pauses
       /set limits.maxSeconds <off|N|Nm|Nh>   Wall-clock time a run may take before it pauses
       /set limits.runTimeoutSeconds <default|N|Nm>  Default shell timeout (1-600 seconds)
+      /set acp.timeout <off|N|Nm|Nh>  Whole ACP turn timeout for the selected provider (default off)
       /set retry.attempts N        Times a failed model call is repeated (default 2)
       /set retry.delay SECONDS     Wait before each retry (default 5)
       /set ctx.                    List context settings and their current values
