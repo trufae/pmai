@@ -21,6 +21,7 @@ public actor ACPProvider: ChatProvider {
   private var bridges: [String: ACPToolBridge] = [:]
   private var activeKeys: Set<String> = []
   private var userHistory: [String: [String]] = [:]
+  private var systemPrompts: [String: String] = [:]
   private var internetAccess = InternetAccessPolicy()
 
   public init(
@@ -66,36 +67,46 @@ public actor ACPProvider: ChatProvider {
       throw JSONRPCError.invalidParams("An ACP prompt is already running for this conversation")
     }
     defer { activeKeys.remove(key) }
+    let messages = ReasoningEffort.messages(
+      request.messages, options: request.options, model: request.model)
+    let instructions = messages.filter { $0.role == .system || $0.role == .developer }
+      .map(\.text).joined(separator: "\n\n")
     let users = request.messages.filter { $0.role == .user }.map(\.text)
-    if let previous = userHistory[key], !users.starts(with: previous) {
+    let promptChanged = configuration.replacePrompt && systemPrompts[key] != instructions
+    if configuration.replaceContext || promptChanged
+      || userHistory[key].map({ !users.starts(with: $0) }) == true
+    {
       await clients.removeValue(forKey: key)?.close()
       await bridges.removeValue(forKey: key)?.close()
       userHistory[key] = nil
     }
     let client = try await client(
       key: key, workingDirectory: configuration.workingDirectory ?? AgentExecutionScope.directory,
-      forwardTools: request.toolChoice != .none && !request.tools.isEmpty)
+      forwardTools: request.toolChoice != .none && !request.tools.isEmpty,
+      systemPrompt: configuration.replacePrompt ? instructions : nil)
+    systemPrompts[key] = instructions
     await bridges[key]?.configure(
       tools: request.toolChoice == .none ? [] : request.tools,
       execute: ProviderToolScope.execute)
     await client.configureInternetAccess(internetAccess)
-    // The runtime hands over the whole transcript each turn, but the ACP agent
-    // keeps its own session, so only the latest user turn is new to it.
+    // Agent-owned context only needs new user text. Replacement and native
+    // prompt changes seed a fresh session from the host's prepared transcript.
     let text: String
     if let previous = userHistory[key] {
       text = users.dropFirst(previous.count).joined(separator: "\n\n")
-    } else if configuration.sessionID != nil || sessionFile != nil {
+    } else if !configuration.replaceContext && !configuration.replacePrompt
+      && (configuration.sessionID != nil || sessionFile != nil)
+    {
       text = ACPProvider.latestUserText(request.messages)
     } else {
-      text = request.messages.filter { $0.role != .system }.map {
-        "[\($0.role.rawValue)]\n\($0.text)"
+      text = request.messages.filter { $0.role != .system && $0.role != .developer }.map {
+        "[\($0.role.rawValue)\($0.isPinned ? " pinned" : "")]\n"
+          + $0.content.map(Self.contextText).filter { !$0.isEmpty }.joined(separator: "\n")
       }.joined(separator: "\n\n")
     }
-    let messages = ReasoningEffort.messages(
-      request.messages, options: request.options, model: request.model)
-    let instructions = messages.filter { $0.role == .system }.map(\.text).joined(
-      separator: "\n\n")
-    let prompt = instructions.isEmpty ? text : "[pmai instructions]\n\(instructions)\n\n\(text)"
+    let prompt =
+      configuration.replacePrompt || instructions.isEmpty
+      ? text : "[pmai instructions]\n\(instructions)\n\n\(text)"
     let collector = TextCollector()
     let stopReason: ProviderStopReason
     do {
@@ -103,7 +114,7 @@ public actor ACPProvider: ChatProvider {
         try await client.selectModel(request.model)
       }
       try await client.selectReasoningEffort(request.options.reasoningEffort)
-      if sessionFile != nil {
+      if sessionFile != nil && !configuration.replaceContext && !configuration.replacePrompt {
         let remoteID = try await client.connect()
         try saveSession(remoteID, key: key)
       }
@@ -135,6 +146,7 @@ public actor ACPProvider: ChatProvider {
     let previousBridges = Array(bridges.values)
     bridges.removeAll()
     userHistory.removeAll()
+    systemPrompts.removeAll()
     for bridge in previousBridges { await bridge.close() }
   }
 
@@ -150,7 +162,9 @@ public actor ACPProvider: ChatProvider {
     (workingDirectory?.standardizedFileURL.path ?? ".") + "\u{0}" + (sessionID ?? "default")
   }
 
-  private func client(key: String, workingDirectory: URL?, forwardTools: Bool) async throws
+  private func client(
+    key: String, workingDirectory: URL?, forwardTools: Bool, systemPrompt: String?
+  ) async throws
     -> ACPClient
   {
     let needsBridge =
@@ -163,8 +177,12 @@ public actor ACPProvider: ChatProvider {
       userHistory[key] = nil
     }
     var configuration = self.configuration
+    configuration.systemPrompt = systemPrompt
+    if configuration.replaceContext || configuration.replacePrompt { configuration.sessionID = nil }
     if configuration.workingDirectory == nil { configuration.workingDirectory = workingDirectory }
-    if let sessionFile, FileManager.default.fileExists(atPath: sessionFile.path) {
+    if !configuration.replaceContext && !configuration.replacePrompt,
+      let sessionFile, FileManager.default.fileExists(atPath: sessionFile.path)
+    {
       configuration.sessionID = try JSONDecoder().decode(
         [String: String].self,
         from: Data(contentsOf: sessionFile))[key]
@@ -204,6 +222,25 @@ public actor ACPProvider: ChatProvider {
       if !text.isEmpty { return text }
     }
     return messages.last?.text ?? ""
+  }
+
+  /// A text handoff preserves tool evidence without executing historical calls.
+  private static func contextText(_ part: ContentPart) -> String {
+    switch part {
+    case .text(let text): return text
+    case .reasoning: return ""
+    case .toolCall(let call):
+      return "[tool call \(call.id) \(call.name)] \(call.arguments.compactJSONString)"
+    case .toolResult(let result):
+      let structured = result.structuredContent.map { "\n\($0.compactJSONString)" } ?? ""
+      return "[tool result \(result.callID)\(result.isError ? " error" : "")]\n"
+        + result.content.map(contextText).joined(separator: "\n") + structured
+    case .file(let file): return "[file \(file.name)]\n\(file.text ?? "[binary attachment]")"
+    case .resource(let resource):
+      return "[resource \(resource.uri)]\n\(resource.text ?? "[binary attachment]")"
+    case .image(let image): return "[image \(image.name ?? image.mimeType)]"
+    case .audio(let audio): return "[audio \(audio.name ?? audio.mimeType)]"
+    }
   }
 }
 
@@ -308,6 +345,13 @@ public struct ACPConfiguredProviderFactory: ConfiguredProviderFactory {
       bearerToken: options["tokenEnv"]?.stringValue.flatMap { environment[$0] }
         ?? options["token"]?.stringValue ?? storedToken)
     clientConfiguration.mcpServers = options["mcpServers"]?.arrayValue ?? []
+    for key in ["context", "prompt"] {
+      if let value = options[key], value != .string("agent") && value != .string("replace") {
+        throw JSONRPCError.invalidParams("ACP options.\(key) must be agent or replace.")
+      }
+    }
+    clientConfiguration.replaceContext = options["context"] == .string("replace")
+    clientConfiguration.replacePrompt = options["prompt"] == .string("replace")
     clientConfiguration.forwardTools =
       options["forwardTools"]?.boolValue
       ?? (URL(fileURLWithPath: command).lastPathComponent != "ssh")

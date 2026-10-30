@@ -27,6 +27,16 @@ public actor ACPClient {
     public var forwirohInvitation: String?
     public var mcpServers: [JSONValue] = []
     public var forwardTools = true
+    /// Start each provider turn from the host's prepared conversation.
+    public var replaceContext = false
+    /// Install the host's instructions as the native base prompt.
+    public var replacePrompt = false
+    /// Native instructions supplied by ACPProvider before opening a session.
+    public var systemPrompt: String?
+
+    var usesCodexAdapter: Bool {
+      ([command] + arguments).contains { URL(fileURLWithPath: $0).lastPathComponent == "codex-acp" }
+    }
 
     public init(
       command: String,
@@ -85,6 +95,7 @@ public actor ACPClient {
   private var internetAccess = InternetAccessPolicy()
   /// The delta sink for the prompt in flight; only one prompt runs at a time.
   private var activeSink: (@Sendable (ProviderEvent) async -> Void)?
+  private var promptDirectory: URL?
 
   public init(
     configuration: Configuration,
@@ -99,6 +110,10 @@ public actor ACPClient {
     self.onPermission = onPermission
     self.onPermissionResponse = onPermissionResponse
     self.onDisconnect = onDisconnect
+  }
+
+  deinit {
+    if let promptDirectory { try? FileManager.default.removeItem(at: promptDirectory) }
   }
 
   /// Connects and creates or restores a session; history arrives through onUpdate.
@@ -494,6 +509,10 @@ public actor ACPClient {
     transport?.close()
     await previous?.close()
     await tunnel?.close()
+    if let promptDirectory {
+      try? FileManager.default.removeItem(at: promptDirectory)
+      self.promptDirectory = nil
+    }
   }
 
   private func connectionClosed(_ peer: JSONRPCPeer) async {
@@ -542,6 +561,36 @@ public actor ACPClient {
       throw InternetAccessError.offline
     }
     let transport: any JSONRPCTransport
+    var environment = configuration.environment ?? ProcessInfo.processInfo.environment
+    let codexPrompt = configuration.systemPrompt != nil && configuration.usesCodexAdapter
+    if codexPrompt {
+      guard configuration.webSocketURL == nil,
+        URL(fileURLWithPath: configuration.command).lastPathComponent != "ssh",
+        configuration.remoteWorkingDirectory == nil
+      else {
+        throw JSONRPCError.invalidParams(
+          "acp.prompt replace requires a locally launched codex-acp; remote Codex adapters do not support system prompt override."
+        )
+      }
+      var config: [String: JSONValue] = [:]
+      if let raw = environment["CODEX_CONFIG"] {
+        guard
+          let object = try JSONDecoder().decode(JSONValue.self, from: Data(raw.utf8)).objectValue
+        else {
+          throw JSONRPCError.invalidParams("CODEX_CONFIG must be a JSON object.")
+        }
+        config = object
+      }
+      let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "pmai-acp-prompt-\(UUID())")
+      try ACPStateFiles.createDirectory(directory)
+      promptDirectory = directory
+      let file = directory.appendingPathComponent("instructions.md")
+      try Data((configuration.systemPrompt ?? "").utf8).write(to: file, options: .atomic)
+      config["model_instructions_file"] = .string(file.path)
+      environment["CODEX_CONFIG"] = String(
+        decoding: try JSONEncoder().encode(config), as: UTF8.self)
+    }
     if let url = configuration.webSocketURL {
       transport = try await remoteTransport(url: url)
     } else {
@@ -549,7 +598,7 @@ public actor ACPClient {
         transport = try StdioJSONRPCTransport.spawn(
           command: configuration.command,
           arguments: configuration.arguments,
-          environment: configuration.environment,
+          environment: environment,
           workingDirectory: configuration.workingDirectory)
       #else
         throw JSONRPCError.invalidParams("This platform requires an ACP WebSocket URL")
@@ -599,6 +648,15 @@ public actor ACPClient {
       supportsPermissionEditing = pmaiCapabilities?["permissionEditing"]?.intValue == 1
       supportsYolo = pmaiCapabilities?["yolo"]?.intValue == 1
       supportsHistoryRewind = pmaiCapabilities?["historyRewind"]?.intValue == 1
+      if configuration.systemPrompt != nil && !codexPrompt,
+        initialized.objectValue?["agentCapabilities"]?.objectValue?["sessionCapabilities"]?
+          .objectValue?["systemPrompt"]?.objectValue?["mode"]?.objectValue?["override"]?.objectValue
+          == nil
+      {
+        throw JSONRPCError.invalidParams(
+          "This ACP agent does not advertise system prompt override. Update its adapter or use /set acp.prompt agent."
+        )
+      }
       if configuration.mcpServers.contains(where: { $0.objectValue?["type"]?.stringValue == "http" }
       ),
         initialized.objectValue?["agentCapabilities"]?.objectValue?["mcpCapabilities"]?
@@ -625,13 +683,19 @@ public actor ACPClient {
     let cwd =
       configuration.remoteWorkingDirectory
       ?? configuration.workingDirectory?.path ?? AgentExecutionScope.directory.path
+    var params: [String: JSONValue] = [
+      "cwd": .string(cwd), "mcpServers": .array(configuration.mcpServers),
+    ]
+    if let prompt = configuration.systemPrompt, !configuration.usesCodexAdapter {
+      params["systemPrompt"] = .object([
+        "mode": .string("override"), "content": .array([ACP.ContentBlock.text(prompt).json]),
+      ])
+    }
     if let sessionID, supportsLoad {
+      params["sessionId"] = .string(sessionID)
       let result = try await peer.request(
         ACP.Method.sessionLoad,
-        params: .object([
-          "sessionId": .string(sessionID), "cwd": .string(cwd),
-          "mcpServers": .array(configuration.mcpServers),
-        ]), timeout: 60)
+        params: .object(params), timeout: 60)
       readSessionOptions(result)
       sessionLoaded = true
       return sessionID
@@ -642,7 +706,7 @@ public actor ACPClient {
     }
     let result = try await peer.request(
       ACP.Method.sessionNew,
-      params: .object(["cwd": .string(cwd), "mcpServers": .array(configuration.mcpServers)]),
+      params: .object(params),
       timeout: 60)
     guard let id = result.objectValue?["sessionId"]?.stringValue, !id.isEmpty else {
       throw ACPClientError.noSession(configuration.command)

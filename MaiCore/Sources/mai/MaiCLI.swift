@@ -10955,6 +10955,7 @@ struct MaiCLI {
       "tool.aproval": configuration.approvals.mode.rawValue,
       "debug": "false", "debugfile": "default", "airplane": "off",
       "acp.timeout": "off",
+      "acp.context": "agent", "acp.prompt": "agent",
       "redact": configuration.redact.rawValue, "delegation": defaults.toolDelegation.rawValue,
       "effort": defaults.options.reasoningEffort ?? "auto", "ui.editor": "none",
       "ctx.compact": defaults.autocompact.isEnabled ? String(defaults.autocompact.tokens) : "off",
@@ -11009,8 +11010,13 @@ struct MaiCLI {
     do {
       if let index = draft.providers.firstIndex(where: {
         $0.id == profile.provider.rawValue && $0.kind == ACPConfiguredProviderFactory.providerKind
-      }), draft.providers[index].timeout != nil {
+      }), draft.providers[index].timeout != nil
+        || draft.providers[index].options["context"] != nil
+        || draft.providers[index].options["prompt"] != nil
+      {
         draft.providers[index].timeout = nil
+        draft.providers[index].options["context"] = nil
+        draft.providers[index].options["prompt"] = nil
         resetProvider = try await plugins.makeProvider(
           from: draft.providers[index], environment: ProcessInfo.processInfo.environment)
       }
@@ -11212,23 +11218,39 @@ struct MaiCLI {
     let requestedKey = parts[0].lowercased()
     let key = requestedKey == "ui.toolresultlines" ? "ui.tools" : requestedKey
     let displayedKey = key
-    if key == "acp.timeout" {
+    if ["acp.timeout", "acp.context", "acp.prompt"].contains(key) {
       guard var draft = configuration,
         let index = draft.providers.firstIndex(where: {
           $0.id == session.profile.provider.rawValue
             && $0.kind == ACPConfiguredProviderFactory.providerKind
         })
       else {
-        await terminal.line("acp.timeout requires a selected ACP provider. Use /provider or /model to select one.")
+        await terminal.line("\(key) requires a selected ACP provider. Use /provider or /model to select one.")
         return
       }
       guard parts.count > 1 else {
-        await listSettings(acpSettings(provider: session.profile.provider, configuration: draft), terminal: terminal)
-        await terminal.line("Whole ACP turn timeout, separate from limits.maxSeconds. Use off or a duration such as 30m; saved for this provider.")
+        await listSettings(acpSettings(provider: session.profile.provider, configuration: draft).filter { $0.hasPrefix(key + " = ") }, terminal: terminal)
+        switch key {
+        case "acp.context":
+          await terminal.line("agent keeps the external conversation; replace starts a new session with pmai's full prepared conversation each turn. Saved for this provider.")
+        case "acp.prompt":
+          await terminal.line("agent sends pmai instructions as user text; replace uses them as the native system prompt. Edit the text with /prompt edit. Saved for this provider.")
+        default:
+          await terminal.line("Whole ACP turn timeout, separate from limits.maxSeconds. Use off or a duration such as 30m; saved for this provider.")
+        }
         return
       }
       let raw = parts.count == 2 ? parts[1].lowercased() : ""
-      if ["off", "none", "unlimited", "0", "default"].contains(raw) {
+      if key != "acp.timeout" {
+        let mode: String
+        if ["agent", "off", "false", "default"].contains(raw) { mode = "agent" }
+        else if ["replace", "on", "true"].contains(raw) { mode = "replace" }
+        else {
+          await terminal.line("Usage: /set \(key) <agent|replace>")
+          return
+        }
+        draft.providers[index].options[String(key.dropFirst(4))] = mode == "agent" ? nil : .string(mode)
+      } else if ["off", "none", "unlimited", "0", "default"].contains(raw) {
         draft.providers[index].timeout = nil
       } else if let seconds = parseDurationSeconds(raw) {
         draft.providers[index].timeout = TimeInterval(seconds)
@@ -11247,7 +11269,9 @@ struct MaiCLI {
         try await runtime.register(provider, replacingExisting: true)
         configuration = draft
         await listSettings(acpSettings(provider: session.profile.provider, configuration: draft), terminal: terminal)
-        await terminal.line("Saved for provider '\(draft.providers[index].id)'; applies to new requests with a fresh timeout.")
+        await terminal.line(key == "acp.timeout"
+          ? "Saved for provider '\(draft.providers[index].id)'; applies to new requests with a fresh timeout."
+          : "Saved for provider '\(draft.providers[index].id)'; applies to the next request with a new ACP session.")
       } catch {
         await terminal.line("error: \(error.localizedDescription)", to: .standardError)
       }
@@ -11596,7 +11620,7 @@ struct MaiCLI {
         || levelKeys.contains(key) || textKeys.contains(key)
     else {
       await terminal.line(
-        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, airplane, effort, acp.timeout, tool.approval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, limits.runTimeoutSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.window, ctx.strategy, \((textKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), export.tools, export.thinking, redact, use.agentsmd, use.plan"
+        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, airplane, effort, acp.timeout, acp.context, acp.prompt, tool.approval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, limits.runTimeoutSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.window, ctx.strategy, \((textKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), export.tools, export.thinking, redact, use.agentsmd, use.plan"
       )
       return
     }
@@ -11760,7 +11784,11 @@ struct MaiCLI {
     guard let configured = configuration?.providers.first(where: {
       $0.id == provider.rawValue && $0.kind == ACPConfiguredProviderFactory.providerKind
     }) else { return [] }
-    return ["acp.timeout = \(configured.timeout.map { ModelUsageFormat.duration($0) } ?? "off")"]
+    return [
+      "acp.timeout = \(configured.timeout.map { ModelUsageFormat.duration($0) } ?? "off")",
+      "acp.context = \(configured.options["context"]?.stringValue ?? "agent")",
+      "acp.prompt = \(configured.options["prompt"]?.stringValue ?? "agent")",
+    ]
   }
 
   private static func toolSettings(_ profile: SessionProfile) -> [String] {
@@ -14508,6 +14536,8 @@ struct MaiCLI {
       "/set limits.maxSubagents ", "/set limits.maxSeconds ", "/set limits.maxTotalTokens ",
       "/set limits.runTimeoutSeconds ",
       "/set acp.", "/set acp.timeout ", "/set acp.timeout off",
+      "/set acp.context", "/set acp.context agent", "/set acp.context replace",
+      "/set acp.prompt", "/set acp.prompt agent", "/set acp.prompt replace",
       "/set retry.", "/set retry.attempts ", "/set retry.delay ", "/set ctx.", "/set ctx.compact ",
       "/set ctx.compact off",
       "/set ctx.recent ", "/set ctx.recent auto",
@@ -15302,6 +15332,8 @@ struct MaiCLI {
       /set limits.maxSeconds <off|N|Nm|Nh>   Wall-clock time a run may take before it pauses
       /set limits.runTimeoutSeconds <default|N|Nm>  Default shell timeout (1-600 seconds)
       /set acp.timeout <off|N|Nm|Nh>  Whole ACP turn timeout for the selected provider (default off)
+      /set acp.context <agent|replace>  Keep agent history or send pmai's full conversation in a fresh session
+      /set acp.prompt <agent|replace>   Keep agent instructions or replace its native system prompt with pmai's
       /set retry.attempts N        Times a failed model call is repeated (default 2)
       /set retry.delay SECONDS     Wait before each retry (default 5)
       /set ctx.                    List context settings and their current values

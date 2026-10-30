@@ -36,13 +36,18 @@ func acpProviderCommands() throws {
 
 #if os(macOS) || os(Linux)
   private let providerAgentScript = #"""
-    import json, sys, urllib.request
+    import json, os, pathlib, sys, urllib.request
     adapter = sys.argv[1]
     legacy = adapter == 'legacy'
     model = 'small'
     effort = 'default' if adapter == 'claude' else 'medium'
     turn = 0
     bridge = None
+    session_method = None
+    native_prompt = None
+    codex_config = json.loads(os.environ.get('CODEX_CONFIG', '{}'))
+    prompt_file = codex_config.get('model_instructions_file')
+    if prompt_file: native_prompt = pathlib.Path(prompt_file).read_text()
     def option():
         return {'id':'model-choice', 'category':'model', 'name':'Model', 'type':'select',
                 'currentValue':model, 'options':[{'value':i,'name':i.title()} for i in ['small','large']]}
@@ -70,7 +75,12 @@ func acpProviderCommands() throws {
         if method == 'initialize':
             result = {'protocolVersion':1,'agentCapabilities':{'mcpCapabilities':{'http':True}}}
             if adapter == 'claude': result['agentCapabilities']['loadSession'] = True
+            if adapter == 'claude': result['agentCapabilities']['sessionCapabilities'] = {'systemPrompt': {'mode': {'override': {}}}}
         elif method in ('session/new', 'session/load'):
+            session_method = method
+            if 'systemPrompt' in params:
+                assert params['systemPrompt']['mode'] == 'override'
+                native_prompt = '\n\n'.join(b['text'] for b in params['systemPrompt']['content'])
             bridge = next((s['url'] for s in params['mcpServers'] if s['name']=='pmai'),None)
             if bridge: rpc('initialize',{})
             result = {'sessionId':'s'}
@@ -115,7 +125,9 @@ func acpProviderCommands() throws {
                     tool_result = rpc('tools/call',{'name':name,'arguments':{}})
                     if 'TWICE' in text: tool_result = rpc('tools/call',{'name':name,'arguments':{}})
             update('agent_thought_chunk', content={'type':'text','text':'thinking'})
-            answer = json.dumps({'model':model,'effort':effort,'turn':turn,'prompt':text,'tool':tool_result})
+            answer = json.dumps({'model':model,'effort':effort,'turn':turn,'prompt':text,'tool':tool_result,
+                                 'sessionMethod':session_method,'systemPrompt':native_prompt,
+                                 'codexConfig':codex_config,'promptFile':prompt_file})
             update('agent_message_chunk', content={'type':'text','text':answer})
             result = {'stopReason':'end_turn'}
         else:
@@ -123,12 +135,127 @@ func acpProviderCommands() throws {
         if 'id' in req: send({'jsonrpc':'2.0','id':req['id'],'result':result})
     """#
 
-  private func providerFixture(legacy: Bool = false, adapter: String = "codex") -> ACPProvider {
-    ACPProvider(
-      id: "test-acp", displayName: "Fixture",
-      configuration: .init(
-        command: "/usr/bin/env",
-        arguments: ["python3", "-u", "-c", providerAgentScript, legacy ? "legacy" : adapter]))
+  private func providerFixture(
+    legacy: Bool = false, adapter: String = "codex", replaceContext: Bool = false,
+    replacePrompt: Bool = false, sessionFile: URL? = nil
+  ) throws -> ACPProvider {
+    var options: [String: JSONValue] = [
+      "command": .string("/usr/bin/env"),
+      "args": .array(
+        ["python3", "-u", "-c", providerAgentScript, legacy ? "legacy" : adapter].map(
+          JSONValue.string)),
+      "context": .string(replaceContext ? "replace" : "agent"),
+      "prompt": .string(replacePrompt ? "replace" : "agent"),
+    ]
+    if let sessionFile { options["sessionFile"] = .string(sessionFile.path) }
+    var environment = ProcessInfo.processInfo.environment
+    environment["CODEX_CONFIG"] = "{\"developer_instructions\":\"Preserve native configuration\"}"
+    return try #require(
+      ACPConfiguredProviderFactory().makeProvider(
+        from: .init(id: "test-acp", kind: "acp", displayName: "Fixture", options: options),
+        environment: environment) as? ACPProvider)
+  }
+
+  @Test("ACP context replacement honors assistant deletion and bypasses stored sessions")
+  func acpReplacedContext() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+      "acp-context-\(UUID())")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let sessionFile = directory.appendingPathComponent("sessions.json")
+    let key = AgentExecutionScope.directory.standardizedFileURL.path + "\u{0}default"
+    try ACPStateFiles.write([key: "stale-session"], to: sessionFile)
+    let provider = try providerFixture(
+      adapter: "claude", replaceContext: true, sessionFile: sessionFile)
+    let user = AgentMessage.user("original task")
+    let reply = AgentMessage.assistant("obsolete assistant evidence")
+    let tool = AgentMessage(
+      role: .tool,
+      content: [
+        .toolResult(
+          .init(
+            callID: "historical", content: [.text("obsolete tool evidence")],
+            structuredContent: .object(["result": .string("structured evidence")])))
+      ])
+    let first = try await provider.complete(
+      .init(model: "large", messages: [user, reply, tool, .user("continue")]))
+    #expect(first.message.text.contains("obsolete assistant evidence"))
+    #expect(first.message.text.contains("obsolete tool evidence"))
+    #expect(first.message.text.contains("structured evidence"))
+    // The user-text prefix is unchanged; only assistant/tool evidence was removed.
+    let second = try await provider.complete(
+      .init(model: "large", messages: [user, .user("continue"), .user("next")]))
+    let value = try JSONDecoder().decode(JSONValue.self, from: Data(second.message.text.utf8))
+    #expect(value.objectValue?["turn"] == .integer(1))
+    #expect(value.objectValue?["sessionMethod"] == .string("session/new"))
+    let prompt = try #require(value.objectValue?["prompt"]?.stringValue)
+    #expect(
+      prompt.contains("original task") && prompt.contains("continue") && prompt.contains("next"))
+    #expect(!prompt.contains("obsolete assistant evidence"))
+    #expect(!prompt.contains("obsolete tool evidence"))
+    #expect(try JSONDecoder().decode([String: String].self, from: Data(contentsOf: sessionFile)) == [key: "stale-session"])
+    await provider.shutdown()
+  }
+
+  @Test(
+    "ACP native prompt replacement updates Claude and local Codex without losing pmai history",
+    arguments: ["claude", "codex-acp"])
+  func acpReplacedPrompt(adapter: String) async throws {
+    let provider = try providerFixture(adapter: adapter, replacePrompt: true)
+    let user = AgentMessage.user("task")
+    let first = try await provider.complete(
+      .init(model: "large", messages: [.system("Original native instructions"), user]))
+    let initial = try JSONDecoder().decode(JSONValue.self, from: Data(first.message.text.utf8))
+    #expect(initial.objectValue?["systemPrompt"] == .string("Original native instructions"))
+    #expect(
+      initial.objectValue?["prompt"]?.stringValue?.contains("Original native instructions") == false
+    )
+    let followup = try await provider.complete(
+      .init(
+        model: "large",
+        messages: [
+          .system("Original native instructions"), user, .assistant("retained answer"),
+          .user("follow up"),
+        ]))
+    let next = try JSONDecoder().decode(JSONValue.self, from: Data(followup.message.text.utf8))
+    #expect(next.objectValue?["turn"] == .integer(2))
+    let changed = try await provider.complete(
+      .init(
+        model: "large",
+        messages: [
+          .system("Updated native instructions"), user, .assistant("retained answer"),
+          .user("follow up"), .user("continue"),
+        ]))
+    let updated = try JSONDecoder().decode(JSONValue.self, from: Data(changed.message.text.utf8))
+    #expect(updated.objectValue?["turn"] == .integer(1))
+    #expect(updated.objectValue?["systemPrompt"] == .string("Updated native instructions"))
+    #expect(updated.objectValue?["prompt"]?.stringValue?.contains("retained answer") == true)
+    if adapter == "codex-acp" {
+      #expect(
+        updated.objectValue?["codexConfig"]?.objectValue?["developer_instructions"]
+          == .string("Preserve native configuration"))
+      let oldPath = try #require(initial.objectValue?["promptFile"]?.stringValue)
+      #expect(!FileManager.default.fileExists(atPath: oldPath))
+      let path = try #require(updated.objectValue?["promptFile"]?.stringValue)
+      #expect(try String(contentsOfFile: path, encoding: .utf8) == "Updated native instructions")
+      await provider.shutdown()
+      #expect(!FileManager.default.fileExists(atPath: path))
+    } else {
+      await provider.shutdown()
+    }
+  }
+
+  @Test("ACP refuses unsupported native prompt replacement")
+  func acpUnsupportedPromptReplacement() async throws {
+    let provider = try providerFixture(replacePrompt: true)
+    do {
+      _ = try await provider.complete(
+        .init(model: "large", messages: [.system("instructions"), .user("task")]))
+      Issue.record("Unsupported native prompt replacement must fail")
+    } catch {
+      #expect(error.localizedDescription.contains("does not advertise system prompt override"))
+    }
+    await provider.shutdown()
   }
 
   private actor ProviderActivity {
@@ -153,7 +280,7 @@ func acpProviderCommands() throws {
     "An ACP primary exposes its answer when also assigned as the tool model",
     arguments: [ToolCallingStrategy.automatic, .xml])
   func acpPrimaryToolAssignment(strategy: ToolCallingStrategy) async throws {
-    let provider = providerFixture()
+    let provider = try providerFixture()
     let runtime = AgentRuntime()
     try await runtime.register(provider)
     try await runtime.register(
@@ -199,7 +326,7 @@ func acpProviderCommands() throws {
     "ACP discovers and selects modern and legacy models; preserves reasoning and session history",
     arguments: [false, true])
   func acpProviderModels(legacy: Bool) async throws {
-    let provider = providerFixture(legacy: legacy)
+    let provider = try providerFixture(legacy: legacy)
     let models = try await provider.availableModels()
     #expect(models.map(\.id) == ["small", "large"])
     let activity = ProviderActivity()
@@ -237,7 +364,7 @@ func acpProviderCommands() throws {
 
   @Test("ACP applies model-specific Claude and Codex effort and restores auto", arguments: ["claude", "codex"])
   func acpProviderEffort(adapter: String) async throws {
-    let provider = providerFixture(adapter: adapter)
+    let provider = try providerFixture(adapter: adapter)
     var messages: [AgentMessage] = []
     for (model, level, expected) in [
       ("small", "high", "high"),
@@ -266,7 +393,7 @@ func acpProviderCommands() throws {
     "ACP MCP tools use runtime approvals, cwd, exposure and budgets",
     arguments: ["allow", "deny", "budget", "disabled"])
   func acpProviderRuntimeTools(mode: String) async throws {
-    let provider = providerFixture()
+    let provider = try providerFixture()
     let runtime = AgentRuntime()
     try await runtime.register(provider)
     try await runtime.register(
@@ -309,7 +436,7 @@ func acpProviderCommands() throws {
 
   @Test("ACP prompt failures bypass automatic transport retries")
   func acpPromptFailureNoRetry() async throws {
-    let provider = providerFixture()
+    let provider = try providerFixture()
     await #expect(throws: ProviderPolicyError.self) {
       _ = try await provider.complete(.init(model: "large", messages: [.user("FAIL_PROMPT")]))
     }

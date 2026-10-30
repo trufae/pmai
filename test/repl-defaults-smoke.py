@@ -282,6 +282,24 @@ def main():
                     run(['/set acp.timeout 1h', clear], home=acp_home)
                     assert json.loads(acp_path.read_text())['providers'][0].get('timeout') is None
                     assert 'acp.timeout = off' in run(['/set acp.timeout'], home=acp_home)
+                # Context and native prompt choices survive restarts and reset independently.
+                output = run(['/set acp.context replace', '/set acp.prompt replace'], home=acp_home)
+                for key in ['context', 'prompt']:
+                    assert f'acp.{key} = replace' in output, output
+                    assert json.loads(acp_path.read_text())['providers'][0]['options'][key] == 'replace'
+                    assert f'acp.{key} = replace' in run([f'/set acp.{key}'], home=acp_home)
+                    original = acp_path.read_bytes()
+                    assert f'Usage: /set acp.{key}' in run([f'/set acp.{key} invalid'], home=acp_home)
+                    assert acp_path.read_bytes() == original, f'invalid acp.{key} changed configuration'
+                run(['/reset acp.context'], home=acp_home)
+                options = json.loads(acp_path.read_text())['providers'][0]['options']
+                assert options.get('context', 'agent') == 'agent' and options['prompt'] == 'replace', options
+                run(['/reset acp.prompt'], home=acp_home)
+                assert 'acp.prompt = agent' in run(['/set acp.prompt'], home=acp_home)
+                run(['/set acp.context on', '/set acp.prompt true', '/reset', 'reset'], home=acp_home)
+                options = json.loads(acp_path.read_text())['providers'][0]['options']
+                assert options.get('context', 'agent') == options.get('prompt', 'agent') == 'agent', options
+                assert options['command'] == command, options
             if name == 'opencode':
                 run(['/provider add acp oc opencode acp', '/model oc::opencode/big-pickle'],
                     home=acp_home, env={'PATH': str(root / 'no-executables')})

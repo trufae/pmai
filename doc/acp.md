@@ -2,6 +2,9 @@
 
 For a standalone WebSocket gateway, the iOS remote frontend, and optional
 Tailcat routing, see [Remote ACP agents](tailcat.md).
+For message pins and deletion, custom context, additional MCP servers, skills,
+and system prompts with Claude/Codex, see
+[Context, tools, skills, and prompts through ACP](acp-context.md).
 
 pmai speaks the [Agent Client Protocol](https://agentclientprotocol.com) — JSON-RPC
 over stdio between an editor and a coding agent — in both directions, and serves
@@ -163,6 +166,16 @@ An ACP provider completes its own tool loop. pmai displays its completed answer
 directly, including when `/model` assigns the ACP provider to every task model.
 Text tool modes inherited from another provider do not wrap ACP prompts.
 
+`/set acp.context agent` (default) keeps the external conversation;
+`/set acp.context replace` starts each turn with a fresh session seeded from
+pmai's prepared conversation, so message edits, deletions, and compaction
+affect the next request. `/set acp.prompt replace` installs pmai's instructions
+as the native base prompt for supported adapters; `agent` preserves the native
+base prompt and sends pmai instructions as user text. Both choices are saved in
+the selected provider's `options.context` and `options.prompt`; `/reset` restores
+`agent`. See [context and prompt replacement](acp-context.md) for native adapter
+requirements, remote limits, and the text handoff format.
+
 Local agents receive pmai tools through a loopback HTTP MCP endpoint. Tools still
 use maiCore's validation, approvals, working directory, offline rules, and run
 budgets. `/tools` changes their exposure as usual. The ACP adapter must advertise
@@ -277,13 +290,15 @@ an updated pmai is required.
 
 ## Design notes
 
-- **One session per working directory.** `ACPProvider` pools an `ACPClient` per
-  cwd, so a subagent running in a different directory never lands its prompt in
-  the parent's session. Each client keeps its child process and ACP session
-  across turns, so the agent keeps its context.
+- **Sessions are keyed by working directory and pmai session ID.** `ACPProvider`
+  pools clients using both, so separate chats and working directories have
+  separate clients. Each client keeps its child process and ACP session across
+  turns, so the agent keeps its context.
 - **The runtime hands over the whole transcript each turn, but the ACP agent
-  keeps its own.** So the provider sends only the latest user turn; everything
-  before it already lives in the agent's session.
+  keeps its own.** The provider normally sends only newly appended user text.
+  In the default `acp.context agent` mode, local pins and assistant/tool message
+  edits do not update that remote history. `replace` starts fresh each turn;
+  see [context management limits](acp-context.md#pins-deletion-and-the-two-histories).
 - **No model schema crosses the boundary.** An ACP agent carries its own tools,
   so MaiCore never offers it a tool definition — tool calling stays remote.
 - **Host workspace data stays behind a repository.** `ACPWorkspaceRepository`

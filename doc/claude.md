@@ -5,6 +5,8 @@ pmai can run Claude Code through the
 Claude runs its own tool loop; pmai provides the chat interface, model selection,
 streaming replies, and tool progress. See [ACP and MCP](acp.md) for the general
 protocol setup and [Remote ACP agents](tailcat.md) for connecting from PocketMai.
+See [Context, tools, skills, and prompts through ACP](acp-context.md) for
+pinning and deleting messages, adding MCPs and skills, and changing instructions.
 
 ## Install and authenticate
 
