@@ -18,7 +18,12 @@ env:
 
 jobs:
   apk:
+    name: ${{ matrix.app }} APK
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [PocketMaiAndroid, PocketMaiKotlin]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: SwiftyLab/setup-swift@d60245579ea3836a3f2fa65ebbe1e8891d577c76 # v1.14.2
@@ -33,7 +38,7 @@ jobs:
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
       - name: Install Android build tools and NDK 30
         run: |
-          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platforms;android-36" "build-tools;36.0.0"
           curl -fL -o "$RUNNER_TEMP/android-ndk.zip" https://dl.google.com/android/repository/android-ndk-r30-linux.zip
           unzip -q "$RUNNER_TEMP/android-ndk.zip" -d "$RUNNER_TEMP"
           echo "ANDROID_NDK_HOME=$RUNNER_TEMP/android-ndk-r30" >> "$GITHUB_ENV"
@@ -46,14 +51,35 @@ jobs:
           swiftpm_root="${XDG_CONFIG_HOME:+$XDG_CONFIG_HOME/swiftpm}"
           bash "${swiftpm_root:-$HOME/.swiftpm}/swift-sdks/swift-${SWIFT_VERSION}-RELEASE_android.artifactbundle/swift-android/scripts/setup-android-sdk.sh"
       - name: Test portable Swift screens
+        if: matrix.app == 'PocketMaiAndroid'
         run: |
           sh PocketMaiAndroid/scripts/bootstrap.sh
           swift test --package-path PocketMaiAndroid --build-system native --disable-sandbox --disable-prefetching
+      - name: Test Kotlin app's Swift facade
+        if: matrix.app == 'PocketMaiKotlin'
+        run: swift test --package-path PocketMaiKotlin --build-system native --disable-sandbox --disable-prefetching
       - name: Build APK for device and emulator
         env:
           ANDROID_ABIS: "arm64-v8a x86_64"
-        run: make android
+        run: make -C "${{ matrix.app }}" CONFIGURATION=debug
+      - name: Test WebXDC archive import
+        if: matrix.app == 'PocketMaiKotlin'
+        run: |
+          cd PocketMaiKotlin
+          ./gradlew :app:testDebugUnitTest
+      - name: Build Kotlin release APK
+        if: matrix.app == 'PocketMaiKotlin'
+        env:
+          ANDROID_ABIS: "arm64-v8a x86_64"
+        run: make -C PocketMaiKotlin release
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: PocketMai-Android-debug
-          path: PocketMaiAndroid/app/build/outputs/apk/debug/app-debug.apk
+          name: ${{ matrix.app }}-debug
+          path: ${{ matrix.app }}/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: matrix.app == 'PocketMaiKotlin'
+        with:
+          name: PocketMaiKotlin-release
+          path: PocketMaiKotlin/PocketMaiKotlin-0.1.0.apk
+          if-no-files-found: error

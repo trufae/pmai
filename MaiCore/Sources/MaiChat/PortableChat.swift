@@ -3,6 +3,12 @@ import MaiCore
 import MaiOpenAI
 import Observation
 
+/// Hosts may use the shared agent runtime while retaining this model's saved
+/// chats, provider settings, streaming presentation and cancellation handling.
+public typealias PortableChatTurnHandler = @Sendable (
+  ProviderRequest, any ChatProvider, @escaping ProviderEventHandler
+) async throws -> [AgentMessage]
+
 /// The small mobile client's settings use the same provider, prompt and chat
 /// types as the other hosts. No Android or Apple UI frameworks belong here.
 public struct PortableChatConfiguration: Codable, Sendable {
@@ -62,15 +68,18 @@ public final class PortableChat {
   @ObservationIgnored private var replyTask: Task<Void, Never>?
   @ObservationIgnored private var modelTask: Task<Void, Never>?
   @ObservationIgnored private var runID: UUID?
+  @ObservationIgnored private let runTurn: PortableChatTurnHandler?
 
   public init(
     directory: URL,
     makeProvider: @escaping @Sendable (ConfiguredProvider) throws -> any ChatProvider = {
       try OpenAIConfiguredProviderFactory().makeProvider(from: $0, environment: [:])
-    }
+    },
+    runTurn: PortableChatTurnHandler? = nil
   ) throws {
     self.directory = directory
     self.makeProvider = makeProvider
+    self.runTurn = runTurn
     files = ChatFileStore(directoryURL: directory.appendingPathComponent("chats"))
     let settingsURL = directory.appendingPathComponent("settings.json")
     let loaded =
@@ -236,15 +245,21 @@ public final class PortableChat {
       streamedText = ""
       streamedReasoning = ""
       status = "Replying…"
-      let response = try await provider.complete(
-        ProviderRequest(
-          model: model, messages: chat.messages, toolChoice: .none, sessionID: chat.sessionID)
-      ) { [weak self] event in
+      let request = ProviderRequest(
+        model: model, messages: chat.messages, toolChoice: .none, sessionID: chat.sessionID)
+      let receive: ProviderEventHandler = { [weak self] event in
         await self?.receive(event, run: id)
+      }
+      let transcript: [AgentMessage]
+      if let runTurn {
+        transcript = try await runTurn(request, provider, receive)
+      } else {
+        let response = try await provider.complete(request, emit: receive)
+        transcript = chat.messages + [response.message]
       }
       try Task.checkCancellation()
       guard runID == id else { return }
-      chat.messages.append(response.message)
+      chat.messages = transcript
       try persistChat()
       status = ""
     } catch {

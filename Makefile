@@ -33,7 +33,7 @@ APP_BUNDLE ?=
 BINDIR ?= $(HOME)/.local/bin
 
 .PHONY: all build test list run uninstall repl repl-build repl-install repl-uninstall repl-musl plugin-fixture fmt clean check-shared-tooling aitest-build
-.PHONY: android android-test test-core test-unit test-cli
+.PHONY: android android-test android-kotlin android-kotlin-release test-core test-unit test-cli
 TEST_PROFILE ?= platform
 TEST_ARGS ?=
 
@@ -50,6 +50,12 @@ test-cli:
 
 android:
 	$(MAKE) -C PocketMaiAndroid
+
+android-kotlin:
+	$(MAKE) -C PocketMaiKotlin
+
+android-kotlin-release:
+	$(MAKE) -C PocketMaiKotlin release
 
 android-test:
 	$(MAKE) -C PocketMaiAndroid test
