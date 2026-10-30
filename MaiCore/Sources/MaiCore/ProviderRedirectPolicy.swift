@@ -78,18 +78,21 @@ public final class ProviderRedirectDelegate: NSObject, URLSessionTaskDelegate, @
     _ session: URLSession,
     task: URLSessionTask,
     willPerformHTTPRedirection response: HTTPURLResponse,
-    newRequest request: URLRequest
-  ) async -> URLRequest? {
+    newRequest request: URLRequest,
+    completionHandler: @escaping @Sendable (URLRequest?) -> Void
+  ) {
     guard
       let redirectedRequest = ProviderRedirectPolicy.redirectedRequest(
         originalRequest: originalRequest,
         response: response,
-        proposedRequest: request),
-      await redirectCounter.claimSlot()
+        proposedRequest: request)
     else {
-      return nil
+      completionHandler(nil)
+      return
     }
-    return redirectedRequest
+    Task {
+      completionHandler(await redirectCounter.claimSlot() ? redirectedRequest : nil)
+    }
   }
 }
 
