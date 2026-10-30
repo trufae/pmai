@@ -45,16 +45,16 @@ actor PocketMaiPluginHost {
     guard let baseURL = URL(string: endpoint.baseURL) else {
       throw ChatProviderError.invalidEndpoint(endpoint.baseURL)
     }
-    return try await registry.makeProvider(
-      from: ConfiguredProvider(
-        id: endpoint.id.uuidString,
-        kind: endpoint.kind,
-        displayName: endpoint.name,
-        baseURL: baseURL,
-        apiKey: endpoint.apiKey,
-        headers: endpoint.effectiveHeaders,
-        timeout: requestTimeout),
-      environment: [:])
+    let configuration = ConfiguredProvider(
+      id: endpoint.id.uuidString,
+      kind: endpoint.kind,
+      displayName: endpoint.name,
+      baseURL: baseURL,
+      apiKey: endpoint.apiKey,
+      headers: endpoint.effectiveHeaders,
+      timeout: requestTimeout)
+    try configuration.validate()
+    return try await registry.makeProvider(from: configuration, environment: [:])
   }
 
   func makeOCRProvider() async throws -> any OCRProvider {

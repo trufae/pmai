@@ -402,3 +402,22 @@ func terminalHighlightConfiguration() throws {
   #expect(try decoder.decode(ConfiguredTerminalUI.self,
     from: JSONEncoder().encode(configured)).highlight == "café = needle")
 }
+
+@Test("Provider drafts reject invalid endpoints, empty models and invalid timeouts in every host")
+func providerDraftValidation() throws {
+  var provider = ConfiguredProvider(id: "local", kind: .openAI,
+    baseURL: URL(string: "http://localhost:8080/v1"), defaultModel: "model", timeout: 600)
+  try provider.validate()
+  provider.baseURL = URL(string: "file:///tmp/provider")
+  #expect(throws: ConfiguredProviderValidationError.self) { try provider.validate() }
+  provider.baseURL = URL(string: "https://api.example.test/v1")
+  provider.defaultModel = "  "
+  #expect(throws: ConfiguredProviderValidationError.emptyDefaultModel) { try provider.validate() }
+  provider.defaultModel = nil
+  for timeout in [0, -1, Double.infinity, Double.nan] {
+    provider.timeout = timeout
+    #expect(throws: ConfiguredProviderValidationError.invalidTimeout) { try provider.validate() }
+  }
+  provider.timeout = nil
+  try provider.validate()
+}

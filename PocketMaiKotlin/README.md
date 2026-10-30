@@ -95,7 +95,7 @@ native build automatically. Each variant has separate staged native libraries.
   remote workspace and download an archive through MaiACP. Apps run in WebView
   with distinct HTTPS origins and storage, persisted/replayed status updates,
   explicit chat-composer handoff and per-app inference/internet permissions.
-  The public PocketMai JavaScript API is generated from the iOS implementation.
+  The public PocketMai JavaScript API is generated from MaiCore's shared implementation.
   Inference uses the Swift provider without exposing API keys to JavaScript.
 
 This is a new Android client, not complete iOS parity. Voice,

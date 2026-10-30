@@ -314,11 +314,14 @@ func transcriptEditing() throws {
       content: [.toolResult(ToolResult(callID: "call-b", text: "B"))]),
     AgentMessage(id: "answer", role: .assistant, content: "Done"),
   ]
-  var transcript = AgentTranscript(messages: messages)
+  var richMessages = messages
+  richMessages[1].providerState = ["opaque": .string("original provider content")]
+  var transcript = AgentTranscript(messages: richMessages)
 
   let previous = try transcript.editMessage(id: "user", text: "revised")
   #expect(previous.text == "original")
   #expect(transcript[1].text == "revised")
+  #expect(transcript[1].providerState == nil)
   #expect(transcript[1].content.contains { if case .image = $0 { true } else { false } })
 
   try transcript.editMessage(id: "result-a", text: "Edited tool result")

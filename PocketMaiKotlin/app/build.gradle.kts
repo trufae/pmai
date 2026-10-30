@@ -22,7 +22,7 @@ val syncIcon by tasks.registering(Copy::class) {
 val generateWebSdk by tasks.registering(Exec::class) {
     workingDir(rootDir)
     commandLine("python3", "scripts/stage-webxdc.py")
-    inputs.file(rootProject.file("../PocketMai/Services/WebXDCPocketMai.swift"))
+    inputs.file(rootProject.file("../MaiCore/Sources/MaiCore/WebXDCPocketMaiBridge.swift"))
     inputs.file(rootProject.file("scripts/stage-webxdc.py"))
     outputs.dir(layout.buildDirectory.dir("generated/webxdc"))
 }

@@ -21,14 +21,7 @@ private struct RemoteConversation: Codable, Identifiable {
   var messages: [RemoteMessage] = []
 }
 
-private struct RemoteMessage: Codable {
-  var id = UUID().uuidString
-  var role: String
-  var text: String
-  var toolID: String?
-  var status: String?
-  var remoteID: String?
-}
+private typealias RemoteMessage = ACPConversationMessage
 
 /// Host → workspace → conversation mirrors iOS navigation. ACP owns all
 /// transport, Forwiroh pairing, streaming and session protocol behavior.
@@ -191,7 +184,7 @@ private struct RemoteMessage: Codable {
 
   func changeMessage(_ id: String, text: String?) {
     guard !busy, connected, canRewind, let client,
-      let position = messages.firstIndex(where: { $0.id == id }),
+      let position = messages.firstIndex(where: { $0.id.uuidString == id }),
       let remoteID = messages[position].remoteID,
       text == nil || messages[position].role == "user" else { return }
     let prefix = Array(messages.prefix(position))
@@ -336,32 +329,10 @@ private struct RemoteMessage: Codable {
   private func receive(_ value: JSONValue, generation attempt: Int) {
     guard generation == attempt, let fields = value.objectValue,
       let kind = fields["sessionUpdate"]?.stringValue else { return }
-    switch kind {
-    case "config_option_update": options = RemoteSessionOption.parse(fields["configOptions"])
-    case "_pmai/message_snapshot":
-      messages = (fields["messages"]?.arrayValue ?? []).compactMap {
-        guard let f = $0.objectValue, let role = f["role"]?.stringValue,
-          let text = f["text"]?.stringValue else { return nil }
-        return RemoteMessage(id: f["remoteID"]?.stringValue ?? UUID().uuidString,
-          role: role, text: text, toolID: f["toolID"]?.stringValue, status: f["status"]?.stringValue, remoteID: f["remoteID"]?.stringValue)
-      }
-    case "agent_message_chunk", "user_message_chunk", "agent_thought_chunk":
-      let role = kind == "user_message_chunk" ? "user" : kind == "agent_thought_chunk" ? "thought" : "assistant"
-      let text = ACP.ContentBlock.text(from: fields["content"])
-      guard !text.isEmpty else { return }
-      if let last = messages.indices.last, messages[last].role == role { messages[last].text += text }
-      else { messages.append(RemoteMessage(role: role, text: text)) }
-    case "tool_call", "tool_call_update":
-      guard let id = fields["toolCallId"]?.stringValue else { return }
-      let text = ACP.ContentBlock.text(from: fields["content"])
-      if let i = messages.firstIndex(where: { $0.toolID == id }) {
-        if !text.isEmpty { messages[i].text += "\n" + text }
-        messages[i].status = fields["status"]?.stringValue
-      } else {
-        messages.append(RemoteMessage(role: "tool", text: fields["title"]?.stringValue ?? text,
-          toolID: id, status: fields["status"]?.stringValue))
-      }
-    default: break
+    if kind == "config_option_update" {
+      options = RemoteSessionOption.parse(fields["configOptions"])
+    } else {
+      ACPConversationTranscript.apply(value, to: &messages)
     }
   }
 
@@ -430,7 +401,7 @@ private struct RemoteMessage: Codable {
       "sessions": (selected?.sessions ?? []).sorted { $0.updatedAt > $1.updatedAt }.map {
         ["id": $0.id, "title": $0.title, "cwd": $0.cwd, "updatedAt": $0.updatedAt.timeIntervalSince1970] as [String: Any]
       },
-      "messages": messages.map { ["id": $0.id, "role": $0.role, "text": $0.text, "status": $0.status ?? "", "remoteID": $0.remoteID ?? ""] },
+      "messages": messages.map { ["id": $0.id.uuidString, "role": $0.role, "text": $0.text, "status": $0.status ?? "", "remoteID": $0.remoteID ?? ""] },
     ]
   }
 }

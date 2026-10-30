@@ -318,9 +318,7 @@ private enum ProviderEditorError: LocalizedError {
   case expectedObject
   case unknownFields([String])
   case changedID(String)
-  case emptyDefaultModel
-  case invalidBaseURL(String)
-  case invalidTimeout
+
 
   var errorDescription: String? {
     switch self {
@@ -343,12 +341,7 @@ private enum ProviderEditorError: LocalizedError {
         + suggestions.joined(separator: " ")
         + " Valid fields: \(providerEditorFieldNames.joined(separator: ", ")). Put provider-specific settings inside options. Names are case-sensitive."
     case .changedID(let id): return "Keep the id '\(id)'; /provider rename \(id) NEW renames it."
-    case .emptyDefaultModel: return "defaultModel must be a model ID or null."
-    case .invalidBaseURL(let value):
-      return
-        "baseURL must be an http:// or https:// URL with a host, got '\(value)'. Use the API endpoint, for example https://api.openai.com/v1."
-    case .invalidTimeout:
-      return "timeout must be a positive number of seconds, such as 600, or null."
+
     }
   }
 }
@@ -9866,20 +9859,7 @@ struct MaiCLI {
           try validateProviderEditorFields(in: edited)
           let provider = try JSONDecoder().decode(ConfiguredProvider.self, from: edited)
           guard provider.id == id else { throw ProviderEditorError.changedID(id) }
-          if let defaultModel = provider.defaultModel,
-            defaultModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-          {
-            throw ProviderEditorError.emptyDefaultModel
-          }
-          if [.openAICompatible, .systemOne].contains(provider.kind),
-            let url = provider.baseURL,
-            !["http", "https"].contains(url.scheme?.lowercased() ?? "") || url.host == nil
-          {
-            throw ProviderEditorError.invalidBaseURL(provider.baseURL?.absoluteString ?? "")
-          }
-          if let timeout = provider.timeout, !timeout.isFinite || timeout <= 0 {
-            throw ProviderEditorError.invalidTimeout
-          }
+          try provider.validate()
           let built = try await plugins.makeProvider(
             from: provider, environment: ProcessInfo.processInfo.environment)
           var candidate = draft

@@ -38,6 +38,7 @@ public struct AgentTranscript: Codable, Equatable, Sendable {
     try validate(index)
     let previous = messages[index]
     messages[index].replaceEditableText(with: text)
+    messages[index].providerState = nil
     return previous
   }
 

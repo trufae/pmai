@@ -85,15 +85,7 @@ struct RemoteAgentConversation: Codable, Identifiable {
   }
 }
 
-struct RemoteAgentMessage: Codable, Identifiable {
-  var id = UUID()
-  var role: String
-  var text: String
-  var toolID: String?
-  var status: String?
-  var createdAt: Date? = Date()
-  var remoteID: String?
-}
+typealias RemoteAgentMessage = ACPConversationMessage
 
 @MainActor @Observable
 final class RemoteAgentStore {
@@ -895,56 +887,10 @@ final class RemoteAgentChat {
     guard self.generation == generation, let object = update.objectValue,
       let kind = object["sessionUpdate"]?.stringValue
     else { return }
-    switch kind {
-    case "config_option_update":
+    if kind == "config_option_update" {
       configurationOptions = RemoteSessionOption.parse(object["configOptions"])
-      return
-    case "_pmai/message_snapshot":
-      let previous = Dictionary(
-        messages.compactMap { message in
-          message.remoteID.map { ($0, message.id) }
-        }, uniquingKeysWith: { first, _ in first })
-      messages = (object["messages"]?.arrayValue ?? []).compactMap { value in
-        guard let fields = value.objectValue, let remoteID = fields["remoteID"]?.stringValue,
-          let role = fields["role"]?.stringValue, let text = fields["text"]?.stringValue
-        else { return nil }
-        return RemoteAgentMessage(
-          id: previous[remoteID] ?? UUID(), role: role, text: text,
-          toolID: fields["toolID"]?.stringValue, status: fields["status"]?.stringValue,
-          createdAt: fields["created"]?.numberValue.map { Date(timeIntervalSince1970: $0 / 1000) },
-          remoteID: remoteID)
-      }
-    case "user_message_chunk", "agent_message_chunk", "agent_thought_chunk":
-      let role =
-        kind == "user_message_chunk"
-        ? "user" : kind == "agent_message_chunk" ? "assistant" : "thought"
-      let text = ACP.ContentBlock.text(from: object["content"])
-      guard !text.isEmpty else { return }
-      if let last = messages.indices.last, messages[last].role == role {
-        messages[last].text += text
-      } else {
-        messages.append(RemoteAgentMessage(role: role, text: text))
-      }
-    case "tool_call", "tool_call_update":
-      guard let id = object["toolCallId"]?.stringValue else { return }
-      let title = object["title"]?.stringValue
-      let content = ACP.ContentBlock.text(from: object["content"])
-      if let index = messages.firstIndex(where: { $0.toolID == id }) {
-        if !content.isEmpty { messages[index].text += "\n" + content }
-        if let status = object["status"]?.stringValue { messages[index].status = status }
-      } else {
-        messages.append(
-          RemoteAgentMessage(
-            role: "tool",
-            text: [title ?? "Tool", content].filter { !$0.isEmpty }.joined(separator: "\n"),
-            toolID: id, status: object["status"]?.stringValue))
-      }
-    case "plan":
-      let entries = object["entries"]?.arrayValue ?? []
-      let text = entries.compactMap { $0.objectValue?["content"]?.stringValue }.joined(
-        separator: "\n")
-      if !text.isEmpty { messages.append(RemoteAgentMessage(role: "plan", text: text)) }
-    default: break
+    } else {
+      ACPConversationTranscript.apply(update, to: &messages)
     }
   }
 

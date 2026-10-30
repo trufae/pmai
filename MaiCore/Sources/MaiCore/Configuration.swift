@@ -104,6 +104,22 @@ public struct ConfiguredProvider: Codable, Equatable, Identifiable, Sendable {
       options: try container.decodeIfPresent([String: JSONValue].self, forKey: .options) ?? [:])
   }
 
+  /// Validates a provider draft before a host saves it or opens a connection.
+  /// Missing URLs remain the provider factory's responsibility (some kinds have defaults).
+  public func validate() throws {
+    if let model = defaultModel, model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      throw ConfiguredProviderValidationError.emptyDefaultModel
+    }
+    if [.openAICompatible, .systemOne].contains(kind), let baseURL,
+      !["http", "https"].contains(baseURL.scheme?.lowercased() ?? "") || baseURL.host?.isEmpty != false
+    {
+      throw ConfiguredProviderValidationError.invalidBaseURL(baseURL.absoluteString)
+    }
+    if let timeout, !timeout.isFinite || timeout <= 0 {
+      throw ConfiguredProviderValidationError.invalidTimeout
+    }
+  }
+
   public func resolvedHeaders(environment: [String: String]) throws -> [String: String] {
     var resolved = headers
     for (header, environmentName) in headerEnvironment {
@@ -137,6 +153,21 @@ public struct ConfiguredProvider: Codable, Equatable, Identifiable, Sendable {
       throw MaiConfigurationError.unreadableAPIKeyFile(expanded)
     }
     return text.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+}
+
+public enum ConfiguredProviderValidationError: LocalizedError, Equatable, Sendable {
+  case emptyDefaultModel
+  case invalidBaseURL(String)
+  case invalidTimeout
+
+  public var errorDescription: String? {
+    switch self {
+    case .emptyDefaultModel: "defaultModel must be a model ID or null."
+    case .invalidBaseURL(let value):
+      "baseURL must be an http:// or https:// URL with a host, got '\(value)'. Use the API endpoint, for example https://api.openai.com/v1."
+    case .invalidTimeout: "timeout must be a positive number of seconds, such as 600, or null."
+    }
   }
 }
 

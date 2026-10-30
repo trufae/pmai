@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Reuse iOS's public PocketMai JS API, adapting only its host transport."""
+"""Reuse MaiCore's public PocketMai JS API, adapting only its host transport."""
 from pathlib import Path
 
 root = Path(__file__).resolve().parent.parent
-source = (root.parent / 'PocketMai/Services/WebXDCPocketMai.swift').read_text()
+source = (root.parent / 'MaiCore/Sources/MaiCore/WebXDCPocketMaiBridge.swift').read_text()
 marker = 'enum WebXDCPocketMaiBridge {'
 script = source.split(marker, 1)[1].split('static let script = #"""', 1)[1].split('"""#', 1)[0]
 script = script.replace("location.protocol !== 'xdc:'", "location.protocol !== 'https:'")

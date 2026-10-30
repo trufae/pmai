@@ -337,19 +337,18 @@ public final class PortableChat {
     guard !isGenerating else { throw PortableChatError.busy }
     guard let i = chat.messages.firstIndex(where: { $0.id == id }),
       [.user, .assistant].contains(chat.messages[i].role), chat.messages[i].toolCalls.isEmpty else { return }
-    let attachments = chat.messages[i].content.filter {
-      if case .text = $0 { return false }; return true
-    }
-    chat.messages[i].content = [.text(text)] + attachments
-    chat.messages[i].providerState = nil
+    var transcript = AgentTranscript(messages: chat.messages)
+    try transcript.editMessage(at: i, text: text)
+    chat.messages = transcript.messages
     try persistChat()
   }
 
   public func deleteMessage(_ id: String) throws {
     guard !isGenerating else { throw PortableChatError.busy }
     guard let removed = chat.messages.first(where: { $0.id == id }), removed.role != .tool else { return }
-    let callIDs = Set(removed.toolCalls.map(\.id))
-    chat.messages.removeAll { $0.id == id || $0.toolResults.contains { callIDs.contains($0.callID) } }
+    var transcript = AgentTranscript(messages: chat.messages)
+    try transcript.removeMessage(id: removed.id)
+    chat.messages = transcript.messages
     try persistChat()
   }
 
@@ -378,7 +377,9 @@ public final class PortableChat {
     var provider = configuration.provider
     provider.baseURL = url
     provider.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-    provider.defaultModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+    let selectedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+    provider.defaultModel = selectedModel.isEmpty ? nil : selectedModel
+    try provider.validate()
     return provider
   }
 
