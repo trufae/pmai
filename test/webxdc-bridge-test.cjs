@@ -17,9 +17,10 @@ function host() {
   assert.equal(api.version, 1);
   let snapshots = [];
   const request = api.complete({messages: [{role: 'user', content: 'Hello'}],
-    systemPrompt: 'Short answers', onUpdate: e => snapshots.push(e.text)});
+    scope: 'chat', systemPrompt: 'Short answers', onUpdate: e => snapshots.push(e.text)});
   const id = messages[0].id;
   assert.equal(messages[0].options.systemPrompt, 'Short answers');
+  assert.equal(messages[0].options.scope, 'chat');
   assert.equal(messages[0].options.onUpdate, undefined);
   window.__pocketmaiReply({id, event: 'text', text: 'Hi'});
   window.__pocketmaiReply({id, result: {text: 'Hi!'}});

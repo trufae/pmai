@@ -92,6 +92,59 @@ final class OpenAPIServerStreamingTests: XCTestCase {
     _ = try? await consumer.value
   }
 
+  func testCurrentChatToolsExecuteOnlyWhenServerAllowsThem() async throws {
+    StubChatEndpoint.install()
+    defer { StubChatEndpoint.uninstall() }
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = AppStore(persistence: PersistenceStore(localBaseURL: directory), monitorNetwork: false)
+    let deadline = Date().addingTimeInterval(20)
+    while !store.hasLoadedPersistedSettings && Date() < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    XCTAssertTrue(store.hasLoadedPersistedSettings)
+    let endpoint = OpenAIEndpoint(
+      name: "Server fixture", baseURL: "https://\(StubChatEndpoint.host)/v1", defaultModel: "server-model")
+    store.settings.openAIEndpoints = [endpoint]
+    store.settings.toolCallingMode = .text
+    store.settings.toolApprovalMode = .yolo
+    store.settings.useToolProxy = false
+    store.settings.toolPolicy = .init(automatic: false)
+    store.settings.agents[0].canSpawnSubagents = false
+    store.settings.toolSettings.webSearchProvider = .searXNG
+    store.settings.toolSettings.webSearchSearXNGURL = "https://\(StubChatEndpoint.host)"
+    store.updateCurrentConversationSettings {
+      $0.provider = .openAICompatible
+      $0.endpointID = endpoint.id
+      $0.modelID = "selected-model"
+      $0.enabledTools = [.webSearch]
+      $0.enabledMCPServers = []
+    }
+    let original = try XCTUnwrap(store.currentConversation)
+    StubChatEndpoint.script = { request in
+      let messages = request["messages"] as? [[String: Any]] ?? []
+      let text = messages.compactMap { $0["content"] as? String }.joined(separator: "\n")
+      let content = text.contains("Rizin search fixture") ? "Found the answer."
+        : text.contains("web_search") ? "TOOL_CALL\ntool: web_search\nquery: rizin\nEND_TOOL_CALL"
+        : "Tools unavailable."
+      return (StubChatEndpoint.completion(content: content), 0)
+    }
+    let request = OpenAPIServerHTTPRequest(
+      method: "POST", path: "/v1/chat/completions", queryItems: [:], headers: [:],
+      body: Data(#"{"messages":[{"role":"user","content":"Search for rizin"}],"stream":false}"#.utf8))
+    for allowTools in [false, true] {
+      store.settings.openAPIServer.allowToolExecution = allowTools
+      let response = await store.openAPIServerResponse(for: request)
+      XCTAssertEqual(response.statusCode, 200, String(decoding: response.body, as: UTF8.self))
+      let body = try XCTUnwrap(JSONSerialization.jsonObject(with: response.body) as? [String: Any])
+      let choices = try XCTUnwrap(body["choices"] as? [[String: Any]])
+      let message = try XCTUnwrap(choices.first?["message"] as? [String: Any])
+      XCTAssertEqual(message["content"] as? String, allowTools ? "Found the answer." : "Tools unavailable.")
+      XCTAssertEqual(StubChatEndpoint.searchQueries, allowTools ? ["rizin"] : [])
+      XCTAssertEqual(store.currentConversation?.messages, original.messages)
+    }
+  }
+
   private func object(_ data: Data) throws -> [String: Any] {
     try object(String(decoding: data, as: UTF8.self))
   }

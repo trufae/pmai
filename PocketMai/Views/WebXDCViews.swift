@@ -67,6 +67,17 @@ final class WebXDCRunningSession: NSObject, ObservableObject, Identifiable {
   lazy var pocketmai = WebXDCPocketMaiHost(
     appID: app.id,
     settings: { [weak self] in self?.store?.settings ?? .defaults },
+    chatConversation: { [weak self] in
+      guard let self, let conversationID, let store else { return nil }
+      return await store.webXDCConversation(withID: conversationID)
+    },
+    chatCompletion: { [weak self] request in
+      guard let store = self?.store else { throw CancellationError() }
+      let result = try await AssistantToolLoop.runIsolated(
+        conversation: request.conversation, settings: request.settings,
+        baseContext: request.context, store: store)
+      return result.text
+    },
     emit: { [weak self] reply in
       guard let data = try? JSONSerialization.data(withJSONObject: reply),
         let json = String(data: data, encoding: .utf8)
@@ -118,7 +129,13 @@ final class WebXDCRunningSession: NSObject, ObservableObject, Identifiable {
     pocketmai.requestPermission = { [weak self] capability in
       await self?.askPermission(capability) ?? false
     }
-    settingsSubscription = store.$settings.dropFirst().sink { [weak self] _ in
+    settingsSubscription = store.$settings.map { settings in
+      // Tool-written data is not a policy change: todo_add must be able to finish.
+      var configuration = settings
+      configuration.memory = ""
+      configuration.toolSettings.todos = []
+      return configuration
+    }.removeDuplicates().dropFirst().sink { [weak self] _ in
       self?.pocketmai.cancelAll()
     }
 
@@ -526,6 +543,30 @@ struct WebXDCRunnerSheet: View {
       Button("Allow") { session.resolvePermission(true) }
     } message: {
       Text("\(session.app.name) wants to use \(session.permissionRequest ?? "native services"). Allow access?")
+    }
+    .alert(
+      store.activeLongRunningOperationTimeoutRequest?.context.promptTitle
+        ?? "Operation is still running",
+      isPresented: Binding(
+        get: {
+          store.activeToolCallApprovalRequest == nil
+            && store.activeLongRunningOperationTimeoutRequest != nil
+        }, set: { _ in }),
+      presenting: store.activeLongRunningOperationTimeoutRequest
+    ) { request in
+      Button("Continue") { store.continueLongRunningOperation(id: request.id) }
+      Button("Skip") { store.skipLongRunningOperation(id: request.id) }
+      Button("Interrupt", role: .destructive) { store.interruptLongRunningOperation(id: request.id) }
+    } message: { request in
+      Text(request.context.promptMessage)
+    }
+    .overlay {
+      if let request = store.activeToolCallApprovalRequest {
+        // Keep the runner visible and its requests alive while the user decides.
+        ToolCallApprovalView(request: request)
+          .id(request.id)
+          .background(Color(uiColor: .systemBackground))
+      }
     }
   }
 
@@ -1244,7 +1285,7 @@ private struct WebXDCPermissionsSection: View {
       Text("App Permissions")
     } footer: {
       Text(
-        "Allow this app to use configured providers outside your chat. Requests may send app text or microphone audio to your selected service and incur charges. Inference and speech APIs must be enabled in WebXDC features; speech also requires Microphone or Audio playback. Grants stay on this device and are never exported."
+        "Allow this app to use configured providers. With Chat bridge enabled, apps can also request the attached chat's context and enabled tools. Normal tool approvals apply. Requests may send text or microphone audio to your selected service and incur charges. Inference and speech APIs must be enabled; speech also requires Microphone or Audio playback. Grants stay on this device and are never exported."
       )
     }
     .onAppear { permissions = WebXDCPermissions.load(appID) }

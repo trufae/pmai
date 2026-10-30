@@ -32,7 +32,7 @@ struct WebXDCAPIError: LocalizedError {
   var errorDescription: String? { message }
 }
 
-/// One host per WKWebView. No AppStore.send, chat history, agent tools or shared TTS player.
+/// One host per WKWebView. Chat access is explicit; speech uses an app-owned player.
 @MainActor
 final class WebXDCPocketMaiHost {
   static let voicePrompt = """
@@ -55,6 +55,9 @@ final class WebXDCPocketMaiHost {
   }
   private let completion:
     (ChatCompletionRequest, @escaping @MainActor (String) -> Void) async throws -> String
+  private let chatConversation: @MainActor () async -> Conversation?
+  private let chatCompletion:
+    (@MainActor (ChatCompletionRequest) async throws -> String)?
   private let recognitionEngine:
     (ConversationSettings, SpeechTranscriptionPolicy) throws -> LiveSpeechRecognitionEngine
 
@@ -65,6 +68,8 @@ final class WebXDCPocketMaiHost {
       String = {
         try await ChatProviderRouter.complete(request: $0, onUpdate: $1)
       },
+    chatConversation: @escaping @MainActor () async -> Conversation? = { nil },
+    chatCompletion: (@MainActor (ChatCompletionRequest) async throws -> String)? = nil,
     recognitionEngine:
       @escaping (ConversationSettings, SpeechTranscriptionPolicy) throws ->
       LiveSpeechRecognitionEngine = {
@@ -76,6 +81,8 @@ final class WebXDCPocketMaiHost {
     self.settings = settings
     self.emit = emit
     self.completion = completion
+    self.chatConversation = chatConversation
+    self.chatCompletion = chatCompletion
     self.recognitionEngine = recognitionEngine
   }
 
@@ -229,6 +236,7 @@ final class WebXDCPocketMaiHost {
     if method == "capabilities" {
       let grants = WebXDCPermissions.load(appID)
       let tools = settings().toolSettings
+      let hasChat = await chatAccessAvailable()
       return [
         "host": "pocketmai", "version": 1,
         "permissions": [
@@ -241,7 +249,8 @@ final class WebXDCPocketMaiHost {
         "features": [
           "streaming": true, "cancellation": true, "microphone": true,
           "providerAPIs": tools.webxdcAllowProviderAPIs,
-          "tools": false,
+          "chat": hasChat,
+          "tools": hasChat,
         ], "voicePrompt": Self.voicePrompt,
       ] as [String: Any]
     }
@@ -373,25 +382,65 @@ final class WebXDCPocketMaiHost {
     return configuration.endpointID?.uuidString ?? configuration.provider.rawValue
   }
 
+  private func chatAccessAvailable() async -> Bool {
+    guard settings().toolSettings.webxdcChatInteractionEnabled, chatCompletion != nil else {
+      return false
+    }
+    return await chatConversation() != nil
+  }
+
   private func complete(_ options: [String: Any], id: String) async throws -> Any {
     var settings = settings()
-    var conversation = Conversation()
-    let provider = options["provider"] as? String ?? defaultProviderID
-    switch provider {
-    case "apple":
-      conversation.provider = .apple
-      conversation.modelID = settings.appleModelID
-    case "mlx":
-      conversation.provider = .mlx
-      conversation.modelID = settings.localMLXModelID
-    default:
-      let endpoint = try endpoint(provider)
-      conversation.provider = .openAICompatible
-      conversation.endpointID = endpoint.id
-      conversation.modelID = endpoint.defaultModel
+    guard let scope = (options["scope"] ?? "isolated") as? String,
+      scope == "isolated" || scope == "chat" else {
+      throw WebXDCAPIError(code: "TypeError", message: "Choose scope isolated or chat.")
     }
-    if options["provider"] == nil {
-      conversation.modelID = settings.defaultProviderConfiguration.modelID
+    var conversation: Conversation
+    if scope == "chat" {
+      guard settings.toolSettings.webxdcChatInteractionEnabled else {
+        throw WebXDCAPIError(
+          code: "NotAllowedError", message: "Enable Chat bridge in WebXDC Permissions to use chat tools and context.")
+      }
+      guard chatCompletion != nil, let attached = await chatConversation() else {
+        throw WebXDCAPIError(
+          code: "NotFoundError", message: "No attached chat is available. Stop this app and open it from a chat.")
+      }
+      try Task.checkCancellation()
+      conversation = attached
+      // The tool loop owns a transient copy, never the stored chat transcript.
+      conversation.id = UUID()
+      conversation.title = "WebXDC: \(attached.displayTitle)"
+      conversation.historyWindow = nil
+      conversation.subagents = []
+      conversation.lastContextSignature = nil
+    } else {
+      conversation = Conversation()
+      conversation.toolsEnabled = false
+      conversation.enabledTools = []
+      conversation.enabledMCPServers = []
+      conversation.enabledMCPTools = []
+      conversation.disabledMCPTools = []
+      settings.memory = ""
+    }
+    if scope == "isolated" || options["provider"] != nil {
+      let provider = options["provider"] as? String ?? defaultProviderID
+      conversation.endpointID = nil
+      switch provider {
+      case "apple":
+        conversation.provider = .apple
+        conversation.modelID = settings.appleModelID
+      case "mlx":
+        conversation.provider = .mlx
+        conversation.modelID = settings.localMLXModelID
+      default:
+        let endpoint = try endpoint(provider)
+        conversation.provider = .openAICompatible
+        conversation.endpointID = endpoint.id
+        conversation.modelID = endpoint.defaultModel
+      }
+      if options["provider"] == nil {
+        conversation.modelID = settings.defaultProviderConfiguration.modelID
+      }
     }
     if let model = options["model"] as? String { conversation.modelID = model }
     let prompt =
@@ -407,7 +456,7 @@ final class WebXDCPocketMaiHost {
         code: "TypeError",
         message: "Supply 1–200 messages (up to 256 KB) and a system prompt up to 64 KB.")
     }
-    conversation.messages = try messages.map { message in
+    conversation.messages += try messages.map { message in
       guard let text = message["content"], let role = message["role"],
         role == "user" || role == "assistant"
       else {
@@ -416,12 +465,15 @@ final class WebXDCPocketMaiHost {
       }
       return ChatMessage(role: role == "user" ? .user : .assistant, text: text)
     }
-    let system = SystemPrompt(name: "WebXDC", text: prompt)
-    settings.systemPrompts = [system]
-    settings.memory = ""
-    conversation.systemPromptID = system.id
-    conversation.toolsEnabled = false
-    conversation.enabledTools = []
+    if scope == "isolated" || options["systemPrompt"] != nil || options["mode"] as? String == "voice" {
+      let system = SystemPrompt(name: "WebXDC", text: prompt)
+      if scope == "isolated" {
+        settings.systemPrompts = [system]
+      } else {
+        settings.systemPrompts.append(system)
+      }
+      conversation.systemPromptID = system.id
+    }
     conversation.usesStreaming = true
     if let message = ChatProviderRouter.preflightMessage(
       conversation: conversation, settings: settings)
@@ -430,6 +482,10 @@ final class WebXDCPocketMaiHost {
     }
     let request = ChatCompletionRequest(
       conversation: conversation, settings: settings, context: "", assistantMessageID: UUID())
+    if scope == "chat", let chatCompletion {
+      let text = try await chatCompletion(request)
+      return ["text": MessageContentFilter.render(text).visibleText]
+    }
     let text = try await completion(request) { [weak self] text in
       guard let self, !cancelledRequests.contains(id), !Task.isCancelled else { return }
       emit(["id": id, "event": "text", "text": MessageContentFilter.render(text).visibleText])

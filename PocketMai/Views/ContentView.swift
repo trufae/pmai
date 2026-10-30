@@ -590,7 +590,11 @@ struct ContentView: View {
   private var approvalBinding: Binding<ApprovalPresentation?> {
     Binding(
       get: {
-        if let request = store.activeToolCallApprovalRequest { return .tool(request) }
+        if let request = store.activeToolCallApprovalRequest {
+          // The visible runner presents approvals above its web view.
+          if store.activeWebXDCSession?.pocketmai.isActive == true { return nil }
+          return .tool(request)
+        }
         if let request = store.activeAutocompactionApprovalRequest { return .compaction(request) }
         return nil
       },
@@ -605,6 +609,7 @@ struct ContentView: View {
       get: {
         store.activeToolCallApprovalRequest == nil
           && store.activeAutocompactionApprovalRequest == nil
+          && store.activeWebXDCSession?.pocketmai.isActive != true
           && store.activeLongRunningOperationTimeoutRequest != nil
       },
       set: { _ in })
@@ -940,7 +945,7 @@ private struct AutocompactionApprovalView: View {
   }
 }
 
-private struct ToolCallApprovalView: View {
+struct ToolCallApprovalView: View {
   @EnvironmentObject private var store: AppStore
   let request: ToolCallApprovalRequest
   @State private var toolCallText: String

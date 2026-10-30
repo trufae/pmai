@@ -70,7 +70,9 @@ if (mai?.host === 'pocketmai' && mai.version === 1) {
   const caps = await mai.capabilities();
   // caps.host === 'pocketmai'; caps.version === 1
   // caps.permissions: {inference, transcription, synthesis} -- effective booleans
-  // caps.features: {streaming: true, cancellation: true, microphone: true, providerAPIs: true, tools: false}
+  // caps.features: {streaming: true, cancellation: true, microphone: true,
+  //                 providerAPIs: true, chat: true, tools: true}
+  // chat/tools require an attached chat and the Chat bridge setting.
   // caps.voicePrompt: the built-in conversational voice system prompt
   showVoiceUI(caps.permissions.transcription && caps.permissions.synthesis);
 } else {
@@ -156,7 +158,8 @@ cancels the native task, stops owned microphone/playback work, and suppresses la
 results. A backend may already have processed or billed a request. Abort does not
 undo remote work. Navigation, page teardown, stopping a session, closing its
 runner, revoking an app grant, or changing PocketMai settings cancels outstanding
-requests. A hidden runner cannot start new native requests. Closing the runner
+requests. Tool-written todo data and memory updates do not cancel requests.
+A hidden runner cannot start new native requests. Closing the runner
 retains the web app's page state; reopening allows new requests.
 
 There are at most eight native requests per app at once and one active speech
@@ -235,10 +238,8 @@ Each completion creates a fresh provider session with only the supplied messages
 and system prompt. The request uses no current-chat history or memory and never writes to the
 current PocketMai chat or changes its selected provider. The app owns its
 history: pass it again on the next call or discard it. Normal provider usage
-accounting still applies. Tools/MCP/agent actions are disabled in this version;
-`caps.features.tools` is false. The app cannot acquire native tool access through
-a prompt. This extension supplies building blocks for custom interfaces, not
-implicit access to all agent permissions.
+accounting still applies. This is the default `scope: 'isolated'`: tools, MCP and
+agent actions are disabled. Use explicit chat scope below to access chat tools.
 
 Messages must contain `role: 'user' | 'assistant'` and string `content`, with
 1–200 entries totaling at most 256,000 UTF-8 bytes. The optional `systemPrompt`
@@ -247,6 +248,45 @@ can contain at most 64,000 UTF-8 bytes. Use it instead of a `system` message.
 the default is a generic helpful assistant. A supplied custom prompt replaces the
 default. PocketMai's provider privacy/redaction, timeouts and offline behavior
 still apply. Keep app histories small for low latency and model context limits.
+
+## Inference with the attached chat's tools and context
+
+```js
+const caps = await mai.capabilities();
+if (!caps.features.chat) throw new Error('Open this app from a chat and enable Chat bridge.');
+const result = await mai.complete({
+  scope: 'chat',
+  mode: 'voice',
+  messages: [{role: 'user', content: 'Use the enabled tools to check my calendar.'}],
+  signal: controller.signal
+});
+await mai.speak({text: result.text, signal: controller.signal});
+```
+
+Chat scope uses a snapshot of the chat the app was started from, including its
+history, memory, working folder, tool selections, MCP grants and tool
+calling mode. Switching chats does not retarget a running app. Stop and reopen
+the app to attach it to a different chat. A missing or deleted attached chat
+rejects with `NotFoundError`; a disabled **Chat bridge** rejects with
+`NotAllowedError`. The app's inference grant and **Inference and speech APIs**
+setting are still required. No OpenAPI server or server tool-execution switch
+is needed for this native JavaScript API.
+
+Omit `provider` and `model` to inherit the attached chat's selection; explicit
+values override only this request. By default the chat's system prompt is kept.
+`mode: 'voice'` selects the voice prompt, and `systemPrompt` replaces the prompt
+for this request. The usual tool policy, offline restrictions and approval flow
+apply, including MCP discovery and execution. Chat scope never enables tools
+that are disabled in the attached chat. Capability flags describe availability
+of chat scope, not whether any particular tool is enabled.
+
+Supplied messages are appended to the chat snapshot. Pass only the app's own
+conversation history, without copying the host transcript. Requests and replies
+are not saved to the host chat. Tool actions can still change data or invoke
+services, just as they can in normal chat. Chat completions currently return
+their final answer after the tool loop; callers must not require streaming
+updates to display the result. Cancellation and runner lifetime rules also apply
+while the model or a tool is running.
 
 ## Speech to text from the microphone
 
@@ -334,7 +374,9 @@ keep responses conversational but cannot guarantee the model follows it.
 [examples/webxdc/voice-avatar](../examples/webxdc/voice-avatar) contains a small
 animated CSS avatar, provider/model/voice selection, an editable system prompt,
 transcript, Start/Stop, and Send now controls. It loops through microphone →
-transcription → isolated streaming inference → speech playback. All requests share
+transcription → inference → speech playback. When chat scope is available,
+**Use attached chat context and tools** is checked and uses that chat's model;
+uncheck it for isolated inference with the provider/model selectors. All requests share
 an AbortController, so Stop interrupts the current phase. It keeps its last 20
 messages in requests and stores no history outside the page.
 
@@ -357,8 +399,8 @@ not exposed by v1.
 
 `webxdc.sendUpdate()` and `webxdc.sendToChat()` remain separate from the
 PocketMai extension. Depending on the existing WebXDC chat-interaction setting,
-updates can trigger the attached chat. Do not use them as the transport for an
-isolated voice assistant; `mai.complete()` supplies that isolation. State updates
+updates can trigger the attached chat. Use `mai.complete()` for voice inference,
+with isolated or chat scope as appropriate. State updates
 are useful for deliberately shared game state; avoid publishing prompts,
 transcripts, or private answers through them automatically.
 

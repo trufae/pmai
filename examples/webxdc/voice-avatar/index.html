@@ -23,13 +23,15 @@ summary { cursor: pointer; } small { color: #b6c6dc; }
 <button id="start" disabled>Start conversation</button><button id="stop" disabled>Stop</button>
 <button id="finish" disabled>Send now</button>
 <details><summary>Voice and personality</summary>
+<label><input id="chat" type="checkbox"> Use attached chat context and tools</label>
+<small>Uses that chat's model and normal tool approvals. Replies stay in this app; tool actions can change data.</small>
 <label>Inference provider<select id="provider"></select></label>
 <label>Model<select id="model"></select></label>
 <label>Speech provider<select id="speech"></select></label>
 <label>Voice<select id="voice"></select></label>
 <label>Language (blank uses device setting)<input id="language" placeholder="en-US"></label>
 <label>Custom system prompt<textarea id="prompt" rows="5"></textarea></label>
-<small>The avatar uses PocketMai's configured transcription service and microphone. History lasts until this page closes. Provider calls may cost money.</small>
+<small>The avatar uses PocketMai's configured transcription service and microphone. App history lasts until this page closes. Provider calls may cost money.</small>
 </details>
 <div id="transcript" aria-live="polite"></div>
 <script src="webxdc.js"></script>

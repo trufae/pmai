@@ -21,6 +21,9 @@ async function voices() {
   select('voice', items, x => x.name + (x.language ? ` (${x.language})` : ''));
 }
 let capable = false;
+function chatScope() {
+  $('provider').disabled = $('model').disabled = $('chat').checked;
+}
 async function init() {
   if (api?.host !== 'pocketmai' || api.version !== 1) {
     state('This avatar needs PocketMai with its webxdc voice extensions.'); return;
@@ -29,6 +32,9 @@ async function init() {
     ? await api.requestPermissions({capabilities: ['inference', 'transcription', 'synthesis']})
     : await api.capabilities();
   $('prompt').value = caps.voicePrompt;
+  $('chat').checked = !!caps.features?.chat;
+  $('chat').disabled = !caps.features?.chat;
+  $('chat').onchange = chatScope;
   capable = ['inference', 'transcription', 'synthesis'].every(key => caps.permissions[key]);
   if (!capable) {
     state('Open Permissions in the app’s top bar. Enable Inference and speech APIs, Microphone and Audio playback, then allow Inference providers, Speech to text and Text to speech for this app. Tap Start to retry.');
@@ -40,6 +46,7 @@ async function init() {
   $('provider').onchange = () => models().catch(e => state(e.message));
   $('speech').onchange = () => voices().catch(e => state(e.message));
   await Promise.all([models(), voices()]);
+  chatScope();
 }
 $('start').onclick = async () => {
   if (!capable) {
@@ -65,7 +72,9 @@ $('start').onclick = async () => {
       state('Thinking');
       const answer = document.createElement('p'); $('transcript').append(answer);
       const result = await api.complete({signal, mode: 'voice',
-        provider: $('provider').value, model: $('model').value || undefined,
+        scope: $('chat').checked ? 'chat' : 'isolated',
+        provider: $('chat').checked ? undefined : $('provider').value,
+        model: $('chat').checked ? undefined : $('model').value || undefined,
         systemPrompt: $('prompt').value, messages: history.slice(-20),
         onUpdate: event => { answer.textContent = `Avatar: ${event.text}`; }});
       answer.textContent = `Avatar: ${result.text}`;

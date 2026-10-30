@@ -2328,6 +2328,12 @@ final class AppStore: ObservableObject {
     activeWebXDCSession = nil
   }
 
+  /// Read the attached chat without selecting it, even after its cached history was released.
+  func webXDCConversation(withID id: UUID) async -> Conversation? {
+    await ensureConversationLoaded(id)
+    return conversation(withID: id)
+  }
+
   private func handleLocalChatCommand(_ prompt: String) -> Bool {
     guard prompt.trimmingCharacters(in: .whitespacesAndNewlines) == "/version" else {
       return false
@@ -2528,7 +2534,7 @@ final class AppStore: ObservableObject {
     openAPIServerState = .stopped
   }
 
-  private func openAPIServerResponse(for request: OpenAPIServerHTTPRequest) async
+  func openAPIServerResponse(for request: OpenAPIServerHTTPRequest) async
     -> OpenAPIServerHTTPResponse
   {
     if request.method == "OPTIONS" {

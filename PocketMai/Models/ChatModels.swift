@@ -730,10 +730,10 @@ enum OpenAPIServerConversationScope: String, Codable, CaseIterable, Identifiable
     switch self {
     case .currentChat:
       return
-        "Requests use only the selected chat's provider and model. Client messages stay isolated and are not saved to the chat."
+        "Requests use the selected chat's provider and model, plus its enabled tools when Run PocketMai tools is on. Client messages stay isolated and are not saved to the chat."
     case .defaultSettings:
       return
-        "Requests use the default provider and model. Client messages stay isolated and are not saved to the selected chat."
+        "Requests use the default provider and model, plus default tools when Run PocketMai tools is on. Client messages stay isolated and are not saved to the selected chat."
     }
   }
 }

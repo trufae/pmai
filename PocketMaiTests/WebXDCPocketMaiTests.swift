@@ -222,6 +222,175 @@ final class WebXDCPocketMaiTests: XCTestCase {
     await fulfillment(of: [finished], timeout: 3)
   }
 
+  func testChatScopeInheritsContextAndSelectionsWithoutEnablingDisabledTools() async throws {
+    let app = try WebXDCLibrary.createApp(name: "Chat context", description: "")
+    defer { try? WebXDCLibrary.deleteApp(id: app.id) }
+    try WebXDCPermissions(inference: true).save(app.id)
+    var settings = AppSettings.defaults
+    let endpoint = OpenAIEndpoint(
+      name: "Chat", baseURL: "http://127.0.0.1:1/v1", defaultModel: "chat-model")
+    settings.openAIEndpoints = [endpoint]
+    settings.memory = "Chat memory"
+    var attached = Conversation()
+    attached.provider = .openAICompatible
+    attached.endpointID = endpoint.id
+    attached.modelID = "selected-model"
+    attached.toolsEnabled = false
+    attached.enabledTools = [.memory]
+    attached.enabledMCPServers = [UUID()]
+    attached.enabledMCPTools = ["selected-tool"]
+    attached.disabledMCPTools = ["disabled-tool"]
+    attached.toolCallingMode = .xml
+    attached.messages = [ChatMessage(role: .user, text: "Chat context")]
+    let finished = expectation(description: "Chat completion")
+    let host = WebXDCPocketMaiHost(
+      appID: app.id, settings: { settings }, chatConversation: { attached },
+      chatCompletion: { request in
+        XCTAssertNotEqual(request.conversation.id, attached.id)
+        XCTAssertEqual(request.conversation.messages.map(\.text), ["Chat context", "Hi"])
+        XCTAssertEqual(request.conversation.modelID, "selected-model")
+        XCTAssertEqual(request.conversation.endpointID, endpoint.id)
+        XCTAssertEqual(request.conversation.toolsEnabled, attached.toolsEnabled)
+        XCTAssertEqual(request.conversation.enabledTools, attached.enabledTools)
+        XCTAssertEqual(request.conversation.enabledMCPServers, attached.enabledMCPServers)
+        XCTAssertEqual(request.conversation.enabledMCPTools, attached.enabledMCPTools)
+        XCTAssertEqual(request.conversation.disabledMCPTools, attached.disabledMCPTools)
+        XCTAssertEqual(request.conversation.toolCallingMode, .xml)
+        XCTAssertEqual(request.settings.memory, "Chat memory")
+        XCTAssertEqual(request.settings.systemPrompts, settings.systemPrompts)
+        return "Hello!"
+      }
+    ) { reply in
+      XCTAssertNil(reply["error"])
+      XCTAssertEqual((reply["result"] as? [String: String])?["text"], "Hello!")
+      finished.fulfill()
+    }
+    host.receive(["id": "chat", "method": "complete", "options": [
+      "scope": "chat", "messages": [["role": "user", "content": "Hi"]],
+    ]])
+    await fulfillment(of: [finished], timeout: 5)
+    XCTAssertEqual(attached.messages.map(\.text), ["Chat context"])
+  }
+
+  func testChatScopeRejectsDisabledBridgeMissingChatAndInvalidScope() async throws {
+    let app = try WebXDCLibrary.createApp(name: "Chat gates", description: "")
+    defer { try? WebXDCLibrary.deleteApp(id: app.id) }
+    try WebXDCPermissions(inference: true).save(app.id)
+    for (scope, enabled, attached, expected) in [
+      ("chat", false, true, "NotAllowedError"),
+      ("chat", true, false, "NotFoundError"),
+      ("typo", true, true, "TypeError"),
+    ] {
+      var settings = AppSettings.defaults
+      settings.toolSettings.webxdcChatInteractionEnabled = enabled
+      let finished = expectation(description: expected)
+      let host = WebXDCPocketMaiHost(
+        appID: app.id, settings: { settings },
+        completion: { _, _ in XCTFail("Must not fall back to isolated inference"); return "" },
+        chatConversation: { attached ? Conversation() : nil },
+        chatCompletion: { _ in XCTFail("Must not run chat inference"); return "" }
+      ) { reply in
+        XCTAssertEqual((reply["error"] as? [String: String])?["code"], expected)
+        finished.fulfill()
+      }
+      host.receive(["id": "gate", "method": "complete", "options": [
+        "scope": scope, "messages": [["role": "user", "content": "Hi"]],
+      ]])
+      await fulfillment(of: [finished], timeout: 5)
+    }
+  }
+
+  func testJavaScriptChatScopeExecutesToolsFromAttachedChatAfterSwitchingChats() async throws {
+    StubChatEndpoint.install()
+    defer { StubChatEndpoint.uninstall() }
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = AppStore(persistence: PersistenceStore(localBaseURL: directory), monitorNetwork: false)
+    let deadline = Date().addingTimeInterval(20)
+    while !store.hasLoadedPersistedSettings && Date() < deadline {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    XCTAssertTrue(store.hasLoadedPersistedSettings)
+    let endpoint = OpenAIEndpoint(
+      name: "Chat fixture", baseURL: "https://\(StubChatEndpoint.host)/v1", defaultModel: "chat-model")
+    store.settings.openAIEndpoints = [endpoint]
+    store.settings.toolCallingMode = .text
+    store.settings.toolApprovalMode = .ask
+    store.settings.useToolProxy = false
+    store.settings.toolPolicy = .init(automatic: false)
+    store.settings.agents[0].canSpawnSubagents = false
+    store.settings.toolSettings.todos = []
+    store.updateCurrentConversationSettings {
+      $0.provider = .openAICompatible
+      $0.endpointID = endpoint.id
+      $0.modelID = "attached-model"
+      $0.enabledTools = [.todo]
+      $0.enabledMCPServers = []
+      $0.messages = [ChatMessage(role: .user, text: "Attached context")]
+    }
+    let attached = try XCTUnwrap(store.currentConversation)
+    StubChatEndpoint.script = { request in
+      let messages = request["messages"] as? [[String: Any]] ?? []
+      let text = messages.compactMap { $0["content"] as? String }.joined(separator: "\n")
+      return (StubChatEndpoint.completion(content: text.contains("Added: Voice task")
+        ? "Saved your task."
+        : "TOOL_CALL\ntool: todo_add\ntitle: Voice task\nEND_TOOL_CALL"), 0)
+    }
+    let app = try WebXDCLibrary.createApp(name: "Chat tools", description: "", indexHTML: """
+      <!doctype html><script src="webxdc.js"></script><script>
+      webxdc.pocketmai.complete({scope:'chat', mode:'voice',
+        messages:[{role:'user',content:'Add Voice task to my todos'}]})
+        .then(r => console.info('chat-result:' + r.text))
+        .catch(e => console.error('chat-error:' + e.name + ':' + e.message));
+      </script>
+      """)
+    defer { try? WebXDCLibrary.deleteApp(id: app.id) }
+    try WebXDCPermissions(inference: true).save(app.id)
+    let session = WebXDCRunningSession(app: app, conversationID: attached.id, store: store)
+    defer { session.stop() }
+    store.newConversation()
+    store.updateCurrentConversationSettings {
+      $0.messages = [ChatMessage(role: .user, text: "Other chat context")]
+      $0.enabledTools = []
+    }
+    let other = try XCTUnwrap(store.currentConversation)
+    XCTAssertNotEqual(other.id, attached.id)
+    let finished = expectation(description: "JavaScript tool result")
+    var completed = false
+    let observation = session.$debugLogs.sink { logs in
+      guard !completed, let message = logs.last?.message,
+        message.hasPrefix("chat-result:") || message.hasPrefix("chat-error:") else { return }
+      completed = true
+      XCTAssertEqual(message, "chat-result:Saved your task.")
+      finished.fulfill()
+    }
+    defer { observation.cancel() }
+    let approvalRequested = expectation(description: "Normal tool approval")
+    var approvalID: UUID?
+    let approvalObservation = store.$toolCallApprovalRequests.sink { requests in
+      guard approvalID == nil, let request = requests.first else { return }
+      approvalID = request.id
+      approvalRequested.fulfill()
+    }
+    defer { approvalObservation.cancel() }
+    await fulfillment(of: [approvalRequested], timeout: 30)
+    XCTAssertTrue(store.settings.toolSettings.todos.isEmpty)
+    let approval = try XCTUnwrap(store.activeToolCallApprovalRequest)
+    XCTAssertNil(store.approveToolCall(id: approval.id, editedText: approval.originalText))
+    await fulfillment(of: [finished], timeout: 30)
+    XCTAssertEqual(store.settings.toolSettings.todos.map(\.title), ["Voice task"])
+    let request = try XCTUnwrap(StubChatEndpoint.requests.first)
+    XCTAssertEqual(request["model"] as? String, "attached-model")
+    let messages = request["messages"] as? [[String: Any]] ?? []
+    let text = messages.compactMap { $0["content"] as? String }.joined(separator: "\n")
+    XCTAssertTrue(text.contains("Attached context"))
+    XCTAssertFalse(text.contains("Other chat context"))
+    XCTAssertTrue(text.contains(WebXDCPocketMaiHost.voicePrompt))
+    let reloaded = await store.webXDCConversation(withID: attached.id)
+    XCTAssertEqual(reloaded?.messages, attached.messages)
+    XCTAssertEqual(store.currentConversation?.messages, other.messages)
+  }
+
   func testListenCanFinishManuallyAndReleasesMicrophone() async throws {
     let app = try WebXDCLibrary.createApp(name: "Listen", description: "")
     defer { try? WebXDCLibrary.deleteApp(id: app.id) }
