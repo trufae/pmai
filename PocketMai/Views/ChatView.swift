@@ -4321,6 +4321,10 @@ private struct ChatComposer: View {
         store.updateCurrentConversation { conversation in
           conversation.toolsEnabled = enabled
         }
+        if enabled, store.currentConversation?.enabledTools.contains(.location) == true {
+          store.enableLocationAccessIfNeeded()
+          store.saveSettings()
+        }
       }
     )
   }
@@ -6060,6 +6064,7 @@ private struct ToolPickerPopover: View {
     }
     if nextValue {
       store.settings.defaultEnabledTools.insert(tool)
+      if tool == .location { store.enableLocationAccessIfNeeded() }
     } else {
       store.settings.defaultEnabledTools.remove(tool)
     }

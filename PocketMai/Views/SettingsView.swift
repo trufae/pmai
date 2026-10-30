@@ -1632,7 +1632,17 @@ struct SettingsView: View {
       .foregroundStyle(.secondary)
     case .location:
       Toggle("Use GPS location", isOn: settingsBinding(\.toolSettings.useGPSLocation))
-      TextField("Manual location", text: settingsBinding(\.toolSettings.manualLocation))
+        .onChange(of: store.settings.toolSettings.useGPSLocation) { _, enabled in
+          if enabled { store.locationService.requestAuthorization() }
+        }
+      if store.settings.toolSettings.useGPSLocation {
+        LocationPermissionStatusView(service: store.locationService)
+      } else {
+        TextField("Manual location", text: settingsBinding(\.toolSettings.manualLocation))
+      }
+      Text("Adds a fresh location to each message while this tool is enabled in the chat. Coordinates are shared with the selected AI provider. Enable Web Search or Browser for nearby maps and information.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
     case .weather:
       TextField("Weather location", text: settingsBinding(\.toolSettings.weatherLocation))
     case .webSearch:
@@ -2455,8 +2465,25 @@ struct SettingsView: View {
       store.settings.defaultEnabledTools.remove(tool)
     } else {
       store.settings.defaultEnabledTools.insert(tool)
+      if tool == .location { store.enableLocationAccessIfNeeded() }
     }
     store.saveSettings()
+  }
+}
+
+private struct LocationPermissionStatusView: View {
+  @ObservedObject var service: LocationService
+
+  var body: some View {
+    Text(service.permissionText)
+      .font(.caption)
+      .foregroundStyle(.secondary)
+    if service.authorizationStatus == .denied {
+      Button("Open iOS Settings") {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
+      }
+    }
   }
 }
 

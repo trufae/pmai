@@ -609,6 +609,15 @@ final class AppStore: ObservableObject {
 
   let streamingTextStore: StreamingTextStore
   lazy var locationService = LocationService()
+
+  func enableLocationAccessIfNeeded() {
+    // Older settings defaulted to an empty manual location. Enabling the tool
+    // should use GPS unless the user has configured a manual place.
+    if settings.toolSettings.manualLocation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+      settings.toolSettings.useGPSLocation = true
+    }
+    if settings.toolSettings.useGPSLocation { locationService.requestAuthorization() }
+  }
   lazy var webxdcHub = WebXDCUpdateHub()
   @Published var activeWebXDCSession: WebXDCRunningSession?
   /// The in-app browser page behind the browser tools; nil until first used.

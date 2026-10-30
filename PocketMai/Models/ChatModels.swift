@@ -2932,7 +2932,7 @@ enum ConversationSearchScope: String, Codable, CaseIterable, Identifiable, Senda
 struct NativeToolSettings: Codable, Equatable, Sendable {
   var includeTimeZone: Bool = true
   var includeMoonPhase: Bool = true
-  var useGPSLocation: Bool = false
+  var useGPSLocation: Bool = true
   var manualLocation: String = ""
   var weatherLocation: String = ""
   var webSearchProvider: WebSearchProvider = .exa
@@ -3004,9 +3004,10 @@ struct NativeToolSettings: Codable, Equatable, Sendable {
       (try? c.decode(Bool.self, forKey: .includeMoonPhase))
       ?? (try? c.decode(Bool.self, forKey: .includeYear))
       ?? defaults.includeMoonPhase
-    useGPSLocation = (try? c.decode(Bool.self, forKey: .useGPSLocation)) ?? defaults.useGPSLocation
     manualLocation =
       (try? c.decode(String.self, forKey: .manualLocation)) ?? defaults.manualLocation
+    useGPSLocation = (try? c.decode(Bool.self, forKey: .useGPSLocation))
+      ?? manualLocation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     weatherLocation =
       (try? c.decode(String.self, forKey: .weatherLocation)) ?? defaults.weatherLocation
     webSearchProvider =

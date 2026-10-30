@@ -131,6 +131,15 @@ there yet. The Android CLI is a separate terminal client.
   Island Live Activities, receive background completion and approval
   notifications, and optionally keep long replies working when the screen locks.
 
+For a walking or driving guide on iOS, enable **Location** in the chat's tool
+picker and allow location access when prompted. GPS is the default; each message
+gets a fresh position, its accuracy, and measurement time in the AI's context.
+Enable **Web Search** or **Browser** as well for nearby maps and information.
+Location is sampled when sending messages while using the app, rather than
+continuously tracked in the background. For a fixed place, turn off **Use GPS
+location** in Settings → Tools → Contextual → Location and enter a manual location.
+If access was denied, use **Open iOS Settings** there to restore it.
+
 Offline use depends on selecting a local model and local tools; remote providers
 still need a connection. CLI Airplane Mode limits tools, not the inference
 provider. File-tool rules enforce workspace boundaries; CLI shell commands run
