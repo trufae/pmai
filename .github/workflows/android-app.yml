@@ -57,7 +57,7 @@ jobs:
           swift test --package-path PocketMaiAndroid --build-system native --disable-sandbox --disable-prefetching
       - name: Test Kotlin app's Swift facade
         if: matrix.app == 'PocketMaiKotlin'
-        run: swift test --package-path PocketMaiKotlin --build-system native --disable-sandbox --disable-prefetching
+        run: python3 test/run-tests.py mobile
       - name: Build APK for device and emulator
         env:
           ANDROID_ABIS: "arm64-v8a x86_64"
@@ -74,7 +74,7 @@ jobs:
         run: make -C PocketMaiKotlin release
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ${{ matrix.app }}-debug
+          name: ${{ matrix.app == 'PocketMaiAndroid' && 'PocketMai-Android-debug' || 'PocketMaiKotlin-debug' }}
           path: ${{ matrix.app }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

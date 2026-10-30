@@ -36,8 +36,9 @@ Built on [MaiCore](MaiCore/README.md), following
 | **PocketMai for iOS** | Native voice, tools, documents, mini apps, and remote projects. iOS 18+; some features require newer iOS or supported hardware. | [App Store](https://apps.apple.com/es/app/pocketmai/id6764296742) |
 | **pmai CLI** | A terminal agent for macOS, Linux, and Android, with shell tools, projects, skills, MCP, ACP, and Vim integration. | Install command above · [Release downloads](https://github.com/trufae/pmai/releases) |
 | **PocketMai for Android** | A native preview with provider/model setup, custom prompts, streaming chat, saved history, and light/dark themes. | [Download APK](https://trufae.github.io/pmai/downloads/PocketMai-Android.apk) · [Android guide](PocketMaiAndroid/README.md) |
+| **PocketMai Kotlin** | Native Compose Android client with shared MaiCore, tools, MCP, skills, Forwiroh hosts and WebXDC apps. | [Build and app guide](PocketMaiKotlin/README.md) |
 
-The Android app preview has a smaller feature set than iOS: tools, voice,
+The SwiftUI Android app preview has a smaller feature set than iOS: tools, voice,
 attachments, MCP, local inference, and remote host navigation are not available
 there yet. The Android CLI is a separate terminal client.
 
@@ -379,6 +380,9 @@ still uses that chat's selected model provider.
 Build the iOS app with Xcode, the CLI with SwiftPM through Make, or the native
 Android preview with `make android`. See the [Android guide](PocketMaiAndroid/README.md)
 for its SDK and toolchain setup.
+Build the new Kotlin/Compose app with `make android-kotlin`, or
+`make android-kotlin-release` for its release APK. See the
+[Kotlin Android guide](PocketMaiKotlin/README.md).
 
 <details>
 <summary>Requirements, build commands, and local inference notes</summary>

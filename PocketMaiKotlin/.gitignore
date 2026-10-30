@@ -1,0 +1,7 @@
+.deps/
+.gradle/
+.kotlin/
+local.properties
+*.apk
+app/src/main/jniLibs/
+bridge/src/main/jniLibs/
