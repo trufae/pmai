@@ -81,13 +81,17 @@ private struct ToolActivity {
     let standard = try await standardTools()
     definitions = standard.map(\.definition)
     groups = try await MaiStandardToolFactory().toolGroups(context: toolContext)
-    let groupDisabled = groups.filter { (settings.disabledGroups ?? []).contains($0.catalogID) }
-      .reduce(into: Set<String>()) { $0.formUnion($1.toolNames) }
-    let enabled = standard.filter { !settings.disabledTools.contains($0.definition.name) && !groupDisabled.contains($0.definition.name) }
+    let policy = AgentToolPolicy(automatic: false,
+      groups: Dictionary(uniqueKeysWithValues: (settings.disabledGroups ?? []).map { ($0, .disabled) }),
+      tools: Dictionary(uniqueKeysWithValues: settings.disabledTools.map { ($0, .disabled) }))
+    func allowed(_ name: String) -> Bool {
+      policy.mode(for: name, in: groups, enabled: true, useToolProxy: false) != .disabled
+    }
+    let enabled = standard.filter { allowed($0.definition.name) }
     try await runtime.register(tools: enabled)
     let catalog = skills
     let skillTools = MaiSkillTools.makeTools(catalog: { catalog })
-      .filter { !settings.disabledTools.contains($0.definition.name) }
+      .filter { allowed($0.definition.name) }
     try await runtime.register(tools: skillTools)
     var clients: [MCPClient] = []
     do {
@@ -98,7 +102,7 @@ private struct ToolActivity {
         _ = try await runtime.register(mcp: client)
       }
       let available = await runtime.availableTools()
-      let tools = Set(available.map(\.name)).subtracting(settings.disabledTools)
+      let tools = Set(available.map(\.name).filter(allowed))
       let scope = AgentExecutionScope(sessionID: request.sessionID ?? UUID().uuidString,
         workingDirectory: directory.appendingPathComponent("workspace"))
       let result = try await AgentExecutionScope.$current.withValue(scope) {
