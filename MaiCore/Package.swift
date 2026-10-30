@@ -5,7 +5,7 @@ import Foundation
 // The core profile omits executable and platform dependency graphs entirely;
 // --filter only selects tests after SwiftPM has built every test target.
 let testProfile = Context.environment["PMAI_TEST_PROFILE"]
-let focusedTests = ["core", "chat", "documents", "voice"].contains(testProfile ?? "")
+let focusedTests = ["core", "chat", "documents", "voice", "mobile"].contains(testProfile ?? "")
 let xmlPackage = Package.Dependency.package(
   url: "https://github.com/compnerd/xylem", revision: "9881c95ce3a139f4ccfa584676201516c2a5751d")
 let cliDependencies: [Target.Dependency] = [
@@ -79,6 +79,7 @@ let package = Package(
     .library(name: "MaiOpenAI", targets: ["MaiOpenAI"]),
     .library(name: "MaiLocalProviders", targets: ["MaiLocalProviders"]),
     .library(name: "MaiChat", targets: ["MaiChat"]),
+    .library(name: "MaiMobile", targets: ["MaiMobile"]),
     .library(name: "MaiMCP", targets: ["MaiMCP"]),
     .library(name: "MaiStandardTools", targets: ["MaiStandardTools"]),
     .library(name: "MaiVisionOCR", targets: ["MaiVisionOCR"]),
@@ -102,6 +103,8 @@ let package = Package(
     ]),
     .target(name: "MaiLocalProviders", dependencies: localProviderDependencies, swiftSettings: localProviderSwiftSettings),
     .target(name: "MaiChat", dependencies: ["MaiCore", "MaiOpenAI"]),
+    .target(name: "MaiMobile", dependencies: ["MaiCore", "MaiChat", "MaiOpenAI", "MaiMCP", "MaiACP", "MaiStandardTools", "MaiDocuments"]),
+    .testTarget(name: "MaiMobileTests", dependencies: ["MaiMobile", "MaiCore"]),
     .target(name: "MaiACP", dependencies: ["MaiCore", "MaiStandardTools",
         .product(name: "NIOCore", package: "swift-nio"),
         .product(name: "NIOHTTP1", package: "swift-nio"),
@@ -174,11 +177,12 @@ let package = Package(
 
 if focusedTests {
   let names = testProfile == "core" ? ["MaiCore", "MaiCoreTests", "MaiTestSupport"]
+    : testProfile == "mobile" ? ["MaiCore", "MaiChat", "MaiOpenAI", "MaiMCP", "MaiACP", "MaiStandardTools", "MaiDocuments", "MaiMarkdown", "MaiVisionOCR", "MaiMobile", "MaiMobileTests"]
     : testProfile == "voice" ? ["MaiCore", "MaiVoice", "MaiOpenAI", "MaiVoiceTests"]
     : testProfile == "documents" ? ["MaiCore", "MaiMarkdown", "MaiDocuments", "MaiDocumentsTests"]
     : ["MaiCore", "MaiOpenAI", "MaiChat", "MaiChatTests"]
   package.products = package.products.filter { names.contains($0.name) }
-  package.dependencies = testProfile == "core" ? []
+  package.dependencies = testProfile == "mobile" ? packageDependencies : testProfile == "core" ? []
     : testProfile == "documents" ? [xmlPackage] : Array(packageDependencies.prefix(1))
   package.targets = package.targets.filter { names.contains($0.name) }
 }

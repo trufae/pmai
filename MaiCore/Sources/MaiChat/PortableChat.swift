@@ -13,6 +13,7 @@ public typealias PortableChatTurnHandler = @Sendable (
 /// types as the other hosts. No Android or Apple UI frameworks belong here.
 public struct PortableChatConfiguration: Codable, Sendable {
   public var provider: ConfiguredProvider
+  public var providers: [ConfiguredProvider]?
   public var prompts: [SystemPrompt]
   public var selectedPromptID: String
   public var selectedChatID: UUID?
@@ -28,7 +29,7 @@ public struct PortableChatConfiguration: Codable, Sendable {
 }
 
 public enum PortableChatError: LocalizedError {
-  case invalidURL, missingModel, emptyPromptName, busy
+  case invalidURL, missingModel, emptyPromptName, busy, lastProvider, providerUnavailable
 
   public var errorDescription: String? {
     switch self {
@@ -36,6 +37,8 @@ public enum PortableChatError: LocalizedError {
     case .missingModel: "Choose a model or enter its model ID first."
     case .emptyPromptName: "Enter a name for the system prompt."
     case .busy: "Stop the current reply before changing chats or settings."
+    case .lastProvider: "Add another provider before removing the last one."
+    case .providerUnavailable: "This chat’s provider was removed. Select a provider before sending."
     }
   }
 }
@@ -47,6 +50,8 @@ public final class PortableChat {
   public var baseURL: String
   public var apiKey: String
   public var model: String
+  public private(set) var providers: [ConfiguredProvider]
+  public private(set) var selectedProviderID: String
   public var draft = ""
   public private(set) var prompts: [SystemPrompt]
   public private(set) var selectedPromptID: String
@@ -69,6 +74,7 @@ public final class PortableChat {
   @ObservationIgnored private var modelTask: Task<Void, Never>?
   @ObservationIgnored private var runID: UUID?
   @ObservationIgnored private let runTurn: PortableChatTurnHandler?
+  @ObservationIgnored private var unavailableProviderID: String?
 
   public init(
     directory: URL,
@@ -88,6 +94,8 @@ public final class PortableChat {
         PortableChatConfiguration.self, from: Data(contentsOf: settingsURL))
       : PortableChatConfiguration()
     configuration = loaded
+    providers = loaded.providers ?? [loaded.provider]
+    selectedProviderID = loaded.provider.id
     baseURL = loaded.provider.baseURL?.absoluteString ?? ""
     apiKey = loaded.provider.apiKey ?? ""
     model = loaded.provider.defaultModel ?? ""
@@ -96,7 +104,7 @@ public final class PortableChat {
     let prompt = loaded.prompts.first { $0.id.uuidString == loaded.selectedPromptID }
     chat = AgentChat(
       primaryAgent: AgentDefinition(
-        id: "chat", instructions: prompt?.text ?? "", provider: "openai",
+        id: "chat", instructions: prompt?.text ?? "", provider: ProviderID(loaded.provider.id),
         model: loaded.provider.defaultModel ?? ""))
     var failures: [String] = []
     chats = try files.loadChats { failures.append($0.localizedDescription) }
@@ -114,12 +122,40 @@ public final class PortableChat {
 
   public var messages: [AgentMessage] { chat.conversationMessages }
 
-  public func saveProvider() throws {
+  public func saveProvider(id: String? = nil, name: String? = nil) throws {
     guard !isGenerating, !isLoadingModels else { throw PortableChatError.busy }
-    configuration.provider = try providerConfiguration()
+    var provider = try providerConfiguration(allowMissingProvider: true)
+    if let id, !id.isEmpty { provider.id = id }
+    if let name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { provider.displayName = name }
+    configuration.provider = provider
+    if let i = providers.firstIndex(where: { $0.id == provider.id }) { providers[i] = provider }
+    else { providers.append(provider) }
+    selectedProviderID = provider.id
+    unavailableProviderID = nil
     models = []
     try saveSettings()
     status = "Provider saved"
+  }
+
+  public func selectProvider(_ id: String) throws {
+    guard !isGenerating, !isLoadingModels else { throw PortableChatError.busy }
+    guard let provider = providers.first(where: { $0.id == id }) else { throw CocoaError(.coderInvalidValue) }
+    configuration.provider = provider
+    selectedProviderID = id
+    unavailableProviderID = nil
+    baseURL = provider.baseURL?.absoluteString ?? ""
+    apiKey = provider.apiKey ?? ""
+    model = provider.defaultModel ?? ""
+    models = []
+    try saveSettings()
+  }
+
+  public func removeProvider(_ id: String) throws {
+    guard !isGenerating, !isLoadingModels else { throw PortableChatError.busy }
+    guard providers.count > 1 else { throw PortableChatError.lastProvider }
+    providers.removeAll { $0.id == id }
+    if selectedProviderID == id, let next = providers.first { try selectProvider(next.id) }
+    try saveSettings()
   }
 
   public func chooseModel(_ id: String) throws {
@@ -175,6 +211,15 @@ public final class PortableChat {
   }
 
   private func restoreSelection(from saved: AgentChat) {
+    if let provider = providers.first(where: { $0.id == saved.primaryAgent.provider.rawValue }) {
+      configuration.provider = provider
+      selectedProviderID = provider.id
+      baseURL = provider.baseURL?.absoluteString ?? ""
+      apiKey = provider.apiKey ?? ""
+      unavailableProviderID = nil
+    } else {
+      unavailableProviderID = saved.primaryAgent.provider.rawValue
+    }
     model = saved.primaryAgent.model
     // A resumed chat keeps its prompt, even if the named template was edited.
     let matching = prompts.first { $0.text == saved.primaryAgent.instructions }
@@ -211,15 +256,15 @@ public final class PortableChat {
     }
   }
 
-  public func sendDraft() {
+  public func sendDraft(attachments: [ContentPart] = []) {
     guard !isGenerating else { return }
     let text = draft
-    replyTask = Task { await send(text) }
+    replyTask = Task { await send(text, attachments: attachments) }
   }
 
-  public func send(_ text: String) async {
+  public func send(_ text: String, attachments: [ContentPart] = []) async {
     let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty, !isGenerating, !isLoadingModels else { return }
+    guard (!text.isEmpty || !attachments.isEmpty), !isGenerating, !isLoadingModels else { return }
     errorMessage = nil
     let id = UUID()
     do {
@@ -235,7 +280,8 @@ public final class PortableChat {
       if let prompt = selectedPrompt, !prompt.text.isEmpty {
         chat.messages.insert(.system(prompt.text), at: 0)
       }
-      chat.messages.append(.user(text))
+      chat.messages.append(AgentMessage(role: .user,
+        content: (text.isEmpty ? [] : [.text(text)]) + attachments))
       chat.refreshTitle(from: text)
       draft = ""
       try persistChat()
@@ -287,6 +333,26 @@ public final class PortableChat {
 
   public func stop() { replyTask?.cancel() }
 
+  public func editMessage(_ id: String, text: String) throws {
+    guard !isGenerating else { throw PortableChatError.busy }
+    guard let i = chat.messages.firstIndex(where: { $0.id == id }),
+      [.user, .assistant].contains(chat.messages[i].role), chat.messages[i].toolCalls.isEmpty else { return }
+    let attachments = chat.messages[i].content.filter {
+      if case .text = $0 { return false }; return true
+    }
+    chat.messages[i].content = [.text(text)] + attachments
+    chat.messages[i].providerState = nil
+    try persistChat()
+  }
+
+  public func deleteMessage(_ id: String) throws {
+    guard !isGenerating else { throw PortableChatError.busy }
+    guard let removed = chat.messages.first(where: { $0.id == id }), removed.role != .tool else { return }
+    let callIDs = Set(removed.toolCalls.map(\.id))
+    chat.messages.removeAll { $0.id == id || $0.toolResults.contains { callIDs.contains($0.callID) } }
+    try persistChat()
+  }
+
   private func receive(_ event: ProviderEvent, run: UUID) {
     guard runID == run else { return }
     switch event {
@@ -298,11 +364,12 @@ public final class PortableChat {
 
   private func currentAgent() -> AgentDefinition {
     AgentDefinition(
-      id: "chat", instructions: selectedPrompt?.text ?? "", provider: "openai",
+      id: "chat", instructions: selectedPrompt?.text ?? "", provider: ProviderID(selectedProviderID),
       model: model, toolChoice: .none)
   }
 
-  private func providerConfiguration() throws -> ConfiguredProvider {
+  private func providerConfiguration(allowMissingProvider: Bool = false) throws -> ConfiguredProvider {
+    guard allowMissingProvider || unavailableProviderID == nil else { throw PortableChatError.providerUnavailable }
     let value = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
     guard let url = URL(string: value), let host = url.host, !host.isEmpty,
       ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
@@ -324,6 +391,10 @@ public final class PortableChat {
   }
 
   private func saveSettings() throws {
+    if let i = providers.firstIndex(where: { $0.id == configuration.provider.id }) {
+      providers[i] = configuration.provider
+    }
+    configuration.providers = providers
     try FileManager.default.createDirectory(
       at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     let url = directory.appendingPathComponent("settings.json")

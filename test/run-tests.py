@@ -25,7 +25,7 @@ if sys.platform.startswith('linux'):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('profile', choices=['core', 'chat', 'documents', 'unit', 'smoke', 'terminal', 'platform', 'full', 'stress', 'external'])
+    parser.add_argument('profile', choices=['core', 'chat', 'documents', 'mobile', 'unit', 'smoke', 'terminal', 'platform', 'full', 'stress', 'external'])
     parser.add_argument('--binary', type=Path, default=ROOT / 'MaiCore/.build/debug/pmai')
     parser.add_argument('--skip-build', action='store_true', help='Reuse prepared tests and CLI binary')
     parser.add_argument('--jobs', type=int, default=1, help='Maximum concurrent smoke scripts (default: 1)')
@@ -47,10 +47,10 @@ def main():
     env.pop('PMAI_TEST_PROFILE', None)
     swift = [env.get('SWIFT', 'swift'), 'test', '--package-path', str(ROOT / 'MaiCore'),
              '--disable-index-store', '--disable-prefetching']
-    if args.profile in ('core', 'chat', 'documents'):
+    if args.profile in ('core', 'chat', 'documents', 'mobile'):
         env['PMAI_TEST_PROFILE'] = args.profile
         swift += ['--scratch-path', str(ROOT / 'MaiCore/.build' / (args.profile + '-tests'))]
-    if args.profile in ('core', 'chat', 'documents', 'unit', 'full'):
+    if args.profile in ('core', 'chat', 'documents', 'mobile', 'unit', 'full'):
         # SwiftPM removes the package lockfile when the focused graph has no
         # external dependencies. Keep the full graph's pins for the next build.
         lockfile = ROOT / 'MaiCore/Package.resolved'
@@ -58,7 +58,7 @@ def main():
         try:
             subprocess.run(swift + (['--skip-build'] if args.skip_build else []), cwd=ROOT, env=env, check=True)
         finally:
-            if args.profile in ('core', 'chat', 'documents') and pins is not None:
+            if args.profile in ('core', 'chat', 'documents', 'mobile') and pins is not None:
                 lockfile.write_bytes(pins)
         if args.profile != 'full':
             return
