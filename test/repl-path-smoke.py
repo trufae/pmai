@@ -276,7 +276,7 @@ def main():
                 expect('ask for this session')
                 enqueue(call('files_read', path='private/secret.txt'), 'SESSION TOOL YOLO')
                 send('Read private')
-                expect('approve [y/a/s/n/e/c]> ')
+                expect('approve [y/a/s/t/n/e/c]> ')
                 send('s')
                 expect('SESSION TOOL YOLO')
                 assert settings.read_bytes() == saved_settings

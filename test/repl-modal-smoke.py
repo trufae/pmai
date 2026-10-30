@@ -39,6 +39,15 @@ class Provider(JSONProvider):
                 'id': 'write', 'type': 'function', 'function': {
                     'name': 'files_write',
                     'arguments': json.dumps({'path': 'approved.txt', 'content': 'original'})}}]}
+        elif users[-1] in ('write again', 'read file') and request['messages'][-1]['role'] == 'user':
+            writing = users[-1] == 'write again'
+            arguments = {'path': 'second.txt'}
+            if writing:
+                arguments['content'] = 'automatically approved'
+            message = {'role': 'assistant', 'content': '', 'tool_calls': [{
+                'id': 'followup', 'type': 'function', 'function': {
+                    'name': 'files_write' if writing else 'files_read',
+                    'arguments': json.dumps(arguments)}}]}
         self.respond({'choices': [{'message': message,
                                   'finish_reason': 'tool_calls' if 'tool_calls' in message else 'stop'}]})
 
@@ -48,7 +57,7 @@ def main():
     server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        for action in ('edit', 'deny', 'cancel', 'search', 'heredoc'):
+        for action in ('edit', 'deny', 'cancel', 'search', 'heredoc', 'tool-yolo'):
             release.clear()
             with tempfile.TemporaryDirectory(prefix='pmai-modal-') as directory:
                 root = Path(directory)
@@ -59,7 +68,7 @@ def main():
                                    'baseURL': f'http://127.0.0.1:{server.server_port}/v1'}],
                     'toolSources': [{'id': 'standard', 'kind': 'standard-tools'}],
                     'agents': [{'id': 'main', 'provider': 'local', 'model': 'modal',
-                                'toolNames': ['files_write'], 'autocompact': {'tokens': 0}}],
+                                'toolNames': ['files_write', 'files_read'], 'autocompact': {'tokens': 0}}],
                     'approvals': {'mode': 'ask'}, 'memory': {'enabled': False},
                     'use': {'plan': False},
                     'ui': {'mode': 'buffer' if action == 'deny' else 'classic',
@@ -119,7 +128,12 @@ def main():
                     read_pty(master, output, .1)
 
                 def next_request():
-                    return requests.get(timeout=15)
+                    deadline = time.monotonic() + 15
+                    while requests.empty():
+                        assert process.poll() is None, output.decode(errors='replace')
+                        assert time.monotonic() < deadline, output.decode(errors='replace')
+                        read_pty(master, output, .1)
+                    return requests.get_nowait()
 
                 try:
                     wait('pmai> ')
@@ -146,8 +160,8 @@ def main():
                     output.clear()
                     release.set()
                     shown = wait('APPROVAL REQUIRED')
-                    if 'approve [y/a/s/n/e/c]> ' not in shown:
-                        shown += wait('approve [y/a/s/n/e/c]> ')
+                    if 'approve [y/a/s/t/n/e/c]> ' not in shown:
+                        shown += wait('approve [y/a/s/t/n/e/c]> ')
                     assert re.search(r'\x1b\[1;7(?:;[^m]*)?m', shown), repr(shown)
                     # No keystroke was needed to repaint the prompt; the draft is hidden.
                     read_pty(master, output, .05)
@@ -156,13 +170,12 @@ def main():
                     assert 'draftXZ' not in input_row, repr(input_row)
                     assert not (root / 'approved.txt').exists()
                     line('this is not a decision')
-                    wait('Answer y/a/s/n/e/c')
-                    wait('approve [y/a/s/n/e/c]> ')
+                    wait('Answer y/a/s/t/n/e/c')
+                    wait('approve [y/a/s/t/n/e/c]> ')
                     assert requests.empty(), 'Invalid modal input reached the model'
                     # Inspection commands return to the same question.
                     line('/set tool.approval')
                     wait('tool.approval = ask')
-                    wait('approve [y/a/s/n/e/c]> ')
                     check_question()
                     if action == 'edit':
                         # Tab offers modal answers, not chat history or prompt names.
@@ -175,6 +188,9 @@ def main():
                         assert not (root / 'approved.txt').exists()
                         line('{"path":"approved.txt","content":"edited"}')
                         restored = wait('approved files_write with the edited arguments')
+                    elif action == 'tool-yolo':
+                        line('t')
+                        restored = wait('yolo for this tool only (saved for this project)')
                     elif action in ('deny', 'search', 'heredoc'):
                         line('n')
                         restored = wait('denied files_write')
@@ -186,7 +202,7 @@ def main():
                         restored += wait('MODAL DONE')
                     if 'draftXZ' not in restored:
                         wait('draftXZ')
-                    assert (root / 'approved.txt').exists() == (action == 'edit')
+                    assert (root / 'approved.txt').exists() == (action in ('edit', 'tool-yolo'))
                     if action == 'edit':
                         assert (root / 'approved.txt').read_text() == 'edited'
                     # Once resolved, a redraw must no longer paint the question panel.
@@ -203,6 +219,22 @@ def main():
                     expected = 'first line\ndraftYZ' if action == 'heredoc' else 'draftYZ'
                     assert request['messages'][-1]['content'] == expected, request
                     wait('MODAL DONE')
+                    if action == 'tool-yolo':
+                        line('write again')
+                        next_request()
+                        next_request()
+                        wait('MODAL DONE')
+                        assert (root / 'second.txt').read_text() == 'automatically approved'
+                        line('read file')
+                        next_request()
+                        wait("tool 'files_read'?")
+                        wait('approve [y/a/s/t/n/e/c]> ')
+                        line('n')
+                        followup = next_request()
+                        assert 'tool call denied' in json.dumps(followup), followup
+                        wait('MODAL DONE')
+                        settings = json.loads((root / '.pmai/settings.json').read_text())
+                        assert settings['toolYolo'] == ['files_write'], settings
                     line('/exit')
                     deadline = time.monotonic() + 10
                     while process.poll() is None:
@@ -215,7 +247,7 @@ def main():
                     if action != 'heredoc':
                         assert 'draftYZ' in saved, saved
                     assert 'this is not a decision' not in saved and '[]' not in saved, saved
-                    assert not any(entry in saved for entry in ('n', 'e')), saved
+                    assert not any(entry in saved for entry in ('n', 'e', 't')), saved
                     assert requests.empty()
                     print(f'PASS modal {action}: live prompt, status, input isolation, restored draft')
                 finally:

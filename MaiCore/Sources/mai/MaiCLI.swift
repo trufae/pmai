@@ -983,16 +983,18 @@ actor TerminalApprovalHandler: ApprovalHandler {
   private struct ProjectSettings: Codable {
     var approvalMode: ToolApprovalMode?
     var pathYolo: Bool?
+    var toolYolo: Set<String>?
     var debug: Bool?
     var debugFile: String?
     init() {}
-    private enum CodingKeys: String, CodingKey { case approvalMode, pathYolo, yolo, debug, debugFile }
+    private enum CodingKeys: String, CodingKey { case approvalMode, pathYolo, toolYolo, yolo, debug, debugFile }
     init(from decoder: Decoder) throws {
       let c = try decoder.container(keyedBy: CodingKeys.self)
       approvalMode =
         try c.decodeIfPresent(ToolApprovalMode.self, forKey: .approvalMode)
         ?? c.decodeIfPresent(Bool.self, forKey: .yolo).map { $0 ? .yolo : .ask }
       pathYolo = try c.decodeIfPresent(Bool.self, forKey: .pathYolo)
+      toolYolo = try c.decodeIfPresent(Set<String>.self, forKey: .toolYolo)
       debug = try c.decodeIfPresent(Bool.self, forKey: .debug)
       debugFile = try c.decodeIfPresent(String.self, forKey: .debugFile)
     }
@@ -1000,6 +1002,7 @@ actor TerminalApprovalHandler: ApprovalHandler {
       var c = encoder.container(keyedBy: CodingKeys.self)
       try c.encodeIfPresent(approvalMode, forKey: .approvalMode)
       try c.encodeIfPresent(pathYolo, forKey: .pathYolo)
+      try c.encodeIfPresent(toolYolo?.sorted(), forKey: .toolYolo)
       try c.encodeIfPresent(debug, forKey: .debug)
       try c.encodeIfPresent(debugFile, forKey: .debugFile)
     }
@@ -1050,8 +1053,15 @@ actor TerminalApprovalHandler: ApprovalHandler {
   }
 
   func setApprovalMode(_ mode: ToolApprovalMode) { sessionApprovalMode = mode }
-  func toolApprovalMode() -> ToolApprovalMode? { currentApprovalMode() }
+  func toolApprovalMode() async -> ToolApprovalMode? { currentApprovalMode() }
+  func toolApprovalMode(for tool: ToolDefinition) async -> ToolApprovalMode? {
+    effectiveApprovalMode(for: tool)
+  }
+  private func effectiveApprovalMode(for tool: ToolDefinition) -> ToolApprovalMode {
+    projectSettings.toolYolo?.contains(tool.name) == true ? .yolo : currentApprovalMode()
+  }
   func currentApprovalMode() -> ToolApprovalMode { sessionApprovalMode ?? approvalMode }
+  func yoloTools() -> [String] { projectSettings.toolYolo?.sorted() ?? [] }
   func permitsUnattendedExecution() -> Bool { currentApprovalMode() == .yolo }
   func permitsUnattendedPathAccess() -> Bool {
     if let sessionApprovalMode { return sessionApprovalMode == .yolo }
@@ -1059,13 +1069,23 @@ actor TerminalApprovalHandler: ApprovalHandler {
   }
   func permitsUnattendedApproval(_ request: ApprovalRequest) -> Bool {
     request.tool.name == "files_path_access"
-      ? permitsUnattendedPathAccess() : permitsUnattendedExecution()
+      ? permitsUnattendedPathAccess() : effectiveApprovalMode(for: request.tool) == .yolo
+  }
+
+  func saveToolYolo(_ name: String) throws {
+    guard name != "files_path_access" else { return }
+    var draft = projectSettings
+    draft.toolYolo = (draft.toolYolo ?? []).union([name])
+    try MaiJSONCoding.default.makeEncoder().encode(draft)
+      .write(to: projectSettingsURL, options: .atomic)
+    projectSettings = draft
   }
 
   func saveApprovalMode(_ mode: ToolApprovalMode, includingPaths: Bool = false) throws {
     var draft = projectSettings
     draft.approvalMode = mode
     draft.pathYolo = mode == .yolo && includingPaths ? true : nil
+    draft.toolYolo = nil
     try MaiJSONCoding.default.makeEncoder().encode(draft)
       .write(to: projectSettingsURL, options: .atomic)
     sessionApprovalMode = nil
@@ -1154,7 +1174,7 @@ actor TerminalApprovalHandler: ApprovalHandler {
 
   func decide(_ request: ApprovalRequest) async throws -> ApprovalDecision {
     let approvalMode = currentApprovalMode()
-    if approvalMode == .yolo { return .approve(arguments: request.call.arguments) }
+    if permitsUnattendedApproval(request) { return .approve(arguments: request.call.arguments) }
     guard approvalMode == .ask else {
       return .deny(reason: "Smart approval must be evaluated by the runtime.")
     }
@@ -1163,13 +1183,13 @@ actor TerminalApprovalHandler: ApprovalHandler {
 
   func decideRemote(_ params: JSONValue, host: String) async throws -> String? {
     let tool = params.objectValue?["toolCall"]?.objectValue ?? [:]
-    let name = tool["title"]?.stringValue ?? "Remote tool"
+    let name = "\(host)::\(tool["title"]?.stringValue ?? "Remote tool")"
     let arguments = tool["rawInput"] ?? .object([:])
     let request = ApprovalRequest(
       run: .init(runID: UUID(), parentRunID: nil, agentID: host, depth: 0),
       tool: .init(name: name, description: "Run on \(host)", annotations: .init(approval: .confirm)),
       call: .init(id: tool["toolCallId"]?.stringValue ?? UUID().uuidString, name: name, arguments: arguments))
-    let decision = permitsUnattendedExecution() ? ApprovalDecision.approve(arguments: arguments)
+    let decision = permitsUnattendedApproval(request) ? ApprovalDecision.approve(arguments: arguments)
       : try await interactiveDecision(request)
     if case .cancelRun = decision { throw CancellationError() }
     let kind: String
@@ -1263,6 +1283,11 @@ actor TerminalApprovalHandler: ApprovalHandler {
       case "s", "session":
         setApprovalMode(.yolo)
         write("Yolo enabled for this session, including path approvals; settings were not saved.\n")
+        return .approve(arguments: request.call.arguments)
+      case let answer where ["t", "tool", "tool-specific-yolo"].contains(answer)
+        && request.tool.name != "files_path_access":
+        try saveToolYolo(request.tool.name)
+        write("Yolo enabled for \(request.tool.name) only (saved for this project); path approvals still apply.\n")
         return .approve(arguments: request.call.arguments)
       case "e" where request.tool.name != "files_path_access",
         "edit" where request.tool.name != "files_path_access":
@@ -3654,6 +3679,16 @@ struct MaiCLI {
         await services.approvalHandler.setApprovalMode(.yolo)
         waiting.reply.resume(with: .approve(arguments: waiting.request.call.arguments))
         await terminal.note("approved \(tool); tool.approval = yolo for this session, including path approvals (not saved)")
+      case let answer where ["t", "tool", "tool-specific-yolo"].contains(answer)
+        && tool != "files_path_access":
+        do {
+          try await services.approvalHandler.saveToolYolo(tool)
+        } catch {
+          await terminal.note("Could not save tool-specific yolo: \(error.localizedDescription).", tone: .warning)
+          return true
+        }
+        waiting.reply.resume(with: .approve(arguments: waiting.request.call.arguments))
+        await terminal.note("approved \(tool); yolo for this tool only (saved for this project); path approvals still apply")
       case "n", "no":
         waiting.reply.resume(with: .deny(reason: "Denied by user."))
         await terminal.note("denied \(tool)")
@@ -3680,22 +3715,26 @@ struct MaiCLI {
     /// well as future calls. Otherwise the setting is live but the run still
     /// appears blocked on decisions made under the old value.
     func releasePendingApprovalsIfUnattended() async {
-      guard await services.approvalHandler.permitsUnattendedExecution() else { return }
       if let editing = loop.editingApproval,
         await services.approvalHandler.permitsUnattendedApproval(editing.request)
       {
         editing.reply.resume(with: .approve(arguments: editing.request.call.arguments))
         loop.editingApproval = nil
       }
-      let includePaths = await services.approvalHandler.permitsUnattendedPathAccess()
-      let pending = loop.approvals.filter { includePaths || $0.request.tool.name != "files_path_access" }
-      loop.approvals.removeAll { includePaths || $0.request.tool.name != "files_path_access" }
+      var pending: [(request: ApprovalRequest, reply: REPLApprovalReply)] = []
+      for approval in loop.approvals {
+        if await services.approvalHandler.permitsUnattendedApproval(approval.request) {
+          pending.append(approval)
+        }
+      }
+      let approvedIDs = Set(pending.map { $0.reply.id })
+      loop.approvals.removeAll { approvedIDs.contains($0.reply.id) }
       for approval in pending {
         approval.reply.resume(with: .approve(arguments: approval.request.call.arguments))
       }
       if !pending.isEmpty {
         await terminal.note(
-          "approved \(pending.count) waiting tool call\(pending.count == 1 ? "" : "s"); tool.approval = yolo"
+          "approved \(pending.count) waiting tool call\(pending.count == 1 ? "" : "s"); yolo enabled for these tools"
         )
       }
     }
@@ -11807,6 +11846,10 @@ struct MaiCLI {
   ) async {
     guard parts.count > 1 else {
       await terminal.line("tool.approval = \(await approvalHandler.currentApprovalMode().rawValue)")
+      let tools = await approvalHandler.yoloTools()
+      if !tools.isEmpty {
+        await terminal.line("Tool-specific yolo (saved for this project): \(tools.joined(separator: ", ")). /set tool.approval ask clears these approvals.")
+      }
       return
     }
     guard (parts.count == 2 || (parts.count == 3 && parts[2].lowercased() == "session")),
@@ -15001,6 +15044,8 @@ struct MaiCLI {
     session. Explicit rules override the hidden-path default. These checks apply
     to Files and vdb, including child agents. /tmp (including its resolved alias)
     is allowed by default, even with saved configurations; explicit rules override it.
+    At tool prompts, t saves yolo for only that tool in this project; path policies
+    still apply. /set tool.approval lists these tools; setting a project mode clears them.
     At tool or path prompts, a enables yolo for tools and path asks and saves it
     for this project; s enables it for this session only. Ordinary saved tool yolo
     settings keep path prompts active. /set tool.approval yolo session also approves
@@ -15374,6 +15419,8 @@ struct MaiCLI {
     /set tool.approval yolo session and s at approval prompts enable yolo for tools
     and path asks until exit; nothing is saved. Explicit path denials still apply.
     At approval prompts, a saves yolo for tools and path asks in the current project.
+    At tool prompts, t saves yolo for only that tool; Files path policies still apply.
+    /set tool.approval lists these tools; setting a project approval mode clears them.
     Debug entries append to the chosen file and may contain prompts and tool output.
     --tool-approval MODE overrides approval for one run. Projects without a saved choice use approvals.mode from the
     active configuration. Agent, UI, and document export settings use the active configuration.

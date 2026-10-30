@@ -219,6 +219,12 @@ reviews each concrete tool and its arguments before execution:
 /set tool.approval smart
 ```
 
+At a CLI tool approval prompt, choose `t` (tool-specific YOLO) to automatically
+approve only that tool, with any arguments, for the current project. The choice
+survives restarts; other tools and Files path policies keep their normal approval
+behavior. `/set tool.approval` lists the saved tools. Setting a project approval
+mode with `/set tool.approval ask|smart|yolo` clears these tool-specific grants.
+
 This uses System One's `questions.harm` with type `noul`. A finite probability
 below 0.5 allows the call; 0.5 or above blocks it. An unavailable endpoint or
 unsupported model falls back to the conversation's chat model. To use a regular

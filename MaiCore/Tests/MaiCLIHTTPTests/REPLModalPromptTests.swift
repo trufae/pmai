@@ -19,6 +19,8 @@ func pinnedApprovalQuestion() throws {
   #expect(question.contains("y (yes)"))
   #expect(question.contains("a (always yolo, saved for project)"))
   #expect(question.contains("s (yolo, this session)"))
+  #expect(question.contains("t (yolo, this tool, saved for project)"))
+  #expect(modal.input.choices.contains("t"))
   let edit = try #require(REPLModalPrompt.approval(request, id: id, editing: true).question)
   #expect(edit.contains("file.txt"))
   #expect(edit.contains("JSON object"))

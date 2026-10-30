@@ -211,7 +211,7 @@ extension AgentRuntime {
     }
 
     let approvedCall: ToolCall
-    let approvalMode = await approvalHandler.toolApprovalMode()
+    let approvalMode = await approvalHandler.toolApprovalMode(for: definition)
     if approvalMode == .yolo
       || (approvalMode == nil && definition.annotations.approval == .automatic)
     {

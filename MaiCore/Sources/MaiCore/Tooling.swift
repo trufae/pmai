@@ -389,6 +389,8 @@ public enum ApprovalDecision: Equatable, Sendable {
 
 public protocol ApprovalHandler: Sendable {
   func toolApprovalMode() async -> ToolApprovalMode?
+  /// Lets hosts override approval for a concrete tool without changing the default.
+  func toolApprovalMode(for tool: ToolDefinition) async -> ToolApprovalMode?
   func decide(_ request: ApprovalRequest) async throws -> ApprovalDecision
   func decideCompaction(_ request: AutocompactionRequest) async throws -> AutocompactionDecision
 }
@@ -396,6 +398,9 @@ public protocol ApprovalHandler: Sendable {
 extension ApprovalHandler {
   /// Nil preserves annotation-based behavior for existing host integrations.
   public func toolApprovalMode() async -> ToolApprovalMode? { nil }
+  public func toolApprovalMode(for tool: ToolDefinition) async -> ToolApprovalMode? {
+    await toolApprovalMode()
+  }
   /// Hosts without an interactive surface retain their configured automatic policy.
   public func decideCompaction(_ request: AutocompactionRequest) async throws -> AutocompactionDecision {
     .compact

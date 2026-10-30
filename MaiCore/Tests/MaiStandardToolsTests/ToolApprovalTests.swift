@@ -7,7 +7,11 @@ import Testing
 private struct ModeHandler: ApprovalHandler {
   let mode: ToolApprovalMode
   var edit: JSONValue? = nil
+  var yoloTool: String? = nil
   func toolApprovalMode() async -> ToolApprovalMode? { mode }
+  func toolApprovalMode(for tool: ToolDefinition) async -> ToolApprovalMode? {
+    tool.name == yoloTool ? .yolo : mode
+  }
   func decide(_ request: ApprovalRequest) async throws -> ApprovalDecision {
     #expect(mode == .ask)
     return .approve(arguments: edit ?? request.call.arguments)
@@ -79,6 +83,31 @@ func approvalModesRunAutomaticTools() async throws {
       .init(provider: "main", messages: [.user("echo")], toolNames: ["candidate"], retry: .none))
     #expect(await calls.values == [mode == .ask ? edited : .object(["text": .string("original")])])
   }
+}
+
+@Test("Tool-specific yolo skips smart review only for the selected tool")
+func toolSpecificApprovalMode() async throws {
+  let calls = ApprovalCalls()
+  let runtime = AgentRuntime(approvalHandler: ModeHandler(mode: .smart, yoloTool: "candidate"))
+  let provider = ApprovalProvider(id: "main", responses: [
+    approvalCall(), approvalCall("other"),
+    verdict(#"{"decision":"block","reason":"requires approval"}"#),
+    .init(message: .assistant("answer")),
+  ])
+  try await runtime.register(provider)
+  try await runtime.register(tool: candidate(calls))
+  var otherDefinition = candidate(calls).definition
+  otherDefinition.name = "other"
+  try await runtime.register(tool: ClosureTool(definition: otherDefinition) { arguments, _ in
+    await calls.append(arguments)
+    return ToolOutput(text: "other ran")
+  })
+  _ = try await runtime.run(
+    .init(provider: "main", messages: [.user("echo")], toolNames: ["candidate", "other"], retry: .none))
+  #expect(await calls.values == [.object(["text": .string("original")])])
+  let reviews = await provider.requests.filter { $0.approvalReview != nil }
+  #expect(reviews.count == 1)
+  #expect(reviews.first?.approvalReview?.tool == "other")
 }
 
 @Test(

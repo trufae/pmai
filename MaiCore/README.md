@@ -309,8 +309,12 @@ The prompt updates as soon as a question arrives, even while you are typing.
 Your unfinished chat message and cursor are restored when the decision is done.
 Tab completes the available answers; approval and context prompts still accept
 slash commands. Invalid answers keep the question open, and modal answers stay
-out of input history. File-access approvals offer only yes, no, and cancel;
-`/path allow PATH` grants ongoing access.
+out of input history. Choose `t` (tool-specific YOLO) at a tool prompt to approve
+that tool automatically for the current project, including after restarting.
+Other tools and Files path approvals keep their normal policy. `/set tool.approval`
+lists these tools; setting a project approval mode clears the tool-specific grants.
+Tool and file-access prompts also offer `a` (project YOLO) and `s` (session YOLO),
+including path approvals; `/path allow PATH` grants ongoing access to a path.
 
 Use `/model -approval PROVIDER::MODEL` (or a saved agent ID) to select the reviewer;
 `/model -approval -` restores the conversation model. A System One provider uses
