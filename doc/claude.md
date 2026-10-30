@@ -94,14 +94,15 @@ standard ACP control and remain managed by Claude.
 ## Disable commit and PR attribution
 
 Claude Code adds a `Co-Authored-By` commit trailer by default. Disable it in
-Claude's settings, including when using the ACP adapter. Merge this object into
-the settings file, preserving its other keys:
+Claude's settings, including when using the ACP adapter. For all projects, merge
+this object into `~/.claude/settings.json`, preserving its other keys:
 
 ```json
 {
   "attribution": {
     "commit": "",
-    "pr": ""
+    "pr": "",
+    "sessionUrl": false
   }
 }
 ```
@@ -114,14 +115,24 @@ Choose the scope:
 | `.claude/settings.json` | This project, shared with the repository. |
 | `.claude/settings.local.json` | Your local settings for this project. |
 
+**`~/.claude/settings.local.json` is not a global settings file.** Claude reads
+`settings.local.json` from the project, not from your home configuration
+directory. If your attribution settings are in `~/.claude/settings.local.json`,
+copy the `attribution` object into `~/.claude/settings.json`; do not overwrite
+unrelated settings. See [settings files and precedence](https://code.claude.com/docs/en/settings).
+If `CLAUDE_CONFIG_DIR` is set, use `settings.json` inside that directory instead
+of `~/.claude/settings.json`.
+
 The [adapter loads user, project, and local settings](https://github.com/agentclientprotocol/claude-agent-acp/blob/main/src/acp-agent.ts).
 These are Claude settings files, separate from `pmai.json`. For SSH or other
 remote ACP connections, edit them on the machine running Claude.
 
 An empty `commit` removes commit attribution; an empty `pr` removes PR
-attribution. The older `includeCoAuthoredBy` key is deprecated. If you also use
-Claude's cloud or Remote Control sessions, add `"sessionUrl": false` inside
-`attribution` to suppress their session links. See the
+attribution; `sessionUrl: false` suppresses cloud and Remote Control session
+links. The older `includeCoAuthoredBy` key is deprecated. Claude Code v2.1.281
+and later also support `"attribution": false` to disable all attribution. Use
+the object above when sharing settings with older versions: those versions
+reject the Boolean form and skip the entire settings file. See the
 [Claude attribution settings](https://code.claude.com/docs/en/settings-reference#attribution).
 
 Restart pmai and start a fresh Claude ACP chat after changing the settings.
@@ -141,8 +152,11 @@ See [ACP permissions and files](acp.md#permission-and-files) for provider polici
 - **Authentication failed:** run `claude` directly and sign in again before
   retrying in pmai. The adapter's stderr is included in authentication errors.
 - **Model unavailable:** run `/models claude` again and select a returned ID.
-- **Attribution still appears:** check the settings in the actual project and
-  user account running Claude, including project overrides and instructions in
-  `CLAUDE.md`; then use a fresh ACP chat.
+- **Attribution still appears:** first check that global settings are in
+  `~/.claude/settings.json`, not `~/.claude/settings.local.json`. Check
+  `CLAUDE_CONFIG_DIR`, the user account and machine running the adapter, project
+  overrides, managed settings, and attribution instructions in `CLAUDE.md` or
+  memory; then use a fresh ACP chat. In the standalone Claude CLI, `/status`
+  lists the loaded setting sources.
 - **Adapter update needed:** run
   `npm install -g @agentclientprotocol/claude-agent-acp` again, then restart pmai.
