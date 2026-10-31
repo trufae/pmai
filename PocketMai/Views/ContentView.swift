@@ -132,7 +132,6 @@ struct ContentView: View {
           }
           .frame(width: panelWidth)
           .frame(maxHeight: .infinity)
-          .modifier(SidebarPlaneEffect(progress: revealProgress))
           .background { SidebarBlurBackground() }
           .overlay { SidebarDistanceTone(progress: revealProgress) }
           .opacity(historyVisible ? 1 : 0)
