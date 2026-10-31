@@ -52,7 +52,8 @@ struct ContentView: View {
             .equatable()
             .frame(width: panelWidth).frame(maxHeight: .infinity)
             .background { SidebarBlurBackground() }
-            .opacity(hostsVisible ? 1 : 0)
+            .transition(.identity)
+            .opacity(layout.pinsSidebar && !hostsVisible ? 0 : 1)
             .allowsHitTesting(panelOffset >= panelWidth * 3)
             .accessibilityHidden(panelOffset < panelWidth * 3)
             .zIndex(-1)
@@ -94,7 +95,8 @@ struct ContentView: View {
           .frame(width: panelWidth)
           .frame(maxHeight: .infinity)
           .background { SidebarBlurBackground() }
-          .opacity(foldersVisible ? 1 : 0)
+          .transition(.identity)
+          .opacity(layout.pinsSidebar && !foldersVisible ? 0 : 1)
           .allowsHitTesting(panelOffset >= panelWidth * 2 && panelOffset < panelWidth * 3)
           .accessibilityHidden(panelOffset < panelWidth * 2 || panelOffset >= panelWidth * 3)
           .offset(x: foldersOffset)
@@ -134,7 +136,8 @@ struct ContentView: View {
           .frame(maxHeight: .infinity)
           .background { SidebarBlurBackground() }
           .overlay { SidebarDistanceTone(progress: revealProgress) }
-          .opacity(historyVisible ? 1 : 0)
+          .transition(.identity)
+          .opacity(layout.pinsSidebar && !historyVisible ? 0 : 1)
           .allowsHitTesting(panelOffset >= panelWidth && panelOffset < panelWidth * 2)
           .accessibilityHidden(panelOffset < panelWidth || panelOffset >= panelWidth * 2)
           .offset(x: sidebarOffset)
@@ -1037,6 +1040,7 @@ struct ToolCallApprovalView: View {
 private struct SidebarBlurBackground: View, Equatable {
   var body: some View {
     Rectangle().fill(.regularMaterial)
+      .background(Color(uiColor: .systemGroupedBackground))
       .ignoresSafeArea(.container)
   }
 
