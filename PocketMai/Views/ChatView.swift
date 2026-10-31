@@ -5,17 +5,6 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-private extension ToolbarContent {
-  @ToolbarContentBuilder
-  func hidingSharedBackground() -> some ToolbarContent {
-    if #available(iOS 26.0, *) {
-      self.sharedBackgroundVisibility(.hidden)
-    } else {
-      self
-    }
-  }
-}
-
 private struct ConversationTimelineTimestamp: View {
   let label: String
   let date: Date
@@ -86,6 +75,8 @@ struct ChatView: View {
   @Environment(\.verticalSizeClass) private var verticalSizeClass
   @Environment(\.horizontalSizeClass) private var horizontalSizeClass
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
   @EnvironmentObject private var ttsPlayer: TTSPlayer
   @State private var showingRenameAlert = false
   @State private var showingProviderModelSheet = false
@@ -110,6 +101,10 @@ struct ChatView: View {
   @State private var messageRenderWindow = ConversationMessageRenderWindow()
   @State private var historyScrollSession = ConversationHistoryScrollSession()
   @State private var messageListIsScrolling = false
+  @State private var messageListIsDragging = false
+  @State private var chatHeaderHidden = false
+  @State private var chatHeaderHeight: CGFloat = 0
+  @State private var headerScrollDistance: CGFloat = 0
   @State private var historyNearTop = false
   @State private var historyNearBottom = false
   @State private var historyPageIsLoading = false
@@ -190,6 +185,8 @@ struct ChatView: View {
         }
       }
       .onChange(of: currentConversationID) { _, _ in
+        chatHeaderHidden = false
+        headerScrollDistance = 0
         cancelMessageSelection()
         withAnimation(.snappy) { chatSearch.cancel() }
       }
@@ -352,6 +349,7 @@ struct ChatView: View {
         landscapeComposerExpanded = false
       }
       .onChange(of: store.composerFocusRequestID) { _, _ in
+        chatHeaderHidden = false
         landscapeComposerExpanded = true
       }
       .onChange(of: store.sharedImportRequestID) { _, _ in
@@ -362,61 +360,79 @@ struct ChatView: View {
       }
       .animation(.snappy, value: ttsPlayer.isSpeaking)
       .animation(.snappy, value: isMessageSelectionMode)
-      .navigationTitle("")
-      .navigationBarTitleDisplayMode(.inline)
-      .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
-      .toolbarBackground(.visible, for: .navigationBar)
-      .toolbar {
-        ToolbarItem(placement: .topBarLeading) {
-          Button(action: onShowHistory) {
-            ZStack(alignment: .topTrailing) {
-              VStack(alignment: .leading, spacing: 6) {
-                Capsule().frame(width: 22, height: 2)
-                Capsule().frame(width: 14, height: 2)
-              }
-              .frame(width: 24, height: 22, alignment: .leading)
-              if hasUnreadConversations {
-                Circle()
-                  .fill(Color.accentColor)
-                  .frame(width: 8, height: 8)
-                  .offset(x: 4, y: -3)
-                  .accessibilityHidden(true)
-              }
-            }
-          }
-          .buttonStyle(.plain)
-          .accessibilityLabel(
-            hasUnreadConversations
-              ? "Show conversations, unread messages"
-              : "Show conversations"
-          )
-          .help("Show conversations")
-        }
-        .hidingSharedBackground()
-        ToolbarItem(placement: .principal) {
-          chatTitle
-        }
-        ToolbarItem(placement: .topBarTrailing) {
-          if remoteChat == nil, let session = store.browserSession {
-            BrowserToolbarButton(session: session) {
-              store.closeBrowserSession()
-            }
-          } else if remoteChat == nil, store.closedBrowserURL != nil {
-            Button {
-              store.reopenBrowserSession()
-            } label: {
-              Image(systemName: "safari")
-            }
-            .accessibilityLabel("Reopen browser")
-            .help("Reopen the last browser page")
-          }
-        }
-        ToolbarItem(placement: .topBarTrailing) {
-          trailingMenu
-        }
-        .hidingSharedBackground()
+      .toolbar(.hidden, for: .navigationBar)
+      .onChange(of: ttsPlayer.isSpeaking) { _, speaking in
+        if speaking { chatHeaderHidden = false }
       }
-      .toolbar(usesCompactLandscapeLayout ? .hidden : .visible, for: .navigationBar)
+  }
+
+  private var showsChatHeader: Bool {
+    !chatHeaderHidden || voiceOverEnabled || currentConversationIsEmpty
+      || isLoadingConversation || chatSearch.isActive || isMessageSelectionMode
+      || ttsPlayer.errorMessage != nil
+  }
+
+  private var chatHeader: some View {
+    VStack(spacing: 0) {
+      if !usesCompactLandscapeLayout {
+        HStack(spacing: 12) {
+          FloatingActionIcon(
+            systemImage: "line.3.horizontal.decrease",
+            accessibilityLabel: hasUnreadConversations
+              ? "Show conversations, unread messages" : "Show conversations",
+            compact: true, action: onShowHistory
+          )
+          .overlay(alignment: .topTrailing) {
+            if hasUnreadConversations {
+              Circle().fill(Color.accentColor).frame(width: 8, height: 8)
+                .padding(8).accessibilityHidden(true)
+            }
+          }
+          chatTitle.frame(maxWidth: .infinity)
+          if remoteChat == nil, let session = store.browserSession {
+            BrowserToolbarButton(session: session) { store.closeBrowserSession() }
+              .buttonStyle(.plain)
+              .font(.title3.weight(.semibold))
+              .foregroundStyle(.primary)
+              .frame(width: 48, height: 48)
+              .modifier(FloatingGlassSurface(shape: Circle()))
+          } else if remoteChat == nil, store.closedBrowserURL != nil {
+            FloatingActionIcon(
+              systemImage: "safari", accessibilityLabel: "Reopen browser", compact: true
+            ) { store.reopenBrowserSession() }
+          }
+          FloatingActionIcon(
+            systemImage: "square.and.pencil", accessibilityLabel: "New Chat", compact: true,
+            action: onNewChat
+          )
+          .disabled(!canStartNewChat)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+      }
+      chatHeaderRows
+    }
+    .padding(.bottom, 8)
+    .background {
+      Rectangle().fill(.ultraThinMaterial)
+        .padding(.bottom, -24)
+        .ignoresSafeArea(edges: .top)
+        .mask(alignment: .bottom) {
+          VStack(spacing: 0) {
+            Rectangle()
+            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+              .frame(height: 24)
+          }
+          .ignoresSafeArea(edges: .top)
+          .padding(.bottom, -24)
+        }
+    }
+    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { chatHeaderHeight = $0 }
+    .offset(y: showsChatHeader ? 0 : -chatHeaderHeight - 24)
+    .opacity(showsChatHeader ? 1 : 0)
+    .allowsHitTesting(showsChatHeader)
+    .accessibilityHidden(!showsChatHeader)
+    .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: showsChatHeader)
   }
 
   // Size classes follow rotation without mistaking a portrait keyboard for landscape.
@@ -462,6 +478,16 @@ struct ChatView: View {
 
   private var chatLayout: some View {
     VStack(spacing: 0) {
+      messages
+        .overlay(alignment: .bottomTrailing) { browserCardOverlay }
+        .overlay(alignment: .top) { chatHeader }
+      bottomControls
+    }
+    .background { ChatScreenBackground() }
+  }
+
+  private var chatHeaderRows: some View {
+    VStack(spacing: 0) {
       if remoteChat == nil, let conversation = currentConversation,
         !conversation.messages.pinnedMessages.isEmpty
       {
@@ -496,13 +522,8 @@ struct ChatView: View {
           onDismiss: { store.dismissBTW($0) })
           .id(currentConversationID)
       }
-      messages
-        .overlay(alignment: .bottomTrailing) {
-          browserCardOverlay
-        }
-      bottomControls
     }
-    .background { ChatScreenBackground() }
+    .padding(.horizontal, 12)
   }
 
   /// The child agents of the chat on screen, live or finished, so a turn
@@ -545,7 +566,6 @@ struct ChatView: View {
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
-    .background(.thinMaterial)
     .contentShape(Rectangle())
     .onTapGesture {
       showingWebXDCRunnerFromBar = true
@@ -583,6 +603,8 @@ struct ChatView: View {
 
   private var chatTitle: some View {
     Menu {
+      Text(providerSubtitle)
+      Divider()
       if currentConversation?.provider == .openAICompatible,
         let endpointID = currentConversation?.endpointID,
         store.settings.openAIEndpoints.first(where: { $0.id == endpointID })?.kind == .chatGPT {
@@ -619,7 +641,7 @@ struct ChatView: View {
         .disabled(!remoteChat.connected && (store.settings.isOffline || remoteChat.busy))
       }
     } label: {
-      VStack(spacing: 1) {
+      HStack(spacing: 6) {
         Text(
           currentConversation?.displayTitle
             ?? currentConversationSummary?.displayTitle
@@ -628,29 +650,18 @@ struct ChatView: View {
         .font(.headline)
         .lineLimit(1)
         .foregroundStyle(.primary)
-        HStack(spacing: 4) {
-          if isLoadingCurrentLocalModel {
-            ProgressView()
-              .controlSize(.mini)
-          }
-          Text(providerSubtitle)
-        }
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
         if isLoadingCurrentLocalModel {
-          ProgressView()
-            .progressViewStyle(.linear)
-            .frame(width: 150)
+          ProgressView().controlSize(.mini)
             .accessibilityLabel("Loading local model into memory")
         }
       }
-      .frame(maxWidth: 240)
+      .frame(minHeight: 44)
       .contentShape(Rectangle())
     }
     .menuStyle(.button)
     .buttonStyle(.plain)
     .disabled(isLoadingConversation)
+    .accessibilityValue(providerSubtitle)
     .accessibilityHint("Tap for chat options")
   }
 
@@ -725,7 +736,6 @@ struct ChatView: View {
       .foregroundStyle(status.color)
       .padding(.horizontal)
       .padding(.vertical, 10)
-      .background(.ultraThinMaterial)
     }
     .buttonStyle(.plain)
     .disabled(remoteChat != nil && (store.settings.isOffline || remoteChat?.busy == true))
@@ -753,16 +763,6 @@ struct ChatView: View {
       store.renameCurrentConversation(to: renameDraft)
     }
     showingRenameAlert = false
-  }
-
-  private var trailingMenu: some View {
-    Button(action: onNewChat) {
-      Image(systemName: "square.and.pencil")
-    }
-    .buttonStyle(.plain)
-    .disabled(!canStartNewChat)
-    .accessibilityLabel("New Chat")
-    .help("New Chat")
   }
 
   private var canStartNewChat: Bool {
@@ -898,7 +898,9 @@ struct ChatView: View {
             } else if !isPreviewingConversation && currentConversationIsEmpty
               && liveVoiceSession.previewMessage == nil
             {
-              emptyState(in: scrollGeometry.size)
+              emptyState(in: CGSize(
+                width: scrollGeometry.size.width,
+                height: max(0, scrollGeometry.size.height - chatHeaderHeight)))
             } else {
               ForEach(renderedMessages) { message in
                 let match = chatSearch.currentMatch
@@ -1068,7 +1070,8 @@ struct ChatView: View {
           // Pin the scroll content to the viewport without using
           // containerRelativeFrame, which can create a layout cycle on rotation.
           .frame(width: scrollGeometry.size.width, alignment: .center)
-          .frame(minHeight: scrollGeometry.size.height, alignment: .bottom)
+          .frame(
+            minHeight: max(0, scrollGeometry.size.height - chatHeaderHeight), alignment: .bottom)
           .background {
             MessageListPinchBridge(
               zoomMethod: store.settings.appearance.zoomMethod,
@@ -1106,6 +1109,7 @@ struct ChatView: View {
           }
         }
         .coordinateSpace(name: MessageFontPinchSession.coordinateSpaceName)
+        .contentMargins(.top, chatHeaderHeight, for: .scrollContent)
         .scrollDismissesKeyboard(.interactively)
         .contextMenu {
           if let remoteChat {
@@ -1125,6 +1129,7 @@ struct ChatView: View {
             hasScrollableContent: hasScrollableContent,
             viewport: ConversationScrollViewport(geometry))
         } action: { old, metrics in
+          updateChatHeader(from: old, to: metrics)
           historyNearTop = metrics.viewportMinY < 160
           historyNearBottom = metrics.viewport.isAtBottom
           if !messageFontPinchSession.isActive {
@@ -1145,6 +1150,8 @@ struct ChatView: View {
           }
         }
         .onScrollPhaseChange { _, phase, context in
+          messageListIsDragging = phase == .interacting
+          if phase != .interacting { headerScrollDistance = 0 }
           messageListIsScrolling = phase != .idle
           if phase == .interacting {
             historyScrollSession.cancel()
@@ -1175,6 +1182,7 @@ struct ChatView: View {
         .onChange(of: currentConversationID) { _, _ in
           historyScrollSession.cancel()
           messageListIsScrolling = false
+          messageListIsDragging = false
           messageFontPinchSession.resetMetrics()
           userMessageNavigation = UserMessageNavigationState()
           userMessageNavigationDestination = nil
@@ -1259,6 +1267,30 @@ struct ChatView: View {
           .snappy,
           value: userMessageNavigation.isAtBottom || userMessageNavigationHiddenBySwipe)
       }
+    }
+  }
+
+  private func updateChatHeader(
+    from old: MessageListScrollMetrics, to new: MessageListScrollMetrics
+  ) {
+    guard messageListIsDragging, !messageFontPinchSession.isActive,
+      !historyScrollSession.isRestoring, old.contentHeight == new.contentHeight,
+      old.viewport.height == new.viewport.height, new.hasScrollableContent
+    else { return }
+    if new.viewportMinY <= 0 {
+      chatHeaderHidden = false
+      headerScrollDistance = 0
+      return
+    }
+    // Ignore rubber-banding and use a small travel threshold to avoid flickering.
+    let limit = max(0, new.contentHeight - new.viewport.height)
+    let delta = min(max(new.viewportMinY, 0), limit) - min(max(old.viewportMinY, 0), limit)
+    guard delta != 0 else { return }
+    if (delta > 0) != (headerScrollDistance > 0) { headerScrollDistance = 0 }
+    headerScrollDistance += delta
+    if abs(headerScrollDistance) >= 24 {
+      chatHeaderHidden = headerScrollDistance < 0
+      headerScrollDistance = 0
     }
   }
 

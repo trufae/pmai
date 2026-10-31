@@ -1941,7 +1941,7 @@ private struct SidebarEdgeFade: View {
   }
 }
 
-private struct FloatingGlassSurface<Background: InsettableShape>: ViewModifier {
+struct FloatingGlassSurface<Background: InsettableShape>: ViewModifier {
   @Environment(\.colorScheme) private var colorScheme
   let shape: Background
   var tint: Color? = nil
