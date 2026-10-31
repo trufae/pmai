@@ -5,6 +5,107 @@ import XCTest
 
 @MainActor
 final class LocationServiceTests: XCTestCase {
+  func testSentMessageIsVisibleAndSavedWhileGPSContextIsPending() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let persistence = PersistenceStore(localBaseURL: root)
+    let store = AppStore(persistence: persistence, monitorNetwork: false)
+    let deadline = Date().addingTimeInterval(10)
+    while !store.hasLoadedPersistedSettings {
+      guard Date() < deadline else { throw URLError(.timedOut) }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    await store.loadStoredConversationsForSearch()
+    let endpoint = OpenAIEndpoint(name: "Unused", baseURL: "https://example.invalid/v1")
+    store.settings.openAIEndpoints = [endpoint]
+    store.settings.toolSettings.useGPSLocation = true
+    store.newConversation()
+    store.updateCurrentConversation {
+      $0.provider = .openAICompatible
+      $0.endpointID = endpoint.id
+      $0.modelID = "test"
+      $0.toolsEnabled = true
+      $0.enabledTools = [.location]
+    }
+    let id = try XCTUnwrap(store.currentConversation?.id)
+    let manager = StubLocationManager(status: .authorizedWhenInUse)
+    store.locationService = LocationService(manager: manager)
+    let requested = expectation(description: "GPS context requested")
+    manager.onLocationRequest = { requested.fulfill() }
+    let attachment = ChatAttachment.textFile(filename: "note.txt", text: "Attached note")
+    let send = Task { await store.send(prompt: "Hello", attachments: [attachment]) }
+    defer { send.cancel() }
+    await fulfillment(of: [requested], timeout: 10)
+
+    let message = try XCTUnwrap(store.currentConversation?.messages.last)
+    XCTAssertEqual(message.role, .user)
+    XCTAssertEqual(message.text, "Hello")
+    XCTAssertEqual(message.attachments, [attachment])
+    XCTAssertFalse(store.isResponding(in: id))
+    persistence.flushPendingWrites()
+    let saved = try XCTUnwrap(persistence.loadConversation(id: id)?.messages)
+    XCTAssertEqual(saved.map(\.id), [message.id])
+    XCTAssertEqual(saved.first?.text, message.text)
+    XCTAssertEqual(saved.first?.attachments, [attachment])
+
+    send.cancel()
+    _ = await send.value
+    XCTAssertEqual(store.currentConversation?.messages, [message])
+    XCTAssertFalse(store.isResponding(in: id))
+  }
+
+  func testPrefetchedLocationIsReusedUntilItsMeasuredPositionExpires() async {
+    var now = Date(timeIntervalSince1970: 2_000)
+    let manager = StubLocationManager(status: .authorizedWhenInUse)
+    let service = LocationService(manager: manager, now: { now })
+    manager.onLocationRequest = { manager.deliver(latitude: 41, longitude: 2, timestamp: now) }
+    service.prefetch(precise: true)
+    manager.onLocationRequest = { XCTFail("Sending must share the pending GPS request") }
+    let first = await service.currentLocationText()
+    XCTAssertTrue(first.contains("Latitude 41.00000"))
+
+    manager.onLocationRequest = { XCTFail("A recent prefetch must not start another lookup") }
+    service.prefetch(precise: true)
+    let cached = await service.currentLocationText()
+    XCTAssertEqual(cached, first)
+
+    now.addTimeInterval(31)
+    manager.onLocationRequest = { manager.deliver(latitude: 42, longitude: 3, timestamp: now) }
+    let refreshed = await service.currentLocationText()
+    XCTAssertTrue(refreshed.contains("Latitude 42.00000"))
+  }
+
+  func testPrefetchDoesNotRequestLocationOrAccuracyPermissionWhileTyping() {
+    for status in [CLAuthorizationStatus.notDetermined, .denied, .restricted, .authorizedWhenInUse] {
+      let manager = StubLocationManager(status: status)
+      manager.accuracyAuthorization = .reducedAccuracy
+      let service = LocationService(manager: manager)
+      manager.onAuthorizationRequest = { XCTFail("Typing must not prompt for location permission") }
+      manager.onAccuracyRequest = { XCTFail("Typing must not prompt for precise permission") }
+      manager.onLocationRequest = { XCTFail("GPS must wait for the configured permissions") }
+      service.prefetch(precise: true)
+    }
+  }
+
+  func testPrefetchRespectsAccuracyChangesAndRevokedPermission() async {
+    let now = Date(timeIntervalSince1970: 2_000)
+    let manager = StubLocationManager(status: .authorizedWhenInUse)
+    let service = LocationService(manager: manager, now: { now })
+    manager.onLocationRequest = { manager.deliver(latitude: 41, longitude: 2, timestamp: now) }
+    service.prefetch(precise: false)
+    let approximate = await service.currentCoordinate(precise: false)
+    XCTAssertEqual(approximate?.latitude, 41)
+
+    manager.onLocationRequest = { manager.deliver(latitude: 42, longitude: 3, timestamp: now) }
+    let precise = await service.currentCoordinate()
+    XCTAssertEqual(precise?.latitude, 42)
+
+    manager.changeAuthorization(to: .denied)
+    manager.onLocationRequest = { XCTFail("Revoked permission must prevent GPS access") }
+    let denied = await service.currentCoordinate(precise: false)
+    XCTAssertNil(denied)
+  }
+
   // These cases prevent missing first-message context, stale positions, and
   // hanging sends when chat and weather request the shared location together.
   func testFirstMessageWaitsForPermissionAndIncludesTheGrantedLocation() async throws {

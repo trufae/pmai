@@ -2955,17 +2955,9 @@ final class AppStore: ObservableObject {
     voiceRecordingFilename: String? = nil,
     attachments: [ChatAttachment] = []
   ) async {
-    guard let index = indexedConversationIndex(for: conversationID) else { return }
-    clearFollowUpSuggestions(in: conversationID)
-    let conversation = conversations[index]
-    let context = await ContextBuilder.build(
-      input: prompt,
-      conversation: conversation,
-      settings: settings,
-      locationService: { self.locationService }
-    )
-
     guard !Task.isCancelled, let i = indexedConversationIndex(for: conversationID) else { return }
+    clearFollowUpSuggestions(in: conversationID)
+    let conversation = conversations[i]
     switch mode {
     case .append:
       let userMessage = ChatMessage(
@@ -2991,11 +2983,19 @@ final class AppStore: ObservableObject {
         conversations[i].messages[lastIndex].attachments = attachments
       }
     }
-    conversations[i].lastContextSignature = context.signature
     conversations[i].updatedAt = Date()
     upsertSummary(for: conversations[i])
     saveConversations()
 
+    // Show and save the user turn before context sources such as GPS can suspend it.
+    let context = await ContextBuilder.build(
+      input: prompt,
+      conversation: conversation,
+      settings: settings,
+      locationService: { self.locationService }
+    )
+    guard !Task.isCancelled, let index = indexedConversationIndex(for: conversationID) else { return }
+    conversations[index].lastContextSignature = context.signature
     dispatchAssistantTurn(
       conversationID: conversationID, context: context.text)
   }
