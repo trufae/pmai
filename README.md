@@ -35,12 +35,11 @@ Built on [MaiCore](MaiCore/README.md), following
 | --- | --- | --- |
 | **PocketMai for iOS** | Native voice, tools, documents, mini apps, and remote projects. iOS 18+; some features require newer iOS or supported hardware. | [App Store](https://apps.apple.com/es/app/pocketmai/id6764296742) |
 | **pmai CLI** | A terminal agent for macOS, Linux, and Android, with shell tools, projects, skills, MCP, ACP, and Vim integration. | Install command above · [Release downloads](https://github.com/trufae/pmai/releases) |
-| **PocketMai for Android** | A native preview with provider/model setup, custom prompts, streaming chat, saved history, and light/dark themes. | [Download APK](https://trufae.github.io/pmai/downloads/PocketMai-Android.apk) · [Android guide](PocketMaiAndroid/README.md) |
-| **PocketMai Kotlin** | Native Compose Android client with shared MaiCore, tools, MCP, skills, Forwiroh hosts and WebXDC apps. | [Build and app guide](PocketMaiKotlin/README.md) |
+| **PocketMai for Android** | Native Kotlin/Compose client with shared MaiCore, tools, MCP, skills, Forwiroh hosts and WebXDC apps. | [Download APK](https://trufae.github.io/pmai/downloads/PocketMai-Android.apk) · [Android guide](PocketMaiKotlin/README.md) |
 
-The SwiftUI Android app preview has a smaller feature set than iOS: tools, voice,
-attachments, MCP, local inference, and remote host navigation are not available
-there yet. The Android CLI is a separate terminal client.
+The older [pure Swift Android preview](PocketMaiAndroid/README.md) is deprecated.
+Its CI artifacts are labeled `pureswift` and are excluded from GitHub releases
+and website downloads. The Android CLI is a separate terminal client.
 
 ## Features
 
@@ -243,7 +242,7 @@ options, and [file browsing over ACP](doc/acp.md#file-browsing-from-pocketmai).
 - [Reusable prompts and skills](doc/prompts.md)
 - [Editing configuration and conversation context](doc/edit.md)
 - [ACP and MCP integration](doc/acp.md) · [Tool proxy](doc/proxy.md)
-- [Vim integration](doc/vim.md) · [Android builds](PocketMaiAndroid/README.md)
+- [Vim integration](doc/vim.md) · [Android builds](PocketMaiKotlin/README.md)
 - [Voice setup and privacy](#voice-setup-and-privacy) · [Build from source](#build)
 
 ## Use your ChatGPT subscription
@@ -378,12 +377,11 @@ still uses that chat's selected model provider.
 
 ## Build
 
-Build the iOS app with Xcode, the CLI with SwiftPM through Make, or the native
-Android preview with `make android`. See the [Android guide](PocketMaiAndroid/README.md)
-for its SDK and toolchain setup.
-Build the new Kotlin/Compose app with `make android-kotlin`, or
+Build the iOS app with Xcode and the CLI with SwiftPM through Make.
+Build the Kotlin/Compose Android app with `make android-kotlin`, or use
 `make android-kotlin-release` for its release APK. See the
 [Kotlin Android guide](PocketMaiKotlin/README.md).
+The deprecated pure Swift Android preview remains buildable with `make android`.
 
 <details>
 <summary>Requirements, build commands, and local inference notes</summary>
@@ -470,12 +468,15 @@ debugger attachment or to run in the Simulator.
 
 Get PocketMai from the [App Store](https://apps.apple.com/es/app/pocketmai/id6764296742).
 The [GitHub releases](https://github.com/trufae/pmai/releases) include the iOS IPA,
-source archives, and pmai CLI binaries for macOS and Linux (arm64 and x64), plus
-Android arm64. Static musl builds omit native plugin loading.
+the Kotlin Android app as `PocketMai-Android.apk` (arm64 and x86_64), source
+archives, and pmai CLI binaries for macOS and Linux (arm64 and x64), plus
+Android arm64. `SHA256SUMS` covers the CLI archives and Android APK.
+Static musl builds omit native plugin loading.
 
 The website's [Android APK](https://trufae.github.io/pmai/downloads/PocketMai-Android.apk)
-is the latest successful main-branch development build, with arm64 and x86_64
-support. Its [SHA-256 checksum](https://trufae.github.io/pmai/downloads/PocketMai-Android.apk.sha256)
-is published alongside it. Updating debug builds may require reinstalling.
+is the Kotlin app's release APK from the latest successful main-branch build,
+with arm64 and x86_64 support. Its [SHA-256 checksum](https://trufae.github.io/pmai/downloads/PocketMai-Android.apk.sha256)
+is published alongside it. CI builds use a generated debug signing key;
+updating between builds may require reinstalling.
 
 —pancake

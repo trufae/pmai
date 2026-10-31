@@ -2,7 +2,15 @@
 
 Native Android UI in Kotlin and Jetpack Compose, backed by the same Swift
 MaiCore libraries as pmai and iOS. This app has its own application ID
-(`org.mai.pocketmai.kotlin`) and can coexist with the SwiftUI Android preview.
+(`org.mai.pocketmai.kotlin`) and can coexist with the deprecated pure Swift
+Android preview.
+
+This is the Android app distributed on the [website](https://trufae.github.io/pmai/)
+and in [GitHub releases](https://github.com/trufae/pmai/releases) as
+`PocketMai-Android.apk`, with arm64 and x86_64 support. The website tracks the
+latest successful main-branch release build; GitHub releases build from the tag.
+CI builds use a generated debug signing key, so updating between builds may
+require reinstalling. The older pure Swift app is excluded from both downloads.
 
 The iOS app is the feature/navigation reference. Android uses Material 3,
 wallpaper-derived colors, system/light/dark themes, edge-to-edge layout,

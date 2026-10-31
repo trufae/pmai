@@ -309,9 +309,15 @@ jobs:
           path: PocketMai-*.ipa
           if-no-files-found: error
 
+  android-app:
+    name: Kotlin Android APK
+    uses: ./.github/workflows/android-app.yml
+    with:
+      release: true
+
   release:
     name: Publish GitHub release
-    needs: [cli, musl-cli, android-cli, ipa]
+    needs: [cli, musl-cli, android-cli, android-app, ipa]
     runs-on: ubuntu-latest
     steps:
       - name: Download release artifacts
@@ -321,10 +327,10 @@ jobs:
           pattern: "*"
           merge-multiple: true
 
-      - name: Generate CLI checksums
+      - name: Generate CLI and Android APK checksums
         run: |
           cd release-assets
-          sha256sum pmai-*.zip > SHA256SUMS
+          sha256sum pmai-*.zip PocketMai-Android.apk > SHA256SUMS
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3

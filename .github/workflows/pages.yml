@@ -52,18 +52,18 @@ jobs:
           test -f www/swift.svg
           test -x www/install.sh
 
-      - name: Bundle the latest main-branch Android APK
+      - name: Bundle the latest main-branch Kotlin Android release APK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
           run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/android-app.yml/runs?branch=main&event=push&status=success&per_page=1" --jq '.workflow_runs[0].id // empty')
           test -n "$run_id" || { echo "No successful main-branch Android build found" >&2; exit 1; }
-          artifact_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" --jq '.artifacts[] | select(.name == "PocketMai-Android-debug" and .expired == false) | .id')
+          artifact_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" --jq '.artifacts[] | select(.name == "PocketMai-Android-release" and .expired == false) | .id')
           test -n "$artifact_id" || { echo "The Android APK artifact is missing or expired" >&2; exit 1; }
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$RUNNER_TEMP/pocketmai-android.zip"
           mkdir -p www/downloads
-          unzip -p "$RUNNER_TEMP/pocketmai-android.zip" app-debug.apk > www/downloads/PocketMai-Android.apk
+          unzip -p "$RUNNER_TEMP/pocketmai-android.zip" PocketMai-Android.apk > www/downloads/PocketMai-Android.apk
           test -s www/downloads/PocketMai-Android.apk
           (cd www/downloads && sha256sum PocketMai-Android.apk > PocketMai-Android.apk.sha256)
 

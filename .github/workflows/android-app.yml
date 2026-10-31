@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      release:
+        description: Build only the Kotlin app for GitHub release assets
+        type: boolean
+        default: false
 
 concurrency:
   group: android-app-${{ github.event.pull_request.number || github.ref }}
@@ -23,7 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [PocketMaiAndroid, PocketMaiKotlin]
+        app: ${{ fromJSON(inputs.release && '["PocketMaiKotlin"]' || '["PocketMaiAndroid", "PocketMaiKotlin"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: SwiftyLab/setup-swift@d60245579ea3836a3f2fa65ebbe1e8891d577c76 # v1.14.2
@@ -72,14 +78,29 @@ jobs:
         env:
           ANDROID_ABIS: "arm64-v8a x86_64"
         run: make -C PocketMaiKotlin release
+      - name: Name Android APK artifacts
+        run: |
+          mkdir -p "$RUNNER_TEMP/android-artifacts"
+          if [ "${{ matrix.app }}" = PocketMaiAndroid ]; then
+            cp PocketMaiAndroid/app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/android-artifacts/PocketMai-Android-pureswift-debug.apk"
+          else
+            cp PocketMaiKotlin/PocketMaiKotlin-0.1.0.apk "$RUNNER_TEMP/android-artifacts/PocketMai-Android.apk"
+          fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: matrix.app == 'PocketMaiAndroid'
         with:
-          name: ${{ matrix.app == 'PocketMaiAndroid' && 'PocketMai-Android-debug' || 'PocketMaiKotlin-debug' }}
-          path: ${{ matrix.app }}/app/build/outputs/apk/debug/app-debug.apk
+          name: PocketMai-Android-pureswift-debug
+          path: ${{ runner.temp }}/android-artifacts/PocketMai-Android-pureswift-debug.apk
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: matrix.app == 'PocketMaiKotlin' && !inputs.release
+        with:
+          name: PocketMaiKotlin-debug
+          path: PocketMaiKotlin/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: matrix.app == 'PocketMaiKotlin'
         with:
-          name: PocketMaiKotlin-release
-          path: PocketMaiKotlin/PocketMaiKotlin-0.1.0.apk
+          name: PocketMai-Android-release
+          path: ${{ runner.temp }}/android-artifacts/PocketMai-Android.apk
           if-no-files-found: error
