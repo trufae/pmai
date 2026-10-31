@@ -8,6 +8,10 @@ import android.content.Intent
 import android.widget.TextView
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroidSize
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -28,6 +32,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.Role
@@ -46,6 +52,34 @@ import org.json.JSONObject
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import kotlin.math.abs
+
+private val LocalMessageFontSize = compositionLocalOf { 16f }
+
+private fun Modifier.pinchToResizeFont(onZoom: (Float) -> Unit, onFinished: () -> Unit) = pointerInput(Unit) {
+    awaitEachGesture {
+        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+        var zoom = 1f
+        var pinching = false
+        try {
+            do {
+                // Intercept a pinch before selectable Markdown TextViews or the list consume it.
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                if (event.changes.count { it.pressed && it.previousPressed } >= 2) {
+                    val change = event.calculateZoom()
+                    zoom *= change
+                    if (!pinching && abs(1 - zoom) * event.calculateCentroidSize(useCurrent = false) > viewConfiguration.touchSlop) {
+                        pinching = true
+                        onZoom(zoom)
+                    } else if (pinching) onZoom(change)
+                } else if (!pinching) zoom = 1f
+                if (pinching) event.changes.forEach { it.consume() }
+            } while (event.changes.any { it.pressed })
+        } finally {
+            if (pinching) onFinished()
+        }
+    }
+}
 
 private enum class Destination(val label: String, val icon: ImageVector) {
     Chats("Chats", Icons.AutoMirrored.Outlined.Chat),
@@ -229,6 +263,9 @@ private enum class Destination(val label: String, val icon: ImageVector) {
     showBack: Boolean, onBack: () -> Unit, onSettings: () -> Unit,
 ) {
     val context = LocalContext.current
+    val appearance = remember(context) { context.getSharedPreferences("appearance", Context.MODE_PRIVATE) }
+    var fontSize by remember { mutableFloatStateOf(appearance.getFloat("messageFontSize", 16f).coerceIn(6f, 43f)) }
+    var pinching by remember { mutableStateOf(false) }
     val list = rememberLazyListState()
     val messages = state.activeMessages
     val runs = remember(messages) { toolMessageRuns(messages) }
@@ -240,7 +277,7 @@ private enum class Destination(val label: String, val icon: ImageVector) {
     } }
     val contentKey = messages.lastOrNull()?.text?.length ?: 0
     LaunchedEffect(messages.size, state.streamed.length, contentKey) {
-        if (atBottom && list.layoutInfo.totalItemsCount > 0) list.scrollToItem(list.layoutInfo.totalItemsCount - 1)
+        if (!pinching && atBottom && list.layoutInfo.totalItemsCount > 0) list.scrollToItem(list.layoutInfo.totalItemsCount - 1)
     }
     Scaffold(modifier.fillMaxHeight(), topBar = {
         TopAppBar(title = { Column {
@@ -284,26 +321,34 @@ private enum class Destination(val label: String, val icon: ImageVector) {
                 EmptyState(Icons.Outlined.AutoAwesome, "What’s on your mind?",
                     if (state.isRemote) "Your remote host runs the agent. You stay in control of tool approvals." else "Ask a question, work through an idea, or start something new.")
             }
-            LazyColumn(Modifier.fillMaxSize().widthIn(max = 900.dp), state = list,
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                items(runs, key = { it.first().id }) { run ->
-                    if (run.first().role == "tool") ToolActivity(run, onLongPress = { selectedMessage = it })
-                    else MessageCard(run.first(), onLongPress = { selectedMessage = it })
+            CompositionLocalProvider(LocalMessageFontSize provides fontSize) {
+                LazyColumn(Modifier.fillMaxSize().widthIn(max = 900.dp).pinchToResizeFont(onZoom = {
+                    pinching = true
+                    fontSize = (fontSize * it).coerceIn(6f, 43f)
+                }, onFinished = {
+                    pinching = false
+                    appearance.edit().putFloat("messageFontSize", fontSize).apply()
+                }), state = list,
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                    items(runs, key = { it.first().id }) { run ->
+                        if (run.first().role == "tool") ToolActivity(run, onLongPress = { selectedMessage = it })
+                        else MessageCard(run.first(), onLongPress = { selectedMessage = it })
+                    }
+                    if (!state.isRemote && state.generating) items(activityRuns, key = { "active-${it.first().id}" }) { ToolActivity(it) }
+                    if (!state.isRemote && state.reasoning.isNotEmpty()) item("reasoning") {
+                        var expanded by remember { mutableStateOf(false) }
+                        TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide reasoning" else "Show reasoning") }
+                        if (expanded) Markdown(state.reasoning)
+                    }
+                    if (!state.isRemote && state.streamed.isNotEmpty()) item("stream") {
+                        MessageCard(Message("stream", "assistant", state.streamed))
+                    }
+                    if (state.busy) item("working") { Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Text(if (state.isRemote) state.remote.status else state.status.ifEmpty { "Working…" },
+                            Modifier.padding(start = 10.dp), style = MaterialTheme.typography.labelMedium)
+                    } }
                 }
-                if (!state.isRemote && state.generating) items(activityRuns, key = { "active-${it.first().id}" }) { ToolActivity(it) }
-                if (!state.isRemote && state.reasoning.isNotEmpty()) item("reasoning") {
-                    var expanded by remember { mutableStateOf(false) }
-                    TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide reasoning" else "Show reasoning") }
-                    if (expanded) Markdown(state.reasoning)
-                }
-                if (!state.isRemote && state.streamed.isNotEmpty()) item("stream") {
-                    MessageCard(Message("stream", "assistant", state.streamed))
-                }
-                if (state.busy) item("working") { Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                    Text(if (state.isRemote) state.remote.status else state.status.ifEmpty { "Working…" },
-                        Modifier.padding(start = 10.dp), style = MaterialTheme.typography.labelMedium)
-                } }
             }
         }
     }
@@ -388,12 +433,16 @@ private enum class Destination(val label: String, val icon: ImageVector) {
     val markwon = remember(context) { Markwon.builder(context).usePlugin(TablePlugin.create(context)).build() }
     val color = (colorOverride ?: MaterialTheme.colorScheme.onSurface).toArgb()
     val link = MaterialTheme.colorScheme.primary.toArgb()
-    AndroidView(factory = { TextView(it).apply { textSize = 16f; setTextIsSelectable(true); setLineSpacing(6f, 1f) } },
+    val fontSize = LocalMessageFontSize.current
+    val document = remember(markwon, text) { markwon.parse(text) }
+    val markdown = remember(markwon, document, fontSize) { markwon.render(document) }
+    AndroidView(factory = { TextView(it).apply { setTextIsSelectable(true); setLineSpacing(6f, 1f) } },
         modifier = Modifier.fillMaxWidth(), update = {
+            it.textSize = fontSize
             it.setTextColor(color); it.setLinkTextColor(link)
             it.setTextIsSelectable(onLongPress == null)
             it.setOnLongClickListener(if (onLongPress == null) null else android.view.View.OnLongClickListener { onLongPress(); true })
-            if (it.tag != text) { markwon.setMarkdown(it, text); it.tag = text }
+            if (it.tag !== markdown) { markwon.setParsedMarkdown(it, markdown); it.tag = markdown }
         })
 }
 
