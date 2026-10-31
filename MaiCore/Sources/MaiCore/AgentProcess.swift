@@ -174,6 +174,11 @@ public struct AgentProcessInfo: Equatable, Sendable, Identifiable {
   public var transcriptRevision: UInt64 = 0
   public var pauseRequested = false
   public var isArchived = false
+  public var externalSessionID: String?
+  public var supportsCancellation = true
+  public var provider: ProviderID?
+  public var model: String?
+  public var reasoningEffort: String?
 
   public var id: AgentPID { pid }
 
@@ -237,10 +242,14 @@ public struct AgentProcessInfo: Equatable, Sendable, Identifiable {
   }
 
   public func summaryLine(at now: Date) -> String {
-    var line = "\(pid) \(agentID)  [\(state.shortLabel)]"
+    let name = externalSessionID == nil ? agentID : "\(Self.oneLine(displayName, limit: 40)) (ACP)"
+    var line = "\(pid) \(name)  [\(state.shortLabel)]"
     let title = Self.oneLine(task, limit: 60)
     if !title.isEmpty { line += "  \(title)" }
     var facts: [String] = []
+    if externalSessionID != nil, let model {
+      facts.append("\(Self.oneLine(model, limit: 60)) [\(Self.oneLine(reasoningEffort ?? "unknown", limit: 20))]")
+    }
     if modelTurns > 0 { facts.append("\(modelTurns) turn\(modelTurns == 1 ? "" : "s")") }
     if toolCalls > 0 { facts.append("\(toolCalls) tool\(toolCalls == 1 ? "" : "s")") }
     if let usage, usage.totalTokens > 0 {
@@ -415,6 +424,10 @@ public struct AgentProcessTree: Equatable, Sendable {
 /// of the chat's own process — so a tree restores under fresh pids.
 public struct AgentProcessRecord: Codable, Equatable, Sendable, Identifiable {
   public var isArchived = false
+  public var externalSessionID: String?
+  public var provider: ProviderID?
+  public var model: String?
+  public var reasoningEffort: String?
   /// Optional settings for continuing this conversation after a restart.
   /// Messages live in `messages`; this snapshot keeps its message array empty.
   public var conversationRequest: AgentRequest? = nil
@@ -443,6 +456,10 @@ public struct AgentProcessRecord: Codable, Equatable, Sendable, Identifiable {
 
   public init(process: AgentProcessInfo, messages: [AgentMessage], parentRunID: UUID? = nil) {
     isArchived = process.isArchived
+    externalSessionID = process.externalSessionID
+    provider = process.provider
+    model = process.model
+    reasoningEffort = process.reasoningEffort
     runID = process.runID
     self.parentRunID = parentRunID
     pid = process.pid
@@ -463,7 +480,7 @@ public struct AgentProcessRecord: Codable, Equatable, Sendable, Identifiable {
   }
 
   private enum CodingKeys: String, CodingKey {
-    case conversationRequest, conversationID, isArchived
+    case conversationRequest, conversationID, isArchived, externalSessionID, provider, model, reasoningEffort
     case runID, parentRunID, pid, parent, agentID, displayName, task, state, depth
     case startedAt, updatedAt, finishedAt, modelTurns, toolCalls, usage, failure, messages
   }
@@ -474,6 +491,10 @@ public struct AgentProcessRecord: Codable, Equatable, Sendable, Identifiable {
   public init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
+    externalSessionID = try container.decodeIfPresent(String.self, forKey: .externalSessionID)
+    provider = try container.decodeIfPresent(ProviderID.self, forKey: .provider)
+    model = try container.decodeIfPresent(String.self, forKey: .model)
+    reasoningEffort = try container.decodeIfPresent(String.self, forKey: .reasoningEffort)
     conversationRequest = try container.decodeIfPresent(AgentRequest.self, forKey: .conversationRequest)
     conversationID = try container.decodeIfPresent(UUID.self, forKey: .conversationID)
     runID = try container.decodeIfPresent(UUID.self, forKey: .runID) ?? UUID()
@@ -499,6 +520,10 @@ public struct AgentProcessRecord: Codable, Equatable, Sendable, Identifiable {
   public func encode(to encoder: any Encoder) throws {
     var container = encoder.container(keyedBy: CodingKeys.self)
     if isArchived { try container.encode(true, forKey: .isArchived) }
+    try container.encodeIfPresent(externalSessionID, forKey: .externalSessionID)
+    try container.encodeIfPresent(provider, forKey: .provider)
+    try container.encodeIfPresent(model, forKey: .model)
+    try container.encodeIfPresent(reasoningEffort, forKey: .reasoningEffort)
     try container.encodeIfPresent(conversationRequest, forKey: .conversationRequest)
     try container.encodeIfPresent(conversationID, forKey: .conversationID)
     try container.encode(runID, forKey: .runID)

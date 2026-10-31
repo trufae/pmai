@@ -142,6 +142,41 @@ effort selector receive prompt guidance only. Other generation settings such
 as temperature and token limits have no standard ACP control and remain
 managed by the external agent.
 
+The CLI status prompt shows the configured effort beside `provider::model`, for
+example `codex::gpt-5 [high]`. `/set effort` changes it for the next turn.
+
+### Native subagent jobs
+
+Recent Claude and Codex adapters support ACP's
+[Subagent Sessions proposal](https://agentclientprotocol.com/rfds/subagents).
+pmai negotiates `clientCapabilities.subagents` and registers each announced child
+in its existing job tree, including nested and reused child sessions:
+
+```
+/jobs
+/jobs log PID
+/jobs focus PID
+/jobs cancel PID
+```
+
+Child text, reasoning, tool activity, and reported inter-agent messages stay in
+that child's transcript. Focusing a native child opens its conversation for
+inspection; the status prompt uses its reported model and effort when available.
+Cancellation targets the child's ACP session, only when its adapter advertises
+the `cancel` capability. The job stays active until the adapter reports that its
+work ended. Cancelling one child does not cancel the parent prompt.
+
+The proposal permits individual cancellation, but not direct child prompts,
+pause/resume, or changing a child's model or effort. pmai reports those controls
+as unavailable and excludes native children from message broadcasts. Their
+parent still chooses their configuration and concurrency; pmai's subagent limits
+apply to pmai-managed children. Update older adapters to expose native children;
+pmai cannot list work an adapter does not report.
+
+Saved native transcripts remain inspectable after restarting pmai. A disconnected
+adapter leaves unfinished jobs marked interrupted with an unknown remote state;
+pmai does not claim the remote work was cancelled.
+
 Claude and Codex use adapters; install them and authenticate with their own CLI:
 
 ```

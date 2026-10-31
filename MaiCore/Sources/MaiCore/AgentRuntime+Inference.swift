@@ -147,12 +147,16 @@ extension AgentRuntime {
         attempt: attempt + 1, value: outgoingRequest)
       do {
         let response = try await withDeadline(budget) {
-          try await provider.complete(outgoingRequest) { event in
-            timing.note(event)
-            if let display {
-              if let visible = await display.feed(event) { await onEvent(visible) }
-            } else {
-              await onEvent(event)
+          try await ProviderProcessScope.$current.withValue(
+            .init(supervisor: self.supervisor, context: context, provider: provider.descriptor.id, emit: emit)
+          ) {
+            try await provider.complete(outgoingRequest) { event in
+              timing.note(event)
+              if let display {
+                if let visible = await display.feed(event) { await onEvent(visible) }
+              } else {
+                await onEvent(event)
+              }
             }
           }
         }

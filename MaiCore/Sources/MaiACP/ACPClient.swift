@@ -96,6 +96,18 @@ public actor ACPClient {
   /// The delta sink for the prompt in flight; only one prompt runs at a time.
   private var activeSink: (@Sendable (ProviderEvent) async -> Void)?
   private var promptDirectory: URL?
+  private var subagentJobs: ACPSubagentJobs?
+
+  public func configureProcessScope(_ scope: ProviderProcessScope?) async {
+    guard let scope, scope.context.pid != nil else { return }
+    if let subagentJobs { await subagentJobs.configure(scope) }
+    else { subagentJobs = ACPSubagentJobs(scope: scope) }
+  }
+
+  private func cancelSubagent(_ id: String) throws {
+    guard let peer else { throw JSONRPCError.internalError("ACP disconnected") }
+    try peer.notify(ACP.Method.sessionCancel, params: .object(["sessionId": .string(id)]))
+  }
 
   public init(
     configuration: Configuration,
@@ -500,6 +512,7 @@ public actor ACPClient {
     reader?.cancel()
     reader = nil
     sessionLoaded = false
+    await subagentJobs?.disconnected()
     effortDefaults.removeAll()
     supportsPermissionEditing = false
     supportsYolo = false
@@ -522,6 +535,7 @@ public actor ACPClient {
     transport = nil
     reader = nil
     sessionLoaded = false
+    await subagentJobs?.disconnected()
     let tunnel = forwirohTunnel
     forwirohTunnel = nil
     await tunnel?.close()
@@ -628,6 +642,7 @@ public actor ACPClient {
             "name": .string("pmai"), "version": .string("1.0.0"),
           ]),
           "clientCapabilities": .object([
+            "subagents": subagentJobs == nil ? .null : .object([:]),
             "fs": .object([
               "readTextFile": .bool(configuration.readClientFiles), "writeTextFile": .bool(false),
             ]),
@@ -720,9 +735,18 @@ public actor ACPClient {
   // MARK: - Agent-initiated traffic
 
   private func handleAgentNotification(method: String, params: JSONValue?) async {
-    guard method == ACP.Method.sessionUpdate,
-      params?.objectValue?["sessionId"]?.stringValue == sessionID
+    guard method == ACP.Method.sessionUpdate, let sessionID,
+      let target = params?.objectValue?["sessionId"]?.stringValue,
+      let update = params?.objectValue?["update"]
     else { return }
+    let knownChild = await subagentJobs?.contains(target) == true
+    if let subagentJobs, target == sessionID || knownChild {
+      await subagentJobs.apply(update, sessionID: target, rootID: sessionID) { [weak self] id in
+        guard let self else { throw JSONRPCError.internalError("ACP disconnected") }
+        try await self.cancelSubagent(id)
+      }
+    }
+    guard target == sessionID else { return }
     if let update = params?.objectValue?["update"] {
       if update.objectValue?["sessionUpdate"]?.stringValue == "config_option_update" {
         readSessionOptions(update)
@@ -780,7 +804,9 @@ public actor ACPClient {
   private func handleAgentRequest(method: String, params: JSONValue?) async throws -> JSONValue {
     switch method {
     case ACP.Method.requestPermission:
-      guard params?.objectValue?["sessionId"]?.stringValue == sessionID else {
+      let target = params?.objectValue?["sessionId"]?.stringValue ?? ""
+      let child = await subagentJobs?.contains(target) == true
+      guard target == sessionID || child else {
         throw JSONRPCError.invalidParams("Permission requested for an unknown session")
       }
       if let onPermissionResponse, let params {

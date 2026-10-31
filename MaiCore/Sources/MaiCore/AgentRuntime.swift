@@ -187,8 +187,8 @@ public actor AgentRuntime {
     registeredAgent: Bool = false,
     emit downstream: @escaping AgentEventHandler
   ) async throws -> AgentResult {
-    let emit: AgentEventHandler = { event in
-      if depth == 0 { await self.recordDebugEvent(event) }
+    let emit: AgentEventHandler = { [weak self] event in
+      if depth == 0 { await self?.recordDebugEvent(event) }
       await downstream(event)
     }
     try Task.checkCancellation()
