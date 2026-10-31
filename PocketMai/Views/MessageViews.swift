@@ -352,67 +352,18 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
             includeMessageExtras: index == prepared.firstVisiblePartIndex
           )
           .id(ResponseScrollTarget(messageID: message.id, partID: part.id))
-        case .tool(let partID, let entry, let section):
-          if range.count > 1 {
-            ToolCallGroup(
-              timings: range.map { prepared.parts[$0].toolTiming },
-              failedCount: range.count { index in
-                if case .tool(_, let entry, _) = prepared.parts[index] {
-                  return entry.hasError
-                }
-                return false
-              },
-              isLive: isLiveAssistantResponse,
-              forceExpanded: isFullChatScreenshotRendering
-            ) {
-              ForEach(Array(prepared.parts[range])) { grouped in
-                if case .tool(let id, let item, let wrapper) = grouped {
-                  ToolCallRow(
-                    entry: item,
-                    onEdit: toolEditAction(for: item, partID: id, in: prepared),
-                    onDelete: toolDeleteAction(
-                      for: item, section: wrapper, partID: id, in: prepared))
-                }
-              }
+        default:
+          MessageActivityGroup(
+            title: "Activity · \(range.count) updates",
+            timings: range.filter { prepared.parts[$0].isTool }.map { prepared.parts[$0].toolTiming },
+            failedCount: range.count { prepared.parts[$0].hasToolError },
+            isLive: isLiveAssistantResponse,
+            forceExpanded: isFullChatScreenshotRendering
+          ) {
+            ForEach(Array(prepared.parts[range])) { part in
+              activityPart(part, in: prepared, canRenderMarkdown: canRenderMarkdown)
             }
-          } else {
-            ToolCallRow(
-              entry: entry,
-              onEdit: toolEditAction(for: entry, partID: partID, in: prepared),
-              onDelete: toolDeleteAction(
-                for: entry, section: section, partID: partID, in: prepared))
           }
-        case .reasoning(_, let section):
-          let compactDisplay = isStreaming && thinkingDisplay == .full ? .five : thinkingDisplay
-          FoldableMetaSection(
-            title: "Reasoning",
-            systemImage: "brain",
-            content: section.content,
-            monospaced: false,
-            detail: Self.reasoningSize(section.content),
-            collapsedStatus: showThinking && compactDisplay == .status && isStreaming
-              ? "Thinking…" : nil,
-            collapsedPreviewLines: showThinking && compactDisplay != .status
-              && compactDisplay != .full ? compactDisplay.lineCount : 0,
-            dimmedContent: true,
-            initiallyExpanded: showThinking && thinkingDisplay == .full && !isStreaming,
-            italicContent: true,
-            markdownAppearance: canRenderMarkdown ? appearance : nil,
-            renderImages: renderImages,
-            expandedMaxHeight: 240,
-            isStreaming: isStreaming,
-            compact: compactMetadata,
-            onDelete: hiddenSectionDeleteAction(
-              for: section, partID: part.id, in: prepared)
-          )
-        case .transcript(_, let section):
-          FoldableMetaSection(
-            title: "Prompt Transcript",
-            systemImage: "text.bubble",
-            content: section.content,
-            monospaced: true,
-            initiallyExpanded: false
-          )
         }
       }
       if prepared.parts.isEmpty && !prepared.hideBubble {
@@ -443,6 +394,52 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
     .frame(maxWidth: 720, alignment: isUser ? .trailing : .leading)
     .padding(.leading, isUser ? 36 : 0)
     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+  }
+
+  @ViewBuilder
+  private func activityPart(
+    _ part: MessageRenderPart, in prepared: PreparedMessageContent, canRenderMarkdown: Bool
+  ) -> some View {
+    switch part {
+    case .visible:
+      EmptyView()
+    case .tool(let partID, let entry, let section):
+      ToolCallRow(
+        entry: entry,
+        onEdit: toolEditAction(for: entry, partID: partID, in: prepared),
+        onDelete: toolDeleteAction(for: entry, section: section, partID: partID, in: prepared))
+    case .reasoning(_, let section):
+      let compactDisplay = isStreaming && thinkingDisplay == .full ? .five : thinkingDisplay
+      FoldableMetaSection(
+        title: "Reasoning",
+        systemImage: "brain",
+        content: section.content,
+        monospaced: false,
+        detail: Self.reasoningSize(section.content),
+        collapsedStatus: showThinking && compactDisplay == .status && isStreaming
+          ? "Thinking…" : nil,
+        collapsedPreviewLines: showThinking && compactDisplay != .status
+          && compactDisplay != .full ? compactDisplay.lineCount : 0,
+        dimmedContent: true,
+        initiallyExpanded: showThinking && thinkingDisplay == .full && !isStreaming,
+        italicContent: true,
+        markdownAppearance: canRenderMarkdown ? appearance : nil,
+        renderImages: renderImages,
+        expandedMaxHeight: 240,
+        isStreaming: isStreaming,
+        compact: compactMetadata,
+        onDelete: hiddenSectionDeleteAction(
+          for: section, partID: part.id, in: prepared)
+      )
+    case .transcript(_, let section):
+      FoldableMetaSection(
+        title: "Prompt Transcript",
+        systemImage: "text.bubble",
+        content: section.content,
+        monospaced: true,
+        initiallyExpanded: false
+      )
+    }
   }
 
   private func responseScrollTarget(in prepared: PreparedMessageContent) -> ResponseScrollTarget? {
@@ -2336,12 +2333,15 @@ private struct PreparedMessageContent {
   func groupedRanges(from start: Int) -> [Range<Int>] {
     var ranges: [Range<Int>] = []
     var index = start
+    while index > 0, index < parts.count, !parts[index].isVisible, !parts[index - 1].isVisible {
+      index -= 1
+    }
     while index < parts.count {
       let first = index
       index += 1
-      if case .tool = parts[first] {
+      if !parts[first].isVisible {
         while index < parts.count {
-          guard case .tool = parts[index] else { break }
+          guard !parts[index].isVisible else { break }
           index += 1
         }
       }
@@ -2373,6 +2373,16 @@ private enum MessageRenderPart: Identifiable {
     }
   }
 
+  var isTool: Bool {
+    if case .tool = self { return true }
+    return false
+  }
+
+  var hasToolError: Bool {
+    if case .tool(_, let entry, _) = self { return entry.hasError }
+    return false
+  }
+
   var toolTiming: ToolRunTiming? {
     if case .tool(_, _, let section) = self { return section.toolTiming }
     return nil
@@ -2385,6 +2395,17 @@ private enum MessageRenderPart: Identifiable {
 }
 
 enum MessageRenderCache {
+  @MainActor
+  static func isActivity(_ message: ChatMessage) -> Bool {
+    guard message.role != .user, message.role != .error, message.attachments.isEmpty else { return false }
+    return preparedContent(messageID: message.id, text: message.presentationText).hideBubble
+  }
+
+  @MainActor
+  static func failedToolCount(_ message: ChatMessage) -> Int {
+    preparedContent(messageID: message.id, text: message.presentationText).parts.count(where: \.hasToolError)
+  }
+
   private struct MarkdownCacheKey: Hashable {
     let messageID: UUID
     let partID: Int
@@ -3108,40 +3129,57 @@ private struct VoiceRecordingPlaybackButton: View {
   }
 }
 
-private struct ToolCallGroup<Content: View>: View {
-  let timings: [ToolRunTiming?]
-  let failedCount: Int
-  let isLive: Bool
-  let forceExpanded: Bool
+extension EnvironmentValues {
+  @Entry var messageActivityIsGrouped = false
+}
+
+struct MessageActivityGroup<Content: View>: View {
+  @Environment(\.messageActivityIsGrouped) private var alreadyGrouped
+  @Environment(\.isFullChatScreenshotRendering) private var isFullChatScreenshotRendering
+  var enabled = true
+  var title = "Activity"
+
+  var timings: [ToolRunTiming?] = []
+  var failedCount = 0
+  var isLive = false
+  var forceExpanded = false
   @ViewBuilder var content: () -> Content
   @State private var expanded = false
 
   var body: some View {
-    DisclosureGroup(isExpanded: Binding(
-      get: { expanded || forceExpanded }, set: { expanded = $0 }
-    )) {
-      VStack(alignment: .leading, spacing: 0, content: content)
-    } label: {
-      TimelineView(.animation(
-        minimumInterval: 1, paused: !isLive || timings.allSatisfy { $0?.finishedAt != nil }
-      )) { context in
-        HStack(spacing: 4) {
-          Text(ToolRunTiming.summary(
-            timings.map { timing in
-              guard isLive || timing?.finishedAt != nil else { return nil }
-              return timing
-            }, now: context.date))
-          if failedCount > 0 {
-            Text("· \(failedCount) failed")
-              .foregroundStyle(Color.red)
+    if !enabled || alreadyGrouped {
+      content()
+    } else {
+      DisclosureGroup(isExpanded: Binding(
+        get: { expanded || forceExpanded || isFullChatScreenshotRendering }, set: { expanded = $0 }
+      )) {
+        VStack(alignment: .leading, spacing: 0, content: content)
+          .environment(\.messageActivityIsGrouped, true)
+      } label: {
+        TimelineView(.animation(
+          minimumInterval: 1, paused: !isLive || timings.allSatisfy { $0?.finishedAt != nil }
+        )) { context in
+          HStack(spacing: 4) {
+            Text(title)
+            if !timings.isEmpty {
+              Text("· " + ToolRunTiming.summary(
+                timings.map { timing in
+                  guard isLive || timing?.finishedAt != nil else { return nil }
+                  return timing
+                }, now: context.date))
+            }
+            if failedCount > 0 {
+              Text("· \(failedCount) failed").foregroundStyle(Color.red)
+            }
           }
+          .font(.caption.monospacedDigit())
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .frame(minHeight: 44, alignment: .leading)
         }
-        .font(.caption.monospacedDigit())
-        .foregroundStyle(.secondary)
-        .frame(minHeight: 44, alignment: .leading)
       }
+      .tint(.secondary)
     }
-    .tint(.secondary)
   }
 }
 

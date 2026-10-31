@@ -269,7 +269,10 @@ private enum class Destination(val label: String, val icon: ImageVector) {
     val list = rememberLazyListState()
     val messages = state.activeMessages
     val runs = remember(messages) { toolMessageRuns(messages) }
-    val activityRuns = remember(state.agent.activity) { toolMessageRuns(state.agent.activity) }
+    val activity = remember(state.agent.activity, state.reasoning) {
+        state.agent.activity + if (state.reasoning.isEmpty()) emptyList()
+            else listOf(Message("active-reasoning", "thought", state.reasoning))
+    }
     var selectedMessage by remember { mutableStateOf<Message?>(null) }
     val atBottom by remember { derivedStateOf {
         val last = list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
@@ -331,14 +334,11 @@ private enum class Destination(val label: String, val icon: ImageVector) {
                 }), state = list,
                     contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                     items(runs, key = { it.first().id }) { run ->
-                        if (run.first().role == "tool") ToolActivity(run, onLongPress = { selectedMessage = it })
+                        if (run.first().isActivity) ToolActivity(run, onLongPress = { selectedMessage = it })
                         else MessageCard(run.first(), onLongPress = { selectedMessage = it })
                     }
-                    if (!state.isRemote && state.generating) items(activityRuns, key = { "active-${it.first().id}" }) { ToolActivity(it) }
-                    if (!state.isRemote && state.reasoning.isNotEmpty()) item("reasoning") {
-                        var expanded by remember { mutableStateOf(false) }
-                        TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide reasoning" else "Show reasoning") }
-                        if (expanded) Markdown(state.reasoning)
+                    if (!state.isRemote && state.generating && activity.isNotEmpty()) item("activity") {
+                        ToolActivity(activity)
                     }
                     if (!state.isRemote && state.streamed.isNotEmpty()) item("stream") {
                         MessageCard(Message("stream", "assistant", state.streamed))
@@ -360,18 +360,19 @@ private enum class Destination(val label: String, val icon: ImageVector) {
     val failed = messages.count { it.toolFailed }
     val running = messages.count { it.status.lowercase() in listOf("running", "pending", "in_progress") }
     Column(Modifier.fillMaxWidth()) {
-        if (messages.size > 1) Row(
+        Row(
             Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button) { expanded = !expanded }
                 .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" },
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text("Tool activity · ${messages.size} updates", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("Activity · ${messages.size} updates", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (failed > 0) Text("· $failed failed", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
             if (running > 0) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
             Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        if (messages.size == 1 || expanded) messages.forEach { message -> key(message.id) {
-            ToolActivityRow(message, onLongPress)
+        if (expanded) messages.forEach { message -> key(message.id) {
+            if (message.role == "tool") ToolActivityRow(message, onLongPress)
+            else MessageCard(message, onLongPress)
         } }
     }
 }

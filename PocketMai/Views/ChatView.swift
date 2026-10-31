@@ -882,13 +882,6 @@ struct ChatView: View {
           // A single response can be several viewports tall and changes height while streaming.
           // LazyVStack can retain a stale row estimate and scroll past the rendered content.
           VStack(spacing: 14) {
-            if startIndex > 0 || conversation?.historyWindow?.hasEarlier == true
-              || messageRenderWindow.messageWithEarlierParts(
-                in: allMessages, conversationID: currentConversationID) != nil
-            {
-              Button("Earlier messages") { Task { await loadHistoryAtEdge(forceEarlier: true) } }
-                .disabled(historyPageIsLoading)
-            }
             if !renderedMessages.isEmpty, startIndex == 0,
               conversation?.historyWindow?.hasEarlier != true,
               let startedAt = conversation?.createdAt
@@ -905,119 +898,131 @@ struct ChatView: View {
                 width: scrollGeometry.size.width,
                 height: max(0, scrollGeometry.size.height - chatHeaderHeight)))
             } else {
-              ForEach(renderedMessages) { message in
-                let match = chatSearch.currentMatch
-                let searchHighlight = match?.messageID == message.id ? match : nil
-                MessageSelectionRow(
-                  isSelectionMode: !isPreviewingConversation && isMessageSelectionMode,
-                  isSelected: !isPreviewingConversation && selectedMessageIDs.contains(message.id)
+              ForEach(ConversationMessageRun.grouped(
+                renderedMessages, conversationID: currentConversationID)
+              ) { run in
+                MessageActivityGroup(
+                  enabled: run.isActivity,
+                  title: "Activity · \(run.messages.count) updates",
+                  failedCount: run.isActivity
+                    ? run.messages.reduce(0) { $0 + MessageRenderCache.failedToolCount($1) } : 0,
+                  forceExpanded: isMessageSelectionMode
                 ) {
-                  if !isPreviewingConversation {
-                    toggleMessageSelection(message.id)
-                  }
-                } content: {
-                  MessageBubble(
-                    message: message,
-                    renderedPartStartIndex: messageRenderWindow.partStartIndex(
-                      for: message.id, conversationID: currentConversationID),
-                    toolSettings: currentToolSettings,
-                    openAIEndpoints: store.settings.isOffline
-                      ? [] : store.settings.openAIEndpoints,
-                    skipTechnicalContentInTTS: store.settings.conversation
-                      .skipTechnicalContentInTTS,
-                    appearance: store.settings.appearance,
-                    renderMarkdown: store.settings.renderMarkdownInChat,
-                    renderImages: store.settings.renderMarkdownImagesInChat,
-                    searchHighlight: searchHighlight,
-                    actions: MessageBubbleActions(
-                      allowsConversationMutation: remoteChat?.canDelete(message.id) ?? true,
-                      canReply: remoteChat == nil
-                        || (remoteChat?.connected == true
-                          && !currentChatIsResponding && !store.settings.isOffline),
-                      canRetry: remoteChat?.canRetry(message.id) ?? true,
-                      canResubmit: remoteChat?.canResubmit(message.id) ?? true,
-                      onDelete: { messagePendingDeletion = message },
-                      onToggleBookmark: conversation.map { conversation in
-                        { store.toggleMessageBookmark(message, in: conversation.id) }
-                      },
-                      onTogglePin: remoteChat == nil ? conversation.map { conversation in
-                        { store.setMessagePinned(!message.isPinned, messageID: message.id, in: conversation.id) }
-                      } : nil,
-                      onBeginSelection: { beginMessageSelection(with: message.id) },
-                      onEdit: remoteChat == nil ? { editMessage(message, text: $0) } : nil,
-                      onEditAttachment: remoteChat == nil
-                        ? { attachmentID, editedText in
-                          editTextAttachment(message, attachmentID: attachmentID, text: editedText)
-                        } : nil,
-                      onTrimFromHere: remoteChat == nil || remoteChat?.supportsHistoryRewind == true
-                        ? { messagePendingTrimAndResubmit = message } : nil,
-                      onRestartFresh: remoteChat == nil || remoteChat?.supportsHistoryRewind == true
-                        ? { messagePendingRestartFresh = message } : nil,
-                      onResubmit: remoteChat.map { chat in { chat.resubmit(message.id) } },
-                      onSpeakFromHere: { speakFromHere(message) },
-                      onReply: { reply in sendReply(reply) }),
-                    isBookmarked: conversation.map {
-                      store.isMessageBookmarked(message.id, in: $0.id)
-                    } ?? false,
-                    conversationCreatedAt: conversation?.createdAt
-                      ?? currentConversationSummary?.createdAt,
-                    showUserTimestamp: message.role == .user && message.id != firstUserMessageID,
-                    showThinking: remoteChat != nil
-                      || store.effectiveShowThinking(for: currentConversation),
-                    compactMetadata: remoteChat != nil,
-                    isWaitingForResponse: isWaitingForResponse(message)
-                  )
-                }
-                .onGeometryChange(for: CGRect.self) { geometry in
-                  geometry.frame(in: .named(MessageFontPinchSession.coordinateSpaceName))
-                } action: { frame in
-                  messageFontPinchSession.updateFrame(frame, for: message.id)
-                  if message.role == .user {
-                    refreshUserMessageNavigation()
-                  }
-                }
-                .onDisappear {
-                  messageFontPinchSession.removeFrame(for: message.id)
-                }
-                .allowsHitTesting(!isPreviewingConversation)
-                .opacity(isPreviewingConversation ? 0.82 : 1)
-                .id(message.id)
-                .background(alignment: .bottom) {
-                  ConversationHistoryScrollBridge(
-                    session: historyScrollSession, revision: messageRenderWindow.revision,
-                    messageID: message.id
-                  )
-                  .frame(height: 1)
-                }
-
-                if !isPreviewingConversation,
-                  !isMessageSelectionMode,
-                  remoteChat == nil, store.settings.followUps.isEnabled,
-                  message.role == .assistant,
-                  renderedMessages.last?.id == message.id,
-                  !currentChatIsResponding,
-                  let conversationID = conversation?.id
-                {
-                  let suggestions = store.followUpSuggestions(
-                    in: conversationID,
-                    after: message.id)
-                  let isGenerating = store.isGeneratingFollowUpSuggestions(
-                    in: conversationID,
-                    after: message.id)
-                  FollowUpSuggestionsCard(
-                    suggestions: suggestions,
-                    isGenerating: isGenerating,
-                    autoSuggestEnabled: store.settings.followUps.autoGenerate,
-                    onSend: { sendFollowUp($0, in: conversationID) },
-                    onEdit: { submitFollowUp($0, in: conversationID) },
-                    onRefresh: { store.regenerateFollowUpSuggestions(in: conversationID) },
-                    onAutoSuggestChange: { isEnabled in
-                      guard store.settings.followUps.autoGenerate != isEnabled else { return }
-                      store.settings.followUps.autoGenerate = isEnabled
-                      store.saveSettings()
+                  ForEach(run.messages) { message in
+                    let match = chatSearch.currentMatch
+                    let searchHighlight = match?.messageID == message.id ? match : nil
+                    MessageSelectionRow(
+                      isSelectionMode: !isPreviewingConversation && isMessageSelectionMode,
+                      isSelected: !isPreviewingConversation && selectedMessageIDs.contains(message.id)
+                    ) {
+                      if !isPreviewingConversation {
+                        toggleMessageSelection(message.id)
+                      }
+                    } content: {
+                      MessageBubble(
+                        message: message,
+                        renderedPartStartIndex: messageRenderWindow.partStartIndex(
+                          for: message.id, conversationID: currentConversationID),
+                        toolSettings: currentToolSettings,
+                        openAIEndpoints: store.settings.isOffline
+                          ? [] : store.settings.openAIEndpoints,
+                        skipTechnicalContentInTTS: store.settings.conversation
+                          .skipTechnicalContentInTTS,
+                        appearance: store.settings.appearance,
+                        renderMarkdown: store.settings.renderMarkdownInChat,
+                        renderImages: store.settings.renderMarkdownImagesInChat,
+                        searchHighlight: searchHighlight,
+                        actions: MessageBubbleActions(
+                          allowsConversationMutation: remoteChat?.canDelete(message.id) ?? true,
+                          canReply: remoteChat == nil
+                            || (remoteChat?.connected == true
+                              && !currentChatIsResponding && !store.settings.isOffline),
+                          canRetry: remoteChat?.canRetry(message.id) ?? true,
+                          canResubmit: remoteChat?.canResubmit(message.id) ?? true,
+                          onDelete: { messagePendingDeletion = message },
+                          onToggleBookmark: conversation.map { conversation in
+                            { store.toggleMessageBookmark(message, in: conversation.id) }
+                          },
+                          onTogglePin: remoteChat == nil ? conversation.map { conversation in
+                            { store.setMessagePinned(!message.isPinned, messageID: message.id, in: conversation.id) }
+                          } : nil,
+                          onBeginSelection: { beginMessageSelection(with: message.id) },
+                          onEdit: remoteChat == nil ? { editMessage(message, text: $0) } : nil,
+                          onEditAttachment: remoteChat == nil
+                            ? { attachmentID, editedText in
+                              editTextAttachment(message, attachmentID: attachmentID, text: editedText)
+                            } : nil,
+                          onTrimFromHere: remoteChat == nil || remoteChat?.supportsHistoryRewind == true
+                            ? { messagePendingTrimAndResubmit = message } : nil,
+                          onRestartFresh: remoteChat == nil || remoteChat?.supportsHistoryRewind == true
+                            ? { messagePendingRestartFresh = message } : nil,
+                          onResubmit: remoteChat.map { chat in { chat.resubmit(message.id) } },
+                          onSpeakFromHere: { speakFromHere(message) },
+                          onReply: { reply in sendReply(reply) }),
+                        isBookmarked: conversation.map {
+                          store.isMessageBookmarked(message.id, in: $0.id)
+                        } ?? false,
+                        conversationCreatedAt: conversation?.createdAt
+                          ?? currentConversationSummary?.createdAt,
+                        showUserTimestamp: message.role == .user && message.id != firstUserMessageID,
+                        showThinking: remoteChat != nil
+                          || store.effectiveShowThinking(for: currentConversation),
+                        compactMetadata: remoteChat != nil,
+                        isWaitingForResponse: isWaitingForResponse(message)
+                      )
                     }
-                  )
-                  .id("follow-ups-\(message.id.uuidString)")
+                    .onGeometryChange(for: CGRect.self) { geometry in
+                      geometry.frame(in: .named(MessageFontPinchSession.coordinateSpaceName))
+                    } action: { frame in
+                      messageFontPinchSession.updateFrame(frame, for: message.id)
+                      if message.role == .user {
+                        refreshUserMessageNavigation()
+                      }
+                    }
+                    .onDisappear {
+                      messageFontPinchSession.removeFrame(for: message.id)
+                    }
+                    .allowsHitTesting(!isPreviewingConversation)
+                    .opacity(isPreviewingConversation ? 0.82 : 1)
+                    .id(message.id)
+                    .background(alignment: .bottom) {
+                      ConversationHistoryScrollBridge(
+                        session: historyScrollSession, revision: messageRenderWindow.revision,
+                        messageID: message.id
+                      )
+                      .frame(height: 1)
+                    }
+
+                    if !isPreviewingConversation,
+                      !isMessageSelectionMode,
+                      remoteChat == nil, store.settings.followUps.isEnabled,
+                      message.role == .assistant,
+                      renderedMessages.last?.id == message.id,
+                      !currentChatIsResponding,
+                      let conversationID = conversation?.id
+                    {
+                      let suggestions = store.followUpSuggestions(
+                        in: conversationID,
+                        after: message.id)
+                      let isGenerating = store.isGeneratingFollowUpSuggestions(
+                        in: conversationID,
+                        after: message.id)
+                      FollowUpSuggestionsCard(
+                        suggestions: suggestions,
+                        isGenerating: isGenerating,
+                        autoSuggestEnabled: store.settings.followUps.autoGenerate,
+                        onSend: { sendFollowUp($0, in: conversationID) },
+                        onEdit: { submitFollowUp($0, in: conversationID) },
+                        onRefresh: { store.regenerateFollowUpSuggestions(in: conversationID) },
+                        onAutoSuggestChange: { isEnabled in
+                          guard store.settings.followUps.autoGenerate != isEnabled else { return }
+                          store.settings.followUps.autoGenerate = isEnabled
+                          store.saveSettings()
+                        }
+                      )
+                      .id("follow-ups-\(message.id.uuidString)")
+                    }
+                  }
                 }
               }
               if conversation?.historyWindow?.hasLater == true {
@@ -1067,7 +1072,10 @@ struct ChatView: View {
               .frame(height: 1)
               .background {
                 ConversationHistoryScrollBridge(
-                  session: historyScrollSession, revision: messageRenderWindow.revision)
+                  session: historyScrollSession, revision: messageRenderWindow.revision,
+                  onHistoryLayout: {
+                    Task { await loadHistoryAtEdge() }
+                  })
               }
           }
           .padding()
@@ -1596,14 +1604,13 @@ struct ChatView: View {
   }
 
   @MainActor
-  private func loadHistoryAtEdge(forceEarlier: Bool = false, forceLater: Bool = false) async {
-    guard !historyPageIsLoading, !messageFontPinchSession.isActive,
-      forceEarlier || forceLater || userScrolledAfterLastMessage
+  private func loadHistoryAtEdge(forceLater: Bool = false) async {
+    guard !historyPageIsLoading, !messageFontPinchSession.isActive, !messageListIsScrolling,
+      forceLater || userScrolledAfterLastMessage
     else { return }
     let id = currentConversationID
-    let earlier = forceEarlier || (!forceLater && historyNearTop)
+    let earlier = !forceLater && historyNearTop
     guard earlier || forceLater || historyNearBottom else { return }
-    if forceEarlier { userScrolledAfterLastMessage = true }
     historyPageIsLoading = true
     defer { historyPageIsLoading = false }
     let messages = presentationMessages

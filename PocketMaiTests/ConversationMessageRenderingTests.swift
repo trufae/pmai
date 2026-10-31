@@ -4,6 +4,28 @@ import XCTest
 @testable import PocketMai
 
 final class ConversationMessageRenderingTests: XCTestCase {
+  @MainActor
+  func testMixedActivityKeepsMessagesActionsAndStableHistoryIdentity() {
+    let question = ChatMessage(role: .user, text: "Question")
+    let thought = ChatMessage(role: .assistant, text: "<think>Check the file</think>")
+    let tool = ChatMessage(role: .tool, text: "<tool_run>Shell tool ():\nError: failed\n</tool_run>")
+    let nextThought = ChatMessage(role: .assistant, text: "<think>Try another file</think>")
+    let answer = ChatMessage(role: .assistant, text: "Answer")
+    let messages = [question, thought, tool, nextThought, answer]
+    let id = UUID()
+    let runs = ConversationMessageRun.grouped(messages[...], conversationID: id)
+    XCTAssertEqual(runs.map(\.messages.count), [1, 3, 1])
+    XCTAssertEqual(runs.flatMap(\.messages).map(\.id), messages.map(\.id))
+    XCTAssertEqual(runs.map(\.isActivity), [false, true, false])
+    XCTAssertEqual(MessageRenderCache.failedToolCount(tool), 1)
+    let tail = ConversationMessageRun.grouped(messages[2...], conversationID: id)
+    XCTAssertEqual(tail.first?.id, runs[1].id)
+    let live = ConversationMessageRun.grouped(messages[1...2], conversationID: id)
+    let extended = ConversationMessageRun.grouped(messages[1...3], conversationID: id)
+    XCTAssertEqual(live.first?.id, extended.first?.id)
+    XCTAssertFalse(MessageRenderCache.isActivity(ChatMessage(role: .error, text: "Connection lost")))
+  }
+
   func testInitialRenderIsBoundedAndIncludesTheLatestMessage() {
     let messages = makeMessages(1_000)
     let window = ConversationMessageRenderWindow()
