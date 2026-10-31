@@ -46,6 +46,14 @@ struct ChatInputSession {
     if remoteChat == nil, let id = conversation?.id { store.cancelVoiceover(in: id) }
   }
 
+  func prepareToSend() {
+    guard remoteChat == nil, let conversation = store.currentConversation,
+      conversation.toolsEnabled, conversation.enabledTools.contains(.location),
+      store.settings.toolSettings.useGPSLocation
+    else { return }
+    store.locationService.prefetch(precise: store.settings.toolSettings.preciseLocation)
+  }
+
   func send(
     prompt: String, attachments: [ChatAttachment] = [], voiceRecordingFilename: String? = nil
   ) async -> Bool {

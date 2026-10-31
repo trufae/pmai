@@ -32,9 +32,13 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
   private var isRequestingAccuracy = false
   private var isRequestingLocation = false
   private var timeoutTask: Task<Void, Never>?
+  private var prefetchPrecision: Bool?
+  private var prefetchedLocation: (location: CLLocation, precise: Bool, accuracy: CLAccuracyAuthorization)?
+  private let now: () -> Date
 
-  init(manager: any LocationManaging = CLLocationManager()) {
+  init(manager: any LocationManaging = CLLocationManager(), now: @escaping () -> Date = Date.init) {
     self.manager = manager
+    self.now = now
     authorizationStatus = manager.authorizationStatus
     accuracyAuthorization = manager.accuracyAuthorization
     super.init()
@@ -115,7 +119,35 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     await requestLocation(precise: precise)?.coordinate
   }
 
+  func prefetch(precise: Bool) {
+    guard manager.authorizationStatus == .authorizedWhenInUse
+      || manager.authorizationStatus == .authorizedAlways,
+      !precise || manager.accuracyAuthorization == .fullAccuracy,
+      continuations.isEmpty, !isRequestingLocation, !isRequestingAccuracy,
+      recentPrefetchedLocation(precise: precise) == nil
+    else { return }
+    prefetchPrecision = precise
+    requestAuthorization(precise: precise)
+    resumeAfterAuthorization()
+  }
+
+  private func recentPrefetchedLocation(precise: Bool) -> CLLocation? {
+    guard let prefetchedLocation, prefetchedLocation.precise == precise,
+      prefetchedLocation.accuracy == manager.accuracyAuthorization,
+      manager.authorizationStatus == .authorizedWhenInUse
+        || manager.authorizationStatus == .authorizedAlways,
+      isRecent(prefetchedLocation.location)
+    else { return nil }
+    return prefetchedLocation.location
+  }
+
+  private func isRecent(_ location: CLLocation) -> Bool {
+    location.horizontalAccuracy >= 0 && abs(location.timestamp.timeIntervalSince(now())) <= 30
+  }
+
   private func requestLocation(precise: Bool) async -> CLLocation? {
+    guard !Task.isCancelled else { return nil }
+    if let location = recentPrefetchedLocation(precise: precise) { return location }
     let id = UUID()
     return await withTaskCancellationHandler {
       await withCheckedContinuation { continuation in
@@ -129,7 +161,8 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
       }
     } onCancel: {
       Task { @MainActor in
-        self.continuations.removeValue(forKey: id)?.resume(returning: nil)
+        guard let continuation = self.continuations.removeValue(forKey: id) else { return }
+        continuation.resume(returning: nil)
         if self.continuations.isEmpty { self.stopRequest() }
       }
     }
@@ -138,12 +171,16 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
   private func resumeAfterAuthorization() {
     authorizationStatus = manager.authorizationStatus
     accuracyAuthorization = manager.accuracyAuthorization
-    guard !continuations.isEmpty else { return }
+    guard !continuations.isEmpty || prefetchPrecision != nil else { return }
     switch authorizationStatus {
     case .notDetermined:
       // Keep the first message pending until the user answers the system prompt.
       return
     case .authorizedWhenInUse, .authorizedAlways:
+      if continuations.isEmpty, preciseLocation, accuracyAuthorization != .fullAccuracy {
+        finishRequest(with: nil)
+        return
+      }
       requestPreciseAuthorizationIfNeeded()
       guard !isRequestingAccuracy, !isRequestingLocation else { return }
       isRequestingLocation = true
@@ -163,9 +200,13 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     if isRequestingLocation { manager.stopUpdatingLocation() }
     isRequestingLocation = false
     accuracyRequested = false
+    prefetchPrecision = nil
   }
 
   private func finishRequest(with location: CLLocation?) {
+    if let location, let precise = prefetchPrecision, precise == preciseLocation {
+      prefetchedLocation = (location, precise, manager.accuracyAuthorization)
+    }
     stopRequest()
     let pending = continuations
     continuations.removeAll()
@@ -185,9 +226,7 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     Task { @MainActor in
       guard isRequestingLocation else { return }
       // Never describe an old cached fix as the user's current position.
-      let location = locations.last {
-        $0.horizontalAccuracy >= 0 && abs($0.timestamp.timeIntervalSinceNow) <= 30
-      }
+      let location = locations.last(where: self.isRecent)
       finishRequest(with: location)
     }
   }

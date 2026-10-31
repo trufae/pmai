@@ -3903,6 +3903,7 @@ private struct ChatComposer: View {
     Binding(
       get: { draftText },
       set: { newText in
+        if draftText.isEmpty, !newText.isEmpty { inputSession.prepareToSend() }
         draftText = newText
         scheduleDraftPersistence(newText, for: conversationID)
       }
