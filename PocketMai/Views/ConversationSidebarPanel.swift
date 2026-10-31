@@ -63,9 +63,6 @@ struct SidebarPanel<Rows: View, Actions: View>: View {
           .scrollContentBackground(.hidden)
           .contentMargins(.horizontal, 16, for: .scrollContent)
           .scrollIndicators(.hidden)
-          .safeAreaInset(edge: .top, spacing: 0) {
-            HostPanelHeader(title: title, backTitle: backTitle, action: onBack)
-          }
           .safeAreaInset(edge: .bottom, spacing: 0) {
             Color.clear.frame(height: 100)
           }
@@ -73,6 +70,9 @@ struct SidebarPanel<Rows: View, Actions: View>: View {
         actions(proxy.size.width - 36 < 300)
           .frame(maxWidth: .infinity, minHeight: 56)
           .padding(.horizontal, 18).padding(.bottom, 22)
+      }
+      .safeAreaInset(edge: .top, spacing: 0) {
+        HostPanelHeader(title: title, backTitle: backTitle, action: onBack)
       }
     }
   }
