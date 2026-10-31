@@ -1849,29 +1849,6 @@ extension SidebarView: Equatable {
   }
 }
 
-struct SidebarPlaneEffect: ViewModifier {
-  let progress: CGFloat
-
-  func body(content: Content) -> some View {
-    content
-      .scaleEffect(scale, anchor: .leading)
-  }
-
-  private var clampedProgress: CGFloat {
-    min(max(progress, 0), 1)
-  }
-
-  private var easedProgress: CGFloat {
-    let progress = clampedProgress
-    return progress * progress * (3 - 2 * progress)
-  }
-
-  private var scale: CGFloat {
-    0.88 + easedProgress * 0.12
-  }
-
-}
-
 struct SidebarDistanceTone: View {
   @Environment(\.colorScheme) private var colorScheme
 
