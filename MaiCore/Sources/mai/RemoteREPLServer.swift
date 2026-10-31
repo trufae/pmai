@@ -240,7 +240,7 @@ actor RemoteREPLServer {
     let gateway = ACPWebSocketGateway.Configuration(
       host: bindAddress, port: port,
       tokenFile: tokenFile, command: executable, arguments: childArguments, workingDirectory: cwd,
-      pairing: pairing)
+      pairing: pairing, resumable: true)
     let tunnel =
       try connectionProtocol == .opentunnel && flags["--url"] == nil
       ? RemoteOpenTunnel(directory: directory) : nil

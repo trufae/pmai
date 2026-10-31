@@ -29,42 +29,44 @@ struct RemoteChatSettingsView: View {
           ForEach(chat.configurationOptions.filter {
             $0.id != "tools.enabled" && !$0.id.hasPrefix("tools.tool.")
           }) { option in
-            if option.isBoolean {
-              Toggle(
-                option.name,
-                isOn: Binding(
-                  get: { option.currentValue.boolValue ?? false },
-                  set: { chat.setConfigurationOption(id: option.id, value: .bool($0)) }))
-            } else if chat.bookmark.backend == .openCode, option.id == "model" {
-              NavigationLink {
-                RemoteOpenCodeModelPicker(chat: chat)
-              } label: {
-                let current = option.currentValue.stringValue ?? ""
-                LabeledContent(
+            Group {
+              if option.isBoolean {
+                Toggle(
                   option.name,
-                  value: option.choices.first(where: { $0.id == current })?.name
-                    ?? (current.isEmpty ? "Server default" : current))
-              }
-            } else {
-              Picker(
-                option.name,
-                selection: Binding(
-                  get: { option.currentValue.stringValue ?? "" },
-                  set: { chat.setConfigurationOption(id: option.id, value: .string($0)) })
-              ) {
-                let current = option.currentValue.stringValue ?? ""
-                if !option.choices.contains(where: { $0.id == current }) {
-                  Text(current.isEmpty ? "Server default" : current).tag(current)
-                    .disabled(true)
+                  isOn: Binding(
+                    get: { option.currentValue.boolValue ?? false },
+                    set: { chat.setConfigurationOption(id: option.id, value: .bool($0)) }))
+              } else if chat.bookmark.backend == .openCode, option.id == "model" {
+                NavigationLink {
+                  RemoteOpenCodeModelPicker(chat: chat)
+                } label: {
+                  let current = option.currentValue.stringValue ?? ""
+                  LabeledContent(
+                    option.name,
+                    value: option.choices.first(where: { $0.id == current })?.name
+                      ?? (current.isEmpty ? "Server default" : current))
                 }
-                ForEach(option.choices) { choice in
-                  Text(choice.group.map { "\($0) · \(choice.name)" } ?? choice.name).tag(choice.id)
+              } else {
+                Picker(
+                  option.name,
+                  selection: Binding(
+                    get: { option.currentValue.stringValue ?? "" },
+                    set: { chat.setConfigurationOption(id: option.id, value: .string($0)) })
+                ) {
+                  let current = option.currentValue.stringValue ?? ""
+                  if !option.choices.contains(where: { $0.id == current }) {
+                    Text(current.isEmpty ? "Server default" : current).tag(current)
+                      .disabled(true)
+                  }
+                  ForEach(option.choices) { choice in
+                    Text(choice.group.map { "\($0) · \(choice.name)" } ?? choice.name).tag(choice.id)
+                  }
                 }
+                .pickerStyle(.navigationLink)
               }
-              .pickerStyle(.navigationLink)
             }
+            .disabled((chat.busy && option.id != "tools.review") || chat.settingsLoading || store.settings.isOffline)
           }
-          .disabled(chat.busy || chat.settingsLoading || store.settings.isOffline)
           if chat.settingsLoading {
             ProgressView()
           } else if chat.configurationOptions.isEmpty, chat.settingsError == nil {

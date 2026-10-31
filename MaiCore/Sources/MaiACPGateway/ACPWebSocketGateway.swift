@@ -6,8 +6,8 @@ import NIOHTTP1
 import NIOPosix
 import NIOWebSocket
 
-/// Authenticated WebSocket -> ACP stdio bridge. Each connection owns a child;
-/// the agent owns its sessions and must implement session/load for recovery.
+/// Authenticated WebSocket -> ACP stdio bridge. Resumable pmai connections
+/// retain their worker; standard ACP connections own a child until disconnect.
 public enum ACPWebSocketGateway {
   public struct Pairing: Sendable {
     public var authorizes: @Sendable (String) -> Bool
@@ -29,11 +29,12 @@ public enum ACPWebSocketGateway {
     public var workingDirectory: URL
     public var maximumConnections: Int
     public var pairing: Pairing?
+    public var resumable: Bool
 
     public init(
       host: String = "127.0.0.1", port: Int = 19283, tokenFile: URL,
       command: String, arguments: [String], workingDirectory: URL, maximumConnections: Int = 16,
-      pairing: Pairing? = nil
+      pairing: Pairing? = nil, resumable: Bool = false
     ) {
       self.host = host
       self.port = port
@@ -43,6 +44,11 @@ public enum ACPWebSocketGateway {
       self.workingDirectory = workingDirectory
       self.maximumConnections = maximumConnections
       self.pairing = pairing
+      self.resumable = resumable
+    }
+
+    func authorizesSession(_ token: String) -> Bool {
+      pairing.map { $0.authorizes(token) } ?? invitationMatches(token)
     }
 
     fileprivate func authorizes(_ token: String) -> Bool {
@@ -66,12 +72,20 @@ public enum ACPWebSocketGateway {
     onListening: @escaping @Sendable (String) -> Void = { _ in }
   ) async throws {
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+    let agents = ACPResumableAgents(configuration: configuration)
+    let reaper = Task {
+      while !Task.isCancelled {
+        do { try await Task.sleep(for: .seconds(30)) } catch { return }
+        await agents.reap()
+      }
+    }
+    defer { reaper.cancel() }
     let slots = ConnectionSlots(maximum: configuration.maximumConnections)
     do {
       let channel = try await ServerBootstrap(group: group)
         .serverChannelOption(ChannelOptions.backlog, value: 64)
         .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
-        .childChannelOption(ChannelOptions.socketOption(.tcp_nodelay), value: 1)
+        .childChannelOption(ChannelOptions.tcpOption(.tcp_nodelay), value: 1)
         .childChannelOption(
           ChannelOptions.writeBufferWaterMark,
           value: ChannelOptions.Types.WriteBufferWaterMark(low: 1024 * 1024, high: 32 * 1024 * 1024)
@@ -100,7 +114,7 @@ public enum ACPWebSocketGateway {
               timeout.cancel()
               let token = String((request.headers.first(name: "authorization") ?? "").dropFirst(7))
               return channel.pipeline.addHandler(
-                AgentBridge(configuration: configuration, token: token))
+                AgentBridge(configuration: configuration, token: token, agents: agents))
             })
           return channel.pipeline.configureHTTPServerPipeline(
             withServerUpgrade: (
@@ -119,8 +133,10 @@ public enum ACPWebSocketGateway {
       } onCancel: {
         channel.close(promise: nil)
       }
+      await agents.close()
       try await group.shutdownGracefully()
     } catch {
+      await agents.close()
       try? await group.shutdownGracefully()
       throw error
     }
@@ -169,6 +185,7 @@ private final class AgentBridge: ChannelInboundHandler, @unchecked Sendable {
   typealias OutboundOut = WebSocketFrame
   let configuration: ACPWebSocketGateway.Configuration
   let token: String
+  let agents: ACPResumableAgents
   var transport: StdioJSONRPCTransport?
   var reader: Task<Void, Never>?
   var writer: Task<Void, Never>?
@@ -178,9 +195,10 @@ private final class AgentBridge: ChannelInboundHandler, @unchecked Sendable {
   var pairingOnly = false
   let outbound = AsyncStream<JSONRPCMessage>.makeStream(bufferingPolicy: .bufferingOldest(256))
 
-  init(configuration: ACPWebSocketGateway.Configuration, token: String) {
+  init(configuration: ACPWebSocketGateway.Configuration, token: String, agents: ACPResumableAgents) {
     self.configuration = configuration
     self.token = token
+    self.agents = agents
   }
 
   func handlerAdded(context: ChannelHandlerContext) {
@@ -190,6 +208,41 @@ private final class AgentBridge: ChannelInboundHandler, @unchecked Sendable {
     }
     if let policy = configuration.pairing, !policy.authorizes(token) {
       pairingOnly = true
+      return
+    }
+    if configuration.resumable {
+      let channel = context.channel
+      writer = Task { [agents, token, configuration, outbound] in
+        var agent: ACPResumableAgent?
+        var transport: StdioJSONRPCTransport?
+        var reader: Task<Void, Never>?
+        do {
+          for await message in outbound.stream {
+            guard channel.isActive else { break }
+            if agent == nil && transport == nil {
+              if message.params?.objectValue?["_meta"]?.objectValue?["pmai"]?
+                .objectValue?["resumeId"]?.stringValue != nil {
+                agent = try await agents.attach(message, token: token, channel: channel)
+              } else {
+                let child = try StdioJSONRPCTransport.spawn(
+                  command: configuration.command, arguments: configuration.arguments,
+                  workingDirectory: configuration.workingDirectory)
+                transport = child
+                reader = Task {
+                  for await reply in child.messages() { await Self.reply(reply, channel: channel) }
+                  channel.close(promise: nil)
+                }
+              }
+            }
+            if let agent { try await agent.send(message, from: channel) }
+            else { try transport?.send(message) }
+          }
+        } catch { channel.close(promise: nil) }
+        if let agent { await agent.detach(channel) }
+        reader?.cancel()
+        transport?.close()
+      }
+      startHeartbeat(channel: channel)
       return
     }
     do {
@@ -218,21 +271,25 @@ private final class AgentBridge: ChannelInboundHandler, @unchecked Sendable {
           for await message in outbound.stream { try transport.send(message) }
         } catch { try? await channel.close().get() }
       }
-      heartbeat = channel.eventLoop.scheduleRepeatedTask(
-        initialDelay: .seconds(20), delay: .seconds(20)
-      ) { [weak self] _ in
-        guard let self else { return }
-        guard self.configuration.authorizes(self.token), !self.waitingForPong else {
-          channel.close(promise: nil)
-          return
-        }
-        self.waitingForPong = true
-        channel.writeAndFlush(
-          WebSocketFrame(
-            fin: true, opcode: .ping,
-            data: channel.allocator.buffer(capacity: 0)), promise: nil)
-      }
+      startHeartbeat(channel: channel)
     } catch { context.close(promise: nil) }
+  }
+
+  private func startHeartbeat(channel: Channel) {
+    heartbeat = channel.eventLoop.scheduleRepeatedTask(
+      initialDelay: .seconds(20), delay: .seconds(20)
+    ) { [weak self] _ in
+      guard let self else { return }
+      guard self.configuration.authorizes(self.token), !self.waitingForPong else {
+        channel.close(promise: nil)
+        return
+      }
+      self.waitingForPong = true
+      channel.writeAndFlush(
+        WebSocketFrame(
+          fin: true, opcode: .ping,
+          data: channel.allocator.buffer(capacity: 0)), promise: nil)
+    }
   }
 
   func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -361,7 +418,7 @@ private final class AgentBridge: ChannelInboundHandler, @unchecked Sendable {
     heartbeat?.cancel()
     reader?.cancel()
     outbound.continuation.finish()
-    writer?.cancel()
+    if !configuration.resumable { writer?.cancel() }
     transport?.close()
     context.fireChannelInactive()
   }

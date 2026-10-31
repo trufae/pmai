@@ -23,6 +23,7 @@ public actor ACPClient {
     public var promptTimeout: TimeInterval?
     public var webSocketURL: URL?
     public var bearerToken: String?
+    public var resumeID: String?
     public var sessionID: String?
     public var forwirohInvitation: String?
     public var mcpServers: [JSONValue] = []
@@ -50,7 +51,8 @@ public actor ACPClient {
       webSocketURL: URL? = nil,
       bearerToken: String? = nil,
       sessionID: String? = nil,
-      forwirohInvitation: String? = nil
+      forwirohInvitation: String? = nil,
+      resumeID: String? = nil
     ) {
       self.command = command
       self.arguments = arguments
@@ -63,6 +65,7 @@ public actor ACPClient {
       self.webSocketURL = webSocketURL
       self.bearerToken = bearerToken
       self.sessionID = sessionID
+      self.resumeID = resumeID
       self.forwirohInvitation = forwirohInvitation
     }
   }
@@ -90,6 +93,7 @@ public actor ACPClient {
   private var supportsFiles = false
   private var supportsPermissionEditing = false
   private var supportsYolo = false
+  private var supportsInjection = false
   private var supportsHistoryRewind = false
   private var busy = false
   private var internetAccess = InternetAccessPolicy()
@@ -477,8 +481,10 @@ public actor ACPClient {
       let raw = result.objectValue?["stopReason"]?.stringValue ?? ACP.StopReason.endTurn.rawValue
       return (ACP.StopReason(rawValue: raw) ?? .endTurn).providerStopReason
     } catch is CancellationError {
-      try? peer.notify(
-        ACP.Method.sessionCancel, params: .object(["sessionId": .string(sessionID)]))
+      if configuration.resumeID == nil {
+        try? peer.notify(
+          ACP.Method.sessionCancel, params: .object(["sessionId": .string(sessionID)]))
+      }
       await disconnect()
       throw CancellationError()
     } catch {
@@ -497,6 +503,22 @@ public actor ACPClient {
       }
       throw ProviderPolicyError(code: "acp_prompt_failed", message: message)
     }
+  }
+
+  public func injectionSupported() async -> Bool { supportsInjection }
+
+  public func inject(_ text: String) async throws {
+    guard supportsInjection, let peer, let sessionID, sessionLoaded else {
+      throw JSONRPCError.invalidParams("This host does not support message injection")
+    }
+    _ = try await peer.request("_pmai/session/inject", params: .object([
+      "sessionId": .string(sessionID), "text": .string(text),
+    ]), timeout: 30)
+  }
+
+  public func cancel() async {
+    guard let peer, let sessionID else { return }
+    try? peer.notify(ACP.Method.sessionCancel, params: .object(["sessionId": .string(sessionID)]))
   }
 
   public func close() async {
@@ -637,6 +659,9 @@ public actor ACPClient {
       let initialized = try await peer.request(
         ACP.Method.initialize,
         params: .object([
+          "_meta": .object(["pmai": .object([
+            "resumeId": configuration.resumeID.map(JSONValue.string) ?? .null,
+          ])]),
           "protocolVersion": .integer(ACP.protocolVersion),
           "clientInfo": .object([
             "name": .string("pmai"), "version": .string("1.0.0"),
@@ -659,6 +684,7 @@ public actor ACPClient {
         .objectValue?["list"]?.objectValue != nil
       let pmaiCapabilities = initialized.objectValue?["agentCapabilities"]?.objectValue?["_meta"]?
         .objectValue?["pmai"]?.objectValue
+      supportsInjection = pmaiCapabilities?["injection"]?.intValue == 1
       supportsFiles = pmaiCapabilities?["workspaceFiles"]?.intValue == 1
       supportsPermissionEditing = pmaiCapabilities?["permissionEditing"]?.intValue == 1
       supportsYolo = pmaiCapabilities?["yolo"]?.intValue == 1

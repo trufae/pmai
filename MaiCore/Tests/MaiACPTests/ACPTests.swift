@@ -352,6 +352,101 @@ func acpServerServesARuntime() async throws {
   serving.cancel()
 }
 
+@Test("Remote approval edits and injected input reach the next model turn during a busy session")
+func acpInteractiveRun() async throws {
+  let call = ToolCall(id: "review", name: "echo", arguments: .object(["text": .string("original")]))
+  let provider = ACPScriptedProvider(responses: [
+    .init(message: .init(role: .assistant, content: [.toolCall(call)]), stopReason: .toolCall),
+    .init(message: .assistant("done"), stopReason: .stop),
+  ])
+  let bridge = ACPPermissionBridge()
+  let runtime = AgentRuntime(approvalHandler: bridge.approvalHandler)
+  try await runtime.register(provider)
+  try await runtime.register(tool: ClosureTool(definition: .init(
+    name: "echo", description: "Echo text",
+    inputSchema: .object(["type": .string("object"), "properties": .object([
+      "text": .object(["type": .string("string")]),
+    ])]), annotations: .init(approval: .automatic))) { arguments, _ in
+      ToolOutput(text: arguments.objectValue?["text"]?.stringValue ?? "")
+    })
+  let agent = AgentDefinition(id: "main", instructions: "", provider: "scripted", model: "fixture", toolNames: ["echo"])
+  try await runtime.register(agent: agent)
+  let (clientTransport, serverTransport) = PipeTransport.pair()
+  let server = ACPServer(runtime: runtime, agent: agent, bridge: bridge)
+  let serving = Task { await server.serve(on: serverTransport) }
+  defer { clientTransport.close(); serving.cancel() }
+  let requests = AsyncStream<JSONValue>.makeStream()
+  let replies = AsyncStream<JSONValue>.makeStream()
+  let snapshots = MessageSnapshotRecorder()
+  let client = JSONRPCPeer(transport: clientTransport, onRequest: { method, params in
+    #expect(method == ACP.Method.requestPermission)
+    requests.continuation.yield(params ?? .null)
+    for await reply in replies.stream { return reply }
+    throw CancellationError()
+  }, onNotification: { _, params in
+    let update = params?.objectValue?["update"]?.objectValue
+    if update?["sessionUpdate"]?.stringValue == "_pmai/message_snapshot" {
+      await snapshots.record(update?["messages"]?.arrayValue ?? [])
+    }
+  })
+  await client.start()
+  _ = try await client.request(ACP.Method.initialize, params: .object(["protocolVersion": .integer(1)]), timeout: 10)
+  let created = try await client.request(ACP.Method.sessionNew, params: .object(["cwd": .string("/tmp")]), timeout: 10)
+  let id = try #require(created.objectValue?["sessionId"]?.stringValue)
+  _ = try await client.request(ACP.Method.sessionSetConfigOption, params: .object([
+    "sessionId": .string(id), "configId": .string("tools.review"), "value": .bool(true),
+  ]), timeout: 10)
+  let turn = Task {
+    try await client.request(ACP.Method.sessionPrompt, params: .object([
+      "sessionId": .string(id), "prompt": .array([ACP.ContentBlock.text("start").json]),
+    ]), timeout: 20)
+  }
+  var pending = requests.stream.makeAsyncIterator()
+  let permission = try #require(await pending.next())
+  #expect(permission.objectValue?["toolCall"]?.objectValue?["rawInput"] == call.arguments)
+  _ = try await client.request(ACP.Method.sessionSetConfigOption, params: .object([
+    "sessionId": .string(id), "configId": .string("tools.review"), "value": .bool(true),
+  ]), timeout: 10)
+  _ = try await client.request("_pmai/session/inject", params: .object([
+    "sessionId": .string(id), "text": .string("steer the run"),
+  ]), timeout: 10)
+  // A reconnect loads the same busy session without cancelling its permission.
+  _ = try await client.request(ACP.Method.sessionLoad, params: .object([
+    "sessionId": .string(id), "cwd": .string("/tmp"),
+  ]), timeout: 10)
+  replies.continuation.yield(.object(["outcome": .object([
+    "outcome": .string("selected"), "optionId": .string("allow_once"),
+    "rawInput": .object(["text": .string("edited")]),
+  ])]))
+  #expect(try await turn.value.objectValue?["stopReason"]?.stringValue == "end_turn")
+  let messages = await snapshots.last
+  #expect(messages.contains { $0.objectValue?["text"]?.stringValue == "steer the run" })
+  let tool = try #require(messages.first { $0.objectValue?["toolID"]?.stringValue == "review" }?.objectValue)
+  #expect(tool["toolName"]?.stringValue == "echo")
+  #expect(tool["text"]?.stringValue == "edited")
+  #expect(tool["toolInput"] == .object(["text": .string("edited")]))
+  await client.close()
+  await serving.value
+}
+
+@Test("Tool titles and parameters survive partial updates and snapshots")
+func acpToolTranscriptDetails() {
+  var messages: [ACPConversationMessage] = []
+  ACPConversationTranscript.apply(.object([
+    "sessionUpdate": .string("tool_call"), "toolCallId": .string("call"),
+    "title": .string("run_shell"), "rawInput": .object(["script": .string("pwd")]),
+  ]), to: &messages)
+  ACPConversationTranscript.apply(.object([
+    "sessionUpdate": .string("tool_call_update"), "toolCallId": .string("call"),
+    "status": .string("completed"),
+    "content": .array([.object(["type": .string("content"), "content": ACP.ContentBlock.text("/work").json])]),
+  ]), to: &messages)
+  #expect(messages.count == 1)
+  #expect(messages.first?.toolName == "run_shell")
+  #expect(messages.first?.toolInput == .object(["script": .string("pwd")]))
+  #expect(messages.first?.text.contains("/work") == true)
+}
+
 @Test("pmai's MCP server exposes the agent as one prompt tool")
 func mcpServerExposesAgent() async throws {
   let provider = ACPScriptedProvider(responses: [

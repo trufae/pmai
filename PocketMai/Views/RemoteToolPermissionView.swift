@@ -104,7 +104,6 @@ struct RemoteToolPermissionView: View {
           .font(.system(.caption, design: .monospaced))
           .foregroundStyle(.primary)
           .textSelection(.enabled)
-          .lineLimit(8)
           .frame(maxWidth: .infinity, alignment: .leading)
           .padding(12)
           .background(Color(uiColor: .tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
@@ -112,7 +111,6 @@ struct RemoteToolPermissionView: View {
         Text(permission.details)
           .font(.system(.caption, design: .monospaced))
           .foregroundStyle(.secondary)
-          .lineLimit(8)
           .textSelection(.enabled)
       }
 

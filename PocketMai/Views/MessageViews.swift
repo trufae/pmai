@@ -1665,7 +1665,7 @@ private struct MessageImageSaveError: LocalizedError {
   }
 }
 
-private struct AssistantTypingIndicator: View {
+struct AssistantTypingIndicator: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   let fontSize: Double

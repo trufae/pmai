@@ -150,9 +150,10 @@ struct ChatView: View {
       .onDisappear { remoteChat?.disconnect() }
       .onChange(of: scenePhase) { _, phase in
         if phase == .background { remoteChat?.disconnect() }
+        if phase == .active, !store.settings.isOffline { remoteChat?.connect() }
       }
       .onChange(of: store.settings.isOffline) { _, enabled in
-        if enabled { remoteChat?.disconnect() }
+        if enabled { remoteChat?.disconnect() } else { remoteChat?.connect() }
       }
   }
 
@@ -682,7 +683,7 @@ struct ChatView: View {
   }
 
   private var currentChatIsResponding: Bool {
-    if let remoteChat { return remoteChat.busy }
+    if let remoteChat { return remoteChat.responding }
     guard let id = currentConversation?.id else { return false }
     return store.isResponding(in: id)
   }
@@ -738,7 +739,7 @@ struct ChatView: View {
       .padding(.vertical, 10)
     }
     .buttonStyle(.plain)
-    .disabled(remoteChat != nil && (store.settings.isOffline || remoteChat?.busy == true))
+    .disabled(remoteChat != nil && store.settings.isOffline)
     .accessibilityHint("Open chat settings to choose a provider")
   }
 
@@ -768,8 +769,7 @@ struct ChatView: View {
   private var canStartNewChat: Bool {
     !isLoadingConversation && !isMessageSelectionMode
       && !(remoteChat != nil
-        && (currentConversationIsEmpty || remoteChat?.busy == true || store.settings.isOffline
-          || remoteChat?.bookmark.requiresApproval == true))
+        && (currentConversationIsEmpty || store.settings.isOffline))
   }
 
   private func speakFromHere(_ message: ChatMessage) {
@@ -934,9 +934,7 @@ struct ChatView: View {
                         searchHighlight: searchHighlight,
                         actions: MessageBubbleActions(
                           allowsConversationMutation: remoteChat?.canDelete(message.id) ?? true,
-                          canReply: remoteChat == nil
-                            || (remoteChat?.connected == true
-                              && !currentChatIsResponding && !store.settings.isOffline),
+                          canReply: remoteChat?.canSubmit ?? true,
                           canRetry: remoteChat?.canRetry(message.id) ?? true,
                           canResubmit: remoteChat?.canResubmit(message.id) ?? true,
                           onDelete: { messagePendingDeletion = message },
@@ -1060,6 +1058,11 @@ struct ChatView: View {
                   .id(message.id)
                 }
               }
+            }
+            if remoteChat?.responding == true {
+              AssistantTypingIndicator(fontSize: store.settings.appearance.fontSize)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 8)
             }
             if !renderedMessages.isEmpty,
               lastUpdatedVisibleConversationID == currentConversationID,
@@ -1711,7 +1714,7 @@ struct ChatView: View {
   private func sendReply(_ text: String) {
     guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
     if let remoteChat {
-      if remoteChat.connected, !remoteChat.busy, !store.settings.isOffline {
+      if remoteChat.canSubmit {
         remoteChat.send(text)
       } else {
         store.replaceComposerDraft(with: text, in: remoteChat.conversation.id)
@@ -3118,7 +3121,8 @@ private struct ChatComposer: View {
   }
 
   private var canSubmitDraft: Bool {
-    (!isResponding || isImmediateCommand) && (hasDraftText || !pendingAttachments.isEmpty)
+    (!isResponding || isImmediateCommand || remoteChat?.canSubmit == true)
+      && (hasDraftText || !pendingAttachments.isEmpty)
       && inputSession.canSubmit
   }
 
@@ -3318,6 +3322,12 @@ private struct ChatComposer: View {
     }
     .onChange(of: store.sharedImportRequestID) { _, _ in
       if remoteChat == nil { beginSharedImport() }
+    }
+    .onChange(of: remoteChat?.unsentPrompt) { _, prompt in
+      guard let prompt else { return }
+      draftText = [prompt, draftText].filter { !$0.isEmpty }.joined(separator: "\n\n")
+      persistDraftTextNow()
+      remoteChat?.unsentPrompt = nil
     }
     .onChange(of: store.draftStorageRevision) { _, _ in
       let storedDraft = store.draftText(for: conversationID)
@@ -3596,7 +3606,8 @@ private struct ChatComposer: View {
         toolMenu
 
         TextField(
-          isResponding && remoteChat == nil ? "Queue a message..." : placeholder,
+          isResponding
+            ? (remoteChat == nil ? "Queue a message..." : "Send to running agent...") : placeholder,
           text: draftBinding, axis: .vertical
         )
         .textFieldStyle(.plain)
@@ -3627,6 +3638,15 @@ private struct ChatComposer: View {
           return .handled
         }
 
+        if remoteChat != nil, isResponding, canSubmitDraft {
+          Button { inputSession.cancelResponse() } label: {
+            Image(systemName: "stop.fill")
+              .foregroundStyle(.red)
+              .frame(width: 24, height: 24)
+          }
+          .adaptiveGlassButtonStyle()
+          .accessibilityLabel("Stop response")
+        }
         Button {
           if canSubmitDraft {
             submitDraft()
@@ -3703,7 +3723,7 @@ private struct ChatComposer: View {
   }
 
   private var trailingActionSystemImage: String {
-    if isImmediateCommand && canSubmitDraft { return "arrow.up" }
+    if canSubmitDraft { return "arrow.up" }
     if isResponding {
       return canQueueDraft ? "arrow.up.to.line" : "stop.fill"
     }
@@ -3714,7 +3734,7 @@ private struct ChatComposer: View {
   }
 
   private var trailingActionColor: Color {
-    if isImmediateCommand && canSubmitDraft { return .accentColor }
+    if canSubmitDraft { return .accentColor }
     if isResponding {
       return canQueueDraft ? .orange : .red
     }
@@ -3724,6 +3744,7 @@ private struct ChatComposer: View {
   private var trailingActionHelp: String {
     if isVersionCommand { return "Show app version" }
     if isImmediateCommand && canSubmitDraft { return isBTW ? "Ask a side question now" : "Manage queued actions" }
+    if isResponding, remoteChat != nil, canSubmitDraft { return "Send to running agent" }
     if isResponding {
       return canQueueDraft ? "Queue message" : "Stop response"
     }

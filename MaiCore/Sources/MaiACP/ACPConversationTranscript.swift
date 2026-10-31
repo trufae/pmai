@@ -59,11 +59,15 @@ public enum ACPConversationTranscript {
       let previous = Dictionary(messages.compactMap { message in
         message.remoteID.map { ($0, message.id) }
       }, uniquingKeysWith: { first, _ in first })
+      let tools = Dictionary(messages.compactMap { message in
+        message.toolID.map { ($0, message.id) }
+      }, uniquingKeysWith: { first, _ in first })
       messages = (object["messages"]?.arrayValue ?? []).compactMap { value in
         guard let fields = value.objectValue, let remoteID = fields["remoteID"]?.stringValue,
           let role = fields["role"]?.stringValue, let text = fields["text"]?.stringValue else { return nil }
         return ACPConversationMessage(
-          id: previous[remoteID] ?? UUID(), role: role, text: text,
+          id: previous[remoteID] ?? fields["toolID"]?.stringValue.flatMap { tools[$0] } ?? UUID(),
+          role: role, text: text,
           toolID: fields["toolID"]?.stringValue, status: fields["status"]?.stringValue,
           toolName: fields["toolName"]?.stringValue, toolInput: fields["toolInput"],
           createdAt: fields["created"]?.numberValue.map { Date(timeIntervalSince1970: $0 / 1000) },
@@ -73,6 +77,12 @@ public enum ACPConversationTranscript {
       let role = kind == "user_message_chunk" ? "user" : kind == "agent_message_chunk" ? "assistant" : "thought"
       let text = ACP.ContentBlock.text(from: object["content"])
       guard !text.isEmpty else { return }
+      if role == "user", let id = object["messageId"]?.stringValue {
+        if !messages.contains(where: { $0.remoteID == id }) {
+          messages.append(.init(role: role, text: text, remoteID: id))
+        }
+        return
+      }
       if let last = messages.indices.last, messages[last].role == role {
         messages[last].text += text
       } else { messages.append(.init(role: role, text: text)) }
@@ -82,10 +92,16 @@ public enum ACPConversationTranscript {
       if let index = messages.firstIndex(where: { $0.toolID == id }) {
         if !content.isEmpty { messages[index].text += "\n" + content }
         if let status = object["status"]?.stringValue { messages[index].status = status }
+        if let name = object["name"]?.stringValue ?? object["title"]?.stringValue {
+          messages[index].toolName = name
+        }
+        if let input = object["rawInput"] { messages[index].toolInput = input }
       } else {
         messages.append(.init(role: "tool",
           text: [object["title"]?.stringValue ?? "Tool", content].filter { !$0.isEmpty }.joined(separator: "\n"),
-          toolID: id, status: object["status"]?.stringValue))
+          toolID: id, status: object["status"]?.stringValue,
+          toolName: object["name"]?.stringValue ?? object["title"]?.stringValue,
+          toolInput: object["rawInput"]))
       }
     case "plan":
       let text = (object["entries"]?.arrayValue ?? []).compactMap {

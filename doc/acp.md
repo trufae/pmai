@@ -49,6 +49,26 @@ device request and then the ACP chat request with `/remote accept`;
 project index.
 See [Remote ACP agents](tailcat.md) for pairing and host management.
 
+With an updated host and iOS app, a remote chat reconnects automatically after
+network loss or returning to the foreground. The host keeps its tool loop and
+pending approvals alive while the phone is disconnected. Stop cancels the turn;
+Disconnect detaches the phone. New Chat opens another session while the current
+one continues. Type and send during a response to inject input at the next model
+turn. In Chat Settings, enable **Review Tool Calls** to review, edit, allow or
+reject tool parameters before execution, including tools the host normally
+approves automatically.
+
+`/remote serve` enables resumable workers for clients that send a stable UUID in
+`initialize.params._meta.pmai.resumeId`. The gateway scopes this ID to the paired
+credential, remaps request IDs across sockets and replays pending permission
+requests after `session/load`. It never resends a prompt. Detached idle workers
+expire after five minutes; running turns remain until completion, explicit Stop,
+credential revocation or server shutdown. Standard clients keep their existing
+connection lifetime. `_pmai/session_state` updates carry a `running` boolean;
+`_pmai/session/inject` accepts `{sessionId, text}` when the advertised
+`agentCapabilities._meta.pmai.injection` version is 1. Older hosts still connect,
+but need updating to support injection and detached execution.
+
 ```
 pmai --acp     # serve pmai as an ACP agent on stdio (for Zed, JetBrains, …)
 pmai --mcp     # serve pmai as an MCP server: one tool that runs the agent
