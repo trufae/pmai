@@ -1,6 +1,37 @@
 import SwiftUI
 import UIKit
 
+struct ConversationMessageRun: Identifiable {
+  enum ID: Hashable {
+    case message(UUID)
+    case activity(before: UUID?, conversation: UUID?)
+  }
+
+  var id: ID
+  var messages: [ChatMessage]
+  let isActivity: Bool
+
+  @MainActor
+  static func grouped(_ messages: ArraySlice<ChatMessage>, conversationID: UUID?) -> [Self] {
+    var runs: [Self] = []
+    for message in messages {
+      let activity = MessageRenderCache.isActivity(message)
+      if activity, runs.last?.isActivity == true {
+        runs[runs.count - 1].messages.append(message)
+      } else {
+        // The following prose anchors a run while older updates are prepended.
+        if !activity, runs.last?.isActivity == true {
+          runs[runs.count - 1].id = .activity(before: message.id, conversation: conversationID)
+        }
+        runs.append(Self(
+          id: activity ? .activity(before: nil, conversation: conversationID) : .message(message.id),
+          messages: [message], isActivity: activity))
+      }
+    }
+    return runs
+  }
+}
+
 /// Keep a stable suffix while live messages are appended to the conversation.
 struct ConversationMessageRenderWindow {
   static let batchSize = 8
@@ -233,6 +264,7 @@ struct ConversationHistoryScrollBridge: UIViewRepresentable {
   let session: ConversationHistoryScrollSession
   let revision: Int
   var messageID: UUID? = nil
+  var onHistoryLayout: () -> Void = {}
 
   func makeUIView(context: Context) -> MarkerView {
     let view = MarkerView()
@@ -250,6 +282,10 @@ struct ConversationHistoryScrollBridge: UIViewRepresentable {
       guard let view, view.session === session, view.revision == revision else { return }
       session.attach(view, messageID: messageID)
       session.restore(revision: revision)
+      if view.completedRevision != revision {
+        view.completedRevision = revision
+        onHistoryLayout()
+      }
     }
   }
 
@@ -261,6 +297,7 @@ struct ConversationHistoryScrollBridge: UIViewRepresentable {
   final class MarkerView: UIView {
     weak var session: ConversationHistoryScrollSession?
     var revision = 0
+    var completedRevision: Int?
     var messageID: UUID?
 
     override func didMoveToSuperview() {
