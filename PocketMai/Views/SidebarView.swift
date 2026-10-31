@@ -14,7 +14,7 @@ extension View {
 }
 
 /// Folder navigation behind the conversation list.
-struct ConversationFoldersView: View {
+struct ConversationFoldersView: View, Equatable {
   @ObservedObject var storeObservation: AppStoreViewObservation
   let store: AppStore
   let isShowingBookmarks: Bool
@@ -25,6 +25,10 @@ struct ConversationFoldersView: View {
   @State private var showingFolderManager = false
   @State private var showingGallery = false
 
+  nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.store === rhs.store && lhs.isShowingBookmarks == rhs.isShowingBookmarks
+  }
+
   var body: some View {
     let folders = store.conversationFolders
     let counts = store.conversationSummaries.reduce(into: [String: Int]()) { counts, summary in
@@ -33,62 +37,48 @@ struct ConversationFoldersView: View {
       }
     }
 
-    ZStack(alignment: .bottom) {
-      List {
-        SidebarGroupedRows(
-          items: folders,
-          groupTitle: { store.isFolderPinned($0.id) ? "Pinned" : "Folders" }
-        ) { folder in
-          let count = counts[folder.id, default: 0]
-          let isSelected = !isShowingBookmarks && store.selectedConversationFolderID == folder.id
-          SidebarFolderRow(
-            title: folder.displayName,
-            subtitle: "\(count) conversation\(count == 1 ? "" : "s")",
-            systemImage: folder.systemImage,
-            iconColor: folder.tint?.swatchColor,
-            isSelected: isSelected,
-            isPinned: store.isFolderPinned(folder.id)
-          ) {
-            onSelectFolder(folder.id)
-          }
-          .disabled(!store.canUseConversationFolder(folder.id))
-          .listRowBackground(SidebarRowBackground(isSelected: isSelected))
-          .listRowSeparator(.hidden)
-          .contextMenu {
-            SidebarFolderActions(
-              isPinned: store.isFolderPinned(folder.id),
-              togglePin: { store.toggleFolderPin(folder.id) },
-              browseFiles: { onBrowseFiles(folder.id) })
-          }
-        }
-
-        if folders.allSatisfy({ store.isFolderPinned($0.id) }) {
-          SidebarGroupHeader(title: "Folders")
-        }
+    SidebarPanel(title: "Local", backTitle: "Hosts", onBack: onShowHosts) {
+      SidebarGroupedRows(
+        items: folders,
+        groupTitle: { store.isFolderPinned($0.id) ? "Pinned" : "Folders" }
+      ) { folder in
+        let count = counts[folder.id, default: 0]
+        let isSelected = !isShowingBookmarks && store.selectedConversationFolderID == folder.id
         SidebarFolderRow(
-          title: "Bookmarks",
-          subtitle: "\(store.messageBookmarks.count) bookmarked message\(store.messageBookmarks.count == 1 ? "" : "s")",
-          systemImage: "bookmark",
-          isSelected: isShowingBookmarks,
-          action: onSelectBookmarks
-        )
-        .listRowBackground(SidebarRowBackground(isSelected: isShowingBookmarks))
+          title: folder.displayName,
+          subtitle: "\(count) conversation\(count == 1 ? "" : "s")",
+          systemImage: folder.systemImage,
+          iconColor: folder.tint?.swatchColor,
+          isSelected: isSelected,
+          isPinned: store.isFolderPinned(folder.id)
+        ) {
+          onSelectFolder(folder.id)
+        }
+        .disabled(!store.canUseConversationFolder(folder.id))
+        .listRowBackground(SidebarRowBackground(isSelected: isSelected))
         .listRowSeparator(.hidden)
+        .contextMenu {
+          SidebarFolderActions(
+            isPinned: store.isFolderPinned(folder.id),
+            togglePin: { store.toggleFolderPin(folder.id) },
+            browseFiles: { onBrowseFiles(folder.id) })
+        }
       }
-      .listStyle(.plain)
-      .contentMargins(.horizontal, 16, for: .scrollContent)
-      .scrollContentBackground(.hidden)
-      .safeAreaInset(edge: .top) {
-        HostPanelHeader(title: "Local", backTitle: "Hosts", action: onShowHosts)
-      }
-      .safeAreaInset(edge: .bottom) {
-        Color.clear.frame(height: 80)
-      }
-      .scrollIndicators(.hidden)
 
-      SidebarEdgeFades()
-
-      floatingActions
+      if folders.allSatisfy({ store.isFolderPinned($0.id) }) {
+        SidebarGroupHeader(title: "Folders")
+      }
+      SidebarFolderRow(
+        title: "Bookmarks",
+        subtitle: "\(store.messageBookmarks.count) bookmarked message\(store.messageBookmarks.count == 1 ? "" : "s")",
+        systemImage: "bookmark",
+        isSelected: isShowingBookmarks,
+        action: onSelectBookmarks
+      )
+      .listRowBackground(SidebarRowBackground(isSelected: isShowingBookmarks))
+      .listRowSeparator(.hidden)
+    } actions: { compact in
+      floatingActions(compact: compact)
     }
     .sheet(isPresented: $showingFolderManager) {
       ConversationFolderManagementView()
@@ -101,37 +91,30 @@ struct ConversationFoldersView: View {
     }
   }
 
-  private var floatingActions: some View {
-    GeometryReader { proxy in
-      let compact = proxy.size.width - 36 < 300
-
-      HStack(spacing: compact ? 6 : 10) {
-        FloatingActionPill(
-          title: "Manage...",
-          systemImage: "folder.badge.gearshape",
-          prominent: false,
-          compact: compact
-        ) {
-          showingFolderManager = true
-        }
-        FloatingActionIcon(
-          systemImage: "photo.on.rectangle.angled",
-          accessibilityLabel: "Gallery",
-          compact: compact
-        ) {
-          showingGallery = true
-        }
-        FloatingActionIcon(
-          systemImage: "square.grid.2x2",
-          accessibilityLabel: "Apps",
-          compact: compact
-        ) {
-          store.showingWebXDCApps = true
-        }
+  private func floatingActions(compact: Bool) -> some View {
+    HStack(spacing: compact ? 6 : 10) {
+      FloatingActionPill(
+        title: "Manage...",
+        systemImage: "folder.badge.gearshape",
+        prominent: false,
+        compact: compact
+      ) {
+        showingFolderManager = true
       }
-      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-      .padding(.horizontal, 18)
-      .padding(.bottom, 22)
+      FloatingActionIcon(
+        systemImage: "photo.on.rectangle.angled",
+        accessibilityLabel: "Gallery",
+        compact: compact
+      ) {
+        showingGallery = true
+      }
+      FloatingActionIcon(
+        systemImage: "square.grid.2x2",
+        accessibilityLabel: "Apps",
+        compact: compact
+      ) {
+        store.showingWebXDCApps = true
+      }
     }
   }
 }
@@ -162,9 +145,9 @@ struct SidebarView: View {
   @StateObject private var exportCoordinator = ConversationExportCoordinator()
 
   var body: some View {
-    ConversationSidebarPanel(
+    SidebarPanel(
       title: isShowingBookmarks ? "Bookmarks" : store.selectedConversationFolder.displayName,
-      onShowFolders: onShowFolders
+      backTitle: "Folders", onBack: onShowFolders
     ) {
       sidebarList
     } actions: { compact in
@@ -388,7 +371,7 @@ struct SidebarView: View {
   }
 
   private var conversationList: some View {
-    List {
+    Group {
       if visibleConversations.isEmpty, let emptyMessage {
         Text(emptyMessage)
           .font(.callout)
@@ -400,10 +383,6 @@ struct SidebarView: View {
         groupTitle: { $0.isPinned ? "Pinned" : ConversationDatePresentation.sidebarGroupTitle(for: $0.updatedAt) },
         row: conversationRow)
     }
-    .listStyle(.plain)
-    .contentMargins(.horizontal, 16, for: .scrollContent)
-    .scrollContentBackground(.hidden)
-    .scrollIndicators(.hidden)
   }
 
   @ViewBuilder
@@ -416,7 +395,7 @@ struct SidebarView: View {
   }
 
   private var bookmarkList: some View {
-    List {
+    Group {
       if isLoadingBookmarks && visibleBookmarks.isEmpty {
         HStack(spacing: 10) {
           ProgressView()
@@ -436,10 +415,6 @@ struct SidebarView: View {
         groupTitle: { $0.bookmark.isPinned ? "Pinned" : ConversationDatePresentation.sidebarGroupTitle(for: $0.bookmark.createdAt) },
         row: bookmarkRow)
     }
-    .listStyle(.plain)
-    .contentMargins(.horizontal, 16, for: .scrollContent)
-    .scrollContentBackground(.hidden)
-    .scrollIndicators(.hidden)
   }
 
   private func bookmarkRow(_ item: BookmarkedMessage) -> some View {

@@ -49,6 +49,7 @@ struct ContentView: View {
       ZStack(alignment: .leading) {
         if isHostsPanelMounted {
           HostsView(hosts: hosts, onSelectHost: selectHost)
+            .equatable()
             .frame(width: panelWidth).frame(maxHeight: .infinity)
             .background { SidebarBlurBackground() }
             .opacity(hostsVisible ? 1 : 0)
@@ -68,6 +69,7 @@ struct ContentView: View {
                 }, isVisible: foldersVisible && !showingHosts,
                 onBrowseFiles: { browseFiles(cwd: $0) },
                 onOpenTerminal: { showRemoteTerminal(cwd: $0) })
+                .equatable()
             } else {
               ConversationFoldersView(
                 storeObservation: sidebarStoreObservation,
@@ -86,6 +88,7 @@ struct ContentView: View {
                 onShowHosts: { setDrawerDepth(3, animation: historyPanelAnimation) },
                 onBrowseFiles: { browseFiles(folderID: $0) }
               )
+              .equatable()
             }
           }
           .frame(width: panelWidth)
@@ -110,6 +113,7 @@ struct ContentView: View {
                 },
                 onShowSettings: { showingSettings = true },
                 isVisible: historyVisible && !showingFolders)
+                .equatable()
             } else {
               SidebarView(
                 storeObservation: sidebarStoreObservation,
@@ -169,16 +173,8 @@ struct ContentView: View {
                 }
               }
             } else {
-              ChatView(
-                storeObservation: chatStoreObservation,
-                remoteChat: hosts.selectedHost.flatMap { host in
-                  hosts.selectedConversation.map {
-                    RemoteAgentChat(
-                      bookmark: host, conversation: $0, isOffline: { store.settings.isOffline })
-                  }
-                },
-                store: store,
-                renderInvalidationKey: ChatView.RenderInvalidationKey(
+              ChatViewContent(
+                key: ChatView.RenderInvalidationKey(
                   isLandscape: layout.chatWidth > proxy.size.height,
                   selectedConversationID: store.selectedConversationID,
                   selectedConversationIsLoading: store.selectedConversationIsLoading,
@@ -186,19 +182,30 @@ struct ContentView: View {
                   renderMarkdownInChat: store.settings.renderMarkdownInChat,
                   renderMarkdownImagesInChat: store.settings.renderMarkdownImagesInChat,
                   sidebarIsPinned: layout.pinsSidebar,
-                  canPinSidebar: layout.canPinSidebar),
-                onShowHistory: { toggleHistoryPanel(in: layout) },
-                onNewChat: {
-                  if hosts.selectedHost == nil {
-                    newLocalConversation()
-                  } else {
-                    newRemoteConversation()
-                  }
-                },
-                onRemoteChatReady: { hosts.activeChat = $0 },
-                onBrowseFiles: { browseFiles() },
-                onShowRemoteTerminal: { host, cwd in showRemoteTerminal(host: host, cwd: cwd) }
-              )
+                  canPinSidebar: layout.canPinSidebar)
+              ) {
+                ChatView(
+                  storeObservation: chatStoreObservation,
+                  remoteChat: hosts.selectedHost.flatMap { host in
+                    hosts.selectedConversation.map {
+                      RemoteAgentChat(
+                        bookmark: host, conversation: $0, isOffline: { store.settings.isOffline })
+                    }
+                  },
+                  store: store,
+                  onShowHistory: { toggleHistoryPanel(in: layout) },
+                  onNewChat: {
+                    if hosts.selectedHost == nil {
+                      newLocalConversation()
+                    } else {
+                      newRemoteConversation()
+                    }
+                  },
+                  onRemoteChatReady: { hosts.activeChat = $0 },
+                  onBrowseFiles: { browseFiles() },
+                  onShowRemoteTerminal: { host, cwd in showRemoteTerminal(host: host, cwd: cwd) }
+                )
+              }
               .equatable()
               .id(
                 hosts.selectedHost.map {
@@ -249,7 +256,7 @@ struct ContentView: View {
               mountHistoryPanel()
             }
             if nextOffset > panelWidth {
-              mountFoldersPanel()
+              isFoldersPanelMounted = true
             }
             if nextOffset > panelWidth * 2 { isHostsPanelMounted = true }
             historyDragOffset = offset
@@ -384,8 +391,7 @@ struct ContentView: View {
     }
     .onChange(of: hosts.selectedHost?.revision) { _, _ in
       if hosts.selectedHost != nil {
-        hosts.stopDiscovery()
-        hosts.refresh(isOffline: store.settings.isOffline)
+        hosts.selectHost(hosts.selectedHostID, isOffline: store.settings.isOffline)
       }
     }
     .tint(selectedHostTint)
@@ -537,7 +543,7 @@ struct ContentView: View {
       mountHistoryPanel()
     }
     if depth > 1 {
-      mountFoldersPanel()
+      isFoldersPanelMounted = true
     }
     if depth > 2 { isHostsPanelMounted = true }
     let previousDepth = showingHosts ? 3 : (showingFolders ? 2 : (showingHistory ? 1 : 0))
@@ -547,19 +553,12 @@ struct ContentView: View {
       showingHosts = depth > 2
       historyDragOffset = 0
     } completion: {
-      // Only the latest transition may unmount panels; an older completion can
-      // otherwise remove the folders or hosts panel revealed by a fast swipe.
       if drawerTransitionGeneration == transitionGeneration {
         if previousDepth != depth {
           store.sidebarVisibilitySettled()
         }
-        if depth < 2 {
-          isFoldersPanelMounted = false
-        }
-        if depth < 3 { isHostsPanelMounted = false }
       }
-      // Keep the lazily mounted conversation list alive so closing the drawer
-      // preserves its native scroll offset and search state.
+      // Retain lazily mounted panels, including their scroll and search state.
       completion?()
     }
   }
@@ -568,11 +567,6 @@ struct ContentView: View {
     guard !isHistoryPanelMounted else { return }
     sidebarStoreObservation.connect(to: store)
     isHistoryPanelMounted = true
-  }
-
-  private func mountFoldersPanel() {
-    guard !isFoldersPanelMounted else { return }
-    isFoldersPanelMounted = true
   }
 
   private enum ApprovalPresentation: Identifiable {
