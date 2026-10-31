@@ -51,6 +51,11 @@
 	<true/>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>PocketMai can include your current location in prompts when the Location tool is enabled.</string>
+	<key>NSLocationTemporaryUsageDescriptionDictionary</key>
+	<dict>
+		<key>PreciseLocation</key>
+		<string>PocketMai uses precise coordinates for nearby places and location-aware answers when Precise location is enabled. Coordinates are shared with your selected AI provider.</string>
+	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>PocketMai connects to remote agents and Ollama servers, and can serve chats to local clients.</string>
 	<key>NSCameraUsageDescription</key>

@@ -1633,9 +1633,18 @@ struct SettingsView: View {
     case .location:
       Toggle("Use GPS location", isOn: settingsBinding(\.toolSettings.useGPSLocation))
         .onChange(of: store.settings.toolSettings.useGPSLocation) { _, enabled in
-          if enabled { store.locationService.requestAuthorization() }
+          if enabled {
+            store.locationService.requestAuthorization(precise: store.settings.toolSettings.preciseLocation)
+          }
         }
       if store.settings.toolSettings.useGPSLocation {
+        Toggle("Precise location", isOn: settingsBinding(\.toolSettings.preciseLocation))
+          .onChange(of: store.settings.toolSettings.preciseLocation) { _, enabled in
+            store.locationService.requestAuthorization(precise: enabled)
+          }
+        Text("When enabled, requests precise GPS coordinates. Turn off to share an approximate position.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
         LocationPermissionStatusView(service: store.locationService)
       } else {
         TextField("Manual location", text: settingsBinding(\.toolSettings.manualLocation))
@@ -2478,7 +2487,7 @@ private struct LocationPermissionStatusView: View {
     Text(service.permissionText)
       .font(.caption)
       .foregroundStyle(.secondary)
-    if service.authorizationStatus == .denied {
+    if service.authorizationStatus == .denied || service.accuracyAuthorization == .reducedAccuracy {
       Button("Open iOS Settings") {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
