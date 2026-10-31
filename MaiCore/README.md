@@ -1169,11 +1169,15 @@ network, and workspace-scoped Files tools.
 
 ### Remote pmai hosts
 
-In the REPL, `/remote serve --protocol local` shares the host's indexed projects
-and saved chats over its LAN WebSocket gateway. `local` is the default, so
-`/remote serve` keeps the same behavior. Add `--path PATH ...` to restrict the
-shared directories, `--port PORT` to change the listener port, or `--loopback`
-to listen only on `127.0.0.1`.
+In the REPL, `/remote serve` shares the host's indexed projects and saved chats
+over Forwiroh by default. Its ACP gateway listens only on loopback, and paired
+devices connect through the encrypted transport. Approve each new device and
+then its ACP chat request with `/remote accept`.
+
+Use `/remote serve --protocol local` for a direct LAN WebSocket gateway. Add
+`--path PATH ...` to restrict the shared directories or `--port PORT` to change
+the listener port. With `--protocol local`, `--loopback` listens only on
+`127.0.0.1`.
 
 For encrypted access across firewalls, install the
 [OpenTunnel CLI](https://github.com/anomalyco/opentunnel) on the serving machine,

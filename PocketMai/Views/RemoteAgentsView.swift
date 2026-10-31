@@ -224,7 +224,7 @@ struct RemoteAgentConnectionView: View {
           }
           if backend == .acp {
             Text(
-              "For pmai, run /remote serve --protocol local, opentunnel or forwiroh, scan its QR, then accept with /remote accept. Forwiroh asks for device approval followed by ACP chat approval. Use /remote qr for a fresh invitation when adding another device."
+              "For pmai, run /remote serve (Forwiroh by default), scan its QR, then accept with /remote accept. Forwiroh asks for device approval followed by ACP chat approval. Use --protocol local for direct LAN access or --protocol opentunnel for OpenTunnel. Use /remote qr for a fresh invitation when adding another device."
             )
             .font(.footnote).foregroundStyle(.secondary)
           }

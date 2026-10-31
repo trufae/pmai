@@ -205,23 +205,24 @@ replies, including existing tables in buffer mode.
 
 ## Bring your workstation to your phone
 
-In the host's pmai REPL, share a project on your local network:
+In the host's pmai REPL, share a project over Forwiroh:
 
 ```text
 /remote serve --path /path/to/project
 ```
 
 In PocketMai, open **Hosts → Add Remote Host**, scan the pairing QR or paste the
-connection URI, save it, and select the host. Accept the request on the host with
-`/remote accept`, then browse its projects, continue a chat, or open its files.
+connection URI, save it, and select the host. Approve the Forwiroh device request
+and then the ACP chat request on the host with `/remote accept`, then browse its
+projects, continue a chat, or open its files.
 The serving REPL stays usable; `/remote stop` or exiting it ends the server.
 
-For access across firewalls, install the OpenTunnel CLI on the host and use
-`/remote serve --protocol opentunnel --path /path/to/project`. For encrypted device pairing without
-an external tunnel command, use `/remote serve --protocol forwiroh --path /path/to/project`.
+Forwiroh is the default and needs no external tunnel command. For direct LAN
+access, use `/remote serve --protocol local --path /path/to/project`. To use
+OpenTunnel, install its CLI on the host and run
+`/remote serve --protocol opentunnel --path /path/to/project`.
 Scan the connection QR in PocketMai, paste its URI in Android's **Hosts** tab,
-or run `/remote pair '<URI>'` on another CLI. Approve the Forwiroh device request
-and then the ACP chat request with `/remote accept`. Saved hosts reconnect
+or run `/remote pair '<URI>'` on another CLI. Saved hosts reconnect
 without scanning again; `/remote qr` creates a fresh five-minute invitation for
 another device. Forwiroh grants access only to pmai's loopback ACP endpoint.
 

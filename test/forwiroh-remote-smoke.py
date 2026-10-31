@@ -34,7 +34,8 @@ def run():
         server = remote.REPL(project, home, config, root / "host.log")
         client = None
         try:
-            server.send(f"/remote serve --protocol forwiroh --port {port} --name workstation")
+            # Omitting --protocol must publish a usable Forwiroh endpoint.
+            server.send(f"/remote serve --port {port} --name workstation")
             server.wait("Connection profile:")
             profile_file = home / "remote-server/connection.txt"
             profile = json.loads(base64.urlsafe_b64decode(profile_file.read_text().strip().split("/")[-1]))

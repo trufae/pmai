@@ -203,7 +203,7 @@ def run():
 
             server.send("/remote stop")
             server.wait("Remote server stopped.")
-            server.send(f'/remote serve --path "{projects[1]}" "{projects[2]}" --port {port} --loopback --name server')
+            server.send(f'/remote serve --protocol local --path "{projects[1]}" "{projects[2]}" --port {port} --loopback --name server')
             wait_for(lambda: server.path.read_text().count("Connection profile:") == 2, "restricted server startup")
             uri = (home / "remote-server/connection.txt").read_text().strip()
             loopback_profile = json.loads(base64.urlsafe_b64decode(uri.split("/")[-1]))
@@ -230,7 +230,7 @@ def run():
 
             server.send("/remote stop")
             wait_for(lambda: server.path.read_text().count("Remote server stopped.") == 2, "loopback server stop")
-            server.send(f'/remote serve --loopback --address {lan_address} --port {port} --name server')
+            server.send(f'/remote serve --protocol local --loopback --address {lan_address} --port {port} --name server')
             wait_for(lambda: server.path.read_text().count("Connection profile:") == 3, "advertised address override startup")
             uri = (home / "remote-server/connection.txt").read_text().strip()
             advertised_profile = json.loads(base64.urlsafe_b64decode(uri.split("/")[-1]))
@@ -329,7 +329,7 @@ else:
             server.wait("Unknown serving protocol")
             server.send("/remote serve --protocol opentunnel --url ws://example.com/acp")
             server.wait("OpenTunnel connections require a wss:// gateway URL")
-            server.send("/remote serve --url wss://example.com/other")
+            server.send("/remote serve --protocol local --url wss://example.com/other")
             server.wait("Use a gateway URL ending in /acp")
             server.send("/remote serve --url wss://example.com/acp --address 127.0.0.1")
             server.wait("Use either --url or --address")

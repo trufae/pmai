@@ -16,7 +16,7 @@ import MaiCore
 enum RemoteAddress {
   static func localIPv4() throws -> String {
     #if os(Windows)
-      throw JSONRPCError.invalidParams("Supply /remote serve --address YOUR_IP on this platform.")
+      throw JSONRPCError.invalidParams("Supply /remote serve --protocol local --address YOUR_IP on this platform.")
     #else
       var interfaces: UnsafeMutablePointer<ifaddrs>?
       guard getifaddrs(&interfaces) == 0, let first = interfaces else {
@@ -62,7 +62,7 @@ enum RemoteAddress {
         }).first?.2
       else {
         throw JSONRPCError.invalidParams(
-          "No network address found. Connect to a network or use /remote serve --address YOUR_IP.")
+          "No network address found. Connect to a network or use /remote serve --protocol local --address YOUR_IP.")
       }
       return address
     #endif
@@ -155,7 +155,7 @@ actor RemoteREPLServer {
     guard let port = Int(flags["--port"] ?? "19283"), (1...65535).contains(port) else {
       throw JSONRPCError.invalidParams("Port must be between 1 and 65535")
     }
-    guard let connectionProtocol = ACPRemoteProtocol(rawValue: flags["--protocol"] ?? "local")
+    guard let connectionProtocol = ACPRemoteProtocol(rawValue: flags["--protocol"] ?? "forwiroh")
     else {
       throw JSONRPCError.invalidParams(
         "Unknown serving protocol. Use --protocol local, opentunnel, forwiroh or openai.")
@@ -175,7 +175,7 @@ actor RemoteREPLServer {
     guard connectionProtocol != .forwiroh || (flags["--url"] == nil && flags["--address"] == nil)
     else {
       throw JSONRPCError.invalidParams(
-        "Forwiroh uses its paired device address; omit --url and --address")
+        "Forwiroh uses its paired device address; omit --url and --address or use --protocol local")
     }
     loopback = loopback || connectionProtocol == .opentunnel || connectionProtocol == .forwiroh
     let bindAddress = loopback ? "127.0.0.1" : "0.0.0.0"

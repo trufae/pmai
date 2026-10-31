@@ -37,9 +37,11 @@ a separate raw TCP listener.
 /remote serve
 ```
 
-This starts an authenticated server in the background, chooses the machine's LAN
-address, and prints a pairing QR. The REPL remains usable; `/remote stop` or
-exiting the REPL stops the listener. By default it exposes every working directory
+This starts an authenticated server in the background over Forwiroh and prints
+a pairing QR. The ACP listener stays on loopback; paired devices connect through
+Forwiroh. Use `/remote serve --protocol local` for direct LAN access instead.
+The REPL remains usable; `/remote stop` or exiting the REPL stops the listener.
+By default it exposes every working directory
 in `~/.pmai/projects.json` (or the configured pmai home), with the conversations
 stored in each project's `.pmai/chats`. `/remote qr` shows the invitation again.
 Run `/remote stop` before starting it with different paths or options.
@@ -50,9 +52,10 @@ Scan it in PocketMai → Hosts, or pair it from another CLI:
 /remote pair CONNECTION_URI_OR_QR_FILE
 ```
 
-The serving REPL displays the client's name, address, and request code. Accept it
-there with `/remote accept` (or `/remote accept CODE` if several requests are
-waiting). `/remote reject` denies it. Until acceptance, the invitation can only
+Forwiroh first asks for device approval, followed by ACP chat approval. The
+serving REPL displays each request. Accept it there with `/remote accept`
+(or `/remote accept CODE` if several requests are waiting). `/remote reject`
+denies it. Until acceptance, the invitation can only
 request pairing: it cannot initialize ACP, read chats, or start an agent process.
 Acceptance issues a separate private credential for that client. The phone stores
 it in Keychain; CLI clients store it in a mode-0600 token file. Reconnection uses
@@ -78,8 +81,9 @@ Optional path restrictions accept multiple directories:
 ```
 
 Both discovery and session access are limited to those directories and their
-descendants. Omitting `--path` shares all indexed projects. `--port`, `--address`,
-and `--name` override the defaults when needed.
+descendants. Omitting `--path` shares all indexed projects. `--port` and `--name`
+override the defaults when needed. With `--protocol local`, `--address` overrides
+the advertised LAN address.
 
 `/project` describes the current project. `/projects` lists the same shared index;
 `/projects open NAME` switches the working directory and loads its saved chats,
@@ -423,7 +427,8 @@ Tailcat relay.
 
 ## Forwiroh paired transport
 
-Run `/remote serve --protocol forwiroh [--path PATH ...]` in the CLI. The ACP
+Run `/remote serve [--path PATH ...]` in the CLI (or explicitly select
+`--protocol forwiroh`). Forwiroh is the default. The ACP
 listener binds only to loopback; Forwiroh carries the connection between paired
 devices. No OpenTunnel executable or public WebSocket address is needed.
 

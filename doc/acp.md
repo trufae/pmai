@@ -41,10 +41,12 @@ The mirror image is just as thin: **the ACP server is an adapter over
 
 ## pmai as a server
 
-For phone and CLI clients, run `/remote serve` inside the REPL. It chooses the
-network address, shows a QR, and shares all indexed projects. New clients wait
-until you accept them with `/remote accept`; `--path PATH ...` optionally limits
-the shared directories. `/projects` lists and switches the same project index.
+For phone and CLI clients, run `/remote serve` inside the REPL. It uses Forwiroh
+by default, shows a pairing QR, and shares all indexed projects. Approve the
+device request and then the ACP chat request with `/remote accept`;
+`--path PATH ...` optionally limits the shared directories. Use
+`--protocol local` for direct LAN access. `/projects` lists and switches the same
+project index.
 See [Remote ACP agents](tailcat.md) for pairing and host management.
 
 ```
