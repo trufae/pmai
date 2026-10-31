@@ -350,9 +350,9 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
           if range.count > 1 {
             ToolCallGroup(
               timings: range.map { prepared.parts[$0].toolTiming },
-              hasErrors: range.contains { index in
+              failedCount: range.count { index in
                 if case .tool(_, let entry, _) = prepared.parts[index] {
-                  return entry.body.hasPrefix("Error:")
+                  return entry.hasError
                 }
                 return false
               },
@@ -3099,7 +3099,7 @@ private struct VoiceRecordingPlaybackButton: View {
 
 private struct ToolCallGroup<Content: View>: View {
   let timings: [ToolRunTiming?]
-  let hasErrors: Bool
+  let failedCount: Int
   let isLive: Bool
   let forceExpanded: Bool
   @ViewBuilder var content: () -> Content
@@ -3109,27 +3109,28 @@ private struct ToolCallGroup<Content: View>: View {
     DisclosureGroup(isExpanded: Binding(
       get: { expanded || forceExpanded }, set: { expanded = $0 }
     )) {
-      VStack(alignment: .leading, spacing: 6, content: content)
+      VStack(alignment: .leading, spacing: 0, content: content)
     } label: {
       TimelineView(.animation(
         minimumInterval: 1, paused: !isLive || timings.allSatisfy { $0?.finishedAt != nil }
       )) { context in
-        Label(
-          ToolRunTiming.summary(
+        HStack(spacing: 4) {
+          Text(ToolRunTiming.summary(
             timings.map { timing in
-              // A restored interrupted call has no trustworthy end time.
               guard isLive || timing?.finishedAt != nil else { return nil }
               return timing
-            }, now: context.date) + (hasErrors ? " · error" : ""),
-          systemImage: "wrench.and.screwdriver")
-          .font(.caption.monospacedDigit())
-          .foregroundStyle(hasErrors ? Color.red : Color.secondary)
-          .lineLimit(1)
+            }, now: context.date))
+          if failedCount > 0 {
+            Text("· \(failedCount) failed")
+              .foregroundStyle(Color.red)
+          }
+        }
+        .font(.caption.monospacedDigit())
+        .foregroundStyle(.secondary)
+        .frame(minHeight: 44, alignment: .leading)
       }
     }
-    .padding(.horizontal, 10)
-    .padding(.vertical, 7)
-    .background(.thinMaterial.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
+    .tint(.secondary)
   }
 }
 
@@ -3148,29 +3149,33 @@ private struct ToolCallRow: View {
         withAnimation(.snappy(duration: 0.18)) { expanded.toggle() }
       } label: {
         HStack(spacing: 8) {
-          Image(systemName: entry.systemImage)
-            .imageScale(.small)
-            .foregroundStyle(Color.accentColor)
+          if entry.hasError {
+            Image(systemName: "exclamationmark.circle")
+              .foregroundStyle(Color.red)
+          }
           Text(entry.name)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.primary)
+            .font(.subheadline)
+            .foregroundStyle(entry.hasError ? Color.red : Color.primary)
+            .lineLimit(1)
+            .layoutPriority(1)
           if !entry.params.isEmpty {
             Text(Self.collapsedParams(for: entry.params))
-              .font(.caption)
+              .font(.system(.caption, design: .monospaced))
               .foregroundStyle(.secondary)
               .lineLimit(1)
+              .truncationMode(.tail)
           }
-          Spacer(minLength: 8)
+          Spacer(minLength: 0)
           Image(systemName: expanded ? "chevron.down" : "chevron.right")
             .imageScale(.small)
             .foregroundStyle(.tertiary)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
+      .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+      .accessibilityHint("Show or hide tool input and output")
       if expanded {
         Divider().opacity(0.4)
         BoundedMetaSectionContent(maxHeight: 240) {
@@ -3182,6 +3187,7 @@ private struct ToolCallRow: View {
           .padding(.horizontal, 12)
           .padding(.vertical, 10)
         }
+        .background(.thinMaterial.opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
       }
     }
     .sheet(item: $previewDocument) { document in
@@ -3194,13 +3200,7 @@ private struct ToolCallRow: View {
         isEditable: document.isEditable,
         onSave: document.isEditable ? onEdit : nil)
     }
-    .background(.thinMaterial.opacity(0.55))
-    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-    .overlay(
-      RoundedRectangle(cornerRadius: 10, style: .continuous)
-        .stroke(Color.accentColor.opacity(0.18), lineWidth: 0.5)
-    )
-    .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    .contentShape(Rectangle())
     .contextMenu {
       toolContextMenu()
     } preview: {
@@ -3382,6 +3382,8 @@ struct ToolEntry: Identifiable {
   /// Verbatim slice of the message this entry was parsed from, so edits can be
   /// written back into the message without touching the surrounding text.
   let rawBlock: String
+
+  var hasError: Bool { body.hasPrefix("Error:") }
 
   var copyText: String {
     let header = params.isEmpty ? "\(name) tool:" : "\(name) tool (\(params)):"
