@@ -2933,6 +2933,7 @@ struct NativeToolSettings: Codable, Equatable, Sendable {
   var includeTimeZone: Bool = true
   var includeMoonPhase: Bool = true
   var useGPSLocation: Bool = true
+  var preciseLocation: Bool = true
   var manualLocation: String = ""
   var weatherLocation: String = ""
   var webSearchProvider: WebSearchProvider = .exa
@@ -2975,7 +2976,7 @@ struct NativeToolSettings: Codable, Equatable, Sendable {
 
   enum CodingKeys: String, CodingKey {
     case includeTimeZone, includeMoonPhase, includeCurrentTime, includeYear, useGPSLocation
-    case manualLocation, weatherLocation, webSearchProvider
+    case preciseLocation, manualLocation, weatherLocation, webSearchProvider
     case webSearchSearXNGURL, webSearchSearXNGUsername, webSearchSearXNGPassword
     case webSearchFetchingEnabled, calendarEventCreationEnabled, todos, files
     case filesWorkspaceAccessEnabled, filesAdvancedToolsEnabled
@@ -3008,6 +3009,8 @@ struct NativeToolSettings: Codable, Equatable, Sendable {
       (try? c.decode(String.self, forKey: .manualLocation)) ?? defaults.manualLocation
     useGPSLocation = (try? c.decode(Bool.self, forKey: .useGPSLocation))
       ?? manualLocation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    preciseLocation =
+      (try? c.decode(Bool.self, forKey: .preciseLocation)) ?? defaults.preciseLocation
     weatherLocation =
       (try? c.decode(String.self, forKey: .weatherLocation)) ?? defaults.weatherLocation
     webSearchProvider =
@@ -3118,6 +3121,7 @@ struct NativeToolSettings: Codable, Equatable, Sendable {
     try c.encode(includeTimeZone, forKey: .includeTimeZone)
     try c.encode(includeMoonPhase, forKey: .includeMoonPhase)
     try c.encode(useGPSLocation, forKey: .useGPSLocation)
+    try c.encode(preciseLocation, forKey: .preciseLocation)
     try c.encode(manualLocation, forKey: .manualLocation)
     try c.encode(weatherLocation, forKey: .weatherLocation)
     try c.encode(webSearchProvider, forKey: .webSearchProvider)

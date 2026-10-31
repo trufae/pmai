@@ -616,7 +616,9 @@ final class AppStore: ObservableObject {
     if settings.toolSettings.manualLocation.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
       settings.toolSettings.useGPSLocation = true
     }
-    if settings.toolSettings.useGPSLocation { locationService.requestAuthorization() }
+    if settings.toolSettings.useGPSLocation {
+      locationService.requestAuthorization(precise: settings.toolSettings.preciseLocation)
+    }
   }
   lazy var webxdcHub = WebXDCUpdateHub()
   @Published var activeWebXDCSession: WebXDCRunningSession?

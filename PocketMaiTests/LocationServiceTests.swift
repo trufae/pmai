@@ -27,6 +27,58 @@ final class LocationServiceTests: XCTestCase {
     XCTAssertEqual(service.lastLocationText, text)
   }
 
+  func testPreciseLocationWaitsForAccuracyPermissionAfterInitialAuthorization() async {
+    let manager = StubLocationManager(status: .notDetermined)
+    manager.accuracyAuthorization = .reducedAccuracy
+    let service = LocationService(manager: manager)
+    let permission = expectation(description: "Location permission requested")
+    manager.onAuthorizationRequest = { permission.fulfill() }
+    let accuracy = expectation(description: "Precise permission requested")
+    manager.onAccuracyRequest = { accuracy.fulfill() }
+    manager.onLocationRequest = { XCTFail("Must wait for the accuracy prompt") }
+    let request = Task { await service.currentLocationText() }
+    await fulfillment(of: [permission], timeout: 10)
+    manager.changeAuthorization(to: .authorizedWhenInUse)
+    await fulfillment(of: [accuracy], timeout: 10)
+    manager.onLocationRequest = { manager.deliver(latitude: 41.40363, longitude: 2.17436) }
+    manager.completeAccuracyRequest(granted: true)
+    let text = await request.value
+    XCTAssertTrue(text.contains("Latitude 41.40363, longitude 2.17436"), text)
+    XCTAssertEqual(service.accuracyAuthorization, .fullAccuracy)
+    XCTAssertEqual(manager.desiredAccuracy, kCLLocationAccuracyBest)
+  }
+
+  func testDecliningPreciseLocationStillCompletesWithAnApproximatePosition() async {
+    let manager = StubLocationManager(status: .authorizedWhenInUse)
+    manager.accuracyAuthorization = .reducedAccuracy
+    let service = LocationService(manager: manager)
+    let accuracy = expectation(description: "Precise permission requested")
+    manager.onAccuracyRequest = { accuracy.fulfill() }
+    manager.onLocationRequest = { manager.deliver(latitude: 41.4, longitude: 2.2, accuracy: 5000) }
+    let request = Task { await service.currentLocationText() }
+    await fulfillment(of: [accuracy], timeout: 10)
+    manager.onAccuracyRequest = { XCTFail("Must not repeat a declined prompt during this lookup") }
+    manager.completeAccuracyRequest(granted: false)
+    let text = await request.value
+    XCTAssertTrue(text.contains("accuracy ±5000 m"), text)
+    XCTAssertTrue(service.permissionText.contains("approximate"))
+  }
+
+  func testApproximateLocationDoesNotRequestPrecisePermission() async {
+    for authorization in [CLAccuracyAuthorization.fullAccuracy, .reducedAccuracy] {
+      let manager = StubLocationManager(status: .authorizedWhenInUse)
+      manager.accuracyAuthorization = authorization
+      let service = LocationService(manager: manager)
+      manager.onAccuracyRequest = { XCTFail("Approximate mode must not request precise access") }
+      manager.onLocationRequest = {
+        manager.deliver(latitude: 41.4, longitude: 2.2, accuracy: 5000)
+      }
+      let text = await service.currentLocationText(precise: false)
+      XCTAssertTrue(text.contains("accuracy ±5000 m"), text)
+      XCTAssertEqual(manager.desiredAccuracy, kCLLocationAccuracyReduced)
+    }
+  }
+
   func testDenialAndRestrictionsReturnActionableContextWithoutRequestingGPS() async {
     for status in [CLAuthorizationStatus.denied, .restricted] {
       let manager = StubLocationManager(status: status)
@@ -156,6 +208,15 @@ final class LocationServiceTests: XCTestCase {
 
   func testLocationSettingsDefaultToGPSAndPreserveSavedManualChoices() throws {
     let decoder = JSONDecoder()
+    XCTAssertTrue(NativeToolSettings.defaults.preciseLocation)
+    XCTAssertTrue(
+      try decoder.decode(NativeToolSettings.self, from: Data("{}".utf8)).preciseLocation)
+    let approximate = try decoder.decode(
+      NativeToolSettings.self, from: Data(#"{"preciseLocation":false}"#.utf8))
+    XCTAssertFalse(approximate.preciseLocation)
+    XCTAssertEqual(
+      try decoder.decode(NativeToolSettings.self, from: JSONEncoder().encode(approximate)),
+      approximate)
     XCTAssertTrue(NativeToolSettings.defaults.useGPSLocation)
     XCTAssertTrue(try decoder.decode(NativeToolSettings.self, from: Data("{}".utf8)).useGPSLocation)
     for json in [#"{"useGPSLocation":false}"#, #"{"manualLocation":"Barcelona"}"#] {
@@ -177,7 +238,10 @@ private final class StubLocationManager: LocationManaging {
     callback?()
     return status
   }
+  var accuracyAuthorization: CLAccuracyAuthorization = .fullAccuracy
   var desiredAccuracy: CLLocationAccuracy = 0
+  var onAccuracyRequest: (() -> Void)?
+  private var accuracyCompletion: (@Sendable (Error?) -> Void)?
   var onAuthorizationCheck: (() -> Void)?
   var onAuthorizationRequest: (() -> Void)?
   var onLocationRequest: (() -> Void)?
@@ -186,6 +250,22 @@ private final class StubLocationManager: LocationManaging {
 
   init(status: CLAuthorizationStatus) { self.status = status }
   func requestWhenInUseAuthorization() { onAuthorizationRequest?() }
+  func requestTemporaryFullAccuracyAuthorization(
+    withPurposeKey purposeKey: String, completion: (@Sendable (Error?) -> Void)?
+  ) {
+    XCTAssertEqual(purposeKey, "PreciseLocation")
+    accuracyCompletion = completion
+    onAccuracyRequest?()
+  }
+
+  func completeAccuracyRequest(granted: Bool) {
+    accuracyAuthorization = granted ? .fullAccuracy : .reducedAccuracy
+    delegate?.locationManagerDidChangeAuthorization?(callbackManager)
+    let completion = accuracyCompletion
+    accuracyCompletion = nil
+    completion?(nil)
+  }
+
   func requestLocation() { onLocationRequest?() }
   func stopUpdatingLocation() {}
 
@@ -194,10 +274,12 @@ private final class StubLocationManager: LocationManaging {
     delegate?.locationManagerDidChangeAuthorization?(callbackManager)
   }
 
-  func deliver(latitude: Double, longitude: Double, timestamp: Date = Date()) {
+  func deliver(
+    latitude: Double, longitude: Double, timestamp: Date = Date(), accuracy: Double = 5
+  ) {
     let location = CLLocation(
       coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
-      altitude: 0, horizontalAccuracy: 5, verticalAccuracy: 5, timestamp: timestamp)
+      altitude: 0, horizontalAccuracy: accuracy, verticalAccuracy: 5, timestamp: timestamp)
     delegate?.locationManager?(callbackManager, didUpdateLocations: [location])
   }
 

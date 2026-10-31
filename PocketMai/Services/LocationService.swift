@@ -6,8 +6,11 @@ import Foundation
 protocol LocationManaging: AnyObject {
   var delegate: (any CLLocationManagerDelegate)? { get set }
   var authorizationStatus: CLAuthorizationStatus { get }
+  var accuracyAuthorization: CLAccuracyAuthorization { get }
   var desiredAccuracy: CLLocationAccuracy { get set }
   func requestWhenInUseAuthorization()
+  func requestTemporaryFullAccuracyAuthorization(
+    withPurposeKey purposeKey: String, completion: (@Sendable (Error?) -> Void)?)
   func requestLocation()
   func stopUpdatingLocation()
 }
@@ -19,15 +22,21 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
   @Published private(set) var lastLocationText = ""
   @Published private(set) var authorizationStatus: CLAuthorizationStatus
 
+  @Published private(set) var accuracyAuthorization: CLAccuracyAuthorization
+
   private let manager: any LocationManaging
   private var continuations: [UUID: CheckedContinuation<CLLocation?, Never>] = [:]
   private var authorizationRequested = false
+  private var preciseLocation = true
+  private var accuracyRequested = false
+  private var isRequestingAccuracy = false
   private var isRequestingLocation = false
   private var timeoutTask: Task<Void, Never>?
 
   init(manager: any LocationManaging = CLLocationManager()) {
     self.manager = manager
     authorizationStatus = manager.authorizationStatus
+    accuracyAuthorization = manager.accuracyAuthorization
     super.init()
     manager.delegate = self
     manager.desiredAccuracy = kCLLocationAccuracyBest
@@ -42,21 +51,48 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     case .restricted:
       "Location access is restricted on this device."
     case .authorizedWhenInUse, .authorizedAlways:
-      "Location access is allowed while using PocketMai."
+      accuracyAuthorization == .fullAccuracy
+        ? "Precise location access is allowed while using PocketMai."
+        : "Only approximate location is allowed. Enable Precise Location in iOS Settings for better accuracy."
     @unknown default:
       "Location access is unavailable."
     }
   }
 
-  func requestAuthorization() {
+  func requestAuthorization(precise: Bool = true) {
+    preciseLocation = precise
+    manager.desiredAccuracy = precise ? kCLLocationAccuracyBest : kCLLocationAccuracyReduced
     authorizationStatus = manager.authorizationStatus
-    guard authorizationStatus == .notDetermined, !authorizationRequested else { return }
-    authorizationRequested = true
-    manager.requestWhenInUseAuthorization()
+    accuracyAuthorization = manager.accuracyAuthorization
+    if authorizationStatus == .notDetermined {
+      guard !authorizationRequested else { return }
+      authorizationRequested = true
+      manager.requestWhenInUseAuthorization()
+    } else {
+      requestPreciseAuthorizationIfNeeded()
+    }
   }
 
-  func currentLocationText() async -> String {
-    guard let location = await requestLocation() else {
+  private func requestPreciseAuthorizationIfNeeded() {
+    guard preciseLocation, manager.accuracyAuthorization == .reducedAccuracy,
+      authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways,
+      !accuracyRequested, !isRequestingAccuracy
+    else { return }
+    accuracyRequested = true
+    isRequestingAccuracy = true
+    manager.requestTemporaryFullAccuracyAuthorization(withPurposeKey: "PreciseLocation") {
+      [weak self] _ in
+      Task { @MainActor in
+        guard let self else { return }
+        self.accuracyRequested = true
+        self.isRequestingAccuracy = false
+        self.resumeAfterAuthorization()
+      }
+    }
+  }
+
+  func currentLocationText(precise: Bool = true) async -> String {
+    guard let location = await requestLocation(precise: precise) else {
       let authorized =
         authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways
       let reason =
@@ -75,11 +111,11 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     return text
   }
 
-  func currentCoordinate() async -> CLLocationCoordinate2D? {
-    await requestLocation()?.coordinate
+  func currentCoordinate(precise: Bool = true) async -> CLLocationCoordinate2D? {
+    await requestLocation(precise: precise)?.coordinate
   }
 
-  private func requestLocation() async -> CLLocation? {
+  private func requestLocation(precise: Bool) async -> CLLocation? {
     let id = UUID()
     return await withTaskCancellationHandler {
       await withCheckedContinuation { continuation in
@@ -88,7 +124,7 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
           return
         }
         continuations[id] = continuation
-        requestAuthorization()
+        requestAuthorization(precise: precise)
         resumeAfterAuthorization()
       }
     } onCancel: {
@@ -101,13 +137,15 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
 
   private func resumeAfterAuthorization() {
     authorizationStatus = manager.authorizationStatus
+    accuracyAuthorization = manager.accuracyAuthorization
     guard !continuations.isEmpty else { return }
     switch authorizationStatus {
     case .notDetermined:
       // Keep the first message pending until the user answers the system prompt.
       return
     case .authorizedWhenInUse, .authorizedAlways:
-      guard !isRequestingLocation else { return }
+      requestPreciseAuthorizationIfNeeded()
+      guard !isRequestingAccuracy, !isRequestingLocation else { return }
       isRequestingLocation = true
       timeoutTask = Task { [weak self] in
         do { try await Task.sleep(for: .seconds(30)) } catch { return }
@@ -124,6 +162,7 @@ final class LocationService: NSObject, ObservableObject, CLLocationManagerDelega
     timeoutTask = nil
     if isRequestingLocation { manager.stopUpdatingLocation() }
     isRequestingLocation = false
+    accuracyRequested = false
   }
 
   private func finishRequest(with location: CLLocation?) {

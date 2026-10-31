@@ -132,14 +132,15 @@ enum LocationRenderer {
     locationService: @MainActor () -> LocationService
   ) async -> String {
     if settings.useGPSLocation {
-      return "Location tool:\n\(await locationService().currentLocationText())"
+      return
+        "Location tool:\n\(await locationService().currentLocationText(precise: settings.preciseLocation))"
     }
     let manual = settings.manualLocation.trimmingCharacters(in: .whitespacesAndNewlines)
     return manual.isEmpty ? "Location tool:\nNo location configured" : "Location tool:\n\(manual)"
   }
 
   static func signature(settings: NativeToolSettings) -> String {
-    "\(settings.useGPSLocation ? "gps" : "manual"):\(settings.manualLocation)"
+    "\(settings.useGPSLocation ? "gps" : "manual"):\(settings.preciseLocation):\(settings.manualLocation)"
   }
 }
 
@@ -162,7 +163,8 @@ enum PocketMaiNetworkTools {
     if configuredLocation.isEmpty, settings.useGPSLocation,
       usesConfiguredLocation(requestedLocation)
     {
-      if let current = await locationService().currentCoordinate() {
+      if let current = await locationService().currentCoordinate(precise: settings.preciseLocation)
+      {
         coordinate = MaiCoordinate(
           latitude: current.latitude,
           longitude: current.longitude)
