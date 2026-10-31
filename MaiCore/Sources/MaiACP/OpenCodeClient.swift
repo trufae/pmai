@@ -464,6 +464,8 @@ public actor OpenCodeClient: RemoteSessionClient {
             entry["role"] = .string("tool")
             entry["toolID"] = part["id"]
             entry["status"] = state["status"]
+            entry["toolName"] = part["name"]
+            entry["toolInput"] = state["input"]
             entry["text"] = .string(
               ([part["name"]?.stringValue ?? "Tool"] + content
                 + [state["error"]?.objectValue?["message"]?.stringValue].compactMap { $0 })

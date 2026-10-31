@@ -340,7 +340,7 @@ func openCodeNativeSessions() async throws {
     case ("GET", "/api/session/ses_new/context"), ("GET", "/api/session/ses_new/message"),
       ("GET", "/api/session/ses_existing/message"):
       body =
-        #"{"data":[{"id":"msg_user","type":"user","text":"Hello","time":{"created":1000}},{"id":"msg_answer","type":"assistant","time":{"created":2000},"content":[{"type":"reasoning","text":"Thinking"},{"type":"text","text":"Hello back"},{"type":"tool","id":"call_1","name":"read","state":{"status":"completed","content":[{"type":"text","text":"File contents"}]}}]},{"id":"msg_idle","type":"idle","outcome":"succeeded"}]}"#
+        #"{"data":[{"id":"msg_user","type":"user","text":"Hello","time":{"created":1000}},{"id":"msg_answer","type":"assistant","time":{"created":2000},"content":[{"type":"reasoning","text":"Thinking"},{"type":"text","text":"Hello back"},{"type":"tool","id":"call_1","name":"read","state":{"status":"completed","input":{"path":"README.md"},"content":[{"type":"text","text":"File contents"}]}}]},{"id":"msg_idle","type":"idle","outcome":"succeeded"}]}"#
     case ("POST", "/api/session/ses_new/prompt"):
       let input = try JSONDecoder().decode(JSONValue.self, from: requestBodyData(request))
       #expect(input.objectValue?["text"]?.stringValue == "Hello")
@@ -384,6 +384,12 @@ func openCodeNativeSessions() async throws {
       "user", "thought", "assistant", "tool",
     ])
   #expect(snapshot.last?.objectValue?["text"]?.stringValue == "read\nFile contents")
+  var transcript: [ACPConversationMessage] = []
+  ACPConversationTranscript.apply(try #require(await updates.values.last), to: &transcript)
+  let cached = try JSONDecoder().decode(
+    [ACPConversationMessage].self, from: JSONEncoder().encode(transcript))
+  #expect(cached.last?.toolName == "read")
+  #expect(cached.last?.toolInput == .object(["path": .string("README.md")]))
   try await client.manageSession("ses_new", cwd: "/work", title: "Renamed")
   try await client.manageSession("ses_new", cwd: "/work", title: nil)
   await client.disconnect()
@@ -394,6 +400,40 @@ func openCodeNativeSessions() async throws {
   await restored.disconnect()
   #expect(methods.methods.filter { $0 == "POST /api/session" }.count == 1)
   #expect(methods.methods.filter { $0 == "POST /api/session/ses_new/prompt" }.count == 1)
+}
+
+@Test("OpenCode restores the first prompt across opaque history pages, including an empty final page")
+func openCodePagedHistory() async throws {
+  let host = "history.opencode.test"
+  let updates = OpenCodeUpdates()
+  StubURLProtocol.install(forHost: host) { request in
+    #expect(request.url?.path == "/api/session/session/message")
+    let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+    let cursor = query.first { $0.name == "cursor" }?.value
+    #expect(query.contains { $0.name == "order" } == (cursor == nil))
+    let body: String
+    if cursor == nil {
+      #expect(query.first { $0.name == "order" }?.value == "asc")
+      body = #"{"data":[{"id":"first","type":"user","text":"First prompt"}],"cursor":{"next":"opaque+/="}}"#
+    } else if cursor == "opaque+/=" {
+      body = #"{"data":[{"id":"second","type":"assistant","content":[{"type":"text","text":"Answer"}]}],"cursor":{"next":"end"}}"#
+    } else {
+      #expect(cursor == "end")
+      body = #"{"data":[],"cursor":{}}"#
+    }
+    return try httpResponse(request, contentType: "application/json", body: body)
+  }
+  defer { StubURLProtocol.reset(host: host) }
+  let client = OpenCodeClient(
+    connection: try .init(url: #require(URL(string: "https://\(host)")), token: "test"),
+    sessionID: "session", configuration: openCodeTestConfiguration(),
+    onUpdate: { await updates.append($0) })
+  _ = try await client.connect()
+  var transcript: [ACPConversationMessage] = []
+  ACPConversationTranscript.apply(try #require(await updates.values.last), to: &transcript)
+  #expect(transcript.map(\.text) == ["First prompt", "Answer"])
+  #expect(transcript.map(\.remoteID) == ["first", "second:0"])
+  await client.disconnect()
 }
 
 #if os(macOS) || os(Linux)

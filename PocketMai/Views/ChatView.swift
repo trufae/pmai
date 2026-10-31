@@ -882,7 +882,10 @@ struct ChatView: View {
           // A single response can be several viewports tall and changes height while streaming.
           // LazyVStack can retain a stale row estimate and scroll past the rendered content.
           VStack(spacing: 14) {
-            if conversation?.historyWindow?.hasEarlier == true {
+            if startIndex > 0 || conversation?.historyWindow?.hasEarlier == true
+              || messageRenderWindow.messageWithEarlierParts(
+                in: allMessages, conversationID: currentConversationID) != nil
+            {
               Button("Earlier messages") { Task { await loadHistoryAtEdge(forceEarlier: true) } }
                 .disabled(historyPageIsLoading)
             }
@@ -961,6 +964,7 @@ struct ChatView: View {
                     showUserTimestamp: message.role == .user && message.id != firstUserMessageID,
                     showThinking: remoteChat != nil
                       || store.effectiveShowThinking(for: currentConversation),
+                    compactMetadata: remoteChat != nil,
                     isWaitingForResponse: isWaitingForResponse(message)
                   )
                 }
@@ -1036,6 +1040,7 @@ struct ChatView: View {
                     ?? currentConversationSummary?.createdAt,
                   showThinking: remoteChat != nil
                     || store.effectiveShowThinking(for: currentConversation),
+                  compactMetadata: remoteChat != nil,
                   isWaitingForResponse: false
                 )
                 .id(preview.id)
@@ -1592,12 +1597,13 @@ struct ChatView: View {
 
   @MainActor
   private func loadHistoryAtEdge(forceEarlier: Bool = false, forceLater: Bool = false) async {
-    guard !historyPageIsLoading, !messageFontPinchSession.isActive, !currentChatIsResponding,
+    guard !historyPageIsLoading, !messageFontPinchSession.isActive,
       forceEarlier || forceLater || userScrolledAfterLastMessage
     else { return }
     let id = currentConversationID
     let earlier = forceEarlier || (!forceLater && historyNearTop)
     guard earlier || forceLater || historyNearBottom else { return }
+    if forceEarlier { userScrolledAfterLastMessage = true }
     historyPageIsLoading = true
     defer { historyPageIsLoading = false }
     let messages = presentationMessages
@@ -1608,7 +1614,9 @@ struct ChatView: View {
         messageRenderWindow.revealEarlierParts(for: part)
       } else if messageRenderWindow.revealEarlier(in: messages, conversationID: id) {
         prepareMessageParts(in: messages)
-      } else if remoteChat == nil, currentConversation?.historyWindow?.hasEarlier == true {
+      } else if remoteChat == nil, !currentChatIsResponding,
+        currentConversation?.historyWindow?.hasEarlier == true
+      {
         await store.pageConversationHistory(earlier: true)
         guard currentConversationID == id, let first = presentationMessages.first else { return }
         messageRenderWindow.reveal(first.id, in: presentationMessages, conversationID: id)
@@ -1616,7 +1624,9 @@ struct ChatView: View {
       } else {
         historyScrollSession.cancel()
       }
-    } else if remoteChat == nil, currentConversation?.historyWindow?.hasLater == true {
+    } else if remoteChat == nil, !currentChatIsResponding,
+      currentConversation?.historyWindow?.hasLater == true
+    {
       guard historyScrollSession.prepareForPrepend(revision: messageRenderWindow.revision + 1)
       else { return }
       await store.pageConversationHistory(earlier: false)
