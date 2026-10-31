@@ -224,9 +224,12 @@ struct ContentView: View {
               .onTapGesture { closeHistoryPanel() }
           }
         }
-        .clipShape(RoundedRectangle(
-          cornerRadius: layout.pinsSidebar ? 24 : (panelOffset > 0 ? 28 : 0),
-          style: .continuous))
+        .mask {
+          RoundedRectangle(
+            cornerRadius: layout.pinsSidebar ? 24 : (panelOffset > 0 ? 28 : 0),
+            style: .continuous)
+            .ignoresSafeArea(.container, edges: layout.pinsSidebar ? [] : .all)
+        }
         .overlay {
           if layout.pinsSidebar {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
