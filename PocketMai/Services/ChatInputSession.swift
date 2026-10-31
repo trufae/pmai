@@ -31,12 +31,12 @@ struct ChatInputSession {
   }
 
   func isResponding(in conversationID: UUID) -> Bool {
-    remoteChat?.busy ?? store.isResponding(in: conversationID)
+    remoteChat?.responding ?? store.isResponding(in: conversationID)
   }
 
   func cancelResponse() {
     if let remoteChat {
-      remoteChat.disconnect()
+      remoteChat.cancel()
     } else if let id = conversation?.id {
       store.cancelResponse(in: id)
     }

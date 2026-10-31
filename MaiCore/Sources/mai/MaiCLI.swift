@@ -1046,9 +1046,11 @@ actor TerminalApprovalHandler: ApprovalHandler {
   }
 
   func setApprovalMode(_ mode: ToolApprovalMode) { sessionApprovalMode = mode }
-  func toolApprovalMode() async -> ToolApprovalMode? { currentApprovalMode() }
+  func toolApprovalMode() async -> ToolApprovalMode? {
+    await delegate?.toolApprovalMode() ?? currentApprovalMode()
+  }
   func toolApprovalMode(for tool: ToolDefinition) async -> ToolApprovalMode? {
-    effectiveApprovalMode(for: tool)
+    await delegate?.toolApprovalMode(for: tool) ?? effectiveApprovalMode(for: tool)
   }
   private func effectiveApprovalMode(for tool: ToolDefinition) -> ToolApprovalMode {
     projectSettings.toolYolo?.contains(tool.name) == true ? .yolo : currentApprovalMode()
@@ -1166,6 +1168,9 @@ actor TerminalApprovalHandler: ApprovalHandler {
   }
 
   func decide(_ request: ApprovalRequest) async throws -> ApprovalDecision {
+    if let delegate, await delegate.toolApprovalMode(for: request.tool) != nil {
+      return try await delegate.decide(request)
+    }
     let approvalMode = currentApprovalMode()
     if permitsUnattendedApproval(request) { return .approve(arguments: request.call.arguments) }
     guard approvalMode == .ask else {

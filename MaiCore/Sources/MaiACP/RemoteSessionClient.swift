@@ -17,11 +17,19 @@ public protocol RemoteSessionClient: AnyObject, Sendable {
   /// Removes the selected message and everything after it. Nil clears the history.
   /// This changes conversation history only, without reverting workspace files.
   func rewind(to messageID: String?) async throws
+  func inject(_ text: String) async throws
+  func injectionSupported() async -> Bool
+  func cancel() async
   func disconnect() async
 }
 
 extension RemoteSessionClient {
   public var supportsHistoryRewind: Bool { false }
+  public func injectionSupported() async -> Bool { false }
+  public func inject(_ text: String) async throws {
+    throw JSONRPCError.invalidParams("Update the remote pmai to send messages during a response.")
+  }
+  public func cancel() async { await disconnect() }
 
   public func historyRewindSupported() async -> Bool { supportsHistoryRewind }
 

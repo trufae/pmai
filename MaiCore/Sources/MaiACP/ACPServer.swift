@@ -19,6 +19,8 @@ public actor ACPServer {
     var updatedAt: Date?
     var definition: AgentDefinition?
     /// Keeps the chat's tool selection intact while tools are temporarily off.
+    var toolInputs: [String: JSONValue]?
+    var reviewTools: Bool?
     var toolsEnabled: Bool?
     var providerSessionID: String?
     var indexed: Bool?
@@ -29,6 +31,7 @@ public actor ACPServer {
     var task: Task<AgentResult, Error>?
     var lease: ACPFileLock?
     var processes: [AgentPID] = []
+    var liveUpdates: [JSONValue] = []
     var busy = false
   }
 
@@ -154,6 +157,8 @@ public actor ACPServer {
       return try await workspaceFiles(params: params)
     case "ping":
       return .object([:])
+    case "_pmai/session/inject":
+      return try await inject(params: params)
     case ACP.Method.sessionPrompt:
       return try await runPrompt(params: params)
     case ACP.Method.sessionSetConfigOption:
@@ -181,7 +186,7 @@ public actor ACPServer {
       "agentCapabilities": .object([
         "_meta": .object(["pmai": .object([
           "workspaceFiles": .integer(1), "permissionEditing": .integer(1), "yolo": .integer(1),
-          "historyRewind": .integer(1),
+          "historyRewind": .integer(1), "injection": .integer(1),
         ])]),
         "loadSession": .bool(sessionDirectory != nil || workspace != nil),
         "sessionCapabilities": .object(
@@ -228,7 +233,7 @@ public actor ACPServer {
   private func canAccess(_ url: URL) -> Bool {
     guard let roots = workspaceRoots else { return true }
     return roots.contains { root in
-      url == root || url.path.hasPrefix(root.path.hasSuffix("/") ? root.path : root.path + "/")
+      url.path == root.path || url.path.hasPrefix(root.path.hasSuffix("/") ? root.path : root.path + "/")
     }
   }
 
@@ -422,6 +427,7 @@ public actor ACPServer {
     else { throw JSONRPCError.invalidParams("Provide a nonempty title, or null to delete") }
     let id = params?.objectValue?["sessionId"]?.stringValue ?? ""
     let wasLoaded = sessions[id] != nil
+    guard sessions[id]?.busy != true else { throw JSONRPCError.invalidParams("Session is busy") }
     _ = try await loadSession(params: params, replay: false)
     sessions[id]?.busy = true
     defer {
@@ -454,7 +460,7 @@ public actor ACPServer {
       throw JSONRPCError.invalidParams("Unknown sessionId")
     }
     let cwd = try directory(params: params)
-    guard sessions[id]?.busy != true, loadingSessions.insert(id).inserted else {
+    guard loadingSessions.insert(id).inserted else {
       throw JSONRPCError.invalidParams("Session is busy")
     }
     defer { loadingSessions.remove(id) }
@@ -470,6 +476,8 @@ public actor ACPServer {
           transcript: conversation.transcript, promptInFlight: checkpoint?.promptInFlight,
           title: conversation.info.title, createdAt: conversation.createdAt,
           updatedAt: conversation.info.updatedAt, definition: conversation.agent,
+          toolInputs: checkpoint?.toolInputs, reviewTools: checkpoint?.reviewTools,
+          toolsEnabled: checkpoint?.toolsEnabled,
           providerSessionID: conversation.providerSessionID)
       } else {
         restored = checkpoint
@@ -496,20 +504,23 @@ public actor ACPServer {
     for message in session.saved.transcript {
       switch message.role {
       case .user:
-        await update(session: id, kind: .userMessageChunk, text: message.text)
+        await update(session: id, kind: .userMessageChunk, text: message.text, remember: false)
       case .assistant:
         if !message.text.isEmpty {
-          await update(session: id, kind: .agentMessageChunk, text: message.text)
+          await update(session: id, kind: .agentMessageChunk, text: message.text, remember: false)
         }
-        for call in message.toolCalls { await toolUpdate(session: id, call: call) }
+        for call in message.toolCalls { await toolUpdate(session: id, call: call, remember: false) }
       case .tool:
-        for result in message.toolResults { await toolFinished(session: id, result: result) }
+        for result in message.toolResults { await toolFinished(session: id, result: result, remember: false) }
       default: break
       }
     }
     await messageSnapshot(session: id)
+    for update in sessions[id]?.liveUpdates ?? [] { await sendUpdate(session: id, update: update) }
+    await sessionState(id)
     let options = await configurationOptions(
-      for: session.saved.definition ?? agent, toolsEnabled: session.saved.toolsEnabled ?? true)
+      for: session.saved.definition ?? agent, toolsEnabled: session.saved.toolsEnabled ?? true,
+      reviewTools: session.saved.reviewTools ?? false)
     return .object(["configOptions": .array(options.map(\.json))])
   }
 
@@ -525,7 +536,7 @@ public actor ACPServer {
     let boundary = fields["messageId"]?.stringValue
     let end: Int
     if let boundary {
-      guard let index = saved.transcript.firstIndex(where: { $0.id == boundary }) else {
+      guard let index = saved.transcript.firstIndex(where: { $0.id == boundary || boundary.hasPrefix($0.id + "/") }) else {
         throw JSONRPCError.invalidParams("This message is no longer in the conversation")
       }
       end = index
@@ -546,7 +557,7 @@ public actor ACPServer {
   }
 
   private func configurationOptions(
-    for definition: AgentDefinition, toolsEnabled: Bool = true
+    for definition: AgentDefinition, toolsEnabled: Bool = true, reviewTools: Bool = false
   ) async -> [RemoteSessionOption] {
     let providers = await runtime.availableProviders()
     let displayNameCounts = Dictionary(grouping: providers, by: \.displayName).mapValues(\.count)
@@ -609,6 +620,9 @@ public actor ACPServer {
         id: "reasoning", name: "Reasoning", category: "thought_level",
         currentValue: .string(effort), choices: efforts),
       .init(
+        id: "tools.review", name: "Review Tool Calls", category: "permissions",
+        currentValue: .bool(reviewTools)),
+      .init(
         id: Self.toolsEnabledOptionID, name: "Enable Tools", category: "tools",
         currentValue: .bool(toolsEnabled)),
     ] + toolOptions
@@ -619,6 +633,16 @@ public actor ACPServer {
       let key = fields["configId"]?.stringValue, let value = fields["value"],
       var saved = sessions[id]?.saved
     else { throw JSONRPCError.invalidParams("Unknown session or setting") }
+    if key == "tools.review" {
+      guard let review = value.boolValue else { throw JSONRPCError.invalidParams("Use a boolean for tool review") }
+      sessions[id]?.saved.reviewTools = review
+      yoloSessionIDs.remove(id)
+      if let saved = sessions[id]?.saved { try await save(saved) }
+      let options = await configurationOptions(
+        for: sessions[id]?.saved.definition ?? agent,
+        toolsEnabled: sessions[id]?.saved.toolsEnabled ?? true, reviewTools: review)
+      return .object(["configOptions": .array(options.map(\.json))])
+    }
     guard sessions[id]?.busy != true, !loadingSessions.contains(id) else {
       throw JSONRPCError.invalidParams("Session is busy")
     }
@@ -626,7 +650,7 @@ public actor ACPServer {
     defer { sessions[id]?.busy = false }
     var definition = saved.definition ?? agent
     let toolsEnabled = saved.toolsEnabled ?? true
-    let available = await configurationOptions(for: definition, toolsEnabled: toolsEnabled)
+    let available = await configurationOptions(for: definition, toolsEnabled: toolsEnabled, reviewTools: saved.reviewTools ?? false)
     guard available.first(where: { $0.id == key })?.accepts(value) == true else {
       throw JSONRPCError.invalidParams("Choose an available setting")
     }
@@ -675,7 +699,7 @@ public actor ACPServer {
     default: throw JSONRPCError.invalidParams("Unknown setting")
     }
     let options = await configurationOptions(
-      for: definition, toolsEnabled: saved.toolsEnabled ?? true)
+      for: definition, toolsEnabled: saved.toolsEnabled ?? true, reviewTools: saved.reviewTools ?? false)
     guard connected, sessions[id] != nil else { throw JSONRPCTransportError.closed }
     saved.definition = definition
     saved.updatedAt = Date()
@@ -693,6 +717,30 @@ public actor ACPServer {
     return .object(["configOptions": json])
   }
 
+  private func inject(params: JSONValue?) async throws -> JSONValue {
+    guard let fields = params?.objectValue, let id = fields["sessionId"]?.stringValue,
+      let text = fields["text"]?.stringValue,
+      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      sessions[id]?.busy == true, let pid = sessions[id]?.processes.last
+    else { throw JSONRPCError.invalidParams("The agent is no longer running; send a new prompt") }
+    let message = AgentMessage.user(text)
+    guard await runtime.supervisor.postIfRunning(message, to: pid) != nil else {
+      throw JSONRPCError.invalidParams("The agent is no longer running; send a new prompt")
+    }
+    await sendUpdate(session: id, update: .object([
+      "sessionUpdate": .string(ACP.Update.userMessageChunk.rawValue),
+      "messageId": .string(message.id), "content": ACP.ContentBlock.text(text).json,
+    ]), remember: true)
+    return .object([:])
+  }
+
+  private func sessionState(_ id: String) async {
+    await sendUpdate(session: id, update: .object([
+      "sessionUpdate": .string("_pmai/session_state"),
+      "running": .bool(sessions[id]?.busy == true),
+    ]))
+  }
+
   private func runPrompt(params: JSONValue?) async throws -> JSONValue {
     guard let id = params?.objectValue?["sessionId"]?.stringValue, sessions[id] != nil else {
       throw JSONRPCError.invalidParams("unknown sessionId")
@@ -705,15 +753,24 @@ public actor ACPServer {
       throw JSONRPCError.invalidParams("prompt is empty")
     }
     sessions[id]?.busy = true
-    defer { sessions[id]?.busy = false }
+    sessions[id]?.liveUpdates = []
+    sessions[id]?.processes = []
+    await sessionState(id)
     sessions[id]?.saved.transcript.append(.user(text))
     if AgentChat.isPlaceholderTitle(sessions[id]?.saved.title ?? AgentChat.placeholderTitle) {
       sessions[id]?.saved.title = AgentChat.derivedTitle(from: text)
     }
     sessions[id]?.saved.updatedAt = Date()
     sessions[id]?.saved.promptInFlight = true
-    try await save(sessions[id]!.saved)
-    guard connected, sessions[id] != nil else { throw JSONRPCTransportError.closed }
+    do { try await save(sessions[id]!.saved) } catch {
+      sessions[id]?.busy = false
+      await sessionState(id)
+      throw error
+    }
+    guard connected, sessions[id] != nil else {
+      sessions[id]?.busy = false
+      throw JSONRPCTransportError.closed
+    }
 
     let agent = sessions[id]?.saved.definition ?? self.agent
     var toolPolicy = agent.toolPolicy
@@ -769,7 +826,10 @@ public actor ACPServer {
       sessions[id]?.saved.updatedAt = Date()
       if let saved = sessions[id]?.saved { try await save(saved) }
       sessions[id]?.task = nil
+      sessions[id]?.busy = false
+      sessions[id]?.liveUpdates = []
       await messageSnapshot(session: id)
+      await sessionState(id)
       // A limit pauses the run with its transcript kept, so the next prompt
       // carries on; the editor is told which limit it was.
       if let interruption = result.interruption {
@@ -788,12 +848,18 @@ public actor ACPServer {
     } catch is CancellationError {
       try? await finishInterruptedPrompt(id)
       sessions[id]?.task = nil
+      sessions[id]?.busy = false
+      sessions[id]?.liveUpdates = []
       await messageSnapshot(session: id)
+      await sessionState(id)
       return .object(["stopReason": .string(ACP.StopReason.cancelled.rawValue)])
     } catch {
       try? await finishInterruptedPrompt(id)
       sessions[id]?.task = nil
+      sessions[id]?.busy = false
+      sessions[id]?.liveUpdates = []
       await messageSnapshot(session: id)
+      await sessionState(id)
       // A run that never produced text should still tell the editor why.
       await update(session: id, kind: .agentMessageChunk, text: error.localizedDescription)
       return .object(["stopReason": .string(ACP.StopReason.refusal.rawValue)])
@@ -804,6 +870,10 @@ public actor ACPServer {
     "The previous prompt was interrupted. Some tools may already have run and partial output may be missing. Verify the current state before repeating actions."
 
   private func finishInterruptedPrompt(_ id: String) async throws {
+    if let pid = sessions[id]?.processes.last {
+      let transcript = await runtime.supervisor.transcript(pid)
+      if !transcript.isEmpty { sessions[id]?.saved.transcript = transcript }
+    }
     sessions[id]?.saved.transcript.append(.assistant(Self.interruptedPromptNotice))
     sessions[id]?.saved.promptInFlight = false
     sessions[id]?.saved.updatedAt = Date()
@@ -834,38 +904,55 @@ public actor ACPServer {
     }
   }
 
-  private func update(session id: String, kind: ACP.Update, text: String) async {
-    try? peer?.notify(
-      ACP.Method.sessionUpdate,
-      params: .object([
-        "sessionId": .string(id),
-        "update": .object([
-          "sessionUpdate": .string(kind.rawValue),
-          "content": ACP.ContentBlock.text(text).json,
-        ]),
-      ]))
+  private func update(session id: String, kind: ACP.Update, text: String, remember: Bool = true) async {
+    await sendUpdate(session: id, update: .object([
+      "sessionUpdate": .string(kind.rawValue), "content": ACP.ContentBlock.text(text).json,
+    ]), remember: remember)
+  }
+
+  private func sendUpdate(session id: String, update: JSONValue, remember: Bool = false) async {
+    if remember {
+      let kind = update.objectValue?["sessionUpdate"]?.stringValue
+      if (kind == ACP.Update.agentMessageChunk.rawValue || kind == ACP.Update.agentThoughtChunk.rawValue),
+        let last = sessions[id]?.liveUpdates.last?.objectValue,
+        last["sessionUpdate"]?.stringValue == kind {
+        var merged = last
+        merged["content"] = ACP.ContentBlock.text(
+          ACP.ContentBlock.text(from: last["content"]) + ACP.ContentBlock.text(from: update.objectValue?["content"])
+        ).json
+        sessions[id]?.liveUpdates.removeLast()
+        sessions[id]?.liveUpdates.append(.object(merged))
+      } else { sessions[id]?.liveUpdates.append(update) }
+    }
+    try? peer?.notify(ACP.Method.sessionUpdate, params: .object([
+      "sessionId": .string(id), "update": update,
+    ]))
   }
 
   /// PocketMai consumes this extension to replace optimistic streaming rows
   /// with durable transcript entries. Standard ACP clients simply ignore it.
   private func messageSnapshot(session id: String) async {
     guard let transcript = sessions[id]?.saved.transcript else { return }
-    let messages = transcript.compactMap { message -> JSONValue? in
-      guard message.role == .user || message.role == .assistant || message.role == .tool else {
-        return nil
+    var messages: [JSONValue] = []
+    var calls: [String: ToolCall] = [:]
+    for message in transcript {
+      for call in message.toolCalls { calls[call.id] = call }
+      if message.role == .tool {
+        for result in message.toolResults {
+          let call = calls[result.callID]
+          messages.append(.object([
+            "remoteID": .string(message.id + "/" + result.callID), "role": .string("tool"),
+            "toolID": .string(result.callID), "toolName": .string(call?.name ?? "Tool"),
+            "toolInput": sessions[id]?.saved.toolInputs?[result.callID] ?? call?.arguments ?? .null,
+            "status": .string(result.isError ? "failed" : "completed"), "text": .string(result.text),
+          ]))
+        }
+      } else if (message.role == .user || message.role == .assistant), !message.text.isEmpty {
+        messages.append(.object([
+          "remoteID": .string(message.id), "role": .string(message.role.rawValue),
+          "text": .string(message.text),
+        ]))
       }
-      let text: String
-      switch message.role {
-      case .tool:
-        text = message.toolResults.map(\.text).joined(separator: "\n")
-      default:
-        text = message.text
-      }
-      guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-      return .object([
-        "remoteID": .string(message.id), "role": .string(message.role.rawValue),
-        "text": .string(text),
-      ])
     }
     try? peer?.notify(
       ACP.Method.sessionUpdate,
@@ -877,38 +964,32 @@ public actor ACPServer {
       ]))
   }
 
-  private func toolUpdate(session id: String, call: ToolCall, kind: ACP.Update = .toolCall) async {
-    try? peer?.notify(
-      ACP.Method.sessionUpdate,
-      params: .object([
-        "sessionId": .string(id),
-        "update": .object([
-          "sessionUpdate": .string(kind.rawValue),
-          "toolCallId": .string(call.id),
-          "title": .string(call.name),
-          "name": .string(call.name),
-          "rawInput": call.arguments,
-          "status": .string("in_progress"),
-        ]),
-      ]))
+  private func toolUpdate(session id: String, call: ToolCall, kind: ACP.Update = .toolCall, remember: Bool = true) async {
+    if remember {
+      if sessions[id]?.saved.toolInputs == nil { sessions[id]?.saved.toolInputs = [:] }
+      sessions[id]?.saved.toolInputs?[call.id] = call.arguments
+    }
+    await sendUpdate(session: id, update: .object([
+      "sessionUpdate": .string(kind.rawValue), "toolCallId": .string(call.id),
+      "title": .string(call.name), "name": .string(call.name),
+      "rawInput": call.arguments, "status": .string("in_progress"),
+    ]), remember: remember)
   }
 
-  private func toolFinished(session id: String, result: ToolResult) async {
-    try? peer?.notify(
-      ACP.Method.sessionUpdate,
-      params: .object([
-        "sessionId": .string(id),
-        "update": .object([
-          "sessionUpdate": .string(ACP.Update.toolCallUpdate.rawValue),
-          "toolCallId": .string(result.callID),
-          "status": .string(result.isError ? "failed" : "completed"),
-          "content": .array([
-            .object([
-              "type": .string("content"), "content": ACP.ContentBlock.text(result.text).json,
-            ])
-          ]),
-        ]),
-      ]))
+  private func toolFinished(session id: String, result: ToolResult, remember: Bool = true) async {
+    await sendUpdate(session: id, update: .object([
+      "sessionUpdate": .string(ACP.Update.toolCallUpdate.rawValue),
+      "toolCallId": .string(result.callID),
+      "status": .string(result.isError ? "failed" : "completed"),
+      "content": .array([
+        .object(["type": .string("content"), "content": ACP.ContentBlock.text(result.text).json]),
+      ]),
+    ]), remember: remember)
+  }
+
+  func approvalMode(sessionID: String?) -> ToolApprovalMode? {
+    guard let sessionID, sessions[sessionID]?.saved.reviewTools == true else { return nil }
+    return yoloSessionIDs.contains(sessionID) ? .yolo : .ask
   }
 
   // MARK: - Permission bridge
@@ -994,6 +1075,10 @@ public final class ACPPermissionBridge: @unchecked Sendable {
 
   private struct Handler: ApprovalHandler {
     let bridge: ACPPermissionBridge
+    func toolApprovalMode() async -> ToolApprovalMode? {
+      let server = bridge.lock.withLock { bridge.server }
+      return await server?.approvalMode(sessionID: AgentExecutionScope.current?.sessionID)
+    }
     func decide(_ request: ApprovalRequest) async throws -> ApprovalDecision {
       await bridge.decide(request)
     }

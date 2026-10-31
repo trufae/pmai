@@ -24,7 +24,7 @@ struct RemoteAgentBookmark: Codable, Identifiable {
   var pinnedConversationIDs: [UUID]?
 
   func makeClient(
-    token: String, cwd: String, sessionID: String? = nil,
+    token: String, cwd: String, sessionID: String? = nil, resumeID: String? = nil,
     httpConfiguration: URLSessionConfiguration = .ephemeral,
     onUpdate: (@Sendable (JSONValue) async -> Void)? = nil,
     onPermission: (@Sendable (JSONValue) async throws -> String?)? = nil,
@@ -47,7 +47,7 @@ struct RemoteAgentBookmark: Codable, Identifiable {
     return ACPClient(
       configuration: .init(
         command: name, permission: .reject, remoteWorkingDirectory: cwd, readClientFiles: false,
-        webSocketURL: url, bearerToken: token, sessionID: sessionID),
+        webSocketURL: url, bearerToken: token, sessionID: sessionID, resumeID: resumeID),
       onUpdate: onUpdate, onPermission: onPermission,
       onPermissionResponse: onPermissionResponse, onDisconnect: onDisconnect)
   }
@@ -463,6 +463,13 @@ final class RemoteAgentChat {
   var error: String?
   var busy = false
   var connected = false
+  private(set) var responding = false
+  private(set) var injecting = false
+  var unsentPrompt: String?
+  private var supportsInjection = false
+  private var reconnectTask: Task<Void, Never>?
+  private var reconnectDelay = 1
+  private var shouldReconnect = false
   private(set) var configurationOptions: [RemoteSessionOption] = []
   private(set) var settingsLoading = false
   private(set) var settingsError: String?
@@ -472,6 +479,7 @@ final class RemoteAgentChat {
   private var client: (any RemoteSessionClient)?
   private var operation: Task<Void, Never>?
   private var pendingPrompt: String?
+  private var pendingInjection: String?
   private var permissionReplies: [UUID: CheckedContinuation<ACPPermissionResponse?, Never>] = [:]
   private var generation = 0
   private var historyRewindSupported = false
@@ -511,7 +519,9 @@ final class RemoteAgentChat {
 
   /// A disconnected remote can reconnect when the person submits a draft.
   /// The actual prompt remains pending until that connection completes.
-  var canSubmit: Bool { !busy && !isOffline() }
+  var canSubmit: Bool {
+    !isOffline() && (!busy || (connected && responding && supportsInjection && !injecting))
+  }
 
   var remoteToolOptions: [RemoteSessionOption] {
     configurationOptions.filter {
@@ -617,12 +627,13 @@ final class RemoteAgentChat {
   /// Group selections update every option in order while keeping the picker busy.
   func setConfigurationOptions(_ updates: [(id: String, value: JSONValue)]) {
     guard !updates.isEmpty else { return }
-    guard connected, !busy, !settingsLoading, !isOffline(), let client else { return }
-    busy = true
+    let reviewOnly = updates.allSatisfy { $0.id == "tools.review" }
+    guard connected, (!busy || reviewOnly), !settingsLoading, !isOffline(), let client else { return }
+    if !reviewOnly { busy = true }
     settingsLoading = true
     settingsError = nil
     let attempt = generation
-    operation = Task {
+    let task = Task {
       do {
         for update in updates {
           guard generation == attempt else { return }
@@ -637,10 +648,10 @@ final class RemoteAgentChat {
         }
       }
       guard generation == attempt else { return }
-      busy = false
+      if !reviewOnly { busy = false; operation = nil }
       settingsLoading = false
-      operation = nil
     }
+    if !reviewOnly { operation = task }
   }
 
   func manage(title: String?) async throws {
@@ -688,7 +699,7 @@ final class RemoteAgentChat {
     let generation = generation
     let token = try store.token(for: bookmark.id)
     return try bookmark.makeClient(
-      token: token, cwd: conversation.cwd, sessionID: sessionID,
+      token: token, cwd: conversation.cwd, sessionID: sessionID, resumeID: conversation.id.uuidString,
       httpConfiguration: httpConfiguration,
       onUpdate: { [weak self] update in await self?.receive(update, generation: generation) },
       onPermissionResponse: { [weak self] request in
@@ -705,7 +716,11 @@ final class RemoteAgentChat {
       error = "Turn off Airplane Mode in Settings to connect to this host."
       return
     }
+    shouldReconnect = true
+    reconnectTask?.cancel()
+    reconnectTask = nil
     busy = true
+    responding = false
     error = nil
     status = "Connecting…"
     historyRewindSupported = false
@@ -728,14 +743,17 @@ final class RemoteAgentChat {
         connected = await client.isConnected
         guard generation == attempt else { return }
         historyRewindSupported = await client.historyRewindSupported()
+        supportsInjection = await client.injectionSupported()
+        reconnectDelay = 1
         store.setConnectionFailed(!connected, for: bookmark.id)
         connectingHistory = nil
-        status = connected ? "Connected" : "Disconnected"
+        status = connected ? (responding ? "Responding…" : "Connected") : "Disconnected"
         persist()
       } catch {
         guard generation == attempt else { return }
         messages = previous
         connectingHistory = nil
+        unsentPrompt = pendingPrompt
         pendingPrompt = nil
         historyRewindSupported = false
         self.error = error.localizedDescription
@@ -745,11 +763,12 @@ final class RemoteAgentChat {
         await client?.disconnect()
       }
       if generation == attempt {
-        busy = false
+        busy = responding
         operation = nil
+        if !connected { scheduleReconnect() }
         if connected, let pendingPrompt {
           self.pendingPrompt = nil
-          submit(pendingPrompt)
+          send(pendingPrompt)
         }
       }
     }
@@ -760,12 +779,52 @@ final class RemoteAgentChat {
     let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty, canSubmit else { return false }
     guard !connected else {
-      submit(text)
+      if responding { inject(text) } else { submit(text) }
       return true
     }
     pendingPrompt = text
     connect()
     return true
+  }
+
+  private func inject(_ text: String) {
+    guard let client, supportsInjection, !injecting else { return }
+    injecting = true
+    pendingInjection = text
+    let attempt = generation
+    Task {
+      defer {
+        if generation == attempt { injecting = false; pendingInjection = nil }
+      }
+      do {
+        try await client.inject(text)
+        guard generation == attempt else { return }
+        persist()
+      } catch {
+        guard generation == attempt else { return }
+        unsentPrompt = text
+        self.error = error.localizedDescription
+      }
+    }
+  }
+
+  func cancel() {
+    guard connected, let client else { return }
+    status = "Stopping…"
+    Task { await client.cancel() }
+  }
+
+  private func scheduleReconnect() {
+    guard shouldReconnect, !isOffline(), reconnectTask == nil else { return }
+    status = "Reconnecting…"
+    let delay = reconnectDelay
+    reconnectDelay = min(30, reconnectDelay * 2)
+    reconnectTask = Task { [weak self] in
+      do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+      guard let self, !Task.isCancelled else { return }
+      reconnectTask = nil
+      connect()
+    }
   }
 
   private func submit(_ text: String, rewind: Bool = false, boundary: String? = nil) {
@@ -774,6 +833,7 @@ final class RemoteAgentChat {
     guard !text.isEmpty else { return }
     busy = true
     error = nil
+    responding = true
     status = rewind ? "Rewinding…" : "Responding…"
     if !rewind { appendPrompt(text) }
     let attempt = generation
@@ -797,12 +857,14 @@ final class RemoteAgentChat {
         self.error = error is CancellationError ? nil : error.localizedDescription
         connected = error is OpenCodeClient.SessionFailure && stillConnected
         store.setConnectionFailed(!connected && !(error is CancellationError), for: bookmark.id)
-        status = connected ? "Session failed" : "Disconnected — reconnect to restore the session"
+        status = connected ? "Session failed" : "Reconnecting…"
       }
       guard generation == attempt else { return }
       cancelPermissions()
+      responding = false
       busy = false
       operation = nil
+      if !connected { scheduleReconnect() }
       conversation.updatedAt = Date()
       persist()
     }
@@ -818,6 +880,9 @@ final class RemoteAgentChat {
   }
 
   func disconnect() {
+    shouldReconnect = false
+    reconnectTask?.cancel()
+    reconnectTask = nil
     generation += 1
     operation?.cancel()
     operation = nil
@@ -832,6 +897,9 @@ final class RemoteAgentChat {
     settingsLoading = false
     settingsError = nil
     busy = false
+    responding = false
+    injecting = false
+    supportsInjection = false
     status = "Disconnected"
     if let connectingHistory {
       messages = connectingHistory
@@ -842,11 +910,31 @@ final class RemoteAgentChat {
 
   private func connectionClosed(generation: Int) {
     guard self.generation == generation else { return }
+    self.generation += 1
+    operation?.cancel()
+    operation = nil
+    client = nil
+    if let pendingInjection {
+      unsentPrompt = pendingInjection
+      self.pendingInjection = nil
+      error = "Connection lost while sending. Check the restored conversation before resending."
+    }
+    settingsLoading = false
+    configurationLoaded = false
+    if let pendingPrompt { unsentPrompt = pendingPrompt; self.pendingPrompt = nil }
     connected = false
+    busy = false
+    responding = false
+    injecting = false
     historyRewindSupported = false
+    if let connectingHistory {
+      messages = connectingHistory
+      self.connectingHistory = nil
+    }
     store.setConnectionFailed(true, for: bookmark.id)
-    status = "Disconnected"
     cancelPermissions()
+    persist()
+    scheduleReconnect()
   }
 
   func answer(_ id: UUID, optionID: String?, rawInput: JSONValue? = nil) {
@@ -900,7 +988,12 @@ final class RemoteAgentChat {
     guard self.generation == generation, let object = update.objectValue,
       let kind = object["sessionUpdate"]?.stringValue
     else { return }
-    if kind == "config_option_update" {
+    if kind == "_pmai/session_state", let running = object["running"]?.boolValue {
+      responding = running
+      if !running { cancelPermissions(); persist() }
+      busy = running || operation != nil
+      status = running ? "Responding…" : "Connected"
+    } else if kind == "config_option_update" {
       configurationOptions = RemoteSessionOption.parse(object["configOptions"])
     } else {
       ACPConversationTranscript.apply(update, to: &messages)
