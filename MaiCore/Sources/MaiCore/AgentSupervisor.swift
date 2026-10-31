@@ -46,6 +46,7 @@ public actor AgentSupervisor {
     var result: AgentResult?
     /// Ephemeral task boundary: queued steering remains in this active run.
     var activeTaskStartID: String?
+    var cancelExternal: (@Sendable () async throws -> Void)?
   }
 
   /// Resident transcript budget for checkpointed, collected processes. Job
@@ -193,10 +194,25 @@ public actor AgentSupervisor {
   /// Cancels a process and everything under it, so no orphan keeps running
   /// with nobody waiting for its answer. Returns what was stopped.
   @discardableResult
-  public func stop(_ pid: AgentPID, reason: String = "Stopped") -> [AgentPID] {
+  public func stop(_ pid: AgentPID, reason: String = "Stopped") async -> [AgentPID] {
+    if let entry = entries[pid], entry.info.externalSessionID != nil {
+      guard !entry.info.state.isTerminal, let cancel = entry.cancelExternal else { return [] }
+      do {
+        try await cancel()
+        if entries[pid]?.info.state.isTerminal == false { note(pid, activity: "cancelling") }
+        return [pid]
+      } catch {
+        note(pid, activity: "Cancellation failed: \(error.localizedDescription)")
+        return []
+      }
+    }
     let doomed = tree().subtree(of: pid).map(\.pid)
     for victim in doomed.reversed() {
       guard var entry = entries[victim] else { continue }
+      if entry.info.externalSessionID != nil {
+        _ = await stop(victim, reason: reason)
+        continue
+      }
       entry.handle?.cancel()
       entry.handle = nil
       entries[victim] = entry
@@ -217,7 +233,7 @@ public actor AgentSupervisor {
   public func pause(_ pid: AgentPID) -> [AgentPID] {
     var held: [AgentPID] = []
     for process in tree().subtree(of: pid)
-    where !process.state.isTerminal && !paused.contains(process.pid) {
+    where process.externalSessionID == nil && !process.state.isTerminal && !paused.contains(process.pid) {
       paused.insert(process.pid)
       if process.state == .queued { pausedWhileQueued.insert(process.pid) }
       held.append(process.pid)
@@ -374,6 +390,11 @@ public actor AgentSupervisor {
         failure: ended ? record.failure : Self.restoredWhileRunning,
         isCollected: true)
       info.isArchived = record.isArchived
+      info.externalSessionID = record.externalSessionID
+      info.supportsCancellation = record.externalSessionID == nil
+      info.provider = record.provider
+      info.model = record.model
+      info.reasoningEffort = record.reasoningEffort
       entries[pid] = Entry(
         info: info, historyReference: record.historyReference, transcript: record.messages)
       pidsByRunID[record.runID] = pid
@@ -392,7 +413,7 @@ public actor AgentSupervisor {
   /// turn. Returns nil when the pid is unknown.
   @discardableResult
   public func post(_ message: AgentMessage, to pid: AgentPID) -> AgentQueuedMessage? {
-    guard entries[pid] != nil else { return nil }
+    guard let entry = entries[pid], entry.info.externalSessionID == nil else { return nil }
     let queued = AgentQueuedMessage(pid: pid, message: message)
     inboxes[pid, default: []].append(queued)
     noteInboxChanged(pid)
@@ -510,11 +531,12 @@ public actor AgentSupervisor {
     agentID: String,
     displayName: String? = nil,
     task: String = "",
-    depth: Int
+    depth: Int,
+    externalSessionID: String? = nil
   ) -> AgentPID {
     let pid = AgentPID(nextPID)
     nextPID += 1
-    let info = AgentProcessInfo(
+    var info = AgentProcessInfo(
       pid: pid,
       parent: parent,
       runID: runID,
@@ -523,6 +545,8 @@ public actor AgentSupervisor {
       task: task,
       state: .starting,
       depth: depth)
+    info.externalSessionID = externalSessionID
+    info.supportsCancellation = externalSessionID == nil
     entries[pid] = Entry(info: info)
     publish(.started(info))
     pruneFinished()
@@ -559,6 +583,26 @@ public actor AgentSupervisor {
     entries[pid]?.handle = handle
   }
 
+  public func configureExternalProcess(
+    _ pid: AgentPID, sessionID: String, title: String, task: String,
+    model: String?, reasoningEffort: String?,
+    provider: ProviderID? = nil,
+    cancel: (@Sendable () async throws -> Void)?
+  ) {
+    guard var entry = entries[pid] else { return }
+    entry.info.externalSessionID = sessionID
+    entry.info.supportsCancellation = cancel != nil
+    entry.info.displayName = title
+    entry.info.task = task
+    entry.info.model = model
+    entry.info.provider = provider
+    entry.info.reasoningEffort = reasoningEffort
+    entry.info.updatedAt = Date()
+    entry.cancelExternal = cancel
+    entries[pid] = entry
+    publish(.changed(entry.info))
+  }
+
   /// Lets a registered child run when fewer than `limit` of its parent
   /// agent's other children are running and no older sibling is still
   /// waiting; otherwise marks it `queued` and answers false. The runtime asks
@@ -572,7 +616,7 @@ public actor AgentSupervisor {
     }
     // Recursive instances share a definition, but each parent has its own slots.
     let siblings = entries.values.lazy.map(\.info).filter {
-      $0.parent == parent && $0.pid != pid && !$0.state.isTerminal
+      $0.externalSessionID == nil && $0.parent == parent && $0.pid != pid && !$0.state.isTerminal
     }
     let running = siblings.filter {
       $0.state != .queued && !self.pausedWhileQueued.contains($0.pid)
@@ -585,7 +629,7 @@ public actor AgentSupervisor {
     }
     let sessionFull = concurrentLimit.map { maximum in
       entries.values.lazy.filter {
-        $0.info.parent != nil && $0.info.pid != pid && !$0.info.state.isTerminal
+        $0.info.externalSessionID == nil && $0.info.parent != nil && $0.info.pid != pid && !$0.info.state.isTerminal
           && $0.info.state != .queued && !self.pausedWhileQueued.contains($0.info.pid)
           && !ancestors.contains($0.info.pid)
       }.count >= maximum

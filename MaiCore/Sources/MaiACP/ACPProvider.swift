@@ -89,6 +89,7 @@ public actor ACPProvider: ChatProvider {
       tools: request.toolChoice == .none ? [] : request.tools,
       execute: ProviderToolScope.execute)
     await client.configureInternetAccess(internetAccess)
+    await client.configureProcessScope(ProviderProcessScope.current)
     // Agent-owned context only needs new user text. Replacement and native
     // prompt changes seed a fresh session from the host's prepared transcript.
     let text: String

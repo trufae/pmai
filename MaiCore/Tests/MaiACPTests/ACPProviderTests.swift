@@ -45,6 +45,8 @@ func acpProviderCommands() throws {
     bridge = None
     session_method = None
     native_prompt = None
+    subagents = False
+    pending_prompt = None
     codex_config = json.loads(os.environ.get('CODEX_CONFIG', '{}'))
     prompt_file = codex_config.get('model_instructions_file')
     if prompt_file: native_prompt = pathlib.Path(prompt_file).read_text()
@@ -69,10 +71,13 @@ func acpProviderCommands() throws {
         return result['result']
     def update(kind, **fields):
         send({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':'s','update':{'sessionUpdate':kind, **fields}}})
+    def child_update(session, kind, **fields):
+        send({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':session,'update':{'sessionUpdate':kind, **fields}}})
     for line in sys.stdin:
         req = json.loads(line)
         method, params = req.get('method'), req.get('params',{})
         if method == 'initialize':
+            subagents = params.get('clientCapabilities',{}).get('subagents') == {}
             result = {'protocolVersion':1,'agentCapabilities':{'mcpCapabilities':{'http':True}}}
             if adapter == 'claude': result['agentCapabilities']['loadSession'] = True
             if adapter == 'claude': result['agentCapabilities']['sessionCapabilities'] = {'systemPrompt': {'mode': {'override': {}}}}
@@ -102,6 +107,29 @@ func acpProviderCommands() throws {
         elif method == 'session/prompt':
             turn += 1
             text = params['prompt'][0]['text']
+            if 'NATIVE_DISCONNECT' in text:
+                assert subagents
+                update('subagent_update',sessionId='lost',title='Disconnected worker',capabilities={'cancel':{}},state={'state':'running'})
+                child_update('lost','agent_message_chunk',content={'type':'text','text':'partial native answer'})
+                sys.exit(0)
+            if 'NATIVE_SUBAGENTS' in text:
+                assert subagents, 'pmai must negotiate native subagent sessions'
+                pending_prompt = req['id']
+                update('subagent_update', sessionId='child', title='Investigator', capabilities={'cancel':{}}, state={'state':'running'})
+                child_update('child','config_option_update',configOptions=options())
+                child_update('child','session_message',messageId='brief',senderSessionId='s',recipientSessionId='child',content=[{'type':'text','text':'Check the parser'}])
+                child_update('child','agent_thought_chunk',content={'type':'text','text':'child thinking'})
+                child_update('child','tool_call',toolCallId='native',name='Read',rawInput={'path':'fixture'},status='in_progress')
+                child_update('child','tool_call_update',toolCallId='native',status='completed',content=[{'type':'content','content':{'type':'text','text':'child file'}}])
+                child_update('child','agent_message_chunk',content={'type':'text','text':'child answer'})
+                child_update('child','subagent_update',sessionId='nested',title='Verifier',state={'state':'running'})
+                child_update('nested','agent_message_chunk',content={'type':'text','text':'nested answer'})
+                update('subagent_update',sessionId='child',state={'state':'idle','stopReason':'end_turn'})
+                update('subagent_update',sessionId='child',state={'state':'running'})
+                send({'jsonrpc':'2.0','id':'child-permission','method':'session/request_permission','params':{
+                    'sessionId':'child','toolCall':{'toolCallId':'read','kind':'read','title':'Read fixture'},
+                    'options':[{'optionId':'allow_once','kind':'allow_once','name':'Allow'}]}})
+                continue
             if 'FAIL_PROMPT' in text:
                 send({'jsonrpc':'2.0','id':req['id'],'error':{'code':-32603,'message':'failed after side effect'}})
                 continue
@@ -130,6 +158,17 @@ func acpProviderCommands() throws {
                                  'codexConfig':codex_config,'promptFile':prompt_file})
             update('agent_message_chunk', content={'type':'text','text':answer})
             result = {'stopReason':'end_turn'}
+        elif method == 'session/cancel':
+            assert params['sessionId'] == 'child', 'individual cancel must not target the root'
+            update('subagent_update',sessionId='child',state={'state':'idle','stopReason':'cancelled'})
+            child_update('child','subagent_update',sessionId='nested',state={'state':'idle','stopReason':'end_turn'})
+            update('agent_message_chunk',content={'type':'text','text':'parent survived'})
+            send({'jsonrpc':'2.0','id':pending_prompt,'result':{'stopReason':'end_turn'}})
+            continue
+        elif req.get('id') == 'child-permission':
+            assert req['result']['outcome']['optionId'] == 'allow_once'
+            child_update('child','agent_message_chunk',content={'type':'text','text':' resumed'})
+            continue
         else:
             continue
         if 'id' in req: send({'jsonrpc':'2.0','id':req['id'],'result':result})
@@ -386,6 +425,72 @@ func acpProviderCommands() throws {
       #expect(result.objectValue?["prompt"]?.stringValue?.contains("Check the result") == true)
       messages.append(response.message)
     }
+    await provider.shutdown()
+  }
+
+  @Test("Native ACP children share jobs, transcripts and individual cancellation", .timeLimit(.minutes(1)), arguments: ["claude", "codex"])
+  func acpNativeJobs(adapter: String) async throws {
+    let provider = try providerFixture(adapter: adapter)
+    let runtime = AgentRuntime()
+    try await runtime.register(provider)
+    let updates = await runtime.supervisor.events()
+    let task = Task {
+      try await runtime.run(.init(provider: "test-acp", model: "large", messages: [.user("NATIVE_SUBAGENTS")]))
+    }
+    defer { task.cancel() }
+    var child: AgentProcessInfo?
+    for await update in updates {
+      if case .changed(let info) = update, info.externalSessionID == "child", info.state == .running,
+        await runtime.supervisor.transcript(info.pid).last?.text.contains("resumed") == true {
+        child = info
+        break
+      }
+    }
+    let info = try #require(child)
+    #expect(info.reasoningEffort == (adapter == "claude" ? "default" : "medium"))
+    #expect(info.model == "large")
+    #expect(info.provider == "test-acp")
+    let processes = await runtime.supervisor.processes()
+    let nested = try #require(processes.first { $0.externalSessionID == "nested" })
+    #expect(nested.parent == info.pid)
+    #expect(!nested.supportsCancellation)
+    #expect(await runtime.supervisor.stop(nested.pid).isEmpty)
+    #expect(await runtime.supervisor.pause(info.pid).isEmpty)
+    #expect(await runtime.supervisor.post(.user("must not silently queue"), to: info.pid) == nil)
+    let messages = await runtime.supervisor.transcript(info.pid)
+    #expect(messages.contains { $0.role == .developer && $0.text.contains("Check the parser") })
+    #expect(messages.contains { $0.reasoning == "child thinking" })
+    #expect(messages.contains { $0.text.contains("fixture") && $0.text.contains("child file") })
+    #expect(await runtime.supervisor.stop(info.pid) == [info.pid])
+    let result = try await task.value
+    #expect(result.response.text == "parent survived")
+    #expect(await runtime.supervisor.info(info.pid)?.state == .cancelled)
+    #expect(await runtime.supervisor.info(nested.pid)?.state == .completed)
+    #expect(!result.response.text.contains("child answer"))
+    #expect(await runtime.supervisor.processes().filter { $0.externalSessionID == "child" }.count == 1)
+    let saved = try JSONDecoder().decode([AgentProcessRecord].self, from: JSONEncoder().encode(
+      await runtime.supervisor.records(under: try #require(info.parent))))
+    let restored = AgentSupervisor()
+    let root = await restored.register(runID: UUID(), parent: nil, agentID: "main", depth: 0)
+    let restoredPIDs = await restored.restore(saved, under: root)
+    #expect(await restored.info(try #require(restoredPIDs.first))?.externalSessionID == "child")
+    #expect(await restored.info(try #require(restoredPIDs.first))?.provider == "test-acp")
+    #expect(await restored.info(try #require(restoredPIDs.first))?.model == "large")
+    await provider.shutdown()
+  }
+
+  @Test("Disconnected native work retains its transcript without claiming cancellation", .timeLimit(.minutes(1)))
+  func acpNativeDisconnect() async throws {
+    let runtime = AgentRuntime()
+    let provider = try providerFixture()
+    try await runtime.register(provider)
+    await #expect(throws: (any Error).self) {
+      _ = try await runtime.run(.init(provider: "test-acp", model: "large", messages: [.user("NATIVE_DISCONNECT")]))
+    }
+    let info = try #require(await runtime.supervisor.processes().first { $0.externalSessionID == "lost" })
+    #expect(info.state == .interrupted)
+    #expect(!info.supportsCancellation)
+    #expect(await runtime.supervisor.transcript(info.pid).last?.text == "partial native answer")
     await provider.shutdown()
   }
 

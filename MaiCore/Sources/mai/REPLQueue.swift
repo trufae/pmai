@@ -76,7 +76,7 @@ extension MaiCLI {
       case .active:
         // Idle chats have a starting PID before their first run.
         return snapshot.filter {
-          !$0.state.isTerminal && ($0.depth > 0 || $0.state != .starting)
+          $0.externalSessionID == nil && !$0.state.isTerminal && ($0.depth > 0 || $0.state != .starting)
         }.map(\.pid)
       }
     }
@@ -89,6 +89,9 @@ extension MaiCLI {
       guard let info = processes[pid] else {
         throw REPLMessageError(
           message: "No agent #\(pid.rawValue). /jobs tree lists the running ones.")
+      }
+      guard info.externalSessionID == nil else {
+        throw REPLMessageError(message: "ACP subagent #\(pid.rawValue) does not support direct messages; its parent assigns work.")
       }
       guard info.depth == 0 || !info.state.isTerminal else {
         throw REPLMessageError(

@@ -2869,6 +2869,12 @@ struct MaiCLI {
           identitySession.profile.agentID = request.agentID
           identitySession.profile.provider = request.provider
           identitySession.profile.model = request.model
+          identitySession.profile.options = request.options
+        } else if let info = await runtime.supervisor.info(pid), info.externalSessionID != nil {
+          identitySession.profile.agentID = info.displayName
+          identitySession.profile.provider = info.provider ?? identitySession.profile.provider
+          identitySession.profile.model = info.model ?? "unknown"
+          identitySession.profile.options.reasoningEffort = info.reasoningEffort ?? "unknown"
         }
       } else if let turn = loop.activeTurn, turn.chatID == session.id {
         liveContext = await runtime.supervisor.info(turn.pid)?.contextSize
@@ -3504,6 +3510,10 @@ struct MaiCLI {
           await deliver(text, to: .main)
           return
         }
+        guard info.externalSessionID == nil else {
+          await terminal.note("ACP subagent #\(pid.rawValue) is controlled by its parent. Direct messages are not supported; /jobs log shows its work and /jobs cancel requests cancellation.")
+          return
+        }
         if pid == voicePID, loop.conversationTurns[pid] == nil {
           await startVoiceTurn(text)
           return
@@ -3781,6 +3791,10 @@ struct MaiCLI {
         }
         loop.focus = .agent(pid)
         await refreshConversation()
+        if info.externalSessionID != nil {
+          await terminal.line("Viewing ACP subagent #\(pid.rawValue). Its parent controls messages; /jobs cancel requests cancellation.")
+          return
+        }
         await terminal.line(
           configuration?.ui.broadcast == true
             ? "Focus saved: agent#\(pid.rawValue). Broadcast is on; @\(pid.rawValue) TEXT addresses this agent."
@@ -3796,6 +3810,11 @@ struct MaiCLI {
       guard name == "/copy" || name == "/last" || name == "/continue"
         || (name == "/msg" && messageActions.contains(action))
         || (name == "/chat" && action == "clear") else { return false }
+      if info.externalSessionID != nil, name == "/continue"
+        || (name != "/copy" && name != "/last" && !["list", "ls", "log", "last", "pins", "pinlist"].contains(action)) {
+        await terminal.note("ACP subagent conversations are read-only. Their parent controls new work.")
+        return true
+      }
       var focused = session
       let messages = await runtime.supervisor.transcript(pid)
       focused.history.replaceAll(with: session.redactor?.unredact(messages) ?? messages)
@@ -6061,7 +6080,8 @@ struct MaiCLI {
       ? (profile.provider.rawValue.isEmpty ? "no model selected" : profile.provider.rawValue)
       : "\(profile.provider.rawValue)::\(profile.model)"
     let context = includeContext ? " · \(promptContextStatus(session, contextSize: contextSize))" : ""
-    return "[\(profile.agentID)]\(context) · \(model)"
+    let effort = visibleUITitle(profile.options.reasoningEffort ?? "auto")
+    return "[\(profile.agentID)]\(context) · \(model) [\(effort.isEmpty ? "auto" : effort)]"
   }
 
   /// The final component of the working directory, with a useful root label.

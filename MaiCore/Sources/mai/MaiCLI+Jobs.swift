@@ -87,8 +87,17 @@ extension MaiCLI {
         await terminal.line("Usage: /jobs kill PID [REASON]")
         return
       }
-      guard await runtime.supervisor.info(pid) != nil else {
+      guard let info = await runtime.supervisor.info(pid) else {
         await terminal.line("No agent \(pid).")
+        return
+      }
+      if info.externalSessionID != nil {
+        guard info.supportsCancellation, !info.state.isTerminal else {
+          await terminal.line("ACP subagent \(pid) has no cancellable work advertised by its adapter.")
+          return
+        }
+        let stopped = await runtime.supervisor.stop(pid)
+        await terminal.line(stopped.isEmpty ? "Could not cancel ACP subagent \(pid); /jobs shows its state." : "Cancellation requested for ACP subagent \(pid).")
         return
       }
       let reason = fields.count > 2 ? fields[2] : "Stopped from the REPL"
@@ -110,6 +119,10 @@ extension MaiCLI {
       }
       guard info.depth > 0 else {
         await terminal.line("\(pid) is this chat; Ctrl+C cancels its turn.")
+        return
+      }
+      guard info.externalSessionID == nil else {
+        await terminal.line("ACP does not support pausing native subagents. Use /jobs cancel \(pid.rawValue) to request cancellation.")
         return
       }
       guard !info.state.isTerminal else {
@@ -135,6 +148,10 @@ extension MaiCLI {
       }
       guard let info = await runtime.supervisor.info(pid) else {
         await terminal.line("No agent \(pid).")
+        return
+      }
+      guard info.externalSessionID == nil else {
+        await terminal.line("ACP subagents are resumed by their parent; /jobs log \(pid.rawValue) shows their work.")
         return
       }
       let released = await runtime.supervisor.perform(.resume, on: pid)
@@ -196,6 +213,9 @@ extension MaiCLI {
     /jobs pause does not pause the main chat; Ctrl+C cancels its turn.
     Finished conversations accept new messages. Saved conversations with runtime
     settings can start new turns; older jobs remain available for inspection.
+    Native ACP subagents appear in the tree and support log/focus. Cancel is
+    available when their adapter advertises it; pause/resume and direct messages
+    are not supported. Their parent controls their model, effort, and limits.
 
     @PID TEXT addresses one process once; @2,3 TEXT or @2 @3 TEXT addresses several.
     @* TEXT, @@ TEXT, and bare @ TEXT reach every active process, including the

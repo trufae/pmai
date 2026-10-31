@@ -204,6 +204,30 @@ func agentArchiveAndActions() async throws {
   #expect(await supervisor.info(child) != nil)
 }
 
+@Test("Native provider jobs cannot be steered or consume pmai scheduling slots")
+func externalProcessControls() async throws {
+  let supervisor = AgentSupervisor()
+  let root = await supervisor.register(runID: UUID(), parent: nil, agentID: "main", depth: 0)
+  let native = await supervisor.register(runID: UUID(), parent: root, agentID: "native", depth: 1)
+  await supervisor.configureExternalProcess(native, sessionID: "native", title: "Investigator", task: "",
+    model: "model", reasoningEffort: "high", cancel: {})
+  await supervisor.note(native, state: .running)
+  let info = try #require(await supervisor.info(native))
+  #expect(!AgentProcessAction.pause.isAvailable(for: info))
+  #expect(!AgentProcessAction.resume.isAvailable(for: info))
+  #expect(AgentProcessAction.cancel.isAvailable(for: info))
+  #expect(await supervisor.post(.user("no"), to: native) == nil)
+  #expect(await supervisor.pause(native).isEmpty)
+  #expect(await supervisor.stop(native) == [native])
+  #expect(await supervisor.info(native)?.state == .running)
+  await supervisor.configureConcurrencyLimit(1)
+  let local = await supervisor.register(runID: UUID(), parent: root, agentID: "worker", depth: 1)
+  #expect(await supervisor.admit(local, limit: 1))
+  await supervisor.configureExternalProcess(native, sessionID: "native", title: "Investigator", task: "",
+    model: "model", reasoningEffort: "high", cancel: nil)
+  #expect(await supervisor.stop(native).isEmpty)
+}
+
 @Test("Agent counts separate queued, paused, waiting and idle roots")
 func agentPresentationCounts() {
   var processes = (1...500).map {
