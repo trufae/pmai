@@ -377,6 +377,31 @@ final class RemoteHostTests: XCTestCase {
       MessageContentFilter.render(presentation.messages[3].text).hiddenSections.first)
     XCTAssertEqual(ToolCallParser.parse(plan.content).first?.body, "Next step")
   }
+  func testOpenCodeToolDetailsSurviveCachingAndUseTheLocalToolRows() throws {
+    let conversation = RemoteAgentConversation(cwd: "/work", messages: [
+      .init(role: "tool", text: "read\nFile contents", status: "completed",
+        toolName: "read", toolInput: .object(["path": .string("README.md")])),
+      .init(role: "tool", text: "bash\nCommand failed", status: "error",
+        toolName: "bash", toolInput: .object(["command": .string("make")])),
+      .init(role: "tool", text: "bash", status: "streaming",
+        toolName: "bash", toolInput: .string("{\n\"command\":")),
+    ])
+    let cached = try JSONDecoder().decode(
+      RemoteAgentConversation.self, from: JSONEncoder().encode(conversation))
+    let entries = try cached.presentation.messages.map { message in
+      let section = try XCTUnwrap(MessageContentFilter.render(message.text).hiddenSections.first)
+      return try XCTUnwrap(ToolCallParser.parse(section.content).first)
+    }
+    XCTAssertEqual(entries.map(\.name), ["read", "bash", "bash"])
+    XCTAssertEqual(entries[0].params, #"{"path":"README.md"}"#)
+    XCTAssertEqual(entries[0].body, "completed\nFile contents")
+    XCTAssertTrue(entries[1].hasError)
+    XCTAssertTrue(entries[1].body.contains("Command failed"))
+    XCTAssertEqual(
+      try JSONDecoder().decode(JSONValue.self, from: Data(entries[2].params.utf8)),
+      conversation.messages[2].toolInput)
+  }
+
   private func withStore(
     _ bookmarks: [RemoteAgentBookmark],
     body: (RemoteAgentStore, URL) throws -> Void

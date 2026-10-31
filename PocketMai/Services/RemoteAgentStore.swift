@@ -72,10 +72,19 @@ struct RemoteAgentConversation: Codable, Identifiable {
       var text = message.text
       if message.role == "thought" { text = "<think>\n\(text)\n</think>" }
       if message.role == "tool" || message.role == "plan" {
+        if let name = message.toolName {
+          if text == name {
+            text = ""
+          } else if text.hasPrefix(name + "\n") {
+            text = String(text.dropFirst(name.count + 1))
+          }
+        }
+        let failed = message.status == "error" || message.status == "failed"
         text = AgentTooling.makeRunBlock(
-          toolName: message.role == "plan" ? "Plan" : "Remote",
-          argumentsJSON: "{}",
-          result: [message.status, text].compactMap { $0 }.joined(separator: "\n"))
+          toolName: message.toolName ?? (message.role == "plan" ? "Plan" : "Remote"),
+          argumentsJSON: message.toolInput?.compactJSONString ?? "",
+          result: failed ? "Error: \(text)"
+            : [message.status, text].compactMap { $0 }.joined(separator: "\n"))
       }
       return ChatMessage(
         id: message.id, role: ChatRole(rawValue: message.role) ?? .assistant, text: text,

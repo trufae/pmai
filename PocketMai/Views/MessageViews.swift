@@ -165,6 +165,7 @@ struct MessageBubble: View {
   var conversationCreatedAt: Date? = nil
   var showUserTimestamp: Bool = false
   var showThinking: Bool = false
+  var compactMetadata: Bool = false
   var isWaitingForResponse: Bool = false
 
   var body: some View {
@@ -184,6 +185,7 @@ struct MessageBubble: View {
       conversationCreatedAt: conversationCreatedAt,
       showUserTimestamp: showUserTimestamp,
       showThinking: showThinking,
+      compactMetadata: compactMetadata,
       isWaitingForResponse: isWaitingForResponse
     )
   }
@@ -205,6 +207,7 @@ private struct StreamingMessageBubble: View {
   var conversationCreatedAt: Date? = nil
   var showUserTimestamp: Bool = false
   var showThinking: Bool = false
+  var compactMetadata: Bool = false
   var isWaitingForResponse: Bool = false
 
   var body: some View {
@@ -225,6 +228,7 @@ private struct StreamingMessageBubble: View {
       conversationCreatedAt: conversationCreatedAt,
       showUserTimestamp: showUserTimestamp,
       showThinking: showThinking,
+      compactMetadata: compactMetadata,
       isWaitingForResponse: isWaitingForResponse
     )
     .equatable()
@@ -268,6 +272,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
   var conversationCreatedAt: Date? = nil
   var showUserTimestamp: Bool = false
   var showThinking: Bool = false
+  var compactMetadata: Bool = false
   var isWaitingForResponse: Bool = false
   @State private var showingTextSelection = false
   @State private var showingRawTextSelection = false
@@ -310,6 +315,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
       && lhs.conversationCreatedAt == rhs.conversationCreatedAt
       && lhs.showUserTimestamp == rhs.showUserTimestamp
       && lhs.showThinking == rhs.showThinking
+      && lhs.compactMetadata == rhs.compactMetadata
       && lhs.isWaitingForResponse == rhs.isWaitingForResponse
   }
 
@@ -395,6 +401,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
             renderImages: renderImages,
             expandedMaxHeight: 240,
             isStreaming: isStreaming,
+            compact: compactMetadata,
             onDelete: hiddenSectionDeleteAction(
               for: section, partID: part.id, in: prepared)
           )
@@ -2760,6 +2767,7 @@ private struct FoldableMetaSection: View {
   var renderImages: Bool = true
   var expandedMaxHeight: CGFloat? = nil
   var isStreaming: Bool = false
+  var compact: Bool = false
   var onDelete: (() -> Void)? = nil
   var onTogglePlayback: (() -> Void)? = nil
   var isPlaying: Bool = false
@@ -2782,6 +2790,7 @@ private struct FoldableMetaSection: View {
     renderImages: Bool = true,
     expandedMaxHeight: CGFloat? = nil,
     isStreaming: Bool = false,
+    compact: Bool = false,
     onDelete: (() -> Void)? = nil,
     onTogglePlayback: (() -> Void)? = nil,
     isPlaying: Bool = false
@@ -2791,19 +2800,20 @@ private struct FoldableMetaSection: View {
     self.content = content
     self.monospaced = monospaced
     self.detail = detail
-    self.collapsedStatus = collapsedStatus
-    self.collapsedPreviewLines = max(0, collapsedPreviewLines)
+    self.collapsedStatus = compact ? nil : collapsedStatus
+    self.collapsedPreviewLines = compact ? 0 : max(0, collapsedPreviewLines)
     self.dimmedContent = dimmedContent
-    self.initiallyExpanded = initiallyExpanded
+    self.initiallyExpanded = !compact && initiallyExpanded
     self.italicContent = italicContent
     self.markdownAppearance = markdownAppearance
     self.renderImages = renderImages
     self.expandedMaxHeight = expandedMaxHeight
     self.isStreaming = isStreaming
+    self.compact = compact
     self.onDelete = onDelete
     self.onTogglePlayback = onTogglePlayback
     self.isPlaying = isPlaying
-    self._expanded = State(initialValue: initiallyExpanded)
+    self._expanded = State(initialValue: !compact && initiallyExpanded)
   }
 
   var body: some View {
@@ -2816,8 +2826,8 @@ private struct FoldableMetaSection: View {
             Image(systemName: systemImage)
               .imageScale(.small)
               .foregroundStyle(.secondary)
-            Text(title)
-              .font(.caption.weight(.semibold))
+            Text(compact && isStreaming ? "Thinking…" : title)
+              .font(compact ? .caption : .caption.weight(.semibold))
               .foregroundStyle(.secondary)
             Spacer(minLength: 8)
             if let detail {
@@ -2831,8 +2841,9 @@ private struct FoldableMetaSection: View {
               .imageScale(.small)
               .foregroundStyle(.tertiary)
           }
-          .padding(.horizontal, 10)
+          .padding(.horizontal, compact ? 0 : 10)
           .padding(.vertical, 7)
+          .frame(minHeight: compact ? 44 : nil)
           .frame(maxWidth: .infinity, alignment: .leading)
           .contentShape(Rectangle())
         }
@@ -2903,11 +2914,11 @@ private struct FoldableMetaSection: View {
         }
       }
     }
-    .background(.thinMaterial.opacity(0.55))
+    .background(.thinMaterial.opacity(compact && !expanded ? 0 : 0.55))
     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     .overlay(
       RoundedRectangle(cornerRadius: 10, style: .continuous)
-        .stroke(.secondary.opacity(0.18), lineWidth: 0.5)
+        .stroke(.secondary.opacity(compact ? 0 : 0.18), lineWidth: 0.5)
     )
     .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     .contextMenu {
@@ -3155,7 +3166,7 @@ private struct ToolCallRow: View {
           }
           Text(entry.name)
             .font(.subheadline)
-            .foregroundStyle(entry.hasError ? Color.red : Color.primary)
+            .foregroundStyle(entry.hasError ? Color.red : Color.secondary)
             .lineLimit(1)
             .layoutPriority(1)
           if !entry.params.isEmpty {

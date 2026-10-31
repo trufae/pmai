@@ -9,24 +9,29 @@ public struct ACPConversationMessage: Codable, Identifiable, Equatable, Sendable
   public var text: String
   public var toolID: String?
   public var status: String?
+  public var toolName: String?
+  public var toolInput: JSONValue?
   public var createdAt: Date?
   public var remoteID: String?
 
   public init(
     id: UUID = UUID(), role: String, text: String, toolID: String? = nil,
-    status: String? = nil, createdAt: Date? = Date(), remoteID: String? = nil
+    status: String? = nil, toolName: String? = nil, toolInput: JSONValue? = nil,
+    createdAt: Date? = Date(), remoteID: String? = nil
   ) {
     self.id = id
     self.role = role
     self.text = text
     self.toolID = toolID
     self.status = status
+    self.toolName = toolName
+    self.toolInput = toolInput
     self.createdAt = createdAt
     self.remoteID = remoteID
   }
 
   private enum CodingKeys: String, CodingKey {
-    case id, role, text, toolID, status, createdAt, remoteID
+    case id, role, text, toolID, status, toolName, toolInput, createdAt, remoteID
   }
 
   public init(from decoder: Decoder) throws {
@@ -37,6 +42,8 @@ public struct ACPConversationMessage: Codable, Identifiable, Equatable, Sendable
     text = try values.decode(String.self, forKey: .text)
     toolID = try values.decodeIfPresent(String.self, forKey: .toolID)
     status = try values.decodeIfPresent(String.self, forKey: .status)
+    toolName = try values.decodeIfPresent(String.self, forKey: .toolName)
+    toolInput = try values.decodeIfPresent(JSONValue.self, forKey: .toolInput)
     createdAt = try values.decodeIfPresent(Date.self, forKey: .createdAt)
     remoteID = try values.decodeIfPresent(String.self, forKey: .remoteID)
   }
@@ -58,6 +65,7 @@ public enum ACPConversationTranscript {
         return ACPConversationMessage(
           id: previous[remoteID] ?? UUID(), role: role, text: text,
           toolID: fields["toolID"]?.stringValue, status: fields["status"]?.stringValue,
+          toolName: fields["toolName"]?.stringValue, toolInput: fields["toolInput"],
           createdAt: fields["created"]?.numberValue.map { Date(timeIntervalSince1970: $0 / 1000) },
           remoteID: remoteID)
       }
