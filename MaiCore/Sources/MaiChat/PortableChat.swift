@@ -265,6 +265,24 @@ public final class PortableChat {
   public func send(_ text: String, attachments: [ContentPart] = []) async {
     let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard (!text.isEmpty || !attachments.isEmpty), !isGenerating, !isLoadingModels else { return }
+    await send(AgentMessage(role: .user, content: (text.isEmpty ? [] : [.text(text)]) + attachments), titleText: text)
+  }
+
+  public func retryMessage(_ id: String, restarting: Bool = false) throws {
+    guard !isGenerating, !isLoadingModels else { throw PortableChatError.busy }
+    guard let position = chat.messages.firstIndex(where: { $0.id == id }),
+      chat.messages[position].role == .user else { return }
+    let message = chat.messages[position]
+    let prefix = restarting ? [] : Array(chat.messages.prefix(position))
+    let text = message.content.compactMap { part -> String? in
+      if case .text(let text) = part { return text }
+      return nil
+    }.joined(separator: "\n")
+    replyTask = Task { await send(message, titleText: text, replacingMessages: prefix) }
+  }
+
+  private func send(_ message: AgentMessage, titleText: String, replacingMessages: [AgentMessage]? = nil) async {
+    guard !isGenerating, !isLoadingModels else { return }
     errorMessage = nil
     let id = UUID()
     do {
@@ -276,13 +294,16 @@ public final class PortableChat {
       configuration.provider = connection
       configuration.selectedChatID = chat.id
       chat.primaryAgent = currentAgent()
+      if let replacingMessages {
+        chat.messages = replacingMessages
+        if replacingMessages.isEmpty { chat.title = AgentChat.placeholderTitle }
+      }
       chat.messages.removeAll { $0.role == .system }
       if let prompt = selectedPrompt, !prompt.text.isEmpty {
         chat.messages.insert(.system(prompt.text), at: 0)
       }
-      chat.messages.append(AgentMessage(role: .user,
-        content: (text.isEmpty ? [] : [.text(text)]) + attachments))
-      chat.refreshTitle(from: text)
+      chat.messages.append(message)
+      chat.refreshTitle(from: titleText)
       draft = ""
       try persistChat()
       try saveSettings()

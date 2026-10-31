@@ -361,7 +361,6 @@ private enum class Destination(val label: String, val icon: ImageVector) {
 }
 
 @Composable private fun MessageCard(message: Message, onLongPress: ((Message) -> Unit)? = null) {
-    val context = LocalContext.current
     val user = message.role == "user"
     var expanded by remember(message.id) { mutableStateOf(message.role != "thought") }
     Column(Modifier.fillMaxWidth().then(if (onLongPress != null) Modifier.combinedClickable(onClick = {}, onLongClick = { onLongPress(message) }) else Modifier), horizontalAlignment = if (user) Alignment.End else Alignment.Start) {
@@ -375,8 +374,6 @@ private enum class Destination(val label: String, val icon: ImageVector) {
                 Text(if (message.role == "thought") "Reasoning" else "PocketMai",
                     style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 if (message.role == "thought") TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide" else "Show") }
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = { copyText(context, message.text) }, Modifier.size(48.dp)) { Icon(Icons.Outlined.ContentCopy, "Copy message", Modifier.size(18.dp)) }
             }
             if (expanded) {
                 MessageAttachments(message.attachments)

@@ -61,7 +61,8 @@ native build automatically. Each variant has separate staged native libraries.
 ## App flows
 
 * **Chats:** searchable saved local chats, date groups, conversation folders,
-  move/rename/delete folder controls, long-press copy/edit/delete/share actions, streaming replies,
+  move/rename/delete folder controls, long-press copy/edit/delete/share actions,
+  retry or restart from a user message, streaming replies,
   cancellation with saved partial replies, Markdown, model selection and
   multiple saved providers, named system prompts, photo attachments and document import.
   PDF text is extracted on Android; scanned PDFs can be sent as pages to a local

@@ -148,6 +148,8 @@ import Observation
       case "remoteStop": remote.stop()
       case "remoteEdit": remote.changeMessage(value("id"), text: value("text"))
       case "remoteDelete": remote.changeMessage(value("id"), text: nil)
+      case "remoteRetry": remote.retryMessage(value("id"))
+      case "remoteRestart": remote.retryMessage(value("id"), restarting: true)
       case "disconnect": remote.disconnect()
       case "browse": remote.browse(value("path").isEmpty ? "." : value("path"))
       case "downloadXdc": remote.download(value("path"))
@@ -183,6 +185,8 @@ import Observation
         chat.sendDraft(attachments: parts)
       case "editMessage": try chat.editMessage(value("id"), text: value("text"))
       case "deleteMessage": try chat.deleteMessage(value("id"))
+      case "retryMessage": try chat.retryMessage(value("id"))
+      case "restartMessage": try chat.retryMessage(value("id"), restarting: true)
       case "stop": chat.stop(); tools.cancelApprovals()
       case "dismissError": chat.errorMessage = nil; remote.error = ""; tools.error = ""
       default: throw CocoaError(.coderInvalidValue)

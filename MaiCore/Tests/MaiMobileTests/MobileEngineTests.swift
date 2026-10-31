@@ -41,6 +41,46 @@ private func command(_ fields: [String: String]) throws -> String {
   String(decoding: try JSONEncoder().encode(fields), as: UTF8.self)
 }
 
+// Retrying must discard later turns, restarting must also discard earlier
+// turns, and both must resend attachments and save the regenerated history.
+@Test(.timeLimit(.minutes(1)), arguments: [false, true]) @MainActor
+func retryAndRestartPreserveSelectedMessage(restarting: Bool) async throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let provider = CaptureProvider()
+  let (updates, continuation) = AsyncStream<String>.makeStream()
+  defer { continuation.finish() }
+  let engine = try MobileEngine(directory: directory, update: { continuation.yield($0) }, makeProvider: { _ in provider })
+  try engine.chat.chooseModel("fixture")
+  await engine.chat.send("Earlier question")
+  let earlier = engine.chat.messages
+  let attachment = ContentPart.file(.init(name: "notes.txt", mimeType: "text/plain", text: "Keep these notes"))
+  await engine.chat.send("Read this", attachments: [attachment])
+  let selected = try #require(engine.chat.messages.last { $0.role == .user })
+  await engine.chat.send("Later question")
+  let oldAnswer = try #require(engine.chat.messages.last)
+  let chatID = engine.chat.chat.id
+  engine.observe()
+  engine.execute(try command(["action": restarting ? "restartMessage" : "retryMessage", "id": selected.id]))
+  for await update in updates {
+    let snapshot = try state(update)
+    let messages = snapshot["messages"] as? [[String: Any]] ?? []
+    if snapshot["isGenerating"] as? Bool == false,
+      messages.last?["role"] as? String == "assistant",
+      messages.last?["id"] as? String != oldAnswer.id { break }
+  }
+  #expect(engine.chat.errorMessage == nil)
+  let expected = (restarting ? [] : earlier) + [selected]
+  let request = try #require(await provider.requests.last)
+  #expect(request.messages.filter { $0.role != .system } == expected)
+  #expect(engine.chat.messages.dropLast() == expected[...])
+  #expect(engine.chat.messages.last?.text == "**Saved answer**")
+  let reloaded = try MobileEngine(directory: directory, update: { _ in })
+  #expect(reloaded.chat.chat.id == chatID)
+  #expect(reloaded.chat.messages == engine.chat.messages)
+  #expect(reloaded.chat.chat.displayTitle == (restarting ? "Read this" : "Earlier question"))
+}
+
 // Prevent tools running without a user decision and transcripts losing tool
 // results when the native engine saves a completed agent turn.
 @Test(.timeLimit(.minutes(1))) @MainActor func toolApprovalAndTranscriptPersist() async throws {

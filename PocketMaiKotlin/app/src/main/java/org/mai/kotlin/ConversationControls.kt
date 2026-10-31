@@ -86,11 +86,15 @@ import kotlinx.coroutines.withContext
     val context = LocalContext.current
     var editing by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
+    var resubmitting by remember { mutableStateOf(false) }
+    var restarting by remember { mutableStateOf(false) }
     var editedText by remember { mutableStateOf(message.text) }
     val remoteReady = state.remote.canRewind && message.remoteID.isNotEmpty()
     val canEdit = !state.busy && message.role in listOf("user", "assistant") && (!state.isRemote || (remoteReady && message.role == "user"))
     val canDelete = !state.busy && (!state.isRemote || remoteReady)
-    if (!editing && !deleting) ModalBottomSheet(onDismissRequest = onDismiss) {
+    val canRetry = !state.busy && message.role == "user" &&
+        (if (state.isRemote) state.remote.connected && remoteReady else state.model.isNotEmpty())
+    if (!editing && !deleting && !resubmitting) ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
             Text("Message", Modifier.padding(horizontal = 24.dp, vertical = 12.dp), style = MaterialTheme.typography.titleLarge)
             TextButton(onClick = {
@@ -99,6 +103,14 @@ import kotlinx.coroutines.withContext
             TextButton(onClick = {
                 context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, message.text) }, "Share message")); onDismiss()
             }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Share, null); Spacer(Modifier.width(12.dp)); Text("Share") }
+            if (message.role == "user") {
+                TextButton(onClick = { restarting = false; resubmitting = true }, enabled = canRetry, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.Refresh, null); Spacer(Modifier.width(12.dp)); Text("Retry from here")
+                }
+                TextButton(onClick = { restarting = true; resubmitting = true }, enabled = canRetry, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.RestartAlt, null); Spacer(Modifier.width(12.dp)); Text("Restart from here")
+                }
+            }
             TextButton(onClick = { editing = true }, enabled = canEdit, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Outlined.Edit, null); Spacer(Modifier.width(12.dp)); Text(if (state.isRemote) "Edit and resend" else "Edit")
             }
@@ -108,6 +120,14 @@ import kotlinx.coroutines.withContext
             if (state.isRemote && !remoteReady) Text("This host has not exposed editable history for this message.", Modifier.padding(24.dp), style = MaterialTheme.typography.bodySmall)
         }
     }
+    if (resubmitting) AlertDialog(onDismissRequest = onDismiss, title = { Text(if (restarting) "Restart from here?" else "Retry from here?") },
+        text = { Text(if (restarting) "All current messages will be removed before starting again from this message." else "Messages after this point will be removed before the response is regenerated.") },
+        confirmButton = { TextButton(onClick = {
+            val action = if (state.isRemote) { if (restarting) "remoteRestart" else "remoteRetry" }
+                else { if (restarting) "restartMessage" else "retryMessage" }
+            model.command(action, "id" to message.id); onDismiss()
+        }, enabled = canRetry) { Text(if (restarting) "Restart from here" else "Retry from here") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
     if (editing) AlertDialog(onDismissRequest = onDismiss, title = { Text(if (state.isRemote) "Edit and resend" else "Edit message") },
         text = { OutlinedTextField(editedText, { editedText = it }, minLines = 4, maxLines = 12, modifier = Modifier.fillMaxWidth()) },
         confirmButton = { TextButton(onClick = { model.command(if (state.isRemote) "remoteEdit" else "editMessage", "id" to message.id, "text" to editedText); onDismiss() }, enabled = editedText.isNotBlank() || message.attachments.isNotEmpty()) { Text(if (state.isRemote) "Resend" else "Save") } },

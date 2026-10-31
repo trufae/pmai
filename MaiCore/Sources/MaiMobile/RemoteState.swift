@@ -182,14 +182,20 @@ private typealias RemoteMessage = ACPConversationMessage
 
   func stop() { operation?.cancel(); answer(nil) }
 
-  func changeMessage(_ id: String, text: String?) {
+  func retryMessage(_ id: String, restarting: Bool = false) {
+    guard let message = messages.first(where: { $0.id.uuidString == id }),
+      message.role == "user" else { return }
+    changeMessage(id, text: message.text, restarting: restarting)
+  }
+
+  func changeMessage(_ id: String, text: String?, restarting: Bool = false) {
     guard !busy, connected, canRewind, let client,
       let position = messages.firstIndex(where: { $0.id.uuidString == id }),
       let remoteID = messages[position].remoteID,
       text == nil || messages[position].role == "user" else { return }
-    let prefix = Array(messages.prefix(position))
+    let prefix = restarting ? [] : Array(messages.prefix(position))
     run {
-      try await client.rewind(to: remoteID)
+      try await client.rewind(to: restarting ? nil : remoteID)
       try Task.checkCancellation()
       self.messages = prefix
       if let text {
