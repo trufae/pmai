@@ -13,7 +13,6 @@ struct NowSpeakingBar: View {
         Button("Dismiss") { ttsPlayer.dismissError() }
       }
       .padding(12)
-      .background(.ultraThinMaterial)
     } else if ttsPlayer.isSpeaking {
       bar
         .transition(.move(edge: .top).combined(with: .opacity))
