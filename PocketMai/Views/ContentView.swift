@@ -220,6 +220,7 @@ struct ContentView: View {
         .overlay {
           if !layout.pinsSidebar && panelOffset > 0 {
             Color.black.opacity(Double(revealProgress) * 0.25)
+              .ignoresSafeArea(.container)
               .contentShape(Rectangle())
               .onTapGesture { closeHistoryPanel() }
           }
@@ -1037,6 +1038,7 @@ struct ToolCallApprovalView: View {
 private struct SidebarBlurBackground: View, Equatable {
   var body: some View {
     Rectangle().fill(.regularMaterial)
+      .ignoresSafeArea(.container)
   }
 
   nonisolated static func == (lhs: Self, rhs: Self) -> Bool { true }
