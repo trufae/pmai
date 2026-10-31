@@ -8,17 +8,21 @@ struct HostPanelHeader: View {
   let action: () -> Void
 
   var body: some View {
-    HStack {
+    ZStack(alignment: .leading) {
+      Text(title)
+        .font(.headline)
+        .lineLimit(1)
+        .padding(.horizontal, 60)
+        .frame(maxWidth: .infinity, minHeight: 48)
+        .accessibilityAddTraits(.isHeader)
       if let backTitle {
-        Button(action: action) { Label(backTitle, systemImage: "chevron.left") }
-        Spacer()
-        Text(title).font(.headline).lineLimit(1)
-      } else {
-        Text(title).font(.title2.bold())
-        Spacer()
+        FloatingActionIcon(
+          systemImage: "chevron.left", accessibilityLabel: "Back to \(backTitle)",
+          compact: true, action: action)
       }
     }
-    .padding(.horizontal, 24).padding(.top, 64).padding(.bottom, 12)
+    .padding(.horizontal, 16)
+    .padding(.vertical, 6)
   }
 }
 
