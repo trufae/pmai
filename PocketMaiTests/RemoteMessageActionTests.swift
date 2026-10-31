@@ -189,6 +189,30 @@ final class RemoteMessageActionTests: XCTestCase {
     }
   }
 
+  func testConfigurationIsReusedUntilRefreshOrReconnect() async throws {
+    try await withChat { chat, _, fixture, _ in
+      await chat.refreshConfiguration()
+      XCTAssertEqual(fixture.catalogRequests, 1)
+      fixture.changeModelExternally("other")
+      await chat.refreshConfiguration()
+      XCTAssertEqual(fixture.catalogRequests, 1)
+      XCTAssertEqual(
+        chat.configurationOptions.first { $0.id == "model" }?.currentValue, .string("original"))
+      await chat.refreshConfiguration(force: true)
+      XCTAssertEqual(fixture.catalogRequests, 2)
+      XCTAssertEqual(
+        chat.configurationOptions.first { $0.id == "model" }?.currentValue, .string("other"))
+      chat.disconnect()
+      fixture.changeModelExternally("original")
+      chat.connect()
+      try await waitForIdle(chat)
+      await chat.refreshConfiguration()
+      XCTAssertEqual(fixture.catalogRequests, 3)
+      XCTAssertEqual(
+        chat.configurationOptions.first { $0.id == "model" }?.currentValue, .string("original"))
+    }
+  }
+
   func testFailedModelResponseKeepsSettingsAndRetryAvailable() async throws {
     try await withChat { chat, store, fixture, _ in
       fixture.rejectNextPrompt()
@@ -350,6 +374,9 @@ private final class RemoteActionEndpoint: @unchecked Sendable {
   private var failRewind = false
   private var failNextPrompt = false
   private var model = "original"
+  private var recordedCatalogRequests = 0
+  var catalogRequests: Int { lock.withLock { recordedCatalogRequests } }
+  func changeModelExternally(_ value: String) { lock.withLock { model = value } }
   var boundaries: [String] { lock.withLock { recordedBoundaries } }
   var prompts: [String] { lock.withLock { recordedPrompts } }
   var mutations: [String] { lock.withLock { recordedMutations } }
@@ -385,6 +412,7 @@ private final class RemoteActionEndpoint: @unchecked Sendable {
           ])
         ])
       case ("GET", "/api/model"):
+        recordedCatalogRequests += 1
         result = .object([
           "data": .array(["original", "other"].map {
             .object(["id": .string($0), "name": .string($0), "providerID": .string("test")])

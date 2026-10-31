@@ -47,24 +47,32 @@ struct SidebarGroupHeader: View {
   }
 }
 
-struct ConversationSidebarPanel<Rows: View, Actions: View>: View {
+struct SidebarPanel<Rows: View, Actions: View>: View {
   let title: String
-  let onShowFolders: () -> Void
+  var backTitle: String? = nil
+  var onBack: () -> Void = {}
   @ViewBuilder let rows: () -> Rows
   @ViewBuilder let actions: (Bool) -> Actions
 
   var body: some View {
     GeometryReader { proxy in
-      ZStack {
-        rows()
+      ZStack(alignment: .bottom) {
+        List { rows().listRowBackground(Color.clear) }
+          .environment(\.defaultMinListRowHeight, 0)
+          .listStyle(.plain)
+          .scrollContentBackground(.hidden)
+          .contentMargins(.horizontal, 16, for: .scrollContent)
+          .scrollIndicators(.hidden)
+          .safeAreaInset(edge: .top, spacing: 0) {
+            HostPanelHeader(title: title, backTitle: backTitle, action: onBack)
+          }
+          .safeAreaInset(edge: .bottom, spacing: 0) {
+            Color.clear.frame(height: 100)
+          }
         SidebarEdgeFades()
-      }
-      .safeAreaInset(edge: .top, spacing: 0) {
-        HostPanelHeader(title: title, backTitle: "Folders", action: onShowFolders)
-      }
-      .safeAreaInset(edge: .bottom, spacing: 0) {
         actions(proxy.size.width - 36 < 300)
-          .frame(minHeight: 56).padding(.horizontal, 18).padding(.bottom, 22)
+          .frame(maxWidth: .infinity, minHeight: 56)
+          .padding(.horizontal, 18).padding(.bottom, 22)
       }
     }
   }

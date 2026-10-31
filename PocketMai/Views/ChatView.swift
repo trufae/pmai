@@ -126,7 +126,6 @@ struct ChatView: View {
   @StateObject private var liveVoiceSession = LiveVoiceSession()
   private let messageListBottomID = "MessageListBottom"
   let store: AppStore
-  let renderInvalidationKey: RenderInvalidationKey
   let onShowHistory: () -> Void
   let onNewChat: () -> Void
   var onRemoteChatReady: (RemoteAgentChat) -> Void = { _ in }
@@ -2765,12 +2764,14 @@ private enum ConversationRecencyLabel {
   }
 }
 
-// Suppresses unrelated parent-driven re-invalidation while allowing chat render settings
-// to refresh cached message views immediately.
-extension ChatView: Equatable {
-  nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-    lhs.renderInvalidationKey == rhs.renderInvalidationKey
-  }
+// Compare before constructing ChatView, including its remote session and HTTP configuration.
+struct ChatViewContent: View, Equatable {
+  let key: ChatView.RenderInvalidationKey
+  @ViewBuilder let content: () -> ChatView
+
+  var body: some View { content() }
+
+  nonisolated static func == (lhs: Self, rhs: Self) -> Bool { lhs.key == rhs.key }
 }
 
 struct ReasoningLevelControl: View {

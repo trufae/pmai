@@ -502,6 +502,11 @@ final class RemoteHostTests: XCTestCase {
       hosts.activeChat = chat
       chat.connected = true
       XCTAssertTrue(hosts.isConnected(original.id))
+      hosts.selectedConversationID = conversation.id
+      hosts.selectHost(original.id, isOffline: false)
+      XCTAssertFalse(hosts.loading)
+      XCTAssertTrue(hosts.activeChat === chat)
+      XCTAssertEqual(hosts.selectedConversationID, conversation.id)
       XCTAssertEqual(hosts.connectionState(original.id, isOffline: false), .connected)
       XCTAssertEqual(hosts.connectionState(original.id, isOffline: true), .disconnected)
       hosts.disconnect(original.id)
@@ -546,6 +551,9 @@ final class RemoteHostTests: XCTestCase {
       XCTAssertNotNil(hosts.error)
       XCTAssertEqual(hosts.connectionState(original.id, isOffline: false), .failed)
       XCTAssertEqual(hosts.connectionState(original.id, isOffline: true), .disconnected)
+      hosts.selectHost(original.id, isOffline: false)
+      XCTAssertFalse(hosts.loading)
+      XCTAssertNotNil(hosts.error)
       hosts.selectHost(nil, isOffline: false)
       XCTAssertEqual(hosts.connectionState(original.id, isOffline: false), .failed)
       hosts.reconnect(original.id, isOffline: false)

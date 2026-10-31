@@ -457,6 +457,7 @@ final class RemoteAgentChat {
   private(set) var configurationOptions: [RemoteSessionOption] = []
   private(set) var settingsLoading = false
   private(set) var settingsError: String?
+  private var configurationLoaded = false
   var permissions: [RemoteAgentPermission] = []
   private var sessionID: String?
   private var client: (any RemoteSessionClient)?
@@ -581,7 +582,8 @@ final class RemoteAgentChat {
     }
   }
 
-  func refreshConfiguration() async {
+  func refreshConfiguration(force: Bool = false) async {
+    guard force || !configurationLoaded else { return }
     guard connected, !settingsLoading, !isOffline(), let client else { return }
     settingsLoading = true
     settingsError = nil
@@ -591,6 +593,7 @@ final class RemoteAgentChat {
       let options = try await client.configurationOptions()
       guard generation == attempt, connected, !Task.isCancelled else { return }
       configurationOptions = options
+      configurationLoaded = true
     } catch {
       if generation == attempt, !(error is CancellationError) {
         settingsError = error.localizedDescription
@@ -697,6 +700,7 @@ final class RemoteAgentChat {
     error = nil
     status = "Connecting…"
     historyRewindSupported = false
+    configurationLoaded = false
     store.setConnectionFailed(false, for: bookmark.id)
     generation += 1
     let attempt = generation

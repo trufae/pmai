@@ -4,20 +4,25 @@ import SwiftUI
 
 struct HostPanelHeader: View {
   let title: String
-  let backTitle: String
+  let backTitle: String?
   let action: () -> Void
 
   var body: some View {
     HStack {
-      Button(action: action) { Label(backTitle, systemImage: "chevron.left") }
-      Spacer()
-      Text(title).font(.headline).lineLimit(1)
+      if let backTitle {
+        Button(action: action) { Label(backTitle, systemImage: "chevron.left") }
+        Spacer()
+        Text(title).font(.headline).lineLimit(1)
+      } else {
+        Text(title).font(.title2.bold())
+        Spacer()
+      }
     }
     .padding(.horizontal, 24).padding(.top, 64).padding(.bottom, 12)
   }
 }
 
-struct HostsView: View {
+struct HostsView: View, Equatable {
   @EnvironmentObject private var appStore: AppStore
   let hosts: HostNavigationStore
   let onSelectHost: (UUID?) -> Void
@@ -27,8 +32,12 @@ struct HostsView: View {
   @State private var editing: RemoteAgentBookmark?
   @State private var renaming: RemoteAgentBookmark?
 
+  nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.hosts === rhs.hosts
+  }
+
   var body: some View {
-    List {
+    SidebarPanel(title: "Hosts") {
       let pinned = hosts.remotes.connections.filter { hosts.isHostPinned($0.id) }
       let online = hosts.remotes.connections.filter {
         !hosts.isHostPinned($0.id) && connectionState($0.id) == .connected
@@ -43,18 +52,7 @@ struct HostsView: View {
         ForEach(online) { host in remoteRow(host) }
       }
       SidebarGroupedRows(items: offline, groupTitle: { _ in "Offline" }, row: remoteRow)
-    }
-    .environment(\.defaultMinListRowHeight, 0)
-    .listStyle(.plain).scrollContentBackground(.hidden)
-    .contentMargins(.horizontal, 16, for: .scrollContent)
-    .safeAreaInset(edge: .top) {
-      HStack {
-        Text("Hosts").font(.title2.bold())
-        Spacer()
-      }
-      .padding(.horizontal, 24).padding(.top, 64).padding(.bottom, 12)
-    }
-    .safeAreaInset(edge: .bottom) {
+    } actions: { _ in
       HStack(spacing: 12) {
         FloatingActionPill(
           title: "Manage…", systemImage: "network", prominent: false, compact: true
@@ -73,7 +71,7 @@ struct HostsView: View {
           scanning = true
           adding = true
         }
-      }.padding(.bottom, 24)
+      }
     }
     .sheet(isPresented: $managing) {
       NavigationStack {
@@ -148,7 +146,7 @@ struct HostsView: View {
   }
 }
 
-struct RemoteFoldersView: View {
+struct RemoteFoldersView: View, Equatable {
   let hosts: HostNavigationStore
   let isOffline: Bool
   let onShowHosts: () -> Void
@@ -161,17 +159,23 @@ struct RemoteFoldersView: View {
   @State private var showingSortOptions = false
   @FocusState private var filterFocused: Bool
 
+  nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.hosts === rhs.hosts && lhs.isOffline == rhs.isOffline && lhs.isVisible == rhs.isVisible
+  }
+
   var body: some View {
-    List {
+    let counts = (hosts.selectedHost?.conversations ?? []).reduce(into: [String: Int]()) {
+      $0[$1.cwd, default: 0] += 1
+    }
+    SidebarPanel(
+      title: hosts.selectedHost?.name ?? "Folders", backTitle: "Hosts", onBack: onShowHosts
+    ) {
       SidebarGroupedRows(
         items: hosts.folders(matching: filter, sortedBy: sortOrder),
         groupTitle: { hosts.isFolderPinned($0.cwd) ? "Pinned" : "Folders" }
       ) {
         folder in
-        let count =
-          hosts.selectedHost.map { host in
-            hosts.remotes.conversations(for: host).filter { $0.cwd == folder.cwd }.count
-          } ?? 0
+        let count = counts[folder.cwd, default: 0]
         let selected = hosts.selectedFolderID == folder.cwd
         let pinned = hosts.isFolderPinned(folder.cwd)
         SidebarFolderRow(
@@ -212,16 +216,8 @@ struct RemoteFoldersView: View {
         )
         .font(.footnote).foregroundStyle(.secondary)
       }
-    }
-    .listStyle(.plain).scrollContentBackground(.hidden)
-    .contentMargins(.horizontal, 16, for: .scrollContent)
-    .onChange(of: isVisible) { _, visible in if !visible { filterFocused = false } }
-    .safeAreaInset(edge: .top) {
-      HostPanelHeader(
-        title: hosts.selectedHost?.name ?? "Folders", backTitle: "Hosts", action: onShowHosts)
-    }
-    .safeAreaInset(edge: .bottom) {
-      HStack(spacing: 10) {
+    } actions: { compact in
+      HStack(spacing: compact ? 6 : 10) {
         FloatingSearchField(text: $filter, isFocused: $filterFocused, placeholder: "Filter folders")
         {
           filter = ""
@@ -246,8 +242,9 @@ struct RemoteFoldersView: View {
         ) {
           hosts.refresh(isOffline: isOffline)
         }.disabled(hosts.loading || isOffline)
-      }.padding(.horizontal, 18).padding(.bottom, 22)
+      }
     }
+    .onChange(of: isVisible) { _, visible in if !visible { filterFocused = false } }
   }
 
   private func folderColor(_ folder: ACPWorkspaceFolder) -> Color? {
@@ -258,7 +255,7 @@ struct RemoteFoldersView: View {
   }
 }
 
-struct RemoteConversationsView: View {
+struct RemoteConversationsView: View, Equatable {
   @EnvironmentObject private var appStore: AppStore
   @StateObject private var exportCoordinator = ConversationExportCoordinator()
   let hosts: HostNavigationStore
@@ -270,8 +267,9 @@ struct RemoteConversationsView: View {
   @FocusState private var searchFocused: Bool
 
   private var conversations: [RemoteAgentConversation] {
-    hosts.conversations.filter {
-      SidebarSearch.matches(search, in: [$0.title] + $0.messages.map(\.text))
+    let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+    return hosts.conversations.filter {
+      query.isEmpty || SidebarSearch.matches(query, in: [$0.title] + $0.messages.map(\.text))
     }
   }
 
@@ -286,10 +284,14 @@ struct RemoteConversationsView: View {
     return summary
   }
 
+  nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+    lhs.hosts === rhs.hosts && lhs.isVisible == rhs.isVisible
+  }
+
   var body: some View {
-    ConversationSidebarPanel(
+    SidebarPanel(
       title: hosts.folders.first { $0.cwd == hosts.selectedFolderID }?.name ?? "Conversations",
-      onShowFolders: onShowFolders
+      backTitle: "Folders", onBack: onShowFolders
     ) {
       conversationList
     } actions: { compact in
@@ -303,8 +305,9 @@ struct RemoteConversationsView: View {
   }
 
   private var conversationList: some View {
-    List {
-      SidebarGroupedRows(items: conversations, groupTitle: groupTitle) { chat in
+    let chats = conversations
+    return Group {
+      SidebarGroupedRows(items: chats, groupTitle: groupTitle) { chat in
         let selected = hosts.selectedConversationID == chat.id
         let summary = summary(for: chat)
         ConversationRow(
@@ -341,7 +344,7 @@ struct RemoteConversationsView: View {
             },
             onTogglePin: { hosts.toggleConversationPin(chat.id) }))
       }
-      if conversations.isEmpty {
+      if chats.isEmpty {
         Text(
           hosts.loading
             ? "Loading conversations…"
@@ -352,8 +355,5 @@ struct RemoteConversationsView: View {
       }
       if let error = hosts.error { Text(error).foregroundStyle(.red).font(.callout) }
     }
-    .listStyle(.plain).scrollContentBackground(.hidden)
-    .contentMargins(.horizontal, 16, for: .scrollContent)
-    .scrollIndicators(.hidden)
   }
 }

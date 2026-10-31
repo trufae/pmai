@@ -23,6 +23,7 @@ enum HostConnectionState: String {
 final class HostNavigationStore {
   let remotes: RemoteAgentStore
   private(set) var selectedHostID: UUID?
+  private var selectedHostRevision: UUID?
   var selectedFolderID: String?
   var selectedConversationID: UUID?
   private(set) var loading = false
@@ -120,15 +121,18 @@ final class HostNavigationStore {
   }
   var selectedConversation: RemoteAgentConversation? {
     guard let host = selectedHost else { return nil }
-    return remotes.conversations(for: host).first { $0.id == selectedConversationID }
+    return host.conversations?.first { $0.id == selectedConversationID }
   }
 
   func selectHost(_ id: UUID?, isOffline: Bool) {
+    let host = remotes.host(id)
+    guard selectedHostID != id || selectedHostRevision != host?.revision else { return }
+    suspendConnections()
+    activeChat = nil
+    selectedHostRevision = host?.revision
     if selectedHostID != id {
-      suspendConnections()
-      activeChat = nil
       selectedHostID = id
-      selectedFolderID = remotes.host(id)?.cwd
+      selectedFolderID = host?.cwd
       selectedConversationID = nil
       error = nil
     }
@@ -168,7 +172,6 @@ final class HostNavigationStore {
 
   func reconnect(_ id: UUID, isOffline: Bool) {
     guard !isOffline else { return }
-    suspendConnections()
     remotes.reconnect(id)
     selectHost(id, isOffline: isOffline)
   }

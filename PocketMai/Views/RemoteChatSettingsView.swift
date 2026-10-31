@@ -82,7 +82,7 @@ struct RemoteChatSettingsView: View {
       .navigationBarTitleDisplayMode(.inline)
       .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
       .task(id: chat.connected) { await chat.refreshConfiguration() }
-      .refreshable { await chat.refreshConfiguration() }
+      .refreshable { await chat.refreshConfiguration(force: true) }
     }
   }
 }
