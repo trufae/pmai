@@ -30,6 +30,9 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -228,6 +231,8 @@ private enum class Destination(val label: String, val icon: ImageVector) {
     val context = LocalContext.current
     val list = rememberLazyListState()
     val messages = state.activeMessages
+    val runs = remember(messages) { toolMessageRuns(messages) }
+    val activityRuns = remember(state.agent.activity) { toolMessageRuns(state.agent.activity) }
     var selectedMessage by remember { mutableStateOf<Message?>(null) }
     val atBottom by remember { derivedStateOf {
         val last = list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
@@ -281,8 +286,11 @@ private enum class Destination(val label: String, val icon: ImageVector) {
             }
             LazyColumn(Modifier.fillMaxSize().widthIn(max = 900.dp), state = list,
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                items(messages, key = { it.id }) { MessageCard(it, onLongPress = { selectedMessage = it }) }
-                if (!state.isRemote && state.generating) items(state.agent.activity, key = { "active-${it.id}" }) { MessageCard(it) }
+                items(runs, key = { it.first().id }) { run ->
+                    if (run.first().role == "tool") ToolActivity(run, onLongPress = { selectedMessage = it })
+                    else MessageCard(run.first(), onLongPress = { selectedMessage = it })
+                }
+                if (!state.isRemote && state.generating) items(activityRuns, key = { "active-${it.first().id}" }) { ToolActivity(it) }
                 if (!state.isRemote && state.reasoning.isNotEmpty()) item("reasoning") {
                     var expanded by remember { mutableStateOf(false) }
                     TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide reasoning" else "Show reasoning") }
@@ -302,10 +310,60 @@ private enum class Destination(val label: String, val icon: ImageVector) {
     selectedMessage?.let { message -> MessageActions(message, state, model, onDismiss = { selectedMessage = null }) }
 }
 
+@Composable private fun ToolActivity(messages: List<Message>, onLongPress: ((Message) -> Unit)? = null) {
+    var expanded by rememberSaveable(messages.first().id) { mutableStateOf(false) }
+    val failed = messages.count { it.toolFailed }
+    val running = messages.count { it.status.lowercase() in listOf("running", "pending", "in_progress") }
+    Column(Modifier.fillMaxWidth()) {
+        if (messages.size > 1) Row(
+            Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(role = Role.Button) { expanded = !expanded }
+                .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" },
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text("Tool activity · ${messages.size} updates", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (failed > 0) Text("· $failed failed", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
+            if (running > 0) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+            Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (messages.size == 1 || expanded) messages.forEach { message -> key(message.id) {
+            ToolActivityRow(message, onLongPress)
+        } }
+    }
+}
+
+@Composable private fun ToolActivityRow(message: Message, onLongPress: ((Message) -> Unit)?) {
+    val context = LocalContext.current
+    var expanded by rememberSaveable(message.id) { mutableStateOf(false) }
+    val title = remember(message.text) { message.text.lineSequence().firstOrNull { it.isNotBlank() }?.take(180) ?: "Tool" }
+    Column(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp)
+            .combinedClickable(role = Role.Button, onClick = { expanded = !expanded }, onLongClick = onLongPress?.let { { it(message) } })
+            .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" },
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (message.toolFailed) Icon(Icons.Outlined.ErrorOutline, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
+            Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                color = if (message.toolFailed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+            if (message.status.isNotBlank()) Text(message.status, style = MaterialTheme.typography.labelSmall,
+                color = if (message.toolFailed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (expanded) Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = RoundedCornerShape(12.dp)) {
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                MessageAttachments(message.attachments)
+                Markdown(message.text, onLongPress = onLongPress?.let { { it(message) } })
+                TextButton(onClick = { copyText(context, message.text) }) {
+                    Icon(Icons.Outlined.ContentCopy, null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp)); Text("Copy tool details")
+                }
+            }
+        }
+    }
+}
+
 @Composable private fun MessageCard(message: Message, onLongPress: ((Message) -> Unit)? = null) {
     val context = LocalContext.current
     val user = message.role == "user"
-    var expanded by remember(message.id) { mutableStateOf(message.role != "thought" && message.role != "tool") }
+    var expanded by remember(message.id) { mutableStateOf(message.role != "thought") }
     Column(Modifier.fillMaxWidth().then(if (onLongPress != null) Modifier.combinedClickable(onClick = {}, onLongClick = { onLongPress(message) }) else Modifier), horizontalAlignment = if (user) Alignment.End else Alignment.Start) {
         if (user) Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(24.dp, 24.dp, 4.dp, 24.dp)) {
             Column(Modifier.padding(16.dp)) {
@@ -314,9 +372,9 @@ private enum class Destination(val label: String, val icon: ImageVector) {
             }
         } else {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(when (message.role) { "tool" -> "Tool · ${message.status}"; "thought" -> "Reasoning"; else -> "PocketMai" },
+                Text(if (message.role == "thought") "Reasoning" else "PocketMai",
                     style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                if (message.role in listOf("thought", "tool")) TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide" else "Show") }
+                if (message.role == "thought") TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide" else "Show") }
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { copyText(context, message.text) }, Modifier.size(48.dp)) { Icon(Icons.Outlined.ContentCopy, "Copy message", Modifier.size(18.dp)) }
             }
