@@ -376,19 +376,16 @@ struct RemoteTerminalView: View {
               Text("Terminal \(index + 1)").tag(tab.id)
             }
           }
-          Divider()
-          Button(keyboardVisible ? "Hide Keyboard" : "Show Keyboard", systemImage: "keyboard") {
-            guard let view = active?.view else { return }
-            if keyboardVisible { view.resignFirstResponder() } else { view.becomeFirstResponder() }
-          }
-          Button("Reconnect", systemImage: "arrow.clockwise") { active?.reconnect(offline: appStore.settings.isOffline) }
           Button("New Terminal", systemImage: "plus") { deck.add() }.disabled(deck.tabs.count >= 8)
           Button("Close Terminal", systemImage: "xmark", role: .destructive) {
             if let active { Task { await deck.remove(active, offline: appStore.settings.isOffline) } }
           }.disabled(active == nil || appStore.settings.isOffline)
           Divider()
-          Button("Smaller Text", systemImage: "textformat.size.smaller") { fontSize = max(8, fontSize - 1) }
-          Button("Larger Text", systemImage: "textformat.size.larger") { fontSize = min(32, fontSize + 1) }
+          Button("Reconnect", systemImage: "arrow.clockwise") { active?.reconnect(offline: appStore.settings.isOffline) }
+          Button(keyboardVisible ? "Hide Keyboard" : "Show Keyboard", systemImage: "keyboard") {
+            guard let view = active?.view else { return }
+            if keyboardVisible { view.resignFirstResponder() } else { view.becomeFirstResponder() }
+          }
         }
       }
       .padding(.horizontal, 12).frame(height: 38)
