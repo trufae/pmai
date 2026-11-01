@@ -5983,7 +5983,7 @@ struct MarkdownTableView: View {
         } else {
           // Leave part of the next column visible to make scrolling discoverable.
           let visibleColumns = min(CGFloat(max(headers.count, 1)), 2.5)
-          wrappedTable(columnWidth: viewportWidth > 0 ? viewportWidth / visibleColumns : 150)
+          wrappedTable(maximumColumnWidth: viewportWidth > 0 ? viewportWidth / visibleColumns : 150)
         }
       }
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -5995,35 +5995,30 @@ struct MarkdownTableView: View {
     }
   }
 
-  private func wrappedTable(columnWidth: CGFloat? = nil) -> some View {
+  private func wrappedTable(maximumColumnWidth: CGFloat? = nil) -> some View {
     let tableRows = [headers] + rows
     let rowCount = tableRows.count
-    // The message and its follow-up card need the full height, including
-    // wrapped rows outside the viewport; a lazy grid only estimates those.
     return styledTable(
-      VStack(alignment: .leading, spacing: 0) {
+      MarkdownTableLayout(columnCount: headers.count, maximumColumnWidth: maximumColumnWidth) {
         ForEach(Array(tableRows.enumerated()), id: \.offset) { rowIndex, row in
-          HStack(spacing: 0) {
-            ForEach(headers.indices, id: \.self) { columnIndex in
-              cellView(
-                columnIndex < row.count ? row[columnIndex] : "",
-                columnIndex: columnIndex,
-                isHeader: rowIndex == 0,
-                unwrapped: false
-              )
-              .frame(width: columnWidth, alignment: frameAlignment(textAlignment(for: columnIndex)))
-            }
-          }
-          .background(
-            rowIndex == 0
-              ? Color.secondary.opacity(0.10)
-              : rowIndex.isMultiple(of: 2)
-                ? Color.secondary.opacity(0.05)
-                : Color.clear
-          )
-          .overlay(alignment: .bottom) {
-            if rowIndex < rowCount - 1 {
-              Divider().opacity(rowIndex == 0 ? 0.5 : 0.25)
+          ForEach(headers.indices, id: \.self) { columnIndex in
+            cellView(
+              columnIndex < row.count ? row[columnIndex] : "",
+              columnIndex: columnIndex,
+              isHeader: rowIndex == 0,
+              unwrapped: false
+            )
+            .background(
+              rowIndex == 0
+                ? Color.secondary.opacity(0.10)
+                : rowIndex.isMultiple(of: 2)
+                  ? Color.secondary.opacity(0.05)
+                  : Color.clear
+            )
+            .overlay(alignment: .bottom) {
+              if rowIndex < rowCount - 1 {
+                Divider().opacity(rowIndex == 0 ? 0.5 : 0.25)
+              }
             }
           }
         }
@@ -6092,6 +6087,7 @@ struct MarkdownTableView: View {
     .frame(
       minWidth: unwrapped ? nil : 0,
       maxWidth: unwrapped ? nil : .infinity,
+      maxHeight: unwrapped ? nil : .infinity,
       alignment: frameAlignment(alignment))
   }
 
@@ -6109,9 +6105,9 @@ struct MarkdownTableView: View {
 
   private func frameAlignment(_ alignment: TextAlignment) -> Alignment {
     switch alignment {
-    case .leading: return .leading
-    case .center: return .center
-    case .trailing: return .trailing
+    case .leading: return .topLeading
+    case .center: return .top
+    case .trailing: return .topTrailing
     }
   }
 }
