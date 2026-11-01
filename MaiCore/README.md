@@ -1512,8 +1512,14 @@ An agent definition is a saved setup — provider, model, system prompt, tool se
 and limits — that people switch between with `/agent use ID`. Each one carries a
 `description` saying what it is for, which a delegating model also reads when it
 picks an agent for a task, and an `enabled` flag that parks a setup without
-deleting it. `/agents` lists them; `/agents describe ID TEXT` and
-`/agents enable|disable ID` maintain them.
+deleting it. `/agents` groups definitions into ACP agents, local pmai agents
+(including those using remote model providers), and task agents, sorting IDs
+alphabetically within each group. Assigned task agents appear once in the task
+group, with their task names. Colors distinguish the groups and the current and
+disabled agents; redirected output stays plain text. Each entry shows its purpose
+and provider/model; `/agents show ID` shows full settings, including the URL.
+`/agents describe ID TEXT` sets the purpose separately from its instructions;
+omit TEXT to read it. `/agents enable|disable ID` parks or enables a definition.
 
 A running instance of a definition is a process with a **pid**. `/jobs` (or
 `/jobs tree`) draws them, `/jobs log PID` prints one agent's own transcript,

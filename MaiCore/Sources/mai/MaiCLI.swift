@@ -9063,7 +9063,6 @@ struct MaiCLI {
     session: REPLSession,
     runtime: AgentRuntime,
     configuration: MaiConfiguration?,
-    providerBaseURLs: ProviderBaseURLStore,
     terminal: TerminalWriter
   ) async {
     let agents: [AgentDefinition]
@@ -9076,23 +9075,62 @@ struct MaiCLI {
       await terminal.line("No configured agents.")
       return
     }
-    for agent in agents {
-      let isCurrent = agent.id == session.profile.agentID
-      let displayed = isCurrent ? session.profile.agentDefinition : agent
-      let baseURL =
-        providerBaseURLs.url(for: displayed.provider.rawValue)?.absoluteString
-        ?? configuration?.providers.first { $0.id == displayed.provider.rawValue }?.baseURL?
-        .absoluteString ?? "-"
-      let marker = isCurrent ? "*" : (displayed.isEnabled ? " " : "-")
-      var line =
-        "\(marker) \(displayed.id) — \(displayed.displayName) [\(displayed.provider) \(baseURL) \(displayed.model)]"
-      if displayed.toolDelegation.delegatesTools { line += " delegating" }
-      if !displayed.isEnabled { line += " (disabled)" }
-      await terminal.line(line)
-      if !displayed.description.isEmpty {
-        await terminal.line("    \(displayed.description)")
+    let tasks = AgentTask.allCases.sorted { $0.rawValue < $1.rawValue }
+    let acpProviders = Set(configuration?.providers.filter {
+      $0.kind == ACPConfiguredProviderFactory.providerKind
+    }.map(\.id) ?? [])
+    func assignments(_ id: String) -> [AgentTask] {
+      tasks.filter { configuration?.taskAgents[$0] == id }
+    }
+    // Task assignments take precedence, including when a task uses ACP.
+    func group(_ agent: AgentDefinition) -> Int {
+      if !assignments(agent.id).isEmpty { return 2 }
+      let provider = agent.id == session.profile.agentID ? session.profile.provider : agent.provider
+      return acpProviders.contains(provider.rawValue) ? 0 : 1
+    }
+    let groups: [(String, TerminalThemeStyle)] = [
+      ("ACP agents", .toolCallForeground),
+      ("Local agents (pmai)", .infoForeground),
+      ("Task agents", .promptForeground),
+    ]
+    var lines: [String] = []
+    for (index, (title, color)) in groups.enumerated() {
+      let members = agents.filter { group($0) == index }.sorted {
+        let lhs = $0.id.lowercased(), rhs = $1.id.lowercased()
+        return lhs == rhs ? $0.id < $1.id : lhs < rhs
+      }
+      guard !members.isEmpty else { continue }
+      if !lines.isEmpty { lines.append("") }
+      lines.append(await terminal.paint(title + ":", role: color, bold: true))
+      for agent in members {
+        let isCurrent = agent.id == session.profile.agentID
+        let displayed = isCurrent ? session.profile.agentDefinition : agent
+        let roles = assignments(agent.id)
+        let marker = isCurrent ? "*" : (displayed.isEnabled ? " " : "-")
+        let name = await terminal.paint(
+          "\(marker) \(displayed.id)",
+          role: !displayed.isEnabled ? .warningForeground : isCurrent ? .successForeground : color,
+          bold: true)
+        let purpose = !displayed.description.isEmpty ? displayed.description
+          : roles.isEmpty ? displayed.displayName : roles.map(\.description).joined(separator: " ")
+        lines.append("\(name) — \(purpose)")
+        let provider = configuration?.providers.first { $0.id == displayed.provider.rawValue }
+        let model = displayed.model.isEmpty ? provider?.defaultModel ?? "default" : displayed.model
+        var details = "\(displayed.provider)::\(model)"
+        if displayed.displayName != displayed.id { details += " · \(displayed.displayName)" }
+        if !roles.isEmpty { details += " · tasks: \(roles.map(\.rawValue).joined(separator: ", "))" }
+        if acpProviders.contains(displayed.provider.rawValue), index == 2 { details += " · ACP" }
+        if displayed.toolDelegation.delegatesTools { details += " · delegating" }
+        if isCurrent { details += " · current" }
+        if !displayed.isEnabled {
+          details += await terminal.paint(" · disabled", role: .warningForeground)
+        }
+        lines.append("    \(details)")
       }
     }
+    lines.append("")
+    lines.append("/agents describe ID TEXT sets its purpose; /agents show ID shows full settings.")
+    await terminal.line(lines.joined(separator: "\n"))
   }
 
   private static func setAgentEnabled(
@@ -9150,7 +9188,10 @@ struct MaiCLI {
     do {
       try draft.save(to: URL(fileURLWithPath: configurationPath))
       try await runtime.register(agent: draft.agents[index], replacingExisting: true)
-      if session.profile.agentID == id { session.touch() }
+      if session.profile.agentID == id {
+        session.profile.description = draft.agents[index].description
+        session.touch()
+      }
       configuration = draft
       await terminal.line("Described agent '\(id)'.")
     } catch {
@@ -9305,7 +9346,7 @@ struct MaiCLI {
       }
       await listAgentDefinitions(
         session: session, runtime: runtime, configuration: configuration,
-        providerBaseURLs: providerBaseURLs, terminal: terminal)
+        terminal: terminal)
 
     case "enable", "disable":
       guard words.count == 2 else {
@@ -15907,11 +15948,11 @@ struct MaiCLI {
     provider, model, system prompt, tools, and limits — that you switch between.
     /jobs manages the processes started from these definitions.
 
-      /agents                    List saved definitions
+      /agents                    List ACP, local pmai, and task definitions alphabetically
       /agents list               Same as /agents
       /agents use ID             Switch this chat to a definition
       /agents show [ID]          Show one definition in full
-      /agents describe ID TEXT   Set the one-line purpose a model reads to pick it
+      /agents describe ID [TEXT] Show or set its purpose (separate from instructions)
       /agents enable|disable ID  Park a definition without deleting it
       /agents acp [list]         List external ACP agents and what is installed
       /agents acp add NAME [CMD ARG ...]  Register an ACP agent as a usable agent

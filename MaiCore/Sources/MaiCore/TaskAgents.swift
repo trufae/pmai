@@ -32,6 +32,17 @@ public enum AgentTask: String, CaseIterable, Codable, Sendable {
   case voiceover
   case voice
 
+  public var description: String {
+    switch self {
+    case .approval: "Reviews tool calls for approval."
+    case .compact: "Summarizes conversation history."
+    case .tool: "Chooses tools for the current task."
+    case .btw: "Answers side questions."
+    case .voiceover: "Turns responses into short spoken summaries."
+    case .voice: "Handles voice conversations."
+    }
+  }
+
   public var instructions: String {
     switch self {
     case .approval:
@@ -132,7 +143,7 @@ extension MaiConfiguration {
     var agent =
       agents.first(where: { $0.id == id })
       ?? AgentDefinition(
-        id: id, instructions: speechPrompt?.text ?? task.instructions,
+        id: id, description: task.description, instructions: speechPrompt?.text ?? task.instructions,
         systemPrompt: speechPrompt?.name, provider: selection.provider,
         model: selection.model)
     agent.provider = selection.provider

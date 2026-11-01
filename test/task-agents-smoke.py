@@ -126,6 +126,49 @@ def main():
         assert config.read_bytes() == original, 'showing models changed the configuration'
         print('PASS /model updates all tasks; /model -chat preserves their assignments across restarts')
 
+        # A mixed catalog must explain each setup and group by provider kind or
+        # actual task assignments, rather than guessing from agent/provider IDs.
+        config.write_text(json.dumps({
+            'defaultAgent': 'main', 'use': {'plan': False},
+            'providers': [
+                {'id': 'hello', 'kind': 'hello'},
+                {'id': 'bridge', 'kind': 'acp', 'options': {'command': 'unused-acp-fixture'}},
+            ],
+            'agents': [
+                {'id': name, 'provider': provider, 'model': 'fixture', **extra}
+                for name, provider, extra in [
+                    ('z-task', 'hello', {}),
+                    ('Zulu', 'hello', {'enabled': False}),
+                    ('Zed', 'bridge', {'description': 'Edits code through ACP.'}),
+                    ('main', 'hello', {'instructions': 'Private operating instructions.'}),
+                    ('alpha', 'bridge', {}),
+                    ('A-task', 'bridge', {}),
+                ]
+            ],
+            'taskAgents': {'compact': 'z-task', 'approval': 'A-task', 'tool': 'A-task'},
+        }))
+        output = run(['/agents describe main Helps with everyday questions.',
+                      '/set effort high', '/agents'])
+        assert '* main — Helps with everyday questions.' in output, output
+        assert 'Private operating instructions.' not in output, output
+        saved_main = next(a for a in json.loads(config.read_text())['agents'] if a['id'] == 'main')
+        assert saved_main['description'] == 'Helps with everyday questions.', saved_main
+        assert saved_main['instructions'] == 'Private operating instructions.', saved_main
+        for command in ('/agents', '/agent', '/agents list', '/agent list'):
+            output = run([command])
+            acp, local = output.split('ACP agents:', 1)[1].split('Local agents (pmai):', 1)
+            local, tasks = local.split('Task agents:', 1)
+            assert re.findall(r'(?m)^[ *-] (\S+) —', acp) == ['alpha', 'Zed'], acp
+            assert re.findall(r'(?m)^[ *-] (\S+) —', local) == ['main', 'plan', 'Zulu'], local
+            assert re.findall(r'(?m)^[ *-] (\S+) —', tasks) == ['A-task', 'z-task'], tasks
+            assert 'tasks: approval, tool · ACP' in tasks, tasks
+            assert 'Summarizes conversation history.' in tasks, tasks
+            assert 'Edits code through ACP.' in acp, acp
+            assert '· current' in local and '· disabled' in local, local
+            assert '/agents describe ID TEXT' in output, output
+            assert '\x1b' not in output, output
+        print('PASS /agents groups and sorts definitions, explains tasks, and preserves descriptions')
+
 
 if __name__ == '__main__':
     main()

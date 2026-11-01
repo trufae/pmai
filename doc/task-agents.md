@@ -34,6 +34,7 @@ Create an agent by copying the current one, then edit the fields you need:
 
 ```text
 /agent add fast
+/agent describe fast Handles routine work and task decisions with a smaller model.
 /agent model fast local::qwen3:8b
 /agent effort fast off
 /prompt add tool-decisions Choose tools efficiently and preserve the facts needed to answer.
@@ -44,6 +45,12 @@ Create an agent by copying the current one, then edit the fields you need:
 ```
 
 The existing `/agent add NAME MODEL GROUPS PROMPT [PROVIDER [BASE_URL]]` form still works. `/edit agent fast` exposes the complete definition, including tool format and generation options. Assigning an agent to a task borrows its inference settings; its own tool list can be empty.
+
+`/agents` groups ACP, local pmai, and assigned task agents, with IDs sorted
+alphabetically in each group. Local pmai agents can use local or remote model
+providers. Task entries show every task assigned to them, and each definition
+appears once. Descriptions explain their purpose independently of their system
+instructions; `/agent describe ID` reads one and `/agent describe ID TEXT` sets it.
 
 For a quick alternative model, these create or update ordinary task agents, which can then be edited with `/agent effort`, `/agent prompt`, or `/edit agent`:
 
