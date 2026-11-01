@@ -92,6 +92,7 @@ private enum class Destination(val label: String, val icon: ImageVector) {
     state: AppState, draft: String, attachments: List<Attachment>, model: MaiViewModel, theme: String, onTheme: (String) -> Unit,
     invitation: String, consumeInvitation: () -> Unit,
 ) {
+    val terminal = model.terminal.collectAsState().value
     var destination by rememberSaveable { mutableStateOf(Destination.Chats) }
     var detail by rememberSaveable { mutableStateOf(false) }
     var addingHost by rememberSaveable { mutableStateOf(false) }
@@ -111,7 +112,7 @@ private enum class Destination(val label: String, val icon: ImageVector) {
         }
         return
     }
-    BackHandler(enabled = runningApp.isNotEmpty() || detail || destination != Destination.Chats) {
+    BackHandler(enabled = terminal == null && (runningApp.isNotEmpty() || detail || destination != Destination.Chats)) {
         when {
             runningApp.isNotEmpty() -> runningApp = ""
             destination != Destination.Chats -> destination = Destination.Chats
@@ -134,7 +135,8 @@ private enum class Destination(val label: String, val icon: ImageVector) {
         return
     }
     val hideNavigation = destination == Destination.Chats && detail && LocalConfiguration.current.screenWidthDp < 840
-    NavigationSuiteScaffold(layoutType = if (hideNavigation) NavigationSuiteType.None
+    if (terminal != null) TerminalScreen(terminal, model)
+    else NavigationSuiteScaffold(layoutType = if (hideNavigation) NavigationSuiteType.None
         else NavigationSuiteScaffoldDefaults.calculateFromAdaptiveInfo(currentWindowAdaptiveInfo()), navigationSuiteItems = {
         Destination.entries.forEach { item ->
             item(selected = destination == item, onClick = { destination = item },
@@ -146,7 +148,7 @@ private enum class Destination(val label: String, val icon: ImageVector) {
                 when (destination) {
                     Destination.Chats -> ChatsScreen(state, draft, attachments, model, detail, onDetail = { detail = it },
                         onHosts = { destination = Destination.Hosts }, onSettings = { destination = Destination.Settings },
-                        onWorkspace = { workspaceScreen = it })
+                        onWorkspace = { if (it == "console") model.openTerminal() else workspaceScreen = it })
                     Destination.Hosts -> HostsScreen(state, model, onAdd = { addingHost = true }, onOpen = {
                         destination = Destination.Chats; detail = false
                     })
@@ -205,7 +207,12 @@ private enum class Destination(val label: String, val icon: ImageVector) {
             Text("Chats")
             Text(host?.name ?: "On this device", style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } }, actions = { IconButton(onClick = onHosts) { Icon(Icons.Outlined.Dns, "Choose host") } })
+        } }, actions = {
+            if (state.isRemote) IconButton(onClick = model::openTerminal, enabled = state.remote.folder.isNotBlank()) {
+                Icon(Icons.Outlined.Terminal, "Open terminal")
+            }
+            IconButton(onClick = onHosts) { Icon(Icons.Outlined.Dns, "Choose host") }
+        })
     }, floatingActionButton = {
         ExtendedFloatingActionButton(onClick = {
             if (state.isRemote) model.command("remoteOpen", "cwd" to state.remote.folder)
@@ -310,10 +317,12 @@ private enum class Destination(val label: String, val icon: ImageVector) {
         }, actions = {
             if (state.isRemote) {
                 IconButton(onClick = { onWorkspace("files") }) { Icon(Icons.Outlined.Folder, "Browse remote files") }
-                IconButton(onClick = { onWorkspace("console") }) { Icon(Icons.Outlined.Terminal, "Open remote console") }
             }
             if (messages.isNotEmpty()) IconButton(onClick = { shareConversation(context, state.activeTitle, messages) }) {
                 Icon(Icons.Outlined.Share, "Share conversation")
+            }
+            if (state.isRemote) IconButton(onClick = model::openTerminal, enabled = state.remote.folder.isNotBlank()) {
+                Icon(Icons.Outlined.Terminal, "Open terminal")
             }
             IconButton(onClick = onSettings) { Icon(Icons.Outlined.Tune, "Chat settings") }
         })

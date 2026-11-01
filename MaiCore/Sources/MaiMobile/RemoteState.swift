@@ -35,6 +35,7 @@ private typealias RemoteMessage = ACPConversationMessage
   var status = ""
   var error = ""
   let workspace: RemoteWorkspaceState
+  let terminal = MobileTerminal()
   private var options: [RemoteSessionOption] = []
   private var canRewind = false
   private var messages: [RemoteMessage] = []
@@ -225,6 +226,28 @@ private typealias RemoteMessage = ACPConversationMessage
     workspace.configure(hostID: selectedHostID, profile: bookmarks[index].profile, cwd: selectedFolder, preparation: preparation)
   }
 
+  func runTerminal(id: String, hostID: String, cwd: String, script: String) {
+    let profile = bookmarks.first { $0.id == hostID }?.profile
+    terminal.run(id: id) {
+      guard let profile, !cwd.isEmpty,
+        !script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      else { throw JSONRPCError.invalidParams("Choose an approved remote host and project folder first.") }
+      if profile.backend != .openCode { try await self.preparation?.value }
+      try Task.checkCancellation()
+      let connection = try profile.workspace(cwd: cwd)
+      do {
+        let result = try await connection.run(script) { output in
+          await self.terminal.update(id: id, output: output)
+        }
+        await connection.close()
+        return result
+      } catch {
+        await connection.close()
+        throw error
+      }
+    }
+  }
+
   func browse(_ path: String) {
     do { try prepareWorkspace(); workspace.browse(path) }
     catch { workspace.error = error.localizedDescription }
@@ -368,7 +391,7 @@ private typealias RemoteMessage = ACPConversationMessage
     return workspace.snapshot.merging([
       "selectedHostID": selectedHostID, "selectedFolder": selectedFolder,
       "conversationID": conversationID, "connected": connected, "busy": busy,
-      "canRewind": canRewind,
+      "canRewind": canRewind, "terminal": terminal.snapshot,
       "status": status, "error": error, "permission": permissionObject ?? NSNull(),
       "options": optionsObject,
       "hosts": bookmarks.sorted { $0.pinned && !$1.pinned }.map {
