@@ -210,8 +210,9 @@ In the host's pmai REPL, share a project over Forwiroh:
 /remote serve --path /path/to/project
 ```
 
-In PocketMai, open **Hosts → Add Remote Host**, scan the pairing QR or paste the
-connection URI, save it, and select the host. Approve the Forwiroh device request
+In PocketMai, open **Hosts → +**, choose **pmai**, tap **Scan Host QR**, name the
+host, and tap **Add**. Manual import and connection fields are under **Advanced**.
+Approve the Forwiroh device request
 and then the ACP chat request on the host with `/remote accept`, then browse its
 projects, continue a chat, or open its files.
 The serving REPL stays usable; `/remote stop` or exiting it ends the server.
