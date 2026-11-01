@@ -58,7 +58,10 @@ struct HostsView: View, Equatable {
       Button("Add Host") {
         adding = true
       }
+      .font(.headline)
+      .controlSize(.large)
       .adaptiveGlassButtonStyle()
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
     .sheet(isPresented: $adding) {
       RemoteAgentConnectionView(
