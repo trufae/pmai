@@ -30,7 +30,6 @@ struct HostsView: View, Equatable {
   @EnvironmentObject private var appStore: AppStore
   let hosts: HostNavigationStore
   let onSelectHost: (UUID?) -> Void
-  @State private var managing = false
   @State private var adding = false
   @State private var editing: RemoteAgentBookmark?
   @State private var renaming: RemoteAgentBookmark?
@@ -56,31 +55,10 @@ struct HostsView: View, Equatable {
       }
       SidebarGroupedRows(items: offline, groupTitle: { _ in "Offline" }, row: remoteRow)
     } actions: { _ in
-      HStack(spacing: 12) {
-        FloatingActionPill(
-          title: "Manage…", systemImage: "network", prominent: false, compact: true
-        ) {
-          managing = true
-        }
-        FloatingActionIcon(
-          systemImage: "plus", accessibilityLabel: "Add Remote Host", compact: true
-        ) {
-          adding = true
-        }
-      }
-    }
-    .sheet(isPresented: $managing) {
-      NavigationStack {
-        RemoteAgentsView(
-          hosts: hosts,
-          onSelectHost: { id in
-            managing = false
-            onSelectHost(id)
-          }
-        )
-        .toolbar {
-          ToolbarItem(placement: .confirmationAction) { Button("Done") { managing = false } }
-        }
+      FloatingActionIcon(
+        systemImage: "plus", accessibilityLabel: "Add Remote Host", compact: true
+      ) {
+        adding = true
       }
     }
     .sheet(isPresented: $adding) {

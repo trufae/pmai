@@ -5,8 +5,6 @@ import SwiftUI
 import VisionKit
 
 struct RemoteAgentsView: View {
-  var hosts: HostNavigationStore? = nil
-  var onSelectHost: ((UUID) -> Void)? = nil
   @EnvironmentObject private var appStore: AppStore
   @State private var store = RemoteAgentStore.shared
   @State private var adding = false
@@ -31,16 +29,7 @@ struct RemoteAgentsView: View {
             RemoteHostMenu(
               host: connection, store: store, isOffline: appStore.settings.isOffline,
               rename: { renaming = connection },
-              connect: onSelectHost.map { select in
-                {
-                  if let hosts {
-                    hosts.reconnect(connection.id, isOffline: appStore.settings.isOffline)
-                  } else {
-                    store.reconnect(connection.id)
-                  }
-                  select(connection.id)
-                }
-              }, edit: { editing = connection })
+              edit: { editing = connection })
           }
         }
         Button("Add Remote Host", systemImage: "plus") { adding = true }
@@ -52,7 +41,7 @@ struct RemoteAgentsView: View {
       if let error = store.error { Text(error).foregroundStyle(.red) }
     }
     .navigationTitle("Remote Hosts")
-    .sheet(isPresented: $adding) { RemoteAgentConnectionView(onAdded: onSelectHost) }
+    .sheet(isPresented: $adding) { RemoteAgentConnectionView() }
     .sheet(item: $editing) { host in RemoteAgentConnectionView(initialHost: host) }
     .modifier(RemoteHostRenameModifier(host: $renaming))
   }
