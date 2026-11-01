@@ -1412,6 +1412,7 @@ struct MaiCLI {
       var configuration = loaded?.configuration
       if var existing = configuration {
         var changed = existing.associateSystemPrompts()
+        if MaiPlanningAgent.install(in: &existing) { changed = true }
         if existing.fileAccess == nil {
           existing.fileAccess = .init()
           changed = true
@@ -1563,6 +1564,7 @@ struct MaiCLI {
         if !created.providers.isEmpty {
           created.defaultAgent = profile.agentID
           created.upsertAgent(profile.agentDefinition)
+          MaiPlanningAgent.install(in: &created)
         }
         try created.save(to: URL(fileURLWithPath: configurationPath))
         configuration = created
@@ -8737,6 +8739,7 @@ struct MaiCLI {
         definition.model = selection.model
         draft.upsertAgent(definition)
         draft.defaultAgent = definition.id
+        MaiPlanningAgent.install(in: &draft, using: definition)
         if !chatOnly {
           for task in AgentTask.allCases {
             try draft.assignTask(
@@ -9540,7 +9543,8 @@ struct MaiCLI {
     }
   }
 
-  /// Makes a saved definition this chat's agent, starting the conversation over.
+  /// Planning and implementation share their context in the same chat.
+  /// Other switches retain their existing fresh-conversation behavior.
   private static func selectAgent(
     _ id: String,
     session: inout REPLSession,
@@ -9549,6 +9553,15 @@ struct MaiCLI {
   ) async {
     guard let definition = configuration?.agents.first(where: { $0.id == id }) else {
       await terminal.line("Unknown agent '\(id)'. Use /agents.")
+      return
+    }
+    if session.profile.agentID == "plan" || id == "plan" {
+      do {
+        try applyDefinition(definition, to: &session)
+        await terminal.line("Agent: \(id). Conversation preserved for planning and implementation.")
+      } catch {
+        await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+      }
       return
     }
     session.reset(profile: SessionProfile(definition: definition))
@@ -9662,7 +9675,8 @@ struct MaiCLI {
     definition.toolGroupNames = []
     definition.toolNames = []
     selection.apply(to: &definition)
-    let changed = draft.upsertAgent(definition)
+    var changed = draft.upsertAgent(definition)
+    if MaiPlanningAgent.install(in: &draft, using: definition) { changed.append("plan") }
 
     do {
       try draft.save(to: URL(fileURLWithPath: configurationPath))
@@ -10160,7 +10174,8 @@ struct MaiCLI {
       await terminal.line("error: No writable configuration is active.", to: .standardError)
       return false
     }
-    let changed = draft.upsertAgent(definition)
+    var changed = draft.upsertAgent(definition)
+    if MaiPlanningAgent.install(in: &draft, using: definition) { changed.append("plan") }
     if makeDefault { draft.defaultAgent = definition.id }
     do {
       try draft.save(to: URL(fileURLWithPath: configurationPath))
@@ -14982,7 +14997,7 @@ struct MaiCLI {
   }
 
   private static func sampleConfiguration() -> MaiConfiguration {
-    MaiConfiguration(
+    var configuration = MaiConfiguration(
       defaultAgent: "hello",
       plugins: [
         ConfiguredPlugin(path: "./plugins/example.dylib", enabled: false)
@@ -15088,6 +15103,8 @@ struct MaiCLI {
         ]),
       memory: ConfiguredMemory(),
       approvals: ConfiguredApprovals())
+    MaiPlanningAgent.install(in: &configuration)
+    return configuration
   }
 
   private static let remoteHelp = """

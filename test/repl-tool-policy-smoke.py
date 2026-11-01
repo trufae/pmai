@@ -32,6 +32,11 @@ def call(name, arguments):
         'function': {'name': name, 'arguments': json.dumps(arguments)}}]}
 
 
+def message_text(message):
+    content = message.get('content') or ''
+    return content if isinstance(content, str) else ''.join(part.get('text', '') for part in content)
+
+
 def main():
     binary = str(Path(sys.argv[1]).resolve())
     env = clean_environment()
@@ -70,7 +75,6 @@ for line in sys.stdin:
 ''')
             config = root / 'config.json'
             config.write_text(json.dumps({
-                'defaultAgent': 'main',
                 'providers': [{'id': 'local', 'kind': 'openAICompatible',
                                'baseURL': f'http://127.0.0.1:{server.server_port}/v1'}],
                 'toolSources': [{'id': 'standard', 'kind': 'standard-tools'}],
@@ -103,6 +107,7 @@ for line in sys.stdin:
 
             # Startup expands tool groups and saves decoded defaults before any command.
             run([], [])
+            assert json.loads(config.read_text()).get('defaultAgent') is None
             before = agent_settings()
             for command in ('/tools', '/tools list'):
                 output, _ = run([command], [])
@@ -273,6 +278,77 @@ for line in sys.stdin:
             assert 'airplane = off' in output, output
             assert 'github_pr' in {t['function']['name'] for t in calls[0]['tools']}, calls[0]
             assert json.loads(config.read_text())['airplane'] is False
+
+            # Planning must inspect files and save its handoff without exposing
+            # commands, writes, skills, delegation, or inherited MCP tools.
+            fixture = root / 'planning.txt'
+            fixture.write_text('Keep this project content.\n')
+            output, calls = run(['Discuss the planning context', '/agent use plan',
+                                 'Inspect the planning fixture'], [
+                {'role': 'assistant', 'content': 'Initial goal: keep the file format.'},
+                call('files_read', {'path': str(fixture)}), final])
+            assert any('Keep this project content.' in message_text(m)
+                       for m in calls[-1]['messages'] if m['role'] == 'tool'), calls[-1]
+            assert any("Mai's planning agent" in message_text(m)
+                       for m in calls[-1]['messages'] if m['role'] == 'system'), calls[-1]
+            assert any('Initial goal: keep the file format.' in message_text(m)
+                       for m in calls[-1]['messages'] if m['role'] == 'assistant'), calls[-1]
+            planning = next(a for a in json.loads(config.read_text())['agents'] if a['id'] == 'plan')
+            expected = {'files_list', 'files_find', 'files_grep', 'files_read',
+                        'files_read_index', 'files_get_function', 'files_read_range',
+                        'todo_list', 'todo_add'}
+            assert set(planning['toolNames']) == expected, planning
+            assert planning['toolPolicy']['localOnly'] is True
+            assert planning['toolPolicy']['groups']['mcp'] == 'disabled'
+            assert planning['provider'] == 'local' and planning['model'] == 'main'
+
+            forbidden = [
+                ('files_write', {'path': str(fixture), 'content': 'changed'}),
+                ('run_shell', {'command': 'touch should-not-exist'}),
+                ('agent_start', {'agent': 'main', 'task': 'Modify the fixture'}),
+                ('external_search', {}), ('skills_alpha', {}),
+                ('todo_done', {'task': '1'}),
+            ]
+            for name, arguments in forbidden:
+                # Direct and proxy calls must both enforce the allowlist.
+                for tool_call in [call(name, arguments),
+                                  call('call_tool', {'name': name, 'arguments': arguments})]:
+                    _, calls = run(['/agent use plan', f'Attempt {name}'], [tool_call, final])
+                    results = [message_text(m) for m in calls[-1]['messages'] if m['role'] == 'tool']
+                    assert results and any('Error:' in text for text in results), (name, results)
+            assert fixture.read_text() == 'Keep this project content.\n'
+            assert not (root / 'should-not-exist').exists()
+
+            output, calls = run(['/agent use plan', 'Save the agreed plan',
+                                 '/agent use main', '/tools enable todo', 'Implement the agreed plan'], [
+                call('call_tool', {'name': 'todo_add', 'arguments': {'title':
+                     'Use the existing parser; verify invalid input is rejected'}}),
+                {'role': 'assistant', 'content': 'AGREED PLAN: preserve the existing file format.'},
+                call('todo_list', {}), final])
+            assert 'Conversation preserved for planning and implementation.' in output, output
+            assert any('AGREED PLAN: preserve the existing file format.' in message_text(m)
+                       for m in calls[-1]['messages'] if m['role'] == 'assistant'), calls[-1]
+            assert any('Use the existing parser; verify invalid input is rejected' in message_text(m)
+                       for m in calls[-1]['messages'] if m['role'] == 'tool'), calls[-1]
+            assert any(message_text(m).startswith('Rules') for m in calls[-1]['messages']
+                       if m['role'] == 'system'), calls[-1]
+            assert not any("Mai's planning agent" in message_text(m) for m in calls[-1]['messages']
+                           if m['role'] == 'system'), calls[-1]
+
+            # User edits, disabling, and deletion survive startup installation.
+            run(['/agent model plan custom-model', '/agent describe plan My planner',
+                 '/agent disable plan'], [])
+            customized = json.loads(config.read_text())
+            customized['prompts']['system']['plan'] = 'Ask about constraints before planning.'
+            config.write_text(json.dumps(customized))
+            run([], [])
+            planning = next(a for a in json.loads(config.read_text())['agents'] if a['id'] == 'plan')
+            assert planning['model'] == 'custom-model' and planning['description'] == 'My planner'
+            assert planning['enabled'] is False
+            assert planning['instructions'] == 'Ask about constraints before planning.'
+            run(['/agent del plan'], [])
+            run([], [])
+            assert not any(a['id'] == 'plan' for a in json.loads(config.read_text())['agents'])
     finally:
         server.shutdown()
         server.server_close()

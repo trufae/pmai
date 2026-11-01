@@ -20,22 +20,27 @@ public struct AgentToolPolicy: Codable, Equatable, Sendable {
   public var automatic: Bool
   public var groups: [String: AgentToolMode]
   public var tools: [String: AgentToolMode]
+  /// Reject providers that execute their own tools outside this allowlist.
+  public var localOnly: Bool
 
   public init(
-    automatic: Bool = true, groups: [String: AgentToolMode] = [:], tools: [String: AgentToolMode] = [:]
+    automatic: Bool = true, groups: [String: AgentToolMode] = [:], tools: [String: AgentToolMode] = [:],
+    localOnly: Bool = false
   ) {
     self.automatic = automatic
     self.groups = groups
     self.tools = tools
+    self.localOnly = localOnly
   }
 
-  private enum CodingKeys: String, CodingKey { case automatic, groups, tools }
+  private enum CodingKeys: String, CodingKey { case automatic, groups, tools, localOnly }
 
   public init(from decoder: Decoder) throws {
     let values = try decoder.container(keyedBy: CodingKeys.self)
     automatic = try values.decodeIfPresent(Bool.self, forKey: .automatic) ?? true
     groups = try values.decodeIfPresent([String: AgentToolMode].self, forKey: .groups) ?? [:]
     tools = try values.decodeIfPresent([String: AgentToolMode].self, forKey: .tools) ?? [:]
+    localOnly = try values.decodeIfPresent(Bool.self, forKey: .localOnly) ?? false
   }
 
   public func mode(

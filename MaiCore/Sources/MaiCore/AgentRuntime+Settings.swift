@@ -156,6 +156,11 @@ extension AgentRuntime {
         insertSystem(agent.instructions, into: &request.messages)
       }
     }
+    if original.toolPolicy.localOnly,
+      providers[request.provider]?.descriptor.capabilities.contains(.managedToolLoop) == true
+    {
+      throw AgentRuntimeError.localToolPolicyRequired(request.provider)
+    }
     if task == .compact {
       request.agentID = "\(original.agentID).compact"
       request.toolNames = []

@@ -72,6 +72,11 @@ extension AgentRuntime {
     guard let provider = providers[inference.provider] else {
       throw AgentRuntimeError.providerNotRegistered(inference.provider)
     }
+    if state.request.toolPolicy.localOnly,
+      provider.descriptor.capabilities.contains(.managedToolLoop)
+    {
+      throw AgentRuntimeError.localToolPolicyRequired(inference.provider)
+    }
     inference.model = resolvedModel(inference.model, for: provider)
     let deciding = provider.descriptor.capabilities.contains(.toolDecision)
     if deciding {

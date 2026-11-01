@@ -9,11 +9,14 @@ public enum AgentRuntimeError: LocalizedError, Equatable, Sendable {
   case agentNotRegistered(String)
   case reservedToolName(String)
   case nativeToolCallingUnavailable(ProviderID)
+  case localToolPolicyRequired(ProviderID)
   case systemOneConfiguration(String)
   case limitExceeded(String)
 
   public var errorDescription: String? {
     switch self {
+    case .localToolPolicyRequired(let provider):
+      "Provider '\(provider)' runs its own tools and cannot enforce this agent's local tool permissions. Select a chat provider and model for this agent."
     case .systemOneConfiguration(let message):
       message
     case .invalidProviderID:

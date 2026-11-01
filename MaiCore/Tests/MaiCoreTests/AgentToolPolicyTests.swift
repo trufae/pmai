@@ -4,6 +4,27 @@ import Testing
 @testable import MaiCore
 @testable import MaiTestSupport
 
+@Test("Local tool permissions reject managed providers before primary or task inference")
+func localOnlyToolPolicy() async throws {
+  let provider = ScriptedProvider(responses: [], capabilities: [.managedToolLoop])
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  let policy = AgentToolPolicy(groups: ["mcp": .disabled], localOnly: true)
+  #expect(try JSONDecoder().decode(AgentToolPolicy.self, from: JSONEncoder().encode(policy)) == policy)
+  #expect(!AgentToolPolicy().localOnly)
+  let request = AgentRequest(
+    provider: "scripted", messages: [.user("Plan the change")], toolPolicy: policy)
+  await #expect(throws: AgentRuntimeError.localToolPolicyRequired("scripted")) {
+    try await runtime.run(request)
+  }
+  for task in [AgentTask.tool, .compact, .approval, .btw] {
+    await #expect(throws: AgentRuntimeError.localToolPolicyRequired("scripted")) {
+      try await runtime.taskRequest(task, from: request)
+    }
+  }
+  #expect(await provider.requests.isEmpty)
+}
+
 private let githubPolicyGroup = ToolGroupDefinition(
   id: "github", sourceID: "standard", toolNames: ["github_pr", "github_issue", "github_ci_log"])
 

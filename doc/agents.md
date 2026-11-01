@@ -50,6 +50,32 @@ Both are edited from every host: `/agents describe ID TEXT` and
 `/agents enable|disable ID` in the REPL and the same `MaiConfiguration` file
 the iOS app reads.
 
+### Planning preset
+
+pmai installs an editable `plan` agent alongside the general assistant, including
+for existing configurations. It initially uses `main`'s provider and model (or
+the selected setup when there is no `main`). The existing default-agent selection
+is preserved. Select it with `/agent use plan` or launch with `--agent plan`.
+
+The planner inspects files, compares approaches, and asks focused questions until
+the important decisions are settled. It then adds pending implementation tasks
+to the project's TODO list and asks you to switch to `main` or another agent.
+Switching into or away from `plan` preserves the conversation, including the decisions
+and final plan, for the implementation agent.
+
+Its default tool allowlist contains only file listing, searching, reading,
+indexing, function inspection, `todo_list`, and `todo_add`. TODO creation is the
+only permitted write; commands, file changes, task completion, skills,
+delegation, and MCP tools are disabled. The tool policy's `localOnly` flag also
+rejects providers such as ACP that run their own tools outside pmai's permission
+checks. Use a regular chat provider for planning.
+
+Customize it through the same controls as any other agent: `/edit agent plan`,
+`/agent model plan MODEL`, `/agent provider plan PROVIDER`, and the `plan` system
+prompt in `/prompts`. Tool settings can be changed after selecting it. These
+edits persist; startup does not overwrite an existing planner. You can disable
+it, or delete it while retaining its named prompt to prevent reinstallation.
+
 The process analogy is not decoration. `agent_start` is fork+exec, `agent_stop`
 is kill, `/jobs tree` is pstree, and a pid is short enough to type. One
 definition can back many concurrent processes; a process always names the

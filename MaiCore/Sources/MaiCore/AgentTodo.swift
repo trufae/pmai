@@ -208,7 +208,7 @@ public enum MaiTodoTools {
     ToolDefinition(
       name: addName,
       description:
-        "Add todo items for work of five or more steps, one title per line; skip it for shorter tasks. The list persists across chats.",
+        "Add todo items for work of five or more steps or an agreed planning handoff, one title per line. The list persists across chats.",
       parameters: [
         ToolParameterDef(
           name: "title", type: "string",
