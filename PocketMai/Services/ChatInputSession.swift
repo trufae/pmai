@@ -1,4 +1,5 @@
 import Foundation
+import MaiCore
 
 /// Routes the shared composer and voice session to the chat visible on screen.
 @MainActor
@@ -54,13 +55,44 @@ struct ChatInputSession {
     store.locationService.prefetch(precise: store.settings.toolSettings.preciseLocation)
   }
 
+  func promptCatalog(local: PromptCatalog) -> PromptCatalog {
+    guard let remoteChat else { return local }
+    return local.merging(remoteChat.promptCatalog, source: remoteChat.bookmark.name)
+  }
+
   func send(
     prompt: String, attachments: [ChatAttachment] = [], voiceRecordingFilename: String? = nil
   ) async -> Bool {
     if let remoteChat {
+      guard canSubmit else { return false }
+      var text = prompt
+      var invocation: String?
+      var skillID: String?
+      let local = store.promptCatalog()
+      if let command = PromptSlashCommand.parse(prompt),
+        let entry = promptCatalog(local: local).entry(named: command.command)
+          ?? (command.command.hasPrefix("remote:")
+            ? remoteChat.promptCatalog.entry(named: String(command.command.dropFirst(7))) : nil)
+      {
+        if entry.kind == .system {
+          remoteChat.setSystemPrompt(SystemPrompt(name: entry.name, text: entry.text))
+          text = command.remainder
+          if text.isEmpty && attachments.isEmpty { return true }
+        } else {
+          // Local skill instructions travel as text; their iOS resource path is
+          // not a directory the remote host can open.
+          invocation = entry.invocation
+          skillID = entry.skillID
+          let localSkill = entry.kind == .skill && local.entries.contains { $0.skill == entry.skill }
+          text = invocation != nil || skillID != nil ? command.remainder
+            : localSkill ? UserPrompt.message(text: entry.text, arguments: command.remainder)
+            : entry.message(arguments: command.remainder) ?? prompt
+        }
+      }
       let attachmentText = PromptComposer.attachmentPromptText(from: attachments)
-      let text = [prompt, attachmentText].filter { !$0.isEmpty }.joined(separator: "\n\n")
-      return remoteChat.send(text)
+      text = [invocation == nil ? remoteChat.conversation.systemPrompt?.text ?? "" : "", text, attachmentText]
+        .filter { !$0.isEmpty }.joined(separator: "\n\n")
+      return remoteChat.send(text, command: invocation, skillID: skillID)
     }
     return await store.send(
       prompt: prompt, voiceRecordingFilename: voiceRecordingFilename, attachments: attachments)

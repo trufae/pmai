@@ -2067,12 +2067,19 @@ struct MaiCLI {
             access: rule.access, descendants: rule.descendants))
       }
       files.pathAccessPolicy = policy
+      let home = resolvedHome(options: options, environment: environment)
       let server = ACPServer(runtime: runtime, agent: agent, bridge: bridge,
         sessionDirectory: directory, workspaceRoot: root,
         workspaceRoots: options.tailcatGateway == nil && !options.acpPaths.isEmpty
           ? options.acpPaths.map { URL(fileURLWithPath: AgentHome.expandUserPath($0), isDirectory: true) } : nil,
         workspace: AgentHomeACPWorkspace(home: resolvedHome(options: options, environment: environment)),
         fileConfiguration: files,
+        promptCatalog: { cwd in
+          let skills = AgentSkillCatalog.load(directories: [
+            cwd.appendingPathComponent(".pmai/skills", isDirectory: true), home.skillsDirectoryURL,
+          ]).skills
+          return configuration?.promptCatalog(skills: skills) ?? PromptCatalog(skills: skills)
+        },
         authorize: authorize, extensionHandler: extensionHandler)
       FileHandle.standardError.write(
         Data("pmai ACP agent ready (\(agent.id)); waiting for a client on stdio.\n".utf8))

@@ -3134,17 +3134,14 @@ private struct MessageSelectionRow<Content: View>: View {
 }
 
 private struct PromptShortcutMenuOption: Identifiable, Equatable {
-  var selection: PromptShortcutSelection?
   var commandName: String
   var displayName: String
   var detail: String
   var systemImage: String
 
-  var prefix: String { selection == nil ? "/" : "$" }
+  var prefix = "/"
 
-  var id: String {
-    selection.map { "\($0.kind.rawValue):\($0.id.uuidString)" } ?? "builtin:\(commandName)"
-  }
+  var id: String { prefix + commandName }
 }
 
 private struct ChatComposer: View {
@@ -3192,6 +3189,7 @@ private struct ChatComposer: View {
   @State private var attachmentNotice: String?
   @State private var attachmentError: String?
   @State private var promptAutocompleteSuppressedCommand: String?
+  @State private var localPromptCatalog = PromptCatalog(builtins: [])
   @State private var pendingPromptCompletion: String?
   @State private var composerTextFieldRefreshID = UUID()
   @State private var focusComposerAfterTextFieldRefresh = false
@@ -3228,8 +3226,7 @@ private struct ChatComposer: View {
   }
 
   private var shouldShowPromptAutocomplete: Bool {
-    remoteChat == nil && pendingPromptCompletion == nil
-      && currentPromptCommandFragment != nil
+    pendingPromptCompletion == nil && currentPromptCommandFragment != nil
       && !promptShortcutOptions.isEmpty
       && !promptAutocompleteIsSuppressed
   }
@@ -3263,35 +3260,30 @@ private struct ChatComposer: View {
   }
 
   private var promptShortcutOptions: [PromptShortcutMenuOption] {
-    let systemOptions = store.settings.systemPrompts.map { prompt in
-      PromptShortcutMenuOption(
-        selection: PromptShortcutSelection(kind: .system, id: prompt.id),
-        commandName: prompt.commandName,
-        displayName: prompt.displayName,
-        detail: "System prompt",
-        systemImage: "text.bubble")
-    }
-    let userOptions = store.settings.userPrompts.map { prompt in
-      PromptShortcutMenuOption(
-        selection: PromptShortcutSelection(kind: .user, id: prompt.id),
-        commandName: prompt.commandName,
-        displayName: prompt.displayName,
-        detail: "User prompt",
-        systemImage: "text.quote")
+    let catalog = inputSession.promptCatalog(local: localPromptCatalog)
+    var names = Set<String>()
+    let namedOptions = catalog.entries.filter {
+      names.insert(PromptSlashCommand.normalized($0.commandName)).inserted
+    }.map { entry in
+      PromptShortcutMenuOption(commandName: entry.commandName, displayName: entry.name,
+        detail: entry.description ?? entry.kind.label,
+        systemImage: entry.kind == .skill ? "sparkles" : entry.kind == .system ? "text.bubble" : "text.quote",
+        prefix: "$")
     }
     let commands = [
       PromptShortcutMenuOption(
-        selection: nil, commandName: "btw", displayName: "Side question",
+        commandName: "btw", displayName: "Side question",
         detail: "Answers in parallel", systemImage: "bubble.left.and.bubble.right"),
       PromptShortcutMenuOption(
-        selection: nil, commandName: "version", displayName: "App version",
+        commandName: "version", displayName: "App version",
         detail: "Version and build", systemImage: "info.circle"),
-      PromptShortcutMenuOption(selection: nil, commandName: "then", displayName: "Queue action",
+      PromptShortcutMenuOption(commandName: "then", displayName: "Queue action",
         detail: "Runs after all tasks finish; no arguments lists the queue", systemImage: "text.badge.plus"),
-      PromptShortcutMenuOption(selection: nil, commandName: "unthen", displayName: "Clear queued actions",
+      PromptShortcutMenuOption(commandName: "unthen", displayName: "Clear queued actions",
         detail: "Drops all pending /then lines", systemImage: "trash"),
     ]
-    let options = draftText.hasPrefix("$") ? (isResponding ? [] : systemOptions + userOptions) : commands
+    let options = draftText.hasPrefix("$") || remoteChat != nil
+      ? namedOptions : commands + namedOptions
     guard let fragment = PromptSlashCommand.fragment(in: draftText),
       !fragment.isEmpty
     else {
@@ -3301,6 +3293,10 @@ private struct ChatComposer: View {
       option.commandName.localizedCaseInsensitiveContains(fragment)
         || option.displayName.localizedCaseInsensitiveContains(fragment)
     }
+  }
+
+  private func refreshLocalPromptCatalog() {
+    localPromptCatalog = store.promptCatalog(for: remoteChat == nil ? inputSession.conversation : nil)
   }
 
   private var canAttachImage: Bool {
@@ -3313,6 +3309,14 @@ private struct ChatComposer: View {
 
   var body: some View {
     composerControls
+      .task(id: conversationID) { refreshLocalPromptCatalog() }
+      .task(id: remoteChat?.conversation.cwd) { await remoteChat?.refreshPromptCatalog() }
+      .task(id: remoteChat?.connected) { await remoteChat?.refreshPromptCatalog() }
+      .onChange(of: draftText.first) { _, first in
+        if let first, PromptSlashCommand.prefixes.contains(first) { refreshLocalPromptCatalog() }
+      }
+      .onChange(of: store.settings.systemPrompts) { _, _ in refreshLocalPromptCatalog() }
+      .onChange(of: store.settings.userPrompts) { _, _ in refreshLocalPromptCatalog() }
       .alert(
         "Import failed",
         isPresented: attachmentErrorBinding,

@@ -203,8 +203,8 @@ public enum PromptSlashCommand {
 /// Every prompt a host runs by name, in the order a name is looked up:
 /// system prompts, user prompts, MaiCore's builtin prompts, then skills. A
 /// skill is listed whether or not the agent may call it as a tool.
-public struct PromptCatalog: Equatable, Sendable {
-  public enum Kind: String, CaseIterable, Sendable {
+public struct PromptCatalog: Codable, Equatable, Sendable {
+  public enum Kind: String, Codable, CaseIterable, Sendable {
     case system, user, builtin, skill
 
     public var label: String {
@@ -217,7 +217,7 @@ public struct PromptCatalog: Equatable, Sendable {
     }
   }
 
-  public struct Entry: Identifiable, Equatable, Sendable {
+  public struct Entry: Identifiable, Codable, Equatable, Sendable {
     public var kind: Kind
     public var name: String
     public var commandName: String
@@ -228,13 +228,34 @@ public struct PromptCatalog: Equatable, Sendable {
     /// The stored prompt's id; nil for a skill.
     public var promptID: UUID?
     public var skill: AgentSkill?
+    public var invocation: String? = nil
+    public var skillID: String? = nil
+
+    public init(
+      kind: Kind, name: String, commandName: String, text: String,
+      description: String? = nil, promptID: UUID? = nil, skill: AgentSkill? = nil,
+      invocation: String? = nil, skillID: String? = nil
+    ) {
+      self.kind = kind
+      self.name = name
+      self.commandName = commandName
+      self.text = text
+      self.description = description
+      self.promptID = promptID
+      self.skill = skill
+      self.invocation = invocation
+      self.skillID = skillID
+    }
 
     public var id: String { "\(kind.rawValue):\(PromptSlashCommand.normalized(commandName))" }
 
     /// The message the entry sends for the words after its name. A system
     /// prompt sends nothing: it changes the instructions instead.
     public func message(arguments: String) -> String? {
-      switch kind {
+      if let invocation {
+        return "/" + invocation + (arguments.isEmpty ? "" : " " + arguments)
+      }
+      return switch kind {
       case .system: nil
       case .skill: skill?.prompt(arguments: arguments)
       case .user, .builtin: UserPrompt.message(text: text, arguments: arguments)
@@ -281,6 +302,19 @@ public struct PromptCatalog: Equatable, Sendable {
 
   public func entries(of kind: Kind) -> [Entry] {
     entries.filter { $0.kind == kind }
+  }
+
+  public func merging(_ remote: PromptCatalog, source: String) -> PromptCatalog {
+    var catalog = self
+    var names = Set(entries.map { PromptSlashCommand.normalized($0.commandName) })
+    for var entry in remote.entries {
+      while !names.insert(PromptSlashCommand.normalized(entry.commandName)).inserted {
+        entry.commandName = "remote:" + entry.commandName
+      }
+      entry.description = "\(source) · \(entry.kind.label)"
+      catalog.entries.append(entry)
+    }
+    return catalog
   }
 
   /// The first entry whose command name matches, case-insensitively.

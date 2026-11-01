@@ -77,6 +77,8 @@ func promptCatalogLookup() throws {
   #expect(
     catalog.entries(of: .builtin).map(\.commandName) == ["goal", "newapp", "tldr", "followup"])
   let skillEntry = try #require(catalog.entries(of: .skill).first)
+  let restored = try JSONDecoder().decode(PromptCatalog.self, from: JSONEncoder().encode(catalog))
+  #expect(restored == catalog)
   #expect(
     skillEntry.message(arguments: "this diff")?.contains("Look at this diff and report defects.")
       == true)
@@ -85,6 +87,21 @@ func promptCatalogLookup() throws {
       "system:reviewer", "user:review", "skill:review",
     ])
   #expect(PromptCatalog.summary(of: "\n\n  first line here\nsecond", limit: 5) == "first…")
+}
+
+@Test("Local and remote prompts remain callable when names collide")
+func promptCatalogRemoteNames() throws {
+  let local = PromptCatalog(user: [UserPrompt(name: "build", text: "Local $ARGUMENTS")], builtins: [])
+  var remote = PromptCatalog(user: [UserPrompt(name: "BUILD", text: "Remote $ARGUMENTS")], builtins: [])
+  remote.entries.append(.init(kind: .user, name: "test", commandName: "test", text: "",
+    invocation: "test"))
+  let catalog = local.merging(remote, source: "Worker")
+  #expect(catalog.entry(named: "build")?.message(arguments: "one") == "Local one")
+  #expect(catalog.entry(named: "remote:build")?.message(arguments: "two") == "Remote two")
+  #expect(catalog.entry(named: "test")?.message(arguments: "three") == "/test three")
+  #expect(catalog.entries(matching: "build").count == 2)
+  let restored = try JSONDecoder().decode(PromptCatalog.self, from: JSONEncoder().encode(catalog))
+  #expect(restored == catalog)
 }
 
 @Test("Stored names resolve exactly, or by case when that leaves one")

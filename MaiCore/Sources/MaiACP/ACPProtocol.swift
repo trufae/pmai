@@ -24,6 +24,7 @@ public enum ACP {
     /// or changing a chat session. This is used by PocketMai's remote terminal.
     public static let sessionRunTool = "_pmai/session/run_tool"
     public static let workspaceFiles = "_pmai/workspace/files"
+    public static let workspacePrompts = "_pmai/workspace/prompts"
     public static let sessionPrompt = "session/prompt"
     public static let sessionCancel = "session/cancel"
     public static let sessionSetConfigOption = "session/set_config_option"

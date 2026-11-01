@@ -62,6 +62,7 @@ struct RemoteAgentConversation: Codable, Identifiable {
   var updatedAt = Date()
   var createdAt: Date? = Date()
   var messages: [RemoteAgentMessage] = []
+  var systemPrompt: SystemPrompt?
 
   var presentation: Conversation {
     var result = Conversation()
@@ -458,8 +459,13 @@ struct RemoteAgentPermission: Identifiable {
 @MainActor @Observable
 final class RemoteAgentChat {
   let bookmark: RemoteAgentBookmark
-  private(set) var conversation: RemoteAgentConversation
-  var messages: [RemoteAgentMessage]
+  private(set) var conversation: RemoteAgentConversation {
+    didSet { cachedPresentation = nil }
+  }
+  var messages: [RemoteAgentMessage] {
+    didSet { cachedPresentation = nil }
+  }
+  @ObservationIgnored private var cachedPresentation: Conversation?
   var status = "Disconnected"
   var error: String?
   var busy = false
@@ -479,14 +485,20 @@ final class RemoteAgentChat {
   private var sessionID: String?
   private var client: (any RemoteSessionClient)?
   private var operation: Task<Void, Never>?
-  private var pendingPrompt: String?
+  private var pendingPrompt: RemotePromptRequest?
   private var pendingInjection: String?
   private var permissionReplies: [UUID: CheckedContinuation<ACPPermissionResponse?, Never>] = [:]
   private var generation = 0
   private var historyRewindSupported = false
   private var deleted = false
   private var connectingHistory: [RemoteAgentMessage]?
-  private var loadingMessages: [RemoteAgentMessage]?
+  @ObservationIgnored private var loadingMessages: [RemoteAgentMessage]?
+  @ObservationIgnored private var pendingMessages: [RemoteAgentMessage]?
+  @ObservationIgnored private var messagePublishTask: Task<Void, Never>?
+  private(set) var promptCatalog = PromptCatalog(builtins: [])
+  private var catalogTask: Task<Void, Never>?
+  @ObservationIgnored private var catalogRequest: Task<PromptCatalog, Error>?
+  private var catalogLoaded = false
   private let store: RemoteAgentStore
   private let isOffline: () -> Bool
   private let httpConfiguration: URLSessionConfiguration
@@ -507,9 +519,49 @@ final class RemoteAgentChat {
   }
 
   var presentation: Conversation {
+    // Keep observation on the source even when the converted timeline is cached.
+    _ = messages
+    _ = conversation
+    if let cachedPresentation { return cachedPresentation }
     var snapshot = conversation
     snapshot.messages = messages
-    return snapshot.presentation
+    let presentation = snapshot.presentation
+    cachedPresentation = presentation
+    return presentation
+  }
+
+  func setSystemPrompt(_ prompt: SystemPrompt) {
+    conversation.systemPrompt = prompt
+    persist()
+  }
+
+  func refreshPromptCatalog() async {
+    guard !catalogLoaded, !isOffline(), bookmark.requiresApproval != true,
+      !conversation.cwd.isEmpty else { return }
+    let attempt = generation
+    let request: Task<PromptCatalog, Error>
+    if let catalogRequest {
+      request = catalogRequest
+    } else {
+      request = Task { [bookmark, store, httpConfiguration, cwd = conversation.cwd, client] in
+        let temporary = client == nil
+        let client = try client ?? bookmark.makeClient(
+          token: store.token(for: bookmark.id), cwd: cwd,
+          resumeID: UUID().uuidString, httpConfiguration: httpConfiguration)
+        defer { if temporary { Task { await client.disconnect() } } }
+        return try await client.promptCatalog()
+      }
+      catalogRequest = request
+    }
+    defer { if generation == attempt { catalogRequest = nil } }
+    do {
+      let catalog = try await request.value
+      guard generation == attempt, !Task.isCancelled else { return }
+      catalogLoaded = true
+      if promptCatalog != catalog { promptCatalog = catalog }
+    } catch {
+      // Older hosts may not expose a catalog. Local shortcuts remain usable.
+    }
   }
 
   var canManage: Bool {
@@ -729,6 +781,9 @@ final class RemoteAgentChat {
     status = "Connecting…"
     historyRewindSupported = false
     configurationLoaded = false
+    catalogRequest?.cancel()
+    catalogRequest = nil
+    catalogLoaded = false
     store.setConnectionFailed(false, for: bookmark.id)
     generation += 1
     let attempt = generation
@@ -755,13 +810,16 @@ final class RemoteAgentChat {
         store.setConnectionFailed(!connected, for: bookmark.id)
         connectingHistory = nil
         status = connected ? (responding ? "Responding…" : "Connected") : "Disconnected"
+        if connected {
+          catalogTask = Task { [weak self] in await self?.refreshPromptCatalog() }
+        }
         persist()
       } catch {
         guard generation == attempt else { return }
         messages = previous
         connectingHistory = nil
         loadingMessages = nil
-        unsentPrompt = pendingPrompt
+        unsentPrompt = pendingPrompt.map(restoredDraft)
         pendingPrompt = nil
         historyRewindSupported = false
         self.error = error.localizedDescription
@@ -777,21 +835,21 @@ final class RemoteAgentChat {
         if !connected { scheduleReconnect() }
         if connected, let pendingPrompt {
           self.pendingPrompt = nil
-          send(pendingPrompt)
+          send(pendingPrompt.text, command: pendingPrompt.command, skillID: pendingPrompt.skillID)
         }
       }
     }
   }
 
   @discardableResult
-  func send(_ text: String) -> Bool {
+  func send(_ text: String, command: String? = nil, skillID: String? = nil) -> Bool {
     let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty, canSubmit else { return false }
+    guard !text.isEmpty || command != nil || skillID != nil, canSubmit else { return false }
     guard !connected else {
-      if responding { inject(text) } else { submit(text) }
+      if responding { inject(text) } else { submit(text, command: command, skillID: skillID) }
       return true
     }
-    pendingPrompt = text
+    pendingPrompt = RemotePromptRequest(text: text, command: command, skillID: skillID)
     connect()
     return true
   }
@@ -836,15 +894,16 @@ final class RemoteAgentChat {
     }
   }
 
-  private func submit(_ text: String, rewind: Bool = false, boundary: String? = nil) {
+  private func submit(_ text: String, rewind: Bool = false, boundary: String? = nil,
+    command: String? = nil, skillID: String? = nil) {
     guard canSend, let client else { return }
     let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty else { return }
+    guard !text.isEmpty || command != nil || skillID != nil else { return }
     busy = true
     error = nil
     responding = true
     status = rewind ? "Rewinding…" : "Responding…"
-    if !rewind { appendPrompt(text) }
+    if !rewind { appendPrompt(RemotePromptRequest(text: text, command: command).draft) }
     let attempt = generation
     operation = Task {
       do {
@@ -856,7 +915,7 @@ final class RemoteAgentChat {
           appendPrompt(text)
           status = "Responding…"
         }
-        let reason = try await client.prompt(text) { _ in }
+        let reason = try await client.prompt(RemotePromptRequest(text: text, command: command, skillID: skillID)) { _ in }
         guard generation == attempt else { return }
         status = reason == .cancelled ? "Cancelled" : "Connected"
       } catch {
@@ -869,6 +928,7 @@ final class RemoteAgentChat {
         status = connected ? "Session failed" : "Reconnecting…"
       }
       guard generation == attempt else { return }
+      flushMessages()
       cancelPermissions()
       responding = false
       busy = false
@@ -880,6 +940,7 @@ final class RemoteAgentChat {
   }
 
   private func appendPrompt(_ text: String) {
+    flushMessages()
     messages.append(RemoteAgentMessage(role: "user", text: text))
     conversation.updatedAt = Date()
     if AgentChat.isPlaceholderTitle(conversation.title) {
@@ -889,6 +950,12 @@ final class RemoteAgentChat {
   }
 
   func disconnect() {
+    flushMessages()
+    catalogTask?.cancel()
+    catalogTask = nil
+    catalogRequest?.cancel()
+    catalogRequest = nil
+    catalogLoaded = false
     shouldReconnect = false
     loadingMessages = nil
     reconnectTask?.cancel()
@@ -920,6 +987,12 @@ final class RemoteAgentChat {
 
   private func connectionClosed(generation: Int) {
     guard self.generation == generation else { return }
+    flushMessages()
+    catalogTask?.cancel()
+    catalogTask = nil
+    catalogRequest?.cancel()
+    catalogRequest = nil
+    catalogLoaded = false
     self.generation += 1
     loadingMessages = nil
     operation?.cancel()
@@ -932,7 +1005,7 @@ final class RemoteAgentChat {
     }
     settingsLoading = false
     configurationLoaded = false
-    if let pendingPrompt { unsentPrompt = pendingPrompt; self.pendingPrompt = nil }
+    if let pendingPrompt { unsentPrompt = restoredDraft(pendingPrompt); self.pendingPrompt = nil }
     connected = false
     busy = false
     responding = false
@@ -960,6 +1033,7 @@ final class RemoteAgentChat {
 
   private func requestPermission(_ request: JSONValue, generation: Int) async -> ACPPermissionResponse? {
     guard self.generation == generation, !Task.isCancelled else { return nil }
+    flushMessages()
     let id = UUID()
     let tool = request.objectValue?["toolCall"]
     let pmai = request.objectValue?["_pmai"]?.objectValue
@@ -1001,19 +1075,42 @@ final class RemoteAgentChat {
     else { return }
     if kind == "_pmai/session_state", let running = object["running"]?.boolValue {
       responding = running
-      if !running { cancelPermissions(); persist() }
+      if !running { flushMessages(); cancelPermissions(); persist() }
       busy = running || operation != nil
       status = running ? "Responding…" : "Connected"
     } else if kind == "config_option_update" {
       configurationOptions = RemoteSessionOption.parse(object["configOptions"])
+    } else if kind == "available_commands_update" {
+      catalogLoaded = false
+      catalogTask?.cancel()
+      catalogTask = Task { [weak self] in await self?.refreshPromptCatalog() }
     } else {
-      if var loading = loadingMessages {
-        ACPConversationTranscript.apply(update, to: &loading)
-        loadingMessages = loading
+      if loadingMessages != nil {
+        ACPConversationTranscript.apply(update, to: &loadingMessages!)
       } else {
-        ACPConversationTranscript.apply(update, to: &messages)
+        if pendingMessages == nil { pendingMessages = messages }
+        ACPConversationTranscript.apply(update, to: &pendingMessages!)
+        guard messagePublishTask == nil else { return }
+        messagePublishTask = Task { [weak self] in
+          do { try await Task.sleep(for: .seconds(1)) } catch { return }
+          self?.flushMessages()
+        }
       }
     }
+  }
+
+  private func flushMessages() {
+    messagePublishTask?.cancel()
+    messagePublishTask = nil
+    guard let pending = pendingMessages else { return }
+    pendingMessages = nil
+    if messages != pending { messages = pending }
+  }
+
+  private func restoredDraft(_ request: RemotePromptRequest) -> String {
+    let name = request.command ?? promptCatalog.entries.first { $0.skillID == request.skillID && $0.skillID != nil }?.commandName
+    guard let name else { return request.draft }
+    return "$remote:" + name + (request.text.isEmpty ? "" : " " + request.text)
   }
 
   private func persist() {

@@ -48,6 +48,7 @@ public actor ACPServer {
   private let workspaceRoots: [URL]?
   private let workspace: (any ACPWorkspaceRepository)?
   private let fileConfiguration: MaiFileWorkspaceConfiguration?
+  private let promptCatalog: @Sendable (URL) -> PromptCatalog
   private let authorize: @Sendable () throws -> Void
   private let extensionHandler: @Sendable (String, JSONValue?) throws -> JSONValue?
   private var connected = false
@@ -66,6 +67,7 @@ public actor ACPServer {
     sessionDirectory: URL? = nil, workspaceRoot: URL? = nil, workspaceRoots: [URL]? = nil,
     workspace: (any ACPWorkspaceRepository)? = nil,
     fileConfiguration: MaiFileWorkspaceConfiguration? = nil,
+    promptCatalog: @escaping @Sendable (URL) -> PromptCatalog = { _ in PromptCatalog() },
     authorize: @escaping @Sendable () throws -> Void = {},
     extensionHandler: @escaping @Sendable (String, JSONValue?) throws -> JSONValue? = { _, _ in nil
     }
@@ -79,6 +81,7 @@ public actor ACPServer {
     }
     self.workspace = workspace
     self.fileConfiguration = fileConfiguration
+    self.promptCatalog = promptCatalog
     self.authorize = authorize
     self.extensionHandler = extensionHandler
   }
@@ -155,6 +158,9 @@ public actor ACPServer {
       return try await runTool(params: params)
     case ACP.Method.workspaceFiles:
       return try await workspaceFiles(params: params)
+    case ACP.Method.workspacePrompts:
+      let catalog = promptCatalog(try directory(params: params))
+      return try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(catalog))
     case "ping":
       return .object([:])
     case "_pmai/session/inject":
@@ -186,6 +192,7 @@ public actor ACPServer {
       "agentCapabilities": .object([
         "_meta": .object(["pmai": .object([
           "workspaceFiles": .integer(1), "permissionEditing": .integer(1), "yolo": .integer(1),
+          "workspacePrompts": .integer(1),
           "historyRewind": .integer(1), "injection": .integer(1),
         ])]),
         "loadSession": .bool(sessionDirectory != nil || workspace != nil),

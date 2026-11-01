@@ -6,7 +6,7 @@ import Foundation
 /// share (`<skills dir>/<name>/SKILL.md`), so a skill written for another
 /// tool works here unchanged. pmai reads them from the project's
 /// `.pmai/skills` and from `~/.pmai/skills`.
-public struct AgentSkill: Equatable, Identifiable, Sendable {
+public struct AgentSkill: Codable, Equatable, Identifiable, Sendable {
   public static let filename = "SKILL.md"
   /// The placeholder a body may use for whatever the caller passes along.
   public static let argumentsPlaceholder = "$ARGUMENTS"
