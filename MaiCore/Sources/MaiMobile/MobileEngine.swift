@@ -151,6 +151,10 @@ import Observation
       case "remoteRetry": remote.retryMessage(value("id"))
       case "remoteRestart": remote.retryMessage(value("id"), restarting: true)
       case "disconnect": remote.disconnect()
+      case "terminalRun":
+        remote.runTerminal(id: value("id"), hostID: value("hostID"), cwd: value("cwd"), script: value("script"))
+      case "terminalStop": remote.terminal.stop()
+      case "terminalClose": remote.terminal.close()
       case "browse": remote.browse(value("path").isEmpty ? "." : value("path"))
       case "downloadXdc": try remote.prepareWorkspace(); remote.workspace.open(value("path"), archive: true)
       case "consumeDownload": try remote.workspace.consumeDownload()
