@@ -9,6 +9,7 @@ public struct ACPRemoteHost: Codable, Identifiable, Equatable, Sendable {
   public var url: URL
   public var cwd: String
   public var connectionProtocol: ACPRemoteProtocol?
+  public var backend: RemoteAgentBackend?
   public var providerID: String { "remote." + id.uuidString.lowercased() }
 }
 
@@ -45,6 +46,12 @@ public struct ACPRemoteHostStore: Sendable {
   @discardableResult
   public func pair(_ profile: ACPRemoteConnection, name: String? = nil) throws -> ACPRemoteHost {
     try profile.validate()
+    return try pair(RemoteHostConnection(profile), name: name)
+  }
+
+  @discardableResult
+  public func pair(_ profile: RemoteHostConnection, name: String? = nil) throws -> ACPRemoteHost {
+    _ = try profile.makeSession()
     let name = (name ?? profile.name).trimmingCharacters(in: .whitespacesAndNewlines)
     guard !name.isEmpty,
       !name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
@@ -66,13 +73,22 @@ public struct ACPRemoteHostStore: Sendable {
     }
     let host = ACPRemoteHost(
       id: existing.map { hosts[$0].id } ?? UUID(), name: name,
-      url: profile.url, cwd: profile.cwd, connectionProtocol: profile.connectionProtocol)
+      url: profile.url, cwd: profile.cwd, connectionProtocol: profile.connectionProtocol, backend: profile.backend)
     try Data(profile.token.utf8).write(to: tokenFile(for: host), options: .atomic)
     try FileManager.default.setAttributes(
       [.posixPermissions: 0o600], ofItemAtPath: tokenFile(for: host).path)
     if let existing { hosts[existing] = host } else { hosts.append(host) }
     try ACPStateFiles.write(hosts, to: index)
     return host
+  }
+
+  public func connection(for host: ACPRemoteHost) throws -> RemoteHostConnection {
+    let token = try String(contentsOf: tokenFile(for: host), encoding: .utf8)
+    if host.backend == .openCode {
+      return .init(try OpenCodeConnection(name: host.name, url: host.url, token: token, cwd: host.cwd))
+    }
+    return .init(try ACPRemoteConnection(name: host.name, url: host.url, token: token, cwd: host.cwd,
+      connectionProtocol: host.connectionProtocol))
   }
 
   public func provider(for host: ACPRemoteHost) -> ConfiguredProvider {

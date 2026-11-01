@@ -225,6 +225,12 @@ or run `/remote pair '<URI>'` on another CLI. Saved hosts reconnect
 without scanning again; `/remote qr` creates a fresh five-minute invitation for
 another device. Forwiroh grants access only to pmai's loopback ACP endpoint.
 
+CLI users can use `/remote ls HOST`, `/remote get HOST REMOTE [LOCAL]`,
+`/remote put HOST LOCAL [REMOTE]`, and `/remote run HOST COMMAND` for files and
+commands on paired pmai or OpenCode hosts. `/remote shell HOST` sends typed
+commands directly to that host until `exit`. See `/help remote` for pairing and
+path examples.
+
 Forwiroh [0.1.4](https://github.com/trufae/forwiroh/releases/tag/v0.1.4) is supplied as a prebuilt SwiftPM dependency under `Vendor/Forwiroh`:
 no Rust build or wrapper generation is needed. Its release binaries support
 macOS, iOS, Linux and Android. Linux glibc binaries require Ubuntu 24.04/glibc

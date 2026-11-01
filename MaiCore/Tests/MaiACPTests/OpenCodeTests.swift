@@ -83,6 +83,12 @@ func openCodeWorkspaceFiles() async throws {
       return (response, second ? Data(bytes.suffix(2)) : Data(bytes.prefix(2)))
     case "/api/fs/read/empty":
       return try httpResponse(request, status: 416, contentType: nil, body: "", headers: ["Content-Range": "bytes */0"])
+    case "/api/experimental/fs/write":
+      #expect(request.httpMethod == "POST")
+      #expect(query.contains(.init(name: "path", value: "/work/sub/upload #?.bin")))
+      #expect(request.value(forHTTPHeaderField: "Content-Type") == "application/octet-stream")
+      #expect(try requestBodyData(request) == bytes)
+      return try httpResponse(request, contentType: "application/json", body: #"{"data":{"path":"/work/sub/upload #?.bin"}}"#)
     default:
       Issue.record("Unexpected workspace request: \(url.path)")
       throw URLError(.unsupportedURL)
@@ -106,6 +112,13 @@ func openCodeWorkspaceFiles() async throws {
   }
   await #expect(throws: WorkspaceFileError.self) {
     try await workspace.request(.init(.list, path: "/work/../outside"))
+  }
+  try await workspace.write("sub/upload #?.bin", data: bytes)
+  await #expect(throws: WorkspaceFileError.self) {
+    try await workspace.write("../outside", data: bytes)
+  }
+  await #expect(throws: WorkspaceFileError.self) {
+    try await workspace.write("sub/upload #?.bin", data: bytes, overwrite: false)
   }
   await workspace.close()
 }

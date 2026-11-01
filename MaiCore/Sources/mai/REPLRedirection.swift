@@ -21,6 +21,8 @@ struct REPLRedirectSyntax {
   static func parse(_ input: String, pasted: IndexSet = []) throws -> Self? {
     let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
     guard trimmed.hasPrefix("/") else { return nil }
+    let command = trimmed.split(maxSplits: 2, whereSeparator: \.isWhitespace)
+    if command.count >= 2, command[0] == "/remote", command[1].lowercased() == "run" { return nil }
     let bytes = Array(input.utf8)
     var quote: UInt8?
     var index = 0

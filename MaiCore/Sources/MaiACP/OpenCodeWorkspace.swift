@@ -29,11 +29,7 @@ public actor OpenCodeWorkspace {
       request.offset <= Int.max - request.limit,
       !request.path.contains("\0")
     else { throw WorkspaceFileError("Invalid file path or range.") }
-    let path = URL(fileURLWithPath: request.path, relativeTo: URL(fileURLWithPath: root, isDirectory: true))
-      .standardized.path
-    guard path == root || path.hasPrefix(root == "/" ? "/" : root + "/") else {
-      throw WorkspaceFileError("The path is outside this workspace.")
-    }
+    let path = try resolve(request.path)
     switch request.operation {
     case .list:
       let response = try await http.request(
@@ -89,6 +85,23 @@ public actor OpenCodeWorkspace {
     default:
       throw WorkspaceFileError("OpenCode file browsing is read only.")
     }
+  }
+
+  private func resolve(_ path: String) throws -> String {
+    guard !path.contains("\0") else { throw WorkspaceFileError("Invalid file path.") }
+    let path = URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: root, isDirectory: true)).standardized.path
+    guard path == root || path.hasPrefix(root == "/" ? "/" : root + "/") else {
+      throw WorkspaceFileError("The path is outside this workspace.")
+    }
+    return path
+  }
+
+  /// OpenCode's binary write endpoint replaces files; it has no exclusive-create option.
+  public func write(_ path: String, data: Data) async throws {
+    let path = try resolve(path)
+    guard path != root else { throw WorkspaceFileError("Choose a file to write.") }
+    _ = try await http.download(["api", "experimental", "fs", "write"], method: "POST",
+      query: query + [.init(name: "path", value: path)], timeout: 120, data: data)
   }
 
   public func run(_ command: String, onOutput: @escaping @Sendable (String) async -> Void = { _ in })

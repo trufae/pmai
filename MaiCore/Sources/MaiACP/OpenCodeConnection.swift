@@ -163,7 +163,7 @@ final class OpenCodeHTTP: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
   func download(
     _ path: [String], method: String = "GET", body: JSONValue? = nil,
     query: [URLQueryItem] = [], headers: [String: String] = [:], accepting: Set<Int> = [],
-    timeout: TimeInterval = 30
+    timeout: TimeInterval = 30, data: Data? = nil
   ) async throws -> (Data, HTTPURLResponse) {
     var url = url
     for component in path {
@@ -188,6 +188,9 @@ final class OpenCodeHTTP: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
     if let body {
       request.httpBody = try JSONEncoder().encode(body)
       request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    } else if let data {
+      request.httpBody = data
+      request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
     }
     let (data, response) = try await session.data(for: request)
     try Task.checkCancellation()

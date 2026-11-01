@@ -55,6 +55,11 @@ public enum WorkspaceConnection: Sendable {
   }
 
   public func write(_ path: String, data: Data, overwrite: Bool = true) async throws {
+    if case .openCode(let workspace) = self {
+      guard overwrite else { throw WorkspaceFileError("OpenCode uploads require permission to replace the destination.") }
+      try await workspace.write(path, data: data)
+      return
+    }
     let response = try await request(.init(.uploadBegin, path: path, overwrite: overwrite))
     guard let id = response.transferID else { throw WorkspaceFileError("The host did not start the upload.") }
     do {
