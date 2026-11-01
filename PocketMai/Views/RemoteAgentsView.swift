@@ -28,36 +28,25 @@ struct RemoteAgentsView: View {
           }
           .foregroundStyle(.primary)
           .contextMenu {
-            Button("Rename", systemImage: "character.cursor.ibeam") { renaming = connection }
-            Button("Edit Host", systemImage: "pencil") { editing = connection }
-            if hosts != nil || onSelectHost != nil { Divider() }
-            if let hosts, hosts.selectedHostID == connection.id || hosts.isConnected(connection.id)
-            {
-              Button("Disconnect", systemImage: "network.slash") { hosts.disconnect(connection.id) }
-            }
-            if onSelectHost != nil {
-              Button("Reconnect", systemImage: "arrow.clockwise") {
-                if let hosts {
-                  hosts.reconnect(connection.id, isOffline: appStore.settings.isOffline)
-                } else {
-                  store.reconnect(connection.id)
+            RemoteHostMenu(
+              host: connection, store: store, isOffline: appStore.settings.isOffline,
+              rename: { renaming = connection },
+              connect: onSelectHost.map { select in
+                {
+                  if let hosts {
+                    hosts.reconnect(connection.id, isOffline: appStore.settings.isOffline)
+                  } else {
+                    store.reconnect(connection.id)
+                  }
+                  select(connection.id)
                 }
-              }
-              .disabled(appStore.settings.isOffline)
-            }
-            Divider()
-            Button("Remove Host", systemImage: "trash", role: .destructive) {
-              store.remove(connection.id)
-            }
+              }, edit: { editing = connection })
           }
-        }
-        .onDelete { indices in
-          for id in indices.map({ store.connections[$0].id }) { store.remove(id) }
         }
         Button("Add Remote Host", systemImage: "plus") { adding = true }
       } footer: {
         Text(
-          "Connect to pmai or OpenCode over your local network or OpenTunnel. The remote agent runs its tools on its host. Chats and credentials stay on this device."
+          "Tools run on the remote host. Connection credentials and cached chats stay on this device."
         )
       }
       if let error = store.error { Text(error).foregroundStyle(.red) }
@@ -65,48 +54,71 @@ struct RemoteAgentsView: View {
     .navigationTitle("Remote Hosts")
     .sheet(isPresented: $adding) { RemoteAgentConnectionView(onAdded: onSelectHost) }
     .sheet(item: $editing) { host in RemoteAgentConnectionView(initialHost: host) }
-    .sheet(item: $renaming) { host in RemoteHostRenameView(host: host) }
+    .modifier(RemoteHostRenameModifier(host: $renaming))
   }
 }
 
-struct RemoteHostRenameView: View {
+struct RemoteHostMenu: View {
   let host: RemoteAgentBookmark
-  @Environment(\.dismiss) private var dismiss
-  @State private var name: String
-  @State private var error: String?
-
-  init(host: RemoteAgentBookmark) {
-    self.host = host
-    _name = State(initialValue: host.name)
-  }
+  let store: RemoteAgentStore
+  let isOffline: Bool
+  let rename: () -> Void
+  var connect: (() -> Void)?
+  let edit: () -> Void
 
   var body: some View {
-    NavigationStack {
-      Form {
-        TextField("Name", text: $name)
-        if let error { Text(error).foregroundStyle(.red) }
-      }
-      .navigationTitle("Rename Host")
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Save") {
-            do {
-              try RemoteAgentStore.shared.rename(host.id, to: name)
-              dismiss()
-            } catch { self.error = error.localizedDescription }
-          }
-          .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        }
-      }
+    Button("Rename", systemImage: "character.cursor.ibeam", action: rename)
+    Button(
+      store.isHostPinned(host.id) ? "Unpin" : "Pin",
+      systemImage: store.isHostPinned(host.id) ? "pin.slash" : "pin"
+    ) { store.toggleHostPin(host.id) }
+    if let connect {
+      Divider()
+      Button("Connect", systemImage: "network", action: connect).disabled(isOffline)
     }
-    .presentationDetents([.medium])
+    Divider()
+    Button("Edit Host", systemImage: "pencil", action: edit)
+  }
+}
+
+struct RemoteHostRenameModifier: ViewModifier {
+  @Binding var host: RemoteAgentBookmark?
+  @State private var name = ""
+  @State private var showing = false
+  @State private var error: String?
+
+  func body(content: Content) -> some View {
+    content
+      .onChange(of: host?.id) { _, id in
+        guard id != nil else { return }
+        name = host?.name ?? ""
+        showing = true
+      }
+      .onChange(of: showing) { _, showing in if !showing { host = nil } }
+      .alert("Rename Host", isPresented: $showing, presenting: host) { host in
+        TextField("Name", text: $name)
+        Button("Cancel", role: .cancel) {}
+        Button("Rename") {
+          do { try RemoteAgentStore.shared.rename(host.id, to: name) } catch {
+            self.error = error.localizedDescription
+          }
+        }
+        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+      }
+      .alert(
+        "Couldn't Rename Host",
+        isPresented: Binding(
+          get: { error != nil }, set: { if !$0 { error = nil } })
+      ) {
+        Button("OK", role: .cancel) { error = nil }
+      } message: {
+        Text(error ?? "")
+      }
   }
 }
 
 struct RemoteAgentConnectionView: View {
   var onAdded: ((UUID) -> Void)? = nil
-  var scanOnAppear = false
   var initialHost: RemoteAgentBookmark? = nil
   @Environment(\.dismiss) private var dismiss
   @EnvironmentObject private var appStore: AppStore
@@ -124,118 +136,85 @@ struct RemoteAgentConnectionView: View {
   @State private var backend: RemoteAgentBackend = .acp
   @State private var importing = false
   @State private var importTask: Task<Void, Never>?
+  @State private var advanced = false
+  @State private var deleting = false
 
   var body: some View {
     NavigationStack {
       Form {
-        Section("Appearance") {
-          TextField("Name", text: $name)
-          Picker("Accent color", selection: $accentColor) {
-            Text("App default").tag(String?.none)
-            ForEach(AgentProjectTint.presetNames, id: \.self) { name in
-              Text(name.capitalized).tag(Optional(name))
-            }
-            if let accentColor, !AgentProjectTint.presetNames.contains(accentColor) {
-              Text("Custom").tag(Optional(accentColor))
-            }
+        Section {
+          Button {
+            Task { await scan() }
+          } label: {
+            Label("Scan Host QR", systemImage: "qrcode.viewfinder")
+              .font(.headline)
+              .frame(maxWidth: .infinity, minHeight: 44)
           }
-          ColorPicker(
-            "Custom accent",
-            selection: Binding(
-              get: {
-                accentColor.flatMap { ConversationFolderTint(rawIdentifier: $0) }?.color
-                  ?? .accentColor
-              },
-              set: { accentColor = $0.folderTintHex.map { "custom:" + $0 } }),
-            supportsOpacity: false)
-        }
-        Section("Import connection") {
-          TextField("Paste pmai connection or OpenCode pairing link", text: $uri, axis: .vertical)
-            .textInputAutocapitalization(.never).autocorrectionDisabled().privacySensitive()
-          Button("Read Connection") { apply(uri) }
-            .disabled(importing || uri.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-          if importing { ProgressView("Pairing with OpenCode…") }
-          if DataScannerViewController.isSupported {
-            Button("Scan Host QR", systemImage: "qrcode.viewfinder") {
-              Task { await scan() }
-            }
-            .disabled(importing)
-          }
-        }
-        Section("Server") {
-          Picker("Server type", selection: $backend) {
-            Text("pmai / ACP").tag(RemoteAgentBackend.acp)
+          .buttonStyle(.borderedProminent)
+          .controlSize(.large)
+          .disabled(importing || !DataScannerViewController.isSupported)
+          Picker("Host Type", selection: $backend) {
+            Text("pmai").tag(RemoteAgentBackend.acp)
             Text("OpenCode").tag(RemoteAgentBackend.openCode)
           }
-          if backend == .openCode {
-            Text("Run `opencode pair --remote` and scan its QR.")
+          .pickerStyle(.menu)
+          .disabled(importing)
+          VStack(alignment: .leading, spacing: 8) {
+            Text(backend == .openCode ? "On your computer, run:" : "In the pmai REPL, run:")
+            Text(backend == .openCode ? "opencode pair --remote" : "/remote serve")
+              .font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
+            Text(
+              backend == .openCode
+                ? "Scan the QR, choose a name, then tap Add."
+                : "Scan the QR and add the host. Approve the device and chat requests with /remote accept on your computer."
+            )
+          }
+          .font(.footnote).foregroundStyle(.secondary)
+          if !DataScannerViewController.isSupported {
+            Text("QR scanning is unavailable on this device. Paste a connection in Advanced.")
               .font(.footnote).foregroundStyle(.secondary)
           }
-          if backend == .acp {
-            Picker("Connection", selection: $connectionProtocol) {
-              ForEach(ACPRemoteProtocol.allCases, id: \.self) { kind in
-                Text(kind.displayName).tag(kind)
-              }
-            }
-          }
-          TextField(backend == .openCode ? "https://host" : "wss://host/acp", text: $address)
-            .keyboardType(.URL)
-            .textInputAutocapitalization(.never).autocorrectionDisabled()
-          SecureField(
-            backend == .openCode ? "OpenCode session token or password" : "Gateway token",
-            text: $token
-          )
-          .textInputAutocapitalization(.never).autocorrectionDisabled()
-          TextField(
-            backend == .openCode
-              ? "Workspace (optional; discovered after pairing)"
-              : "Absolute workspace on remote host", text: $cwd
-          )
-          .textInputAutocapitalization(.never).autocorrectionDisabled()
+          if importing { ProgressView("Pairing with OpenCode…") }
         }
-
-        if backend == .acp && connectionProtocol == .tailcat {
-          Section("Set up Tailcat") {
-            Text(
-              "PocketMai connects to Tailcat workers through an ACP gateway. On the worker, run:")
-            Text("pmai tailcat serve --name workstation")
-              .font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
-            Text("On your gateway computer, pair the worker's invite:")
-            Text("pmai tailcat pair workstation '<worker invite>'")
-              .font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
-            Text(
-              "Then start the gateway using the worker's workspace and your gateway's reachable address:"
-            )
-            Text(
-              "pmai acp-gateway --host 0.0.0.0 --cwd /absolute/workspace --url ws://gateway.local:19283/acp --name workstation --qr gateway.png -- pmai tailcat connect workstation"
-            )
-            .font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
-            Text(
-              "Scan gateway.png here. The worker's Tailcat enrollment QR is used on the gateway computer."
-            )
-          }
-        }
-
         Section {
-          if address.lowercased().hasPrefix("ws://") || address.lowercased().hasPrefix("http://") {
+          TextField("Name", text: $name)
+            .disabled(importing)
+          if !address.isEmpty {
+            Label("Connection details added", systemImage: "checkmark.circle")
+              .font(.footnote).foregroundStyle(.secondary)
+          }
+        }
+        Section {
+          DisclosureGroup("Advanced", isExpanded: $advanced) {
+            manualConnectionFields
+            Divider()
+            appearanceFields
+          }
+          .disabled(importing)
+        }
+        if address.lowercased().hasPrefix("ws://") || address.lowercased().hasPrefix("http://") {
+          Section {
             Label(
               "This connection is unencrypted. Use it only on a trusted private network, or use HTTPS / WSS.",
               systemImage: "lock.open")
           }
-          if backend == .acp {
-            Text(
-              "For pmai, run /remote serve (Forwiroh by default), scan its QR, then accept with /remote accept. Forwiroh asks for device approval followed by ACP chat approval. Use --protocol local for direct LAN access or --protocol opentunnel for OpenTunnel. Use /remote qr for a fresh invitation when adding another device."
-            )
-            .font(.footnote).foregroundStyle(.secondary)
+        }
+        if initialHost != nil {
+          Section {
+            Button("Delete Host", systemImage: "trash", role: .destructive) { deleting = true }
           }
         }
         if let error { Text(error).foregroundStyle(.red) }
       }
-      .navigationTitle(initialHost == nil ? "Add Remote Host" : "Edit Remote Host")
+      .navigationTitle(initialHost == nil ? "Add Host" : "Edit Host")
+      .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
         ToolbarItem(placement: .confirmationAction) {
-          Button("Save") { save() }.disabled(importing)
+          Button(initialHost == nil ? "Add" : "Save") { save() }
+            .disabled(
+              importing || address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
       }
       .sheet(isPresented: $scanning) {
@@ -256,6 +235,16 @@ struct RemoteAgentConnectionView: View {
           }
         }
       }
+      .alert("Delete Host?", isPresented: $deleting) {
+        Button("Delete Host", role: .destructive) {
+          guard let host = initialHost else { return }
+          RemoteAgentStore.shared.remove(host.id)
+          dismiss()
+        }
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text("This removes the saved connection and its chats from this device.")
+      }
       .task {
         if let host = initialHost {
           name = host.name
@@ -270,20 +259,97 @@ struct RemoteAgentConnectionView: View {
             self.error = error.localizedDescription
           }
         }
-        if scanOnAppear { await scan() }
       }
       .onDisappear { importTask?.cancel() }
+    }
+  }
+
+  private var manualConnectionFields: some View {
+    Group {
+      TextField("Paste connection or pairing link", text: $uri, axis: .vertical)
+        .textInputAutocapitalization(.never).autocorrectionDisabled().privacySensitive()
+      Button("Import Connection") { apply(uri) }
+        .disabled(importing || uri.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+      Divider()
+      if backend == .acp {
+        Picker("Connection", selection: $connectionProtocol) {
+          ForEach(ACPRemoteProtocol.allCases, id: \.self) { kind in
+            Text(kind.displayName).tag(kind)
+          }
+        }
+      }
+      TextField(backend == .openCode ? "https://host" : "wss://host/acp", text: $address)
+        .keyboardType(.URL)
+        .textInputAutocapitalization(.never).autocorrectionDisabled()
+      SecureField(
+        backend == .openCode ? "OpenCode session token or password" : "Gateway token",
+        text: $token
+      )
+      .textInputAutocapitalization(.never).autocorrectionDisabled()
+      TextField(
+        backend == .openCode
+          ? "Workspace (optional; discovered after pairing)"
+          : "Absolute workspace on remote host", text: $cwd
+      )
+      .textInputAutocapitalization(.never).autocorrectionDisabled()
+      if backend == .acp && connectionProtocol == .tailcat {
+        VStack(alignment: .leading, spacing: 8) {
+          Text("Set up Tailcat").font(.headline)
+          Text(
+            "PocketMai connects to Tailcat workers through an ACP gateway. On the worker, run:")
+          Text("pmai tailcat serve --name workstation")
+            .font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
+          Text("On your gateway computer, pair the worker's invite:")
+          Text("pmai tailcat pair workstation '<worker invite>'")
+            .font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
+          Text(
+            "Then start the gateway using the worker's workspace and your gateway's reachable address:"
+          )
+          Text(
+            "pmai acp-gateway --host 0.0.0.0 --cwd /absolute/workspace --url ws://gateway.local:19283/acp --name workstation --qr gateway.png -- pmai tailcat connect workstation"
+          )
+          .font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
+          Text(
+            "Scan gateway.png here. The worker's Tailcat enrollment QR is used on the gateway computer."
+          )
+        }
+      }
+    }
+  }
+
+  private var appearanceFields: some View {
+    Group {
+      Picker("Accent color", selection: $accentColor) {
+        Text("App default").tag(String?.none)
+        ForEach(AgentProjectTint.presetNames, id: \.self) { name in
+          Text(name.capitalized).tag(Optional(name))
+        }
+        if let accentColor, !AgentProjectTint.presetNames.contains(accentColor) {
+          Text("Custom").tag(Optional(accentColor))
+        }
+      }
+      ColorPicker(
+        "Custom accent",
+        selection: Binding(
+          get: {
+            accentColor.flatMap { ConversationFolderTint(rawIdentifier: $0) }?.color
+              ?? .accentColor
+          },
+          set: { accentColor = $0.folderTintHex.map { "custom:" + $0 } }),
+        supportsOpacity: false)
     }
   }
 
   private func scan() async {
     let allowed = await AVCaptureDevice.requestAccess(for: .video)
     guard allowed else {
+      advanced = true
       error = "Allow camera access for PocketMai in iOS Settings to scan a host QR."
       return
     }
     guard DataScannerViewController.isAvailable else {
-      error = "Camera scanning is currently unavailable. You can paste the connection URI instead."
+      advanced = true
+      error = "Camera scanning is currently unavailable. Paste the connection in Advanced instead."
       return
     }
     error = nil
@@ -296,6 +362,7 @@ struct RemoteAgentConnectionView: View {
     if text.hasPrefix("pmai-tailcat://") {
       backend = .acp
       connectionProtocol = .tailcat
+      advanced = true
       error =
         "Pair this Tailcat invite on your gateway computer with pmai tailcat pair. Then scan the ACP gateway QR here. See Set up Tailcat below."
       return
@@ -334,7 +401,7 @@ struct RemoteAgentConnectionView: View {
     do {
       let profile = try ACPRemoteConnection.parse(text)
       backend = .acp
-      name = profile.name
+      name = initialHost?.name ?? profile.name
       address = profile.url.absoluteString
       token = profile.token
       cwd = profile.cwd

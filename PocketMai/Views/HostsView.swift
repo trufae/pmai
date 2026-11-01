@@ -32,7 +32,6 @@ struct HostsView: View, Equatable {
   let onSelectHost: (UUID?) -> Void
   @State private var managing = false
   @State private var adding = false
-  @State private var scanning = false
   @State private var editing: RemoteAgentBookmark?
   @State private var renaming: RemoteAgentBookmark?
 
@@ -66,13 +65,6 @@ struct HostsView: View, Equatable {
         FloatingActionIcon(
           systemImage: "plus", accessibilityLabel: "Add Remote Host", compact: true
         ) {
-          scanning = false
-          adding = true
-        }
-        FloatingActionIcon(
-          systemImage: "qrcode.viewfinder", accessibilityLabel: "Scan Host QR", compact: true
-        ) {
-          scanning = true
           adding = true
         }
       }
@@ -96,10 +88,10 @@ struct HostsView: View, Equatable {
         onAdded: { id in
           adding = false
           onSelectHost(id)
-        }, scanOnAppear: scanning)
+        })
     }
     .sheet(item: $editing) { host in RemoteAgentConnectionView(initialHost: host) }
-    .sheet(item: $renaming) { host in RemoteHostRenameView(host: host) }
+    .modifier(RemoteHostRenameModifier(host: $renaming))
   }
 
   private func connectionState(_ id: UUID) -> HostConnectionState {
@@ -112,24 +104,11 @@ struct HostsView: View, Equatable {
       image: "network", id: host.id
     )
     .contextMenu {
-      Button("Rename", systemImage: "character.cursor.ibeam") { renaming = host }
-      Button("Edit Host", systemImage: "pencil") { editing = host }
-      Button(
-        hosts.isHostPinned(host.id) ? "Unpin Host" : "Pin to Top",
-        systemImage: hosts.isHostPinned(host.id) ? "pin.slash" : "pin"
-      ) { hosts.toggleHostPin(host.id) }
-      Divider()
-      if hosts.selectedHostID == host.id || hosts.isConnected(host.id) {
-        Button("Disconnect", systemImage: "network.slash") { hosts.disconnect(host.id) }
-      }
-      Button("Reconnect", systemImage: "arrow.clockwise") {
-        hosts.reconnect(host.id, isOffline: appStore.settings.isOffline)
-      }
-      .disabled(appStore.settings.isOffline)
-      Divider()
-      Button("Remove Host", systemImage: "trash", role: .destructive) {
-        hosts.remotes.remove(host.id)
-      }
+      RemoteHostMenu(
+        host: host, store: hosts.remotes, isOffline: appStore.settings.isOffline,
+        rename: { renaming = host },
+        connect: { hosts.reconnect(host.id, isOffline: appStore.settings.isOffline) },
+        edit: { editing = host })
     }
   }
 

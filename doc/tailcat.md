@@ -140,15 +140,20 @@ connection starts one child process. No child starts for rejected credentials.
 1. Open the conversation drawer, swipe right to Folders, then right again to **Hosts**.
    The **Hosts** button above the folders also opens this panel. **Local** is always
    available and shows this PocketMai app's existing folders and conversations.
-2. Choose **Scan Host QR** or **Add Remote Host**, then scan the terminal QR (or `gateway.png`), paste the printed
-   `pmai-acp://connect/...` URI, or enter the gateway URL, token, and remote cwd.
-3. Save and select the host. For `/remote serve`, accept the pending client in
+2. Tap **+**, choose **pmai** or **OpenCode**, then tap **Scan Host QR** to scan the
+   terminal QR (or `gateway.png`). The host type shows the command to run on your
+   computer. **Advanced** contains connection import, URL, token, workspace, and colors.
+3. Choose a name and tap **Add**. For `/remote serve`, accept the pending client in
    the serving REPL with `/remote accept`. PocketMai then discovers its folders and conversations.
    Choose a folder, then open a conversation or use **New Chat** at the top right
    of the chat window. Opening a
    chat connects automatically and restores its transcript from the host.
 4. Send a prompt. Replies stream into the chat; tools that request permission
    display their arguments and the agent's approval/rejection choices.
+
+Long-press a host for **Rename**, **Pin/Unpin**, **Connect**, or **Edit Host**.
+Rename opens a system text-entry alert. **Edit Host** contains **Delete Host**,
+which asks before removing the saved connection and its local chats.
 
 The remote project panel filters by folder name only. Beside the filter, **Sort
 folders** chooses **Name** or **Last Updated**, and Refresh reloads projects from
@@ -200,8 +205,8 @@ tokens and are excluded from backup. Deleting a saved connection removes its
 local token and chat record, not the worker's session files.
 
 OpenCode v2 hosts can also be added by running `opencode pair --remote` and
-scanning its QR in **Add Remote Host**, or pasting its HTTPS pairing link into
-**Import connection**. Local links from `opencode pair` work too. PocketMai accepts
+choosing **OpenCode** in **Add Host** and scanning its QR, or pasting its HTTPS
+pairing link under **Advanced → Import Connection**. Local links from `opencode pair` work too. PocketMai accepts
 both `/auth/connect/<code>` links and the QR's JSON `{code, urls}` payload, exchanges
 the single-use code for a session token, and stores that token in the Keychain.
 Save the connection, then select its discovered project and conversation.
