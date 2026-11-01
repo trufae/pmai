@@ -62,7 +62,7 @@ private final class RemoteTerminalController: ObservableObject {
   func start(_ location: RemoteTerminalLocation, offline: Bool) {
     guard reader == nil, workspace == nil, !closed else { return }
     self.location = location
-    reader = Task {
+    reader = Task { [self] in
       defer { reader = nil }
       do {
         guard !offline else { throw InternetAccessError.offline }
@@ -209,7 +209,7 @@ private final class RemoteTerminalController: ObservableObject {
     saveHistory()
     running = true
     status = "Running"
-    reader = Task {
+    reader = Task { [self] in
       do {
         let result = try await workspace.run(command) { [weak self] output in await self?.showOutput(output) }
         showOutput(result.text)
@@ -384,7 +384,7 @@ struct RemoteTerminalView: View {
           Button("Reconnect", systemImage: "arrow.clockwise") { active?.reconnect(offline: appStore.settings.isOffline) }
           Button(keyboardVisible ? "Hide Keyboard" : "Show Keyboard", systemImage: "keyboard") {
             guard let view = active?.view else { return }
-            if keyboardVisible { view.resignFirstResponder() } else { view.becomeFirstResponder() }
+            if keyboardVisible { _ = view.resignFirstResponder() } else { _ = view.becomeFirstResponder() }
           }
         }
       }
@@ -461,7 +461,7 @@ private struct TerminalSurface: UIViewRepresentable {
     if view.font.pointSize != fontSize { view.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular) }
     if context.coordinator.wasActive != active {
       context.coordinator.wasActive = active
-      if !active { view.resignFirstResponder() }
+      if !active { _ = view.resignFirstResponder() }
     }
   }
   static func dismantleUIView(_ view: SwiftTerm.TerminalView, coordinator: Coordinator) {
