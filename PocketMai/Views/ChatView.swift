@@ -1784,7 +1784,7 @@ struct ChatView: View {
     cancelMessageSelection()
     userScrolledAfterLastMessage = true
     withAnimation(.snappy) {
-      Task {
+      _ = Task {
         if let id = currentConversationID, remoteChat == nil {
           await store.preloadConversation(id: id)
         }
@@ -3308,6 +3308,10 @@ private struct ChatComposer: View {
   }
 
   var body: some View {
+    composerImportDialogs
+  }
+
+  private var composerPromptUpdates: some View {
     composerControls
       .task(id: conversationID) { refreshLocalPromptCatalog() }
       .task(id: remoteChat?.conversation.cwd) { await remoteChat?.refreshPromptCatalog() }
@@ -3317,6 +3321,10 @@ private struct ChatComposer: View {
       }
       .onChange(of: store.settings.systemPrompts) { _, _ in refreshLocalPromptCatalog() }
       .onChange(of: store.settings.userPrompts) { _, _ in refreshLocalPromptCatalog() }
+  }
+
+  private var composerAttachmentDialogs: some View {
+    composerPromptUpdates
       .alert(
         "Import failed",
         isPresented: attachmentErrorBinding,
@@ -3348,6 +3356,10 @@ private struct ChatComposer: View {
         onOCR: { pending in extractTextFromImages(pending) },
         onCancel: { dismissImageSizePrompt() }
       )
+  }
+
+  private var composerImportDialogs: some View {
+    composerAttachmentDialogs
       .confirmationDialog(
         "Import PDF",
         isPresented: pdfImportBinding,
@@ -3377,8 +3389,8 @@ private struct ChatComposer: View {
       }
   }
 
-  /// The composer's questions live in `body`; everything else is built here, so
-  /// neither chain grows past what the type checker will accept.
+  /// Keep controls, prompt updates, and import dialogs in separate expressions
+  /// to limit the work required by the type checker.
   private var composerControls: some View {
     Group {
       if liveVoiceSession.isActive {
