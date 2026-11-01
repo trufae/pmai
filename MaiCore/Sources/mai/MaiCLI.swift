@@ -2539,6 +2539,7 @@ struct MaiCLI {
     var session = REPLSession(chat: selectedChat)
     let localProfile = session.profile
     var remoteReturnChatID: UUID?
+    var remoteShell: ACPRemoteHost?
     let executable = TailcatCLI.resolveExecutable(platformCommandLineArguments(environment: ProcessInfo.processInfo.environment)[0])
       ?? URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.path
     let remoteServer = RemoteREPLServer(home: home, executable: executable)
@@ -2927,7 +2928,9 @@ struct MaiCLI {
     func inputPrompt() -> TerminalPrompt {
       if let modal = loop.modalPrompt(for: session.id) { return modal.input }
       let prompt: String
-      if configuration?.ui.broadcast == true {
+      if let remoteShell {
+        prompt = "\(remoteShell.name)> "
+      } else if configuration?.ui.broadcast == true {
         prompt = "pmai@*> "
       } else if case .agent(let pid) = loop.focus {
         // The prompt names the process a line goes to: a focused child, or the
@@ -2989,6 +2992,7 @@ struct MaiCLI {
       let completionConfiguration = configuration
       let completionOffline = await runtime.internetAccessPolicy().isOffline
       let completionCache = REPLCompletionCache()
+      let shellMode = remoteShell != nil
       let focusedMessages: [AgentMessage]?
       if case .agent(let pid) = loop.focus {
         let messages = await runtime.supervisor.transcript(pid)
@@ -3003,6 +3007,7 @@ struct MaiCLI {
           // or every subsequent input handoff.
           completions: [],
           additionalCompletions: { line in
+            if shellMode { return ["exit", "/remote shell off", "/remote ls ", "/remote get ", "/remote put "] }
             if line.hasPrefix("/msg unpin ") {
               // Paged histories may have pins outside the visible window.
               let messages = focusedMessages
@@ -3430,6 +3435,24 @@ struct MaiCLI {
       loop.foregroundCommand = nil
       if let turn { interruptHandler.restore(turn.interrupt) { turn.task.cancel() } }
       return (value, interrupted)
+    }
+
+    func runRemoteWorkspace(_ action: String, arguments: [String], host: ACPRemoteHost) async throws {
+      guard !(await runtime.internetAccessPolicy().isOffline) else {
+        throw JSONRPCError.invalidParams("Turn off Airplane Mode before accessing remote hosts.")
+      }
+      let connection = try remoteServer.hosts.connection(for: host).workspace()
+      let directory = AgentExecutionScope.directory
+      _ = await runForeground("/remote \(action)", resumeInput: false) {
+        do {
+          try await RemoteWorkspaceCommand.run(action, arguments: arguments,
+            connection: connection, directory: directory, terminal: terminal)
+        } catch {
+          await terminal.line(Task.isCancelled
+            ? "Stopped remote operation; a command on the host may still be running."
+            : "error: \(error.localizedDescription)", to: .standardError)
+        }
+      }
     }
 
     /// After a command ran under a turn: says how what it changed meets the
@@ -4207,6 +4230,21 @@ struct MaiCLI {
           await releaseIfIdle(workspace: workspace)
           return false
         }
+        if let host = remoteShell, loop.modalPrompt(for: session.id) == nil, typed != "/quit",
+          !typed.hasPrefix("/remote ") || typed == "/remote shell off" {
+          if ["exit", "/exit", "/remote shell off"].contains(typed) {
+            remoteShell = nil
+            await terminal.line("Left remote shell \(host.name).")
+          } else {
+            if !typed.isEmpty {
+              do { try await runRemoteWorkspace("run", arguments: [raw], host: host) }
+              catch { await terminal.line("error: \(error.localizedDescription)", to: .standardError) }
+            }
+          }
+          await refreshStatus()
+          await releaseIfIdle(workspace: workspace)
+          return false
+        }
         if typed == "/recover" || typed.hasPrefix("/recover ") {
           let argument = typed.dropFirst("/recover".count).trimmingCharacters(in: .whitespaces)
           if argument == "clear" {
@@ -4275,7 +4313,7 @@ struct MaiCLI {
         let commandFields = text.split(whereSeparator: \Character.isWhitespace).map(String.init)
         let metadataCommands = [
           "/help", "/history", "/version", "/about", "/then", "/unthen", "/stop", "/view", "/highlight",
-          "/projects", "/project", "/exit", "/quit",
+          "/projects", "/project", "/remote", "/exit", "/quit",
         ]
         let chatNavigation =
           commandFields.first == "/chat"
@@ -4562,8 +4600,10 @@ struct MaiCLI {
           }
           if name == "/remote" {
             do {
-              let fields = try shellWords(argument)
-              let action = fields.first?.lowercased() ?? "list"
+              let isRun = argument.split(whereSeparator: \.isWhitespace).first?.lowercased() == "run"
+              let fields = try shellWords(argument, remainderAfter: isRun ? 2 : .max)
+              var action = fields.first?.lowercased() ?? "list"
+              if action == "ls", fields.count == 1 { action = "list" }
               let arguments = Array(fields.dropFirst())
               let hosts = remoteServer.hosts
               switch action {
@@ -4583,16 +4623,37 @@ struct MaiCLI {
                 await terminal.line("Remote server stopped.")
               case "qr":
                 await remoteServer.showPairing(terminal: terminal)
-              case "status", "list", "ls":
+              case "status", "list":
                 await terminal.line(remoteServer.status())
                 for host in try hosts.hosts() {
-                  await terminal.line("\(host.name) · \(host.url.absoluteString) · /remote connect \(shellQuote(host.name))")
+                  let command = host.backend == .openCode ? "ls" : "connect"
+                  await terminal.line("\(host.name) · \(host.url.absoluteString) · /remote \(command) \(shellQuote(host.name))")
                 }
               case "pair":
-                guard (1...2).contains(arguments.count) else {
-                  throw JSONRPCError.invalidParams("Usage: /remote pair URI_OR_QR_FILE [NAME]")
+                guard (1...3).contains(arguments.count) else {
+                  throw JSONRPCError.invalidParams("Usage: /remote pair URI_OR_QR_FILE [NAME] [CWD]")
                 }
-                var profile = try ACPRemoteConnection.parse(TailcatQR.read(arguments[0]))
+                let invitationText = try TailcatQR.read(arguments[0])
+                if let link = try? OpenCodePairingLink.parse(invitationText) {
+                  guard !(await runtime.internetAccessPolicy().isOffline) else {
+                    throw JSONRPCError.invalidParams("Turn off Airplane Mode before pairing.")
+                  }
+                  guard arguments.count == 3, arguments[2].hasPrefix("/") else {
+                    throw JSONRPCError.invalidParams("Use /remote pair OPENCODE_LINK NAME /absolute/project")
+                  }
+                  let directory = arguments[2], hostName = arguments[1]
+                  _ = await runForeground("/remote pair", resumeInput: false) {
+                    do {
+                      var profile = RemoteHostConnection(try await link.redeem())
+                      profile.cwd = directory
+                      let host = try hosts.pair(profile, name: hostName)
+                      await terminal.line("Paired \(host.name). /remote ls \(shellQuote(host.name)) lists its files.")
+                    } catch { await terminal.line("error: \(error.localizedDescription)", to: .standardError) }
+                  }
+                  break
+                }
+                var profile = try ACPRemoteConnection.parse(invitationText)
+                if arguments.count == 3 { profile.cwd = arguments[2] }
                 if profile.requiresApproval == true {
                   guard !(await runtime.internetAccessPolicy().isOffline) else {
                     throw JSONRPCError.invalidParams("Turn off Airplane Mode before pairing.")
@@ -4621,8 +4682,26 @@ struct MaiCLI {
                   profile.token = token
                   profile.requiresApproval = false
                 }
-                let host = try hosts.pair(profile, name: arguments.count == 2 ? arguments[1] : nil)
+                let host = try hosts.pair(profile, name: arguments.count >= 2 ? arguments[1] : nil)
                 await terminal.line("Paired \(host.name). /remote connect \(shellQuote(host.name)) opens a chat.")
+              case "ls", "get", "put", "run":
+                guard let hostName = arguments.first else {
+                  throw JSONRPCError.invalidParams("Usage: /remote \(action) HOST. /help remote lists arguments.")
+                }
+                try await runRemoteWorkspace(action, arguments: Array(arguments.dropFirst()), host: hosts.host(hostName))
+              case "shell":
+                guard arguments.count == 1 else { throw JSONRPCError.invalidParams("Usage: /remote shell HOST|off") }
+                if arguments[0] == "off" {
+                  remoteShell = nil
+                  await terminal.line("Returned to pmai.")
+                } else {
+                  guard !(await runtime.internetAccessPolicy().isOffline) else {
+                    throw JSONRPCError.invalidParams("Turn off Airplane Mode before accessing remote hosts.")
+                  }
+                  let host = try hosts.host(arguments[0])
+                  remoteShell = host
+                  await terminal.line("Remote shell \(host.name). Commands start in \(host.cwd). Type exit to return to pmai.")
+                }
               case "pending":
                 let waiting = try await remoteServer.pendingClients()
                 await terminal.line(waiting.isEmpty ? "No pairing requests are waiting." : waiting.joined(separator: "\n"))
@@ -4649,6 +4728,9 @@ struct MaiCLI {
                   throw JSONRPCError.invalidParams("Turn off Airplane Mode before connecting.")
                 }
                 let host = try hosts.host(arguments[0])
+                guard host.backend != .openCode else {
+                  throw JSONRPCError.invalidParams("Use /remote ls, get, put, or run for this OpenCode host.")
+                }
                 let provider = hosts.provider(for: host)
                 let probe = ACPClient(configuration: .init(command: host.name,
                   remoteWorkingDirectory: host.cwd, readClientFiles: false, webSocketURL: host.url,
@@ -5460,7 +5542,8 @@ struct MaiCLI {
         redirection = isCommand ? nil : loop.pendingQueueRedirection
         // A queued line's redirection belongs to its eventual execution.
         let command = raw.split(whereSeparator: \Character.isWhitespace).first
-        if !heredoc, isCommand, command != "/then" {
+        let shellInput = remoteShell != nil && loop.modalPrompt(for: session.id) == nil && command != "/remote"
+        if !heredoc, isCommand, command != "/then", !shellInput {
           do {
             if let syntax = try REPLRedirectSyntax.parse(raw, pasted: pasted) {
               switch syntax.destination {
@@ -8041,14 +8124,15 @@ struct MaiCLI {
       terminal: terminal)
   }
 
-  private static func shellWords(_ input: String) throws -> [String] {
+  private static func shellWords(_ input: String, remainderAfter: Int = .max) throws -> [String] {
     enum Quote { case single, double }
     var words: [String] = []
     var word = ""
     var quote: Quote?
     var escaped = false
     var started = false
-    for character in input {
+    for index in input.indices {
+      let character = input[index]
       if escaped {
         word.append(character)
         escaped = false
@@ -8073,6 +8157,10 @@ struct MaiCLI {
       if character.isWhitespace, quote == nil {
         if started {
           words.append(word)
+          if words.count == remainderAfter {
+            let remainder = input[index...].trimmingCharacters(in: .whitespacesAndNewlines)
+            return remainder.isEmpty ? words : words + [remainder]
+          }
           word = ""
           started = false
         }
@@ -14587,6 +14675,8 @@ struct MaiCLI {
       "/help remote", "/remote", "/remote serve", "/remote stop", "/remote qr", "/remote status",
       "/remote serve --protocol local", "/remote serve --protocol opentunnel", "/remote serve --protocol forwiroh", "/remote serve --protocol openai",
       "/remote list", "/remote pair ", "/remote connect ", "/remote disconnect",
+      "/remote ls ", "/remote get ", "/remote put ", "/remote run ",
+      "/remote shell ", "/remote shell off",
       "/remote pending", "/remote accept", "/remote reject", "/remote clients", "/remote del ",
       "/help projects", "/projects", "/projects list", "/projects open ", "/projects switch ",
       "/projects rename ", "/projects tint ", "/projects del ", "/projects info ",
@@ -15013,7 +15103,13 @@ struct MaiCLI {
     /remote stop           Stop the server and disconnect its clients
     /remote qr             Show the running server's pairing QR and connection URI again
     /remote list            List paired hosts and server status
-    /remote pair PROFILE [NAME]  Save a connection URI, profile text file, or QR image
+    /remote pair PROFILE [NAME] [CWD]  Save a connection URI, profile text file, or QR image
+    /remote ls HOST [PATH]  List files, including hidden files
+    /remote get HOST REMOTE [LOCAL]  Download a file (default: its basename here)
+    /remote put HOST LOCAL [REMOTE]  Upload a file (default: its basename on the host)
+    /remote run HOST COMMAND  Run a command directly on the host
+    /remote shell HOST     Send typed commands to HOST; exit returns to pmai
+    /remote shell off      Leave remote shell mode
     /remote pending        List clients waiting for your approval
     /remote accept [CODE]  Accept a pairing request; omit CODE when only one is waiting
     /remote reject [CODE]  Reject a pairing request
@@ -15021,6 +15117,21 @@ struct MaiCLI {
     /remote del ID         Revoke an accepted client's access
     /remote connect NAME   Open a new chat with a paired host's agent
     /remote disconnect     Return to your local chat
+
+    File and shell commands work without /remote connect and do not create chats.
+    Paths on the host and commands start in the paired CWD; local paths use your
+    REPL directory and support ~. Quote paths or host names containing spaces.
+    Transfers replace existing files and are limited to 32 MB each; put accepts
+    a remote directory ending in /. ls includes every page. Ctrl+C stops waiting.
+    Everything after run HOST goes to the remote shell verbatim, including quotes,
+    pipes, variables, and redirects. Shell directory changes apply to that run only.
+    shell HOST changes the prompt to HOST>. Each line runs directly on that host;
+    exit or /remote shell off returns to pmai. /remote commands remain available.
+    This uses the same one-command console; cwd and environment reset for each line.
+    Host Files permissions and enabled run_shell tools still apply.
+    For OpenCode, use /remote pair LINK NAME /absolute/project with the link or QR
+    from opencode pair --remote. OpenCode uploads use its experimental write API;
+    /remote connect remains for pmai/ACP chats.
 
     OpenAI serving uses the current agent and provider settings at startup. Use
     --port PORT to change 11435, or --bind HOST to choose a listener address.

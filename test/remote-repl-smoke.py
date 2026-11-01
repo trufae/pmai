@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise /remote serving, project discovery, CLI pairing, and durable sessions."""
 import base64
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import json
 import os
@@ -10,8 +11,9 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from smoke import clean_environment
 
@@ -85,7 +87,11 @@ def run():
             path.mkdir()
         config = root / "pmai.json"
         settings = {"defaultAgent": "main", "providers": [{"id": "hello", "kind": "hello"}],
-                    "agents": [{"id": "main", "provider": "hello", "model": "hello"}],
+                    "agents": [{"id": "main", "provider": "hello", "model": "hello",
+                                "toolNames": ["run_shell"]}],
+                    "toolSources": [{"id": "standard", "kind": "standard-tools",
+                                     "options": {"tools": ["run_shell"]}}],
+                    "approvals": {"mode": "yolo"},
                     "use": {"plan": False}}
         config.write_text(json.dumps(settings))
         for index, path in enumerate(projects):
@@ -169,6 +175,36 @@ def run():
             assert "Paired server." not in client.path.read_text(), "CLI paired before server approval"
             server.send("/remote accept")
             client.wait("Paired server.")
+            payload = bytes([0, 255, 128, 10]) * 150_000
+            (client_dir / "local input.bin").write_bytes(payload)
+            before = set(chats(projects[0]))
+            client.send('/remote put server "local input.bin" "remote upload.bin"')
+            client.wait(f"Uploaded {len(payload)} bytes")
+            assert (projects[0] / "remote upload.bin").read_bytes() == payload
+            (projects[0] / "listed-only.txt").write_text("listing")
+            client.send('/remote ls server')
+            client.wait("listed-only.txt")
+            client.send('/remote get server "remote upload.bin" "downloaded file.bin"')
+            client.wait(f"Downloaded {len(payload)} bytes")
+            assert (client_dir / "downloaded file.bin").read_bytes() == payload
+            client.send('/remote run server printf \'%s\\n\' "remote $((2+3))" | cat > command.txt; cat command.txt')
+            client.wait("remote 5")
+            assert (projects[0] / "command.txt").read_text() == "remote 5\n"
+            assert not (client_dir / "command.txt").exists(), "remote redirect ran locally"
+            client.send('/remote shell server')
+            client.wait("Remote shell server.")
+            client.send('/bin/echo "shell $((6*7))" > shell.txt; cat shell.txt')
+            client.wait("shell 42")
+            assert (projects[0] / "shell.txt").read_text() == "shell 42\n"
+            assert not (client_dir / "shell.txt").exists(), "shell-mode redirect ran locally"
+            client.send('exit')
+            client.wait("Left remote shell server.")
+            assert set(chats(projects[0])) == before, "workspace commands created a chat"
+            errors = client.path.read_text().count("error:")
+            client.send('/remote get server missing.bin "downloaded file.bin"')
+            wait_for(lambda: client.path.read_text().count("error:") > errors, "failed remote download")
+            assert (client_dir / "downloaded file.bin").read_bytes() == payload, "failed download replaced local data"
+            print("Remote binary transfers, paths with spaces, shell quoting, and chat isolation: passed", flush=True)
             client.send("/remote connect server")
             client.wait("Connected to server.")
             client.send("remote hello")
@@ -402,5 +438,101 @@ else:
         print("Serving protocols, public pairing profile, isolated publisher lifecycle, failure cleanup, and stable identity: passed", flush=True)
 
 
+def run_opencode():
+    payload = bytes([0, 255, 128, 10])
+    script = 'printf \'%s\\n\' "$PWD" | cat > paths.txt'
+    shell_script = '/bin/echo "$PWD" > paths.txt'
+    uploaded = []
+    commands = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def reply(self, data, status=200, headers=None):
+            self.send_response(status)
+            self.send_header("Content-Length", str(len(data)))
+            for key, value in (headers or {}).items():
+                self.send_header(key, value)
+            self.end_headers()
+            self.wfile.write(data)
+
+        def handle_request(self):
+            url = urlsplit(self.path)
+            if url.path == "/auth/connect/code":
+                return self.reply(b'{"token":"test-token"}')
+            assert self.headers.get("Authorization") == "Basic " + base64.b64encode(b"opencode:test-token").decode()
+            query = parse_qs(url.query)
+            assert query["location[directory]"] == ["/work"]
+            if url.path == "/api/fs/list":
+                assert query["path"] == ["/work"]
+                return self.reply(json.dumps({"data": [{"path": f"file-{i:03}", "type": "file"}
+                                                       for i in range(501)]}).encode())
+            if unquote(url.path) == "/api/fs/read/binary file.bin":
+                return self.reply(payload, headers={"ETag": "v1"})
+            if url.path == "/api/experimental/fs/write":
+                assert self.command == "POST" and self.headers["Content-Type"] == "application/octet-stream"
+                assert query["path"] == ["/work/uploaded file.bin"]
+                uploaded.append(self.rfile.read(int(self.headers["Content-Length"])))
+                return self.reply(b'{"data":{"path":"/work/uploaded file.bin"}}')
+            if url.path == "/api/shell" and self.command == "POST":
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                assert body["command"] in (script, shell_script) and body["cwd"] == "/work"
+                commands.append(body["command"])
+                return self.reply(b'{"data":{"id":"sh_test"}}')
+            if url.path == "/api/shell/sh_test" and self.command == "GET":
+                return self.reply(b'{"data":{"status":"exited","exit":0}}')
+            if url.path == "/api/shell/sh_test/output":
+                output = f"mock shell result {len(commands)}"
+                return self.reply(json.dumps({"data": {"output": output, "cursor": len(output), "size": len(output)}}).encode())
+            if url.path == "/api/shell/sh_test" and self.command == "DELETE":
+                return self.reply(b'{}')
+            raise AssertionError("Unexpected OpenCode request: " + self.path)
+
+        do_GET = do_POST = do_DELETE = handle_request
+
+    with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory(prefix="pmai-opencode-repl-") as directory:
+                root = Path(directory)
+                config = root / "config.json"
+                config.write_text(json.dumps({"defaultAgent": "main", "providers": [{"id": "hello", "kind": "hello"}],
+                    "agents": [{"id": "main", "provider": "hello", "model": "hello"}]}))
+                client = REPL(root, root / "home", config, root / "client.log")
+                try:
+                    client.send(f'/remote pair "http://127.0.0.1:{server.server_port}/auth/connect/code" "dev host" /work')
+                    client.wait("Paired dev host.")
+                    client.send('/remote ls "dev host"')
+                    client.wait("file-500")
+                    client.send('/remote get "dev host" "binary file.bin"')
+                    client.wait("Downloaded 4 bytes")
+                    assert (root / "binary file.bin").read_bytes() == payload
+                    client.send('/remote put "dev host" "binary file.bin" "uploaded file.bin"')
+                    client.wait("Uploaded 4 bytes")
+                    assert uploaded == [payload]
+                    client.send('/remote run "dev host" ' + script)
+                    client.wait("mock shell result 1")
+                    client.send('/remote shell "dev host"')
+                    client.wait("Remote shell dev host.")
+                    client.send(shell_script)
+                    client.wait("mock shell result 2")
+                    assert commands == [script, shell_script]
+                    assert not (root / "paths.txt").exists(), "OpenCode redirect ran locally"
+                    client.send('exit')
+                    client.wait("Left remote shell dev host.")
+                    assert not chats(root), "OpenCode workspace commands created a chat"
+                    client.send("local-after-shell")
+                    client.wait("took ")
+                finally:
+                    client.close()
+        finally:
+            server.shutdown()
+            thread.join()
+    print("OpenCode pairing, paginated listing, binary get/put, and verbatim remote shell: passed", flush=True)
+
+
 if __name__ == "__main__":
+    run_opencode()
     run_tunnel_modes(run())

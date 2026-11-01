@@ -1203,6 +1203,63 @@ In PocketMai on iOS, open Hosts → Add Remote Host and scan the QR or paste its
 connection URI, save it, and select the host. Accept its pairing request in the
 serving REPL. Both clients use individual credentials after approval.
 
+Use the same `/remote` command for files and shell access, without connecting a
+chat or calling a model:
+
+```text
+/remote ls workstation
+/remote ls workstation "src/my folder"
+/remote get workstation "output/report.pdf" ./
+/remote put workstation "./my document.pdf" uploads/
+/remote run workstation git status
+/remote run workstation printf '%s\n' "$PWD" | sort > paths.txt
+```
+
+`ls` includes hidden files and all directory pages. `get` and `put` transfer one
+binary file, up to 32 MB, and replace an existing destination. Omit the destination
+to use the source basename. Local paths use the REPL directory and expand `~`;
+remote paths use the directory saved when pairing. A trailing `/` on an upload
+destination appends the source basename; a download can target a local directory.
+Quote paths and host names containing spaces. Remote Files permissions and the
+host's enabled `run_shell` tool still apply.
+
+Everything after `run HOST` goes verbatim to the remote shell, including quotes,
+variables, pipes, and redirects. Each command starts in the paired directory;
+use `cd subdir && command` to run elsewhere. Ctrl+C cancels the operation and
+closes its workspace connection; a command on an ACP host may continue running.
+
+For several commands on one host, enter shell mode:
+
+```text
+/remote shell workstation
+uname -a
+git status
+exit
+```
+
+The prompt becomes `workstation>`. Lines run directly on that host, without a
+model; `exit`, `/exit`, or `/remote shell off` returns to pmai. `/remote` commands
+remain available for transfers or switching hosts, and `/quit` exits pmai.
+This reuses the mobile console's one-command API: every line starts in the paired
+directory with a fresh environment. Use `cd subdir && command` on the same line;
+interactive programs such as `vim` require a separate terminal connection.
+
+OpenCode hosts use the same file and shell commands. Run `opencode pair --remote`
+on the host, then pair its printed link (or saved QR image) with an explicit name
+and absolute project directory:
+
+```text
+/remote pair 'https://HOST/auth/connect/CODE' dev /home/me/project
+/remote ls dev
+/remote put dev ./input.bin input.bin
+/remote run dev uname -a
+```
+
+The optional third pairing argument also selects a different served directory
+for pmai hosts. OpenCode uploads require its experimental binary write endpoint;
+older servers without it report an HTTP error. `/remote connect` opens pmai/ACP
+chats; OpenCode file and shell access does not require it.
+
 To use a tunnel or TLS proxy you manage separately:
 
 ```text
