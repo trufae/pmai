@@ -643,6 +643,7 @@ final class RemoteAgentChat {
         status = "Connected"
       }
       guard generation == attempt else { return }
+      flushMessages()
       busy = false
       operation = nil
       conversation.updatedAt = Date()
@@ -1085,6 +1086,7 @@ final class RemoteAgentChat {
       catalogTask?.cancel()
       catalogTask = Task { [weak self] in await self?.refreshPromptCatalog() }
     } else {
+      guard kind == "_pmai/message_snapshot" || ACP.Update(rawValue: kind) != nil else { return }
       if loadingMessages != nil {
         ACPConversationTranscript.apply(update, to: &loadingMessages!)
       } else {
