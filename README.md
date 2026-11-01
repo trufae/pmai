@@ -225,7 +225,7 @@ or run `/remote pair '<URI>'` on another CLI. Saved hosts reconnect
 without scanning again; `/remote qr` creates a fresh five-minute invitation for
 another device. Forwiroh grants access only to pmai's loopback ACP endpoint.
 
-Forwiroh [0.1.2](https://github.com/trufae/forwiroh/releases/tag/v0.1.2) is supplied as a prebuilt SwiftPM dependency under `Vendor/Forwiroh`:
+Forwiroh [0.1.4](https://github.com/trufae/forwiroh/releases/tag/v0.1.4) is supplied as a prebuilt SwiftPM dependency under `Vendor/Forwiroh`:
 no Rust build or wrapper generation is needed. Its release binaries support
 macOS, iOS, Linux and Android. Linux glibc binaries require Ubuntu 24.04/glibc
 2.39 or newer; musl builds use the musl variants. The source package requires
