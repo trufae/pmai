@@ -56,7 +56,7 @@ import kotlin.math.abs
 
 private val LocalMessageFontSize = compositionLocalOf { 16f }
 
-private fun Modifier.pinchToResizeFont(onZoom: (Float) -> Unit, onFinished: () -> Unit) = pointerInput(Unit) {
+internal fun Modifier.pinchToResizeFont(onZoom: (Float) -> Unit, onFinished: () -> Unit) = pointerInput(Unit) {
     awaitEachGesture {
         awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
         var zoom = 1f
@@ -96,6 +96,7 @@ private enum class Destination(val label: String, val icon: ImageVector) {
     var detail by rememberSaveable { mutableStateOf(false) }
     var addingHost by rememberSaveable { mutableStateOf(false) }
     var hostInvitation by rememberSaveable { mutableStateOf("") }
+    var workspaceScreen by rememberSaveable { mutableStateOf("") }
     var runningApp by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(invitation) {
         if (invitation.isNotEmpty()) {
@@ -126,6 +127,12 @@ private enum class Destination(val label: String, val icon: ImageVector) {
         WebXdcRunner(runningApp, state, model, onClose = { runningApp = "" })
         return
     }
+    if (workspaceScreen.isNotEmpty() && state.isRemote) {
+        RemoteWorkspaceScreen(state.remote, model, console = workspaceScreen == "console", onClose = {
+            workspaceScreen = ""
+        })
+        return
+    }
     val hideNavigation = destination == Destination.Chats && detail && LocalConfiguration.current.screenWidthDp < 840
     NavigationSuiteScaffold(layoutType = if (hideNavigation) NavigationSuiteType.None
         else NavigationSuiteScaffoldDefaults.calculateFromAdaptiveInfo(currentWindowAdaptiveInfo()), navigationSuiteItems = {
@@ -138,7 +145,8 @@ private enum class Destination(val label: String, val icon: ImageVector) {
             Box(Modifier.fillMaxSize().padding(padding)) {
                 when (destination) {
                     Destination.Chats -> ChatsScreen(state, draft, attachments, model, detail, onDetail = { detail = it },
-                        onHosts = { destination = Destination.Hosts }, onSettings = { destination = Destination.Settings })
+                        onHosts = { destination = Destination.Hosts }, onSettings = { destination = Destination.Settings },
+                        onWorkspace = { workspaceScreen = it })
                     Destination.Hosts -> HostsScreen(state, model, onAdd = { addingHost = true }, onOpen = {
                         destination = Destination.Chats; detail = false
                     })
@@ -169,23 +177,23 @@ private enum class Destination(val label: String, val icon: ImageVector) {
 
 @Composable private fun ChatsScreen(
     state: AppState, draft: String, attachments: List<Attachment>, model: MaiViewModel, detail: Boolean,
-    onDetail: (Boolean) -> Unit, onHosts: () -> Unit, onSettings: () -> Unit,
+    onDetail: (Boolean) -> Unit, onHosts: () -> Unit, onSettings: () -> Unit, onWorkspace: (String) -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val expanded = maxWidth >= 840.dp
         Row(Modifier.fillMaxSize()) {
             if (expanded || !detail) {
                 ChatList(state, model, Modifier.then(if (expanded) Modifier.width(340.dp) else Modifier.fillMaxWidth()),
-                    onOpen = { onDetail(true) }, onHosts = onHosts)
+                    onOpen = { onDetail(true) }, onHosts = onHosts, onWorkspace = onWorkspace)
             }
             if (expanded) VerticalDivider()
             if (expanded || detail) ConversationScreen(state, draft, attachments, model, Modifier.weight(1f),
-                showBack = !expanded, onBack = { onDetail(false) }, onSettings = onSettings)
+                showBack = !expanded, onBack = { onDetail(false) }, onSettings = onSettings, onWorkspace = onWorkspace)
         }
     }
 }
 
-@Composable private fun ChatList(state: AppState, model: MaiViewModel, modifier: Modifier, onOpen: () -> Unit, onHosts: () -> Unit) {
+@Composable private fun ChatList(state: AppState, model: MaiViewModel, modifier: Modifier, onOpen: () -> Unit, onHosts: () -> Unit, onWorkspace: (String) -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
     var moving by remember { mutableStateOf<ChatSummary?>(null) }
     val host = state.remote.hosts.firstOrNull { it.id == state.remote.hostID }
@@ -211,6 +219,14 @@ private enum class Destination(val label: String, val icon: ImageVector) {
                 placeholder = { Text("Search chats") }, leadingIcon = { Icon(Icons.Outlined.Search, null) }, singleLine = true,
                 shape = RoundedCornerShape(28.dp))
             if (state.isRemote) {
+                Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { onWorkspace("files") }, enabled = state.remote.folder.isNotEmpty()) {
+                        Icon(Icons.Outlined.Folder, null); Spacer(Modifier.width(8.dp)); Text("Files")
+                    }
+                    OutlinedButton(onClick = { onWorkspace("console") }, enabled = state.remote.folder.isNotEmpty()) {
+                        Icon(Icons.Outlined.Terminal, null); Spacer(Modifier.width(8.dp)); Text("Console")
+                    }
+                }
                 LazyRowFolders(state.remote, onSelect = { model.command("folder", "cwd" to it) })
                 if (state.remote.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 if (state.remote.status.isNotEmpty()) Text(state.remote.status,
@@ -260,7 +276,7 @@ private enum class Destination(val label: String, val icon: ImageVector) {
 
 @Composable private fun ConversationScreen(
     state: AppState, draft: String, attachments: List<Attachment>, model: MaiViewModel, modifier: Modifier,
-    showBack: Boolean, onBack: () -> Unit, onSettings: () -> Unit,
+    showBack: Boolean, onBack: () -> Unit, onSettings: () -> Unit, onWorkspace: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val appearance = remember(context) { context.getSharedPreferences("appearance", Context.MODE_PRIVATE) }
@@ -292,6 +308,10 @@ private enum class Destination(val label: String, val icon: ImageVector) {
         } }, navigationIcon = {
             if (showBack) IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to chats") }
         }, actions = {
+            if (state.isRemote) {
+                IconButton(onClick = { onWorkspace("files") }) { Icon(Icons.Outlined.Folder, "Browse remote files") }
+                IconButton(onClick = { onWorkspace("console") }) { Icon(Icons.Outlined.Terminal, "Open remote console") }
+            }
             if (messages.isNotEmpty()) IconButton(onClick = { shareConversation(context, state.activeTitle, messages) }) {
                 Icon(Icons.Outlined.Share, "Share conversation")
             }
@@ -516,7 +536,7 @@ private enum class Destination(val label: String, val icon: ImageVector) {
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.fillMaxWidth().imePadding().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("Connect a remote host", style = MaterialTheme.typography.headlineSmall)
-            Text("On your computer, run /remote serve --protocol forwiroh in pmai. Paste its connection link, then approve this device on the host.")
+            Text("On your computer, run /remote serve --protocol forwiroh in pmai. Paste its connection link, then approve this device on the host. For OpenCode, paste the pairing link from opencode pair --remote.")
             OutlinedButton(onClick = { scanning = true }, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Outlined.QrCodeScanner, null); Spacer(Modifier.width(8.dp)); Text("Scan host QR code")
             }

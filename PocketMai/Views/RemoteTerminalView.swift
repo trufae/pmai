@@ -21,8 +21,7 @@ private final class RemoteTerminalSession: ObservableObject {
   private let location: RemoteTerminalLocation
   private let fileURL: URL
   private var isClosed = false
-  private var client: ACPClient?
-  private var workspace: OpenCodeWorkspace?
+  private var workspace: WorkspaceConnection?
   private var operation: Task<Void, Never>?
 
   init(location: RemoteTerminalLocation) {
@@ -53,25 +52,9 @@ private final class RemoteTerminalSession: ObservableObject {
       }
       do {
         guard !offline else { throw InternetAccessError.offline }
-        let result: ToolResult
-        if location.host.backend == .openCode {
-          if workspace == nil {
-            workspace = try OpenCodeWorkspace(
-              connection: .init(
-                name: location.host.name, url: location.host.url,
-                token: RemoteAgentStore.shared.token(for: location.host.id), cwd: location.cwd))
-          }
-          result = try await workspace!.run(command) { [weak self] output in
-            await self?.finish(id, output: output, isError: false, isComplete: false)
-          }
-        } else {
-          result = try await connectedClient().runTool(
-            cwd: location.cwd,
-            call: .init(
-              id: id.uuidString, name: "run_shell",
-              arguments: .object([
-                "script": .string(command)
-              ])))
+        if workspace == nil { workspace = try location.host.workspaceConnection(cwd: location.cwd) }
+        let result = try await workspace!.run(command) { [weak self] output in
+          await self?.finish(id, output: output, isError: false, isComplete: false)
         }
         finish(id, output: result.text, isError: result.isError)
       } catch {
@@ -109,29 +92,12 @@ private final class RemoteTerminalSession: ObservableObject {
     save()
     let operation = operation
     operation?.cancel()
-    let client = client
     let workspace = workspace
-    self.client = nil
     self.workspace = nil
     Task {
-      await client?.disconnect()
       await operation?.value
       await workspace?.close()
     }
-  }
-
-  private func connectedClient() throws -> ACPClient {
-    if let client { return client }
-    guard location.host.requiresApproval != true else {
-      throw JSONRPCError.invalidParams("Approve this device on the remote host first.")
-    }
-    let client = ACPClient(
-      configuration: .init(
-        command: location.host.name, permission: .reject, remoteWorkingDirectory: location.cwd,
-        readClientFiles: false, webSocketURL: location.host.url,
-        bearerToken: try RemoteAgentStore.shared.token(for: location.host.id)))
-    self.client = client
-    return client
   }
 
   private func finish(_ id: UUID, output: String, isError: Bool, isComplete: Bool = true) {

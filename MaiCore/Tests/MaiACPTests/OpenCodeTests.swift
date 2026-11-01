@@ -89,23 +89,23 @@ func openCodeWorkspaceFiles() async throws {
     }
   }
   defer { StubURLProtocol.reset(host: host) }
-  let workspace = try OpenCodeWorkspace(
-    connection: .init(url: #require(URL(string: "https://\(host)")), token: "test", cwd: "/work"),
-    configuration: openCodeTestConfiguration())
-  let listing = try #require(try await workspace.files(.init(.list, path: "/work/sub")).listing)
+  let connection = RemoteHostConnection(try OpenCodeConnection(
+    url: #require(URL(string: "https://\(host)")), token: "test", cwd: "/work"))
+  let workspace = try connection.workspace(configuration: openCodeTestConfiguration())
+  let listing = try #require(try await workspace.request(.init(.list, path: "/work/sub")).listing)
   #expect(listing.entries.map(\.name) == ["dir", "a #?.bin"])
   #expect(!listing.writeEnabled)
-  #expect(try await workspace.files(.init(.list, path: "/work/sub", showHidden: true)).listing?.entries.count == 3)
-  let first = try #require(try await workspace.files(.init(.read, path: "/work/sub/a #?.bin", limit: 2)).chunk)
-  let second = try #require(try await workspace.files(.init(.read, path: "/work/sub/a #?.bin", offset: 2, limit: 2, version: first.version)).chunk)
+  #expect(try await workspace.request(.init(.list, path: "/work/sub", showHidden: true)).listing?.entries.count == 3)
+  let first = try #require(try await workspace.request(.init(.read, path: "/work/sub/a #?.bin", limit: 2)).chunk)
+  let second = try #require(try await workspace.request(.init(.read, path: "/work/sub/a #?.bin", offset: 2, limit: 2, version: first.version)).chunk)
   #expect(first.data + second.data == bytes)
   #expect(second.size == 4)
-  #expect(try await workspace.files(.init(.read, path: "/work/empty")).chunk?.size == 0)
+  #expect(try await workspace.request(.init(.read, path: "/work/empty")).chunk?.size == 0)
   await #expect(throws: WorkspaceFileError.self) {
-    try await workspace.files(.init(.read, path: "/work/sub/a #?.bin", limit: 2, version: "old"))
+    try await workspace.request(.init(.read, path: "/work/sub/a #?.bin", limit: 2, version: "old"))
   }
   await #expect(throws: WorkspaceFileError.self) {
-    try await workspace.files(.init(.list, path: "/work/../outside"))
+    try await workspace.request(.init(.list, path: "/work/../outside"))
   }
   await workspace.close()
 }
@@ -142,9 +142,9 @@ func openCodeWorkspaceShell(_ cancel: Bool) async throws {
     return try httpResponse(request, contentType: "application/json", body: body)
   }
   defer { StubURLProtocol.reset(host: host) }
-  let workspace = try OpenCodeWorkspace(
-    connection: .init(url: #require(URL(string: "https://\(host)")), token: "test", cwd: "/work"),
-    configuration: openCodeTestConfiguration())
+  let connection = RemoteHostConnection(try OpenCodeConnection(
+    url: #require(URL(string: "https://\(host)")), token: "test", cwd: "/work"))
+  let workspace = try connection.workspace(configuration: openCodeTestConfiguration())
   if cancel {
     await #expect(throws: (any Error).self) { try await workspace.run("printf hello; exit 7") }
   } else {

@@ -1,6 +1,6 @@
 import XCTest
+import MaiACP
 
-@testable import PocketMai
 
 final class RemoteTerminalBufferTests: XCTestCase {
   func testRestoresScrollbackAndHistoryWithoutReplayingAnInterruptedCommand() throws {
