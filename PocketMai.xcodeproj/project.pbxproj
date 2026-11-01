@@ -900,7 +900,10 @@
 		E10000000000000000000003 /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm";
-			requirement = {kind = exactVersion; version = 1.99.2; };
+			requirement = {
+				kind = exactVersion;
+				version = 1.99.2;
+			};
 		};
 /* End XCRemoteSwiftPackageReference section */
 
