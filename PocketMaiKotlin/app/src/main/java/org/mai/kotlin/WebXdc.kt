@@ -91,7 +91,6 @@ internal class XdcLibrary(private val context: Context) {
     var importing by remember { mutableStateOf(false) }
     var removing by remember { mutableStateOf<XdcApp?>(null) }
     var browsing by remember { mutableStateOf(false) }
-    var remotePath by remember { mutableStateOf(".") }
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) {
         try { apps = withContext(Dispatchers.IO) { library.apps() } }
@@ -126,7 +125,7 @@ internal class XdcLibrary(private val context: Context) {
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(bottom = 100.dp)) {
             item { Text("Small apps, right here", Modifier.padding(20.dp), style = MaterialTheme.typography.headlineSmall) }
             item { Text("Open WebXDC apps with their own saved state. Each app has separate storage and permissions.", Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.bodyMedium) }
-            if (state.isRemote) item { OutlinedButton(onClick = { browsing = true; model.command("browse", "path" to ".") },
+            if (state.isRemote) item { OutlinedButton(onClick = { browsing = true },
                 modifier = Modifier.padding(20.dp), enabled = !state.remote.busy) { Icon(Icons.Outlined.Dns, null); Spacer(Modifier.width(8.dp)); Text("Import from remote host") } }
             if (importing) item { LinearProgressIndicator(Modifier.fillMaxWidth().padding(20.dp)) }
             if (error.isNotEmpty()) item { Text(error, Modifier.padding(20.dp), color = MaterialTheme.colorScheme.error) }
@@ -138,25 +137,9 @@ internal class XdcLibrary(private val context: Context) {
             }
         }
     }
-    if (browsing) ModalBottomSheet(onDismissRequest = { browsing = false }) {
-        Column(Modifier.fillMaxWidth().imePadding().padding(20.dp)) {
-            Text("Apps on this host", style = MaterialTheme.typography.headlineSmall)
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                OutlinedTextField(remotePath, { remotePath = it }, label = { Text("Folder or .xdc path") }, modifier = Modifier.weight(1f))
-                IconButton(onClick = { model.command(if (remotePath.endsWith(".xdc", true)) "downloadXdc" else "browse", "path" to remotePath) }, enabled = !state.remote.busy) { Icon(Icons.AutoMirrored.Outlined.ArrowForward, "Open path") }
-            }
-            Text(state.remote.browserPath, Modifier.padding(vertical = 12.dp), style = MaterialTheme.typography.labelMedium)
-            if (state.remote.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-            LazyColumn(Modifier.heightIn(max = 420.dp)) {
-                items(state.remote.files.filter { it.directory || it.name.endsWith(".xdc", true) }, key = { it.path }) { file ->
-                    ListItem(headlineContent = { Text(file.name) }, leadingContent = { Icon(if (file.directory) Icons.Outlined.Folder else Icons.Outlined.Widgets, null) },
-                        modifier = Modifier.clickable(enabled = !state.remote.busy) {
-                            remotePath = file.path
-                            model.command(if (file.directory) "browse" else "downloadXdc", "path" to file.path)
-                        })
-                }
-            }
-        }
+    if (browsing) androidx.compose.ui.window.Dialog(onDismissRequest = { browsing = false },
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+        RemoteWorkspaceScreen(state.remote, model, archivesOnly = true, onClose = { browsing = false })
     }
     removing?.let { app -> AlertDialog(onDismissRequest = { removing = null }, title = { Text("Remove ${app.name}?") },
         text = { Text("Its saved status updates and permissions will also be deleted.") },

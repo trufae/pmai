@@ -6,7 +6,7 @@ import Observation
 
 private struct RemoteBookmark: Codable, Identifiable {
   var id = UUID().uuidString
-  var profile: ACPRemoteConnection
+  var profile: RemoteHostConnection
   var pinned = false
   var folders: [ACPWorkspaceFolder] = []
   var sessions: [RemoteConversation] = []
@@ -34,9 +34,7 @@ private typealias RemoteMessage = ACPConversationMessage
   var busy = false
   var status = ""
   var error = ""
-  private var entries: [WorkspaceFileEntry] = []
-  private var browserPath = "."
-  private var downloadPath = ""
+  let workspace: RemoteWorkspaceState
   private var options: [RemoteSessionOption] = []
   private var canRewind = false
   private var messages: [RemoteMessage] = []
@@ -44,12 +42,13 @@ private typealias RemoteMessage = ACPConversationMessage
   private var permissionReply: CheckedContinuation<String?, Never>?
   private let directory: URL
   private let clientName: String
-  private var client: ACPClient?
+  private var client: (any RemoteSessionClient)?
   private var operation: Task<Void, Never>?
   private var preparation: Task<Void, Error>?
   private var generation = 0
 
   init(directory: URL, clientName: String = "PocketMai") throws {
+    workspace = RemoteWorkspaceState(directory: directory)
     self.directory = directory
     self.clientName = clientName
     let file = directory.appendingPathComponent("bookmarks.json")
@@ -71,11 +70,14 @@ private typealias RemoteMessage = ACPConversationMessage
     guard !busy else { return }
     disconnect()
     run {
-      var profile = try ACPRemoteConnection.parse(invitation)
+      var profile: RemoteHostConnection
+      if let link = try? OpenCodePairingLink.parse(invitation) {
+        profile = .init(try await link.redeem())
+      } else { profile = .init(try ACPRemoteConnection.parse(invitation)) }
       if !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { profile.name = name }
       if profile.requiresApproval == true {
         self.status = "Approve this device, then chat access, on the remote host."
-        let client = self.makeClient(profile, generation: self.generation)
+        let client = self.makeACPClient(try ACPRemoteConnection.parse(invitation), generation: self.generation)
         self.client = client
         profile.token = try await client.requestPairing(
           clientID: UUID().uuidString, name: self.clientName)
@@ -110,13 +112,14 @@ private typealias RemoteMessage = ACPConversationMessage
   private func discover() async throws {
     guard let index else { return }
     let profile = bookmarks[index].profile
-    let client = makeClient(profile, generation: generation)
+    let client = try makeClient(profile, generation: generation)
     self.client = client
     status = "Connecting to \(profile.name)…"
     let workspace = try await client.workspace()
     try Task.checkCancellation()
     if let workspace {
       bookmarks[index].folders = workspace.folders
+      if selectedFolder.isEmpty { selectedFolder = workspace.folders.first?.cwd ?? "" }
       for session in workspace.sessions {
         if let existing = bookmarks[index].sessions.firstIndex(where: { $0.sessionID == session.sessionID }) {
           bookmarks[index].sessions[existing].title = session.title
@@ -145,7 +148,7 @@ private typealias RemoteMessage = ACPConversationMessage
     selectedFolder = session.cwd
     run {
       let attempt = self.generation
-      let client = self.makeClient(self.bookmarks[index].profile,
+      let client = try self.makeClient(self.bookmarks[index].profile,
         cwd: session.cwd, session: session.sessionID, updates: true, generation: attempt)
       self.client = client
       self.status = "Opening chat…"
@@ -215,55 +218,26 @@ private typealias RemoteMessage = ACPConversationMessage
     }
   }
 
+  func prepareWorkspace() throws {
+    guard let index, !selectedFolder.isEmpty else {
+      throw WorkspaceFileError("Choose a remote project first.")
+    }
+    workspace.configure(hostID: selectedHostID, profile: bookmarks[index].profile, cwd: selectedFolder, preparation: preparation)
+  }
+
   func browse(_ path: String) {
-    guard !busy, let client else { return }
-    run {
-      let result = try await client.files(cwd: self.selectedFolder,
-        request: WorkspaceFileRequest(.list, path: path, limit: 200))
-      try Task.checkCancellation()
-      self.entries = result.listing?.entries ?? []
-      self.browserPath = result.listing?.path ?? path
-    }
+    do { try prepareWorkspace(); workspace.browse(path) }
+    catch { workspace.error = error.localizedDescription }
   }
 
-  func download(_ path: String) {
-    guard !busy, let client else { return }
-    run {
-      guard path.lowercased().hasSuffix(".xdc") else {
-        throw JSONRPCError.invalidParams("Choose a .xdc archive")
-      }
-      var data = Data()
-      var version: String?
-      while true {
-        try Task.checkCancellation()
-        let response = try await client.files(cwd: self.selectedFolder,
-          request: WorkspaceFileRequest(.read, path: path, offset: data.count, version: version))
-        guard let chunk = response.chunk, chunk.size <= 32_000_000,
-          data.count + chunk.data.count <= 32_000_000 else {
-          throw JSONRPCError.invalidParams("Archive exceeds the 32 MB limit")
-        }
-        if let version, version != chunk.version { throw JSONRPCError.invalidParams("File changed while downloading") }
-        version = chunk.version
-        data.append(chunk.data)
-        if data.count >= chunk.size { break }
-        guard !chunk.data.isEmpty else { throw CocoaError(.fileReadCorruptFile) }
-      }
-      try Task.checkCancellation()
-      let folder = self.directory.appendingPathComponent("downloads")
-      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-      let output = folder.appendingPathComponent(UUID().uuidString + ".xdc")
-      try data.write(to: output, options: .atomic)
-      self.downloadPath = output.path
-    }
-  }
-
-  func consumeDownload() throws {
-    guard !downloadPath.isEmpty else { return }
-    try FileManager.default.removeItem(atPath: downloadPath)
-    downloadPath = ""
+  func selectFolder(_ cwd: String) {
+    guard selectedFolder != cwd else { return }
+    workspace.close()
+    selectedFolder = cwd
   }
 
   func disconnect() {
+    workspace.close()
     generation += 1
     operation?.cancel()
     operation = nil
@@ -308,21 +282,21 @@ private typealias RemoteMessage = ACPConversationMessage
     } onCancel: { Task { @MainActor [weak self] in self?.answer(nil) } }
   }
 
-  private func makeClient(_ profile: ACPRemoteConnection, cwd: String? = nil,
-    session: String? = nil, updates: Bool = false, generation attempt: Int = 0) -> ACPClient {
+  private func makeClient(_ profile: RemoteHostConnection, cwd: String? = nil,
+    session: String? = nil, updates: Bool = false, generation attempt: Int = 0) throws -> any RemoteSessionClient {
     let onUpdate: (@Sendable (JSONValue) async -> Void)?
-    if updates {
-      onUpdate = { [weak self] update in await self?.receive(update, generation: attempt) }
-    } else { onUpdate = nil }
-    return ACPClient(configuration: .init(
-      command: profile.name, permission: .reject, remoteWorkingDirectory: cwd ?? profile.cwd,
-      readClientFiles: false, webSocketURL: profile.url, bearerToken: profile.token,
-      sessionID: session, forwirohInvitation: profile.forwirohInvitation),
-      onUpdate: onUpdate,
+    if updates { onUpdate = { [weak self] update in await self?.receive(update, generation: attempt) } }
+    else { onUpdate = nil }
+    return try profile.makeSession(cwd: cwd, sessionID: session, onUpdate: onUpdate,
       onPermission: { [weak self] request in await self?.ask(request, generation: attempt) },
-      onDisconnect: { [weak self] in
-        await self?.connectionClosed(generation: attempt)
-      })
+      onDisconnect: { [weak self] in await self?.connectionClosed(generation: attempt) })
+  }
+
+  private func makeACPClient(_ profile: ACPRemoteConnection, generation attempt: Int) -> ACPClient {
+    ACPClient(configuration: .init(command: profile.name, permission: .reject,
+      remoteWorkingDirectory: profile.cwd, readClientFiles: false, webSocketURL: profile.url,
+      bearerToken: profile.token, forwirohInvitation: profile.forwirohInvitation),
+      onDisconnect: { [weak self] in await self?.connectionClosed(generation: attempt) })
   }
 
   private func connectionClosed(generation attempt: Int) {
@@ -391,14 +365,12 @@ private typealias RemoteMessage = ACPConversationMessage
       .flatMap { try? JSONSerialization.jsonObject(with: $0) }
     let optionsObject = (try? JSONEncoder().encode(options.map(\.json)))
       .flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? []
-    return [
+    return workspace.snapshot.merging([
       "selectedHostID": selectedHostID, "selectedFolder": selectedFolder,
       "conversationID": conversationID, "connected": connected, "busy": busy,
       "canRewind": canRewind,
       "status": status, "error": error, "permission": permissionObject ?? NSNull(),
-      "browserPath": browserPath, "downloadPath": downloadPath,
       "options": optionsObject,
-      "files": entries.map { ["path": $0.path, "name": $0.name, "directory": $0.isDirectory] as [String: Any] },
       "hosts": bookmarks.sorted { $0.pinned && !$1.pinned }.map {
         ["id": $0.id, "name": $0.profile.name, "address": $0.profile.url.absoluteString,
           "pinned": $0.pinned, "connected": $0.id == selectedHostID && connected] as [String: Any]
@@ -408,6 +380,6 @@ private typealias RemoteMessage = ACPConversationMessage
         ["id": $0.id, "title": $0.title, "cwd": $0.cwd, "updatedAt": $0.updatedAt.timeIntervalSince1970] as [String: Any]
       },
       "messages": messages.map { ["id": $0.id.uuidString, "role": $0.role, "text": $0.text, "status": $0.status ?? "", "remoteID": $0.remoteID ?? ""] },
-    ]
+    ]) { _, value in value }
   }
 }

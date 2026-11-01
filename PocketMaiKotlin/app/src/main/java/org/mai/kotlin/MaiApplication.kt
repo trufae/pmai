@@ -21,6 +21,7 @@ data class ToolGroupInfo(val id: String, val name: String, val description: Stri
 data class Prompt(val id: String, val name: String, val text: String)
 data class Host(val id: String, val name: String, val address: String, val pinned: Boolean, val connected: Boolean)
 data class Folder(val cwd: String, val name: String)
+data class ConsoleEntry(val id: String, val command: String, val output: String, val error: Boolean, val complete: Boolean)
 data class RemoteFile(val path: String, val name: String, val directory: Boolean)
 data class AgentToolInfo(val name: String, val description: String, val enabled: Boolean)
 data class SkillInfo(val name: String, val description: String, val body: String, val toolName: String, val enabled: Boolean)
@@ -38,6 +39,11 @@ data class RemoteState(
     val browserPath: String = ".", val downloadPath: String = "", val files: List<RemoteFile> = emptyList(),
     val options: List<JSONObject> = emptyList(),
     val canRewind: Boolean = false,
+    val browserRoot: String = "", val workspaceBusy: Boolean = false, val workspaceError: String = "",
+    val writeEnabled: Boolean = false, val showHidden: Boolean = false, val hasMoreFiles: Boolean = false,
+    val filePath: String = "", val previewPath: String = "", val previewText: String? = null,
+    val terminalRunning: Boolean = false, val terminalHistory: List<String> = emptyList(),
+    val terminalEntries: List<ConsoleEntry> = emptyList(),
 )
 data class AppState(
     val ready: Boolean = false, val error: String = "", val baseURL: String = "",
@@ -90,6 +96,16 @@ data class AppState(
                     files = r.optJSONArray("files").objects().map { RemoteFile(it.getString("path"), it.getString("name"), it.getBoolean("directory")) },
                     options = r.optJSONArray("options").objects(),
                     canRewind = r.optBoolean("canRewind"),
+                    browserRoot = r.optString("browserRoot"), workspaceBusy = r.optBoolean("workspaceBusy"),
+                    workspaceError = r.optString("workspaceError"), writeEnabled = r.optBoolean("writeEnabled"),
+                    showHidden = r.optBoolean("showHidden"), hasMoreFiles = r.optBoolean("hasMoreFiles"),
+                    filePath = r.optString("filePath"), previewPath = r.optString("previewPath"),
+                    previewText = if (r.isNull("previewText")) null else r.optString("previewText"),
+                    terminalRunning = r.optBoolean("terminalRunning"),
+                    terminalHistory = r.optJSONArray("terminalHistory")?.let { values -> (0 until values.length()).map { values.getString(it) } } ?: emptyList(),
+                    terminalEntries = r.optJSONArray("terminalEntries").objects().map {
+                        ConsoleEntry(it.getString("id"), it.getString("command"), it.getString("output"), it.getBoolean("isError"), it.getBoolean("isComplete"))
+                    },
                 ),
                 agent = AgentState(enabled = a.optBoolean("enabled"), loading = a.optBoolean("loading"), error = a.optString("error"),
                     tools = a.optJSONArray("tools").objects().map { AgentToolInfo(it.getString("name"), it.getString("description"), it.getBoolean("enabled")) },

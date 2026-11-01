@@ -23,6 +23,23 @@ struct RemoteAgentBookmark: Codable, Identifiable {
   var pinnedFolderPaths: [String]?
   var pinnedConversationIDs: [UUID]?
 
+  private func connection(token: String, cwd: String) throws -> RemoteHostConnection {
+    var connection: RemoteHostConnection
+    if backend == .openCode {
+      connection = .init(try OpenCodeConnection(name: name, url: url, token: token, cwd: cwd))
+    } else {
+      connection = .init(try ACPRemoteConnection(name: name, url: url, token: token, cwd: cwd,
+        connectionProtocol: connectionProtocol ?? (url.scheme == "forwiroh" ? .forwiroh : nil)))
+      connection.forwirohInvitation = forwirohInvitation
+    }
+    connection.requiresApproval = requiresApproval
+    return connection
+  }
+
+  @MainActor func workspaceConnection(cwd: String) throws -> WorkspaceConnection {
+    try connection(token: RemoteAgentStore.shared.token(for: id), cwd: cwd).workspace()
+  }
+
   func makeClient(
     token: String, cwd: String, sessionID: String? = nil, resumeID: String? = nil,
     httpConfiguration: URLSessionConfiguration = .ephemeral,
@@ -31,24 +48,8 @@ struct RemoteAgentBookmark: Codable, Identifiable {
     onPermissionResponse: (@Sendable (JSONValue) async throws -> ACPPermissionResponse?)? = nil,
     onDisconnect: (@Sendable () async -> Void)? = nil
   ) throws -> any RemoteSessionClient {
-    if backend == .openCode {
-      if let onPermissionResponse {
-        return OpenCodeClient(
-          connection: try .init(name: name, url: url, token: token, cwd: cwd), sessionID: sessionID,
-          configuration: httpConfiguration,
-          onUpdate: onUpdate,
-          onPermission: { request in try await onPermissionResponse(request)?.optionID })
-      }
-      return OpenCodeClient(
-        connection: try .init(name: name, url: url, token: token, cwd: cwd), sessionID: sessionID,
-        configuration: httpConfiguration,
-        onUpdate: onUpdate, onPermission: onPermission)
-    }
-    return ACPClient(
-      configuration: .init(
-        command: name, permission: .reject, remoteWorkingDirectory: cwd, readClientFiles: false,
-        webSocketURL: url, bearerToken: token, sessionID: sessionID, resumeID: resumeID),
-      onUpdate: onUpdate, onPermission: onPermission,
+    try connection(token: token, cwd: cwd).makeSession(sessionID: sessionID, resumeID: resumeID,
+      configuration: httpConfiguration, onUpdate: onUpdate, onPermission: onPermission,
       onPermissionResponse: onPermissionResponse, onDisconnect: onDisconnect)
   }
 }

@@ -153,3 +153,23 @@ The Android GitHub Actions workflow builds both Android clients. The Kotlin
 job tests the facade/importer and uploads debug and release APKs containing
 arm64 and x86_64 libraries. CI release APKs use the runner's debug key; configure
 your own signing variables for an APK intended for distribution.
+
+## Remote workspaces
+
+Pair a pmai/Forwiroh connection or an OpenCode pairing link in Hosts. Select a
+project, then open **Files** or **Console** from the chat list or chat toolbar.
+Files supports parent navigation, hidden files, paged listings, bounded binary
+downloads, sharing, and text previews. Hosts that allow writes also support text
+editing, uploads, and new folders; OpenCode files remain read only.
+
+Console runs each command in the selected project directory. It keeps bounded
+scrollback and searchable command history per host/project, allows editing and
+rerunning commands, and supports pinch font resizing. These are individual shell
+commands, not an interactive PTY; use a single script for commands that share
+shell state. Stopping disconnects ACP requests or deletes OpenCode shells; ACP
+commands may continue on the host.
+
+Both screens use `MaiACP.RemoteHostConnection` / `WorkspaceConnection` inside
+MaiCore. The same API serves iOS and is available to CLI clients; Kotlin only
+renders `MaiMobile` snapshots and forwards actions. File and console connections
+are independent of the conversation connection.

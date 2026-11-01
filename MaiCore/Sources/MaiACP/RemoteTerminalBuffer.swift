@@ -1,30 +1,32 @@
-import CryptoKit
+import Crypto
 import Foundation
 
-struct RemoteTerminalEntry: Codable, Identifiable, Equatable {
-  var id = UUID()
-  let command: String
-  var output: String?
-  var isError = false
-  var isComplete = false
+public struct RemoteTerminalEntry: Codable, Identifiable, Equatable {
+  public var id = UUID()
+  public let command: String
+  public var output: String?
+  public var isError = false
+  public var isComplete = false
 }
 
-struct RemoteTerminalBuffer: Codable {
-  static let historyLimit = 500
-  static let entryLimit = 200
-  static let outputLimit = 128_000
-  static let backlogLimit = 1_000_000
+public struct RemoteTerminalBuffer: Codable {
+  public static let historyLimit = 500
+  public static let entryLimit = 200
+  public static let outputLimit = 128_000
+  public static let backlogLimit = 1_000_000
 
-  private(set) var entries: [RemoteTerminalEntry] = []
-  private(set) var history: [String] = []
+  public init() {}
 
-  static func fileURL(hostID: UUID, endpoint: URL, cwd: String, directory: URL) -> URL {
+  public private(set) var entries: [RemoteTerminalEntry] = []
+  public private(set) var history: [String] = []
+
+  public static func fileURL(hostID: UUID, endpoint: URL, cwd: String, directory: URL) -> URL {
     let key = [hostID.uuidString, endpoint.absoluteString, cwd].joined(separator: "\n")
     let digest = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
     return directory.appendingPathComponent(digest).appendingPathExtension("json")
   }
 
-  static func load(from url: URL) -> Self {
+  public static func load(from url: URL) -> Self {
     guard let data = try? Data(contentsOf: url),
       var buffer = try? JSONDecoder().decode(Self.self, from: data)
     else { return Self() }
@@ -33,13 +35,13 @@ struct RemoteTerminalBuffer: Codable {
     return buffer
   }
 
-  func save(to url: URL) throws {
+  public func save(to url: URL) throws {
     try FileManager.default.createDirectory(
       at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     try JSONEncoder().encode(self).write(to: url, options: .atomic)
   }
 
-  mutating func append(_ command: String) -> UUID {
+  public mutating func append(_ command: String) -> UUID {
     let entry = RemoteTerminalEntry(command: command)
     entries.append(entry)
     history.removeAll { $0 == command }
@@ -48,7 +50,7 @@ struct RemoteTerminalBuffer: Codable {
     return entry.id
   }
 
-  mutating func update(_ id: UUID, output: String, isError: Bool, isComplete: Bool = true) {
+  public mutating func update(_ id: UUID, output: String, isError: Bool, isComplete: Bool = true) {
     guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
     entries[index].output = Self.boundedOutput(output)
     entries[index].isError = isError
@@ -56,10 +58,10 @@ struct RemoteTerminalBuffer: Codable {
     trim()
   }
 
-  mutating func clearScrollback() { entries.removeAll() }
-  mutating func clearHistory() { history.removeAll() }
+  public mutating func clearScrollback() { entries.removeAll() }
+  public mutating func clearHistory() { history.removeAll() }
 
-  mutating func interruptPending() {
+  public mutating func interruptPending() {
     for index in entries.indices where !entries[index].isComplete {
       entries[index].output =
         (entries[index].output ?? "")
@@ -89,11 +91,13 @@ struct RemoteTerminalBuffer: Codable {
   }
 }
 
-struct RemoteTerminalHistoryCursor {
-  private(set) var index: Int?
+public struct RemoteTerminalHistoryCursor {
+  public private(set) var index: Int?
   private var draft = ""
 
-  mutating func move(_ direction: Int, command: String, history: [String]) -> String {
+  public init() {}
+
+  public mutating func move(_ direction: Int, command: String, history: [String]) -> String {
     guard !history.isEmpty else { return command }
     if index == nil {
       guard direction < 0 else { return command }
@@ -104,7 +108,7 @@ struct RemoteTerminalHistoryCursor {
     return index.map { history[$0] } ?? draft
   }
 
-  mutating func reset() {
+  public mutating func reset() {
     index = nil
     draft = ""
   }
