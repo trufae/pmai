@@ -989,6 +989,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
   public var documentExport: DocumentExportOptions
   public var airplane: Bool
   public var toolsEnabled: Bool
+  public var remoteTerminalTimeoutSeconds: Int
   public var redact: RedactionMode
 
   public init(
@@ -1011,6 +1012,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
     documentExport: DocumentExportOptions = .init(),
     airplane: Bool = false,
     toolsEnabled: Bool = true,
+    remoteTerminalTimeoutSeconds: Int = 0,
     redact: RedactionMode = .off
   ) {
     self.version = version
@@ -1032,6 +1034,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
     self.documentExport = documentExport
     self.airplane = airplane
     self.toolsEnabled = toolsEnabled
+    self.remoteTerminalTimeoutSeconds = max(0, remoteTerminalTimeoutSeconds)
     self.redact = redact
   }
 
@@ -1039,7 +1042,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
     case version, defaultAgent, taskAgents, voice, plugins, providers, toolSources, ocrProviders,
       mcpServers, agents,
       prompts, memory, ui,
-      approvals, fileAccess, use, documentExport, airplane, redact, toolsEnabled
+      approvals, fileAccess, use, documentExport, airplane, redact, toolsEnabled, remoteTerminalTimeoutSeconds
   }
 
   public init(from decoder: Decoder) throws {
@@ -1071,6 +1074,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
         ?? .init(),
       airplane: try container.decodeIfPresent(Bool.self, forKey: .airplane) ?? false,
       toolsEnabled: try container.decodeIfPresent(Bool.self, forKey: .toolsEnabled) ?? true,
+      remoteTerminalTimeoutSeconds: try container.decodeIfPresent(Int.self, forKey: .remoteTerminalTimeoutSeconds) ?? 0,
       // Older versions stored a rules filename here. Only the fixed redact.txt
       // file is supported now; obsolete values must not prevent startup.
       redact: (try? container.decodeIfPresent(RedactionMode.self, forKey: .redact)) ?? .off)

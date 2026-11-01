@@ -72,6 +72,8 @@ actor ACPResumableAgent {
     let id: JSONValue
     let generation: Int
     let method: String
+    let terminalAction: String?
+    let terminalID: String?
   }
   private let transport: StdioJSONRPCTransport
   private var reader: Task<Void, Never>?
@@ -82,6 +84,7 @@ actor ACPResumableAgent {
   private var nextID = 1
   private var requests: [Int: Request] = [:]
   private var permissions: [String: JSONRPCMessage] = [:]
+  private var terminals = Set<String>()
   private var closed = false
 
   init(configuration: ACPWebSocketGateway.Configuration) throws {
@@ -113,13 +116,14 @@ actor ACPResumableAgent {
   }
 
   func expireIdle() -> Bool {
-    guard channel == nil, requests.isEmpty else { return false }
+    guard channel == nil, requests.isEmpty, terminals.isEmpty else { return false }
     close()
     return true
   }
 
   func expireIfNeeded() -> Bool {
-    let expired = closed || (detachedAt.map { Date().timeIntervalSince($0) >= 300 } == true && requests.isEmpty)
+    let expired = closed || (detachedAt.map { Date().timeIntervalSince($0) >= 300 } == true
+      && requests.isEmpty && terminals.isEmpty)
     if expired { close() }
     return expired
   }
@@ -130,7 +134,9 @@ actor ACPResumableAgent {
     if message.isRequest, let id = message.id, let method = message.method {
       let serial = nextID
       nextID += 1
-      requests[serial] = Request(id: id, generation: generation, method: method)
+      requests[serial] = Request(id: id, generation: generation, method: method,
+        terminalAction: method == ACP.Method.workspaceTerminal ? message.params?.objectValue?["action"]?.stringValue : nil,
+        terminalID: message.params?.objectValue?["id"]?.stringValue)
       message.id = .integer(serial)
       if method == ACP.Method.sessionNew, let sessionID {
         var params = message.params?.objectValue ?? [:]
@@ -146,6 +152,8 @@ actor ACPResumableAgent {
 
   private func receive(_ message: JSONRPCMessage) async {
     var message = message
+    if message.method == "_pmai/workspace/terminal_closed",
+      let id = message.params?.objectValue?["id"]?.stringValue { terminals.remove(id) }
     if message.method == ACP.Method.sessionUpdate,
       let update = message.params?.objectValue?["update"]?.objectValue,
       update["sessionUpdate"]?.stringValue == "_pmai/session_state",
@@ -156,6 +164,15 @@ actor ACPResumableAgent {
     var replayPermissions = false
     if message.isResponse, let id = message.id?.intValue {
       guard let request = requests.removeValue(forKey: id) else { return }
+      if message.error == nil, let action = request.terminalAction {
+        if action == "close_all" { terminals.removeAll() }
+        else if action == "open", let id = message.result?.objectValue?["id"]?.stringValue {
+          terminals.insert(id)
+        } else if let id = request.terminalID,
+          action == "close" || (action == "read" && message.result?.objectValue?["exitCode"]?.intValue != nil) {
+          terminals.remove(id)
+        }
+      }
       if request.method == ACP.Method.sessionNew, message.error == nil {
         sessionID = message.result?.objectValue?["sessionId"]?.stringValue ?? sessionID
         if let sessionID, var result = message.result?.objectValue {

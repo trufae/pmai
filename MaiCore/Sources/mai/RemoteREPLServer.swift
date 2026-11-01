@@ -214,6 +214,7 @@ actor RemoteREPLServer {
     snapshot.defaultAgent = agent.id
     snapshot.agents.removeAll { $0.id == agent.id }
     snapshot.agents.append(agent)
+    try ACPStateFiles.write(configuration.remoteTerminalTimeoutSeconds, to: directory.appendingPathComponent("terminal-timeout.json"))
     let configFile = directory.appendingPathComponent("settings.json")
     try snapshot.save(to: configFile)
     try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configFile.path)

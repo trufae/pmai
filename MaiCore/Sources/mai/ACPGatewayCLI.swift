@@ -88,7 +88,7 @@ enum ACPGatewayCLI {
     let configuration = ACPWebSocketGateway.Configuration(
       host: flags["--host"] ?? "127.0.0.1",
       port: port, tokenFile: tokenFile, command: command, arguments: commandArguments,
-      workingDirectory: URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
+      workingDirectory: URL(fileURLWithPath: FileManager.default.currentDirectoryPath), resumable: true)
     let server = Task {
       try await ACPWebSocketGateway.serve(configuration) { address in
         FileHandle.standardError.write(

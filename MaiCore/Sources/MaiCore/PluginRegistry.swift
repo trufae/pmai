@@ -150,7 +150,7 @@ public struct ToolGroupDefinition: Codable, Equatable, Sendable {
   public static func defaultNetworkRequirement(for id: String, sourceID: String = "") -> ToolNetworkRequirement {
     if sourceID == "mcp" { return .internet }
     switch id.lowercased() {
-    case "weather", "web", "websearch", "github", "mastodon", "browser": return .internet
+    case "weather", "web", "websearch", "github", "mastodon", "browser", "remote": return .internet
     default: return .offline
     }
   }

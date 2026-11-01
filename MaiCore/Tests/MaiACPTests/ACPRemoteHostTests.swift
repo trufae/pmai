@@ -36,8 +36,15 @@ func acpRemoteHostPairing() throws {
     ACPRemoteConnection(name: "Renamed", url: url, token: "new-token", cwd: "/work/other",
       connectionProtocol: .opentunnel))
   #expect(first.id == second.id)
+  #expect(second.agentAccess != true)
+  try store.setAgentAccess(true, for: second)
+  #expect(try store.host("renamed").agentAccess == true)
+  try store.setAgentAccess(false, for: second)
+  #expect(try store.host("renamed").agentAccess == false)
   #expect(try store.hosts().count == 1)
-  #expect(try store.host("renamed") == second)
+  var disabled = second
+  disabled.agentAccess = false
+  #expect(try store.host("renamed") == disabled)
   #expect(try store.host("renamed").connectionProtocol == .opentunnel)
   let provider = store.provider(for: second)
   #expect(provider.options["token"] == nil)

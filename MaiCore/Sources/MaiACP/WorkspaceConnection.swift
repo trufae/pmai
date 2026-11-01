@@ -8,6 +8,38 @@ public enum WorkspaceConnection: Sendable {
   case remote(ACPClient, cwd: String)
   case openCode(OpenCodeWorkspace)
 
+  public func supportsInteractiveTerminal() async throws -> Bool {
+    if case .remote(let client, _) = self { return try await client.terminalSupported() }
+    return false
+  }
+
+  public func openTerminal(columns: Int, rows: Int) async throws -> RemoteTerminalSession {
+    guard case .remote(let client, let cwd) = self else {
+      throw WorkspaceFileError("This host supports command execution only")
+    }
+    let result = try await client.terminal([
+      "action": .string("open"), "cwd": .string(cwd),
+      "columns": .integer(columns), "rows": .integer(rows),
+    ])
+    guard let id = result.objectValue?["id"]?.stringValue else {
+      throw WorkspaceFileError("The host did not open a terminal")
+    }
+    return RemoteTerminalSession(id: id, client: client)
+  }
+
+  public func attachTerminal(id: String) async throws -> RemoteTerminalSession? {
+    guard case .remote(let client, _) = self else { return nil }
+    let response = try await client.terminal(["action": .string("attach"), "id": .string(id)])
+    return response.objectValue?["attached"]?.boolValue == true
+      ? RemoteTerminalSession(id: id, client: client) : nil
+  }
+
+  public func terminalIDs() async throws -> [String] {
+    guard case .remote(let client, _) = self else { return [] }
+    let response = try await client.terminal(["action": .string("list")])
+    return response.objectValue?["ids"]?.arrayValue?.compactMap(\.stringValue) ?? []
+  }
+
   public func request(_ request: WorkspaceFileRequest) async throws -> WorkspaceFileResponse {
     try Task.checkCancellation()
     switch self {

@@ -44,12 +44,16 @@ public actor ACPServer {
   private var loadingSessions = Set<String>()
   private var modelCatalogs: [ProviderID: [ModelDescriptor]] = [:]
   private var fileSystems: [String: MaiWorkspaceFiles] = [:]
+  #if os(macOS) || os(Linux) || os(Android)
+  private var terminals: [String: RemotePTY] = [:]
+  #endif
   private let sessionDirectory: URL?
   private let workspaceRoots: [URL]?
   private let workspace: (any ACPWorkspaceRepository)?
   private let fileConfiguration: MaiFileWorkspaceConfiguration?
   private let promptCatalog: @Sendable (URL) -> PromptCatalog
   private let authorize: @Sendable () throws -> Void
+  private let terminalIdleTimeout: @Sendable () -> TimeInterval
   private let extensionHandler: @Sendable (String, JSONValue?) throws -> JSONValue?
   private var connected = false
   private var initialized = false
@@ -69,6 +73,7 @@ public actor ACPServer {
     fileConfiguration: MaiFileWorkspaceConfiguration? = nil,
     promptCatalog: @escaping @Sendable (URL) -> PromptCatalog = { _ in PromptCatalog() },
     authorize: @escaping @Sendable () throws -> Void = {},
+    terminalIdleTimeout: @escaping @Sendable () -> TimeInterval = { 0 },
     extensionHandler: @escaping @Sendable (String, JSONValue?) throws -> JSONValue? = { _, _ in nil
     }
   ) {
@@ -83,6 +88,7 @@ public actor ACPServer {
     self.fileConfiguration = fileConfiguration
     self.promptCatalog = promptCatalog
     self.authorize = authorize
+    self.terminalIdleTimeout = terminalIdleTimeout
     self.extensionHandler = extensionHandler
   }
 
@@ -112,6 +118,11 @@ public actor ACPServer {
     await peer.run()
     connected = false
     monitor.cancel()
+    #if os(macOS) || os(Linux) || os(Android)
+    let previousTerminals = terminals
+    terminals.removeAll()
+    for terminal in previousTerminals.values { await terminal.stop() }
+    #endif
     for session in sessions.values {
       for pid in session.processes {
         await runtime.supervisor.stop(pid, reason: "ACP disconnected")
@@ -158,6 +169,8 @@ public actor ACPServer {
       return try await runTool(params: params)
     case ACP.Method.workspaceFiles:
       return try await workspaceFiles(params: params)
+    case ACP.Method.workspaceTerminal:
+      return try await workspaceTerminal(params: params)
     case ACP.Method.workspacePrompts:
       let catalog = promptCatalog(try directory(params: params))
       return try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(catalog))
@@ -193,6 +206,7 @@ public actor ACPServer {
         "_meta": .object(["pmai": .object([
           "workspaceFiles": .integer(1), "permissionEditing": .integer(1), "yolo": .integer(1),
           "workspacePrompts": .integer(1),
+          "workspaceTerminal": .integer(Self.hasPTY ? 1 : 0),
           "historyRewind": .integer(1), "injection": .integer(1),
         ])]),
         "loadSession": .bool(sessionDirectory != nil || workspace != nil),
@@ -213,6 +227,93 @@ public actor ACPServer {
       return
     }
     do { try authorize() } catch { await peer?.close() }
+    #if os(macOS) || os(Linux) || os(Android)
+    for (id, terminal) in terminals where terminal.isIdle(timeout: terminalIdleTimeout()) {
+      terminals[id] = nil
+      await terminal.stop()
+      try? peer?.notify("_pmai/workspace/terminal_closed", params: .object(["id": .string(id)]))
+    }
+    if !terminals.isEmpty, (try? await runtime.isToolEnabled(MaiRunTool.name, for: agent)) != true {
+      let previous = terminals
+      terminals.removeAll()
+      for (id, terminal) in previous {
+        await terminal.stop()
+        try? peer?.notify("_pmai/workspace/terminal_closed", params: .object(["id": .string(id)]))
+      }
+    }
+    #endif
+  }
+
+  private static var hasPTY: Bool {
+    #if os(macOS) || os(Linux) || os(Android)
+    true
+    #else
+    false
+    #endif
+  }
+
+  private func workspaceTerminal(params: JSONValue?) async throws -> JSONValue {
+    #if os(macOS) || os(Linux) || os(Android)
+    guard let fields = params?.objectValue, let action = fields["action"]?.stringValue else {
+      throw JSONRPCError.invalidParams("A terminal action is required")
+    }
+    if action == "close", let id = fields["id"]?.stringValue {
+      let terminal = terminals.removeValue(forKey: id)
+      await terminal?.stop()
+      return .object([:])
+    }
+    if action == "close_all" {
+      let previous = terminals
+      terminals.removeAll()
+      for terminal in previous.values { await terminal.stop() }
+      return .object([:])
+    }
+    guard try await runtime.isToolEnabled(MaiRunTool.name, for: agent) else {
+      throw JSONRPCError.invalidParams("Enable run_shell on this host to use its terminal")
+    }
+    // The runtime check suspends; revocation/disconnect may have happened meanwhile.
+    try authorize()
+    guard connected else { throw JSONRPCTransportError.closed }
+    if action == "list" {
+      return .object(["ids": .array(terminals.keys.sorted().map(JSONValue.string))])
+    }
+    if action == "attach", let id = fields["id"]?.stringValue {
+      guard let terminal = terminals[id] else { return .object(["attached": .bool(false)]) }
+      terminal.detachReader()
+      return .object(["attached": .bool(true)])
+    }
+    if action == "open" || action == "resize" {
+      guard let columns = fields["columns"]?.intValue, let rows = fields["rows"]?.intValue,
+        (1...1000).contains(columns), (1...1000).contains(rows) else {
+        throw JSONRPCError.invalidParams("Terminal dimensions must be between 1 and 1000")
+      }
+      if action == "open" {
+        let cwd = try directory(params: params)
+        guard terminals.count < 16 else { throw JSONRPCError.invalidParams("Too many open terminals") }
+        let id = UUID().uuidString.lowercased()
+        terminals[id] = try RemotePTY(cwd: cwd, columns: columns, rows: rows)
+        return .object(["id": .string(id)])
+      }
+    }
+    guard let id = fields["id"]?.stringValue, let terminal = terminals[id] else {
+      throw JSONRPCError.invalidParams("Unknown terminal; open a new session")
+    }
+    switch action {
+    case "read":
+      let chunk = try await terminal.readOutput(after: fields["offset"]?.intValue)
+      return try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(chunk))
+    case "write":
+      guard let encoded = fields["data"]?.stringValue, encoded.count <= 24 * 1024,
+        let data = Data(base64Encoded: encoded) else { throw JSONRPCError.invalidParams("Invalid terminal input") }
+      try terminal.send(data)
+    case "resize":
+      try terminal.resize(columns: fields["columns"]!.intValue!, rows: fields["rows"]!.intValue!)
+    default: throw JSONRPCError.invalidParams("Unknown terminal action")
+    }
+    return .object([:])
+    #else
+    throw JSONRPCError.invalidParams("Interactive terminals require a Unix host")
+    #endif
   }
 
   private func directory(params: JSONValue?) throws -> URL {

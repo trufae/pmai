@@ -465,6 +465,7 @@ private struct REPLServices: Sendable {
   var approvalHandler: TerminalApprovalHandler
   var promptFileAccess: PromptFileAccess
   var configurationPath: String?
+  var remoteTerminalSettingsURL: URL
   var providerBaseURLs: ProviderBaseURLStore
   var memory: MemoryState
   var todo: TodoState
@@ -1508,6 +1509,14 @@ struct MaiCLI {
         configuration: configuration,
         environment: environment)
       try await registerMemoryTools(in: runtime, state: memoryState)
+      let remoteHosts = ACPRemoteHostStore(directory:
+        resolvedHome(options: options, environment: environment).rootURL.appendingPathComponent("remotes"))
+      let remoteTools = RemoteWorkspaceTools {
+        try remoteHosts.hosts().filter { $0.agentAccess == true }.map {
+          RemoteWorkspaceHost(id: $0.id.uuidString.lowercased(), connection: try remoteHosts.connection(for: $0))
+        }
+      }
+      try await runtime.register(tools: remoteTools.tools())
       try await registerTodoTools(in: runtime, state: todoState)
       try await runtime.register(tools: MaiContextTools.makeTools(supervisor: runtime.supervisor))
       try await registerSkillTools(in: runtime, state: skillState)
@@ -1637,6 +1646,7 @@ struct MaiCLI {
         approvalHandler: approvalHandler,
         promptFileAccess: promptFileAccess,
         configurationPath: configurationPath,
+        remoteTerminalSettingsURL: resolvedHome(options: options, environment: environment).rootURL.appendingPathComponent("remote-server/terminal-timeout.json"),
         providerBaseURLs: ProviderBaseURLStore(setup.providerBaseURLs),
         memory: memoryState,
         todo: todoState,
@@ -1773,6 +1783,7 @@ struct MaiCLI {
         configuration: configuration,
         catalogs: setup.catalogs,
         services: services,
+        remoteTools: remoteTools,
         pmaiBridge: pmaiBridge,
         promptFileAccess: promptFileAccess,
         terminal: terminal, startup: startup)
@@ -2082,7 +2093,12 @@ struct MaiCLI {
           ]).skills
           return configuration?.promptCatalog(skills: skills) ?? PromptCatalog(skills: skills)
         },
-        authorize: authorize, extensionHandler: extensionHandler)
+        authorize: authorize,
+        terminalIdleTimeout: {
+          let file = home.rootURL.appendingPathComponent("remote-server/terminal-timeout.json")
+          return Double((try? JSONDecoder().decode(Int.self, from: Data(contentsOf: file)))
+            ?? configuration?.remoteTerminalTimeoutSeconds ?? 0)
+        }, extensionHandler: extensionHandler)
       FileHandle.standardError.write(
         Data("pmai ACP agent ready (\(agent.id)); waiting for a client on stdio.\n".utf8))
       await server.serve(on: transport)
@@ -2514,6 +2530,7 @@ struct MaiCLI {
     configuration: MaiConfiguration?,
     catalogs: [MCPServerCatalog],
     services: REPLServices,
+    remoteTools: RemoteWorkspaceTools,
     pmaiBridge: PmaiCommandBridge,
     promptFileAccess: PromptFileAccess,
     terminal: TerminalWriter, startup: CLIStartupTiming
@@ -4277,7 +4294,8 @@ struct MaiCLI {
             if await resetSettings(
               session: &session, runtime: runtime, plugins: plugins,
               configuration: &configuration, configurationPath: services.configurationPath,
-              approvalHandler: services.approvalHandler, catalogs: &catalogs, terminal: terminal)
+              approvalHandler: services.approvalHandler, catalogs: &catalogs, terminal: terminal,
+              remoteTerminalSettingsURL: services.remoteTerminalSettingsURL)
             {
               await stopVoice()
               await recordSubagents()
@@ -4686,6 +4704,15 @@ struct MaiCLI {
                 }
                 let host = try hosts.pair(profile, name: arguments.count >= 2 ? arguments[1] : nil)
                 await terminal.line("Paired \(host.name). /remote connect \(shellQuote(host.name)) opens a chat.")
+              case "tools":
+                guard arguments.count == 2, ["on", "off"].contains(arguments[1]) else {
+                  throw JSONRPCError.invalidParams("Usage: /remote tools HOST on|off")
+                }
+                let host = try hosts.host(arguments[0])
+                let enabled = arguments[1] == "on"
+                try hosts.setAgentAccess(enabled, for: host)
+                if !enabled { await remoteTools.revoke(host: host.id.uuidString.lowercased()) }
+                await terminal.line("Agent access to \(host.name): \(enabled ? "on" : "off"). Enable the remote tools for your agent with /tools.")
               case "ls", "get", "put", "run":
                 guard let hostName = arguments.first else {
                   throw JSONRPCError.invalidParams("Usage: /remote \(action) HOST. /help remote lists arguments.")
@@ -6509,7 +6536,7 @@ struct MaiCLI {
         configuration: &configuration,
         configurationPath: services.configurationPath,
         catalogs: &catalogs,
-        terminal: terminal)
+        terminal: terminal, remoteTerminalSettingsURL: services.remoteTerminalSettingsURL)
     case "/reset":
       guard !argument.isEmpty else {
         await terminal.line("Type /reset at the REPL prompt, then choose reset or cancel.")
@@ -6528,7 +6555,7 @@ struct MaiCLI {
             plugins: plugins, providerBaseURLs: services.providerBaseURLs,
             approvalHandler: services.approvalHandler, configuration: &configuration,
             configurationPath: services.configurationPath, catalogs: &catalogs, terminal: terminal,
-            restoringDefault: true)
+            restoringDefault: true, remoteTerminalSettingsURL: services.remoteTerminalSettingsURL)
         }
       } catch {
         await terminal.line("error: \(error.localizedDescription)", to: .standardError)
@@ -11160,6 +11187,7 @@ struct MaiCLI {
       "debug": "false", "debugfile": "default", "airplane": "off",
       "acp.timeout": "off",
       "acp.context": "agent", "acp.prompt": "agent",
+      "limits.terminaltimeout": "0",
       "redact": configuration.redact.rawValue, "delegation": defaults.toolDelegation.rawValue,
       "effort": defaults.options.reasoningEffort ?? "auto", "ui.editor": "none",
       "ctx.compact": defaults.autocompact.isEnabled ? String(defaults.autocompact.tokens) : "off",
@@ -11188,7 +11216,7 @@ struct MaiCLI {
     configurationPath: String?,
     approvalHandler: TerminalApprovalHandler,
     catalogs: inout [MCPServerCatalog],
-    terminal: TerminalWriter
+    terminal: TerminalWriter, remoteTerminalSettingsURL: URL? = nil
   ) async -> Bool {
     guard let original = configuration, let configurationPath else {
       await terminal.line("error: No writable configuration is active.", to: .standardError)
@@ -11203,6 +11231,7 @@ struct MaiCLI {
     draft.airplane = defaults.airplane
     draft.redact = defaults.redact
     draft.approvals.mode = defaults.approvals.mode
+    draft.remoteTerminalTimeoutSeconds = defaults.remoteTerminalTimeoutSeconds
     var profile = session.profile
     profile.resetSettings()
     // Do not create a configured agent on an install with no provider selected.
@@ -11226,9 +11255,14 @@ struct MaiCLI {
       }
       try draft.save(to: url)
       do {
+        if let remoteTerminalSettingsURL {
+          try ACPStateFiles.createDirectory(remoteTerminalSettingsURL.deletingLastPathComponent())
+          try ACPStateFiles.write(0, to: remoteTerminalSettingsURL)
+        }
         try await approvalHandler.resetSettings()
       } catch {
         try original.save(to: url)
+        if let remoteTerminalSettingsURL { try? ACPStateFiles.write(original.remoteTerminalTimeoutSeconds, to: remoteTerminalSettingsURL) }
         throw error
       }
     } catch {
@@ -11289,7 +11323,8 @@ struct MaiCLI {
     configurationPath: String?,
     catalogs: inout [MCPServerCatalog],
     terminal: TerminalWriter,
-    restoringDefault: Bool = false
+    restoringDefault: Bool = false,
+    remoteTerminalSettingsURL: URL? = nil
   ) async {
     // Recognize old provider URL spellings so they point to the editor rather
     // than being mistaken for an unrelated setting.
@@ -11405,6 +11440,7 @@ struct MaiCLI {
         "debugfile = \(await approvalHandler.debugLogURL().path)",
         "airplane = \(await runtime.internetAccessPolicy().airplaneModeEnabled ? "on ✈" : "off")",
         "redact = \((configuration?.redact ?? .off).rawValue)",
+        "limits.terminalTimeout = \(configuration?.remoteTerminalTimeoutSeconds ?? 0)",
         "delegation = \(session.profile.toolDelegation.rawValue)",
         effortDescription(session.profile.options),
       ] + acpSettings(provider: session.profile.provider, configuration: configuration)
@@ -11422,6 +11458,31 @@ struct MaiCLI {
     let requestedKey = parts[0].lowercased()
     let key = requestedKey == "ui.toolresultlines" ? "ui.tools" : requestedKey
     let displayedKey = key
+    if key == "limits.terminaltimeout" {
+      guard parts.count > 1 else {
+        await terminal.line("limits.terminalTimeout = \(configuration?.remoteTerminalTimeoutSeconds ?? 0) (seconds; 0 keeps sessions until closed)")
+        return
+      }
+      guard parts.count == 2, let seconds = parts[1] == "0" ? 0 : parseDurationSeconds(parts[1]), seconds <= 31_536_000 else {
+        await terminal.line("Usage: /set limits.terminalTimeout <0|SECONDS|3m20s|1h20m> (0 disables idle expiry)")
+        return
+      }
+      guard var draft = configuration, let configurationPath else {
+        await terminal.line("error: No writable configuration is active.", to: .standardError)
+        return
+      }
+      do {
+        draft.remoteTerminalTimeoutSeconds = seconds
+        try draft.save(to: URL(fileURLWithPath: configurationPath))
+        if let remoteTerminalSettingsURL {
+          try ACPStateFiles.createDirectory(remoteTerminalSettingsURL.deletingLastPathComponent())
+          try ACPStateFiles.write(seconds, to: remoteTerminalSettingsURL)
+        }
+        configuration = draft
+        await terminal.line("Set limits.terminalTimeout = \(seconds) seconds. Applies to running remote terminals; 0 disables idle expiry.")
+      } catch { await terminal.line("error: \(error.localizedDescription)", to: .standardError) }
+      return
+    }
     if ["acp.timeout", "acp.context", "acp.prompt"].contains(key) {
       guard var draft = configuration,
         let index = draft.providers.firstIndex(where: {
@@ -11696,7 +11757,8 @@ struct MaiCLI {
       return
     }
     if key == "limits" || key == "limits." {
-      await listSettings(limitSettings(session.profile.limits), terminal: terminal)
+      await listSettings(limitSettings(session.profile.limits)
+        + ["limits.terminalTimeout = \(configuration?.remoteTerminalTimeoutSeconds ?? 0)"], terminal: terminal)
       return
     }
     if let limitKey = limitSettingKeys[key] {
@@ -12226,12 +12288,17 @@ struct MaiCLI {
         continue
       }
       guard let value = Int(digits) else { return nil }
+      let multiplier: Int
       switch character {
-      case "h": total += value * 3600
-      case "m": total += value * 60
-      case "s": total += value
+      case "h": multiplier = 3600
+      case "m": multiplier = 60
+      case "s": multiplier = 1
       default: return nil
       }
+      let part = value.multipliedReportingOverflow(by: multiplier)
+      let sum = total.addingReportingOverflow(part.partialValue)
+      guard !part.overflow, !sum.overflow else { return nil }
+      total = sum.partialValue
       digits = ""
       units += 1
     }
@@ -14745,6 +14812,7 @@ struct MaiCLI {
       "/set limits.", "/set limits.maxToolCalls ", "/set limits.maxModelTurns ",
       "/set limits.maxSubagents ", "/set limits.maxSeconds ", "/set limits.maxTotalTokens ",
       "/set limits.runTimeoutSeconds ",
+      "/set limits.terminalTimeout ",
       "/set acp.", "/set acp.timeout ", "/set acp.timeout off",
       "/set acp.context", "/set acp.context agent", "/set acp.context replace",
       "/set acp.prompt", "/set acp.prompt agent", "/set acp.prompt replace",
@@ -15161,6 +15229,7 @@ struct MaiCLI {
     /remote stop           Stop the server and disconnect its clients
     /remote qr             Show the running server's pairing QR and connection URI again
     /remote list            List paired hosts and server status
+    /remote tools HOST on|off  Allow or revoke local agents' access to a paired host
     /remote pair PROFILE [NAME] [CWD]  Save a connection URI, profile text file, or QR image
     /remote ls HOST [PATH]  List files, including hidden files
     /remote get HOST REMOTE [LOCAL]  Download a file (default: its basename here)
@@ -15576,6 +15645,7 @@ struct MaiCLI {
       /set limits.maxTotalTokens <off|N|Nk>  Tokens a run may spend before it pauses
       /set limits.maxSeconds <off|N|Nm|Nh>   Wall-clock time a run may take before it pauses
       /set limits.runTimeoutSeconds <default|N|Nm>  Default shell timeout (1-600 seconds)
+      /set limits.terminalTimeout <0|SECONDS|3m20s|1h20m>  Remote terminal idle expiry (0 keeps until closed)
       /set acp.timeout <off|N|Nm|Nh>  Whole ACP turn timeout for the selected provider (default off)
       /set acp.context <agent|replace>  Keep agent history or send pmai's full conversation in a fresh session
       /set acp.prompt <agent|replace>   Keep agent instructions or replace its native system prompt with pmai's

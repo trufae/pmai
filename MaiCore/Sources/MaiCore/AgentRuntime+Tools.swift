@@ -1,6 +1,13 @@
 import Foundation
 
 extension AgentRuntime {
+  /// Host UI operations must honor the same enabled-tool selection as a chat.
+  public func isToolEnabled(_ name: String, for agent: AgentDefinition) throws -> Bool {
+    try visibleDefinitions(for: request(for: agent, messages: [])).contains {
+      $0.name == name && internetAccess.allows($0, in: availableToolGroups())
+    }
+  }
+
   /// Runs one enabled host tool at a person's explicit request, without a
   /// model turn or an approval round trip. Hosts should expose this only from
   /// deliberate UI actions such as a terminal, never from generated content.

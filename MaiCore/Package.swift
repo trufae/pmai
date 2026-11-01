@@ -105,7 +105,7 @@ let package = Package(
     .target(name: "MaiChat", dependencies: ["MaiCore", "MaiOpenAI"]),
     .target(name: "MaiMobile", dependencies: ["MaiCore", "MaiChat", "MaiOpenAI", "MaiMCP", "MaiACP", "MaiStandardTools", "MaiDocuments"]),
     .testTarget(name: "MaiMobileTests", dependencies: ["MaiMobile", "MaiCore", "MaiACP", "MaiStandardTools"]),
-    .target(name: "MaiACP", dependencies: ["MaiCore", "MaiStandardTools",
+    .target(name: "MaiACP", dependencies: ["MaiCore", "MaiStandardTools", "CMaiTerminal",
         .product(name: "Crypto", package: "swift-crypto"),
         .product(name: "NIOCore", package: "swift-nio"),
         .product(name: "NIOHTTP1", package: "swift-nio"),
@@ -178,7 +178,7 @@ let package = Package(
 
 if focusedTests {
   let names = testProfile == "core" ? ["MaiCore", "MaiCoreTests", "MaiTestSupport"]
-    : testProfile == "mobile" ? ["MaiCore", "MaiChat", "MaiOpenAI", "MaiMCP", "MaiACP", "MaiStandardTools", "MaiDocuments", "MaiMarkdown", "MaiVisionOCR", "MaiMobile", "MaiMobileTests"]
+    : testProfile == "mobile" ? ["MaiCore", "MaiChat", "MaiOpenAI", "MaiMCP", "MaiACP", "CMaiTerminal", "MaiStandardTools", "MaiDocuments", "MaiMarkdown", "MaiVisionOCR", "MaiMobile", "MaiMobileTests"]
     : testProfile == "voice" ? ["MaiCore", "MaiVoice", "MaiOpenAI", "MaiVoiceTests"]
     : testProfile == "documents" ? ["MaiCore", "MaiMarkdown", "MaiDocuments", "MaiDocumentsTests"]
     : ["MaiCore", "MaiOpenAI", "MaiChat", "MaiChatTests"]

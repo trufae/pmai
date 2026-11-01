@@ -91,6 +91,7 @@ public actor ACPClient {
   private var supportsLoad = false
   private var supportsList = false
   private var supportsFiles = false
+  private var supportsTerminal = false
   private var supportsPrompts = false
   private var commandCatalog = PromptCatalog(builtins: [])
   private var supportsPermissionEditing = false
@@ -348,6 +349,20 @@ public actor ACPClient {
         "tool": .object(["name": .string(call.name), "arguments": call.arguments]),
       ]), timeout: MaiRunConfiguration.maximumTimeout + 10)
     return try JSONDecoder().decode(ToolResult.self, from: JSONEncoder().encode(result))
+  }
+
+  /// Terminal traffic is independent of chat turns and reads may overlap input.
+  public func terminalSupported() async throws -> Bool {
+    _ = try await connectedPeer()
+    return supportsTerminal
+  }
+
+  public func terminal(_ fields: [String: JSONValue]) async throws -> JSONValue {
+    let peer = try await connectedPeer()
+    guard supportsTerminal else {
+      throw JSONRPCError.invalidParams("Update the remote pmai host to use interactive terminals")
+    }
+    return try await peer.request(ACP.Method.workspaceTerminal, params: .object(fields), timeout: 30)
   }
 
   /// A title renames a durable session; nil deletes it without creating a new session.
@@ -698,6 +713,7 @@ public actor ACPClient {
         .objectValue?["pmai"]?.objectValue
       supportsInjection = pmaiCapabilities?["injection"]?.intValue == 1
       supportsFiles = pmaiCapabilities?["workspaceFiles"]?.intValue == 1
+      supportsTerminal = pmaiCapabilities?["workspaceTerminal"]?.intValue == 1
       supportsPrompts = pmaiCapabilities?["workspacePrompts"]?.intValue == 1
       supportsPermissionEditing = pmaiCapabilities?["permissionEditing"]?.intValue == 1
       supportsYolo = pmaiCapabilities?["yolo"]?.intValue == 1

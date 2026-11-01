@@ -5,6 +5,123 @@ import MaiStandardTools
 @testable import MaiACP
 @testable import MaiCore
 
+#if os(macOS) || os(Linux) || os(Android)
+@Test("Remote PTYs retain cwd, have a controlling tty, resize, interrupt jobs and close on disconnect")
+func acpInteractiveTerminal() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent("acp-pty-\(UUID())")
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let runtime = AgentRuntime()
+  try await runtime.register(tool: MaiRunTool(configuration: .init()))
+  let (transport, worker) = PipeTransport.pair()
+  let server = ACPServer(runtime: runtime,
+    agent: .init(id: "terminal", instructions: "", provider: "unused", model: "unused", toolNames: [MaiRunTool.name]),
+    bridge: ACPPermissionBridge(), workspaceRoot: root)
+  let serving = Task { await server.serve(on: worker) }
+  let peer = JSONRPCPeer(transport: transport)
+  await peer.start()
+  do {
+    _ = try await peer.request(ACP.Method.initialize,
+      params: .object(["protocolVersion": .integer(ACP.protocolVersion)]), timeout: 10)
+    func terminal(_ fields: [String: JSONValue]) async throws -> JSONValue {
+      try await peer.request(ACP.Method.workspaceTerminal, params: .object(fields), timeout: 30)
+    }
+    await #expect(throws: JSONRPCError.self) {
+      _ = try await terminal(["action": .string("open"), "cwd": .string("/"), "columns": .integer(80), "rows": .integer(24)])
+    }
+    let opened = try await terminal(["action": .string("open"), "cwd": .string(root.path), "columns": .integer(80), "rows": .integer(24)])
+    let id = try #require(opened.objectValue?["id"]?.stringValue)
+    func send(_ text: String) async throws {
+      _ = try await terminal(["action": .string("write"), "id": .string(id), "data": .string(Data(text.utf8).base64EncodedString())])
+    }
+    func receive(until marker: String) async throws -> String {
+      var bytes = Data()
+      let deadline = ContinuousClock.now + .seconds(30)
+      while ContinuousClock.now < deadline {
+        let response = try await terminal(["action": .string("read"), "id": .string(id)])
+        let chunk = try JSONDecoder().decode(RemoteTerminalChunk.self, from: JSONEncoder().encode(response))
+        bytes.append(chunk.data)
+        let text = String(decoding: bytes, as: UTF8.self)
+        if text.contains(marker) { return text }
+        guard chunk.exitCode == nil else { throw WorkspaceFileError("Terminal exited: \(text)") }
+      }
+      throw WorkspaceFileError("Terminal did not produce \(marker)")
+    }
+    // Disable echo before sending probe text so echoed commands cannot satisfy markers.
+    try await send("stty -echo; printf '\\n%s\\n' 'echo-disabled'\n")
+    _ = try await receive(until: "\r\necho-disabled\r\n")
+    try await send("test -t 0 && test -t 1 && test -t 2 && test -r /dev/tty && printf 'tty-%s\\n' ready; mkdir sub; cd sub; printf '%s\\n' saved > data; printf 'cwd-%s\\n' retained\n")
+    let output = try await receive(until: "cwd-retained")
+    #expect(output.contains("tty-ready"))
+    #expect(try String(contentsOf: root.appendingPathComponent("sub/data"), encoding: .utf8) == "saved\n")
+    _ = try await terminal(["action": .string("resize"), "id": .string(id), "columns": .integer(101), "rows": .integer(37)])
+    try await send("stty size; printf 'size-%s\\n' done\n")
+    #expect(try await receive(until: "size-done").contains("37 101"))
+    try await send("sh -c 'trap \"exit 130\" INT; printf \"job-%s\\n\" ready; read ignored'\n")
+    _ = try await receive(until: "job-ready")
+    try await send("\u{3}")
+    try await send("printf 'interrupt-%s\\n' worked\n")
+    _ = try await receive(until: "interrupt-worked")
+    let other = try await terminal(["action": .string("open"), "cwd": .string(root.path), "columns": .integer(80), "rows": .integer(24)])
+    let otherID = try #require(other.objectValue?["id"]?.stringValue)
+    #expect(otherID != id)
+    _ = try await terminal(["action": .string("write"), "id": .string(otherID),
+      "data": .string(Data("exit 7\n".utf8).base64EncodedString())])
+    var otherExit: Int?
+    let deadline = ContinuousClock.now + .seconds(30)
+    while otherExit == nil, ContinuousClock.now < deadline {
+      let response = try await terminal(["action": .string("read"), "id": .string(otherID)])
+      otherExit = try JSONDecoder().decode(RemoteTerminalChunk.self, from: JSONEncoder().encode(response)).exitCode
+    }
+    #expect(otherExit == 7)
+    // Reattach layout must not prevent delivery of an offline shell's exit status.
+    _ = try await terminal(["action": .string("resize"), "id": .string(otherID), "columns": .integer(90), "rows": .integer(25)])
+    _ = try await terminal(["action": .string("close"), "id": .string(otherID)])
+    let reliable = try await terminal(["action": .string("open"), "cwd": .string(root.path), "columns": .integer(80), "rows": .integer(24)])
+    let reliableID = try #require(reliable.objectValue?["id"]?.stringValue)
+    _ = try await terminal(["action": .string("write"), "id": .string(reliableID),
+      "data": .string(Data("printf 'output-%s\\n' retained\n".utf8).base64EncodedString())])
+    let first = try await terminal(["action": .string("read"), "id": .string(reliableID), "offset": .integer(0)])
+    let firstChunk = try JSONDecoder().decode(RemoteTerminalChunk.self, from: JSONEncoder().encode(first))
+    #expect(!firstChunk.data.isEmpty)
+    let replay = try await terminal(["action": .string("read"), "id": .string(reliableID), "offset": .integer(0)])
+    let replayChunk = try JSONDecoder().decode(RemoteTerminalChunk.self, from: JSONEncoder().encode(replay))
+    // Until acknowledged, wire bytes must remain replayable after a lost reply.
+    #expect(replayChunk.data.prefix(firstChunk.data.count) == firstChunk.data)
+    _ = try await terminal(["action": .string("close"), "id": .string(reliableID)])
+    try await send("printf '%s\\n' $$ > shell.pid; printf 'pid-%s\\n' saved\n")
+    _ = try await receive(until: "pid-saved")
+    let pid = try #require(Int32(String(contentsOf: root.appendingPathComponent("sub/shell.pid"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+    await runtime.configureToolsEnabled(false)
+    await #expect(throws: JSONRPCError.self) {
+      _ = try await terminal(["action": .string("open"), "cwd": .string(root.path), "columns": .integer(80), "rows": .integer(24)])
+    }
+    await peer.close()
+    await serving.value
+    #expect(kill(pid, 0) == -1)
+    #expect(errno == ESRCH)
+  } catch {
+    await peer.close()
+    await serving.value
+    throw error
+  }
+}
+#endif
+
+@Test("Remote native tools reject hosts that are not explicitly enabled")
+func remoteWorkspaceAgentAccess() async throws {
+  let tools = RemoteWorkspaceTools { [] }
+  let result = try await tools.call("remote_hosts", arguments: .object([:]), owner: "chat")
+  #expect(result.structuredContent == .array([]))
+  for name in ["remote_run", "remote_files", "remote_terminal"] {
+    await #expect(throws: WorkspaceFileError.self) {
+      _ = try await tools.call(name, arguments: .object([
+        "host": .string("unapproved"), "command": .string("touch forbidden"), "action": .string("open"),
+      ]), owner: "chat")
+    }
+  }
+}
+
 @Test("ACP browses and transfers worker files without a chat, within the served root")
 func acpWorkspaceFiles() async throws {
   let base = FileManager.default.temporaryDirectory.appendingPathComponent("acp-browser-\(UUID())")

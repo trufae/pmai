@@ -10,6 +10,7 @@ public struct ACPRemoteHost: Codable, Identifiable, Equatable, Sendable {
   public var cwd: String
   public var connectionProtocol: ACPRemoteProtocol?
   public var backend: RemoteAgentBackend?
+  public var agentAccess: Bool?
   public var providerID: String { "remote." + id.uuidString.lowercased() }
 }
 
@@ -37,6 +38,17 @@ public struct ACPRemoteHostStore: Sendable {
 
   public func tokenFile(for host: ACPRemoteHost) -> URL {
     directory.appendingPathComponent(host.id.uuidString.lowercased() + ".token")
+  }
+
+  public func setAgentAccess(_ enabled: Bool, for host: ACPRemoteHost) throws {
+    let lock = try ACPFileLock(url: directory.appendingPathComponent("hosts.lock"), wait: true)
+    defer { withExtendedLifetime(lock) {} }
+    var hosts = try hosts()
+    guard let index = hosts.firstIndex(where: { $0.id == host.id }) else {
+      throw JSONRPCError.invalidParams("Unknown remote host")
+    }
+    hosts[index].agentAccess = enabled
+    try ACPStateFiles.write(hosts, to: self.index)
   }
 
   public func sessionFile(for host: ACPRemoteHost) -> URL {
@@ -73,7 +85,8 @@ public struct ACPRemoteHostStore: Sendable {
     }
     let host = ACPRemoteHost(
       id: existing.map { hosts[$0].id } ?? UUID(), name: name,
-      url: profile.url, cwd: profile.cwd, connectionProtocol: profile.connectionProtocol, backend: profile.backend)
+      url: profile.url, cwd: profile.cwd, connectionProtocol: profile.connectionProtocol, backend: profile.backend,
+      agentAccess: existing.map { hosts[$0].agentAccess } ?? nil)
     try Data(profile.token.utf8).write(to: tokenFile(for: host), options: .atomic)
     try FileManager.default.setAttributes(
       [.posixPermissions: 0o600], ofItemAtPath: tokenFile(for: host).path)

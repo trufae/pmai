@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from smoke import clean_environment
@@ -72,6 +73,73 @@ class REPL:
 def chats(directory):
     return {file.stem.lower(): json.loads(file.read_text())
             for file in (directory / ".pmai/chats").glob("*.json")}
+
+
+def remote_terminal_sessions(server, port, token, root):
+    resume = str(uuid.uuid4())
+    def connect():
+        ws = WS(port, token)
+        ws.sock.settimeout(30)
+        ws.rpc('initialize', {'protocolVersion': 1, '_meta': {'pmai': {'resumeId': resume}}})
+        return ws
+    ws = connect()
+    method = '_pmai/workspace/terminal'
+    def request(action, **fields):
+        return ws.rpc(method, dict(action=action, **fields))[0]
+    terminal = request('open', cwd=str(root), columns=80, rows=24)['id']
+    offset = 0
+    def send(text):
+        request('write', id=terminal, data=base64.b64encode(text.encode()).decode())
+    def until(marker):
+        nonlocal offset
+        data = b''
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            chunk = request('read', id=terminal, offset=offset)
+            data += base64.b64decode(chunk['data'])
+            offset = chunk['offset']
+            if marker in data:
+                return data
+            assert chunk.get('exitCode') is None, data
+        raise AssertionError('terminal did not produce ' + repr(marker))
+    try:
+        send("stty -echo; printf '\\n%s\\n' echo-disabled\n")
+        until(b'\r\necho-disabled\r\n')
+        send("export PMAI_TERMINAL_STATE=retained; printf '%s\\n' $$ > terminal.pid; printf 'state-%s\\n' saved\n")
+        until(b'state-saved')
+        pid = (root / 'terminal.pid').read_text()
+        ws.close()
+        ws = connect()
+        assert request('attach', id=terminal)['attached']
+        assert terminal in request('list')['ids']
+        send("printf '%s\\n' \"$PMAI_TERMINAL_STATE\" > terminal-state; printf 'resume-%s\\n' ready\n")
+        until(b'resume-ready')
+        assert (root / 'terminal-state').read_text() == 'retained\n'
+        assert (root / 'terminal.pid').read_text() == pid
+        second = request('open', cwd=str(root), columns=60, rows=20)['id']
+        assert second != terminal
+        request('close', id=second)
+        assert not request('attach', id=second)['attached']
+        assert request('attach', id=terminal)['attached']
+        request('close', id=terminal)
+        assert not request('attach', id=terminal)['attached']
+        idle = request('open', cwd=str(root), columns=80, rows=24)['id']
+        server.send('/set limits.terminalTimeout 3m20s')
+        server.wait('Set limits.terminalTimeout = 200 seconds.')
+        server.send('/set limits.terminalTimeout 1h20m')
+        server.wait('Set limits.terminalTimeout = 4800 seconds.')
+        server.send('/set limits.terminalTimeout 9223372036854775807h')
+        server.wait('Usage: /set limits.terminalTimeout')
+        assert json.loads((root.parent / 'pmai.json').read_text())['remoteTerminalTimeoutSeconds'] == 4800
+        server.send('/set limits.terminalTimeout 2')
+        server.wait('Set limits.terminalTimeout = 2 seconds.')
+        wait_for(lambda: not request('attach', id=idle)['attached'], 'configured terminal idle expiry', timeout=30)
+        server.send('/set limits.terminalTimeout 0')
+        server.wait('Set limits.terminalTimeout = 0 seconds.')
+        print('Persistent PTY state across disconnect, multiple terminals, explicit close and live idle timeout: passed', flush=True)
+    finally:
+        request('close_all')
+        ws.close()
 
 
 def run():
@@ -156,6 +224,7 @@ def run():
             assert any("continue existing chat" in json.dumps(m) for m in chats(projects[1])[conversation["sessionId"]]["messages"])
             connection.close()
             print("Automatic LAN address, all indexed projects, and existing chat recovery: passed", flush=True)
+            remote_terminal_sessions(server, port, approved_token, projects[0])
 
             client_config = root / "client.json"
             client_config.write_text(json.dumps(settings))
