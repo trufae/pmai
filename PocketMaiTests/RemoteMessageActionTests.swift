@@ -49,6 +49,57 @@ final class RemoteMessageActionTests: XCTestCase {
     }
   }
 
+  func testSharedShortcutsExpandLocalAndRemoteResourcesWithoutChangingTheLocalChat() async throws {
+    try await withChat { chat, _, fixture, _ in
+      try await self.withLocalStore { local in
+        local.settings.userPrompts = [UserPrompt(name: "review", text: "Local review: $ARGUMENTS")]
+        await chat.refreshPromptCatalog()
+        let session = ChatInputSession(store: local, remoteChat: chat)
+        let catalog = session.promptCatalog(local: local.promptCatalog())
+        XCTAssertNotNil(catalog.entry(named: "review"))
+        XCTAssertNotNil(catalog.entry(named: "remote:review"))
+        XCTAssertNotNil(catalog.entry(named: "remote-skill"))
+        let original = local.currentConversation
+        let name = "local-" + UUID().uuidString
+        let directory = SkillTools.directoryURL.appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try "---\nname: \(name)\ndisable-model-invocation: true\n---\nLocal skill: $ARGUMENTS".write(
+          to: directory.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+        let skillSentLocally = await session.send(prompt: "$\(name) change")
+        XCTAssertTrue(skillSentLocally)
+        try await self.waitForIdle(chat)
+        XCTAssertEqual(fixture.prompts.last, "Local skill: change")
+        for prefix in ["/", "$"] {
+          let sent = await session.send(prompt: prefix + "review diff")
+          XCTAssertTrue(sent)
+          try await self.waitForIdle(chat)
+          XCTAssertEqual(fixture.prompts.last, "Local review: diff")
+        }
+        let skillSent = await session.send(prompt: "$remote-skill code")
+        XCTAssertTrue(skillSent)
+        try await self.waitForIdle(chat)
+        XCTAssertEqual(fixture.prompts.last, "code")
+        let commandSent = await session.send(prompt: "$remote:review diff")
+        XCTAssertTrue(commandSent)
+        try await self.waitForIdle(chat)
+        XCTAssertTrue(fixture.mutations.contains("POST /api/session/ses_test/command"))
+        XCTAssertEqual(fixture.prompts.last, "diff")
+        XCTAssertEqual(chat.messages.last?.text, "New answer")
+        local.settings.systemPrompts = [SystemPrompt(name: "concise", text: "Be concise")]
+        let count = fixture.prompts.count
+        let selected = await session.send(prompt: "$concise")
+        XCTAssertTrue(selected)
+        XCTAssertEqual(fixture.prompts.count, count)
+        let followup = await session.send(prompt: "Next turn")
+        XCTAssertTrue(followup)
+        try await self.waitForIdle(chat)
+        XCTAssertEqual(fixture.prompts.last, "Be concise\n\nNext turn")
+        XCTAssertEqual(local.currentConversation, original)
+      }
+    }
+  }
+
   func testLiveVoiceSubmitsToRemoteAndPausesOnRemoteFailure() async throws {
     for streamTTS in [false, true] {
       try await withChat { chat, _, fixture, _ in
@@ -475,6 +526,13 @@ private final class RemoteActionEndpoint: @unchecked Sendable {
         ])
       case ("GET", "/api/agent"):
         result = .object(["data": .array([])])
+      case ("GET", "/api/command"):
+        result = .object(["data": .array([.object(["name": .string("review")])])])
+      case ("GET", "/api/skill"):
+        result = .object(["data": .array([.object([
+          "id": .string("remote-skill-id"), "name": .string("remote-skill"),
+          "content": .string("Remote instructions for $ARGUMENTS"),
+        ])])])
       case ("POST", "/api/session/ses_test/model"):
         model = try XCTUnwrap(input?["model"]?.objectValue?["id"]?.stringValue)
         recordedModels.append(model)
@@ -491,8 +549,12 @@ private final class RemoteActionEndpoint: @unchecked Sendable {
           history.firstIndex { $0["id"]?.stringValue == recordedBoundaries.last })
         history.removeSubrange(index...)
         result = .null
-      case ("POST", "/api/session/ses_test/prompt"):
+      case ("POST", "/api/session/ses_test/prompt"), ("POST", "/api/session/ses_test/command"):
+        if path.hasSuffix("/command") { XCTAssertEqual(input?["name"], .string("review")) }
         let text = try XCTUnwrap(input?["text"]?.stringValue)
+        if text == "code" {
+          XCTAssertEqual(input?["skills"], .array([.object(["id": .string("remote-skill-id")])]))
+        }
         recordedPrompts.append(text)
         history.append([
           "id": .string(UUID().uuidString), "type": .string("user"), "text": .string(text),

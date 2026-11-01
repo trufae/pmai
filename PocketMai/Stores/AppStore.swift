@@ -118,12 +118,6 @@ private enum ToolCallApprovalParseResult {
   case failure(String)
 }
 
-private struct PromptShortcutTarget {
-  var selection: PromptShortcutSelection
-  var commandName: String
-  var text: String
-}
-
 private struct ResolvedPromptSubmission {
   var prompt: String
   var displayText: String?
@@ -429,7 +423,7 @@ final class AppStore: ObservableObject {
     default:
       // Named prompt shortcuts keep their existing expansion path. An unknown
       // slash command must never turn into an accidental model request.
-      guard promptShortcutTarget(command: command.command) != nil else {
+      guard promptCatalog(for: conversations[index]).entry(named: command.command) != nil else {
         errorMessage = "Unknown command '/\(command.command)'."
         return false
       }
@@ -2370,7 +2364,8 @@ final class AppStore: ObservableObject {
     let resolved = resolvedPromptSubmission(
       rawPrompt: rawPrompt,
       rawDisplayText: rawDisplayText,
-      shortcutSelection: promptShortcutSelection)
+      shortcutSelection: promptShortcutSelection,
+      conversation: conversation(withID: conversationID))
     guard !resolved.prompt.isEmpty || !attachments.isEmpty || resolved.systemPromptID != nil else {
       return false
     }
@@ -2411,7 +2406,8 @@ final class AppStore: ObservableObject {
   private func resolvedPromptSubmission(
     rawPrompt: String,
     rawDisplayText: String?,
-    shortcutSelection: PromptShortcutSelection?
+    shortcutSelection: PromptShortcutSelection?,
+    conversation: Conversation?
   ) -> ResolvedPromptSubmission {
     let prompt = rawPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
     let parsed = PromptSlashCommand.parse(prompt)
@@ -2423,9 +2419,12 @@ final class AppStore: ObservableObject {
     }
 
     let slashCommand = parsed ?? ParsedPromptSlashCommand(command: "", remainder: prompt)
-    let target =
-      shortcutSelection.flatMap { promptShortcutTarget(selection: $0) }
-      ?? promptShortcutTarget(command: slashCommand.command)
+    let catalog = promptCatalog(for: conversation)
+    let target = shortcutSelection.flatMap { selection in
+      catalog.entries.first {
+        $0.promptID == selection.id && ($0.kind == .system) == (selection.kind == .system)
+      }
+    } ?? catalog.entry(named: slashCommand.command)
     guard let target else {
       return ResolvedPromptSubmission(
         prompt: prompt,
@@ -2440,15 +2439,15 @@ final class AppStore: ObservableObject {
         : PromptSlashCommand.visualText(
           commandName: target.commandName,
           remainder: slashCommand.remainder))
-    switch target.selection.kind {
+    switch target.kind {
     case .system:
       let modelPrompt = slashCommand.remainder.trimmingCharacters(in: .whitespacesAndNewlines)
       return ResolvedPromptSubmission(
         prompt: modelPrompt,
         displayText: normalizedDisplayText(shortcutDisplayText, prompt: modelPrompt),
-        systemPromptID: target.selection.id)
-    case .user:
-      let expanded = UserPrompt.message(text: target.text, arguments: slashCommand.remainder)
+        systemPromptID: target.promptID)
+    case .user, .builtin, .skill:
+      let expanded = target.message(arguments: slashCommand.remainder) ?? ""
       return ResolvedPromptSubmission(
         prompt: expanded,
         displayText: normalizedDisplayText(shortcutDisplayText, prompt: expanded),
@@ -2462,38 +2461,9 @@ final class AppStore: ObservableObject {
     return trimmed
   }
 
-  private func promptShortcutTarget(selection: PromptShortcutSelection) -> PromptShortcutTarget? {
-    switch selection.kind {
-    case .system:
-      guard let prompt = settings.systemPrompts.first(where: { $0.id == selection.id }) else {
-        return nil
-      }
-      return PromptShortcutTarget(
-        selection: selection,
-        commandName: prompt.commandName,
-        text: prompt.text)
-    case .user:
-      guard let prompt = settings.userPrompts.first(where: { $0.id == selection.id }) else {
-        return nil
-      }
-      return PromptShortcutTarget(
-        selection: selection,
-        commandName: prompt.commandName,
-        text: prompt.text)
-    }
-  }
-
-  /// The prompt a typed name means, resolved the way pmai resolves `$name`:
-  /// system prompts first, then user prompts. The builtin prompts are
-  /// already among the user prompts here, so they are not consulted apart.
-  private func promptShortcutTarget(command: String) -> PromptShortcutTarget? {
-    let catalog = PromptCatalog(
-      system: settings.systemPrompts, user: settings.userPrompts, builtins: [])
-    guard let entry = catalog.entry(named: command), let id = entry.promptID else { return nil }
-    return PromptShortcutTarget(
-      selection: PromptShortcutSelection(kind: entry.kind == .system ? .system : .user, id: id),
-      commandName: entry.commandName,
-      text: entry.text)
+  func promptCatalog(for conversation: Conversation? = nil) -> PromptCatalog {
+    PromptCatalog(system: settings.systemPrompts, user: settings.userPrompts, builtins: [],
+      skills: SkillTools.catalog(for: conversation, settings: settings).skills)
   }
 
   var isOpenAPIServerRunning: Bool {

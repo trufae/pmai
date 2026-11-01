@@ -19,17 +19,26 @@ func acpWorkspaceFiles() async throws {
   let policy = MaiFileAccessPolicy(outside: .allow) { _, _ in false }
   policy.set(.init(url: secret, access: .deny))
   let (transport, workerTransport) = PipeTransport.pair()
+  let catalog = PromptCatalog(user: [UserPrompt(name: "review", text: "Review $ARGUMENTS")])
   let server = ACPServer(
     runtime: AgentRuntime(),
     agent: .init(id: "files", instructions: "", provider: "unused", model: "unused"),
     bridge: ACPPermissionBridge(), sessionDirectory: base.appendingPathComponent("sessions"),
-    workspaceRoot: root, fileConfiguration: .init(rootURL: root, pathAccessPolicy: policy))
+    workspaceRoot: root, fileConfiguration: .init(rootURL: root, pathAccessPolicy: policy),
+    promptCatalog: { _ in catalog })
   let serving = Task { await server.serve(on: workerTransport) }
   let peer = JSONRPCPeer(transport: transport)
   await peer.start()
   let initialized = try await peer.request(
     ACP.Method.initialize,
     params: .object(["protocolVersion": .integer(1)]), timeout: 5)
+  let response = try await peer.request(ACP.Method.workspacePrompts,
+    params: .object(["cwd": .string(root.path)]), timeout: 5)
+  #expect(try JSONDecoder().decode(PromptCatalog.self, from: JSONEncoder().encode(response)) == catalog)
+  await #expect(throws: JSONRPCError.self) {
+    _ = try await peer.request(ACP.Method.workspacePrompts,
+      params: .object(["cwd": .string(outside.path)]), timeout: 5)
+  }
   #expect(
     initialized.objectValue?["agentCapabilities"]?.objectValue?["_meta"]?
       .objectValue?["pmai"]?.objectValue?["workspaceFiles"]?.intValue == 1)

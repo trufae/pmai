@@ -91,6 +91,8 @@ public actor ACPClient {
   private var supportsLoad = false
   private var supportsList = false
   private var supportsFiles = false
+  private var supportsPrompts = false
+  private var commandCatalog = PromptCatalog(builtins: [])
   private var supportsPermissionEditing = false
   private var supportsYolo = false
   private var supportsInjection = false
@@ -147,6 +149,16 @@ public actor ACPClient {
   public func configurationOptions() async throws -> [RemoteSessionOption] {
     if !sessionLoaded { _ = try await connect() }
     return sessionOptions
+  }
+
+  public func promptCatalog() async throws -> PromptCatalog {
+    let peer = try await connectedPeer()
+    guard supportsPrompts else { return commandCatalog }
+    let cwd = configuration.remoteWorkingDirectory
+      ?? configuration.workingDirectory?.path ?? AgentExecutionScope.directory.path
+    let result = try await peer.request(ACP.Method.workspacePrompts,
+      params: .object(["cwd": .string(cwd)]), timeout: 30)
+    return try JSONDecoder().decode(PromptCatalog.self, from: JSONEncoder().encode(result))
   }
 
   public func setConfigurationOption(id: String, value: JSONValue) async throws
@@ -686,6 +698,7 @@ public actor ACPClient {
         .objectValue?["pmai"]?.objectValue
       supportsInjection = pmaiCapabilities?["injection"]?.intValue == 1
       supportsFiles = pmaiCapabilities?["workspaceFiles"]?.intValue == 1
+      supportsPrompts = pmaiCapabilities?["workspacePrompts"]?.intValue == 1
       supportsPermissionEditing = pmaiCapabilities?["permissionEditing"]?.intValue == 1
       supportsYolo = pmaiCapabilities?["yolo"]?.intValue == 1
       supportsHistoryRewind = pmaiCapabilities?["historyRewind"]?.intValue == 1
@@ -774,6 +787,13 @@ public actor ACPClient {
     }
     guard target == sessionID else { return }
     if let update = params?.objectValue?["update"] {
+      if update.objectValue?["sessionUpdate"]?.stringValue == "available_commands_update" {
+        commandCatalog.entries = (update.objectValue?["availableCommands"]?.arrayValue ?? []).compactMap {
+          guard let fields = $0.objectValue, let name = fields["name"]?.stringValue else { return nil }
+          return PromptCatalog.Entry(kind: .user, name: name, commandName: name, text: "",
+            description: fields["description"]?.stringValue, invocation: name)
+        }
+      }
       if update.objectValue?["sessionUpdate"]?.stringValue == "config_option_update" {
         readSessionOptions(update)
       } else if legacyModes,

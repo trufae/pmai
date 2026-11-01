@@ -189,6 +189,32 @@ public actor OpenCodeClient: RemoteSessionClient {
     try await loadConfiguration().options
   }
 
+  public func promptCatalog() async throws -> PromptCatalog {
+    try checkOpen()
+    let query = [URLQueryItem(name: "location[directory]", value: cwd)]
+    async let commandRequest = http.request(["api", "command"], query: query)
+    async let skillRequest = http.request(["api", "skill"], query: query)
+    let (commandResponse, skillResponse) = try await (commandRequest, skillRequest)
+    guard let commandEntries = commandResponse.objectValue?["data"]?.arrayValue,
+      let skillEntries = skillResponse.objectValue?["data"]?.arrayValue else { throw invalidResponse() }
+    let skills = skillEntries.compactMap { value -> PromptCatalog.Entry? in
+      guard let fields = value.objectValue, let name = fields["name"]?.stringValue,
+        let id = fields["id"]?.stringValue, let content = fields["content"]?.stringValue
+      else { return nil }
+      return .init(kind: .skill, name: name, commandName: name, text: content,
+        description: fields["description"]?.stringValue, skillID: id)
+    }
+    var catalog = PromptCatalog(builtins: [])
+    catalog.entries = skills
+    let entries = commandEntries.compactMap { value -> PromptCatalog.Entry? in
+      guard let fields = value.objectValue, let name = fields["name"]?.stringValue else { return nil }
+      return .init(kind: .user, name: name, commandName: name, text: "",
+        description: fields["description"]?.stringValue, invocation: name)
+    }
+    catalog.entries.insert(contentsOf: entries, at: 0)
+    return catalog
+  }
+
   public func setConfigurationOption(id: String, value: JSONValue) async throws
     -> [RemoteSessionOption]
   {
@@ -316,6 +342,12 @@ public actor OpenCodeClient: RemoteSessionClient {
   public func prompt(
     _ text: String, emit: @escaping @Sendable (ProviderEvent) async -> Void
   ) async throws -> ProviderStopReason {
+    try await prompt(RemotePromptRequest(text: text), emit: emit)
+  }
+
+  public func prompt(
+    _ request: RemotePromptRequest, emit: @escaping @Sendable (ProviderEvent) async -> Void
+  ) async throws -> ProviderStopReason {
     try checkOpen()
     guard isConnected, !prompting, !configuring, let id = sessionID else {
       throw JSONRPCError.invalidParams("Connect to an idle OpenCode session first.")
@@ -326,9 +358,14 @@ public actor OpenCodeClient: RemoteSessionClient {
     do {
       // Admission returns before execution finishes. Never resend this POST on a
       // network failure: the server may already have accepted and run the prompt.
+      var body: [String: JSONValue] = ["text": .string(request.text)]
+      if let command = request.command { body["name"] = .string(command) }
+      if let skillID = request.skillID {
+        body["skills"] = .array([.object(["id": .string(skillID)])])
+      }
       _ = try await http.request(
-        ["api", "session", id, "prompt"], method: "POST",
-        body: .object(["text": .string(text)]))
+        ["api", "session", id, request.command == nil ? "prompt" : "command"], method: "POST",
+        body: .object(body))
       try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask { [http] in
           _ = try await http.request(

@@ -1,6 +1,22 @@
 import Foundation
 import MaiCore
 
+public struct RemotePromptRequest: Sendable {
+  public var text: String
+  public var command: String?
+  public var skillID: String?
+
+  public init(text: String, command: String? = nil, skillID: String? = nil) {
+    self.text = text
+    self.command = command
+    self.skillID = skillID
+  }
+
+  public var draft: String {
+    command.map { "/" + $0 + (text.isEmpty ? "" : " " + text) } ?? text
+  }
+}
+
 /// Operations shared by the app's ACP and OpenCode remote hosts.
 public protocol RemoteSessionClient: AnyObject, Sendable {
   var isConnected: Bool { get async }
@@ -11,8 +27,11 @@ public protocol RemoteSessionClient: AnyObject, Sendable {
   func workspace() async throws -> ACPWorkspaceSnapshot?
   func manageSession(_ id: String, cwd: String, title: String?) async throws
   func configurationOptions() async throws -> [RemoteSessionOption]
+  func promptCatalog() async throws -> PromptCatalog
   func setConfigurationOption(id: String, value: JSONValue) async throws -> [RemoteSessionOption]
   func prompt(_ text: String, emit: @escaping @Sendable (ProviderEvent) async -> Void)
+    async throws -> ProviderStopReason
+  func prompt(_ request: RemotePromptRequest, emit: @escaping @Sendable (ProviderEvent) async -> Void)
     async throws -> ProviderStopReason
   /// Removes the selected message and everything after it. Nil clears the history.
   /// This changes conversation history only, without reverting workspace files.
@@ -24,6 +43,11 @@ public protocol RemoteSessionClient: AnyObject, Sendable {
 }
 
 extension RemoteSessionClient {
+  public func promptCatalog() async throws -> PromptCatalog { PromptCatalog(builtins: []) }
+  public func prompt(_ request: RemotePromptRequest,
+    emit: @escaping @Sendable (ProviderEvent) async -> Void) async throws -> ProviderStopReason {
+    try await prompt(request.draft, emit: emit)
+  }
   public var supportsHistoryRewind: Bool { false }
   public func injectionSupported() async -> Bool { false }
   public func inject(_ text: String) async throws {
