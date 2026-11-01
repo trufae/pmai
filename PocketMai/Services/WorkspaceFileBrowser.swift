@@ -37,11 +37,12 @@ enum FileBrowserLocation: Identifiable {
             isSecurityScoped: context.isSecurityScoped,
             hiddenRootEntryNames: context.hidesModelsFolder ? ["Models"] : [])))
     case .remote(let host, let cwd):
-      guard host.backend != .openCode else {
-        throw WorkspaceFileError("File browsing is not available for OpenCode hosts yet.")
-      }
       guard host.requiresApproval != true else {
         throw WorkspaceFileError("Approve this device on the remote host first.")
+      }
+      if host.backend == .openCode {
+        return .openCode(try OpenCodeWorkspace(connection: .init(
+          name: host.name, url: host.url, token: RemoteAgentStore.shared.token(for: host.id), cwd: cwd)))
       }
       return .remote(
         ACPClient(
@@ -56,17 +57,20 @@ enum FileBrowserLocation: Identifiable {
 enum FileBrowserConnection: Sendable {
   case local(MaiWorkspaceFiles)
   case remote(ACPClient, cwd: String)
+  case openCode(OpenCodeWorkspace)
 
   func request(_ request: WorkspaceFileRequest) async throws -> WorkspaceFileResponse {
     switch self {
     case .local(let files): try await files.request(request)
     case .remote(let client, let cwd): try await client.files(cwd: cwd, request: request)
+    case .openCode(let workspace): try await workspace.files(request)
     }
   }
   func close() async {
     switch self {
     case .local(let files): await files.close()
     case .remote(let client, _): await client.disconnect()
+    case .openCode(let workspace): await workspace.close()
     }
   }
 }

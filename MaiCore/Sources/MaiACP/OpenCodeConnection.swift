@@ -139,6 +139,17 @@ final class OpenCodeHTTP: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
     _ path: [String], method: String = "GET", body: JSONValue? = nil,
     query: [URLQueryItem] = [], timeout: TimeInterval = 30
   ) async throws -> JSONValue {
+    let (data, _) = try await download(
+      path, method: method, body: body, query: query, timeout: timeout)
+    if data.isEmpty { return .null }
+    return try JSONDecoder().decode(JSONValue.self, from: data)
+  }
+
+  func download(
+    _ path: [String], method: String = "GET", body: JSONValue? = nil,
+    query: [URLQueryItem] = [], headers: [String: String] = [:], accepting: Set<Int> = [],
+    timeout: TimeInterval = 30
+  ) async throws -> (Data, HTTPURLResponse) {
     var url = url
     for component in path {
       // IDs from the server must remain a single path component.
@@ -153,6 +164,7 @@ final class OpenCodeHTTP: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
     request.httpMethod = method
     request.timeoutInterval = timeout
     request.setValue("application/json", forHTTPHeaderField: "Accept")
+    for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
     if let token {
       request.setValue(
         "Basic " + Data("opencode:\(token)".utf8).base64EncodedString(),
@@ -170,11 +182,10 @@ final class OpenCodeHTTP: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
       throw JSONRPCError.invalidParams(
         "OpenCode authentication expired or was revoked. Pair this host again with a new QR.")
     }
-    guard (200..<300).contains(response.statusCode) else {
+    guard (200..<300).contains(response.statusCode) || accepting.contains(response.statusCode) else {
       throw JSONRPCError.internalError("OpenCode request failed (HTTP \(response.statusCode)).")
     }
-    if data.isEmpty { return .null }
-    return try JSONDecoder().decode(JSONValue.self, from: data)
+    return (data, response)
   }
 
   func close() { session.invalidateAndCancel() }

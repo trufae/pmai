@@ -18,6 +18,18 @@ public struct WorkspaceFileEntry: Codable, Equatable, Identifiable, Sendable {
   public let isSymbolicLink: Bool
   public let size: Int
   public let modifiedAt: Date?
+
+  public init(
+    path: String, name: String, isDirectory: Bool, isSymbolicLink: Bool = false,
+    size: Int = 0, modifiedAt: Date? = nil
+  ) {
+    self.path = path
+    self.name = name
+    self.isDirectory = isDirectory
+    self.isSymbolicLink = isSymbolicLink
+    self.size = size
+    self.modifiedAt = modifiedAt
+  }
 }
 
 public struct WorkspaceFileListing: Codable, Sendable {
@@ -26,12 +38,26 @@ public struct WorkspaceFileListing: Codable, Sendable {
   public let writeEnabled: Bool
   public let entries: [WorkspaceFileEntry]
   public let nextOffset: Int?
+
+  public init(root: String, path: String, writeEnabled: Bool, entries: [WorkspaceFileEntry], nextOffset: Int?) {
+    self.root = root
+    self.path = path
+    self.writeEnabled = writeEnabled
+    self.entries = entries
+    self.nextOffset = nextOffset
+  }
 }
 
 public struct WorkspaceFileChunk: Codable, Sendable {
   public let data: Data
   public let size: Int
   public let version: String
+
+  public init(data: Data, size: Int, version: String) {
+    self.data = data
+    self.size = size
+    self.version = version
+  }
 }
 
 /// A bounded filesystem operation, shared by local browsers and ACP clients.

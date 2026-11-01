@@ -87,6 +87,7 @@ private struct FileBrowserDirectoryView: View {
                 Text(
                   entry.isDirectory
                     ? "Folder"
+                    : entry.size < 0 ? "File"
                     : ByteCountFormatter.string(fromByteCount: Int64(entry.size), countStyle: .file)
                 )
                 .font(.caption).foregroundStyle(.secondary)

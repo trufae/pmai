@@ -649,7 +649,7 @@ struct ChatView: View {
           onShowRemoteTerminal(remoteChat.bookmark, remoteChat.conversation.cwd)
         }
         .disabled(
-          remoteChat.bookmark.backend == .openCode || remoteChat.bookmark.requiresApproval == true
+          remoteChat.bookmark.requiresApproval == true
             || store.settings.isOffline)
       }
       Divider()
@@ -1151,7 +1151,7 @@ struct ChatView: View {
               onShowRemoteTerminal(remoteChat.bookmark, remoteChat.conversation.cwd)
             }
             .disabled(
-              remoteChat.bookmark.backend == .openCode || remoteChat.bookmark.requiresApproval == true
+              remoteChat.bookmark.requiresApproval == true
                 || store.settings.isOffline)
           }
         }
@@ -4244,7 +4244,7 @@ private struct ChatComposer: View {
         "Working Folder...", systemImage: "folder.badge.gearshape",
         trailingText: workingFolderMenuText,
         isEnabled: remoteChat.map {
-          $0.bookmark.backend != .openCode && $0.bookmark.requiresApproval != true
+          $0.bookmark.requiresApproval != true
             && !store.settings.isOffline
         } ?? true,
         action: openWorkingFolderMenu)

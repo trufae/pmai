@@ -1,5 +1,6 @@
 import Foundation
 import MaiCore
+import MaiStandardTools
 import Testing
 
 @testable import MaiACP
@@ -48,6 +49,101 @@ private func openCodeTestConfiguration() -> URLSessionConfiguration {
   let configuration = URLSessionConfiguration.ephemeral
   configuration.protocolClasses = [StubURLProtocol.self]
   return configuration
+}
+
+@Test("OpenCode browses nested and hidden files and reads bounded binary ranges without creating a chat")
+func openCodeWorkspaceFiles() async throws {
+  let host = "files.opencode.test"
+  let bytes = Data([0, 255, 1, 128])
+  StubURLProtocol.install(forHost: host) { request in
+    let url = try #require(request.url)
+    let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+    #expect(query.contains(.init(name: "location[directory]", value: "/work")))
+    #expect(request.value(forHTTPHeaderField: "Authorization") == "Basic " + Data("opencode:test".utf8).base64EncodedString())
+    switch url.path {
+    case "/api/fs/list":
+      #expect(query.contains(.init(name: "path", value: "/work/sub")))
+      return try httpResponse(request, contentType: "application/json", body:
+        #"{"data":[{"path":"sub/a #?.bin","type":"file"},{"path":"sub/.hidden","type":"file"},{"path":"sub/dir","type":"directory"}]}"#)
+    case "/api/fs/read/sub/a #?.bin":
+      let second = request.value(forHTTPHeaderField: "Range") == "bytes=2-3"
+      let response = try #require(HTTPURLResponse(url: url, statusCode: 206, httpVersion: "HTTP/1.1", headerFields: [
+        "Content-Range": second ? "bytes 2-3/4" : "bytes 0-1/4", "ETag": "v1",
+      ]))
+      return (response, second ? Data(bytes.suffix(2)) : Data(bytes.prefix(2)))
+    case "/api/fs/read/empty":
+      return try httpResponse(request, status: 416, contentType: nil, body: "", headers: ["Content-Range": "bytes */0"])
+    default:
+      Issue.record("Unexpected workspace request: \(url.path)")
+      throw URLError(.unsupportedURL)
+    }
+  }
+  defer { StubURLProtocol.reset(host: host) }
+  let workspace = try OpenCodeWorkspace(
+    connection: .init(url: #require(URL(string: "https://\(host)")), token: "test", cwd: "/work"),
+    configuration: openCodeTestConfiguration())
+  let listing = try #require(try await workspace.files(.init(.list, path: "/work/sub")).listing)
+  #expect(listing.entries.map(\.name) == ["dir", "a #?.bin"])
+  #expect(!listing.writeEnabled)
+  #expect(try await workspace.files(.init(.list, path: "/work/sub", showHidden: true)).listing?.entries.count == 3)
+  let first = try #require(try await workspace.files(.init(.read, path: "/work/sub/a #?.bin", limit: 2)).chunk)
+  let second = try #require(try await workspace.files(.init(.read, path: "/work/sub/a #?.bin", offset: 2, limit: 2, version: first.version)).chunk)
+  #expect(first.data + second.data == bytes)
+  #expect(second.size == 4)
+  #expect(try await workspace.files(.init(.read, path: "/work/empty")).chunk?.size == 0)
+  await #expect(throws: WorkspaceFileError.self) {
+    try await workspace.files(.init(.read, path: "/work/sub/a #?.bin", limit: 2, version: "old"))
+  }
+  await #expect(throws: WorkspaceFileError.self) {
+    try await workspace.files(.init(.list, path: "/work/../outside"))
+  }
+  await workspace.close()
+}
+
+@Test("OpenCode terminal returns all output pages and nonzero exits and removes its shell", arguments: [false, true])
+func openCodeWorkspaceShell(_ cancel: Bool) async throws {
+  let host = "shell-\(cancel).opencode.test"
+  let removed = MethodRecorder()
+  StubURLProtocol.install(forHost: host) { request in
+    let path = try #require(request.url?.path)
+    if request.httpMethod == "DELETE" {
+      removed.record(path)
+      return try httpResponse(request, status: 204, contentType: nil, body: "")
+    }
+    let body: String
+    switch path {
+    case "/api/shell":
+      let input = try jsonObject(requestBodyData(request))
+      #expect(input["command"] as? String == "printf hello; exit 7")
+      #expect(input["cwd"] as? String == "/work")
+      body = #"{"data":{"id":"sh_test","status":"running"}}"#
+    case "/api/shell/sh_test":
+      body = #"{"data":{"status":"exited","exit":7}}"#
+    case "/api/shell/sh_test/output":
+      if cancel { throw CancellationError() }
+      let second = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?
+        .contains(.init(name: "cursor", value: "2")) == true
+      body = second ? #"{"data":{"output":"llo","cursor":5,"size":5}}"#
+        : #"{"data":{"output":"he","cursor":2,"size":5}}"#
+    default:
+      Issue.record("Unexpected terminal request: \(path)")
+      throw URLError(.unsupportedURL)
+    }
+    return try httpResponse(request, contentType: "application/json", body: body)
+  }
+  defer { StubURLProtocol.reset(host: host) }
+  let workspace = try OpenCodeWorkspace(
+    connection: .init(url: #require(URL(string: "https://\(host)")), token: "test", cwd: "/work"),
+    configuration: openCodeTestConfiguration())
+  if cancel {
+    await #expect(throws: (any Error).self) { try await workspace.run("printf hello; exit 7") }
+  } else {
+    let result = try await workspace.run("printf hello; exit 7")
+    #expect(result.isError)
+    #expect(result.text == "hello\n[exited, exit 7]")
+  }
+  #expect(removed.methods == ["/api/shell/sh_test"])
+  await workspace.close()
 }
 
 @Test(
