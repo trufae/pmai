@@ -50,6 +50,7 @@ struct ContentView: View {
         if isHostsPanelMounted {
           HostsView(hosts: hosts, onSelectHost: selectHost)
             .equatable()
+            .ignoresSafeArea(.container, edges: .horizontal)
             .frame(width: panelWidth).frame(maxHeight: .infinity)
             .background { SidebarBlurBackground() }
             .transition(.identity)
@@ -93,6 +94,7 @@ struct ContentView: View {
               .equatable()
             }
           }
+          .ignoresSafeArea(.container, edges: .horizontal)
           .frame(width: panelWidth)
           .frame(maxHeight: .infinity)
           .background { SidebarBlurBackground() }
@@ -133,6 +135,7 @@ struct ContentView: View {
               .equatable()
             }
           }
+          .ignoresSafeArea(.container, edges: .horizontal)
           .frame(width: panelWidth)
           .frame(maxHeight: .infinity)
           .background { SidebarBlurBackground() }
@@ -192,7 +195,9 @@ struct ContentView: View {
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea(.container, edges: .horizontal)
+        .frame(width: layout.chatWidth)
+        .frame(maxHeight: .infinity)
         .allowsHitTesting(layout.pinsSidebar || panelOffset == 0)
         .overlay {
           if !layout.pinsSidebar && panelOffset > 0 {

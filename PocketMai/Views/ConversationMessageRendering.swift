@@ -12,6 +12,21 @@ struct ConversationMessageRun: Identifiable {
   let isActivity: Bool
 
   @MainActor
+  static func batchStart(in messages: [ChatMessage], before end: Int, count: Int) -> Int {
+    var groups = 0
+    var followingIsActivity = false
+    for index in (0..<end).reversed() {
+      let activity = MessageRenderCache.isActivity(messages[index])
+      if !activity || !followingIsActivity {
+        groups += 1
+        if groups > count { return index + 1 }
+      }
+      followingIsActivity = activity
+    }
+    return 0
+  }
+
+  @MainActor
   static func grouped(_ messages: ArraySlice<ChatMessage>, conversationID: UUID?) -> [Self] {
     var runs: [Self] = []
     for message in messages {
@@ -89,6 +104,23 @@ struct ConversationMessageRenderWindow {
       max(0, messages.count - Self.batchSize),
       startIndex(in: messages, conversationID: conversationID))
     setStart(start, in: messages, conversationID: conversationID)
+  }
+
+  @MainActor
+  mutating func resetGrouped(in messages: [ChatMessage], conversationID: UUID?) {
+    let start = ConversationMessageRun.batchStart(in: messages, before: messages.count, count: Self.batchSize)
+    setStart(min(start, startIndex(in: messages, conversationID: conversationID)),
+      in: messages, conversationID: conversationID)
+  }
+
+  @MainActor
+  @discardableResult
+  mutating func revealEarlierGroups(in messages: [ChatMessage], conversationID: UUID?) -> Bool {
+    let end = startIndex(in: messages, conversationID: conversationID)
+    guard end > 0 else { return false }
+    setStart(ConversationMessageRun.batchStart(in: messages, before: end, count: Self.batchSize),
+      in: messages, conversationID: conversationID)
+    return true
   }
 
   @discardableResult

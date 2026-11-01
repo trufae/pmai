@@ -1,7 +1,33 @@
 import SwiftUI
+import Testing
 import XCTest
 
 @testable import PocketMai
+
+@Test("Collapsed remote activity does not consume the visible history batch")
+@MainActor
+func remoteHistoryCountsVisibleGroups() {
+  let prose = (0..<10).map { ChatMessage(role: .user, text: "Question \($0)") }
+  let activity = (0..<20).map {
+    ChatMessage(role: .tool, text: "<tool_run>Read tool ():\nFile \($0)\n</tool_run>")
+  }
+  let messages = prose + activity
+  let conversationID = UUID()
+  var window = ConversationMessageRenderWindow()
+  window.resetGrouped(in: messages, conversationID: conversationID)
+  let start = window.startIndex(in: messages, conversationID: conversationID)
+  #expect(start == 3)
+  #expect(ConversationMessageRun.grouped(messages[start...], conversationID: conversationID).count == 8)
+  let revealed = window.revealEarlierGroups(in: messages, conversationID: conversationID)
+  #expect(revealed)
+  #expect(window.startIndex(in: messages, conversationID: conversationID) == 0)
+  let revealedAtBeginning = window.revealEarlierGroups(in: messages, conversationID: conversationID)
+  #expect(!revealedAtBeginning)
+
+  // A chat containing only tool events still exposes its complete collapsed run.
+  window.resetGrouped(in: activity, conversationID: UUID())
+  #expect(window.firstMessageID == activity.first?.id)
+}
 
 final class ConversationMessageRenderingTests: XCTestCase {
   @MainActor

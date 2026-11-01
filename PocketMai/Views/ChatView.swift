@@ -1177,6 +1177,9 @@ struct ChatView: View {
           refreshUserMessageNavigation(
             isAtBottom: metrics.viewport.isAtBottom,
             hasScrollableContent: metrics.hasScrollableContent)
+          if remoteChat != nil, !metrics.hasScrollableContent {
+            Task { await loadHistoryAtEdge() }
+          }
         }
         .onPreferenceChange(ResponseScrollTargetsKey.self) { targets in
           responseScrollTargets = targets
@@ -1612,7 +1615,11 @@ struct ChatView: View {
   private func renderOlderMessages(for key: MessageHistoryLoadKey) async {
     guard !Task.isCancelled, messageHistoryLoadKey == key, !key.isPreview else { return }
     if messageRenderWindow.conversationID != key.conversationID {
-      messageRenderWindow.reset(in: presentationMessages, conversationID: key.conversationID)
+      if remoteChat != nil {
+        messageRenderWindow.resetGrouped(in: presentationMessages, conversationID: key.conversationID)
+      } else {
+        messageRenderWindow.reset(in: presentationMessages, conversationID: key.conversationID)
+      }
     }
     if let request = store.pendingMessageNavigation, request.conversationID == key.conversationID {
       messageRenderWindow.reveal(
@@ -1627,11 +1634,12 @@ struct ChatView: View {
 
   @MainActor
   private func loadHistoryAtEdge(forceLater: Bool = false) async {
+    let needsMoreRemoteHistory = remoteChat != nil && !userMessageNavigation.hasScrollableContent
     guard !historyPageIsLoading, !messageFontPinchSession.isActive, !messageListIsScrolling,
-      forceLater || userScrolledAfterLastMessage
+      forceLater || userScrolledAfterLastMessage || needsMoreRemoteHistory
     else { return }
     let id = currentConversationID
-    let earlier = !forceLater && historyNearTop
+    let earlier = !forceLater && (historyNearTop || needsMoreRemoteHistory)
     guard earlier || forceLater || historyNearBottom else { return }
     historyPageIsLoading = true
     defer { historyPageIsLoading = false }
@@ -1641,7 +1649,10 @@ struct ChatView: View {
       else { return }
       if let part = messageRenderWindow.messageWithEarlierParts(in: messages, conversationID: id) {
         messageRenderWindow.revealEarlierParts(for: part)
-      } else if messageRenderWindow.revealEarlier(in: messages, conversationID: id) {
+      } else if remoteChat != nil
+        ? messageRenderWindow.revealEarlierGroups(in: messages, conversationID: id)
+        : messageRenderWindow.revealEarlier(in: messages, conversationID: id)
+      {
         prepareMessageParts(in: messages)
       } else if remoteChat == nil, !currentChatIsResponding,
         currentConversation?.historyWindow?.hasEarlier == true
