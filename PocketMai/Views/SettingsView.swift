@@ -898,7 +898,15 @@ struct SettingsView: View {
     Toggle("Live Markdown", isOn: settingsBinding(\.appearance.liveMarkdown))
     Toggle("Render images", isOn: settingsBinding(\.renderMarkdownImagesInChat))
     Toggle("Justify Text", isOn: settingsBinding(\.appearance.justifyText))
-    Toggle("Unwrapped Tables", isOn: settingsBinding(\.appearance.unwrappedTables))
+    Picker("Tables", selection: settingsBinding(\.appearance.tableLayout)) {
+      ForEach(AppearanceTableLayout.allCases) { layout in
+        Text(layout.displayName).tag(layout)
+      }
+    }
+    .pickerStyle(.menu)
+    Text(store.settings.appearance.tableLayout.detail)
+      .font(.caption)
+      .foregroundStyle(.secondary)
     Toggle(
       "Scroll to follow responses",
       isOn: settingsBinding(\.appearance.scrollToFollowResponses))

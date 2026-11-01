@@ -3,6 +3,37 @@ import XCTest
 @testable import PocketMai
 
 final class AppearanceSettingsTests: XCTestCase {
+  func testTablesDefaultToBalancedLayout() throws {
+    XCTAssertEqual(AppearanceSettings.defaults.tableLayout, .balanced)
+    for json in ["{}", "{\"tableLayout\":\"unknown\"}"] {
+      let decoded = try JSONDecoder().decode(AppearanceSettings.self, from: Data(json.utf8))
+      XCTAssertEqual(decoded.tableLayout, .balanced)
+    }
+  }
+
+  func testLegacyTableChoicesArePreserved() throws {
+    for unwrapped in [true, false] {
+      let data = Data("{\"unwrappedTables\":\(unwrapped)}".utf8)
+      let decoded = try JSONDecoder().decode(AppearanceSettings.self, from: data)
+      XCTAssertEqual(decoded.tableLayout, unwrapped ? .expanded : .compact)
+    }
+    let data = Data("{\"tableLayout\":\"balanced\",\"unwrappedTables\":true}".utf8)
+    XCTAssertEqual(
+      try JSONDecoder().decode(AppearanceSettings.self, from: data).tableLayout, .balanced)
+  }
+
+  func testAllTableLayoutsAreSavedAndRestored() throws {
+    for layout in AppearanceTableLayout.allCases {
+      var settings = AppearanceSettings.defaults
+      settings.tableLayout = layout
+      let encoded = try JSONEncoder().encode(settings)
+      XCTAssertEqual(try JSONDecoder().decode(AppearanceSettings.self, from: encoded), settings)
+      let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+      XCTAssertEqual(object["tableLayout"] as? String, layout.rawValue)
+      XCTAssertNil(object["unwrappedTables"])
+    }
+  }
+
   func testGitHubTokenDefaultsAndRoundTrips() throws {
     var settings = try JSONDecoder().decode(NativeToolSettings.self, from: Data("{}".utf8))
     XCTAssertEqual(settings.githubAPIKey, "")

@@ -343,6 +343,30 @@ enum AppearanceZoomMethod: String, Codable, CaseIterable, Identifiable, Sendable
   }
 }
 
+enum AppearanceTableLayout: String, Codable, CaseIterable, Identifiable, Sendable {
+  case compact
+  case balanced
+  case expanded
+
+  var id: String { rawValue }
+
+  var displayName: String {
+    switch self {
+    case .compact: "Compact"
+    case .balanced: "Balanced"
+    case .expanded: "Expanded"
+    }
+  }
+
+  var detail: String {
+    switch self {
+    case .compact: "Wraps all columns to fit the chat width."
+    case .balanced: "Shows about 2–3 columns with wrapped text. Scroll horizontally to see the rest."
+    case .expanded: "Keeps cell text on one line. Scroll horizontally to see the rest."
+    }
+  }
+}
+
 struct AppearanceSettings: Codable, Equatable, Sendable {
   static let fontSizeRange: ClosedRange<Double> = 6...43
   static let fontSizeStep: Double = 0.05
@@ -358,7 +382,7 @@ struct AppearanceSettings: Codable, Equatable, Sendable {
   var theme: AppearanceTheme = .system
   var liveMarkdown: Bool = true
   var justifyText: Bool = true
-  var unwrappedTables: Bool = false
+  var tableLayout: AppearanceTableLayout = .balanced
   var scrollToFollowResponses: Bool = false
   var hapticsEnabled: Bool = true
 
@@ -377,7 +401,7 @@ struct AppearanceSettings: Codable, Equatable, Sendable {
   enum CodingKeys: String, CodingKey {
     case userFontFamily, assistantFontFamily, fontFamily, fontSize, lineSpacing, zoomMethod, tint,
       theme
-    case liveMarkdown, justifyText, unwrappedTables
+    case liveMarkdown, justifyText, tableLayout, unwrappedTables
     case scrollToFollowResponses, hapticsEnabled
   }
 
@@ -397,7 +421,13 @@ struct AppearanceSettings: Codable, Equatable, Sendable {
     theme = (try? c.decode(AppearanceTheme.self, forKey: .theme)) ?? .system
     liveMarkdown = (try? c.decode(Bool.self, forKey: .liveMarkdown)) ?? true
     justifyText = (try? c.decode(Bool.self, forKey: .justifyText)) ?? true
-    unwrappedTables = (try? c.decode(Bool.self, forKey: .unwrappedTables)) ?? false
+    if let layout = try? c.decode(AppearanceTableLayout.self, forKey: .tableLayout) {
+      tableLayout = layout
+    } else if let unwrapped = try? c.decode(Bool.self, forKey: .unwrappedTables) {
+      tableLayout = unwrapped ? .expanded : .compact
+    } else {
+      tableLayout = .balanced
+    }
     scrollToFollowResponses =
       (try? c.decode(Bool.self, forKey: .scrollToFollowResponses)) ?? false
     hapticsEnabled = (try? c.decode(Bool.self, forKey: .hapticsEnabled)) ?? true
@@ -414,7 +444,7 @@ struct AppearanceSettings: Codable, Equatable, Sendable {
     try c.encode(theme, forKey: .theme)
     try c.encode(liveMarkdown, forKey: .liveMarkdown)
     try c.encode(justifyText, forKey: .justifyText)
-    try c.encode(unwrappedTables, forKey: .unwrappedTables)
+    try c.encode(tableLayout, forKey: .tableLayout)
     try c.encode(scrollToFollowResponses, forKey: .scrollToFollowResponses)
     try c.encode(hapticsEnabled, forKey: .hapticsEnabled)
   }

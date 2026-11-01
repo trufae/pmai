@@ -5,6 +5,56 @@ import XCTest
 
 final class ConversationMessageRenderingTests: XCTestCase {
   @MainActor
+  func testBalancedTablesWrapAndScrollAcrossAllColumnsAtDifferentWidths() async throws {
+    let headers = ["First", "Second", "Third", "Fourth"]
+    let text = "A longer cell with enough text to wrap across multiple lines and remain fully readable."
+    let table = MarkdownTableView(
+      headers: headers, rows: [Array(repeating: text, count: headers.count)],
+      alignments: [], appearance: .defaults)
+    let host = UIHostingController(rootView: table.frame(maxHeight: .infinity, alignment: .top))
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+    let previousKeyWindow = scene.keyWindow
+    let window = UIWindow(windowScene: scene)
+    window.rootViewController = host
+    window.makeKeyAndVisible()
+    defer {
+      window.isHidden = true
+      previousKeyWindow?.makeKeyAndVisible()
+    }
+
+    func findScrollView(in view: UIView) -> UIScrollView? {
+      if let scroll = view as? UIScrollView { return scroll }
+      return view.subviews.lazy.compactMap { findScrollView(in: $0) }.first
+    }
+
+    for width in [320.0, 600.0] {
+      window.frame = CGRect(x: 0, y: 0, width: width, height: 844)
+      try await waitForLayout(host: host) {
+        guard let scroll = findScrollView(in: host.view) else { return false }
+        return abs(scroll.bounds.width - width) < 1
+          && abs(scroll.contentSize.width - width * 4 / 2.5) < 1
+      }
+      let scroll = try XCTUnwrap(findScrollView(in: host.view))
+      // Four columns occupy more than the viewport, with two to three visible.
+      let columnWidth = scroll.contentSize.width / CGFloat(headers.count)
+      XCTAssertGreaterThan(scroll.bounds.width / columnWidth, 2)
+      XCTAssertLessThan(scroll.bounds.width / columnWidth, 3)
+      XCTAssertGreaterThan(scroll.contentSize.height, UIFont.systemFont(ofSize: 17).lineHeight * 4)
+      let rightEdge = scroll.contentSize.width - scroll.bounds.width
+      scroll.setContentOffset(CGPoint(x: rightEdge, y: 0), animated: false)
+      XCTAssertEqual(scroll.contentOffset.x + scroll.bounds.width, scroll.contentSize.width, accuracy: 1)
+
+      let screenshot = UIGraphicsImageRenderer(bounds: host.view.bounds).image { _ in
+        host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+      }
+      let attachment = XCTAttachment(image: screenshot)
+      attachment.name = "Balanced table at \(Int(width))pt, scrolled to the last column"
+      attachment.lifetime = .keepAlways
+      add(attachment)
+    }
+  }
+
+  @MainActor
   func testMixedActivityKeepsMessagesActionsAndStableHistoryIdentity() {
     let question = ChatMessage(role: .user, text: "Question")
     let thought = ChatMessage(role: .assistant, text: "<think>Check the file</think>")

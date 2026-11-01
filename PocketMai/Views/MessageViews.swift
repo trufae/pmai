@@ -5939,6 +5939,7 @@ enum MarkdownInlineSymbols {
 
 struct MarkdownTableView: View {
   @Environment(\.isFullChatScreenshotRendering) private var isFullChatScreenshotRendering
+  @State private var viewportWidth: CGFloat = 0
 
   let headers: [String]
   let rows: [[String]]
@@ -5973,16 +5974,28 @@ struct MarkdownTableView: View {
   }
 
   var body: some View {
-    if appearance.unwrappedTables && !isFullChatScreenshotRendering {
-      ScrollView(.horizontal, showsIndicators: true) {
-        unwrappedTable
-      }
+    if isFullChatScreenshotRendering || appearance.tableLayout == .compact {
+      wrappedTable()
     } else {
-      wrappedTable
+      ScrollView(.horizontal, showsIndicators: true) {
+        if appearance.tableLayout == .expanded {
+          unwrappedTable
+        } else {
+          // Leave part of the next column visible to make scrolling discoverable.
+          let visibleColumns = min(CGFloat(max(headers.count, 1)), 2.5)
+          wrappedTable(columnWidth: viewportWidth > 0 ? viewportWidth / visibleColumns : 150)
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .onGeometryChange(for: CGFloat.self) {
+        $0.size.width
+      } action: {
+        viewportWidth = $0
+      }
     }
   }
 
-  private var wrappedTable: some View {
+  private func wrappedTable(columnWidth: CGFloat? = nil) -> some View {
     let tableRows = [headers] + rows
     let rowCount = tableRows.count
     // The message and its follow-up card need the full height, including
@@ -5998,6 +6011,7 @@ struct MarkdownTableView: View {
                 isHeader: rowIndex == 0,
                 unwrapped: false
               )
+              .frame(width: columnWidth, alignment: frameAlignment(textAlignment(for: columnIndex)))
             }
           }
           .background(
