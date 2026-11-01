@@ -62,7 +62,7 @@ public struct RemoteHostConnection: Codable, Sendable {
       return OpenCodeClient(
         connection: try .init(name: name, url: url, token: token, cwd: cwd ?? self.cwd),
         sessionID: sessionID, configuration: configuration,
-        onUpdate: onUpdate, onPermission: permission)
+        onUpdate: onUpdate, onPermission: permission, onDisconnect: onDisconnect)
     }
     return ACPClient(configuration: try acpConfiguration(cwd: cwd ?? self.cwd, sessionID: sessionID, resumeID: resumeID),
       onUpdate: onUpdate, onPermission: onPermission,

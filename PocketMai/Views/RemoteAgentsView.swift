@@ -111,14 +111,14 @@ struct RemoteAgentConnectionView: View {
   var initialHost: RemoteAgentBookmark? = nil
   @Environment(\.dismiss) private var dismiss
   @EnvironmentObject private var appStore: AppStore
-  @State private var name = "pmai"
+  @State private var name = ""
   @State private var address = ""
   @State private var token = ""
   @State private var cwd = ""
   @State private var uri = ""
   @State private var scanning = false
   @State private var error: String?
-  @State private var accentColor: String?
+  @State private var accentColor = AgentProjectTint.presetNames.randomElement() ?? "blue"
   @State private var requiresApproval: Bool?
   @State private var forwirohInvitation: String?
   @State private var connectionProtocol: ACPRemoteProtocol = .local
@@ -132,22 +132,21 @@ struct RemoteAgentConnectionView: View {
     NavigationStack {
       Form {
         Section {
-          Button {
-            Task { await scan() }
-          } label: {
-            Label("Scan Host QR", systemImage: "qrcode.viewfinder")
-              .font(.headline)
-              .frame(maxWidth: .infinity, minHeight: 44)
-          }
-          .buttonStyle(.borderedProminent)
-          .controlSize(.large)
-          .disabled(importing || !DataScannerViewController.isSupported)
           Picker("Host Type", selection: $backend) {
             Text("pmai").tag(RemoteAgentBackend.acp)
             Text("OpenCode").tag(RemoteAgentBackend.openCode)
           }
           .pickerStyle(.menu)
           .disabled(importing)
+          Button {
+            Task { await scan() }
+          } label: {
+            Label("Scan Host QR", systemImage: "qrcode.viewfinder")
+              .labelStyle(.titleAndIcon)
+          }
+          .buttonStyle(.borderedProminent)
+          .controlSize(.regular)
+          .disabled(importing || !DataScannerViewController.isSupported)
           VStack(alignment: .leading, spacing: 8) {
             Text(backend == .openCode ? "On your computer, run:" : "In the pmai REPL, run:")
             Text(backend == .openCode ? "opencode pair --remote" : "/remote serve")
@@ -166,7 +165,9 @@ struct RemoteAgentConnectionView: View {
           if importing { ProgressView("Pairing with OpenCode…") }
         }
         Section {
-          TextField("Name", text: $name)
+          TextField("Host name", text: $name)
+            .disabled(importing)
+          appearanceFields
             .disabled(importing)
           if !address.isEmpty {
             Label("Connection details added", systemImage: "checkmark.circle")
@@ -176,8 +177,6 @@ struct RemoteAgentConnectionView: View {
         Section {
           DisclosureGroup("Advanced", isExpanded: $advanced) {
             manualConnectionFields
-            Divider()
-            appearanceFields
           }
           .disabled(importing)
         }
@@ -239,7 +238,7 @@ struct RemoteAgentConnectionView: View {
           name = host.name
           address = host.url.absoluteString
           cwd = host.cwd
-          accentColor = host.accentColor
+          accentColor = host.accentColor ?? accentColor
           requiresApproval = host.requiresApproval
           forwirohInvitation = host.forwirohInvitation
           connectionProtocol = host.connectionProtocol ?? .local
@@ -308,24 +307,33 @@ struct RemoteAgentConnectionView: View {
 
   private var appearanceFields: some View {
     Group {
-      Picker("Accent color", selection: $accentColor) {
-        Text("App default").tag(String?.none)
+      Picker("Accent color", selection: Binding(
+        get: { AgentProjectTint.presetNames.contains(accentColor) ? accentColor : "custom" },
+        set: { selection in
+          if selection == "custom" {
+            let color = ConversationFolderTint(rawIdentifier: accentColor)?.color ?? .blue
+            accentColor = "custom:" + (color.folderTintHex ?? "#007AFF")
+          } else {
+            accentColor = selection
+          }
+        }
+      )) {
         ForEach(AgentProjectTint.presetNames, id: \.self) { name in
-          Text(name.capitalized).tag(Optional(name))
+          Text(name.capitalized).tag(name)
         }
-        if let accentColor, !AgentProjectTint.presetNames.contains(accentColor) {
-          Text("Custom").tag(Optional(accentColor))
-        }
+        Text("Custom").tag("custom")
       }
-      ColorPicker(
-        "Custom accent",
-        selection: Binding(
-          get: {
-            accentColor.flatMap { ConversationFolderTint(rawIdentifier: $0) }?.color
-              ?? .accentColor
-          },
-          set: { accentColor = $0.folderTintHex.map { "custom:" + $0 } }),
-        supportsOpacity: false)
+      .pickerStyle(.menu)
+      if !AgentProjectTint.presetNames.contains(accentColor) {
+        ColorPicker(
+          "Custom accent",
+          selection: Binding(
+            get: { ConversationFolderTint(rawIdentifier: accentColor)?.color ?? .blue },
+            set: { color in
+              if let hex = color.folderTintHex { accentColor = "custom:" + hex }
+            }),
+          supportsOpacity: false)
+      }
     }
   }
 

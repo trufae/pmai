@@ -510,6 +510,8 @@ private final class RemoteActionEndpoint: @unchecked Sendable {
         result = .object(["data": .array([
           .object(["id": .string("ses_test"), "location": .object(["directory": .string("/work")])])
         ])])
+      case ("GET", "/api/session/active"):
+        result = .object(["data": .object([:])])
       case ("GET", "/api/session/ses_test"):
         result = .object([
           "data": .object([

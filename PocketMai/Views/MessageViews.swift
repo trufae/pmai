@@ -167,6 +167,7 @@ struct MessageBubble: View {
   var showThinking: Bool = false
   var compactMetadata: Bool = false
   var isWaitingForResponse: Bool = false
+  var showsResponsePlaceholder: Bool = true
 
   var body: some View {
     StreamingMessageBubble(
@@ -186,7 +187,8 @@ struct MessageBubble: View {
       showUserTimestamp: showUserTimestamp,
       showThinking: showThinking,
       compactMetadata: compactMetadata,
-      isWaitingForResponse: isWaitingForResponse
+      isWaitingForResponse: isWaitingForResponse,
+      showsResponsePlaceholder: showsResponsePlaceholder
     )
   }
 }
@@ -209,6 +211,7 @@ private struct StreamingMessageBubble: View {
   var showThinking: Bool = false
   var compactMetadata: Bool = false
   var isWaitingForResponse: Bool = false
+  var showsResponsePlaceholder: Bool = true
 
   var body: some View {
     MessageBubbleContent(
@@ -229,7 +232,8 @@ private struct StreamingMessageBubble: View {
       showUserTimestamp: showUserTimestamp,
       showThinking: showThinking,
       compactMetadata: compactMetadata,
-      isWaitingForResponse: isWaitingForResponse
+      isWaitingForResponse: isWaitingForResponse,
+      showsResponsePlaceholder: showsResponsePlaceholder
     )
     .equatable()
   }
@@ -274,6 +278,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
   var showThinking: Bool = false
   var compactMetadata: Bool = false
   var isWaitingForResponse: Bool = false
+  var showsResponsePlaceholder: Bool = true
   @State private var showingTextSelection = false
   @State private var showingRawTextSelection = false
   @State private var selectedTextAttachment: ChatAttachment?
@@ -317,6 +322,7 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
       && lhs.showThinking == rhs.showThinking
       && lhs.compactMetadata == rhs.compactMetadata
       && lhs.isWaitingForResponse == rhs.isWaitingForResponse
+      && lhs.showsResponsePlaceholder == rhs.showsResponsePlaceholder
   }
 
   var body: some View {
@@ -504,9 +510,9 @@ private struct MessageBubbleContent: View, @MainActor Equatable {
         }
       }
       if visibleText.isEmpty {
-        if isLiveAssistantResponse {
+        if showsResponsePlaceholder && isLiveAssistantResponse {
           AssistantTypingIndicator(fontSize: appearance.fontSize)
-        } else if !hasIncludedExtras {
+        } else if showsResponsePlaceholder && !hasIncludedExtras {
           Text("...")
             .font(messageFont)
             .foregroundStyle(.secondary)

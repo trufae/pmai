@@ -234,6 +234,69 @@ private actor OpenCodeUpdates {
   func askedPermission() { permissions += 1 }
 }
 
+@Test("OpenCode resumes host work without resending and distinguishes stop from disconnect",
+  arguments: ["complete", "stop", "disconnect", "offline"])
+func openCodeResumeUpdates(_ action: String) async throws {
+  let host = "resume-\(action).opencode.test"
+  let methods = MethodRecorder()
+  let updates = OpenCodeUpdates()
+  StubURLProtocol.install(forHost: host) { request in
+    let path = request.url!.path
+    methods.record(path)
+    let checks = methods.methods.filter { $0 == "/api/session/active" }.count
+    let stopped = methods.methods.contains("/api/session/session/interrupt")
+    let complete = (action == "complete" && checks >= 3) || stopped
+    let body: String
+    switch path {
+    case "/api/session/active":
+      if action == "offline", checks > 1 { throw URLError(.notConnectedToInternet) }
+      body = complete ? #"{"data":{}}"# : #"{"data":{"session":{}}}"#
+    case "/api/session/session/message", "/api/session/session/context":
+      body = complete
+        ? #"{"data":[{"id":"answer","type":"assistant","content":[{"type":"text","text":"Finished while away"}]},{"id":"idle","type":"idle","outcome":"succeeded"}]}"#
+        : #"{"data":[{"id":"answer","type":"assistant","content":[{"type":"text","text":"Working"}]}]}"#
+    case "/api/session/session/permission": body = #"{"data":[]}"#
+    case "/api/session/session/interrupt": body = "{}"
+    default:
+      Issue.record("Unexpected request: \(path)")
+      throw URLError(.badURL)
+    }
+    return try httpResponse(request, contentType: "application/json", body: body)
+  }
+  defer { StubURLProtocol.reset(host: host) }
+  let client = OpenCodeClient(
+    connection: try .init(url: #require(URL(string: "https://\(host)")), token: "test"),
+    sessionID: "session", configuration: openCodeTestConfiguration(),
+    onUpdate: { await updates.append($0) },
+    onDisconnect: { methods.record("disconnected") })
+  _ = try await client.connect()
+  try await client.resumeUpdates()
+  #expect(await updates.values.contains { $0.objectValue?["running"]?.boolValue == true })
+  if action == "stop" { await client.cancel() }
+  if action != "disconnect" {
+    let deadline = ContinuousClock.now + .seconds(10)
+    while ContinuousClock.now < deadline {
+      if action == "offline" {
+        if methods.methods.contains("disconnected") { break }
+      } else if await updates.values.contains(where: { $0.objectValue?["running"]?.boolValue == false }) {
+        break
+      }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    if action == "offline" {
+      #expect(methods.methods.contains("disconnected"))
+      #expect(await !client.isConnected)
+    } else {
+      #expect(await updates.values.contains { $0.objectValue?["running"]?.boolValue == false })
+      #expect(await updates.values.contains {
+        $0.objectValue?["messages"]?.arrayValue?.first?.objectValue?["text"]?.stringValue == "Finished while away"
+      })
+    }
+  }
+  await client.disconnect()
+  #expect(methods.methods.filter { $0.hasSuffix("/interrupt") }.count == (action == "stop" ? 1 : 0))
+}
+
 @Test(
   "OpenCode turn failures preserve the connection; host authentication and network failures do not",
   arguments: ["provider", "unauthorized", "network"])

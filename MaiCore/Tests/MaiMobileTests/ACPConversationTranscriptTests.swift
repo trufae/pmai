@@ -3,6 +3,29 @@ import MaiACP
 import MaiCore
 import Testing
 
+@Test("OpenCode updates retain cached history and stable IDs until an explicit rewind")
+func remoteTranscriptPreservesOpenCodeHistory() throws {
+  let first = ACPConversationMessage(role: "user", text: "Earlier question", remoteID: "user-1")
+  let answer = ACPConversationMessage(role: "assistant", text: "Earlier answer", remoteID: "answer-1:0")
+  var messages = try JSONDecoder().decode(
+    [ACPConversationMessage].self, from: JSONEncoder().encode([first, answer]))
+  messages.append(.init(role: "user", text: "Next question"))
+  let update = try JSONDecoder().decode(JSONValue.self, from: Data(#"{"sessionUpdate":"_pmai/message_snapshot","preserveHistory":true,"messages":[{"remoteID":"user-2","role":"user","text":"Next question"},{"remoteID":"answer-2:0","role":"assistant","text":"Partial answer"}]}"#.utf8))
+  ACPConversationTranscript.apply(update, to: &messages)
+  #expect(messages.map(\.text) == ["Earlier question", "Earlier answer", "Next question", "Partial answer"])
+  #expect(messages.prefix(2).map(\.id) == [first.id, answer.id])
+  let answerID = try #require(messages.last?.id)
+  let completion = try JSONDecoder().decode(JSONValue.self, from: Data(#"{"sessionUpdate":"_pmai/message_snapshot","preserveHistory":true,"messages":[{"remoteID":"answer-2:0","role":"assistant","text":"Complete answer"}]}"#.utf8))
+  ACPConversationTranscript.apply(completion, to: &messages)
+  ACPConversationTranscript.apply(completion, to: &messages)
+  #expect(messages.map(\.text) == ["Earlier question", "Earlier answer", "Next question", "Complete answer"])
+  #expect(messages.last?.id == answerID)
+  let rewind = try JSONDecoder().decode(JSONValue.self, from: Data(#"{"sessionUpdate":"_pmai/message_snapshot","preserveHistory":false,"messages":[{"remoteID":"user-1","role":"user","text":"Earlier question"}]}"#.utf8))
+  ACPConversationTranscript.apply(rewind, to: &messages)
+  #expect(messages.map(\.text) == ["Earlier question"])
+  #expect(messages.first?.id == first.id)
+}
+
 @Test("Remote transcripts retain tool output, status, plans and stable IDs across snapshots")
 func remoteTranscriptUpdates() throws {
   var messages: [ACPConversationMessage] = []

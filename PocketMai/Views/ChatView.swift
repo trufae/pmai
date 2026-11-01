@@ -984,7 +984,8 @@ struct ChatView: View {
                         showThinking: remoteChat != nil
                           || store.effectiveShowThinking(for: currentConversation),
                         compactMetadata: remoteChat != nil,
-                        isWaitingForResponse: isWaitingForResponse(message)
+                        isWaitingForResponse: isWaitingForResponse(message),
+                        showsResponsePlaceholder: remoteChat == nil
                       )
                     }
                     .onGeometryChange(for: CGRect.self) { geometry in
@@ -2326,8 +2327,6 @@ struct ChatView: View {
       .buttonStyle(.bordered)
       .controlSize(.large)
       .disabled(hosts.selectedHost?.requiresApproval == true || store.settings.isOffline)
-      Button("Browse Folders", action: onShowRemoteFolders)
-        .font(.subheadline)
       if hosts.waitingApproval {
         Text("Approve this device on the remote host to start chatting.")
           .font(.caption).foregroundStyle(.secondary)
@@ -2485,7 +2484,7 @@ struct ChatView: View {
       ChatComposer(
         store: store,
         remoteChat: remoteChat,
-        placeholder: "Ask anything...",
+        placeholder: "Ask anything… / commands, $ prompts & skills",
         conversationID: currentConversation?.id,
         isResponding: currentChatIsResponding,
         isKeyboardVisible: keyboardOverlap > 0,
@@ -3706,75 +3705,99 @@ private struct ChatComposer: View {
       HStack(alignment: .bottom, spacing: 10) {
         toolMenu
 
-        TextField(
-          isResponding
-            ? (remoteChat == nil ? "Queue a message..." : "Send to running agent...") : placeholder,
-          text: draftBinding, axis: .vertical
-        )
-        .textFieldStyle(.plain)
-        .lineLimit(1...3)
-        .padding(.vertical, 5)
-        .frame(minHeight: 32, alignment: .center)
-        .focused($composerFocused)
-        .onAppear {
-          guard focusComposerAfterTextFieldRefresh else { return }
-          focusComposerAfterTextFieldRefresh = false
-          composerFocused = true
-        }
-        .id(composerTextFieldRefreshID)
-        .popover(
-          isPresented: promptAutocompleteBinding,
-          attachmentAnchor: .rect(.bounds),
-          arrowEdge: .bottom
-        ) {
-          promptAutocompletePopover
-            .presentationCompactAdaptation(.popover)
-        }
-        .onKeyPress(.return, phases: .down) { press in
-          // Only hardware keyboards reach onKeyPress, so the on-screen Return
-          // always inserts a newline. With a hardware keyboard, Shift+Return
-          // inserts a newline and a bare Return submits.
-          guard !press.modifiers.contains(.shift) else { return .ignored }
-          submitDraft()
-          return .handled
-        }
-
-        if remoteChat != nil, isResponding, canSubmitDraft {
-          Button { inputSession.cancelResponse() } label: {
-            Image(systemName: "stop.fill")
-              .foregroundStyle(.red)
-              .frame(width: 24, height: 24)
+        HStack(alignment: .bottom, spacing: 4) {
+          TextField(
+            isResponding
+              ? (remoteChat == nil ? "Queue a message..." : "Send to running agent...") : placeholder,
+            text: draftBinding, axis: .vertical
+          )
+          .textFieldStyle(.plain)
+          .lineLimit(1...5)
+          .padding(.leading, 14)
+          .padding(.vertical, 8)
+          .frame(minHeight: 44, alignment: .center)
+          .accessibilityLabel("Message")
+          .accessibilityHint("Start with / for commands or $ for prompts and skills.")
+          .focused($composerFocused)
+          .onAppear {
+            guard focusComposerAfterTextFieldRefresh else { return }
+            focusComposerAfterTextFieldRefresh = false
+            composerFocused = true
           }
-          .adaptiveGlassButtonStyle()
-          .accessibilityLabel("Stop response")
-        }
-        Button {
-          if canSubmitDraft {
+          .id(composerTextFieldRefreshID)
+          .popover(
+            isPresented: promptAutocompleteBinding,
+            attachmentAnchor: .rect(.bounds),
+            arrowEdge: .bottom
+          ) {
+            promptAutocompletePopover
+              .presentationCompactAdaptation(.popover)
+          }
+          .onKeyPress(.return, phases: .down) { press in
+            // Only hardware keyboards reach onKeyPress, so the on-screen Return
+            // always inserts a newline. With a hardware keyboard, Shift+Return
+            // inserts a newline and a bare Return submits.
+            guard !press.modifiers.contains(.shift) else { return .ignored }
             submitDraft()
-          } else if let id = conversationID, isResponding {
-            if canQueueDraft {
-              queueDraft(in: id)
-            } else {
-              inputSession.cancelResponse()
-            }
-          } else {
-            liveVoiceSession.start(store: store, ttsPlayer: ttsPlayer, remoteChat: remoteChat)
+            return .handled
           }
-        } label: {
-          Image(systemName: trailingActionSystemImage)
-            .font(.title2)
-            .symbolRenderingMode(.hierarchical)
-            .foregroundStyle(trailingActionColor)
-            .frame(width: 24, height: 24)
-            .contentShape(Circle())
+
+          if remoteChat != nil, isResponding, canSubmitDraft {
+            Button { inputSession.cancelResponse() } label: {
+              Image(systemName: "stop.fill")
+                .foregroundStyle(.red)
+                .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Stop response")
+          }
+          Button {
+            if canSubmitDraft {
+              submitDraft()
+            } else if let id = conversationID, isResponding {
+              if canQueueDraft {
+                queueDraft(in: id)
+              } else {
+                inputSession.cancelResponse()
+              }
+            } else {
+              liveVoiceSession.start(store: store, ttsPlayer: ttsPlayer, remoteChat: remoteChat)
+            }
+          } label: {
+            Image(systemName: trailingActionSystemImage)
+              .font(.title2)
+              .symbolRenderingMode(.hierarchical)
+              .foregroundStyle(trailingActionColor)
+              .frame(width: 44, height: 44)
+              .contentShape(Circle())
+          }
+          .buttonStyle(.plain)
+          .disabled(
+            !isResponding && (liveVoiceSession.isActive || !inputSession.canSubmit)
+          )
+          .help(trailingActionHelp)
         }
-        .adaptiveGlassButtonStyle()
-        .disabled(
-          !isResponding && (liveVoiceSession.isActive || !inputSession.canSubmit)
-        )
-        .help(trailingActionHelp)
+        .background { composerInputBackground }
       }
     }
+  }
+
+  private var composerInputBackground: some View {
+    let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+    return Group {
+      if #available(iOS 26.0, *) {
+        shape
+          .fill(.clear)
+          .glassEffect(.regular, in: shape)
+      } else {
+        shape
+          .fill(.regularMaterial)
+          .overlay {
+            shape.strokeBorder(.secondary.opacity(0.3), lineWidth: 1)
+          }
+      }
+    }
+    .allowsHitTesting(false)
   }
 
   private var pendingAttachmentStrip: some View {
@@ -4216,10 +4239,11 @@ private struct ChatComposer: View {
         .font(.title2)
         .symbolRenderingMode(.hierarchical)
         .foregroundStyle(Color.accentColor)
-        .frame(width: 24, height: 24)
+        .frame(width: 44, height: 44)
         .contentShape(Circle())
     }
-    .adaptiveGlassButtonStyle()
+    .buttonStyle(.plain)
+    .background { composerInputBackground }
     .popover(isPresented: $showingToolMenu, attachmentAnchor: .rect(.bounds), arrowEdge: .bottom) {
       toolMenuPopover
         .presentationCompactAdaptation(.popover)
@@ -4282,7 +4306,7 @@ private struct ChatComposer: View {
         showingCameraPicker = true
       }
       Divider()
-      toolMenuButton("Start App", systemImage: "square.grid.2x2", isEnabled: remoteChat == nil) {
+      toolMenuButton("Start App", systemImage: "square.grid.2x2") {
         showingToolMenu = false
         showingWebXDCLauncher = true
       }
@@ -4439,7 +4463,11 @@ private struct ChatComposer: View {
   }
 
   private var workingFolderMenuText: String? {
-    if let remoteChat { return remoteChat.conversation.cwd }
+    if let remoteChat {
+      let path = remoteChat.conversation.cwd
+      guard !path.isEmpty else { return nil }
+      return URL(fileURLWithPath: path).lastPathComponent
+    }
     guard let conversation = store.currentConversation else { return nil }
     guard workingFolderMode != .disabled else { return "Off" }
     return store.workingFolderDisplayName(for: conversation)

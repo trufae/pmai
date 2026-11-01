@@ -24,6 +24,8 @@ public protocol RemoteSessionClient: AnyObject, Sendable {
   /// Some clients learn this capability during their connection handshake.
   func historyRewindSupported() async -> Bool
   func connect() async throws -> String
+  /// Resume observing work already running on the host without resubmitting it.
+  func resumeUpdates() async throws
   func workspace() async throws -> ACPWorkspaceSnapshot?
   func manageSession(_ id: String, cwd: String, title: String?) async throws
   func configurationOptions() async throws -> [RemoteSessionOption]
@@ -43,6 +45,7 @@ public protocol RemoteSessionClient: AnyObject, Sendable {
 }
 
 extension RemoteSessionClient {
+  public func resumeUpdates() async throws {}
   public func promptCatalog() async throws -> PromptCatalog { PromptCatalog(builtins: []) }
   public func prompt(_ request: RemotePromptRequest,
     emit: @escaping @Sendable (ProviderEvent) async -> Void) async throws -> ProviderStopReason {

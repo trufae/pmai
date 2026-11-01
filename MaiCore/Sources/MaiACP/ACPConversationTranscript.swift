@@ -62,7 +62,7 @@ public enum ACPConversationTranscript {
       let tools = Dictionary(messages.compactMap { message in
         message.toolID.map { ($0, message.id) }
       }, uniquingKeysWith: { first, _ in first })
-      messages = (object["messages"]?.arrayValue ?? []).compactMap { value in
+      let snapshot: [ACPConversationMessage] = (object["messages"]?.arrayValue ?? []).compactMap { value in
         guard let fields = value.objectValue, let remoteID = fields["remoteID"]?.stringValue,
           let role = fields["role"]?.stringValue, let text = fields["text"]?.stringValue else { return nil }
         return ACPConversationMessage(
@@ -72,6 +72,26 @@ public enum ACPConversationTranscript {
           toolName: fields["toolName"]?.stringValue, toolInput: fields["toolInput"],
           createdAt: fields["created"]?.numberValue.map { Date(timeIntervalSince1970: $0 / 1000) },
           remoteID: remoteID)
+      }
+      if object["preserveHistory"]?.boolValue == true {
+        // OpenCode's active context can omit earlier messages or content parts.
+        // Keep confirmed cached history; replace optimistic local rows with the
+        // server's identified messages so submitted prompts aren't duplicated.
+        messages.removeAll { $0.remoteID == nil }
+        var indices = Dictionary(messages.enumerated().compactMap { index, message in
+          message.remoteID.map { ($0, index) }
+        }, uniquingKeysWith: { first, _ in first })
+        for message in snapshot {
+          guard let remoteID = message.remoteID else { continue }
+          if let index = indices[remoteID] {
+            messages[index] = message
+          } else {
+            indices[remoteID] = messages.count
+            messages.append(message)
+          }
+        }
+      } else {
+        messages = snapshot
       }
     case "user_message_chunk", "agent_message_chunk", "agent_thought_chunk":
       let role = kind == "user_message_chunk" ? "user" : kind == "agent_message_chunk" ? "assistant" : "thought"

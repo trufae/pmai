@@ -798,6 +798,7 @@ final class RemoteAgentChat {
         connectingHistory = previous
         loadingMessages = bookmark.backend == .openCode ? previous : []
         let id = try await client.connect()
+        try await client.resumeUpdates()
         guard generation == attempt else { return }
         sessionID = id
         connected = await client.isConnected
@@ -962,13 +963,17 @@ final class RemoteAgentChat {
     reconnectTask?.cancel()
     reconnectTask = nil
     generation += 1
-    operation?.cancel()
+    let pendingOperation = operation
+    if bookmark.backend != .openCode { pendingOperation?.cancel() }
     operation = nil
     pendingPrompt = nil
     cancelPermissions()
     let client = client
     self.client = nil
-    Task { await client?.disconnect() }
+    Task {
+      await client?.disconnect()
+      pendingOperation?.cancel()
+    }
     connected = false
     historyRewindSupported = false
     configurationOptions = []

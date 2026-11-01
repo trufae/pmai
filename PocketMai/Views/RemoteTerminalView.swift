@@ -212,9 +212,11 @@ struct RemoteTerminalView: View {
           }
           .labelStyle(.iconOnly)
           .buttonStyle(.bordered)
-          HStack(alignment: .firstTextBaseline, spacing: 8) {
+          // Empty multiline fields do not provide a stable text baseline.
+          HStack(alignment: .top, spacing: 8) {
             Text("$").foregroundStyle(.green)
             TextField("Command", text: $command, axis: .vertical)
+              .textFieldStyle(.plain)
               .lineLimit(1...6)
               .textInputAutocapitalization(.never)
               .autocorrectionDisabled()

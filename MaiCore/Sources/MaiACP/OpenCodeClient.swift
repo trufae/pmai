@@ -16,25 +16,86 @@ public actor OpenCodeClient: RemoteSessionClient {
   private var prompting = false
   private var configuring = false
   private var rewinding = false
+  private var observation: Task<Void, Never>?
+  private var observing = false
   private var history: [JSONValue] = []
   public private(set) var isConnected = false
   private let onUpdate: (@Sendable (JSONValue) async -> Void)?
   private let onPermission: (@Sendable (JSONValue) async throws -> String?)?
+  private let onDisconnect: (@Sendable () async -> Void)?
 
   public init(
     connection: OpenCodeConnection, sessionID: String? = nil,
     configuration: URLSessionConfiguration = .ephemeral,
     onUpdate: (@Sendable (JSONValue) async -> Void)? = nil,
-    onPermission: (@Sendable (JSONValue) async throws -> String?)? = nil
+    onPermission: (@Sendable (JSONValue) async throws -> String?)? = nil,
+    onDisconnect: (@Sendable () async -> Void)? = nil
   ) {
     http = OpenCodeHTTP(url: connection.url, token: connection.token, configuration: configuration)
     cwd = connection.cwd
     self.sessionID = sessionID
     self.onUpdate = onUpdate
     self.onPermission = onPermission
+    self.onDisconnect = onDisconnect
   }
 
-  deinit { http.close() }
+  deinit { observation?.cancel(); http.close() }
+
+  public func resumeUpdates() async throws {
+    try checkOpen()
+    guard isConnected, !prompting, !observing, let id = sessionID else { return }
+    let running = try await sessionIsRunning(id)
+    _ = try await refreshHistory(id, full: true)
+    try checkOpen()
+    observing = running
+    await publishRunning(running)
+    guard running, !closed else { return }
+    observation = Task { [weak self] in
+      do {
+        while !Task.isCancelled {
+          guard let self else { return }
+          guard try await self.pollResumedSession(id) else { return }
+          try await Task.sleep(for: .seconds(1))
+        }
+      } catch {
+        await self?.observationFailed()
+      }
+    }
+  }
+
+  private func sessionIsRunning(_ id: String) async throws -> Bool {
+    let response = try await http.request(["api", "session", "active"])
+    guard let active = response.objectValue?["data"]?.objectValue else { throw invalidResponse() }
+    return active[id] != nil
+  }
+
+  private func publishRunning(_ running: Bool) async {
+    await onUpdate?(.object([
+      "sessionUpdate": .string("_pmai/session_state"), "running": .bool(running),
+    ]))
+  }
+
+  private func pollResumedSession(_ id: String) async throws -> Bool {
+    try checkOpen()
+    let running = try await sessionIsRunning(id)
+    _ = try await refreshHistory(id, full: !running)
+    if running { try await answerPermissions(id) }
+    try checkOpen()
+    if !running {
+      observing = false
+      observation = nil
+      await publishRunning(false)
+    }
+    return running
+  }
+
+  private func observationFailed() async {
+    guard !closed else { return }
+    observing = false
+    observation = nil
+    isConnected = false
+    await onDisconnect?()
+  }
 
   public func workspace() async throws -> ACPWorkspaceSnapshot? {
     try checkOpen()
@@ -127,7 +188,7 @@ public actor OpenCodeClient: RemoteSessionClient {
 
   public func rewind(to messageID: String?) async throws {
     try checkOpen()
-    guard isConnected, !prompting, !configuring, let id = sessionID else {
+    guard isConnected, !prompting, !observing, !configuring, let id = sessionID else {
       throw JSONRPCError.invalidParams("Connect to an idle OpenCode session first.")
     }
     configuring = true
@@ -219,7 +280,7 @@ public actor OpenCodeClient: RemoteSessionClient {
     -> [RemoteSessionOption]
   {
     try checkOpen()
-    guard isConnected, !prompting, !configuring, let sessionID else {
+    guard isConnected, !prompting, !observing, !configuring, let sessionID else {
       throw JSONRPCError.invalidParams("Connect to an idle OpenCode session first.")
     }
     configuring = true
@@ -349,7 +410,7 @@ public actor OpenCodeClient: RemoteSessionClient {
     _ request: RemotePromptRequest, emit: @escaping @Sendable (ProviderEvent) async -> Void
   ) async throws -> ProviderStopReason {
     try checkOpen()
-    guard isConnected, !prompting, !configuring, let id = sessionID else {
+    guard isConnected, !prompting, !observing, !configuring, let id = sessionID else {
       throw JSONRPCError.invalidParams("Connect to an idle OpenCode session first.")
     }
     prompting = true
@@ -385,7 +446,7 @@ public actor OpenCodeClient: RemoteSessionClient {
       completedHistory = try await refreshHistory(id, full: true)
     } catch {
       isConnected = false
-      if Task.isCancelled {
+      if Task.isCancelled && !closed {
         // Cancellation must still reach the host after the caller's task is cancelled.
         let http = http
         _ = await Task {
@@ -412,19 +473,21 @@ public actor OpenCodeClient: RemoteSessionClient {
   }
 
   public func cancel() async {
-    guard prompting, !closed, let sessionID else { return }
+    guard prompting || observing, !closed, let sessionID else { return }
     _ = try? await http.request(["api", "session", sessionID, "interrupt"], method: "POST")
   }
 
   public func disconnect() async {
     closed = true
     isConnected = false
-    if prompting, let sessionID {
-      _ = try? await http.request(["api", "session", sessionID, "interrupt"], method: "POST")
-    }
+    let observation = observation
+    observation?.cancel()
+    self.observation = nil
+    observing = false
     // A cancelled rewind may still need to clear a staged deletion. Keep its
     // transport alive until that cleanup finishes, then rewind's defer closes it.
     if !rewinding { http.close() }
+    await observation?.value
   }
 
   private func checkOpen() throws {
@@ -520,6 +583,7 @@ public actor OpenCodeClient: RemoteSessionClient {
     await onUpdate?(
       .object([
         "sessionUpdate": .string("_pmai/message_snapshot"), "messages": .array(messages),
+        "preserveHistory": .bool(!rewinding),
       ]))
     return history
   }

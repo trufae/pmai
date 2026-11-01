@@ -55,11 +55,10 @@ struct HostsView: View, Equatable {
       }
       SidebarGroupedRows(items: offline, groupTitle: { _ in "Offline" }, row: remoteRow)
     } actions: { _ in
-      FloatingActionIcon(
-        systemImage: "plus", accessibilityLabel: "Add Remote Host", compact: true
-      ) {
+      Button("Add Host") {
         adding = true
       }
+      .adaptiveGlassButtonStyle()
     }
     .sheet(isPresented: $adding) {
       RemoteAgentConnectionView(
