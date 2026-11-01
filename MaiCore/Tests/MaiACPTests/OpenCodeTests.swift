@@ -51,6 +51,16 @@ private func openCodeTestConfiguration() -> URLSessionConfiguration {
   return configuration
 }
 
+@Test("Remote recovery retries network failures but stops for cancellation and credentials")
+func openCodeRecoveryPolicy() {
+  #expect(RemoteConnectionRecovery.shouldRetry(URLError(.networkConnectionLost)))
+  #expect(RemoteConnectionRecovery.shouldRetry(URLError(.notConnectedToInternet)))
+  #expect(RemoteConnectionRecovery.shouldRetry(JSONRPCError.internalError("Server unavailable")))
+  #expect(!RemoteConnectionRecovery.shouldRetry(CancellationError()))
+  #expect(!RemoteConnectionRecovery.shouldRetry(JSONRPCError.invalidParams("Pair this host again")))
+  #expect(!RemoteConnectionRecovery.shouldRetry(JSONRPCError(code: JSONRPCError.authRequired, message: "Log in")))
+}
+
 @Test("OpenCode browses nested and hidden files and reads bounded binary ranges without creating a chat")
 func openCodeWorkspaceFiles() async throws {
   let host = "files.opencode.test"

@@ -2348,7 +2348,7 @@ struct ChatView: View {
         onShowRemoteTerminal(hosts.selectedHost ?? chat.bookmark, chat.conversation.cwd)
       }
     }
-    .disabled(chat.bookmark.backend == .openCode)
+    .disabled(chat.conversation.cwd.isEmpty)
   }
 
   private func remoteConversationSuggestions(hosts: HostNavigationStore) -> some View {

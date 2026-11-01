@@ -310,6 +310,48 @@ final class RemoteMessageActionTests: XCTestCase {
     throw URLError(.timedOut)
   }
 
+  func testHostDiscoveryRecoversAndResumesTheSavedFolderAndChat() async throws {
+    try await withChat { chat, store, fixture, _ in
+      let suite = "remote-navigation-\(UUID())"
+      let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+      defer { preferences.removePersistentDomain(forName: suite) }
+      let configuration = URLSessionConfiguration.ephemeral
+      configuration.protocolClasses = [RemoteActionURLProtocol.self]
+      let navigation = HostNavigationStore(
+        remotes: store, preferences: preferences, httpConfiguration: configuration)
+      defer { navigation.suspendConnections() }
+      fixture.interruptNextDiscovery()
+      navigation.selectHost(chat.bookmark.id, isOffline: false)
+      navigation.selectFolder("/work")
+      navigation.selectedConversationID = chat.conversation.id
+      try await waitForHost(navigation, id: chat.bookmark.id)
+      XCTAssertEqual(navigation.selectedConversationID, chat.conversation.id)
+      navigation.suspendConnections()
+      let restored = HostNavigationStore(
+        remotes: store, preferences: preferences, httpConfiguration: configuration)
+      defer { restored.suspendConnections() }
+      XCTAssertEqual(restored.selectedHostID, chat.bookmark.id)
+      XCTAssertEqual(restored.selectedFolderID, "/work")
+      XCTAssertEqual(restored.selectedConversationID, chat.conversation.id)
+      restored.resumeConnections(isOffline: true)
+      XCTAssertFalse(restored.loading)
+      restored.resumeConnections(isOffline: false)
+      try await waitForHost(restored, id: chat.bookmark.id)
+      XCTAssertNil(restored.error)
+      restored.disconnect(chat.bookmark.id)
+      XCTAssertNil(HostNavigationStore(remotes: store, preferences: preferences).selectedHostID)
+    }
+  }
+
+  private func waitForHost(_ navigation: HostNavigationStore, id: UUID) async throws {
+    for _ in 0..<1000 {
+      if navigation.isConnected(id) && !navigation.loading { return }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    XCTFail(navigation.error ?? "Host did not reconnect")
+    throw URLError(.timedOut)
+  }
+
   private func withChat(
     _ body:
       @MainActor (
@@ -374,6 +416,7 @@ private final class RemoteActionEndpoint: @unchecked Sendable {
   private var recordedModels: [String] = []
   private var failRewind = false
   private var failNextPrompt = false
+  private var failNextDiscovery = false
   private var model = "original"
   private var recordedCatalogRequests = 0
   var catalogRequests: Int { lock.withLock { recordedCatalogRequests } }
@@ -384,6 +427,7 @@ private final class RemoteActionEndpoint: @unchecked Sendable {
   var selectedModels: [String] { lock.withLock { recordedModels } }
   func rejectRewind() { lock.withLock { failRewind = true } }
   func rejectNextPrompt() { lock.withLock { failNextPrompt = true } }
+  func interruptNextDiscovery() { lock.withLock { failNextDiscovery = true } }
 
   func respond(_ request: URLRequest) throws -> (Int, Data) {
     try lock.withLock {
@@ -405,6 +449,16 @@ private final class RemoteActionEndpoint: @unchecked Sendable {
         data.isEmpty ? nil : try JSONDecoder().decode(JSONValue.self, from: data).objectValue
       let result: JSONValue
       switch (method, path) {
+      case ("GET", "/api/project"):
+        if failNextDiscovery {
+          failNextDiscovery = false
+          throw URLError(.networkConnectionLost)
+        }
+        result = .array([.object(["canonical": .string("/work")])])
+      case ("GET", "/api/session"):
+        result = .object(["data": .array([
+          .object(["id": .string("ses_test"), "location": .object(["directory": .string("/work")])])
+        ])])
       case ("GET", "/api/session/ses_test"):
         result = .object([
           "data": .object([

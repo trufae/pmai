@@ -485,6 +485,7 @@ final class RemoteAgentChat {
   private var historyRewindSupported = false
   private var deleted = false
   private var connectingHistory: [RemoteAgentMessage]?
+  private var loadingMessages: [RemoteAgentMessage]?
   private let store: RemoteAgentStore
   private let isOffline: () -> Bool
   private let httpConfiguration: URLSessionConfiguration
@@ -738,7 +739,7 @@ final class RemoteAgentChat {
         let client = try makeClient()
         self.client = client
         connectingHistory = previous
-        messages = []
+        loadingMessages = bookmark.backend == .openCode ? previous : []
         let id = try await client.connect()
         guard generation == attempt else { return }
         sessionID = id
@@ -746,6 +747,9 @@ final class RemoteAgentChat {
         guard generation == attempt else { return }
         historyRewindSupported = await client.historyRewindSupported()
         supportsInjection = await client.injectionSupported()
+        guard generation == attempt, !Task.isCancelled else { return }
+        messages = loadingMessages ?? previous
+        loadingMessages = nil
         reconnectDelay = 1
         store.setConnectionFailed(!connected, for: bookmark.id)
         connectingHistory = nil
@@ -755,11 +759,13 @@ final class RemoteAgentChat {
         guard generation == attempt else { return }
         messages = previous
         connectingHistory = nil
+        loadingMessages = nil
         unsentPrompt = pendingPrompt
         pendingPrompt = nil
         historyRewindSupported = false
         self.error = error.localizedDescription
         connected = false
+        if !RemoteConnectionRecovery.shouldRetry(error) { shouldReconnect = false }
         store.setConnectionFailed(!(error is CancellationError), for: bookmark.id)
         status = "Disconnected"
         await client?.disconnect()
@@ -883,6 +889,7 @@ final class RemoteAgentChat {
 
   func disconnect() {
     shouldReconnect = false
+    loadingMessages = nil
     reconnectTask?.cancel()
     reconnectTask = nil
     generation += 1
@@ -913,6 +920,7 @@ final class RemoteAgentChat {
   private func connectionClosed(generation: Int) {
     guard self.generation == generation else { return }
     self.generation += 1
+    loadingMessages = nil
     operation?.cancel()
     operation = nil
     client = nil
@@ -998,7 +1006,12 @@ final class RemoteAgentChat {
     } else if kind == "config_option_update" {
       configurationOptions = RemoteSessionOption.parse(object["configOptions"])
     } else {
-      ACPConversationTranscript.apply(update, to: &messages)
+      if var loading = loadingMessages {
+        ACPConversationTranscript.apply(update, to: &loading)
+        loadingMessages = loading
+      } else {
+        ACPConversationTranscript.apply(update, to: &messages)
+      }
     }
   }
 

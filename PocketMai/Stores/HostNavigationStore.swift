@@ -24,8 +24,12 @@ final class HostNavigationStore {
   let remotes: RemoteAgentStore
   private(set) var selectedHostID: UUID?
   private var selectedHostRevision: UUID?
-  var selectedFolderID: String?
-  var selectedConversationID: UUID?
+  var selectedFolderID: String? {
+    didSet { preferences?.set(selectedFolderID, forKey: "remote.selectedFolder") }
+  }
+  var selectedConversationID: UUID? {
+    didSet { preferences?.set(selectedConversationID?.uuidString, forKey: "remote.selectedConversation") }
+  }
   private var draftConversation: RemoteAgentConversation?
   private(set) var loading = false
   private(set) var waitingApproval = false
@@ -37,9 +41,33 @@ final class HostNavigationStore {
   private(set) var connectedHostID: UUID?
   var activeChat: RemoteAgentChat?
   private var managementChat: RemoteAgentChat?
+  private let preferences: UserDefaults?
+  private let httpConfiguration: URLSessionConfiguration
+  private var reconnectTask: Task<Void, Never>?
+  private var reconnectDelay = 1
+  private var suspended = false
 
-  init(remotes: RemoteAgentStore = .shared) {
+  init(
+    remotes: RemoteAgentStore = .shared, preferences: UserDefaults? = nil,
+    httpConfiguration: URLSessionConfiguration = .ephemeral
+  ) {
     self.remotes = remotes
+    self.preferences = preferences
+    self.httpConfiguration = httpConfiguration
+    if let saved = preferences?.string(forKey: "remote.selectedHost"),
+      let id = UUID(uuidString: saved), let host = remotes.host(id)
+    {
+      selectedHostID = id
+      selectedHostRevision = host.revision
+      selectedFolderID = preferences?.string(forKey: "remote.selectedFolder") ?? host.cwd
+      if let saved = preferences?.string(forKey: "remote.selectedConversation"),
+        let chat = host.conversations?.first(where: { $0.id.uuidString == saved })
+      {
+        selectedConversationID = chat.id
+        selectedFolderID = chat.cwd
+      }
+      if selectedConversationID == nil { newConversation() }
+    }
   }
 
   func isConnected(_ id: UUID) -> Bool {
@@ -62,9 +90,21 @@ final class HostNavigationStore {
   }
 
   func suspendConnections() {
+    suspended = true
     stopDiscovery()
     activeChat?.disconnect()
     managementChat?.disconnect()
+  }
+
+  func resumeConnections(isOffline: Bool) {
+    guard !isOffline else { return }
+    suspended = false
+    if let id = selectedHostID, !isConnected(id), !loading { refresh(isOffline: false) }
+    if let activeChat, activeChat.conversation.id == selectedConversationID,
+      activeChat.conversation.sessionID != nil || !activeChat.messages.isEmpty
+    {
+      activeChat.connect()
+    }
   }
 
   func manageConversation(
@@ -87,7 +127,10 @@ final class HostNavigationStore {
         bookmark: host, conversation: conversation, store: remotes, isOffline: isOffline)
     }
     managementChat = chat
-    defer { if managementChat === chat { managementChat = nil } }
+    defer {
+      if managementChat === chat { managementChat = nil }
+      if !suspended { resumeConnections(isOffline: isOffline()) }
+    }
     do {
       try await chat.manage(title: title)
       if title == nil, selectedHostID == host.id, selectedConversationID == conversation.id {
@@ -128,12 +171,16 @@ final class HostNavigationStore {
 
   func selectHost(_ id: UUID?, isOffline: Bool) {
     let host = remotes.host(id)
-    guard selectedHostID != id || selectedHostRevision != host?.revision else { return }
+    guard selectedHostID != id || selectedHostRevision != host?.revision else {
+      resumeConnections(isOffline: isOffline)
+      return
+    }
     suspendConnections()
     activeChat = nil
     selectedHostRevision = host?.revision
     if selectedHostID != id {
       selectedHostID = id
+      preferences?.set(id?.uuidString, forKey: "remote.selectedHost")
       selectedFolderID = host?.cwd
       draftConversation = nil
       selectedConversationID = nil
@@ -214,6 +261,7 @@ final class HostNavigationStore {
       return
     }
     stopDiscovery()
+    suspended = false
     loading = true
     error = nil
     remotes.setConnectionFailed(false, for: host.id)
@@ -240,6 +288,7 @@ final class HostNavigationStore {
         }
         let client = try host.makeClient(
           token: token, cwd: host.cwd,
+          httpConfiguration: httpConfiguration,
           onDisconnect: { [weak self] in await self?.connectionClosed(attempt: attempt) })
         self.client = client
         let snapshot = try await client.workspace()
@@ -247,6 +296,7 @@ final class HostNavigationStore {
         let connected = await client.isConnected
         guard generation == attempt, !Task.isCancelled else { return }
         connectedHostID = connected ? host.id : nil
+        reconnectDelay = 1
         remotes.setConnectionFailed(!connected, for: host.id)
         supportsDiscovery = snapshot != nil
         if let snapshot { remotes.updateWorkspace(host.id, snapshot: snapshot) }
@@ -261,7 +311,12 @@ final class HostNavigationStore {
         guard generation == attempt else { return }
         self.error = error.localizedDescription
         remotes.setConnectionFailed(!(error is CancellationError), for: host.id)
-        await client?.disconnect()
+        let previous = client
+        client = nil
+        await previous?.disconnect()
+        guard generation == attempt else { return }
+        loading = false
+        if RemoteConnectionRecovery.shouldRetry(error) { scheduleReconnect() }
       }
       guard generation == attempt else { return }
       operation = nil
@@ -271,6 +326,8 @@ final class HostNavigationStore {
   }
 
   func stopDiscovery() {
+    reconnectTask?.cancel()
+    reconnectTask = nil
     generation += 1
     operation?.cancel()
     operation = nil
@@ -283,9 +340,24 @@ final class HostNavigationStore {
   }
 
   private func connectionClosed(attempt: Int) {
-    guard generation == attempt else { return }
+    guard generation == attempt, client != nil else { return }
     if let selectedHostID { remotes.setConnectionFailed(true, for: selectedHostID) }
     connectedHostID = nil
-    if !loading { error = "Disconnected from this host. Reconnect to continue." }
+    error = "Connection lost. Reconnecting…"
+    // Invalidate callbacks before closing the failed client.
+    stopDiscovery()
+    scheduleReconnect()
+  }
+
+  private func scheduleReconnect() {
+    guard !suspended, selectedHostID != nil, reconnectTask == nil else { return }
+    let delay = reconnectDelay
+    reconnectDelay = min(30, reconnectDelay * 2)
+    reconnectTask = Task { [weak self] in
+      do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+      guard let self, !Task.isCancelled, !suspended else { return }
+      reconnectTask = nil
+      refresh(isOffline: false)
+    }
   }
 }

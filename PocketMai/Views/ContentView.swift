@@ -22,7 +22,7 @@ struct ContentView: View {
   @State private var isFoldersPanelMounted = false
   @State private var showingHosts = false
   @State private var isHostsPanelMounted = false
-  @State private var hosts = HostNavigationStore()
+  @State private var hosts = HostNavigationStore(preferences: .standard)
   @State private var historyDragOffset: CGFloat = 0
   @State private var drawerTransitionGeneration = 0
   @State private var sidebarSelectionGeneration = 0
@@ -66,6 +66,7 @@ struct ContentView: View {
                 onShowHosts: { setDrawerDepth(3, animation: historyPanelAnimation) },
                 onSelectFolder: { cwd in
                   hosts.selectFolder(cwd)
+                  hosts.resumeConnections(isOffline: store.settings.isOffline)
                   setDrawerDepth(1, animation: historyPanelAnimation)
                 }, isVisible: foldersVisible && !showingHosts,
                 onBrowseFiles: { browseFiles(cwd: $0) },
@@ -348,11 +349,13 @@ struct ContentView: View {
       settingsStoreObservation.connect(to: store)
       screenshotService.store = store
       store.drainPendingSharedLaunchCommand()
+      hosts.resumeConnections(isOffline: store.settings.isOffline)
     }
     .onChange(of: scenePhase) { _, phase in
       store.handleScenePhaseChange(phase)
       if phase == .background { hosts.suspendConnections() }
       if phase == .active {
+        hosts.resumeConnections(isOffline: store.settings.isOffline)
         store.refreshAppleIntelligenceAvailabilityInBackground()
         store.refreshLocalMLXModelsInBackground()
         store.drainPendingSharedLaunchCommand()
@@ -362,6 +365,8 @@ struct ContentView: View {
       if enabled {
         hosts.suspendConnections()
         Task { await ForwirohRemote.shared.close() }
+      } else {
+        hosts.resumeConnections(isOffline: false)
       }
     }
     .onChange(of: hosts.remotes.connections.map(\.id)) { _, ids in
