@@ -1574,7 +1574,6 @@ struct SettingsView: View {
       }
 
       SettingsLazyDisclosureGroup {
-        ToolCatalogSettingsButton(groupID: MaiSkillTools.group(toolNames: []).catalogID)
         SkillsSettingsView()
       } label: {
         Label("Skills", systemImage: "sparkles")
