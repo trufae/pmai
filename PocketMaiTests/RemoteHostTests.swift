@@ -35,6 +35,64 @@ final class RemoteHostTests: XCTestCase {
     }
   }
 
+  func testRemoteLandingDraftSurvivesDiscoveryAndOnlyPersistsWhenUsed() throws {
+    let original = RemoteAgentBookmark(
+      name: "Worker", url: try XCTUnwrap(URL(string: "https://worker.example")), cwd: "",
+      backend: .openCode)
+    try withStore([original]) { store, _ in
+      let hosts = HostNavigationStore(remotes: store)
+      hosts.selectHost(original.id, isOffline: true)
+      let draft = try XCTUnwrap(hosts.selectedConversation)
+      XCTAssertNil(draft.sessionID)
+      XCTAssertFalse(RemoteAgentChat(bookmark: original, conversation: draft, store: store).canSubmit)
+      XCTAssertTrue(store.host(original.id)?.conversations?.isEmpty == true)
+
+      // Discovery supplies OpenCode's project after the composer is already visible.
+      hosts.selectFolder("/work", preservingDraft: true)
+      XCTAssertEqual(hosts.selectedConversation?.id, draft.id)
+      XCTAssertEqual(hosts.selectedConversation?.cwd, "/work")
+      let unused = try XCTUnwrap(hosts.newConversation())
+      XCTAssertNotEqual(unused.id, draft.id)
+      XCTAssertTrue(RemoteAgentChat(bookmark: original, conversation: unused, store: store).canSubmit)
+      XCTAssertTrue(store.host(original.id)?.conversations?.isEmpty == true)
+
+      var started = unused
+      started.sessionID = "new-session"
+      started.messages = [.init(role: "user", text: "Hello")]
+      store.update(original.id, conversation: started)
+      XCTAssertEqual(hosts.selectedConversation?.id, unused.id)
+      XCTAssertEqual(hosts.selectedConversation?.messages.first?.text, "Hello")
+      XCTAssertEqual(store.host(original.id)?.conversations?.count, 1)
+      hosts.selectHost(nil, isOffline: true)
+      XCTAssertNil(hosts.selectedConversation)
+    }
+  }
+
+  func testRemoteLandingRecentsStayOnHostAndOpenTheirOwnFolder() throws {
+    let chats = (1...4).map { index in
+      RemoteAgentConversation(
+        cwd: "/project/\(index)", sessionID: "session-\(index)", title: "Chat \(index)",
+        updatedAt: Date(timeIntervalSince1970: Double(index)))
+    }
+    let first = RemoteAgentBookmark(
+      name: "First", url: try XCTUnwrap(URL(string: "wss://first.example/acp")), cwd: "/work",
+      conversations: chats + [RemoteAgentConversation(cwd: "/work")])
+    let second = RemoteAgentBookmark(
+      name: "Second", url: try XCTUnwrap(URL(string: "https://second.example")), cwd: "/other",
+      conversations: [.init(cwd: "/other", sessionID: "other-session")], backend: .openCode)
+    try withStore([first, second]) { store, _ in
+      let hosts = HostNavigationStore(remotes: store)
+      hosts.selectHost(first.id, isOffline: true)
+      XCTAssertEqual(hosts.recentConversations.map(\.id), Array(chats.suffix(3)).map(\.id))
+      hosts.selectConversation(chats[2].id)
+      XCTAssertEqual(hosts.selectedFolderID, chats[2].cwd)
+      XCTAssertEqual(hosts.selectedConversation?.sessionID, chats[2].sessionID)
+      hosts.selectHost(second.id, isOffline: true)
+      XCTAssertEqual(hosts.recentConversations.map(\.id), second.conversations?.map(\.id))
+      XCTAssertEqual(hosts.selectedConversation?.cwd, "/other")
+    }
+  }
+
   func testLegacyHostStillUsesACP() throws {
     let host = RemoteAgentBookmark(
       name: "Legacy", url: try XCTUnwrap(URL(string: "wss://host.example/acp")), cwd: "/work")
