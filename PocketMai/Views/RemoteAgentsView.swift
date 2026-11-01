@@ -10,6 +10,7 @@ struct RemoteAgentsView: View {
   @State private var adding = false
   @State private var editing: RemoteAgentBookmark?
   @State private var renaming: RemoteAgentBookmark?
+  @State private var terminalLocation: RemoteTerminalLocation?
 
   var body: some View {
     List {
@@ -29,6 +30,7 @@ struct RemoteAgentsView: View {
             RemoteHostMenu(
               host: connection, store: store, isOffline: appStore.settings.isOffline,
               rename: { renaming = connection },
+              terminal: { if let cwd = connection.terminalWorkingDirectory { terminalLocation = .init(host: connection, cwd: cwd) } },
               edit: { editing = connection })
           }
         }
@@ -43,6 +45,7 @@ struct RemoteAgentsView: View {
     .navigationTitle("Remote Hosts")
     .sheet(isPresented: $adding) { RemoteAgentConnectionView() }
     .sheet(item: $editing) { host in RemoteAgentConnectionView(initialHost: host) }
+    .fullScreenCover(item: $terminalLocation) { RemoteTerminalView(location: $0).environmentObject(appStore) }
     .modifier(RemoteHostRenameModifier(host: $renaming))
   }
 }
@@ -53,6 +56,7 @@ struct RemoteHostMenu: View {
   let isOffline: Bool
   let rename: () -> Void
   var connect: (() -> Void)?
+  var terminal: (() -> Void)?
   let edit: () -> Void
 
   var body: some View {
@@ -64,6 +68,9 @@ struct RemoteHostMenu: View {
     if let connect {
       Divider()
       Button("Connect", systemImage: "network", action: connect).disabled(isOffline)
+    }
+    if let terminal, host.terminalWorkingDirectory != nil, host.requiresApproval != true {
+      Button("Terminal", systemImage: "terminal", action: terminal).disabled(isOffline)
     }
     Divider()
     Button("Edit Host", systemImage: "pencil", action: edit)
@@ -121,20 +128,28 @@ struct RemoteAgentConnectionView: View {
   @State private var accentColor = AgentProjectTint.presetNames.randomElement() ?? "blue"
   @State private var requiresApproval: Bool?
   @State private var forwirohInvitation: String?
-  @State private var connectionProtocol: ACPRemoteProtocol = .local
+  @State private var connectionProtocol: ACPRemoteProtocol = .forwiroh
   @State private var backend: RemoteAgentBackend = .acp
   @State private var importing = false
   @State private var importTask: Task<Void, Never>?
   @State private var advanced = false
   @State private var deleting = false
+  @State private var agentAccess = false
+
+  private enum HostType: String, CaseIterable { case pocketMai = "PocketMai", webSocketACP = "WebSocketACP", openCode = "OpenCode" }
+  private var hostType: HostType {
+    backend == .openCode ? .openCode : connectionProtocol == .local ? .webSocketACP : .pocketMai
+  }
 
   var body: some View {
     NavigationStack {
       Form {
         Section {
-          Picker("Host Type", selection: $backend) {
-            Text("pmai").tag(RemoteAgentBackend.acp)
-            Text("OpenCode").tag(RemoteAgentBackend.openCode)
+          Picker("Host Type", selection: Binding(get: { hostType }, set: { value in
+            backend = value == .openCode ? .openCode : .acp
+            if value != .openCode { connectionProtocol = value == .webSocketACP ? .local : .forwiroh }
+          })) {
+            ForEach(HostType.allCases, id: \.self) { Text($0.rawValue).tag($0) }
           }
           .pickerStyle(.menu)
           .disabled(importing)
@@ -148,12 +163,15 @@ struct RemoteAgentConnectionView: View {
           .controlSize(.regular)
           .disabled(importing || !DataScannerViewController.isSupported)
           VStack(alignment: .leading, spacing: 8) {
-            Text(backend == .openCode ? "On your computer, run:" : "In the pmai REPL, run:")
-            Text(backend == .openCode ? "opencode pair --remote" : "/remote serve")
+            Text(hostType == .pocketMai ? "In the pmai REPL, run:" : "On your computer, run:")
+            Text(hostType == .openCode ? "opencode pair --remote" : hostType == .webSocketACP
+              ? "pmai acp-gateway --host 0.0.0.0 --cwd \"$PWD\" --url ws://HOST_IP:19283/acp -- pmai --acp --acp-root \"$PWD\""
+              : "/remote serve")
               .font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
             Text(
-              backend == .openCode
-                ? "Scan the QR, choose a name, then tap Add."
+              hostType == .openCode ? "Scan the QR, choose a name, then tap Add."
+                : hostType == .webSocketACP
+                ? "Replace HOST_IP with your computer’s LAN address, run this command in the project folder, then scan its QR. Other ACP agents can also be exposed through the gateway."
                 : "Scan the QR and add the host. Approve the device and chat requests with /remote accept on your computer."
             )
           }
@@ -186,6 +204,11 @@ struct RemoteAgentConnectionView: View {
               "This connection is unencrypted. Use it only on a trusted private network, or use HTTPS / WSS.",
               systemImage: "lock.open")
           }
+        }
+        Section {
+          Toggle("Allow Remote Tool", isOn: $agentAccess)
+        } footer: {
+          Text("Permit the native remote tool in local conversations to access this host’s files and run programs. Tool approvals still apply.")
         }
         if initialHost != nil {
           Section {
@@ -241,8 +264,9 @@ struct RemoteAgentConnectionView: View {
           accentColor = host.accentColor ?? accentColor
           requiresApproval = host.requiresApproval
           forwirohInvitation = host.forwirohInvitation
-          connectionProtocol = host.connectionProtocol ?? .local
+          connectionProtocol = host.connectionProtocol ?? (host.url.scheme == "forwiroh" ? .forwiroh : .local)
           backend = host.backend ?? .acp
+          agentAccess = host.agentAccess == true
           do { token = try RemoteAgentStore.shared.token(for: host.id) } catch {
             self.error = error.localizedDescription
           }
@@ -423,6 +447,7 @@ struct RemoteAgentConnectionView: View {
           url: url, token: token.trimmingCharacters(in: .whitespacesAndNewlines), cwd: cwd)
         let id = try RemoteAgentStore.shared.add(
           profile, replacing: initialHost?.id, accentColor: accentColor)
+        try RemoteAgentStore.shared.setAgentAccess(agentAccess, for: id)
         dismiss()
         onAdded?(id)
         return
@@ -435,6 +460,7 @@ struct RemoteAgentConnectionView: View {
       profile.forwirohInvitation = connectionProtocol == .forwiroh ? forwirohInvitation : nil
       let id = try RemoteAgentStore.shared.add(
         profile, replacing: initialHost?.id, accentColor: accentColor)
+      try RemoteAgentStore.shared.setAgentAccess(agentAccess, for: id)
       dismiss()
       onAdded?(id)
     } catch { self.error = error.localizedDescription }

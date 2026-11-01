@@ -575,6 +575,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
   case calculator
   case textToSpeech
   case files
+  case remote
   case vdb
   case calendar
   case clipboard
@@ -599,7 +600,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
     case .datetime, .language, .location, .memory:
       return true
     case .weather, .webSearch, .todo, .calculator, .textToSpeech, .files, .calendar, .clipboard,
-      .alarms, .webxdc, .github, .mastodon, .browser, .vdb, .context:
+      .alarms, .webxdc, .github, .mastodon, .browser, .vdb, .context, .remote:
       return false
     }
   }
@@ -607,7 +608,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
   var isCallableTool: Bool {
     switch self {
     case .weather, .webSearch, .todo, .calculator, .textToSpeech, .files, .calendar, .clipboard,
-      .alarms, .webxdc, .github, .mastodon, .browser, .vdb, .context:
+      .alarms, .webxdc, .github, .mastodon, .browser, .vdb, .context, .remote:
       return true
     case .datetime, .language, .location, .memory:
       return false
@@ -625,6 +626,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
     case .calculator: "Calculator"
     case .textToSpeech: "Text to Speech"
     case .files: "Files"
+    case .remote: "Remote Hosts"
     case .vdb: "Local documentation"
     case .calendar: "Calendar"
     case .clipboard: "Clipboard"
@@ -649,6 +651,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
     case .calculator: "function"
     case .textToSpeech: "speaker.wave.2"
     case .files: "folder"
+    case .remote: "terminal"
     case .vdb: "books.vertical"
     case .calendar: "calendar"
     case .clipboard: "doc.on.clipboard"

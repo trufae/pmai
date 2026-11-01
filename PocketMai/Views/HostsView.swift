@@ -33,6 +33,7 @@ struct HostsView: View, Equatable {
   @State private var adding = false
   @State private var editing: RemoteAgentBookmark?
   @State private var renaming: RemoteAgentBookmark?
+  @State private var terminalLocation: RemoteTerminalLocation?
 
   nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.hosts === rhs.hosts
@@ -71,6 +72,7 @@ struct HostsView: View, Equatable {
         })
     }
     .sheet(item: $editing) { host in RemoteAgentConnectionView(initialHost: host) }
+    .fullScreenCover(item: $terminalLocation) { RemoteTerminalView(location: $0).environmentObject(appStore) }
     .modifier(RemoteHostRenameModifier(host: $renaming))
   }
 
@@ -88,6 +90,7 @@ struct HostsView: View, Equatable {
         host: host, store: hosts.remotes, isOffline: appStore.settings.isOffline,
         rename: { renaming = host },
         connect: { hosts.reconnect(host.id, isOffline: appStore.settings.isOffline) },
+        terminal: { if let cwd = host.terminalWorkingDirectory { terminalLocation = .init(host: host, cwd: cwd) } },
         edit: { editing = host })
     }
   }

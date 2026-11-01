@@ -22,8 +22,13 @@ struct RemoteAgentBookmark: Codable, Identifiable, Sendable {
   var isPinned: Bool?
   var pinnedFolderPaths: [String]?
   var pinnedConversationIDs: [UUID]?
+  var agentAccess: Bool?
+  var terminalWorkingDirectory: String? {
+    if !cwd.isEmpty { return cwd }
+    return workspace?.folders.first?.cwd
+  }
 
-  private func connection(token: String, cwd: String) throws -> RemoteHostConnection {
+  func connection(token: String, cwd: String) throws -> RemoteHostConnection {
     var connection: RemoteHostConnection
     if backend == .openCode {
       connection = .init(try OpenCodeConnection(name: name, url: url, token: token, cwd: cwd))
@@ -36,8 +41,8 @@ struct RemoteAgentBookmark: Codable, Identifiable, Sendable {
     return connection
   }
 
-  @MainActor func workspaceConnection(cwd: String) throws -> WorkspaceConnection {
-    try connection(token: RemoteAgentStore.shared.token(for: id), cwd: cwd).workspace()
+  @MainActor func workspaceConnection(cwd: String, resumeID: String? = nil) throws -> WorkspaceConnection {
+    try connection(token: RemoteAgentStore.shared.token(for: id), cwd: cwd).workspace(resumeID: resumeID)
   }
 
   func makeClient(
@@ -195,6 +200,7 @@ final class RemoteAgentStore {
     }
     setConnectionFailed(false, for: id)
     try save()
+    Task { await PocketMaiRemoteTools.shared.revoke(host: id.uuidString.lowercased()) }
     return id
   }
 
@@ -316,6 +322,15 @@ final class RemoteAgentStore {
     try save()
   }
 
+  func setAgentAccess(_ enabled: Bool, for id: UUID) throws {
+    guard let index = connections.firstIndex(where: { $0.id == id }) else { return }
+    connections[index].agentAccess = enabled
+    try save()
+    if !enabled {
+      Task { await PocketMaiRemoteTools.shared.revoke(host: id.uuidString.lowercased()) }
+    }
+  }
+
   func folders(for host: RemoteAgentBookmark) -> [ACPWorkspaceFolder] {
     var folders = host.workspace?.folders ?? []
     if host.workspace == nil {
@@ -418,6 +433,7 @@ final class RemoteAgentStore {
   }
 
   func remove(_ id: UUID) {
+    Task { await PocketMaiRemoteTools.shared.revoke(host: id.uuidString.lowercased()) }
     SecItemDelete(keychainQuery(id) as CFDictionary)
     connections.removeAll { $0.id == id }
     failedHostIDs.remove(id)

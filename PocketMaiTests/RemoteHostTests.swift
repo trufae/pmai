@@ -16,6 +16,8 @@ final class RemoteHostTests: XCTestCase {
       defer { store.remove(id) }
       XCTAssertEqual(store.host(id)?.backend, .openCode)
       XCTAssertEqual(store.host(id)?.requiresApproval, false)
+      XCTAssertNotEqual(store.host(id)?.agentAccess, true)
+      try store.setAgentAccess(true, for: id)
       XCTAssertTrue(store.folders(for: try XCTUnwrap(store.host(id))).isEmpty)
       let chat = store.newConversation(hostID: id, cwd: "/work")
       store.toggleFolderPin(hostID: id, cwd: "/work")
@@ -27,6 +29,9 @@ final class RemoteHostTests: XCTestCase {
       let host = try XCTUnwrap(reloaded.host(id))
       XCTAssertEqual(host.backend, .openCode)
       XCTAssertEqual(host.name, "Workstation")
+      XCTAssertEqual(host.agentAccess, true)
+      try reloaded.setAgentAccess(false, for: id)
+      XCTAssertEqual(RemoteAgentStore(file: file).host(id)?.agentAccess, false)
       XCTAssertEqual(host.pinnedFolderPaths, ["/work"])
       XCTAssertEqual(host.pinnedConversationIDs, [chat.id])
       XCTAssertEqual(try reloaded.token(for: id), "refreshed-session")

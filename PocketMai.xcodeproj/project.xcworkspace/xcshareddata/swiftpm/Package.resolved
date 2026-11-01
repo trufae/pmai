@@ -1,5 +1,5 @@
 {
-  "originHash" : "b77ec488b219b73838e300edb4ee9470f36bfec2e88ef649a1f26ee5186fc5ff",
+  "originHash" : "2ddbd7bc4db7b99ff8c3dac0c2cd128c551433b693a38d3632ade04165b8c871",
   "pins" : [
     {
       "identity" : "beautiful-mermaid-swift",
@@ -17,6 +17,15 @@
       "state" : {
         "revision" : "32f8042e3509a4819f00ff9cd46e829ec2b26da0",
         "version" : "1.0.2"
+      }
+    },
+    {
+      "identity" : "h",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/rarestype/h",
+      "state" : {
+        "revision" : "aa3626829160917d4378330617971977cbd78f5b",
+        "version" : "1.0.1"
       }
     },
     {
@@ -128,6 +137,15 @@
       }
     },
     {
+      "identity" : "swift-png",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/tayloraswift/swift-png",
+      "state" : {
+        "revision" : "2d17c6c51c098628574c0383f1119892655a73a2",
+        "version" : "4.5.2"
+      }
+    },
+    {
       "identity" : "swift-sse",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/DePasqualeOrg/swift-sse",
@@ -179,6 +197,15 @@
       "state" : {
         "revision" : "4395b0900c1d45614d323b9ba1109cd46dc1c1d7",
         "version" : "0.2.0"
+      }
+    },
+    {
+      "identity" : "swiftterm",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/migueldeicaza/SwiftTerm",
+      "state" : {
+        "revision" : "a183c15b52858530a17de57dcc72b93eeebc9857",
+        "version" : "1.99.2"
       }
     },
     {

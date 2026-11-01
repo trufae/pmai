@@ -267,7 +267,7 @@ struct ContentView: View {
     .sheet(item: $fileBrowserLocation) { location in
       FileBrowserView(location: location).environmentObject(store)
     }
-    .sheet(item: $remoteTerminalLocation) { location in
+    .fullScreenCover(item: $remoteTerminalLocation) { location in
       RemoteTerminalView(location: location).environmentObject(store)
     }
     .sheet(item: pendingConversationImportFileBinding) { file in

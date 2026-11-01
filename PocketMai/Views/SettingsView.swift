@@ -1893,6 +1893,10 @@ struct SettingsView: View {
       )
       .font(.caption)
       .foregroundStyle(.secondary)
+    case .remote:
+      NavigationLink("Configure Remote Hosts") { RemoteAgentsView() }
+      Text("Enable agent access for each host, then enable Remote Hosts in a conversation to use its files, programs and terminals.")
+        .font(.caption).foregroundStyle(.secondary)
     case .context:
       Picker(
         "Chat access",

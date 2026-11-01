@@ -22,6 +22,7 @@
 		A20000000000000000000007 /* MaiLocalProviders in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000017 /* MaiLocalProviders */; };
 		C0000000000000000000000E /* PocketMaiWidgetsExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = C00000000000000000000002 /* PocketMaiWidgetsExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		D0000000000000000000000E /* PocketMaiShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = D00000000000000000000002 /* PocketMaiShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		E10000000000000000000001 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = E10000000000000000000002 /* SwiftTerm */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -148,6 +149,7 @@
 				A20000000000000000000004 /* MaiStandardTools in Frameworks */,
 				A20000000000000000000005 /* MaiDocuments in Frameworks */,
 				A20000000000000000000006 /* MaiACP in Frameworks */,
+				E10000000000000000000001 /* SwiftTerm in Frameworks */,
 				A10000000000000000000001 /* MLX in Frameworks */,
 				A10000000000000000000002 /* MLXLLM in Frameworks */,
 				A10000000000000000000003 /* MLXLMCommon in Frameworks */,
@@ -237,6 +239,7 @@
 				A20000000000000000000014 /* MaiStandardTools */,
 				A20000000000000000000015 /* MaiDocuments */,
 				A20000000000000000000016 /* MaiACP */,
+				E10000000000000000000002 /* SwiftTerm */,
 				A10000000000000000000011 /* MLX */,
 				A10000000000000000000012 /* MLXLLM */,
 				A10000000000000000000013 /* MLXLMCommon */,
@@ -363,6 +366,7 @@
 				A10000000000000000000023 /* XCRemoteSwiftPackageReference "swift-hf-api-mlx" */,
 				A10000000000000000000024 /* XCRemoteSwiftPackageReference "swift-tokenizers-mlx" */,
 				A10000000000000000000025 /* XCRemoteSwiftPackageReference "beautiful-mermaid-swift" */,
+				E10000000000000000000003 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A00000000000000000000011 /* Products */;
@@ -893,6 +897,11 @@
 				kind = branch;
 			};
 		};
+		E10000000000000000000003 /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm";
+			requirement = {kind = exactVersion; version = 1.99.2; };
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -960,6 +969,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A20000000000000000000021 /* XCLocalSwiftPackageReference "MaiCore" */;
 			productName = MaiLocalProviders;
+		};
+		E10000000000000000000002 /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E10000000000000000000003 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
+			productName = SwiftTerm;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

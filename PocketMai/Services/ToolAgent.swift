@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import MaiCore
+import MaiACP
 import MaiStandardTools
 import UIKit
 
@@ -27,6 +28,12 @@ enum BuiltInToolCatalog {
     store: AppStore
   ) async -> String? {
     switch call.name {
+    case let name where RemoteWorkspaceTools.definitions.contains(where: { $0.name == name }):
+      guard !store.settings.isOffline else { return "Error: remote hosts are unavailable while offline." }
+      do {
+        return try await PocketMaiRemoteTools.shared.call(name, arguments: .object(call.argumentValues),
+          owner: conversation.id.uuidString).text
+      } catch { return "Error: \(error.localizedDescription)" }
     case let name where TodoTool.toolNames.contains(name):
       return TodoTool.execute(name: name, arguments: call.argumentValues, store: store)
     case MaiCalculatorTool.name:
@@ -197,6 +204,8 @@ enum BuiltInToolCatalog {
     case .vdb:
       return settings.toolSettings.filesWorkspaceAccessEnabled
         ? [MaiVectorDatabaseTool.toolDefinition] : []
+    case .remote:
+      return RemoteWorkspaceTools.definitions
     case .calendar:
       var toolSettings = settings.toolSettings
       if includeUnavailable { toolSettings.calendarEventCreationEnabled = true }

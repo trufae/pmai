@@ -232,6 +232,28 @@ commands on paired pmai or OpenCode hosts. `/remote shell HOST` sends typed
 commands directly to that host until `exit`. See `/help remote` for pairing and
 path examples.
 
+PocketMai's iOS terminal uses SwiftTerm with a persistent Unix PTY on updated
+pmai hosts, including Forwiroh connections. It supports interactive programs
+such as Vim, pinch font sizing, a keyboard control bar, and separate terminal
+sessions selected through the `…` menu. Done detaches the panel; Close Terminal
+ends that shell. Sessions reconnect after an app restart or network loss while
+the host's pmai server stays running.
+Use `/set limits.terminalTimeout 3m20s` (or `1h20m`, or plain seconds) on the host
+to expire terminals with no input or output; `0` (the default) keeps them until explicitly closed.
+Older pmai hosts and OpenCode use command mode instead: each
+command starts in the selected workspace. SwiftTerm is an iOS app dependency;
+it is not linked into the CLI or Android clients. Open a terminal from a host's
+long-press menu or a remote workspace. Add Host offers PocketMai, WebSocketACP,
+and OpenCode; WebSocketACP includes a local gateway command and QR setup hint.
+
+To let a local conversation work on a remote host, edit that host and enable
+**Allow Remote Tool**, then enable the native **Remote Hosts** tool in the
+conversation. On the CLI, use `/remote tools HOST on` and enable the `remote`
+tool group with `/tools`. The `remote_hosts`, `remote_files`, `remote_run`, and
+`remote_terminal` tools access only hosts you have explicitly enabled. Turning
+host access off prevents subsequent calls and closes its agent terminals;
+ordinary tool approvals and the remote host's permissions still apply.
+
 Forwiroh [0.1.4](https://github.com/trufae/forwiroh/releases/tag/v0.1.4) is supplied as a prebuilt SwiftPM dependency under `Vendor/Forwiroh`:
 no Rust build or wrapper generation is needed. Its release binaries support
 macOS, iOS, Linux and Android. Linux glibc binaries require Ubuntu 24.04/glibc
