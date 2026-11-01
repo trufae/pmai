@@ -520,7 +520,9 @@ final class RemoteAgentChat {
   /// A disconnected remote can reconnect when the person submits a draft.
   /// The actual prompt remains pending until that connection completes.
   var canSubmit: Bool {
-    !isOffline() && (!busy || (connected && responding && supportsInjection && !injecting))
+    !isOffline() && store.host(bookmark.id)?.requiresApproval != true
+      && (bookmark.backend != .openCode || !conversation.cwd.isEmpty)
+      && (!busy || (connected && responding && supportsInjection && !injecting))
   }
 
   var remoteToolOptions: [RemoteSessionOption] {

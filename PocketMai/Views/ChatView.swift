@@ -121,9 +121,11 @@ struct ChatView: View {
   @StateObject private var liveVoiceSession = LiveVoiceSession()
   private let messageListBottomID = "MessageListBottom"
   let store: AppStore
+  var remoteHosts: HostNavigationStore? = nil
   let onShowHistory: () -> Void
   let onNewChat: () -> Void
   var onRemoteChatReady: (RemoteAgentChat) -> Void = { _ in }
+  var onShowRemoteFolders: () -> Void = {}
   var onBrowseFiles: () -> Void = {}
   var onShowRemoteTerminal: (RemoteAgentBookmark, String) -> Void = { _, _ in }
 
@@ -145,16 +147,33 @@ struct ChatView: View {
       }
       .task {
         if let remoteChat { onRemoteChatReady(remoteChat) }
-        if !store.settings.isOffline { remoteChat?.connect() }
+        reconnectRemoteChat()
+      }
+      .onChange(of: remoteHosts?.selectedConversation?.cwd) { _, _ in
+        guard let remoteHosts, let host = remoteHosts.selectedHost,
+          let draft = remoteHosts.selectedConversation, let chat = remoteChat,
+          chat.conversation.sessionID == nil, !chat.busy, chat.messages.isEmpty
+        else { return }
+        remoteChat = RemoteAgentChat(
+          bookmark: host, conversation: draft, isOffline: { store.settings.isOffline })
+        if let remoteChat { onRemoteChatReady(remoteChat) }
       }
       .onDisappear { remoteChat?.disconnect() }
       .onChange(of: scenePhase) { _, phase in
         if phase == .background { remoteChat?.disconnect() }
-        if phase == .active, !store.settings.isOffline { remoteChat?.connect() }
+        if phase == .active { reconnectRemoteChat() }
       }
       .onChange(of: store.settings.isOffline) { _, enabled in
-        if enabled { remoteChat?.disconnect() } else { remoteChat?.connect() }
+        if enabled { remoteChat?.disconnect() } else { reconnectRemoteChat() }
       }
+  }
+
+  private func reconnectRemoteChat() {
+    guard let remoteChat, !store.settings.isOffline,
+      remoteChat.conversation.sessionID != nil || !remoteChat.messages.isEmpty
+        || remoteChat.unsentPrompt != nil
+    else { return }
+    remoteChat.connect()
   }
 
   private var currentConversation: Conversation? {
@@ -768,8 +787,7 @@ struct ChatView: View {
 
   private var canStartNewChat: Bool {
     !isLoadingConversation && !isMessageSelectionMode
-      && !(remoteChat != nil
-        && (currentConversationIsEmpty || store.settings.isOffline))
+      && remoteHosts?.selectedHost?.requiresApproval != true
   }
 
   private func speakFromHere(_ message: ChatMessage) {
@@ -2264,14 +2282,23 @@ struct ChatView: View {
 
   private func emptyState(in viewport: CGSize) -> some View {
     let suggestions = remoteChat == nil ? store.previousConversationSuggestions : []
+    let hasSuggestions = !suggestions.isEmpty || remoteHosts?.recentConversations.isEmpty == false
     let showsColumns = viewport.width >= 700 && !dynamicTypeSize.isAccessibilitySize
-      && !suggestions.isEmpty
+      && (hasSuggestions || remoteChat != nil)
     let layout = showsColumns
       ? AnyLayout(HStackLayout(spacing: 40)) : AnyLayout(VStackLayout(spacing: 28))
 
     return layout {
       emptyStateBrand.frame(maxWidth: showsColumns ? .infinity : nil)
-      if !suggestions.isEmpty {
+      if let remoteHosts, let remoteChat {
+        VStack(spacing: 24) {
+          remoteStartupActions(hosts: remoteHosts, chat: remoteChat)
+          if !remoteHosts.recentConversations.isEmpty {
+            remoteConversationSuggestions(hosts: remoteHosts)
+          }
+        }
+        .frame(maxWidth: showsColumns ? .infinity : nil)
+      } else if !suggestions.isEmpty {
         PreviousConversationSuggestions(
           store: store, suggestions: suggestions,
           exportCoordinator: exportCoordinator
@@ -2288,6 +2315,59 @@ struct ChatView: View {
     // A minimum height centers short content but lets large text and a short
     // multitasking window scroll, instead of positioning content offscreen.
     .frame(minHeight: max(0, viewport.height - 33))
+  }
+
+  private func remoteStartupActions(hosts: HostNavigationStore, chat: RemoteAgentChat) -> some View {
+    VStack(spacing: 12) {
+      ViewThatFits(in: .horizontal) {
+        HStack(spacing: 12) { remoteWorkspaceButtons(hosts: hosts, chat: chat) }
+        VStack(spacing: 12) { remoteWorkspaceButtons(hosts: hosts, chat: chat) }
+      }
+      .buttonStyle(.bordered)
+      .controlSize(.large)
+      .disabled(hosts.selectedHost?.requiresApproval == true || store.settings.isOffline)
+      Button("Browse Folders", action: onShowRemoteFolders)
+        .font(.subheadline)
+      if hosts.waitingApproval {
+        Text("Approve this device on the remote host to start chatting.")
+          .font(.caption).foregroundStyle(.secondary)
+      } else if hosts.loading {
+        ProgressView("Loading conversations…").font(.caption)
+      } else if let error = hosts.error {
+        Text(error).font(.caption).foregroundStyle(.secondary)
+        Button("Reconnect") { hosts.refresh(isOffline: store.settings.isOffline) }
+      }
+    }
+  }
+
+  @ViewBuilder
+  private func remoteWorkspaceButtons(hosts: HostNavigationStore, chat: RemoteAgentChat) -> some View {
+    Group {
+      Button("Browse Files", systemImage: "folder", action: onBrowseFiles)
+      Button("Terminal", systemImage: "terminal") {
+        onShowRemoteTerminal(hosts.selectedHost ?? chat.bookmark, chat.conversation.cwd)
+      }
+    }
+    .disabled(chat.bookmark.backend == .openCode)
+  }
+
+  private func remoteConversationSuggestions(hosts: HostNavigationStore) -> some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("Pick up where you left off")
+        .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+        .padding(.horizontal, 4)
+      ForEach(hosts.recentConversations) { chat in
+        PreviousConversationSuggestionButton(
+          title: chat.title, updatedAt: chat.updatedAt,
+          folderName: hosts.folders.first { $0.cwd == chat.cwd }?.name ?? chat.cwd,
+          systemImage: "folder", tint: .accentColor,
+          isMostRecent: hosts.recentConversations.last?.id == chat.id
+        ) {
+          hosts.selectConversation(chat.id)
+        }
+        .disabled(hosts.selectedHost?.requiresApproval == true)
+      }
+    }
   }
 
   private var emptyStateBrand: some View {
@@ -2308,7 +2388,7 @@ struct ChatView: View {
       Text("PocketMai")
         .font(.system(.largeTitle, design: .rounded, weight: .bold))
         .accessibilityAddTraits(.isHeader)
-      Text("Your pocket assistant")
+      Text(remoteHosts?.selectedHost?.name ?? "Your pocket assistant")
         .font(.title3.weight(.medium))
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
@@ -2660,8 +2740,10 @@ private struct PreviousConversationSuggestions: View {
       VStack(spacing: 8) {
         ForEach(suggestions) { suggestion in
           PreviousConversationSuggestionButton(
-            conversation: suggestion,
-            folder: folder(for: suggestion),
+            title: suggestion.displayTitle, updatedAt: suggestion.updatedAt,
+            folderName: folder(for: suggestion).displayName,
+            systemImage: folder(for: suggestion).systemImage,
+            tint: folder(for: suggestion).tint?.swatchColor ?? .accentColor,
             isMostRecent: suggestions.last?.id == suggestion.id,
             onSelect: { onSelect(suggestion.id) }
           )
@@ -2684,21 +2766,24 @@ private struct PreviousConversationSuggestions: View {
 }
 
 private struct PreviousConversationSuggestionButton: View {
-  let conversation: ConversationSummary
-  let folder: ConversationFolder
+  let title: String
+  let updatedAt: Date
+  let folderName: String
+  let systemImage: String
+  let tint: Color
   let isMostRecent: Bool
   let onSelect: () -> Void
 
   var body: some View {
     Button(action: onSelect) {
       HStack(spacing: 10) {
-        Image(systemName: folder.systemImage)
+        Image(systemName: systemImage)
           .font(.body)
-          .foregroundStyle(folder.tint?.swatchColor ?? Color.accentColor)
+          .foregroundStyle(tint)
           .frame(width: 22, height: 22)
 
         VStack(alignment: .leading, spacing: 3) {
-          Text(conversation.displayTitle)
+          Text(title)
             .font(.callout.weight(.semibold))
             .foregroundStyle(.primary)
             .lineLimit(1)
@@ -2732,13 +2817,13 @@ private struct PreviousConversationSuggestionButton: View {
       .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
     .buttonStyle(ConversationSuggestionButtonStyle())
-    .accessibilityLabel(conversation.displayTitle)
+    .accessibilityLabel(title)
     .accessibilityHint(recencyLabel)
   }
 
   private var recencyLabel: String {
-    let recency = ConversationRecencyLabel.text(for: conversation.updatedAt)
-    return "\(recency) in \(folder.displayName)"
+    let recency = ConversationRecencyLabel.text(for: updatedAt)
+    return "\(recency) in \(folderName)"
   }
 }
 

@@ -110,7 +110,7 @@ struct ContentView: View {
                 hosts: hosts,
                 onShowFolders: { setDrawerDepth(2, animation: historyPanelAnimation) },
                 onSelectConversation: { id in
-                  hosts.selectedConversationID = id
+                  hosts.selectConversation(id)
                   closeHistoryPanel()
                 },
                 onShowSettings: { showingSettings = true },
@@ -148,72 +148,46 @@ struct ContentView: View {
           ChatScreenBackground()
 
           NavigationStack {
-            if let host = hosts.selectedHost, hosts.selectedConversation == nil {
-              VStack(spacing: 20) {
-                ContentUnavailableView(
-                  "\(host.name)", systemImage: "network",
-                  description: Text("Choose a folder and conversation, or start a new chat."))
-                Button("Browse Folders") { setDrawerDepth(2, animation: historyPanelAnimation) }
-                Button("Browse Files", systemImage: "folder") { browseFiles() }
-                  .disabled(host.backend == .openCode)
-              }
-              .navigationTitle(host.name)
-              .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                  Button(
-                    "Conversations", systemImage: "line.3.horizontal",
-                    action: { toggleHistoryPanel(in: layout) }
-                  )
-                  .labelStyle(.iconOnly)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                  Button(
-                    "New Chat", systemImage: "square.and.pencil", action: newRemoteConversation
-                  )
-                  .labelStyle(.iconOnly)
-                  .disabled(host.requiresApproval == true || hosts.selectedFolderID == nil)
-                }
-              }
-            } else {
-              ChatViewContent(
-                key: ChatView.RenderInvalidationKey(
-                  isLandscape: layout.chatWidth > proxy.size.height,
-                  selectedConversationID: store.selectedConversationID,
-                  selectedConversationIsLoading: store.selectedConversationIsLoading,
-                  appearance: store.settings.appearance,
-                  renderMarkdownInChat: store.settings.renderMarkdownInChat,
-                  renderMarkdownImagesInChat: store.settings.renderMarkdownImagesInChat,
-                  sidebarIsPinned: layout.pinsSidebar,
-                  canPinSidebar: layout.canPinSidebar)
-              ) {
-                ChatView(
-                  storeObservation: chatStoreObservation,
-                  remoteChat: hosts.selectedHost.flatMap { host in
-                    hosts.selectedConversation.map {
-                      RemoteAgentChat(
-                        bookmark: host, conversation: $0, isOffline: { store.settings.isOffline })
-                    }
-                  },
-                  store: store,
-                  onShowHistory: { toggleHistoryPanel(in: layout) },
-                  onNewChat: {
-                    if hosts.selectedHost == nil {
-                      newLocalConversation()
-                    } else {
-                      newRemoteConversation()
-                    }
-                  },
-                  onRemoteChatReady: { hosts.activeChat = $0 },
-                  onBrowseFiles: { browseFiles() },
-                  onShowRemoteTerminal: { host, cwd in showRemoteTerminal(host: host, cwd: cwd) }
-                )
-              }
-              .equatable()
-              .id(
-                hosts.selectedHost.map {
-                  "\($0.id):\($0.url):\($0.revision?.uuidString ?? ""):\(hosts.selectedConversationID?.uuidString ?? "")"
-                } ?? "local")
+            ChatViewContent(
+              key: ChatView.RenderInvalidationKey(
+                isLandscape: layout.chatWidth > proxy.size.height,
+                selectedConversationID: store.selectedConversationID,
+                selectedConversationIsLoading: store.selectedConversationIsLoading,
+                appearance: store.settings.appearance,
+                renderMarkdownInChat: store.settings.renderMarkdownInChat,
+                renderMarkdownImagesInChat: store.settings.renderMarkdownImagesInChat,
+                sidebarIsPinned: layout.pinsSidebar,
+                canPinSidebar: layout.canPinSidebar)
+            ) {
+              ChatView(
+                storeObservation: chatStoreObservation,
+                remoteChat: hosts.selectedHost.flatMap { host in
+                  hosts.selectedConversation.map {
+                    RemoteAgentChat(
+                      bookmark: host, conversation: $0, isOffline: { store.settings.isOffline })
+                  }
+                },
+                store: store,
+                remoteHosts: hosts.selectedHost == nil ? nil : hosts,
+                onShowHistory: { toggleHistoryPanel(in: layout) },
+                onNewChat: {
+                  if hosts.selectedHost == nil {
+                    newLocalConversation()
+                  } else {
+                    newRemoteConversation()
+                  }
+                },
+                onRemoteChatReady: { hosts.activeChat = $0 },
+                onShowRemoteFolders: { setDrawerDepth(2, animation: historyPanelAnimation) },
+                onBrowseFiles: { browseFiles() },
+                onShowRemoteTerminal: { host, cwd in showRemoteTerminal(host: host, cwd: cwd) }
+              )
             }
+            .equatable()
+            .id(
+              hosts.selectedHost.map {
+                "\($0.id):\($0.url):\($0.revision?.uuidString ?? ""):\(hosts.selectedConversationID?.uuidString ?? "")"
+              } ?? "local")
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -479,7 +453,7 @@ struct ContentView: View {
   private func selectHost(_ id: UUID?) {
     sidebarSelectionGeneration += 1
     hosts.selectHost(id, isOffline: store.settings.isOffline)
-    setDrawerDepth(2, animation: historyPanelAnimation)
+    closeHistoryPanel()
   }
 
   private func newRemoteConversation() {

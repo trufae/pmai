@@ -26,6 +26,7 @@ final class HostNavigationStore {
   private var selectedHostRevision: UUID?
   var selectedFolderID: String?
   var selectedConversationID: UUID?
+  private var draftConversation: RemoteAgentConversation?
   private(set) var loading = false
   private(set) var waitingApproval = false
   private(set) var error: String?
@@ -90,7 +91,7 @@ final class HostNavigationStore {
     do {
       try await chat.manage(title: title)
       if title == nil, selectedHostID == host.id, selectedConversationID == conversation.id {
-        selectedConversationID = nil
+        newConversation()
       }
     } catch is CancellationError {
     } catch { self.error = error.localizedDescription }
@@ -122,6 +123,7 @@ final class HostNavigationStore {
   var selectedConversation: RemoteAgentConversation? {
     guard let host = selectedHost else { return nil }
     return host.conversations?.first { $0.id == selectedConversationID }
+      ?? (draftConversation?.id == selectedConversationID ? draftConversation : nil)
   }
 
   func selectHost(_ id: UUID?, isOffline: Bool) {
@@ -133,15 +135,34 @@ final class HostNavigationStore {
     if selectedHostID != id {
       selectedHostID = id
       selectedFolderID = host?.cwd
+      draftConversation = nil
       selectedConversationID = nil
+      if host != nil { newConversation() }
       error = nil
     }
     if id != nil { refresh(isOffline: isOffline) }
   }
 
-  func selectFolder(_ cwd: String) {
+  func selectFolder(_ cwd: String, preservingDraft: Bool = false) {
     selectedFolderID = cwd
-    selectedConversationID = nil
+    if preservingDraft, let draftConversation, draftConversation.id == selectedConversationID {
+      self.draftConversation?.cwd = cwd
+    } else {
+      newConversation()
+    }
+  }
+
+  func selectConversation(_ id: UUID) {
+    guard let chat = selectedHost?.conversations?.first(where: { $0.id == id }) else { return }
+    selectedFolderID = chat.cwd
+    selectedConversationID = chat.id
+  }
+
+  var recentConversations: [RemoteAgentConversation] {
+    Array((selectedHost?.conversations ?? [])
+      .filter { $0.id != selectedConversationID && ($0.sessionID != nil || !$0.messages.isEmpty) }
+      .sorted { $0.updatedAt > $1.updatedAt }
+      .prefix(ConversationSummary.recentCacheLimit).reversed())
   }
 
   func isFolderPinned(_ cwd: String) -> Bool {
@@ -178,8 +199,9 @@ final class HostNavigationStore {
 
   @discardableResult
   func newConversation() -> RemoteAgentConversation? {
-    guard let hostID = selectedHostID, let cwd = selectedFolderID else { return nil }
-    let chat = remotes.newConversation(hostID: hostID, cwd: cwd)
+    guard let host = selectedHost else { return nil }
+    let chat = RemoteAgentConversation(cwd: selectedFolderID ?? host.cwd)
+    draftConversation = chat
     selectedConversationID = chat.id
     return chat
   }
@@ -228,8 +250,12 @@ final class HostNavigationStore {
         remotes.setConnectionFailed(!connected, for: host.id)
         supportsDiscovery = snapshot != nil
         if let snapshot { remotes.updateWorkspace(host.id, snapshot: snapshot) }
-        if !folders.contains(where: { $0.cwd == selectedFolderID }) {
-          selectedFolderID = folders.first?.cwd
+        if selectedConversation?.sessionID == nil,
+          selectedConversation?.messages.isEmpty != false,
+          !folders.contains(where: { $0.cwd == selectedFolderID }),
+          let cwd = folders.first?.cwd, cwd != selectedFolderID
+        {
+          selectFolder(cwd, preservingDraft: true)
         }
       } catch {
         guard generation == attempt else { return }
