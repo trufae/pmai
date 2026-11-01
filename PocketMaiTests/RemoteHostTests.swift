@@ -618,7 +618,7 @@ final class RemoteHostTests: XCTestCase {
     }
   }
 
-  func testFailedDiscoveryPersistsUntilReconnectOrExplicitDisconnect() async throws {
+  func testInvalidCredentialsNeedUserActionAndSelectingTheHostRetriesWithoutLosingState() async throws {
     let original = RemoteAgentBookmark(
       name: "Worker", url: try XCTUnwrap(URL(string: "wss://worker.example/acp")), cwd: "/work")
     try await withRemoteManagementStore(original) { store in
@@ -635,6 +635,11 @@ final class RemoteHostTests: XCTestCase {
       XCTAssertEqual(hosts.connectionState(original.id, isOffline: false), .failed)
       XCTAssertEqual(hosts.connectionState(original.id, isOffline: true), .disconnected)
       hosts.selectHost(original.id, isOffline: false)
+      XCTAssertTrue(hosts.loading)
+      for _ in 0..<500 {
+        if !hosts.loading { break }
+        try await Task.sleep(for: .milliseconds(10))
+      }
       XCTAssertFalse(hosts.loading)
       XCTAssertNotNil(hosts.error)
       hosts.selectHost(nil, isOffline: false)

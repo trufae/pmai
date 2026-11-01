@@ -10,6 +10,21 @@ public enum RemoteAgentBackend: String, Codable, Sendable {
   case openCode
 }
 
+public enum RemoteConnectionRecovery {
+  /// Invalid credentials and protocol/configuration errors need user action.
+  public static func shouldRetry(_ error: any Error) -> Bool {
+    if error is CancellationError { return false }
+    if let error = error as? JSONRPCError {
+      return error.code == JSONRPCError.internalError
+    }
+    if let error = error as? URLError {
+      return [.timedOut, .cannotFindHost, .cannotConnectToHost, .networkConnectionLost,
+        .dnsLookupFailed, .notConnectedToInternet, .cannotLoadFromNetwork].contains(error.code)
+    }
+    return false
+  }
+}
+
 /// OpenCode's HTTP API and ACP use different credentials and transports.
 public struct OpenCodeConnection: Sendable {
   public var name: String
@@ -183,7 +198,11 @@ final class OpenCodeHTTP: NSObject, URLSessionTaskDelegate, @unchecked Sendable 
         "OpenCode authentication expired or was revoked. Pair this host again with a new QR.")
     }
     guard (200..<300).contains(response.statusCode) || accepting.contains(response.statusCode) else {
-      throw JSONRPCError.internalError("OpenCode request failed (HTTP \(response.statusCode)).")
+      let message = "OpenCode request failed (HTTP \(response.statusCode))."
+      if response.statusCode >= 500 || [408, 429].contains(response.statusCode) {
+        throw JSONRPCError.internalError(message)
+      }
+      throw JSONRPCError.invalidParams(message)
     }
     return (data, response)
   }
