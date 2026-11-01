@@ -24,6 +24,8 @@ private final class RemoteTerminalSession: ObservableObject {
 
   private let location: RemoteTerminalLocation
   private var client: ACPClient?
+  private var workspace: OpenCodeWorkspace?
+  private var operation: Task<Void, Never>?
 
   init(location: RemoteTerminalLocation) {
     self.location = location
@@ -36,16 +38,28 @@ private final class RemoteTerminalSession: ObservableObject {
     entries.append(entry)
     isRunning = true
 
-    Task { [weak self] in
+    operation = Task { [weak self] in
       guard let self else { return }
-      defer { isRunning = false }
+      defer { isRunning = false; operation = nil }
       do {
         guard !offline else { throw InternetAccessError.offline }
-        let result = try await connectedClient().runTool(
-          cwd: location.cwd,
-          call: .init(id: entry.id.uuidString, name: "run_shell", arguments: .object([
-            "script": .string(command),
-          ])))
+        let result: ToolResult
+        if location.host.backend == .openCode {
+          if workspace == nil {
+            workspace = try OpenCodeWorkspace(connection: .init(
+              name: location.host.name, url: location.host.url,
+              token: RemoteAgentStore.shared.token(for: location.host.id), cwd: location.cwd))
+          }
+          result = try await workspace!.run(command) { [weak self] output in
+            await self?.finish(entry.id, output: output, isError: false)
+          }
+        } else {
+          result = try await connectedClient().runTool(
+            cwd: location.cwd,
+            call: .init(id: entry.id.uuidString, name: "run_shell", arguments: .object([
+              "script": .string(command),
+            ])))
+        }
         finish(entry.id, output: result.text, isError: result.isError)
       } catch {
         finish(entry.id, output: "Error: \(error.localizedDescription)", isError: true)
@@ -56,16 +70,21 @@ private final class RemoteTerminalSession: ObservableObject {
   func clear() { entries.removeAll() }
 
   func close() {
+    let operation = operation
+    operation?.cancel()
     let client = client
+    let workspace = workspace
     self.client = nil
-    Task { await client?.disconnect() }
+    self.workspace = nil
+    Task {
+      await client?.disconnect()
+      await operation?.value
+      await workspace?.close()
+    }
   }
 
   private func connectedClient() throws -> ACPClient {
     if let client { return client }
-    guard location.host.backend != .openCode else {
-      throw JSONRPCError.invalidParams("The remote terminal is not available for OpenCode hosts.")
-    }
     guard location.host.requiresApproval != true else {
       throw JSONRPCError.invalidParams("Approve this device on the remote host first.")
     }

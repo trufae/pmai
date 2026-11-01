@@ -199,10 +199,10 @@ struct RemoteFoldersView: View, Equatable {
             togglePin: { hosts.toggleFolderPin(folder.cwd) },
             browseFiles: { onBrowseFiles(folder.cwd) },
             browseFilesDisabled: hosts.selectedHost?.requiresApproval == true
-              || hosts.selectedHost?.backend == .openCode || isOffline,
+              || isOffline,
             openTerminal: { onOpenTerminal(folder.cwd) },
             terminalDisabled: hosts.selectedHost?.requiresApproval == true
-              || hosts.selectedHost?.backend == .openCode || isOffline,
+              || isOffline,
             path: folder.cwd)
         }
       }

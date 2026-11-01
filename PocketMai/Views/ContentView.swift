@@ -483,10 +483,6 @@ struct ContentView: View {
 
   private func showRemoteTerminal(host: RemoteAgentBookmark? = nil, cwd: String? = nil) {
     guard let host = host ?? hosts.selectedHost else { return }
-    guard host.backend != .openCode else {
-      store.errorMessage = "The remote terminal is not available for OpenCode hosts yet."
-      return
-    }
     guard host.requiresApproval != true else {
       store.errorMessage = "Approve this device on the remote host first."
       return
