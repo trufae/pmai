@@ -374,6 +374,11 @@ public actor OpenCodeClient: RemoteSessionClient {
     public let errorDescription: String?
   }
 
+  public func cancel() async {
+    guard prompting, !closed, let sessionID else { return }
+    _ = try? await http.request(["api", "session", sessionID, "interrupt"], method: "POST")
+  }
+
   public func disconnect() async {
     closed = true
     isConnected = false
