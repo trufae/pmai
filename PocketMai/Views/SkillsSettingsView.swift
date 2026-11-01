@@ -10,152 +10,201 @@ private struct SkillEditorSelection: Identifiable {
 struct SkillsSettingsView: View {
   @EnvironmentObject private var store: AppStore
   @State private var skills: [AgentSkill] = []
+  @State private var managing = false
+
+  var body: some View {
+    let invocable = AgentSkillCatalog(skills: skills).modelInvocable
+    Group {
+      ForEach(skills) { skill in
+        let available = invocable.contains {
+          $0.directoryURL == skill.directoryURL && $0.name == skill.name
+        }
+        Toggle(
+          isOn: Binding(
+            get: { available && store.settings.enabledSkillTools.contains(skill.toolName) },
+            set: { enabled in
+              if enabled {
+                store.settings.enabledSkillTools.insert(skill.toolName)
+              } else {
+                store.settings.enabledSkillTools.remove(skill.toolName)
+              }
+              store.saveSettings()
+            }
+          )
+        ) {
+          SkillSummaryView(skill: skill, isAvailable: available)
+        }
+        .disabled(!available)
+      }
+      Button {
+        managing = true
+      } label: {
+        HStack {
+          Label("Manage Skills", systemImage: "sparkles")
+          Spacer()
+          Image(systemName: "chevron.right")
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.tertiary)
+        }
+      }
+      .sheet(isPresented: $managing) {
+        SkillsManagerView(skills: $skills)
+      }
+      .onAppear(perform: reload)
+      .onChange(of: store.settings.selectedAgentID) { reload() }
+      .onChange(of: store.currentConversation?.id) { reload() }
+    }
+  }
+
+  private func reload() {
+    skills = SkillTools.catalog(for: store.currentConversation, settings: store.settings).skills
+  }
+}
+
+private struct SkillSummaryView: View {
+  let skill: AgentSkill
+  var isAvailable = true
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text(skill.name).foregroundStyle(.primary)
+      Text(skill.description)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .lineLimit(2)
+      if !isAvailable || !skill.isModelInvocable {
+        Text(
+          skill.isModelInvocable
+            ? "Another skill uses this tool name" : "Automatic use disabled by this skill"
+        )
+        .font(.caption2).foregroundStyle(.secondary)
+      }
+      if skill.rootURL.standardizedFileURL != SkillTools.directoryURL.standardizedFileURL {
+        Text("Working folder").font(.caption2).foregroundStyle(.secondary)
+      }
+    }
+  }
+}
+
+private struct SkillsManagerView: View {
+  @Environment(\.dismiss) private var dismiss
+  @EnvironmentObject private var store: AppStore
+  @Binding var skills: [AgentSkill]
   @State private var editor: SkillEditorSelection?
   @State private var importing = false
   @State private var importType = UTType.zip
   @State private var pendingDeletion: AgentSkill?
   @State private var statusMessage: String?
+  @State private var errorMessage: String?
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
-      Text(
-        "Skills give your agent reusable instructions for specific tasks. Tap a skill to edit its description and prompt."
-      )
-      .font(.caption)
-      .foregroundStyle(.secondary)
-
-      HStack {
-        Button("Create Skill", systemImage: "plus") { editor = SkillEditorSelection() }
-        Spacer()
-        Menu {
-          Button("Import ZIP", systemImage: "doc.zipper") {
-            importType = .zip
-            importing = true
-          }
-          Button("Import Folder", systemImage: "folder") {
-            importType = .folder
-            importing = true
-          }
-        } label: {
-          Label("Import", systemImage: "square.and.arrow.down")
-        }
-      }
-      .buttonStyle(.borderless)
-
-      if skills.isEmpty {
-        VStack(spacing: 6) {
-          Image(systemName: "sparkles").font(.title2)
-          Text("No skills yet").font(.headline)
-          Text("Create a skill with a description and prompt, or import a skill ZIP from Files.")
-            .font(.caption)
-            .multilineTextAlignment(.center)
-        }
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 16)
-      }
-
-      ForEach(skills) { skill in
-        HStack(spacing: 12) {
-          Button {
-            editor = SkillEditorSelection(skill: skill)
+    NavigationStack {
+      Form {
+        Section {
+          Button("Create Skill", systemImage: "plus") { editor = SkillEditorSelection() }
+          Menu {
+            Button("Import ZIP", systemImage: "doc.zipper") {
+              importType = .zip
+              importing = true
+            }
+            Button("Import Folder", systemImage: "folder") {
+              importType = .folder
+              importing = true
+            }
           } label: {
-            VStack(alignment: .leading, spacing: 4) {
-              Text(skill.name).foregroundStyle(.primary)
-              Text(skill.description)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-              if !canInvoke(skill) {
-                Text(
-                  skill.isModelInvocable
-                    ? "Another skill uses this tool name" : "Automatic use disabled by this skill"
-                )
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            Label("Import", systemImage: "square.and.arrow.down")
+          }
+        }
+
+        Section {
+          if skills.isEmpty {
+            ContentUnavailableView(
+              "No skills yet", systemImage: "sparkles",
+              description: Text("Create a skill or import one from Files.")
+            )
+          }
+
+          ForEach(skills) { skill in
+            Button {
+              editor = SkillEditorSelection(skill: skill)
+            } label: {
+              HStack {
+                SkillSummaryView(skill: skill)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                  .font(.footnote.weight(.semibold))
+                  .foregroundStyle(.tertiary)
               }
-              if skill.rootURL.standardizedFileURL != SkillTools.directoryURL.standardizedFileURL {
-                Text("Working folder").font(.caption2).foregroundStyle(.secondary)
+              .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Edit skill")
+            .contextMenu {
+              Button("Edit", systemImage: "pencil") { editor = SkillEditorSelection(skill: skill) }
+              Button("Delete Skill", systemImage: "trash", role: .destructive) {
+                pendingDeletion = skill
               }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
+            .swipeActions {
+              Button("Delete", systemImage: "trash", role: .destructive) {
+                pendingDeletion = skill
+              }
+            }
           }
-          .buttonStyle(.plain)
-          .accessibilityHint("Edit skill")
+        } header: {
+          Text("Your Skills")
+        } footer: {
+          Text("Tap a skill to edit its description and instructions. Swipe left to delete.")
+        }
 
-          Toggle(
-            "Enable \(skill.name)",
-            isOn: Binding(
-              get: {
-                canInvoke(skill) && store.settings.enabledSkillTools.contains(skill.toolName)
-              },
-              set: { enabled in
-                if enabled {
-                  store.settings.enabledSkillTools.insert(skill.toolName)
-                } else {
-                  store.settings.enabledSkillTools.remove(skill.toolName)
-                }
+        Section {
+          if !skills.isEmpty {
+            Button("Enable All") {
+              store.settings.enabledSkillTools.formUnion(
+                AgentSkillCatalog(skills: skills).modelInvocable.map(\.toolName))
+              store.saveSettings()
+            }
+            Button("Disable All") {
+              store.settings.enabledSkillTools.subtract(skills.map(\.toolName))
+              store.saveSettings()
+            }
+          }
+
+          Picker(
+            "Skill approval",
+            selection: Binding(
+              get: { store.settings.skillApprovalMode },
+              set: {
+                store.settings.skillApprovalMode = $0
                 store.saveSettings()
               }
             )
+          ) {
+            Text("Follow tool approval").tag(nil as ToolApprovalMode?)
+            Text("Ask").tag(ToolApprovalMode.ask as ToolApprovalMode?)
+            Text("Yolo").tag(ToolApprovalMode.yolo as ToolApprovalMode?)
+            Text("Smart").tag(ToolApprovalMode.smart as ToolApprovalMode?)
+          }
+          .pickerStyle(.navigationLink)
+        } header: {
+          Text("Permissions")
+        } footer: {
+          Text(
+            "Enabled skills are available to \(store.settings.selectedAgent.name). New and imported skills are enabled when they allow automatic use. Ask lets you approve or choose a different skill before use."
           )
-          .labelsHidden()
-          .disabled(!canInvoke(skill))
-
-          Menu {
-            Button("Edit", systemImage: "pencil") { editor = SkillEditorSelection(skill: skill) }
-            Button("Delete Skill", systemImage: "trash", role: .destructive) {
-              pendingDeletion = skill
-            }
-          } label: {
-            Image(systemName: "ellipsis.circle").padding(.vertical, 8)
+        }
+        Section {
+          Button("Reload Skills", systemImage: "arrow.clockwise", action: reload)
+          if let statusMessage {
+            Text(statusMessage).font(.caption).foregroundStyle(.secondary)
           }
-          .accessibilityLabel("Actions for \(skill.name)")
         }
       }
-
-      if !skills.isEmpty {
-        HStack {
-          Button("Enable All") {
-            store.settings.enabledSkillTools.formUnion(
-              AgentSkillCatalog(skills: skills).modelInvocable.map(\.toolName))
-            store.saveSettings()
-          }
-          Spacer()
-          Button("Disable All") {
-            store.settings.enabledSkillTools.subtract(skills.map(\.toolName))
-            store.saveSettings()
-          }
-        }
-        .buttonStyle(.borderless)
+      .navigationTitle("Manage Skills")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
       }
-
-      Picker(
-        "Skill approval",
-        selection: Binding(
-          get: { store.settings.skillApprovalMode },
-          set: {
-            store.settings.skillApprovalMode = $0
-            store.saveSettings()
-          }
-        )
-      ) {
-        Text("Follow tool approval").tag(nil as ToolApprovalMode?)
-        Text("Ask").tag(ToolApprovalMode.ask as ToolApprovalMode?)
-        Text("Yolo").tag(ToolApprovalMode.yolo as ToolApprovalMode?)
-        Text("Smart").tag(ToolApprovalMode.smart as ToolApprovalMode?)
-      }
-      Text(
-        "Enabled skills are available to \(store.settings.selectedAgent.name). New and imported skills are enabled when they allow automatic use. Ask lets you approve or choose a different skill before use."
-      )
-      .font(.caption)
-      .foregroundStyle(.secondary)
-      if let statusMessage {
-        Text(statusMessage).font(.caption).foregroundStyle(.secondary)
-      }
-      Button("Reload Skills", systemImage: "arrow.clockwise", action: reload)
-        .buttonStyle(.borderless)
     }
     .onAppear(perform: reload)
     .onChange(of: store.settings.selectedAgentID) { reload() }
@@ -182,7 +231,17 @@ struct SkillsSettingsView: View {
         enableNewSkill(skill)
         statusMessage = "Imported \(skill.name)."
         reload()
-      } catch { store.errorMessage = error.localizedDescription }
+      } catch { errorMessage = error.localizedDescription }
+    }
+    .alert(
+      "Couldn't Manage Skill",
+      isPresented: Binding(
+        get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
+      )
+    ) {
+      Button("OK", role: .cancel) { errorMessage = nil }
+    } message: {
+      Text(errorMessage ?? "")
     }
     .alert(
       "Delete skill?",
@@ -206,7 +265,7 @@ struct SkillsSettingsView: View {
             store.saveSettings()
           }
           statusMessage = "Deleted \(skill.name)."
-        } catch { store.errorMessage = error.localizedDescription }
+        } catch { errorMessage = error.localizedDescription }
         pendingDeletion = nil
       }
     } message: {
