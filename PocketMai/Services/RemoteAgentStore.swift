@@ -4,7 +4,7 @@ import MaiCore
 import Observation
 import Security
 
-struct RemoteAgentBookmark: Codable, Identifiable {
+struct RemoteAgentBookmark: Codable, Identifiable, Sendable {
   var id = UUID()
   var name: String
   var url: URL
@@ -54,7 +54,7 @@ struct RemoteAgentBookmark: Codable, Identifiable {
   }
 }
 
-struct RemoteAgentConversation: Codable, Identifiable {
+struct RemoteAgentConversation: Codable, Identifiable, Sendable {
   var id = UUID()
   var cwd: String
   var sessionID: String?
@@ -105,6 +105,7 @@ final class RemoteAgentStore {
   private(set) var failedHostIDs: Set<UUID> = []
   var error: String?
   private let file: URL
+  private let persistenceQueue = DispatchQueue(label: "io.github.trufae.mai.remote-cache", qos: .utility)
   private let keychainService = "io.github.trufae.mai.acp-gateway"
 
   init(file: URL? = nil) {
@@ -220,7 +221,7 @@ final class RemoteAgentStore {
     try save()
   }
 
-  func update(_ hostID: UUID, conversation: RemoteAgentConversation) {
+  func update(_ hostID: UUID, conversation: RemoteAgentConversation, inBackground: Bool = false) {
     guard let index = connections.firstIndex(where: { $0.id == hostID }) else { return }
     var chats = connections[index].conversations ?? []
     if let chatIndex = chats.firstIndex(where: { $0.id == conversation.id }) {
@@ -229,10 +230,14 @@ final class RemoteAgentStore {
       chats.append(conversation)
     }
     connections[index].conversations = chats
-    do { try save() } catch { self.error = error.localizedDescription }
+    if inBackground {
+      saveInBackground()
+    } else {
+      do { try save() } catch { self.error = error.localizedDescription }
+    }
   }
 
-  func updateWorkspace(_ hostID: UUID, snapshot: ACPWorkspaceSnapshot) {
+  func updateWorkspace(_ hostID: UUID, snapshot: ACPWorkspaceSnapshot, inBackground: Bool = false) {
     guard let index = connections.firstIndex(where: { $0.id == hostID }) else { return }
     connections[index].workspace = snapshot
     var chats = connections[index].conversations ?? []
@@ -253,7 +258,11 @@ final class RemoteAgentStore {
       }
     }
     connections[index].conversations = chats
-    do { try save() } catch { self.error = error.localizedDescription }
+    if inBackground {
+      saveInBackground()
+    } else {
+      do { try save() } catch { self.error = error.localizedDescription }
+    }
   }
 
   func deleteConversation(_ id: UUID, hostID: UUID) {
@@ -416,7 +425,33 @@ final class RemoteAgentStore {
   }
 
   private func save() throws {
-    try JSONEncoder().encode(connections).write(
+    let snapshot = connections
+    let file = file
+    // Explicit edits keep their synchronous error contract and follow queued chat writes.
+    try persistenceQueue.sync { try Self.write(snapshot, to: file) }
+  }
+
+  private func saveInBackground() {
+    let snapshot = connections
+    let file = file
+    persistenceQueue.async { [weak self] in
+      do {
+        try Self.write(snapshot, to: file)
+      } catch {
+        let message = error.localizedDescription
+        Task { @MainActor [weak self] in self?.error = message }
+      }
+    }
+  }
+
+  func flushPersistence() async {
+    await withCheckedContinuation { continuation in
+      persistenceQueue.async { continuation.resume() }
+    }
+  }
+
+  nonisolated private static func write(_ snapshot: [RemoteAgentBookmark], to file: URL) throws {
+    try JSONEncoder().encode(snapshot).write(
       to: file, options: [.atomic, .completeFileProtectionUnlessOpen])
     // Device-local credentials and chats are not an iCloud settings export.
     var url = file
@@ -1124,6 +1159,6 @@ final class RemoteAgentChat {
     guard !deleted else { return }
     conversation.sessionID = sessionID
     conversation.messages = messages
-    store.update(bookmark.id, conversation: conversation)
+    store.update(bookmark.id, conversation: conversation, inBackground: true)
   }
 }

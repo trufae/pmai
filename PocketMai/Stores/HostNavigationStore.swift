@@ -299,7 +299,7 @@ final class HostNavigationStore {
         reconnectDelay = 1
         remotes.setConnectionFailed(!connected, for: host.id)
         supportsDiscovery = snapshot != nil
-        if let snapshot { remotes.updateWorkspace(host.id, snapshot: snapshot) }
+        if let snapshot { remotes.updateWorkspace(host.id, snapshot: snapshot, inBackground: true) }
         if selectedConversation?.sessionID == nil,
           selectedConversation?.messages.isEmpty != false,
           !folders.contains(where: { $0.cwd == selectedFolderID }),

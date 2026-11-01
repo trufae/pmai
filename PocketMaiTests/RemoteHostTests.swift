@@ -2,6 +2,7 @@ import Foundation
 import MaiACP
 import MaiCore
 import XCTest
+import Testing
 
 @testable import PocketMai
 
@@ -717,4 +718,31 @@ final class RemoteHostTests: XCTestCase {
     try JSONEncoder().encode([bookmark]).write(to: file)
     try await body(RemoteAgentStore(file: file))
   }
+}
+
+
+@Test("Background remote cache saves preserve the newest chat and subsequent deletion")
+@MainActor
+func backgroundRemoteCachePersistence() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let file = directory.appendingPathComponent("connections.json")
+    let url = try #require(URL(string: "https://worker.example"))
+    let host = RemoteAgentBookmark(name: "Worker", url: url, cwd: "/work")
+    try JSONEncoder().encode([host]).write(to: file)
+    let store = RemoteAgentStore(file: file)
+    var chat = RemoteAgentConversation(cwd: "/work")
+    chat.title = "Earlier response"
+    store.update(host.id, conversation: chat, inBackground: true)
+    chat.title = "Latest response"
+    store.update(host.id, conversation: chat, inBackground: true)
+    await store.flushPersistence()
+    #expect(RemoteAgentStore(file: file).host(host.id)?.conversations?.first?.title == "Latest response")
+
+    chat.title = "Pending update"
+    store.update(host.id, conversation: chat, inBackground: true)
+    store.deleteConversation(chat.id, hostID: host.id)
+    await store.flushPersistence()
+    #expect(RemoteAgentStore(file: file).host(host.id)?.conversations?.isEmpty == true)
 }

@@ -66,9 +66,10 @@ struct ContentView: View {
                 hosts: hosts, isOffline: store.settings.isOffline,
                 onShowHosts: { setDrawerDepth(3, animation: historyPanelAnimation) },
                 onSelectFolder: { cwd in
-                  hosts.selectFolder(cwd)
-                  hosts.resumeConnections(isOffline: store.settings.isOffline)
-                  setDrawerDepth(1, animation: historyPanelAnimation)
+                  setDrawerDepth(1, animation: historyPanelAnimation) {
+                    hosts.selectFolder(cwd)
+                    hosts.resumeConnections(isOffline: store.settings.isOffline)
+                  }
                 }, isVisible: foldersVisible && !showingHosts,
                 onBrowseFiles: { browseFiles(cwd: $0) },
                 onOpenTerminal: { showRemoteTerminal(cwd: $0) })
@@ -80,9 +81,10 @@ struct ContentView: View {
                 isShowingBookmarks: isShowingBookmarksFolder,
                 onSelectFolder: { folderID in
                   sidebarSelectionGeneration += 1
-                  isShowingBookmarksFolder = false
-                  store.selectConversationFolder(folderID)
-                  setDrawerDepth(1, animation: historyPanelAnimation)
+                  setDrawerDepth(1, animation: historyPanelAnimation) {
+                    isShowingBookmarksFolder = false
+                    store.selectConversationFolder(folderID)
+                  }
                 },
                 onSelectBookmarks: {
                   isShowingBookmarksFolder = true
@@ -113,8 +115,7 @@ struct ContentView: View {
                 hosts: hosts,
                 onShowFolders: { setDrawerDepth(2, animation: historyPanelAnimation) },
                 onSelectConversation: { id in
-                  hosts.selectConversation(id)
-                  closeHistoryPanel()
+                  closeHistoryPanel { hosts.selectConversation(id) }
                 },
                 onShowSettings: { showingSettings = true },
                 isVisible: historyVisible && !showingFolders)
@@ -462,20 +463,21 @@ struct ContentView: View {
 
   private func selectHost(_ id: UUID?) {
     sidebarSelectionGeneration += 1
-    hosts.selectHost(id, isOffline: store.settings.isOffline)
-    closeHistoryPanel()
+    closeHistoryPanel {
+      hosts.selectHost(id, isOffline: store.settings.isOffline)
+    }
   }
 
   private func newRemoteConversation() {
-    guard hosts.newConversation() != nil else { return }
-    closeHistoryPanel()
+    closeHistoryPanel { _ = hosts.newConversation() }
   }
 
   private func newLocalConversation() {
     sidebarSelectionGeneration += 1
-    isShowingBookmarksFolder = false
-    store.newConversation()
-    closeHistoryPanel()
+    closeHistoryPanel {
+      isShowingBookmarksFolder = false
+      store.newConversation()
+    }
   }
 
   private func browseFiles(folderID: String? = nil, cwd: String? = nil) {
@@ -533,16 +535,16 @@ struct ContentView: View {
     }
     if depth > 2 { isHostsPanelMounted = true }
     let previousDepth = showingHosts ? 3 : (showingFolders ? 2 : (showingHistory ? 1 : 0))
-    withAnimation(animation, completionCriteria: .logicallyComplete) {
+    withAnimation(animation, completionCriteria: .removed) {
       showingHistory = depth > 0
       showingFolders = depth > 1
       showingHosts = depth > 2
       historyDragOffset = 0
     } completion: {
-      if drawerTransitionGeneration == transitionGeneration {
-        if previousDepth != depth {
-          store.sidebarVisibilitySettled()
-        }
+      // An interrupted swipe must not apply an obsolete selection or start a connection.
+      guard drawerTransitionGeneration == transitionGeneration else { return }
+      if previousDepth != depth {
+        store.sidebarVisibilitySettled()
       }
       // Retain lazily mounted panels, including their scroll and search state.
       completion?()
