@@ -125,6 +125,7 @@ final class ReasoningRenderBufferTests: XCTestCase {
       appearance: .defaults, renderMarkdown: false, showThinking: true
     )
     .environmentObject(StreamingTextStore())
+    .environment(\.messageActivityIsGrouped, true)
     .defaultAppStorage(preferences)
     .frame(width: 360)
     let host = UIHostingController(rootView: root)

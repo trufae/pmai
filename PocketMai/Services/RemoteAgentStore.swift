@@ -809,7 +809,7 @@ final class RemoteAgentChat {
   }
 
   func cancel() {
-    guard connected, let client else { return }
+    guard responding, connected, let client else { return }
     status = "Stopping…"
     Task { await client.cancel() }
   }

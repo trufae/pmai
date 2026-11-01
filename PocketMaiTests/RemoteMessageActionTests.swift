@@ -79,7 +79,8 @@ final class RemoteMessageActionTests: XCTestCase {
           XCTAssertTrue(fixture.prompts.first?.contains("Use the remote host") == true)
           XCTAssertEqual(local.currentConversation, original)
           voice.stop(cancelResponse: true)
-          XCTAssertFalse(chat.connected)
+          XCTAssertTrue(chat.connected)
+          XCTAssertTrue(chat.canSend)
           XCTAssertEqual(local.currentConversation, original)
         }
       }

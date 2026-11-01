@@ -173,6 +173,8 @@ func openCodePromptFailureRecovery(_ scenario: String) async throws {
   #expect(methods.methods.filter { $0 == promptPath }.count == 1)
   #expect(await client.isConnected == (scenario == "provider"))
   if scenario == "provider" {
+    await client.cancel()
+    #expect(await client.isConnected)
     #expect(try await client.configurationOptions().contains { $0.id == "model" })
     #expect(try await client.prompt("Try again", emit: { _ in }) == .stop)
     #expect(await client.isConnected)
@@ -439,8 +441,9 @@ func openCodePagedHistory() async throws {
 #if os(macOS) || os(Linux)
   @Test(
     "OpenCode HTTP pairing, permissions, completion and cancellation work over a real socket",
-    arguments: [false, true])
-  func openCodeHTTPIntegration(cancel: Bool) async throws {
+    arguments: ["complete", "cancel", "stop"])
+  func openCodeHTTPIntegration(action: String) async throws {
+    let cancel = action != "complete"
     let script = #"""
       import base64, json, threading
       from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -473,7 +476,7 @@ func openCodePagedHistory() async throws {
                   return self.send(dict(data=[] if done.is_set() else [dict(id='per_1', action='read', resources=['/work/file'])]))
               if path.endswith('/context') or path.endswith('/message'):
                   messages = [] if not state['prompts'] else [dict(id='msg_1', type='user', text='Read'), dict(id='msg_2', type='assistant', content=[dict(type='text', text='Finished' if done.is_set() else 'Reading')])]
-                  if done.is_set(): messages.append(dict(id='msg_3', type='idle', outcome='succeeded'))
+                  if done.is_set(): messages.append(dict(id='msg_3', type='idle', outcome='interrupted' if state['interrupts'] else 'succeeded'))
                   return self.send(dict(data=messages, cursor={}))
               self.send({}, 404)
           def do_POST(self):
@@ -537,8 +540,14 @@ func openCodePagedHistory() async throws {
       while await updates.permissions == 0, ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(10))
       }
-      prompt.cancel()
-      await #expect(throws: CancellationError.self) { try await prompt.value }
+      if action == "stop" {
+        await client.cancel()
+        #expect(try await prompt.value == .cancelled)
+        #expect(await client.isConnected)
+      } else {
+        prompt.cancel()
+        await #expect(throws: CancellationError.self) { try await prompt.value }
+      }
     } else {
       #expect(try await prompt.value == .stop)
       let messages = await updates.values.last?.objectValue?["messages"]?.arrayValue
