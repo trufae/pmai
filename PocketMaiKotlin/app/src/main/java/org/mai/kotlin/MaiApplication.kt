@@ -184,7 +184,10 @@ class MaiRepository(application: Application) {
     }
 
     fun closeTerminal() {
-        mutableTerminal.value?.let { saveTerminal(it.copy(buffer = it.buffer.interrupted())) }
+        mutableTerminal.value?.let {
+            val saved = saveTerminal(it.copy(buffer = it.buffer.interrupted()))
+            if (saved.storageError.isNotEmpty()) mutableState.value = state.value.copy(error = saved.storageError)
+        }
         mutableTerminal.value = null
         terminalCursor.reset()
         execute("terminalClose")

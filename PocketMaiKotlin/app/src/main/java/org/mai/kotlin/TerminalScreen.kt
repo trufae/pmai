@@ -25,9 +25,11 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -44,6 +46,10 @@ import kotlinx.coroutines.launch
     val dragging by list.interactionSource.collectIsDraggedAsState()
     val scope = rememberCoroutineScope()
     val focus = remember { FocusRequester() }
+    var input by remember { mutableStateOf(TextFieldValue(session.draft, TextRange(session.draft.length))) }
+    LaunchedEffect(session.draft) {
+        if (input.text != session.draft) input = TextFieldValue(session.draft, TextRange(session.draft.length))
+    }
     val atBottom by remember { derivedStateOf {
         val last = list.layoutInfo.visibleItemsInfo.lastOrNull()
         last == null || (last.index == list.layoutInfo.totalItemsCount - 1 &&
@@ -108,7 +114,7 @@ import kotlinx.coroutines.launch
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("$", color = MaterialTheme.colorScheme.primary, fontFamily = FontFamily.Monospace, fontSize = fontSize.sp)
-                    OutlinedTextField(session.draft, model::terminalDraft,
+                    OutlinedTextField(input, { input = it; model.terminalDraft(it.text) },
                         Modifier.weight(1f).padding(horizontal = 8.dp).focusRequester(focus).onPreviewKeyEvent {
                             if (it.type != KeyEventType.KeyDown) false else when {
                                 it.key == Key.DirectionUp -> { model.terminalRecall(-1); true }
