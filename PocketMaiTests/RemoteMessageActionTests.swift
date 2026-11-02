@@ -7,6 +7,64 @@ import XCTest
 
 @MainActor
 final class RemoteMessageActionTests: XCTestCase {
+  func testFailedConnectionKeepsAnUnsentBubbleUntilExplicitRetry() async throws {
+    try await withChat { chat, store, fixture, setOffline in
+      chat.disconnect()
+      fixture.rejectConnections(true)
+      XCTAssertTrue(chat.send("diff", command: "review"))
+      let bubble = try XCTUnwrap(chat.presentation.messages.last)
+      XCTAssertEqual(bubble.role, .user)
+      XCTAssertEqual(bubble.text, "/review diff")
+      XCTAssertTrue(chat.isSendingUnsent(bubble.id))
+      try await self.waitForIdle(chat)
+      XCTAssertNotNil(chat.error)
+      XCTAssertTrue(chat.isUnsent(bubble.id))
+      XCTAssertFalse(chat.isSendingUnsent(bubble.id))
+      XCTAssertTrue(fixture.prompts.isEmpty)
+      XCTAssertEqual(chat.presentation.messages.last?.id, bubble.id)
+
+      let saved = try XCTUnwrap(
+        store.host(chat.bookmark.id)?.conversations?.first { $0.id == chat.conversation.id })
+      let restored = try JSONDecoder().decode(
+        RemoteAgentConversation.self, from: JSONEncoder().encode(saved))
+      XCTAssertEqual(restored.presentation.messages.last?.id, bubble.id)
+      XCTAssertEqual(restored.unsentMessages?.first?.command, "review")
+
+      fixture.rejectConnections(false)
+      chat.connect()
+      try await self.waitForIdle(chat)
+      XCTAssertTrue(chat.connected)
+      XCTAssertTrue(chat.isUnsent(bubble.id))
+      XCTAssertTrue(fixture.prompts.isEmpty)
+      setOffline(true)
+      chat.retryUnsent(bubble.id)
+      XCTAssertTrue(chat.isUnsent(bubble.id))
+      setOffline(false)
+      chat.retryUnsent(bubble.id)
+      chat.retryUnsent(bubble.id)
+      try await self.waitForIdle(chat)
+      XCTAssertFalse(chat.isUnsent(bubble.id))
+      XCTAssertEqual(fixture.prompts, ["diff"])
+      XCTAssertEqual(chat.presentation.messages.filter { $0.text == "diff" }.count, 1)
+    }
+  }
+
+  func testDisconnectDuringConnectionRetainsTheUnsentPromptAndSkill() async throws {
+    try await withChat { chat, _, fixture, _ in
+      chat.disconnect()
+      XCTAssertTrue(chat.send("code", skillID: "remote-skill-id"))
+      let bubble = try XCTUnwrap(chat.presentation.messages.last)
+      chat.disconnect()
+      XCTAssertTrue(chat.isUnsent(bubble.id))
+      XCTAssertFalse(chat.isSendingUnsent(bubble.id))
+      chat.retryUnsent(bubble.id)
+      try await self.waitForIdle(chat)
+      XCTAssertFalse(chat.isUnsent(bubble.id))
+      XCTAssertEqual(fixture.prompts, ["code"])
+      XCTAssertEqual(chat.presentation.messages.filter { $0.text == "code" }.count, 1)
+    }
+  }
+
   func testSharedComposerSendsAttachmentsAfterReconnectAndLeavesLocalChatUntouched() async throws {
     try await withChat { chat, _, fixture, setOffline in
       try await self.withLocalStore { local in
@@ -468,6 +526,7 @@ private final class RemoteActionEndpoint: @unchecked Sendable {
   private var failRewind = false
   private var failNextPrompt = false
   private var failNextDiscovery = false
+  private var failConnections = false
   private var model = "original"
   private var recordedCatalogRequests = 0
   var catalogRequests: Int { lock.withLock { recordedCatalogRequests } }
@@ -479,6 +538,7 @@ private final class RemoteActionEndpoint: @unchecked Sendable {
   func rejectRewind() { lock.withLock { failRewind = true } }
   func rejectNextPrompt() { lock.withLock { failNextPrompt = true } }
   func interruptNextDiscovery() { lock.withLock { failNextDiscovery = true } }
+  func rejectConnections(_ reject: Bool) { lock.withLock { failConnections = reject } }
 
   func respond(_ request: URLRequest) throws -> (Int, Data) {
     try lock.withLock {
@@ -540,6 +600,7 @@ private final class RemoteActionEndpoint: @unchecked Sendable {
         recordedModels.append(model)
         result = .null
       case ("GET", "/api/session/ses_test/message"), ("GET", "/api/session/ses_test/context"):
+        if failConnections { return (401, Data("{}".utf8)) }
         result = .object(["data": .array(history.map(JSONValue.object))])
       case ("POST", "/api/session/ses_test/revert/stage"):
         XCTAssertEqual(input?["files"], .bool(false))

@@ -463,7 +463,7 @@ struct ContentView: View {
 
   private func selectHost(_ id: UUID?) {
     sidebarSelectionGeneration += 1
-    closeHistoryPanel {
+    setDrawerDepth(2, animation: historyPanelAnimation) {
       hosts.selectHost(id, isOffline: store.settings.isOffline)
     }
   }
