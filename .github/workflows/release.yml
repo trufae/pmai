@@ -276,7 +276,7 @@ jobs:
           if-no-files-found: error
 
   ipa:
-    name: Build unsigned IPA
+    name: GUI (iOS)
     runs-on: macos-26
     steps:
       - name: Checkout
@@ -354,7 +354,7 @@ jobs:
           if-no-files-found: error
 
   android-app:
-    name: Kotlin Android APK
+    name: GUI (Android)
     uses: ./.github/workflows/android-app.yml
     with:
       release: true
