@@ -6404,7 +6404,6 @@ private struct ToolPickerPopover: View {
 struct ConversationModelSettingsView: View {
   @EnvironmentObject private var store: AppStore
   @Environment(\.dismiss) private var dismiss
-  @State private var didSaveDefaults = false
   @State private var showingNewFolder = false
   @State private var showingFolderManager = false
   @State private var showingCompactSheet = false
@@ -6417,6 +6416,16 @@ struct ConversationModelSettingsView: View {
         if store.currentConversation == nil {
           ContentUnavailableView("No Chat Selected", systemImage: "bubble.left")
         } else {
+          Section {
+            Picker("Agent", selection: agentBinding) {
+              ForEach(store.settings.agents) { agent in
+                Text(agent.name).tag(agent.id)
+              }
+            }
+            .pickerStyle(.menu)
+            .disabled(store.isResponding || store.isCompacting)
+          }
+
           Section {
             HStack {
               Button {
@@ -6752,67 +6761,31 @@ struct ConversationModelSettingsView: View {
     }
   }
 
-  private var isCurrentProviderModelDefault: Bool {
-    guard let conversation = store.currentConversation else { return false }
-    let defaults = store.effectiveDefaultProviderConfiguration
-    let reasoningMatches = conversation.reasoningLevel == store.settings.defaultReasoningLevel
-    switch conversation.provider {
-    case .apple:
-      return defaults.provider == .apple
-        && normalizedModel(conversation.modelID) == normalizedModel(defaults.modelID)
-        && reasoningMatches
-    case .mlx:
-      guard store.localMLXIsAvailable else { return false }
-      let model =
-        store.availableLocalMLXModelID(preferred: effectiveMLXModel(conversation))
-        ?? effectiveMLXModel(conversation)
-      return defaults.provider == .mlx
-        && normalizedModel(model) == normalizedModel(defaults.modelID)
-        && reasoningMatches
-    case .openAICompatible:
-      guard let endpoint = selectedEndpoint else { return false }
-      let model = effectiveConversationModel(conversation, endpoint: endpoint)
-      return defaults.provider == .openAICompatible
-        && defaults.endpointID == endpoint.id
-        && normalizedModel(model) == normalizedModel(defaults.modelID)
-        && reasoningMatches
-    }
+  private var agentBinding: Binding<UUID> {
+    Binding(
+      get: { store.settings.selectedAgentID },
+      set: { id in
+        store.selectAgent(id)
+        resetChatSettingsToDefaults()
+      })
   }
 
   private var isCurrentChatUsingDefaults: Bool {
-    guard let conversation = store.currentConversation else { return true }
-    let defaults = store.effectiveProviderConfiguration(forFolderID: conversation.folderID)
-    let defaultModel =
-      defaults.provider == .mlx
-      ? (store.availableLocalMLXModelID(preferred: defaults.modelID)
-        ?? normalizedModel(defaults.modelID))
-      : defaults.modelID
-    let memoryMatches =
-      conversation.enabledTools.contains(.memory)
-      == store.settings.defaultEnabledTools.contains(.memory)
-    return conversation.provider == defaults.provider
-      && conversation.endpointID == defaults.endpointID
-      && normalizedModel(conversation.modelID) == normalizedModel(defaultModel)
-      && conversation.reasoningLevel == store.settings.defaultReasoningLevel
-      && effectiveSystemPromptID(for: conversation)
-        == store.effectiveSystemPromptID(forFolderID: conversation.folderID)
-      && conversation.effectiveLanguageOverrideIdentifier == nil
-      && conversation.showThinking == store.settings.showThinkingByDefault
-      && conversation.usesStreaming == store.settings.streamByDefault
-      && (conversation.toolCallingMode ?? store.settings.toolCallingMode)
-        == store.settings.toolCallingMode
-      && conversation.contextWindowMode == nil
-      && conversation.mlxMaxKVSize == nil
-      && memoryMatches
+    guard var conversation = store.currentConversation else { return true }
+    conversation.systemPromptID = effectiveSystemPromptID(for: conversation)
+    var defaults = Conversation()
+    store.settings.applyAgentDefaults(to: &defaults)
+    return store.settings.agentDefaults(from: conversation)
+      == store.settings.agentDefaults(from: defaults)
   }
 
   private var chatSettingsDefaultButtonTitle: String {
-    isCurrentChatUsingDefaults ? "Using app defaults" : "Use as default"
+    isCurrentChatUsingDefaults ? "Using agent defaults" : "Use as default"
   }
 
   private var chatSettingsDefaultFooterText: String {
     if isCurrentChatUsingDefaults {
-      return "These chat settings already match the app defaults."
+      return "These chat settings match \(store.settings.selectedAgent.name)."
     }
     guard let conversation = store.currentConversation else { return "" }
     if conversation.provider == .openAICompatible && store.settings.isOffline {
@@ -6826,107 +6799,21 @@ struct ConversationModelSettingsView: View {
     if conversation.provider == .mlx && store.localMLXModelIDs.isEmpty {
       return "Download an MLX model before using MLX as the default."
     }
-    if didSaveDefaults {
-      return "Future chats will use these settings."
-    }
-    return "Make these chat settings the default for new chats."
+    return "Save these chat settings as the defaults for \(store.settings.selectedAgent.name)."
   }
 
   private func saveChatSettingsAsDefault() {
-    guard let conversation = store.currentConversation else { return }
-    switch conversation.provider {
-    case .apple:
-      guard store.appleIntelligenceIsAvailable else {
-        return
-      }
-      store.settings.defaultProvider = .apple
-      store.settings.appleModelID = conversation.modelID
-    case .mlx:
-      guard store.localMLXIsAvailable else { return }
-      let model =
-        store.availableLocalMLXModelID(preferred: effectiveMLXModel(conversation))
-        ?? effectiveMLXModel(conversation)
-      store.settings.defaultProvider = .mlx
-      if !model.isEmpty {
-        store.settings.localMLXModelID = model
-      }
-    case .openAICompatible:
-      guard !store.settings.isOffline else { return }
-      guard let endpoint = selectedEndpoint,
-        let index = store.settings.openAIEndpoints.firstIndex(where: { $0.id == endpoint.id })
-      else { return }
-      let model = effectiveConversationModel(conversation, endpoint: endpoint)
-      store.settings.defaultProvider = .openAICompatible
-      store.settings.selectedEndpointID = endpoint.id
-      if !model.isEmpty {
-        store.settings.openAIEndpoints[index].defaultModel = model
-      }
-    }
-    store.settings.defaultReasoningLevel = conversation.reasoningLevel
-    store.settings.defaultSystemPromptID = effectiveSystemPromptID(for: conversation)
-    if let identifier = conversation.effectiveLanguageOverrideIdentifier {
-      store.settings.conversation.speechRecognitionLanguageIdentifier = identifier
-      store.settings.recordRecentChatLanguage(identifier)
-    }
-    store.settings.streamByDefault = conversation.usesStreaming
-    store.settings.showThinkingByDefault = conversation.showThinking
-    if let toolCallingMode = conversation.toolCallingMode {
-      store.settings.toolCallingMode = toolCallingMode
-    }
-    if let contextWindowMode = conversation.contextWindowMode {
-      store.settings.contextWindowMode = contextWindowMode
-    }
-    if let mlxMaxKVSize = conversation.mlxMaxKVSize {
-      store.settings.mlxMaxKVSize = mlxMaxKVSize
-    }
-    if conversation.enabledTools.contains(.memory) {
-      store.settings.defaultEnabledTools.insert(.memory)
-    } else {
-      store.settings.defaultEnabledTools.remove(.memory)
-    }
+    guard var conversation = store.currentConversation else { return }
+    conversation.systemPromptID = effectiveSystemPromptID(for: conversation)
+    store.settings.agentSettings = store.settings.agentDefaults(from: conversation)
     store.saveSettings()
-    didSaveDefaults = true
   }
 
   private func resetChatSettingsToDefaults() {
-    guard let source = store.currentConversation else { return }
-    let defaults = store.effectiveProviderConfiguration(forFolderID: source.folderID)
-    let defaultModel: String = {
-      guard defaults.provider == .mlx else { return defaults.modelID }
-      return store.availableLocalMLXModelID(preferred: defaults.modelID)
-        ?? normalizedModel(defaults.modelID)
-    }()
+    let settings = store.settings
     store.updateCurrentConversationSettings { conversation in
-      conversation.provider = defaults.provider
-      conversation.endpointID = defaults.endpointID
-      conversation.modelID = defaultModel
-      conversation.reasoningLevel = store.settings.defaultReasoningLevel
-      conversation.systemPromptID = store.effectiveSystemPromptID(forFolderID: source.folderID)
-      conversation.languageOverrideIdentifier = nil
-      conversation.showThinking = store.settings.showThinkingByDefault
-      conversation.usesStreaming = store.settings.streamByDefault
-      conversation.toolCallingMode = nil
-      conversation.contextWindowMode = nil
-      conversation.mlxMaxKVSize = nil
-      if store.settings.defaultEnabledTools.contains(.memory) {
-        conversation.enabledTools.insert(.memory)
-      } else {
-        conversation.enabledTools.remove(.memory)
-      }
+      settings.applyAgentDefaults(to: &conversation)
     }
-    didSaveDefaults = false
-  }
-
-  private func effectiveConversationModel(
-    _ conversation: Conversation, endpoint: OpenAIEndpoint
-  ) -> String {
-    let model = normalizedModel(conversation.modelID)
-    return model.isEmpty ? normalizedModel(endpoint.defaultModel) : model
-  }
-
-  private func effectiveMLXModel(_ conversation: Conversation) -> String {
-    let model = normalizedModel(conversation.modelID)
-    return model.isEmpty ? normalizedModel(store.settings.localMLXModelID) : model
   }
 
   private func effectiveSystemPromptID(for conversation: Conversation) -> UUID {
@@ -6973,15 +6860,12 @@ struct ConversationModelSettingsView: View {
             conversation.provider = .apple
             conversation.endpointID = nil
             conversation.modelID = store.settings.appleModelID
-            didSaveDefaults = false
           case .mlx:
             conversation.provider = .mlx
             conversation.endpointID = nil
             conversation.modelID = selectedMLXModelID ?? ""
-            didSaveDefaults = false
           case .endpoint(let id):
             guard !store.settings.isOffline else {
-              didSaveDefaults = false
               return
             }
             conversation.provider = .openAICompatible
@@ -6991,7 +6875,6 @@ struct ConversationModelSettingsView: View {
             {
               conversation.modelID = endpoint.defaultModel
             }
-            didSaveDefaults = false
           }
         }
       }
@@ -7009,7 +6892,6 @@ struct ConversationModelSettingsView: View {
         store.updateCurrentConversationSettings { conversation in
           conversation.modelID = model
         }
-        didSaveDefaults = false
       }
     )
   }
@@ -7044,7 +6926,6 @@ struct ConversationModelSettingsView: View {
         store.updateCurrentConversationSettings { conversation in
           conversation.modelID = model
         }
-        didSaveDefaults = false
       }
     )
   }
@@ -7056,7 +6937,6 @@ struct ConversationModelSettingsView: View {
         store.updateCurrentConversationSettings { conversation in
           conversation.usesStreaming = usesStreaming
         }
-        didSaveDefaults = false
       }
     )
   }
@@ -7068,7 +6948,6 @@ struct ConversationModelSettingsView: View {
         store.updateCurrentConversationSettings { conversation in
           conversation.toolCallingMode = mode
         }
-        didSaveDefaults = false
       }
     )
   }
@@ -7080,7 +6959,6 @@ struct ConversationModelSettingsView: View {
         store.updateCurrentConversationSettings { conversation in
           conversation.contextWindowMode = mode
         }
-        didSaveDefaults = false
       }
     )
   }
@@ -7092,7 +6970,6 @@ struct ConversationModelSettingsView: View {
         store.updateCurrentConversationSettings { conversation in
           conversation.mlxMaxKVSize = size
         }
-        didSaveDefaults = false
       }
     )
   }
@@ -7123,7 +7000,6 @@ struct ConversationModelSettingsView: View {
         store.updateCurrentConversationSettings { conversation in
           conversation.showThinking = showThinking
         }
-        didSaveDefaults = false
       }
     )
   }
@@ -7141,7 +7017,6 @@ struct ConversationModelSettingsView: View {
         store.updateCurrentConversationSettings { conversation in
           conversation.systemPromptID = promptID
         }
-        didSaveDefaults = false
       }
     )
   }
@@ -7157,7 +7032,6 @@ struct ConversationModelSettingsView: View {
       get: { store.currentConversation?.effectiveLanguageOverrideIdentifier ?? "" },
       set: { identifier in
         store.setCurrentConversationLanguageOverride(identifier.isEmpty ? nil : identifier)
-        didSaveDefaults = false
       }
     )
   }
@@ -7173,7 +7047,6 @@ struct ConversationModelSettingsView: View {
             conversation.enabledTools.remove(.memory)
           }
         }
-        didSaveDefaults = false
       }
     )
   }

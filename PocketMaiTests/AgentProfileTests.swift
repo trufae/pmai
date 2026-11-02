@@ -158,6 +158,65 @@ final class AgentProfileTests: XCTestCase {
     XCTAssertEqual(settings.selectedAgentID, coder.id)
   }
 
+  func testApplyingAgentDefaultsUpdatesExistingChatWithoutLosingItsContents() {
+    var settings = AppSettings.defaults
+    settings.agentSettings = customAgentSettings()
+    settings.openAIEndpoints = [
+      OpenAIEndpoint(id: endpointID, name: "Local", baseURL: "http://localhost:11434/v1")
+    ]
+    var conversation = Conversation()
+    conversation.messages = [ChatMessage(role: .user, text: "keep this")]
+    conversation.toolsEnabled = false
+    conversation.disabledMCPTools = ["server:tool"]
+    conversation.languageOverrideIdentifier = "ca"
+    let original = conversation
+    settings.applyAgentDefaults(to: &conversation)
+    XCTAssertEqual(conversation.id, original.id)
+    XCTAssertEqual(conversation.messages, original.messages)
+    XCTAssertEqual(conversation.folderID, original.folderID)
+    XCTAssertEqual(conversation.languageOverrideIdentifier, "ca")
+    XCTAssertEqual(conversation.modelID, "agent-specific-model")
+    XCTAssertEqual(conversation.endpointID, endpointID)
+    XCTAssertEqual(conversation.systemPromptID, promptID)
+    XCTAssertTrue(conversation.toolsEnabled)
+    XCTAssertTrue(conversation.disabledMCPTools.isEmpty)
+    XCTAssertEqual(settings.agentDefaults(from: conversation), customAgentSettings())
+  }
+
+  func testSavingChatDefaultsOnlyChangesTheSelectedAgentAndSurvivesRestart() throws {
+    var settings = AppSettings.defaults
+    settings.agentSettings = customAgentSettings()
+    settings.openAIEndpoints = [
+      OpenAIEndpoint(
+        id: endpointID, name: "Local", baseURL: "http://localhost:11434/v1",
+        defaultModel: "shared-model")
+    ]
+    let extra = settings.addAgent(named: "Extra")
+    settings.selectAgent(extra.id)
+    var conversation = Conversation()
+    settings.applyAgentDefaults(to: &conversation)
+    conversation.modelID = "chat-model"
+    conversation.reasoningLevel = .disabled
+    conversation.enabledTools = [.memory]
+    conversation.enabledMCPTools = ["server:tool", "server:other"]
+    conversation.disabledMCPTools = ["server:tool"]
+    settings.agentSettings = settings.agentDefaults(from: conversation)
+    settings.syncSelectedAgent()
+    let restored = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
+    XCTAssertEqual(restored.selectedAgentID, extra.id)
+    XCTAssertEqual(restored.selectedAgent.settings.openAIModelID, "chat-model")
+    XCTAssertEqual(restored.selectedAgent.settings.defaultReasoningLevel, .disabled)
+    XCTAssertEqual(restored.selectedAgent.settings.defaultEnabledTools, [.memory])
+    XCTAssertEqual(restored.selectedAgent.settings.defaultEnabledMCPTools, ["server:other"])
+    XCTAssertEqual(restored.agents.first { $0.isStock }?.settings, customAgentSettings())
+    XCTAssertEqual(restored.openAIEndpoints[0].defaultModel, "shared-model")
+    conversation.toolsEnabled = false
+    let disabled = restored.agentDefaults(from: conversation)
+    XCTAssertTrue(disabled.defaultEnabledTools.isEmpty)
+    XCTAssertTrue(disabled.defaultEnabledMCPServers.isEmpty)
+    XCTAssertTrue(disabled.defaultEnabledMCPTools.isEmpty)
+  }
+
   func testRemovingTheSelectedAgentFallsBackToStock() {
     var settings = AppSettings.defaults
     let stockSettings = customAgentSettings()
