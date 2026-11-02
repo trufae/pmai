@@ -22,8 +22,8 @@ env:
 
 # Build caches are restored everywhere but saved only from main, so pull
 # requests reuse main's objects without evicting them. Each job saves right
-# after building, before its tests, so a failing test still refreshes the
-# cache for the next run.
+# after compilation (including focused test graphs); test failures still
+# refresh the cache for the next run.
 
 jobs:
   cli:
@@ -49,25 +49,11 @@ jobs:
           swift-version: swift-${{ env.SWIFT_VERSION }}-RELEASE
           check-latest: true
 
-      - name: Show Swift version
-        id: swift-cache
-        run: |
-          swift --version | tee "$RUNNER_TEMP/swift-cache.txt"
-          if [ "$RUNNER_OS" = macOS ]; then
-            xcodebuild -version >> "$RUNNER_TEMP/swift-cache.txt"
-            xcrun --sdk macosx --show-sdk-version >> "$RUNNER_TEMP/swift-cache.txt"
-          fi
-          echo "id=$(shasum -a 256 "$RUNNER_TEMP/swift-cache.txt" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
-
       - name: Restore Swift build outputs
         id: build-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: ./.github/actions/restore-swift-build
         with:
-          path: MaiCore/.build
-          key: swift-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-cache.outputs.id }}-${{ hashFiles('MaiCore/Package.swift', 'MaiCore/Package.resolved', 'Vendor/Forwiroh/Package.swift', 'Vendor/Forwiroh/Artifacts/manifest.json') }}-${{ hashFiles('MaiCore/Sources/**', 'MaiCore/Tests/**') }}
-          restore-keys: |
-            swift-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-cache.outputs.id }}-${{ hashFiles('MaiCore/Package.swift', 'MaiCore/Package.resolved', 'Vendor/Forwiroh/Package.swift', 'Vendor/Forwiroh/Artifacts/manifest.json') }}-
-            swift-${{ runner.os }}-${{ runner.arch }}-${{ steps.swift-cache.outputs.id }}-
+          profile: ${{ runner.os == 'macOS' && 'cli-debug-native' || 'cli-release-native-osize' }}
 
       - name: Test dependency download profiles
         run: python3 test/build-dependencies.py
@@ -160,13 +146,9 @@ jobs:
       # below produces the fully static binary for Alpine and other musl distributions.
       - name: Restore Swift build outputs
         id: build-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: ./.github/actions/restore-swift-build
         with:
-          path: MaiCore/.build
-          key: swift-static-${{ runner.arch }}-${{ env.SWIFT_VERSION }}-${{ hashFiles('MaiCore/Package.swift', 'MaiCore/Package.resolved', 'Vendor/Forwiroh/Package.swift', 'Vendor/Forwiroh/Artifacts/manifest.json') }}-${{ hashFiles('MaiCore/Sources/**', 'MaiCore/Tests/**') }}
-          restore-keys: |
-            swift-static-${{ runner.arch }}-${{ env.SWIFT_VERSION }}-${{ hashFiles('MaiCore/Package.swift', 'MaiCore/Package.resolved', 'Vendor/Forwiroh/Package.swift', 'Vendor/Forwiroh/Artifacts/manifest.json') }}-
-            swift-static-${{ runner.arch }}-${{ env.SWIFT_VERSION }}-
+          profile: linux-static-native-osize
 
       - name: Build static release CLI
         run: |
@@ -175,13 +157,6 @@ jobs:
           args=(--package-path MaiCore --disable-prefetching --build-system native --jobs 2 -c release -Xswiftc -Osize --static-swift-stdlib -Xswiftc -static-stdlib)
           swift build "${args[@]}" --disable-index-store --product pmai
           cp "$(swift build "${args[@]}" --show-bin-path)/pmai" pmai
-
-      - name: Save Swift build outputs
-        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.build-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: MaiCore/.build
-          key: ${{ steps.build-cache.outputs.cache-primary-key }}
 
       - name: Verify no Swift runtime or XML dependencies
         run: |
@@ -205,6 +180,13 @@ jobs:
 
       - name: Test document import and XML handling
         run: python3 test/run-tests.py documents
+
+      - name: Save Swift build outputs
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.build-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: MaiCore/.build
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
 
   musl-cli:
     name: CLI (Linux musl ${{ matrix.name }})
@@ -239,13 +221,9 @@ jobs:
       # Keep one optimized build to exercise the SDK/runtime without AVX.
       - name: Restore Swift build outputs
         id: build-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: ./.github/actions/restore-swift-build
         with:
-          path: MaiCore/.build
-          key: swift-musl-${{ runner.arch }}-${{ env.SWIFT_VERSION }}-${{ hashFiles('MaiCore/Package.swift', 'MaiCore/Package.resolved', 'Vendor/Forwiroh/Package.swift', 'Vendor/Forwiroh/Artifacts/manifest.json') }}-${{ hashFiles('MaiCore/Sources/**', 'MaiCore/Tests/**') }}
-          restore-keys: |
-            swift-musl-${{ runner.arch }}-${{ env.SWIFT_VERSION }}-${{ hashFiles('MaiCore/Package.swift', 'MaiCore/Package.resolved', 'Vendor/Forwiroh/Package.swift', 'Vendor/Forwiroh/Artifacts/manifest.json') }}-
-            swift-musl-${{ runner.arch }}-${{ env.SWIFT_VERSION }}-
+          profile: linux-musl-native-osize
 
       - name: Build fully static CLI
         run: |
@@ -283,64 +261,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends qemu-user
           python3 test/linux-network-smoke.py qemu-x86_64 -cpu Nehalem ./pmai
 
-  android-cli:
-    name: CLI (Android arm64)
-    runs-on: ubuntu-24.04
-    env:
-      PMAI_NO_MLX: "1"
-      PMAI_FORWIROH_PLATFORM: native
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      # The Android Swift SDK must exactly match the host Swift toolchain.
-      - name: Set up Swift
-        uses: SwiftyLab/setup-swift@d60245579ea3836a3f2fa65ebbe1e8891d577c76 # v1.14.2
-        with:
-          swift-version: swift-${{ env.SWIFT_VERSION }}-RELEASE
-          check-latest: true
-
-      - name: Install Android NDK 30
-        run: |
-          curl -fL -o "$RUNNER_TEMP/android-ndk.zip" \
-            https://dl.google.com/android/repository/android-ndk-r30-linux.zip
-          unzip -q "$RUNNER_TEMP/android-ndk.zip" -d "$RUNNER_TEMP"
-          # ROOT takes precedence over HOME, including the runner's preinstalled NDK.
-          echo "ANDROID_NDK_ROOT=$RUNNER_TEMP/android-ndk-r30" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_HOME=$RUNNER_TEMP/android-ndk-r30" >> "$GITHUB_ENV"
-
-      - name: Install and configure Swift Android SDK
-        run: |
-          swift sdk install \
-            "https://download.swift.org/swift-${SWIFT_VERSION}-release/android-sdk/swift-${SWIFT_VERSION}-RELEASE/swift-${SWIFT_VERSION}-RELEASE_android.artifactbundle.tar.gz" \
-            --checksum 21fb555122a3d801ad943d48df7ebffdd8824de61c25c180bb792d3edaee0b43
-          swiftpm_root="${XDG_CONFIG_HOME:+$XDG_CONFIG_HOME/swiftpm}"
-          bash "${swiftpm_root:-$HOME/.swiftpm}/swift-sdks/swift-${SWIFT_VERSION}-RELEASE_android.artifactbundle/swift-android/scripts/setup-android-sdk.sh"
-
-      - name: Restore Swift build outputs
-        id: build-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: MaiCore/.build
-          key: swift-android-${{ env.SWIFT_VERSION }}-${{ hashFiles('MaiCore/Package.swift', 'MaiCore/Package.resolved', 'Vendor/Forwiroh/Package.swift', 'Vendor/Forwiroh/Artifacts/manifest.json') }}-${{ hashFiles('MaiCore/Sources/**', 'MaiCore/Tests/**') }}
-          restore-keys: |
-            swift-android-${{ env.SWIFT_VERSION }}-${{ hashFiles('MaiCore/Package.swift', 'MaiCore/Package.resolved', 'Vendor/Forwiroh/Package.swift', 'Vendor/Forwiroh/Artifacts/manifest.json') }}-
-            swift-android-${{ env.SWIFT_VERSION }}-
-
-      # Avoid Swift Build 6.4's Linux planner crash and exercise the release flags.
-      - name: Build Android arm64 release CLI
-        run: |
-          swift build --build-system native --package-path MaiCore -c release --disable-index-store --disable-prefetching --product pmai \
-            --swift-sdk swift-${SWIFT_VERSION}-RELEASE_android \
-            --triple aarch64-unknown-linux-android28 --static-swift-stdlib -Xswiftc -Osize
-
-      - name: Save Swift build outputs
-        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.build-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: MaiCore/.build
-          key: ${{ steps.build-cache.outputs.cache-primary-key }}
-
   windows-cli:
     name: CLI (Windows ${{ matrix.arch }})
     strategy:
@@ -374,22 +294,12 @@ jobs:
 
       - name: Restore Swift build outputs
         id: build-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: ./.github/actions/restore-swift-build
         with:
-          path: MaiCore/.build
-          key: swift-windows-${{ runner.arch }}-${{ env.SWIFT_VERSION }}-${{ hashFiles('MaiCore/Package.swift', 'MaiCore/Package.resolved', 'Vendor/Forwiroh/Package.swift', 'Vendor/Forwiroh/Artifacts/manifest.json') }}-${{ hashFiles('MaiCore/Sources/**', 'MaiCore/Tests/**') }}
-          restore-keys: |
-            swift-windows-${{ runner.arch }}-${{ env.SWIFT_VERSION }}-${{ hashFiles('MaiCore/Package.swift', 'MaiCore/Package.resolved', 'Vendor/Forwiroh/Package.swift', 'Vendor/Forwiroh/Artifacts/manifest.json') }}-
-            swift-windows-${{ runner.arch }}-${{ env.SWIFT_VERSION }}-
+          profile: windows-release-osize
 
       - name: Build release CLI without debug information
         run: swift build --package-path MaiCore --configuration release -debug-info-format none --disable-index-store --disable-prefetching --product pmai -Xswiftc -Osize -Xlinker /DEBUG:NONE
-
-      - name: Check interactive console input
-        run: |
-          $bin = swift build --package-path MaiCore --configuration release --disable-prefetching --show-bin-path
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python test/windows-console-smoke.py (Join-Path $bin 'pmai.exe')
 
       - name: Save Swift build outputs
         if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.build-cache.outputs.cache-hit != 'true' }}
@@ -397,6 +307,12 @@ jobs:
         with:
           path: MaiCore/.build
           key: ${{ steps.build-cache.outputs.cache-primary-key }}
+
+      - name: Check interactive console input
+        run: |
+          $bin = swift build --package-path MaiCore --configuration release --disable-prefetching --show-bin-path
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python test/windows-console-smoke.py (Join-Path $bin 'pmai.exe')
 
       - name: Package Windows beta CLI
         run: ./sys/package-windows.ps1 -Architecture ${{ matrix.arch }}
@@ -442,34 +358,17 @@ jobs:
             sudo ln -s "$(xcrun --toolchain XcodeDefault --find ld)" "$swift_bin/ld"
           fi
 
-      - name: Show Xcode and macOS versions
-        id: ios-cache
-        run: |
-          sw_vers
-          xcodebuild -version
-          swift --version
-          uname -m
-          {
-            swift --version
-            xcodebuild -version
-            xcrun --sdk iphonesimulator --show-sdk-version
-          } > "$RUNNER_TEMP/ios-cache.txt"
-          echo "id=$(shasum -a 256 "$RUNNER_TEMP/ios-cache.txt" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
-
-      # The compilation cache is content-addressed, so each main run saves a
-      # new entry and the next run restores the newest one for these inputs.
-      - name: Restore iOS dependencies and compiler cache
+      - name: Restore Swift build outputs
         id: ios-build-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: ./.github/actions/restore-swift-build
         with:
+          profile: ios-xcode
+          package: aitest
+          rolling: 'true'
           path: |
             aitest/.build
             build/DerivedData/SourcePackages
             build/DerivedData/CompilationCache.noindex
-          key: ios-${{ runner.arch }}-${{ steps.ios-cache.outputs.id }}-${{ hashFiles('**/Package.resolved', 'MaiCore/Package.swift', 'Vendor/Forwiroh/Package.swift', 'Vendor/Forwiroh/Artifacts/manifest.json') }}-${{ github.run_id }}
-          restore-keys: |
-            ios-${{ runner.arch }}-${{ steps.ios-cache.outputs.id }}-${{ hashFiles('**/Package.resolved', 'MaiCore/Package.swift', 'Vendor/Forwiroh/Package.swift', 'Vendor/Forwiroh/Artifacts/manifest.json') }}-
-            ios-${{ runner.arch }}-${{ steps.ios-cache.outputs.id }}-
 
       - name: List available iOS Simulator runtimes
         run: xcrun simctl list runtimes

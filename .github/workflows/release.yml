@@ -60,9 +60,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libcurl4-openssl-dev
 
+      - name: Restore Swift build outputs
+        id: build-cache
+        uses: ./.github/actions/restore-swift-build
+        with:
+          profile: ${{ runner.os == 'Linux' && 'linux-static-native-osize' || 'cli-release-native-osize' }}
+
       - name: Build release CLI
         run: |
-          args=(--package-path MaiCore --disable-prefetching -c release --product pmai -Xswiftc -Osize)
+          args=(--package-path MaiCore --build-system native --disable-index-store --disable-prefetching --jobs 2 -c release --product pmai -Xswiftc -Osize)
           if [ "${{ matrix.target }}" = "macos-x64" ]; then
             export PMAI_NO_MLX=1
           fi
@@ -136,10 +142,16 @@ jobs:
 
       # Fully static: runs on Alpine and other musl distributions as well as
       # on glibc systems too old for the regular Linux build.
+      - name: Restore Swift build outputs
+        id: build-cache
+        uses: ./.github/actions/restore-swift-build
+        with:
+          profile: linux-musl-native-osize
+
       - name: Build fully static release CLI
         run: |
           set -eu
-          args=(--package-path MaiCore --disable-prefetching -c release --swift-sdk ${{ matrix.arch }}-swift-linux-musl -Xswiftc -Osize)
+          args=(--package-path MaiCore --build-system native --disable-index-store --disable-prefetching --jobs 2 -c release --swift-sdk ${{ matrix.arch }}-swift-linux-musl -Xswiftc -Osize)
           swift build "${args[@]}" --product pmai
           cp "$(swift build "${args[@]}" --show-bin-path)/pmai" pmai
           strip -s pmai
@@ -169,66 +181,6 @@ jobs:
         with:
           name: pmai-${{ matrix.target }}
           path: pmai-${{ matrix.target }}.zip
-          if-no-files-found: error
-
-  android-cli:
-    name: CLI (Android arm64)
-    runs-on: ubuntu-24.04
-    env:
-      PMAI_NO_MLX: "1"
-      PMAI_FORWIROH_PLATFORM: native
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Swift
-        uses: SwiftyLab/setup-swift@d60245579ea3836a3f2fa65ebbe1e8891d577c76 # v1.14.2
-        with:
-          swift-version: swift-${{ env.SWIFT_VERSION }}-RELEASE
-          check-latest: true
-
-      - name: Install Android NDK 30
-        run: |
-          curl -fL -o "$RUNNER_TEMP/android-ndk.zip" \
-            https://dl.google.com/android/repository/android-ndk-r30-linux.zip
-          unzip -q "$RUNNER_TEMP/android-ndk.zip" -d "$RUNNER_TEMP"
-          # ROOT takes precedence over HOME, including the runner's preinstalled NDK.
-          echo "ANDROID_NDK_ROOT=$RUNNER_TEMP/android-ndk-r30" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_HOME=$RUNNER_TEMP/android-ndk-r30" >> "$GITHUB_ENV"
-
-      - name: Install and configure Swift Android SDK
-        run: |
-          swift sdk install \
-            "https://download.swift.org/swift-${SWIFT_VERSION}-release/android-sdk/swift-${SWIFT_VERSION}-RELEASE/swift-${SWIFT_VERSION}-RELEASE_android.artifactbundle.tar.gz" \
-            --checksum 21fb555122a3d801ad943d48df7ebffdd8824de61c25c180bb792d3edaee0b43
-          swiftpm_root="${XDG_CONFIG_HOME:+$XDG_CONFIG_HOME/swiftpm}"
-          bash "${swiftpm_root:-$HOME/.swiftpm}/swift-sdks/swift-${SWIFT_VERSION}-RELEASE_android.artifactbundle/swift-android/scripts/setup-android-sdk.sh"
-
-      # Avoid Swift Build 6.4's Linux planner crash.
-      - name: Build Android arm64 release CLI
-        run: |
-          args=(--build-system native --package-path MaiCore -c release --disable-index-store --disable-prefetching
-            --swift-sdk swift-${SWIFT_VERSION}-RELEASE_android
-            --triple aarch64-unknown-linux-android28 --static-swift-stdlib -Xswiftc -Osize)
-          swift build "${args[@]}" --product pmai
-          cp "$(swift build "${args[@]}" --show-bin-path)/pmai" pmai
-
-      - name: Package Android CLI
-        run: |
-          set -eu
-          package="$RUNNER_TEMP/pmai-android-arm64"
-          mkdir -p "$package"
-          cp pmai "$package/pmai"
-          cp "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$package/"
-          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" -x "$package/pmai"
-          (cd "$package" && zip -9 "$GITHUB_WORKSPACE/pmai-android-arm64.zip" pmai libc++_shared.so)
-          unzip -l pmai-android-arm64.zip
-
-      - name: Upload Android CLI artifact
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: pmai-android-arm64
-          path: pmai-android-arm64.zip
           if-no-files-found: error
 
   windows-cli:
@@ -261,6 +213,12 @@ jobs:
 
       - name: Show Swift version
         run: swift --version
+
+      - name: Restore Swift build outputs
+        id: build-cache
+        uses: ./.github/actions/restore-swift-build
+        with:
+          profile: windows-release-osize
 
       - name: Build release CLI without debug information
         run: swift build --package-path MaiCore --configuration release -debug-info-format none --disable-index-store --disable-prefetching --product pmai -Xswiftc -Osize -Xlinker /DEBUG:NONE
@@ -310,6 +268,18 @@ jobs:
             sudo ln -s "$(xcrun --toolchain XcodeDefault --find ld)" "$swift_bin/ld"
           fi
 
+      - name: Restore Swift build outputs
+        id: build-cache
+        uses: ./.github/actions/restore-swift-build
+        with:
+          profile: ios-xcode
+          package: aitest
+          rolling: 'true'
+          path: |
+            aitest/.build
+            build/DerivedData/SourcePackages
+            build/DerivedData/CompilationCache.noindex
+
       # Keep releases independent of private signing credentials. The IPA can
       # be signed after download with the user's own Apple identity.
       - name: Build unsigned device app
@@ -327,6 +297,8 @@ jobs:
             -skipPackagePluginValidation \
             "CC=$xcode_clang" "TOOLCHAINS=$swift_toolchain \$(inherited)" \
             'OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -enable-cross-import-overlays' \
+            COMPILATION_CACHE_ENABLE_CACHING=YES \
+            COMPILER_INDEX_STORE_ENABLE=NO ENABLE_CODE_COVERAGE=NO \
             CODE_SIGNING_ALLOWED=NO \
             build
 
@@ -361,7 +333,7 @@ jobs:
 
   release:
     name: Publish GitHub release
-    needs: [cli, musl-cli, android-cli, windows-cli, android-app, ipa]
+    needs: [cli, musl-cli, windows-cli, android-app, ipa]
     runs-on: ubuntu-latest
     steps:
       - name: Download release artifacts

@@ -56,6 +56,52 @@ jobs:
             --checksum 21fb555122a3d801ad943d48df7ebffdd8824de61c25c180bb792d3edaee0b43
           swiftpm_root="${XDG_CONFIG_HOME:+$XDG_CONFIG_HOME/swiftpm}"
           bash "${swiftpm_root:-$HOME/.swiftpm}/swift-sdks/swift-${SWIFT_VERSION}-RELEASE_android.artifactbundle/swift-android/scripts/setup-android-sdk.sh"
+      - name: Restore Swift build outputs
+        id: build-cache
+        uses: ./.github/actions/restore-swift-build
+        with:
+          profile: android-ndk30-${{ matrix.app }}
+          package: ${{ matrix.app }}
+          path: |
+            ${{ matrix.app }}/.build
+
+      - name: Restore Android CLI and mobile test outputs
+        if: matrix.app == 'PocketMaiKotlin'
+        id: cli-build-cache
+        uses: ./.github/actions/restore-swift-build
+        with:
+          profile: android-ndk30-cli-native-static-osize
+
+      # Avoid Swift Build 6.4's Linux planner crash.
+      - name: Build Android arm64 release CLI
+        if: matrix.app == 'PocketMaiKotlin'
+        run: |
+          args=(--build-system native --package-path MaiCore -c release --disable-index-store --disable-prefetching
+            --swift-sdk swift-${SWIFT_VERSION}-RELEASE_android
+            --triple aarch64-unknown-linux-android28 --static-swift-stdlib -Xswiftc -Osize)
+          swift build "${args[@]}" --product pmai
+          cp "$(swift build "${args[@]}" --show-bin-path)/pmai" pmai
+
+      - name: Package Android CLI
+        if: matrix.app == 'PocketMaiKotlin'
+        run: |
+          set -eu
+          package="$RUNNER_TEMP/pmai-android-arm64"
+          mkdir -p "$package"
+          cp pmai "$package/pmai"
+          cp "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$package/"
+          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" -x "$package/pmai"
+          (cd "$package" && zip -9 "$GITHUB_WORKSPACE/pmai-android-arm64.zip" pmai libc++_shared.so)
+          unzip -l pmai-android-arm64.zip
+
+      - name: Upload Android CLI artifact
+        if: matrix.app == 'PocketMaiKotlin'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pmai-android-arm64
+          path: pmai-android-arm64.zip
+          if-no-files-found: error
+
       - name: Test portable Swift screens
         if: matrix.app == 'PocketMaiAndroid'
         run: |
@@ -64,6 +110,12 @@ jobs:
       - name: Test Kotlin app's Swift facade
         if: matrix.app == 'PocketMaiKotlin'
         run: python3 test/run-tests.py mobile
+      - name: Save Android CLI and mobile test outputs
+        if: ${{ !cancelled() && matrix.app == 'PocketMaiKotlin' && github.ref == 'refs/heads/main' && steps.cli-build-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: MaiCore/.build
+          key: ${{ steps.cli-build-cache.outputs.cache-primary-key }}
       - name: Build APK for device and emulator
         env:
           ANDROID_ABIS: "arm64-v8a x86_64"
@@ -104,3 +156,9 @@ jobs:
           name: PocketMai-Android-release
           path: ${{ runner.temp }}/android-artifacts/PocketMai-Android.apk
           if-no-files-found: error
+      - name: Save Android GUI build outputs
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.build-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ matrix.app }}/.build
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}

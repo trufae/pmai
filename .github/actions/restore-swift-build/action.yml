@@ -1,0 +1,55 @@
+name: Restore Swift build
+description: Share compatible intermediates between CI and release builds
+inputs:
+  profile:
+    description: Destination, build system, configuration and compiler flags (bump when these change)
+    required: true
+  package:
+    description: Root Swift package
+    default: MaiCore
+  path:
+    description: Cached paths; consumers must save exactly the same paths
+    default: MaiCore/.build
+  rolling:
+    description: Refresh a content-addressed compiler cache on every run
+    default: 'false'
+outputs:
+  cache-hit:
+    description: Whether the exact cache was restored
+    value: ${{ steps.restore.outputs.cache-hit }}
+  cache-primary-key:
+    description: Key to use with actions/cache/save
+    value: ${{ steps.restore.outputs.cache-primary-key }}
+runs:
+  using: composite
+  steps:
+    - name: Fingerprint Swift and platform SDKs
+      id: toolchain
+      shell: python
+      run: |
+        import hashlib
+        import os
+        import subprocess
+        import sys
+
+        commands = [['swift', '--version']]
+        if sys.platform == 'darwin':
+            commands += [['xcodebuild', '-version']]
+            commands += [['xcrun', '--sdk', sdk, '--show-sdk-build-version']
+                         for sdk in ('macosx', 'iphoneos', 'iphonesimulator')]
+        identity = b''.join(subprocess.check_output(command) for command in commands)
+        print(identity.decode())
+        with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+            output.write('id=' + hashlib.sha256(identity).hexdigest() + '\n')
+
+    # Keep path lists identical across workflows: GitHub also hashes them into
+    # the cache version. Never restore across toolchains or build profiles.
+    - name: Restore intermediates
+      id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ inputs.path }}
+        key: swift-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.profile }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles(format('{0}/Package.*', inputs.package), 'MaiCore/Package.*', 'Vendor/Forwiroh/Package.swift', 'Vendor/Forwiroh/Artifacts/manifest.json', 'PocketMai.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-${{ inputs.rolling == 'true' && github.run_id || hashFiles(format('{0}/Sources/**', inputs.package), format('{0}/Tests/**', inputs.package), 'MaiCore/Sources/**', 'MaiCore/Tests/**', 'Vendor/Forwiroh/Sources/**') }}
+        restore-keys: |
+          swift-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.profile }}-${{ steps.toolchain.outputs.id }}-${{ hashFiles(format('{0}/Package.*', inputs.package), 'MaiCore/Package.*', 'Vendor/Forwiroh/Package.swift', 'Vendor/Forwiroh/Artifacts/manifest.json', 'PocketMai.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-
+          swift-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.profile }}-${{ steps.toolchain.outputs.id }}-
