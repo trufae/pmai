@@ -429,24 +429,17 @@ struct ChatView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
+        .background {
+          Rectangle().fill(.ultraThinMaterial)
+            .mask(LinearGradient(
+              colors: [.black.opacity(0.7), .clear], startPoint: .top, endPoint: .bottom))
+            .padding(.bottom, -16)
+            .ignoresSafeArea(edges: .top)
+        }
       }
       chatHeaderRows
     }
     .padding(.bottom, 8)
-    .background {
-      Rectangle().fill(.ultraThinMaterial)
-        .padding(.bottom, -24)
-        .ignoresSafeArea(edges: .top)
-        .mask(alignment: .bottom) {
-          VStack(spacing: 0) {
-            Rectangle()
-            LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-              .frame(height: 24)
-          }
-          .ignoresSafeArea(edges: .top)
-          .padding(.bottom, -24)
-        }
-    }
     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { chatHeaderHeight = $0 }
     .offset(y: showsChatHeader ? 0 : -chatHeaderHeight - 24)
     .opacity(showsChatHeader ? 1 : 0)
@@ -507,7 +500,10 @@ struct ChatView: View {
   }
 
   private var chatHeaderRows: some View {
-    VStack(spacing: 0) {
+    VStack(spacing: 8) {
+      NowSpeakingBar { messageID in
+        pendingScrollToMessageID = messageID
+      }
       if remoteChat == nil, let conversation = currentConversation,
         !conversation.messages.pinnedMessages.isEmpty
       {
@@ -520,9 +516,6 @@ struct ChatView: View {
       }
       if let providerStatus {
         providerStatusBanner(providerStatus)
-      }
-      NowSpeakingBar { messageID in
-        pendingScrollToMessageID = messageID
       }
       if let session = currentWebXDCSession {
         webxdcSessionBar(session)
@@ -622,67 +615,82 @@ struct ChatView: View {
   }
 
   private var chatTitle: some View {
-    Menu {
-      Text(providerSubtitle)
-      Divider()
-      if currentConversation?.provider == .openAICompatible,
-        let endpointID = currentConversation?.endpointID,
-        store.settings.openAIEndpoints.first(where: { $0.id == endpointID })?.kind == .chatGPT {
-        Link("Manage ChatGPT usage", destination: URL(string: "https://chatgpt.com/settings/usage")!)
-      }
-      Button("Rename...", systemImage: "pencil", action: beginRename)
-        .disabled(remoteChat.map { !$0.canManage || $0.busy || store.settings.isOffline } ?? false)
-      Button("Search...", systemImage: "magnifyingglass", action: beginChatSearch)
-        .disabled(currentConversationIsEmpty || liveVoiceSession.isActive)
-      ConversationShareButton(
-        conversationID: currentConversation?.id,
-        conversation: remoteChat?.presentation,
-        coordinator: exportCoordinator)
-      ConversationExportMenu(
-        conversationID: currentConversation?.id,
-        conversation: remoteChat?.presentation,
-        coordinator: exportCoordinator)
-      Divider()
-      Button("Files…", systemImage: "folder", action: onBrowseFiles)
-      if let remoteChat {
-        Button("Terminal…", systemImage: "terminal") {
-          onShowRemoteTerminal(remoteChat.bookmark, remoteChat.conversation.cwd)
+    Group {
+      if let remoteChat, !remoteChat.connected {
+        Menu(content: { chatTitleActions }, label: { chatTitleLabel }) {
+          remoteChat.connect()
         }
-        .disabled(
-          remoteChat.bookmark.requiresApproval == true
-            || store.settings.isOffline)
+        .accessibilityHint("Tap to connect. Touch and hold for chat options")
+      } else {
+        Menu(content: { chatTitleActions }, label: { chatTitleLabel })
+          .accessibilityHint("Tap for chat options")
       }
-      Divider()
-      Button("Chat Settings", systemImage: "slider.horizontal.3", action: showChatSettings)
-      if let remoteChat {
-        Button(remoteChat.connected ? "Disconnect" : "Connect", systemImage: "network") {
-          if remoteChat.connected { remoteChat.disconnect() } else { remoteChat.connect() }
-        }
-        .disabled(!remoteChat.connected && (store.settings.isOffline || remoteChat.busy))
-      }
-    } label: {
-      HStack(spacing: 6) {
-        Text(
-          currentConversation?.displayTitle
-            ?? currentConversationSummary?.displayTitle
-            ?? "Chat"
-        )
-        .font(.headline)
-        .lineLimit(1)
-        .foregroundStyle(.primary)
-        if isLoadingCurrentLocalModel {
-          ProgressView().controlSize(.mini)
-            .accessibilityLabel("Loading local model into memory")
-        }
-      }
-      .frame(minHeight: 44)
-      .contentShape(Rectangle())
     }
     .menuStyle(.button)
     .buttonStyle(.plain)
     .disabled(isLoadingConversation)
     .accessibilityValue(providerSubtitle)
-    .accessibilityHint("Tap for chat options")
+  }
+
+  @ViewBuilder
+  private var chatTitleActions: some View {
+    Text(providerSubtitle)
+    if let error = remoteChat?.error { Text(error) }
+    Divider()
+    if currentConversation?.provider == .openAICompatible,
+      let endpointID = currentConversation?.endpointID,
+      store.settings.openAIEndpoints.first(where: { $0.id == endpointID })?.kind == .chatGPT {
+      Link("Manage ChatGPT usage", destination: URL(string: "https://chatgpt.com/settings/usage")!)
+    }
+    Button("Rename...", systemImage: "pencil", action: beginRename)
+      .disabled(remoteChat.map { !$0.canManage || $0.busy || store.settings.isOffline } ?? false)
+    Button("Search...", systemImage: "magnifyingglass", action: beginChatSearch)
+      .disabled(currentConversationIsEmpty || liveVoiceSession.isActive)
+    ConversationShareButton(
+      conversationID: currentConversation?.id,
+      conversation: remoteChat?.presentation,
+      coordinator: exportCoordinator)
+    ConversationExportMenu(
+      conversationID: currentConversation?.id,
+      conversation: remoteChat?.presentation,
+      coordinator: exportCoordinator)
+    Divider()
+    Button("Files…", systemImage: "folder", action: onBrowseFiles)
+    if let remoteChat {
+      Button("Terminal…", systemImage: "terminal") {
+        onShowRemoteTerminal(remoteChat.bookmark, remoteChat.conversation.cwd)
+      }
+      .disabled(
+        remoteChat.bookmark.requiresApproval == true
+          || store.settings.isOffline)
+    }
+    Divider()
+    Button("Chat Settings", systemImage: "slider.horizontal.3", action: showChatSettings)
+    if let remoteChat {
+      Button("Connect", systemImage: "network") {
+        remoteChat.connect()
+      }
+      .disabled(remoteChat.connected || store.settings.isOffline || remoteChat.busy)
+    }
+  }
+
+  private var chatTitleLabel: some View {
+    HStack(spacing: 6) {
+      Text(
+        currentConversation?.displayTitle
+          ?? currentConversationSummary?.displayTitle
+          ?? "Chat"
+      )
+      .font(.headline)
+      .lineLimit(1)
+      .foregroundStyle(remoteChat.map { $0.connected ? Color.primary : .red } ?? .primary)
+      if isLoadingCurrentLocalModel {
+        ProgressView().controlSize(.mini)
+          .accessibilityLabel("Loading local model into memory")
+      }
+    }
+    .frame(minHeight: 44)
+    .contentShape(Rectangle())
   }
 
   private var systemPromptName: String? {
@@ -848,15 +856,7 @@ struct ChatView: View {
   }
 
   private var providerStatus: (message: String, systemImage: String, color: Color)? {
-    if let remoteChat {
-      return (
-        remoteChat.error
-          ?? (store.settings.isOffline
-            ? "Turn off Airplane Mode in Settings to connect to a remote agent."
-            : remoteChat.status),
-        "network", remoteChat.error == nil ? .secondary : .red
-      )
-    }
+    guard remoteChat == nil else { return nil }
     if currentConversation?.provider == .mlx,
       let message = LocalMLXAvailability.current.unavailabilityMessage
     {
