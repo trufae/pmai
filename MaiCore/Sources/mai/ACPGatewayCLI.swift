@@ -79,7 +79,7 @@ enum ACPGatewayCLI {
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
       }
       print("Connection profile (contains the gateway credential):\n\(uri)")
-      try TailcatQR.show(uri, output: flags["--qr"].map { URL(fileURLWithPath: $0) })
+      try QRGenerator.show(uri, output: flags["--qr"].map { URL(fileURLWithPath: $0) })
       fflush(nil)
     } else if flags["--url"] != nil || flags["--qr"] != nil || flags["--profile"] != nil {
       throw TailcatCLI.Error.message(

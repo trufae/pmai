@@ -13,6 +13,7 @@ let cliDependencies: [Target.Dependency] = [
   "CMaiTerminal", "MaiVoice",
   "MaiDocuments", "MaiMarkdown", "MaiACP", "MaiACPGateway", "MaiLocalProviders",
   .product(name: "Crypto", package: "swift-crypto"),
+  .product(name: "QRCodeGenerator", package: "swift-qrcode-generator"),
 ]
 var localProviderDependencies: [Target.Dependency] = ["MaiCore"]
 var localProviderSwiftSettings: [SwiftSetting] = []
@@ -20,6 +21,7 @@ var packageDependencies: [Package.Dependency] = [
   .package(url: "https://github.com/apple/swift-crypto", from: "4.5.2"),
   .package(url: "https://github.com/apple/swift-nio", from: "2.81.0"),
   xmlPackage,
+  .package(url: "https://github.com/fwcd/swift-qrcode-generator", from: "2.0.2"),
   .package(
     name: "Forwiroh", path: Context.environment["PMAI_FORWIROH_PATH"] ?? "../Vendor/Forwiroh"),
 ]

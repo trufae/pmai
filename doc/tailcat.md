@@ -116,8 +116,8 @@ With `--url`, pmai prints a scannable block-character QR directly in the termina
 Open **Scan Gateway QR** in PocketMai and point the phone at the terminal. Keep
 the whole square and its white border visible; widen the terminal or reduce its
 font size if lines wrap. `--qr gateway.png` additionally saves an image. On
-non-Apple hosts, install the optional `qrencode` executable for terminal/image
-QR generation; the URI remains available without it.
+non-Apple hosts, only PNG export needs the optional `qrencode` executable.
+Terminal QR codes and SVG export use the bundled pure Swift encoder on all platforms.
 
 The gateway creates a private bearer token in `$PMAI_HOME/gateway/token`
 (`~/.pmai/gateway/token` by default). `--token-file /path/to/token` selects a
@@ -315,9 +315,9 @@ pmai tailcat pair workstation /path/to/invite.png
 pmai tailcat status workstation
 ```
 
-Text files containing the URI work on all platforms. QR generation uses Core
-Image on macOS and the optional `qrencode` executable elsewhere. Linux clients
-can always paste the URI without QR tooling.
+Text files containing the URI work on all platforms. Terminal QR generation
+uses a bundled pure Swift encoder and needs no external executable. The URI
+remains available for copying and pasting.
 
 Pairing records the worker's address and workspace, creates a persistent
 controller key, and adds an ACP provider/agent to the pmai config. Selection is
