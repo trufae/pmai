@@ -360,6 +360,9 @@ final class TerminalLineEditor {
     var raw = original
     raw.c_lflag &= ~tcflag_t(ICANON | ECHO | ISIG)
     raw.c_iflag &= ~tcflag_t(IXON | ICRNL)
+    #if os(Windows)
+    WindowsConsole.prepareRawMode(&raw)
+    #endif
     guard tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == 0 else { return nil }
     defer { _ = tcsetattr(STDIN_FILENO, TCSAFLUSH, &original) }
     FileHandle.standardOutput.write(Data(TerminalInputModes.enable.utf8))

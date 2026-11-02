@@ -742,6 +742,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     raw = cooked
     raw.c_lflag &= ~tcflag_t(ICANON | ECHO | ISIG)
     raw.c_iflag &= ~tcflag_t(IXON | ICRNL)
+    #if os(Windows)
+    WindowsConsole.prepareRawMode(&raw)
+    #endif
     guard tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == 0 else { return }
     active = true
     if let directory = viewDiffDirectory { watchViewDiffsLocked(in: directory) }

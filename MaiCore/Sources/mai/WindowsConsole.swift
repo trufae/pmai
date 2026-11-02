@@ -84,12 +84,14 @@
     if state.c_lflag & ICANON != 0 { inputMode |= enableLineInput }
     if state.c_lflag & ECHO != 0 { inputMode |= enableEchoInput }
     if state.c_lflag & ISIG != 0 { inputMode |= enableProcessedInput }
-    // Raw mode wants key presses as the escape sequences a Unix tty sends.
-    if state.c_lflag & ICANON == 0 { inputMode |= enableVirtualTerminalInput }
-    // The editor draws with ANSI escapes whatever the input mode is.
-    let outputMode = state.outputMode | enableProcessedOutput | enableVirtualTerminalProcessing
-    guard SetConsoleMode(input, inputMode), SetConsoleMode(output, outputMode) else { return -1 }
-    if state.c_lflag & ICANON == 0 { WindowsConsole.resumeUTF8Output() }
+    var previousInputMode: DWORD = 0
+    guard GetConsoleMode(input, &previousInputMode), SetConsoleMode(input, inputMode) else { return -1 }
+    guard SetConsoleMode(output, state.outputMode) else {
+      let error = GetLastError()
+      _ = SetConsoleMode(input, previousInputMode)
+      SetLastError(error)
+      return -1
+    }
     return 0
   }
 
@@ -145,6 +147,14 @@
   // MARK: - Console services without a POSIX shape
 
   enum WindowsConsole {
+    /// Enable VT only in the editor's raw copy. Saved modes may already be
+    /// noncanonical and must still be restored without adding any flags.
+    static func prepareRawMode(_ state: inout termios) {
+      state.inputMode |= enableVirtualTerminalInput
+      state.outputMode |= enableProcessedOutput | enableVirtualTerminalProcessing
+      resumeUTF8Output()
+    }
+
     nonisolated(unsafe) private static var originalOutputCodePage: UINT?
 
     /// All CLI writers emit UTF-8, including Foundation FileHandle and Swift
