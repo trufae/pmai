@@ -77,9 +77,14 @@ final class MarkdownSVGRenderer: NSObject, WKNavigationDelegate {
         let size = CGSize(
           width: max(1, (dimensions[0] * scale).rounded()),
           height: max(1, (dimensions[1] * scale).rounded()))
+        guard size.width * size.height <= 16_777_216 else {
+          throw URLError(.dataLengthExceedsMaximum)
+        }
         webView.frame.size = size
+        webView.layoutIfNeeded()
         let configuration = WKSnapshotConfiguration()
-        configuration.afterScreenUpdates = true
+        // Offscreen software snapshots include current layout without waiting for a screen update.
+        configuration.afterScreenUpdates = false
         configuration.snapshotWidth = NSNumber(
           value: Double(size.width / max(1, webView.traitCollection.displayScale)))
         let snapshot = try await webView.takeSnapshot(configuration: configuration)
