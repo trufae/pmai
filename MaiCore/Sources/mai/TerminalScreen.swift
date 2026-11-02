@@ -270,7 +270,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   func activateConversation(_ id: String) {
-    lock.withLock { archivedConversations.remove(id) }
+    lock.withLock { _ = archivedConversations.remove(id) }
   }
 
   func releaseConversation(for pid: AgentPID, removing: Bool) {
