@@ -21,18 +21,8 @@ final class WindowsRunJob {
 
   deinit { CloseHandle(handle) }
 
-  func attach(pid: Int32) throws {
-    guard let process = OpenProcess(DWORD(PROCESS_SET_QUOTA | PROCESS_TERMINATE | SYNCHRONIZE),
-      false, DWORD(bitPattern: pid)) else {
-      // A command can finish before the launcher returns its PID.
-      if GetLastError() == ERROR_INVALID_PARAMETER { return }
-      throw Self.lastError()
-    }
-    defer { CloseHandle(process) }
-    guard AssignProcessToJobObject(handle, process) else {
-      if WaitForSingleObject(process, 0) == WAIT_OBJECT_0 { return }
-      throw Self.lastError()
-    }
+  func attach(process: HANDLE) throws {
+    guard AssignProcessToJobObject(handle, process) else { throw Self.lastError() }
   }
 
   func terminate() { _ = TerminateJobObject(handle, 1) }

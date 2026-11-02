@@ -174,7 +174,7 @@ public struct MaiRunTool: AgentTool {
             launchArguments += ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptURL!.runFileSystemPath] + positional
           } else if shell == "cmd" {
             scriptURL = try Self.writeScript("@echo off\r\n" + script, extension: "cmd")
-            launchArguments += ["/d", "/c", scriptURL!.runFileSystemPath] + positional
+            launchArguments += ["/d", "/s", "/c", scriptURL!.runFileSystemPath] + positional
           } else {
             scriptURL = try Self.writeScript(script, extension: "sh")
             launchArguments += [scriptURL!.runFileSystemPath] + positional
@@ -582,9 +582,13 @@ enum MaiRunToolError: LocalizedError {
             GetConsoleMode(FileHandle.standardOutput._handle, &outputMode) else {
             throw MaiRunToolError.noTerminal
           }
+          let inputCodePage = GetConsoleCP()
+          let outputCodePage = GetConsoleOutputCP()
           defer {
             _ = SetConsoleMode(FileHandle.standardInput._handle, inputMode)
             _ = SetConsoleMode(FileHandle.standardOutput._handle, outputMode)
+            _ = SetConsoleCP(inputCodePage)
+            _ = SetConsoleOutputCP(outputCodePage)
           }
           #else
           guard isatty(STDIN_FILENO) != 0, isatty(STDOUT_FILENO) != 0 else {
@@ -643,12 +647,13 @@ enum MaiRunToolError: LocalizedError {
     }
     #endif
 
-    /// Owns the non-Sendable `Process` and pipes; every mutation goes through `lock`.
+    /// Owns the child and its pipes; every mutation goes through `lock`.
     private final class ProcessSession: @unchecked Sendable {
       private let lock = NSLock()
-      private let process = Process()
       #if os(Windows)
-        private var job: WindowsRunJob?
+        private let process: WindowsRunProcess
+      #else
+        private let process = Process()
       #endif
       private let stdoutPipe = Pipe()
       private let stderrPipe = Pipe()
@@ -705,6 +710,15 @@ enum MaiRunToolError: LocalizedError {
         self.outputLimit = outputLimit
         self.outputMode = outputMode
         stdinPipe = hasInput ? Pipe() : nil
+        #if os(Windows)
+        process = WindowsRunProcess(executable: executable, arguments: arguments,
+          directory: workingDirectory, environment: environment,
+          input: interactive ? .standardInput : stdinPipe?.fileHandleForReading ?? .nullDevice,
+          output: interactive ? .standardOutput : stdoutPipe.fileHandleForWriting,
+          errors: interactive ? .standardError : stderrPipe.fileHandleForWriting,
+          parentHandles: (interactive ? [] : [stdoutPipe.fileHandleForWriting, stderrPipe.fileHandleForWriting])
+            + (stdinPipe.map { [$0.fileHandleForReading] } ?? []))
+        #else
         process.executableURL = executable
         process.arguments = arguments
         process.currentDirectoryURL = workingDirectory
@@ -712,6 +726,7 @@ enum MaiRunToolError: LocalizedError {
         process.standardOutput = interactive ? FileHandle.standardOutput : stdoutPipe
         process.standardError = interactive ? FileHandle.standardError : stderrPipe
         process.standardInput = interactive ? FileHandle.standardInput : stdinPipe ?? FileHandle.nullDevice
+        #endif
         stdoutClosed = interactive
         stderrClosed = interactive
       }
@@ -755,17 +770,7 @@ enum MaiRunToolError: LocalizedError {
               #endif
             }
             process.terminationHandler = { [weak self] _ in self?.markExited() }
-            #if os(Windows)
-              job = try WindowsRunJob()
-            #endif
             try process.run()
-            #if os(Windows)
-              do { try job?.attach(pid: process.processIdentifier) }
-              catch {
-                if process.isRunning { process.terminate() }
-                throw error
-              }
-            #endif
             if let commandScope, let command {
               commandID = commandScope.started(
                 pid: process.processIdentifier, command: command, arguments: commandArguments,
@@ -917,7 +922,7 @@ enum MaiRunToolError: LocalizedError {
         }
       }
 
-      /// Stop the shell's process group, including children that outlive the shell.
+      /// Stop the shell and its descendants, including children that outlive it.
       @discardableResult
       func stop(timedOut: Bool, userRequested: Bool = false) -> Bool {
         let pid: Int32 = lock.withLock {
@@ -931,7 +936,7 @@ enum MaiRunToolError: LocalizedError {
         // A shell can defer or trap SIGTERM and keep executing after its child exits.
         // Timeout and cancellation must stop the whole group without that grace period.
         #if os(Windows)
-          lock.withLock { job?.terminate() }
+          process.terminate()
         #else
           signalGroup(pid, SIGKILL)
         #endif

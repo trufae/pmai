@@ -120,7 +120,7 @@ def check_windows(binary):
                 result = subprocess.run([
                     binary, '--config', str(config), '--home', str(root / 'home'),
                     '--no-stream', '--no-markdown'], input='Run the command\n/exit\n',
-                    cwd=root, env=dict(env, PWD=str(root)), encoding='utf-8',
+                    cwd=root, env=dict(env, PWD=str(root), TMP=str(root), TEMP=str(root)), encoding='utf-8',
                     capture_output=True, timeout=90)
                 output = result.stdout + result.stderr
                 assert result.returncode == 0, output
@@ -139,13 +139,23 @@ def check_windows(binary):
             })
             assert 'two words|ü:input' in body and 'Error:' not in body, body
             assert (root / 'result.txt').read_text().strip() == 'saved'
-            literals = ['', 'two words', '"quoted"', '$(bad)', '& echo injected', 'ü']
+            literals = ['', 'two words', '"quoted"', 'C:\\path with spaces\\', '$(bad)', '& echo injected', 'ü']
             body = invoke({'args': [sys.executable, '-X', 'utf8', '-c',
                                    'import json,sys; print(json.dumps(sys.argv[1:], ensure_ascii=False))',
                                    *literals]})
             assert json.loads(body) == literals, body
+            body = invoke({'args': ['cmd.exe', '/d', '/s', '/c', 'echo native-cmd']})
+            assert body.strip() == 'native-cmd', body
             body = invoke({'commands': ["Write-Output 'one'", "Write-Output 'two'"]})
             assert body.strip().splitlines() == ['one', 'two'], body
+
+            settings = json.loads(config.read_text())
+            settings['toolSources'][0]['options']['runShell'] = 'cmd.exe'
+            config.write_text(json.dumps(settings))
+            body = invoke({'script': 'echo cmd:%~1\nexit /b 7', 'args': ['two words']})
+            assert 'cmd:two words' in body and '[exit code 7]' in body, body
+            del settings['toolSources'][0]['options']['runShell']
+            config.write_text(json.dumps(settings))
 
             # The timeout must stop the spawned child too, not just PowerShell.
             body = invoke({'script':
