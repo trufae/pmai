@@ -159,7 +159,7 @@ def main():
             acp, local = output.split('ACP agents:', 1)[1].split('Local agents (pmai):', 1)
             local, tasks = local.split('Task agents:', 1)
             assert re.findall(r'(?m)^[ *-] (\S+) —', acp) == ['alpha', 'Zed'], acp
-            assert re.findall(r'(?m)^[ *-] (\S+) —', local) == ['main', 'plan', 'Zulu'], local
+            assert re.findall(r'(?m)^[ *-] (\S+) —', local) == ['bare', 'main', 'plan', 'Zulu'], local
             assert re.findall(r'(?m)^[ *-] (\S+) —', tasks) == ['A-task', 'z-task'], tasks
             assert 'tasks: approval, tool · ACP' in tasks, tasks
             assert 'Summarizes conversation history.' in tasks, tasks

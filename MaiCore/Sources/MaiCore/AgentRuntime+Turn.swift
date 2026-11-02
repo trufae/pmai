@@ -144,22 +144,22 @@ extension AgentRuntime {
     if concreteDefinitions.contains(where: { MaiSkillTools.isSkillTool($0.name) }) {
       insertSystem(MaiSkillTools.promptSection, into: &providerMessages)
     }
-    if let instructionsSection,
+    if inference.systemContext != false, let instructionsSection,
       !providerMessages.contains(where: {
         $0.role == .system && $0.text == instructionsSection
       })
     {
       insertSystem(instructionsSection, into: &providerMessages)
     }
-    if let projectSection = projectInstructionSection(
+    if inference.systemContext != false, let projectSection = projectInstructionSection(
       sessionID: state.request.sessionID, pid: state.pid, messages: providerMessages)
     {
       insertSystem(projectSection, into: &providerMessages)
     }
-    if let memorySection, depth == 0 {
+    if inference.systemContext != false, let memorySection, depth == 0 {
       insertSystem(memorySection, into: &providerMessages)
     }
-    if includesWorkingDirectoryContext {
+    if inference.systemContext != false, includesWorkingDirectoryContext {
       insertSystem(
         """
         <execution_context>
@@ -168,7 +168,7 @@ extension AgentRuntime {
         </execution_context>
         """, into: &providerMessages)
     }
-    if depth == 0 {
+    if inference.systemContext != false, depth == 0 {
       let soulPath = AgentHome.expandUserPath("~/.pmai/SOUL.md")
       if let soul = try? String(contentsOfFile: soulPath, encoding: .utf8).trimmingCharacters(
         in: .whitespacesAndNewlines), !soul.isEmpty
@@ -178,7 +178,9 @@ extension AgentRuntime {
     }
     // The effort level and its guidance reach the model in words as well as
     // in the provider's own field, for the models that have none.
-    if let effortSection = ReasoningEffort.promptSection(for: inference.options) {
+    if inference.systemContext != false,
+      let effortSection = ReasoningEffort.promptSection(for: inference.options)
+    {
       insertSystem(effortSection, into: &providerMessages)
     }
     if case .tool(let name) = routedDecision {

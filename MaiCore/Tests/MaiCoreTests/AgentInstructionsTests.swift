@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import MaiCore
+@testable import MaiTestSupport
 
 @Test("AGENTS.md files are found from the working directory up to the repository root, root first")
 func agentsMarkdownLocate() throws {
@@ -300,4 +301,57 @@ private struct NestedWriteTool: AgentTool {
     await counter.increment()
     return ToolOutput(text: "wrote")
   }
+}
+
+@Test("An agent can keep an empty system prompt and ignore unsolicited tool calls")
+func emptyPromptWithoutSystemContext() async throws {
+  let files = FileManager.default
+  let root = files.temporaryDirectory.appendingPathComponent("bare-\(UUID().uuidString)")
+  try files.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? files.removeItem(at: root) }
+  try "Project rules".write(
+    to: root.appendingPathComponent("AGENTS.md"), atomically: true, encoding: .utf8)
+  let rules = root.appendingPathComponent("redact.txt")
+  try "private-token=SECRET".write(to: rules, atomically: true, encoding: .utf8)
+  let call = ToolCall(id: "unexpected", name: "write", arguments: .object([:]))
+  let provider = ScriptedProvider(responses: [
+    ProviderResponse(
+      message: AgentMessage(role: .assistant, content: [.text("Hello"), .toolCall(call)]),
+      stopReason: .toolCall),
+    ProviderResponse(message: .assistant("Done"), stopReason: .stop),
+  ])
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  try await runtime.register(tool: ClosureTool(
+    definition: ToolDefinition(name: "write", description: "Must never run"),
+    operation: { _, _ in
+      Issue.record("Tool calling is off")
+      return ToolOutput(text: "Unexpected")
+    }))
+  try await runtime.configureRedaction(.on, file: rules)
+  await runtime.configureMemory("Remember this")
+  await runtime.configureProjectInstructions("Host instructions")
+  await runtime.configureProjectInstructionDirectory(root)
+  await runtime.configureWorkingDirectoryContext(true)
+  let agent = AgentDefinition(
+    id: "bare", instructions: "", systemContext: false, provider: "scripted", model: "fixture",
+    toolNames: ["write"], options: .init(reasoningEffort: "high"), toolCallingStrategy: .off)
+  let saved = try JSONDecoder().decode(AgentDefinition.self, from: JSONEncoder().encode(agent))
+  let request = await runtime.request(for: saved, messages: [.user("Hi")])
+  let restored = try JSONDecoder().decode(AgentRequest.self, from: JSONEncoder().encode(request))
+  let result = try await runtime.run(restored)
+  #expect(result.response.text == "Hello" && result.response.toolCalls.isEmpty)
+  #expect(result.toolCalls == 0 && result.modelTurns == 1)
+  let outbound = try #require(await provider.requests.first)
+  #expect(outbound.messages.map(\.role) == [.user])
+  #expect(outbound.messages.first?.text == "Hi")
+  #expect(outbound.tools.isEmpty && outbound.toolChoice == .none)
+
+  // Older requests retain ambient context without needing a migration.
+  _ = try await runtime.run(AgentRequest(provider: "scripted", messages: [.user("Normal")]))
+  let normal = try #require(await provider.requests.last)
+  #expect(normal.messages.contains { $0.text == "Remember this" })
+  #expect(normal.messages.contains { $0.text == "Host instructions" })
+  #expect(normal.messages.contains { $0.text.contains("Project rules") })
+  #expect(normal.messages.contains { $0.text.contains("Current working directory:") })
 }
