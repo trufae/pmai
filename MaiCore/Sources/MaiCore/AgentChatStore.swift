@@ -213,7 +213,7 @@ public struct AgentHome: Sendable {
   ) -> URL {
     guard
       let raw = environment["HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-      !raw.isEmpty, raw.hasPrefix("/")
+      !raw.isEmpty, !raw.hasPrefix("~"), NSString(string: raw).isAbsolutePath
     else { return fallback }
     return URL(fileURLWithPath: raw, isDirectory: true).standardizedFileURL
   }
@@ -225,6 +225,9 @@ public struct AgentHome: Sendable {
     environment: [String: String] = ProcessInfo.processInfo.environment,
     fallback: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
   ) -> String {
+    #if os(Windows)
+    let path = path.hasPrefix("~\\") ? "~/" + String(path.dropFirst(2)) : path
+    #endif
     let home = userHomeDirectory(environment: environment, fallback: fallback)
     if path == "~" { return home.path }
     if path.hasPrefix("~/") {

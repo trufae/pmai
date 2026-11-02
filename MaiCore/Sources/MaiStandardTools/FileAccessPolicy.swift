@@ -242,7 +242,7 @@ extension MaiFileWorkspaceConfiguration {
     for path in paths {
       let expanded = AgentHome.expandUserPath(path)
       let target =
-        (expanded.hasPrefix("/")
+        (NSString(string: expanded).isAbsolutePath
         ? URL(fileURLWithPath: expanded) : effectiveRootURL.appendingPathComponent(expanded))
         .standardizedFileURL
       let resolvedTarget = MaiFileAccessPolicy.resolvedURL(target)
@@ -317,7 +317,7 @@ extension MaiFileWorkspaceConfiguration {
           if let movingTo, path == paths.first {
             let expanded = AgentHome.expandUserPath(movingTo)
             let destination =
-              expanded.hasPrefix("/")
+              NSString(string: expanded).isAbsolutePath
               ? URL(fileURLWithPath: expanded) : effectiveRootURL.appendingPathComponent(expanded)
             let suffix = url.path.dropFirst(
               resolvedTarget.path.count + (resolvedTarget.path == "/" ? 0 : 1))

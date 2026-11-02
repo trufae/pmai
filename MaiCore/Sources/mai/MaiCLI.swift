@@ -5804,7 +5804,11 @@ struct MaiCLI {
   /// treated as paths: an access grant must come from an unambiguous absolute,
   /// home-relative, or dot-relative reference in the person's prompt.
   private static func promptPaths(in text: String, relativeTo directory: URL) -> [URL] {
+    #if os(Windows)
+    let pattern = #"(?:^|(?<=[\s\"'`]))((?:[A-Za-z]:[\\/]|[\\/]|~[\\/]|\.\.?[\\/])[^\s\"'`<>|]+)"#
+    #else
     let pattern = #"(?:^|(?<=[\s\"'`]))((?:/|~\/|\.\.?/)[^\s\"'`<>|]+)"#
+    #endif
     guard let expression = try? NSRegularExpression(pattern: pattern) else { return [] }
     let range = NSRange(text.startIndex..., in: text)
     var seen = Set<URL>()
@@ -5812,8 +5816,8 @@ struct MaiCLI {
       guard let captured = Range(match.range(at: 1), in: text) else { return nil }
       let raw = text[captured].trimmingCharacters(in: CharacterSet(charactersIn: ",.;:!?)]}"))
       guard !raw.isEmpty else { return nil }
-      let path = NSString(string: String(raw)).expandingTildeInPath
-      let url = (path.hasPrefix("/")
+      let path = AgentHome.expandUserPath(String(raw))
+      let url = (NSString(string: path).isAbsolutePath
         ? URL(fileURLWithPath: path)
         : directory.appendingPathComponent(path))
         .standardizedFileURL
@@ -5959,7 +5963,7 @@ struct MaiCLI {
       }
       let expanded = AgentHome.expandUserPath(value, environment: environment)
       let url =
-        (expanded.hasPrefix("/")
+        (NSString(string: expanded).isAbsolutePath
         ? URL(fileURLWithPath: expanded)
         : files.effectiveRootURL.appendingPathComponent(expanded))
         .standardizedFileURL.resolvingSymlinksInPath()
@@ -5976,10 +5980,15 @@ struct MaiCLI {
           : ["deny", "reject"].contains(command) ? .deny : .ask
         var directory: ObjCBool = false
         _ = FileManager.default.fileExists(atPath: url.path, isDirectory: &directory)
+        #if os(Windows)
+        let directorySuffix = value.hasSuffix("/") || value.hasSuffix("\\")
+        #else
+        let directorySuffix = value.hasSuffix("/")
+        #endif
         access.policy.set(
           .init(
             url: url, access: policy,
-            descendants: policy == .deny || directory.boolValue || value.hasSuffix("/")))
+            descendants: policy == .deny || directory.boolValue || directorySuffix))
         await terminal.note("Files policy: \(policy.rawValue) \(url.path)")
       }
       do {

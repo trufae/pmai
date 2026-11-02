@@ -1748,7 +1748,7 @@ struct MaiFileWorkspace: Sendable {
     let trimmed =
       preserveWhitespace ? rawPath : rawPath.trimmingCharacters(in: .whitespacesAndNewlines)
     var candidate: URL
-    if trimmed.hasPrefix("/") || trimmed.hasPrefix("~") {
+    if NSString(string: trimmed).isAbsolutePath || trimmed.hasPrefix("~") {
       // An absolute path is fine as long as it points inside the workspace:
       // models often repeat the directory a shell command just printed.
       candidate =

@@ -427,4 +427,18 @@ func userPathResolution() {
   #expect(
     AgentHome.expandUserPath("relative/file", environment: environment, fallback: fallback)
       == "relative/file")
+
+  let nativeHome = FileManager.default.temporaryDirectory.appendingPathComponent("native home ü")
+  let native = nativeHome.withUnsafeFileSystemRepresentation { String(cString: $0!) }
+  for path in Set([native, native.replacingOccurrences(of: "\\", with: "/")]) {
+    let resolved = AgentHome.resolve(environment: ["HOME": path], homeDirectory: fallback)
+    #expect(resolved.rootURL.path == nativeHome.appendingPathComponent(".pmai").path)
+    #expect(AgentHome.expandUserPath("~/notes", environment: ["HOME": path], fallback: fallback)
+      == nativeHome.appendingPathComponent("notes").path)
+  }
+  #expect(AgentHome.userHomeDirectory(environment: ["HOME": "~other"], fallback: fallback) == fallback)
+  #if os(Windows)
+  #expect(AgentHome.expandUserPath("~\\notes", environment: ["HOME": native], fallback: fallback)
+    == nativeHome.appendingPathComponent("notes").path)
+  #endif
 }

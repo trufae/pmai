@@ -142,6 +142,18 @@ func scopedAgentsMarkdown() throws {
   let argvSection = argvContext.observe(argv, workingDirectory: root)
   #expect(argvSection?.contains("sub rules") == true)
   #expect(argvSection?.contains("deep rules") == true)
+
+  let native = deep.appendingPathComponent("source.swift")
+    .withUnsafeFileSystemRepresentation { String(cString: $0!) }
+  for path in Set([native, native.replacingOccurrences(of: "\\", with: "/")]) {
+    var absoluteContext = AgentInstructionsContext(directory: root)
+    let absolute = ToolCall(id: "absolute", name: "files_read", arguments: .object([
+      "path": .string(path)
+    ]))
+    let absoluteSection = absoluteContext.observe(absolute, workingDirectory: root)
+    #expect(absoluteSection?.contains("sub rules") == true)
+    #expect(absoluteSection?.contains("deep rules") == true)
+  }
 }
 
 @Test("A nested write waits until its AGENTS.md reaches the next model turn")

@@ -51,6 +51,59 @@ private func policyCall(_ tool: MaiFileWorkspaceTool, _ args: [String: JSONValue
       run: .init(runID: UUID(), parentRunID: nil, agentID: "test", depth: 0), modelTurn: 0))
 }
 
+private var nativeAbsolutePathStyles: [Bool] {
+  #if os(Windows)
+  [false, true]
+  #else
+  [false]
+  #endif
+}
+
+private func nativeAbsolutePath(_ url: URL, forwardSlashes: Bool) -> String {
+  let native = url.withUnsafeFileSystemRepresentation { String(cString: $0!) }
+  return forwardSlashes ? native.replacingOccurrences(of: "\\", with: "/") : native
+}
+
+@Test("Native absolute Files paths write, read and rename the requested file",
+  arguments: nativeAbsolutePathStyles)
+func filePathPolicyNativeAbsoluteOperations(forwardSlashes: Bool) async throws {
+  let fixture = try PathFixture()
+  defer { fixture.cleanup() }
+  let policy = MaiFileAccessPolicy { _, _ in false }
+  let source = fixture.root.appendingPathComponent("native ü.txt")
+  let destination = fixture.root.appendingPathComponent("renamed ü.txt")
+  func path(_ url: URL) -> JSONValue {
+    .string(nativeAbsolutePath(url, forwardSlashes: forwardSlashes))
+  }
+  let written = try await policyCall(fixture.tool(.write, policy: policy), [
+    "path": path(source), "content": .string("native contents"),
+  ])
+  #expect(!written.isError)
+  #expect(try String(contentsOf: source, encoding: .utf8) == "native contents")
+  let read = try await policyCall(fixture.tool(.read, policy: policy), ["path": path(source)])
+  #expect(read.text == "native contents")
+  let renamed = try await policyCall(fixture.tool(.rename, policy: policy), [
+    "path": path(source), "new_path": path(destination),
+  ])
+  #expect(!renamed.isError)
+  #expect(!FileManager.default.fileExists(atPath: source.path))
+  #expect(try String(contentsOf: destination, encoding: .utf8) == "native contents")
+
+  let tree = fixture.root.appendingPathComponent("native tree ü")
+  let movedTree = fixture.root.appendingPathComponent("moved tree ü")
+  let hidden = tree.appendingPathComponent(".secret")
+  try FileManager.default.createDirectory(at: tree, withIntermediateDirectories: true)
+  try Data("protected".utf8).write(to: hidden)
+  policy.set(.init(url: hidden, access: .allow, descendants: false))
+  policy.set(.init(url: movedTree.appendingPathComponent(".secret"), access: .deny, descendants: false))
+  let denied = try await policyCall(fixture.tool(.rename, policy: policy), [
+    "path": path(tree), "new_path": path(movedTree),
+  ])
+  #expect(denied.isError)
+  #expect(try String(contentsOf: hidden, encoding: .utf8) == "protected")
+  #expect(!FileManager.default.fileExists(atPath: movedTree.path))
+}
+
 @Test("CLI scratch defaults permit /tmp writes and aliases while preserving rules and resolved boundaries")
 func filePathPolicyTemporaryDefaults() async throws {
   let fixture = try PathFixture()
@@ -286,27 +339,30 @@ func filePathPolicyAsksEveryTime() async throws {
   #expect(!rejected.text.contains("sensitive needle"))
 }
 
-@Test("Outside ask grants apply to one operation; allow and revoke keep file boundaries")
-func filePathPolicyOutsideScope() async throws {
+@Test("Outside ask grants apply to one operation; allow and revoke keep file boundaries",
+  arguments: nativeAbsolutePathStyles)
+func filePathPolicyOutsideScope(forwardSlashes: Bool) async throws {
   let fixture = try PathFixture()
   defer { fixture.cleanup() }
   let confirmations = PathConfirmations()
   let policy = MaiFileAccessPolicy(outside: .ask) { url, _ in await confirmations.decide(url) }
   let read = fixture.tool(.read, policy: policy)
   let file = fixture.external.appendingPathComponent("outside.txt")
+  let path = nativeAbsolutePath(file, forwardSlashes: forwardSlashes)
   for _ in 0..<2 {
-    #expect(!(try await policyCall(read, ["path": .string(file.path)])).isError)
+    let output = try await policyCall(read, ["path": .string(path)])
+    #expect(output.text == "sensitive needle")
   }
-  #expect(await confirmations.urls.count == 2)
+  #expect(await confirmations.urls == Array(repeating: file.standardizedFileURL.resolvingSymlinksInPath(), count: 2))
   policy.setOutside(.deny)
-  #expect((try await policyCall(read, ["path": .string(file.path)])).isError)
+  #expect((try await policyCall(read, ["path": .string(path)])).isError)
   policy.set(.init(url: file, access: .allow, descendants: false))
-  #expect(!(try await policyCall(read, ["path": .string(file.path)])).isError)
+  #expect((try await policyCall(read, ["path": .string(path)])).text == "sensitive needle")
   #expect(
     (try await policyCall(
-      fixture.tool(.list, policy: policy), ["path": .string(fixture.external.path)])).isError)
+      fixture.tool(.list, policy: policy), ["path": .string(nativeAbsolutePath(fixture.external, forwardSlashes: forwardSlashes))])).isError)
   policy.remove(file)
-  #expect((try await policyCall(read, ["path": .string(file.path)])).isError)
+  #expect((try await policyCall(read, ["path": .string(path)])).isError)
   #expect(await confirmations.urls.count == 2)
 }
 

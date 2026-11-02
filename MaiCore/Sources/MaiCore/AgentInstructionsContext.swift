@@ -68,10 +68,11 @@ struct AgentInstructionsContext {
   }
 
   private static func resolve(_ path: String, from directory: URL) -> URL {
-    (path.hasPrefix("/")
-      ? URL(fileURLWithPath: path)
+    let expanded = AgentHome.expandUserPath(path)
+    return (NSString(string: expanded).isAbsolutePath
+      ? URL(fileURLWithPath: expanded)
       : URL(fileURLWithPath: directory.path, isDirectory: true)
-        .appendingPathComponent(path))
+        .appendingPathComponent(expanded))
       .standardizedFileURL.resolvingSymlinksInPath()
   }
 
