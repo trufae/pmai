@@ -162,7 +162,7 @@ import Observation
 
   func run(id: String, script: String) {
     guard !interactive, let workspace else { return }
-    command.run(id: id) {
+    command.run(id: id) { [self] in
       try await workspace.run(script) { [weak self] output in
         await self?.command.update(id: id, output: output)
       }

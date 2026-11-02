@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 source "$(dirname "$0")/environment.sh"
+# Build plugins also invoke swift by name; use the selected toolchain there too.
+export PATH="$(dirname -- "$(command -v "$SWIFT")"):$PATH"
 export PMAI_NO_MLX=1 PMAI_FORWIROH_PLATFORM=native
 configuration=${CONFIGURATION:-debug}
 abis=${ANDROID_ABIS:-arm64-v8a}
@@ -19,7 +21,7 @@ for abi in $abis; do
     x86_64) arch=x86_64 ;;
     *) echo "Unsupported Android ABI: $abi" >&2; exit 1 ;;
   esac
-  args=(--package-path "$app_dir" --build-system native --disable-sandbox --disable-index-store --disable-prefetching
+  args=(--package-path "$app_dir" --disable-sandbox --disable-index-store --disable-prefetching
     --swift-sdk "$swift_sdk" --triple "$arch-unknown-linux-android28" -c "$configuration" "${sdk_options[@]}"
     -Xlinker "-L$SWIFT_ANDROID_SDK_ROOT/swift-resources/usr/lib/swift_static-$arch/android")
   "$SWIFT" build "${args[@]}" --product MaiKotlinBridge
