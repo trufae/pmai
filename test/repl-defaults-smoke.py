@@ -58,6 +58,11 @@ def main():
         assert saved['ui']['tools'] == 0, saved
         assert saved['ui']['toolcalls'] == 'truncate', saved
         assert 'ui.toolcalls = truncate' in run(['/set ui.'])
+        # Querying awake must not toggle it or try to acquire a system inhibitor.
+        assert 'awake = off' in run(['/set awake'])
+        assert 'awake = off' in run(['/set awake off', '/reset awake', '/set awake'])
+        assert json.loads(config.read_text())['awake'] is False
+        assert 'Usage: /set awake [on|off]' in run(['/set awake invalid'])
         # Emphasis overrides survive restarts and custom-theme save/load; none
         # removes only the color. Invalid input must leave saved settings intact.
         output = run(['/set ui.fgbold #123456', '/set ui.fgitalic none', '/set ui.'])

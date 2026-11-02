@@ -8,6 +8,7 @@ import android.content.Intent
 import android.widget.TextView
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroidSize
@@ -17,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.*
@@ -31,12 +33,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -203,11 +207,13 @@ private enum class Destination(val label: String, val icon: ImageVector) {
         else state.chats.filter { state.folderID == "all" || it.folderID == state.folderID })
         .filter { it.title.contains(query, ignoreCase = true) || it.subtitle.contains(query, ignoreCase = true) }
     Scaffold(modifier.fillMaxHeight(), topBar = {
-        TopAppBar(title = { Column {
+        TopAppBar(title = { AwakeTitle(state.awake, onToggle = {
+            model.command("awake", "enabled" to (!state.awake).toString())
+        }) { Column {
             Text("Chats")
             Text(host?.name ?: "On this device", style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } }, actions = {
+        } } }, actions = {
             IconButton(onClick = model::openTerminal, enabled = !state.isRemote || state.remote.folder.isNotBlank()) {
                 Icon(Icons.Outlined.Terminal, "Open terminal")
             }
@@ -306,13 +312,15 @@ private enum class Destination(val label: String, val icon: ImageVector) {
         if (!pinching && atBottom && list.layoutInfo.totalItemsCount > 0) list.scrollToItem(list.layoutInfo.totalItemsCount - 1)
     }
     Scaffold(modifier.fillMaxHeight(), topBar = {
-        TopAppBar(title = { Column {
+        TopAppBar(title = { AwakeTitle(state.awake, onToggle = {
+            model.command("awake", "enabled" to (!state.awake).toString())
+        }) { Column {
             Text(state.activeTitle, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(if (state.isRemote) state.remote.status else state.model.ifEmpty { "Choose a model in Settings" },
                 modifier = Modifier.clickable(onClick = onSettings),
                 style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
-        } }, navigationIcon = {
+        } } }, navigationIcon = {
             if (showBack) IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to chats") }
         }, actions = {
             if (state.isRemote) {
@@ -660,4 +668,29 @@ private fun shareConversation(context: Context, title: String, messages: List<Me
     context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
         type = "text/markdown"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }, "Share conversation"))
+}
+
+@Composable private fun AwakeTitle(awake: Boolean, onToggle: () -> Unit, content: @Composable () -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        Row(Modifier.clickable(role = Role.Button) { expanded = true },
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (awake) AwakeIndicator()
+            Box(Modifier.weight(1f, fill = false)) { content() }
+            Icon(Icons.Outlined.ArrowDropDown, "Title menu", Modifier.size(18.dp))
+        }
+        DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(text = { Text("Keep awake") },
+                trailingIcon = { Checkbox(checked = awake, onCheckedChange = null) },
+                onClick = { onToggle(); expanded = false })
+        }
+    }
+}
+
+@Composable private fun AwakeIndicator() {
+    val transition = rememberInfiniteTransition(label = "awake")
+    val opacity by transition.animateFloat(initialValue = 0.35f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1800), RepeatMode.Reverse), label = "breath")
+    Box(Modifier.size(8.dp).alpha(opacity).background(MaterialTheme.colorScheme.primary, CircleShape)
+        .semantics { contentDescription = "Keep awake enabled" })
 }

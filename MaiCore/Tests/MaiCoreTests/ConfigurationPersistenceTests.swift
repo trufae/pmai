@@ -421,3 +421,12 @@ func providerDraftValidation() throws {
   provider.timeout = nil
   try provider.validate()
 }
+
+@Test("Awake defaults off in existing configurations and persists when enabled")
+func awakeConfiguration() throws {
+  let decoder = JSONDecoder()
+  #expect(!MaiConfiguration().awake)
+  #expect(try !decoder.decode(MaiConfiguration.self, from: Data("{}".utf8)).awake)
+  let configuration = MaiConfiguration(awake: true)
+  #expect(try decoder.decode(MaiConfiguration.self, from: configuration.encoded()).awake)
+}

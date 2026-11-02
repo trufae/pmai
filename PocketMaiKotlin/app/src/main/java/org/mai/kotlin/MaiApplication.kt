@@ -48,7 +48,7 @@ data class RemoteState(
     val terminal: TerminalResult = TerminalResult(),
 )
 data class AppState(
-    val ready: Boolean = false, val error: String = "", val baseURL: String = "",
+    val ready: Boolean = false, val awake: Boolean = false, val error: String = "", val baseURL: String = "",
     val apiKey: String = "", val model: String = "", val chatID: String = "",
     val title: String = "New chat", val generating: Boolean = false, val loadingModels: Boolean = false,
     val streamed: String = "", val reasoning: String = "", val status: String = "",
@@ -76,7 +76,7 @@ data class AppState(
                     it.optJSONArray("attachments").objects().map { attachment -> Attachment(attachment.optString("path"), attachment.getString("name"), attachment.getString("mime")) }, it.optString("remoteID"))
             }
             return AppState(
-                ready = j.optBoolean("ready"), error = j.optString("error"),
+                ready = j.optBoolean("ready"), awake = j.optBoolean("awake"), error = j.optString("error"),
                 baseURL = j.optString("baseURL"), apiKey = j.optString("apiKey"), model = j.optString("model"),
                 chatID = j.optString("chatID"), title = j.optString("title", "New chat"),
                 generating = j.optBoolean("isGenerating"), loadingModels = j.optBoolean("isLoadingModels"),
