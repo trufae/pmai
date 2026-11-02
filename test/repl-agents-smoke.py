@@ -152,7 +152,9 @@ def main():
                             output.extend(os.read(master, 65536))
                     # Configuration listings stay separate even during a run.
                     send('/agents')
-                    listing = wait_for('worker — worker')
+                    # The agent name is colored, so match the plain description.
+                    listing = wait_for('— worker')
+                    assert '* worker — worker' in listing, listing
                     assert 'Total:' not in listing and 'Jobs:' not in listing, listing
                     send('/jobs')
                     pids = check_tree('run')

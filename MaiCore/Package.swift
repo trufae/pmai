@@ -17,6 +17,7 @@ let cliDependencies: [Target.Dependency] = [
 ]
 var localProviderDependencies: [Target.Dependency] = ["MaiCore"]
 var localProviderSwiftSettings: [SwiftSetting] = []
+var localProviderLinkerSettings: [LinkerSetting] = []
 var packageDependencies: [Package.Dependency] = [
   .package(url: "https://github.com/apple/swift-crypto", from: "4.5.2"),
   .package(url: "https://github.com/apple/swift-nio", from: "2.81.0"),
@@ -67,6 +68,9 @@ var packageDependencies: [Package.Dependency] = [
       .product(name: "HFAPI", package: "swift-hf-api", condition: .when(platforms: mlxPlatforms)),
       .product(name: "Tokenizers", package: "swift-tokenizers", condition: .when(platforms: mlxPlatforms)),
     ]
+    // The Tokenizers and Forwiroh Rust archives both define rust_eh_personality.
+    // Dead stripping lets ld64 keep one copy; SwiftPM only strips release builds.
+    localProviderLinkerSettings.append(.unsafeFlags(["-Xlinker", "-dead_strip"], .when(platforms: [.macOS])))
   }
 #endif
 let package = Package(
@@ -103,7 +107,9 @@ let package = Package(
       "MaiCore", .product(name: "Crypto", package: "swift-crypto"),
       .product(name: "CryptoExtras", package: "swift-crypto"),
     ]),
-    .target(name: "MaiLocalProviders", dependencies: localProviderDependencies, swiftSettings: localProviderSwiftSettings),
+    .target(
+      name: "MaiLocalProviders", dependencies: localProviderDependencies,
+      swiftSettings: localProviderSwiftSettings, linkerSettings: localProviderLinkerSettings),
     .target(name: "MaiChat", dependencies: ["MaiCore", "MaiOpenAI"]),
     .target(name: "MaiMobile", dependencies: ["MaiCore", "MaiChat", "MaiOpenAI", "MaiMCP", "MaiACP", "MaiStandardTools", "MaiDocuments"]),
     .testTarget(name: "MaiMobileTests", dependencies: ["MaiMobile", "MaiCore", "MaiACP", "MaiStandardTools"]),
