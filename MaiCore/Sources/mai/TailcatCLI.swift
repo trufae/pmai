@@ -192,7 +192,7 @@ enum TailcatCLI {
     print("Pairing invite for \(invite.name); expires \(ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: invite.expires))).")
     print(invite.url)
     let output = options.values["--qr"].map { URL(fileURLWithPath: NSString(string: $0).expandingTildeInPath) }
-    try TailcatQR.show(invite.url, output: output)
+    try QRGenerator.show(invite.url, output: output)
   }
 
   private static func pair(_ name: String, value: String, store: TailcatStore, home: URL,
@@ -202,7 +202,7 @@ enum TailcatCLI {
     }), let permission = ACPPermissionPolicy(rawValue: options.values["--permission"] ?? "auto") else {
       throw Error.message("Use a simple agent name and --permission auto, allow, or reject")
     }
-    let invite = try TailcatInvite(url: TailcatQR.read(value))
+    let invite = try TailcatInvite(url: RemotePairingInput.read(value))
     let configurationURL = configURL(options, environment: environment)
     var configuration = FileManager.default.fileExists(atPath: configurationURL.path)
       ? try MaiConfiguration.load(from: configurationURL) : MaiConfiguration()

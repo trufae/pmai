@@ -4653,7 +4653,7 @@ struct MaiCLI {
                 guard (1...3).contains(arguments.count) else {
                   throw JSONRPCError.invalidParams("Usage: /remote pair URI_OR_QR_FILE [NAME] [CWD]")
                 }
-                let invitationText = try TailcatQR.read(arguments[0])
+                let invitationText = try RemotePairingInput.read(arguments[0])
                 if let link = try? OpenCodePairingLink.parse(invitationText) {
                   guard !(await runtime.internetAccessPolicy().isOffline) else {
                     throw JSONRPCError.invalidParams("Turn off Airplane Mode before pairing.")
