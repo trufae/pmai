@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import pty
+import shlex
 import signal
 import socket
 import subprocess
@@ -135,7 +136,10 @@ def live_shells(root, home, config, host_root):
             if '37 111' in response:
                 break
             assert time.monotonic() < deadline, response
-        send("trap 'printf \"interrupt-ack\\n\"' INT; printf 'interrupt-%s\\n' ready; sleep 60\r")
+        # The foreground job installs its handler before announcing readiness;
+        # a parent-shell trap does not receive interrupts sent to the job group.
+        interrupt_job = "trap 'printf \"interrupt-%s\\n\" ack; exit 130' INT; printf 'interrupt-%s\\n' ready; read ignored"
+        send("sh -c " + shlex.quote(interrupt_job) + "\r")
         wait('interrupt-ready')
         send('\x03')
         wait('interrupt-ack')

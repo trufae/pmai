@@ -299,7 +299,7 @@ public struct ACPConfiguredProviderFactory: ConfiguredProviderFactory {
     let options = configuration.options
     if options["backend"] == .string(RemoteAgentBackend.openCode.rawValue) {
       guard let address = options["url"]?.stringValue, let url = URL(string: address),
-        let cwd = options["remoteCwd"]?.stringValue, cwd.hasPrefix("/"),
+        let cwd = options["remoteCwd"]?.stringValue, RemoteWorkspacePath.isAbsolute(cwd),
         let tokenFile = options["tokenFile"]?.stringValue else {
         throw JSONRPCError.invalidParams("OpenCode providers require url, remoteCwd, and tokenFile options")
       }
@@ -317,7 +317,7 @@ public struct ACPConfiguredProviderFactory: ConfiguredProviderFactory {
         throw JSONRPCError.invalidParams("Invalid ACP WebSocket URL")
       }
       try ACPRemoteConnection.validate(url: parsed)
-      guard options["remoteCwd"]?.stringValue?.hasPrefix("/") == true else {
+      guard let cwd = options["remoteCwd"]?.stringValue, RemoteWorkspacePath.isAbsolute(cwd) else {
         throw JSONRPCError.invalidParams(
           "WebSocket ACP providers require an absolute options.remoteCwd")
       }

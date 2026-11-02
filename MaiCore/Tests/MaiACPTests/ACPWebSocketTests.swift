@@ -8,6 +8,15 @@ import Testing
     name: "Worker", url: #require(URL(string: "wss://gateway.example/acp")),
     token: String(repeating: "a", count: 64), cwd: "/work/project")
   #expect(try ACPRemoteConnection.parse(profile.uri()) == profile)
+  for cwd in [#"C:\work\project"#, "D:/work/project", #"\\server\share\project"#] {
+    let windows = try ACPRemoteConnection(name: "Windows", url: profile.url, token: profile.token, cwd: cwd)
+    #expect(try ACPRemoteConnection.parse(windows.uri()) == windows)
+  }
+  for cwd in ["relative", "C:relative", #"\root-relative"#, #"\\server"#, "C:\\work\0project"] {
+    #expect(throws: JSONRPCError.self) {
+      _ = try ACPRemoteConnection(name: "Invalid", url: profile.url, token: profile.token, cwd: cwd)
+    }
+  }
   for address in [
     "https://gateway.example/acp", "ws://user:secret@gateway/acp", "ws://gateway/acp?token=secret",
   ] {
@@ -110,11 +119,12 @@ func acpClientAirplaneMode() async throws {
           if request.get('method') == 'initialize':
               result = {'protocolVersion': 1, 'agentCapabilities': {'sessionCapabilities': {'list': {}}}}
           else:
-              result = {'sessions': [], '_meta': {'pmai': {'folders': [
+              result = {'sessions': [{'sessionId': 'windows-project', 'cwd': 'C:/work/project', 'title': 'Windows Project'}], '_meta': {'pmai': {'folders': [
                   {'cwd': '/plain', 'name': 'Plain', 'updatedAt': '2026-10-16T12:00:00Z'},
                   {'cwd': '/fraction', 'name': 'Fraction', 'updatedAt': '2026-10-16T12:00:00.500Z'},
                   {'cwd': '/missing', 'name': 'Missing'},
-                  {'cwd': '/invalid', 'name': 'Invalid', 'updatedAt': 'invalid'}
+                  {'cwd': '/invalid', 'name': 'Invalid', 'updatedAt': 'invalid'},
+                  {'cwd': 'C:/work/project', 'name': 'Windows Project'}
               ]}}}
           print(json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'result': result}), flush=True)
       """
@@ -122,7 +132,9 @@ func acpClientAirplaneMode() async throws {
       configuration: .init(command: "/usr/bin/python3", arguments: ["-u", "-c", script]))
     let workspace = try #require(try await client.workspace())
     let date = try Date.ISO8601FormatStyle().parse("2026-10-16T12:00:00Z")
-    #expect(workspace.folders.map(\.updatedAt) == [date, date.addingTimeInterval(0.5), nil, nil])
+    #expect(workspace.folders.map(\.updatedAt) == [date, date.addingTimeInterval(0.5), nil, nil, nil])
+    #expect(workspace.folders.last?.cwd == "C:/work/project")
+    #expect(workspace.sessions.first?.cwd == "C:/work/project")
     await client.disconnect()
   }
 

@@ -2,7 +2,9 @@ import Foundation
 import MaiACP
 import MaiStandardTools
 
-#if canImport(Android)
+#if os(Windows)
+import WinSDK
+#elseif canImport(Android)
 import Android
 #elseif canImport(Musl)
 import Musl
@@ -16,27 +18,18 @@ import Darwin
 /// The caller parks the REPL reader until this relay has restored the tty.
 enum RemoteTerminalRelay {
   static var available: Bool {
-    #if os(Windows)
-    return false
-    #else
     return isatty(STDIN_FILENO) != 0 && isatty(STDOUT_FILENO) != 0
-    #endif
   }
 
   static func run(connection: WorkspaceConnection, name: String) async throws {
-    #if os(Windows)
-    throw WorkspaceFileError("Live remote shells are unavailable on this platform; use cmd mode.")
-    #else
     guard available else { throw WorkspaceFileError("Live shells require a terminal; use cmd mode for piped input.") }
     if let screen = TerminalScreen.current {
       try await screen.suspendTerminalAsync { try await relay(connection: connection, name: name) }
     } else {
       try await relay(connection: connection, name: name)
     }
-    #endif
   }
 
-  #if !os(Windows)
   private static func size() -> (columns: Int, rows: Int) {
     var size = winsize()
     _ = ioctl(STDOUT_FILENO, UInt(TIOCGWINSZ), &size)
@@ -48,20 +41,33 @@ enum RemoteTerminalRelay {
     var cooked = termios()
     guard tcgetattr(STDIN_FILENO, &cooked) == 0 else { throw error() }
     var raw = cooked
+    #if os(Windows)
+    raw.c_lflag &= ~tcflag_t(ICANON | ECHO | ISIG)
+    raw.c_iflag &= ~tcflag_t(IXON | ICRNL)
+    WindowsConsole.prepareRawMode(&raw)
+    #else
     cfmakeraw(&raw)
     // A bounded poll and nonblocking read let cancellation join the input task.
     withUnsafeMutableBytes(of: &raw.c_cc) {
       $0[Int(VMIN)] = 0
       $0[Int(VTIME)] = 0
     }
+    #endif
     guard tcsetattr(STDIN_FILENO, TCSANOW, &raw) == 0 else { throw error() }
     defer {
+      #if !os(Windows)
       _ = tcsetattr(STDIN_FILENO, TCSADRAIN, &cooked)
+      #endif
       // A disconnected full-screen program may leave display/input modes set.
       let reset = TerminalInputModes.disable
         + "\u{1b}[?1000l\u{1b}[?1002l\u{1b}[?1003l\u{1b}[?1006l"
         + "\u{1b}[?1049l\u{1b}[0m\u{1b}[?25h\r\n"
       FileHandle.standardOutput.write(Data(reset.utf8))
+      #if os(Windows)
+      // Reset VT state while VT output is still enabled, then restore the
+      // caller's exact native modes (which may have VT processing disabled).
+      _ = tcsetattr(STDIN_FILENO, TCSADRAIN, &cooked)
+      #endif
     }
     let dimensions = size()
     let shell = try await connection.openTerminal(columns: dimensions.columns, rows: dimensions.rows)
@@ -93,8 +99,12 @@ enum RemoteTerminalRelay {
               if errno == EINTR { continue }
               throw error()
             }
-            if descriptor.revents & Int16(POLLIN | POLLHUP | POLLERR) != 0 {
+            if ready > 0 {
+              #if os(Windows)
+              let count = Int(read(STDIN_FILENO, &buffer, UInt32(buffer.count)))
+              #else
               let count = read(STDIN_FILENO, &buffer, buffer.count)
+              #endif
               if count < 0 {
                 if errno == EINTR || errno == EAGAIN { continue }
                 throw error()
@@ -122,5 +132,4 @@ enum RemoteTerminalRelay {
   }
 
   private static func error() -> NSError { NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
-  #endif
 }

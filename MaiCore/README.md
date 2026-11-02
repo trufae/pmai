@@ -1259,6 +1259,11 @@ interrupts the host program; `exit` or Ctrl+] closes the shell and returns to
 pmai. Terminal resizing is forwarded to the host. A disconnect ends the CLI
 relay and restores the local terminal; run the command again to open a new shell.
 
+Windows hosts provide live terminals through ConPTY on Windows 10 version 1809
+or later. They prefer PowerShell, falling back to Command Prompt; `PMAI_SHELL`
+can select a different installed shell executable. Native Windows workspace
+paths, including drive-letter paths and UNC shares, can be saved when pairing.
+
 Use `/remote shell workstation live` to require a live PTY, or
 `/remote shell workstation cmd` to force command/result mode. The default `auto`
 uses command/result mode for hosts without PTY support (including OpenCode),

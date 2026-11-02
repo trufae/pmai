@@ -7,13 +7,66 @@ import sys
 from contextlib import ExitStack
 
 
+# A deterministic terminal peer tests the Windows relay independently of the
+# worker's shell. Reads stay pending while writes, resize and close proceed.
+TERMINAL_FIXTURE = r'''
+import base64, json, os, sys, threading
+from pathlib import Path
+events = Path(sys.argv[1])
+condition = threading.Condition()
+output = bytearray(b'\r\nrelay-ready\r\n')
+received = bytearray()
+closed = False
+send_lock = threading.Lock()
+def respond(request):
+    global closed
+    method, fields = request.get('method'), request.get('params', {})
+    result = {}
+    if method == 'initialize':
+        result = {'protocolVersion': 1, 'agentCapabilities': {
+            '_meta': {'pmai': {'workspaceTerminal': 1}}}}
+    elif method == '_pmai/workspace/terminal':
+        with condition:
+            action = fields['action']
+            with events.open('a', encoding='utf-8') as log:
+                log.write(json.dumps(fields) + '\n')
+            if action == 'open':
+                result = {'id': 'fixture'}
+            elif action == 'read':
+                offset = fields.get('offset', 0)
+                condition.wait_for(lambda: closed or len(output) > offset, timeout=15)
+                result = {'data': base64.b64encode(output[offset:]).decode(), 'offset': len(output)}
+                if closed:
+                    result['exitCode'] = 0
+            elif action == 'write':
+                received.extend(base64.b64decode(fields['data']))
+                if 'é 漢 🙂\x03\x1b[A\r'.encode() in received:
+                    output.extend('\r\nrelay-received-é 漢 🙂\r\n'.encode())
+            elif action == 'resize':
+                output.extend(f"\r\nrelay-size-{fields['columns']}x{fields['rows']}\r\n".encode())
+            elif action == 'close':
+                closed = True
+            condition.notify_all()
+    if 'id' in request:
+        with send_lock:
+            print(json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'result': result}), flush=True)
+    if method == '_pmai/workspace/terminal' and fields.get('action') == 'close':
+        os._exit(0)
+for line in sys.stdin:
+    threading.Thread(target=respond, args=(json.loads(line),), daemon=True).start()
+'''
+
+
 def worker(binary):
     import ctypes as c
     from ctypes import wintypes as w
     import json
     import msvcrt
+    import base64
+    import socket
     import tempfile
     import time
+    import uuid
 
     from smoke import clean_environment
 
@@ -45,6 +98,8 @@ def worker(binary):
     kernel.FreeConsole.argtypes = []
     kernel.FreeConsole.restype = w.BOOL
     kernel.GetConsoleScreenBufferInfo.argtypes = [w.HANDLE, c.POINTER(ScreenInfo)]
+    kernel.SetConsoleWindowInfo.argtypes = [w.HANDLE, w.BOOL, c.POINTER(Rect)]
+    kernel.SetConsoleWindowInfo.restype = w.BOOL
     kernel.ReadConsoleOutputCharacterW.argtypes = [w.HANDLE, w.LPWSTR, w.DWORD, Coord, c.POINTER(w.DWORD)]
     kernel.WriteConsoleInputW.argtypes = [w.HANDLE, c.POINTER(Record), w.DWORD, c.POINTER(w.DWORD)]
     kernel.FlushConsoleInputBuffer.argtypes = [w.HANDLE]
@@ -193,6 +248,62 @@ Path(sys.argv[1]).write_text(json.dumps(modes))
                     send(f'!chcp 437 >nul\r/help resumed-{mode}-é\r')
                     wait_for(f"Unknown help topic 'resumed-{mode}-é")
                     assert kernel.GetConsoleOutputCP() == 65001
+                    if mode == 'classic':
+                        fixture = root / 'terminal-peer.py'
+                        fixture.write_text(TERMINAL_FIXTURE, encoding='utf-8')
+                        events = root / 'terminal-events.jsonl'
+                        token = root / 'terminal-token'
+                        token.write_text('terminal-fixture-' + '0' * 32)
+                        with socket.socket() as probe:
+                            probe.bind(('127.0.0.1', 0))
+                            port = probe.getsockname()[1]
+                        remotes = root / mode / 'remotes'
+                        remotes.mkdir(parents=True, exist_ok=True)
+                        host_id = str(uuid.uuid4())
+                        (remotes / 'hosts.json').write_text(json.dumps([{
+                            'id': host_id, 'name': 'fixture', 'url': f'ws://127.0.0.1:{port}/acp',
+                            'cwd': '/work', 'backend': 'acp'}]))
+                        (remotes / f'{host_id}.token').write_text(token.read_text())
+                        gateway_log = root / 'terminal-gateway.log'
+                        with gateway_log.open('w', encoding='utf-8') as log:
+                            gateway = subprocess.Popen([binary, 'acp-gateway', '--port', str(port),
+                                '--token-file', str(token), '--cwd', '/work', '--', sys.executable,
+                                '-u', str(fixture), str(events)], cwd=root, env=env,
+                                stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+                            try:
+                                deadline = time.monotonic() + 30
+                                while 'ACP WebSocket gateway listening' not in gateway_log.read_text(encoding='utf-8'):
+                                    assert gateway.poll() is None, gateway_log.read_text(encoding='utf-8')
+                                    assert time.monotonic() < deadline, gateway_log.read_text(encoding='utf-8')
+                                    time.sleep(.02)
+                                send('/remote shell fixture live\r')
+                                wait_for('relay-ready')
+                                send('é 漢 🙂\x03\x1b[A\r')
+                                wait_for('relay-received-é 漢 🙂')
+                                with open('CONOUT$', 'r+b', buffering=0) as active:
+                                    active_handle = msvcrt.get_osfhandle(active.fileno())
+                                    info = ScreenInfo()
+                                    checked(kernel.GetConsoleScreenBufferInfo(active_handle, c.byref(info)))
+                                    original_window = Rect.from_buffer_copy(info.window)
+                                    smaller = Rect(info.window.Left, info.window.Top,
+                                                   info.window.Right - 1, info.window.Bottom - 1)
+                                    checked(kernel.SetConsoleWindowInfo(active_handle, True, c.byref(smaller)))
+                                    try:
+                                        wait_for(f'relay-size-{smaller.Right - smaller.Left + 1}x{smaller.Bottom - smaller.Top + 1}')
+                                        send('\x1d')
+                                        wait_for('Left remote shell fixture.')
+                                    finally:
+                                        checked(kernel.SetConsoleWindowInfo(active_handle, True, c.byref(original_window)))
+                                send('/help relay-returned\r')
+                                wait_for("Unknown help topic 'relay-returned'")
+                                recorded = [json.loads(line) for line in events.read_text(encoding='utf-8').split('\n')[:-1]]
+                                sent = b''.join(base64.b64decode(event['data']) for event in recorded if event['action'] == 'write')
+                                assert sent == 'é 漢 🙂\x03\x1b[A\r'.encode(), sent
+                                assert any(event['action'] == 'close' for event in recorded), recorded
+                                assert kernel.GetConsoleOutputCP() == 65001
+                            finally:
+                                gateway.kill()
+                                gateway.wait(timeout=20)
                     send('/exit\r')
                     assert process.wait(timeout=20) == 0, screen()
                     assert console_mode(input_handle) == baseline_input
@@ -241,7 +352,7 @@ def main():
         # terminal or share its input queue with the parent test runner.
         result = subprocess.run([sys.executable, __file__, binary, '--worker'],
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                creationflags=subprocess.CREATE_NO_WINDOW, timeout=100)
+                                creationflags=subprocess.CREATE_NO_WINDOW, timeout=160)
         sys.stdout.buffer.write(result.stdout)
         result.check_returncode()
         print('windows console smoke: ok')

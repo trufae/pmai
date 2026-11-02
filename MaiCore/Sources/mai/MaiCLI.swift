@@ -4741,7 +4741,7 @@ struct MaiCLI {
                   guard !(await runtime.internetAccessPolicy().isOffline) else {
                     throw JSONRPCError.invalidParams("Turn off Airplane Mode before pairing.")
                   }
-                  guard arguments.count == 3, arguments[2].hasPrefix("/") else {
+                  guard arguments.count == 3, RemoteWorkspacePath.isAbsolute(arguments[2]) else {
                     throw JSONRPCError.invalidParams("Use /remote pair OPENCODE_LINK NAME /absolute/project")
                   }
                   let directory = arguments[2], hostName = arguments[1]

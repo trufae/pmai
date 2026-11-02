@@ -35,7 +35,7 @@ public struct OpenCodeConnection: Sendable {
   public init(name: String = "OpenCode", url: URL, token: String, cwd: String = "") throws {
     try OpenCodeHTTP.validate(url)
     guard !name.isEmpty, name.count <= 200, !token.isEmpty, token.count <= 4096,
-      !token.contains(where: \.isWhitespace), cwd.isEmpty || cwd.hasPrefix("/")
+      !token.contains(where: \.isWhitespace), cwd.isEmpty || RemoteWorkspacePath.isAbsolute(cwd)
     else { throw JSONRPCError.invalidParams("Invalid OpenCode connection") }
     self.name = name
     self.url = url

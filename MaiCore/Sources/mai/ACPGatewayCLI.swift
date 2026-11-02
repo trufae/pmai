@@ -51,7 +51,7 @@ enum ACPGatewayCLI {
       index += 2
     }
     guard separator < arguments.endIndex - 1,
-      let cwd = flags["--cwd"], cwd.hasPrefix("/"),
+      let cwd = flags["--cwd"], RemoteWorkspacePath.isAbsolute(cwd),
       let port = Int(flags["--port"] ?? "19283"), (1...65535).contains(port)
     else {
       throw TailcatCLI.Error.message(

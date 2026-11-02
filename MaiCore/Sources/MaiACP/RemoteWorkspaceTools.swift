@@ -45,7 +45,7 @@ public actor RemoteWorkspaceTools {
         .init(name: "encoding", type: "string", description: "utf8 (default) or base64", required: false),
         .init(name: "offset", type: "integer", description: "Next listing offset returned by list", required: false),
       ], annotations: .init(requiresInternet: true)),
-    .init(name: "remote_terminal", description: "Control a persistent Unix PTY on an enabled pmai host: open, read, write, resize or close. Use the returned session ID on subsequent calls. read waits for output or exit (up to 15 seconds) and returns raw base64 bytes plus readable text. write sends text verbatim, including control characters, or base64 data. Close when finished. Sessions are private to this local conversation. OpenCode supports remote_run instead.",
+    .init(name: "remote_terminal", description: "Control a persistent terminal on an enabled pmai host: open, read, write, resize or close. Hosts use a Unix PTY or Windows ConPTY. Use the returned session ID on subsequent calls. read waits for output or exit (up to 15 seconds) and returns raw base64 bytes plus readable text. write sends text verbatim, including control characters, or base64 data. Close when finished. Sessions are private to this local conversation. OpenCode supports remote_run instead.",
       parameters: [
         .init(name: "host", type: "string", description: "Host ID or unique name", required: true),
         .init(name: "action", type: "string", description: "open, read, write, resize or close", required: true),

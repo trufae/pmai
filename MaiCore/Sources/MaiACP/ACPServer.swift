@@ -44,7 +44,7 @@ public actor ACPServer {
   private var loadingSessions = Set<String>()
   private var modelCatalogs: [ProviderID: [ModelDescriptor]] = [:]
   private var fileSystems: [String: MaiWorkspaceFiles] = [:]
-  #if os(macOS) || os(Linux) || os(Android)
+  #if os(macOS) || os(Linux) || os(Android) || os(Windows)
   private var terminals: [String: RemotePTY] = [:]
   #endif
   private let sessionDirectory: URL?
@@ -118,7 +118,7 @@ public actor ACPServer {
     await peer.run()
     connected = false
     monitor.cancel()
-    #if os(macOS) || os(Linux) || os(Android)
+    #if os(macOS) || os(Linux) || os(Android) || os(Windows)
     let previousTerminals = terminals
     terminals.removeAll()
     for terminal in previousTerminals.values { await terminal.stop() }
@@ -227,7 +227,7 @@ public actor ACPServer {
       return
     }
     do { try authorize() } catch { await peer?.close() }
-    #if os(macOS) || os(Linux) || os(Android)
+    #if os(macOS) || os(Linux) || os(Android) || os(Windows)
     for (id, terminal) in terminals where terminal.isIdle(timeout: terminalIdleTimeout()) {
       terminals[id] = nil
       await terminal.stop()
@@ -245,7 +245,9 @@ public actor ACPServer {
   }
 
   private static var hasPTY: Bool {
-    #if os(macOS) || os(Linux) || os(Android)
+    #if os(Windows)
+    RemotePTY.isSupported
+    #elseif os(macOS) || os(Linux) || os(Android)
     true
     #else
     false
@@ -253,7 +255,8 @@ public actor ACPServer {
   }
 
   private func workspaceTerminal(params: JSONValue?) async throws -> JSONValue {
-    #if os(macOS) || os(Linux) || os(Android)
+    #if os(macOS) || os(Linux) || os(Android) || os(Windows)
+    guard Self.hasPTY else { throw JSONRPCError.invalidParams("Interactive terminals require Windows 10 version 1809 or later") }
     guard let fields = params?.objectValue, let action = fields["action"]?.stringValue else {
       throw JSONRPCError.invalidParams("A terminal action is required")
     }
@@ -307,17 +310,21 @@ public actor ACPServer {
         let data = Data(base64Encoded: encoded) else { throw JSONRPCError.invalidParams("Invalid terminal input") }
       try terminal.send(data)
     case "resize":
+      #if os(Windows)
+      try await terminal.resize(columns: fields["columns"]!.intValue!, rows: fields["rows"]!.intValue!)
+      #else
       try terminal.resize(columns: fields["columns"]!.intValue!, rows: fields["rows"]!.intValue!)
+      #endif
     default: throw JSONRPCError.invalidParams("Unknown terminal action")
     }
     return .object([:])
     #else
-    throw JSONRPCError.invalidParams("Interactive terminals require a Unix host")
+    throw JSONRPCError.invalidParams("Interactive terminals are unavailable on this host")
     #endif
   }
 
   private func directory(params: JSONValue?) throws -> URL {
-    guard let path = params?.objectValue?["cwd"]?.stringValue, path.hasPrefix("/") else {
+    guard let path = params?.objectValue?["cwd"]?.stringValue, RemoteWorkspacePath.isLocalAbsolute(path) else {
       throw JSONRPCError.invalidParams("cwd must be an absolute directory on the worker")
     }
     let url = URL(fileURLWithPath: path, isDirectory: true)

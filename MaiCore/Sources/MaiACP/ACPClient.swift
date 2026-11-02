@@ -440,7 +440,7 @@ public actor ACPClient {
       for value in sessions {
         guard let entry = value.objectValue,
           let id = entry["sessionId"]?.stringValue, !id.isEmpty,
-          let cwd = entry["cwd"]?.stringValue, cwd.hasPrefix("/")
+          let cwd = entry["cwd"]?.stringValue, RemoteWorkspacePath.isAbsolute(cwd)
         else { continue }
         let date = Self.parseDate(entry["updatedAt"])
         if !snapshot.sessions.contains(where: { $0.sessionID == id }) {
@@ -453,7 +453,7 @@ public actor ACPClient {
       let folders = fields["_meta"]?.objectValue?["pmai"]?.objectValue?["folders"]?.arrayValue ?? []
       for value in folders {
         guard let entry = value.objectValue, let cwd = entry["cwd"]?.stringValue,
-          cwd.hasPrefix("/"), !snapshot.folders.contains(where: { $0.cwd == cwd })
+          RemoteWorkspacePath.isAbsolute(cwd), !snapshot.folders.contains(where: { $0.cwd == cwd })
         else { continue }
         snapshot.folders.append(
           .init(

@@ -199,7 +199,7 @@ public struct ACPRemoteConnection: Codable, Equatable, Sendable {
     }
     guard version == 1, !name.isEmpty, name.count <= 200,
       !token.isEmpty, token.count <= 4096, !token.contains(where: { $0.isWhitespace }),
-      cwd.hasPrefix("/"), cwd.count <= 4096
+      RemoteWorkspacePath.isAbsolute(cwd), cwd.count <= 4096
     else {
       throw JSONRPCError.invalidParams("Invalid ACP gateway connection profile")
     }

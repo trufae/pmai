@@ -315,6 +315,8 @@ jobs:
           python test/windows-console-smoke.py (Join-Path $bin 'pmai.exe')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python test/run-shell-smoke.py (Join-Path $bin 'pmai.exe')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python test/windows-terminal-smoke.py (Join-Path $bin 'pmai.exe')
 
       - name: Package Windows beta CLI
         run: ./sys/package-windows.ps1 -Architecture ${{ matrix.arch }}

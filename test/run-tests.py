@@ -17,7 +17,7 @@ TERMINAL = '''repl-agents repl-buffer repl-buffer-commands repl-btw repl-then re
 repl-policy repl-queue repl-recap repl-redirection repl-startup repl-suspend repl-view repl-voice repl-voice-settings'''.split()
 STRESS = ['repl-subagent-load']  # Explicit opt-in, including when running full.
 EXTERNAL = ['repl-reflow', 'tailcat']  # Ghostty and a separately built tailcat binary.
-WINDOWS = ['windows-console']
+WINDOWS = ['windows-console', 'windows-terminal']
 PLATFORM = ['web-fetch', 'openai-http', 'run-shell', *WINDOWS] if os.name == 'nt' else [
     'update', 'web-fetch', 'openai-http', 'project-approval', 'repl-defaults', 'repl-small-context']
 if sys.platform.startswith('linux'):
