@@ -13,8 +13,10 @@ struct NowSpeakingBar: View {
         Button("Dismiss") { ttsPlayer.dismissError() }
       }
       .padding(12)
+      .modifier(FloatingGlassSurface(shape: RoundedRectangle(cornerRadius: 24)))
     } else if ttsPlayer.isSpeaking {
       bar
+        .modifier(FloatingGlassSurface(shape: RoundedRectangle(cornerRadius: 24)))
         .transition(.move(edge: .top).combined(with: .opacity))
     }
   }
