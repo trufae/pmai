@@ -108,6 +108,7 @@ public struct ACPRemoteHostStore: Sendable {
     .init(
       id: host.providerID, kind: "acp", displayName: host.name,
       options: [
+        "backend": .string((host.backend ?? .acp).rawValue),
         "url": .string(host.url.absoluteString), "remoteCwd": .string(host.cwd),
         "tokenFile": .string(tokenFile(for: host).path),
         "sessionFile": .string(sessionFile(for: host).path),

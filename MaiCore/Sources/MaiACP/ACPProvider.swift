@@ -297,6 +297,20 @@ public struct ACPConfiguredProviderFactory: ConfiguredProviderFactory {
     environment: [String: String]
   ) throws -> any ChatProvider {
     let options = configuration.options
+    if options["backend"] == .string(RemoteAgentBackend.openCode.rawValue) {
+      guard let address = options["url"]?.stringValue, let url = URL(string: address),
+        let cwd = options["remoteCwd"]?.stringValue, cwd.hasPrefix("/"),
+        let tokenFile = options["tokenFile"]?.stringValue else {
+        throw JSONRPCError.invalidParams("OpenCode providers require url, remoteCwd, and tokenFile options")
+      }
+      let name = configuration.displayName ?? configuration.id
+      let permission: (@Sendable (JSONValue) async throws -> String?)?
+      if let onPermission { permission = { try await onPermission($0, name) } }
+      else { permission = nil }
+      return OpenCodeProvider(id: .init(configuration.id), connection: try .init(name: name, url: url,
+        token: String(contentsOfFile: tokenFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines), cwd: cwd),
+        sessionFile: options["sessionFile"]?.stringValue.map { URL(fileURLWithPath: $0) }, onPermission: permission)
+    }
     let url: URL?
     if let address = options["url"]?.stringValue {
       guard let parsed = URL(string: address) else {

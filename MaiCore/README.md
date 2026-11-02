@@ -1265,9 +1265,12 @@ every line starts in the paired directory with a fresh environment. `exit`,
 `/exit`, or `/remote shell off` returns to pmai; `/remote` commands remain
 available for transfers or switching hosts, and `/quit` exits pmai.
 
-Use `/shell` or `/shell local` for a local interactive shell and `!COMMAND` for
-a local command/result. Local shell changes persist until `exit` returns to
-pmai; they do not change pmai's own directory or environment.
+`/shell` follows the active chat: a chat opened with `/remote connect HOST`
+uses that host's shell, while a local chat opens a local interactive shell.
+`/shell live` requires a live remote PTY; `/shell cmd` forces command/result
+mode. `/shell local` always opens a local shell, even from a remote chat.
+`!COMMAND` always runs locally. Local shell changes persist until `exit`
+returns to pmai; they do not change pmai's own directory or environment.
 
 OpenCode hosts use the same file and shell commands. Run `opencode pair --remote`
 on the host, then pair its printed link (or saved QR image) with an explicit name
@@ -1278,12 +1281,22 @@ and absolute project directory:
 /remote ls dev
 /remote put dev ./input.bin input.bin
 /remote run dev uname -a
+/remote connect dev
+Hello from the CLI
+/shell
+uname -a
+exit
+/remote disconnect
 ```
 
 The optional third pairing argument also selects a different served directory
 for pmai hosts. OpenCode uploads require its experimental binary write endpoint;
-older servers without it report an HTTP error. `/remote connect` opens pmai/ACP
-chats; OpenCode file and shell access does not require it.
+older servers without it report an HTTP error. `/remote connect` opens native
+pmai/ACP or OpenCode conversations. Messages, reasoning, tool activity and
+permission requests use the host's agent. Each saved CLI chat retains its own
+host session; reopening it with `--resume` continues that session. OpenCode
+keeps its model and agent settings on the host. File and shell access also
+works without connecting a chat.
 
 To use a tunnel or TLS proxy you manage separately:
 

@@ -105,6 +105,8 @@ def live_shells(root, home, config, host_root):
 
     try:
         wait('pmai> ')
+        send('/remote connect server\r')
+        wait('Connected to server.')
         send('/shell local\r')
         wait('Local shell.')
         wait('local-shell-ready\r\n')
@@ -117,7 +119,7 @@ def live_shells(root, home, config, host_root):
         repl('local')
         assert set(chats(root)) == before, 'local shell created a chat'
 
-        send('/remote shell server live\r')
+        send('/shell live\r')
         wait('Live shell server.')
         send("stty -echo; export SHELL_STATE=remote; cd /; printf '\\n%s\\n' remote-ready\r")
         wait('\r\nremote-ready\r\n')
@@ -144,7 +146,7 @@ def live_shells(root, home, config, host_root):
         repl('exit')
 
         # Auto selects live on a TTY. Ctrl+] closes even a busy host program.
-        send('/remote shell server\r')
+        send('/shell\r')
         wait('Live shell server.')
         send("stty -echo; echo $$ > relay-shell.pid; printf '\\n%s\\n' escape-ready; sleep 60\r")
         wait('\r\nescape-ready\r\n')
@@ -628,6 +630,8 @@ def run_opencode():
     shell_script = '/bin/echo "$PWD" > paths.txt'
     uploaded = []
     commands = []
+    sessions = {}
+    prompts = []
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -647,6 +651,40 @@ def run_opencode():
                 return self.reply(b'{"token":"test-token"}')
             assert self.headers.get("Authorization") == "Basic " + base64.b64encode(b"opencode:test-token").decode()
             query = parse_qs(url.query)
+            if url.path == '/api/project':
+                return self.reply(b'[{"canonical":"/work"}]')
+            if url.path == '/api/session':
+                if self.command == 'POST':
+                    body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                    assert body['location']['directory'] == '/work', body
+                    session = f'ses_{len(sessions) + 1}'
+                    sessions[session] = []
+                    return self.reply(json.dumps({'data': {'id': session}}).encode())
+                return self.reply(b'{"data":[]}')
+            parts = url.path.strip('/').split('/')
+            if len(parts) == 4 and parts[:2] == ['api', 'session']:
+                session, action = parts[2:]
+                assert session in sessions, parts
+                if action == 'prompt':
+                    body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+                    prompts.append((session, body['text']))
+                    index = len(prompts)
+                    sessions[session] += [
+                        {'id': f'user_{index}', 'type': 'user', 'text': body['text']},
+                        {'id': f'answer_{index}', 'type': 'assistant', 'content': [
+                            {'type': 'reasoning', 'text': f'remote-thought-{index}'},
+                            {'type': 'tool', 'id': f'call_{index}', 'name': 'remote_probe',
+                             'state': {'status': 'completed', 'input': {},
+                                       'content': [{'type': 'text', 'text': f'host-tool-output-{index}'}]}},
+                            {'type': 'text', 'text': f'remote-reply-{index}'}]},
+                        {'id': f'idle_{index}', 'type': 'idle', 'outcome': 'succeeded'}]
+                    return self.reply(b'{}')
+                if action in ('context', 'message'):
+                    return self.reply(json.dumps({'data': sessions[session]}).encode())
+                if action == 'permission':
+                    return self.reply(b'{"data":[]}')
+            if parts[:3] == ['api', 'experimental', 'session'] and parts[-1] == 'wait':
+                return self.reply(b'{}')
             assert query["location[directory]"] == ["/work"]
             if url.path == "/api/fs/list":
                 assert query["path"] == ["/work"]
@@ -683,7 +721,7 @@ def run_opencode():
                 root = Path(directory)
                 config = root / "config.json"
                 config.write_text(json.dumps({"defaultAgent": "main", "providers": [{"id": "hello", "kind": "hello"}],
-                    "agents": [{"id": "main", "provider": "hello", "model": "hello"}]}))
+                    "agents": [{"id": "main", "provider": "hello", "model": "hello"}], "ui": {"tools": -1}}))
                 client = REPL(root, root / "home", config, root / "client.log")
                 try:
                     client.send(f'/remote pair "http://127.0.0.1:{server.server_port}/auth/connect/code" "dev host" /work')
@@ -709,12 +747,46 @@ def run_opencode():
                     assert not chats(root), "OpenCode workspace commands created a chat"
                     client.send("local-after-shell")
                     client.wait("took ")
+                    client.send('/remote connect "dev host"')
+                    client.wait('Connected to dev host.')
+                    client.send('first native OpenCode prompt')
+                    client.wait('remote-reply-1')
+                    saved = wait_for(lambda: next((c for c in chats(root).values()
+                        if 'remote-reply-1' in json.dumps(c)), None), 'OpenCode chat saved')
+                    assert 'host-tool-output-1' in client.path.read_text(), 'remote tool output was lost'
+                    client.send('/shell')
+                    wait_for(lambda: client.path.read_text().count('Remote shell dev host.') == 2,
+                             '/shell follows the active OpenCode host')
+                    client.send(shell_script)
+                    client.wait('mock shell result 3')
+                    assert commands == [script, shell_script, shell_script]
+                    client.send('exit')
+                    wait_for(lambda: client.path.read_text().count('Left remote shell dev host.') == 2,
+                             'return from active-host shell')
+                    client.send('/shell local')
+                    client.wait('A local shell requires a terminal.')
+                    client.send('/remote disconnect')
+                    client.wait('Using your local chat.')
+                    client.close()
+                    client = REPL(root, root / 'home', config, root / 'resume.log', ['--resume', saved['id']])
+                    client.send('second native OpenCode prompt')
+                    client.wait('remote-reply-2')
+                    wait_for(lambda: 'remote-reply-2' in json.dumps(chats(root)), 'resumed OpenCode response saved')
+                    assert prompts == [('ses_1', 'first native OpenCode prompt'),
+                                       ('ses_1', 'second native OpenCode prompt')], prompts
+                    assert len(sessions) == 1, 'restart created another OpenCode conversation'
+                    assert 'remote-reply-1' not in client.path.read_text().split('second native OpenCode prompt')[-1], 'old answer replayed as a new response'
+                    client.send('/remote connect "dev host"')
+                    client.wait('Connected to dev host.')
+                    client.send('separate native OpenCode prompt')
+                    client.wait('remote-reply-3')
+                    assert prompts[-1] == ('ses_2', 'separate native OpenCode prompt'), prompts
                 finally:
                     client.close()
         finally:
             server.shutdown()
             thread.join()
-    print("OpenCode pairing, paginated listing, binary get/put, and verbatim remote shell: passed", flush=True)
+    print("OpenCode pairing, files, native chats, active-host shells, restart recovery and chat isolation: passed", flush=True)
 
 
 if __name__ == "__main__":

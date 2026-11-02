@@ -3481,6 +3481,39 @@ struct MaiCLI {
       }
     }
 
+    func openRemoteShell(_ host: ACPRemoteHost, mode: String = "auto") async throws {
+      guard !(await runtime.internetAccessPolicy().isOffline) else {
+        throw JSONRPCError.invalidParams("Turn off Airplane Mode before accessing remote hosts.")
+      }
+      if mode == "live", !RemoteTerminalRelay.available {
+        throw JSONRPCError.invalidParams("Live shells require a supported terminal; use /remote shell HOST cmd.")
+      }
+      let connection = try remoteServer.hosts.connection(for: host).workspace()
+      let result = await runForeground("/remote shell", resumeInput: false) {
+        do {
+          let live = mode != "cmd" && RemoteTerminalRelay.available
+            ? try await connection.supportsInteractiveTerminal() : false
+          if mode == "live", !live {
+            throw JSONRPCError.invalidParams("This host supports command execution only; use cmd mode.")
+          }
+          if live { try await RemoteTerminalRelay.run(connection: connection, name: host.name) }
+          await connection.close()
+          return Optional(live)
+        } catch {
+          await connection.close()
+          await terminal.line(Task.isCancelled ? "Stopped remote shell." : "error: \(error.localizedDescription)", to: .standardError)
+          return Bool?.none
+        }
+      }
+      if result.value == false && !result.interrupted {
+        remoteShell = host
+        await terminal.line("Remote shell \(host.name). Command mode: each command starts in \(host.cwd) with a fresh environment. Type exit to return to pmai.")
+      } else {
+        remoteShell = nil
+        if result.value == true { await terminal.line("Left remote shell \(host.name).") }
+      }
+    }
+
     /// After a command ran under a turn: says how what it changed meets the
     /// run. Chat edits are merged when its reply lands; operational settings
     /// are pushed into the live request and observed at its next safe boundary.
@@ -4556,8 +4589,18 @@ struct MaiCLI {
             command.count > 1
             ? command[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
           if name == "/shell" {
-            if !argument.isEmpty && argument != "local" {
-              await terminal.line("Usage: /shell [local]; /remote shell HOST [auto|live|cmd]", to: .standardError)
+            let mode = argument.isEmpty ? "auto" : argument
+            if !["local", "auto", "live", "cmd"].contains(mode) {
+              await terminal.line("Usage: /shell [local|auto|live|cmd]; /remote shell HOST [auto|live|cmd]", to: .standardError)
+            } else if mode != "local", session.profile.provider.rawValue.hasPrefix("remote.") {
+              do {
+                guard let host = try remoteServer.hosts.hosts().first(where: { $0.providerID == session.profile.provider.rawValue }) else {
+                  throw JSONRPCError.invalidParams("The current remote host is no longer paired. Use /remote pair to reconnect, or /shell local.")
+                }
+                try await openRemoteShell(host, mode: mode)
+              } catch { await terminal.line("error: \(error.localizedDescription)", to: .standardError) }
+            } else if mode == "cmd" {
+              await terminal.line("Use !COMMAND for local command/result execution.")
             } else if isatty(STDIN_FILENO) == 0 || isatty(STDOUT_FILENO) == 0 {
               await terminal.line("A local shell requires a terminal. Use !COMMAND for command/result execution.", to: .standardError)
             } else {
@@ -4680,8 +4723,7 @@ struct MaiCLI {
               case "status", "list":
                 await terminal.line(remoteServer.status())
                 for host in try hosts.hosts() {
-                  let command = host.backend == .openCode ? "ls" : "connect"
-                  await terminal.line("\(host.name) · \(host.url.absoluteString) · /remote \(command) \(shellQuote(host.name))")
+                  await terminal.line("\(host.name) · \(host.url.absoluteString) · /remote connect \(shellQuote(host.name))")
                 }
               case "pair":
                 guard (1...3).contains(arguments.count) else {
@@ -4701,7 +4743,7 @@ struct MaiCLI {
                       var profile = RemoteHostConnection(try await link.redeem())
                       profile.cwd = directory
                       let host = try hosts.pair(profile, name: hostName)
-                      await terminal.line("Paired \(host.name). /remote ls \(shellQuote(host.name)) lists its files.")
+                      await terminal.line("Paired \(host.name). /remote connect \(shellQuote(host.name)) opens a chat; /remote ls \(shellQuote(host.name)) lists its files.")
                     } catch { await terminal.line("error: \(error.localizedDescription)", to: .standardError) }
                   }
                   break
@@ -4764,34 +4806,7 @@ struct MaiCLI {
                     throw JSONRPCError.invalidParams("Turn off Airplane Mode before accessing remote hosts.")
                   }
                   let host = try hosts.host(arguments[0])
-                  let mode = arguments.count == 2 ? arguments[1] : "auto"
-                  if mode == "live", !RemoteTerminalRelay.available {
-                    throw JSONRPCError.invalidParams("Live shells require a supported terminal; use /remote shell HOST cmd.")
-                  }
-                  let connection = try hosts.connection(for: host).workspace()
-                  let result = await runForeground("/remote shell", resumeInput: false) {
-                    do {
-                      let live = mode != "cmd" && RemoteTerminalRelay.available
-                        ? try await connection.supportsInteractiveTerminal() : false
-                      if mode == "live", !live {
-                        throw JSONRPCError.invalidParams("This host supports command execution only; use cmd mode.")
-                      }
-                      if live { try await RemoteTerminalRelay.run(connection: connection, name: host.name) }
-                      await connection.close()
-                      return Optional(live)
-                    } catch {
-                      await connection.close()
-                      await terminal.line(Task.isCancelled ? "Stopped remote shell." : "error: \(error.localizedDescription)", to: .standardError)
-                      return Bool?.none
-                    }
-                  }
-                  if result.value == false && !result.interrupted {
-                    remoteShell = host
-                    await terminal.line("Remote shell \(host.name). Command mode: each command starts in \(host.cwd) with a fresh environment. Type exit to return to pmai.")
-                  } else {
-                    remoteShell = nil
-                    if result.value == true { await terminal.line("Left remote shell \(host.name).") }
-                  }
+                  try await openRemoteShell(host, mode: arguments.count == 2 ? arguments[1] : "auto")
                 }
               case "pending":
                 let waiting = try await remoteServer.pendingClients()
@@ -4819,13 +4834,8 @@ struct MaiCLI {
                   throw JSONRPCError.invalidParams("Turn off Airplane Mode before connecting.")
                 }
                 let host = try hosts.host(arguments[0])
-                guard host.backend != .openCode else {
-                  throw JSONRPCError.invalidParams("Use /remote ls, get, put, or run for this OpenCode host.")
-                }
                 let provider = hosts.provider(for: host)
-                let probe = ACPClient(configuration: .init(command: host.name,
-                  remoteWorkingDirectory: host.cwd, readClientFiles: false, webSocketURL: host.url,
-                  bearerToken: try String(contentsOf: hosts.tokenFile(for: host), encoding: .utf8)))
+                let probe = try hosts.connection(for: host).makeSession()
                 let checked = await runForeground("/remote connect", resumeInput: false) {
                   do { _ = try await probe.workspace(); await probe.disconnect(); return true }
                   catch { await probe.disconnect(); await terminal.line("error: \(error.localizedDescription)", to: .standardError); return false }
@@ -4838,7 +4848,7 @@ struct MaiCLI {
                   draft.providers.removeAll { $0.id == provider.id }
                   draft.providers.append(provider)
                   let agent = AgentDefinition(id: host.providerID, displayName: host.name,
-                    description: "Remote pmai on \(host.name)", instructions: "", provider: .init(host.providerID), model: host.providerID)
+                    description: "Remote agent on \(host.name)", instructions: "", provider: .init(host.providerID), model: host.providerID)
                   draft.upsertAgent(agent)
                   let built = try await plugins.makeProvider(from: provider, environment: ProcessInfo.processInfo.environment)
                   try draft.save(to: URL(fileURLWithPath: configPath))
@@ -15340,7 +15350,7 @@ struct MaiCLI {
     /remote reject [CODE]  Reject a pairing request
     /remote clients        List accepted clients
     /remote del ID         Revoke an accepted client's access
-    /remote connect NAME   Open a new chat with a paired host's agent
+    /remote connect NAME   Open an ACP or OpenCode chat on a paired host
     /remote disconnect     Return to your local chat
 
     File and shell commands work without /remote connect and do not create chats.
@@ -15357,8 +15367,9 @@ struct MaiCLI {
     exit or /remote shell off returns to pmai; /remote commands remain available.
     Host Files permissions apply; command/result execution requires run_shell.
     For OpenCode, use /remote pair LINK NAME /absolute/project with the link or QR
-    from opencode pair --remote. OpenCode uploads use its experimental write API;
-    /remote connect remains for pmai/ACP chats.
+    from opencode pair --remote. /remote connect opens its native chat session;
+    saved local chats resume the same host session. /shell follows the active host.
+    OpenCode uploads use its experimental write API.
 
     OpenAI serving uses the current agent and provider settings at startup. Use
     --port PORT to change 11435, or --bind HOST to choose a listener address.
@@ -15536,7 +15547,8 @@ struct MaiCLI {
       <<WORD              Start a multiline message; WORD alone ends it
       $NAME [TEXT]        Send a named prompt or skill; /prompts lists names
       !COMMAND            Run a system shell command (interactive programs work)
-      /shell [local]      Open a local shell; exit returns to pmai
+      /shell [auto|live|cmd]  Shell on the active chat host (local for local chats)
+      /shell local        Always open a local shell; exit returns to pmai
       /remote shell HOST [auto|live|cmd]  Live shell or command/result prompt
 
     Redirect slash-command output:
