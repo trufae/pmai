@@ -3937,6 +3937,7 @@ private struct MarkdownRemoteImageView: View {
   @StateObject private var loader = MarkdownRemoteImageLoader()
   @State private var imageSaveNotice: ImageSaveNotice?
   @State private var showingFullscreenImage = false
+  @State private var showingImageSizePicker = false
 
   var body: some View {
     Group {
@@ -3956,9 +3957,9 @@ private struct MarkdownRemoteImageView: View {
         .buttonStyle(.plain)
         .contextMenu {
           Button {
-            saveImage()
+            showingImageSizePicker = true
           } label: {
-            Label("Save Image", systemImage: "square.and.arrow.down")
+            Label("Save as PNG…", systemImage: "square.and.arrow.down")
           }
         }
         .fullScreenCover(isPresented: $showingFullscreenImage) {
@@ -3973,16 +3974,23 @@ private struct MarkdownRemoteImageView: View {
     }
     .accessibilityLabel(accessibilityLabel)
     .imageSaveNotice($imageSaveNotice)
+    .imageSizeConfirmationDialog(
+      isPresented: $showingImageSizePicker,
+      presenting: url,
+      message: { _ in "Choose the resolution for the PNG image." },
+      onSelect: { _, size in saveImage(size: size) },
+      onCancel: {}
+    )
   }
 
   private var accessibilityLabel: String {
     image.altText.isEmpty ? "Markdown image" : image.altText
   }
 
-  private func saveImage() {
+  private func saveImage(size: AttachmentImageSize) {
     Task {
       do {
-        let data = try await loader.imageData(for: url)
+        let data = try await loader.pngData(size: size)
         try await MessageAttachmentImage.saveImageDataToPhotoLibrary(data)
         await MainActor.run {
           imageSaveNotice = .success()
@@ -4087,7 +4095,7 @@ private struct MarkdownImageFailureView: View {
 }
 
 @MainActor
-private final class MarkdownRemoteImageLoader: ObservableObject {
+final class MarkdownRemoteImageLoader: ObservableObject {
   enum Phase {
     case idle
     case loading
@@ -4097,6 +4105,7 @@ private final class MarkdownRemoteImageLoader: ObservableObject {
 
   @Published private(set) var phase: Phase = .idle
   private var currentURL: URL?
+  private var svgData: Data?
 
   func load(_ url: URL) async {
     if currentURL == url {
@@ -4109,39 +4118,74 @@ private final class MarkdownRemoteImageLoader: ObservableObject {
     }
 
     currentURL = url
+    svgData = nil
     phase = .loading
 
     do {
       let imageData = try await Self.imageDataAndDecodedImage(from: url)
+      try Task.checkCancellation()
       guard currentURL == url else { return }
+      svgData = imageData.svgData
       phase = .success(imageData.image, imageData.data)
     } catch is CancellationError {
+      guard currentURL == url else { return }
+      currentURL = nil
+      phase = .idle
     } catch {
       guard currentURL == url else { return }
       phase = .failure
     }
   }
 
-  func imageData(for url: URL) async throws -> Data {
-    if currentURL == url, case .success(_, let data) = phase {
-      return data
+  func pngData(size: AttachmentImageSize) async throws -> Data {
+    guard case .success(let preview, _) = phase else {
+      throw MessageImageSaveError("This image could not be decoded.")
     }
-    return try await Self.imageDataAndDecodedImage(from: url).data
+    let image: UIImage
+    if let svgData {
+      image = try await MarkdownSVGRenderer.render(svgData, maxDimension: size.maxDimension)
+    } else {
+      let pixels = CGSize(
+        width: preview.size.width * preview.scale, height: preview.size.height * preview.scale)
+      let scale = size.maxDimension.map { min(1, CGFloat($0) / max(pixels.width, pixels.height)) } ?? 1
+      let target = CGSize(
+        width: max(1, (pixels.width * scale).rounded()),
+        height: max(1, (pixels.height * scale).rounded()))
+      let format = UIGraphicsImageRendererFormat()
+      format.scale = 1
+      image = UIGraphicsImageRenderer(size: target, format: format).image { _ in
+        preview.draw(in: CGRect(origin: .zero, size: target))
+      }
+    }
+    guard let data = image.pngData() else {
+      throw MessageImageSaveError("This image could not be decoded.")
+    }
+    return data
   }
 
   private static func imageDataAndDecodedImage(from url: URL) async throws -> (
-    data: Data, image: UIImage
+    data: Data, image: UIImage, svgData: Data?
   ) {
-    let (data, response) = try await URLSession.shared.data(from: url)
-    if let httpResponse = response as? HTTPURLResponse,
-      !(200..<300).contains(httpResponse.statusCode)
-    {
-      throw MessageImageSaveError("The image could not be downloaded.")
+    let data: Data
+    if let embedded = try MarkdownImageURL.embeddedData(from: url) {
+      data = embedded
+    } else {
+      let (downloaded, response) = try await URLSession.shared.data(from: url)
+      if let httpResponse = response as? HTTPURLResponse,
+        !(200..<300).contains(httpResponse.statusCode)
+      {
+        throw MessageImageSaveError("The image could not be downloaded.")
+      }
+      data = downloaded
     }
-    guard let image = UIImage(data: data) else {
+    if let image = UIImage(data: data) {
+      return (data, image, nil)
+    }
+    let image = try await MarkdownSVGRenderer.render(data)
+    guard let png = image.pngData() else {
       throw MessageImageSaveError("This image could not be decoded.")
     }
-    return (data, image)
+    return (png, image, data)
   }
 }
 
@@ -4164,7 +4208,7 @@ private struct MarkdownInlineImage: Equatable {
   let source: String
 
   var url: URL? {
-    MarkdownWebURL.url(from: source)
+    MarkdownImageURL.url(from: source)
   }
 }
 
@@ -6127,6 +6171,13 @@ struct CodeBlockView: View {
   let allowsTextSelection: Bool
 
   @State private var showingCodePreview = false
+  @State private var showingSVGPreview = false
+
+  private var svgImage: MarkdownInlineImage? {
+    MarkdownImageURL.svgSource(code: code, language: language).map {
+      MarkdownInlineImage(altText: "SVG image", source: $0)
+    }
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -6140,12 +6191,18 @@ struct CodeBlockView: View {
         if !isFullChatScreenshotRendering {
           HStack(spacing: appearance.markdownMetric(8)) {
             Button {
-              showingCodePreview = true
+              if svgImage != nil {
+                showingSVGPreview.toggle()
+              } else {
+                showingCodePreview = true
+              }
             } label: {
-              Image(systemName: "eye")
+              Image(systemName: showingSVGPreview ? "chevron.left.forwardslash.chevron.right" : "eye")
             }
             .adaptiveGlassButtonStyle()
-            .help("View code")
+            .help(svgImage == nil ? "View code" : showingSVGPreview ? "Show source" : "Preview SVG")
+            .accessibilityLabel(
+              svgImage == nil ? "View code" : showingSVGPreview ? "Show source" : "Preview SVG")
             Button {
               UIPasteboard.general.string = code
             } label: {
@@ -6162,7 +6219,10 @@ struct CodeBlockView: View {
       .padding(.horizontal, appearance.markdownMetric(10))
       .padding(.vertical, appearance.markdownMetric(7))
       Divider()
-      if isFullChatScreenshotRendering {
+      if showingSVGPreview, let svgImage {
+        MarkdownImageView(image: svgImage, appearance: appearance)
+          .padding(appearance.markdownMetric(12))
+      } else if isFullChatScreenshotRendering {
         Text(SyntaxHighlighter.highlight(code, language: language))
           .font(appearance.codeFont)
           .lineSpacing(CGFloat(appearance.lineSpacing))
