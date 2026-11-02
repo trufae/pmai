@@ -1,13 +1,4 @@
 import Foundation
-#if canImport(Android)
-  import Android
-#elseif canImport(Musl)
-  import Musl
-#elseif canImport(Glibc)
-  import Glibc
-#elseif canImport(Darwin)
-  import Darwin
-#endif
 
 /// Lifetime counters are for display. A bounded recent window drives exposure
 /// so old workflows do not permanently occupy the direct-tool slots.
@@ -133,13 +124,8 @@ public actor AgentToolUsageStore {
   ) throws -> AgentToolUsage {
     try FileManager.default.createDirectory(
       at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-    #if !os(Windows)
-      let descriptor = open(url.path + ".lock", O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0o600)
-      guard descriptor >= 0 else { throw POSIXError(.EIO) }
-      defer { _ = close(descriptor) }
-      guard flock(descriptor, LOCK_EX) == 0 else { throw POSIXError(.EIO) }
-      defer { _ = flock(descriptor, LOCK_UN) }
-    #endif
+    let lock = try MaiFileLock(url: url.appendingPathExtension("lock"))
+    defer { withExtendedLifetime(lock) {} }
     var saved = (try? Data(contentsOf: url))
       .flatMap { try? JSONDecoder().decode(AgentToolUsage.self, from: $0) } ?? .init()
     saved.add(counts: counts, recent: recent)

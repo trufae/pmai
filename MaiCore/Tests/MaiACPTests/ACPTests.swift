@@ -5,6 +5,25 @@ import MaiStandardTools
 @testable import MaiACP
 @testable import MaiCore
 
+@Test("ACP state leases report contention and release after their owner leaves scope")
+func acpFileLockContention() throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent("acp-lock-\(UUID())")
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let url = directory.appendingPathComponent("session.lock")
+  func holdLease() throws {
+    let owner = try ACPFileLock(url: url)
+    _ = withExtendedLifetime(owner) {
+      #expect(throws: JSONRPCError.invalidParams("State is in use by another connection.")) {
+        _ = try ACPFileLock(url: url)
+      }
+    }
+  }
+  try holdLease()
+  let acquired = try ACPFileLock(url: url)
+  withExtendedLifetime(acquired) {}
+}
+
 #if os(Windows)
 @Test("Windows ACP launches a PATH executable and preserves request data and literal arguments")
 func windowsACPStdioRoundTrip() async throws {

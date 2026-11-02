@@ -1,15 +1,5 @@
 import Foundation
 
-#if canImport(Android)
-  import Android
-#elseif canImport(Musl)
-  import Musl
-#elseif canImport(Glibc)
-  import Glibc
-#elseif canImport(Darwin)
-  import Darwin
-#endif
-
 /// Serializes tool calls across chats and child agents. Atomic JSON snapshots
 /// survive restarts; modified snapshots are reloaded before the next operation.
 public actor MaiVectorDatabaseStore {
@@ -89,18 +79,8 @@ public actor MaiVectorDatabaseStore {
   private func withWriteLock<T>(at url: URL, _ operation: () throws -> T) throws -> T {
     try FileManager.default.createDirectory(
       at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-    #if !os(Windows)
-      let descriptor = open(
-        url.appendingPathExtension("lock").path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0o600)
-      guard descriptor >= 0 else {
-        throw MaiVectorDatabaseError.invalidIndex("cannot open index lock")
-      }
-      defer { close(descriptor) }
-      guard flock(descriptor, LOCK_EX) == 0 else {
-        throw MaiVectorDatabaseError.invalidIndex("cannot lock index")
-      }
-      defer { _ = flock(descriptor, LOCK_UN) }
-    #endif
+    let lock = try MaiFileLock(url: url.appendingPathExtension("lock"))
+    defer { withExtendedLifetime(lock) {} }
     try Task.checkCancellation()
     // Another process or store may have committed while we acquired the lock.
     cached = nil

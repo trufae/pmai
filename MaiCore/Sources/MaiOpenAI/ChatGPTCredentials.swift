@@ -143,38 +143,28 @@ public struct ChatGPTCredentialStore: Sendable {
   func lock() async throws -> ChatGPTCredentialLock {
     #if os(iOS)
       return ChatGPTCredentialLock()
-    #elseif os(Windows)
-      throw ChatGPTError.message("ChatGPT credential locking requires a POSIX host or iOS.")
     #else
       try FileManager.default.createDirectory(
         at: directory, withIntermediateDirectories: true,
         attributes: [.posixPermissions: 0o700])
-      let descriptor = open(
-        directory.appendingPathComponent("credentials.lock").path,
-        O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0o600)
-      guard descriptor >= 0 else { throw ChatGPTError.credentialsUnavailable }
-      let lock = ChatGPTCredentialLock(descriptor: descriptor)
-      let deadline = Date().addingTimeInterval(60)
-      while flock(descriptor, LOCK_EX | LOCK_NB) != 0 {
-        try Task.checkCancellation()
-        guard Date() < deadline else { throw ChatGPTError.credentialsUnavailable }
-        try await Task.sleep(for: .milliseconds(100))
+      do {
+        let lock = try await MaiFileLock.acquire(url: directory.appendingPathComponent("credentials.lock"))
+        return ChatGPTCredentialLock(lock: lock)
+      } catch is CancellationError {
+        throw CancellationError()
+      } catch {
+        throw ChatGPTError.credentialsUnavailable
       }
-      return lock
     #endif
   }
 }
 
 final class ChatGPTCredentialLock: @unchecked Sendable {
-  #if os(iOS) || os(Windows)
+  #if os(iOS)
     init() {}
   #else
-    let descriptor: Int32
-    init(descriptor: Int32) { self.descriptor = descriptor }
-    deinit {
-      _ = flock(descriptor, LOCK_UN)
-      _ = close(descriptor)
-    }
+    private let lock: MaiFileLock
+    init(lock: MaiFileLock) { self.lock = lock }
   #endif
 }
 
