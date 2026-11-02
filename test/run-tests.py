@@ -45,8 +45,11 @@ def main():
         parser.error(f'Update suite ownership: unlisted={found-known}, missing={known-found}')
     env = os.environ.copy()
     env.pop('PMAI_TEST_PROFILE', None)
-    swift = [env.get('SWIFT', 'swift'), 'test', '--package-path', str(ROOT / 'MaiCore'),
-             '--disable-index-store', '--disable-prefetching']
+    build_args = ['--package-path', str(ROOT / 'MaiCore'),
+                  '--disable-index-store', '--disable-prefetching']
+    if sys.platform == 'darwin':
+        build_args += ['--build-system', 'native', '--jobs', '2']
+    swift = [env.get('SWIFT', 'swift'), 'test', *build_args]
     if args.profile in ('core', 'chat', 'documents', 'mobile'):
         env['PMAI_TEST_PROFILE'] = args.profile
         swift += ['--scratch-path', str(ROOT / 'MaiCore/.build' / (args.profile + '-tests'))]
@@ -64,8 +67,7 @@ def main():
             return
         env['PMAI_TESTS_BUILT'] = '1'
     if not args.skip_build:
-        subprocess.run([env.get('SWIFT', 'swift'), 'build', '--package-path', str(ROOT / 'MaiCore'),
-                        '--disable-index-store', '--disable-prefetching', '--product', 'pmai'],
+        subprocess.run([env.get('SWIFT', 'swift'), 'build', *build_args, '--product', 'pmai'],
                        cwd=ROOT, env=env, check=True)
     binary = args.binary.resolve()
     if not binary.is_file():

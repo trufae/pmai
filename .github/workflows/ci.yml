@@ -72,8 +72,8 @@ jobs:
       # Reuse the debug objects built by swift test on macOS.
       - name: Build CLI
         run: |
-          args=(--package-path MaiCore --disable-index-store --disable-prefetching)
-          if [ "$RUNNER_OS" = Linux ]; then args+=(--build-system native --jobs 2 -c release -Xswiftc -Osize); fi
+          args=(--package-path MaiCore --disable-index-store --disable-prefetching --build-system native --jobs 2)
+          if [ "$RUNNER_OS" = Linux ]; then args+=(-c release -Xswiftc -Osize); fi
           swift build "${args[@]}" --product pmai
           cp "$(swift build "${args[@]}" --show-bin-path)/pmai" pmai
 
