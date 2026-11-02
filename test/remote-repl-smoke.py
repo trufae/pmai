@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
 """Exercise /remote serving, project discovery, CLI pairing, and durable sessions."""
 import base64
+import fcntl
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import json
 import os
 from pathlib import Path
+import pty
 import signal
 import socket
 import subprocess
+import struct
 import sys
+import termios
 import tempfile
 import threading
 import time
 import uuid
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from smoke import clean_environment
+from smoke import clean_environment, expect_pty, read_pty
 
 PMAI = str(Path(sys.argv[1]).resolve())
 spec = importlib.util.spec_from_file_location("gateway_smoke", Path(__file__).with_name("acp-gateway-smoke.py"))
@@ -73,6 +77,116 @@ class REPL:
 def chats(directory):
     return {file.stem.lower(): json.loads(file.read_text())
             for file in (directory / ".pmai/chats").glob("*.json")}
+
+
+def live_shells(root, home, config, host_root):
+    """Stateful shells, host interrupts, resize, and returning ownership to the REPL."""
+    before = set(chats(root))
+    master, slave = pty.openpty()
+    original = termios.tcgetattr(slave)
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 100, 0, 0))
+    local_shell = root / 'local-shell'
+    local_shell.write_text("#!/bin/sh\nprintf 'local-shell-ready\\n'\nexec /bin/sh -i\n")
+    local_shell.chmod(0o700)
+    env = dict(clean_environment(), TERM='xterm-256color', SHELL=str(local_shell), ENV='/dev/null')
+    process = subprocess.Popen([PMAI, '--home', str(home), '--config', str(config),
+        '--no-markdown'], cwd=root, env=env, stdin=slave, stdout=slave, stderr=slave)
+    output = bytearray()
+
+    def send(text):
+        os.write(master, text.encode())
+
+    def wait(text):
+        return expect_pty(master, process, output, text, 30)
+
+    def repl(label):
+        send('/help shell-barrier-' + label + '\r')
+        wait("Unknown help topic 'shell-barrier-" + label + "'")
+
+    try:
+        wait('pmai> ')
+        send('/shell local\r')
+        wait('Local shell.')
+        wait('local-shell-ready\r\n')
+        send("stty -echo; export SHELL_STATE=local; cd /; printf '\\n%s\\n' local-ready\r")
+        wait('\r\nlocal-ready\r\n')
+        send("printf 'local-%s:%s\\n' \"$SHELL_STATE\" \"$PWD\"\r")
+        wait('local-local:/')
+        send('exit\r')
+        wait('Left local shell.')
+        repl('local')
+        assert set(chats(root)) == before, 'local shell created a chat'
+
+        send('/remote shell server live\r')
+        wait('Live shell server.')
+        send("stty -echo; export SHELL_STATE=remote; cd /; printf '\\n%s\\n' remote-ready\r")
+        wait('\r\nremote-ready\r\n')
+        send("printf 'remote-%s:%s\\n' \"$SHELL_STATE\" \"$PWD\"\r")
+        wait('remote-remote:/')
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 37, 111, 0, 0))
+        # A query proves the resize reached the PTY; retry the query until that
+        # result arrives rather than assuming SIGWINCH delivery after a sleep.
+        deadline = time.monotonic() + 30
+        while True:
+            send("printf 'size-'; stty size; printf 'size-%s\\n' done\r")
+            response = wait('size-done')
+            if '37 111' in response:
+                break
+            assert time.monotonic() < deadline, response
+        send("trap 'printf \"interrupt-ack\\n\"' INT; printf 'interrupt-%s\\n' ready; sleep 60\r")
+        wait('interrupt-ready')
+        send('\x03')
+        wait('interrupt-ack')
+        send("printf 'interrupt-%s\\n' stopped\r")
+        wait('interrupt-stopped')
+        send('exit\r')
+        wait('Left remote shell server.')
+        repl('exit')
+
+        # Auto selects live on a TTY. Ctrl+] closes even a busy host program.
+        send('/remote shell server\r')
+        wait('Live shell server.')
+        send("stty -echo; echo $$ > relay-shell.pid; printf '\\n%s\\n' escape-ready; sleep 60\r")
+        wait('\r\nescape-ready\r\n')
+        pid = int((host_root / 'relay-shell.pid').read_text())
+        send('\x1d')
+        wait('Left remote shell server.')
+        repl('escape')
+        def shell_stopped():
+            try:
+                os.kill(pid, 0)
+                return False
+            except ProcessLookupError:
+                return True
+        wait_for(shell_stopped, 'escape closes host shell')
+
+        send('/remote shell server cmd\r')
+        wait('Command mode:')
+        send("printf 'cmd-%s\\n' result\r")
+        wait('cmd-result')
+        send('exit\r')
+        wait('Left remote shell server.')
+        repl('cmd')
+        assert set(chats(root)) == before, 'shell access created a chat'
+        send('/quit\r')
+        deadline = time.monotonic() + 30
+        while process.poll() is None:
+            assert time.monotonic() < deadline, output.decode(errors='replace')
+            read_pty(master, output, .05)
+        assert process.returncode == 0
+        restored = termios.tcgetattr(slave)
+        # BSD can set PENDIN while restoring canonical input; it asks the
+        # kernel to retype pending input and is not a terminal mode leak.
+        restored[3] &= ~getattr(termios, 'PENDIN', 0)
+        original[3] &= ~getattr(termios, 'PENDIN', 0)
+        assert restored == original, ('shell handoff did not restore terminal modes', original, restored)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        os.close(master)
+        os.close(slave)
+    print('Local and remote live shells, persistent state, Ctrl+C, resize, escape cleanup, cmd mode and tty restoration: passed', flush=True)
 
 
 def remote_terminal_sessions(server, port, token, root):
@@ -274,6 +388,7 @@ def run():
             wait_for(lambda: client.path.read_text().count("error:") > errors, "failed remote download")
             assert (client_dir / "downloaded file.bin").read_bytes() == payload, "failed download replaced local data"
             print("Remote binary transfers, paths with spaces, shell quoting, and chat isolation: passed", flush=True)
+            live_shells(client_dir, client_home, client_config, projects[0])
             client.send("/remote connect server")
             client.wait("Connected to server.")
             client.send("remote hello")

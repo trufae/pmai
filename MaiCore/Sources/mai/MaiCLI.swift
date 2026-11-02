@@ -4340,7 +4340,7 @@ struct MaiCLI {
         let commandFields = text.split(whereSeparator: \Character.isWhitespace).map(String.init)
         let metadataCommands = [
           "/help", "/history", "/version", "/about", "/then", "/unthen", "/stop", "/view", "/highlight",
-          "/projects", "/project", "/remote", "/exit", "/quit",
+          "/projects", "/project", "/remote", "/shell", "/exit", "/quit",
         ]
         let chatNavigation =
           commandFields.first == "/chat"
@@ -4555,6 +4555,33 @@ struct MaiCLI {
           let argument =
             command.count > 1
             ? command[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+          if name == "/shell" {
+            if !argument.isEmpty && argument != "local" {
+              await terminal.line("Usage: /shell [local]; /remote shell HOST [auto|live|cmd]", to: .standardError)
+            } else if isatty(STDIN_FILENO) == 0 || isatty(STDOUT_FILENO) == 0 {
+              await terminal.line("A local shell requires a terminal. Use !COMMAND for command/result execution.", to: .standardError)
+            } else {
+              await terminal.line("Local shell. Type exit to return to pmai.")
+              await withTurnInterruptSetAside {
+                #if os(Windows)
+                await runShellCommand("cmd", terminal: terminal)
+                #else
+                #if canImport(Android)
+                let fallback = "/system/bin/sh"
+                #else
+                let fallback = "/bin/sh"
+                #endif
+                let configured = ProcessInfo.processInfo.environment["SHELL"] ?? fallback
+                let shell = FileManager.default.isExecutableFile(atPath: configured) ? configured : fallback
+                do { _ = try TerminalCommand.run("exec \(shellQuote(shell)) -i") }
+                catch { await terminal.line("error: \(error.localizedDescription)", to: .standardError) }
+                #endif
+              }
+              await terminal.line("Left local shell.")
+            }
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
           if name == "/reset", argument.isEmpty {
             if configuration == nil || services.configurationPath == nil {
               await terminal.line("error: No writable configuration is active.", to: .standardError)
@@ -4726,7 +4753,9 @@ struct MaiCLI {
                 }
                 try await runRemoteWorkspace(action, arguments: Array(arguments.dropFirst()), host: hosts.host(hostName))
               case "shell":
-                guard arguments.count == 1 else { throw JSONRPCError.invalidParams("Usage: /remote shell HOST|off") }
+                guard (1...2).contains(arguments.count), arguments.count == 1 || ["auto", "live", "cmd"].contains(arguments[1]),
+                  arguments[0] != "off" || arguments.count == 1
+                else { throw JSONRPCError.invalidParams("Usage: /remote shell HOST [auto|live|cmd] | off") }
                 if arguments[0] == "off" {
                   remoteShell = nil
                   await terminal.line("Returned to pmai.")
@@ -4735,8 +4764,34 @@ struct MaiCLI {
                     throw JSONRPCError.invalidParams("Turn off Airplane Mode before accessing remote hosts.")
                   }
                   let host = try hosts.host(arguments[0])
-                  remoteShell = host
-                  await terminal.line("Remote shell \(host.name). Commands start in \(host.cwd). Type exit to return to pmai.")
+                  let mode = arguments.count == 2 ? arguments[1] : "auto"
+                  if mode == "live", !RemoteTerminalRelay.available {
+                    throw JSONRPCError.invalidParams("Live shells require a supported terminal; use /remote shell HOST cmd.")
+                  }
+                  let connection = try hosts.connection(for: host).workspace()
+                  let result = await runForeground("/remote shell", resumeInput: false) {
+                    do {
+                      let live = mode != "cmd" && RemoteTerminalRelay.available
+                        ? try await connection.supportsInteractiveTerminal() : false
+                      if mode == "live", !live {
+                        throw JSONRPCError.invalidParams("This host supports command execution only; use cmd mode.")
+                      }
+                      if live { try await RemoteTerminalRelay.run(connection: connection, name: host.name) }
+                      await connection.close()
+                      return Optional(live)
+                    } catch {
+                      await connection.close()
+                      await terminal.line(Task.isCancelled ? "Stopped remote shell." : "error: \(error.localizedDescription)", to: .standardError)
+                      return Bool?.none
+                    }
+                  }
+                  if result.value == false && !result.interrupted {
+                    remoteShell = host
+                    await terminal.line("Remote shell \(host.name). Command mode: each command starts in \(host.cwd) with a fresh environment. Type exit to return to pmai.")
+                  } else {
+                    remoteShell = nil
+                    if result.value == true { await terminal.line("Left remote shell \(host.name).") }
+                  }
                 }
               case "pending":
                 let waiting = try await remoteServer.pendingClients()
@@ -14817,7 +14872,7 @@ struct MaiCLI {
   ) -> [String] {
     var values = [
       "/recover", "/recover clear", "/help", "/help set", "/help reset", "/reset", "/exit", "/quit", "/set tool.approval yolo", "/set tool.approval ask",
-      "/help shell", "/help keys", "/help model",
+      "/help shell", "/shell", "/shell local", "/help keys", "/help model",
       "/help history", "/history", "/history list", "/history search ", "/history del ",
       "/history clear", "/history path", "/history help",
       "/help theme", "/theme", "/theme list", "/theme show", "/theme use ", "/theme save ", "/theme color",
@@ -15278,7 +15333,7 @@ struct MaiCLI {
     /remote get HOST REMOTE [LOCAL]  Download a file (default: its basename here)
     /remote put HOST LOCAL [REMOTE]  Upload a file (default: its basename on the host)
     /remote run HOST COMMAND  Run a command directly on the host
-    /remote shell HOST     Send typed commands to HOST; exit returns to pmai
+    /remote shell HOST [auto|live|cmd]  Open a live shell or command/result prompt
     /remote shell off      Leave remote shell mode
     /remote pending        List clients waiting for your approval
     /remote accept [CODE]  Accept a pairing request; omit CODE when only one is waiting
@@ -15295,10 +15350,12 @@ struct MaiCLI {
     a remote directory ending in /. ls includes every page. Ctrl+C stops waiting.
     Everything after run HOST goes to the remote shell verbatim, including quotes,
     pipes, variables, and redirects. Shell directory changes apply to that run only.
-    shell HOST changes the prompt to HOST>. Each line runs directly on that host;
-    exit or /remote shell off returns to pmai. /remote commands remain available.
-    This uses the same one-command console; cwd and environment reset for each line.
-    Host Files permissions and enabled run_shell tools still apply.
+    shell HOST uses a live PTY when the host and terminal support it. State persists;
+    interactive programs work. exit or Ctrl+] closes the shell and returns to pmai.
+    live requires PTY support; cmd forces command/result mode. Piped input uses cmd.
+    In cmd mode the prompt becomes HOST>; cwd and environment reset for each line.
+    exit or /remote shell off returns to pmai; /remote commands remain available.
+    Host Files permissions apply; command/result execution requires run_shell.
     For OpenCode, use /remote pair LINK NAME /absolute/project with the link or QR
     from opencode pair --remote. OpenCode uploads use its experimental write API;
     /remote connect remains for pmai/ACP chats.
@@ -15479,6 +15536,8 @@ struct MaiCLI {
       <<WORD              Start a multiline message; WORD alone ends it
       $NAME [TEXT]        Send a named prompt or skill; /prompts lists names
       !COMMAND            Run a system shell command (interactive programs work)
+      /shell [local]      Open a local shell; exit returns to pmai
+      /remote shell HOST [auto|live|cmd]  Live shell or command/result prompt
 
     Redirect slash-command output:
       /COMMAND > FILE     Overwrite a file

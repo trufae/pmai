@@ -41,6 +41,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   private let lock = NSLock()
+  private var suspendedWrites: [(String, FileHandle)]?
   private var cooked = termios()
   private var rows = 24
   private var columns = 80
@@ -788,6 +789,27 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     }
   }
 
+  /// Network terminals await reads and writes while the REPL input is parked.
+  /// Release the screen lock across those awaits so transport callbacks can run.
+  func suspendTerminalAsync(_ action: () async throws -> Void) async rethrows {
+    let wasActive = lock.withLock {
+      let wasActive = active
+      if wasActive { deactivateLocked() }
+      suspendedWrites = []
+      return wasActive
+    }
+    defer {
+      let writes = lock.withLock {
+        let writes = suspendedWrites ?? []
+        suspendedWrites = nil
+        if wasActive { activateLocked() }
+        return writes
+      }
+      for (text, handle) in writes { write(text, to: handle) }
+    }
+    try await action()
+  }
+
   /// Restore cooked input immediately, but keep the buffer visible until the
   /// command requests a handoff. Short commands can return without switching
   /// screens; interactive programs start with the correct tty settings.
@@ -993,6 +1015,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   func write(_ text: String, to handle: FileHandle) {
     guard !text.isEmpty else { return }
     lock.withLock {
+      // Background notices belong to the REPL after the host releases the tty.
+      if suspendedWrites != nil { suspendedWrites?.append((text, handle)); return }
       guard active else {
         handle.write(Data(TerminalThemeStyle.resolve(text).utf8))
         return

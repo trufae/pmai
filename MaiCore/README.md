@@ -1250,12 +1250,24 @@ git status
 exit
 ```
 
-The prompt becomes `workstation>`. Lines run directly on that host, without a
-model; `exit`, `/exit`, or `/remote shell off` returns to pmai. `/remote` commands
-remain available for transfers or switching hosts, and `/quit` exits pmai.
-This reuses the mobile console's one-command API: every line starts in the paired
-directory with a fresh environment. Use `cd subdir && command` on the same line;
-interactive programs such as `vim` require a separate terminal connection.
+In an interactive terminal, this opens the same live host PTY used by mobile,
+including Forwiroh connections. Directory changes, environment variables, shell
+history, and interactive programs such as `vim` work across commands. Ctrl+C
+interrupts the host program; `exit` or Ctrl+] closes the shell and returns to
+pmai. Terminal resizing is forwarded to the host. A disconnect ends the CLI
+relay and restores the local terminal; run the command again to open a new shell.
+
+Use `/remote shell workstation live` to require a live PTY, or
+`/remote shell workstation cmd` to force command/result mode. The default `auto`
+uses command/result mode for hosts without PTY support (including OpenCode),
+and for piped REPL input. In this mode the prompt becomes `workstation>` and
+every line starts in the paired directory with a fresh environment. `exit`,
+`/exit`, or `/remote shell off` returns to pmai; `/remote` commands remain
+available for transfers or switching hosts, and `/quit` exits pmai.
+
+Use `/shell` or `/shell local` for a local interactive shell and `!COMMAND` for
+a local command/result. Local shell changes persist until `exit` returns to
+pmai; they do not change pmai's own directory or environment.
 
 OpenCode hosts use the same file and shell commands. Run `opencode pair --remote`
 on the host, then pair its printed link (or saved QR image) with an explicit name
