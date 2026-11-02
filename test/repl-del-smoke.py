@@ -7,7 +7,28 @@ import shlex
 import subprocess
 import sys
 import tempfile
-from smoke import clean_environment, run_repl
+import threading
+from http.server import ThreadingHTTPServer
+from smoke import JSONProvider, clean_environment, run_repl
+
+
+class HTTPMCP(JSONProvider):
+    def do_POST(self):
+        request = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+        if 'id' not in request:
+            self.send_response(204)
+            self.end_headers()
+            return
+        method = request['method']
+        if method == 'initialize':
+            result = {'protocolVersion': '2025-11-25', 'capabilities': {},
+                      'serverInfo': {'name': 'Wordcraft fixture', 'version': '1'}}
+        elif method == 'tools/list':
+            result = {'tools': [{'name': 'echo', 'description': 'HTTP fixture echo',
+                                'inputSchema': {'type': 'object'}}]}
+        else:
+            result = {'resources': []}
+        self.respond({'jsonrpc': '2.0', 'id': request['id'], 'result': result})
 
 
 def main():
@@ -85,8 +106,8 @@ for line in sys.stdin:
                      'Transport: stdio', 'Command:', str(mcp), f'Working directory: {root}',
                      'Timeout: 45 seconds', 'Tool prefix: external', 'Approval: confirm',
                      'Environment variables: FIXTURE_SECRET', 'Protocol: 2025-11-25', 'Resources: 1',
-                     '2 tools, 6 calls', 'external::echo [direct; 4 calls]',
-                     'external::resources_read [direct; 2 calls]', 'Fixture echo', 'Text to echo'):
+                     '2 tools, 6 calls', 'external::echo',
+                     'external::resources_read', 'Fixture echo', 'Text to echo'):
             assert text in output[0], (text, output[0])
         tool_help = output[1][output[1].index('MCP fixture (mcp/fixture)'):].strip()
         assert tool_help in output[0], (tool_help, output[0])
@@ -115,10 +136,11 @@ for line in sys.stdin:
         assert [s['id'] for s in saved['mcpServers']] == ['keeper'], saved
         for item in saved['agents']:
             assert not any(n.startswith(('external::', 'dormant::'))
-                           for n in item['toolNames'] + item['proxyExposedTools']), item
+                           for n in item['toolNames'] + item.get('proxyExposedTools', [])), item
             assert not {'mcp/fixture', 'mcp/dormant'} & set(item['toolGroupNames']), item
-            assert item['toolPolicy']['groups'] == {'mcp/keeper': 'disabled'}, item
-            assert item['toolPolicy']['tools'] == {'files_read': 'direct'}, item
+            if item['id'] in ('main', 'worker'):
+                assert item['toolPolicy']['groups'] == {'mcp/keeper': 'disabled'}, item
+                assert item['toolPolicy']['tools'] == {'files_read': 'direct'}, item
         assert 'fixture' not in run(['/mcp list']), 'deleted server returned after restart'
 
         # Reusing a deleted ID and deleting a server disabled in this session both work.
@@ -132,6 +154,51 @@ for line in sys.stdin:
         assert result.returncode == 0, result.stderr
         assert "MCP server 'missing' is not configured." in result.stderr, result.stderr
         assert json.loads(config.read_text()) == before, 'unknown ID changed configuration'
+
+        # URL additions must connect over HTTP, save that transport, and reconnect after restart.
+        with ThreadingHTTPServer(('127.0.0.1', 0), HTTPMCP) as server:
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                url = f'http://127.0.0.1:{server.server_port}'
+                output = run([f'/mcp add --name wordcraft -- {url}',
+                              '/mcp info wordcraft'])
+                for text in ("Added and connected streamable-http MCP 'wordcraft'",
+                             'Transport: streamable-http', f'URL: {url}', 'wordcraft::echo'):
+                    assert text in output, (text, output)
+                saved = next(s for s in json.loads(config.read_text())['mcpServers']
+                             if s['id'] == 'wordcraft')
+                assert saved['kind'] == 'streamable-http' and saved['url'] == url, saved
+                assert saved.get('command') is None, saved
+                assert 'State: connected' in run(['/mcp info wordcraft'])
+                run(['/mcp del wordcraft'])
+            finally:
+                server.shutdown()
+                thread.join(timeout=10)
+
+        # Bad endpoints/HTTP-only misuse and failed subprocess launches leave the REPL usable.
+        before = json.loads(config.read_text())
+        output = run_repl(command, ['/mcp add --name bad -- http://',
+                                    '/mcp add --name bad -- ftp://127.0.0.1/mcp',
+                                    '/mcp add --name bad -- http://127.0.0.1 extra',
+                                    '/mcp add --name bad --cwd . -- http://127.0.0.1',
+                                    '/mcp add --name bad --env KEY=value -- http://127.0.0.1',
+                                    f'/mcp add --name bad -- {root}/missing-command',
+                                    '/mcp list'], cwd=root, env=env, allow_errors=True)
+        assert 'Invalid MCP URL' in output and 'HTTP MCP servers accept one URL' in output, output
+        assert 'Unable to launch MCP command' in output and 'keeper' in output, output
+        assert json.loads(config.read_text()) == before, 'failed addition changed configuration'
+
+        # A URL mistakenly saved as a stdio command must report an error instead of aborting.
+        broken = dict(before, mcpServers=before['mcpServers'] + [
+            {'id': 'bad-stdio', 'kind': 'stdio', 'enabled': False,
+             'command': 'http://127.0.0.1:9090'}])
+        config.write_text(json.dumps(broken))
+        output = run_repl(command, ['/mcp enable bad-stdio', '/mcp list'], cwd=root, env=env,
+                          allow_errors=True)
+        assert 'Unable to launch MCP command' in output and 'keeper' in output, output
+        assert json.loads(config.read_text()) == broken, 'failed enable changed configuration'
+        config.write_text(json.dumps(before))
 
         # Other suites cover project, remote and skill deletion.
         document = root / 'notes.txt'

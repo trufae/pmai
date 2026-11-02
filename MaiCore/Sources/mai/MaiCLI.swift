@@ -361,6 +361,8 @@ private enum MCPCommandError: LocalizedError {
   case invalidEnvironment
   case invalidTimeout
   case invalidApproval
+  case invalidURL(String)
+  case invalidHTTPArguments
   case unterminatedQuote
   case danglingEscape
 
@@ -371,12 +373,15 @@ private enum MCPCommandError: LocalizedError {
       "Invalid MCP name '\(id)'. Start with a letter or number; "
         + "then use letters, numbers, '.', '_', or '-'."
     case .duplicateID(let id): "An MCP server named '\(id)' is already configured."
-    case .missingCommand: "The stdio MCP command is missing."
+    case .missingCommand: "The MCP command or HTTP(S) URL is missing."
     case .missingOptionValue(let option): "Missing value after \(option)."
     case .invalidOption(let option): "Unknown MCP option '\(option)'."
     case .invalidEnvironment: "--env expects KEY=VALUE."
     case .invalidTimeout: "--timeout expects a positive number of seconds."
     case .invalidApproval: "--approval expects automatic, confirm, or dangerous."
+    case .invalidURL(let url): "Invalid MCP URL '\(url)'. Use an HTTP(S) URL with a host."
+    case .invalidHTTPArguments:
+      "HTTP MCP servers accept one URL; --env, --cwd, and command arguments are only supported for stdio servers."
     case .unterminatedQuote: "The command contains an unterminated quote."
     case .danglingEscape: "The command ends with an incomplete escape."
     }
@@ -7007,7 +7012,7 @@ struct MaiCLI {
         return
       }
       do {
-        let server = try parseStdioMCPAddArguments(rawAddArguments)
+        let server = try parseMCPAddArguments(rawAddArguments)
         guard !draft.mcpServers.contains(where: { $0.id == server.id }) else {
           throw MCPCommandError.duplicateID(server.id)
         }
@@ -7024,7 +7029,7 @@ struct MaiCLI {
         configuration = draft
         catalogs.append(catalog)
         await terminal.line(
-          "Added and connected stdio MCP '\(server.id)'; \(addedTools.count) tools available under mcp/\(server.id); /tools selects per-agent exposure."
+          "Added and connected \(server.kind) MCP '\(server.id)'; \(addedTools.count) tools available under mcp/\(server.id); /tools selects per-agent exposure."
         )
       } catch {
         await terminal.line("error: \(error.localizedDescription)", to: .standardError)
@@ -7183,7 +7188,7 @@ struct MaiCLI {
     return prefix.flatMap { $0.isEmpty ? nil : $0 } ?? server.id
   }
 
-  private static func parseStdioMCPAddArguments(_ arguments: String) throws
+  private static func parseMCPAddArguments(_ arguments: String) throws
     -> ConfiguredMCPServer
   {
     let words = try shellWords(arguments)
@@ -7266,14 +7271,28 @@ struct MaiCLI {
     guard let command = commandWords.first, !command.isEmpty else {
       throw MCPCommandError.missingCommand
     }
-    let inferredID = URL(fileURLWithPath: command).lastPathComponent
+    let url: URL?
+    if command.contains("://") {
+      guard let endpoint = URL(string: command),
+        ["http", "https"].contains(endpoint.scheme?.lowercased() ?? ""),
+        endpoint.host?.isEmpty == false
+      else { throw MCPCommandError.invalidURL(command) }
+      guard commandWords.count == 1, environment.isEmpty, workingDirectory == nil else {
+        throw MCPCommandError.invalidHTTPArguments
+      }
+      url = endpoint
+    } else {
+      url = nil
+    }
+    let inferredID = url?.host ?? URL(fileURLWithPath: command).lastPathComponent
     let resolvedID = id ?? inferredID
     guard !resolvedID.isEmpty else { throw MCPCommandError.missingID }
     guard isValidMCPID(resolvedID) else { throw MCPCommandError.invalidID(resolvedID) }
     return ConfiguredMCPServer(
       id: resolvedID,
-      kind: "stdio",
-      command: command,
+      kind: url == nil ? "stdio" : "streamable-http",
+      url: url,
+      command: url == nil ? command : nil,
       args: Array(commandWords.dropFirst()),
       env: environment,
       cwd: workingDirectory,
@@ -15941,11 +15960,13 @@ struct MaiCLI {
       /mcp tools ID            Show a connected server's tools and counters
       /mcp direct|proxy|hide|inherit ID[/TOOL]  Set per-agent exposure
       /mcp add COMMAND [ARG ...]
+      /mcp add URL             Connect an HTTP(S) MCP endpoint
       /mcp add [--name ID] [--env KEY=VALUE] [--cwd PATH] [--timeout SECONDS]
-               [--prefix PREFIX] [--approval MODE] -- COMMAND [ARG ...]
+               [--prefix PREFIX] [--approval MODE] -- COMMAND [ARG ...] | URL
 
     MODE is automatic, confirm, or dangerous. Quotes and backslash escapes are
-    supported. Without --name, the command's basename becomes the server name.
+    supported. Without --name, the command's basename or URL host becomes the server name.
+    HTTP(S) URLs use streamable HTTP; --env and --cwd apply only to stdio commands.
     The server is connected immediately, saved in the normal mcpServers
     configuration. Its tools are available through the hybrid proxy by default;
     /tools disable mcp/ID or /tools disable PREFIX::TOOL disables them per agent.
@@ -15953,6 +15974,7 @@ struct MaiCLI {
     Examples:
       /mcp add r2mcp
       /mcp add --name weather -- npx -y weather-mcp
+      /mcp add --name wordcraft -- http://127.0.0.1:9090
     """
 
   private static let editHelp = """

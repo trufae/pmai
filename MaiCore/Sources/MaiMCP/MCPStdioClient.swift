@@ -396,7 +396,15 @@
         let base =
           configuration.workingDirectory
           ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
-        child.executableURL = URL(fileURLWithPath: command, relativeTo: base).standardizedFileURL
+        let executableURL = URL(fileURLWithPath: command, relativeTo: base).standardizedFileURL
+        // Foundation may interpret a URL-shaped command as a non-file URL.
+        // Process raises an Objective-C exception for those, bypassing Swift catch.
+        guard executableURL.isFileURL else {
+          throw MCPStdioTransportError.launchFailed(
+            command: configuration.command,
+            message: "Expected a local executable path; configure HTTP MCP servers with a URL instead.")
+        }
+        child.executableURL = executableURL
         child.arguments = configuration.args
       } else {
         child.executableURL = URL(fileURLWithPath: "/usr/bin/env")
