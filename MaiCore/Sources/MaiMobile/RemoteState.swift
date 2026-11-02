@@ -226,6 +226,14 @@ private typealias RemoteMessage = ACPConversationMessage
     workspace.configure(hostID: selectedHostID, profile: bookmarks[index].profile, cwd: selectedFolder, preparation: preparation)
   }
 
+  func shell(id: String, hostID: String, cwd: String, remoteID: String, offset: Int) throws -> MobileShell {
+    guard let profile = bookmarks.first(where: { $0.id == hostID })?.profile, !cwd.isEmpty else {
+      throw WorkspaceFileError("Choose an approved host and project first.")
+    }
+    return MobileShell(id: id, cwd: cwd, profile: profile, preparation: preparation,
+      remoteID: remoteID, offset: offset)
+  }
+
   func runTerminal(id: String, hostID: String, cwd: String, script: String) {
     let profile = bookmarks.first { $0.id == hostID }?.profile
     terminal.run(id: id) {

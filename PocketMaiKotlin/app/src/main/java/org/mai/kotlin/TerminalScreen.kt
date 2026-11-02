@@ -1,183 +1,115 @@
 @file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 package org.mai.kotlin
 
-import android.content.Context
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.*
-import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.KeyboardReturn
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.launch
+import org.connectbot.terminal.Terminal
+import org.connectbot.terminal.VTermKey
 
-@Composable internal fun TerminalScreen(session: TerminalSession, model: MaiViewModel) {
-    val preferences = LocalContext.current.getSharedPreferences("appearance", Context.MODE_PRIVATE)
-    var fontSize by remember { mutableFloatStateOf(preferences.getFloat("terminalFontSize", 14f).coerceIn(6f, 43f)) }
-    var pinching by remember { mutableStateOf(false) }
+@Composable internal fun TerminalScreen(model: MaiViewModel) {
+    val deck = model.terminals
+    val session = deck.tabs.firstOrNull { it.id == deck.selected }
+    val preferences = LocalContext.current.getSharedPreferences("appearance", 0)
+    val keyboard = LocalSoftwareKeyboardController.current
     var history by rememberSaveable { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
-    var followsOutput by remember { mutableStateOf(true) }
-    val list = rememberLazyListState()
-    val dragging by list.interactionSource.collectIsDraggedAsState()
-    val scope = rememberCoroutineScope()
-    val focus = remember { FocusRequester() }
-    var input by remember { mutableStateOf(TextFieldValue(session.draft, TextRange(session.draft.length))) }
-    LaunchedEffect(session.draft) {
-        if (input.text != session.draft) input = TextFieldValue(session.draft, TextRange(session.draft.length))
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        if (it) session?.reconnect()
     }
-    val atBottom by remember { derivedStateOf {
-        val last = list.layoutInfo.visibleItemsInfo.lastOrNull()
-        last == null || (last.index == list.layoutInfo.totalItemsCount - 1 &&
-            last.offset + last.size <= list.layoutInfo.viewportEndOffset + 40)
-    } }
-    LaunchedEffect(list) {
-        var manual = false
-        snapshotFlow { Triple(dragging, list.isScrollInProgress, atBottom) }.collect { (dragged, scrolling, bottom) ->
-            if (dragged) manual = true
-            if (manual) {
-                followsOutput = bottom
-                if (!dragged && !scrolling) manual = false
-            }
-        }
-    }
-    val last = session.buffer.entries.lastOrNull()
-    LaunchedEffect(last?.id, last?.output, last?.running) {
-        if (followsOutput && !pinching) list.scrollToItem(session.buffer.entries.size + 1)
-    }
-    LaunchedEffect(session.location) { focus.requestFocus() }
-    BackHandler(onBack = model::closeTerminal)
-    val run: (String?) -> Unit = { saved ->
-        if (!session.buffer.running && !(saved ?: session.draft).isBlank()) {
-            followsOutput = true
-            model.runTerminal(saved)
-        }
-    }
+    BackHandler(onBack = deck::dismiss)
     MaterialTheme(colorScheme = darkColorScheme(background = Color.Black, surface = Color.Black,
-        primary = Color(0xFF81C784), onBackground = Color(0xFFE6E6E6), onSurface = Color(0xFFE6E6E6))) {
-        Scaffold(containerColor = Color.Black, topBar = {
-            TopAppBar(title = { Column {
-                Text(session.location.name + " · Terminal", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(session.location.cwd, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            } }, navigationIcon = {
-                IconButton(onClick = model::closeTerminal) { Icon(Icons.Outlined.Close, "Close terminal") }
-            }, actions = { Box {
-                IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "Terminal options") }
-                DropdownMenu(menu, { menu = false }) {
-                    DropdownMenuItem(text = { Text("Clear scrollback") }, enabled = !session.buffer.running && session.buffer.entries.isNotEmpty(),
-                        onClick = { menu = false; model.clearTerminal(false) })
-                    DropdownMenuItem(text = { Text("Clear history") }, enabled = session.buffer.history.isNotEmpty(),
-                        onClick = { menu = false; model.clearTerminal(true) })
+        primary = Color(0xFF81C784), onBackground = Color.White, onSurface = Color.White)) {
+        Column(Modifier.fillMaxSize().background(Color.Black).safeDrawingPadding().imePadding()) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                IconButton(onClick = deck::dismiss) { Icon(Icons.Outlined.Close, "Return to chat") }
+                Column(Modifier.weight(1f)) {
+                    Text(session?.location?.name ?: "Terminal", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    session?.let { Text(it.location.cwd.ifEmpty { it.status }, style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 }
-            } })
-        }, bottomBar = {
-            Column(Modifier.imePadding().navigationBarsPadding().padding(12.dp)) {
-                if (session.storageError.isNotEmpty()) Text(session.storageError, color = MaterialTheme.colorScheme.error)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { model.terminalRecall(-1) },
-                        enabled = session.buffer.history.isNotEmpty() && session.historyIndex != 0) {
-                        Icon(Icons.Outlined.ArrowUpward, "Previous command")
-                    }
-                    IconButton(onClick = { model.terminalRecall(1) }, enabled = session.historyIndex != null) {
-                        Icon(Icons.Outlined.ArrowDownward, "Next command")
-                    }
-                    IconButton(onClick = { history = true }, enabled = session.buffer.history.isNotEmpty()) {
-                        Icon(Icons.Outlined.History, "Command history")
-                    }
-                    Spacer(Modifier.weight(1f))
-                    if (session.buffer.running) TextButton(onClick = model::stopTerminal) { Text("Stop") }
-                    else Text("Ready", style = MaterialTheme.typography.labelSmall)
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("$", color = MaterialTheme.colorScheme.primary, fontFamily = FontFamily.Monospace, fontSize = fontSize.sp)
-                    OutlinedTextField(input, { input = it; model.terminalDraft(it.text) },
-                        Modifier.weight(1f).padding(horizontal = 8.dp).focusRequester(focus).onPreviewKeyEvent {
-                            if (it.type != KeyEventType.KeyDown) false else when {
-                                it.key == Key.DirectionUp -> { model.terminalRecall(-1); true }
-                                it.key == Key.DirectionDown -> { model.terminalRecall(1); true }
-                                it.key == Key.Enter && !it.isShiftPressed -> { run(null); true }
-                                else -> false
-                            }
-                        }, placeholder = { Text("Command") }, maxLines = 6,
-                        textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = fontSize.sp),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go, autoCorrectEnabled = false),
-                        keyboardActions = KeyboardActions(onGo = { run(null) }))
-                    IconButton(onClick = { run(null) }, enabled = !session.buffer.running && session.draft.isNotBlank()) {
-                        Icon(Icons.AutoMirrored.Outlined.KeyboardReturn, "Run command")
+                IconButton(onClick = deck::newSession, enabled = session != null) { Icon(Icons.Outlined.Add, "New terminal session") }
+                Box {
+                    IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "Terminal options") }
+                    DropdownMenu(menu, { menu = false }) {
+                        DropdownMenuItem(text = { Text("Reconnect") }, onClick = { menu = false; session?.reconnect() })
+                        DropdownMenuItem(text = { Text("Clear screen") }, onClick = { menu = false; session?.clear() })
+                        DropdownMenuItem(text = { Text("Hide keyboard") }, onClick = { menu = false; keyboard?.hide() })
+                        DropdownMenuItem(text = { Text("Close this session") }, onClick = { menu = false; session?.end() })
                     }
                 }
             }
-        }) { padding ->
-            Box(Modifier.fillMaxSize().padding(padding)) {
-                LazyColumn(Modifier.fillMaxSize().pinchToResizeFont(onZoom = {
-                    pinching = true
-                    fontSize = (fontSize * it).coerceIn(6f, 43f)
-                }, onFinished = {
-                    pinching = false
-                    preferences.edit().putFloat("terminalFontSize", fontSize).apply()
-                }), state = list, contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    item("location") {
-                        SelectionContainer { Column {
-                            Text(session.location.name + ":" + session.location.cwd, color = MaterialTheme.colorScheme.primary,
-                                fontFamily = FontFamily.Monospace, fontSize = fontSize.sp)
-                            Text("Each command starts in this project directory.", color = Color.Gray,
-                                fontFamily = FontFamily.Monospace, fontSize = fontSize.sp)
-                        } }
-                    }
-                    items(session.buffer.entries, key = { it.id }) { entry ->
-                        SelectionContainer { Column {
-                            Text("$ " + entry.command, color = MaterialTheme.colorScheme.primary,
-                                fontFamily = FontFamily.Monospace, fontSize = fontSize.sp)
-                            if (entry.output.isNotEmpty()) Text(entry.output,
-                                Modifier.horizontalScroll(rememberScrollState()), softWrap = false,
-                                color = if (entry.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                                fontFamily = FontFamily.Monospace, fontSize = fontSize.sp)
-                            if (entry.running) Text("Running…", color = Color.Gray, fontFamily = FontFamily.Monospace, fontSize = fontSize.sp)
-                        } }
-                    }
-                    item("terminal-bottom") { Spacer(Modifier.height(1.dp)) }
+            LazyRow(Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(deck.tabs, key = { it.id }) { tab ->
+                    FilterChip(selected = tab.id == deck.selected, onClick = { deck.select(tab.id) },
+                        label = { Text("${deck.tabs.indexOf(tab) + 1} · ${tab.location.name}", maxLines = 1) })
                 }
-                if (!followsOutput) FilledTonalButton(onClick = {
-                    followsOutput = true
-                    scope.launch { list.animateScrollToItem(session.buffer.entries.size + 1) }
-                }, modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)) {
-                    Icon(Icons.Outlined.ArrowDownward, null)
-                    Text("Latest output")
+            }
+            if (deck.storageError.isNotEmpty()) Text(deck.storageError, color = MaterialTheme.colorScheme.error)
+            if (session == null) {
+                Text("All terminal sessions are closed.", Modifier.padding(24.dp))
+                TextButton(onClick = deck::dismiss) { Text("Return to chat") }
+                Spacer(Modifier.weight(1f))
+            } else key(session.id) {
+                if (session.error.isNotEmpty()) {
+                    Text(session.error, Modifier.padding(horizontal = 12.dp), color = MaterialTheme.colorScheme.error)
+                    Row {
+                        if (session.location.hostID.isEmpty() && TermuxShell.installed(LocalContext.current) && !TermuxShell.permitted(LocalContext.current)) {
+                            TextButton(onClick = { permission.launch(TermuxShell.PERMISSION) }) { Text("Allow Termux") }
+                        }
+                        TextButton(onClick = session::reconnect) { Text("Reconnect") }
+                    }
                 }
+                var font by remember { mutableFloatStateOf(preferences.getFloat("terminalFontSize", 14f).coerceIn(8f, 32f)) }
+                // Keep the emulator outside composition; resizing only changes its cell grid.
+                Terminal(session.emulator, modifier = Modifier.weight(1f).fillMaxWidth()
+                    .pinchToResizeFont(onZoom = { font = (font * it).coerceIn(8f, 32f) },
+                        onFinished = { preferences.edit().putFloat("terminalFontSize", font).apply() }),
+                    initialFontSize = font.sp, minFontSize = font.sp, maxFontSize = font.sp,
+                    keyboardEnabled = session.canInput, modifierManager = session.modifiers)
+                if (!session.interactive) Text(session.status, Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.labelSmall)
+                TerminalKeyBar(session, onHistory = { history = true })
+                if (history) TerminalHistorySheet(session, onDismiss = { history = false })
             }
         }
-        if (history) TerminalHistorySheet(session, onDismiss = { history = false }, onEdit = {
-            model.terminalEdit(it); history = false; focus.requestFocus()
-        }, onRun = { run(it); history = false })
     }
 }
 
-@Composable private fun TerminalHistorySheet(session: TerminalSession, onDismiss: () -> Unit,
-    onEdit: (String) -> Unit, onRun: (String) -> Unit) {
+@Composable private fun TerminalKeyBar(session: TerminalSessions.ShellSession, onHistory: () -> Unit) {
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+        FilterChip(selected = session.modifiers.control, onClick = { session.modifiers.control = !session.modifiers.control }, label = { Text("Ctrl") })
+        FilterChip(selected = session.modifiers.alt, onClick = { session.modifiers.alt = !session.modifiers.alt }, label = { Text("Alt") })
+        listOf("Esc" to VTermKey.ESCAPE, "Tab" to VTermKey.TAB, "←" to VTermKey.LEFT,
+            "↓" to VTermKey.DOWN, "↑" to VTermKey.UP, "→" to VTermKey.RIGHT,
+            "PgUp" to VTermKey.PAGEUP, "PgDn" to VTermKey.PAGEDOWN).forEach { (title, code) ->
+            TextButton(onClick = {
+                session.emulator.dispatchKey(session.modifiers.mask(), code)
+                session.modifiers.clearTransients()
+            }, modifier = Modifier.defaultMinSize(minWidth = 44.dp, minHeight = 44.dp), contentPadding = PaddingValues(6.dp)) { Text(title) }
+        }
+        if (!session.interactive) IconButton(onClick = onHistory) { Icon(Icons.Outlined.History, "Command history") }
+    }
+}
+
+@Composable private fun TerminalHistorySheet(session: TerminalSessions.ShellSession, onDismiss: () -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
@@ -187,10 +119,10 @@ import kotlinx.coroutines.launch
             LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false), contentPadding = PaddingValues(bottom = 24.dp)) {
                 items(session.buffer.history.asReversed().filter { it.contains(query, ignoreCase = true) }, key = { it }) { saved ->
                     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                        SelectionContainer { Text(saved, fontFamily = FontFamily.Monospace) }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { onEdit(saved) }) { Text("Edit") }
-                            OutlinedButton(onClick = { onRun(saved) }, enabled = !session.buffer.running) { Text("Run") }
+                        Text(saved, fontFamily = FontFamily.Monospace)
+                        Row {
+                            TextButton(onClick = { session.edit(saved); onDismiss() }) { Text("Edit") }
+                            TextButton(onClick = { session.runSaved(saved); onDismiss() }, enabled = !session.buffer.running) { Text("Run") }
                         }
                     }
                 }

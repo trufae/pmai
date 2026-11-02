@@ -173,3 +173,42 @@ Both screens use `MaiACP.RemoteHostConnection` / `WorkspaceConnection` inside
 MaiCore. The same API serves iOS and is available to CLI clients; Kotlin only
 renders `MaiMobile` snapshots and forwards actions. File and console connections
 are independent of the conversation connection.
+
+
+### Terminal sessions
+
+The terminal button is available in local and remote chats. The + button opens
+another independent session; tabs can belong to different hosts and projects.
+Returning to chat keeps sessions running. Use **Close this session** to end a
+shell. Remote pmai/Forwiroh hosts with PTY support provide live input/output,
+resizing, job control and interactive programs. Each tab uses a separate
+resumable connection and restores recent output after an app restart. OpenCode
+and older hosts use command mode; commands run independently in the selected
+project directory, with searchable command history. Stopping a command in this
+mode only stops waiting for its result; it may continue on the host.
+
+Local sessions prefer Termux when installed. Before first use:
+
+- Install Python in Termux with `pkg install python`.
+- Set `allow-external-apps=true` in `~/.termux/termux.properties`.
+- Grant PocketMai the **Run commands in Termux environment** permission (the
+  terminal offers **Allow Termux**). Termux must have been opened and initialized.
+
+A small Python PTY relay runs through Termux's documented `RUN_COMMAND` API. It
+connects to an authenticated, per-session loopback socket; the shell runs with
+Termux's user, home, packages and configured shell. PocketMai does not install
+packages or modify Termux settings automatically. If Termux is installed but
+needs setup, the terminal shows the error instead of silently using a different
+environment. Without Termux, a persistent `/system/bin/sh` runs in PocketMai's
+workspace with the app's Android permissions (not adb shell or root privileges).
+Local shell processes end when Android kills their owning app.
+
+The terminal uses [ConnectBot termlib](https://github.com/connectbot/termlib)
+(Apache 2.0, libvterm MIT) for ANSI/VT emulation and scrollback. Pinch to resize
+the font; the setting is saved. The row above the keyboard provides one-shot
+Ctrl/Alt, Esc, Tab, arrows and Page Up/Down. In live shells, command history and
+line editing come from the shell itself. In command mode, Up/Down recall history
+and the history button offers search, edit and run.
+
+Run the host-side Termux relay check with
+`python3 PocketMaiKotlin/scripts/test-terminal.py` from the repository root.

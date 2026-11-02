@@ -65,7 +65,7 @@ import Darwin
 
 /// A worker owns the descriptor until it has reaped the shell. Bounded queues
 /// apply backpressure without dropping terminal bytes or blocking Swift actors.
-final class RemotePTY: @unchecked Sendable {
+public final class RemotePTY: @unchecked Sendable {
   private let lock = NSLock()
   private let master: Int32
   private let pid: Int32
@@ -79,7 +79,7 @@ final class RemotePTY: @unchecked Sendable {
   private var closed: [CheckedContinuation<Void, Never>] = []
   private static let capacity = 256 * 1024
 
-  init(cwd: URL, columns: Int, rows: Int) throws {
+  public init(cwd: URL, columns: Int, rows: Int) throws {
     var master: Int32 = -1, slave: Int32 = -1
     var size = winsize(ws_row: UInt16(rows), ws_col: UInt16(columns), ws_xpixel: 0, ws_ypixel: 0)
     guard openpty(&master, &slave, nil, nil, &size) == 0 else { throw Self.error() }
@@ -115,7 +115,7 @@ final class RemotePTY: @unchecked Sendable {
     Thread.detachNewThread { self.pump() }
   }
 
-  func readOutput(after offset: Int? = nil) async throws -> RemoteTerminalChunk {
+  public func readOutput(after offset: Int? = nil) async throws -> RemoteTerminalChunk {
     let token = UUID()
     return try await withTaskCancellationHandler {
       try await withCheckedThrowingContinuation { continuation in
@@ -147,7 +147,7 @@ final class RemotePTY: @unchecked Sendable {
     } onCancel: { self.finishRead(token: token, cancelled: true) }
   }
 
-  func send(_ data: Data) throws {
+  public func send(_ data: Data) throws {
     try lock.withLock {
       guard !stopping, exitCode == nil else { throw JSONRPCTransportError.closed }
       guard data.count <= 16 * 1024, input.count + data.count <= Self.capacity else {
@@ -158,7 +158,7 @@ final class RemotePTY: @unchecked Sendable {
     }
   }
 
-  func resize(columns: Int, rows: Int) throws {
+  public func resize(columns: Int, rows: Int) throws {
     try lock.withLock {
       guard !stopping else { throw JSONRPCTransportError.closed }
       // Reattaching a shell that exited offline must still deliver its final
@@ -170,7 +170,7 @@ final class RemotePTY: @unchecked Sendable {
     }
   }
 
-  func stop() async {
+  public func stop() async {
     await withCheckedContinuation { continuation in
       lock.withLock {
         if exitCode != nil { continuation.resume() }

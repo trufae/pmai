@@ -89,3 +89,46 @@ func stoppingTerminalKeepsPartialOutputAndAllowsAnotherCommand() async throws {
   await waitForTerminal(terminal)
   #expect(terminal.output == "ready")
 }
+
+#if os(macOS) || os(Linux)
+@MainActor private func shellOutput(_ shell: MobileShell, containing marker: String) async throws -> Data {
+  var output = Data()
+  while true {
+    let snapshot = shell.snapshot
+    let error = snapshot["error"] as? String ?? ""
+    #expect(error.isEmpty)
+    if let encoded = snapshot["data"] as? String, let data = Data(base64Encoded: encoded), !data.isEmpty {
+      output.append(data)
+      shell.acknowledge(snapshot["sequence"] as? Int ?? -1)
+      if marker.isEmpty || String(decoding: output, as: UTF8.self).contains(marker) { return output }
+    } else {
+      await withCheckedContinuation { continuation in
+        withObservationTracking { _ = shell.snapshot } onChange: { continuation.resume() }
+      }
+    }
+  }
+}
+
+@Test(.timeLimit(.minutes(1))) @MainActor
+func mobileShellSessionsKeepIndependentWorkingDirectoriesAndResize() async throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let first = MobileShell(id: UUID().uuidString, cwd: directory.path, profile: nil, preparation: nil)
+  let second = MobileShell(id: UUID().uuidString, cwd: "/", profile: nil, preparation: nil)
+  first.connect(); second.connect()
+  _ = try await shellOutput(first, containing: "")
+  _ = try await shellOutput(second, containing: "")
+  first.resize(columns: 101, rows: 33)
+  first.send(Data("stty -echo; printf 'FIRST:%s\\n' \"$PWD\"; stty size; printf 'DONE_%s\\n' first\n".utf8))
+  let output = try await shellOutput(first, containing: "DONE_first")
+  #expect(String(decoding: output, as: UTF8.self).contains("FIRST:" + directory.path))
+  #expect(String(decoding: output, as: UTF8.self).contains("33 101"))
+  second.send(Data("stty -echo; printf 'SECOND:%s\\n' \"$PWD\"; printf 'DONE_%s\\n' second\n".utf8))
+  let other = try await shellOutput(second, containing: "DONE_second")
+  #expect(String(decoding: other, as: UTF8.self).contains("SECOND:/"))
+  await first.close(); await second.close()
+  #expect(first.snapshot["status"] as? String == "Closed")
+  #expect(second.snapshot["status"] as? String == "Closed")
+}
+#endif
