@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from contextlib import ExitStack
 
 
 def worker(binary):
@@ -43,8 +44,6 @@ def worker(binary):
     kernel.AllocConsole.restype = w.BOOL
     kernel.FreeConsole.argtypes = []
     kernel.FreeConsole.restype = w.BOOL
-    kernel.GetStdHandle.argtypes = [w.DWORD]
-    kernel.GetStdHandle.restype = w.HANDLE
     kernel.GetConsoleScreenBufferInfo.argtypes = [w.HANDLE, c.POINTER(ScreenInfo)]
     kernel.ReadConsoleOutputCharacterW.argtypes = [w.HANDLE, w.LPWSTR, w.DWORD, Coord, c.POINTER(w.DWORD)]
     kernel.WriteConsoleInputW.argtypes = [w.HANDLE, c.POINTER(Record), w.DWORD, c.POINTER(w.DWORD)]
@@ -63,9 +62,14 @@ def worker(binary):
             raise c.WinError(c.get_last_error())
 
     checked(kernel.AllocConsole())
+    handles = ExitStack()
     try:
-        input_handle = kernel.GetStdHandle(w.DWORD(-10).value)
-        output_handle = kernel.GetStdHandle(w.DWORD(-11).value)
+        # Standard handles may still refer to the CI runner's redirected pipes.
+        # Open the allocated console explicitly, preserving stdout for diagnostics.
+        console_in = handles.enter_context(open('CONIN$', 'r+b', buffering=0))
+        console_out = handles.enter_context(open('CONOUT$', 'r+b', buffering=0))
+        input_handle = msvcrt.get_osfhandle(console_in.fileno())
+        output_handle = msvcrt.get_osfhandle(console_out.fileno())
 
         def console_mode(handle):
             mode = w.DWORD()
@@ -221,6 +225,7 @@ Path(sys.argv[1]).write_text(json.dumps(modes))
             assert 'Unknown option: --unknown-é' in redirected.stderr.decode('utf-8')
             assert kernel.GetConsoleOutputCP() == 437
     finally:
+        handles.close()
         checked(kernel.FreeConsole())
 
 
@@ -234,8 +239,11 @@ def main():
     else:
         # The worker gets its own console; never inject keys into the user's
         # terminal or share its input queue with the parent test runner.
-        subprocess.run([sys.executable, __file__, binary, '--worker'], check=True,
-                       creationflags=subprocess.CREATE_NO_WINDOW, timeout=100)
+        result = subprocess.run([sys.executable, __file__, binary, '--worker'],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                creationflags=subprocess.CREATE_NO_WINDOW, timeout=100)
+        sys.stdout.buffer.write(result.stdout)
+        result.check_returncode()
         print('windows console smoke: ok')
 
 

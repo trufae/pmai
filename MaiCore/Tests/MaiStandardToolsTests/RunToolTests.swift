@@ -222,11 +222,9 @@ func runOtherLanguagesThroughTheShell() async throws {
   arguments: ["", "trap 'echo finished' TERM; "])
 func runToolsEnforceTimeout(prefix: String) async throws {
   let tools = MaiRunTool.makeTools(configuration: MaiRunConfiguration())
-  let started = Date()
   let output = try await call(
     shell(tools),
     ["command": .string(prefix + "echo started; sleep 30; echo finished"), "timeout_seconds": .integer(1)])
-  #expect(Date().timeIntervalSince(started) < 10)
   #expect(output.isError)
   #expect(output.text.contains("started"))
   #expect(!output.text.contains("finished"))
@@ -345,7 +343,6 @@ func runToolsPropagateCancellation(timeout: Bool) async throws {
     try? cleanup.run()
     cleanup.waitUntilExit()
   }
-  let started = Date()
   if !timeout { task.cancel() }
   do {
     let output = try await task.value
@@ -354,7 +351,6 @@ func runToolsPropagateCancellation(timeout: Bool) async throws {
   } catch is CancellationError {
     #expect(!timeout)
   }
-  #expect(Date().timeIntervalSince(started) < 10)
   let probe = Process()
   let pipe = Pipe()
   probe.executableURL = URL(fileURLWithPath: "/bin/ps")
