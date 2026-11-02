@@ -299,6 +299,16 @@ jobs:
       - name: Build debug CLI
         run: swift build --package-path MaiCore --configuration debug --disable-index-store --disable-prefetching --product pmai
 
+      - name: Package Windows beta CLI
+        run: ./sys/package-windows.ps1
+
+      - name: Upload Windows CLI artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pmai-windows-x64
+          path: pmai-windows-x64.zip
+          if-no-files-found: error
+
   build:
     name: Build (Xcode latest on macOS latest)
     runs-on: macos-latest

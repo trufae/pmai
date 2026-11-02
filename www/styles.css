@@ -144,6 +144,7 @@ details > p { max-width: 920px; margin: 0 0 24px; color: var(--muted); font-size
 .download-card .button { width: 100%; margin-top: auto; }
 .download-card small { display: block; margin-top: 17px; color: var(--muted); font-size: 13px; line-height: 1.7; }
 .cli-download { color: var(--paper); background: var(--ink); }
+.cli-download .button { margin-top: 18px; border-color: var(--accent); color: var(--ink); background: var(--accent); }
 .cli-download .kicker { color: var(--accent); }
 .cli-download > p:not(.kicker), .cli-download small { color: #c0beb5; }
 .cli-download .inline-link { margin-top: 18px; }
