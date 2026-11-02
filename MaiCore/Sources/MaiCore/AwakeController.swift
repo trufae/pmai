@@ -62,7 +62,7 @@ import Observation
       guard let handle, handle != INVALID_HANDLE_VALUE else {
         throw AwakeError.unavailable("Cannot create a Windows power request.")
       }
-      guard PowerSetRequest(handle, PowerRequestSystemRequired) != 0 else {
+      guard PowerSetRequest(handle, PowerRequestSystemRequired) else {
         CloseHandle(handle)
         throw AwakeError.unavailable("Cannot prevent sleep with a Windows power request.")
       }

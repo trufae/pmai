@@ -262,8 +262,8 @@ jobs:
       - name: Show Swift version
         run: swift --version
 
-      - name: Build debug CLI
-        run: swift build --package-path MaiCore --configuration debug --disable-index-store --disable-prefetching --product pmai
+      - name: Build release CLI without debug information
+        run: swift build --package-path MaiCore --configuration release -debug-info-format none --disable-index-store --disable-prefetching --product pmai -Xswiftc -Osize -Xlinker /DEBUG:NONE
 
       - name: Package Windows beta CLI
         run: ./sys/package-windows.ps1 -Architecture ${{ matrix.arch }}

@@ -5,7 +5,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$bin = swift build --package-path MaiCore --configuration debug --disable-prefetching --show-bin-path
+$bin = swift build --package-path MaiCore --configuration release -debug-info-format none --disable-prefetching --show-bin-path
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $asset = "pmai-windows-$Architecture"
 $package = Join-Path $env:RUNNER_TEMP $asset
@@ -62,6 +62,6 @@ pmai for Windows $Architecture (beta)
 
 Extract the ZIP, open PowerShell in $asset and run .\pmai.exe.
 Keep the bundled DLLs beside pmai.exe. No Swift installation is needed.
-This debug build provides initial Windows support; some Unix features are unavailable.
+This release build provides initial Windows support; some Unix features are unavailable.
 "@ | Set-Content (Join-Path $package 'README.txt')
 Compress-Archive -Path $package -DestinationPath "$asset.zip" -Force
