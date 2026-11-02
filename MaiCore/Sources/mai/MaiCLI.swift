@@ -1342,6 +1342,9 @@ struct MaiCLI {
   private static let version = "1.13.8"
 
   static func main() async {
+    #if os(Windows)
+    WindowsConsole.configureUTF8Output()
+    #endif
     let started = ContinuousClock.now
     let environment = ProcessInfo.processInfo.environment
     let startup = CLIStartupTiming(started: started, environment: environment)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the real Windows console: empty Enter must not end the REPL."""
+"""Exercise native Windows input, Unicode output, and console restoration."""
 import os
 from pathlib import Path
 import subprocess
@@ -49,6 +49,10 @@ def worker(binary):
     kernel.ReadConsoleOutputCharacterW.argtypes = [w.HANDLE, w.LPWSTR, w.DWORD, Coord, c.POINTER(w.DWORD)]
     kernel.WriteConsoleInputW.argtypes = [w.HANDLE, c.POINTER(Record), w.DWORD, c.POINTER(w.DWORD)]
     kernel.FlushConsoleInputBuffer.argtypes = [w.HANDLE]
+    kernel.GetConsoleOutputCP.argtypes = []
+    kernel.GetConsoleOutputCP.restype = w.UINT
+    kernel.SetConsoleOutputCP.argtypes = [w.UINT]
+    kernel.SetConsoleOutputCP.restype = w.BOOL
 
     def checked(result):
         if not result:
@@ -58,22 +62,24 @@ def worker(binary):
     try:
         input_handle = kernel.GetStdHandle(w.DWORD(-10).value)
 
-        def screen():
+        def screen(full=False):
             # CONOUT$ opens the active screen, including the alternate buffer.
             with open('CONOUT$', 'rb', buffering=0) as console:
                 handle = msvcrt.get_osfhandle(console.fileno())
                 info = ScreenInfo()
                 checked(kernel.GetConsoleScreenBufferInfo(handle, c.byref(info)))
-                first_row = max(0, info.window.Top - 40)
+                first_row = 0 if full else max(0, info.window.Top - 40)
                 length = info.size.X * (info.window.Bottom - first_row + 1)
                 text = c.create_unicode_buffer(length)
                 read = w.DWORD()
                 checked(kernel.ReadConsoleOutputCharacterW(handle, text, length, Coord(0, first_row), c.byref(read)))
-                return text[:read.value]
+                return text[:read.value].encode('utf-16-le', 'surrogatepass').decode('utf-16-le', 'surrogatepass')
 
         def send(text):
             records = []
-            for char in text:
+            encoded = text.encode('utf-16-le')
+            for offset in range(0, len(encoded), 2):
+                char = chr(int.from_bytes(encoded[offset:offset + 2], 'little'))
                 # Include releases, as a physical keyboard does.
                 for down in (True, False):
                     record = Record()
@@ -93,6 +99,7 @@ def worker(binary):
             # Use classic and the persistent buffer surface, both of which
             # share the native input adapter. No provider requests are needed.
             for mode in ('classic', 'buffer'):
+                checked(kernel.SetConsoleOutputCP(437))
                 checked(kernel.FlushConsoleInputBuffer(input_handle))
                 config.write_text(json.dumps({
                     'version': 1, 'defaultAgent': 'test', 'ui': {'mode': mode},
@@ -120,14 +127,52 @@ def worker(binary):
                     # completed, without depending on a previously drawn prompt.
                     send(f'/help ready-{mode}\r')
                     wait_for(f"Unknown help topic 'ready-{mode}'")
+                    for label, character in [('accent', 'é'), ('cjk', '漢'), ('emoji', '🙂')]:
+                        topic = f'{label}-{mode}-{character}'
+                        send(f'/help {topic}\r')
+                        wait_for(f"Unknown help topic '{topic}")
+                    if mode == 'classic':
+                        # The marker is assembled by cmd, so echoed input
+                        # cannot satisfy this shell Unicode output check.
+                        send('!for %x in (shell) do @echo %x-é\r')
+                        wait_for('shell-é')
+                    assert kernel.GetConsoleOutputCP() == 65001
                     send(f'\r\r/help after-enter-{mode}\r')
                     wait_for(f"Unknown help topic 'after-enter-{mode}'")
+                    # chcp never reads stdin. The following unique reply proves
+                    # the child finished and pmai reclaimed its output encoding.
+                    send(f'!chcp 437 >nul\r/help resumed-{mode}-é\r')
+                    wait_for(f"Unknown help topic 'resumed-{mode}-é")
+                    assert kernel.GetConsoleOutputCP() == 65001
                     send('/exit\r')
                     assert process.wait(timeout=20) == 0, screen()
+                    assert kernel.GetConsoleOutputCP() == 437
                 finally:
                     if process.poll() is None:
                         process.kill()
                         process.wait()
+            # Early return uses buffered Swift print; errors call exit(2) and
+            # write directly to stderr. Both must display Unicode and restore CP.
+            for arguments, status, expected, stderr_only in [
+                (['--help'], 0, 'pmai — the Pocket Mai command-line agent', False),
+                (['--unknown-é'], 2, 'Unknown option: --unknown-é', True),
+            ]:
+                checked(kernel.SetConsoleOutputCP(437))
+                with open('CONOUT$', 'r+b', buffering=0) as console_out:
+                    result = subprocess.run([binary, *arguments], cwd=root, env=env,
+                                            stdin=subprocess.DEVNULL,
+                                            stdout=subprocess.DEVNULL if stderr_only else console_out,
+                                            stderr=console_out, timeout=20)
+                assert result.returncode == status, result.returncode
+                assert expected in screen(full=True), screen(full=True)
+                assert kernel.GetConsoleOutputCP() == 437
+            # Redirected output remains UTF-8 and must leave the shared console alone.
+            checked(kernel.SetConsoleOutputCP(437))
+            redirected = subprocess.run([binary, '--unknown-é'], cwd=root, env=env,
+                                        stdin=subprocess.DEVNULL, capture_output=True, timeout=20)
+            assert redirected.returncode == 2
+            assert 'Unknown option: --unknown-é' in redirected.stderr.decode('utf-8')
+            assert kernel.GetConsoleOutputCP() == 437
     finally:
         checked(kernel.FreeConsole())
 

@@ -106,7 +106,8 @@ enum TerminalCommand {
     beforeWait: (Int32) throws -> Int32? = { _ in nil }
   ) throws -> Int32 {
     #if os(Windows)
-      let status = command.withCString(terminalSystem)
+      defer { WindowsConsole.resumeUTF8Output() }
+      let status = command.withCString(encodedAs: UTF16.self, terminalSystem)
       guard status != -1 else { throw posixError(errno) }
       return status
     #else
@@ -382,6 +383,6 @@ enum TerminalCommand {
 }
 
 #if os(Windows)
-  @_silgen_name("system")
-  private func terminalSystem(_ command: UnsafePointer<CChar>) -> CInt
+  @_silgen_name("_wsystem")
+  private func terminalSystem(_ command: UnsafePointer<UInt16>) -> CInt
 #endif

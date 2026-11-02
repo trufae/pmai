@@ -89,6 +89,7 @@
     // The editor draws with ANSI escapes whatever the input mode is.
     let outputMode = state.outputMode | enableProcessedOutput | enableVirtualTerminalProcessing
     guard SetConsoleMode(input, inputMode), SetConsoleMode(output, outputMode) else { return -1 }
+    if state.c_lflag & ICANON == 0 { WindowsConsole.resumeUTF8Output() }
     return 0
   }
 
@@ -144,6 +145,40 @@
   // MARK: - Console services without a POSIX shape
 
   enum WindowsConsole {
+    nonisolated(unsafe) private static var originalOutputCodePage: UINT?
+
+    /// All CLI writers emit UTF-8, including Foundation FileHandle and Swift
+    /// print. Console output uses a shared code page; redirected streams do not.
+    static func configureUTF8Output() {
+      guard originalOutputCodePage == nil else { return }
+      let hasConsole = [STDOUT_FILENO, STDERR_FILENO].contains { descriptor in
+        guard let handle = consoleHandle(descriptor) else { return false }
+        var mode: DWORD = 0
+        return GetConsoleMode(handle, &mode)
+      }
+      let previous = GetConsoleOutputCP()
+      guard hasConsole, previous != 0, SetConsoleOutputCP(UINT(CP_UTF8)) else { return }
+      originalOutputCodePage = previous
+      // CLI error paths call exit(), so a main-scope defer is insufficient.
+      if atexit(restoreConsoleOutputCodePage) != 0 {
+        originalOutputCodePage = nil
+        _ = SetConsoleOutputCP(previous)
+      }
+    }
+
+    /// A foreground child may run chcp. Reclaim UTF-8 when pmai resumes.
+    static func resumeUTF8Output() {
+      guard originalOutputCodePage != nil else { return }
+      _ = SetConsoleOutputCP(UINT(CP_UTF8))
+    }
+
+    fileprivate static func restoreOutputCodePage() {
+      guard let previous = originalOutputCodePage else { return }
+      // exit invokes atexit handlers before flushing buffered print output.
+      _ = fflush(nil)
+      _ = SetConsoleOutputCP(previous)
+    }
+
     // The editor has one input owner. Keep native reads
     // here so CRT text translation cannot look ahead after CR, hide bytes
     // from poll, or turn a control key into EOF. ReadConsoleW also avoids the
@@ -261,5 +296,9 @@
   private func interruptSignalHandler(_ number: Int32) {
     _ = signal(number, interruptSignalHandler)
     WindowsConsole.interrupted()
+  }
+
+  private func restoreConsoleOutputCodePage() {
+    WindowsConsole.restoreOutputCodePage()
   }
 #endif
