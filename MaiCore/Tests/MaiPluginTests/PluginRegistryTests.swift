@@ -223,7 +223,7 @@ private struct FixtureMCP: MCPToolSource {
   func close() async {}
 }
 
-#if os(macOS) || os(Linux)
+#if os(macOS) || os(Linux) || os(Windows)
   @Test("Tesseract OCR is registered on every desktop platform")
   func tesseractOCRFactoryIsRegistered() async throws {
     let registry = PluginRegistry()
@@ -243,6 +243,7 @@ private struct FixtureMCP: MCPToolSource {
     }
   }
 
+  #if !os(Windows)
   @Test("Tesseract OCR runs the configured command and returns its output")
   func tesseractOCRRunsCommand() async throws {
     let directory = FileManager.default.temporaryDirectory
@@ -260,6 +261,53 @@ private struct FixtureMCP: MCPToolSource {
       OCRRequest(imageData: Data([0x89, 0x50]), mimeType: "image/png", filename: "a.png"))
     #expect(result.markdown == "hello\nworld")
   }
+  #endif
+
+  #if os(Windows)
+  @Test("Tesseract discovers Windows executables through configured PATH and native paths")
+  func tesseractOCRWindowsDiscovery() throws {
+    let files = FileManager.default
+    let root = files.temporaryDirectory
+      .appendingPathComponent("tesseract-fixture-\(UUID())", isDirectory: true)
+    let directory = root.appendingPathComponent("OCR ü tools", isDirectory: true)
+    let notExecutable = root.appendingPathComponent("directory-only", isDirectory: true)
+    for url in [directory, notExecutable.appendingPathComponent("tesseract.exe", isDirectory: true)] {
+      try files.createDirectory(at: url, withIntermediateDirectories: true)
+    }
+    defer { try? files.removeItem(at: root) }
+    let environment = LocalProcess.mergedEnvironment(ProcessInfo.processInfo.environment)
+    let system = try #require(environment["SYSTEMROOT"])
+    let executable = directory.appendingPathComponent("tesseract.exe")
+    try files.copyItem(at: URL(fileURLWithPath: system).appendingPathComponent("System32/cmd.exe"), to: executable)
+    func native(_ url: URL) -> String {
+      url.withUnsafeFileSystemRepresentation { String(cString: $0!) }
+    }
+    func found(_ provider: TesseractOCRProvider) -> String? {
+      provider.executablePath.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
+    }
+    let expected = executable.standardizedFileURL.path
+    for (command, paths) in [
+      ("tesseract", [native(directory)]),
+      ("tesseract.exe", [native(directory)]),
+      (native(executable), []),
+      (native(executable.deletingPathExtension()), []),
+      (native(executable).replacingOccurrences(of: "\\", with: "/"), []),
+      ("tesseract", [native(notExecutable), native(directory)]),
+    ] {
+      #expect(found(TesseractOCRProvider(command: command, searchPath: paths)) == expected)
+    }
+    #expect(found(TesseractOCRProvider(command: native(executable.deletingPathExtension()))) == expected)
+    #expect(TesseractOCRProvider(command: "missing-tesseract", searchPath: [native(directory)]).executablePath == nil)
+    #expect(TesseractOCRProvider(searchPath: [native(notExecutable)]).executablePath == nil)
+    let factory = TesseractConfiguredOCRProviderFactory()
+    for key in ["Path", "PATH", "pAtH"] {
+      let provider = try factory.makeOCRProvider(context: PluginFactoryContext(
+        id: "windows-ocr", environment: [key: "\"\(native(notExecutable))\";\"\(native(directory))\""]))
+      let tesseract = try #require(provider as? TesseractOCRProvider)
+      #expect(found(tesseract) == expected)
+    }
+  }
+  #endif
 
   @Test("An unavailable OCR provider fails only when used")
   func unavailableOCRProviderFailsLazily() async throws {

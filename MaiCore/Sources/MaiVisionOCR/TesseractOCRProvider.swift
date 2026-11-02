@@ -26,8 +26,7 @@ import MaiCore
       self.languages = languages
       self.searchPath =
         searchPath
-        ?? ProcessInfo.processInfo.environment["PATH"]?
-        .split(separator: ":").map(String.init) ?? []
+        ?? Self.pathEntries(in: ProcessInfo.processInfo.environment) ?? []
     }
 
     /// The absolute path of the tesseract executable, or nil when it is not
@@ -93,6 +92,28 @@ import MaiCore
 
     private static func resolve(_ command: String, searchPath: [String]) -> String? {
       let expanded = NSString(string: command).expandingTildeInPath
+      #if os(Windows)
+      func nativeExecutable(_ command: String) -> String? {
+        let process = Process()
+        guard (try? LocalProcess.configure(process, command: command, environment: ["Path": ""])) != nil,
+          let url = process.executableURL
+        else { return nil }
+        return url.withUnsafeFileSystemRepresentation { pointer in
+          pointer.map { String(cString: $0) }
+        }
+      }
+      if expanded.contains("/") || expanded.contains("\\") || expanded.contains(":") {
+        return nativeExecutable(expanded)
+      }
+      // Preserve explicit searchPath ordering instead of implicitly searching
+      // the current directory before the caller's configured directories.
+      for directory in searchPath where !directory.isEmpty {
+        let unquoted = directory.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+        let candidate = (unquoted as NSString).appendingPathComponent(expanded)
+        if let executable = nativeExecutable(candidate) { return executable }
+      }
+      return nil
+      #else
       if expanded.contains("/") {
         return FileManager.default.isExecutableFile(atPath: expanded) ? expanded : nil
       }
@@ -103,6 +124,15 @@ import MaiCore
         }
       }
       return nil
+      #endif
+    }
+
+    fileprivate static func pathEntries(in environment: [String: String]) -> [String]? {
+      #if os(Windows)
+      return LocalProcess.mergedEnvironment(environment)["Path"]?.split(separator: ";").map(String.init)
+      #else
+      return environment["PATH"]?.split(separator: ":").map(String.init)
+      #endif
     }
 
     private static func fileExtension(mimeType: String, filename: String) -> String {
@@ -126,15 +156,16 @@ import MaiCore
     public init() {}
 
     public func makeOCRProvider(context: PluginFactoryContext) throws -> any OCRProvider {
+      let environment = LocalProcess.mergedEnvironment(context.environment)
       let command =
         context.options["command"]?.stringValue
-        ?? context.environment["TESSERACT_COMMAND"]
+        ?? environment["TESSERACT_COMMAND"]
         ?? TesseractOCRProvider.defaultCommand
       let languages =
         context.options["languages"]?.stringValue
         ?? context.options["language"]?.stringValue
-        ?? context.environment["TESSERACT_LANGUAGES"]
-      let searchPath = context.environment["PATH"]?.split(separator: ":").map(String.init)
+        ?? environment["TESSERACT_LANGUAGES"]
+      let searchPath = TesseractOCRProvider.pathEntries(in: environment)
       return TesseractOCRProvider(
         id: context.id,
         command: command.isEmpty ? TesseractOCRProvider.defaultCommand : command,
