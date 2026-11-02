@@ -334,23 +334,36 @@
       if !params.isEmpty { object["params"] = .object(params) }
 
       return try await withTaskCancellationHandler {
-        try await withCheckedThrowingContinuation { continuation in
-          pending[id] = PendingRequest(method: method, continuation: continuation)
-          do {
-            try write(.object(object))
-          } catch {
-            finish(id: id, result: .failure(error))
-            return
-          }
-          let timeout = configuration.timeout
-          timeouts[id] = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(timeout))
-            guard !Task.isCancelled else { return }
-            await self?.requestTimedOut(id: id, generation: requestGeneration)
-          }
-        }
+        try await waitForResult(
+          method: method, id: id, message: .object(object), generation: requestGeneration)
       } onCancel: {
         Task { [weak self] in await self?.cancelRequest(id: id, generation: requestGeneration) }
+      }
+    }
+
+    // Swift 6.4 Windows IRGen crashes when this continuation is nested inside
+    // the cancellation handler's async closure. Keep it in a separate function.
+    @inline(never)
+    private func waitForResult(method: String, id: Int, message: JSONValue, generation: Int)
+      async throws -> JSONValue
+    {
+      try Task.checkCancellation()
+      guard generation == self.generation else { throw CancellationError() }
+      if let failure { throw failure }
+      return try await withCheckedThrowingContinuation { continuation in
+        pending[id] = PendingRequest(method: method, continuation: continuation)
+        do {
+          try write(message)
+        } catch {
+          finish(id: id, result: .failure(error))
+          return
+        }
+        let timeout = configuration.timeout
+        timeouts[id] = Task { [weak self] in
+          try? await Task.sleep(for: .seconds(timeout))
+          guard !Task.isCancelled else { return }
+          await self?.requestTimedOut(id: id, generation: generation)
+        }
       }
     }
 
