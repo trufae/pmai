@@ -69,7 +69,7 @@ final class MarkdownImageTests: XCTestCase {
         <rect x="100" width="100" height="100" fill="blue"/>
       </svg>
       """
-    let image = try await MarkdownSVGRenderer.render(Data(source.utf8), maxDimension: 320)
+    let image = try await SVGImageRenderer.render(Data(source.utf8), maxDimension: 320)
     XCTAssertEqual(image.cgImage?.width, 320)
     XCTAssertEqual(image.cgImage?.height, 160)
     assertShapeColors(in: image)

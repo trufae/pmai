@@ -324,8 +324,7 @@ enum WebXDCLibrary {
     return updated
   }
 
-  /// Writes a file in place inside the current revision (used by the editor UI
-  /// after the user explicitly created a revision, and for icon updates).
+  /// Writes a file in place after the editor UI explicitly created a revision.
   static func writeFileInPlace(_ app: WebXDCAppInfo, path: String, data: Data) throws {
     let relative = try validatedRelativePath(path)
     guard data.count <= maxFileBytes else {
@@ -354,7 +353,7 @@ enum WebXDCLibrary {
 
   static func iconData(_ app: WebXDCAppInfo, revision: Int? = nil) -> Data? {
     let root = revisionURL(app, revision: revision ?? app.currentRevision)
-    for name in ["icon.png", "icon.jpg"] {
+    for name in ["icon.png", "icon.jpg", "icon.svg"] {
       if let data = try? Data(contentsOf: root.appendingPathComponent(name)) {
         return data
       }

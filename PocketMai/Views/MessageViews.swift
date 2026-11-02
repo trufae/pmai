@@ -4143,7 +4143,7 @@ final class MarkdownRemoteImageLoader: ObservableObject {
     }
     let image: UIImage
     if let svgData {
-      image = try await MarkdownSVGRenderer.render(svgData, maxDimension: size.maxDimension)
+      image = try await SVGImageRenderer.render(svgData, maxDimension: size.maxDimension)
     } else {
       let pixels = CGSize(
         width: preview.size.width * preview.scale, height: preview.size.height * preview.scale)
@@ -4181,7 +4181,7 @@ final class MarkdownRemoteImageLoader: ObservableObject {
     if let image = UIImage(data: data) {
       return (data, image, nil)
     }
-    let image = try await MarkdownSVGRenderer.render(data)
+    let image = try await SVGImageRenderer.render(data)
     guard let png = image.pngData() else {
       throw MessageImageSaveError("This image could not be decoded.")
     }

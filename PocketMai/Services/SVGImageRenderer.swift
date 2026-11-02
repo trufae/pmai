@@ -2,7 +2,7 @@ import UIKit
 import WebKit
 
 @MainActor
-final class MarkdownSVGRenderer: NSObject, WKNavigationDelegate {
+final class SVGImageRenderer: NSObject, WKNavigationDelegate {
   private let webView: WKWebView
   private var continuation: CheckedContinuation<UIImage, Error>?
   private var timeout: Task<Void, Never>?
@@ -24,7 +24,7 @@ final class MarkdownSVGRenderer: NSObject, WKNavigationDelegate {
   }
 
   static func render(_ data: Data, maxDimension: Int? = 1024) async throws -> UIImage {
-    let renderer = MarkdownSVGRenderer()
+    let renderer = SVGImageRenderer()
     renderer.maxDimension = maxDimension
     return try await renderer.image(from: data)
   }

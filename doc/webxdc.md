@@ -417,6 +417,12 @@ speech assets, remote services and audible playback also need device validation.
 
 ## Importing apps on iOS
 
+App icons use `icon.png` or `icon.jpg` at the archive root, as defined by the
+[webxdc format](https://webxdc.org/docs/spec/format.html). PocketMai also displays
+`icon.svg` when neither standard icon is present. SVG rendering is offline and
+does not run scripts. The icon chooser accepts SVG files and converts them to
+`icon.png` for compatibility with other webxdc hosts.
+
 Open a `.xdc` document with **PocketMai**, import it from **Apps → Import**, or
 share it to PocketMai. Imports open **Apps → App details**, with an import notice
 and a choice to review the app or run it. You can inspect the icon and files,

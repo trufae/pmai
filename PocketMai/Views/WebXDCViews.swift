@@ -1206,10 +1206,12 @@ struct WebXDCAppsPanel: View {
 struct WebXDCAppIcon: View {
   let app: WebXDCAppInfo
   var size: CGFloat = 40
+  @State private var renderedImage: UIImage?
 
   var body: some View {
+    let data = WebXDCLibrary.iconData(app)
     Group {
-      if let data = WebXDCLibrary.iconData(app), let image = UIImage(data: data) {
+      if let image = renderedImage {
         Image(uiImage: image)
           .resizable()
           .scaledToFill()
@@ -1221,6 +1223,37 @@ struct WebXDCAppIcon: View {
     .frame(width: size, height: size)
     .background(Color.secondary.opacity(0.12))
     .clipShape(RoundedRectangle(cornerRadius: size / 5, style: .continuous))
+    .task(id: data) {
+      renderedImage = nil
+      guard let data else { return }
+      let image = try? await WebXDCIconImage.decode(data)
+      guard !Task.isCancelled else { return }
+      renderedImage = image
+    }
+  }
+}
+
+@MainActor
+enum WebXDCIconImage {
+  private static let cache: NSCache<NSData, UIImage> = {
+    let cache = NSCache<NSData, UIImage>()
+    cache.totalCostLimit = 8 * 1024 * 1024
+    return cache
+  }()
+
+  static func decode(_ data: Data) async throws -> UIImage {
+    if let image = cache.object(forKey: data as NSData) { return image }
+    let image: UIImage
+    if let raster = UIImage(data: data) {
+      image = raster
+    } else {
+      image = try await SVGImageRenderer.render(data, maxDimension: 256)
+    }
+    try Task.checkCancellation()
+    if let cgImage = image.cgImage {
+      cache.setObject(image, forKey: data as NSData, cost: cgImage.bytesPerRow * cgImage.height)
+    }
+    return image
   }
 }
 
@@ -1406,7 +1439,7 @@ struct WebXDCAppDetailView: View {
     }
     .fileImporter(
       isPresented: $showingIconImporter,
-      allowedContentTypes: [.png, .jpeg, .image]
+      allowedContentTypes: [.png, .jpeg, .svg, .image]
     ) { result in
       if case .success(let url) = result {
         importIcon(from: url)
@@ -1699,19 +1732,25 @@ struct WebXDCAppDetailView: View {
     guard let app else { return }
     let accessing = url.startAccessingSecurityScopedResource()
     defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-    guard let data = try? Data(contentsOf: url), let image = UIImage(data: data),
-      let png = image.pngData()
-    else {
+    guard let data = try? Data(contentsOf: url) else {
       errorMessage = "Could not read the image."
       return
     }
-    do {
-      try WebXDCLibrary.writeFileInPlace(app, path: "icon.png", data: png)
-      let jpgURL = WebXDCLibrary.currentRevisionURL(app).appendingPathComponent("icon.jpg")
-      try? FileManager.default.removeItem(at: jpgURL)
-      reload()
-    } catch {
-      errorMessage = error.localizedDescription
+    Task {
+      do {
+        let image = try await WebXDCIconImage.decode(data)
+        guard let png = image.pngData() else {
+          throw WebXDCError.message("Could not read the image.")
+        }
+        let updated = try WebXDCLibrary.writeFile(app, path: "icon.png", data: png)
+        for name in ["icon.jpg", "icon.svg"] {
+          let url = WebXDCLibrary.currentRevisionURL(updated).appendingPathComponent(name)
+          try? FileManager.default.removeItem(at: url)
+        }
+        reload()
+      } catch {
+        errorMessage = error.localizedDescription
+      }
     }
   }
 
