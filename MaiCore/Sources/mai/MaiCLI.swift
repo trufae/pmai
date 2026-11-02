@@ -3900,12 +3900,12 @@ struct MaiCLI {
     func handleConversationCommand(_ name: String, argument: String) async -> Bool {
       guard case .agent(let pid) = loop.focus, let info = await runtime.supervisor.info(pid) else { return false }
       let action = argument.split(whereSeparator: \.isWhitespace).first?.lowercased() ?? ""
-      let messageActions: Set<String> = ["list", "ls", "log", "last", "edit", "del", "delete", "rm", "undo", "trim", "rewind", "pin", "pins", "pinlist", "unpin"]
+      let messageActions: Set<String> = ["list", "log", "last", "edit", "del", "delete", "rm", "undo", "trim", "rewind", "pin", "pins", "pinlist", "unpin"]
       guard name == "/copy" || name == "/last" || name == "/continue"
         || (name == "/msg" && messageActions.contains(action))
         || (name == "/chat" && action == "clear") else { return false }
       if info.externalSessionID != nil, name == "/continue"
-        || (name != "/copy" && name != "/last" && !["list", "ls", "log", "last", "pins", "pinlist"].contains(action)) {
+        || (name != "/copy" && name != "/last" && !["list", "log", "last", "pins", "pinlist"].contains(action)) {
         await terminal.note("ACP subagent conversations are read-only. Their parent controls new work.")
         return true
       }
@@ -3939,7 +3939,7 @@ struct MaiCLI {
       } else if name == "/copy" {
         await copyToClipboard(argument, session: focused, terminal: terminal)
       } else {
-        let readOnly = name == "/last" || ["list", "ls", "log", "last", "pins", "pinlist"].contains(action)
+        let readOnly = name == "/last" || ["list", "log", "last", "pins", "pinlist"].contains(action)
         guard readOnly || info.state.isTerminal else {
           await terminal.note("Wait for this agent's turn to finish before editing its transcript.")
           return true
@@ -4719,7 +4719,7 @@ struct MaiCLI {
                 await terminal.line("Remote server stopped.")
               case "qr":
                 await remoteServer.showPairing(terminal: terminal)
-              case "status", "list":
+              case "list":
                 await terminal.line(remoteServer.status())
                 for host in try hosts.hosts() {
                   await terminal.line("\(host.name) · \(host.url.absoluteString) · /remote connect \(shellQuote(host.name))")
@@ -4862,7 +4862,7 @@ struct MaiCLI {
                   await saveWorkspace(&workspace, store: store, terminal: terminal)
                   await terminal.line("Connected to \(host.name). Messages run on that host; /remote disconnect returns to your local chat.")
                 }
-              case "disconnect", "local":
+              case "disconnect":
                 guard !loop.hasTurns else {
                   throw JSONRPCError.invalidParams("Finish or stop the current turn before disconnecting.")
                 }
@@ -5075,9 +5075,9 @@ struct MaiCLI {
               let arguments = Array(fields.dropFirst())
               let index = try home.loadProjectIndex()
               switch action {
-              case "list", "ls":
+              case "list":
                 await terminal.line(projectListing(index, currentID: project.id, now: Date()))
-              case "open", "use", "switch":
+              case "open":
                 guard arguments.count == 1 else { throw JSONRPCError.invalidParams("Usage: /projects open INDEX|NAME|PATH") }
                 guard loop.activeTurn == nil, await runtime.supervisor.liveProcesses().isEmpty else {
                   throw JSONRPCError.invalidParams("Stop running agents before switching projects.")
@@ -5873,7 +5873,7 @@ struct MaiCLI {
     files.pathAccessPolicy = access.policy
     let state = access.policy.snapshot()
     switch command {
-    case "list", "ls":
+    case "list":
       let badges = [
         "allow": await terminal.paint("allow", role: .successForeground, bold: true),
         "ask": await terminal.paint("ask", role: .warningForeground, bold: true),
@@ -7770,14 +7770,14 @@ struct MaiCLI {
       configuration?.promptCatalog(skills: skills.skills) ?? PromptCatalog(skills: skills.skills)
 
     switch action.lowercased() {
-    case "", "list", "ls":
+    case "", "list":
       await showPrompts(
         session: session, configuration: configuration, skills: skills, terminal: terminal)
 
     case "help":
       await terminal.line(promptHelp)
 
-    case "show", "cat":
+    case "show":
       guard !rest.isEmpty else {
         await terminal.line("Usage: /prompts show NAME")
         return .handled
@@ -7984,11 +7984,11 @@ struct MaiCLI {
       await terminal.line(
         session.profile.instructions.isEmpty ? "(empty)" : session.profile.instructions)
 
-    case "list", "ls":
+    case "list":
       await showPrompts(
         session: session, configuration: configuration, skills: skills, terminal: terminal)
 
-    case "show", "cat":
+    case "show":
       let requested = rest.isEmpty ? session.profile.systemPrompt ?? "" : rest
       guard let name = resolvedSystemPromptName(requested, configuration: configuration),
         let text = (configuration ?? .init()).systemPrompt(named: name)?.text
@@ -10963,7 +10963,7 @@ struct MaiCLI {
         "Use /skills prompt NAME [TEXT] at the chat prompt; /skills show NAME prints what it sends."
       )
 
-    case "path", "paths", "dirs", "dir":
+    case "path":
       for directory in skills.directories {
         var isDirectory: ObjCBool = false
         let exists =
@@ -10974,7 +10974,7 @@ struct MaiCLI {
           "\(directory.path)  \(exists ? "\(count) skill\(count == 1 ? "" : "s")" : "(missing)")")
       }
 
-    case "reload", "sync", "rescan":
+    case "reload":
       var parts: [String] = []
       if !synced.added.isEmpty { parts.append("added \(synced.added.joined(separator: ", "))") }
       if !synced.removed.isEmpty {
@@ -13558,7 +13558,7 @@ struct MaiCLI {
       in: .whitespacesAndNewlines)
 
     switch action {
-    case "list", "chats", "ls":
+    case "list":
       guard let scope = ChatListScope(rest) else {
         await terminal.line("Usage: /chat list [active|archived|all]")
         return
@@ -13596,7 +13596,7 @@ struct MaiCLI {
       workspace.upsert(chat, selecting: true)
       session = REPLSession(chat: chat)
       await terminal.line("Forked '\(source.displayTitle)' into '\(chat.displayTitle)' and switched to it.")
-    case "use", "switch", "open":
+    case "use":
       guard !rest.isEmpty, let chat = resolveChat(rest, in: workspace) else {
         await terminal.line("Usage: /chat use INDEX|ID|TITLE")
         return
@@ -14159,7 +14159,7 @@ struct MaiCLI {
       .trimmingCharacters(in: .whitespacesAndNewlines)
 
     switch action {
-    case "list", "ls":
+    case "list":
       guard actionArgument.isEmpty else {
         await terminal.line("Usage: /msg list")
         return
@@ -14901,13 +14901,13 @@ struct MaiCLI {
       "/subagents next", "/subagents prev", "/btw ", "/then ", "/unthen",
       "/help memory", "/help agents", "/help jobs", "/help ps", "/help chat", "/help edit", "/help tools",
       "/agent acp list", "/agent acp add ", "/agents acp list",
-      "/help remote", "/remote", "/remote serve", "/remote stop", "/remote qr", "/remote status",
+      "/help remote", "/remote", "/remote serve", "/remote stop", "/remote qr",
       "/remote serve --protocol local", "/remote serve --protocol opentunnel", "/remote serve --protocol forwiroh", "/remote serve --protocol openai",
       "/remote list", "/remote pair ", "/remote connect ", "/remote disconnect",
       "/remote ls ", "/remote get ", "/remote put ", "/remote run ",
       "/remote shell ", "/remote shell off",
       "/remote pending", "/remote accept", "/remote reject", "/remote clients", "/remote del ",
-      "/help projects", "/projects", "/projects list", "/projects open ", "/projects switch ",
+      "/help projects", "/projects", "/projects list", "/projects open ",
       "/projects rename ", "/projects tint ", "/projects del ", "/projects info ",
       "/memory", "/memory edit", "/memory learn", "/memory learn --all", "/memory add ",
       "/memory clear", "/memory on", "/memory off", "/memory scope none",
@@ -15374,7 +15374,7 @@ struct MaiCLI {
     --port PORT to change 11435, or --bind HOST to choose a listener address.
     It stays on loopback by default. LAN serving requires a bearer token from
     PMAI_HTTP_TOKEN, or creates one in ~/.pmai/remote-server/openai/token.
-    /remote status shows the endpoint and token file location; /remote stop or
+    /remote list shows the endpoint and token file location; /remote stop or
     leaving the REPL stops serving. Audio examples are in doc/audio-server.md.
 
     Other /remote serve protocols keep this REPL usable too. Forwiroh is the
@@ -15903,7 +15903,7 @@ struct MaiCLI {
 
   private static let projectsHelp = """
     /projects              List every indexed working directory, recent first
-    /projects open INDEX|NAME|PATH  Switch directory and load its saved conversations (alias: switch)
+    /projects open INDEX|NAME|PATH  Switch directory and load its saved conversations
     /projects info SELECTOR  Show another project's details and chat counts
     /projects rename SELECTOR NAME  Rename an indexed project
     /projects tint SELECTOR COLOR  Change a project's accent color

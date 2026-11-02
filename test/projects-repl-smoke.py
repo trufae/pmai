@@ -33,7 +33,7 @@ def run():
         files_one = set((one / ".pmai/chats").glob("*.json"))
         files_two = set((two / ".pmai/chats").glob("*.json"))
         output = run_repl(command, ["/projects", "/projects open two", "/project", "/chat list", "/memory", "/skills list",
-            "/projects rename one First", "/projects tint First mint", "/projects switch First",
+            "/projects rename one First", "/projects tint First mint", "/projects open First",
             "/project", "/chat list", "/memory", "/skills list", f'/projects open "{new}"', "/chat rename newly opened",
             "/projects open two", f'/projects del "{new}"'], cwd=one, env=clean_environment())
         assert "Opened project 'two'" in output, output

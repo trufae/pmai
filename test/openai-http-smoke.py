@@ -112,7 +112,7 @@ def main():
                 status, data, _ = request("/v1/audio/transcriptions", form, "multipart/form-data; boundary=fixture")
                 assert status == 200 and json.loads(data)["text"] == "transcribed by fixture"
                 assert request("/v1/audio/transcriptions", b"invalid")[0] == 400
-                process.stdin.write(b"/remote status\n/remote stop\n/remote status\n/exit\n")
+                process.stdin.write(b"/remote list\n/remote stop\n/remote list\n/exit\n")
                 process.stdin.flush()
                 process.wait(timeout=10)
                 log.seek(0)

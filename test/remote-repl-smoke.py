@@ -605,7 +605,7 @@ else:
             wait_for(state.exists, "provisioning starts")
             server.process.send_signal(signal.SIGINT)
             wait_for(lambda: not state.exists(), "cancelled provisioning stops publisher")
-            server.send("/remote status")
+            server.send("/remote list")
             server.wait("Remote server is stopped.")
             mode.write_text("ready")
             server.send(f"/remote serve --protocol opentunnel --port {port}")

@@ -1315,7 +1315,7 @@ the public connection; pmai still requires operator-approved pairing.
 
 In the pmai REPL, run `/remote serve --protocol openai` to expose configured
 agents and providers at `http://127.0.0.1:11435/v1`. Add `--tools` to enable agent
-tools. `/remote status` shows the endpoint and `/remote stop` stops it. The server
+tools. `/remote list` shows the endpoint and `/remote stop` stops it. The server
 also exposes OpenAI-compatible transcription, speech and voice discovery routes.
 See [audio server usage](../doc/audio-server.md) for model selectors, Groq and
 native speech, streaming formats, authentication and examples.

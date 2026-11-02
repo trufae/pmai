@@ -11,7 +11,7 @@ Start pmai normally, then start serving from its prompt:
 
 ```text
 /remote serve --protocol openai
-/remote status
+/remote list
 /remote stop
 ```
 
@@ -28,7 +28,7 @@ serving commands keep their behavior. One server runs at a time in this REPL.
 `--tools` enables the selected agent's configured tools. Existing project tool
 approvals still apply. Set `PMAI_HTTP_TOKEN` before starting pmai to require a
 Bearer token on all requests. LAN serving creates a mode-0600 token file at
-`~/.pmai/remote-server/openai/token` when no token was provided. `/remote status`
+`~/.pmai/remote-server/openai/token` when no token was provided. `/remote list`
 shows the endpoint and token file location, without printing the token itself.
 `/remote stop`, exiting the REPL or enabling Airplane Mode stops serving.
 
