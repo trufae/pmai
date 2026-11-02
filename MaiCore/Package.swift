@@ -156,6 +156,7 @@ let package = Package(
       path: "Sources/mai",
       exclude: ["VoiceInfo.plist"],
       linkerSettings: [
+        .linkedLibrary("user32", .when(platforms: [.windows])),
         .unsafeFlags(["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist",
           "-Xlinker", URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .appendingPathComponent("Sources/mai/VoiceInfo.plist").path], .when(platforms: [.macOS])),

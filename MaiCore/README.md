@@ -391,9 +391,9 @@ tool calls, tool results, and attachments are summarized on their own lines.
 Instructions are never copied. A trailing path writes the same text to a file
 instead of the clipboard: `/copy reply.md` saves the last reply and
 `/copy 4 ~/notes/chat.txt` the last four messages, replacing an existing file.
-`/help copy` lists the forms. macOS uses the native pasteboard; other platforms
-use the first of `wl-copy`, `xclip`, `xsel`, `pbcopy`, or `clip.exe` found in
-`PATH`.
+`/help copy` lists the forms. macOS uses the native pasteboard and Windows uses
+the native Unicode clipboard. Other platforms use the first of `wl-copy`,
+`xclip`, `xsel`, `pbcopy`, or `clip.exe` found in `PATH`.
 
 `/edit input` writes the next message in `$EDITOR` instead of at the prompt: an
 empty file opens and what it holds when the editor closes is sent as an

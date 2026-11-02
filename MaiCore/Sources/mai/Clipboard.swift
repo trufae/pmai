@@ -2,10 +2,12 @@ import Foundation
 
 #if canImport(AppKit)
   import AppKit
+#elseif os(Windows)
+  import WinSDK
 #endif
 
-/// Writes text to the system clipboard. macOS uses the native pasteboard; other
-/// platforms shell out to the first available clipboard tool.
+/// Writes text to the system clipboard. macOS and Windows use native APIs;
+/// other platforms shell out to the first available clipboard tool.
 enum SystemClipboard {
   static func write(_ text: String) throws {
     #if canImport(AppKit)
@@ -14,10 +16,62 @@ enum SystemClipboard {
       guard pasteboard.setString(text, forType: .string) else {
         throw ClipboardError.writeFailed("NSPasteboard rejected the text.")
       }
+    #elseif os(Windows)
+      try writeWindowsText(text)
     #else
       try writeUsingExternalTool(text)
     #endif
   }
+
+  #if os(Windows)
+  private static func writeWindowsText(_ text: String) throws {
+    guard !text.utf16.contains(0) else {
+      throw ClipboardError.writeFailed("Windows clipboard text cannot contain a NUL character.")
+    }
+    // CF_UNICODETEXT uses NUL-terminated UTF-16 and CRLF line endings.
+    let normalized = text.replacingOccurrences(of: "\r\n", with: "\n")
+      .replacingOccurrences(of: "\r", with: "\n").replacingOccurrences(of: "\n", with: "\r\n")
+    let units = Array(normalized.utf16) + [0]
+    let byteCount = units.count * MemoryLayout<UInt16>.stride
+    guard let memory = GlobalAlloc(UINT(GMEM_MOVEABLE), SIZE_T(byteCount)) else {
+      throw windowsFailure("Cannot allocate clipboard text")
+    }
+    var transferred = false
+    defer { if !transferred { _ = GlobalFree(memory) } }
+    guard let bytes = GlobalLock(memory) else {
+      throw windowsFailure("Cannot access clipboard text")
+    }
+    units.withUnsafeBytes { bytes.copyMemory(from: $0.baseAddress!, byteCount: byteCount) }
+    _ = GlobalUnlock(memory)
+
+    // A real owner window is required: EmptyClipboard after OpenClipboard(nil)
+    // would leave no owner, causing SetClipboardData to fail.
+    let window = "STATIC".withCString(encodedAs: UTF16.self) {
+      CreateWindowExW(0, $0, nil, DWORD(WS_POPUPWINDOW), 0, 0, 0, 0, nil, nil, nil, nil)
+    }
+    guard let window else { throw windowsFailure("Cannot create clipboard owner") }
+    defer { _ = DestroyWindow(window) }
+    let deadline = GetTickCount64() + 500
+    while !OpenClipboard(window) {
+      let code = GetLastError()
+      guard GetTickCount64() < deadline else {
+        throw ClipboardError.unavailable("Windows clipboard is in use (Windows error \(code)).")
+      }
+      Sleep(10)
+    }
+    defer { _ = CloseClipboard() }
+    guard EmptyClipboard() else { throw windowsFailure("Cannot clear clipboard") }
+    guard SetClipboardData(UINT(CF_UNICODETEXT), memory) != nil else {
+      throw windowsFailure("Cannot write clipboard text")
+    }
+    // Windows owns the movable allocation only after SetClipboardData succeeds.
+    transferred = true
+  }
+
+  private static func windowsFailure(_ operation: String) -> ClipboardError {
+    .writeFailed("\(operation) (Windows error \(GetLastError())).")
+  }
+  #endif
 
   /// Command lines tried in order on platforms without a native pasteboard API.
   static let externalTools: [[String]] = [
