@@ -68,6 +68,7 @@ struct RemoteAgentConversation: Codable, Identifiable, Sendable {
   var createdAt: Date? = Date()
   var messages: [RemoteAgentMessage] = []
   var systemPrompt: SystemPrompt?
+  var unsentMessages: [RemoteUnsentMessage]?
 
   var presentation: Conversation {
     var result = Conversation()
@@ -75,7 +76,7 @@ struct RemoteAgentConversation: Codable, Identifiable, Sendable {
     result.title = self.title
     result.createdAt = self.createdAt ?? self.updatedAt
     result.updatedAt = self.updatedAt
-    result.messages = messages.map { message in
+    result.messages = (messages + (unsentMessages ?? []).map(\.displayMessage)).map { message in
       var text = message.text
       if message.role == "thought" { text = "<think>\n\(text)\n</think>" }
       if message.role == "tool" || message.role == "plan" {
@@ -102,6 +103,21 @@ struct RemoteAgentConversation: Codable, Identifiable, Sendable {
 }
 
 typealias RemoteAgentMessage = ACPConversationMessage
+
+struct RemoteUnsentMessage: Codable, Identifiable, Sendable {
+  var message: RemoteAgentMessage
+  var command: String?
+  var skillID: String?
+  var id: UUID { message.id }
+  var request: RemotePromptRequest {
+    RemotePromptRequest(text: message.text, command: command, skillID: skillID)
+  }
+  var displayMessage: RemoteAgentMessage {
+    var result = message
+    result.text = request.draft
+    return result
+  }
+}
 
 @MainActor @Observable
 final class RemoteAgentStore {
@@ -536,7 +552,7 @@ final class RemoteAgentChat {
   private var sessionID: String?
   private var client: (any RemoteSessionClient)?
   private var operation: Task<Void, Never>?
-  private var pendingPrompt: RemotePromptRequest?
+  private var pendingPrompt: UUID?
   private var pendingInjection: String?
   private var permissionReplies: [UUID: CheckedContinuation<ACPPermissionResponse?, Never>] = [:]
   private var generation = 0
@@ -662,13 +678,36 @@ final class RemoteAgentChat {
     send(message.text)
   }
 
+  func isUnsent(_ messageID: UUID) -> Bool {
+    conversation.unsentMessages?.contains { $0.id == messageID } == true
+  }
+
+  func isSendingUnsent(_ messageID: UUID) -> Bool {
+    pendingPrompt == messageID
+  }
+
+  func retryUnsent(_ messageID: UUID) {
+    guard canSubmit, !busy,
+      let unsent = conversation.unsentMessages?.first(where: { $0.id == messageID })
+    else { return }
+    guard connected else {
+      pendingPrompt = messageID
+      connect()
+      return
+    }
+    conversation.unsentMessages?.removeAll { $0.id == messageID }
+    submit(unsent.message.text, command: unsent.command, skillID: unsent.skillID,
+      messageID: messageID)
+  }
+
   func retry(_ messageID: UUID, restarting: Bool = false) {
     guard canRetry(messageID), let message = sourceMessage(messageID) else { return }
     submit(message.text, rewind: true, boundary: restarting ? nil : message.remoteID)
   }
 
   func canDelete(_ messageID: UUID) -> Bool {
-    canSend && supportsHistoryRewind && messages.contains {
+    if isUnsent(messageID) { return !isSendingUnsent(messageID) }
+    return canSend && supportsHistoryRewind && messages.contains {
       $0.id == messageID && $0.remoteID != nil
     }
   }
@@ -676,6 +715,11 @@ final class RemoteAgentChat {
   /// Removes this remote message and everything after it. The pmai host owns
   /// the transcript, so this never mutates PocketMai's unrelated local chats.
   func delete(_ messageID: UUID) {
+    if isUnsent(messageID), canDelete(messageID) {
+      conversation.unsentMessages?.removeAll { $0.id == messageID }
+      persist()
+      return
+    }
     guard canDelete(messageID), let message = messages.first(where: { $0.id == messageID }),
       let remoteID = message.remoteID, let client
     else { return }
@@ -872,7 +916,6 @@ final class RemoteAgentChat {
         messages = previous
         connectingHistory = nil
         loadingMessages = nil
-        unsentPrompt = pendingPrompt.map(restoredDraft)
         pendingPrompt = nil
         historyRewindSupported = false
         self.error = error.localizedDescription
@@ -886,9 +929,9 @@ final class RemoteAgentChat {
         busy = responding
         operation = nil
         if !connected { scheduleReconnect() }
-        if connected, let pendingPrompt {
+        if let pendingPrompt {
           self.pendingPrompt = nil
-          send(pendingPrompt.text, command: pendingPrompt.command, skillID: pendingPrompt.skillID)
+          if connected { retryUnsent(pendingPrompt) }
         }
       }
     }
@@ -902,7 +945,15 @@ final class RemoteAgentChat {
       if responding { inject(text) } else { submit(text, command: command, skillID: skillID) }
       return true
     }
-    pendingPrompt = RemotePromptRequest(text: text, command: command, skillID: skillID)
+    let unsent = RemoteUnsentMessage(
+      message: .init(role: "user", text: text), command: command, skillID: skillID)
+    conversation.unsentMessages = (conversation.unsentMessages ?? []) + [unsent]
+    conversation.updatedAt = Date()
+    if AgentChat.isPlaceholderTitle(conversation.title) {
+      conversation.title = AgentChat.derivedTitle(from: unsent.request.draft) ?? conversation.title
+    }
+    persist()
+    pendingPrompt = unsent.id
     connect()
     return true
   }
@@ -948,7 +999,7 @@ final class RemoteAgentChat {
   }
 
   private func submit(_ text: String, rewind: Bool = false, boundary: String? = nil,
-    command: String? = nil, skillID: String? = nil) {
+    command: String? = nil, skillID: String? = nil, messageID: UUID = UUID()) {
     guard canSend, let client else { return }
     let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !text.isEmpty || command != nil || skillID != nil else { return }
@@ -956,7 +1007,9 @@ final class RemoteAgentChat {
     error = nil
     responding = true
     status = rewind ? "Rewinding…" : "Responding…"
-    if !rewind { appendPrompt(RemotePromptRequest(text: text, command: command).draft) }
+    if !rewind {
+      appendPrompt(RemotePromptRequest(text: text, command: command).draft, id: messageID)
+    }
     let attempt = generation
     operation = Task {
       do {
@@ -992,9 +1045,9 @@ final class RemoteAgentChat {
     }
   }
 
-  private func appendPrompt(_ text: String) {
+  private func appendPrompt(_ text: String, id: UUID = UUID()) {
     flushMessages()
-    messages.append(RemoteAgentMessage(role: "user", text: text))
+    messages.append(RemoteAgentMessage(id: id, role: "user", text: text))
     conversation.updatedAt = Date()
     if AgentChat.isPlaceholderTitle(conversation.title) {
       conversation.title = AgentChat.derivedTitle(from: text) ?? conversation.title
@@ -1062,7 +1115,7 @@ final class RemoteAgentChat {
     }
     settingsLoading = false
     configurationLoaded = false
-    if let pendingPrompt { unsentPrompt = restoredDraft(pendingPrompt); self.pendingPrompt = nil }
+    pendingPrompt = nil
     connected = false
     busy = false
     responding = false
@@ -1163,12 +1216,6 @@ final class RemoteAgentChat {
     guard let pending = pendingMessages else { return }
     pendingMessages = nil
     if messages != pending { messages = pending }
-  }
-
-  private func restoredDraft(_ request: RemotePromptRequest) -> String {
-    let name = request.command ?? promptCatalog.entries.first { $0.skillID == request.skillID && $0.skillID != nil }?.commandName
-    guard let name else { return request.draft }
-    return "$remote:" + name + (request.text.isEmpty ? "" : " " + request.text)
   }
 
   private func persist() {

@@ -937,56 +937,70 @@ struct ChatView: View {
                         toggleMessageSelection(message.id)
                       }
                     } content: {
-                      MessageBubble(
-                        message: message,
-                        renderedPartStartIndex: messageRenderWindow.partStartIndex(
-                          for: message.id, conversationID: currentConversationID),
-                        toolSettings: currentToolSettings,
-                        openAIEndpoints: store.settings.isOffline
-                          ? [] : store.settings.openAIEndpoints,
-                        skipTechnicalContentInTTS: store.settings.conversation
-                          .skipTechnicalContentInTTS,
-                        appearance: store.settings.appearance,
-                        renderMarkdown: store.settings.renderMarkdownInChat,
-                        renderImages: store.settings.renderMarkdownImagesInChat,
-                        searchHighlight: searchHighlight,
-                        actions: MessageBubbleActions(
-                          allowsConversationMutation: remoteChat?.canDelete(message.id) ?? true,
-                          canReply: remoteChat?.canSubmit ?? true,
-                          canRetry: remoteChat?.canRetry(message.id) ?? true,
-                          canResubmit: remoteChat?.canResubmit(message.id) ?? true,
-                          onDelete: { messagePendingDeletion = message },
-                          onToggleBookmark: conversation.map { conversation in
-                            { store.toggleMessageBookmark(message, in: conversation.id) }
-                          },
-                          onTogglePin: remoteChat == nil ? conversation.map { conversation in
-                            { store.setMessagePinned(!message.isPinned, messageID: message.id, in: conversation.id) }
-                          } : nil,
-                          onBeginSelection: { beginMessageSelection(with: message.id) },
-                          onEdit: remoteChat == nil ? { editMessage(message, text: $0) } : nil,
-                          onEditAttachment: remoteChat == nil
-                            ? { attachmentID, editedText in
-                              editTextAttachment(message, attachmentID: attachmentID, text: editedText)
+                      VStack(alignment: .trailing, spacing: 4) {
+                        MessageBubble(
+                          message: message,
+                          renderedPartStartIndex: messageRenderWindow.partStartIndex(
+                            for: message.id, conversationID: currentConversationID),
+                          toolSettings: currentToolSettings,
+                          openAIEndpoints: store.settings.isOffline
+                            ? [] : store.settings.openAIEndpoints,
+                          skipTechnicalContentInTTS: store.settings.conversation
+                            .skipTechnicalContentInTTS,
+                          appearance: store.settings.appearance,
+                          renderMarkdown: store.settings.renderMarkdownInChat,
+                          renderImages: store.settings.renderMarkdownImagesInChat,
+                          searchHighlight: searchHighlight,
+                          actions: MessageBubbleActions(
+                            allowsConversationMutation: remoteChat?.canDelete(message.id) ?? true,
+                            canReply: remoteChat?.canSubmit ?? true,
+                            canRetry: remoteChat?.canRetry(message.id) ?? true,
+                            canResubmit: remoteChat?.canResubmit(message.id) ?? true,
+                            onDelete: { messagePendingDeletion = message },
+                            onToggleBookmark: conversation.map { conversation in
+                              { store.toggleMessageBookmark(message, in: conversation.id) }
+                            },
+                            onTogglePin: remoteChat == nil ? conversation.map { conversation in
+                              { store.setMessagePinned(!message.isPinned, messageID: message.id, in: conversation.id) }
                             } : nil,
-                          onTrimFromHere: remoteChat == nil || remoteChat?.supportsHistoryRewind == true
-                            ? { messagePendingTrimAndResubmit = message } : nil,
-                          onRestartFresh: remoteChat == nil || remoteChat?.supportsHistoryRewind == true
-                            ? { messagePendingRestartFresh = message } : nil,
-                          onResubmit: remoteChat.map { chat in { chat.resubmit(message.id) } },
-                          onSpeakFromHere: { speakFromHere(message) },
-                          onReply: { reply in sendReply(reply) }),
-                        isBookmarked: conversation.map {
-                          store.isMessageBookmarked(message.id, in: $0.id)
-                        } ?? false,
-                        conversationCreatedAt: conversation?.createdAt
-                          ?? currentConversationSummary?.createdAt,
-                        showUserTimestamp: message.role == .user && message.id != firstUserMessageID,
-                        showThinking: remoteChat != nil
-                          || store.effectiveShowThinking(for: currentConversation),
-                        compactMetadata: remoteChat != nil,
-                        isWaitingForResponse: isWaitingForResponse(message),
-                        showsResponsePlaceholder: remoteChat == nil
-                      )
+                            onBeginSelection: { beginMessageSelection(with: message.id) },
+                            onEdit: remoteChat == nil ? { editMessage(message, text: $0) } : nil,
+                            onEditAttachment: remoteChat == nil
+                              ? { attachmentID, editedText in
+                                editTextAttachment(message, attachmentID: attachmentID, text: editedText)
+                              } : nil,
+                            onTrimFromHere: remoteChat == nil || remoteChat?.supportsHistoryRewind == true
+                              ? { messagePendingTrimAndResubmit = message } : nil,
+                            onRestartFresh: remoteChat == nil || remoteChat?.supportsHistoryRewind == true
+                              ? { messagePendingRestartFresh = message } : nil,
+                            onResubmit: remoteChat.map { chat in { chat.resubmit(message.id) } },
+                            onSpeakFromHere: { speakFromHere(message) },
+                            onReply: { reply in sendReply(reply) }),
+                          isBookmarked: conversation.map {
+                            store.isMessageBookmarked(message.id, in: $0.id)
+                          } ?? false,
+                          conversationCreatedAt: conversation?.createdAt
+                            ?? currentConversationSummary?.createdAt,
+                          showUserTimestamp: message.role == .user && message.id != firstUserMessageID,
+                          showThinking: remoteChat != nil
+                            || store.effectiveShowThinking(for: currentConversation),
+                          compactMetadata: remoteChat != nil,
+                          isWaitingForResponse: isWaitingForResponse(message),
+                          showsResponsePlaceholder: remoteChat == nil
+                        )
+                        if let chat = remoteChat, chat.isUnsent(message.id) {
+                          Button {
+                            chat.retryUnsent(message.id)
+                          } label: {
+                            Text(chat.isSendingUnsent(message.id)
+                              ? "Connecting…" : "Not sent — tap to retry")
+                              .font(.caption)
+                              .foregroundStyle(.secondary)
+                          }
+                          .buttonStyle(.plain)
+                          .disabled(chat.busy || !chat.canSubmit || isMessageSelectionMode)
+                        }
+                      }
                     }
                     .onGeometryChange(for: CGRect.self) { geometry in
                       geometry.frame(in: .named(MessageFontPinchSession.coordinateSpaceName))
