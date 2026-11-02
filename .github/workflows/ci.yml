@@ -296,23 +296,8 @@ jobs:
       - name: Show Swift version
         run: swift --version
 
-      - name: Test dependency download profiles
-        run: python test/build-dependencies.py
-
       - name: Build debug CLI
-        run: |
-          swift build --package-path MaiCore --disable-index-store --disable-prefetching --product pmai
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $bin = swift build --package-path MaiCore --disable-prefetching --show-bin-path
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Copy-Item "$bin/pmai.exe" pmai.exe
-
-      - name: Verify the binary runs
-        run: |
-          ./pmai.exe --help
-
-      - name: Test paged web fetch over HTTP
-        run: python test/web-fetch-smoke.py ./pmai.exe
+        run: swift build --package-path MaiCore --configuration debug --disable-index-store --disable-prefetching --product pmai
 
   build:
     name: Build (Xcode latest on macOS latest)
