@@ -46,6 +46,7 @@ jobs:
           test -f www/styles.css
           test -f www/app.js
           test -f www/install.sh
+          test -f www/install.ps1
           test -f www/mai-logo.png
           test -f www/icon-192.png
           test -f www/pmai-logo-noai.png
