@@ -82,7 +82,7 @@
     }
     Write-Host "pmai: installed windows/$architecture version $version to $target"
     Write-Host 'pmai: ready - run: pmai'
-    Write-Host 'pmai: to update, close pmai and run this installer again'
+    Write-Host 'pmai: to update, run: pmai -U'
   } finally {
     [Net.ServicePointManager]::SecurityProtocol = $oldProtocol
     if ($tempDir -and (Test-Path -LiteralPath $tempDir)) {

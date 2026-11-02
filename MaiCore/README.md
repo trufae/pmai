@@ -161,8 +161,10 @@ the archive when it matches the release. `PMAI_VERSION` can select a specific
 release instead of the latest. `PMAI_RELEASES_URL` overrides the release server
 (normally `https://github.com/trufae/pmai/releases`); `PMAI_RELEASE_BASE` overrides
 the selected release's asset directory. Automatic updates support macOS, Linux,
-and Android, require write access to the installation directory, and need no
-external download, checksum, or unzip tools.
+Android, and Windows, require write access to the installation directory, and
+need no external download, checksum, or unzip tools. Windows updates replace
+`pmai.exe` together with the bundled runtime DLLs; old images still in use are
+removed on a later update check after their processes exit.
 
 Print a complete configuration template:
 

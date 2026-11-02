@@ -6,11 +6,100 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import struct
 import sys
 import tempfile
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import zipfile
+
+
+def windows_main(binary):
+    """Use native release fixtures; the update must replace mapped PE images."""
+    import ctypes
+    import _ctypes
+
+    compiler = shutil.which('cl')
+    if not compiler:
+        raise SystemExit('Windows update smoke requires cl in a Visual Studio developer shell')
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.startswith(('PMAI_', 'MAI_', 'OPENAI_'))}
+    with tempfile.TemporaryDirectory(prefix="pmai update ' \u00e9 ") as temporary:
+        root = Path(temporary)
+        source = root / 'release.c'
+        source.write_text('#include <stdio.h>\nint main(void) { puts("99.0.0"); return 0; }\n')
+        fixture = root / 'release.exe'
+        subprocess.run([compiler, '/nologo', '/MT', str(source), '/Fe:' + str(fixture)],
+                       cwd=root, check=True, capture_output=True, timeout=60)
+        installed = root / 'installed'
+        installed.mkdir()
+        target = installed / 'pmai.exe'
+        shutil.copy2(binary, target)
+        runtime = {path.name: path.read_bytes() for path in binary.parent.glob('*.dll')}
+        for name, data in runtime.items():
+            (installed / name).write_bytes(data)
+        original = target.read_bytes()
+        old_dll = Path(environment['WINDIR']) / 'System32' / 'version.dll'
+        old_dll_bytes = old_dll.read_bytes()
+        dll = installed / 'fixture.dll'
+        dll.write_bytes(old_dll_bytes)
+        release_dll = old_dll_bytes + b'pmai updated DLL fixture'
+        loaded = ctypes.WinDLL(str(dll))
+        environment.update(PMAI_CONFIG=str(root / 'missing.json'), PMAI_VERSION='v99.0.0')
+        pe_offset = struct.unpack_from('<I', original, 0x3c)[0]
+        machine = struct.unpack_from('<H', original, pe_offset + 4)[0]
+        assert machine in (0x8664, 0xaa64), f'Unsupported Windows machine: {machine:x}'
+        platform = 'arm64' if machine == 0xaa64 else 'x64'
+
+        def release(name, *, checksum=True, version='v99.0.0', extra=()):
+            folder = root / name
+            folder.mkdir()
+            archive = folder / f'pmai-windows-{platform}.zip'
+            with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as bundle:
+                bundle.writestr('package/pmai.exe', fixture.read_bytes())
+                bundle.writestr('package/fixture.dll', release_dll)
+                for filename, data in extra:
+                    bundle.writestr(filename, data)
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest() if checksum else '0' * 64
+            (folder / 'SHA256SUMS').write_text(f'{digest}  {archive.name}\n')
+            return {**environment, 'PMAI_RELEASE_BASE': folder.as_uri(), 'PMAI_VERSION': version}
+
+        def run(env, status=0):
+            result = subprocess.run([str(target), '-U'], env=env, cwd=root,
+                                    capture_output=True, text=True, timeout=60)
+            output = result.stdout + result.stderr
+            assert result.returncode == status, (result.returncode, output)
+            assert not list(installed.glob('.pmai-update-*')), 'staging files remain'
+            return output
+
+        try:
+            assert 'checksum verification failed' in run(release('checksum', checksum=False), 2)
+            assert target.read_bytes() == original and dll.read_bytes() == old_dll_bytes
+            assert 'release version mismatch' in run(release('version', version='v99.0.1'), 2)
+            assert target.read_bytes() == original
+            assert 'duplicate Windows release file' in run(release(
+                'duplicate', extra=[('package/FIXTURE.DLL', release_dll)]), 2)
+            assert target.read_bytes() == original
+            # The executable has already been moved aside when this destination
+            # fails. Verify rollback preserves the usable old installation.
+            _ctypes.FreeLibrary(loaded._handle)
+            loaded = None
+            dll.unlink()
+            dll.mkdir()
+            assert 'Cannot replace a non-file' in run(release('rollback'), 2)
+            assert target.read_bytes() == original and dll.is_dir()
+            dll.rmdir()
+            dll.write_bytes(old_dll_bytes)
+            loaded = ctypes.WinDLL(str(dll))
+            output = run(release('success'))
+            assert 'updated ' in output, output
+            assert target.read_bytes() == fixture.read_bytes()
+            assert dll.read_bytes() == release_dll
+            assert subprocess.check_output([str(target), '--version'], text=True).strip() == '99.0.0'
+            print('PASS Windows checksum/startup validation, rollback, and running EXE/mapped DLL replacement')
+        finally:
+            if loaded is not None:
+                _ctypes.FreeLibrary(loaded._handle)
 
 
 class Releases(SimpleHTTPRequestHandler):
@@ -49,6 +138,9 @@ class Releases(SimpleHTTPRequestHandler):
 
 def main():
     binary = Path(sys.argv[1]).resolve()
+    if os.name == 'nt':
+        windows_main(binary)
+        return
     repository = Path(__file__).resolve().parent.parent
     environment = {key: value for key, value in os.environ.items()
                    if not key.startswith(('PMAI_', 'MAI_', 'OPENAI_', 'ANDROID_', 'TERMUX_'))}

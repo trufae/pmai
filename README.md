@@ -29,8 +29,8 @@ irm https://raw.githubusercontent.com/trufae/pmai/main/www/install.ps1 | iex
 The [Windows installer](www/install.ps1) selects x64 or ARM64, verifies the
 SHA-256 checksum, and installs the executable and runtime DLLs in
 `%LOCALAPPDATA%\Programs\pmai` without administrator privileges. It adds that
-directory to your user PATH and the current PowerShell session. Close pmai and
-rerun the command to update. Set `PMAI_INSTALL_DIR` for a custom directory or
+directory to your user PATH and the current PowerShell session. Update with
+`pmai -U`. Set `PMAI_INSTALL_DIR` for a custom directory or
 `PMAI_VERSION` for a specific release tag.
 
 [![CI](https://github.com/trufae/pmai/actions/workflows/ci.yml/badge.svg)](https://github.com/trufae/pmai/actions/workflows/ci.yml)
