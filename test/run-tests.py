@@ -17,7 +17,8 @@ TERMINAL = '''repl-agents repl-buffer repl-buffer-commands repl-btw repl-then re
 repl-policy repl-queue repl-recap repl-redirection repl-startup repl-suspend repl-view repl-voice repl-voice-settings'''.split()
 STRESS = ['repl-subagent-load']  # Explicit opt-in, including when running full.
 EXTERNAL = ['repl-reflow', 'tailcat']  # Ghostty and a separately built tailcat binary.
-PLATFORM = ['web-fetch', 'openai-http'] if os.name == 'nt' else [
+WINDOWS = ['windows-console']
+PLATFORM = ['web-fetch', 'openai-http', *WINDOWS] if os.name == 'nt' else [
     'update', 'web-fetch', 'openai-http', 'project-approval', 'repl-defaults', 'repl-small-context']
 if sys.platform.startswith('linux'):
     PLATFORM.append('linux-network')
@@ -39,7 +40,7 @@ def main():
     if args.profile in ('terminal', 'full', 'stress', 'external') and os.name == 'nt':
         parser.error('PTY suites require a POSIX host; use the platform profile on Windows')
     # Every script has a suite; stress and external suites remain opt-in.
-    known = set(SMOKE + TERMINAL + STRESS + EXTERNAL + ['acp-gateway', 'linux-network'])
+    known = set(SMOKE + TERMINAL + STRESS + EXTERNAL + WINDOWS + ['acp-gateway', 'linux-network'])
     found = {p.name.removesuffix('-smoke.py') for p in (ROOT / 'test').glob('*-smoke.py')}
     if found != known:
         parser.error(f'Update suite ownership: unlisted={found-known}, missing={known-found}')

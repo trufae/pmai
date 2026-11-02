@@ -77,7 +77,8 @@ def main():
                 try:
                     wait('pmai>')
                     prompt_seconds = time.monotonic() - started
-                    send('/version\n')
+                    # Empty submissions must leave the prompt usable.
+                    send('\n\n/version\n')
                     wait(version)
                     ready_seconds = time.monotonic() - started
                     read_pty(master, output, .2)

@@ -1502,7 +1502,9 @@ final class TerminalLineEditor {
         // the first byte of the answer, leaving that byte in the terminal.
         if interruptForPrompt && hasPromptUpdate { return (nil, true) }
         var byte: UInt8 = 0
-        return (read(STDIN_FILENO, &byte, 1) == 1 ? byte : nil, true)
+        let count = read(STDIN_FILENO, &byte, 1)
+        if count < 0, errno == EINTR { return (nil, false) }
+        return (count == 1 ? byte : nil, true)
       }
       if result.done { return result.byte }
     }

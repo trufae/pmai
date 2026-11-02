@@ -17,7 +17,13 @@
   }
 
   func read(_ descriptor: Int32, _ buffer: UnsafeMutableRawPointer, _ count: UInt32) -> Int32 {
-    _read(descriptor, buffer, count)
+    if descriptor == STDIN_FILENO, let handle = consoleHandle(descriptor) {
+      var mode: DWORD = 0
+      if GetConsoleMode(handle, &mode), mode & enableLineInput == 0 {
+        return WindowsConsole.readInput(into: buffer, count: count)
+      }
+    }
+    return _read(descriptor, buffer, count)
   }
 
   // MARK: - Terminal modes
@@ -114,10 +120,19 @@
 
   let POLLIN: Int16 = 0x1
 
-  /// Waits for one console handle. Any console event wakes it, including key
-  /// releases, which is fine for the cursor query that uses it.
+  /// Waits for character input, rather than treating key releases, focus,
+  /// and resize events as bytes that a following read could consume.
   func poll(_ descriptors: UnsafeMutablePointer<pollfd>, _ count: UInt32, _ timeout: Int32) -> Int32 {
     guard count == 1, let handle = consoleHandle(descriptors.pointee.fd) else { return -1 }
+    descriptors.pointee.revents = 0
+    var mode: DWORD = 0
+    if descriptors.pointee.fd == STDIN_FILENO,
+      GetConsoleMode(handle, &mode), mode & enableLineInput == 0
+    {
+      let ready = WindowsConsole.pollInput(handle, timeout: timeout)
+      if ready > 0 { descriptors.pointee.revents = POLLIN }
+      return ready
+    }
     let outcome = WaitForSingleObject(handle, timeout < 0 ? DWORD.max : DWORD(timeout))
     if outcome == WAIT_OBJECT_0 {
       descriptors.pointee.revents = POLLIN
@@ -129,6 +144,79 @@
   // MARK: - Console services without a POSIX shape
 
   enum WindowsConsole {
+    // The editor has one input owner. Keep native reads
+    // here so CRT text translation cannot look ahead after CR, hide bytes
+    // from poll, or turn a control key into EOF. ReadConsoleW also avoids the
+    // console's OEM code page: the editor always consumes UTF-8.
+    nonisolated(unsafe) private static var inputBytes: [UInt8] = []
+    nonisolated(unsafe) private static var highSurrogate: UInt16?
+
+    private static func hasCharacter(_ record: INPUT_RECORD) -> Bool {
+      guard record.EventType == KEY_EVENT else { return false }
+      let key = record.Event.KeyEvent
+      guard key.bKeyDown.boolValue else { return false }
+      if key.uChar.UnicodeChar != 0 { return true }
+      // VT mode translates navigation and function keys to escape sequences.
+      // Ctrl+Space is a literal NUL; modifier-only presses have no character.
+      let code = key.wVirtualKeyCode
+      return (WORD(VK_PRIOR)...WORD(VK_DOWN)).contains(code)
+        || code == WORD(VK_INSERT) || code == WORD(VK_DELETE)
+        || (WORD(VK_F1)...WORD(VK_F12)).contains(code)
+        || (code == WORD(VK_SPACE) && key.dwControlKeyState & DWORD(LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED) != 0)
+    }
+
+    fileprivate static func readInput(into buffer: UnsafeMutableRawPointer, count: UInt32) -> Int32 {
+      let size = min(Int(count), inputBytes.count)
+      guard size > 0 else {
+        if count == 0 { return 0 }
+        errno = EINTR
+        return -1
+      }
+      inputBytes.withUnsafeBytes { source in
+        buffer.copyMemory(from: source.baseAddress!, byteCount: size)
+      }
+      inputBytes.removeFirst(size)
+      return Int32(size)
+    }
+
+    fileprivate static func pollInput(_ handle: HANDLE, timeout: Int32) -> Int32 {
+      let started = GetTickCount64()
+      while inputBytes.isEmpty {
+        let elapsed = GetTickCount64() - started
+        let remaining = timeout < 0 ? DWORD.max : DWORD(max(0, Int64(timeout) - Int64(elapsed)))
+        let outcome = WaitForSingleObject(handle, remaining)
+        if outcome == 0x102 { return 0 }  // WAIT_TIMEOUT
+        guard outcome == WAIT_OBJECT_0 else { errno = EIO; return -1 }
+
+        var record = INPUT_RECORD()
+        var recordsRead: DWORD = 0
+        guard PeekConsoleInputW(handle, &record, 1, &recordsRead) else { errno = EIO; return -1 }
+        if recordsRead > 0 {
+          if hasCharacter(record) {
+            var characters = [UInt16](repeating: 0, count: 64)
+            var charactersRead: DWORD = 0
+            guard ReadConsoleW(handle, &characters, DWORD(characters.count), &charactersRead, nil) else {
+              errno = GetLastError() == ERROR_OPERATION_ABORTED ? EINTR : EIO
+              return -1
+            }
+            var text = Array(characters.prefix(Int(charactersRead)))
+            if let highSurrogate { text.insert(highSurrogate, at: 0) }
+            highSurrogate = nil
+            if let last = text.last, (0xD800...0xDBFF).contains(last) {
+              highSurrogate = text.removeLast()
+            }
+            inputBytes = Array(String(decoding: text, as: UTF16.self).utf8)
+          } else {
+            // ReadConsole ignores these records and could block waiting for
+            // a later key. Discard them without starting a blocking read.
+            guard ReadConsoleInputW(handle, &record, 1, &recordsRead) else { errno = EIO; return -1 }
+          }
+        }
+        if inputBytes.isEmpty, timeout >= 0, GetTickCount64() - started >= UInt64(timeout) { return 0 }
+      }
+      return 1
+    }
+
     private static let lock = NSLock()
     nonisolated(unsafe) private static var interruptHandler: (@Sendable () -> Void)?
 

@@ -385,6 +385,12 @@ jobs:
       - name: Build release CLI without debug information
         run: swift build --package-path MaiCore --configuration release -debug-info-format none --disable-index-store --disable-prefetching --product pmai -Xswiftc -Osize -Xlinker /DEBUG:NONE
 
+      - name: Check interactive console input
+        run: |
+          $bin = swift build --package-path MaiCore --configuration release --disable-prefetching --show-bin-path
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python test/windows-console-smoke.py (Join-Path $bin 'pmai.exe')
+
       - name: Save Swift build outputs
         if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.build-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
