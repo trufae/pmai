@@ -5762,13 +5762,19 @@ struct MaiCLI {
         to: .standardError)
       return
     }
-    // The wait status packs a signal in the low bits and an exit code above.
+    #if os(Windows)
+    if waitStatus != 0 {
+      await terminal.note("exit status \(waitStatus)")
+    }
+    #else
+    // The POSIX wait status packs a signal in the low bits and an exit code above.
     let signalNumber = waitStatus & 0x7f
     if signalNumber != 0 {
       await terminal.note("killed by signal \(signalNumber)")
     } else if (waitStatus >> 8) & 0xff != 0 {
       await terminal.note("exit status \((waitStatus >> 8) & 0xff)")
     }
+    #endif
   }
 
   /// Reports background agents that are waiting on somebody, once each. A

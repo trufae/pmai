@@ -170,6 +170,9 @@ Path(sys.argv[1]).write_text(json.dumps(modes))
                         # cannot satisfy this shell Unicode output check.
                         send('!for %x in (shell) do @echo %x-é\r')
                         wait_for('shell-é')
+                    for status in (7, 256):
+                        send(f'!exit {status}\r')
+                        wait_for(f'exit status {status}')
                     assert kernel.GetConsoleOutputCP() == 65001
                     send(f'\r\r/help after-enter-{mode}\r')
                     wait_for(f"Unknown help topic 'after-enter-{mode}'")
