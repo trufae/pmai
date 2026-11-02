@@ -238,7 +238,7 @@ enum OpenAIProxy {
     }
     let run = AgentRequest(
       agentID: selected.id, provider: selected.provider, model: selected.model,
-      messages: messages, toolNames: allowTools ? selected.toolNames : [],
+      messages: messages, systemContext: selected.systemContext, toolNames: allowTools ? selected.toolNames : [],
       toolGroupNames: allowTools ? selected.toolGroupNames : [],
       subagentNames: allowTools ? selected.subagentNames : [],
       toolChoice: allowTools ? selected.toolChoice : .none, responseFormat: selected.responseFormat,

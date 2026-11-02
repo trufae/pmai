@@ -1029,6 +1029,8 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
   public var instructions: String
   /// Name of the reusable system prompt that supplies `instructions`.
   public var systemPrompt: String?
+  /// Nil enables runtime context; false keeps the configured system prompt alone.
+  public var systemContext: Bool?
   public var provider: ProviderID
   public var model: String
   public var toolNames: Set<String>
@@ -1063,6 +1065,7 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
     isEnabled: Bool = true,
     instructions: String = SystemPrompt.defaultInstructions,
     systemPrompt: String? = nil,
+    systemContext: Bool? = nil,
     provider: ProviderID,
     model: String,
     toolNames: Set<String> = [],
@@ -1089,6 +1092,7 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
     self.isEnabled = isEnabled
     self.instructions = instructions
     self.systemPrompt = systemPrompt
+    self.systemContext = systemContext
     self.provider = provider
     self.model = model
     self.toolNames = toolNames
@@ -1111,8 +1115,8 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
   }
 
   private enum CodingKeys: String, CodingKey {
-    case id, displayName, instructions, systemPrompt, provider, model, toolNames, toolGroupNames,
-      subagentNames, stream, limits
+    case id, displayName, instructions, systemPrompt, systemContext, provider, model, toolNames,
+      toolGroupNames, subagentNames, stream, limits
     case toolChoice, responseFormat, options, toolCallingStrategy, useToolProxy, useSystemOne,
       proxyExposedTools, toolPolicy,
       toolDelegation
@@ -1132,6 +1136,7 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
       instructions: try container.decodeIfPresent(String.self, forKey: .instructions)
         ?? SystemPrompt.defaultInstructions,
       systemPrompt: try container.decodeIfPresent(String.self, forKey: .systemPrompt),
+      systemContext: try container.decodeIfPresent(Bool.self, forKey: .systemContext),
       provider: try container.decode(ProviderID.self, forKey: .provider),
       model: try container.decodeIfPresent(String.self, forKey: .model) ?? "",
       toolNames: try container.decodeIfPresent(Set<String>.self, forKey: .toolNames) ?? [],
@@ -1171,6 +1176,8 @@ public struct AgentRequest: Codable, Equatable, Sendable {
   public var provider: ProviderID
   public var model: String
   public var messages: [AgentMessage]
+  /// Nil enables runtime context, preserving older saved requests.
+  public var systemContext: Bool?
   public var toolNames: Set<String>
   /// Nil keeps source compatibility for callers that construct requests
   /// directly. Hosts set this from the agent profile so runtime-native tool
@@ -1202,6 +1209,7 @@ public struct AgentRequest: Codable, Equatable, Sendable {
     provider: ProviderID,
     model: String = "",
     messages: [AgentMessage],
+    systemContext: Bool? = nil,
     toolNames: Set<String> = [],
     toolGroupNames: Set<String>? = nil,
     subagentNames: Set<String> = [],
@@ -1225,6 +1233,7 @@ public struct AgentRequest: Codable, Equatable, Sendable {
     self.provider = provider
     self.model = model
     self.messages = messages
+    self.systemContext = systemContext
     self.toolNames = toolNames
     self.toolGroupNames = toolGroupNames
     self.subagentNames = subagentNames

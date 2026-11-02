@@ -311,6 +311,7 @@ extension AgentRequest {
     retry = other.retry
     autocompact = other.autocompact
     context = other.context
+    systemContext = other.systemContext
   }
 
   mutating func applyRuntimeSettings(from definition: AgentDefinition) {
@@ -333,6 +334,7 @@ extension AgentRequest {
     retry = definition.retry
     autocompact = definition.autocompact
     context = definition.context
+    systemContext = definition.systemContext
   }
 }
 

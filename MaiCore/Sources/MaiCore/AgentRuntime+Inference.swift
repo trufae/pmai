@@ -121,6 +121,7 @@ extension AgentRuntime {
     context: AgentEventContext,
     pid: AgentPID,
     retriesEmptyReply: Bool = true,
+    systemContext: Bool? = nil,
     emit: @escaping AgentEventHandler,
     onEvent: @escaping ProviderEventHandler
   ) async throws -> ProviderCall {
@@ -128,7 +129,7 @@ extension AgentRuntime {
     while true {
       var outbound = providerRequest
       if redactionMode != .off, let redactor = ContentRedactor.current {
-        if !redactionRules.isEmpty {
+        if systemContext != false, !redactionRules.isEmpty {
           outbound.messages.insert(
             .system(ContentRedactor.placeholderInstructions), at: 0)
         }
@@ -260,7 +261,8 @@ extension AgentRuntime {
       }) {
         try await complete(
           turn.request, with: turn.provider, retry: turn.retry, budget: state.budget,
-          context: context, pid: state.pid, retriesEmptyReply: !repairsEmptyReply, emit: emit
+          context: context, pid: state.pid, retriesEmptyReply: !repairsEmptyReply,
+          systemContext: state.request.systemContext, emit: emit
         ) { event in
           if turn.selectingTools {
             switch event {

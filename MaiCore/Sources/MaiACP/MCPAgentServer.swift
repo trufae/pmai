@@ -89,6 +89,7 @@ public actor MCPAgentServer {
       provider: agent.provider,
       model: agent.model,
       messages: messages,
+      systemContext: agent.systemContext,
       toolNames: agent.toolNames,
       toolGroupNames: agent.toolGroupNames,
       subagentNames: agent.subagentNames,

@@ -649,6 +649,7 @@ struct SessionProfile: Sendable {
   var model: String
   var instructions: String
   var systemPrompt: String?
+  var systemContext: Bool?
   var toolNames: Set<String>
   var toolGroupNames: Set<String>
   var subagentNames: Set<String>
@@ -676,6 +677,7 @@ struct SessionProfile: Sendable {
     model = definition.model
     instructions = definition.instructions
     systemPrompt = definition.systemPrompt
+    systemContext = definition.systemContext
     toolNames = definition.toolNames
     toolGroupNames = definition.toolGroupNames
     subagentNames = definition.subagentNames
@@ -704,6 +706,7 @@ struct SessionProfile: Sendable {
     self.model = model
     self.instructions = instructions
     systemPrompt = nil
+    systemContext = nil
     toolNames = Set(
       [
         MaiCurrentTimeTool.name,
@@ -744,6 +747,7 @@ struct SessionProfile: Sendable {
       isEnabled: isEnabled,
       instructions: instructions,
       systemPrompt: systemPrompt,
+      systemContext: systemContext,
       provider: provider,
       model: model,
       toolNames: toolNames,
@@ -1413,7 +1417,7 @@ struct MaiCLI {
       var configuration = loaded?.configuration
       if var existing = configuration {
         var changed = existing.associateSystemPrompts()
-        if MaiPlanningAgent.install(in: &existing) { changed = true }
+        if !MaiAgentPresets.install(in: &existing).isEmpty { changed = true }
         if existing.fileAccess == nil {
           existing.fileAccess = .init()
           changed = true
@@ -1573,7 +1577,7 @@ struct MaiCLI {
         if !created.providers.isEmpty {
           created.defaultAgent = profile.agentID
           created.upsertAgent(profile.agentDefinition)
-          MaiPlanningAgent.install(in: &created)
+          MaiAgentPresets.install(in: &created)
         }
         try created.save(to: URL(fileURLWithPath: configurationPath))
         configuration = created
@@ -3326,6 +3330,7 @@ struct MaiCLI {
         provider: profile.provider,
         model: profile.model,
         messages: session.history.messages,
+        systemContext: profile.systemContext,
         toolNames: profile.toolNames,
         toolGroupNames: profile.toolGroupNames,
         subagentNames: profile.subagentNames,
@@ -6051,6 +6056,7 @@ struct MaiCLI {
         provider: profile.provider,
         model: profile.model,
         messages: session.history.messages,
+        systemContext: profile.systemContext,
         toolNames: profile.toolNames,
         toolGroupNames: profile.toolGroupNames,
         subagentNames: profile.subagentNames,
@@ -6149,6 +6155,7 @@ struct MaiCLI {
       provider: profile.provider,
       model: profile.model,
       messages: messages,
+      systemContext: profile.systemContext,
       toolNames: profile.toolNames,
       toolGroupNames: profile.toolGroupNames,
       subagentNames: profile.subagentNames,
@@ -8509,6 +8516,7 @@ struct MaiCLI {
           session.profile.retry = agent.retry
           session.profile.autocompact = agent.autocompact
           session.profile.systemPrompt = agent.systemPrompt
+          session.profile.systemContext = agent.systemContext
           try applySystemInstructions(
             agent.instructions,
             replacing: session.profile.instructions,
@@ -8766,7 +8774,7 @@ struct MaiCLI {
         definition.model = selection.model
         draft.upsertAgent(definition)
         draft.defaultAgent = definition.id
-        MaiPlanningAgent.install(in: &draft, using: definition)
+        MaiAgentPresets.install(in: &draft, using: definition)
         if !chatOnly {
           for task in AgentTask.allCases {
             try draft.assignTask(
@@ -9744,7 +9752,7 @@ struct MaiCLI {
     definition.toolNames = []
     selection.apply(to: &definition)
     var changed = draft.upsertAgent(definition)
-    if MaiPlanningAgent.install(in: &draft, using: definition) { changed.append("plan") }
+    changed += MaiAgentPresets.install(in: &draft, using: definition)
 
     do {
       try draft.save(to: URL(fileURLWithPath: configurationPath))
@@ -10243,7 +10251,7 @@ struct MaiCLI {
       return false
     }
     var changed = draft.upsertAgent(definition)
-    if MaiPlanningAgent.install(in: &draft, using: definition) { changed.append("plan") }
+    changed += MaiAgentPresets.install(in: &draft, using: definition)
     if makeDefault { draft.defaultAgent = definition.id }
     do {
       try draft.save(to: URL(fileURLWithPath: configurationPath))
@@ -15212,7 +15220,7 @@ struct MaiCLI {
         ]),
       memory: ConfiguredMemory(),
       approvals: ConfiguredApprovals())
-    MaiPlanningAgent.install(in: &configuration)
+    MaiAgentPresets.install(in: &configuration)
     return configuration
   }
 

@@ -50,6 +50,22 @@ Both are edited from every host: `/agents describe ID TEXT` and
 `/agents enable|disable ID` in the REPL and the same `MaiConfiguration` file
 the iOS app reads.
 
+### Bare preset
+
+pmai installs an editable `bare` agent through the same setup as `plan`, including
+for existing configurations. Select it with `/agent use bare` or `--agent bare`.
+It starts with an empty named system prompt, no tools, skills, or delegation,
+and tool calling off. Unsolicited tool calls are ignored. Like `plan`, it uses
+`main`'s provider and model initially and rejects providers that run their own
+tool loop, such as ACP.
+
+Its `systemContext: false` setting suppresses runtime additions: memory,
+AGENTS.md, SOUL.md, working directory, reasoning guidance, and redaction guidance.
+Its automatic compaction is disabled. Other agents retain the existing context
+behavior when this setting is absent. The configured system prompt stays
+editable: `/edit agent bare` or the `bare` entry in `/prompts`. Existing edits,
+disabling, and deletion with a retained named prompt survive startup.
+
 ### Planning preset
 
 pmai installs an editable `plan` agent alongside the general assistant, including

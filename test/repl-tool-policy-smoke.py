@@ -279,6 +279,29 @@ for line in sys.stdin:
             assert 'github_pr' in {t['function']['name'] for t in calls[0]['tools']}, calls[0]
             assert json.loads(config.read_text())['airplane'] is False
 
+            # Bare chats must not inherit ambient instructions or execute a
+            # tool call even when a provider returns one without being offered tools.
+            (root / 'AGENTS.md').write_text('BARE MUST NOT SEE PROJECT RULES')
+            output, calls = run(['/agent use bare', '/set use.agentsmd on', 'Hello bare',
+                                 '/agent use main'], [final])
+            assert len(calls) == 1 and not calls[0].get('tools'), calls
+            assert [m['role'] for m in calls[0]['messages']] == ['user'], calls
+            bare = next(a for a in json.loads(config.read_text())['agents'] if a['id'] == 'bare')
+            assert bare['instructions'] == '' and bare['systemPrompt'] == 'bare', bare
+            assert bare['systemContext'] is False and bare['toolCallingStrategy'] == 'off', bare
+            assert not bare['toolNames'] and not bare['toolGroupNames'] and not bare['subagentNames']
+            assert bare['toolPolicy']['localOnly'] is True
+            assert bare['toolPolicy']['groups']['mcp'] == 'disabled'
+            assert bare['provider'] == 'local' and bare['model'] == 'main'
+            for tool_call in [call('files_write', {'path': str(root / 'bare-write'), 'content': 'bad'}),
+                              call('call_tool', {'name': 'run_shell', 'arguments': {
+                                  'command': 'touch bare-write'}})]:
+                _, calls = run(['/agent use bare', 'Try a tool', '/agent use main'], [tool_call])
+                assert len(calls) == 1 and not calls[0].get('tools'), calls
+                assert not (root / 'bare-write').exists()
+            run(['/set use.agentsmd off'], [])
+            (root / 'AGENTS.md').unlink()
+
             # Planning must inspect files and save its handoff without exposing
             # commands, writes, skills, delegation, or inherited MCP tools.
             fixture = root / 'planning.txt'
@@ -346,6 +369,17 @@ for line in sys.stdin:
             assert planning['model'] == 'custom-model' and planning['description'] == 'My planner'
             assert planning['enabled'] is False
             assert planning['instructions'] == 'Ask about constraints before planning.'
+            run(['/agent model bare custom-bare-model', '/agent disable bare'], [])
+            customized = json.loads(config.read_text())
+            customized['prompts']['system']['bare'] = 'My bare prompt'
+            config.write_text(json.dumps(customized))
+            run([], [])
+            bare = next(a for a in json.loads(config.read_text())['agents'] if a['id'] == 'bare')
+            assert bare['model'] == 'custom-bare-model' and bare['enabled'] is False
+            assert bare['instructions'] == 'My bare prompt' and bare['systemContext'] is False
+            run(['/agent del bare'], [])
+            run([], [])
+            assert not any(a['id'] == 'bare' for a in json.loads(config.read_text())['agents'])
             run(['/agent del plan'], [])
             run([], [])
             assert not any(a['id'] == 'plan' for a in json.loads(config.read_text())['agents'])

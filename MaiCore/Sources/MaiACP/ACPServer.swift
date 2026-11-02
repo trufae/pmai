@@ -895,6 +895,7 @@ public actor ACPServer {
       provider: agent.provider,
       model: agent.model,
       messages: sessions[id]!.saved.transcript,
+      systemContext: agent.systemContext,
       toolNames: agent.toolNames,
       toolGroupNames: agent.toolGroupNames,
       subagentNames: agent.subagentNames,
