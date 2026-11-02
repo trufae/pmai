@@ -4699,8 +4699,7 @@ struct MaiCLI {
             do {
               let isRun = argument.split(whereSeparator: \.isWhitespace).first?.lowercased() == "run"
               let fields = try shellWords(argument, remainderAfter: isRun ? 2 : .max)
-              var action = fields.first?.lowercased() ?? "list"
-              if action == "ls", fields.count == 1 { action = "list" }
+              let action = fields.first?.lowercased() ?? "list"
               let arguments = Array(fields.dropFirst())
               let hosts = remoteServer.hosts
               switch action {
