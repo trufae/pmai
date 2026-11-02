@@ -85,6 +85,7 @@ import Observation
           } else {
             #if os(macOS) || os(Linux) || os(Android)
             try Task.checkCancellation()
+            try FileManager.default.createDirectory(at: URL(fileURLWithPath: cwd), withIntermediateDirectories: true)
             let terminal = try RemotePTY(cwd: URL(fileURLWithPath: cwd), columns: columns, rows: rows)
             local = terminal
             interactive = true

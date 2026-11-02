@@ -46,4 +46,8 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         invitation = intent.dataString?.takeIf { it.startsWith("pmai-acp://connect/") }.orEmpty()
     }
+    override fun onStop() {
+        (application as MaiApplication).repository.terminals.persist()
+        super.onStop()
+    }
 }

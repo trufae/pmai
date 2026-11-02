@@ -62,7 +62,7 @@ internal class TermuxShell(private val app: Application, private val id: String,
                     val candidate = peer.getInputStream().bufferedReader()
                     val auth = try { candidate.readBoundedLine(128) } catch (_: Exception) { null }
                     if (auth != null && MessageDigest.isEqual(auth.toByteArray(), token.toByteArray())) {
-                        socket = peer; reader = candidate; peer.soTimeout = 0; break
+                        socket = peer; reader = candidate; peer.soTimeout = 0; peer.tcpNoDelay = true; break
                     }
                     peer.close()
                 }

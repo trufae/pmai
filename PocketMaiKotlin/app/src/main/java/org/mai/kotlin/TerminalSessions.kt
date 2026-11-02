@@ -79,7 +79,8 @@ internal class TerminalSessions(private val app: Application, private val execut
     }
 
     fun select(id: String) { selected = id; tabs.firstOrNull { it.id == id }?.start() }
-    fun dismiss() { visible = false; tabs.forEach { it.persist() }; saveIndex() }
+    fun persist() { tabs.forEach { it.persist() }; saveIndex() }
+    fun dismiss() { visible = false; persist() }
     private fun remove(tab: ShellSession) {
         tabs.remove(tab)
         if (selected == tab.id) selected = tabs.firstOrNull()?.id.orEmpty()
@@ -115,6 +116,9 @@ internal class TerminalSessions(private val app: Application, private val execut
         var status by mutableStateOf("Connecting…")
         var error by mutableStateOf("")
         var interactive by mutableStateOf(false)
+        var applicationGestures by mutableStateOf(false)
+            private set
+        private val modes = TerminalModes()
         val modifiers = TerminalModifiers()
         val archive = AtomicFile(root.resolve("$id.session.json"))
         val historyFile = root.resolve("$id.properties")
@@ -123,7 +127,7 @@ internal class TerminalSessions(private val app: Application, private val execut
         private var remoteID = ""
         private var offset = 0
         private var sequence = -1
-        private var pendingAck: Pair<Int, ByteArray>? = null
+        private var pendingAck: Int? = null
         private var commandMode = false
         private var output = ByteArray(0)
         private var resultID = ""
@@ -135,6 +139,8 @@ internal class TerminalSessions(private val app: Application, private val execut
         private var line = ""
         private val history = TerminalHistoryCursor()
         private var storage: Job = Job().apply { complete() }
+        private var checkpoint: Job? = null
+        private var dirty = false
         private var removed = false
         private var columns = 80
         private var rows = 24
@@ -154,6 +160,8 @@ internal class TerminalSessions(private val app: Application, private val execut
                     offset = saved.optInt("offset")
                     output = Base64.decode(saved.optString("data"), Base64.NO_WRAP)
                     emulator.writeInput(output)
+                    modes.feed(output)
+                    applicationGestures = modes.application
                 }
             } catch (failure: Exception) { error = "Could not load terminal history: ${failure.localizedMessage}" }
         }
@@ -168,7 +176,7 @@ internal class TerminalSessions(private val app: Application, private val execut
                 interactive = true
                 started = true
                 termux = TermuxShell(app, id, columns, rows,
-                    onData = { bytes -> withContext(Dispatchers.Main) { feed(bytes); persist(); storage }.join() },
+                    onData = { bytes -> withContext(Dispatchers.Main) { feed(bytes); schedulePersist() } },
                     onStatus = { message -> scope.launch { status = message } },
                     onError = { message -> scope.launch { error = message; started = false } })
                 termux?.start()
@@ -182,7 +190,8 @@ internal class TerminalSessions(private val app: Application, private val execut
         }
         fun reconnect() {
             error = ""
-            pendingAck?.let { (serial, data) -> persistAndAck(serial, data); return }
+            pendingAck?.let { persistAndAck(it); return }
+            persist()
             if (termux != null) { termux?.close(); termux = null; started = false; start() }
             else if (!started) start()
             else command("shellReconnect", "id" to id)
@@ -193,6 +202,7 @@ internal class TerminalSessions(private val app: Application, private val execut
         }
         private fun forget() {
             removed = true
+            checkpoint?.cancel(); checkpoint = null
             scope.launch { storage.join(); remove(this@ShellSession) }
         }
         fun receive(value: JSONObject) {
@@ -212,7 +222,14 @@ internal class TerminalSessions(private val app: Application, private val execut
                 remoteID = value.optString("remoteID")
                 offset = value.optInt("offset")
                 feed(Base64.decode(data, Base64.NO_WRAP))
-                persistAndAck(serial, archiveJSON())
+                if (location.hostID.isNotEmpty()) {
+                    // The next remote read consumes these bytes on the host.
+                    // Save data and its offset together before releasing it.
+                    persistAndAck(serial)
+                } else {
+                    command("shellAck", "id" to id, "sequence" to serial.toString())
+                    schedulePersist()
+                }
             }
             val result = value.optJSONObject("command") ?: return
             if (result.optString("id") == resultID && resultID.isNotEmpty()) {
@@ -228,19 +245,29 @@ internal class TerminalSessions(private val app: Application, private val execut
                 }
             }
         }
-        private fun persistAndAck(serial: Int, data: ByteArray) {
-            pendingAck = serial to data
-            val previous = storage
-            storage = scope.launch {
-                previous.join()
-                try {
-                    withContext(Dispatchers.IO) { archive.writeBytes(data) }
-                    pendingAck = null
-                    command("shellAck", "id" to id, "sequence" to serial.toString())
-                } catch (failure: Exception) { error = "Could not save terminal: ${failure.localizedMessage}. Tap Reconnect to retry." }
+        private fun schedulePersist() {
+            dirty = true
+            if (checkpoint != null) return
+            checkpoint = scope.launch {
+                do {
+                    delay(250)
+                    dirty = false
+                    saveHistory(includeHistory = false)
+                    storage.join()
+                } while (dirty)
+                checkpoint = null
+            }
+        }
+        private fun persistAndAck(serial: Int) {
+            pendingAck = serial
+            saveHistory(includeHistory = false) {
+                pendingAck = null
+                command("shellAck", "id" to id, "sequence" to serial.toString())
             }
         }
         private fun feed(data: ByteArray) {
+            modes.feed(data)
+            applicationGestures = modes.application
             emulator.writeInput(data)
             output += data
             if (output.size > 2 * 1024 * 1024) {
@@ -250,16 +277,23 @@ internal class TerminalSessions(private val app: Application, private val execut
             }
         }
         private fun feedText(text: String) = feed(text.replace("\r\n", "\n").replace("\n", "\r\n").toByteArray())
-        fun persist() { saveHistory() }
-        private fun archiveJSON() = JSONObject().put("remoteID", remoteID).put("offset", offset)
-            .put("data", Base64.encodeToString(output, Base64.NO_WRAP)).toString().toByteArray()
-        private fun saveHistory() {
+        fun persist() { checkpoint?.cancel(); checkpoint = null; saveHistory() }
+        private fun saveHistory(includeHistory: Boolean = true, onSaved: () -> Unit = {}) {
             val saved = buffer
-            val data = archiveJSON()
+            // feed() replaces the byte array, so these references form a
+            // consistent data/offset checkpoint without encoding on the UI thread.
+            val savedOutput = output
+            val savedRemoteID = remoteID
+            val savedOffset = offset
             val previous = storage
             storage = scope.launch {
                 previous.join()
-                try { withContext(Dispatchers.IO) { saved.save(historyFile); archive.writeBytes(data) } }
+                try { withContext(Dispatchers.IO) {
+                    if (includeHistory) saved.save(historyFile)
+                    val data = JSONObject().put("remoteID", savedRemoteID).put("offset", savedOffset)
+                        .put("data", Base64.encodeToString(savedOutput, Base64.NO_WRAP)).toString().toByteArray()
+                    archive.writeBytes(data)
+                }; onSaved() }
                 catch (failure: Exception) { error = "Could not save history: ${failure.localizedMessage}" }
             }
         }

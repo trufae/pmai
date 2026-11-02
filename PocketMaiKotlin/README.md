@@ -206,7 +206,12 @@ Local shell processes end when Android kills their owning app.
 The terminal uses [ConnectBot termlib](https://github.com/connectbot/termlib)
 (Apache 2.0, libvterm MIT) for ANSI/VT emulation and scrollback. Pinch to resize
 the font; the setting is saved. The row above the keyboard provides one-shot
-Ctrl/Alt, Esc, Tab, arrows and Page Up/Down. In live shells, command history and
+Ctrl/Alt, Enter, Esc, Tab, arrows and Page Up/Down. Swipes send arrow keys while
+an application enables an alternate screen, application cursor keys or mouse
+tracking, so full-screen tools such as radare2 receive navigation input. Drag
+up/left to move down/right through content, and down/right to move up/left.
+The terminal menu can force arrow keys or scrollback instead of automatic
+detection. In live shells, command history and
 line editing come from the shell itself. In command mode, Up/Down recall history
 and the history button offers search, edit and run.
 

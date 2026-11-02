@@ -22,7 +22,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.connectbot.terminal.Terminal
 import org.connectbot.terminal.VTermKey
 
 @Composable internal fun TerminalScreen(model: MaiViewModel) {
@@ -32,12 +31,14 @@ import org.connectbot.terminal.VTermKey
     val keyboard = LocalSoftwareKeyboardController.current
     var history by rememberSaveable { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
+    var swipeMode by remember { mutableStateOf(preferences.getString("terminalSwipes", "auto") ?: "auto") }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         if (it) session?.reconnect()
     }
     BackHandler(onBack = deck::dismiss)
     MaterialTheme(colorScheme = darkColorScheme(background = Color.Black, surface = Color.Black,
         primary = Color(0xFF81C784), onBackground = Color.White, onSurface = Color.White)) {
+      Surface(color = Color.Black, contentColor = Color.White) {
         Column(Modifier.fillMaxSize().background(Color.Black).safeDrawingPadding().imePadding()) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 IconButton(onClick = deck::dismiss) { Icon(Icons.Outlined.Close, "Return to chat") }
@@ -53,6 +54,13 @@ import org.connectbot.terminal.VTermKey
                         DropdownMenuItem(text = { Text("Reconnect") }, onClick = { menu = false; session?.reconnect() })
                         DropdownMenuItem(text = { Text("Clear screen") }, onClick = { menu = false; session?.clear() })
                         DropdownMenuItem(text = { Text("Hide keyboard") }, onClick = { menu = false; keyboard?.hide() })
+                        listOf("auto" to "Swipes: automatic", "keys" to "Swipes: arrow keys", "history" to "Swipes: scrollback").forEach { (value, title) ->
+                            DropdownMenuItem(text = { Text(title) }, leadingIcon = {
+                                Icon(if (swipeMode == value) Icons.Outlined.RadioButtonChecked else Icons.Outlined.RadioButtonUnchecked, null)
+                            }, onClick = {
+                                swipeMode = value; preferences.edit().putString("terminalSwipes", value).apply(); menu = false
+                            })
+                        }
                         DropdownMenuItem(text = { Text("Close this session") }, onClick = { menu = false; session?.end() })
                     }
                 }
@@ -79,17 +87,20 @@ import org.connectbot.terminal.VTermKey
                     }
                 }
                 var font by remember { mutableFloatStateOf(preferences.getFloat("terminalFontSize", 14f).coerceIn(8f, 32f)) }
-                // Keep the emulator outside composition; resizing only changes its cell grid.
-                Terminal(session.emulator, modifier = Modifier.weight(1f).fillMaxWidth()
-                    .pinchToResizeFont(onZoom = { font = (font * it).coerceIn(8f, 32f) },
-                        onFinished = { preferences.edit().putFloat("terminalFontSize", font).apply() }),
-                    initialFontSize = font.sp, minFontSize = font.sp, maxFontSize = font.sp,
-                    keyboardEnabled = session.canInput, modifierManager = session.modifiers)
+                TerminalViewport(session, font.sp, Modifier.weight(1f).fillMaxWidth(),
+                    swipeKeys = session.canInput && session.interactive && when (swipeMode) {
+                        "keys" -> true
+                        "history" -> false
+                        else -> session.applicationGestures
+                    },
+                    onZoom = { font = (font * it).coerceIn(8f, 32f) },
+                    onZoomFinished = { preferences.edit().putFloat("terminalFontSize", font).apply() })
                 if (!session.interactive) Text(session.status, Modifier.padding(horizontal = 12.dp), style = MaterialTheme.typography.labelSmall)
                 TerminalKeyBar(session, onHistory = { history = true })
                 if (history) TerminalHistorySheet(session, onDismiss = { history = false })
             }
         }
+      }
     }
 }
 
@@ -97,7 +108,7 @@ import org.connectbot.terminal.VTermKey
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
         FilterChip(selected = session.modifiers.control, onClick = { session.modifiers.control = !session.modifiers.control }, label = { Text("Ctrl") })
         FilterChip(selected = session.modifiers.alt, onClick = { session.modifiers.alt = !session.modifiers.alt }, label = { Text("Alt") })
-        listOf("Esc" to VTermKey.ESCAPE, "Tab" to VTermKey.TAB, "←" to VTermKey.LEFT,
+        listOf("Enter" to VTermKey.ENTER, "Esc" to VTermKey.ESCAPE, "Tab" to VTermKey.TAB, "←" to VTermKey.LEFT,
             "↓" to VTermKey.DOWN, "↑" to VTermKey.UP, "→" to VTermKey.RIGHT,
             "PgUp" to VTermKey.PAGEUP, "PgDn" to VTermKey.PAGEDOWN).forEach { (title, code) ->
             TextButton(onClick = {

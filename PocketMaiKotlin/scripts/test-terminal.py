@@ -60,7 +60,7 @@ with tempfile.TemporaryDirectory() as home:
         second = Session(home); sessions.append(second)
         # Disable echo so a marker only proves that the shell actually ran it.
         for session in sessions:
-            session.send("stty -echo; printf '\\nREADY_%s\\n' marker\n")
+            session.send("stty -echo; export PS1='PMAI_READY> '; printf '\\nREADY_%s\\n' marker\n")
             session.until(b'READY_marker\r\n')
         first.send("export PMAI_TAB=first; printf 'DIR:%s\\n' \"$PWD\"; stty size; printf 'DONE_%s\\n' one\n")
         output = first.until(b'DONE_one\r\n')
@@ -71,9 +71,14 @@ with tempfile.TemporaryDirectory() as home:
         first.request(columns=100, rows=35)
         first.send("stty size; printf 'RESIZED_%s\\n' ok\n")
         assert b'35 100' in first.until(b'RESIZED_ok\r\n')
-        first.send("printf 'SLEEP_%s\\n' started; sleep 120\n")
+        # Emit readiness from the foreground job, after bash has handed over
+        # the tty; a marker from bash itself races with starting that job.
+        first.send("sh -c 'printf \"SLEEP_%s\\n\" started; exec sleep 120'\n")
         first.until(b'SLEEP_started\r\n')
         first.send('\x03')
+        # Wait for the shell to regain the foreground. Sending the next command
+        # alongside Ctrl-C can legitimately flush that command from the PTY.
+        first.until(b'PMAI_READY> ')
         first.send("printf 'INTERRUPTED_%s\\n' ok\n")
         first.until(b'INTERRUPTED_ok\r\n')
         second.send("printf '☃\\n'; exit 7\n")

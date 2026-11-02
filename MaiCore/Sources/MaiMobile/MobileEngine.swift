@@ -8,7 +8,7 @@ import Observation
 
 /// UI-independent mobile application facade. JSON is a snapshot of app data,
 /// never a view tree. All provider requests and persistence remain in MaiChat.
-@MainActor public final class MobileEngine {
+@MainActor @Observable public final class MobileEngine {
   let chat: PortableChat
   private let remote: RemoteState
   private let awake = AwakeController(acquire: { {} })

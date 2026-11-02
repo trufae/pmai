@@ -71,7 +71,7 @@ kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarg
 tasks.named("preBuild") { dependsOn(syncIcon, generateWebSdk) }
 dependencies {
     implementation(project(":bridge"))
-    implementation("org.connectbot:termlib:0.0.23")
+    implementation("org.connectbot:termlib:0.0.24")
     implementation(platform("androidx.compose:compose-bom:2026.02.01"))
     implementation("androidx.activity:activity-compose:1.11.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")

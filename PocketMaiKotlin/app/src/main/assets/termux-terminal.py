@@ -15,6 +15,7 @@ import termios
 port, token, columns, rows = sys.argv[1:]
 peer = socket.create_connection(('127.0.0.1', int(port)), timeout=30)
 peer.settimeout(None)
+peer.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 peer.sendall(token.encode() + b'\n')
 pid, master = pty.fork()
 if pid == 0:

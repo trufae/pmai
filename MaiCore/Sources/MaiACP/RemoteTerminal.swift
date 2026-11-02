@@ -69,6 +69,8 @@ public final class RemotePTY: @unchecked Sendable {
   private let lock = NSLock()
   private let master: Int32
   private let pid: Int32
+  private let wakeRead: Int32
+  private let wakeWrite: Int32
   private var output = Data()
   private var outputOffset = 0
   private var input = Data()
@@ -104,14 +106,31 @@ public final class RemotePTY: @unchecked Sendable {
     let shell = FileManager.default.isExecutableFile(atPath: configured) ? configured : fallback
     let env = environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
     defer { for pointer in env { free(pointer) } }
+    var wakeDescriptors: [Int32] = [-1, -1]
+    guard pipe(&wakeDescriptors) == 0 else {
+      let error = Self.error()
+      _ = close(master)
+      throw error
+    }
+    for fd in wakeDescriptors {
+      guard fcntl(fd, F_SETFD, FD_CLOEXEC) == 0, fcntl(fd, F_SETFL, O_NONBLOCK) == 0 else {
+        let error = Self.error()
+        for descriptor in wakeDescriptors { _ = close(descriptor) }
+        _ = close(master)
+        throw error
+      }
+    }
     let child = mai_terminal_shell(master, slave, shell, cwd.path, env)
     guard child >= 0 else {
       let error = Self.error()
+      for descriptor in wakeDescriptors { _ = close(descriptor) }
       _ = close(master)
       throw error
     }
     self.master = master
     pid = child
+    wakeRead = wakeDescriptors[0]
+    wakeWrite = wakeDescriptors[1]
     Thread.detachNewThread { self.pump() }
   }
 
@@ -154,7 +173,7 @@ public final class RemotePTY: @unchecked Sendable {
         throw JSONRPCError.invalidParams("Terminal input queue is full; send smaller chunks")
       }
       input.append(data)
-      if !data.isEmpty { lastActivity = ProcessInfo.processInfo.systemUptime }
+      if !data.isEmpty { lastActivity = ProcessInfo.processInfo.systemUptime; wakePump() }
     }
   }
 
@@ -174,7 +193,7 @@ public final class RemotePTY: @unchecked Sendable {
     await withCheckedContinuation { continuation in
       lock.withLock {
         if exitCode != nil { continuation.resume() }
-        else { stopping = true; closed.append(continuation) }
+        else { stopping = true; closed.append(continuation); wakePump() }
       }
     }
   }
@@ -211,6 +230,13 @@ public final class RemotePTY: @unchecked Sendable {
     }
   }
 
+  // Called under lock; a full pipe already has a wakeup pending. This lets
+  // keystrokes and cancellation interrupt poll instead of waiting for its tick.
+  private func wakePump() {
+    var byte: UInt8 = 1
+    _ = write(wakeWrite, &byte, 1)
+  }
+
   private func pump() {
     var status: Int32 = 0
     var reaped = false
@@ -220,10 +246,15 @@ public final class RemotePTY: @unchecked Sendable {
         (stopping, output.count < Self.capacity, !input.isEmpty)
       }
       if stop { break }
-      var descriptor = pollfd(fd: canRead || canWrite ? master : -1,
-        events: (canRead ? Int16(POLLIN) : 0) | (canWrite ? Int16(POLLOUT) : 0), revents: 0)
-      let ready = poll(&descriptor, 1, 50)
+      var descriptors = [pollfd(fd: canRead || canWrite ? master : -1,
+        events: (canRead ? Int16(POLLIN) : 0) | (canWrite ? Int16(POLLOUT) : 0), revents: 0),
+        pollfd(fd: wakeRead, events: Int16(POLLIN), revents: 0)]
+      let ready = poll(&descriptors, 2, 50)
       if ready < 0, errno != EINTR { break }
+      if descriptors[1].revents & Int16(POLLIN) != 0 {
+        while buffer.withUnsafeMutableBytes({ read(wakeRead, $0.baseAddress, $0.count) }) > 0 {}
+      }
+      let descriptor = descriptors[0]
       if canWrite, descriptor.revents & Int16(POLLOUT) != 0 {
         lock.withLock {
           let count = input.withUnsafeBytes { write(master, $0.baseAddress, min($0.count, 16 * 1024)) }
@@ -263,6 +294,8 @@ public final class RemotePTY: @unchecked Sendable {
     }
     lock.withLock {
       _ = close(master)
+      _ = close(wakeRead)
+      _ = close(wakeWrite)
       exitCode = status & 0x7f == 0 ? Int((status >> 8) & 0xff) : 128 + Int(status & 0x7f)
       if let (_, reliable, continuation) = pending {
         pending = nil

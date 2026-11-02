@@ -116,6 +116,51 @@ private func state(_ json: String) throws -> [String: Any] {
   try #require(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
 }
 
+#if os(macOS) || os(Linux)
+// Opening the first shell must publish its readiness/output to Kotlin, without
+// relying on an unrelated chat/settings change to enable the terminal keyboard.
+@Test(.timeLimit(.minutes(1))) @MainActor
+func newlyOpenedShellPublishesReadinessAndRunsInput() async throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let (updates, continuation) = AsyncStream<String>.makeStream()
+  defer { continuation.finish() }
+  let engine = try MobileEngine(directory: directory, update: { continuation.yield($0) })
+  engine.observe()
+  var iterator = updates.makeAsyncIterator()
+  // Finish initial catalog work so it cannot accidentally reveal the new shell.
+  while let update = await iterator.next() {
+    let agent = try #require(state(update)["agent"] as? [String: Any])
+    if agent["loading"] as? Bool == false, let tools = agent["tools"] as? [Any], !tools.isEmpty { break }
+  }
+  let id = UUID().uuidString
+  engine.execute(try command(["action": "shellOpen", "id": id]))
+  defer { engine.execute((try? command(["action": "shellClose", "id": id])) ?? "{}") }
+  var sent = false
+  var output = Data()
+  var sequence = -1
+  while let update = await iterator.next() {
+    let shells = try #require(state(update)["shells"] as? [[String: Any]])
+    guard let shell = shells.first(where: { $0["id"] as? String == id }) else { continue }
+    #expect((shell["error"] as? String ?? "").isEmpty)
+    if shell["interactive"] as? Bool == true, !sent {
+      sent = true
+      engine.execute(try command(["action": "shellInput", "id": id,
+        "data": Data("printf 'LOCAL_%s\\n' working\rexit\r".utf8).base64EncodedString()]))
+    }
+    if let encoded = shell["data"] as? String, let data = Data(base64Encoded: encoded), !data.isEmpty,
+      let serial = shell["sequence"] as? Int, serial != sequence {
+      sequence = serial
+      output.append(data)
+      engine.execute(try command(["action": "shellAck", "id": id, "sequence": String(serial)]))
+    }
+    if (shell["status"] as? String)?.hasPrefix("Exited") == true { break }
+  }
+  #expect(sent)
+  #expect(String(decoding: output, as: UTF8.self).contains("LOCAL_working"))
+}
+#endif
+
 @Test @MainActor func multipleProvidersRetainIndependentCredentials() throws {
   let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
   defer { try? FileManager.default.removeItem(at: directory) }
