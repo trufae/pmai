@@ -144,8 +144,8 @@ public final class StdioJSONRPCTransport: JSONRPCTransport, @unchecked Sendable 
     StdioJSONRPCTransport(input: .standardInput, output: .standardOutput)
   }
 
-  /// Starts a child and speaks to it over its pipes. Commands without a slash
-  /// are resolved through `env`, as a shell would.
+  /// Starts a child and speaks to it over its pipes, resolving local commands
+  /// through the platform's executable search path.
   public static func spawn(
     command: String,
     arguments: [String] = [],
@@ -156,16 +156,9 @@ public final class StdioJSONRPCTransport: JSONRPCTransport, @unchecked Sendable 
     let stdin = Pipe()
     let stdout = Pipe()
     let stderr = Pipe()
-    let executable = NSString(string: command).expandingTildeInPath
-    if executable.contains("/") {
-      child.executableURL = URL(fileURLWithPath: executable).standardizedFileURL
-      child.arguments = arguments
-    } else {
-      child.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-      child.arguments = [executable] + arguments
-    }
-    if let environment { child.environment = environment }
-    child.currentDirectoryURL = workingDirectory
+    try LocalProcess.configure(
+      child, command: command, arguments: arguments,
+      environment: environment, workingDirectory: workingDirectory)
     child.standardInput = stdin
     child.standardOutput = stdout
     child.standardError = stderr

@@ -404,27 +404,14 @@
       let input = Pipe()
       let output = Pipe()
       let errors = Pipe()
-      let command = NSString(string: configuration.command).expandingTildeInPath
-      if command.contains("/") {
-        let base =
-          configuration.workingDirectory
-          ?? URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
-        let executableURL = URL(fileURLWithPath: command, relativeTo: base).standardizedFileURL
-        // Foundation may interpret a URL-shaped command as a non-file URL.
-        // Process raises an Objective-C exception for those, bypassing Swift catch.
-        guard executableURL.isFileURL else {
-          throw MCPStdioTransportError.launchFailed(
-            command: configuration.command,
-            message: "Expected a local executable path; configure HTTP MCP servers with a URL instead.")
-        }
-        child.executableURL = executableURL
-        child.arguments = configuration.args
-      } else {
-        child.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        child.arguments = [command] + configuration.args
+      do {
+        try LocalProcess.configure(
+          child, command: configuration.command, arguments: configuration.args,
+          environment: configuration.environment, workingDirectory: configuration.workingDirectory)
+      } catch {
+        throw MCPStdioTransportError.launchFailed(
+          command: configuration.command, message: error.localizedDescription)
       }
-      child.environment = configuration.environment
-      child.currentDirectoryURL = configuration.workingDirectory
       child.standardInput = input
       child.standardOutput = output
       child.standardError = errors

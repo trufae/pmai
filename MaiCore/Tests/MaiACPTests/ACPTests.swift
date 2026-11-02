@@ -5,6 +5,48 @@ import MaiStandardTools
 @testable import MaiACP
 @testable import MaiCore
 
+#if os(Windows)
+@Test("Windows ACP launches a PATH executable and preserves request data and literal arguments")
+func windowsACPStdioRoundTrip() async throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent("acp ü \(UUID())")
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let script = directory.appendingPathComponent("peer.ps1")
+  try #"""
+    param([string]$Literal)
+    [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
+    [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+    while ($null -ne ($line = [Console]::ReadLine())) {
+      $request = $line | ConvertFrom-Json
+      @{jsonrpc='2.0'; id=$request.id; result=@{value=$request.params; argument=$Literal; cwd=[Environment]::CurrentDirectory}} |
+        ConvertTo-Json -Compress -Depth 8 | ForEach-Object { [Console]::WriteLine($_) }
+    }
+    """#.write(to: script, atomically: false, encoding: .utf8)
+  var environment = LocalProcess.mergedEnvironment(ProcessInfo.processInfo.environment)
+  let system = try #require(environment["SYSTEMROOT"])
+  environment = LocalProcess.mergedEnvironment(environment, overrides: [
+    "PATH": system + "\\System32\\WindowsPowerShell\\v1.0"
+  ])
+  let literal = "spaces ü & | < > ^ % ! $(literal) quoted \"x\" slash\\"
+  let transport = try StdioJSONRPCTransport.spawn(
+    command: "powershell", arguments: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script.path, literal],
+    environment: environment, workingDirectory: directory)
+  let peer = JSONRPCPeer(transport: transport)
+  await peer.start()
+  do {
+    let response = try await peer.request("echo", params: .string(literal), timeout: 30)
+    #expect(response.objectValue?["value"]?.stringValue == literal)
+    #expect(response.objectValue?["argument"]?.stringValue == literal)
+    let cwd = try #require(response.objectValue?["cwd"]?.stringValue)
+    #expect(URL(fileURLWithPath: cwd).standardizedFileURL == directory.standardizedFileURL)
+  } catch {
+    await peer.close()
+    throw error
+  }
+  await peer.close()
+}
+#endif
+
 #if os(macOS) || os(Linux) || os(Android)
 @Test("Remote PTYs retain cwd, have a controlling tty, resize, interrupt jobs and close on disconnect")
 func acpInteractiveTerminal() async throws {

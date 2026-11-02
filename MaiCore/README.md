@@ -1851,6 +1851,12 @@ configuration fields. `kind` may be omitted when `command` is present:
 
 The command inherits the `pmai` environment, with `env` values taking
 precedence. A bare command is resolved through `PATH`; `cwd` is optional. Stdio
+commands on Windows resolve native `.exe` and `.com` programs through the
+semicolon-separated `PATH`. For a `.cmd` or `.bat` wrapper such as `npx.cmd`,
+configure `cmd.exe` explicitly with `args` containing `/d`, `/s`, `/c`, and the
+complete shell command, or use `node.exe` with the package's server script.
+Arguments passed to native programs remain literal; shell syntax is enabled
+only when you explicitly configure a shell. Stdio
 MCP support, including its subprocess factory and public transport types, is
 compiled out on iOS. The iOS app continues to support Streamable HTTP only.
 

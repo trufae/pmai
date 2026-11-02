@@ -410,8 +410,7 @@ public struct ConfiguredMCPServer: Codable, Equatable, Identifiable, Sendable {
       guard !executable.isEmpty else {
         throw MaiConfigurationError.mcpServerMissingCommand(id)
       }
-      var childEnvironment = environment
-      childEnvironment.merge(env) { _, configured in configured }
+      let childEnvironment = LocalProcess.mergedEnvironment(environment, overrides: env)
       let workingDirectory = cwd.flatMap { raw -> URL? in
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }

@@ -26,7 +26,11 @@
     let resolved = try configured.resolvedStdio(
       environment: ["PATH": "/usr/bin:/bin", "OVERRIDE": "old"])
     #expect(resolved.command == "example-mcp")
+    #if os(Windows)
+    #expect(resolved.environment["Path"] == "/usr/bin:/bin")
+    #else
     #expect(resolved.environment["PATH"] == "/usr/bin:/bin")
+    #endif
     #expect(resolved.environment["MCP_TOKEN"] == "configured")
     #expect(resolved.environment["OVERRIDE"] == "new")
     #expect(resolved.workingDirectory != nil)
@@ -39,6 +43,34 @@
 
   @Test("Stdio MCP launches a process, discovers tools, and calls them")
   func stdioMCPClient() async throws {
+    #if os(Windows)
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("mcp ü \(UUID())")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let fixture = directory.appendingPathComponent("server.ps1")
+    try #"""
+      [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
+      [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+      while ($null -ne ($line = [Console]::ReadLine())) {
+        $request = $line | ConvertFrom-Json
+        if ($null -eq $request.id) { continue }
+        switch ($request.method) {
+          'initialize' { $result = @{protocolVersion='2025-11-25'; serverInfo=@{name='Stdio Fixture'}} }
+          'tools/list' { $result = @{tools=@(@{name='lookup'; description='Lookup'; inputSchema=@{type='object'}; annotations=@{readOnlyHint=$true}})} }
+          'resources/list' { $result = @{resources=@()} }
+          'tools/call' { $result = @{content=@(@{type='text'; text='stdio result'}); structuredContent=@{count=1}} }
+        }
+        @{jsonrpc='2.0'; id=$request.id; result=$result} | ConvertTo-Json -Compress -Depth 10 |
+          ForEach-Object { [Console]::WriteLine($_) }
+      }
+      """#.write(to: fixture, atomically: false, encoding: .utf8)
+    let environment = LocalProcess.mergedEnvironment(ProcessInfo.processInfo.environment)
+    let system = try #require(environment["SYSTEMROOT"])
+    let client = MCPStdioClient(configuration: MCPStdioServerConfiguration(
+      id: "fixture", command: "powershell", args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", fixture.path],
+      environment: LocalProcess.mergedEnvironment(environment, overrides: ["PATH": system + "\\System32\\WindowsPowerShell\\v1.0"]),
+      workingDirectory: directory, timeout: 30))
+    #else
     let script = #"""
       while IFS= read -r line
       do
@@ -70,6 +102,7 @@
         args: ["-c", script],
         environment: ProcessInfo.processInfo.environment,
         timeout: 2))
+    #endif
 
     do {
       let catalog = try await client.connect()
