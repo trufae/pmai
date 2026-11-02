@@ -47,7 +47,7 @@ final class WindowsRunProcess: @unchecked Sendable {
     let job = try WindowsRunJob()
     let info: PROCESS_INFORMATION = try Self.launchLock.withLock {
       let null = "NUL".withCString(encodedAs: UTF16.self) {
-        CreateFileW($0, DWORD(GENERIC_READ | GENERIC_WRITE), DWORD(FILE_SHARE_READ | FILE_SHARE_WRITE),
+        CreateFileW($0, DWORD(GENERIC_READ) | DWORD(GENERIC_WRITE), DWORD(FILE_SHARE_READ | FILE_SHARE_WRITE),
           nil, DWORD(OPEN_EXISTING), DWORD(FILE_ATTRIBUTE_NORMAL), nil)
       }
       guard let null, null != INVALID_HANDLE_VALUE else { throw Self.lastError() }

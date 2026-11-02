@@ -664,7 +664,7 @@ enum MaiRunToolError: LocalizedError {
       private let commandScope: AgentCommandScope?
       private let command: String?
       private let commandArguments: [String]
-      private var commandID: UUID?
+      private var commandID: Foundation.UUID?
       private var killed = false
       private var stdoutSource: DispatchSourceRead?
       private var stderrSource: DispatchSourceRead?
