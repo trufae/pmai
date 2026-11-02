@@ -988,6 +988,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
   public var use: ConfiguredUse
   public var documentExport: DocumentExportOptions
   public var airplane: Bool
+  public var awake: Bool
   public var toolsEnabled: Bool
   public var remoteTerminalTimeoutSeconds: Int
   public var redact: RedactionMode
@@ -1011,6 +1012,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
     use: ConfiguredUse = .init(),
     documentExport: DocumentExportOptions = .init(),
     airplane: Bool = false,
+    awake: Bool = false,
     toolsEnabled: Bool = true,
     remoteTerminalTimeoutSeconds: Int = 0,
     redact: RedactionMode = .off
@@ -1033,6 +1035,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
     self.use = use
     self.documentExport = documentExport
     self.airplane = airplane
+    self.awake = awake
     self.toolsEnabled = toolsEnabled
     self.remoteTerminalTimeoutSeconds = max(0, remoteTerminalTimeoutSeconds)
     self.redact = redact
@@ -1042,7 +1045,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
     case version, defaultAgent, taskAgents, voice, plugins, providers, toolSources, ocrProviders,
       mcpServers, agents,
       prompts, memory, ui,
-      approvals, fileAccess, use, documentExport, airplane, redact, toolsEnabled, remoteTerminalTimeoutSeconds
+      approvals, fileAccess, use, documentExport, airplane, awake, redact, toolsEnabled, remoteTerminalTimeoutSeconds
   }
 
   public init(from decoder: Decoder) throws {
@@ -1073,6 +1076,7 @@ public struct MaiConfiguration: Codable, Equatable, Sendable {
       documentExport: try container.decodeIfPresent(DocumentExportOptions.self, forKey: .documentExport)
         ?? .init(),
       airplane: try container.decodeIfPresent(Bool.self, forKey: .airplane) ?? false,
+      awake: try container.decodeIfPresent(Bool.self, forKey: .awake) ?? false,
       toolsEnabled: try container.decodeIfPresent(Bool.self, forKey: .toolsEnabled) ?? true,
       remoteTerminalTimeoutSeconds: try container.decodeIfPresent(Int.self, forKey: .remoteTerminalTimeoutSeconds) ?? 0,
       // Older versions stored a rules filename here. Only the fixed redact.txt

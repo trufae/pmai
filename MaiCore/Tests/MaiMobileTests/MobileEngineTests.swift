@@ -219,3 +219,24 @@ private func state(_ json: String) throws -> [String: Any] {
   let messages = try #require(state(reloaded.snapshotJSON())["messages"] as? [[String: Any]])
   #expect(messages.map { $0["text"] as? String } == ["Hello", "Partial reply"])
 }
+
+@Test("Mobile awake state is local, persistent, and rejects malformed toggles")
+@MainActor func mobileAwakePreference() throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  let suite = "awake-test-" + UUID().uuidString
+  let preferences = try #require(UserDefaults(suiteName: suite))
+  defer {
+    preferences.removePersistentDomain(forName: suite)
+    try? FileManager.default.removeItem(at: directory)
+  }
+  let engine = try MobileEngine(directory: directory, update: { _ in }, preferences: preferences)
+  #expect(try state(engine.snapshotJSON())["awake"] as? Bool == false)
+  engine.execute(try command(["action": "awake", "enabled": "true"]))
+  #expect(try state(engine.snapshotJSON())["awake"] as? Bool == true)
+  engine.execute(try command(["action": "awake", "enabled": "invalid"]))
+  #expect(try state(engine.snapshotJSON())["awake"] as? Bool == true)
+  let reloaded = try MobileEngine(directory: directory, update: { _ in }, preferences: preferences)
+  #expect(try state(reloaded.snapshotJSON())["awake"] as? Bool == true)
+  reloaded.execute(try command(["action": "awake", "enabled": "false"]))
+  #expect(!preferences.bool(forKey: AwakeController.preferenceKey))
+}

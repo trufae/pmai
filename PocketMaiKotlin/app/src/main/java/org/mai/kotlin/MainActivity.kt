@@ -2,6 +2,7 @@ package org.mai.kotlin
 
 import android.content.Intent
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -28,6 +29,11 @@ class MainActivity : ComponentActivity() {
             MaterialTheme(colorScheme = colors) {
                 val model: MaiViewModel = viewModel()
                 val state by model.state.collectAsStateWithLifecycle()
+                DisposableEffect(state.awake) {
+                    val flag = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                    if (state.awake) window.addFlags(flag) else window.clearFlags(flag)
+                    onDispose { window.clearFlags(flag) }
+                }
                 val draft by model.draft.collectAsStateWithLifecycle()
                 val attachments by model.attachments.collectAsStateWithLifecycle()
                 PocketMaiApp(state, draft, attachments, model, theme, onTheme = {

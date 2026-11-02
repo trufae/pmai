@@ -2540,6 +2540,8 @@ struct MaiCLI {
     terminal: TerminalWriter, startup: CLIStartupTiming
   ) async {
     startup.mark("REPL entered")
+    do { try await AwakeController.shared.setEnabled(configuration?.awake ?? false) }
+    catch { await terminal.line("awake: \(error.localizedDescription)", to: .standardError) }
     var configuration = configuration
     var catalogs = catalogs
     var project = project
@@ -5648,6 +5650,7 @@ struct MaiCLI {
       await releaseIfIdle(workspace: workspace)
     }
 
+    try? await AwakeController.shared.setEnabled(false)
     await stopVoice()
     loop.beginExit()
     await remoteServer.stop()
@@ -11192,7 +11195,7 @@ struct MaiCLI {
     defaults.resetSettings()
     let special = [
       "tool.aproval": configuration.approvals.mode.rawValue,
-      "debug": "false", "debugfile": "default", "airplane": "off",
+      "debug": "false", "debugfile": "default", "airplane": "off", "awake": "off",
       "acp.timeout": "off",
       "acp.context": "agent", "acp.prompt": "agent",
       "limits.terminaltimeout": "0",
@@ -11237,6 +11240,7 @@ struct MaiCLI {
     draft.documentExport = defaults.documentExport
     draft.use = defaults.use
     draft.airplane = defaults.airplane
+    draft.awake = defaults.awake
     draft.redact = defaults.redact
     draft.approvals.mode = defaults.approvals.mode
     draft.remoteTerminalTimeoutSeconds = defaults.remoteTerminalTimeoutSeconds
@@ -11278,6 +11282,7 @@ struct MaiCLI {
       return false
     }
     configuration = draft
+    try? await AwakeController.shared.setEnabled(false)
     if let resetProvider {
       do { try await runtime.register(resetProvider, replacingExisting: true) }
       catch {
@@ -11447,6 +11452,7 @@ struct MaiCLI {
         "debug = \(await approvalHandler.isDebugEnabled() ? "true" : "false")",
         "debugfile = \(await approvalHandler.debugLogURL().path)",
         "airplane = \(await runtime.internetAccessPolicy().airplaneModeEnabled ? "on ✈" : "off")",
+        "awake = \(await AwakeController.shared.isEnabled ? "on" : "off")",
         "redact = \((configuration?.redact ?? .off).rawValue)",
         "limits.terminalTimeout = \(configuration?.remoteTerminalTimeoutSeconds ?? 0)",
         "delegation = \(session.profile.toolDelegation.rawValue)",
@@ -11545,6 +11551,34 @@ struct MaiCLI {
         await terminal.line(key == "acp.timeout"
           ? "Saved for provider '\(draft.providers[index].id)'; applies to new requests with a fresh timeout."
           : "Saved for provider '\(draft.providers[index].id)'; applies to the next request with a new ACP session.")
+      } catch {
+        await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+      }
+      return
+    }
+    if key == "awake" {
+      guard parts.count > 1 else {
+        await terminal.line("awake = \(await AwakeController.shared.isEnabled ? "on" : "off")")
+        return
+      }
+      guard parts.count == 2, ["on", "off"].contains(parts[1].lowercased()) else {
+        await terminal.line("Usage: /set awake [on|off]")
+        return
+      }
+      let enabled = parts[1].lowercased() == "on"
+      let previous = await AwakeController.shared.isEnabled
+      do {
+        try await AwakeController.shared.setEnabled(enabled)
+        if var draft = configuration, let configurationPath {
+          draft.awake = enabled
+          do { try draft.save(to: URL(fileURLWithPath: configurationPath)) }
+          catch {
+            try? await AwakeController.shared.setEnabled(previous)
+            throw error
+          }
+          configuration = draft
+        }
+        await terminal.line("awake = \(enabled ? "on" : "off")")
       } catch {
         await terminal.line("error: \(error.localizedDescription)", to: .standardError)
       }
@@ -14834,6 +14868,7 @@ struct MaiCLI {
       "/set tool.", "/set tool.calling off", "/set tool.calling automatic", "/set tool.calling native",
       "/set tool.calling text", "/set tool.calling xml", "/set tool.calling json",
       "/set tool.systemone true", "/set tool.systemone false",
+      "/set awake", "/set awake on", "/set awake off",
       "/set airplane on", "/set airplane off", "/set airplane toggle",
       "/set tool.proxy on", "/set tool.proxy off", "/set tool.proxy all",
       "/set tool.proxy hybrid", "/set tool.auto on", "/set tool.auto off",
@@ -15641,6 +15676,7 @@ struct MaiCLI {
       /set tool.                   List the tool calling settings
       /set tool.calling MODE       off disables calls; automatic/native or text/XML/JSON enables them
       /set tool.systemone BOOL     Route tools via the System One /model -tool provider (default false)
+      /set awake [on|off]          Show or change the local sleep inhibitor (default off)
       /set airplane on|off|toggle  Pause internet tools; ✈ marks offline mode
       /set tool.proxy MODE         Default exposure: on/hybrid (common tools direct), all, or off
       /set tool.auto BOOL          Automatically expose frequently used tools (default on)

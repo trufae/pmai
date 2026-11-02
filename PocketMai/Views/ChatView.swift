@@ -71,6 +71,7 @@ struct ChatView: View {
 
   @ObservedObject var storeObservation: AppStoreViewObservation
   @State var remoteChat: RemoteAgentChat? = nil
+  @AppStorage(AwakeController.preferenceKey) private var keepAwake = false
   @Environment(\.scenePhase) private var scenePhase
   @Environment(\.verticalSizeClass) private var verticalSizeClass
   @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -665,6 +666,7 @@ struct ChatView: View {
           || store.settings.isOffline)
     }
     Divider()
+    Toggle(isOn: $keepAwake) { Label("Keep Awake", systemImage: "sun.max") }
     Button("Chat Settings", systemImage: "slider.horizontal.3", action: showChatSettings)
     if let remoteChat {
       Button("Connect", systemImage: "network") {
@@ -676,6 +678,7 @@ struct ChatView: View {
 
   private var chatTitleLabel: some View {
     HStack(spacing: 6) {
+      if keepAwake { AwakeIndicator() }
       Text(
         currentConversation?.displayTitle
           ?? currentConversationSummary?.displayTitle
@@ -7074,5 +7077,18 @@ struct ConversationModelSettingsView: View {
       return true
     }
     return false
+  }
+}
+
+private struct AwakeIndicator: View {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.scenePhase) private var scenePhase
+
+  var body: some View {
+    Image(systemName: "circle.fill")
+      .font(.system(size: 8))
+      .foregroundStyle(.orange)
+      .symbolEffect(.breathe, options: .repeating, isActive: !reduceMotion && scenePhase == .active)
+      .accessibilityLabel("Keep awake enabled")
   }
 }

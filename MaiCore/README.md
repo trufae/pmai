@@ -797,6 +797,19 @@ the tool tint and inherit the theme's main background. Diff additions and remova
 keep their own colors.
 
 All theme colors accept named ANSI colors, `rgb:RGB`, `#RRGGBB`, or `none`.
+`/set awake` shows whether the local machine's sleep inhibitor is active.
+`/set awake on` prevents automatic system sleep; `/set awake off` releases it.
+The option defaults off, is saved in the shared configuration, and is restored
+when the REPL starts. `/reset awake` and `/reset` turn it off. Exiting releases
+the inhibitor. Linux requires `systemd-inhibit` and logind permission; macOS
+uses an IOKit assertion and Windows uses a power request. This affects the
+machine running the REPL, including when chatting with a remote host.
+
+On iOS and the Kotlin Android app, choose **Keep Awake** in the chat title menu.
+A gently breathing indicator beside the title shows when it is enabled. The
+saved device preference prevents automatic screen lock while the app is visible;
+it does not grant background execution or override the lock button.
+
 `/set ui.` lists persisted terminal behavior settings. `ui.markdown` and
 `ui.broadcast` accept `on` or `off`. `ui.toolResultLines` accepts `all`, `relevant`, or a line count (the default is
 `all`; `0` prints each completed tool call on one line, with a green `✔` for

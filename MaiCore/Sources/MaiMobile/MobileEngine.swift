@@ -11,6 +11,8 @@ import Observation
 @MainActor public final class MobileEngine {
   let chat: PortableChat
   private let remote: RemoteState
+  private let awake = AwakeController(acquire: { {} })
+  private let preferences: UserDefaults
   private let tools: MobileTools
   private let folders: ConversationFolders
   private let directory: URL
@@ -21,11 +23,13 @@ import Observation
   private var webTasks: [String: Task<Void, Never>] = [:]
 
   public init(directory: URL, clientName: String = "PocketMai", update: @escaping (String) -> Void,
+    preferences: UserDefaults = .standard,
     makeProvider: @escaping @Sendable (ConfiguredProvider) throws -> any ChatProvider = {
       try OpenAIConfiguredProviderFactory().makeProvider(from: $0, environment: [:])
     }
   ) throws {
     self.directory = directory
+    self.preferences = preferences
     self.makeProvider = makeProvider
     folders = try ConversationFolders(directory: directory)
     let tools = try MobileTools(directory: directory)
@@ -34,6 +38,7 @@ import Observation
       runTurn: { request, provider, emit in try await tools.run(request, provider: provider, emit: emit) })
     remote = try RemoteState(directory: directory.appendingPathComponent("remotes"), clientName: clientName)
     self.update = update
+    try awake.setEnabled(preferences.bool(forKey: AwakeController.preferenceKey))
   }
 
   public func configureRemote(identity: Data?) { remote.configure(identity: identity) }
@@ -126,6 +131,12 @@ import Observation
       let command = try JSONDecoder().decode([String: String].self, from: Data(json.utf8))
       func value(_ key: String) -> String { command[key] ?? "" }
       switch value("action") {
+      case "awake":
+        guard ["true", "false"].contains(value("enabled")) else {
+          throw JSONRPCError.invalidParams("awake requires enabled=true or false")
+        }
+        try awake.setEnabled(value("enabled") == "true")
+        preferences.set(awake.isEnabled, forKey: AwakeController.preferenceKey)
       case "toolsEnabled", "toolEnabled", "groupEnabled", "saveMcp", "mcpEnabled", "removeMcp", "saveSkill", "removeSkill":
         guard !chat.isGenerating else { throw PortableChatError.busy }
         try tools.configure(command)
@@ -237,7 +248,7 @@ import Observation
 
   public func snapshotJSON() -> String {
     let snapshot: [String: Any] = [
-      "ready": true,
+      "ready": true, "awake": awake.isEnabled,
       "shells": shells.values.map(\.snapshot),
       "baseURL": chat.baseURL, "apiKey": chat.apiKey, "model": chat.model,
       "chatID": chat.chat.id.uuidString, "title": chat.chat.displayTitle,

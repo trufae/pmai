@@ -1,3 +1,4 @@
+import MaiCore
 import SwiftUI
 
 @main
@@ -27,6 +28,8 @@ struct PocketMaiApp: App {
 private struct PocketMaiRootView: View {
   let store: AppStore
   let ttsPlayer: TTSPlayer
+  @Environment(\.scenePhase) private var scenePhase
+  @AppStorage(AwakeController.preferenceKey) private var keepAwake = false
   @StateObject private var storeObservation = AppStoreViewObservation(scope: .application)
 
   var body: some View {
@@ -35,6 +38,16 @@ private struct PocketMaiRootView: View {
         .environmentObject(store.streamingTextStore)
         .environmentObject(ttsPlayer)
         .preferredColorScheme(store.settings.appearance.theme.colorScheme)
-        .onAppear { storeObservation.connect(to: store) }
+        .onAppear {
+          storeObservation.connect(to: store)
+          updateAwake()
+        }
+        .onChange(of: keepAwake, initial: true) { _, _ in updateAwake() }
+        .onChange(of: scenePhase) { _, _ in updateAwake() }
+        .onDisappear { try? AwakeController.shared.setEnabled(false) }
+  }
+
+  private func updateAwake() {
+    try? AwakeController.shared.setEnabled(keepAwake && scenePhase == .active)
   }
 }
