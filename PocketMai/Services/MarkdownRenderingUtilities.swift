@@ -64,3 +64,41 @@ enum MarkdownWebURL {
     return trimmed
   }
 }
+
+enum MarkdownImageURL {
+  static func svgSource(code: String, language: String) -> String? {
+    let language = language.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard language == "svg"
+      || (["xml", "html", ""].contains(language)
+        && code.range(of: "<svg(?:\\s|>)", options: [.regularExpression, .caseInsensitive]) != nil)
+    else { return nil }
+    return "data:image/svg+xml;base64," + Data(code.utf8).base64EncodedString()
+  }
+
+  static func url(from raw: String) -> URL? {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.lowercased().hasPrefix("data:image/"), trimmed.contains(",") {
+      return URL(string: trimmed)
+    }
+    return MarkdownWebURL.url(from: trimmed)
+  }
+
+  static func embeddedData(from url: URL) throws -> Data? {
+    guard url.scheme?.lowercased() == "data" else { return nil }
+    let source = url.absoluteString
+    guard let comma = source.firstIndex(of: ","),
+      source.lowercased().hasPrefix("data:image/"),
+      let payload = String(source[source.index(after: comma)...]).removingPercentEncoding
+    else {
+      throw URLError(.cannotDecodeContentData)
+    }
+    let metadata = source[..<comma].lowercased().split(separator: ";")
+    if metadata.contains("base64") {
+      guard let data = Data(base64Encoded: payload) else {
+        throw URLError(.cannotDecodeContentData)
+      }
+      return data
+    }
+    return Data(payload.utf8)
+  }
+}
