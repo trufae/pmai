@@ -92,7 +92,7 @@ private enum class Destination(val label: String, val icon: ImageVector) {
     state: AppState, draft: String, attachments: List<Attachment>, model: MaiViewModel, theme: String, onTheme: (String) -> Unit,
     invitation: String, consumeInvitation: () -> Unit,
 ) {
-    val terminal = model.terminal.collectAsState().value
+    val terminal = model.terminals.visible
     var destination by rememberSaveable { mutableStateOf(Destination.Chats) }
     var detail by rememberSaveable { mutableStateOf(false) }
     var addingHost by rememberSaveable { mutableStateOf(false) }
@@ -112,7 +112,7 @@ private enum class Destination(val label: String, val icon: ImageVector) {
         }
         return
     }
-    BackHandler(enabled = terminal == null && (runningApp.isNotEmpty() || detail || destination != Destination.Chats)) {
+    BackHandler(enabled = !terminal && (runningApp.isNotEmpty() || detail || destination != Destination.Chats)) {
         when {
             runningApp.isNotEmpty() -> runningApp = ""
             destination != Destination.Chats -> destination = Destination.Chats
@@ -129,13 +129,13 @@ private enum class Destination(val label: String, val icon: ImageVector) {
         return
     }
     if (workspaceScreen.isNotEmpty() && state.isRemote) {
-        RemoteWorkspaceScreen(state.remote, model, console = workspaceScreen == "console", onClose = {
+        RemoteWorkspaceScreen(state.remote, model, onClose = {
             workspaceScreen = ""
         })
         return
     }
     val hideNavigation = destination == Destination.Chats && detail && LocalConfiguration.current.screenWidthDp < 840
-    if (terminal != null) TerminalScreen(terminal, model)
+    if (terminal) TerminalScreen(model)
     else NavigationSuiteScaffold(layoutType = if (hideNavigation) NavigationSuiteType.None
         else NavigationSuiteScaffoldDefaults.calculateFromAdaptiveInfo(currentWindowAdaptiveInfo()), navigationSuiteItems = {
         Destination.entries.forEach { item ->
@@ -208,7 +208,7 @@ private enum class Destination(val label: String, val icon: ImageVector) {
             Text(host?.name ?: "On this device", style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         } }, actions = {
-            if (state.isRemote) IconButton(onClick = model::openTerminal, enabled = state.remote.folder.isNotBlank()) {
+            IconButton(onClick = model::openTerminal, enabled = !state.isRemote || state.remote.folder.isNotBlank()) {
                 Icon(Icons.Outlined.Terminal, "Open terminal")
             }
             IconButton(onClick = onHosts) { Icon(Icons.Outlined.Dns, "Choose host") }
@@ -321,7 +321,7 @@ private enum class Destination(val label: String, val icon: ImageVector) {
             if (messages.isNotEmpty()) IconButton(onClick = { shareConversation(context, state.activeTitle, messages) }) {
                 Icon(Icons.Outlined.Share, "Share conversation")
             }
-            if (state.isRemote) IconButton(onClick = model::openTerminal, enabled = state.remote.folder.isNotBlank()) {
+            IconButton(onClick = model::openTerminal, enabled = !state.isRemote || state.remote.folder.isNotBlank()) {
                 Icon(Icons.Outlined.Terminal, "Open terminal")
             }
             IconButton(onClick = onSettings) { Icon(Icons.Outlined.Tune, "Chat settings") }

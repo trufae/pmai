@@ -16,6 +16,7 @@ import Observation
   private let directory: URL
   private let update: (String) -> Void
   private let makeProvider: @Sendable (ConfiguredProvider) throws -> any ChatProvider
+  private var shells: [String: MobileShell] = [:]
   private var catalogRequested = false
   private var webTasks: [String: Task<Void, Never>] = [:]
 
@@ -151,6 +152,29 @@ import Observation
       case "remoteRetry": remote.retryMessage(value("id"))
       case "remoteRestart": remote.retryMessage(value("id"), restarting: true)
       case "disconnect": remote.disconnect()
+      case "shellOpen":
+        let id = value("id")
+        guard UUID(uuidString: id) != nil else { throw CocoaError(.coderInvalidValue) }
+        if shells[id] == nil {
+          shells[id] = try value("hostID").isEmpty
+            ? MobileShell(id: id, cwd: directory.appendingPathComponent("workspace").path, profile: nil, preparation: nil)
+            : remote.shell(id: id, hostID: value("hostID"), cwd: value("cwd"),
+              remoteID: value("remoteID"), offset: Int(value("offset")) ?? 0)
+        }
+        shells[id]?.connect()
+      case "shellInput":
+        if let data = Data(base64Encoded: value("data")) { shells[value("id")]?.send(data) }
+      case "shellResize": shells[value("id")]?.resize(columns: Int(value("columns")) ?? 80, rows: Int(value("rows")) ?? 24)
+      case "shellAck": shells[value("id")]?.acknowledge(Int(value("sequence")) ?? -1)
+      case "shellRun": shells[value("id")]?.run(id: value("commandID"), script: value("script"))
+      case "shellStop": shells[value("id")]?.command.stop()
+      case "shellReconnect": shells[value("id")]?.connect()
+      case "shellClose":
+        if let shell = shells[value("id")] {
+          Task { await shell.close() }
+        }
+      case "shellForget":
+        if shells[value("id")]?.status == "Closed" { shells[value("id")] = nil }
       case "terminalRun":
         remote.runTerminal(id: value("id"), hostID: value("hostID"), cwd: value("cwd"), script: value("script"))
       case "terminalStop": remote.terminal.stop()
@@ -214,6 +238,7 @@ import Observation
   public func snapshotJSON() -> String {
     let snapshot: [String: Any] = [
       "ready": true,
+      "shells": shells.values.map(\.snapshot),
       "baseURL": chat.baseURL, "apiKey": chat.apiKey, "model": chat.model,
       "chatID": chat.chat.id.uuidString, "title": chat.chat.displayTitle,
       "isGenerating": chat.isGenerating, "isLoadingModels": chat.isLoadingModels,

@@ -145,10 +145,7 @@ class MaiRepository(application: Application) {
     private val mutableState = MutableStateFlow(AppState())
     val state = mutableState.asStateFlow()
     private val main = Handler(Looper.getMainLooper())
-    private val terminalDirectory = application.filesDir.resolve("terminals")
-    private val mutableTerminal = MutableStateFlow<TerminalSession?>(null)
-    val terminal = mutableTerminal.asStateFlow()
-    private val terminalCursor = TerminalHistoryCursor()
+    internal val terminals = TerminalSessions(application) { action, fields -> execute(action, *fields) }
     init {
         try {
             System.loadLibrary("SwiftJava")
@@ -159,7 +156,8 @@ class MaiRepository(application: Application) {
                     try {
                         val decoded = AppState.decode(json)
                         mutableState.value = decoded
-                        receiveTerminal(decoded.remote.terminal)
+                        terminals.restore()
+                        terminals.receive(JSONObject(json).optJSONArray("shells"))
                     }
                     catch (error: Exception) { mutableState.value = AppState(error = "Cannot read application state: ${error.localizedMessage}") }
                 }
@@ -170,79 +168,7 @@ class MaiRepository(application: Application) {
             mutableState.value = AppState(error = "Native library could not load: ${error.localizedMessage}")
         }
     }
-    fun openTerminal() {
-        val remote = state.value.remote
-        val host = remote.hosts.firstOrNull { it.id == remote.hostID } ?: return
-        if (remote.folder.isBlank() || mutableTerminal.value != null) return
-        val location = TerminalLocation(host.id, host.name, host.address, remote.folder)
-        terminalCursor.reset()
-        mutableTerminal.value = try {
-            TerminalSession(location, TerminalBuffer.load(location.file(terminalDirectory)))
-        } catch (error: Exception) {
-            TerminalSession(location, TerminalBuffer(), storageError = "Could not load terminal history: " + error.localizedMessage)
-        }
-    }
-
-    fun closeTerminal() {
-        mutableTerminal.value?.let {
-            val saved = saveTerminal(it.copy(buffer = it.buffer.interrupted()))
-            if (saved.storageError.isNotEmpty()) mutableState.value = state.value.copy(error = saved.storageError)
-        }
-        mutableTerminal.value = null
-        terminalCursor.reset()
-        execute("terminalClose")
-    }
-
-    private fun saveTerminal(session: TerminalSession): TerminalSession = try {
-        session.buffer.save(session.location.file(terminalDirectory))
-        session.copy(storageError = "")
-    } catch (error: Exception) {
-        session.copy(storageError = "Could not save terminal history: " + error.localizedMessage)
-    }
-
-    private fun receiveTerminal(result: TerminalResult) {
-        val session = mutableTerminal.value ?: return
-        if (session.buffer.entries.none { it.id == result.id && it.running }) return
-        val updated = session.copy(buffer = session.buffer.update(result.id, result.output,
-            running = result.running, isError = result.isError))
-        mutableTerminal.value = if (result.running) updated else saveTerminal(updated)
-    }
-
-    fun stopTerminal() = execute("terminalStop")
-
-    fun terminalDraft(text: String) {
-        mutableTerminal.value = mutableTerminal.value?.copy(draft = text)
-    }
-
-    fun terminalEdit(text: String) {
-        terminalCursor.reset()
-        mutableTerminal.value = mutableTerminal.value?.copy(draft = text, historyIndex = null)
-    }
-
-    fun terminalRecall(direction: Int) {
-        val session = mutableTerminal.value ?: return
-        val text = terminalCursor.move(direction, session.draft, session.buffer.history)
-        mutableTerminal.value = session.copy(draft = text, historyIndex = terminalCursor.index)
-    }
-
-    fun runTerminal(saved: String? = null) {
-        val session = mutableTerminal.value ?: return
-        val script = (saved ?: session.draft).trim()
-        if (!state.value.ready || session.buffer.running || script.isEmpty()) return
-        val id = java.util.UUID.randomUUID().toString()
-        terminalCursor.reset()
-        mutableTerminal.value = saveTerminal(session.copy(buffer = session.buffer.append(id, script),
-            draft = if (saved == null) "" else session.draft, historyIndex = null))
-        execute("terminalRun", "id" to id, "hostID" to session.location.hostID, "cwd" to session.location.cwd, "script" to script)
-    }
-
-    fun clearTerminal(history: Boolean) {
-        val session = mutableTerminal.value ?: return
-        if (!history && session.buffer.running) return
-        terminalCursor.reset()
-        val buffer = if (history) session.buffer.copy(history = emptyList()) else session.buffer.copy(entries = emptyList())
-        mutableTerminal.value = saveTerminal(session.copy(buffer = buffer, historyIndex = null))
-    }
+    fun openTerminal() = terminals.open(state.value)
 
     fun execute(action: String, vararg fields: Pair<String, String>) {
         if (!state.value.ready) return
@@ -255,7 +181,7 @@ class MaiRepository(application: Application) {
 class MaiViewModel(application: Application, private val saved: SavedStateHandle) : AndroidViewModel(application) {
     private val repository = (application as MaiApplication).repository
     val state = repository.state
-    val terminal = repository.terminal
+    internal val terminals = repository.terminals
     val draft = saved.getStateFlow("draft", "")
     private val mutableAttachments = MutableStateFlow(Attachment.decode(saved.get<String>("attachments") ?: "[]"))
     val attachments = mutableAttachments.asStateFlow()
@@ -272,13 +198,6 @@ class MaiViewModel(application: Application, private val saved: SavedStateHandle
         } else if (!current.busy && current.error.isNotEmpty()) { pending = null }
     } } }
     fun openTerminal() = repository.openTerminal()
-    fun closeTerminal() = repository.closeTerminal()
-    fun stopTerminal() = repository.stopTerminal()
-    fun terminalDraft(text: String) = repository.terminalDraft(text)
-    fun terminalEdit(text: String) = repository.terminalEdit(text)
-    fun terminalRecall(direction: Int) = repository.terminalRecall(direction)
-    fun runTerminal(saved: String? = null) = repository.runTerminal(saved)
-    fun clearTerminal(history: Boolean) = repository.clearTerminal(history)
     fun draft(value: String) { saved["draft"] = value }
     fun command(action: String, vararg fields: Pair<String, String>) = repository.execute(action, *fields)
     private fun setAttachments(items: List<Attachment>) { mutableAttachments.value = items; saved["attachments"] = Attachment.encode(items) }

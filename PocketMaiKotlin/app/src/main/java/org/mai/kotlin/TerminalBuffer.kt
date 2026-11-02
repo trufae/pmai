@@ -116,6 +116,3 @@ class TerminalHistoryCursor {
 
     fun reset() { index = null; draft = "" }
 }
-
-data class TerminalSession(val location: TerminalLocation, val buffer: TerminalBuffer,
-    val draft: String = "", val historyIndex: Int? = null, val storageError: String = "")
