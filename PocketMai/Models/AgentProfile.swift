@@ -275,6 +275,53 @@ extension AppSettings {
     }
   }
 
+  func applyAgentDefaults(to conversation: inout Conversation) {
+    let provider = defaultProviderConfiguration
+    conversation.provider = provider.provider
+    conversation.endpointID = provider.endpointID
+    conversation.modelID = provider.modelID
+    conversation.systemPromptID = defaultSystemPromptID
+    conversation.reasoningLevel = defaultReasoningLevel
+    conversation.usesStreaming = streamByDefault
+    conversation.showThinking = showThinkingByDefault
+    conversation.toolCallingMode = toolCallingMode
+    conversation.contextWindowMode = nil
+    conversation.mlxMaxKVSize = nil
+    conversation.toolsEnabled = true
+    conversation.enabledTools = defaultEnabledTools
+    conversation.enabledMCPServers = defaultEnabledMCPServers
+    conversation.enabledMCPTools = defaultEnabledMCPTools
+    conversation.disabledMCPTools = []
+  }
+
+  func agentDefaults(from conversation: Conversation) -> AgentSettings {
+    var profile = agentSettings
+    profile.defaultProvider = conversation.provider
+    let model = conversation.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+    switch conversation.provider {
+    case .apple:
+      profile.appleModelID = model
+    case .mlx:
+      profile.localMLXModelID = model.isEmpty ? localMLXModelID : model
+    case .openAICompatible:
+      let endpoint = OpenAICompatibleProvider.selectedEndpoint(for: conversation, settings: self)
+      profile.selectedEndpointID = endpoint?.id
+      profile.openAIModelID = model.isEmpty ? endpoint?.defaultModel ?? "" : model
+    }
+    profile.defaultSystemPromptID = conversation.systemPromptID ?? defaultSystemPromptID
+    profile.defaultReasoningLevel = conversation.reasoningLevel
+    profile.streamByDefault = conversation.usesStreaming
+    profile.showThinkingByDefault = conversation.showThinking
+    profile.toolCallingMode = conversation.toolCallingMode ?? toolCallingMode
+    profile.contextWindowMode = conversation.contextWindowMode ?? contextWindowMode
+    profile.mlxMaxKVSize = conversation.mlxMaxKVSize ?? mlxMaxKVSize
+    profile.defaultEnabledTools = conversation.toolsEnabled ? conversation.enabledTools : []
+    profile.defaultEnabledMCPServers = conversation.toolsEnabled ? conversation.enabledMCPServers : []
+    profile.defaultEnabledMCPTools = conversation.toolsEnabled
+      ? conversation.enabledMCPTools.subtracting(conversation.disabledMCPTools) : []
+    return profile
+  }
+
   /// Makes `id` the selected agent: the live settings are stored on the agent
   /// being left and replaced by the settings of the one being entered.
   @discardableResult

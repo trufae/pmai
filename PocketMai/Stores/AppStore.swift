@@ -1834,8 +1834,9 @@ final class AppStore: ObservableObject {
     guard let index = currentConversationIndex else { return }
     var conversation = conversations[index]
     update(&conversation)
-    if conversation.modelID != conversations[index].modelID
-      || conversation.endpointID != conversations[index].endpointID {
+    if conversation.toolCallingMode == nil,
+      conversation.modelID != conversations[index].modelID
+        || conversation.endpointID != conversations[index].endpointID {
       if let endpointID = conversation.endpointID,
         endpointModelDescriptors[endpointID]?.first(where: { $0.id == conversation.modelID })?
           .capabilities.contains(.nativeToolCalling) == true {
