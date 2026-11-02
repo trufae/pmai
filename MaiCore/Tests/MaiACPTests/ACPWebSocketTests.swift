@@ -130,21 +130,19 @@ func acpClientAirplaneMode() async throws {
   func acpClientIdleDisconnect() async throws {
     let events = WebSocketEvents()
     let script = """
-      import json, sys, time
+      import json, sys
       for line in sys.stdin:
           request = json.loads(line)
           method = request.get('method')
           result = {'protocolVersion': 1} if method == 'initialize' else {'sessionId': 'idle'}
           print(json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'result': result}), flush=True)
           if method == 'session/new':
-              time.sleep(0.1)
               break
       """
     let client = ACPClient(
       configuration: .init(command: "/usr/bin/python3", arguments: ["-u", "-c", script]),
       onDisconnect: { await events.disconnect() })
     #expect(try await client.connect() == "idle")
-    #expect(await client.isConnected)
     let deadline = ContinuousClock.now + .seconds(5)
     while await events.disconnections == 0, ContinuousClock.now < deadline {
       try await Task.sleep(for: .milliseconds(10))

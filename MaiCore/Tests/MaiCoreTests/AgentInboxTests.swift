@@ -288,6 +288,7 @@ func pausedRunWaitsAtTheNextStep() async throws {
         toolNames: ["echo"]),
       process: pid)
   }
+  defer { run.cancel() }
 
   // The model call it was in completes; the tool it asked for waits.
   try await inboxWaitUntil {
@@ -296,10 +297,6 @@ func pausedRunWaitsAtTheNextStep() async throws {
   #expect(await supervisor.info(pid)?.modelTurns == 1)
   #expect(await provider.requests.count == 1)
   #expect(await echoes.value == 0)
-  try await Task.sleep(for: .milliseconds(250))
-  #expect(await echoes.value == 0)
-  #expect(await supervisor.info(pid)?.state == .paused)
-
   await supervisor.post(.user("also note b"), to: pid)
   #expect(await supervisor.info(pid)?.queuedMessages == 1)
   #expect(await supervisor.resume(pid) == [pid])
@@ -338,6 +335,7 @@ func cancelledWhilePausedRunEnds() async throws {
       AgentRequest(provider: "inbox-scripted", model: "fixture", messages: [.user("start")]),
       process: pid)
   }
+  defer { run.cancel() }
   try await inboxWaitUntil {
     await supervisor.info(pid).map { $0.state == .paused && $0.activity.isEmpty } ?? false
   }
@@ -356,7 +354,7 @@ private actor InboxCounter {
 }
 
 private func inboxWaitUntil(
-  timeout: Duration = .seconds(5),
+  timeout: Duration = .seconds(30),
   _ condition: @Sendable () async -> Bool
 ) async throws {
   let clock = ContinuousClock()

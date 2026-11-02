@@ -89,7 +89,10 @@ public actor OpenCodeWorkspace {
 
   private func resolve(_ path: String) throws -> String {
     guard !path.contains("\0") else { throw WorkspaceFileError("Invalid file path.") }
-    let path = URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: root, isDirectory: true)).standardized.path
+    // Resolve the workspace base before normalizing ..; some Foundation versions
+    // otherwise discard leading .. from a relative URL instead of escaping the root.
+    let path = URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: root, isDirectory: true))
+      .absoluteURL.standardized.path
     guard path == root || path.hasPrefix(root == "/" ? "/" : root + "/") else {
       throw WorkspaceFileError("The path is outside this workspace.")
     }

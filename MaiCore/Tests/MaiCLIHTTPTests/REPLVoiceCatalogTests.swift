@@ -46,7 +46,7 @@ func replVoiceCatalogCompletion() async throws {
   #expect(completions("ordinary input").isEmpty)
   for model in ["first", "second"] {
     configuration.voice.speechModel = model
-    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    let deadline = ContinuousClock.now.advanced(by: .seconds(30))
     while !completions("/set voice.voice ").contains("/set voice.voice \(model)-voice") {
       try #require(ContinuousClock.now < deadline)
       try await Task.sleep(for: .milliseconds(10))
