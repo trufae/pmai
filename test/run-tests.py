@@ -18,7 +18,7 @@ repl-policy repl-queue repl-recap repl-redirection repl-startup repl-suspend rep
 STRESS = ['repl-subagent-load']  # Explicit opt-in, including when running full.
 EXTERNAL = ['repl-reflow', 'tailcat']  # Ghostty and a separately built tailcat binary.
 WINDOWS = ['windows-console']
-PLATFORM = ['web-fetch', 'openai-http', *WINDOWS] if os.name == 'nt' else [
+PLATFORM = ['web-fetch', 'openai-http', 'run-shell', *WINDOWS] if os.name == 'nt' else [
     'update', 'web-fetch', 'openai-http', 'project-approval', 'repl-defaults', 'repl-small-context']
 if sys.platform.startswith('linux'):
     PLATFORM.append('linux-network')

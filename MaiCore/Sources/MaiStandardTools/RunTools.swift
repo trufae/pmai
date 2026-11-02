@@ -1,6 +1,10 @@
 import Foundation
 import MaiCore
 
+#if os(Windows)
+  import WinSDK
+#endif
+
 #if canImport(Android)
   import Android
 #elseif canImport(Musl)
@@ -15,6 +19,8 @@ import MaiCore
 public struct MaiRunConfiguration: Equatable, Sendable {
   #if os(Android)
     public static let defaultShell = "/system/bin/sh"
+  #elseif os(Windows)
+    public static let defaultShell = "powershell.exe"
   #else
     public static let defaultShell = "/bin/sh"
   #endif
@@ -49,7 +55,7 @@ public struct MaiRunTool: AgentTool {
 
   /// Spawning processes is unavailable on iOS, where the group is simply absent.
   public static var isSupported: Bool {
-    #if os(macOS) || os(Linux) || os(Android)
+    #if os(macOS) || os(Linux) || os(Android) || os(Windows)
       true
     #else
       false
@@ -72,7 +78,7 @@ public struct MaiRunTool: AgentTool {
 
   public func approvalEnvironment(arguments: JSONValue) throws -> ToolApprovalEnvironment {
     var environment = ToolApprovalEnvironment.current
-    #if os(macOS) || os(Linux) || os(Android)
+    #if os(macOS) || os(Linux) || os(Android) || os(Windows)
       environment.workingDirectory = try Self.workingDirectory(
         arguments.objectValue?["cwd"]?.stringValue
       ).path
@@ -83,7 +89,7 @@ public struct MaiRunTool: AgentTool {
   }
 
   public func call(arguments: JSONValue, context: ToolExecutionContext) async throws -> ToolOutput {
-    #if os(macOS) || os(Linux) || os(Android)
+    #if os(macOS) || os(Linux) || os(Android) || os(Windows)
       let arguments = arguments.objectValue ?? [:]
       do {
         try Task.checkCancellation()
@@ -104,7 +110,7 @@ public struct MaiRunTool: AgentTool {
       MaiRunConfiguration.maximumTimeout)
   }
 
-  #if os(macOS) || os(Linux) || os(Android)
+  #if os(macOS) || os(Linux) || os(Android) || os(Windows)
     enum OutputMode: String {
       /// Return output up to the configured limit; spill any excess to a file.
       case automatic = "auto"
@@ -140,33 +146,65 @@ public struct MaiRunTool: AgentTool {
       if interactive, stdin != nil || outputMode != .automatic {
         throw MaiRunToolError.interactiveIO
       }
-      let scriptURL = try Self.writeScript(script, extension: "sh")
-      defer { try? FileManager.default.removeItem(at: scriptURL) }
-      var extraArguments = [scriptURL.path]
-      if let args = arguments["args"]?.arrayValue {
-        extraArguments += args.map { $0.stringValue ?? $0.compactJSONString }
-      }
+      let positional = arguments["args"]?.arrayValue?.map { $0.stringValue ?? $0.compactJSONString } ?? []
+      var executable = launcher.executable
+      var launchArguments = launcher.arguments
+      var scriptURL: URL?
+      defer { if let scriptURL { try? FileManager.default.removeItem(at: scriptURL) } }
+      #if os(Windows)
+        // Args-only requests launch the executable directly, preserving empty
+        // arguments and avoiding PowerShell's native-argument rewriting.
+        let hasScript = ["script", "command"].contains {
+          !(arguments[$0]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        } || !(arguments["commands"]?.arrayValue?.compactMap(\.stringValue).isEmpty ?? true)
+        if !hasScript {
+          let process = Process()
+          try LocalProcess.configure(process, command: positional[0], arguments: Array(positional.dropFirst()),
+            environment: environment, workingDirectory: workingDirectory)
+          executable = process.executableURL!
+          launchArguments = process.arguments ?? []
+        } else {
+          let shell = executable.deletingPathExtension().lastPathComponent.lowercased()
+          if shell == "powershell" || shell == "pwsh" {
+            let source = "\u{feff}$ErrorActionPreference = 'Stop'\n"
+              + "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)\n"
+              + "$OutputEncoding = [Console]::OutputEncoding\n"
+              + script + "\nif ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }\n"
+            scriptURL = try Self.writeScript(source, extension: "ps1")
+            launchArguments += ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptURL!.runFileSystemPath] + positional
+          } else if shell == "cmd" {
+            scriptURL = try Self.writeScript("@echo off\r\n" + script, extension: "cmd")
+            launchArguments += ["/d", "/c", scriptURL!.runFileSystemPath] + positional
+          } else {
+            scriptURL = try Self.writeScript(script, extension: "sh")
+            launchArguments += [scriptURL!.runFileSystemPath] + positional
+          }
+        }
+      #else
+        scriptURL = try Self.writeScript(script, extension: "sh")
+        launchArguments += [scriptURL!.runFileSystemPath] + positional
+      #endif
 
       if interactive {
         let outcome = try await MaiHostProcess.runInteractive(
-          executable: launcher.executable, arguments: launcher.arguments + extraArguments,
+          executable: executable, arguments: launchArguments,
           workingDirectory: workingDirectory, environment: environment,
           timeout: arguments["timeout_seconds"] == nil ? nil : timeout, host: terminalHost,
-          command: script, commandArguments: Array(extraArguments.dropFirst()))
+          command: script, commandArguments: positional)
         return Self.output(
           for: outcome, timeout: timeout, workingDirectory: workingDirectory, interactive: true)
       }
 
       let outcome = try await MaiHostProcess.run(
-        executable: launcher.executable,
-        arguments: launcher.arguments + extraArguments,
+        executable: executable,
+        arguments: launchArguments,
         workingDirectory: workingDirectory,
         environment: environment,
         stdin: stdin,
         timeout: timeout,
         outputLimit: configuration.outputLimit,
         outputMode: outputMode, command: script,
-        commandArguments: Array(extraArguments.dropFirst()))
+        commandArguments: positional)
       return Self.output(for: outcome, timeout: timeout, workingDirectory: workingDirectory)
     }
 
@@ -294,7 +332,7 @@ public struct MaiRunTool: AgentTool {
         .appendingPathComponent("pmai-run-\(UUID().uuidString).\(ext)")
       guard
         FileManager.default.createFile(
-          atPath: url.path,
+          atPath: url.runFileSystemPath,
           contents: Data(script.utf8),
           attributes: [.posixPermissions: 0o600])
       else { throw MaiRunToolError.scriptWriteFailed(url.path) }
@@ -338,6 +376,12 @@ public struct MaiRunTool: AgentTool {
       "Shell command line or multi-line script, passed as the value of the script field, never as a field name like script=\"...\". "
         + "For heredocs, use real newlines and put the closing delimiter alone on its own line: python3 - <<'PY'\nprint('hello')\nPY"
     )
+    #if os(Windows)
+      properties["script"] = stringProperty(
+        "Shell command line or multi-line script using the configured shell (PowerShell by default). "
+          + "Use PowerShell syntax, for example Get-ChildItem or Get-Content file.txt; .cmd scripts require cmd.exe. "
+          + "Pass script text as the value of script, not as a field name.")
+    #endif
     properties["command"] = stringProperty("Accepted as an alias of script.")
     properties["commands"] = .object([
       "type": .string("array"),
@@ -351,6 +395,13 @@ public struct MaiRunTool: AgentTool {
         "With script or command, positional arguments passed as $1, $2, … . Otherwise, a command followed by literal arguments, e.g. [\"sys/lint.sh\"] or [\"git\",\"status\",\"--short\"]. To use shell options such as -c or -lc, include the shell executable first."
       )
     ])
+    #if os(Windows)
+      properties["args"] = .object([
+        "type": .string("array"), "items": .object(["type": .string("string")]),
+        "description": .string(
+          "With script or command, arguments passed to the script (PowerShell: $args). Otherwise, an executable followed by literal arguments, e.g. [\"git\",\"status\",\"--short\"]. Use a script to run shell builtins or .cmd/.bat files."),
+      ])
+    #endif
     properties["stdin"] = stringProperty("Text piped to standard input. Omit for interactive runs, where the person types directly.")
     properties["interactive"] = .object([
       "type": .string("boolean"),
@@ -413,7 +464,7 @@ enum MaiRunToolError: LocalizedError {
   }
 }
 
-#if os(macOS) || os(Linux) || os(Android)
+#if os(macOS) || os(Linux) || os(Android) || os(Windows)
   struct MaiHostProcessOutcome: Sendable {
     var pid: Int32
     var stdout: Data
@@ -438,6 +489,22 @@ enum MaiRunToolError: LocalizedError {
       _ interpreter: String,
       environment: [String: String]
     ) throws -> (executable: URL, arguments: [String]) {
+      #if os(Windows)
+        // A configured full executable path can itself contain spaces.
+        let process = Process()
+        if (try? LocalProcess.configure(process, command: interpreter, environment: environment)) != nil,
+          let executable = process.executableURL { return (executable, []) }
+        var count: Int32 = 0
+        let words = interpreter.withCString(encodedAs: UTF16.self) { CommandLineToArgvW($0, &count) }
+        guard let words else { throw MaiRunToolError.interpreterNotFound(interpreter) }
+        defer { _ = LocalFree(words) }
+        let parts = (0..<Int(count)).map { String(decodingCString: words[$0]!, as: UTF16.self) }
+        guard let command = parts.first else { throw MaiRunToolError.interpreterNotFound(interpreter) }
+        do {
+          try LocalProcess.configure(process, command: command, environment: environment)
+          return (process.executableURL!, Array(parts.dropFirst()))
+        } catch { throw MaiRunToolError.interpreterNotFound(command) }
+      #else
       let parts = interpreter.split(whereSeparator: \.isWhitespace).map(String.init)
       guard let command = parts.first else { throw MaiRunToolError.interpreterNotFound(interpreter) }
       let expanded = NSString(string: command).expandingTildeInPath
@@ -456,6 +523,7 @@ enum MaiRunToolError: LocalizedError {
         }
       }
       throw MaiRunToolError.interpreterNotFound(command)
+      #endif
     }
 
     static func run(
@@ -507,6 +575,18 @@ enum MaiRunToolError: LocalizedError {
       return try await withTaskCancellationHandler {
         try Task.checkCancellation()
         try await host.run {
+          #if os(Windows)
+          var inputMode: DWORD = 0
+          var outputMode: DWORD = 0
+          guard GetConsoleMode(FileHandle.standardInput._handle, &inputMode),
+            GetConsoleMode(FileHandle.standardOutput._handle, &outputMode) else {
+            throw MaiRunToolError.noTerminal
+          }
+          defer {
+            _ = SetConsoleMode(FileHandle.standardInput._handle, inputMode)
+            _ = SetConsoleMode(FileHandle.standardOutput._handle, outputMode)
+          }
+          #else
           guard isatty(STDIN_FILENO) != 0, isatty(STDOUT_FILENO) != 0 else {
             throw MaiRunToolError.noTerminal
           }
@@ -520,7 +600,9 @@ enum MaiRunToolError: LocalizedError {
             _ = setForegroundGroup(foreground)
             _ = tcsetattr(STDIN_FILENO, TCSANOW, &cooked)
           }
+          #endif
           try session.start()
+          #if !os(Windows)
           // Foundation starts a separate process group. A child that tried
           // reading before this handoff may already be stopped by SIGTTIN.
           if setForegroundGroup(session.pid) != 0, session.isRunning {
@@ -530,6 +612,7 @@ enum MaiRunToolError: LocalizedError {
             throw error
           }
           _ = kill(-session.pid, SIGCONT)
+          #endif
           let watchdog = timeout.map { seconds in
             Task {
               try await Task.sleep(for: .seconds(seconds))
@@ -548,6 +631,7 @@ enum MaiRunToolError: LocalizedError {
 
     /// Restoring pmai's foreground group happens while it is in the
     /// background. Block SIGTTOU on this thread for that one ioctl.
+    #if !os(Windows)
     private static func setForegroundGroup(_ pid: Int32) -> Int32 {
       var mask = sigset_t()
       var previous = sigset_t()
@@ -557,11 +641,15 @@ enum MaiRunToolError: LocalizedError {
       defer { pthread_sigmask(SIG_SETMASK, &previous, nil) }
       return tcsetpgrp(STDIN_FILENO, pid)
     }
+    #endif
 
     /// Owns the non-Sendable `Process` and pipes; every mutation goes through `lock`.
     private final class ProcessSession: @unchecked Sendable {
       private let lock = NSLock()
       private let process = Process()
+      #if os(Windows)
+        private var job: WindowsRunJob?
+      #endif
       private let stdoutPipe = Pipe()
       private let stderrPipe = Pipe()
       private let readerQueue = DispatchQueue(label: "pmai.run.output", qos: .utility)
@@ -620,7 +708,7 @@ enum MaiRunToolError: LocalizedError {
         process.executableURL = executable
         process.arguments = arguments
         process.currentDirectoryURL = workingDirectory
-        process.environment = environment
+        process.environment = LocalProcess.mergedEnvironment(environment)
         process.standardOutput = interactive ? FileHandle.standardOutput : stdoutPipe
         process.standardError = interactive ? FileHandle.standardError : stderrPipe
         process.standardInput = interactive ? FileHandle.standardInput : stdinPipe ?? FileHandle.nullDevice
@@ -657,7 +745,9 @@ enum MaiRunToolError: LocalizedError {
           try lock.withLock {
             guard !stopping else { throw CancellationError() }
             if !interactive {
-              #if os(Linux) || os(Android)
+              #if os(Windows)
+                monitorWindowsPipes()
+              #elseif os(Linux) || os(Android)
                 try monitorPipes()
               #else
                 stdoutSource = try monitor(stdoutPipe.fileHandleForReading, isStderr: false)
@@ -665,7 +755,17 @@ enum MaiRunToolError: LocalizedError {
               #endif
             }
             process.terminationHandler = { [weak self] _ in self?.markExited() }
+            #if os(Windows)
+              job = try WindowsRunJob()
+            #endif
             try process.run()
+            #if os(Windows)
+              do { try job?.attach(pid: process.processIdentifier) }
+              catch {
+                if process.isRunning { process.terminate() }
+                throw error
+              }
+            #endif
             if let commandScope, let command {
               commandID = commandScope.started(
                 pid: process.processIdentifier, command: command, arguments: commandArguments,
@@ -679,6 +779,55 @@ enum MaiRunToolError: LocalizedError {
           throw error
         }
       }
+
+      #if os(Windows)
+        private func monitorWindowsPipes() {
+          let handles = [stdoutPipe.fileHandleForReading, stderrPipe.fileHandleForReading]
+          readersClosed.enter()
+          let thread = Thread { [self] in
+            defer {
+              for handle in handles { try? handle.close() }
+              readersClosed.leave()
+            }
+            while !lock.withLock({ finishing }) {
+              for index in handles.indices {
+                lock.withLock {
+                  guard !finishing, !(index == 0 ? stdoutClosed : stderrClosed) else { return }
+                  let handle = handles[index]._handle
+                  var available: DWORD = 0
+                  if !PeekNamedPipe(handle, nil, 0, nil, &available, nil) {
+                    let error = GetLastError()
+                    if error != ERROR_BROKEN_PIPE {
+                      readError = NSError(domain: "NSWin32ErrorDomain", code: Int(error))
+                    }
+                    if index == 0 { stdoutClosed = true } else { stderrClosed = true }
+                    return
+                  }
+                  guard available > 0 else { return }
+                  var data = Data(count: min(Int(available), 64 * 1024))
+                  var count: DWORD = 0
+                  let success = data.withUnsafeMutableBytes {
+                    ReadFile(handle, $0.baseAddress, DWORD($0.count), &count, nil)
+                  }
+                  guard success else {
+                    readError = NSError(domain: "NSWin32ErrorDomain", code: Int(GetLastError()))
+                    if index == 0 { stdoutClosed = true } else { stderrClosed = true }
+                    return
+                  }
+                  data.count = Int(count)
+                  if index == 0 { append(data, to: &stdout, dropped: &stdoutDropped, file: &stdoutFile, stream: "stdout") }
+                  else { append(data, to: &stderr, dropped: &stderrDropped, file: &stderrFile, stream: "stderr") }
+                }
+              }
+              finishIfComplete()
+              if lock.withLock({ stdoutClosed && stderrClosed }) { return }
+              Thread.sleep(forTimeInterval: 0.01)
+            }
+          }
+          thread.name = "pmai-run-output"
+          thread.start()
+        }
+      #endif
 
       #if os(Linux) || os(Android)
         /// Linux Dispatch read sources can race during concurrent EOF teardown
@@ -725,6 +874,7 @@ enum MaiRunToolError: LocalizedError {
         }
       #endif
 
+      #if !os(Windows)
       private func monitor(_ handle: FileHandle, isStderr: Bool) throws -> DispatchSourceRead {
         let fd = handle.fileDescriptor
         let flags = fcntl(fd, F_GETFL)
@@ -741,12 +891,13 @@ enum MaiRunToolError: LocalizedError {
         source.resume()
         return source
       }
+      #endif
 
       func send(_ input: String) {
         guard let handle = stdinPipe?.fileHandleForWriting else { return }
         #if os(macOS)
           _ = fcntl(handle.fileDescriptor, F_SETNOSIGPIPE, 1)
-        #else
+        #elseif !os(Windows)
           signal(SIGPIPE, SIG_IGN)
         #endif
         DispatchQueue.global(qos: .utility).async {
@@ -779,7 +930,11 @@ enum MaiRunToolError: LocalizedError {
         guard pid > 0 else { return false }
         // A shell can defer or trap SIGTERM and keep executing after its child exits.
         // Timeout and cancellation must stop the whole group without that grace period.
-        signalGroup(pid, SIGKILL)
+        #if os(Windows)
+          lock.withLock { job?.terminate() }
+        #else
+          signalGroup(pid, SIGKILL)
+        #endif
         lock.withLock { killSent = true }
         finishIfComplete()
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1) { [self] in
@@ -788,6 +943,7 @@ enum MaiRunToolError: LocalizedError {
         return true
       }
 
+      #if !os(Windows)
       private func signalGroup(_ pid: Int32, _ signal: Int32) {
         // Foundation spawns a new process group; never signal pmai's own group.
         if pid != getpgrp(), kill(-pid, signal) == 0 { return }
@@ -819,6 +975,8 @@ enum MaiRunToolError: LocalizedError {
         }
         finishIfComplete()
       }
+
+      #endif
 
       private func append(
         _ data: Data,
@@ -919,3 +1077,14 @@ enum MaiRunToolError: LocalizedError {
     }
   }
 #endif
+
+private extension URL {
+  var runFileSystemPath: String {
+    #if os(Windows)
+      // URL.path can use /C:/ spelling; native programs need C:\\ paths.
+      withUnsafeFileSystemRepresentation { $0.map { String(cString: $0) } } ?? path
+    #else
+      path
+    #endif
+  }
+}

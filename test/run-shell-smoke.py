@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Failing run_shell output reaches both the CLI and the model, without a live model."""
 import json
+import os
 from datetime import datetime
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -85,9 +86,94 @@ def check_timeout_setting(binary, server, env):
             print(f'PASS {"proxy" if proxy else "native"}: /set shell timeout execution and persistence')
 
 
+def check_windows(binary):
+    """Keep Run visible and executable on a stock Windows installation."""
+    global tool_call
+    env = clean_environment()
+    env.update(NO_PROXY='127.0.0.1,localhost', NO_COLOR='1')
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with tempfile.TemporaryDirectory(prefix='pmai run ü ') as directory:
+            root = Path(directory)
+            config = root / 'config.json'
+            config.write_text(json.dumps({
+                'defaultAgent': 'main',
+                'providers': [{'id': 'local', 'kind': 'openAICompatible',
+                               'baseURL': f'http://127.0.0.1:{server.server_port}/v1'}],
+                'toolSources': [{'id': 'standard', 'kind': 'standard-tools',
+                                 'options': {'tools': ['run_shell']}}],
+                'agents': [{'id': 'main', 'provider': 'local', 'model': 'fixture',
+                            'toolNames': ['run_shell'], 'toolGroupNames': [],
+                            'retry': {'attempts': 0}, 'autocompact': {'tokens': 0}}],
+                'approvals': {'mode': 'yolo'}, 'memory': {'enabled': False},
+                'use': {'plan': False, 'agentsmd': 'off'},
+            }))
+
+            def invoke(arguments, proxy=False):
+                global tool_call
+                requests.clear()
+                tool_call = {'id': 'windows-run', 'type': 'function', 'function': {
+                    'name': 'call-tool' if proxy else 'run_shell',
+                    'arguments': json.dumps({'name': 'run_shell', 'arguments': arguments}
+                                            if proxy else arguments)}}
+                result = subprocess.run([
+                    binary, '--config', str(config), '--home', str(root / 'home'),
+                    '--no-stream', '--no-markdown'], input='Run the command\n/exit\n',
+                    cwd=root, env=dict(env, PWD=str(root)), encoding='utf-8',
+                    capture_output=True, timeout=90)
+                output = result.stdout + result.stderr
+                assert result.returncode == 0, output
+                assert len(requests) == 2, (requests, output)
+                body = '\n'.join(m['content'] for m in requests[-1]['messages'] if m['role'] == 'tool')
+                assert 'CHECK-COMPLETE' in output, output
+                return body
+
+            for proxy in (False, True):
+                body = invoke({'script': "[Console]::Write('out ü'); [Console]::Error.Write('err'); exit 3"}, proxy)
+                assert 'out ü' in body and '[stderr]\nerr' in body and '[exit code 3]' in body, body
+            body = invoke({
+                'command': "[Console]::Write(($args -join '|') + ':' + [Console]::In.ReadToEnd()); "
+                           "Set-Content -LiteralPath result.txt -Value 'saved'",
+                'args': ['two words', 'ü'], 'stdin': 'input', 'cwd': str(root),
+            })
+            assert 'two words|ü:input' in body and 'Error:' not in body, body
+            assert (root / 'result.txt').read_text().strip() == 'saved'
+            literals = ['', 'two words', '"quoted"', '$(bad)', '& echo injected', 'ü']
+            body = invoke({'args': [sys.executable, '-X', 'utf8', '-c',
+                                   'import json,sys; print(json.dumps(sys.argv[1:], ensure_ascii=False))',
+                                   *literals]})
+            assert json.loads(body) == literals, body
+            body = invoke({'commands': ["Write-Output 'one'", "Write-Output 'two'"]})
+            assert body.strip().splitlines() == ['one', 'two'], body
+
+            # The timeout must stop the spawned child too, not just PowerShell.
+            body = invoke({'script':
+                "$child = Start-Process powershell.exe -ArgumentList '-NoProfile', '-Command', "
+                "'Start-Sleep -Seconds 120' -PassThru; Write-Output $child.Id; Start-Sleep -Seconds 120",
+                'timeout_seconds': 10})
+            assert 'timed out after 10 seconds' in body, body
+            pid = int(body.splitlines()[0])
+            probe = subprocess.run(['powershell.exe', '-NoProfile', '-Command',
+                f'if (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ exit 1 }}'],
+                capture_output=True, timeout=30)
+            try:
+                assert probe.returncode == 0, f'Timed-out child {pid} is still running'
+            finally:
+                if probe.returncode:
+                    subprocess.run(['taskkill.exe', '/PID', str(pid), '/T', '/F'],
+                                   capture_output=True, timeout=30)
+            print('PASS Windows run_shell: registration, aliases, Unicode, stdin, cwd, argv, exit status and timeout tree cleanup')
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def main():
     global tool_call
     binary = str(Path(sys.argv[1]).resolve())
+    if os.name == 'nt':
+        return check_windows(binary)
     fixture = Path(__file__).resolve().parent.parent / 'MaiCore/Tests/Fixtures/run-failure.sh'
     diagnostic = fixture.read_text().splitlines()[1].removeprefix("echo '").removesuffix("'")
     env = clean_environment()

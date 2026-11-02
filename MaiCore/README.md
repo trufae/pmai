@@ -1815,6 +1815,11 @@ one schema to pay for on every call rather than four. The text is taken from
 `command` or `script` interchangeably, since models mix the two up. Every call
 may pass `args`, `stdin`, `cwd`, `timeout_seconds`, and `output`. Commands run
 with color disabled and ANSI sequences are stripped from returned text.
+On Windows, the default shell is the built-in `powershell.exe`; use PowerShell
+syntax such as `Get-ChildItem` and `$args[0]`. Set `runShell` to `pwsh.exe`,
+`cmd.exe`, or an installed Bash executable to use another shell. Calls with
+only `args` launch a native executable directly, preserving literal argument
+boundaries. Timeouts and cancellation terminate its Windows process tree.
 For programs the person will operate, such as `vim`, `nano`, `less`, or a
 language REPL, pass `interactive: true`, for example
 `{"command":"vim notes.md","interactive":true}`. The CLI pauses its input
