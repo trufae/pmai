@@ -78,17 +78,22 @@ accepts a Sendable `[String: JSONValue]` for protocol extensions. Core errors th
 | iOS | arm64 device; arm64 / x86_64 simulator slices | iOS 17 |
 | Linux | arm64 / x86_64 glibc and musl static archives | glibc 2.39 or musl |
 | Android | arm64-v8a / x86_64 static archives | API 28 |
+| Windows | arm64 / amd64 MSVC static libraries | Windows 10/11; Swift 6.4 |
 
-Apple uses XCFrameworks. Linux and Android use SwiftPM's
+Apple uses XCFrameworks. Linux, Android, and Windows use SwiftPM's
 [static library artifact bundles (SE-0482)](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0482-swiftpm-static-library-binary-target-non-apple-platforms.md).
 Their archives link into the consuming executable/shared library; no extra
 `libforwiroh.so` needs packaging or a runtime search path. Use SwiftPM's native
 build system when cross-compiling Android. Android variant metadata includes
 API-level triples 28 through 40 (pmai currently selects `android28`).
 
+Windows embeds `forwiroh.lib` into the host executable; no Forwiroh DLL is needed.
+The SDK uses the shared MSVC C runtime to match Swift. The host must provide the
+Swift and Visual C++ runtime DLLs as usual.
+
 Mobile callers supply `identity: Data` containing a stable 32-byte seed stored in
 their Keychain/Keystore. The core does not write external identities to disk.
-macOS/Linux can omit it to use the core's owner-only identity file. The caller
+macOS/Linux/Windows can omit it to use the core's owner-only identity file. The caller
 chooses a writable, app-specific state directory. An app and its VPN extension
 cannot own the same directory simultaneously.
 
@@ -143,7 +148,31 @@ python3 scripts/package-swift.py
 swift test
 ```
 
-`build-swift-core.sh` writes archives to `dist/libraries/<rust-target>/`. Run it
+On Windows, install Swift 6.4 (matching pmai), Rust's MSVC toolchain, and Visual
+Studio C++ Build Tools with the Windows SDK for the desired architecture. Build
+on a native amd64 or arm64 host in PowerShell:
+
+```powershell
+# Use aarch64-pc-windows-msvc instead on arm64.
+rustup target add x86_64-pc-windows-msvc
+./scripts/build-swift-core.ps1 -Target x86_64-pc-windows-msvc
+python scripts/package-swift.py
+swift test --configuration release
+swift run --package-path examples/swiftpm --configuration release Consumer
+```
+
+The Windows workflow runs this build on both native architectures, then unpacks
+the generated ZIP and tests that distribution and an external SwiftPM consumer.
+It uploads `Forwiroh-SwiftPM-windows-amd64` and `Forwiroh-SwiftPM-windows-arm64`
+Actions artifacts for individual builds. The full release ZIP combines both
+Windows libraries with the Apple, Linux, and Android variants.
+
+For pmai's Windows integration, unpack the complete package into
+`pmai/Vendor/Forwiroh`, or set `PMAI_FORWIROH_PATH` to the unpacked `Forwiroh`
+directory. Its `MaiACP` product dependency includes Windows.
+
+`build-swift-core.sh` and `build-swift-core.ps1` write archives to
+`dist/libraries/<rust-target>/` (`forwiroh.lib` on Windows). Run the shell script
 on Linux for the Linux targets, or with `ANDROID_NDK_HOME` for Android. The release
 builds use Ubuntu 24.04, `musl-tools`, and Zig 0.17.0 for musl linking (or supply
 your own `CARGO_TARGET_<TARGET>_LINKER` and `CC_<target>` overrides). The release
@@ -237,7 +266,7 @@ git push origin --tags
 ```
 
 The tag must match the workspace version. The SwiftPM workflow builds and tests
-all platforms, requires all eleven SDK variants and all eight CLI targets, generates the remote
+all platforms, requires all thirteen SDK variants and all eight CLI targets, generates the remote
 manifest using that tag's GitHub asset URLs, verifies checksums, then creates
 the release and uploads both package ZIPs, both binary ZIPs, the CLI archives,
 both installers, the Android debug APK, `SHA256SUMS`, `CLI-SHA256SUMS`, and

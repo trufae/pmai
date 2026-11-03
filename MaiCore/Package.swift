@@ -121,7 +121,7 @@ let package = Package(
         .product(name: "NIOWebSocket", package: "swift-nio"),
         .product(
           name: "Forwiroh", package: "Forwiroh",
-          condition: .when(platforms: [.macOS, .iOS, .linux, .android])),
+          condition: .when(platforms: [.macOS, .iOS, .linux, .android, .windows])),
       ]),
     .target(name: "MaiACPGateway", dependencies: [
       "MaiACP", "MaiCore",

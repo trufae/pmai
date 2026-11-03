@@ -1,12 +1,12 @@
 [
   {
     "name": "ForwirohApple",
-    "url": "https://github.com/trufae/forwiroh/releases/download/v0.1.4/ForwirohApple.xcframework.zip",
-    "checksum": "aba872550bb9e4e588d0694a022f79b75232bae0750f4450f31cb6aafe17e731"
+    "url": "https://github.com/trufae/forwiroh/releases/download/v0.1.5/ForwirohApple.xcframework.zip",
+    "checksum": "d3cfe101dc73ed47f65ce6e2cd93f112d62d64a63ac9e1ac34a51ee87c2a892e"
   },
   {
     "name": "ForwirohNative",
-    "url": "https://github.com/trufae/forwiroh/releases/download/v0.1.4/ForwirohNative.artifactbundle.zip",
-    "checksum": "e29ffb2f2d732d5ab2e0fc5d771795a86dedf5596b7d5bc503f508af8937bc87"
+    "url": "https://github.com/trufae/forwiroh/releases/download/v0.1.5/ForwirohNative.artifactbundle.zip",
+    "checksum": "b593e6710b2955e67054ee433368e0b336b06e1df8b2005a18a1a841a26f6d5e"
   }
 ]

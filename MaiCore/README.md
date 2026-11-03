@@ -138,7 +138,7 @@ repositories on Linux before resolving the graph. Include the flag when invoking
 `swift build`, `swift test`, or `swift package resolve` directly.
 
 For Linux/Android cross-builds from a Mac, also set `PMAI_NO_MLX=1` and
-`PMAI_FORWIROH_PLATFORM=native`. The latter selects Forwiroh's Linux/Android
+`PMAI_FORWIROH_PLATFORM=native`. The latter selects Forwiroh's Linux/Android/Windows
 artifact bundle without downloading its Apple XCFramework. Native Apple builds
 fetch only the Apple artifact. `make repl-musl` and the Android build script set
 the cross-build environment automatically.

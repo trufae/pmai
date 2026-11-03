@@ -1,5 +1,5 @@
 // swift-tools-version: 6.2
-// pmai SDK pin: Forwiroh 0.1.4. Update with Artifacts/manifest.json to invalidate the manifest cache.
+// pmai SDK pin: Forwiroh 0.1.5. Update with Artifacts/manifest.json to invalidate the manifest cache.
 import PackageDescription
 import Foundation
 
@@ -21,7 +21,7 @@ guard let data = try? Data(contentsOf: manifest),
 // conditional. Cross-builds must select their destination instead of the host.
 #if os(macOS)
 let defaultPlatform = "apple"
-#elseif os(Linux) || os(Android)
+#elseif os(Linux) || os(Android) || os(Windows)
 let defaultPlatform = "native"
 #else
 let defaultPlatform = "none"
@@ -46,7 +46,7 @@ let binaries: [Target] = selectedArtifacts.map { artifact in
 }
 let coreDependencies: [Target.Dependency] = selectedArtifacts.map { artifact in
     .target(name: artifact.name, condition: .when(platforms:
-        artifact.name == "ForwirohApple" ? [.macOS, .iOS] : [.linux, .android]))
+        artifact.name == "ForwirohApple" ? [.macOS, .iOS] : [.linux, .android, .windows]))
 }
 let package = Package(
     name: "Forwiroh",
@@ -68,6 +68,19 @@ let package = Package(
                 .linkedLibrary("pthread", .when(platforms: [.linux])),
                 .linkedLibrary("android", .when(platforms: [.android])),
                 .linkedLibrary("log", .when(platforms: [.android])),
+                // Native dependencies of the Rust MSVC static library. Use the
+                // shared CRT, matching Swift's Windows runtime (no crt-static).
+                .linkedLibrary("advapi32", .when(platforms: [.windows])),
+                .linkedLibrary("bcrypt", .when(platforms: [.windows])),
+                .linkedLibrary("crypt32", .when(platforms: [.windows])),
+                .linkedLibrary("iphlpapi", .when(platforms: [.windows])),
+                .linkedLibrary("kernel32", .when(platforms: [.windows])),
+                .linkedLibrary("ncrypt", .when(platforms: [.windows])),
+                .linkedLibrary("ntdll", .when(platforms: [.windows])),
+                .linkedLibrary("ole32", .when(platforms: [.windows])),
+                .linkedLibrary("secur32", .when(platforms: [.windows])),
+                .linkedLibrary("userenv", .when(platforms: [.windows])),
+                .linkedLibrary("ws2_32", .when(platforms: [.windows])),
             ]),
         .testTarget(name: "ForwirohTests", dependencies: ["Forwiroh"]),
     ]
