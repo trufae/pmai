@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise native Windows input, Unicode output, and console restoration."""
+import io
 import os
 from pathlib import Path
 import subprocess
@@ -121,8 +122,8 @@ def worker(binary):
     try:
         # Standard handles may still refer to the CI runner's redirected pipes.
         # Open the allocated console explicitly, preserving stdout for diagnostics.
-        console_in = handles.enter_context(open('CONIN$', 'r+b', buffering=0))
-        console_out = handles.enter_context(open('CONOUT$', 'r+b', buffering=0))
+        console_in = handles.enter_context(io.FileIO('CONIN$', 'r+'))
+        console_out = handles.enter_context(io.FileIO('CONOUT$', 'r+'))
         input_handle = msvcrt.get_osfhandle(console_in.fileno())
         output_handle = msvcrt.get_osfhandle(console_out.fileno())
 
@@ -136,7 +137,7 @@ def worker(binary):
 
         def screen(full=False):
             # CONOUT$ opens the active screen, including the alternate buffer.
-            with open('CONOUT$', 'rb', buffering=0) as console:
+            with io.FileIO('CONOUT$', 'r') as console:
                 handle = msvcrt.get_osfhandle(console.fileno())
                 info = ScreenInfo()
                 checked(kernel.GetConsoleScreenBufferInfo(handle, c.byref(info)))
@@ -169,14 +170,14 @@ def worker(binary):
             env = clean_environment()
             env.update(NO_COLOR='1')
             mode_probe = root / 'console-modes.py'
-            mode_probe.write_text('''import ctypes as c, json, msvcrt, sys
+            mode_probe.write_text('''import ctypes as c, io, json, msvcrt, sys
 from ctypes import wintypes as w
 from pathlib import Path
 kernel = c.WinDLL('kernel32', use_last_error=True)
 kernel.GetConsoleMode.argtypes = [w.HANDLE, c.POINTER(w.DWORD)]
 modes = []
 for name in ('CONIN$', 'CONOUT$'):
-    with open(name, 'r+b', buffering=0) as console:
+    with io.FileIO(name, 'r+') as console:
         mode = w.DWORD()
         if not kernel.GetConsoleMode(msvcrt.get_osfhandle(console.fileno()), c.byref(mode)):
             raise c.WinError(c.get_last_error())
@@ -200,7 +201,7 @@ Path(sys.argv[1]).write_text(json.dumps(modes))
                     'agents': [{'id': 'test', 'provider': 'test', 'model': 'test', 'toolNames': []}],
                 }))
                 # GetConsoleMode requires read access on the output handle too.
-                with open('CONIN$', 'r+b', buffering=0) as console_in, open('CONOUT$', 'r+b', buffering=0) as console_out:
+                with io.FileIO('CONIN$', 'r+') as console_in, io.FileIO('CONOUT$', 'r+') as console_out:
                     process = subprocess.Popen(
                         [binary, '--config', str(config), '--home', str(root / mode), '--no-markdown'],
                         cwd=root, env=env, stdin=console_in, stdout=console_out, stderr=console_out)
@@ -280,7 +281,7 @@ Path(sys.argv[1]).write_text(json.dumps(modes))
                                 wait_for('relay-ready')
                                 send('é 漢 🙂\x03\x1b[A\r')
                                 wait_for('relay-received-é 漢 🙂')
-                                with open('CONOUT$', 'r+b', buffering=0) as active:
+                                with io.FileIO('CONOUT$', 'r+') as active:
                                     active_handle = msvcrt.get_osfhandle(active.fileno())
                                     info = ScreenInfo()
                                     checked(kernel.GetConsoleScreenBufferInfo(active_handle, c.byref(info)))
@@ -320,7 +321,7 @@ Path(sys.argv[1]).write_text(json.dumps(modes))
                 (['--unknown-é'], 2, 'Unknown option: --unknown-é', True),
             ]:
                 checked(kernel.SetConsoleOutputCP(437))
-                with open('CONOUT$', 'r+b', buffering=0) as console_out:
+                with io.FileIO('CONOUT$', 'r+') as console_out:
                     result = subprocess.run([binary, *arguments], cwd=root, env=env,
                                             stdin=subprocess.DEVNULL,
                                             stdout=subprocess.DEVNULL if stderr_only else console_out,

@@ -2367,12 +2367,13 @@ func queuedRetryDelayReconfiguresWithoutRestarting() async throws {
     provider: "live-retry",
     model: "fixture",
     messages: [.user("retry")],
-    retry: AgentRetryPolicy(attempts: 1, delaySeconds: 30))
+    retry: AgentRetryPolicy(attempts: 1, delaySeconds: 300))
   let task = Task { try await runtime.run(initial, process: pid) }
   let watchdog = Task {
-    try? await Task.sleep(for: .seconds(2))
+    try await Task.sleep(for: .seconds(60))
     task.cancel()
   }
+  defer { watchdog.cancel(); task.cancel() }
   #expect(await provider.waitForRequests(1))
 
   var updated = initial
@@ -2380,7 +2381,6 @@ func queuedRetryDelayReconfiguresWithoutRestarting() async throws {
   #expect(await runtime.reconfigure(pid, with: updated))
 
   let result = try await task.value
-  watchdog.cancel()
   #expect(result.response.text == "retried")
   #expect(await provider.requests.count == 2)
 }

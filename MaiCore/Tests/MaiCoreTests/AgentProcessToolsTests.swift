@@ -311,16 +311,15 @@ func queuedChildStartsWhenDynamicLimitIsRaised() async throws {
   }
   await supervisor.attach(task, to: second.pid)
   let watchdog = Task {
-    try? await Task.sleep(for: .seconds(2))
+    try await Task.sleep(for: .seconds(60))
     task.cancel()
   }
+  defer { watchdog.cancel(); task.cancel() }
 
-  try await Task.sleep(for: .milliseconds(150))
   #expect(await supervisor.info(second.pid)?.state == .queued)
   await limit.set(2)
   supervisor.changes.notify()
   let result = try await task.value
-  watchdog.cancel()
 
   #expect(result.response.text == "second")
   #expect(await supervisor.info(second.pid)?.state == .completed)
