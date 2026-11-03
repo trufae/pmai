@@ -100,7 +100,10 @@ let package = Package(
   dependencies: packageDependencies,
   targets: [
     .target(name: "CMaiTerminal"),
-    .target(name: "MaiCore"),
+    .target(name: "CMaiWinHTTP", linkerSettings: [
+      .linkedLibrary("winhttp", .when(platforms: [.windows])),
+    ]),
+    .target(name: "MaiCore", dependencies: ["CMaiWinHTTP"]),
     .target(name: "MaiVoice", dependencies: ["MaiCore", "MaiOpenAI"]),
     .target(name: "MaiMarkdown"),
     .target(name: "MaiOpenAI", dependencies: [
@@ -194,5 +197,5 @@ if focusedTests {
   package.products = package.products.filter { names.contains($0.name) }
   package.dependencies = testProfile == "mobile" ? packageDependencies : testProfile == "core" ? []
     : testProfile == "documents" ? [xmlPackage] : Array(packageDependencies.prefix(1))
-  package.targets = package.targets.filter { names.contains($0.name) }
+  package.targets = package.targets.filter { names.contains($0.name) || $0.name == "CMaiWinHTTP" }
 }

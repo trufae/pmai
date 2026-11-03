@@ -6,6 +6,25 @@ import FoundationNetworking
 enum ProviderRedirectPolicy {
   static let maximumRedirectCount = 5
 
+  static func redirectedRequest(originalRequest: URLRequest, response: HTTPURLResponse) -> URLRequest? {
+    guard [301, 302, 303, 307, 308].contains(response.statusCode),
+      let location = response.value(forHTTPHeaderField: "Location"),
+      let destination = URL(string: location, relativeTo: originalRequest.url)?.absoluteURL
+    else { return nil }
+    var proposed = originalRequest
+    proposed.url = destination
+    if response.statusCode == 303 && proposed.httpMethod != "HEAD"
+      || [301, 302].contains(response.statusCode) && proposed.httpMethod == "POST"
+    {
+      proposed.httpMethod = "GET"
+      proposed.httpBody = nil
+      proposed.httpBodyStream = nil
+      proposed.setValue(nil, forHTTPHeaderField: "Content-Length")
+      proposed.setValue(nil, forHTTPHeaderField: "Content-Type")
+    }
+    return redirectedRequest(originalRequest: originalRequest, response: response, proposedRequest: proposed)
+  }
+
   static func redirectedRequest(
     originalRequest: URLRequest,
     response: HTTPURLResponse,

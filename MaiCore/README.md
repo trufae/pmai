@@ -730,19 +730,22 @@ and credential fields are redacted. The setting survives restarts in
 `.pmai/settings.json`. The log is readable only by the current user and can
 contain prompts, tool output, and other private data.
 
-OpenAI-compatible providers use the system `curl.exe` on Windows to avoid a
+OpenAI-compatible providers use native WinHTTP on Windows to avoid a
 FoundationNetworking upload stall when the request outgrows a socket send buffer
 ([Swift issue #5532](https://github.com/swiftlang/swift-corelibs-foundation/issues/5532)).
 Other platforms keep URLSession. The provider's `options.httpTransport` can be
-`auto` (the default), `curl`, or `urlsession`; `curl` is also available on macOS
-and Linux for comparison. This preserves live SSE replies and cancellation.
-Windows requires `%SystemRoot%\System32\curl.exe`, included since Windows 10
-1803; older or customized installations may need curl installed at that location.
-Authentication headers travel over curl's standard input, not its command line.
-Request bodies use private temporary files which are removed after the request.
-Curl's per-request timeout is a total deadline; its connection timeout is capped
-at 30 seconds. Certificate verification remains enabled and redirects stay within
-the original origin.
+`auto` (the default), `winhttp`, `curl`, or `urlsession`. WinHTTP is Windows-only
+and uses the OS HTTP/TLS library directly, with no subprocess or temporary body
+files. Both WinHTTP and curl preserve live SSE replies, cancellation, and gzip
+responses, enforce a total request deadline, and cap the connection timeout at
+30 seconds. Certificate verification remains enabled and redirects stay within
+the original origin. Windows login credentials are not sent automatically.
+
+Curl remains selectable on Windows, macOS and Linux. On Windows it requires
+`%SystemRoot%\System32\curl.exe`, included since Windows 10 1803; older or
+customized installations may need curl installed at that location. Authentication
+headers travel over curl's standard input, not its command line. Curl request
+bodies use private temporary files which are removed after the request.
 
 Debug logs include `model.transport.request` (wire body size, selected transport,
 streaming flag and timeout), `model.transport.headers`, `model.transport.first_line`

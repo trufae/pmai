@@ -39,7 +39,7 @@ public struct OpenAIConfiguredProviderFactory: ConfiguredProviderFactory {
     let selection = configuration.options["httpTransport"]?.stringValue ?? "auto"
     guard let transport = ProviderHTTPTransport(rawValue: selection.lowercased()) else {
       throw NSError(domain: "pmai.http", code: 1, userInfo: [NSLocalizedDescriptionKey:
-        "Unknown httpTransport '\(selection)'; use auto, curl, or urlsession."])
+        "Unknown httpTransport '\(selection)'; use auto, winhttp, curl, or urlsession."])
     }
     return OpenAICompatibleProvider(
       configuration: .init(

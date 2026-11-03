@@ -4,25 +4,26 @@ import FoundationNetworking
 #endif
 
 /// Windows FoundationNetworking can stop uploading when a socket's send buffer
-/// fills (swift-corelibs-foundation#5532). The system curl uses its own event loop.
+/// fills (swift-corelibs-foundation#5532). WinHTTP and curl bypass that event loop.
 public enum ProviderHTTPTransport: String, Sendable {
   case automatic = "auto"
   case urlSession = "urlsession"
   case curl
+  case winHTTP = "winhttp"
 
   public var resolved: Self {
     guard self == .automatic else { return self }
     #if os(Windows)
-    return .curl
+    return .winHTTP
     #else
     return .urlSession
     #endif
   }
 
   public func makeSession() -> URLSession {
-    guard resolved == .curl else { return .shared }
+    guard resolved != .urlSession else { return .shared }
     let configuration = URLSessionConfiguration.ephemeral
-    configuration.protocolClasses = [CurlHTTPProtocol.self]
+    configuration.protocolClasses = resolved == .winHTTP ? [WinHTTPProtocol.self] : [CurlHTTPProtocol.self]
     return URLSession(configuration: configuration)
   }
 }
@@ -109,7 +110,7 @@ final class CurlHTTPProtocol: URLProtocol, @unchecked Sendable {
     }
     // Keep credentials off the command line and body bytes intact, including
     // multipart audio and NULs. Only the request body uses a private temp file.
-    if let body = try Self.body(of: request) {
+    if let body = try ProviderHTTPTransport.body(of: request) {
       request.httpBodyStream = nil
       request.httpBody = body
       let bodyURL = directory.appendingPathComponent("body")
@@ -174,25 +175,8 @@ final class CurlHTTPProtocol: URLProtocol, @unchecked Sendable {
         guard let response = HTTPURLResponse(url: url, statusCode: status,
           httpVersion: String(statusLine[0].dropFirst(5)), headerFields: headers)
         else { throw URLError(.badServerResponse) }
-        if [301, 302, 303, 307, 308].contains(status),
-          let location = response.value(forHTTPHeaderField: "Location"),
-          let destination = URL(string: location, relativeTo: url)?.absoluteURL
-        {
-          var proposed = request
-          proposed.url = destination
-          if status == 303 && proposed.httpMethod != "HEAD"
-            || [301, 302].contains(status) && proposed.httpMethod == "POST"
-          {
-            proposed.httpMethod = "GET"
-            proposed.httpBody = nil
-            proposed.httpBodyStream = nil
-            proposed.setValue(nil, forHTTPHeaderField: "Content-Length")
-            proposed.setValue(nil, forHTTPHeaderField: "Content-Type")
-          }
-          if let redirected = ProviderRedirectPolicy.redirectedRequest(
-            originalRequest: request, response: response, proposedRequest: proposed)
-          { return redirected }
-        }
+        if let redirected = ProviderRedirectPolicy.redirectedRequest(originalRequest: request, response: response)
+        { return redirected }
         receivedHeaders = true
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         if !pending.isEmpty { client?.urlProtocol(self, didLoad: pending) }
@@ -241,7 +225,11 @@ final class CurlHTTPProtocol: URLProtocol, @unchecked Sendable {
       .replacingOccurrences(of: "\t", with: "\\t") + "\""
   }
 
-  private static func body(of request: URLRequest) throws -> Data? {
+  #endif
+}
+
+extension ProviderHTTPTransport {
+  static func body(of request: URLRequest) throws -> Data? {
     if let body = request.httpBody { return body }
     guard let stream = request.httpBodyStream else { return nil }
     stream.open()
@@ -255,5 +243,4 @@ final class CurlHTTPProtocol: URLProtocol, @unchecked Sendable {
       result.append(contentsOf: buffer.prefix(count))
     }
   }
-  #endif
 }

@@ -1,8 +1,9 @@
 # Windows HTTP upload investigation
 
-The app workaround selects the system curl executable for OpenAI-compatible
-providers on Windows. Set the provider's `options.httpTransport` to `urlsession`
-to compare the original path, or `curl` to force the workaround on macOS/Linux.
+The app selects native WinHTTP for OpenAI-compatible providers on Windows.
+Set the provider's `options.httpTransport` to `urlsession` to compare the original
+path, or `curl` to select the alternative executable transport on Windows,
+macOS, or Linux. Explicit `winhttp` selection is available on Windows.
 Do not automatically retry a stalled POST through another transport: the first
 request may already have reached the provider and incurred usage or side effects.
 
@@ -20,15 +21,18 @@ Microsoft added the executable to [Windows 10 version 1803](https://devblogs.mic
 it is included on current Windows installations, but older or customized images
 can lack it. pmai invokes `%SystemRoot%\System32\curl.exe` directly, avoiding
 the [PowerShell 5.1 `curl` alias](https://learn.microsoft.com/en-us/windows/curl/).
-The workaround requires that executable; it does not silently retry a failed
+The curl transport requires that executable; it does not silently retry a failed
 request through FoundationNetworking.
 
-For a future native implementation, prefer the
+The native implementation uses the
 [WinHTTP API](https://learn.microsoft.com/en-us/windows/win32/winhttp/about-winhttp).
 It provides HTTP and OS-managed TLS without a subprocess or a .NET runtime.
-An implementation must preserve incremental SSE delivery, cancellation, deadlines,
-certificate validation, and pmai's same-origin redirect policy. Keep curl as a
-selectable alternative even if WinHTTP becomes the Windows default.
+The Swift adapter uses a small C bridge to async WinHTTP. It queries available
+bytes before reading to preserve incremental SSE delivery, closes the request
+handle for cancellation, and retains its callback context and I/O buffers until
+the final `HANDLE_CLOSING` notification. A total deadline spans the request and
+all redirects. Certificate validation and pmai's same-origin redirect policy
+remain enabled. Curl stays available independently of this Windows default.
 
 Raw Winsock would leave TLS, certificate checks, HTTP framing, proxies, and
 redirects to the application. It is useful for a reduced socket regression, but
@@ -37,8 +41,7 @@ is a much larger replacement for the application's HTTPS transport.
 can support streaming, with a separate deadline and cancellation for content
 reads. Calling it through PowerShell would still require a streaming loop,
 process lifecycle handling, and safe credential transfer; a one-liner does not
-remove those requirements. Neither WinHTTP nor PowerShell is implemented as an
-app transport here.
+remove those requirements. PowerShell is not used as an app transport here.
 
 ## Run the standalone probe
 
