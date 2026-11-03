@@ -790,6 +790,9 @@ struct REPLSession: Sendable {
   }
   var historyChanges = ChatHistoryChanges()
   var historyWindow: ChatHistoryWindow? = nil
+  /// The whole history's size, measured before it was swapped for a page,
+  /// so the status line keeps describing the chat rather than the page.
+  var historyContextSize: AgentContextSize? = nil
   var fileAccessLog: FileAccessLog
   var pendingContent: [ContentPart]
   var createdAt: Date
@@ -2726,6 +2729,7 @@ struct MaiCLI {
         session.subagents = chat.subagents
         session.commands = chat.commands
         session.historyWindow = nil
+        session.historyContextSize = nil
         session.historyChanges = chat.historyChanges
         return true
       } catch {
@@ -2763,6 +2767,7 @@ struct MaiCLI {
             try currentStore.loadChatPage(id: id)
           }
         ).value {
+          session.historyContextSize = AgentContextSize(messages: session.history.messages)
           session.history = AgentTranscript(messages: page.messages)
           session.historyWindow = page.historyWindow
           session.subagents = page.subagents
@@ -6336,8 +6341,16 @@ struct MaiCLI {
   private static func promptContextStatus(
     _ session: REPLSession, contextSize: AgentContextSize? = nil
   ) -> String {
-    let size = contextSize ?? AgentContextSize(messages: session.history.messages)
-    return "\(ModelUsageFormat.count(size.estimatedTokens))/\(size.messageCount)"
+    if let size = contextSize ?? session.historyContextSize {
+      return "\(ModelUsageFormat.count(size.estimatedTokens))/\(size.messageCount)"
+    }
+    let size = AgentContextSize(messages: session.history.messages)
+    // A chat opened on its latest page has not been measured as a whole:
+    // its message count is known, its tokens are at least the page's.
+    guard let window = session.historyWindow, window.totalCount > size.messageCount else {
+      return "\(ModelUsageFormat.count(size.estimatedTokens))/\(size.messageCount)"
+    }
+    return "\(ModelUsageFormat.count(size.estimatedTokens))+/\(window.totalCount)"
   }
 
   private static func changeWorkingDirectory(_ argument: String, terminal: TerminalWriter) async {
