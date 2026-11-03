@@ -29,11 +29,14 @@ func workspaceFilesList() async throws {
   #expect(String(decoding: content.data, as: UTF8.self) == "spaces")
 }
 
-@Test("Binary uploads commit only complete sequential chunks and preserve existing files")
-func workspaceFilesTransfers() async throws {
+@Test("Binary uploads commit only complete sequential chunks and preserve existing files",
+  arguments: [false, true])
+func workspaceFilesTransfers(useDefaultTemporaryDirectory: Bool) async throws {
   let (base, root) = try fileBrowserFixture()
   defer { try? FileManager.default.removeItem(at: base) }
-  let files = MaiWorkspaceFiles(configuration: .init(rootURL: root, temporaryDirectoryURL: base))
+  let files = MaiWorkspaceFiles(configuration: .init(
+    rootURL: root, temporaryDirectoryURL: useDefaultTemporaryDirectory ? nil : base))
+  let temporaryDirectory = useDefaultTemporaryDirectory ? FileManager.default.temporaryDirectory : base
   let destination = root.appendingPathComponent("binary.dat")
   let bytes = Data((0..<WorkspaceFileRequest.chunkSize + 17).map { UInt8($0 % 256) })
   let id = try #require(try await files.request(.init(.uploadBegin, path: "binary.dat")).transferID)
@@ -74,12 +77,16 @@ func workspaceFilesTransfers() async throws {
   _ = try await files.request(.init(.uploadCancel, transferID: cancel))
   #expect(
     !FileManager.default.fileExists(
-      atPath: base.appendingPathComponent("pmai-upload-\(cancel)").path))
+      atPath: temporaryDirectory.appendingPathComponent("pmai-upload-\(cancel)").path))
   let empty = try #require(try await files.request(.init(.uploadBegin, path: "empty")).transferID)
   _ = try await files.request(.init(.uploadFinish, transferID: empty))
   #expect(try Data(contentsOf: root.appendingPathComponent("empty")).isEmpty)
-  _ = try await files.request(.init(.uploadBegin, path: "abandoned"))
+  let abandoned = try #require(
+    try await files.request(.init(.uploadBegin, path: "abandoned")).transferID)
   await files.close()
+  #expect(
+    !FileManager.default.fileExists(
+      atPath: temporaryDirectory.appendingPathComponent("pmai-upload-\(abandoned)").path))
   #expect(try FileManager.default.contentsOfDirectory(atPath: base.path) == ["project"])
 }
 

@@ -40,9 +40,7 @@ public struct MaiFileWorkspaceConfiguration: Equatable, Sendable {
   ) {
     self.rootURL = rootURL.standardizedFileURL
     self.temporaryDirectoryURL =
-      temporaryDirectoryURL?.standardizedFileURL
-      ?? URL(fileURLWithPath: ProcessInfo.processInfo.environment["TMPDIR"] ?? "/tmp", isDirectory: true)
-      .standardizedFileURL
+      (temporaryDirectoryURL ?? FileManager.default.temporaryDirectory).standardizedFileURL
     self.displayName = displayName ?? rootURL.lastPathComponent
     self.writeEnabled = writeEnabled
     self.followsProcessWorkingDirectory = followsProcessWorkingDirectory
