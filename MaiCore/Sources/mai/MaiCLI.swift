@@ -8411,11 +8411,14 @@ struct MaiCLI {
         started = true
         continue
       }
-      if character == "\\", quote != .single {
-        escaped = true
-        started = true
-        continue
-      }
+      // Windows paths keep backslashes literal, including before a closing quote.
+      #if !os(Windows)
+        if character == "\\", quote != .single {
+          escaped = true
+          started = true
+          continue
+        }
+      #endif
       if character == "'", quote != .double {
         quote = quote == .single ? nil : .single
         started = true

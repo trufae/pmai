@@ -207,6 +207,19 @@ def worker(binary):
                     # completed, without depending on a previously drawn prompt.
                     send(f'/help ready-{mode}\r')
                     wait_for(f"Unknown help topic 'ready-{mode}'")
+                    # Backslashes in native paths must survive REPL parsing and
+                    # persistence, including immediately before a closing quote.
+                    send(r'/provider add acp windows-paths "C:\Program Files\agent.exe" '
+                         r'C:\Users\alice\repo "C:\Users\alice\my repo" '
+                         r'\\server\share\repo "C:\" C:\ ' + '\r')
+                    wait_for("ACP provider 'windows-paths' saved.")
+                    provider = next(p for p in json.loads(config.read_text(encoding='utf-8'))['providers']
+                                    if p['id'] == 'windows-paths')
+                    assert provider['options']['command'] == r'C:\Program Files\agent.exe', provider
+                    assert provider['options']['args'] == [
+                        r'C:\Users\alice\repo', r'C:\Users\alice\my repo',
+                        r'\\server\share\repo', 'C:\\', 'C:\\',
+                    ], provider
                     for label, character in [('accent', 'é'), ('cjk', '漢'), ('emoji', '🙂')]:
                         topic = f'{label}-{mode}-{character}'
                         # Screen-buffer reads can replace supplementary glyphs.
