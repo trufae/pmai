@@ -29,9 +29,13 @@ class ACP:
         self.output = {}
 
         def read():
-            for line in self.process.stdout:
-                self.messages.put(json.loads(line))
-            self.messages.put(None)
+            try:
+                for line in self.process.stdout:
+                    self.messages.put(json.loads(line))
+            except Exception as error:
+                self.messages.put(RuntimeError(f'Invalid ACP frame {line!r}: {error}'))
+            finally:
+                self.messages.put(None)
 
         def errors():
             self.errors.extend(self.process.stderr.read())
@@ -47,6 +51,8 @@ class ACP:
         deadline = time.monotonic() + 45
         while True:
             message = self.messages.get(timeout=max(0, deadline - time.monotonic()))
+            if isinstance(message, Exception):
+                raise message
             assert message is not None, self.errors.decode(errors='replace')
             if message.get('id') != self.number:
                 continue
