@@ -75,6 +75,7 @@ MaiWindowsPTY *mai_windows_pty_create(const uint16_t *executable, const uint16_t
   if (!arguments) { failure = ERROR_NOT_ENOUGH_MEMORY; goto fail; }
   STARTUPINFOEXW startup = {0};
   startup.StartupInfo.cb = sizeof(startup);
+  startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
   startup.lpAttributeList = attributes;
   if (!CreateProcessW((LPCWSTR)executable, arguments, NULL, NULL, FALSE,
       EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED, NULL, (LPCWSTR)cwd,

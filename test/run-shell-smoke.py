@@ -141,8 +141,7 @@ def check_windows(binary):
             assert json.loads(body) == literals, body
             print('PASS Windows native argv and stdin', flush=True)
             body = invoke({
-                'command': "[Console]::Error.WriteLine('stdin redirected: ' + [Console]::IsInputRedirected); "
-                           "[Console]::Write(($args -join '|') + ':' + [Console]::In.ReadToEnd()); "
+                'command': "[Console]::Write(($args -join '|') + ':' + [Console]::In.ReadToEnd()); "
                            "Set-Content -LiteralPath result.txt -Value 'saved'",
                 'args': ['two words', 'ü'], 'stdin': 'input', 'cwd': str(root),
             })
