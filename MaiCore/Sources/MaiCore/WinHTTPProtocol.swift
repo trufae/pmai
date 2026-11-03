@@ -23,19 +23,22 @@ final class WinHTTPProtocol: URLProtocol, @unchecked Sendable {
   override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
   override func startLoading() {
-    queue.async { [self] in
-      guard !self.finished else { return }
-      let timer = DispatchSource.makeTimerSource(queue: self.queue)
-      timer.schedule(deadline: .now() + max(0.001, self.request.timeoutInterval))
-      timer.setEventHandler { [weak self] in self?.finish(error: URLError(.timedOut)) }
-      self.deadline = timer
+    // corelibs Foundation marks URLProtocol non-Sendable; state is confined to queue.
+    nonisolated(unsafe) let owner = self
+    queue.async {
+      guard !owner.finished else { return }
+      let timer = DispatchSource.makeTimerSource(queue: owner.queue)
+      timer.schedule(deadline: .now() + max(0.001, owner.request.timeoutInterval))
+      timer.setEventHandler { [weak owner] in owner?.finish(error: URLError(.timedOut)) }
+      owner.deadline = timer
       timer.resume()
-      self.start(self.request)
+      owner.start(owner.request)
     }
   }
 
   override func stopLoading() {
-    queue.async { self.finish(notify: false) }
+    nonisolated(unsafe) let owner = self
+    queue.async { owner.finish(notify: false) }
   }
 
   private func start(_ incoming: URLRequest) {

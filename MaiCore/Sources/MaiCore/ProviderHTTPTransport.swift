@@ -46,23 +46,25 @@ final class CurlHTTPProtocol: URLProtocol, @unchecked Sendable {
 
   override func startLoading() {
     #if os(macOS) || os(Linux) || os(Windows)
+    // corelibs Foundation marks URLProtocol non-Sendable; access is serialized here.
+    nonisolated(unsafe) let owner = self
     DispatchQueue.global(qos: .userInitiated).async {
       do {
-        var next = self.request
+        var next = owner.request
         for redirectCount in 0...ProviderRedirectPolicy.maximumRedirectCount {
-          if self.isCancelled { return }
-          if let redirected = try self.transfer(next) {
+          if owner.isCancelled { return }
+          if let redirected = try owner.transfer(next) {
             guard redirectCount < ProviderRedirectPolicy.maximumRedirectCount else {
               throw URLError(.httpTooManyRedirects)
             }
             next = redirected
           } else {
-            if !self.isCancelled { self.client?.urlProtocolDidFinishLoading(self) }
+            if !owner.isCancelled { owner.client?.urlProtocolDidFinishLoading(owner) }
             return
           }
         }
       } catch {
-        if !self.isCancelled { self.client?.urlProtocol(self, didFailWithError: error) }
+        if !owner.isCancelled { owner.client?.urlProtocol(owner, didFailWithError: error) }
       }
     }
     #else
