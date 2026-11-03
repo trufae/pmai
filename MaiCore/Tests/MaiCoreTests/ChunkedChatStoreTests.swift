@@ -90,6 +90,7 @@ func chunkedLegacyRoundTrip() async throws {
   #expect(try page.subagents[0].historyReference?.loadMessages() == childMessages)
   #expect(try Data(contentsOf: store.fileURL(for: chat.id).appendingPathExtension("legacy")) == raw)
   let destination = store.directoryURL.appendingPathComponent("export.json")
+  try Data("previous export".utf8).write(to: destination)
   try store.exportChat(id: chat.id, to: destination)
   let exported = try MaiJSONCoding.default.makeDecoder().decode(
     AgentChat.self, from: Data(contentsOf: destination))

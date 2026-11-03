@@ -739,11 +739,7 @@ extension ChatFileStore where Chat: PagedStoredChat {
         }
       }
       try handle.close()
-      if FileManager.default.fileExists(atPath: destination.path) {
-        _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporary)
-      } else {
-        try FileManager.default.moveItem(at: temporary, to: destination)
-      }
+      try MaiFileReplacement.replaceItem(at: destination, withItemAt: temporary)
     }
   }
 

@@ -7,7 +7,7 @@ import CMaiWinHTTP
 /// Adapt the native async Windows HTTP API to the provider's URLSession streams.
 /// Native state and API calls are confined to queue. Native callbacks only copy
 /// data and enqueue work, so even synchronous completions cannot recurse.
-final class WinHTTPProtocol: URLProtocol, @unchecked Sendable {
+final class WinHTTPProtocol: URLProtocol {
   private let queue = DispatchQueue(label: "pmai.winhttp")
   private let clientLock = NSRecursiveLock()
   private var stopped = false
@@ -25,13 +25,17 @@ final class WinHTTPProtocol: URLProtocol, @unchecked Sendable {
   override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
   override func startLoading() {
+    #if canImport(FoundationNetworking)
     // corelibs Foundation marks URLProtocol non-Sendable; state is confined to queue.
     nonisolated(unsafe) let owner = self
+    #else
+    let owner = self
+    #endif
     queue.async {
       guard !owner.finished else { return }
       let timer = DispatchSource.makeTimerSource(queue: owner.queue)
       timer.schedule(deadline: .now() + max(0.001, owner.request.timeoutInterval))
-      timer.setEventHandler { [weak owner] in owner?.finish(error: URLError(.timedOut)) }
+      timer.setEventHandler { [weak owner = owner] in owner?.finish(error: URLError(.timedOut)) }
       owner.deadline = timer
       timer.resume()
       owner.start(owner.request)
@@ -42,7 +46,11 @@ final class WinHTTPProtocol: URLProtocol, @unchecked Sendable {
     // FoundationNetworking completes cancellation as soon as this returns.
     // Suppress delivery synchronously, including callbacks already on queue.
     clientLock.withLock { stopped = true }
+    #if canImport(FoundationNetworking)
     nonisolated(unsafe) let owner = self
+    #else
+    let owner = self
+    #endif
     queue.async { owner.finish(notify: false) }
   }
 
@@ -219,3 +227,8 @@ final class WinHTTPProtocol: URLProtocol, @unchecked Sendable {
       error == 50 ? "WinHTTP is only available on Windows." : "WinHTTP request failed (Windows error \(error))."])
   }
 }
+
+#if !canImport(FoundationNetworking)
+// Apple Foundation's URLProtocol is Sendable; corelibs explicitly forbids it.
+extension WinHTTPProtocol: @unchecked Sendable {}
+#endif

@@ -31,7 +31,7 @@ public enum ProviderHTTPTransport: String, Sendable {
 /// Retain URLSession's streaming/delegate interface while bypassing its socket
 /// implementation. curl never follows redirects itself; the provider's existing
 /// same-origin redirect policy is applied before issuing another request.
-final class CurlHTTPProtocol: URLProtocol, @unchecked Sendable {
+final class CurlHTTPProtocol: URLProtocol {
   private let lock = NSRecursiveLock()
   private var cancelled = false
   #if os(macOS) || os(Linux) || os(Windows)
@@ -46,8 +46,12 @@ final class CurlHTTPProtocol: URLProtocol, @unchecked Sendable {
 
   override func startLoading() {
     #if os(macOS) || os(Linux) || os(Windows)
+    #if canImport(FoundationNetworking)
     // corelibs Foundation marks URLProtocol non-Sendable; access is serialized here.
     nonisolated(unsafe) let owner = self
+    #else
+    let owner = self
+    #endif
     DispatchQueue.global(qos: .userInitiated).async {
       do {
         var next = owner.request
@@ -238,6 +242,11 @@ final class CurlHTTPProtocol: URLProtocol, @unchecked Sendable {
 
   #endif
 }
+
+#if !canImport(FoundationNetworking)
+// Apple Foundation's URLProtocol is Sendable; corelibs explicitly forbids it.
+extension CurlHTTPProtocol: @unchecked Sendable {}
+#endif
 
 extension ProviderHTTPTransport {
   static func body(of request: URLRequest) throws -> Data? {

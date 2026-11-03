@@ -1,4 +1,5 @@
 import Foundation
+import MaiCore
 
 #if canImport(Darwin)
   import Darwin
@@ -297,11 +298,7 @@ public actor MaiWorkspaceFiles {
       try FileManager.default.copyItem(at: upload.file, to: staging)
       if upload.overwrite {
         #if os(Windows)
-          if FileManager.default.fileExists(atPath: url.path) {
-            _ = try FileManager.default.replaceItemAt(url, withItemAt: staging)
-          } else {
-            try FileManager.default.moveItem(at: staging, to: url)
-          }
+          try MaiFileReplacement.replaceItem(at: url, withItemAt: staging)
         #else
           guard rename(staging.path, url.path) == 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
