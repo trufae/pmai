@@ -95,7 +95,7 @@ func smallContextDoesNotRetryOversizedPrompt() async throws {
       AgentRequest(
         provider: "small", model: "fixture",
         messages: [.user(String(repeating: "large request ", count: 8_000))],
-        retry: .init(attempts: 2, delaySeconds: 0), autocompact: .init(tokens: 0)))
+        retry: .init(attempts: 2, delaySeconds: 0), autocompact: .init(tokens: 0), context: .cache))
   }
   #expect(await provider.requests.count == 1)
 }
@@ -139,7 +139,7 @@ func smallContextPreflight() async throws {
     AgentRequest(
       provider: "small", model: "fixture", messages: messages,
       options: .init(contextWindowTokens: 32_768),
-      autocompact: .init(tokens: 100_000)))
+      autocompact: .init(tokens: 100_000), context: .cache))
   #expect(result.response.text == "done")
   #expect(result.transcript.first == messages.first)
   #expect(result.transcript.contains(latest))
@@ -163,7 +163,7 @@ func smallContextRecoversOverflow() async throws {
     AgentRequest(
       provider: "small", model: "fixture", messages: messages,
       retry: .init(attempts: 2, delaySeconds: 0),
-      autocompact: .init(tokens: 100_000)))
+      autocompact: .init(tokens: 100_000), context: .cache))
   #expect(result.response.text == "done")
   #expect(result.transcript.contains(latest))
   #expect(await provider.rejections == 1)
@@ -184,7 +184,7 @@ func smallContextFailedSummaryKeepsHistory() async throws {
   let result = try await runtime.run(
     AgentRequest(
       provider: "small", model: "fixture", messages: messages,
-      autocompact: .init(tokens: 100, preserveRecentTokens: 0)))
+      autocompact: .init(tokens: 100, preserveRecentTokens: 0), context: .cache))
   #expect(Array(result.transcript.prefix(messages.count)) == messages)
   #expect(result.response.text == "done")
 }
@@ -221,7 +221,7 @@ func smallContextOverflowRespectsKeep() async throws {
           .user("Old task"), .assistant(String(repeating: "evidence ", count: 6_000)),
           .user("Continue"),
         ], retry: .init(attempts: 2, delaySeconds: 0),
-        autocompact: .init(tokens: 100_000)))
+        autocompact: .init(tokens: 100_000), context: .cache))
   }
   #expect(await provider.requests.count == 1)
 }
