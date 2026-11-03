@@ -261,6 +261,12 @@ public enum ChatExport {
     // A title ending in a period would otherwise read "title..md".
     name = name.trimmingCharacters(in: CharacterSet(charactersIn: ". "))
     if name.isEmpty { name = "chat" }
+    // Windows reserves device basenames even when followed by extensions.
+    let stem = name.split(separator: ".", maxSplits: 1).first?
+      .trimmingCharacters(in: .whitespaces).uppercased() ?? ""
+    let devices = ["CON", "PRN", "AUX", "NUL"]
+      + "123456789¹²³".flatMap { ["COM\($0)", "LPT\($0)"] }
+    if devices.contains(stem) { name = "_" + name }
     return name + "." + format.fileExtension
   }
 

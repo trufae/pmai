@@ -221,6 +221,16 @@ func exportNamesAndFormats() {
   #expect(ChatExport.filename(for: chat, format: .docx).hasSuffix(".docx"))
   chat.title = "Ends with a period."
   #expect(ChatExport.filename(for: chat, format: .markdown) == "Ends with a period.md")
+  for title in ["CON", "prn", "AuX", "NUL", "COM1", "COM9", "lpt1", "LPT9",
+    "COM¹", "LPT²", "COM³", "nul.tar.gz", "COM1 .notes"]
+  {
+    chat.title = title
+    #expect(ChatExport.filename(for: chat, format: .markdown) == "_" + title + ".md")
+  }
+  for title in ["COM0", "LPT0", "COM10", "LPT10", "CONSOLE", "auxiliary", "NUL device"] {
+    chat.title = title
+    #expect(ChatExport.filename(for: chat, format: .markdown) == title + ".md")
+  }
   chat.title = ""
   #expect(ChatExport.filename(for: chat, format: .epub) == "New chat.epub")
   #expect(ChatExportFormat(argument: "md") == .markdown)
