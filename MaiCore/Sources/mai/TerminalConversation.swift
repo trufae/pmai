@@ -20,6 +20,16 @@ final class TerminalConversation {
   var thinkingText: String?
   var thinkingDisplay: ThinkingDisplay = .status
   var outputEndedLine = true
+
+  func clearOutput() {
+    transcript.clear()
+    thinkingBlock = nil
+    replyBlock = nil
+    auxiliaryReplyBlocks.removeAll()
+    toolBlocks.removeAll()
+    messageLines.removeAll()
+    outputEndedLine = true
+  }
 }
 
 enum REPLAgentSwitch: Sendable {
