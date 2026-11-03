@@ -226,6 +226,51 @@ func smallContextOverflowRespectsKeep() async throws {
   #expect(await provider.requests.count == 1)
 }
 
+@Test("Working context scales reduction to the model window and preserves saved evidence",
+  arguments: [8_192, 131_072], [AgentContextMode.smart, .adaptive])
+func workingContextWindow(window: Int, mode: AgentContextMode) async throws {
+  let provider = SmallContextProvider(window: window)
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  let messages: [AgentMessage] = [
+    .system("Keep this exact rule."), .user("Old task"),
+    .assistant("KEEP-1 " + String(repeating: "evidence ", count: 4_000)),
+    .user("Finish this exact task."),
+  ]
+  let result = try await runtime.run(AgentRequest(
+    provider: "small", model: "fixture", messages: messages,
+    options: .init(contextWindowTokens: window), context: mode))
+  #expect(result.response.text == "done")
+  #expect(Array(result.transcript.prefix(messages.count)) == messages)
+  #expect(await provider.rejections == 0)
+  let requests = await provider.requests
+  #expect(requests.contains { !$0.stream } == (window == 8_192))
+  let chat = try #require(requests.last)
+  #expect(chat.messages.contains(messages[0]) && chat.messages.contains(messages[3]))
+  #expect(chat.messages.contains(messages[2]) == (window == 131_072))
+}
+
+@Test("Working context learns a rejected window even with durable compaction disabled",
+  arguments: [AgentContextMode.smart, .adaptive])
+func workingContextRecovery(mode: AgentContextMode) async throws {
+  let provider = SmallContextProvider(window: 4_096)
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  let messages: [AgentMessage] = [
+    .user("Old task"), .assistant("KEEP-1 " + String(repeating: "evidence ", count: 2_000)),
+    .user("Continue exactly."),
+  ]
+  let result = try await runtime.run(AgentRequest(
+    provider: "small", model: "fixture", messages: messages,
+    retry: .none, autocompact: .init(tokens: 0), context: mode))
+  #expect(result.response.text == "done")
+  #expect(await provider.rejections == 1)
+  #expect(Array(result.transcript.prefix(messages.count)) == messages)
+  let chats = await provider.requests.filter { $0.stream }
+  #expect(chats.count == 2)
+  #expect(AgentRuntime.contextTokens(chats[1]) < AgentRuntime.contextTokens(chats[0]))
+}
+
 private struct KeepSmallContext: ApprovalHandler {
   func decide(_ request: ApprovalRequest) async throws -> ApprovalDecision {
     .deny(reason: "No tools needed")

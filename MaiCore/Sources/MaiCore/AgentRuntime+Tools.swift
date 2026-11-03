@@ -98,8 +98,10 @@ extension AgentRuntime {
           providerRequest, with: provider, retry: inference.retry,
           budget: budget, context: approval.run, pid: pid, emit: emit
         ) { _ in }
-        let usage = call.usage(for: providerRequest.messages)
+        let usage = call.usage(for: providerRequest)
         await budget.recordApproval(usage)
+        let previous = await supervisor.info(pid)?.usage
+        await supervisor.note(pid, usage: previous.merging(usage))
         await recordModelCall(call, provider: provider.descriptor.id, request: providerRequest)
         return SmartToolApproval.decision(call.response, arguments: approval.call.arguments)
       }
@@ -380,9 +382,7 @@ extension AgentRuntime {
     // the rest. The results join the transcript in call order once the
     // last of them is in.
     let modelTurn = state.modelTurns
-    let usedTokens = AgentAutocompaction.estimatedTokens(
-      of: state.contextMessages,
-      lastUsage: state.lastUsage, lastUsageMessageCount: state.lastUsageMessageCount)
+    let usedTokens = state.contextSize.estimatedTokens
     var results = [ToolResult?](repeating: nil, count: calls.count)
     var changesState = [Bool](repeating: false, count: calls.count)
     try await withThrowingTaskGroup(of: (Int, ToolResult).self) { group in
@@ -506,7 +506,7 @@ extension AgentRuntime {
     }
     await supervisor.note(
       pid, transcript: state.transcript,
-      contextSize: AgentContextSize(messages: state.contextMessages))
+      contextSize: state.contextSize)
   }
 
   /// A one-shot signal a concurrent call gives once it is under way — a

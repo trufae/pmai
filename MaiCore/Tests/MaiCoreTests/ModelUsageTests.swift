@@ -704,3 +704,20 @@ func userDefaultsPersistence() async throws {
   let store = ModelUsageStore(persistence: persistence)
   #expect(await store.ledger == ledger)
 }
+
+@Test("Missing usage counts reasoning and tool-only responses, including request schemas")
+func estimatedToolAndReasoningUsage() {
+  let message = AgentMessage(role: .assistant, content: [
+    .reasoning(String(repeating: "thinking ", count: 100)),
+    .toolCall(.init(id: "one", name: "read", arguments: .object(["path": .string("file.swift")]))),
+  ])
+  let call = AgentRuntime.ProviderCall(
+    response: .init(message: message), timing: .init(requestStart: Date()), ended: Date())
+  let request = ProviderRequest(model: "fixture", messages: [.user("Read it")], tools: [
+    .init(name: "read", description: String(repeating: "schema ", count: 500)),
+  ])
+  let usage = call.usage(for: request)
+  #expect(usage.isEstimated && usage.inputTokens > 500 && usage.outputTokens > 200)
+  #expect(usage.reasoningTokens == nil)
+  #expect(usage.totalTokens == usage.inputTokens + usage.outputTokens)
+}

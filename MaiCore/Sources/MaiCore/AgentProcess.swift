@@ -135,6 +135,11 @@ public struct AgentContextSize: Equatable, Sendable {
     estimatedTokens = ModelCallStats.estimatedTokenCount(
       forCharacterCount: AgentTranscriptEditor.characterCount(of: messages))
   }
+
+  public init(request: ProviderRequest) {
+    messageCount = request.messages.count
+    estimatedTokens = AgentRuntime.contextTokens(request)
+  }
 }
 
 /// Everything a host needs to list, follow, or act on one running agent.

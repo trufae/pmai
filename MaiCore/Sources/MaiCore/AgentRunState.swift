@@ -18,8 +18,13 @@ extension AgentRuntime {
     /// Provider usage describes the previous context until an edit changes it.
     var lastUsage: TokenUsage?
     var lastUsageMessageCount = 0
+    var modelRequest: ProviderRequest?
+    var modelRequestTranscriptCount = 0
+    var modelInputTokens: Int?
     var skipAutocompaction = false
     var contextRecoveryAttempts = 0
+    var adaptiveThreshold: Int?
+    var rejectedContextTokens: Int?
     var modelTurns = 0
     var toolCalls = 0
     /// A specialist hands results to the primary for the remainder of a reply.
@@ -50,6 +55,18 @@ extension AgentRuntime {
     var estimatedTokens: Int {
       AgentAutocompaction.estimatedTokens(
         of: transcript, lastUsage: lastUsage, lastUsageMessageCount: lastUsageMessageCount)
+    }
+
+    var contextSize: AgentContextSize {
+      guard var modelRequest else { return AgentContextSize(messages: contextMessages) }
+      let added = Array(transcript.dropFirst(modelRequestTranscriptCount))
+      modelRequest.messages += added
+      var size = AgentContextSize(request: modelRequest)
+      if let modelInputTokens {
+        size.estimatedTokens = max(
+          size.estimatedTokens, modelInputTokens + AgentContextSize(messages: added).estimatedTokens)
+      }
+      return size
     }
 
     mutating func recordRepair(_ feedback: String) {

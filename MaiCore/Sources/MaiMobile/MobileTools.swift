@@ -107,7 +107,7 @@ private struct ToolActivity {
         workingDirectory: directory.appendingPathComponent("workspace"))
       let result = try await AgentExecutionScope.$current.withValue(scope) {
         try await runtime.run(AgentRequest(provider: provider.descriptor.id,
-        model: request.model, messages: request.messages, toolNames: tools,
+        model: request.model, messages: request.messages, toolNames: tools, options: request.options,
         sessionID: request.sessionID)) { [weak self] event in
           switch event {
           case .provider(_, let value): await emit(value)

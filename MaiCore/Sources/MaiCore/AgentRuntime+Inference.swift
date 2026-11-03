@@ -76,12 +76,12 @@ extension AgentRuntime {
     var ended: Date
 
     /// Calls without reported usage still spend tokens and count toward limits.
-    func usage(for messages: [AgentMessage]) -> TokenUsage {
+    func usage(for request: ProviderRequest) -> TokenUsage {
       response.usage
         ?? .estimated(
-          inputTokens: ModelCallStats.estimatedTokenCount(of: messages),
+          inputTokens: AgentRuntime.contextTokens(request),
           outputTokens: ModelCallStats.estimatedTokenCount(
-            forCharacterCount: response.message.text.count))
+            forCharacterCount: AgentTranscriptEditor.characterCount(of: response.message)))
     }
   }
 
@@ -95,10 +95,15 @@ extension AgentRuntime {
     let userInputTokens = userMessages.map {
       ModelCallStats.estimatedTokenCount(of: Self.trailingUserMessages(in: $0))
     }
-    let stats = ModelCallStats.measured(
+    var stats = ModelCallStats.measured(
       providerLabel: provider.rawValue, modelID: request.model,
       messages: request.messages, response: call.response,
       timing: call.timing, end: call.ended, userInputTokens: userInputTokens)
+    if call.response.usage == nil {
+      let usage = call.usage(for: request)
+      stats.inputTokens = usage.inputTokens
+      stats.outputTokens = usage.outputTokens
+    }
     await usageStats?.record(stats, at: call.ended)
     return stats
   }
@@ -227,10 +232,13 @@ extension AgentRuntime {
     let context = state.context
     let emit = state.emit
     state.modelTurns += 1
+    state.modelRequest = turn.request
+    state.modelRequestTranscriptCount = state.transcript.count
+    state.modelInputTokens = nil
     await emit(.modelStarted(context, turn: state.modelTurns))
     await supervisor.note(
       state.pid, modelTurns: state.modelTurns, activity: "thinking",
-      contextSize: AgentContextSize(messages: turn.request.messages))
+      contextSize: state.contextSize)
     let repairsEmptyReply =
       (state.toolCalls > 0 || (!turn.definitions.isEmpty && !turn.toolBudgetExhausted))
       && state.modelTurns < state.request.limits.maxModelTurns
@@ -297,6 +305,7 @@ extension AgentRuntime {
       }
       state.toolCalls = await toolCount.used
       state.transcript += await toolCount.transcript
+      state.rejectedContextTokens = nil
       return response
     } catch let error as ProviderContextLimitError {
       state.toolCalls = await toolCount.used
@@ -309,6 +318,14 @@ extension AgentRuntime {
         window.map {
           Self.inputTokenBudget(window: $0, options: turn.request.options) * 3 / 4
         } ?? max(1, Self.contextTokens(turn.request) / 2)
+      if state.request.context == .smart || state.request.context == .adaptive,
+        !turn.provider.descriptor.capabilities.contains(.managedToolLoop), !turn.deciding
+      {
+        state.adaptiveThreshold = min(state.adaptiveThreshold ?? Int.max, threshold)
+        state.rejectedContextTokens = Self.contextTokens(turn.request)
+        state.smartContext = AgentSmartContext()
+        return nil
+      }
       let before = AgentTranscriptEditor.characterCount(of: state.transcript)
       _ = try await autocompact(
         &state, requiredThreshold: threshold,
