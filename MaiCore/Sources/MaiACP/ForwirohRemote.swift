@@ -258,7 +258,7 @@ public struct ForwirohPeerSummary: Sendable {
     public init(directory: URL, name: String = "PocketMai", identity: Data? = nil) {}
     private static var unavailable: JSONRPCError {
       .invalidParams(
-        "Forwiroh is available on macOS, iOS, Linux and Android. Use a direct ACP gateway on this platform."
+        "Forwiroh is available on macOS, iOS, Linux, Android and Windows. Use a direct ACP gateway on this platform."
       )
     }
     public func configure(directory: URL, identity: Data? = nil, name: String? = nil) throws {}

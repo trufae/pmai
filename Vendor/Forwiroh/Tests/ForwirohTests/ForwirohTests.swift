@@ -36,7 +36,7 @@ import Testing
     #expect(!FileManager.default.fileExists(atPath: path.path))
 }
 
-#if os(macOS) || os(Linux)
+#if os(macOS) || os(Linux) || os(Windows)
 @Test(.timeLimit(.minutes(1))) func lifecyclePersistenceAndConcurrentShutdown() async throws {
     let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: path) }
