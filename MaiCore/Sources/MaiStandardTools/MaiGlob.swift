@@ -6,6 +6,7 @@ import Foundation
 /// the file name, so `*.c` finds every C file at any depth; one with a slash
 /// is matched against the whole relative path, so `src/*.c` finds only the
 /// files directly in `src` and `src/**/*.c` the ones anywhere below it.
+/// On Windows, backslashes also separate path components.
 /// Matching is case-insensitive unless the pattern has an uppercase letter.
 public struct MaiGlob: Sendable {
   public let pattern: String
@@ -21,7 +22,7 @@ public struct MaiGlob: Sendable {
   /// `anchored` matches the pattern against the relative path even without
   /// a slash, for a pattern that came from a path such as `src/*.c`.
   public init?(_ pattern: String, anchored: Bool = false) {
-    var trimmed = pattern.trimmingCharacters(in: .whitespacesAndNewlines)
+    var trimmed = Self.normalizedSeparators(pattern).trimmingCharacters(in: .whitespacesAndNewlines)
     while trimmed.hasPrefix("./") { trimmed = String(trimmed.dropFirst(2)) }
     while trimmed.hasPrefix("/") { trimmed = String(trimmed.dropFirst()) }
     guard !trimmed.isEmpty else { return nil }
@@ -38,7 +39,7 @@ public struct MaiGlob: Sendable {
 
   /// Whether a path, relative to the directory the search started in, fits.
   public func matches(_ relativePath: String) -> Bool {
-    var subject = relativePath
+    var subject = Self.normalizedSeparators(relativePath)
     while subject.hasPrefix("./") { subject = String(subject.dropFirst(2)) }
     if !matchesPath, let slash = subject.lastIndex(of: "/") {
       subject = String(subject[subject.index(after: slash)...])
@@ -52,11 +53,23 @@ public struct MaiGlob: Sendable {
   /// no metacharacter at all.
   public static func splitPath(_ text: String) -> (directory: String, pattern: String)? {
     guard isPattern(text) else { return nil }
-    let components = text.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+    let components = normalizedSeparators(text).split(separator: "/", omittingEmptySubsequences: false).map(String.init)
     guard let first = components.firstIndex(where: isPattern) else { return nil }
     let directory = components[..<first].joined(separator: "/")
     let pattern = components[first...].joined(separator: "/")
+    #if os(Windows)
+    // C:/ is rooted on its drive; C: alone would be drive-relative.
+    if first == 1, directory.count == 2, directory.hasSuffix(":") { return (directory + "/", pattern) }
+    #endif
     return (directory, pattern)
+  }
+
+  private static func normalizedSeparators(_ path: String) -> String {
+    #if os(Windows)
+    path.replacingOccurrences(of: "\\", with: "/")
+    #else
+    path
+    #endif
   }
 
   static func regularExpression(for pattern: String) -> String {

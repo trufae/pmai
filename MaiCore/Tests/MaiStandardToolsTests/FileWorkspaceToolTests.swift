@@ -804,12 +804,37 @@ func globSemantics() throws {
   #expect(MaiGlob.splitPath("src/**/x/*.c")?.pattern == "**/x/*.c")
   #expect(MaiGlob.splitPath("*.c")?.directory == "")
   #expect(MaiGlob.splitPath("plain/name") == nil)
+
+  #if os(Windows)
+  let native = try #require(MaiGlob(#".\src\*.c"#))
+  #expect(native.matches("src/a.c") && native.matches(#".\src\a.c"#))
+  #expect(!native.matches(#"src\sub\a.c"#) && !native.matches("a.c"))
+  #expect(try #require(MaiGlob(#"src\**\*.{c,h}"#)).matches(#"src\x\y\a.h"#))
+  #expect(star.matches(#"src\deep\a.c"#))
+  #expect(MaiGlob.splitPath(#"src\lib\*.c"#)?.directory == "src/lib")
+  #expect(MaiGlob.splitPath(#"src\**\x\*.c"#)?.pattern == "**/x/*.c")
+  #expect(MaiGlob.splitPath(#"C:\*.c"#)?.directory == "C:/")
+  #expect(MaiGlob.splitPath(#"\\server\share\*.c"#)?.directory == "//server/share")
+  #else
+  let literal = try #require(MaiGlob(#"a\*.c"#))
+  #expect(literal.matches("a*.c") && !literal.matches("abc.c"))
+  #endif
+}
+
+private var globPathSeparators: [String] {
+  #if os(Windows)
+  ["/", "\\"]
+  #else
+  ["/"]
+  #endif
 }
 
 @Test(
-  "Files tools take glob patterns: find by pattern, grep narrowed by glob or path, list by name pattern"
+  "Files tools take glob patterns: find by pattern, grep narrowed by glob or path, list by name pattern",
+  arguments: globPathSeparators
 )
-func fileToolsAcceptGlobs() async throws {
+func fileToolsAcceptGlobs(separator: String) async throws {
+  func pattern(_ path: String) -> String { path.replacingOccurrences(of: "/", with: separator) }
   let root = FileManager.default.temporaryDirectory
     .appendingPathComponent("mai-glob-\(UUID().uuidString)", isDirectory: true)
   defer { try? FileManager.default.removeItem(at: root) }
@@ -838,9 +863,9 @@ func fileToolsAcceptGlobs() async throws {
     paths(try await call(find, ["query": .string("*.c")])) == [
       "a.c", "src/main.c", "src/sub/deep.c",
     ])
-  #expect(paths(try await call(find, ["query": .string("src/*.c")])) == ["src/main.c"])
+  #expect(paths(try await call(find, ["query": .string(pattern("src/*.c"))])) == ["src/main.c"])
   #expect(
-    paths(try await call(find, ["query": .string("src/**/*.c")])) == [
+    paths(try await call(find, ["query": .string(pattern("src/**/*.c"))])) == [
       "src/main.c", "src/sub/deep.c",
     ])
   #expect(
@@ -852,13 +877,13 @@ func fileToolsAcceptGlobs() async throws {
       == ["src/main.c", "src/sub/deep.c"])
   // A pattern with a slash applies below the search folder, or from the root.
   #expect(
-    paths(try await call(find, ["query": .string("sub/*.c"), "path": .string("src")]))
+    paths(try await call(find, ["query": .string(pattern("sub/*.c")), "path": .string("src")]))
       == ["src/sub/deep.c"])
   #expect(
-    paths(try await call(find, ["query": .string("src/sub/*.c"), "path": .string("src")]))
+    paths(try await call(find, ["query": .string(pattern("src/sub/*.c")), "path": .string("src")]))
       == ["src/sub/deep.c"])
-  let none = try await call(find, ["query": .string("docs/*.c")])
-  #expect(none.text.hasPrefix("No files matched 'docs/*.c'."))
+  let none = try await call(find, ["query": .string(pattern("docs/*.c"))])
+  #expect(none.text.hasPrefix("No files matched '\(pattern("docs/*.c"))'."))
   #expect(none.text.contains("**/"))
   // Plain names still match fuzzily.
   #expect(paths(try await call(find, ["query": .string("deep")])).first == "src/sub/deep.c")
@@ -868,24 +893,24 @@ func fileToolsAcceptGlobs() async throws {
       "src/util.h"
     ])
   #expect(
-    paths(try await call(grep, ["query": .string("needle"), "path": .string("src/*.c")]))
+    paths(try await call(grep, ["query": .string("needle"), "path": .string(pattern("src/*.c"))]))
       == ["src/main.c"])
   #expect(
-    Set(paths(try await call(grep, ["query": .string("needle"), "glob": .string("src/**/*.c")])))
+    Set(paths(try await call(grep, ["query": .string("needle"), "glob": .string(pattern("src/**/*.c"))])))
       == ["src/main.c", "src/sub/deep.c"])
   let grepNone = try await call(grep, ["query": .string("needle"), "glob": .string("*.rs")])
   #expect(grepNone.text.contains("No file matched '*.rs'"))
   #expect(grepNone.structuredContent?.objectValue?["glob"] == .array([.string("*.rs")]))
 
-  let listed = try await call(list, ["path": .string("src/*.c")])
+  let listed = try await call(list, ["path": .string(pattern("src/*.c"))])
   let entries = listed.structuredContent?.objectValue?["entries"]?.arrayValue?.compactMap {
     $0.objectValue?["path"]?.stringValue
   }
   #expect(entries == ["src/main.c"])
   #expect(listed.structuredContent?.objectValue?["pattern"] == .string("*.c"))
-  let empty = try await call(list, ["path": .string("docs/*.c")])
+  let empty = try await call(list, ["path": .string(pattern("docs/*.c"))])
   #expect(empty.text == "(no entries match '*.c')")
-  let deepList = try await call(list, ["path": .string("src/**/*.c")])
+  let deepList = try await call(list, ["path": .string(pattern("src/**/*.c"))])
   #expect(deepList.isError)
   #expect(deepList.text.hasPrefix("Error: Invalid pattern: '**/*.c' spans folders"))
   #expect(deepList.text.contains("files_find"))
