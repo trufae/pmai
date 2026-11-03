@@ -5,13 +5,13 @@ import Testing
 
 @Test(
   "Queued steering retains a running task's exact skill and proxy catalog; a new run releases them",
-  arguments: [AgentContextMode.cache, .size, .smart, .tools], [false, true])
+  arguments: [AgentContextMode.cache, .size, .smart, .tools, .adaptive], [false, true])
 func promptContextQueuedSteering(contextMode: AgentContextMode, directInvocation: Bool) async throws {
   try await exercisePromptContextSteering(contextMode: contextMode, directInvocation: directInvocation)
 }
 
 @Test("A limit-interrupted skill task resumes on the same PID with its exact active instructions",
-  arguments: [AgentContextMode.cache, .size, .smart, .tools])
+  arguments: [AgentContextMode.cache, .size, .smart, .tools, .adaptive])
 func promptContextResumesSteeredTask(contextMode: AgentContextMode) async throws {
   try await exercisePromptContextSteering(contextMode: contextMode, directInvocation: false, pauseAtLimit: true)
 }

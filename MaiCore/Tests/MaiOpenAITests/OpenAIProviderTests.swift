@@ -189,8 +189,8 @@ func openAIStructuredContentOnlyWithoutText() async throws {
   #expect(!texts[2].contains("structured_content"))
 }
 
-@Test("OpenAI-compatible provider encodes multimodal native-tool requests")
-func openAIChatCompletion() async throws {
+@Test("OpenAI-compatible provider encodes multimodal native-tool requests", arguments: [false, true])
+func openAIChatCompletion(usageAliases: Bool) async throws {
   let recorder = URLRequestRecorder()
   StubURLProtocol.install(forHost: "completion.example.test") { request in
     recorder.record(request, body: try requestBodyData(request))
@@ -215,8 +215,8 @@ func openAIChatCompletion() async throws {
             "prompt_tokens": 4,
             "completion_tokens": 3,
             "total_tokens": 7,
-            "prompt_tokens_details": {"cached_tokens": 1},
-            "completion_tokens_details": {"reasoning_tokens": 2}
+            "\(usageAliases ? "input_tokens_details" : "prompt_tokens_details")": {"cached_tokens": 1},
+            "\(usageAliases ? "output_tokens_details" : "completion_tokens_details")": {"reasoning_tokens": 2}
           }
         }
         """)

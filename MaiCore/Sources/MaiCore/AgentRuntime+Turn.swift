@@ -118,29 +118,7 @@ extension AgentRuntime {
     let usesTextToolProtocol = textToolMode != nil && !toolBudgetExhausted
     let promptContext = AgentPromptContext(
       messages: inference.messages, activeTaskID: state.activeTaskID)
-    var providerMessages: [AgentMessage]
-    if state.request.context == .smart {
-      if let evidence = state.smartContext.pending(
-        in: promptContext, activeTaskID: state.activeTaskID)
-      {
-        await supervisor.note(state.pid, activity: "preparing state.context")
-        do {
-          let template = smartContextTemplate
-          let brief = try await compactText(
-            source: AgentSmartContext.transcript(for: evidence, in: promptContext),
-            render: { AgentSmartContextPrompt.render(transcript: $0, template: template) },
-            state: &state)
-          state.smartContext.store(brief, for: evidence)
-        } catch let error where error is CancellationError || error is RunDeadlineExceeded {
-          throw error
-        } catch {
-          await state.emit(.compactionFailed(state.context, error.localizedDescription))
-        }
-      }
-      providerMessages = state.smartContext.messages(from: promptContext)
-    } else {
-      providerMessages = promptContext.messages()
-    }
+    var providerMessages = promptContext.messages()
     if concreteDefinitions.contains(where: { MaiSkillTools.isSkillTool($0.name) }) {
       insertSystem(MaiSkillTools.promptSection, into: &providerMessages)
     }
@@ -203,7 +181,7 @@ extension AgentRuntime {
       insertSystem(AgentToolLoopPolicy.nativeToolInstructions, into: &providerMessages)
     }
     let offersTools = !usesTextToolProtocol && !toolBudgetExhausted
-    let providerRequest = ProviderRequest(
+    var providerRequest = ProviderRequest(
       model: inference.model,
       messages: providerMessages,
       tools: offersTools ? definitions : [],
@@ -212,6 +190,37 @@ extension AgentRuntime {
       options: inference.options,
       stream: usesTextToolProtocol ? false : inference.stream,
       sessionID: state.request.sessionID)
+    if state.request.context == .smart || state.request.context == .adaptive,
+      !managesToolLoop, !deciding
+    {
+      let window = contextWindow(
+        provider: inference.provider, model: inference.model, options: inference.options)
+      let threshold = min(state.adaptiveThreshold ?? Int.max, window.map {
+        Self.inputTokenBudget(window: $0, options: inference.options) * 3 / 4
+      } ?? AgentSmartContext.thresholdTokens)
+      var context = promptContext
+      context.instructions = providerRequest.messages.filter(AgentPromptContext.isInstruction)
+      if let evidence = state.smartContext.pending(
+        in: context, activeTaskID: state.activeTaskID,
+        thresholdTokens: max(1, threshold), recentTokens: min(8_000, threshold / 4),
+        request: providerRequest, preserveUserMessages: state.request.context == .smart)
+      {
+        await supervisor.note(state.pid, activity: "preparing context")
+        do {
+          let template = smartContextTemplate
+          let brief = try await compactText(
+            source: AgentSmartContext.transcript(for: evidence, in: context),
+            render: { AgentSmartContextPrompt.render(transcript: $0, template: template) },
+            state: &state, outputLimit: min(8_000, max(2_048, threshold / 8)))
+          state.smartContext.store(brief, for: evidence)
+        } catch let error where error is CancellationError || error is RunDeadlineExceeded {
+          throw error
+        } catch {
+          await state.emit(.compactionFailed(state.context, error.localizedDescription))
+        }
+      }
+      providerRequest.messages = state.smartContext.messages(from: context)
+    }
     return ModelTurn(
       provider: provider, request: providerRequest, retry: inference.retry,
       definitions: definitions, selectingTools: selectingTools, deciding: deciding,

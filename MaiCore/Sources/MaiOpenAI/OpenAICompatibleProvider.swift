@@ -1145,8 +1145,8 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     guard !input.addingReportingOverflow(output).overflow else {
       throw OpenAICompatibleProviderError.invalidResponse("Token usage total exceeds the supported range.")
     }
-    let promptDetails = usage["prompt_tokens_details"]?.objectValue
-    let completionDetails = usage["completion_tokens_details"]?.objectValue
+    let promptDetails = (usage["prompt_tokens_details"] ?? usage["input_tokens_details"])?.objectValue
+    let completionDetails = (usage["completion_tokens_details"] ?? usage["output_tokens_details"])?.objectValue
     return try TokenUsage(
       inputTokens: input,
       outputTokens: output,

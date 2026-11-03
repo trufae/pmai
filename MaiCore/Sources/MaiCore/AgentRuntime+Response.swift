@@ -23,14 +23,16 @@ extension AgentRuntime {
     } else {
       state.modelStats?.merge(stats)
     }
-    let usage = call.usage(for: turn.request.messages)
+    let usage = call.usage(for: turn.request)
+    state.modelInputTokens = providerResponse.usage?.inputTokens
     state.totalUsage = state.totalUsage.merging(usage)
     // Reduced context usage does not describe the full saved transcript.
     state.lastUsage =
-      state.request.context == .smart || state.request.context == .tools || turn.deciding
+      state.request.context == .smart || state.request.context == .tools
+        || state.request.context == .adaptive || turn.deciding
       ? nil : providerResponse.usage
     state.lastUsageMessageCount = state.transcript.count + 1
-    await supervisor.note(state.pid, usage: state.totalUsage)
+    await supervisor.note(state.pid, usage: state.totalUsage.merging(await state.budget.approvalUsage))
     await state.budget.record(tokens: usage.totalTokens)
 
     if turn.deciding {
@@ -144,7 +146,7 @@ extension AgentRuntime {
     state.transcript.append(providerResponse.message)
     await supervisor.note(
       state.pid, transcript: state.transcript,
-      contextSize: AgentContextSize(messages: state.contextMessages))
+      contextSize: state.contextSize)
     return providerResponse
   }
 

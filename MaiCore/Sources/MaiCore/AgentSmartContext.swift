@@ -102,7 +102,12 @@ struct AgentSmartContext {
   private var attempted: [AgentMessage] = []
   private var task: AgentMessage?
 
-  mutating func pending(in context: AgentPromptContext, activeTaskID: String?) -> [AgentMessage]? {
+  mutating func pending(
+    in context: AgentPromptContext, activeTaskID: String?,
+    thresholdTokens: Int = AgentSmartContext.thresholdTokens,
+    recentTokens: Int = AgentSmartContext.recentTokens,
+    request: ProviderRequest? = nil, preserveUserMessages: Bool = true
+  ) -> [AgentMessage]? {
     let latestTask = context.conversation.last { $0.role == .user }
     let ids = Set(summarized.map(\.id))
     // A queued correction, transcript edit, or durable compaction can make
@@ -113,14 +118,20 @@ struct AgentSmartContext {
       attempted = []
       task = latestTask
     }
-    guard AgentAutocompaction.estimatedTokens(
-      of: messages(from: context), lastUsage: nil) >= Self.thresholdTokens,
+    var projected = request
+    projected?.messages = messages(from: context)
+    let tokens = projected.map(AgentRuntime.contextTokens)
+      ?? AgentAutocompaction.estimatedTokens(of: messages(from: context), lastUsage: nil)
+    guard tokens >= thresholdTokens,
       let selection = AgentAutocompaction.selection(
-        in: context.conversation, preservingRecentTokens: Self.recentTokens,
+        in: context.conversation, preservingRecentTokens: recentTokens,
         activeTaskID: activeTaskID)
     else { return nil }
     let selected = Set(selection)
-    let evidence = context.conversation.filter { selected.contains($0.id) }
+    let evidence = context.conversation.filter {
+      selected.contains($0.id) && (!preserveUserMessages || $0.role != .user)
+    }
+    guard !evidence.isEmpty else { return nil }
     guard evidence != attempted else { return nil }
     // A failed reduction is optional and is not retried every loop boundary.
     attempted = evidence
@@ -128,6 +139,8 @@ struct AgentSmartContext {
   }
 
   mutating func store(_ brief: String, for evidence: [AgentMessage]) {
+    let brief = brief.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !brief.isEmpty else { return }
     let attachments = evidence.flatMap { $0.content.flatMap(AgentSmartContextPrompt.binaryAttachments) }
     let replacement = AgentMessage(role: .user, content: [.text("Earlier task context:\n" + brief)] + attachments)
     guard AgentTranscriptEditor.characterCount(of: replacement)
@@ -153,6 +166,7 @@ struct AgentSmartContext {
 
   static func transcript(for evidence: [AgentMessage], in context: AgentPromptContext) -> String {
     let ids = Set(evidence.map(\.id)).union(context.preservedConversation.map(\.id))
+      .union(context.conversation.filter { $0.role == .user }.map(\.id))
     return AgentSmartContextPrompt.transcript(
       of: context.conversation.filter { ids.contains($0.id) })
   }

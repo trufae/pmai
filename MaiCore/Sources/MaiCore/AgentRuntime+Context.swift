@@ -97,6 +97,13 @@ extension AgentRuntime {
         await supervisor.note(state.pid, transcript: state.transcript)
       }
     }
+    if state.request.context == .cache,
+      let report = AgentContextPruning.pruneCacheSuffix(&state.transcript)
+    {
+      state.lastUsage = nil
+      await state.emit(.transcriptEdited(state.context, report))
+      await supervisor.note(state.pid, transcript: state.transcript)
+    }
     // In size mode the bodies of files read for earlier user prompts make
     // way for a reference before every call; cache mode leaves conversation
     // evidence whole. Instruction separation affects only the provider view.

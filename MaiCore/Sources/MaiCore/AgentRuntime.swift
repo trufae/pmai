@@ -255,6 +255,12 @@ public actor AgentRuntime {
         let turn = try await prepareTurn(
           concreteDefinitions: listedDefinitions(in: concreteDefinitions, request: state.request),
           definitions: definitions, state: &state)
+        if let rejected = state.rejectedContextTokens,
+          Self.contextTokens(turn.request) >= rejected
+        {
+          throw ProviderContextLimitError(
+            message: "Context reduction could not shrink the rejected request. Use smaller tool results or compact the chat.")
+        }
         if let window = contextWindow(
           provider: turn.provider.descriptor.id, model: turn.request.model,
           options: turn.request.options),

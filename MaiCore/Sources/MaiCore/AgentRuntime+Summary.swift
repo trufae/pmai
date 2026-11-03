@@ -44,7 +44,7 @@ extension AgentRuntime {
   /// removed from the durable transcript until every call has succeeded.
   func compactText(
     source: String, render: @escaping @Sendable (String) -> String,
-    state: inout RunState, inputLimit: Int? = nil, depth: Int = 0
+    state: inout RunState, inputLimit: Int? = nil, depth: Int = 0, outputLimit: Int? = nil
   ) async throws -> String {
     try Task.checkCancellation()
     guard depth < 12 else { throw SummaryError.cannotReduce }
@@ -66,7 +66,7 @@ extension AgentRuntime {
         provider: inference.provider, model: inference.model, options: inference.options) ?? 32_768
     // Keep partial summaries small enough that consolidation makes progress.
     inference.options.maxOutputTokens = min(
-      max(1, inference.options.maxOutputTokens ?? 2_048), max(1, window / 8))
+      max(1, inference.options.maxOutputTokens ?? outputLimit ?? 2_048), max(1, window / 8))
     let budget = min(
       inputLimit ?? Int.max, Self.inputTokenBudget(window: window, options: inference.options))
     var messages = inference.messages
@@ -84,9 +84,9 @@ extension AgentRuntime {
           context: state.context, pid: state.pid, emit: state.emit
         ) { _ in }
         await recordModelCall(call, provider: inference.provider, request: providerRequest)
-        let usage = call.usage(for: messages)
+        let usage = call.usage(for: providerRequest)
         state.totalUsage = state.totalUsage.merging(usage)
-        await supervisor.note(state.pid, usage: state.totalUsage)
+        await supervisor.note(state.pid, usage: state.totalUsage.merging(await state.budget.approvalUsage))
         await state.budget.record(tokens: usage.totalTokens)
         let text = MessageContentFilter.textWithoutReasoning(from: call.response.message.text)
           .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -99,7 +99,7 @@ extension AgentRuntime {
         return try await compactText(
           source: source, render: render, state: &state,
           inputLimit: min(budget - 1, max(1, Self.contextTokens(providerRequest) / 2)),
-          depth: depth + 1)
+          depth: depth + 1, outputLimit: outputLimit)
       }
     }
     // Measure scaffolding separately so long custom prompts or task-agent
@@ -124,13 +124,13 @@ extension AgentRuntime {
     for chunk in chunks {
       partials.append(
         try await compactText(
-          source: chunk, render: render, state: &state, inputLimit: budget, depth: depth + 1))
+          source: chunk, render: render, state: &state, inputLimit: budget, depth: depth + 1, outputLimit: outputLimit))
     }
     let combined = partials.enumerated().map { "Part \($0.offset + 1):\n\($0.element)" }
       .joined(separator: "\n\n")
     guard combined.utf8.count < source.utf8.count else { throw SummaryError.cannotReduce }
     return try await compactText(
-      source: combined, render: render, state: &state, inputLimit: budget, depth: depth + 1)
+      source: combined, render: render, state: &state, inputLimit: budget, depth: depth + 1, outputLimit: outputLimit)
   }
 
   /// Scalar boundaries preserve all text, including Unicode and a single
