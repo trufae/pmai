@@ -1,0 +1,20 @@
+I found a concrete Windows Dispatch source-muxing bug that looks directly relevant to this upload stall, and prepared a candidate fix plus regression coverage.
+
+In src/event/event_windows.c, _dispatch_unote_muxnote_find() normalizes EVFILT_WRITE to EVFILT_READ when looking up an existing entry. However, _dispatch_muxnote_create() stores EVFILT_WRITE unchanged when the first source is a writer. A later reader on the same socket therefore misses that entry and creates a second one. Foundation's curl integration can register write interest for connection setup before adding read interest.
+
+The two entries independently call WSAEventSelect() on the same socket. That API replaces the socket's previous event object and event mask, so the reader's registration can remove the writer's FD_WRITE notification. Each entry still believes its own mask is installed. This provides a plausible explanation for a request that sends its first buffer, then cannot resume when further writes need readiness notifications. Cancelling one entry can also disable the other entry's notifications.
+
+The proposed fix canonicalizes the filter during Windows entry creation, matching the lookup key: if (filter == EVFILT_WRITE) filter = EVFILT_READ; The Linux epoll backend already performs this normalization. This belongs in swift-corelibs-libdispatch, even though the upload symptom is tracked here; it does not require changing curl's event bitmask or adding a polling timer.
+
+The attached libdispatch patch also extends dispatch_io_muxed: it registers a writer first, registers a reader, waits for writer cancellation, then verifies that the reader still receives a byte. Registration and cancellation handlers provide the synchronization, so this regression does not depend on sleeps, send-buffer size, or network RTT.
+
+The companion Foundation patch adds a constrained-window upload/echo test for both POST with URLRequest.httpBody and PUT with uploadTask. It checks the full received body rather than relying on the upload delegate's byte counter.
+
+Local validation: both patches apply cleanly to the recorded upstream commits. The Dispatch regression passes against macOS system Dispatch, and its Windows branch passes a cross-target syntax check. The new Foundation test method and modified HTTP fixture compile; a standalone harness using that fixture completes both 1 MiB round trips against macOS Foundation. An extracted constructor/lookup check, with Windows metadata stubbed, fails for write-first lookup before the change and passes after it.
+
+Native Windows before/after execution with a rebuilt dispatch.dll is still outstanding. I am presenting this as a candidate fix for #5532, not yet as a confirmed resolution on Windows.
+
+Source references:
+https://github.com/swiftlang/swift-corelibs-libdispatch/blob/2078b9d4a2853b8b07a61e3d460e9dfd9d3c3454/src/event/event_windows.c#L100-L169
+https://github.com/swiftlang/swift-corelibs-libdispatch/blob/2078b9d4a2853b8b07a61e3d460e9dfd9d3c3454/src/event/event_epoll.c#L146-L214
+https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-wsaeventselect

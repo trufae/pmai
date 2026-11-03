@@ -1,0 +1,95 @@
+diff --git a/Tests/Foundation/HTTPServer.swift b/Tests/Foundation/HTTPServer.swift
+index 18f51094371c0c58c8875cd37a689a04e9eeb50a..0e0bb8608401468f541f9518617c0b3c440b410c 100644
+--- a/Tests/Foundation/HTTPServer.swift
++++ b/Tests/Foundation/HTTPServer.swift
+@@ -186,6 +186,19 @@ class _TCPSocket: CustomStringConvertible {
+         return _TCPSocket(socket: connection)
+     }
+  
++    func setReceiveBufferSize(_ size: CInt) throws {
++        guard let connectionSocket = _socket else {
++            throw InternalServerError.socketAlreadyClosed
++        }
++        var value = size
++        try withUnsafePointer(to: &value) { pointer in
++            try pointer.withMemoryRebound(to: CChar.self, capacity: MemoryLayout<CInt>.size) {
++                _ = try attempt("setsockopt SO_RCVBUF", valid: isZero,
++                    setsockopt(connectionSocket, SOL_SOCKET, SO_RCVBUF, $0, socklen_t(MemoryLayout<CInt>.size)))
++            }
++        }
++    }
++
+     func readData() throws -> Data? {
+         guard let connectionSocket = _socket else {
+             throw InternalServerError.socketAlreadyClosed
+@@ -335,6 +348,15 @@ class _HTTPServer: CustomStringConvertible {
+         }
+         var request = try _HTTPRequest(header: headerString)
+ 
++        if request.uri == "/echo-with-backpressure" {
++            // Constrain receiver buffering before the request body arrives
++            // to exercise sender backpressure on a large upload.
++            try tcpSocket.setReceiveBufferSize(16 * 1024)
++            if request.getHeader(for: "Expect")?.lowercased() == "100-continue" {
++                try tcpSocket.writeRawData(Data("HTTP/1.1 100 Continue\r\n\r\n".utf8))
++            }
++        }
++
+         if let contentLength = request.getHeader(for: "Content-Length"), let length = Int(contentLength), length > 0 {
+             let messageData = try reader.readBytes(count: length)
+             request.messageData = messageData
+@@ -879,7 +901,7 @@ public class TestURLSessionServer: CustomStringConvertible {
+             return httpResponse
+         }
+         
+-        if uri == "/echo" {
++        if uri == "/echo" || uri == "/echo-with-backpressure" {
+             return try _HTTPResponse(response: .OK, body: request.messageBody ?? "")
+         }
+         
+diff --git a/Tests/Foundation/TestURLSession.swift b/Tests/Foundation/TestURLSession.swift
+index 4c8df2bf1dec98bde2574ac39d39183e73966e22..dfbe329277d8bd226f1def7fdbcfc95cf6d88123 100644
+--- a/Tests/Foundation/TestURLSession.swift
++++ b/Tests/Foundation/TestURLSession.swift
+@@ -1409,6 +1409,41 @@ final class TestURLSession: LoopbackServerTest, @unchecked Sendable {
+ 
+     }
+ 
++    func test_uploadResumesAfterSocketBackpressure() async throws {
++        // Exercise both URLRequest.httpBody and uploadTask's separate body.
++        // The peer echoes the entire body, so delegate progress alone cannot
++        // make this pass if the socket stops sending after its first buffer.
++        let body = Data(repeating: 0x61, count: 1024 * 1024)
++        let url = try XCTUnwrap(URL(string: "http://127.0.0.1:\(Self.serverPort)/echo-with-backpressure"))
++        for uploadTask in [false, true] {
++            let configuration = URLSessionConfiguration.ephemeral
++            configuration.timeoutIntervalForResource = 45
++            let session = URLSession(configuration: configuration)
++            defer { session.invalidateAndCancel() }
++            var request = URLRequest(url: url)
++            request.httpMethod = uploadTask ? "PUT" : "POST"
++            request.timeoutInterval = 30
++            request.setValue("100-continue", forHTTPHeaderField: "Expect")
++            let completed = expectation(description: "complete upload, uploadTask=\(uploadTask)")
++            let completion: @Sendable (Data?, URLResponse?, Error?) -> Void = { data, response, error in
++                defer { completed.fulfill() }
++                XCTAssertNil(error)
++                XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
++                XCTAssertEqual(data, body)
++            }
++            let task: URLSessionTask
++            if uploadTask {
++                task = session.uploadTask(with: request, from: body, completionHandler: completion)
++            } else {
++                request.httpBody = body
++                task = session.dataTask(with: request, completionHandler: completion)
++            }
++            task.resume()
++            await fulfillment(of: [completed], timeout: 60)
++            task.cancel()
++        }
++    }
++
+     func test_requestWithEmptyBody() async throws {
+         for method in httpMethods {
+             let urlString = "http://127.0.0.1:\(TestURLSession.serverPort)/" + method.lowercased()

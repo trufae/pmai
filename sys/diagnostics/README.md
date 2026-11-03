@@ -106,18 +106,72 @@ adding a fast polling timer to hide a missed notification. An upstream patch
 needs a failing/passing backpressure regression and evidence identifying the
 lost notification. The app workaround can be used while that is investigated.
 
-No upstream source patch is claimed or submitted by these diagnostics. The next
-required evidence is a failing Windows probe run; successful macOS runs validate
-the harness, not the Windows bug or an upstream fix.
+## Candidate upstream patches for #5532
 
-The contribution sequence is:
+[libdispatch-write-first.patch](swift-5532/libdispatch-write-first.patch) contains
+the source fix and a regression in the existing `dispatch_io_muxed` suite.
+It targets `swift-corelibs-libdispatch` commit
+`2078b9d4a2853b8b07a61e3d460e9dfd9d3c3454`.
+[foundation-upload-regression.patch](swift-5532/foundation-upload-regression.patch)
+adds the HTTP regression to `swift-corelibs-foundation` commit
+`08a9cd98b7eaf4821c70e87e2173ff18a2359b1f`.
+These patches apply to different repositories. The runtime fix belongs in
+Dispatch; the Foundation patch contains tests, not a replacement HTTP backend.
 
-1. Run the manual workflow, or run the two standalone files on an affected
-   machine. Attach the receiver results and runtime versions to issue #5532.
-2. Trace the missing transition on that same runtime. If Dispatch loses the
-   notification, the source fix belongs in `swift-corelibs-libdispatch`, even
-   though the symptom is tracked in Foundation.
-3. Reduce the failing upload into a bounded regression in the affected upstream
-   suite, patch the identified transition, and demonstrate failure before and
-   success after on Windows. Verify receiver bytes, rather than relying only on
-   Foundation's delegate counters.
+Windows `_dispatch_unote_muxnote_find` canonicalizes `EVFILT_WRITE` to
+`EVFILT_READ`, but `_dispatch_muxnote_create` stores the original write filter.
+A writer registered first therefore cannot be found when the reader registers.
+The resulting second socket entry calls `WSAEventSelect` with another event and
+mask, replacing the existing write notification registration. Cancelling either
+entry can also clear the other's registration. Linux already canonicalizes the
+filter at creation. The fix adds that missing normalization to Windows.
+
+The Dispatch regression waits for writer registration, then reader registration,
+then writer cancellation before sending a byte from the peer. It asserts that
+the reader still receives it. It uses completion events rather than sleeps and
+does not depend on upload size or socket autotuning. The Foundation regression
+checks the complete echoed body for both `httpBody`/POST and `uploadTask`/PUT,
+using a constrained receive window and an explicit `100-continue` exchange.
+The large body is needed to exercise the partial-write path.
+
+The [ticket response draft](swift-5532/ticket-response.txt) and
+[validation record](swift-5532/validation.txt) distinguish code/fixture checks
+from native Windows validation. Neither patch has been submitted. Windows
+before/after execution remains required to confirm this fixes the reported
+upload stall; successful macOS runs do not establish that result.
+
+### Validate on Windows
+
+Use a Visual Studio developer shell with Clang, Ninja and CMake available.
+The build commands below are prepared instructions, not a claimed Windows run.
+From a clean libdispatch checkout at the recorded commit, first apply only the
+test so the baseline still uses the unmodified Windows backend:
+
+```powershell
+$patch = 'C:\path\to\pmai\sys\diagnostics\swift-5532\libdispatch-write-first.patch'
+git apply --include=tests/dispatch_io_muxed.c $patch
+cmake -S . -B build-5532 -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DBUILD_SHARED_LIBS=ON -DENABLE_SWIFT=OFF
+cmake --build build-5532 --target dispatch_io_muxed bsdtestharness
+ctest --test-dir build-5532 -R '^dispatch_io_muxed$' --output-on-failure
+```
+
+Record the baseline failure, then apply just the runtime fix and repeat the same
+build and focused test:
+
+```powershell
+git apply --include=src/event/event_windows.c $patch
+cmake --build build-5532 --target dispatch_io_muxed bsdtestharness
+ctest --test-dir build-5532 -R '^dispatch_io_muxed$' --output-on-failure
+```
+
+Repeat on x64 and ARM64. Next run the standalone upload probe with the original
+runtime, then with the compatible rebuilt `dispatch.dll` and `BlocksRuntime.dll`
+beside a separate copy of `urlsession-upload.exe`. Confirm which DLLs the process
+actually loads. Do not replace the installed toolchain DLLs. Keep architecture,
+FoundationNetworking, libcurl and compiler versions constant between runs.
+
+Apply the Foundation regression patch in its own checkout and run
+`swift test --filter TestURLSession.test_uploadResumesAfterSocketBackpressure`
+with that patched Dispatch runtime. Foundation's Windows dependency setup is
+documented in its upstream README. Include the receiver's actual byte counts
+from the standalone probe as well as the new regression result in the ticket.

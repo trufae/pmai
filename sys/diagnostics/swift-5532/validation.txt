@@ -1,0 +1,40 @@
+Candidate patches for swift-corelibs-foundation issue #5532
+
+Upstream bases:
+swift-corelibs-libdispatch 2078b9d4a2853b8b07a61e3d460e9dfd9d3c3454
+swift-corelibs-foundation 08a9cd98b7eaf4821c70e87e2173ff18a2359b1f
+
+Host: macOS 27.0.1 arm64, Apple Swift 6.4, Xcode Clang.
+
+Passed:
+1. git diff --check in both upstream checkouts.
+2. git apply --check for each patch in a pristine worktree at its recorded base.
+3. Full dispatch_io_muxed executable, compiled from the patched test source and
+   existing bsdtests.c/dispatch_test.c against macOS system Dispatch, completed
+   successfully. The new reader received 'x' after the writer's cancellation.
+   This did not execute the Windows backend.
+4. Clang cross-target syntax check of dispatch_io_muxed.c's Windows branch,
+   using x86_64-w64-windows-gnu and MinGW headers. HAVE_MODE_T, HAVE_PID_T and
+   HAVE_MKSTEMP matched the MinGW headers, as CMake normally detects them.
+   This was compilation only, not linking or Windows execution.
+5. The complete modified Foundation HTTPServer.swift and new XCTest method
+   compiled together in Swift 6 mode in a temporary harness using macOS XCTest.
+   The harness exercised the new server route with macOS Foundation:
+   PASS Foundation HTTP fixture uploadTask=false, echoedBytes=1048576
+   PASS Foundation HTTP fixture uploadTask=true, echoedBytes=1048576
+   This was not a build or run of swift-corelibs-foundation's full test suite.
+6. A temporary check compiled the actual Windows constructor and lookup
+   functions before/after the patch, with Windows handle metadata stubbed:
+   before: write-first stored_filter=-2 read_found=0 write_found=0 (exit 1)
+   after:  write-first stored_filter=-1 read_found=1 write_found=1 (exit 0)
+   Read-first lookup succeeded in both versions. This demonstrates the key
+   mismatch in the C functions, not a native Windows networking A/B result.
+
+Still required before claiming the reported stall is fixed:
+- Native Windows x64 and ARM64 Dispatch regression failure before / pass after.
+- Standalone Foundation uploads with old and rebuilt Dispatch, checking receiver
+  bytes and the DLLs actually loaded; keep the other runtime versions constant.
+- The Foundation regression against rebuilt corelibs Foundation and Dispatch.
+- Broader upstream platform checks required by the maintainers before merging.
+
+No upstream comment, pull request, or branch has been published by this work.
