@@ -166,6 +166,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var aggregateOrder: [String] = []
   private var viewTask: Task<Void, Never>?
   private var viewDiffDirectory: URL?
+  private var viewJobsOperation: (@Sendable (Int) async -> String)?
   private var viewGeneration = UUID()
   private var viewPromptOperation: (@Sendable (String) async throws -> String)?
   private var viewPromptReply: (conversation: String, id: String, text: String)?
@@ -224,6 +225,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       if ui.mode != .buffer {
         view = nil
         stopViewTask()
+        viewJobsOperation = nil
         viewPromptOperation = nil
         viewPromptReply = nil
         draggingViewSeparator = false
@@ -488,6 +490,30 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     }
   }
 
+  func watchViewJobs(_ operation: @escaping @Sendable (Int) async -> String) {
+    lock.withLock {
+      viewJobsOperation = operation
+      watchViewJobsLocked()
+    }
+  }
+
+  private func watchViewJobsLocked() {
+    guard active, ui.mode == .buffer, view?.source == .jobs,
+      viewTask == nil, let operation = viewJobsOperation else { return }
+    let generation = viewGeneration
+    viewTask = Task.detached(priority: .utility) { [weak self] in
+      while !Task.isCancelled {
+        guard let width = self?.lock.withLock({
+          self?.paneContentWidth(inView: true)
+        }) else { return }
+        let text = await operation(width)
+        guard !Task.isCancelled else { return }
+        self?.updateViewText(text, source: .jobs, generation: generation)
+        do { try await Task.sleep(for: .seconds(2)) } catch { return }
+      }
+    }
+  }
+
   var viewNeedsPrompt: Bool { lock.withLock { view?.source == .prompt } }
 
   func runViewPrompt(title: String, operation: @escaping @Sendable (String) async throws -> String) {
@@ -542,6 +568,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       guard ui.mode == .buffer else { return }
       let label = title.components(separatedBy: .controlCharacters).joined(separator: " ")
       stopViewTask()
+      viewJobsOperation = nil
       viewPromptOperation = nil
       viewPromptReply = nil
       aggregateSections = [:]
@@ -769,6 +796,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     guard tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == 0 else { return }
     active = true
     if let directory = viewDiffDirectory { watchViewDiffsLocked(in: directory) }
+    watchViewJobsLocked()
     paintedPanelRows = []
     clampInputRows()
     if ui.mode == .buffer {
@@ -876,7 +904,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     scrollbarDrag = nil
     refreshSize()
     setCursorHidden(false)
-    if view?.source == .diffs { stopViewTask() }
+    if view?.source == .diffs || view?.source == .jobs { stopViewTask() }
     resizeSource?.cancel()
     resizeSource = nil
     activitySource?.cancel()
@@ -1602,7 +1630,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   private func updateViewBuffer() {
     guard let source = view?.source else { return }
-    if view?.needsMessages == true || source == .todo || source == .history || source == .diffs || source == .prompt { return }
+    if view?.needsMessages == true || source == .todo || source == .jobs || source == .history || source == .diffs || source == .prompt { return }
     if source == .conversations {
       let ids = Set(conversations.keys.filter { $0 != "initial" && $0 != selectedConversation })
       if aggregateOrder.contains(where: { !ids.contains($0) }) {

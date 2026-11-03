@@ -680,8 +680,12 @@ Child agents print as they work, in blocks rather than character by character,
 every line prefixed with the child's pid (`agent#3 │ …`, `agent#3 → tool …`,
 `agent#3 ↲ done …`) so two children working at once stay apart. `ui.subagents`
 picks how much: `all` (replies and tool calls), `tools` (tool calls only),
-`stats` (one line per model turn), or `none`. Every `/jobs` row says how
-long its run has been going (`5 turns · 2 tools · 2.1k tok · 1m4s`), and
+`stats` (one line per model turn), or `none`. `/jobs` shows a compact tree with
+colored states, aligned elapsed time, turns, tools, tokens, and task/activity
+details. Narrow terminals use two lines per job. `/view jobs` opens the same
+table in a buffer-mode pane and refreshes every two seconds, including elapsed
+time while agents wait for a model. Use Tab to focus it and Enter for fullscreen.
+The heading counts active, waiting, and finished jobs, and
 `/jobs tree` ends with a `Total:` row summing the turns, tools, and tokens
 of the whole tree. When a turn ends the REPL prints
 `✓ took 5s and 1.2k tok · avg 42.1 tok/s` in cyan, or `✗ took 5s` in red

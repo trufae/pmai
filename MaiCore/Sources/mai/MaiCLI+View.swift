@@ -21,6 +21,7 @@ extension MaiCLI {
     case "log" where rest.isEmpty: return (.log, "message log")
     case "voice" where rest.isEmpty: return (.voice, "voice")
     case "todo" where rest.isEmpty: return (.todo, "project todo")
+    case "jobs" where rest.isEmpty: return (.jobs, "jobs · live 2s")
     case "iconlog" where rest.isEmpty: return (.iconlog, "tool icons")
     case "thinking" where rest.isEmpty, "reasoning" where rest.isEmpty:
       return (.thinking, "thinking")
@@ -37,7 +38,7 @@ extension MaiCLI {
     let target = name == "agent" ? rest : argument
     guard !target.isEmpty else {
       throw JSONRPCError.invalidParams(
-        "Usage: /view <off|clear|current|pins|log|history|todo|iconlog|thinking|voice|tools [NAME]|diffs|prompt TEXT|agents|AGENT>. /help view")
+        "Usage: /view <off|clear|current|pins|log|history|todo|jobs|iconlog|thinking|voice|tools [NAME]|diffs|prompt TEXT|agents|AGENT>. /help view")
     }
     let rawPID = target.replacingOccurrences(of: "agent#", with: "")
       .trimmingCharacters(in: CharacterSet(charactersIn: "#@"))
@@ -84,6 +85,7 @@ extension MaiCLI {
     /view log              Show the first line of every message as role: text
     /view history          Show saved inputs, as in /history
     /view todo             Show the project's todo list, as in /todo
+    /view jobs             Watch jobs, states, elapsed time and usage, refreshed every 2 seconds
     /view iconlog          Show tool calls as a continuous row of emojis
     /view thinking         Show the current agent's full retained reasoning
     /view voice            Show voice animation, input, replies and tool calls/results

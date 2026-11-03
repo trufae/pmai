@@ -112,11 +112,12 @@ def main():
                 def check_tree(state):
                     tree = wait_for('Total:')
                     for depth in range(1, max_depth + 1):
-                        name = 'worker' if mode.startswith('named') else 'worker' + '.worker' * depth
                         prefix = '    ' * (depth - 1) + '└── '
                         title = 'Review level 1' if depth == 1 else f'level {depth}'
-                        assert re.search(rf'(?m)^{prefix}#\d+ {re.escape(name)}\s+\[{state}\]\s+{title}', tree), tree
-                    return re.findall(r'#(\d+) \S+\s+\[', tree)
+                        row = next((line for line in tree.splitlines()
+                                    if re.match(rf'^{prefix}#\d+ ', line)), '')
+                        assert 'worker' in row and re.search(rf'\s{state}\s', row) and title in row, tree
+                    return re.findall(r'(?m)^[ │├└─]*#(\d+) ', tree)
 
                 def check_queue(expected):
                     send('/queue')

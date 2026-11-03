@@ -17,7 +17,7 @@ import threading
 import time
 from http.server import ThreadingHTTPServer
 
-from smoke import clean_environment, JSONProvider, read_pty, run_repl
+from smoke import clean_environment, JSONProvider, read_chat, read_pty, run_repl
 
 CSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
 MOVE = re.compile(r'\x1b\[(\d+);(\d+)H')
@@ -549,6 +549,26 @@ def main(binary):
                 wait_for('── view: View child #')
                 child_pid = re.search(r'View child #(\d+)', screen[separator()])[1]
                 assert 'CHILD_INITIAL' in top(), screen
+                send('/view jo\t')
+                wait_for('/view jobs')
+                send('\r')
+                wait_for('Jobs:')
+                assert 'View child' in top() and 'TOKENS' in top(), screen
+                send(f'/jobs pause {child_pid}\r')
+                wait_for('Paused')
+                deadline = time.monotonic() + 15
+                while not re.search(rf'#{child_pid} View child\s+paused\s', top()):
+                    assert time.monotonic() < deadline, screen
+                    read_for(.05)
+                send(f'/jobs resume {child_pid}\r')
+                wait_for('Continued')
+                deadline = time.monotonic() + 15
+                while not re.search(rf'#{child_pid} View child\s+run\s', top()):
+                    assert time.monotonic() < deadline, screen
+                    read_for(.05)
+                send('/view View child\r')
+                wait_for('── view: View child #')
+                assert 'CHILD_INITIAL' in top(), screen
                 send('/view agent\r')
                 wait_for('── view: agent conversations')
                 send('/pwd\r')
@@ -668,7 +688,7 @@ def main(binary):
                 quit_repl()
                 # Saved history larger than one page must still expose early pins and log entries.
                 saved = next((root / '.pmai/chats').glob('*.json'))
-                chat = json.loads(saved.read_text())
+                chat = read_chat(saved)
                 chat['messages'] = [{'id': f'paged-{i}',
                     'role': 'user' if i % 2 == 0 else 'assistant',
                     'content': [{'text': {'_0': f'PAGED_{i:03d}\nDETAIL_{i:03d}'}}],
@@ -848,7 +868,7 @@ def main(binary):
                                  ['/view thinking', '/help view'], cwd=root, env=env, allow_errors=True)
                 assert 'error: /view requires ui.mode=buffer.' in output and '/view off' in output
                 print('PASS view: Markdown settings, horizontal/vertical layouts, fullscreen restore, highlight search/persistence/cancellation, mode guard, sources, pins, first-line message log, read-only focus, Ctrl+W word deletion, focus colors/cursor visibility, blank Enter, history, prompt, independent scrolling, live thinking/tools/diffs, '
-                      'background agents, J/K and Ctrl+B/F paging, g/G top/bottom, divider background, v/V resizing, q close, separator dragging, mouse cleanup, '
+                      'live jobs and pause/resume, background agents, J/K and Ctrl+B/F paging, g/G top/bottom, divider background, v/V resizing, q close, separator dragging, mouse cleanup, '
                       'live ui.tools previews and iconlog, resize, saved reasoning/results, off and cleanup')
             finally:
                 chunks.put(None)

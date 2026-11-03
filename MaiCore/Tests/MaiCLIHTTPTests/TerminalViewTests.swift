@@ -84,6 +84,7 @@ func terminalViewSelectors() throws {
   #expect(try source("pins") == .pins)
   #expect(try source(" LOG ") == .log)
   #expect(try source(" TODO ") == .todo)
+  #expect(try source("jobs") == .jobs)
   #expect(try source(" ICONLOG ") == .iconlog)
   #expect(try source("tools") == .tools(nil))
   for name in ["files_read", "tool files_read", "tools files_read"] {
@@ -91,7 +92,7 @@ func terminalViewSelectors() throws {
   }
   for name in [
     "", "missing", "tools missing", "thinking extra", "pins extra", "log extra", "off extra",
-    "todo extra", "iconlog extra", "prompt", "history extra", "voice extra",
+    "todo extra", "jobs extra", "iconlog extra", "prompt", "history extra", "voice extra",
   ] {
     #expect(throws: (any Error).self) { try source(name) }
   }
@@ -312,6 +313,52 @@ func terminalViewGitScroll() {
   #expect(view.buffer.visibleRows(width: 80, height: 4) == tail)
   view.updateText("No unstaged changes to tracked files.")
   #expect(view.buffer.visibleRows(width: 80, height: 4) == ["No unstaged changes to tracked files."])
+}
+
+@Test("Jobs snapshots keep live durations, finished usage and attention visible")
+func terminalViewJobsSnapshot() {
+  let now = Date(timeIntervalSince1970: 1_000)
+  let root = AgentProcessInfo(
+    pid: 1, runID: UUID(), agentID: "main", state: .running,
+    startedAt: now.addingTimeInterval(-60), modelTurns: 3, toolCalls: 2)
+  var child = AgentProcessInfo(
+    pid: 2, parent: 1, runID: UUID(), agentID: "worker", task: "Review the parser",
+    state: .completed, depth: 1, startedAt: now.addingTimeInterval(-100),
+    finishedAt: now.addingTimeInterval(-95), modelTurns: 2, toolCalls: 4,
+    usage: TokenUsage(inputTokens: 1_000, outputTokens: 200))
+  let text = TerminalJobs.render([child, root], width: 120, at: now)
+  #expect(text.contains("Jobs: 1 active · 0 waiting · 1 finished"))
+  #expect(text.contains("└── #2 worker") && text.contains("Review the parser"))
+  #expect(text.contains("1m") && text.contains("5s"))
+  #expect(text.contains("Total: 5 turns, 6 tools, 1.2k tok"))
+  let later = TerminalJobs.render([child, root], width: 120, at: now.addingTimeInterval(60))
+  #expect(later.contains("2m") && later.contains("5s"))
+  child.state = .waitingForInput
+  child.attention = .input("Choose a branch")
+  child.task = String(repeating: "long title ", count: 10)
+  #expect(TerminalJobs.render([child], width: 80, at: now).contains("Choose a bran"))
+  child.isArchived = true
+  #expect(TerminalJobs.render([child], width: 80, at: now) == "No jobs recorded.")
+  #expect(TerminalJobs.render([child], width: 80, at: now, includeArchived: true).contains("#2 worker"))
+
+  child.isArchived = false
+  child.displayName = "調査 🔎 worker"
+  for width in [1, 20, 50, 75, 76, 80, 120] {
+    let rows = TerminalJobs.render([root, child], width: width, at: now).components(separatedBy: "\n")
+    #expect(rows.allSatisfy { TerminalLineEditor.displayWidth(of: $0) <= width })
+  }
+}
+
+@Test("Refreshing jobs retains the reader's viewport instead of jumping to totals")
+func terminalViewJobsScroll() {
+  var view = TerminalView(source: .jobs, title: "jobs")
+  let lines = (0..<30).map { "job \($0)" }
+  view.updateText(lines.joined(separator: "\n"))
+  #expect(view.buffer.visibleRows(width: 80, height: 4).first == "job 0")
+  view.buffer.scroll(lines: 8, width: 80, height: 4)
+  let anchor = view.buffer.visibleRows(width: 80, height: 4)
+  view.updateText((lines + ["new job"]).joined(separator: "\n"))
+  #expect(view.buffer.visibleRows(width: 80, height: 4) == anchor)
 }
 
 @Test("Git views use live theme colors for headers, additions and removals")

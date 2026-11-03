@@ -531,6 +531,12 @@ the complete saved history even when the conversation pane shows a bounded windo
 `/view todo` shows the current project's shared todo list using the same numbering,
 counts, and checkboxes as `/todo`. It refreshes as commands and tools run.
 
+`/view jobs` shows the same compact process tree as `/jobs`, refreshed every two
+seconds. States use theme colors; rows show elapsed time, turns, tools, tokens,
+and task/activity details. The heading counts active, waiting, and finished jobs.
+Narrow panes use two lines per job. Scrolling stays anchored during updates;
+Tab focuses the view and Enter expands it to fullscreen. `/view off` closes it.
+
 Each pane (and the chat alone when the view is closed) shows a scrollbar on the
 right only when its wrapped content exceeds its height. `/set ui.scrollbar N`
 sets its width in characters: `0` hides it, `1` is the default, `2` uses two

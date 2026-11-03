@@ -12,6 +12,7 @@ enum TerminalViewSource: Equatable {
   case pins
   case log
   case todo
+  case jobs
   case iconlog
   case tools(String?)
   case diffs
@@ -60,7 +61,7 @@ struct TerminalView {
   mutating func updateText(_ text: String) {
     guard self.text != text else { return }
     self.text = text
-    let anchor = source == .diffs ? buffer.viewportAnchor : buffer.readingAnchor
+    let anchor = source == .diffs || source == .jobs ? buffer.viewportAnchor : buffer.readingAnchor
     var output = TerminalOutputBuffer()
     if source == .prompt {
       output.configureMarkdown(markdown)
@@ -77,7 +78,7 @@ struct TerminalView {
       output.append(text)
     }
     buffer.updateView(from: output, selection: .all)
-    if source == .diffs || source == .prompt {
+    if source == .diffs || source == .jobs || source == .prompt {
       buffer.restoreAnchor(line: anchor?.line ?? 0, glyph: anchor?.glyph ?? 0)
     }
   }

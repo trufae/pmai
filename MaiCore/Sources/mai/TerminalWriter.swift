@@ -109,6 +109,10 @@ actor TerminalWriter {
   /// than a pipe or captured command output.
   var paintsOutput: Bool { colorsOutput && REPLRedirection.current == nil }
 
+  var outputColumns: Int {
+    terminalOutput && REPLRedirection.current == nil ? TerminalLineEditor.terminalColumns() : 160
+  }
+
   /// Styles a piece of stdout text, or returns it untouched where
   /// escapes would show as noise.
   func paint(_ text: String, color: String? = nil, role: TerminalThemeStyle? = nil, bold: Bool = false) -> String {

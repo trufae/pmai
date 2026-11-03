@@ -38,8 +38,8 @@ extension MaiCLI {
         await terminal.line("Usage: /jobs [tree]")
         return
       }
-      let lines = await jobsTreeLines(runtime: runtime, includeArchived: fields.contains("--all"))
-      await terminal.line(lines.isEmpty ? "No jobs recorded." : lines.joined(separator: "\n"))
+      let processes = await runtime.supervisor.processes()
+      await terminal.line(await terminal.renderJobs(processes, includeArchived: fields.contains("--all")))
 
     case "clear":
       guard fields.count == 1 else {
@@ -172,13 +172,6 @@ extension MaiCLI {
     }
   }
 
-  private static func jobsTreeLines(runtime: AgentRuntime, includeArchived: Bool = false) async -> [String] {
-    let processes = await runtime.supervisor.processes()
-    let tree = AgentProcessTree(processes.filter { includeArchived || !$0.isArchived })
-    guard !tree.isEmpty else { return [] }
-    return ["Jobs:"] + tree.lines() + [jobTreeTotal(tree)]
-  }
-
   /// One row summing what the whole tree has spent so far. Tokens are every
   /// model call's input and output added up, the way a provider bills them,
   /// formatted like the rows above it.
@@ -197,6 +190,7 @@ extension MaiCLI {
 
       /jobs                     List the process tree, including finished and saved jobs
       /jobs tree                Same as /jobs; /jobs ps also works
+      /view jobs                Watch the process tree, refreshed every 2 seconds (buffer mode)
       /jobs log PID             Print a process's transcript
       /jobs pause PID           Pause a child and its descendants after their current step
       /jobs resume PID          Resume paused processes and deliver queued messages

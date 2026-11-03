@@ -4702,6 +4702,12 @@ struct MaiCLI {
                     }
                   } else {
                     screen.setView(selection.source, title: selection.title)
+                    if selection.source == .jobs {
+                      screen.watchViewJobs { width in
+                        let processes = await runtime.supervisor.processes()
+                        return await terminal.renderJobs(processes, width: width)
+                      }
+                    }
                   }
                 } catch {
                   await terminal.line("error: \(error.localizedDescription)", to: .standardError)
@@ -15148,7 +15154,7 @@ struct MaiCLI {
       "/agent", "/agents", "/agents list", "/agents describe ", "/agents enable ",
       "/agents disable ",
       "/ps", "/ps -a", "/ps -p", "/ps -ap", "/ps -k ",
-      "/view", "/view off", "/view current", "/view main", "/view pins", "/view log", "/view todo", "/view iconlog", "/view thinking", "/view voice", "/view tools",
+      "/view", "/view off", "/view current", "/view main", "/view pins", "/view log", "/view todo", "/view jobs", "/view iconlog", "/view thinking", "/view voice", "/view tools",
       "/view tools ", "/view prompt ", "/view history", "/view diffs", "/view agents", "/view agent ", "/view clear", "/help view",
       "/job", "/jobs", "/jobs tree", "/jobs stop ", "/jobs continue ", "/jobs clear", "/jobs log ",
       "/jobs kill ", "/jobs focus ",
