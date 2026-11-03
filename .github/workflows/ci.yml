@@ -312,11 +312,12 @@ jobs:
         run: |
           $bin = swift build --package-path MaiCore --configuration release --disable-prefetching --show-bin-path
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python test/windows-console-smoke.py (Join-Path $bin 'pmai.exe')
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python test/run-shell-smoke.py (Join-Path $bin 'pmai.exe')
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python test/windows-terminal-smoke.py (Join-Path $bin 'pmai.exe')
+          $failed = 0
+          foreach ($test in 'windows-console', 'run-shell', 'windows-terminal') {
+            python "test/$test-smoke.py" (Join-Path $bin 'pmai.exe')
+            if ($LASTEXITCODE -ne 0) { $failed = 1 }
+          }
+          exit $failed
 
       - name: Package Windows beta CLI
         run: ./sys/package-windows.ps1 -Architecture ${{ matrix.arch }}

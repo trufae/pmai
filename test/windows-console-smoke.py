@@ -99,6 +99,7 @@ def worker(binary):
     kernel.FreeConsole.argtypes = []
     kernel.FreeConsole.restype = w.BOOL
     kernel.GetConsoleScreenBufferInfo.argtypes = [w.HANDLE, c.POINTER(ScreenInfo)]
+    kernel.SetConsoleScreenBufferSize.argtypes = [w.HANDLE, Coord]
     kernel.SetConsoleWindowInfo.argtypes = [w.HANDLE, w.BOOL, c.POINTER(Rect)]
     kernel.SetConsoleWindowInfo.restype = w.BOOL
     kernel.ReadConsoleOutputCharacterW.argtypes = [w.HANDLE, w.LPWSTR, w.DWORD, Coord, c.POINTER(w.DWORD)]
@@ -126,6 +127,9 @@ def worker(binary):
         console_out = handles.enter_context(io.FileIO('CONOUT$', 'r+'))
         input_handle = msvcrt.get_osfhandle(console_in.fileno())
         output_handle = msvcrt.get_osfhandle(console_out.fileno())
+        info = ScreenInfo()
+        checked(kernel.GetConsoleScreenBufferInfo(output_handle, c.byref(info)))
+        checked(kernel.SetConsoleScreenBufferSize(output_handle, Coord(info.size.X, max(1000, info.size.Y))))
 
         def console_mode(handle):
             mode = w.DWORD()

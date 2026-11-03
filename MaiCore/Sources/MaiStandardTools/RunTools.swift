@@ -906,8 +906,17 @@ enum MaiRunToolError: LocalizedError {
           signal(SIGPIPE, SIG_IGN)
         #endif
         DispatchQueue.global(qos: .utility).async {
+          #if os(Windows)
+          FileHandle.standardError.write(Data("stdin sender started\n".utf8))
+          #endif
           try? handle.write(contentsOf: Data(input.utf8))
+          #if os(Windows)
+          FileHandle.standardError.write(Data("stdin sender wrote\n".utf8))
+          #endif
           try? handle.close()
+          #if os(Windows)
+          FileHandle.standardError.write(Data("stdin sender closed\n".utf8))
+          #endif
         }
       }
 
