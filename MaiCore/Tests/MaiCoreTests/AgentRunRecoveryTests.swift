@@ -165,9 +165,9 @@ func modelTurnLimitPausesRun() async throws {
   let requests = await provider.requests
   #expect(requests.count == 4)
   let resumedMessages = requests[2].messages.filter {
-    $0.text != AgentToolLoopPolicy.nativeToolInstructions
+    !AgentPromptContext.isInstruction($0)
   }
-  #expect(resumedMessages.map(\.id) == paused.transcript.map(\.id))
+  #expect(resumedMessages == paused.transcript.filter { !AgentPromptContext.isInstruction($0) })
 }
 
 @Test("Interactive tool limits pause before requesting a tool-free answer")

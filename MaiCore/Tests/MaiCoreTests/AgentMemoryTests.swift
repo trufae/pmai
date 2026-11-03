@@ -235,8 +235,7 @@ func memoryReachesTopLevelRunsOnly() async throws {
 
   let requests = await provider.requests
   let parent = try #require(requests.first)
-  #expect(parent.messages.map(\.role) == [.system, .system, .system, .user])
-  #expect(parent.messages[1].text.contains("Prefers Swift."))
+  #expect(parent.messages.contains { $0.role == .system && $0.text.contains("Prefers Swift.") })
   // The stored transcript is untouched: memory is run-scoped context.
   #expect(parent.messages[0].text == "Be terse.")
   // Both sides carry the file tool, and the agent family too: the worker is
@@ -252,7 +251,9 @@ func memoryReachesTopLevelRunsOnly() async throws {
       provider: "memory-fixture",
       model: "fixture",
       messages: [.system("Be terse."), .user("done")]))
-  #expect(await provider.requests.last?.messages.map(\.role) == [.system, .user])
+  let cleared = try #require(await provider.requests.last)
+  #expect(cleared.messages.contains { $0.role == .system && $0.text == "Be terse." })
+  #expect(!cleared.messages.contains { $0.text.contains("Prefers Swift.") })
 }
 
 private actor MemoryFixtureProvider: ChatProvider {

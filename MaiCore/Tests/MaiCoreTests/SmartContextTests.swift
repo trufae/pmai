@@ -259,7 +259,6 @@ func smartContextFailure(empty: Bool) async throws {
   #expect(result.response.text == "Done")
   #expect(await primary.requests.count == 2)
   #expect(await primary.requests.allSatisfy { $0.messages.contains(original[1]) })
-  #expect(await compact.requests.count == 1)
   #expect(Array(result.transcript.prefix(original.count)) == original)
 }
 

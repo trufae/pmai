@@ -20,11 +20,7 @@ final class TTSPlayer: NSObject, ObservableObject {
   private let synthesizeSpeech: SpeechSynthesis
   private let integratesWithSystemPlayback: Bool
 
-  private lazy var synthesizer: AVSpeechSynthesizer = {
-    let synthesizer = AVSpeechSynthesizer()
-    synthesizer.delegate = self
-    return synthesizer
-  }()
+  private var synthesizer: AVSpeechSynthesizer?
   private var remoteCommandsConfigured = false
   private var queuedSpeech: [QueuedSpeech] = []
   private var pendingSpeechAfterCancel: QueuedSpeech?
@@ -341,6 +337,9 @@ final class TTSPlayer: NSObject, ObservableObject {
   }
 
   private func beginSystemSpeaking(_ speech: QueuedSpeech) {
+    let synthesizer = self.synthesizer ?? AVSpeechSynthesizer()
+    synthesizer.delegate = self
+    self.synthesizer = synthesizer
     let utterance = AVSpeechUtterance(string: speech.text)
     if !speech.voice.voiceIdentifier.isEmpty,
       let v = AVSpeechSynthesisVoice(identifier: speech.voice.voiceIdentifier)
@@ -454,8 +453,8 @@ final class TTSPlayer: NSObject, ObservableObject {
       updateNowPlaying()
       return
     }
-    guard synthesizer.isSpeaking, !isPaused else { return }
-    synthesizer.pauseSpeaking(at: .word)
+    guard synthesizer?.isSpeaking == true, !isPaused else { return }
+    synthesizer?.pauseSpeaking(at: .word)
   }
 
   func resume() {
@@ -477,14 +476,14 @@ final class TTSPlayer: NSObject, ObservableObject {
       updateNowPlaying()
       return
     }
-    synthesizer.continueSpeaking()
+    synthesizer?.continueSpeaking()
   }
 
   func stop() {
     queuedSpeech.removeAll()
     pendingSpeechAfterCancel = nil
-    if synthesizer.isSpeaking {
-      synthesizer.stopSpeaking(at: .immediate)
+    if synthesizer?.isSpeaking == true {
+      synthesizer?.stopSpeaking(at: .immediate)
       return
     }
     if providerSpeechTask != nil || audioPlayer != nil || boostedAudioPlayerNode != nil {
@@ -544,13 +543,13 @@ final class TTSPlayer: NSObject, ObservableObject {
   }
 
   private var hasActiveSpeech: Bool {
-    synthesizer.isSpeaking || providerSpeechTask != nil || audioPlayer != nil
+    synthesizer?.isSpeaking == true || providerSpeechTask != nil || audioPlayer != nil
       || boostedAudioPlayerNode != nil
   }
 
   private func cancelActiveSpeech() {
-    if synthesizer.isSpeaking {
-      synthesizer.stopSpeaking(at: .immediate)
+    if synthesizer?.isSpeaking == true {
+      synthesizer?.stopSpeaking(at: .immediate)
       return
     }
     cancelProviderSpeech()
@@ -646,6 +645,7 @@ final class TTSPlayer: NSObject, ObservableObject {
   }
 
   private func activateAudioSession() {
+    guard integratesWithSystemPlayback else { return }
     let session = AVAudioSession.sharedInstance()
     do {
       // Live voice recording leaves the session in playAndRecord. Switch TTS back
@@ -658,6 +658,7 @@ final class TTSPlayer: NSObject, ObservableObject {
   }
 
   private func deactivateAudioSession() {
+    guard integratesWithSystemPlayback else { return }
     do {
       let session = AVAudioSession.sharedInstance()
       guard session.category != .playAndRecord else { return }

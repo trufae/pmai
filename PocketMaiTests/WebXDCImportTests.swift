@@ -134,7 +134,7 @@ final class WebXDCImportTests: XCTestCase {
     return try WebXDCLibrary.importXDC(from: url, fallbackName: name)
   }
 
-  func testSVGAppIconImportsRendersAndExportsWithStandardIconPrecedence() async throws {
+  func testSVGAppIconImportsAndExportsWithStandardIconPrecedence() throws {
     let svg = Data("""
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
         <rect width="64" height="64" fill="red"/>
@@ -146,35 +146,20 @@ final class WebXDCImportTests: XCTestCase {
     defer { try? WebXDCLibrary.deleteApp(id: imported.app.id) }
     XCTAssertEqual(WebXDCLibrary.iconData(imported.app), svg)
 
-    let image = try await WebXDCIconImage.decode(svg)
-    XCTAssertEqual(image.cgImage?.width, 256)
-    XCTAssertEqual(image.cgImage?.height, 256)
-    var pixel = [UInt8](repeating: 0, count: 4)
-    let drew = pixel.withUnsafeMutableBytes { bytes -> Bool in
-      guard let cgImage = image.cgImage,
-        let context = CGContext(
-          data: bytes.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
-          space: CGColorSpaceCreateDeviceRGB(),
-          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-      else { return false }
-      context.draw(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
-      return true
-    }
-    XCTAssertTrue(drew)
-    XCTAssertGreaterThan(pixel[0], 240)
-    XCTAssertGreaterThan(pixel[3], 240)
-
     let exported = try WebXDCLibrary.exportXDC(imported.app)
     defer { try? FileManager.default.removeItem(at: exported) }
     let entries = try ZipArchiveReader.entries(in: Data(contentsOf: exported))
     XCTAssertEqual(entries.first { $0.path == "icon.svg" }?.data, svg)
 
-    let png = try XCTUnwrap(image.pngData())
+    // Pixel rendering belongs to MarkdownImageTests; this test covers archive
+    // contents and icon precedence without launching another WebKit process.
+    let png = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1)).pngData { context in
+      UIColor.red.setFill()
+      context.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+    }
     let updated = try WebXDCLibrary.writeFile(imported.app, path: "icon.png", data: png)
     XCTAssertEqual(WebXDCLibrary.iconData(updated), png)
     XCTAssertEqual(WebXDCLibrary.iconData(updated, revision: 1), svg)
-    let raster = try await WebXDCIconImage.decode(png)
-    XCTAssertEqual(raster.cgImage?.width, 256)
   }
 
   func testIdenticalFilesReuseAppDespiteArchiveOrderAndKeepPermissionsAndData() throws {

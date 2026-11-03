@@ -189,7 +189,7 @@ func contextCompactWithoutSummaryIsSummarizedByTheModel() async throws {
   #expect(!result.transcript.contains { $0.text == "It rained all week here." })
   let requests = await provider.requests
   #expect(requests.count == 3)
-  let compaction = try #require(requests[1].messages.first?.text)
+  let compaction = try #require(requests[1].messages.first { $0.role == .user }?.text)
   #expect(compaction.contains("It rained all week here."))
   #expect(compaction.contains("the weather"))
   #expect(requests[1].tools.isEmpty)

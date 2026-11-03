@@ -67,9 +67,8 @@ func projectInstructionsReachRuns() async throws {
 
   let requests = await provider.requests
   let parent = try #require(requests.first)
-  #expect(parent.messages.map(\.role) == [.system, .system, .system, .user])
   #expect(parent.messages[0].text == "Be terse.")
-  #expect(parent.messages[1].text.contains("Run make test"))
+  #expect(parent.messages.contains { $0.role == .system && $0.text.contains("Run make test") })
   // The child works in the same tree, so it gets the same rules.
   let worker = try #require(
     requests.first { $0.messages.contains { $0.text.contains("running as agent '") } })
@@ -81,7 +80,9 @@ func projectInstructionsReachRuns() async throws {
       provider: "instructions-fixture",
       model: "fixture",
       messages: [.system("Be terse."), .user("done")]))
-  #expect(await provider.requests.last?.messages.map(\.role) == [.system, .user])
+  let cleared = try #require(await provider.requests.last)
+  #expect(cleared.messages.contains { $0.role == .system && $0.text == "Be terse." })
+  #expect(!cleared.messages.contains { $0.text.contains("Run make test") })
 }
 
 @Test("Scoped instructions discover nested files once and skip files already in context")

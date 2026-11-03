@@ -535,10 +535,7 @@ enum MaiRunToolError: LocalizedError {
         try Task.checkCancellation()
         try session.start()
         if let stdin { session.send(stdin) }
-        let watchdog = Task {
-          try await Task.sleep(for: .seconds(timeout))
-          session.stop(timedOut: true)
-        }
+        let watchdog = session.scheduleTimeout(after: timeout)
         defer { watchdog.cancel() }
         await session.wait()
         try Task.checkCancellation()
@@ -602,12 +599,7 @@ enum MaiRunToolError: LocalizedError {
           }
           _ = kill(-session.pid, SIGCONT)
           #endif
-          let watchdog = timeout.map { seconds in
-            Task {
-              try await Task.sleep(for: .seconds(seconds))
-              session.stop(timedOut: true)
-            }
-          }
+          let watchdog = timeout.map { session.scheduleTimeout(after: $0) }
           defer { watchdog?.cancel() }
           session.waitBlocking()
         }
@@ -720,6 +712,15 @@ enum MaiRunToolError: LocalizedError {
       var isRunning: Bool { lock.withLock { process.isRunning } }
 
       func waitBlocking() { completion.wait() }
+
+      // Blocking process work must not starve its own watchdog on Swift's
+      // cooperative executor, including the interactive wait above.
+      func scheduleTimeout(after seconds: TimeInterval) -> DispatchWorkItem {
+        let watchdog = DispatchWorkItem { [weak self] in self?.stop(timedOut: true) }
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(
+          deadline: .now() + seconds, execute: watchdog)
+        return watchdog
+      }
 
       var outcome: MaiHostProcessOutcome {
         get throws {

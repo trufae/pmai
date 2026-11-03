@@ -7,6 +7,9 @@ or inference dependencies. `python3 test/run-tests.py chat` does the same for
 the portable chat layer. Both use separate build directories. `make test-unit`
 runs all module-owned Swift targets; shared parsing and document-indexing cases
 run here instead of booting the iOS app. `make test` runs the iOS-specific suite.
+Real speech playback tests require a working audio service and explicit opt-in:
+set `PMAI_TEST_AUDIO_PLAYBACK=1` in Xcode's Test environment. They are skipped in default CI;
+speech chunking, provider requests, cancellation, and errors remain covered offline.
 
 `python3 test/build-dependencies.py` checks the native and cross-build dependency
 profiles without downloading packages. CI runs it on macOS and Linux to verify

@@ -149,7 +149,7 @@ final class OpenAISpeechTests: XCTestCase {
   }
 
   func testMissingProviderReportsErrorWithoutSwitchingVoice() {
-    let player = TTSPlayer { _, _, _ in
+    let player = TTSPlayer(integratesWithSystemPlayback: false) { _, _, _ in
       XCTFail("Must not synthesize")
       return Data()
     }
@@ -167,7 +167,7 @@ final class OpenAISpeechTests: XCTestCase {
     let voice = RoleVoiceSettings(
       provider: .openAICompatible, openAIEndpointID: endpoint.id, openAIVoice: "nova")
     var calls: [(String, String)] = []
-    let player = TTSPlayer { endpoint, _, voice in
+    let player = TTSPlayer(integratesWithSystemPlayback: false) { endpoint, _, voice in
       calls.append((endpoint.effectiveSpeechModel, voice))
       throw ChatProviderError.providerHTTPError(statusCode: 429, message: "Quota exceeded")
     }
@@ -204,7 +204,7 @@ final class OpenAISpeechTests: XCTestCase {
     let voice = RoleVoiceSettings(
       provider: .openAICompatible, openAIEndpointID: endpoint.id, openAIVoice: "coral")
     var calls = 0
-    let player = TTSPlayer { _, _, _ in
+    let player = TTSPlayer(integratesWithSystemPlayback: false) { _, _, _ in
       calls += 1
       try await Task.sleep(for: .seconds(30))
       return Data()
@@ -243,6 +243,7 @@ final class OpenAISpeechTests: XCTestCase {
   }
 
   func testPausedSynthesisWaitsForResumeAndFinishesQueuedAudio() async throws {
+    try requireAudioPlayback()
     let endpoint = OpenAIEndpoint()
     let voice = RoleVoiceSettings(
       provider: .openAICompatible, openAIEndpointID: endpoint.id, openAIVoice: "coral")
@@ -279,6 +280,7 @@ final class OpenAISpeechTests: XCTestCase {
   }
 
   func testLongReadAloudUsesExistingQueueInOrder() async throws {
+    try requireAudioPlayback()
     let endpoint = OpenAIEndpoint(defaultModel: "chat", speechModel: "gpt-4o-mini-tts")
     let voice = RoleVoiceSettings(
       provider: .openAICompatible, openAIEndpointID: endpoint.id, openAIVoice: "marin")
@@ -295,7 +297,12 @@ final class OpenAISpeechTests: XCTestCase {
     player.speak(
       text: text, voice: voice, role: .assistant,
       openAIEndpoints: [endpoint], skipTechnicalContent: false)
-    for _ in 0..<400 where player.isSpeaking { try await Task.sleep(for: .milliseconds(10)) }
+    let finished = expectation(description: "All speech chunks finished")
+    let observation = player.$isSpeaking.sink { speaking in
+      if !speaking { finished.fulfill() }
+    }
+    defer { observation.cancel() }
+    await fulfillment(of: [finished], timeout: 30)
     XCTAssertFalse(player.isSpeaking)
     XCTAssertNil(player.errorMessage)
     XCTAssertGreaterThan(inputs.count, 1)
@@ -308,7 +315,7 @@ final class OpenAISpeechTests: XCTestCase {
     let voice = RoleVoiceSettings(
       provider: .openAICompatible, openAIEndpointID: endpoint.id, openAIVoice: "nova")
     var calls = 0
-    let player = TTSPlayer { _, _, _ in
+    let player = TTSPlayer(integratesWithSystemPlayback: false) { _, _, _ in
       calls += 1
       return Data("not audio".utf8)
     }
@@ -346,6 +353,12 @@ final class OpenAISpeechTests: XCTestCase {
     uint32(UInt32(samples * 2))
     data.append(Data(count: samples * 2))
     return data
+  }
+
+  private func requireAudioPlayback() throws {
+    try XCTSkipUnless(
+      ProcessInfo.processInfo.environment["PMAI_TEST_AUDIO_PLAYBACK"] == "1",
+      "Real audio playback requires PMAI_TEST_AUDIO_PLAYBACK=1 and a working audio service")
   }
 
 }
