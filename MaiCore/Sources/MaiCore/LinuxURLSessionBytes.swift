@@ -78,7 +78,9 @@ public struct URLSessionAsyncBytes: AsyncSequence, Sendable {
     let streaming = URLSession(configuration: session.configuration, delegate: proxy, delegateQueue: nil)
     let task = streaming.dataTask(with: request)
     let lifetime = StreamLifetime(session: streaming, task: task)
-    body.continuation.onTermination = { @Sendable [weak task] _ in task?.cancel() }
+    body.continuation.onTermination = { @Sendable [weak task] termination in
+      if case .cancelled = termination { task?.cancel() }
+    }
     return try await withTaskCancellationHandler {
       try Task.checkCancellation()
       task.resume()

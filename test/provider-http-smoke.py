@@ -111,6 +111,16 @@ class Provider(BaseHTTPRequestHandler):
         if not RELEASE.wait(60):
             return
         self.wfile.write(b'data: {"choices":[{"delta":{"content":" COMPLETE"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n')
+        self.wfile.flush()
+        if self.path.startswith('/early/'):
+            # SSE completion must release the connection even without HTTP EOF.
+            # This exercises cancellation against pending native I/O callbacks.
+            self.connection.settimeout(90)
+            try:
+                if not self.connection.recv(1):
+                    DISCONNECTED.set()
+            except (ConnectionResetError, ConnectionAbortedError):
+                DISCONNECTED.set()
 
 
 def main():
@@ -129,7 +139,7 @@ def main():
         with tempfile.TemporaryDirectory(prefix='pmai-provider-http-') as directory:
             root = Path(directory)
             transports = ['winhttp'] if os.name == 'nt' else ['curl']
-            cases = [('ok', False), ('gzip', False), ('ok', True), ('redirect', True),
+            cases = [('ok', False), ('gzip', False), ('ok', True), ('redirect', True), ('early', True),
                      ('loop', True), ('cross', True), ('error', True), ('cancel', True), ('deadline', True),
                      ('tls', True)]
             checks = [(transport, case, stream) for transport in transports for case, stream in cases]
@@ -206,6 +216,8 @@ def main():
                         assert 'café 🐢' in text, text
                     if case == 'redirect':
                         assert RECEIVED[start][1:] == RECEIVED[start + 1][1:], '307 lost body or credentials'
+                    if case == 'early':
+                        assert DISCONNECTED.wait(30), f'{transport} SSE completion left HTTP connected'
                 print(f'PASS {transport} {case} stream={stream}', flush=True)
     finally:
         RELEASE.set()

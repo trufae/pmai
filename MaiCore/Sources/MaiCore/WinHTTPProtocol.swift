@@ -5,10 +5,12 @@ import FoundationNetworking
 import CMaiWinHTTP
 
 /// Adapt the native async Windows HTTP API to the provider's URLSession streams.
-/// State and native API calls are confined to queue. Native callbacks only copy
+/// Native state and API calls are confined to queue. Native callbacks only copy
 /// data and enqueue work, so even synchronous completions cannot recurse.
 final class WinHTTPProtocol: URLProtocol, @unchecked Sendable {
   private let queue = DispatchQueue(label: "pmai.winhttp")
+  private let clientLock = NSRecursiveLock()
+  private var stopped = false
   private var native: OpaquePointer?
   private var generation = 0
   private var currentRequest: URLRequest?
@@ -37,8 +39,20 @@ final class WinHTTPProtocol: URLProtocol, @unchecked Sendable {
   }
 
   override func stopLoading() {
+    // FoundationNetworking completes cancellation as soon as this returns.
+    // Suppress delivery synchronously, including callbacks already on queue.
+    clientLock.withLock { stopped = true }
     nonisolated(unsafe) let owner = self
     queue.async { owner.finish(notify: false) }
+  }
+
+  private func notifyClient(_ body: (any URLProtocolClient) -> Void) {
+    // Keep the lock through delivery so stopLoading also waits for a callback
+    // in progress. A client may reenter stopLoading from its callback.
+    clientLock.withLock {
+      guard !stopped, let client else { return }
+      body(client)
+    }
   }
 
   private func start(_ incoming: URLRequest) {
@@ -123,7 +137,7 @@ final class WinHTTPProtocol: URLProtocol, @unchecked Sendable {
         result = mai_winhttp_read(native, min(32_768, max(1, count)))
       case Int32(MAI_WINHTTP_READ):
         if count == 0 { finish(); return }
-        if let data { client?.urlProtocol(self, didLoad: data) }
+        if let data { notifyClient { $0.urlProtocol(self, didLoad: data) } }
         result = mai_winhttp_query_available(native)
       case Int32(MAI_WINHTTP_ERROR): throw Self.transportError(error)
       default: return
@@ -157,7 +171,7 @@ final class WinHTTPProtocol: URLProtocol, @unchecked Sendable {
       start(redirected)
       return
     }
-    client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+    notifyClient { $0.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed) }
     let result = mai_winhttp_query_available(native)
     if result != 0 { throw Self.transportError(result) }
   }
@@ -177,8 +191,10 @@ final class WinHTTPProtocol: URLProtocol, @unchecked Sendable {
     closeNative()
     currentRequest = nil
     if notify {
-      if let error { client?.urlProtocol(self, didFailWithError: error) }
-      else { client?.urlProtocolDidFinishLoading(self) }
+      notifyClient {
+        if let error { $0.urlProtocol(self, didFailWithError: error) }
+        else { $0.urlProtocolDidFinishLoading(self) }
+      }
     }
   }
 

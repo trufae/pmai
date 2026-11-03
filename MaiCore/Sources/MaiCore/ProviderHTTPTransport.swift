@@ -32,7 +32,7 @@ public enum ProviderHTTPTransport: String, Sendable {
 /// implementation. curl never follows redirects itself; the provider's existing
 /// same-origin redirect policy is applied before issuing another request.
 final class CurlHTTPProtocol: URLProtocol, @unchecked Sendable {
-  private let lock = NSLock()
+  private let lock = NSRecursiveLock()
   private var cancelled = false
   #if os(macOS) || os(Linux) || os(Windows)
   private var process: Process?
@@ -59,12 +59,12 @@ final class CurlHTTPProtocol: URLProtocol, @unchecked Sendable {
             }
             next = redirected
           } else {
-            if !owner.isCancelled { owner.client?.urlProtocolDidFinishLoading(owner) }
+            owner.notifyClient { $0.urlProtocolDidFinishLoading(owner) }
             return
           }
         }
       } catch {
-        if !owner.isCancelled { owner.client?.urlProtocol(owner, didFailWithError: error) }
+        owner.notifyClient { $0.urlProtocol(owner, didFailWithError: error) }
       }
     }
     #else
@@ -82,6 +82,15 @@ final class CurlHTTPProtocol: URLProtocol, @unchecked Sendable {
   }
 
   private var isCancelled: Bool { lock.withLock { cancelled } }
+
+  private func notifyClient(_ body: (any URLProtocolClient) -> Void) {
+    // Cancellation must wait for in-flight delivery and prevent later calls.
+    // The client can reenter stopLoading, hence the recursive lock.
+    lock.withLock {
+      guard !cancelled, let client else { return }
+      body(client)
+    }
+  }
 
   #if os(macOS) || os(Linux) || os(Windows)
   private func transfer(_ incoming: URLRequest) throws -> URLRequest? {
@@ -156,7 +165,7 @@ final class CurlHTTPProtocol: URLProtocol, @unchecked Sendable {
       if chunk.isEmpty { break }
       if isCancelled { throw URLError(.cancelled) }
       if receivedHeaders {
-        client?.urlProtocol(self, didLoad: chunk)
+        notifyClient { $0.urlProtocol(self, didLoad: chunk) }
         continue
       }
       pending.append(chunk)
@@ -180,8 +189,8 @@ final class CurlHTTPProtocol: URLProtocol, @unchecked Sendable {
         if let redirected = ProviderRedirectPolicy.redirectedRequest(originalRequest: request, response: response)
         { return redirected }
         receivedHeaders = true
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        if !pending.isEmpty { client?.urlProtocol(self, didLoad: pending) }
+        notifyClient { $0.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed) }
+        if !pending.isEmpty { notifyClient { $0.urlProtocol(self, didLoad: pending) } }
         pending.removeAll()
         break
       }
