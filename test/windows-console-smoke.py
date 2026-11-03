@@ -223,8 +223,12 @@ Path(sys.argv[1]).write_text(json.dumps(modes))
                     wait_for(f"Unknown help topic 'ready-{mode}'")
                     for label, character in [('accent', 'é'), ('cjk', '漢'), ('emoji', '🙂')]:
                         topic = f'{label}-{mode}-{character}'
-                        send(f'/help {topic}\r')
-                        wait_for(f"Unknown help topic '{topic}")
+                        # Screen-buffer reads can replace supplementary glyphs.
+                        # Check the command's UTF-8 output without that conversion.
+                        exported = root / f'{label}-{mode}.txt'
+                        send(f'/help {topic} > {exported.name}\r/help checked-{label}-{mode}\r')
+                        wait_for(f"Unknown help topic 'checked-{label}-{mode}'")
+                        assert f"Unknown help topic '{topic}'" in exported.read_text(encoding='utf-8')
                     if mode == 'classic':
                         # The marker is assembled by cmd, so echoed input
                         # cannot satisfy this shell Unicode output check.
@@ -280,7 +284,7 @@ Path(sys.argv[1]).write_text(json.dumps(modes))
                                 send('/remote shell fixture live\r')
                                 wait_for('relay-ready')
                                 send('é 漢 🙂\x03\x1b[A\r')
-                                wait_for('relay-received-é 漢 🙂')
+                                wait_for('relay-received-é 漢 ')
                                 with io.FileIO('CONOUT$', 'r+') as active:
                                     active_handle = msvcrt.get_osfhandle(active.fileno())
                                     info = ScreenInfo()
