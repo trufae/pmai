@@ -128,8 +128,8 @@ Compaction sends the compaction template and selected transcript to the assigned
 `prompts.smart` template (`/edit smart`). When the working context reaches about
 75% of its prepared input budget, it selects older evidence for a reusable brief.
 The trigger and recent tail scale with the model window; every user message and
-the newest complete exchange stay verbatim. See [Context strategies](context.md). Earlier
-evidence includes complete tool outputs. The brief travels alongside recent
+the newest complete exchange stay verbatim. See [Context strategies](context.md).
+Earlier evidence includes complete tool outputs. The brief travels alongside recent
 exchanges and the original system/developer instructions. Small tasks need no
 preparation calls. Failed reductions retain the evidence without repeatedly
 retrying the same reduction. The saved transcript keeps growing and still
