@@ -66,6 +66,7 @@ public struct ChatExportDebug: Codable, Equatable, Sendable {
   public var toolDefinitions: [ToolDefinition]
   /// Free-form facts such as the working directory or the tool strategy.
   public var settings: [String: String]
+  public var configuration: JSONValue?
   /// Child agents of this chat's runs, parents before children, each with
   /// its transcript.
   public var subagents: [ChatExportSubagent]
@@ -75,12 +76,14 @@ public struct ChatExportDebug: Codable, Equatable, Sendable {
     providerDisplayName: String? = nil,
     toolDefinitions: [ToolDefinition] = [],
     settings: [String: String] = [:],
-    subagents: [ChatExportSubagent] = []
+    subagents: [ChatExportSubagent] = [],
+    configuration: JSONValue? = nil
   ) {
     self.provider = provider
     self.providerDisplayName = providerDisplayName
     self.toolDefinitions = toolDefinitions
     self.settings = settings
+    self.configuration = configuration.map(DebugDiagnostics.sanitize)
     self.subagents = subagents
   }
 
@@ -92,6 +95,7 @@ public struct ChatExportDebug: Codable, Equatable, Sendable {
     toolDefinitions =
       try container.decodeIfPresent([ToolDefinition].self, forKey: .toolDefinitions) ?? []
     settings = try container.decodeIfPresent([String: String].self, forKey: .settings) ?? [:]
+    configuration = try container.decodeIfPresent(JSONValue.self, forKey: .configuration)
     subagents = try container.decodeIfPresent([ChatExportSubagent].self, forKey: .subagents) ?? []
   }
 }

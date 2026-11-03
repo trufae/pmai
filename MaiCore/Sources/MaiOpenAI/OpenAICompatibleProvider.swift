@@ -387,26 +387,20 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     }
     let reasoningEffort = request.options.reasoningEffort?.trimmingCharacters(
       in: .whitespacesAndNewlines) ?? ""
-    if reasoningEffort.isEmpty,
-      request.options.additional["thinking"] == nil,
-      request.options.additional["reasoning_effort"] == nil
-    {
-      for (key, value) in ReasoningEffort.automatic.requestFields(family: family, model: model)
-      where request.options.additional[key] == nil {
-        body[key] = value
-      }
-    } else {
+    if let effort = ReasoningEffort(name: reasoningEffort.isEmpty ? "automatic" : reasoningEffort) {
       // One of our levels becomes whatever this endpoint's API family takes;
       // anything else is a value meant for the endpoint and goes as it is.
       // Fields set through `additional` are the person's own and stay.
-      if let effort = ReasoningEffort(name: reasoningEffort) {
+      let explicitThinking = ["think", "thinking", "reasoning_effort", "reasoning",
+        "enable_thinking", "chat_template_kwargs"].contains { request.options.additional[$0] != nil }
+      if effort != .automatic || !explicitThinking {
         let fields = effort.requestFields(family: family, model: model)
         for (key, value) in fields where request.options.additional[key] == nil {
           body[key] = value
         }
-      } else if request.options.additional["reasoning_effort"] == nil {
-        body["reasoning_effort"] = .string(reasoningEffort)
       }
+    } else if request.options.additional["reasoning_effort"] == nil {
+      body["reasoning_effort"] = .string(reasoningEffort)
     }
     if let responseFormat = openAIResponseFormat(request.responseFormat) {
       body["response_format"] = responseFormat
@@ -564,9 +558,11 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     guard
       !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         || !message.toolCalls.isEmpty
-        || (stopReason == .length && !message.reasoning.isEmpty)
+        || stopReason == .length
     else {
-      throw OpenAICompatibleEmptyReply()
+      throw OpenAICompatibleEmptyReply(
+        finishReason: choice["finish_reason"]?.stringValue,
+        reasoningCharacters: message.reasoning.count, usage: try tokenUsage(root["usage"]))
     }
 
     await emitParts(message.content, emit: emit)
@@ -756,12 +752,14 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
       }
     }
     guard hasContent || !completedCalls.isEmpty
-      || (stopReason == .length && reasoningStream.parts.contains {
-        if case .reasoning(let text) = $0 { return !text.isEmpty }
-        return false
-      })
+      || stopReason == .length
     else {
-      throw OpenAICompatibleEmptyReply()
+      throw OpenAICompatibleEmptyReply(
+        finishReason: String(describing: stopReason),
+        reasoningCharacters: reasoningStream.parts.reduce(0) { count, part in
+          if case .reasoning(let text) = part { return count + text.count }
+          return count
+        }, usage: usage)
     }
     var parts = reasoningStream.parts
     parts.append(contentsOf: completedCalls.map(ContentPart.toolCall))
@@ -1296,5 +1294,16 @@ extension ProviderStopReason {
 /// Only a reply with nothing in it is a repairable turn; an empty HTTP body is
 /// still a transport failure.
 public struct OpenAICompatibleEmptyReply: ProviderEmptyResponseError, LocalizedError {
-  public var errorDescription: String? { "The provider returned an empty response." }
+  public var finishReason: String? = nil
+  public var reasoningCharacters: Int? = nil
+  public var usage: TokenUsage? = nil
+
+  public var errorDescription: String? {
+    var details: [String] = []
+    if let finishReason { details.append("finish_reason: \(finishReason)") }
+    if let reasoningCharacters { details.append("reasoning characters: \(reasoningCharacters)") }
+    if let usage { details.append("output tokens: \(usage.outputTokens)") }
+    return "The provider returned an empty response."
+      + (details.isEmpty ? "" : " (\(details.joined(separator: ", ")))")
+  }
 }

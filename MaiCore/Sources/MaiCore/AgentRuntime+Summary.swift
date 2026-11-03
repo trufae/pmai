@@ -90,8 +90,8 @@ extension AgentRuntime {
         await state.budget.record(tokens: usage.totalTokens)
         let text = MessageContentFilter.textWithoutReasoning(from: call.response.message.text)
           .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { throw SummaryError.empty }
         guard call.response.stopReason != .length else { throw SummaryError.truncated }
+        guard !text.isEmpty else { throw SummaryError.empty }
         return text
       } catch is ProviderContextLimitError {
         // A conservative character estimate still cannot know every tokenizer.
@@ -171,7 +171,8 @@ extension AgentRuntime {
     var errorDescription: String? {
       switch self {
       case .empty: "The model returned an empty summary."
-      case .truncated: "The model's summary reached its output limit; history was kept."
+      case .truncated:
+        "The model's summary reached its output limit (which may include reasoning tokens); history was kept. Increase the compact model's output limit or lower its reasoning effort."
       case .cannotReduce:
         "Summarization did not reduce the context enough; history was kept. Try another compact model."
       case .instructionsTooLarge:

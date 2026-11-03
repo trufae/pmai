@@ -721,7 +721,12 @@ project log path. Relative paths resolve from the current working directory
 when the setting is saved. `/set debug` and `/set debugfile` show the current
 state and path. Each JSON line has a timestamp and records full
 model requests and responses (including retries and compaction), model errors,
-tool calls and results, and run events. The setting survives restarts in
+tool calls and results, and run events. Configuration snapshots at startup,
+after `/set`, and before turns include the platform, backend URLs, timeouts,
+generation options, task-model assignments, and the current `/set` values.
+`/export debug PATH` includes the same configuration. Configuration diagnostics
+omit API keys, header values, URL credentials and query strings; command settings
+and credential fields are redacted. The setting survives restarts in
 `.pmai/settings.json`. The log is readable only by the current user and can
 contain prompts, tool output, and other private data.
 

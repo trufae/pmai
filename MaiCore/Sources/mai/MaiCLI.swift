@@ -1698,6 +1698,8 @@ struct MaiCLI {
       session.redactor = await runtime.contentRedactor(sessionID: session.sessionID)
       await terminal.configureRedactor(session.redactor)
       configureEditor(configuration?.ui.editor ?? "")
+      await logDiagnosticConfiguration(
+        session: session, configuration: configuration, runtime: runtime, services: services)
       startup.mark("session and terminal configured")
 
       if let mode = options.serve {
@@ -2573,6 +2575,8 @@ struct MaiCLI {
       } catch { await terminal.line(error.localizedDescription, to: .standardError) }
     }
     var session = REPLSession(chat: selectedChat)
+    await logDiagnosticConfiguration(
+      session: session, configuration: configuration, runtime: runtime, services: services)
     let localProfile = session.profile
     var remoteReturnChatID: UUID?
     var remoteShell: ACPRemoteHost?
@@ -3239,6 +3243,8 @@ struct MaiCLI {
     }
 
     func beginTurn(_ request: AgentRequest, process pid: AgentPID, kind: REPLTurnKind) async {
+      await logDiagnosticConfiguration(
+        session: session, configuration: configuration, runtime: runtime, services: services)
       if kind == .chat { loop.limitDecisions.removeValue(forKey: session.id) }
       let redirection = REPLRedirection.current
       if kind == .chat { screen?.bindConversation("chat:\(session.id)", to: pid) }
@@ -6911,6 +6917,7 @@ struct MaiCLI {
         process: chatProcess,
         configuration: configuration,
         skills: services.skills.catalog,
+        services: services,
         terminal: terminal)
     case "/import":
       await terminal.line("Use /import PATH at the interactive chat prompt.")
@@ -11447,7 +11454,112 @@ struct MaiCLI {
     return true
   }
 
+  private static func currentSetSettings(
+    profile: SessionProfile, configuration: MaiConfiguration?,
+    runtime: AgentRuntime, approvalHandler: TerminalApprovalHandler
+  ) async throws -> [String] {
+    let voice = try voiceSettings(configuration?.voice ?? .init())
+    return [
+        "tool.approval = \(await approvalHandler.currentApprovalMode().rawValue)",
+        "debug = \(await approvalHandler.isDebugEnabled() ? "true" : "false")",
+        "debugfile = \(await approvalHandler.debugLogURL().path)",
+        "airplane = \(await runtime.internetAccessPolicy().airplaneModeEnabled ? "on ✈" : "off")",
+        "awake = \(await AwakeController.shared.isEnabled ? "on" : "off")",
+        "redact = \((configuration?.redact ?? .off).rawValue)",
+        "limits.terminalTimeout = \(configuration?.remoteTerminalTimeoutSeconds ?? 0)",
+        "delegation = \(profile.toolDelegation.rawValue)",
+        effortDescription(profile.options),
+      ] + acpSettings(provider: profile.provider, configuration: configuration)
+        + limitSettings(profile.limits) + recoverySettings(profile)
+        + toolSettings(profile) + uiSettings(configuration?.ui ?? .init())
+        + exportSettings(configuration?.documentExport ?? .init())
+        + useSettings(configuration?.use ?? .init()) + voice
+  }
+
+  private static func diagnosticConfiguration(
+    session: REPLSession, configuration: MaiConfiguration?, runtime: AgentRuntime,
+    providerBaseURLs: ProviderBaseURLStore, approvalHandler: TerminalApprovalHandler
+  ) async throws -> JSONValue {
+    let profile = session.profile
+    let lines = try await currentSetSettings(
+      profile: profile, configuration: configuration, runtime: runtime,
+      approvalHandler: approvalHandler)
+    let settings = Dictionary(uniqueKeysWithValues: lines.compactMap { line -> (String, JSONValue)? in
+      guard let range = line.range(of: " = ") else { return nil }
+      return (String(line[..<range.lowerBound]), .string(String(line[range.upperBound...])))
+    })
+    var providers: [JSONValue] = []
+    for provider in configuration?.providers ?? [] {
+      let url = providerBaseURLs.url(for: provider.id) ?? provider.baseURL
+      providers.append(.object([
+        "id": .string(provider.id), "kind": .string(provider.kind.rawValue),
+        "baseURL": url.map { .string($0.absoluteString) } ?? .null,
+        "timeout": provider.timeout.map(JSONValue.number) ?? .null,
+        "headerNames": .array(Set(provider.headers.keys).union(provider.headerEnvironment.keys)
+          .sorted().map(JSONValue.string)),
+      ]))
+    }
+    var tasks: [String: JSONValue] = [:]
+    for task in AgentTask.allCases {
+      let id = configuration?.taskAgents[task]
+      let agent = id.flatMap { selected in configuration?.agents.first { $0.id == selected } }
+      tasks[task.rawValue] = .object([
+        "agent": .string(id ?? profile.agentID),
+        "provider": .string(agent?.provider.rawValue ?? profile.provider.rawValue),
+        "model": .string(agent?.model ?? profile.model),
+        "options": try DebugDiagnostics.value(agent?.options ?? profile.options),
+      ])
+    }
+    return DebugDiagnostics.sanitize(.object([
+      "platform": .string(ProcessInfo.processInfo.operatingSystemVersionString),
+      "pmaiVersion": .string(version),
+      "workingDirectory": .string(FileManager.default.currentDirectoryPath),
+      "agent": .string(profile.agentID), "provider": .string(profile.provider.rawValue),
+      "model": .string(profile.model), "stream": .bool(profile.stream),
+      "options": try DebugDiagnostics.value(profile.options),
+      "providers": .array(providers), "taskModels": .object(tasks),
+      "settings": .object(settings),
+    ]))
+  }
+
+  private static func logDiagnosticConfiguration(
+    session: REPLSession, configuration: MaiConfiguration?, runtime: AgentRuntime,
+    services: REPLServices
+  ) async {
+    do {
+      let value = try await diagnosticConfiguration(
+        session: session, configuration: configuration, runtime: runtime,
+        providerBaseURLs: services.providerBaseURLs, approvalHandler: services.approvalHandler)
+      await runtime.recordDebugConfiguration(value)
+    } catch {
+      // Diagnostics must not interrupt a conversation.
+    }
+  }
+
   private static func handleSetCommand(
+    _ argument: String, session: inout REPLSession, runtime: AgentRuntime,
+    plugins: PluginRegistry, providerBaseURLs: ProviderBaseURLStore,
+    approvalHandler: TerminalApprovalHandler, configuration: inout MaiConfiguration?,
+    configurationPath: String?, catalogs: inout [MCPServerCatalog], terminal: TerminalWriter,
+    restoringDefault: Bool = false, remoteTerminalSettingsURL: URL? = nil
+  ) async {
+    await applySetCommand(
+      argument, session: &session, runtime: runtime, plugins: plugins,
+      providerBaseURLs: providerBaseURLs, approvalHandler: approvalHandler,
+      configuration: &configuration, configurationPath: configurationPath, catalogs: &catalogs,
+      terminal: terminal, restoringDefault: restoringDefault,
+      remoteTerminalSettingsURL: remoteTerminalSettingsURL)
+    do {
+      let snapshot = try await diagnosticConfiguration(
+        session: session, configuration: configuration, runtime: runtime,
+        providerBaseURLs: providerBaseURLs, approvalHandler: approvalHandler)
+      await runtime.recordDebugConfiguration(snapshot)
+    } catch {
+      // Diagnostics must not change the result of /set.
+    }
+  }
+
+  private static func applySetCommand(
     _ argument: String,
     session: inout REPLSession,
     runtime: AgentRuntime,
@@ -11563,27 +11675,15 @@ struct MaiCLI {
         .split(whereSeparator: \Character.isWhitespace).map(String.init)
     }
     if parts.isEmpty || (parts.count == 1 && parts[0].hasSuffix(".")) {
-      let voice: [String]
-      do { voice = try voiceSettings(configuration?.voice ?? .init()) }
-      catch {
-        await terminal.line("voice: \(error.localizedDescription)", to: .standardError)
+      let settings: [String]
+      do {
+        settings = try await currentSetSettings(
+          profile: session.profile, configuration: configuration, runtime: runtime,
+          approvalHandler: approvalHandler)
+      } catch {
+        await terminal.line("settings: \(error.localizedDescription)", to: .standardError)
         return
       }
-      let settings = [
-        "tool.approval = \(await approvalHandler.currentApprovalMode().rawValue)",
-        "debug = \(await approvalHandler.isDebugEnabled() ? "true" : "false")",
-        "debugfile = \(await approvalHandler.debugLogURL().path)",
-        "airplane = \(await runtime.internetAccessPolicy().airplaneModeEnabled ? "on ✈" : "off")",
-        "awake = \(await AwakeController.shared.isEnabled ? "on" : "off")",
-        "redact = \((configuration?.redact ?? .off).rawValue)",
-        "limits.terminalTimeout = \(configuration?.remoteTerminalTimeoutSeconds ?? 0)",
-        "delegation = \(session.profile.toolDelegation.rawValue)",
-        effortDescription(session.profile.options),
-      ] + acpSettings(provider: session.profile.provider, configuration: configuration)
-        + limitSettings(session.profile.limits) + recoverySettings(session.profile)
-        + toolSettings(session.profile) + uiSettings(configuration?.ui ?? .init())
-        + exportSettings(configuration?.documentExport ?? .init())
-        + useSettings(configuration?.use ?? .init()) + voice
       let prefix = parts.first?.lowercased() ?? ""
       let matching = settings.filter { $0.lowercased().hasPrefix(prefix) }
       if !matching.isEmpty {
@@ -12855,6 +12955,7 @@ struct MaiCLI {
     process: AgentPID?,
     configuration: MaiConfiguration?,
     skills: AgentSkillCatalog,
+    services: REPLServices,
     terminal: TerminalWriter
   ) async {
     let fields = argument.split(maxSplits: 1, whereSeparator: \Character.isWhitespace).map(
@@ -12908,6 +13009,10 @@ struct MaiCLI {
       let profile = session.profile
       let tools = await runtime.availableTools().filter { profile.toolNames.contains($0.name) }
       let provider = await runtime.availableProviders().first { $0.id == profile.provider }
+      let snapshot = try? await diagnosticConfiguration(
+        session: session, configuration: configuration, runtime: runtime,
+        providerBaseURLs: services.providerBaseURLs, approvalHandler: services.approvalHandler)
+      let settings = snapshot?.objectValue?["settings"]?.objectValue?.compactMapValues(\.stringValue) ?? [:]
       debug = ChatExportDebug(
         provider: profile.provider.rawValue,
         providerDisplayName: provider?.displayName,
@@ -12933,8 +13038,9 @@ struct MaiCLI {
           "ctx.recent": profile.autocompact.preserveRecentTokens.map(String.init) ?? "auto",
           "ctx.window": profile.options.contextWindowTokens.map(String.init) ?? "auto",
           "ctx.strategy": profile.context.rawValue,
-        ],
-        subagents: chat.subagents)
+        ].merging(settings, uniquingKeysWith: { _, current in current }),
+        subagents: chat.subagents,
+        configuration: snapshot)
     }
     let target = exportTarget(
       fields.count > 1 ? fields[1] : nil,

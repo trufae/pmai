@@ -279,29 +279,36 @@ func effortOffAndAuto() throws {
       .hasSuffix("/no_think") == true)
 }
 
-@Test("DeepSeek Flash is non-thinking by default and explicit fields still win")
-func deepSeekFlashAutomaticRequest() throws {
+@Test("DeepSeek Flash defaults stay bounded through direct and Ollama endpoints", arguments: [false, true])
+func deepSeekFlashAutomaticRequest(ollama: Bool) throws {
+  let model = ollama ? "deepseek-v4.1-flash:1017" : "deepseek-flash"
+  let url = ollama ? "https://ollama.com/v1" : "https://api.deepseek.com/v1"
   let provider = OpenAICompatibleProvider(
-    configuration: .init(baseURL: URL(string: "https://api.deepseek.com/v1")!))
+    configuration: .init(baseURL: URL(string: url)!))
 
   func body(options: GenerationOptions = .init()) throws -> [String: JSONValue] {
     let request = try provider.makeURLRequest(
       ProviderRequest(
-        model: "deepseek-flash", messages: [.user("Hi")], options: options, stream: false),
-      model: "deepseek-flash")
+        model: model, messages: [.user("Hi")], options: options, stream: false),
+      model: model)
     let data = try #require(request.httpBody)
     let decoded = try JSONDecoder().decode(JSONValue.self, from: data)
     return try #require(decoded.objectValue)
   }
 
-  #expect(try body()["thinking"] == .object(["type": .string("disabled")]))
+  #expect(try body()[ollama ? "think" : "thinking"] == (ollama
+    ? .bool(false) : .object(["type": .string("disabled")])))
   let low = try body(options: GenerationOptions(reasoningEffort: "low"))
-  #expect(low["thinking"] == .object(["type": .string("enabled")]))
+  #expect(low[ollama ? "think" : "thinking"] == (ollama
+    ? .bool(true) : .object(["type": .string("enabled")])))
   #expect(low["reasoning_effort"] == .string("low"))
   #expect(
     try body(options: GenerationOptions(additional: [
       "thinking": .object(["type": .string("enabled")])
     ]))["thinking"] == .object(["type": .string("enabled")]))
+  let customThink = try body(options: GenerationOptions(additional: ["think": .bool(true)]))
+  #expect(customThink["think"] == .bool(true))
+  #expect(customThink["reasoning_effort"] == nil)
   let customEffort = try body(options: GenerationOptions(additional: [
     "reasoning_effort": .string("low")
   ]))

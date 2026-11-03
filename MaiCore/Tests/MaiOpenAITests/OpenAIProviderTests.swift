@@ -58,13 +58,13 @@ func openAIStableSchemaOrder() throws {
   #expect(String(decoding: body, as: UTF8.self).contains(#""required":["z","a"]"#))
 }
 
-@Test("Reasoning-only output limits retain usage and finish reason for runtime repair", arguments: [false, true])
-func openAITruncatedReasoning(stream: Bool) async throws {
-  let host = "truncated-\(stream).example.test"
+@Test("Reasoning-only output limits retain usage and finish reason for runtime repair", arguments: [false, true], [false, true])
+func openAITruncatedReasoning(stream: Bool, includesReasoning: Bool) async throws {
+  let host = "truncated-\(stream)-\(includesReasoning).example.test"
   StubURLProtocol.install(forHost: host) { request in
     let payload: [String: JSONValue] = [
       "choices": .array([.object([
-        stream ? "delta" : "message": .object(["reasoning": .string("Still thinking")]),
+        stream ? "delta" : "message": .object(includesReasoning ? ["reasoning": .string("Still thinking")] : [:]),
         "finish_reason": .string("length"),
       ])]),
       "usage": .object(["prompt_tokens": .integer(10), "completion_tokens": .integer(100)]),
@@ -80,7 +80,7 @@ func openAITruncatedReasoning(stream: Bool) async throws {
   let response = try await provider.complete(ProviderRequest(
     model: "lfm25", messages: [.user("read a file")], stream: stream))
   #expect(response.message.text.isEmpty)
-  #expect(response.message.reasoning == "Still thinking")
+  #expect(response.message.reasoning == (includesReasoning ? "Still thinking" : ""))
   #expect(response.stopReason == .length)
   #expect(response.usage?.outputTokens == 100)
 }

@@ -7,6 +7,10 @@ extension AgentRuntime {
     debugLog = log
   }
 
+  public func recordDebugConfiguration(_ value: JSONValue) async {
+    await debugLog?.record("configuration.snapshot", value: DebugDiagnostics.sanitize(value))
+  }
+
   func recordDebugEvent(_ event: AgentEvent) async {
     guard let debugLog else { return }
     switch event {
@@ -180,8 +184,8 @@ extension AgentRuntime {
       } catch is RunDeadlineExceeded {
         await debugLog?.record("model.deadline", context: context, value: "deadline exceeded")
         throw RunDeadlineExceeded()
-      } catch is ProviderEmptyResponseError where !retriesEmptyReply {
-        await debugLog?.record("model.empty", context: context, value: "empty response")
+      } catch let error as any ProviderEmptyResponseError where !retriesEmptyReply {
+        await debugLog?.record("model.empty", context: context, value: error.localizedDescription)
         throw ProviderEmptyReply()
       } catch let error as ToolApprovalUnavailable {
         throw error

@@ -143,8 +143,14 @@ public enum ReasoningEffort: String, Codable, CaseIterable, Identifiable, Sendab
     if self == .automatic {
       // DeepSeek Flash otherwise enables thinking at high effort. Keep the
       // normal pmai path fast and bounded; an explicit effort turns it back on.
-      guard family == .deepSeek, Self.isDeepSeekFlash(model) else { return [:] }
-      return ["thinking": .object(["type": .string("disabled")])]
+      guard Self.isDeepSeekFlash(model) else { return [:] }
+      if family == .deepSeek {
+        return ["thinking": .object(["type": .string("disabled")])]
+      }
+      if family == .ollama, model.lowercased().contains("deepseek") {
+        return ["think": .bool(false), "reasoning_effort": .string("none")]
+      }
+      return [:]
     }
     let enabled = self != .disabled
     switch family {
@@ -287,7 +293,8 @@ public enum ReasoningEffort: String, Codable, CaseIterable, Identifiable, Sendab
     let family = APIFamily.detect(model: model, provider: provider, baseURL: baseURL)
     let name = model.lowercased()
     if self == .automatic {
-      return family == .deepSeek && Self.isDeepSeekFlash(model)
+      return Self.isDeepSeekFlash(model)
+        && (family == .deepSeek || family == .ollama && name.contains("deepseek"))
         ? "Thinking is off by default for DeepSeek Flash; choose Low or higher to enable it."
         : nil
     }

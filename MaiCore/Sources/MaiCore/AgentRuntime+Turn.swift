@@ -205,6 +205,7 @@ extension AgentRuntime {
         thresholdTokens: max(1, threshold), recentTokens: min(8_000, threshold / 4),
         request: providerRequest, preserveUserMessages: state.request.context == .smart)
       {
+        await state.emit(.compactionStarted(state.context, estimatedTokens: Self.contextTokens(providerRequest)))
         await supervisor.note(state.pid, activity: "preparing context")
         do {
           let template = smartContextTemplate

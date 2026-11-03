@@ -173,6 +173,24 @@ func smallContextRecoversOverflow() async throws {
   #expect(AgentRuntime.contextTokens(chats[1]) < AgentRuntime.contextTokens(chats[0]))
 }
 
+@Test("A reasoning-only summary reports output exhaustion and preserves the source")
+func smallContextReasoningSummaryLimit() async throws {
+  let provider = SmallContextProvider(window: 32_768, truncatesSummary: true, reasoningOnly: true)
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  do {
+    _ = try await runtime.summarize(
+      "Keep the user's task and findings.",
+      request: AgentRequest(provider: "small", model: "fixture", messages: []),
+      renderPrompt: { $0 })
+    Issue.record("Expected summary output exhaustion")
+  } catch {
+    #expect(error.localizedDescription.contains("output limit"))
+    #expect(error.localizedDescription.contains("reasoning tokens"))
+    #expect(!error.localizedDescription.contains("empty summary"))
+  }
+}
+
 @Test("Failed or truncated partial summaries leave the runtime transcript intact")
 func smallContextFailedSummaryKeepsHistory() async throws {
   let provider = SmallContextProvider(window: 32_768, truncatesSummary: true)
@@ -284,12 +302,14 @@ private actor SmallContextProvider: ChatProvider {
   nonisolated let descriptor = ProviderDescriptor(id: "small", displayName: "Small context fixture")
   let window: Int
   let truncatesSummary: Bool
+  let reasoningOnly: Bool
   private(set) var requests: [ProviderRequest] = []
   private(set) var rejections = 0
 
-  init(window: Int, truncatesSummary: Bool = false) {
+  init(window: Int, truncatesSummary: Bool = false, reasoningOnly: Bool = false) {
     self.window = window
     self.truncatesSummary = truncatesSummary
+    self.reasoningOnly = reasoningOnly
   }
 
   func complete(_ request: ProviderRequest, emit: @escaping ProviderEventHandler) async throws
@@ -313,7 +333,7 @@ private actor SmallContextProvider: ChatProvider {
       let markers = matches.compactMap { Range($0.range, in: input).map { String(input[$0]) } }
       let summary = "Saved facts: " + Set(markers).sorted().joined(separator: " ")
       return ProviderResponse(
-        message: .assistant(summary),
+        message: reasoningOnly ? AgentMessage(role: .assistant, content: [.reasoning("Still thinking")]) : .assistant(summary),
         usage: .init(inputTokens: input.count / 4, outputTokens: summary.count / 4),
         stopReason: truncatesSummary ? .length : .stop)
     }

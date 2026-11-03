@@ -55,7 +55,7 @@ def main():
                 'version': 1, 'defaultAgent': 'smoke',
                 'providers': [{'id': 'smoke', 'kind': 'openAICompatible', 'apiKey': 'secret-key',
                                'baseURL': f'http://127.0.0.1:{server.server_port}/v1',
-                               'timeout': 10}],
+                               'timeout': 10, 'headers': {'X-Api-Key': 'header-secret'}}],
                 'toolSources': [{'id': 'standard', 'kind': 'standard-tools',
                                  'options': {'tools': ['files_write']}}],
                 'agents': [{'id': 'smoke', 'provider': 'smoke', 'model': 'smoke', 'enabled': True,
@@ -78,7 +78,9 @@ def main():
             log = project / '.pmai' / 'debug.jsonl'
             assert 'debug = false' in run(project, '/set debug')
             assert not log.exists()
-            output = run(project, '/set debug true', '/set tool.approval yolo', 'first prompt')
+            output = run(project, '/set debug true', '/set tool.approval yolo',
+                         '/set retry.attempts 1', '/set ui.thinking full',
+                         'first prompt', '/export debug debug.json')
             assert 'debug smoke done' in output, output
             assert (project / 'debug-proof.txt').read_text() == 'logged tool call'
             settings = json.loads((project / '.pmai' / 'settings.json').read_text())
@@ -93,14 +95,29 @@ def main():
             assert len(requests) >= 2, requests
             assert any('first prompt' in str(request) for request in requests), requests
             assert any('logged tool call' in str(request) for request in requests), requests
-            assert all('secret-key' not in line for line in log.read_text().splitlines())
+            snapshots = [entry['value'] for entry in entries if entry['kind'] == 'configuration.snapshot']
+            assert snapshots, kinds
+            snapshot = snapshots[-1]
+            assert snapshot['providers'][0]['baseURL'] == f'http://127.0.0.1:{server.server_port}/v1'
+            assert snapshot['providers'][0]['timeout'] == 10
+            assert snapshot['settings']['tool.approval'] == 'yolo'
+            assert snapshot['settings']['retry.attempts'] == '1'
+            assert snapshot['settings']['ui.thinking'] == 'full'
+            assert any(v['settings']['tool.approval'] == 'ask' for v in snapshots)
+            assert snapshot['taskModels']['compact']['model'] == 'smoke'
+            exported = json.loads((project / 'debug.json').read_text())['debug']
+            assert exported['settings']['ui.thinking'] == 'full'
+            assert exported['configuration']['providers'] == snapshot['providers']
+            for text in (log.read_text(), (project / 'debug.json').read_text()):
+                assert 'secret-key' not in text and 'header-secret' not in text
             before = len(entries)
             assert 'debug = true' in run(project, '/set debug', 'second prompt')
             before_disable = len(log.read_text().splitlines())
             assert before_disable > before, 'setting did not survive restart'
             run(project, '/set debug false', 'third prompt')
             after = len(log.read_text().splitlines())
-            assert after == before_disable, 'disabling did not stop logging immediately'
+            assert not any(entry['kind'] == 'model.request' and 'third prompt' in str(entry)
+                           for entry in map(json.loads, log.read_text().splitlines())), 'disabled request was logged'
             run(project, 'fourth prompt')
             assert len(log.read_text().splitlines()) == after, 'disabled logging still wrote'
             assert json.loads((project / '.pmai' / 'settings.json').read_text())['debug'] is False
@@ -118,7 +135,7 @@ def main():
             first_count = len(custom.read_text().splitlines())
             replacement = root / 'debug logs' / 'second.jsonl'
             run(project, f'/set debugfile {replacement}', 'switched prompt')
-            assert len(custom.read_text().splitlines()) == first_count
+            assert 'switched prompt' not in custom.read_text()
             assert 'switched prompt' in replacement.read_text()
             second_count = len(replacement.read_text().splitlines())
             run(project, 'restart prompt')

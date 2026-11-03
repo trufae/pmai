@@ -123,12 +123,22 @@ func chatExportsToEveryFormat() throws {
   let debug = ChatExportDebug(
     provider: "hello", providerDisplayName: "Offline hello",
     toolDefinitions: [ToolDefinition(name: "echo", description: "Echo", inputSchema: .object(["type": .string("object")]), annotations: ToolAnnotations(approval: .automatic))],
-    settings: ["workingDirectory": "/tmp"])
+    settings: ["workingDirectory": "/tmp"],
+    configuration: .object([
+      "baseURL": .string("https://user:password@ollama.com/v1?api_key=url-secret"),
+      "options": .object(["maxOutputTokens": .integer(2048), "api_key": .string("secret")]),
+      "headers": .object(["X-Api-Key": .string("header-secret")]),
+    ]))
   let debugJSON = try ChatExport.data(for: chat, format: .debug, generator: "pmai", debug: debug)
   let debugEnvelope = try decoder.decode(ChatExportEnvelope.self, from: debugJSON)
   #expect(debugEnvelope.debug?.toolDefinitions.map(\.name) == ["echo"])
   #expect(debugEnvelope.debug?.settings["workingDirectory"] == "/tmp")
   #expect(debugEnvelope.debug?.subagents.isEmpty == true)
+  #expect(debugEnvelope.debug?.configuration?.objectValue?["baseURL"] == .string("https://ollama.com/v1"))
+  #expect(debugEnvelope.debug?.configuration?.objectValue?["options"]?.objectValue?["maxOutputTokens"] == .integer(2048))
+  let diagnosticText = String(decoding: debugJSON, as: UTF8.self)
+  #expect(!diagnosticText.contains("url-secret") && !diagnosticText.contains("header-secret"))
+  #expect(!diagnosticText.contains("password"))
 
   // A child agent's own transcript travels with the debug export.
   let child = AgentProcessInfo(
