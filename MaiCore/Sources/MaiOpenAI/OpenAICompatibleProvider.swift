@@ -593,12 +593,30 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     emit: @escaping ProviderEventHandler
   ) async throws -> ProviderResponse {
     let delegate = ProviderRedirectDelegate(originalRequest: request)
-    let (bytes, response) = try await session.bytes(for: request, delegate: delegate)
+    let started = ContinuousClock.now
+    func transportError(_ error: URLError, statusCode: Int?) -> ProviderTransportError {
+      let elapsed = started.duration(to: .now)
+      return ProviderTransportError(
+        host: request.url?.host ?? "unknown host", statusCode: statusCode,
+        elapsed: elapsed / .seconds(1),
+        code: error.errorCode, message: error.localizedDescription)
+    }
+    let bytes: URLSession.AsyncBytes
+    let response: URLResponse
+    do {
+      (bytes, response) = try await session.bytes(for: request, delegate: delegate)
+    } catch let error as URLError where error.code != .cancelled {
+      throw transportError(error, statusCode: nil)
+    }
     #if !canImport(FoundationNetworking)
       let urlTask = bytes.task
     #endif
     return try await withTaskCancellationHandler {
-      try await decodedStream(bytes, response: response, resolver: resolver, emit: emit)
+      do {
+        return try await decodedStream(bytes, response: response, resolver: resolver, emit: emit)
+      } catch let error as URLError where error.code != .cancelled {
+        throw transportError(error, statusCode: (response as? HTTPURLResponse)?.statusCode)
+      }
     } onCancel: {
       #if !canImport(FoundationNetworking)
         urlTask.cancel()

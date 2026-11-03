@@ -294,6 +294,39 @@ func retryRepeatsFailedCalls() async throws {
   #expect(await stubborn.requests.count == 2)
 }
 
+@Test("A connection reset at the same point before any response stops retrying")
+func repeatedTransportCutoffStopsRetries() async throws {
+  func reset(after elapsed: TimeInterval) -> ProviderTransportError {
+    ProviderTransportError(
+      host: "llm.example", statusCode: nil, elapsed: elapsed, code: -1005,
+      message: "Recv failure: Connection was reset")
+  }
+  let provider = ScriptedProvider(
+    responses: [textReply("ok")], failures: [0: reset(after: 15.0), 1: reset(after: 15.2)])
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  await #expect(throws: ProviderTransportError.self) {
+    try await runtime.run(
+      AgentRequest(
+        provider: "scripted", model: "fixture", messages: [.user("hi")],
+        retry: AgentRetryPolicy(attempts: 5, delaySeconds: 0)))
+  }
+  #expect(await provider.requests.count == 2)
+  #expect(reset(after: 15).localizedDescription.contains("llm.example, before any response, 15.0s"))
+
+  // Quick failures, such as a server that is restarting, keep retrying.
+  let flaky = ScriptedProvider(
+    responses: [textReply("ok")], failures: [0: reset(after: 0.1), 1: reset(after: 0.1)])
+  let patient = AgentRuntime()
+  try await patient.register(flaky)
+  let result = try await patient.run(
+    AgentRequest(
+      provider: "scripted", model: "fixture", messages: [.user("hi")],
+      retry: AgentRetryPolicy(attempts: 5, delaySeconds: 0)))
+  #expect(result.response.text == "ok")
+  #expect(await flaky.requests.count == 3)
+}
+
 @Test("Policy rejections stop without retrying and preserve completed tool work")
 func policyRejectionSkipsRetries() async throws {
   let rejection = ProviderPolicyError(

@@ -126,6 +126,7 @@ extension AgentRuntime {
     onEvent: @escaping ProviderEventHandler
   ) async throws -> ProviderCall {
     var attempt = 0
+    var lastTransportError: ProviderTransportError?
     while true {
       var outbound = providerRequest
       if redactionMode != .off, let redactor = ContentRedactor.current {
@@ -193,6 +194,12 @@ extension AgentRuntime {
               previous, window)
           }
           throw overflow
+        }
+        if let transport = error as? ProviderTransportError {
+          if let lastTransportError, transport.repeats(lastTransportError) { throw error }
+          lastTransportError = transport
+        } else {
+          lastTransportError = nil
         }
         let delayStarted = ContinuousClock.now
         let policy = liveRequests[pid]?.retry ?? retry
