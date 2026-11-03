@@ -30,7 +30,7 @@ def main():
                 split=split, allow_errors=allow_errors)
 
         # Empty installs remain empty across restarts; /about repeats the welcome.
-        output = run(['/providers', '/provider', '/model', '/set effort', '/help'])
+        output = run(['/providers', '/provider', '/model', '/set effort', '/set ctx.strategy', '/help'])
         assert 'Welcome to PocketMai!' in output, output
         assert r'\___________/' in output, output
         assert '/provider add myai https://api.example.com/v1 --api-key YOUR_API_KEY' in output
@@ -42,6 +42,7 @@ def main():
         assert 'No provider selected.' in output, output
         assert 'Chat: no model selected' in output, output
         assert 'effort = low' in output, output
+        assert 'ctx.strategy = smart' in output, output
         assert '/about' in output, output
         assert '/visual' not in output, output
         for help_output in run(['/provider add', '/help provider'], split=True):
@@ -131,6 +132,11 @@ def main():
         saved = json.loads(config.read_text())
         provider = next(p for p in saved['providers'] if p['id'] == 'local')
         assert provider['apiKeyFile'] == str(key_file), provider
+        assert 'ctx.strategy = smart' in run(['/set ctx.strategy'])
+        run(['/set ctx.strategy cache'])
+        assert 'ctx.strategy = cache' in run(['/set ctx.strategy'])
+        run(['/reset ctx.strategy'])
+        assert 'ctx.strategy = smart' in run(['/set ctx.strategy'])
         run(['/model'])  # Normalize the newly created task agents' named prompts.
         original = config.read_bytes()
         for env in ({}, {'PMAI_PROVIDER': 'hello', 'PMAI_MODEL': 'stale'},

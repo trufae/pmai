@@ -58,7 +58,7 @@ def main():
                           '/edit prompt smart', 'Fix the parser'])
             assert 'ctx.strategy = smart' in output, output
             assert 'ctx.strategy = smart\n' in output, output
-            assert '/set ctx.strategy <cache|size|smart|tools>' in output, output
+            assert '/set ctx.strategy <cache|size|smart|tools|adaptive>' in output, output
             assert 'ctx.context' not in output and 'ctx.strategy alias' not in output, output
             assert 'Smart prompt saved' in output, output
             saved = json.loads(config.read_text())
@@ -99,7 +99,7 @@ def main():
             saved_config = config.read_bytes()
             output = run(['/set ctx.strategy invalid', '/set ctx.context smart',
                           '/set ctx.strategy'], resume=True)
-            assert 'Usage: /set ctx.strategy <cache|size|smart|tools>' in output, output
+            assert 'Usage: /set ctx.strategy <cache|size|smart|tools|adaptive>' in output, output
             assert "Unknown setting 'ctx.context'." in output, output
             assert 'ctx.context' not in output.split('Available settings:', 1)[1], output
             assert 'ctx.strategy = cache' in output, output

@@ -244,6 +244,26 @@ public enum AgentAutocompaction {
 /// re-read the ones already collapsed when it came to write the answer
 /// (10 calls and 27k tokens instead of 7 and 18k).
 public enum AgentContextPruning {
+  static func pruneCacheSuffix(
+    _ messages: inout [AgentMessage]
+  ) -> AgentTranscriptEditReport? {
+    let before = messages.count
+    let charactersBefore = AgentTranscriptEditor.characterCount(of: messages)
+    while let last = messages.last, last.role == .assistant, !last.isPinned,
+      last.providerState?.isEmpty != false,
+      last.content.allSatisfy({ part in
+        guard case .text(let text) = part else { return false }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      })
+    {
+      messages.removeLast()
+    }
+    guard messages.count < before else { return nil }
+    return AgentTranscriptEditReport(removed: before - messages.count,
+      charactersBefore: charactersBefore,
+      charactersAfter: AgentTranscriptEditor.characterCount(of: messages))
+  }
+
   /// Bodies shorter than this are left alone; the reference would not be smaller.
   public static let minimumCharacters = 400
 

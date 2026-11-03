@@ -569,6 +569,27 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   func closeView() { setView(nil) }
 
+  func clearView() {
+    lock.withLock {
+      guard ui.mode == .buffer, let source = view?.source else { return }
+      let ids: [String]
+      switch source {
+      case .conversations:
+        ids = conversations.keys.filter { $0 != "initial" && $0 != selectedConversation }
+      case .conversation(let id): ids = [id]
+      case .voice: ids = voiceConversation.map { [$0] } ?? []
+      case .current, .thinking, .tools, .iconlog: ids = [selectedConversation]
+      default: ids = []
+      }
+      for id in ids { conversations[id]?.clearOutput() }
+      view?.buffer.clear()
+      aggregateSections = [:]
+      aggregateOrder = []
+      guard active else { return }
+      redrawBuffer()
+    }
+  }
+
   func resizeView(lines: Int) {
     lock.withLock {
       guard active, ui.mode == .buffer, view != nil else { return }
@@ -1249,11 +1270,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       guard active else { return }
       refreshSize()
       if clearOutput {
-        transcript.clear()
-        thinkingBlock = nil
-        replyBlock = nil
-        outputConversation.auxiliaryReplyBlocks.removeAll()
-        toolBlocks.removeAll()
+        outputConversation.clearOutput()
       }
       if ui.mode == .buffer {
         transcript.follow()
@@ -1587,7 +1604,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     guard let source = view?.source else { return }
     if view?.needsMessages == true || source == .todo || source == .history || source == .diffs || source == .prompt { return }
     if source == .conversations {
-      let ids = Set(conversations.keys.filter { $0 != "initial" })
+      let ids = Set(conversations.keys.filter { $0 != "initial" && $0 != selectedConversation })
       if aggregateOrder.contains(where: { !ids.contains($0) }) {
         view?.buffer.clear()
         aggregateSections = [:]

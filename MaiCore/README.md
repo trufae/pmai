@@ -978,13 +978,17 @@ cursor position and history search. It does not clear the conversation.
 `Ctrl+Z` suspends pmai with the terminal restored; run `fg` in the shell to
 resume the same input or active run.
 
+[Context strategies and their tradeoffs](../doc/context.md) describes all modes.
+The default is `smart`; explicit saved choices take precedence.
+
 `/set ctx.strategy=smart` (config key `context: "smart"`) keeps small working
-conversations intact. Once the working context reaches about 16k estimated
-tokens, it uses `/model -compact` to summarize older exchanges, keeping about
-8k recent tokens and the newest complete tool exchange verbatim. Newly read
-code and tool results reach the acting model directly instead of through a
-lossy brief. The brief is reused until enough new evidence accumulates; queued
-corrections, changed evidence, and transcript edits invalidate stale briefs.
+conversations intact. It reduces at 75% of the prepared input budget, after
+reserving reply space and a safety margin. The trigger and recent-evidence tail
+scale with `ctx.window`; without a known window the trigger is 16k estimated
+tokens and the recent tail is 4k. Every user message, pinned evidence and the
+newest complete tool exchange stay verbatim. Newly read code and tool results
+reach the acting model directly. The brief is reused until enough new evidence
+accumulates; queued corrections and changed evidence invalidate stale briefs.
 Earlier evidence includes tool arguments, complete text and structured results,
 files, and child-agent findings.
 System/developer instructions, active skill bodies, and loaded proxy tool catalogs
@@ -995,7 +999,8 @@ and proxy catalogs loaded by `list-tools` reach the model verbatim in separate
 instruction sections. Their steps, arguments, resource directories, output formats,
 and tool schemas survive a lossy brief. These instruction sections are supplied
 in every context mode. System/developer instructions keep their original roles
-and text; runtime instructions and tool protocols are injected after reduction.
+and text; runtime instructions and tool protocols are included in the prepared
+budget and preserved by reduction.
 Cache mode leaves conversational evidence whole; its inference view still
 separates injected instructions and replaces skill/catalog bodies with receipts.
 Binary attachments remain available unchanged. Automatic/manual compaction,
@@ -1017,9 +1022,34 @@ Only needed reductions add compact-model calls; their usage counts toward
 statistics and token/time limits. If no compact model is assigned, the current
 model is used. A failed or empty brief keeps the evidence available and lets the
 run continue; that same reduction is not retried at every tool step.
-`ctx.strategy` accepts `cache`, `size`, `smart`, and `tools`.
+`ctx.strategy` accepts `cache`, `size`, `smart`, `tools`, and `adaptive`.
 
-`/set ctx.strategy size` (config key `context`, default `cache`) turns on the cheap
+`/set ctx.strategy adaptive` uses the same machinery but can also summarize
+older user messages. It retains full evidence until the prepared request
+reaches 75% of its input budget. `/set ctx.window` supplies the model window;
+the budget reserves configured reply space and a safety margin. Runtime
+instructions and tool schemas count toward the trigger. Older complete
+exchanges become a reusable disposable brief; the newest exchange, current
+user instructions, pinned evidence, and active skills stay verbatim. Recent
+history gets a quarter of the trigger, capped at 8k tokens. Without a known
+window the trigger is 16k estimated tokens. Provider context errors can teach
+the runtime a smaller window and trigger reduction even with `ctx.compact=0`.
+An unchanged rejected request is not sent again. Managed tool-loop providers
+keep ownership of their own context. This does not guarantee that a huge new
+result or immutable instructions can fit. A failed brief retains the evidence.
+Saved history is untouched. `smart` is the default; `adaptive` is opt-in.
+
+While a run is active, the status line reports cumulative `spent` tokens and
+`think` tokens when the provider reports them. Thinking is a subset of output,
+not extra tokens to add to the total. Counts become available after completed
+calls; hidden reasoning cannot be reconstructed from streamed summaries.
+Context size follows the prepared model request plus subsequent messages,
+including schemas and runtime instructions, rather than the unreduced saved
+history. It remains an estimate, separate from cumulative spending. Missing
+usage estimates include reasoning text, tool arguments, and tool results;
+provider-reported totals take precedence.
+
+`/set ctx.strategy size` (config key `context`, default `smart`) turns on the cheap
 half of that: before every model call the runtime replaces the body of any file
 read while answering an *earlier* prompt with one line saying what it was and
 how to read it again. This includes full files, `files_read_range`, and
@@ -1027,8 +1057,9 @@ how to read it again. This includes full files, `files_read_range`, and
 stays (pruning inside a run made models re-read what they still needed). File
 bodies can be a large part of a coding conversation and are often no longer
 needed for a later prompt, so `size` can cut tokens; the price is that
-a server's prompt cache is invalidated from the rewritten message on. `cache`, the default, never changes a message once sent, so the
-cache covers every earlier turn and each call pays only for what is new. The
+a server's prompt cache is invalidated from the rewritten message on. `cache` preserves retained messages and can discard dispensable trailing
+messages without changing the retained prefix. Provider caching can reuse that
+prefix; actual savings depend on the endpoint. The
 REPL prints `✂ context: pruned 1 old read result (12.3k → 2.1k chars)` when it
 prunes. Those sizes are totals for the conversation; pruning only removes old
 read bodies. Large search results, shell output, generated code in tool

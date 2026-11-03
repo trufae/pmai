@@ -127,9 +127,6 @@ def worker(binary):
         console_out = handles.enter_context(io.FileIO('CONOUT$', 'r+'))
         input_handle = msvcrt.get_osfhandle(console_in.fileno())
         output_handle = msvcrt.get_osfhandle(console_out.fileno())
-        info = ScreenInfo()
-        checked(kernel.GetConsoleScreenBufferInfo(output_handle, c.byref(info)))
-        checked(kernel.SetConsoleScreenBufferSize(output_handle, Coord(info.size.X, max(1000, info.size.Y))))
 
         def console_mode(handle):
             mode = w.DWORD()
@@ -307,6 +304,11 @@ def worker(binary):
             ]:
                 checked(kernel.SetConsoleOutputCP(437))
                 with io.FileIO('CONOUT$', 'r+') as console_out:
+                    # Buffer mode can reset scrollback; keep the full help output.
+                    active_handle = msvcrt.get_osfhandle(console_out.fileno())
+                    info = ScreenInfo()
+                    checked(kernel.GetConsoleScreenBufferInfo(active_handle, c.byref(info)))
+                    checked(kernel.SetConsoleScreenBufferSize(active_handle, Coord(info.size.X, max(1000, info.size.Y))))
                     result = subprocess.run([binary, *arguments], cwd=root, env=env,
                                             stdin=subprocess.DEVNULL,
                                             stdout=subprocess.DEVNULL if stderr_only else console_out,

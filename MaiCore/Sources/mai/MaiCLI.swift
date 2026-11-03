@@ -741,7 +741,7 @@ struct SessionProfile: Sendable {
     toolDelegation = .inline
     retry = .init()
     autocompact = .init()
-    context = .cache
+    context = .smart
   }
 
   var agentDefinition: AgentDefinition {
@@ -2939,6 +2939,12 @@ struct MaiCLI {
         if process.pauseRequested || process.state == .paused { facts.append("paused") }
         else if process.state.isWaiting || process.state == .queued { facts.append(process.state.shortLabel) }
         else { facts.append(process.activity.isEmpty || process.activity == "thinking" ? "thinking" : "running \(process.activity)") }
+        if let usage = process.usage {
+          facts.append("spent \(ModelUsageFormat.tokens(usage.totalTokens, estimated: usage.isEstimated))")
+          if let reasoning = usage.reasoningTokens {
+            facts.append("think \(ModelUsageFormat.count(reasoning))")
+          }
+        }
       }
       if !loop.btwTurns.isEmpty {
         facts.append("\(loop.btwTurns.count) btw running")
@@ -4654,6 +4660,8 @@ struct MaiCLI {
             if let screen, screen.isBufferMode {
               if argument.isEmpty || argument == "help" {
                 await terminal.line(viewHelp)
+              } else if argument.lowercased() == "clear" {
+                screen.clearView()
               } else {
                 do {
                   let processes = await conversationTabs()
@@ -12319,7 +12327,7 @@ struct MaiCLI {
       return
     }
     guard parts.count == 2, let mode = AgentContextMode(rawValue: parts[1].lowercased()) else {
-      await terminal.line("Usage: /set \(parts[0]) <cache|size|smart|tools>")
+      await terminal.line("Usage: /set \(parts[0]) <cache|size|smart|tools|adaptive>")
       return
     }
     session.profile.context = mode
@@ -14978,6 +14986,7 @@ struct MaiCLI {
       "/set ctx.window ", "/set ctx.window auto",
       "/set ctx.strategy ", "/set ctx.strategy cache", "/set ctx.strategy size", "/set ctx.strategy smart",
       "/set ctx.strategy tools",
+      "/set ctx.strategy adaptive",
       "/continue", "/stop",
       "/set tool.", "/set tool.calling off", "/set tool.calling automatic", "/set tool.calling native",
       "/set tool.calling text", "/set tool.calling xml", "/set tool.calling json",
@@ -15029,7 +15038,7 @@ struct MaiCLI {
       "/agents disable ",
       "/ps", "/ps -a", "/ps -p", "/ps -ap", "/ps -k ",
       "/view", "/view off", "/view current", "/view main", "/view pins", "/view log", "/view todo", "/view iconlog", "/view thinking", "/view voice", "/view tools",
-      "/view tools ", "/view prompt ", "/view history", "/view diffs", "/view agents", "/view agent ", "/help view",
+      "/view tools ", "/view prompt ", "/view history", "/view diffs", "/view agents", "/view agent ", "/view clear", "/help view",
       "/job", "/jobs", "/jobs tree", "/jobs stop ", "/jobs continue ", "/jobs clear", "/jobs log ",
       "/jobs kill ", "/jobs focus ",
       "/jobs focus main", "/queue", "/queue push ", "/queue pop", "/queue del",
@@ -15819,7 +15828,7 @@ struct MaiCLI {
       /set ctx.compact <off|N|Nk>  Prompt to prune tool output or summarize older context at ~N tokens
       /set ctx.recent <auto|N|Nk>  Recent tokens kept verbatim when summarizing (auto: up to 8k)
       /set ctx.window <auto|N|Nk>  Model context size including reply space (e.g. 32768)
-      /set ctx.strategy <cache|size|smart|tools>  Keep history, prune reads, build a brief, or summarize old tool results
+      /set ctx.strategy <cache|size|smart|tools|adaptive>  Keep history, prune reads, or build a working context
       /set export.                 List document export settings
       /set export.tools BOOL       Include tool calls and results in documents (default off)
       /set export.thinking BOOL    Include thinking blocks in documents (default off)

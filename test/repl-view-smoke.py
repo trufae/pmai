@@ -549,6 +549,15 @@ def main(binary):
                 wait_for('── view: View child #')
                 child_pid = re.search(r'View child #(\d+)', screen[separator()])[1]
                 assert 'CHILD_INITIAL' in top(), screen
+                send('/view agent\r')
+                wait_for('── view: agent conversations')
+                send('/pwd\r')
+                wait_for(str(root))
+                send('/view clear\r')
+                read_for()
+                assert '── view: agent conversations' in screen[separator()], screen
+                assert 'CHILD_INITIAL' not in top() and '── chat:' not in top(), screen
+                assert str(root) in bottom(), screen
                 chunks.put('CHILD_BACKGROUND\n')
                 wait_for('CHILD_BACKGROUND')
                 assert 'CHILD_BACKGROUND' in top() and 'CHILD_BACKGROUND' not in bottom(), screen
@@ -566,8 +575,30 @@ def main(binary):
                 send('/jobs focus main\r')
                 wait_for('Messages go to this chat again.')
                 assert 'user: CHILD_REQUEST' not in top(), screen
+                resize(60, 120)
                 send('/view agents\r')
                 wait_for('── view: agent conversations')
+                assert 'CHILD_BACKGROUND' in top() and '── chat:' not in top(), screen
+                send('/fork View second\r')
+                wait_for('and switched to it.')
+                send('/clear\r')
+                send('SECOND_REQUEST\r')
+                chunks.put('SECOND_OUTPUT\n')
+                chunks.put(None)
+                wait_for('✓ took')
+                send('/jobs focus main\r')
+                wait_for('Messages go to this chat again.')
+                assert 'CHILD_BACKGROUND' in top() and 'SECOND_OUTPUT' in top(), screen
+                assert '── chat:' not in top(), screen
+                send(f'/jobs focus {child_pid}\r')
+                wait_for('Messages go to agent#')
+                send('\t')
+                wait_for('view focused')
+                send('g\t')
+                read_for()
+                assert f'── agent:{child_pid} ──' not in top() and 'SECOND_OUTPUT' in top(), screen
+                send('/jobs focus main\r')
+                wait_for('Messages go to this chat again.')
                 send('/view off\r')
                 read_for()
                 assert b'\x1b[?1002h' in captured, captured

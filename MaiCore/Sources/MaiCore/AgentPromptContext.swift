@@ -4,7 +4,7 @@ import Foundation
 /// not conversational evidence for a summarizer to rewrite. Stored messages
 /// remain unchanged, including the original skill calls and their results.
 struct AgentPromptContext {
-  let instructions: [AgentMessage]
+  var instructions: [AgentMessage]
   let conversation: [AgentMessage]
   let preservedConversation: [AgentMessage]
 

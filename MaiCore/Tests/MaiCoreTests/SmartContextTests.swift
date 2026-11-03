@@ -77,8 +77,9 @@ func smartContextToolTurns(textProtocol: Bool) async throws {
   #expect(await stats.totals().count == 1)
 }
 
-@Test("Large smart history is summarized once; new source code and tool pairs stay verbatim")
-func smartContextLargeHistory() async throws {
+@Test("Large working context keeps new source code and tool pairs verbatim",
+  arguments: [AgentContextMode.smart, .adaptive])
+func smartContextLargeHistory(mode: AgentContextMode) async throws {
   let call = ToolCall(id: "read", name: "read", arguments: .object([:]))
   let evidence = "EXACT CODE: if (!v) return false;"
   let primary = SmartContextProvider(id: "primary", responses: [
@@ -101,7 +102,7 @@ func smartContextLargeHistory() async throws {
   ]
   let result = try await runtime.run(AgentRequest(
     provider: "primary", model: "frontier", messages: original, toolNames: ["read"],
-    retry: .none, autocompact: .init(tokens: 0), context: .smart))
+    retry: .none, autocompact: .init(tokens: 0), context: mode))
   #expect(result.response.text == "Concrete finding")
   #expect(Array(result.transcript.prefix(original.count)) == original)
   let preparations = await compact.requests
@@ -114,6 +115,9 @@ func smartContextLargeHistory() async throws {
   let requests = await primary.requests
   try #require(requests.count == 2)
   #expect(requests.allSatisfy { $0.messages.contains(original[4]) })
+  if mode == .smart {
+    #expect(requests.allSatisfy { $0.messages.contains(original[2]) })
+  }
   #expect(requests.allSatisfy { $0.messages.contains { $0.text.contains("Earlier evidence brief") } })
   #expect(!requests[0].messages.contains(original[3]))
   #expect(requests[1].messages.flatMap(\.toolCalls) == [call])
@@ -282,6 +286,12 @@ func smartContextAttachments() {
 
 @Test("Smart mode and its independent prompt persist and validate")
 func smartContextConfiguration() async throws {
+  #expect(AgentDefinition(id: "main", instructions: "", provider: "hello", model: "hello").context == .smart)
+  #expect(AgentRequest(provider: "hello", messages: []).context == .smart)
+  let legacy = Data(#"{"id":"main","provider":"hello"}"#.utf8)
+  #expect(try JSONDecoder().decode(AgentDefinition.self, from: legacy).context == .smart)
+  let explicit = Data(#"{"id":"main","provider":"hello","context":"cache"}"#.utf8)
+  #expect(try JSONDecoder().decode(AgentDefinition.self, from: explicit).context == .cache)
   let agent = AgentDefinition(
     id: "main", instructions: "", provider: "hello", model: "hello", context: .smart)
   let config = MaiConfiguration(
@@ -303,7 +313,7 @@ func smartContextConfiguration() async throws {
 
 @Test(
   "Every context and protocol forwards direct and proxied skill instructions after later tools",
-  arguments: [AgentContextMode.cache, .size, .smart, .tools].flatMap { context in
+  arguments: [AgentContextMode.cache, .size, .smart, .tools, .adaptive].flatMap { context in
     [ToolCallingStrategy.native, .json, .xml, .text].flatMap { strategy in
       [false, true].map { (context, strategy, $0) }
     }

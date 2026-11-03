@@ -231,3 +231,28 @@ func aggressivePruningKeepsConversationAndLatestExchange() throws {
   #expect(results[3].text == body)
   #expect(AgentContextPruning.pruneToolOutput(&messages) == nil)
 }
+
+@Test("Cache cleanup removes only dispensable suffixes and preserves the exact retained prefix")
+func cacheSuffixPruning() {
+  let prefix: [AgentMessage] = [.system("Rule"), .assistant(""), .user("Current task")]
+  var messages = prefix + [.assistant(" \n"), .assistant("")]
+  #expect(AgentContextPruning.pruneCacheSuffix(&messages)?.removed == 2)
+  #expect(messages == prefix)
+  let call = ToolCall(id: "one", name: "read", arguments: .object([:]))
+  var opaque = AgentMessage.assistant("")
+  opaque.providerState = ["provider.reasoning": .string("opaque")]
+  var pinned = AgentMessage.assistant("")
+  pinned.isPinned = true
+  let protected = [
+    AgentMessage.user(""), .assistant("Relevant finding"), opaque, pinned,
+    AgentMessage(role: .assistant, content: [.reasoning("reasoning")]),
+    AgentMessage(role: .assistant, content: [.toolCall(call)]),
+    AgentMessage(role: .tool, content: [.toolResult(.init(callID: call.id, text: ""))]),
+  ]
+  for tail in protected {
+    var candidate = prefix + [tail, .assistant("")]
+    #expect(AgentContextPruning.pruneCacheSuffix(&candidate)?.removed == 1)
+    #expect(candidate == prefix + [tail])
+    #expect(AgentContextPruning.pruneCacheSuffix(&candidate) == nil)
+  }
+}

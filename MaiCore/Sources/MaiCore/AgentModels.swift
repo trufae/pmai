@@ -926,24 +926,15 @@ public struct AgentRetryPolicy: Codable, Equatable, Sendable {
   }
 }
 
-/// When the runtime folds the older part of a transcript into a summary on
-/// its own, before a model turn, so a long task keeps fitting in the model's
-/// context. Context windows differ per model and most providers do not say
-/// how big theirs is, so the trigger is an absolute token count rather than
-/// a percentage.
-/// What a run optimises its conversation for. `cache` never touches a message
-/// once sent, so a server's prompt cache covers every earlier turn; `size`
-/// replaces the bodies of files read in earlier turns with a one-line
-/// reference before each model call, at the price of invalidating the cache
-/// from that message on.
-/// `smart` summarizes older exchanges once the working context grows, keeping
-/// recent evidence verbatim and retaining the transcript for normal compaction.
-/// `tools` summarizes only older tool results in a disposable model context.
+/// Context strategy. Cache mode preserves the retained prefix and can drop
+/// dispensable suffix messages. Size prunes earlier reads; smart (the default),
+/// tools and adaptive build disposable summaries while retaining saved history.
 public enum AgentContextMode: String, Codable, Equatable, Sendable {
   case cache
   case size
   case smart
   case tools
+  case adaptive
 }
 
 public struct AgentAutocompact: Codable, Equatable, Sendable {
@@ -1084,7 +1075,7 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
     toolDelegation: AgentToolDelegation = .inline,
     retry: AgentRetryPolicy = .init(),
     autocompact: AgentAutocompact = .init(),
-    context: AgentContextMode = .cache
+    context: AgentContextMode = .smart
   ) {
     self.id = id
     self.displayName = displayName ?? id
@@ -1163,7 +1154,7 @@ public struct AgentDefinition: Codable, Equatable, Identifiable, Sendable {
       retry: try container.decodeIfPresent(AgentRetryPolicy.self, forKey: .retry) ?? .init(),
       autocompact: try container.decodeIfPresent(AgentAutocompact.self, forKey: .autocompact)
         ?? .init(),
-      context: try container.decodeIfPresent(AgentContextMode.self, forKey: .context) ?? .cache)
+      context: try container.decodeIfPresent(AgentContextMode.self, forKey: .context) ?? .smart)
   }
 }
 
@@ -1226,7 +1217,7 @@ public struct AgentRequest: Codable, Equatable, Sendable {
     toolDelegation: AgentToolDelegation = .inline,
     retry: AgentRetryPolicy = .init(),
     autocompact: AgentAutocompact = .init(),
-    context: AgentContextMode = .cache,
+    context: AgentContextMode = .smart,
     sessionID: String? = nil
   ) {
     self.agentID = agentID

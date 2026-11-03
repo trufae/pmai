@@ -93,7 +93,7 @@ func toolResultContextLoop() async throws {
   #expect(await stats.totals().reduce(0) { $0 + $1.callCount } == 6)
 
   let sizes = await primary.contextSizes
-  #expect(sizes == requests.map { AgentContextSize(messages: $0.messages) })
+  #expect(sizes == requests.map { AgentContextSize(request: $0) })
   #expect(sizes[1].estimatedTokens > sizes[0].estimatedTokens)
   #expect(sizes[2].estimatedTokens < sizes[1].estimatedTokens)
   #expect(sizes[3].estimatedTokens < sizes[2].estimatedTokens)
@@ -334,3 +334,27 @@ private actor ToolContextProvider: ChatProvider {
 }
 
 private enum ToolContextFixtureError: Error { case unexpectedCall }
+
+@Test("Live context keeps the prepared view while accounting for new tool results")
+func preparedContextAfterTools() {
+  let history: [AgentMessage] = [
+    .user("Old task"), .assistant(String(repeating: "old evidence ", count: 5_000)),
+    .user("Current task"),
+  ]
+  let request = AgentRequest(provider: "fixture", messages: history, context: .smart)
+  var state = AgentRuntime.RunState(
+    request, context: .init(runID: UUID(), parentRunID: nil, agentID: "main", depth: 0), pid: 1,
+    budget: RunBudget(limits: .init()), activeTaskID: history.last?.id, emit: { _ in })
+  state.modelRequest = ProviderRequest(model: "fixture", messages: [.user("Reusable brief"), history[2]])
+  state.modelRequestTranscriptCount = history.count
+  let before = state.contextSize
+  state.transcript += [
+    AgentMessage(role: .assistant, content: [.toolCall(.init(id: "one", name: "read", arguments: .object([:])))]),
+    AgentMessage(role: .tool, content: [.toolResult(.init(callID: "one", text: String(repeating: "new code ", count: 200)))]),
+  ]
+  let after = state.contextSize
+  #expect(after.estimatedTokens > before.estimatedTokens)
+  #expect(after.estimatedTokens < AgentContextSize(messages: state.transcript).estimatedTokens)
+  state.modelInputTokens = 20_000
+  #expect(state.contextSize.estimatedTokens >= 20_000)
+}
