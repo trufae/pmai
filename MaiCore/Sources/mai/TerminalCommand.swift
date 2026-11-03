@@ -106,7 +106,12 @@ enum TerminalCommand {
     beforeWait: (Int32) throws -> Int32? = { _ in nil }
   ) throws -> Int32 {
     #if os(Windows)
-      defer { WindowsConsole.resumeUTF8Output() }
+      var original = termios()
+      let hasTerminal = tcgetattr(STDIN_FILENO, &original) == 0
+      defer {
+        if hasTerminal { _ = tcsetattr(STDIN_FILENO, TCSADRAIN, &original) }
+        WindowsConsole.resumeUTF8Output()
+      }
       let status = command.withCString(encodedAs: UTF16.self, terminalSystem)
       guard status != -1 else { throw posixError(errno) }
       return status

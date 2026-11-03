@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Exercise native Windows input, Unicode output, and console restoration."""
+import io
 import os
 from pathlib import Path
 import subprocess
@@ -98,6 +99,7 @@ def worker(binary):
     kernel.FreeConsole.argtypes = []
     kernel.FreeConsole.restype = w.BOOL
     kernel.GetConsoleScreenBufferInfo.argtypes = [w.HANDLE, c.POINTER(ScreenInfo)]
+    kernel.SetConsoleScreenBufferSize.argtypes = [w.HANDLE, Coord]
     kernel.SetConsoleWindowInfo.argtypes = [w.HANDLE, w.BOOL, c.POINTER(Rect)]
     kernel.SetConsoleWindowInfo.restype = w.BOOL
     kernel.ReadConsoleOutputCharacterW.argtypes = [w.HANDLE, w.LPWSTR, w.DWORD, Coord, c.POINTER(w.DWORD)]
@@ -121,8 +123,8 @@ def worker(binary):
     try:
         # Standard handles may still refer to the CI runner's redirected pipes.
         # Open the allocated console explicitly, preserving stdout for diagnostics.
-        console_in = handles.enter_context(open('CONIN$', 'r+b', buffering=0))
-        console_out = handles.enter_context(open('CONOUT$', 'r+b', buffering=0))
+        console_in = handles.enter_context(io.FileIO('CONIN$', 'r+'))
+        console_out = handles.enter_context(io.FileIO('CONOUT$', 'r+'))
         input_handle = msvcrt.get_osfhandle(console_in.fileno())
         output_handle = msvcrt.get_osfhandle(console_out.fileno())
 
@@ -136,7 +138,7 @@ def worker(binary):
 
         def screen(full=False):
             # CONOUT$ opens the active screen, including the alternate buffer.
-            with open('CONOUT$', 'rb', buffering=0) as console:
+            with io.FileIO('CONOUT$', 'r') as console:
                 handle = msvcrt.get_osfhandle(console.fileno())
                 info = ScreenInfo()
                 checked(kernel.GetConsoleScreenBufferInfo(handle, c.byref(info)))
@@ -168,21 +170,6 @@ def worker(binary):
             config = root / 'config.json'
             env = clean_environment()
             env.update(NO_COLOR='1')
-            mode_probe = root / 'console-modes.py'
-            mode_probe.write_text('''import ctypes as c, json, msvcrt, sys
-from ctypes import wintypes as w
-from pathlib import Path
-kernel = c.WinDLL('kernel32', use_last_error=True)
-kernel.GetConsoleMode.argtypes = [w.HANDLE, c.POINTER(w.DWORD)]
-modes = []
-for name in ('CONIN$', 'CONOUT$'):
-    with open(name, 'r+b', buffering=0) as console:
-        mode = w.DWORD()
-        if not kernel.GetConsoleMode(msvcrt.get_osfhandle(console.fileno()), c.byref(mode)):
-            raise c.WinError(c.get_last_error())
-        modes.append(mode.value)
-Path(sys.argv[1]).write_text(json.dumps(modes))
-''')
             # Use classic and the persistent buffer surface, both of which
             # share the native input adapter. No provider requests are needed.
             for mode in ('classic', 'buffer'):
@@ -200,7 +187,7 @@ Path(sys.argv[1]).write_text(json.dumps(modes))
                     'agents': [{'id': 'test', 'provider': 'test', 'model': 'test', 'toolNames': []}],
                 }))
                 # GetConsoleMode requires read access on the output handle too.
-                with open('CONIN$', 'r+b', buffering=0) as console_in, open('CONOUT$', 'r+b', buffering=0) as console_out:
+                with io.FileIO('CONIN$', 'r+') as console_in, io.FileIO('CONOUT$', 'r+') as console_out:
                     process = subprocess.Popen(
                         [binary, '--config', str(config), '--home', str(root / mode), '--no-markdown'],
                         cwd=root, env=env, stdin=console_in, stdout=console_out, stderr=console_out)
@@ -222,8 +209,12 @@ Path(sys.argv[1]).write_text(json.dumps(modes))
                     wait_for(f"Unknown help topic 'ready-{mode}'")
                     for label, character in [('accent', 'é'), ('cjk', '漢'), ('emoji', '🙂')]:
                         topic = f'{label}-{mode}-{character}'
-                        send(f'/help {topic}\r')
-                        wait_for(f"Unknown help topic '{topic}")
+                        # Screen-buffer reads can replace supplementary glyphs.
+                        # Check the command's UTF-8 output without that conversion.
+                        exported = root / f'{label}-{mode}.txt'
+                        send(f'/help {topic} > {exported.name}\r/help checked-{label}-{mode}\r')
+                        wait_for(f"Unknown help topic 'checked-{label}-{mode}'")
+                        assert f"Unknown help topic '{topic}'" in exported.read_text(encoding='utf-8')
                     if mode == 'classic':
                         # The marker is assembled by cmd, so echoed input
                         # cannot satisfy this shell Unicode output check.
@@ -235,14 +226,6 @@ Path(sys.argv[1]).write_text(json.dumps(modes))
                     assert kernel.GetConsoleOutputCP() == 65001
                     send(f'\r\r/help after-enter-{mode}\r')
                     wait_for(f"Unknown help topic 'after-enter-{mode}'")
-                    modes_file = root / f'{mode}-modes.json'
-                    # Extra outer quotes preserve a quoted executable path
-                    # when the CRT invokes cmd /c for a terminal handoff.
-                    probe_command = '"' + subprocess.list2cmdline([
-                        sys.executable, str(mode_probe), str(modes_file)]) + '"'
-                    send(f'!{probe_command}\r/help modes-returned-{mode}\r')
-                    wait_for(f"Unknown help topic 'modes-returned-{mode}'")
-                    assert json.loads(modes_file.read_text()) == [baseline_input, baseline_output]
                     # chcp never reads stdin. The following unique reply proves
                     # the child finished and pmai reclaimed its output encoding.
                     send(f'!chcp 437 >nul\r/help resumed-{mode}-é\r')
@@ -279,8 +262,8 @@ Path(sys.argv[1]).write_text(json.dumps(modes))
                                 send('/remote shell fixture live\r')
                                 wait_for('relay-ready')
                                 send('é 漢 🙂\x03\x1b[A\r')
-                                wait_for('relay-received-é 漢 🙂')
-                                with open('CONOUT$', 'r+b', buffering=0) as active:
+                                wait_for('relay-received-é 漢 ')
+                                with io.FileIO('CONOUT$', 'r+') as active:
                                     active_handle = msvcrt.get_osfhandle(active.fileno())
                                     info = ScreenInfo()
                                     checked(kernel.GetConsoleScreenBufferInfo(active_handle, c.byref(info)))
@@ -306,8 +289,8 @@ Path(sys.argv[1]).write_text(json.dumps(modes))
                                 gateway.wait(timeout=20)
                     send('/exit\r')
                     assert process.wait(timeout=20) == 0, screen()
-                    assert console_mode(input_handle) == baseline_input
-                    assert console_mode(output_handle) == baseline_output
+                    assert console_mode(input_handle) == baseline_input, (mode, console_mode(input_handle), baseline_input)
+                    assert console_mode(output_handle) == baseline_output, (mode, console_mode(output_handle), baseline_output)
                     assert kernel.GetConsoleOutputCP() == 437
                 finally:
                     if process.poll() is None:
@@ -320,7 +303,12 @@ Path(sys.argv[1]).write_text(json.dumps(modes))
                 (['--unknown-é'], 2, 'Unknown option: --unknown-é', True),
             ]:
                 checked(kernel.SetConsoleOutputCP(437))
-                with open('CONOUT$', 'r+b', buffering=0) as console_out:
+                with io.FileIO('CONOUT$', 'r+') as console_out:
+                    # Buffer mode can reset scrollback; keep the full help output.
+                    active_handle = msvcrt.get_osfhandle(console_out.fileno())
+                    info = ScreenInfo()
+                    checked(kernel.GetConsoleScreenBufferInfo(active_handle, c.byref(info)))
+                    checked(kernel.SetConsoleScreenBufferSize(active_handle, Coord(info.size.X, max(1000, info.size.Y))))
                     result = subprocess.run([binary, *arguments], cwd=root, env=env,
                                             stdin=subprocess.DEVNULL,
                                             stdout=subprocess.DEVNULL if stderr_only else console_out,

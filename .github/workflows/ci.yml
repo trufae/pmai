@@ -20,10 +20,8 @@ env:
   # Pass the full release tag below so setup-swift does not drop the .0.
   SWIFT_VERSION: "6.4.0"
 
-# Build caches are restored everywhere but saved only from main, so pull
-# requests reuse main's objects without evicting them. Each job saves right
-# after compilation (including focused test graphs); test failures still
-# refresh the cache for the next run.
+# Save main builds and Windows PR caches, which are scoped to the PR ref.
+# Save after compilation so a test failure still refreshes the next build.
 
 jobs:
   cli:
@@ -302,7 +300,7 @@ jobs:
         run: swift build --package-path MaiCore --configuration release -debug-info-format none --disable-index-store --disable-prefetching --product pmai -Xswiftc -Osize -Xlinker /DEBUG:NONE
 
       - name: Save Swift build outputs
-        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.build-cache.outputs.cache-hit != 'true' }}
+        if: ${{ !cancelled() && steps.build-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: MaiCore/.build
@@ -312,11 +310,12 @@ jobs:
         run: |
           $bin = swift build --package-path MaiCore --configuration release --disable-prefetching --show-bin-path
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python test/windows-console-smoke.py (Join-Path $bin 'pmai.exe')
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python test/run-shell-smoke.py (Join-Path $bin 'pmai.exe')
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python test/windows-terminal-smoke.py (Join-Path $bin 'pmai.exe')
+          $failed = 0
+          foreach ($test in 'windows-console', 'run-shell', 'windows-terminal') {
+            python -X utf8 "test/$test-smoke.py" (Join-Path $bin 'pmai.exe')
+            if ($LASTEXITCODE -ne 0) { $failed = 1 }
+          }
+          exit $failed
 
       - name: Package Windows beta CLI
         run: ./sys/package-windows.ps1 -Architecture ${{ matrix.arch }}

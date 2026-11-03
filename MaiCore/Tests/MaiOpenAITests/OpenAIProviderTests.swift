@@ -191,8 +191,9 @@ func openAIStructuredContentOnlyWithoutText() async throws {
 
 @Test("OpenAI-compatible provider encodes multimodal native-tool requests", arguments: [false, true])
 func openAIChatCompletion(usageAliases: Bool) async throws {
+  let host = "completion-\(usageAliases).example.test"
   let recorder = URLRequestRecorder()
-  StubURLProtocol.install(forHost: "completion.example.test") { request in
+  StubURLProtocol.install(forHost: host) { request in
     recorder.record(request, body: try requestBodyData(request))
     return try httpResponse(
       request,
@@ -221,11 +222,11 @@ func openAIChatCompletion(usageAliases: Bool) async throws {
         }
         """)
   }
-  defer { StubURLProtocol.reset(host: "completion.example.test") }
+  defer { StubURLProtocol.reset(host: host) }
 
   let provider = OpenAICompatibleProvider(
     configuration: .init(
-      baseURL: try #require(URL(string: "https://completion.example.test/v1/")),
+      baseURL: try #require(URL(string: "https://\(host)/v1/")),
       apiKey: "secret"),
     session: stubSession())
   #expect(provider.descriptor.capabilities.contains(.nativeToolCalling))
@@ -269,7 +270,7 @@ func openAIChatCompletion(usageAliases: Bool) async throws {
   #expect(response.usage?.reasoningTokens == 2)
 
   let request = try #require(recorder.request)
-  #expect(request.url?.absoluteString == "https://completion.example.test/v1/chat/completions")
+  #expect(request.url?.absoluteString == "https://\(host)/v1/chat/completions")
   #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer secret")
   let body = try jsonObject(try #require(recorder.body))
   let messages = try #require(body["messages"] as? [[String: Any]])

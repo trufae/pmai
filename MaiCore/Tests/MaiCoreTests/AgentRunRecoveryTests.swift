@@ -460,7 +460,7 @@ func autocompactFoldsOlderMessages() async throws {
       messages: [.user("start")],
       toolNames: ["echo"],
       retry: .none,
-      autocompact: AgentAutocompact(tokens: 500, preserveRecentTokens: 0))
+      autocompact: AgentAutocompact(tokens: 500, preserveRecentTokens: 0), context: .cache)
   ) { event in
     await recorder.append(event)
   }

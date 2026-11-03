@@ -80,6 +80,7 @@ func terminalViewSelectors() throws {
   #expect(try source("history") == .history)
   #expect(try source("prompt $tldr") == .prompt)
   #expect(try source("agents") == .conversations)
+  #expect(try source("agent") == .conversations)
   #expect(try source("pins") == .pins)
   #expect(try source(" LOG ") == .log)
   #expect(try source(" TODO ") == .todo)
@@ -90,7 +91,7 @@ func terminalViewSelectors() throws {
   }
   for name in [
     "", "missing", "tools missing", "thinking extra", "pins extra", "log extra", "off extra",
-    "agent", "todo extra", "iconlog extra", "prompt", "history extra", "voice extra",
+    "todo extra", "iconlog extra", "prompt", "history extra", "voice extra",
   ] {
     #expect(throws: (any Error).self) { try source(name) }
   }

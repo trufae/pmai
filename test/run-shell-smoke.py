@@ -127,11 +127,19 @@ def check_windows(binary):
                 assert len(requests) == 2, (requests, output)
                 body = '\n'.join(m['content'] for m in requests[-1]['messages'] if m['role'] == 'tool')
                 assert 'CHECK-COMPLETE' in output, output
+                if 'timed out' in body:
+                    print(output, flush=True)
                 return body
 
             for proxy in (False, True):
                 body = invoke({'script': "[Console]::Write('out ü'); [Console]::Error.Write('err'); exit 3"}, proxy)
                 assert 'out ü' in body and '[stderr]\nerr' in body and '[exit code 3]' in body, body
+            literals = ['', 'two words', '"quoted"', 'C:\\path with spaces\\', '$(bad)', '& echo injected', 'ü']
+            body = invoke({'args': [sys.executable, '-X', 'utf8', '-c',
+                                   'import json,sys; print(json.dumps(sys.argv[1:], ensure_ascii=False)); assert sys.stdin.read() == \"input\"',
+                                   *literals], 'stdin': 'input'})
+            assert json.loads(body) == literals, body
+            print('PASS Windows native argv and stdin', flush=True)
             body = invoke({
                 'command': "[Console]::Write(($args -join '|') + ':' + [Console]::In.ReadToEnd()); "
                            "Set-Content -LiteralPath result.txt -Value 'saved'",
@@ -139,11 +147,6 @@ def check_windows(binary):
             })
             assert 'two words|ü:input' in body and 'Error:' not in body, body
             assert (root / 'result.txt').read_text().strip() == 'saved'
-            literals = ['', 'two words', '"quoted"', 'C:\\path with spaces\\', '$(bad)', '& echo injected', 'ü']
-            body = invoke({'args': [sys.executable, '-X', 'utf8', '-c',
-                                   'import json,sys; print(json.dumps(sys.argv[1:], ensure_ascii=False))',
-                                   *literals]})
-            assert json.loads(body) == literals, body
             body = invoke({'args': ['cmd.exe', '/d', '/s', '/c', 'echo native-cmd']})
             assert body.strip() == 'native-cmd', body
             body = invoke({'commands': ["Write-Output 'one'", "Write-Output 'two'"]})

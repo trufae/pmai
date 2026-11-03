@@ -53,9 +53,10 @@ final class WindowsRunProcess: @unchecked Sendable {
       guard let null, null != INVALID_HANDLE_VALUE else { throw Self.lastError() }
       defer { CloseHandle(null) }
       let handles = [input, output, errors].map { $0 === FileHandle.nullDevice ? null : $0._handle }
+      var inherited = Array(Set(handles))
       var originalFlags: [(HANDLE, DWORD)] = []
       defer { for (handle, flags) in originalFlags { _ = SetHandleInformation(handle, DWORD(HANDLE_FLAG_INHERIT), flags) } }
-      for handle in handles {
+      for handle in inherited {
         var flags: DWORD = 0
         guard GetHandleInformation(handle, &flags) else { throw Self.lastError() }
         originalFlags.append((handle, flags))
@@ -63,31 +64,44 @@ final class WindowsRunProcess: @unchecked Sendable {
           throw Self.lastError()
         }
       }
-      var startup = STARTUPINFOW()
-      startup.cb = DWORD(MemoryLayout<STARTUPINFOW>.size)
-      startup.dwFlags = DWORD(STARTF_USESTDHANDLES)
-      startup.hStdInput = handles[0]
-      startup.hStdOutput = handles[1]
-      startup.hStdError = handles[2]
-      let path = Self.path(executable)
-      var command = Array(Self.commandLine(path, arguments: arguments).utf16) + [0]
-      var variables = Array(environment.keys.sorted { $0.uppercased() < $1.uppercased() }
-        .map { "\($0)=\(environment[$0]!)\0" }.joined().utf16) + [0]
-      let directory = currentDirectoryURL.map(Self.path) ?? FileManager.default.currentDirectoryPath
-      var info = PROCESS_INFORMATION()
-      let success = path.withCString(encodedAs: UTF16.self) { executable in
-        command.withUnsafeMutableBufferPointer { command in
-          variables.withUnsafeMutableBufferPointer { variables in
-            directory.withCString(encodedAs: UTF16.self) { directory in
-              CreateProcessW(executable, command.baseAddress, nil, nil, true,
-                DWORD(CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT),
-                UnsafeMutableRawPointer(variables.baseAddress!), directory, &startup, &info)
+      var bytes: SIZE_T = 0
+      _ = InitializeProcThreadAttributeList(nil, 1, 0, &bytes)
+      let attributes = UnsafeMutableRawPointer.allocate(byteCount: Int(bytes), alignment: MemoryLayout<UInt>.alignment)
+      defer { attributes.deallocate() }
+      var startup = STARTUPINFOEXW()
+      startup.StartupInfo.cb = DWORD(MemoryLayout<STARTUPINFOEXW>.size)
+      startup.StartupInfo.dwFlags = DWORD(STARTF_USESTDHANDLES)
+      startup.StartupInfo.hStdInput = handles[0]
+      startup.StartupInfo.hStdOutput = handles[1]
+      startup.StartupInfo.hStdError = handles[2]
+      startup.lpAttributeList = OpaquePointer(attributes)
+      guard InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &bytes) else { throw Self.lastError() }
+      return try inherited.withUnsafeMutableBufferPointer { allowed in
+        defer { DeleteProcThreadAttributeList(startup.lpAttributeList) }
+        guard UpdateProcThreadAttribute(startup.lpAttributeList, 0, 0x20002, // PROC_THREAD_ATTRIBUTE_HANDLE_LIST
+          allowed.baseAddress, SIZE_T(allowed.count * MemoryLayout<HANDLE>.stride), nil, nil) else {
+          throw Self.lastError()
+        }
+        let path = Self.path(executable)
+        var command = Array(Self.commandLine(path, arguments: arguments).utf16) + [0]
+        var variables = Array(environment.keys.sorted { $0.uppercased() < $1.uppercased() }
+          .map { "\($0)=\(environment[$0]!)\0" }.joined().utf16) + [0]
+        let directory = currentDirectoryURL.map(Self.path) ?? FileManager.default.currentDirectoryPath
+        var info = PROCESS_INFORMATION()
+        let success = path.withCString(encodedAs: UTF16.self) { executable in
+          command.withUnsafeMutableBufferPointer { command in
+            variables.withUnsafeMutableBufferPointer { variables in
+              directory.withCString(encodedAs: UTF16.self) { directory in
+                CreateProcessW(executable, command.baseAddress, nil, nil, true,
+                  DWORD(CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT),
+                  UnsafeMutableRawPointer(variables.baseAddress!), directory, &startup.StartupInfo, &info)
+              }
             }
           }
         }
+        guard success else { throw Self.lastError() }
+        return info
       }
-      guard success else { throw Self.lastError() }
-      return info
     }
     let processHandle = info.hProcess!
     let threadHandle = info.hThread!

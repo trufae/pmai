@@ -286,7 +286,7 @@ func smartContextAttachments() {
 
 @Test("Smart mode and its independent prompt persist and validate")
 func smartContextConfiguration() async throws {
-  #expect(AgentDefinition(id: "main", instructions: "", provider: "hello").context == .smart)
+  #expect(AgentDefinition(id: "main", instructions: "", provider: "hello", model: "hello").context == .smart)
   #expect(AgentRequest(provider: "hello", messages: []).context == .smart)
   let legacy = Data(#"{"id":"main","provider":"hello"}"#.utf8)
   #expect(try JSONDecoder().decode(AgentDefinition.self, from: legacy).context == .smart)
