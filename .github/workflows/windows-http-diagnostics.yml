@@ -1,0 +1,75 @@
+name: Windows HTTP upload diagnostics
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SWIFT_VERSION: "6.4.0"
+
+jobs:
+  upload-probe:
+    name: Foundation vs curl (${{ matrix.arch }})
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: x64
+            build_arch: amd64
+          - os: windows-11-arm
+            arch: arm64
+            build_arch: arm64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Swift
+        uses: compnerd/gha-setup-swift@9ff1ee4c44888c5817fc14d1b257ac8cabb4935f # v0.5.1
+        with:
+          swift-version: swift-${{ env.SWIFT_VERSION }}-release
+          swift-build: ${{ env.SWIFT_VERSION }}-RELEASE
+          build_arch: ${{ matrix.build_arch }}
+
+      - name: Record runtime DLL versions and hashes
+        run: |
+          $records = foreach ($directory in ($env:Path -split ';' | Sort-Object -Unique)) {
+            if (!$directory) { continue }
+            foreach ($name in 'FoundationNetworking.dll', 'dispatch.dll', 'libcurl.dll') {
+              $candidate = Join-Path $directory $name
+              if (Test-Path $candidate -PathType Leaf) {
+                $file = Get-Item $candidate
+                [PSCustomObject]@{
+                  Path = $file.FullName
+                  Version = $file.VersionInfo.FileVersion
+                  SHA256 = (Get-FileHash $candidate -Algorithm SHA256).Hash
+                }
+              }
+            }
+          }
+          $records | ConvertTo-Json | Set-Content -Encoding utf8 runtime-dlls.json
+
+      - name: Compile the standalone Foundation probe
+        run: swiftc sys/diagnostics/urlsession-upload.swift -o urlsession-upload.exe
+
+      - name: Compare uploads against a slow local receiver
+        run: |
+          python -X utf8 sys/diagnostics/http-upload-probe.py .\urlsession-upload.exe 2>&1 | Tee-Object -FilePath upload-probe.log
+          exit $LASTEXITCODE
+
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-http-${{ matrix.arch }}
+          path: |
+            upload-probe.log
+            runtime-dlls.json
+          if-no-files-found: warn
