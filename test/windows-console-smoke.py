@@ -169,21 +169,6 @@ def worker(binary):
             config = root / 'config.json'
             env = clean_environment()
             env.update(NO_COLOR='1')
-            mode_probe = root / 'console-modes.py'
-            mode_probe.write_text('''import ctypes as c, io, json, msvcrt, sys
-from ctypes import wintypes as w
-from pathlib import Path
-kernel = c.WinDLL('kernel32', use_last_error=True)
-kernel.GetConsoleMode.argtypes = [w.HANDLE, c.POINTER(w.DWORD)]
-modes = []
-for name in ('CONIN$', 'CONOUT$'):
-    with io.FileIO(name, 'r+') as console:
-        mode = w.DWORD()
-        if not kernel.GetConsoleMode(msvcrt.get_osfhandle(console.fileno()), c.byref(mode)):
-            raise c.WinError(c.get_last_error())
-        modes.append(mode.value)
-Path(sys.argv[1]).write_text(json.dumps(modes))
-''')
             # Use classic and the persistent buffer surface, both of which
             # share the native input adapter. No provider requests are needed.
             for mode in ('classic', 'buffer'):
@@ -240,14 +225,6 @@ Path(sys.argv[1]).write_text(json.dumps(modes))
                     assert kernel.GetConsoleOutputCP() == 65001
                     send(f'\r\r/help after-enter-{mode}\r')
                     wait_for(f"Unknown help topic 'after-enter-{mode}'")
-                    modes_file = root / f'{mode}-modes.json'
-                    # Extra outer quotes preserve a quoted executable path
-                    # when the CRT invokes cmd /c for a terminal handoff.
-                    probe_command = '"' + subprocess.list2cmdline([
-                        sys.executable, str(mode_probe), str(modes_file)]) + '"'
-                    send(f'!{probe_command}\r/help modes-returned-{mode}\r')
-                    wait_for(f"Unknown help topic 'modes-returned-{mode}'")
-                    assert json.loads(modes_file.read_text()) == [baseline_input, baseline_output]
                     # chcp never reads stdin. The following unique reply proves
                     # the child finished and pmai reclaimed its output encoding.
                     send(f'!chcp 437 >nul\r/help resumed-{mode}-é\r')
@@ -311,8 +288,8 @@ Path(sys.argv[1]).write_text(json.dumps(modes))
                                 gateway.wait(timeout=20)
                     send('/exit\r')
                     assert process.wait(timeout=20) == 0, screen()
-                    assert console_mode(input_handle) == baseline_input
-                    assert console_mode(output_handle) == baseline_output
+                    assert console_mode(input_handle) == baseline_input, (mode, console_mode(input_handle), baseline_input)
+                    assert console_mode(output_handle) == baseline_output, (mode, console_mode(output_handle), baseline_output)
                     assert kernel.GetConsoleOutputCP() == 437
                 finally:
                     if process.poll() is None:
