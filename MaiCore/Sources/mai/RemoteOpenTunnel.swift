@@ -20,7 +20,7 @@ struct RemoteOpenTunnel: Sendable {
   let directory: URL
 
   init(directory: URL) throws {
-    guard let command = TailcatCLI.resolveExecutable("opentunnel") else {
+    guard let command = try? LocalExecutable.resolve("opentunnel") else {
       throw JSONRPCError.invalidParams(
         "OpenTunnel is not installed. Install it with brew install anomalyco/tap/opentunnel or cargo install opentunnel-cli, or supply --url wss://HOST/acp for an existing tunnel.")
     }

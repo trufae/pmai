@@ -58,6 +58,42 @@ for line in sys.stdin:
 '''
 
 
+def check_executable_discovery(binary):
+    """Installed native tools remain discoverable through Windows PATH syntax."""
+    import json
+    import shutil
+    import tempfile
+    from smoke import clean_environment
+
+    with tempfile.TemporaryDirectory(prefix='pmai discovery ü ') as directory:
+        root = Path(directory)
+        tools = root / 'tools with spaces'
+        tools.mkdir()
+        env = clean_environment()
+        path = next((value for key, value in env.items() if key.lower() == 'path'), '')
+        env = {key: value for key, value in env.items() if key.lower() != 'path'}
+        env.update(pAtH=f'"{tools}";{path}', NO_COLOR='1')
+        system = next(value for key, value in env.items() if key.lower() == 'systemroot')
+        for name in ('tailcat.exe', 'goose.exe'):
+            shutil.copy2(Path(system) / 'System32/cmd.exe', tools / name)
+        # Reaching remote selection proves Tailcat was found; no worker is launched.
+        result = subprocess.run([binary, 'tailcat', 'connect', 'missing', '--home', str(root / 'home')],
+                                cwd=root, env=env, capture_output=True, encoding='utf-8', timeout=30)
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert 'Choose a remote from pmai tailcat status' in result.stderr, result.stderr
+        config = root / 'config.json'
+        config.write_text(json.dumps({
+            'defaultAgent': 'main', 'providers': [{'id': 'hello', 'kind': 'hello'}],
+            'agents': [{'id': 'main', 'provider': 'hello', 'model': 'hello', 'toolNames': []}],
+            'use': {'plan': False, 'agentsmd': 'off'},
+        }), encoding='utf-8')
+        result = subprocess.run([binary, '--config', str(config), '--home', str(root / 'home'),
+                                 '--no-markdown'], input='/agent acp list\n/exit\n',
+                                cwd=root, env=env, capture_output=True, encoding='utf-8', timeout=30)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert '✅ goose —' in result.stdout, result.stdout
+
+
 def worker(binary):
     import ctypes as c
     from ctypes import wintypes as w
@@ -349,6 +385,7 @@ def main():
     if '--worker' in sys.argv:
         worker(binary)
     else:
+        check_executable_discovery(binary)
         # The worker gets its own console; never inject keys into the user's
         # terminal or share its input queue with the parent test runner.
         result = subprocess.run([sys.executable, __file__, binary, '--worker'],

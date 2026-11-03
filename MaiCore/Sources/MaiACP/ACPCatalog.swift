@@ -86,13 +86,6 @@ public enum ACPCatalog {
     _ command: String,
     environment: [String: String] = ProcessInfo.processInfo.environment
   ) -> String? {
-    if command.contains("/") {
-      return FileManager.default.isExecutableFile(atPath: command) ? command : nil
-    }
-    for directory in (environment["PATH"] ?? "").split(separator: ":") {
-      let candidate = "\(directory)/\(command)"
-      if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
-    }
-    return nil
+    try? LocalExecutable.resolve(command, environment: environment)
   }
 }

@@ -466,7 +466,7 @@ func acpPermissionPolicy() {
 }
 
 @Test("A catalog agent becomes an acp-kind provider record")
-func acpCatalog() {
+func acpCatalog() throws {
   let gemini = ACPCatalog.agent("gemini")
   #expect(gemini?.command == "gemini")
   let provider = gemini?.configuredProvider()
@@ -474,6 +474,23 @@ func acpCatalog() {
   #expect(provider?.options["command"]?.stringValue == "gemini")
   #expect(provider?.options["args"]?.arrayValue?.first?.stringValue == "--acp")
   #expect(ACPCatalog.agent("nope") == nil)
+  let files = FileManager.default
+  let root = files.temporaryDirectory.appendingPathComponent("acp-discovery-\(UUID())")
+  try files.createDirectory(at: root, withIntermediateDirectories: true)
+  defer { try? files.removeItem(at: root) }
+  #if os(Windows)
+  let program = root.appendingPathComponent("acp-fixture.exe")
+  let environment = ["pAtH": "\"\(root.path)\""]
+  #else
+  let program = root.appendingPathComponent("acp-fixture")
+  let environment = ["PATH": root.path]
+  #endif
+  try Data().write(to: program)
+  #if !os(Windows)
+  try files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: program.path)
+  #endif
+  let resolved = try #require(ACPCatalog.resolve("acp-fixture", environment: environment))
+  #expect(URL(fileURLWithPath: resolved).standardizedFileURL == program.standardizedFileURL)
 }
 
 @Test("pmai's ACP server answers initialize, session/new, and session/prompt")

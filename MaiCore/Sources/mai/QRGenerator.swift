@@ -1,4 +1,5 @@
 import Foundation
+import MaiCore
 import QRCodeGenerator
 #if canImport(CoreImage)
   import CoreImage
@@ -44,7 +45,7 @@ enum QRGenerator {
         guard CGImageDestinationFinalize(destination) else { return }
         try (buffer as Data).write(to: output, options: .atomic)
       #else
-        guard let executable = TailcatCLI.resolveExecutable("qrencode") else {
+        guard let executable = try? LocalExecutable.resolve("qrencode") else {
           throw CocoaError(.featureUnsupported, userInfo: [
             NSLocalizedDescriptionKey: "Install qrencode to export PNG, or use an .svg output file.",
           ])

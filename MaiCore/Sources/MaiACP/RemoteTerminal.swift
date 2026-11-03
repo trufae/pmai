@@ -103,7 +103,7 @@ public final class RemotePTY: @unchecked Sendable {
     let fallback = "/bin/sh"
     #endif
     let configured = environment["SHELL"] ?? fallback
-    let shell = FileManager.default.isExecutableFile(atPath: configured) ? configured : fallback
+    let shell = (try? LocalExecutable.resolve(configured, environment: environment, workingDirectory: cwd)) ?? fallback
     let env = environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
     defer { for pointer in env { free(pointer) } }
     var wakeDescriptors: [Int32] = [-1, -1]

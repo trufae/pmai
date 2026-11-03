@@ -24,15 +24,13 @@ import MaiCore
       self.descriptor = OCRProviderDescriptor(id: id, displayName: "Tesseract OCR")
       self.command = command
       self.languages = languages
-      self.searchPath =
-        searchPath
-        ?? Self.pathEntries(in: ProcessInfo.processInfo.environment) ?? []
+      self.searchPath = searchPath ?? LocalExecutable.searchPath()
     }
 
     /// The absolute path of the tesseract executable, or nil when it is not
     /// installed. Hosts can use this to describe OCR availability up front.
     public var executablePath: String? {
-      Self.resolve(command, searchPath: searchPath)
+      try? LocalExecutable.resolve(command, searchPath: searchPath)
     }
 
     public func recognize(_ request: OCRRequest) async throws -> OCRResult {
@@ -90,51 +88,6 @@ import MaiCore
       return String(decoding: stdout, as: UTF8.self)
     }
 
-    private static func resolve(_ command: String, searchPath: [String]) -> String? {
-      let expanded = NSString(string: command).expandingTildeInPath
-      #if os(Windows)
-      func nativeExecutable(_ command: String) -> String? {
-        let process = Process()
-        guard (try? LocalProcess.configure(process, command: command, environment: ["Path": ""])) != nil,
-          let url = process.executableURL
-        else { return nil }
-        return url.withUnsafeFileSystemRepresentation { pointer in
-          pointer.map { String(cString: $0) }
-        }
-      }
-      if expanded.contains("/") || expanded.contains("\\") || expanded.contains(":") {
-        return nativeExecutable(expanded)
-      }
-      // Preserve explicit searchPath ordering instead of implicitly searching
-      // the current directory before the caller's configured directories.
-      for directory in searchPath where !directory.isEmpty {
-        let unquoted = directory.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-        let candidate = (unquoted as NSString).appendingPathComponent(expanded)
-        if let executable = nativeExecutable(candidate) { return executable }
-      }
-      return nil
-      #else
-      if expanded.contains("/") {
-        return FileManager.default.isExecutableFile(atPath: expanded) ? expanded : nil
-      }
-      for directory in searchPath where !directory.isEmpty {
-        let candidate = (directory as NSString).appendingPathComponent(expanded)
-        if FileManager.default.isExecutableFile(atPath: candidate) {
-          return candidate
-        }
-      }
-      return nil
-      #endif
-    }
-
-    fileprivate static func pathEntries(in environment: [String: String]) -> [String]? {
-      #if os(Windows)
-      return LocalProcess.mergedEnvironment(environment)["Path"]?.split(separator: ";").map(String.init)
-      #else
-      return environment["PATH"]?.split(separator: ":").map(String.init)
-      #endif
-    }
-
     private static func fileExtension(mimeType: String, filename: String) -> String {
       switch mimeType.lowercased() {
       case "image/png": return "png"
@@ -165,7 +118,7 @@ import MaiCore
         context.options["languages"]?.stringValue
         ?? context.options["language"]?.stringValue
         ?? environment["TESSERACT_LANGUAGES"]
-      let searchPath = TesseractOCRProvider.pathEntries(in: environment)
+      let searchPath = LocalExecutable.searchPath(in: environment)
       return TesseractOCRProvider(
         id: context.id,
         command: command.isEmpty ? TesseractOCRProvider.defaultCommand : command,

@@ -1,5 +1,6 @@
 import Crypto
 import Foundation
+import MaiCore
 import MaiDocuments
 
 #if canImport(FoundationNetworking)
@@ -50,11 +51,7 @@ enum CLIUpdater {
     let binaryName = "pmai.exe"
     #else
     let binaryName = "pmai"
-    let candidates = executable.contains("/") ? [executable]
-      : (environment["PATH"] ?? "").components(separatedBy: ":").map {
-        URL(fileURLWithPath: $0.isEmpty ? "." : $0).appendingPathComponent(executable).path
-      }
-    guard let path = candidates.first(where: { fm.isExecutableFile(atPath: $0) }) else {
+    guard let path = try? LocalExecutable.resolve(executable, environment: environment) else {
       throw CocoaError(.fileNoSuchFile)
     }
     #endif

@@ -137,8 +137,9 @@ public struct MaiRunTool: AgentTool {
         environment["FORCE_COLOR"] = "0"
         environment["TERM"] = "dumb"
       }
-      let launcher = try MaiHostProcess.resolve(configuration.shell, environment: environment)
       let workingDirectory = try Self.workingDirectory(arguments["cwd"]?.stringValue)
+      let launcher = try MaiHostProcess.resolve(
+        configuration.shell, environment: environment, workingDirectory: workingDirectory)
       let timeout = timeoutSeconds(arguments: arguments, agentDefault: defaultTimeout)
       let stdin = arguments["stdin"]?.stringValue
       let script = try Self.requiredText(arguments, key: "script", alias: "command")
@@ -487,43 +488,27 @@ enum MaiRunToolError: LocalizedError {
     /// or `node --no-warnings` into an executable found in `PATH` plus leading arguments.
     static func resolve(
       _ interpreter: String,
-      environment: [String: String]
+      environment: [String: String],
+      workingDirectory: URL? = nil
     ) throws -> (executable: URL, arguments: [String]) {
       #if os(Windows)
         // A configured full executable path can itself contain spaces.
-        let process = Process()
-        if (try? LocalProcess.configure(process, command: interpreter, environment: environment)) != nil,
-          let executable = process.executableURL { return (executable, []) }
+        if let path = try? LocalExecutable.resolve(
+          interpreter, environment: environment, workingDirectory: workingDirectory)
+        { return (URL(fileURLWithPath: path), []) }
         var count: Int32 = 0
         let words = interpreter.withCString(encodedAs: UTF16.self) { CommandLineToArgvW($0, &count) }
         guard let words else { throw MaiRunToolError.interpreterNotFound(interpreter) }
         defer { _ = LocalFree(words) }
         let parts = (0..<Int(count)).map { String(decodingCString: words[$0]!, as: UTF16.self) }
-        guard let command = parts.first else { throw MaiRunToolError.interpreterNotFound(interpreter) }
-        do {
-          try LocalProcess.configure(process, command: command, environment: environment)
-          return (process.executableURL!, Array(parts.dropFirst()))
-        } catch { throw MaiRunToolError.interpreterNotFound(command) }
       #else
-      let parts = interpreter.split(whereSeparator: \.isWhitespace).map(String.init)
-      guard let command = parts.first else { throw MaiRunToolError.interpreterNotFound(interpreter) }
-      let expanded = NSString(string: command).expandingTildeInPath
-      if expanded.contains("/") {
-        guard FileManager.default.isExecutableFile(atPath: expanded) else {
-          throw MaiRunToolError.interpreterNotFound(command)
-        }
-        return (URL(fileURLWithPath: expanded), Array(parts.dropFirst()))
-      }
-      let searchPath = (environment["PATH"] ?? "/usr/local/bin:/usr/bin:/bin")
-        .split(separator: ":").map(String.init)
-      for directory in searchPath where !directory.isEmpty {
-        let candidate = (directory as NSString).appendingPathComponent(command)
-        if FileManager.default.isExecutableFile(atPath: candidate) {
-          return (URL(fileURLWithPath: candidate), Array(parts.dropFirst()))
-        }
-      }
-      throw MaiRunToolError.interpreterNotFound(command)
+        let parts = interpreter.split(whereSeparator: \.isWhitespace).map(String.init)
       #endif
+      guard let command = parts.first,
+        let path = try? LocalExecutable.resolve(
+          command, environment: environment, workingDirectory: workingDirectory)
+      else { throw MaiRunToolError.interpreterNotFound(parts.first ?? interpreter) }
+      return (URL(fileURLWithPath: path), Array(parts.dropFirst()))
     }
 
     static func run(

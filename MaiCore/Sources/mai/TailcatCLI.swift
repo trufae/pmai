@@ -67,7 +67,7 @@ enum TailcatCLI {
       isDirectory: true).standardizedFileURL
     let store = TailcatStore(directory: home.appendingPathComponent("tailcat", isDirectory: true))
     let args = Array(options.positional.dropFirst())
-    let ownExecutable = resolveExecutable(executable) ?? executable
+    let ownExecutable = (try? LocalExecutable.resolve(executable, environment: environment)) ?? executable
     let tailcatName = options.values["--tailcat"] ?? environment["PMAI_TAILCAT"] ?? "tailcat"
     // Registry administration remains available if Tailcat is not installed.
     if command == "invite" {
@@ -94,7 +94,7 @@ enum TailcatCLI {
       }
       return
     }
-    guard let tailcat = resolveExecutable(tailcatName) else {
+    guard let tailcat = try? LocalExecutable.resolve(tailcatName, environment: environment) else {
       throw Error.message("Tailcat is not installed. Install a release with serve exec and TAILCAT_PEER_KEY support, or pass --tailcat PATH.")
     }
     try ACPStateFiles.createDirectory(store.directory)
@@ -264,19 +264,6 @@ enum TailcatCLI {
       }
       return url
     }
-  }
-
-  static func resolveExecutable(_ command: String) -> String? {
-    if command.contains("/") {
-      let path = NSString(string: command).expandingTildeInPath
-      return FileManager.default.isExecutableFile(atPath: path)
-        ? URL(fileURLWithPath: path).standardizedFileURL.path : nil
-    }
-    for folder in (ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin").split(separator: ":") {
-      let path = String(folder) + "/" + command
-      if FileManager.default.isExecutableFile(atPath: path) { return path }
-    }
-    return nil
   }
 
   static func capture(_ command: String, _ arguments: [String], input: Data? = nil) throws -> String {

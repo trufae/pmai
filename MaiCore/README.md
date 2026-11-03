@@ -1935,6 +1935,14 @@ only when you explicitly configure a shell. Stdio
 MCP support, including its subprocess factory and public transport types, is
 compiled out on iOS. The iOS app continues to support Streamable HTTP only.
 
+Swift hosts should use `LocalExecutable.resolve(_:environment:workingDirectory:searchPath:)`
+from MaiCore for program discovery, and `LocalProcess.configure` when launching
+a subprocess. The resolver returns an absolute native filesystem path, handles
+the host's PATH syntax and Windows executable suffixes, and rejects directories
+and batch wrappers. An explicit `searchPath` replaces PATH and disables the
+implicit Windows working-directory search; `LocalExecutable.searchPath(in:)`
+provides the platform's PATH entries when a host needs to add fallback folders.
+
 The example MCP entry is disabled so the example remains safe to inspect. Set
 an HTTP URL or stdio command and enable it to connect its discovered tools.
 The hybrid proxy is the default for agent profiles, including old profiles

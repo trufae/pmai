@@ -2602,7 +2602,7 @@ struct MaiCLI {
     let localProfile = session.profile
     var remoteReturnChatID: UUID?
     var remoteShell: ACPRemoteHost?
-    let executable = TailcatCLI.resolveExecutable(platformCommandLineArguments(environment: ProcessInfo.processInfo.environment)[0])
+    let executable = (try? LocalExecutable.resolve(platformCommandLineArguments(environment: ProcessInfo.processInfo.environment)[0]))
       ?? URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.path
     let remoteServer = RemoteREPLServer(home: home, executable: executable)
     /// Hands the loop's state to `pmai_run`, so a command the model runs
@@ -4720,8 +4720,9 @@ struct MaiCLI {
                 #else
                 let fallback = "/bin/sh"
                 #endif
-                let configured = ProcessInfo.processInfo.environment["SHELL"] ?? fallback
-                let shell = FileManager.default.isExecutableFile(atPath: configured) ? configured : fallback
+                let shellEnvironment = ProcessInfo.processInfo.environment
+                let configured = shellEnvironment["SHELL"] ?? fallback
+                let shell = (try? LocalExecutable.resolve(configured, environment: shellEnvironment)) ?? fallback
                 do { _ = try TerminalCommand.run("exec \(shellQuote(shell)) -i") }
                 catch { await terminal.line("error: \(error.localizedDescription)", to: .standardError) }
                 #endif
@@ -15036,32 +15037,24 @@ struct MaiCLI {
   }
 
   private static func fallbackEditor(environment: [String: String]) -> String? {
+    let editors = ["vim", "nano", "notepad"]
     #if os(Windows)
-      let editors = ["vim.exe", "nano.exe", "notepad.exe"]
-      var directories = (environment["PATH"] ?? environment["Path"] ?? "")
-        .components(separatedBy: ";")
-      if let windows = environment["SystemRoot"] ?? environment["WINDIR"] {
-        directories.append(URL(fileURLWithPath: windows).appendingPathComponent("System32").path)
-      }
+      let normalized = LocalProcess.mergedEnvironment(environment)
+      let systemDirectories = (normalized["SYSTEMROOT"] ?? normalized["WINDIR"]).map {
+        [URL(fileURLWithPath: $0).appendingPathComponent("System32").path]
+      } ?? []
     #else
-      let editors = ["vim", "nano", "notepad"]
-      let directories = (environment["PATH"] ?? "").components(separatedBy: ":")
+      let systemDirectories: [String] = []
     #endif
+    let directories = LocalExecutable.searchPath(in: environment) + systemDirectories
     for editor in editors {
-      for directory in directories {
-        let path = URL(fileURLWithPath: directory.isEmpty ? "." : directory)
-          .appendingPathComponent(editor).path
-        var isDirectory: ObjCBool = false
-        if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
-          !isDirectory.boolValue, FileManager.default.isExecutableFile(atPath: path)
-        {
-          #if os(Windows)
-            return "\"\(path)\""
-          #else
-            return shellQuote(path)
-          #endif
-        }
-      }
+      guard let path = try? LocalExecutable.resolve(editor, environment: environment, searchPath: directories)
+      else { continue }
+      #if os(Windows)
+        return "\"\(path)\""
+      #else
+        return shellQuote(path)
+      #endif
     }
     return nil
   }

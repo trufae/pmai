@@ -1,4 +1,5 @@
 import Foundation
+import MaiCore
 
 #if canImport(AppKit)
   import AppKit
@@ -84,8 +85,7 @@ enum SystemClipboard {
 
   static func writeUsingExternalTool(
     _ text: String,
-    searchPath: [String] = ProcessInfo.processInfo.environment["PATH"]?
-      .split(separator: ":").map(String.init) ?? []
+    searchPath: [String] = LocalExecutable.searchPath()
   ) throws {
     guard let command = externalTools.compactMap({ resolve($0, searchPath: searchPath) }).first
     else {
@@ -110,14 +110,9 @@ enum SystemClipboard {
   }
 
   private static func resolve(_ command: [String], searchPath: [String]) -> [String]? {
-    guard let name = command.first else { return nil }
-    for directory in searchPath {
-      let candidate = (directory as NSString).appendingPathComponent(name)
-      if FileManager.default.isExecutableFile(atPath: candidate) {
-        return [candidate] + command.dropFirst()
-      }
-    }
-    return nil
+    guard let name = command.first,
+      let path = try? LocalExecutable.resolve(name, searchPath: searchPath) else { return nil }
+    return [path] + command.dropFirst()
   }
 }
 

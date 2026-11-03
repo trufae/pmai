@@ -32,10 +32,9 @@ public final class RemotePTY: @unchecked Sendable {
     candidates += [environment["COMSPEC"], "cmd"]
     var executable: String?
     for candidate in candidates.compactMap({ $0 }) {
-      let process = Process()
-      if (try? LocalProcess.configure(process, command: candidate, environment: environment, workingDirectory: cwd)) != nil {
-        executable = process.executableURL?.withUnsafeFileSystemRepresentation { $0.map { String(cString: $0) } }
-        if executable != nil { break }
+      if let path = try? LocalExecutable.resolve(candidate, environment: environment, workingDirectory: cwd) {
+        executable = path
+        break
       }
     }
     guard let executable else { throw JSONRPCError.internalError("No native Windows shell was found") }
