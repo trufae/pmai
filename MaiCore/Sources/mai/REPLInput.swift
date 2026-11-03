@@ -6,7 +6,11 @@ import MaiCore
 enum REPLVoiceControl: Sendable { case toggleCapture, send, discard }
 
 enum REPLEvent: Sendable {
-  case line(String, heredoc: Bool, promptID: String?, pasted: IndexSet = [])
+  /// Buffered submissions may already have released the reader while a
+  /// foreground command waited. Replaying them must not open a second prompt.
+  case line(String, heredoc: Bool, promptID: String?, pasted: IndexSet = [], inputReleased: Bool = false)
+  case foregroundFinished(UUID)
+  case readerParked
   /// A non-nil ID means the signal/input path already cancelled that exact
   /// operation. `endedInput` distinguishes a raw Ctrl+C byte from SIGINT.
   case interrupt(REPLInterruptID?, endedInput: Bool)
@@ -180,6 +184,10 @@ final class REPLInputReader: @unchecked Sendable {
         interrupt()
         continue
       }
+      if editor.wasParked {
+        continuation.yield(.readerParked)
+        continue
+      }
       let promptID = editor.submittedPromptID
       guard promptID == nil, let delimiter = Self.heredocDelimiter(in: line) else {
         continuation.yield(.line(line, heredoc: false, promptID: promptID, pasted: editor.submittedPasteBytes))
@@ -202,6 +210,12 @@ final class REPLInputReader: @unchecked Sendable {
             continue
           }
           break
+        }
+        if editor.wasParked {
+          continuation.yield(.readerParked)
+          gate.wait()
+          if lock.withLock({ stopped }) { return }
+          continue
         }
         if let promptID = editor.submittedPromptID {
           // Answer the modal through the event loop, retaining the heredoc

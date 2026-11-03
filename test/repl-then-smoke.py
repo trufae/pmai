@@ -161,6 +161,11 @@ def main():
                 request('idle', model='next')
                 wait('DONE-idle')
                 send('/exit')
+                # Terminal restoration can wait for queued PTY output to drain.
+                deadline = time.monotonic() + 10
+                while process.poll() is None:
+                    assert time.monotonic() < deadline, output.decode(errors='replace')
+                    read_pty(master, output, .05)
                 process.wait(timeout=10)
                 assert process.returncode == 0
                 assert requests.empty()

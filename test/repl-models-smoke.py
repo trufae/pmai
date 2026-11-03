@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import pty
 import queue
+import shlex
 import struct
 import subprocess
 import sys
@@ -19,6 +20,7 @@ from http.server import ThreadingHTTPServer
 
 requests = queue.Queue()
 catalog_release = threading.Event()
+foreground_release = threading.Event()
 compact_release = threading.Event()
 shutdown = threading.Event()
 catalog = {
@@ -38,7 +40,10 @@ class Provider(JSONProvider):
 
     def do_GET(self):
         requests.put((self.path, self.headers.get('Accept'), self.headers.get('Authorization')))
-        if self.path.startswith('/stalled/'):
+        if self.path.startswith('/foreground/'):
+            foreground_release.wait(60)
+            self.respond(catalog)
+        elif self.path.startswith('/stalled/'):
             shutdown.wait(30)
         elif self.path.startswith('/drip/'):
             self.send_response(200)
@@ -62,6 +67,10 @@ class Provider(JSONProvider):
     def do_POST(self):
         length = int(self.headers['Content-Length'])
         body = json.loads(self.rfile.read(length))
+        if self.path == '/blocked-mcp':
+            requests.put(('mcp', body['method'], None))
+            shutdown.wait(60)
+            return
         if body['messages'][-1]['content'].startswith('Compact the transcript below'):
             requests.put(('compact', length, body['model']))
             compact_release.wait(30)
@@ -86,7 +95,8 @@ def main():
                 for name, path in [('openai', ''), ('v1', '/v1/'),
                                    ('completion', '/v1/chat/completions'),
                                    ('native', '/native'), ('unavailable', '/unavailable'),
-                                   ('stalled', '/stalled'), ('lazy', '/lazy'), ('drip', '/drip')]
+                                   ('stalled', '/stalled'), ('lazy', '/lazy'), ('drip', '/drip'),
+                                   ('foreground', '/foreground')]
             ]
             # The provider unit test pins the default 15-second catalog cap.
             # Exercise stalled and drip deadlines here without waiting for that cap.
@@ -100,7 +110,12 @@ def main():
                             'toolNames': [], 'toolGroupNames': [], 'retry': {'attempts': 0},
                             'autocompact': {'tokens': 0}}],
                 'memory': {'enabled': False}, 'use': {'plan': False},
+                'mcpServers': [{'id': 'blocked', 'kind': 'streamable-http', 'enabled': False,
+                                'url': f'http://127.0.0.1:{server.server_port}/blocked-mcp'}],
             }))
+            editor = root / 'editor.py'
+            editor.write_text('from pathlib import Path\nPath("editor-ran").write_text("done")\n')
+            environment['EDITOR'] = shlex.join([sys.executable, str(editor)])
             command = [binary, '--config', str(config), '--home', str(root / 'home'),
                        '--no-stream', '--no-markdown']
             seed = subprocess.run(command + ['seed'], cwd=root, env=environment,
@@ -225,6 +240,51 @@ def main():
                 send('/models unavailable\n')
                 wait_for('Loading model')
                 assert next_request()[0] == '/unavailable/models'
+                # Submitting another command must leave cancellation usable,
+                # and apply the queued change after the cancelled task settles.
+                blocked_commands = [
+                    ('/models foreground', '/models', '\x03', '/foreground/models'),
+                    (f'/mcp add --name cancelled -- http://127.0.0.1:{server.server_port}/blocked-mcp',
+                     '/mcp', '/stop\n', 'mcp'),
+                    ('/mcp enable blocked', '/mcp', '\x03', 'mcp'),
+                ]
+                for index, (command_text, name, cancellation, request_path) in enumerate(blocked_commands):
+                    send(command_text + '\n')
+                    assert next_request()[0] == request_path
+                    if index == 0:
+                        send('\x1b[1;5C')
+                        wait_for('Agent switch queued until /models finishes.')
+                    value = 1001 + index
+                    send(f'/set ctx.recent {value}\n')
+                    wait_for(f'Queued until {name} finishes.')
+                    send(cancellation)
+                    wait_for(f'cancelled {name}')
+                    wait_for(f'Set ctx.recent = {value}')
+                    send('/set ctx.recent\n')
+                    wait_for(f'ctx.recent = {value}')
+                saved_servers = json.loads(config.read_text())['mcpServers']
+                assert len(saved_servers) == 1 and not saved_servers[0]['enabled'], saved_servers
+                print('PASS foreground /models and MCP: queued settings, Ctrl+C, /stop, cancelled configuration', flush=True)
+                send('/models foreground\n')
+                assert next_request()[0] == '/foreground/models'
+                send('/edit input\n')
+                wait_for('Queued until /models finishes.')
+                for value in (2001, 2002):
+                    send(f'/set ctx.recent {value}\n')
+                    wait_for('Queued until /models finishes.')
+                send('catalog-draft')
+                wait_for('catalog-draft')
+                foreground_release.set()
+                wait_for('fresh.gguf — llamacpp')
+                wait_for('Nothing to send: the editor left the file empty.')
+                wait_for('Set ctx.recent = 2002')
+                assert (root / 'editor-ran').read_text() == 'done'
+                send('-preserved')
+                wait_for('catalog-draft-preserved')
+                send('\x03')
+                send('/set ctx.recent\n')
+                wait_for('ctx.recent = 2002')
+                print('PASS foreground completion: ordered commands and preserved draft', flush=True)
                 for provider, timeout in [('drip', 1), ('stalled', 1)]:
                     send(f'/models {provider}\n')
                     assert next_request()[0] == f'/{provider}/models'
@@ -260,14 +320,21 @@ def main():
                 wait_for('draft-after-compaction-preserved')
                 send('\n')
                 wait_for('✓ took')
-                send('/exit\n')
+                foreground_release.clear()
+                send('/models foreground\n')
+                assert next_request()[0] == '/foreground/models'
+                send('/set ctx.recent 3000\n')
+                wait_for('Queued until /models finishes.')
+                send('\x04')
                 # macOS terminal restoration waits for pending PTY output to drain.
                 deadline = time.monotonic() + 10
                 while process.poll() is None:
-                    assert time.monotonic() < deadline, ('/exit timed out', output.decode(errors='replace'))
+                    assert time.monotonic() < deadline, ('EOF shutdown timed out', output.decode(errors='replace'))
                     read_for(.05)
                 assert process.returncode == 0, (process.returncode, output.decode(errors='replace'))
-                messages = read_chat(chat_file)['messages']
+                saved = read_chat(chat_file)
+                assert saved['primaryAgent']['autocompact']['preserveRecentTokens'] == 3000, saved
+                messages = saved['messages']
                 user_texts = [m['content'][0]['text']['_0'] for m in messages if m['role'] == 'user']
                 # Compaction keeps the latest request and stores its summary as conversation evidence.
                 assert user_texts == [
@@ -287,6 +354,7 @@ def main():
                 os.close(master)
     finally:
         catalog_release.set()
+        foreground_release.set()
         compact_release.set()
         shutdown.set()
         server.shutdown()

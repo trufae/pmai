@@ -2374,6 +2374,7 @@ struct MaiCLI {
     var resetID: UUID?
     /// True while the input thread waits for the loop before reading again.
     var readerParked = true
+    var readerEnded = false
     var exiting = false
 
     var hasTurns: Bool { activeTurn != nil || !btwTurns.isEmpty || !conversationTurns.isEmpty || summary != nil }
@@ -2655,6 +2656,8 @@ struct MaiCLI {
     }
 
     let (events, continuation) = AsyncStream<REPLEvent>.makeStream()
+    var eventIterator = events.makeAsyncIterator()
+    var deferredEvents: [REPLEvent] = []
     let interruptHandler = TerminalInterruptHandler {
       continuation.yield(.interrupt($0, endedInput: $1))
     }
@@ -3035,11 +3038,12 @@ struct MaiCLI {
 
     /// Lets the input thread read the next line. Settings that the editor
     /// reads are refreshed here, while the thread is parked and cannot race.
-    func releaseReader(workspace: AgentChatWorkspace) async {
+    func releaseReader(workspace: AgentChatWorkspace, duringForeground: Bool = false) async {
       if isatty(STDIN_FILENO) != 0 {
         services.modelCatalog.select(session.profile.provider)
       }
-      guard loop.readerParked, !loop.exiting, !loop.drainingThen else { return }
+      guard loop.readerParked, !loop.readerEnded, !loop.exiting,
+        !loop.drainingThen || duringForeground else { return }
       await refreshTerminalSettings()
       if screen == nil {
         // Announcing while the classic editor owns the row would corrupt it,
@@ -3117,7 +3121,7 @@ struct MaiCLI {
         await releaseIfIdle(workspace: workspace)
         return
       }
-      guard loop.readerParked, !loop.exiting, !loop.drainingThen else { return }
+      guard loop.readerParked, !loop.readerEnded, !loop.exiting, !loop.drainingThen else { return }
       if screen?.viewNeedsHistory == true {
         screen?.updateViewHistory((try? REPLHistoryCommand.run("", editor: editor)) ?? "No input history.")
       }
@@ -3492,9 +3496,9 @@ struct MaiCLI {
       if let operation { interruptHandler.restore(operation.id, cancellation: operation.cancel) }
     }
 
-    /// Gives Ctrl+C to one non-interactive command, then restores a turn that
-    /// may still be streaming behind it. Its value state is applied by the
-    /// event loop only after the command ends.
+    /// Gives Ctrl+C to one non-interactive command. Keep consuming input while
+    /// it waits, buffering ordinary submissions until its state is applied.
+    /// Commands that own stdin themselves leave resumeInput disabled.
     func runForeground<Value: Sendable>(
       _ name: String,
       resumeInput: Bool = true,
@@ -3502,10 +3506,58 @@ struct MaiCLI {
     ) async -> (value: Value, interrupted: Bool) {
       let previous = loop.interruptOperation
       if let previous { interruptHandler.suspend(previous.id) }
-      let task = Task { await operation() }
+      let readsInput = screen != nil && resumeInput
+      let id = UUID()
+      let task = Task {
+        let value = await operation()
+        if readsInput { continuation.yield(.foregroundFinished(id)) }
+        return value
+      }
       let interrupt = interruptHandler.activate { task.cancel() }
       loop.foregroundCommand = name
-      if screen != nil && resumeInput { await releaseReader(workspace: workspace) }
+      if readsInput {
+        await releaseReader(workspace: workspace, duringForeground: true)
+        while let event = await eventIterator.next() {
+          if case .foregroundFinished(let finished) = event, finished == id { break }
+          switch event {
+          case .line(let raw, let heredoc, let promptID, let pasted, _):
+            loop.readerParked = true
+            let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !heredoc, text == "/stop" {
+              interruptHandler.requestInterrupt()
+            } else {
+              deferredEvents.append(.line(
+                raw, heredoc: heredoc, promptID: promptID, pasted: pasted, inputReleased: true))
+              if !heredoc, ["/exit", "/quit"].contains(text) {
+                interruptHandler.requestInterrupt()
+              } else {
+                await terminal.note("Queued until \(name) finishes. Ctrl+C or /stop cancels it.")
+              }
+            }
+            await releaseReader(workspace: workspace, duringForeground: true)
+          case .interrupt(let operation, let endedInput):
+            if endedInput { loop.readerParked = true }
+            // The signal/input path cancelled the registered task already.
+            // Replay its other effects without parking the reopened reader.
+            deferredEvents.append(.interrupt(operation, endedInput: false))
+            await terminal.note("Cancelling \(name)…")
+            await releaseReader(workspace: workspace, duringForeground: true)
+          case .endOfFile:
+            loop.readerEnded = true
+            loop.readerParked = true
+            interruptHandler.requestInterrupt()
+            deferredEvents.append(event)
+          case .switchAgent(let selection, let reply):
+            // Navigation waits for acknowledgement on the input thread.
+            // Queue its state change, but let that thread keep handling keys.
+            deferredEvents.append(.switchAgent(selection, reply: {}))
+            reply()
+            await terminal.note("Agent switch queued until \(name) finishes.")
+          default:
+            deferredEvents.append(event)
+          }
+        }
+      }
       let value = await task.value
       let interrupted = interruptHandler.deactivate(interrupt)
       loop.foregroundCommand = nil
@@ -4329,9 +4381,13 @@ struct MaiCLI {
         defer { reply() }
         guard loop.modalPrompt(for: session.id) == nil, !loop.exiting else { return false }
         await switchAgent(selection)
-      case .line(let raw, let isHeredoc, let promptID, _):
+      case .foregroundFinished:
+        break
+      case .readerParked:
+        loop.readerParked = true
+      case .line(let raw, let isHeredoc, let promptID, _, let inputReleased):
         var heredoc = isHeredoc
-        if !loop.drainingThen { loop.readerParked = true }
+        if !loop.drainingThen && !inputReleased { loop.readerParked = true }
         let typed = heredoc ? raw : raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if !typed.hasPrefix("/"), promptID != loop.modalPrompt(for: session.id)?.input.id {
           loop.recoveredInputs.keep(raw, promptID: promptID)
@@ -5481,6 +5537,7 @@ struct MaiCLI {
 
       case .endOfFile:
         await stopVoice()
+        loop.readerEnded = true
         loop.readerParked = true
         await closeChatChop()
         loop.beginExit()
@@ -5761,11 +5818,45 @@ struct MaiCLI {
       return false
     }
 
+    /// A buffered line may run an editor, switch terminal modes, or lend stdin
+    /// to a shell. Park the current draft first, just like a fresh submission.
+    func parkReader() async {
+      guard screen != nil, !loop.readerParked, !loop.readerEnded else { return }
+      editor.requestPark(true)
+      defer { editor.requestPark(false) }
+      while let event = await eventIterator.next() {
+        switch event {
+        case .readerParked:
+          loop.readerParked = true
+          return
+        case .line(let raw, let heredoc, let promptID, let pasted, _):
+          deferredEvents.append(.line(
+            raw, heredoc: heredoc, promptID: promptID, pasted: pasted, inputReleased: true))
+          loop.readerParked = true
+          return
+        case .interrupt(let operation, let endedInput):
+          deferredEvents.append(.interrupt(operation, endedInput: false))
+          if endedInput { loop.readerParked = true; return }
+        case .endOfFile:
+          deferredEvents.append(event)
+          loop.readerEnded = true
+          loop.readerParked = true
+          return
+        case .switchAgent(let selection, let reply):
+          deferredEvents.append(.switchAgent(selection, reply: {}))
+          reply()
+        default:
+          deferredEvents.append(event)
+        }
+      }
+    }
+
     func dispatchEvent(_ input: REPLEvent) async -> Bool {
+      if case .line(_, _, _, _, inputReleased: true) = input { await parkReader() }
       var event = input
       var redirection: REPLRedirection?
       switch event {
-      case .line(let raw, let heredoc, let promptID, let pasted):
+      case .line(let raw, let heredoc, let promptID, let pasted, let inputReleased):
         let isCommand = raw.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/")
         redirection = isCommand ? nil : loop.pendingQueueRedirection
         // A queued line's redirection belongs to its eventual execution.
@@ -5784,10 +5875,10 @@ struct MaiCLI {
               case .process(let command):
                 redirection = try REPLRedirection(command: command)
               }
-              event = .line(syntax.input, heredoc: false, promptID: promptID)
+              event = .line(syntax.input, heredoc: false, promptID: promptID, inputReleased: inputReleased)
             }
           } catch {
-            if !loop.drainingThen { loop.readerParked = true }
+            if !loop.drainingThen && !inputReleased { loop.readerParked = true }
             await terminal.note("redirection: \(error.localizedDescription)", tone: .error)
             await releaseIfIdle(workspace: workspace)
             return false
@@ -5819,7 +5910,11 @@ struct MaiCLI {
       return exits
     }
 
-    for await event in events {
+    while true {
+      let event: REPLEvent
+      if !deferredEvents.isEmpty { event = deferredEvents.removeFirst() }
+      else if let incoming = await eventIterator.next() { event = incoming }
+      else { break }
       if await dispatchEvent(event) { break }
       var exits = false
       // Turns must have settled their transcripts, and background children

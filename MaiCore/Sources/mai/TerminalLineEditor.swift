@@ -248,6 +248,7 @@ final class TerminalLineEditor {
   private let maximumHistory = 500
   private var ui = ConfiguredTerminalUI()
   private(set) var wasInterrupted = false
+  private(set) var wasParked = false
   private(set) var submittedPromptID: String?
   private(set) var submittedPasteBytes = IndexSet()
   private var historyPasteBytes: [String: IndexSet] = [:]
@@ -255,6 +256,8 @@ final class TerminalLineEditor {
   private var publishedPrompt: TerminalPrompt?
   private var pendingPrompt: TerminalPrompt?
   private var recoveredInput: String?
+  private var parkRequested = false
+  private var parkedModalDraft: (id: String?, bytes: [UInt8], cursor: Int, pasted: IndexSet)?
   // Only the input thread touches the active prompt and saved chat draft.
   private var activePrompt = TerminalPrompt(text: "")
   private var tracksPromptUpdates = false
@@ -297,6 +300,11 @@ final class TerminalLineEditor {
     promptLock.withLock { recoveredInput = text }
   }
 
+  /// Return the reader to its gate between keystrokes, retaining the draft.
+  func requestPark(_ requested: Bool) {
+    promptLock.withLock { parkRequested = requested }
+  }
+
   /// Publish from the event loop; the input thread applies it on its next poll.
   func updatePrompt(_ prompt: TerminalPrompt) {
     promptLock.withLock {
@@ -324,6 +332,7 @@ final class TerminalLineEditor {
     continuationPrompt: String? = nil
   ) -> String? {
     wasInterrupted = false
+    wasParked = false
     submittedPromptID = nil
     submittedPasteBytes = []
     self.tracksPromptUpdates = tracksPromptUpdates
@@ -402,6 +411,14 @@ final class TerminalLineEditor {
         bytes = Array(recovered.utf8)
         cursor = bytes.count
         pasted = []
+      }
+    }
+    if let saved = parkedModalDraft {
+      parkedModalDraft = nil
+      if activePrompt.isModal, activePrompt.id == saved.id {
+        bytes = saved.bytes
+        cursor = saved.cursor
+        pasted = saved.pasted
       }
     }
     var historyIndex: Int?
@@ -490,6 +507,23 @@ final class TerminalLineEditor {
 
     var viewSearch: [UInt8]?
     while let key = readKey() {
+      if case .refreshPrompt = key,
+        promptLock.withLock({
+          guard parkRequested else { return false }
+          parkRequested = false
+          return true
+        })
+      {
+        if activePrompt.isModal {
+          parkedModalDraft = (activePrompt.id, bytes, cursor, pasted)
+        } else {
+          conversationDrafts[activePrompt.conversationID ?? "main"] = (bytes, cursor, pasted)
+        }
+        surface?.setViewSearching(false)
+        dismissCompletion()
+        wasParked = true
+        return ""
+      }
       if case .outputBoundary(let toEnd) = key {
         surface?.scrollOutput(toEnd: toEnd)
         continue
@@ -1485,7 +1519,7 @@ final class TerminalLineEditor {
   /// The next byte of input, from what the surface read ahead first; with a
   /// timeout, nil when nothing arrives in time.
   private var hasPromptUpdate: Bool {
-    tracksPromptUpdates && promptLock.withLock { pendingPrompt != nil }
+    tracksPromptUpdates && promptLock.withLock { pendingPrompt != nil || parkRequested }
   }
 
   private func readByte(timeoutMilliseconds: Int32? = nil, interruptForPrompt: Bool = false) -> UInt8? {
