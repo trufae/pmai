@@ -25,7 +25,7 @@ extension MaiCLI {
     case "thinking" where rest.isEmpty, "reasoning" where rest.isEmpty:
       return (.thinking, "thinking")
     case "diff" where rest.isEmpty, "diffs" where rest.isEmpty: return (.diffs, "git diff")
-    case "agents" where rest.isEmpty, "conversations" where rest.isEmpty:
+    case "agent" where rest.isEmpty, "agents" where rest.isEmpty, "conversations" where rest.isEmpty:
       return (.conversations, "agent conversations")
     case "tool", "tools":
       guard rest.isEmpty || tools.contains(rest) else {
@@ -37,7 +37,7 @@ extension MaiCLI {
     let target = name == "agent" ? rest : argument
     guard !target.isEmpty else {
       throw JSONRPCError.invalidParams(
-        "Usage: /view <off|current|pins|log|history|todo|iconlog|thinking|voice|tools [NAME]|diffs|prompt TEXT|agents|AGENT>. /help view")
+        "Usage: /view <off|clear|current|pins|log|history|todo|iconlog|thinking|voice|tools [NAME]|diffs|prompt TEXT|agents|AGENT>. /help view")
     }
     let rawPID = target.replacingOccurrences(of: "agent#", with: "")
       .trimmingCharacters(in: CharacterSet(charactersIn: "#@"))
@@ -78,8 +78,8 @@ extension MaiCLI {
     /view current          Watch the conversation selected at the prompt
     /view main             Watch the main conversation while working with another agent
     /view AGENT            Watch an agent's conversation by name, agent#PID, or PID
-    /view agent NAME       Explicit agent selector (also accepts a display name)
-    /view agents           Show retained agent conversations, including the main chat
+    /view agent [NAME]     Watch one agent, or all other agents when NAME is omitted
+    /view agents           Watch all conversations except the agent selected at the prompt
     /view pins             Show all pinned messages in full, in transcript order
     /view log              Show the first line of every message as role: text
     /view history          Show saved inputs, as in /history
@@ -92,6 +92,7 @@ extension MaiCLI {
     /view diffs            Show git diff (unstaged tracked changes), refreshed every 5 seconds
     /view prompt $NAME     Apply a saved prompt after each reply (e.g. $tldr)
     /view prompt TEXT      Apply instructions after each reply, using the compact model
+    /view clear            Clear view output without changing its source or UI mode
     /view off              Close the view
     """
 }

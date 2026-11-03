@@ -4654,6 +4654,8 @@ struct MaiCLI {
             if let screen, screen.isBufferMode {
               if argument.isEmpty || argument == "help" {
                 await terminal.line(viewHelp)
+              } else if argument.lowercased() == "clear" {
+                screen.clearView()
               } else {
                 do {
                   let processes = await conversationTabs()
@@ -15029,7 +15031,7 @@ struct MaiCLI {
       "/agents disable ",
       "/ps", "/ps -a", "/ps -p", "/ps -ap", "/ps -k ",
       "/view", "/view off", "/view current", "/view main", "/view pins", "/view log", "/view todo", "/view iconlog", "/view thinking", "/view voice", "/view tools",
-      "/view tools ", "/view prompt ", "/view history", "/view diffs", "/view agents", "/view agent ", "/help view",
+      "/view tools ", "/view prompt ", "/view history", "/view diffs", "/view agents", "/view agent ", "/view clear", "/help view",
       "/job", "/jobs", "/jobs tree", "/jobs stop ", "/jobs continue ", "/jobs clear", "/jobs log ",
       "/jobs kill ", "/jobs focus ",
       "/jobs focus main", "/queue", "/queue push ", "/queue pop", "/queue del",
