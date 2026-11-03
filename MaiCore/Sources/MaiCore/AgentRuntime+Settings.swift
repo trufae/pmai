@@ -162,6 +162,13 @@ extension AgentRuntime {
       throw AgentRuntimeError.localToolPolicyRequired(request.provider)
     }
     if task == .compact {
+      // Chat effort is for solving the task, not for rewriting its history.
+      // Thinking can consume the entire summary allowance before any text is
+      // produced. A dedicated compact agent may explicitly opt back in.
+      if taskAgents[task] == nil || request.options.reasoningEffort == nil {
+        request.options.reasoningEffort = ReasoningEffort.disabled.rawValue
+        if taskAgents[task] == nil { request.options.reasoningGuidance = nil }
+      }
       request.agentID = "\(original.agentID).compact"
       request.toolNames = []
       request.toolPolicy = .init()

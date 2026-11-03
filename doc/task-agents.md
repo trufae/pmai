@@ -122,7 +122,9 @@ On iOS, side questions appear in a collapsible bar below the chat title. Expand
 it to read all answers, newest first, and stop or dismiss individual questions.
 These answers remain separate from chat history and are kept until dismissed or the app exits.
 
-Compaction sends the compaction template and selected transcript to the assigned agent with its prompt and reasoning settings, with tools disabled. Both manual and automatic compaction use the assignment. A failed summary leaves the existing conversation intact. With no assignment, the current model and reasoning settings are used.
+Compaction sends the compaction template and selected transcript to the assigned agent with its prompt and tools disabled. Both manual and automatic compaction use the assignment. With no assignment, the current model is used. Compaction defaults to disabled reasoning independently of the chat's effort; an explicitly configured effort on a dedicated compact agent is respected.
+
+Transcripts larger than the summarizer's context window are split into bounded pieces, then their summaries are consolidated. If a response is truncated or contains no summary text, compaction increases the output allowance and recalculates the input budget, splitting further when needed. Configured output limits and shared token/time budgets still apply. History is replaced only after a complete summary succeeds; a failed summary leaves the existing conversation intact.
 
 `/set ctx.strategy=smart` also uses the compact assignment, with a separate
 `prompts.smart` template (`/edit smart`). When the working context reaches about

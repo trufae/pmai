@@ -64,9 +64,12 @@ extension AgentRuntime {
     let window =
       contextWindow(
         provider: inference.provider, model: inference.model, options: inference.options) ?? 32_768
-    // Keep partial summaries small enough that consolidation makes progress.
+    // Start small, but leave room to recover when reasoning or a dense
+    // transcript needs more output. Explicit configured limits remain caps.
+    let maximumOutput = min(
+      max(1, inference.options.maxOutputTokens ?? 16_384), max(1, window / 4))
     inference.options.maxOutputTokens = min(
-      max(1, inference.options.maxOutputTokens ?? outputLimit ?? 2_048), max(1, window / 8))
+      max(1, outputLimit ?? inference.options.maxOutputTokens ?? 2_048), maximumOutput)
     let budget = min(
       inputLimit ?? Int.max, Self.inputTokenBudget(window: window, options: inference.options))
     var messages = inference.messages
@@ -90,6 +93,14 @@ extension AgentRuntime {
         await state.budget.record(tokens: usage.totalTokens)
         let text = MessageContentFilter.textWithoutReasoning(from: call.response.message.text)
           .trimmingCharacters(in: .whitespacesAndNewlines)
+        let allowance = inference.options.maxOutputTokens ?? 2_048
+        if (call.response.stopReason == .length || text.isEmpty), allowance < maximumOutput {
+          // This is a changed request, not a blind transport retry. Recompute
+          // the input budget too: more reply space may require smaller chunks.
+          return try await compactText(
+            source: source, render: render, state: &state, inputLimit: inputLimit,
+            depth: depth + 1, outputLimit: min(maximumOutput, allowance * 2))
+        }
         guard call.response.stopReason != .length else { throw SummaryError.truncated }
         guard !text.isEmpty else { throw SummaryError.empty }
         return text
@@ -170,7 +181,8 @@ extension AgentRuntime {
 
     var errorDescription: String? {
       switch self {
-      case .empty: "The model returned an empty summary."
+      case .empty:
+        "The model returned no summary text (possibly only reasoning); history was kept. Lower the compact model's reasoning effort, increase its output limit, or try another model."
       case .truncated:
         "The model's summary reached its output limit (which may include reasoning tokens); history was kept. Increase the compact model's output limit or lower its reasoning effort."
       case .cannotReduce:

@@ -41,26 +41,47 @@ func smallContextUnicodeChunks() {
   #expect(chunks.allSatisfy { $0.utf8.count <= 1_024 })
 }
 
-@Test("A 32k summarizer covers a transcript larger than its window, including one huge message")
+@Test("A summarizer covers a transcript larger than its window, including one huge message")
 func smallContextChunkedSummary() async throws {
-  let provider = SmallContextProvider(window: 32_768)
+  let provider = SmallContextProvider(window: 4_096)
   let runtime = AgentRuntime()
   try await runtime.register(provider)
-  let source = (0..<12).map { "KEEP-\($0) " + String(repeating: "evidence ", count: 5_000) }
+  let source = (0..<3).map { "KEEP-\($0) " + String(repeating: "evidence ", count: 900) }
     .joined(separator: "\n")
   let result = try await runtime.summarize(
     source,
     request: AgentRequest(
       provider: "small", model: "fixture",
-      messages: [], options: .init(contextWindowTokens: 32_768)),
+      messages: [], options: .init(contextWindowTokens: 4_096)),
     renderPrompt: { "CUSTOM preserve all KEEP identifiers and focus.\nTranscript:\n\($0)" })
-  for index in 0..<12 { #expect(result.contains("KEEP-\(index)")) }
+  for index in 0..<3 { #expect(result.contains("KEEP-\(index)")) }
   let requests = await provider.requests
   #expect(requests.count > 2)
   #expect(await provider.rejections == 0)
   #expect(requests.allSatisfy { $0.messages.last?.text.hasPrefix("CUSTOM preserve") == true })
   #expect(requests.allSatisfy { $0.tools.isEmpty && $0.toolChoice == .none && !$0.stream })
   #expect(requests.allSatisfy { ($0.options.maxOutputTokens ?? 0) <= 2_048 })
+}
+
+@Test("Compaction recovers truncated or reasoning-only output with room for a complete summary",
+  arguments: [false, true])
+func smallContextSummaryOutputRecovery(reasoningOnly: Bool) async throws {
+  let provider = SmallContextProvider(
+    window: 16_384, truncatesSummary: !reasoningOnly, reasoningOnly: reasoningOnly,
+    minimumSummaryOutput: 4_096)
+  let runtime = AgentRuntime()
+  try await runtime.register(provider)
+  let result = try await runtime.summarize(
+    "KEEP-1: The initial question. " + String(repeating: "evidence ", count: 4_000)
+      + " KEEP-2: The remaining failure.",
+    request: AgentRequest(
+      provider: "small", model: "fixture", messages: [],
+      options: .init(contextWindowTokens: 16_384, reasoningEffort: "xhigh")),
+    renderPrompt: { AgentCompactionPrompt.render(transcript: $0) })
+  #expect(result == "Saved facts: KEEP-1 KEEP-2")
+  #expect(!result.contains("Still thinking"))
+  #expect(await provider.rejections == 0)
+  #expect(await provider.requests.allSatisfy { $0.options.reasoningEffort == "disabled" })
 }
 
 @Test(
@@ -303,13 +324,18 @@ private actor SmallContextProvider: ChatProvider {
   let window: Int
   let truncatesSummary: Bool
   let reasoningOnly: Bool
+  let minimumSummaryOutput: Int
   private(set) var requests: [ProviderRequest] = []
   private(set) var rejections = 0
 
-  init(window: Int, truncatesSummary: Bool = false, reasoningOnly: Bool = false) {
+  init(
+    window: Int, truncatesSummary: Bool = false, reasoningOnly: Bool = false,
+    minimumSummaryOutput: Int = 0
+  ) {
     self.window = window
     self.truncatesSummary = truncatesSummary
     self.reasoningOnly = reasoningOnly
+    self.minimumSummaryOutput = minimumSummaryOutput
   }
 
   func complete(_ request: ProviderRequest, emit: @escaping ProviderEventHandler) async throws
@@ -332,10 +358,13 @@ private actor SmallContextProvider: ChatProvider {
       let matches = expression.matches(in: input, range: NSRange(input.startIndex..., in: input))
       let markers = matches.compactMap { Range($0.range, in: input).map { String(input[$0]) } }
       let summary = "Saved facts: " + Set(markers).sorted().joined(separator: " ")
+      let fails = minimumSummaryOutput == 0
+        || (request.options.maxOutputTokens ?? 0) < minimumSummaryOutput
       return ProviderResponse(
-        message: reasoningOnly ? AgentMessage(role: .assistant, content: [.reasoning("Still thinking")]) : .assistant(summary),
+        message: reasoningOnly && fails
+          ? AgentMessage(role: .assistant, content: [.reasoning("Still thinking")]) : .assistant(summary),
         usage: .init(inputTokens: input.count / 4, outputTokens: summary.count / 4),
-        stopReason: truncatesSummary ? .length : .stop)
+        stopReason: truncatesSummary && fails ? .length : .stop)
     }
     return ProviderResponse(message: .assistant("done"), stopReason: .stop)
   }

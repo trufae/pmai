@@ -253,16 +253,25 @@ func taskAgentManualCompaction() async throws {
   let original = AgentRequest(
     provider: "primary", model: "large", messages: [.user("summarize")],
     toolNames: ["echo"], toolGroupNames: ["files"], subagentNames: ["worker"],
-    autocompact: .init(tokens: 1))
+    options: .init(reasoningEffort: "xhigh"), autocompact: .init(tokens: 1))
   let request = try await runtime.taskRequest(.compact, from: original)
   #expect(request.provider == "local")
   #expect(request.toolNames.isEmpty && request.subagentNames.isEmpty)
   #expect(request.toolGroupNames == [])
+  #expect(request.options.reasoningEffort == "disabled")
   #expect(!request.autocompact.isEnabled)
   #expect(original.model == "large")
+  #expect(original.options.reasoningEffort == "xhigh")
+  try await runtime.register(
+    agent: AgentDefinition(
+      id: "compact", instructions: "", provider: "local", model: "tiny",
+      options: .init(reasoningEffort: "high")), replacingExisting: true)
+  let explicit = try await runtime.taskRequest(.compact, from: original)
+  #expect(explicit.options.reasoningEffort == "high")
   await runtime.configureTaskAgents(.init())
   let fallback = try await runtime.taskRequest(.compact, from: original)
   #expect(fallback.provider == original.provider && fallback.model == original.model)
+  #expect(fallback.options.reasoningEffort == "disabled")
 }
 
 @Test("A primary without native tools can continue after a native specialist")

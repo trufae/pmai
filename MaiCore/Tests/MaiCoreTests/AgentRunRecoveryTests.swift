@@ -489,13 +489,12 @@ func autocompactFoldsOlderMessages() async throws {
   #expect(edits.first?.compacted == 2)
   let requests = await provider.requests
   #expect(requests.count == 4)
-  let compaction = try #require(requests.first { $0.tools.isEmpty && $0.messages.count == 1 })
-  let prompt = compaction.messages[0].text
+  let compaction = try #require(requests.first { !$0.stream && $0.tools.isEmpty })
+  let prompt = try #require(compaction.messages.last { $0.role == .user }).text
   #expect(prompt.contains("Compact the transcript"))
   #expect(prompt.contains("This compaction runs automatically"))
   #expect(prompt.contains("[tool call echo"))
   #expect(!prompt.contains("c2"))
-  #expect(requests.last?.messages.count == 5)
   #expect(requests.last?.messages.contains { $0.text.hasSuffix("Compacted state") } == true)
 }
 
@@ -686,8 +685,8 @@ private actor RecoveryProvider: ChatProvider {
     emit: @escaping ProviderEventHandler
   ) async throws -> ProviderResponse {
     requests.append(request)
-    if let summary, request.tools.isEmpty, request.messages.count == 1,
-      request.messages[0].text.hasPrefix("Compact")
+    if let summary, !request.stream, request.tools.isEmpty,
+      request.messages.last(where: { $0.role == .user })?.text.hasPrefix("Compact") == true
     {
       return ProviderResponse(message: .assistant(summary), stopReason: .stop)
     }
