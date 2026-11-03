@@ -32,7 +32,7 @@ class Provider(JSONProvider):
         requests.append((self.path, body))
         if reply_mode == 'slow':
             recap_started.set()
-            recap_release.wait(20)
+            recap_release.wait(60)
         if reply_mode == 'error':
             self.respond({'error': {'message': 'Recap fixture failure'}}, 500)
             return
@@ -49,7 +49,7 @@ class Provider(JSONProvider):
                                    'finish_reason': 'stop'}]})
 
 
-def check_terminal(command, root, environment):
+def check_terminal(command, root, environment, assert_unchanged):
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 200, 0, 0))
     process = subprocess.Popen(command + ['--resume'], cwd=root, env=environment,
@@ -64,16 +64,25 @@ def check_terminal(command, root, environment):
         output.clear()
         os.write(master, text.replace('\n', '\r').encode())
 
+    def start_summary(command):
+        recap_started.clear()
+        send(command + '\n')
+        end = time.monotonic() + 10
+        while not recap_started.is_set():
+            assert time.monotonic() < end, output.decode(errors='replace')
+            if select.select([master], [], [], .05)[0]:
+                output.extend(os.read(master, 65536))
+
     try:
         wait_for('pmai> ')
         for draft in ('cancelled-draft', 'preserved-draft'):
-            recap_started.clear()
-            send('/chat recap\n')
-            end = time.monotonic() + 10
-            while not recap_started.is_set():
-                assert time.monotonic() < end, (draft, output.decode(errors='replace'))
-                if select.select([master], [], [], .05)[0]:
-                    output.extend(os.read(master, 65536))
+            start_summary('/chat compact' if draft == 'cancelled-draft' else '/chat recap')
+            # A submitted command used to park the input reader behind the
+            # summary, making keyboard Ctrl+C inaccessible as well.
+            send('/set\n')
+            wait_for('ctx.compact = off')
+            send('/unthen\n')
+            wait_for('Cleared /then queue.')
             send(draft)
             wait_for(draft)
             if draft == 'cancelled-draft':
@@ -85,7 +94,19 @@ def check_terminal(command, root, environment):
                 send('-still-here')
                 wait_for('preserved-draft-still-here')
                 send('\x03')
-                wait_for('Nothing to cancel.')
+        send('/unthen\n')
+        wait_for('Cleared /then queue.')
+        assert_unchanged()
+        recap_release.clear()
+        start_summary('/chat compact')
+        send('/set ctx.recent 1234\n')
+        wait_for('Set ctx.recent = 1234')
+        send('/unthen\n')
+        wait_for('Cleared /then queue.')
+        recap_release.set()
+        wait_for('Conversation compacted into a summary.')
+        send('/set ctx.recent\n')
+        wait_for('ctx.recent = 1234')
         send('/exit\n')
         end = time.monotonic() + 10
         while process.poll() is None:
@@ -181,6 +202,20 @@ def main():
                 for key in ('messages', 'pendingContent', 'primaryAgent', 'sessionID'):
                     assert after.get(key) == before.get(key), (key, before, after)
 
+            def terminal():
+                global reply_mode
+                reply_mode = 'slow'
+                check_terminal(command, root, environment, assert_unchanged)
+                saved = json.loads(chat_file.read_text())
+                assert 'COMPACTED GOAL' in json.dumps(saved['messages']), saved
+                assert saved['primaryAgent']['autocompact']['preserveRecentTokens'] == 1234, saved
+                reply_mode = 'normal'
+
+            if '--terminal-only' in sys.argv[2:]:
+                terminal()
+                print('PASS summary input: /set, cancellation, unchanged history, preserved draft and settings')
+                return
+
             def recap():
                 before = len(requests)
                 output = run(['/chat recap'])
@@ -231,10 +266,7 @@ def main():
             endpoint, body = recap()
             assert endpoint.startswith('/primary/') and body['model'] == 'large', (endpoint, body)
 
-            reply_mode = 'slow'
-            check_terminal(command, root, environment)
-            assert_unchanged()
-            reply_mode = 'normal'
+            terminal()
 
             assert 'Conversation compacted' in run(['/chat compact'])
             compacted = json.loads(chat_file.read_text())

@@ -12,6 +12,7 @@ enum REPLEvent: Sendable {
   case interrupt(REPLInterruptID?, endedInput: Bool)
   case endOfFile
   case turnFinished(AgentPID, Result<AgentResult, any Error>)
+  case summaryFinished(UUID, [AgentMessage]?)
   case approval(ApprovalRequest, REPLApprovalReply)
   case approvalFinished(REPLApprovalReply)
   case compaction(AutocompactionRequest, REPLCompactionReply)

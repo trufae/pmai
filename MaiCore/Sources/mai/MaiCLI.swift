@@ -2339,6 +2339,16 @@ struct MaiCLI {
     let interrupt: REPLInterruptID
   }
 
+  private struct REPLSummary {
+    let id: UUID
+    let task: Task<Void, Never>
+    let interrupt: REPLInterruptID
+    let chatID: UUID
+    let sent: [AgentMessage]
+    let pendingContent: [ContentPart]
+    let redirection: REPLRedirection?
+  }
+
   private struct REPLLimitDecision {
     let reason: AgentRunInterruption
     let id = UUID()
@@ -2348,6 +2358,7 @@ struct MaiCLI {
     var activeTurn: REPLTurn?
     var btwTurns: [AgentPID: REPLTurn] = [:]
     var conversationTurns: [AgentPID: REPLTurn] = [:]
+    var summary: REPLSummary?
     var foregroundCommand: String?
     var thenLines: [String] = []
     var drainingThen = false
@@ -2365,7 +2376,7 @@ struct MaiCLI {
     var readerParked = true
     var exiting = false
 
-    var hasTurns: Bool { activeTurn != nil || !btwTurns.isEmpty || !conversationTurns.isEmpty }
+    var hasTurns: Bool { activeTurn != nil || !btwTurns.isEmpty || !conversationTurns.isEmpty || summary != nil }
 
     func modalPrompt(for chatID: UUID) -> REPLModalPrompt? {
       if let resetID { return .reset(id: resetID) }
@@ -2392,9 +2403,19 @@ struct MaiCLI {
         .max { $0.interrupt.rawValue < $1.interrupt.rawValue }
     }
 
+    var interruptOperation: (id: REPLInterruptID, cancel: @Sendable () -> Void)? {
+      let turn = interruptTurn
+      if let summary, summary.interrupt.rawValue > (turn?.interrupt.rawValue ?? 0) {
+        return (summary.interrupt, { summary.task.cancel() })
+      }
+      if let turn { return (turn.interrupt, { turn.task.cancel() }) }
+      return nil
+    }
+
     mutating func beginExit() {
       exiting = true
       activeTurn?.task.cancel()
+      summary?.task.cancel()
       for turn in btwTurns.values { turn.task.cancel() }
       for turn in conversationTurns.values { turn.task.cancel() }
       cancelApprovals { _ in true }
@@ -2761,6 +2782,7 @@ struct MaiCLI {
       if session.historyWindow == nil, session.history.count > 64,
         session.historyChanges.isCommitted(count: session.history.count),
         loop.activeTurn?.chatID != session.id,
+        loop.summary?.chatID != session.id,
         loop.conversationTurns.values.allSatisfy({ $0.chatID != session.id })
       {
         let currentStore = store
@@ -2936,7 +2958,7 @@ struct MaiCLI {
       }
       let liveProcesses = await runtime.supervisor.liveProcesses()
       let counts = AgentProcessCounts(liveProcesses)
-      let running = loop.foregroundCommand != nil || (!activityWasInterrupted && counts.running > 0)
+      let running = loop.foregroundCommand != nil || loop.summary != nil || (!activityWasInterrupted && counts.running > 0)
       let activityMarker = running ? "●" : "○"
       let activityPID: AgentPID? = if case .agent(let pid) = loop.focus { pid } else { loop.activeTurn?.pid }
       if let activityPID, let process = await runtime.supervisor.info(activityPID), !process.state.isTerminal {
@@ -2956,6 +2978,7 @@ struct MaiCLI {
         facts.append("\(loop.btwTurns.count) btw running")
       }
       if let command = loop.foregroundCommand { facts.append("running \(command)") }
+      if loop.summary != nil { facts.append("summarizing · Ctrl+C to cancel") }
       let children = liveProcesses.filter { $0.depth > 0 }
       if !children.isEmpty { facts.append(AgentProcessCounts(children).summary) }
       let queued = await runtime.supervisor.queuedMessages().count
@@ -3461,12 +3484,12 @@ struct MaiCLI {
     /// the command hands the tty to — an editor, a shell — keeps its own
     /// Ctrl+C instead of ending the run.
     func withTurnInterruptSetAside(_ body: () async -> Void) async {
-      let turn = loop.interruptTurn
-      if let turn { interruptHandler.suspend(turn.interrupt) }
+      let operation = loop.interruptOperation
+      if let operation { interruptHandler.suspend(operation.id) }
       let shield = interruptHandler.activate(reports: false) {}
       await body()
       _ = interruptHandler.deactivate(shield)
-      if let turn { interruptHandler.restore(turn.interrupt) { turn.task.cancel() } }
+      if let operation { interruptHandler.restore(operation.id, cancellation: operation.cancel) }
     }
 
     /// Gives Ctrl+C to one non-interactive command, then restores a turn that
@@ -3477,8 +3500,8 @@ struct MaiCLI {
       resumeInput: Bool = true,
       operation: @escaping @Sendable () async -> Value
     ) async -> (value: Value, interrupted: Bool) {
-      let turn = loop.interruptTurn
-      if let turn { interruptHandler.suspend(turn.interrupt) }
+      let previous = loop.interruptOperation
+      if let previous { interruptHandler.suspend(previous.id) }
       let task = Task { await operation() }
       let interrupt = interruptHandler.activate { task.cancel() }
       loop.foregroundCommand = name
@@ -3486,7 +3509,7 @@ struct MaiCLI {
       let value = await task.value
       let interrupted = interruptHandler.deactivate(interrupt)
       loop.foregroundCommand = nil
-      if let turn { interruptHandler.restore(turn.interrupt) { turn.task.cancel() } }
+      if let previous { interruptHandler.restore(previous.id, cancellation: previous.cancel) }
       return (value, interrupted)
     }
 
@@ -3689,8 +3712,8 @@ struct MaiCLI {
       guard let chop = loop.chatChop else { return }
       loop.chatChop = nil
       _ = interruptHandler.deactivate(chop.interrupt)
-      if let turn = loop.interruptTurn {
-        interruptHandler.restore(turn.interrupt) { turn.task.cancel() }
+      if let operation = loop.interruptOperation {
+        interruptHandler.restore(operation.id, cancellation: operation.cancel)
       }
       await terminal.note("Chat chop closed.")
     }
@@ -5209,8 +5232,43 @@ struct MaiCLI {
             await releaseIfIdle(workspace: workspace)
             return false
           }
-          // Summaries use the cancellable command path below, which keeps
-          // the input prompt open while the summary request is in flight.
+          // Summaries finish through the event loop, so submitted commands
+          // and keyboard cancellation remain usable during model inference.
+          if screen != nil, name == "/chat", ["compact", "recap"].contains(
+            argument.split(whereSeparator: \.isWhitespace).first?.lowercased() ?? "")
+          {
+            guard loop.summary == nil else {
+              await terminal.note("A summary is already running. Ctrl+C cancels it.")
+              await releaseIfIdle(workspace: workspace)
+              return false
+            }
+            let id = UUID()
+            let source = session
+            let compactPrompt = configuration?.prompts?.compact
+            let recapPrompt = configuration?.prompts?.recap
+            let redirection = REPLRedirection.current
+            let task = Task {
+              var result = source
+              await withTaskCancellationHandler {
+                await handleChatCommand(
+                  argument, session: &result, runtime: runtime,
+                  compactPrompt: compactPrompt, recapPrompt: recapPrompt,
+                  terminal: terminal, announceCompaction: false)
+              } onCancel: {
+                redirection?.cancel()
+              }
+              continuation.yield(.summaryFinished(
+                id, result.history.messages == source.history.messages ? nil : result.history.messages))
+            }
+            let interrupt = interruptHandler.activate { task.cancel() }
+            loop.summary = REPLSummary(
+              id: id, task: task, interrupt: interrupt, chatID: source.id,
+              sent: source.history.messages, pendingContent: source.pendingContent,
+              redirection: redirection)
+            await refreshStatus()
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
           if name == "/msg" || name == "/chat",
             name == "/msg" || !["compact", "recap"].contains(
               argument.split(whereSeparator: \.isWhitespace).first?.lowercased() ?? "")
@@ -5429,6 +5487,41 @@ struct MaiCLI {
         if loop.hasTurns { return false }
         return true
 
+      case .summaryFinished(let id, let messages):
+        guard let summary = loop.summary, summary.id == id else { return false }
+        loop.summary = nil
+        let interrupted = interruptHandler.deactivate(summary.interrupt)
+        if let operation = loop.interruptOperation {
+          interruptHandler.restore(operation.id, cancellation: operation.cancel)
+        }
+        if let chop = loop.chatChop { interruptHandler.restore(chop.interrupt) {} }
+        if interrupted {
+          await terminal.note("cancelled /chat")
+        } else if let messages {
+          // A setting change or chat switch must survive completion. Apply
+          // only the transcript, and only if nobody edited its source.
+          if currentMessages(of: summary.chatID) == summary.sent {
+            if session.id == summary.chatID {
+              session.history.replaceAll(with: messages)
+              if session.pendingContent == summary.pendingContent { session.pendingContent.removeAll() }
+              session.touch()
+              workspace.upsert(session.chat, selecting: true)
+            } else if var chat = workspace.chats.first(where: { $0.id == summary.chatID }) {
+              chat.messages = messages
+              if chat.pendingContent == summary.pendingContent { chat.pendingContent.removeAll() }
+              chat.touch()
+              workspace.upsert(chat)
+            }
+            await saveWorkspace(&workspace, store: store, terminal: terminal)
+            await terminal.line("Conversation compacted into a summary.")
+          } else {
+            await terminal.note("The chat changed while compacting; history was kept. Run /chat compact again.")
+          }
+        }
+        if loop.exiting { return !loop.hasTurns }
+        await refreshStatus()
+        await releaseIfIdle(workspace: workspace)
+
       case .turnFinished(let pid, let outcome):
         // A pmai_run call may have changed the session's profile, the
         // configuration or the MCP servers while the turn was running.
@@ -5459,8 +5552,8 @@ struct MaiCLI {
           }
         }
         let wasInterrupted = turn.map { interruptHandler.deactivate($0.interrupt) } ?? false
-        if let remaining = loop.interruptTurn {
-          interruptHandler.restore(remaining.interrupt) { remaining.task.cancel() }
+        if let remaining = loop.interruptOperation {
+          interruptHandler.restore(remaining.id, cancellation: remaining.cancel)
         }
         if let chop = loop.chatChop { interruptHandler.restore(chop.interrupt) {} }
         var succeeded = false
@@ -5703,6 +5796,8 @@ struct MaiCLI {
       case .turnFinished(let pid, _):
         redirection = loop.activeTurn?.pid == pid
           ? loop.activeTurn?.redirection : (loop.btwTurns[pid] ?? loop.conversationTurns[pid])?.redirection
+      case .summaryFinished:
+        redirection = loop.summary?.redirection
       case .interrupt, .endOfFile:
         redirection = loop.pendingQueueRedirection
       default: break
@@ -5711,6 +5806,7 @@ struct MaiCLI {
         await handleEvent(event)
       }
       if let redirection,
+        loop.summary?.redirection !== redirection,
         loop.activeTurn?.redirection !== redirection,
         !loop.btwTurns.values.contains(where: { $0.redirection === redirection }),
         !loop.conversationTurns.values.contains(where: { $0.redirection === redirection }),
@@ -14289,7 +14385,8 @@ struct MaiCLI {
     compactPrompt: String?,
     recapPrompt: String?,
     chatProcess: AgentPID? = nil,
-    terminal: TerminalWriter
+    terminal: TerminalWriter,
+    announceCompaction: Bool = true
   ) async {
     let parts = argument.split(maxSplits: 1, whereSeparator: \Character.isWhitespace).map(
       String.init)
@@ -14307,7 +14404,7 @@ struct MaiCLI {
         promptTemplate: action == "recap" ? recapPrompt : compactPrompt,
         session: &session,
         runtime: runtime,
-        terminal: terminal)
+        terminal: terminal, announceCompaction: announceCompaction)
     case "clear":
       session.reset()
       if let chatProcess { await runtime.supervisor.clearFinished(under: chatProcess) }
@@ -14574,7 +14671,8 @@ struct MaiCLI {
     promptTemplate: String?,
     session: inout REPLSession,
     runtime: AgentRuntime,
-    terminal: TerminalWriter
+    terminal: TerminalWriter,
+    announceCompaction: Bool = true
   ) async {
     let action = recap ? "recap" : "compact"
     let transcript = recap
@@ -14623,7 +14721,10 @@ struct MaiCLI {
             ? AgentRecapPrompt.render(transcript: source, template: configuredTemplate)
             : AgentCompactionPrompt.render(
               transcript: source, focus: focus, template: configuredTemplate)
+        }, emit: { event in
+          if case .retrying = event { await terminal.consume(event) }
         })
+      try Task.checkCancellation()
       let summary = MessageContentFilter.textWithoutReasoning(
         from: session.redactor?.unredact(reply) ?? reply
       )
@@ -14641,7 +14742,9 @@ struct MaiCLI {
         session.history.messages, summary: summary))
       session.pendingContent.removeAll()
       session.touch()
-      await terminal.line("Conversation compacted into a summary.")
+      if announceCompaction { await terminal.line("Conversation compacted into a summary.") }
+    } catch is CancellationError {
+      // The interactive loop reports cancellation and keeps the source chat.
     } catch {
       await terminal.line("error: \(error.localizedDescription)", to: .standardError)
     }
