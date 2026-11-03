@@ -999,7 +999,8 @@ and proxy catalogs loaded by `list-tools` reach the model verbatim in separate
 instruction sections. Their steps, arguments, resource directories, output formats,
 and tool schemas survive a lossy brief. These instruction sections are supplied
 in every context mode. System/developer instructions keep their original roles
-and text; runtime instructions and tool protocols are injected after reduction.
+and text; runtime instructions and tool protocols are included in the prepared
+budget and preserved by reduction.
 Cache mode leaves conversational evidence whole; its inference view still
 separates injected instructions and replaces skill/catalog bodies with receipts.
 Binary attachments remain available unchanged. Automatic/manual compaction,
