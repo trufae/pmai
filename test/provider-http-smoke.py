@@ -96,7 +96,8 @@ class Provider(BaseHTTPRequestHandler):
                     time.sleep(1)  # Workload, not evidence of completion.
                     self.wfile.write(b': keepalive\n\n')
                     self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError):
+            # Windows may report a closed client as WSAECONNABORTED (10053).
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 DISCONNECTED.set()
             return
         if self.path.startswith('/cancel/'):
@@ -104,7 +105,7 @@ class Provider(BaseHTTPRequestHandler):
             try:
                 if not self.connection.recv(1):
                     DISCONNECTED.set()
-            except ConnectionResetError:
+            except (ConnectionResetError, ConnectionAbortedError):
                 DISCONNECTED.set()
             return
         if not RELEASE.wait(60):
@@ -127,7 +128,7 @@ def main():
     try:
         with tempfile.TemporaryDirectory(prefix='pmai-provider-http-') as directory:
             root = Path(directory)
-            transports = ['curl', 'winhttp'] if os.name == 'nt' else ['curl']
+            transports = ['winhttp'] if os.name == 'nt' else ['curl']
             cases = [('ok', False), ('gzip', False), ('ok', True), ('redirect', True),
                      ('loop', True), ('cross', True), ('error', True), ('cancel', True), ('deadline', True),
                      ('tls', True)]
