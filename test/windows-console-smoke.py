@@ -352,7 +352,7 @@ def main():
         # terminal or share its input queue with the parent test runner.
         result = subprocess.run([sys.executable, __file__, binary, '--worker'],
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                creationflags=subprocess.CREATE_NO_WINDOW, timeout=160)
+                                creationflags=subprocess.DETACHED_PROCESS, timeout=160)
         sys.stdout.buffer.write(result.stdout)
         result.check_returncode()
         print('windows console smoke: ok')

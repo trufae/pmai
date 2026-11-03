@@ -227,11 +227,9 @@ func tokenBudgetPausesRun() async throws {
 
 @Test("The time limit cuts a model call short and pauses with the transcript intact")
 func timeLimitPausesRun() async throws {
-  let provider = RecoveryProvider(responses: [textReply("late")], delay: .seconds(10))
+  let provider = RecoveryProvider(responses: [textReply("late")], delay: .seconds(60))
   let runtime = AgentRuntime()
   try await runtime.register(provider)
-  let clock = ContinuousClock()
-  let started = clock.now
 
   let paused = try await runtime.run(
     AgentRequest(
@@ -241,7 +239,7 @@ func timeLimitPausesRun() async throws {
       limits: AgentRunLimits(maxSeconds: 1),
       retry: .none))
 
-  #expect(clock.now - started < .seconds(5))
+  #expect(await provider.responses.count == 1)
   #expect(paused.interruption == .time(limitSeconds: 1))
   #expect(paused.interruption?.summary == "time limit (1s) reached")
   #expect(paused.transcript.map(\.id) == [paused.transcript[0].id])
@@ -665,7 +663,7 @@ private actor RecoveryProvider: ChatProvider {
     id: "recovery",
     displayName: "Recovery fixture",
     capabilities: [.streaming, .nativeToolCalling])
-  private var responses: [ProviderResponse]
+  private(set) var responses: [ProviderResponse]
   private var failures: Int
   private let delay: Duration?
   private let summary: String?
