@@ -44,17 +44,29 @@ enum REPLPathCompletion {
       var decoded = ""
       var escaped = false
       for character in path {
-        if escaped { decoded.append(character); escaped = false }
-        else if character == "\\", quote != "'" { escaped = true }
-        else if quote == nil, character.isWhitespace { return [] }
-        else { decoded.append(character) }
+        if escaped { decoded.append(character); escaped = false; continue }
+        #if !os(Windows)
+        if character == "\\", quote != "'" { escaped = true; continue }
+        #endif
+        if quote == nil, character.isWhitespace { return [] }
+        decoded.append(character)
       }
       path = decoded
     }
+    #if os(Windows)
+    let slash = path.lastIndex { $0 == "/" || $0 == "\\" }
+    #else
     let slash = path.lastIndex(of: "/")
+    #endif
+    let separator = slash.map { String(path[$0]) } ?? "/"
     let parent = slash.map { String(path[...$0]) } ?? ""
     let name = slash.map { String(path[path.index(after: $0)...]) } ?? path
-    let expanded = NSString(string: parent.isEmpty ? "." : parent).expandingTildeInPath
+    #if os(Windows)
+    let lookupPath = parent.replacingOccurrences(of: "\\", with: "/")
+    #else
+    let lookupPath = parent
+    #endif
+    let expanded = NSString(string: lookupPath.isEmpty ? "." : lookupPath).expandingTildeInPath
     let url = URL(fileURLWithPath: expanded, isDirectory: true, relativeTo: directory)
     guard let entries = try? FileManager.default.contentsOfDirectory(
       at: url, includingPropertiesForKeys: nil) else { return [] }
@@ -65,9 +77,19 @@ enum REPLPathCompletion {
       _ = FileManager.default.fileExists(atPath: entry.path, isDirectory: &directoryFlag)
       let isDirectory = directoryFlag.boolValue
       guard !context.directoriesOnly || isDirectory else { return nil }
-      let value = parent + filename + (isDirectory ? "/" : "")
+      let value = parent + filename + (isDirectory ? separator : "")
       let argument: String
       if context.shell {
+        #if os(Windows)
+        // REPL arguments on Windows use literal backslashes and quoted spaces.
+        if let quote, !value.contains(quote) {
+          argument = String(quote) + value + String(quote)
+        } else if value.contains(where: { $0.isWhitespace || $0 == "'" }) {
+          argument = "\"" + value + "\""
+        } else {
+          argument = value
+        }
+        #else
         if let quote, !value.contains(quote), !value.contains("\\"),
           quote == "'" || !value.contains("$") && !value.contains("`")
         {
@@ -78,6 +100,7 @@ enum REPLPathCompletion {
             result.append(character)
           }
         }
+        #endif
       } else {
         // These commands already accept spaces as part of the remaining path.
         argument = value
@@ -108,7 +131,9 @@ enum REPLPathCompletion {
       for index in line.indices where index >= flag.upperBound {
         let character = line[index]
         if escaped { escaped = false; continue }
+        #if !os(Windows)
         if character == "\\", quote != "'" { escaped = true; continue }
+        #endif
         if character == quote { quote = nil }
         else if quote == nil, character == "'" || character == "\"" { quote = character }
         else if quote == nil, character.isWhitespace { start = line.index(after: index) }
