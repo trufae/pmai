@@ -65,10 +65,16 @@ public final class StreamTimingRecorder: @unchecked Sendable {
 
   /// Counts every event that carries generated content; usage payloads are
   /// bookkeeping the model did not generate and never move the window.
-  public func note(_ event: ProviderEvent, at date: Date = Date()) {
+  @discardableResult
+  public func note(_ event: ProviderEvent, at date: Date = Date()) -> Bool {
     switch event {
-    case .textDelta, .reasoningDelta, .toolCallDelta: noteTokenChunk(at: date)
-    case .usage, .toolStarted, .toolUpdated, .toolFinished: break
+    case .textDelta, .reasoningDelta, .toolCallDelta:
+      return lock.withLock {
+        let first = stored.firstTokenAt == nil
+        stored.noteTokenChunk(at: date)
+        return first
+      }
+    case .usage, .toolStarted, .toolUpdated, .toolFinished: return false
     }
   }
 

@@ -13,6 +13,7 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     public var apiKey: String?
     public var additionalHeaders: [String: String]
     public var requestTimeout: TimeInterval
+    public var httpTransport: ProviderHTTPTransport
 
     public init(
       id: ProviderID = .openAI,
@@ -20,7 +21,8 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
       baseURL: URL,
       apiKey: String? = nil,
       additionalHeaders: [String: String] = [:],
-      requestTimeout: TimeInterval = 600
+      requestTimeout: TimeInterval = 600,
+      httpTransport: ProviderHTTPTransport = .automatic
     ) {
       self.id = id
       self.displayName = displayName
@@ -28,6 +30,7 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
       self.apiKey = apiKey
       self.additionalHeaders = additionalHeaders
       self.requestTimeout = requestTimeout
+      self.httpTransport = httpTransport
     }
   }
 
@@ -41,10 +44,10 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
 
   public init(
     configuration: Configuration,
-    session: URLSession = .shared
+    session: URLSession? = nil
   ) {
     self.configuration = configuration
-    self.session = session
+    self.session = session ?? configuration.httpTransport.makeSession()
     descriptor = ProviderDescriptor(
       id: configuration.id,
       displayName: configuration.displayName,
@@ -63,6 +66,13 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
 
     let resolver = ToolNameResolver(definitions: request.tools)
     let urlRequest = try makeURLRequest(request, model: model, resolver: resolver)
+    await ProviderProcessScope.current?.reportTransport("request", details: [
+      "host": .string(urlRequest.url?.host ?? ""),
+      "bodyBytes": .integer(urlRequest.httpBody?.count ?? 0),
+      "stream": .bool(request.stream),
+      "transport": .string(configuration.httpTransport.resolved.rawValue),
+      "timeoutSeconds": .number(urlRequest.timeoutInterval),
+    ], activity: request.stream ? "waiting for HTTP response" : "waiting for buffered HTTP response")
     return request.stream
       ? try await stream(urlRequest, resolver: resolver, emit: emit)
       : try await completeOnce(urlRequest, resolver: resolver, emit: emit)
@@ -604,6 +614,11 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     } catch let error as URLError where error.code != .cancelled {
       throw transportError(error, statusCode: nil)
     }
+    await ProviderProcessScope.current?.reportTransport("headers", details: [
+      "statusCode": (response as? HTTPURLResponse).map { .integer($0.statusCode) } ?? .null,
+      "contentType": .string(response.mimeType ?? ""),
+      "elapsedSeconds": .number(started.duration(to: .now) / .seconds(1)),
+    ], activity: "HTTP headers received; waiting for stream data")
     #if !canImport(FoundationNetworking)
       let urlTask = bytes.task
     #endif
@@ -648,8 +663,15 @@ public final class OpenAICompatibleProvider: ChatProvider, @unchecked Sendable {
     var rawLines: [String] = []
     var rawCharacterCount = 0
 
+    var receivedLine = false
     for try await line in bytes.lines {
       try Task.checkCancellation()
+      if !receivedLine {
+        receivedLine = true
+        await ProviderProcessScope.current?.reportTransport("first_line", details: [
+          "lineBytes": .integer(line.utf8.count)
+        ], activity: "stream data received; waiting for model output")
+      }
       guard line.hasPrefix("data:") else {
         appendRawLine(line, to: &rawLines, characterCount: &rawCharacterCount)
         continue

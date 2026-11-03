@@ -89,6 +89,7 @@ def main():
             entries = [json.loads(line) for line in log.read_text().splitlines()]
             kinds = [entry['kind'] for entry in entries]
             for kind in ('run.started', 'model.request', 'model.response',
+                         'model.transport.request', 'model.transport.first_output',
                          'tool.started', 'tool.finished', 'run.finished'):
                 assert kind in kinds, kinds
             requests = [entry['value'] for entry in entries if entry['kind'] == 'model.request']

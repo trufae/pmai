@@ -311,7 +311,7 @@ jobs:
           $bin = swift build --package-path MaiCore --configuration release --disable-prefetching --show-bin-path
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $failed = 0
-          foreach ($test in 'windows-console', 'run-shell', 'windows-terminal') {
+          foreach ($test in 'windows-console', 'run-shell', 'windows-terminal', 'provider-http') {
             python -X utf8 "test/$test-smoke.py" (Join-Path $bin 'pmai.exe')
             if ($LASTEXITCODE -ne 0) { $failed = 1 }
           }

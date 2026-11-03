@@ -12,13 +12,13 @@ ROOT = Path(__file__).resolve().parent.parent
 SMOKE = '''installer openai-http project-approval project-debug projects-repl provider-routing remote-repl forwiroh-remote repl-defaults
 repl-cd repl-chat repl-del repl-export repl-fork repl-history repl-indexes repl-local-providers repl-redact repl-resume repl-resume-routing
 repl-resume-state repl-reset repl-skills repl-small-context repl-smart-context repl-tool-context repl-tool-policy run-shell task-agents
-update vim web-fetch'''.split()
+update vim web-fetch provider-http'''.split()
 TERMINAL = '''repl-agents repl-buffer repl-buffer-commands repl-btw repl-then repl-chop repl-compaction repl-conversations repl-interactive-run repl-modal repl-models repl-path
 repl-policy repl-queue repl-recap repl-redirection repl-startup repl-suspend repl-view repl-voice repl-voice-settings'''.split()
 STRESS = ['repl-subagent-load']  # Explicit opt-in, including when running full.
 EXTERNAL = ['repl-reflow', 'tailcat']  # Ghostty and a separately built tailcat binary.
 WINDOWS = ['windows-console', 'windows-terminal']
-PLATFORM = ['web-fetch', 'openai-http', 'run-shell', *WINDOWS] if os.name == 'nt' else [
+PLATFORM = ['web-fetch', 'openai-http', 'provider-http', 'run-shell', *WINDOWS] if os.name == 'nt' else [
     'update', 'web-fetch', 'openai-http', 'project-approval', 'repl-defaults', 'repl-small-context']
 if sys.platform.startswith('linux'):
     PLATFORM.append('linux-network')

@@ -156,13 +156,31 @@ extension AgentRuntime {
       await debugLog?.record(
         "model.request", context: context, provider: provider.descriptor.id.rawValue,
         attempt: attempt + 1, value: outgoingRequest)
+      let attemptNumber = attempt + 1
+      let scope = ProviderProcessScope(
+        supervisor: supervisor, context: context, provider: provider.descriptor.id, emit: emit,
+        diagnostic: { phase, details in
+          await self.recordTransportDiagnostic(phase, details: details, context: context,
+            provider: provider.descriptor.id, attempt: attemptNumber)
+        })
       do {
         let response = try await withDeadline(budget) {
           try await ProviderProcessScope.$current.withValue(
-            .init(supervisor: self.supervisor, context: context, provider: provider.descriptor.id, emit: emit)
+            scope
           ) {
             try await provider.complete(outgoingRequest) { event in
-              timing.note(event)
+              if timing.note(event) {
+                let kind: String
+                switch event {
+                case .reasoningDelta: kind = "reasoning"
+                case .toolCallDelta: kind = "tool_call"
+                default: kind = "text"
+                }
+                await scope.reportTransport("first_output", details: [
+                  "kind": .string(kind),
+                  "elapsedSeconds": .number(Date().timeIntervalSince(timing.observation.requestStart)),
+                ], activity: "receiving model output")
+              }
               if let display {
                 if let visible = await display.feed(event) { await onEvent(visible) }
               } else {
@@ -230,6 +248,14 @@ extension AgentRuntime {
         guard attempt <= updatedPolicy.attempts else { throw error }
       }
     }
+  }
+
+  private func recordTransportDiagnostic(
+    _ phase: String, details: [String: JSONValue], context: AgentEventContext,
+    provider: ProviderID, attempt: Int
+  ) async {
+    await debugLog?.record("model.transport.\(phase)", context: context,
+      provider: provider.rawValue, attempt: attempt, value: DebugDiagnostics.sanitize(.object(details)))
   }
 
   func callProvider(_ turn: ModelTurn, state: inout RunState) async throws -> ProviderCall? {

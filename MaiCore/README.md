@@ -730,6 +730,28 @@ and credential fields are redacted. The setting survives restarts in
 `.pmai/settings.json`. The log is readable only by the current user and can
 contain prompts, tool output, and other private data.
 
+OpenAI-compatible providers use the system `curl.exe` on Windows to avoid a
+FoundationNetworking upload stall when the request outgrows a socket send buffer
+([Swift issue #5532](https://github.com/swiftlang/swift-corelibs-foundation/issues/5532)).
+Other platforms keep URLSession. The provider's `options.httpTransport` can be
+`auto` (the default), `curl`, or `urlsession`; `curl` is also available on macOS
+and Linux for comparison. This preserves live SSE replies and cancellation.
+Windows requires `%SystemRoot%\System32\curl.exe`, included since Windows 10
+1803; older or customized installations may need curl installed at that location.
+Authentication headers travel over curl's standard input, not its command line.
+Request bodies use private temporary files which are removed after the request.
+Curl's per-request timeout is a total deadline; its connection timeout is capped
+at 30 seconds. Certificate verification remains enabled and redirects stay within
+the original origin.
+
+Debug logs include `model.transport.request` (wire body size, selected transport,
+streaming flag and timeout), `model.transport.headers`, `model.transport.first_line`
+and `model.transport.first_output`. The latter three show which response milestones
+were reached. A request entry alone does not establish that an upload completed.
+The status line distinguishes waiting for HTTP, waiting for stream data, and
+receiving model output. For a credential-free upstream reproduction, see
+[the upload diagnostic](../sys/diagnostics/README.md).
+
 `/theme` (or `/theme list`) lists terminal themes. Thirteen are built in:
 `default` preserves the original styling, `slime` is green, `summer` uses a sunny
 cream background, `ember` uses warm colors, and `pink` and `night`

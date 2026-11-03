@@ -2942,7 +2942,9 @@ struct MaiCLI {
       if let activityPID, let process = await runtime.supervisor.info(activityPID), !process.state.isTerminal {
         if process.pauseRequested || process.state == .paused { facts.append("paused") }
         else if process.state.isWaiting || process.state == .queued { facts.append(process.state.shortLabel) }
-        else { facts.append(process.activity.isEmpty || process.activity == "thinking" ? "thinking" : "running \(process.activity)") }
+        else if ["waiting ", "HTTP headers", "stream data", "receiving "].contains(where: process.activity.hasPrefix) {
+          facts.append(process.activity)
+        } else { facts.append(process.activity.isEmpty || process.activity == "thinking" ? "thinking" : "running \(process.activity)") }
         if let usage = process.usage {
           facts.append("spent \(ModelUsageFormat.tokens(usage.totalTokens, estimated: usage.isEstimated))")
           if let reasoning = usage.reasoningTokens {
@@ -11495,6 +11497,9 @@ struct MaiCLI {
         "id": .string(provider.id), "kind": .string(provider.kind.rawValue),
         "baseURL": url.map { .string($0.absoluteString) } ?? .null,
         "timeout": provider.timeout.map(JSONValue.number) ?? .null,
+        "httpTransport": .string(provider.options["httpTransport"]?.stringValue ?? "auto"),
+        "resolvedHTTPTransport": .string((ProviderHTTPTransport(rawValue:
+          provider.options["httpTransport"]?.stringValue?.lowercased() ?? "auto") ?? .automatic).resolved.rawValue),
         "headerNames": .array(Set(provider.headers.keys).union(provider.headerEnvironment.keys)
           .sorted().map(JSONValue.string)),
       ]))

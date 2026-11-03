@@ -36,6 +36,11 @@ public struct OpenAIConfiguredProviderFactory: ConfiguredProviderFactory {
     guard let baseURL = configuration.baseURL else {
       throw MaiConfigurationError.providerMissingBaseURL(configuration.id)
     }
+    let selection = configuration.options["httpTransport"]?.stringValue ?? "auto"
+    guard let transport = ProviderHTTPTransport(rawValue: selection.lowercased()) else {
+      throw NSError(domain: "pmai.http", code: 1, userInfo: [NSLocalizedDescriptionKey:
+        "Unknown httpTransport '\(selection)'; use auto, curl, or urlsession."])
+    }
     return OpenAICompatibleProvider(
       configuration: .init(
         id: ProviderID(configuration.id),
@@ -43,6 +48,7 @@ public struct OpenAIConfiguredProviderFactory: ConfiguredProviderFactory {
         baseURL: baseURL,
         apiKey: try configuration.resolvedAPIKey(environment: environment),
         additionalHeaders: try configuration.resolvedHeaders(environment: environment),
-        requestTimeout: configuration.timeout ?? 600))
+        requestTimeout: configuration.timeout ?? 600,
+        httpTransport: transport))
   }
 }
