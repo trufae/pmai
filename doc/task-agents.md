@@ -20,6 +20,13 @@ Add connections once, then refer to them by ID. OpenAI-compatible local servers 
 
 Use `/edit provider ID` for the URL, default model, credentials, headers, and backend options. Other agents sharing that provider use the updated connection. A provider's `defaultModel` is selected by `/provider use ID` and fills an empty agent model; an explicit model takes precedence.
 
+For OpenAI-compatible providers, `/set http.transport` shows the selected HTTP engine;
+`/set http.transport auto|curl|winhttp|urlsession` saves it for that provider and
+applies it to the next request. `auto` uses WinHTTP on Windows and URLSession
+elsewhere. `curl` requires the curl executable; `winhttp` is Windows-only.
+`/reset http.transport` restores `auto`. This setting controls provider requests;
+the `pmai -U` release updater uses its own URLSession.
+
 On macOS, Apple and MLX are built-in native providers. `/providers` reports
 availability; select `/model apple::on-device` or
 `/model mlx::LiquidAI/LFM2.5-1.2B-Instruct-MLX-4bit`. Neither needs a URL or an

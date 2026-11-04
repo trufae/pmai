@@ -114,6 +114,35 @@ path.write_text(json.dumps(provider))
                 assert headers.get('Authorization') == (None if key is None else 'Bearer ' + key), headers
                 assert request['model'] == model, request
 
+            # Changing the HTTP engine saves only this provider's option and
+            # reloads the live connection before the next prompt.
+            engine_config = root / 'engine.json'
+            engine_config.write_bytes(config.read_bytes())
+
+            def run_engine(commands, **kwargs):
+                return run(commands, args=['--config', str(engine_config),
+                                          '--home', str(root / 'engine-home')], **kwargs)
+
+            output = run_engine(['/set http.transport curl', 'Use the selected HTTP engine.'])
+            assert 'http.transport = curl' in output, output
+            check_request('/local/v1', 'local-key', 'main-model')
+            assert requests[-1][1]['User-Agent'].startswith('curl/'), requests[-1][1]
+            saved = json.loads(engine_config.read_text())
+            assert saved['providers'][0]['options']['httpTransport'] == 'curl', saved
+            assert saved['providers'][1]['options'] == {'custom': True}, saved
+            assert 'http.transport = curl' in run_engine(['/set http.'])
+            before = engine_config.read_bytes()
+            assert 'Usage: /set http.transport' in run_engine(['/set http.transport invalid'])
+            if os.name != 'nt':
+                assert 'WinHTTP is only available on Windows' in run_engine(
+                    ['/set http.transport winhttp'], error=True)
+            assert engine_config.read_bytes() == before, 'invalid engine changed saved configuration'
+            output = run_engine(['/reset http.transport', 'Use the default HTTP engine.'])
+            assert 'http.transport = auto' in output, output
+            check_request('/local/v1', 'local-key', 'main-model')
+            assert not requests[-1][1].get('User-Agent', '').startswith('curl/'), requests[-1][1]
+            assert 'httpTransport' not in json.loads(engine_config.read_text())['providers'][0]['options']
+
             # The welcome commands turn an empty config into a working keyed connection.
             fresh_config = root / 'fresh.json'
             fresh_config.write_text('{}')

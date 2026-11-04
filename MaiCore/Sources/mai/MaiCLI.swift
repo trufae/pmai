@@ -11533,6 +11533,7 @@ struct MaiCLI {
       "debug": "false", "debugfile": "default", "airplane": "off", "awake": "off",
       "acp.timeout": "off",
       "acp.context": "agent", "acp.prompt": "agent",
+      "http.transport": "auto",
       "limits.terminaltimeout": "0",
       "redact": configuration.redact.rawValue, "delegation": defaults.toolDelegation.rawValue,
       "effort": defaults.options.reasoningEffort ?? "auto", "ui.editor": "none",
@@ -11600,6 +11601,13 @@ struct MaiCLI {
         resetProvider = try await plugins.makeProvider(
           from: draft.providers[index], environment: ProcessInfo.processInfo.environment)
       }
+      if let index = draft.providers.firstIndex(where: {
+        $0.id == profile.provider.rawValue && $0.kind == .openAI
+      }), draft.providers[index].options["httpTransport"] != nil {
+        draft.providers[index].options["httpTransport"] = nil
+        resetProvider = try await plugins.makeProvider(
+          from: draft.providers[index], environment: ProcessInfo.processInfo.environment)
+      }
       try draft.save(to: url)
       do {
         if let remoteTerminalSettingsURL {
@@ -11621,7 +11629,7 @@ struct MaiCLI {
     if let resetProvider {
       do { try await runtime.register(resetProvider, replacingExisting: true) }
       catch {
-        await terminal.line("warning: Settings were saved but the ACP provider could not reload: \(error.localizedDescription)", to: .standardError)
+        await terminal.line("warning: Settings were saved but the provider could not reload: \(error.localizedDescription)", to: .standardError)
       }
     }
     session.profile = profile
@@ -11676,6 +11684,7 @@ struct MaiCLI {
         "delegation = \(profile.toolDelegation.rawValue)",
         effortDescription(profile.options),
       ] + acpSettings(provider: profile.provider, configuration: configuration)
+        + httpSettings(provider: profile.provider, configuration: configuration)
         + limitSettings(profile.limits) + recoverySettings(profile)
         + toolSettings(profile) + uiSettings(configuration?.ui ?? .init())
         + exportSettings(configuration?.documentExport ?? .init())
@@ -11903,6 +11912,48 @@ struct MaiCLI {
     let requestedKey = parts[0].lowercased()
     let key = requestedKey == "ui.toolresultlines" ? "ui.tools" : requestedKey
     let displayedKey = key
+    if key == "http.transport" {
+      guard var draft = configuration,
+        let index = draft.providers.firstIndex(where: {
+          $0.id == session.profile.provider.rawValue && $0.kind == .openAI
+        })
+      else {
+        await terminal.line("http.transport requires a selected OpenAI-compatible provider. Use /provider or /model to select one.")
+        return
+      }
+      guard parts.count > 1 else {
+        await listSettings(httpSettings(provider: session.profile.provider, configuration: draft), terminal: terminal)
+        await terminal.line("auto uses winhttp on Windows and urlsession elsewhere. curl uses the curl executable; winhttp is Windows-only. Saved for this provider; applies to the next request.")
+        return
+      }
+      guard parts.count == 2, let transport = ProviderHTTPTransport(rawValue: parts[1].lowercased()) else {
+        await terminal.line("Usage: /set http.transport <auto|curl|winhttp|urlsession>")
+        return
+      }
+      #if !os(Windows)
+      guard transport != .winHTTP else {
+        await terminal.line("error: WinHTTP is only available on Windows.", to: .standardError)
+        return
+      }
+      #endif
+      guard let configurationPath else {
+        await terminal.line("error: No writable configuration is active.", to: .standardError)
+        return
+      }
+      draft.providers[index].options["httpTransport"] = transport == .automatic ? nil : .string(transport.rawValue)
+      do {
+        let provider = try await plugins.makeProvider(
+          from: draft.providers[index], environment: ProcessInfo.processInfo.environment)
+        try draft.save(to: URL(fileURLWithPath: configurationPath))
+        try await runtime.register(provider, replacingExisting: true)
+        configuration = draft
+        await listSettings(httpSettings(provider: session.profile.provider, configuration: draft), terminal: terminal)
+        await terminal.line("Saved for provider '\(draft.providers[index].id)'; applies to the next request.")
+      } catch {
+        await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+      }
+      return
+    }
     if key == "limits.terminaltimeout" {
       guard parts.count > 1 else {
         await terminal.line("limits.terminalTimeout = \(configuration?.remoteTerminalTimeoutSeconds ?? 0) (seconds; 0 keeps sessions until closed)")
@@ -12363,7 +12414,7 @@ struct MaiCLI {
         || levelKeys.contains(key) || textKeys.contains(key)
     else {
       await terminal.line(
-        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, airplane, effort, acp.timeout, acp.context, acp.prompt, tool.approval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, limits.runTimeoutSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.window, ctx.strategy, \((textKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), export.tools, export.thinking, redact, use.agentsmd, use.plan"
+        "Unknown setting '\(parts[0])'. Available settings: debug, debugfile, airplane, effort, http.transport, acp.timeout, acp.context, acp.prompt, tool.approval, delegation, tool.calling, tool.proxy, tool.systemone, limits.maxToolCalls, limits.maxModelTurns, limits.maxSubagents, limits.maxSubagentDepth, limits.maxTotalTokens, limits.maxSeconds, limits.runTimeoutSeconds, retry.attempts, retry.delay, ctx.compact, ctx.recent, ctx.window, ctx.strategy, \((textKeys + booleanKeys + countKeys + levelKeys).joined(separator: ", ")), export.tools, export.thinking, redact, use.agentsmd, use.plan"
       )
       return
     }
@@ -12528,6 +12579,15 @@ struct MaiCLI {
       "acp.context = \(configured.options["context"]?.stringValue ?? "agent")",
       "acp.prompt = \(configured.options["prompt"]?.stringValue ?? "agent")",
     ]
+  }
+
+  private static func httpSettings(
+    provider: ProviderID, configuration: MaiConfiguration?
+  ) -> [String] {
+    guard let configured = configuration?.providers.first(where: {
+      $0.id == provider.rawValue && $0.kind == .openAI
+    }) else { return [] }
+    return ["http.transport = \(configured.options["httpTransport"]?.stringValue ?? "auto")"]
   }
 
   private static func toolSettings(_ profile: SessionProfile) -> [String] {
@@ -15303,6 +15363,8 @@ struct MaiCLI {
       "/set acp.", "/set acp.timeout ", "/set acp.timeout off",
       "/set acp.context", "/set acp.context agent", "/set acp.context replace",
       "/set acp.prompt", "/set acp.prompt agent", "/set acp.prompt replace",
+      "/set http.", "/set http.transport", "/set http.transport auto",
+      "/set http.transport curl", "/set http.transport winhttp", "/set http.transport urlsession",
       "/set retry.", "/set retry.attempts ", "/set retry.delay ", "/set ctx.", "/set ctx.compact ",
       "/set ctx.compact off",
       "/set ctx.recent ", "/set ctx.recent auto",
@@ -16145,6 +16207,7 @@ struct MaiCLI {
       /set acp.timeout <off|N|Nm|Nh>  Whole ACP turn timeout for the selected provider (default off)
       /set acp.context <agent|replace>  Keep agent history or send pmai's full conversation in a fresh session
       /set acp.prompt <agent|replace>   Keep agent instructions or replace its native system prompt with pmai's
+      /set http.transport <auto|curl|winhttp|urlsession>  HTTP engine for the selected OpenAI-compatible provider
       /set retry.attempts N        Times a failed model call is repeated (default 2)
       /set retry.delay SECONDS     Wait before each retry (default 5)
       /set ctx.                    List context settings and their current values
