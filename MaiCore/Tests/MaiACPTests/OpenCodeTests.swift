@@ -235,11 +235,14 @@ private actor OpenCodeUpdates {
 }
 
 @Test("OpenCode resumes host work without resending and distinguishes stop from disconnect",
+  .timeLimit(.minutes(1)),
   arguments: ["complete", "stop", "disconnect", "offline"])
 func openCodeResumeUpdates(_ action: String) async throws {
   let host = "resume-\(action).opencode.test"
   let methods = MethodRecorder()
   let updates = OpenCodeUpdates()
+  let (finished, finish) = AsyncStream<Void>.makeStream()
+  defer { finish.finish() }
   StubURLProtocol.install(forHost: host) { request in
     let path = request.url!.path
     methods.record(path)
@@ -267,22 +270,17 @@ func openCodeResumeUpdates(_ action: String) async throws {
   let client = OpenCodeClient(
     connection: try .init(url: #require(URL(string: "https://\(host)")), token: "test"),
     sessionID: "session", configuration: openCodeTestConfiguration(),
-    onUpdate: { await updates.append($0) },
-    onDisconnect: { methods.record("disconnected") })
+    onUpdate: {
+      await updates.append($0)
+      if $0.objectValue?["running"]?.boolValue == false { finish.finish() }
+    },
+    onDisconnect: { methods.record("disconnected"); finish.finish() })
   _ = try await client.connect()
   try await client.resumeUpdates()
   #expect(await updates.values.contains { $0.objectValue?["running"]?.boolValue == true })
   if action == "stop" { await client.cancel() }
   if action != "disconnect" {
-    let deadline = ContinuousClock.now + .seconds(10)
-    while ContinuousClock.now < deadline {
-      if action == "offline" {
-        if methods.methods.contains("disconnected") { break }
-      } else if await updates.values.contains(where: { $0.objectValue?["running"]?.boolValue == false }) {
-        break
-      }
-      try await Task.sleep(for: .milliseconds(20))
-    }
+    for await _ in finished {}
     if action == "offline" {
       #expect(methods.methods.contains("disconnected"))
       #expect(await !client.isConnected)
