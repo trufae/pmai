@@ -295,6 +295,8 @@ jobs:
             -destination 'generic/platform=iOS' \
             -derivedDataPath build/DerivedData \
             -skipPackagePluginValidation \
+            -skipPackageUpdates \
+            -showBuildTimingSummary \
             "CC=$xcode_clang" "TOOLCHAINS=$swift_toolchain \$(inherited)" \
             'OTHER_SWIFT_FLAGS=$(inherited) -Xfrontend -enable-cross-import-overlays' \
             COMPILATION_CACHE_ENABLE_CACHING=YES \

@@ -390,7 +390,9 @@ jobs:
           xcode_clang=$(xcrun --toolchain XcodeDefault --find clang)
           # Match Xcode's automatic SwiftUI/PhotosUI cross-imports.
           # https://github.com/swiftlang/swift/issues/73048
-          make test XCODE_PACKAGE_FLAGS="-skipPackagePluginValidation -enableCodeCoverage NO COMPILER_INDEX_STORE_ENABLE=NO \
+          # Preserve the Makefile's package-update skip when overriding its flags.
+          # Timing summaries distinguish compilation from package/setup work.
+          make test XCODE_PACKAGE_FLAGS="-skipPackagePluginValidation -skipPackageUpdates -showBuildTimingSummary -enableCodeCoverage NO COMPILER_INDEX_STORE_ENABLE=NO \
             'CC=$xcode_clang' 'TOOLCHAINS=$swift_toolchain \$\$(inherited)' \
             'OTHER_SWIFT_FLAGS=\$\$(inherited) -Xfrontend -enable-cross-import-overlays'"
 
