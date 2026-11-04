@@ -105,6 +105,8 @@ elif action == 'fail':
 
             # Finish the current word before offering its arguments. Commands
             # inferred from longer candidates must appear only once in the menu.
+            # Clear drafts with Ctrl+W: Ctrl+C can cancel a preceding command
+            # whose result was printed before its foreground task finished.
             for prefix, options in (
                 ('/model', ('/model', '/models', '/model')),
                 ('/provider', ('/provider', '/providers', '/provider')),
@@ -114,18 +116,15 @@ elif action == 'fail':
                 for option in options:
                     send(b'\t')
                     wait_for(f'\x1b[97;44m{option}\x1b[0m')
-                send(b'\x03')
-                wait_for('Nothing to cancel.')
+                send(b'\x17' * len(prefix.split()))
             send(b'/model \t')
             wait_for('-approval\x1b[0m')
-            send(b'\x03')
-            wait_for('Nothing to cancel.')
+            send(b'\x17\x17')
             send(b'/mcp\t')
             wait_for('/mcp \x1b[0m')
             send(b'\t')
             wait_for('\x1b[97;44madd\x1b[0m')
-            send(b'\x03')
-            wait_for('Nothing to cancel.')
+            send(b'\x17\x17')
             print('PASS: command and argument completion respects word boundaries')
 
             # Every Tab applies the highlighted item, including items which
@@ -154,12 +153,10 @@ elif action == 'fail':
             wait_for('/edit provider offline')
             send(b'\t')
             wait_for('/edit provider other')
-            send(b'\x03')
-            wait_for('Nothing to cancel.')
+            send(b'\x17\x17\x17')
             send(b'/edit provider o\t')
             wait_for('/edit provider offline')
-            send(b'\x03')
-            wait_for('Nothing to cancel.')
+            send(b'\x17\x17\x17')
             print('PASS: completion selection, wraparound, narrow rows and editing')
 
             # Shift+Tab reverses the same menu, including its first selection
@@ -185,8 +182,7 @@ elif action == 'fail':
                 wait_for('\x1b[97;44m/provider\x1b[0m')
                 send(b's\x1b[Z')
                 wait_for('/providers \x1b[0m')
-                send(b'\x03')
-                wait_for('Nothing to cancel.')
+                send(b'\x17')
             send(b'/set ui.mode classic\r')
             wait_for('Set ui.mode = classic')
             print('PASS: Shift+Tab selects previous completions in classic and buffer modes')
