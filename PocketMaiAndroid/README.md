@@ -2,8 +2,9 @@
 
 Use the [Kotlin/Compose Android app](../PocketMaiKotlin/README.md) for new
 installations. Website downloads and GitHub releases ship that app. This legacy
-preview remains available in CI as `PocketMai-Android-pureswift-debug`, containing
-`PocketMai-Android-pureswift-debug.apk`; it is excluded from releases.
+preview remains available in CI as `PocketMai-Android-pureswift-release`, containing
+`PocketMai-Android-pureswift-release.apk` for arm64. This APK is unsigned and
+must be signed before installation; it is excluded from GitHub releases.
 
 A minimal app with Swift 6 application code and screens: OpenAI-compatible
 provider setup, model discovery/manual selection, named system prompts,

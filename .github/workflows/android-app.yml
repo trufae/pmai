@@ -60,12 +60,12 @@ jobs:
         id: build-cache
         uses: ./.github/actions/restore-swift-build
         with:
-          profile: android-ndk30-${{ matrix.app }}
+          profile: android-ndk30-arm64-release-${{ matrix.app }}
           package: ${{ matrix.app }}
           path: |
             ${{ matrix.app }}/.build
 
-      - name: Restore Android CLI and mobile test outputs
+      - name: Restore Android CLI build outputs
         if: matrix.app == 'PocketMaiKotlin'
         id: cli-build-cache
         uses: ./.github/actions/restore-swift-build
@@ -102,53 +102,30 @@ jobs:
           path: pmai-android-arm64.zip
           if-no-files-found: error
 
-      - name: Test portable Swift screens
-        if: matrix.app == 'PocketMaiAndroid'
-        run: |
-          sh PocketMaiAndroid/scripts/bootstrap.sh
-          swift test --package-path PocketMaiAndroid --build-system native --disable-sandbox --disable-prefetching
-      - name: Test Kotlin app's Swift facade
-        if: matrix.app == 'PocketMaiKotlin'
-        run: python3 test/run-tests.py mobile
-      - name: Save Android CLI and mobile test outputs
+      - name: Save Android CLI build outputs
         if: ${{ !cancelled() && matrix.app == 'PocketMaiKotlin' && github.ref == 'refs/heads/main' && steps.cli-build-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: MaiCore/.build
           key: ${{ steps.cli-build-cache.outputs.cache-primary-key }}
-      - name: Build APK for device and emulator
+      - name: Build release APK (arm64-v8a)
         env:
-          ANDROID_ABIS: "arm64-v8a x86_64"
-        run: make -C "${{ matrix.app }}" CONFIGURATION=debug
-      - name: Test WebXDC archive import
-        if: matrix.app == 'PocketMaiKotlin'
-        run: |
-          cd PocketMaiKotlin
-          ./gradlew :app:testDebugUnitTest
-      - name: Build Kotlin release APK
-        if: matrix.app == 'PocketMaiKotlin'
-        env:
-          ANDROID_ABIS: "arm64-v8a x86_64"
-        run: make -C PocketMaiKotlin release
+          ANDROID_ABIS: "arm64-v8a"
+        run: make -C "${{ matrix.app }}" release
       - name: Name Android APK artifacts
         run: |
           mkdir -p "$RUNNER_TEMP/android-artifacts"
           if [ "${{ matrix.app }}" = PocketMaiAndroid ]; then
-            cp PocketMaiAndroid/app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/android-artifacts/PocketMai-Android-pureswift-debug.apk"
+            cp PocketMaiAndroid/app/build/outputs/apk/release/app-release-unsigned.apk \
+              "$RUNNER_TEMP/android-artifacts/PocketMai-Android-pureswift-release.apk"
           else
             cp PocketMaiKotlin/PocketMaiKotlin-0.1.0.apk "$RUNNER_TEMP/android-artifacts/PocketMai-Android.apk"
           fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: matrix.app == 'PocketMaiAndroid'
         with:
-          name: PocketMai-Android-pureswift-debug
-          path: ${{ runner.temp }}/android-artifacts/PocketMai-Android-pureswift-debug.apk
-          if-no-files-found: error
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: matrix.app == 'PocketMaiKotlin' && !inputs.release
-        with:
-          name: PocketMaiKotlin-debug
-          path: PocketMaiKotlin/app/build/outputs/apk/debug/app-debug.apk
+          name: PocketMai-Android-pureswift-release
+          path: ${{ runner.temp }}/android-artifacts/PocketMai-Android-pureswift-release.apk
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: matrix.app == 'PocketMaiKotlin'

@@ -7,7 +7,7 @@ Android preview.
 
 This is the Android app distributed on the [website](https://trufae.github.io/pmai/)
 and in [GitHub releases](https://github.com/trufae/pmai/releases) as
-`PocketMai-Android.apk`, with arm64 and x86_64 support. The website tracks the
+`PocketMai-Android.apk`, for arm64 devices. The website tracks the
 latest successful main-branch release build; GitHub releases build from the tag.
 CI builds use a generated debug signing key, so updating between builds may
 require reinstalling. The older pure Swift app is excluded from both downloads.
@@ -149,10 +149,10 @@ message edits, streaming cancellation, tool groups and approved tool execution.
 JVM tests cover WebXDC extraction and malicious/oversized archives.
 No live model, credentials or emulator is needed for these suites.
 
-The Android GitHub Actions workflow builds both Android clients. The Kotlin
-job tests the facade/importer and uploads debug and release APKs containing
-arm64 and x86_64 libraries. CI release APKs use the runner's debug key; configure
-your own signing variables for an APK intended for distribution.
+The Android GitHub Actions workflow builds both Android clients as arm64
+release APKs and uploads the Android arm64 CLI. It does not run the test suites
+above or upload debug APKs. The Kotlin release APK uses the runner's debug key;
+configure your own signing variables for an APK intended for distribution.
 
 ## Remote workspaces
 

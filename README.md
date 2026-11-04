@@ -509,14 +509,14 @@ debugger attachment or to run in the Simulator.
 
 Get PocketMai from the [App Store](https://apps.apple.com/es/app/pocketmai/id6764296742).
 The [GitHub releases](https://github.com/trufae/pmai/releases) include the iOS IPA,
-the Kotlin Android app as `PocketMai-Android.apk` (arm64 and x86_64), source
+the Kotlin Android app as `PocketMai-Android.apk` (arm64), source
 archives, and pmai CLI binaries for macOS and Linux (arm64 and x64), plus
 Android arm64. `SHA256SUMS` covers the CLI archives and Android APK.
 Static musl builds omit native plugin loading.
 
 The website's [Android APK](https://trufae.github.io/pmai/downloads/PocketMai-Android.apk)
 is the Kotlin app's release APK from the latest successful main-branch build,
-with arm64 and x86_64 support. Its [SHA-256 checksum](https://trufae.github.io/pmai/downloads/PocketMai-Android.apk.sha256)
+for arm64 devices. Its [SHA-256 checksum](https://trufae.github.io/pmai/downloads/PocketMai-Android.apk.sha256)
 is published alongside it. CI builds use a generated debug signing key;
 updating between builds may require reinstalling.
 
