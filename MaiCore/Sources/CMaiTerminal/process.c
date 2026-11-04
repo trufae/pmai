@@ -36,7 +36,8 @@ int mai_process_spawn(const char *executable, char *const arguments[], char *con
     close(report[i]);
     report[i] = fd;
   }
-  const int limit = getdtablesize();
+  const long limit = sysconf(_SC_OPEN_MAX);
+  if (limit == -1) { goto fail; }
   sigset_t blocked, previous;
   sigfillset(&blocked);
   error = pthread_sigmask(SIG_SETMASK, &blocked, &previous);
@@ -62,7 +63,7 @@ int mai_process_spawn(const char *executable, char *const arguments[], char *con
     if (syscall(SYS_close_range, 4U, ~0U, 0) != 0)
 #endif
     {
-      for (int fd = 4; fd < limit; fd++) { close(fd); }
+      for (long fd = 4; fd < limit; fd++) { close((int)fd); }
     }
     struct sigaction action = {0};
     action.sa_handler = SIG_DFL;
