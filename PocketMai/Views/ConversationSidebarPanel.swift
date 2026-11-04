@@ -73,6 +73,7 @@ struct SidebarPanel<Rows: View, Actions: View>: View {
       }
       .safeAreaInset(edge: .top, spacing: 0) {
         HostPanelHeader(title: title, backTitle: backTitle, action: onBack)
+          .background { HeaderFadeBlur() }
       }
     }
   }

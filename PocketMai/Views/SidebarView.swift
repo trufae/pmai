@@ -1876,7 +1876,6 @@ struct SidebarDistanceTone: View {
 struct SidebarEdgeFades: View {
   var body: some View {
     VStack(spacing: 0) {
-      SidebarEdgeFade(edge: .top)
       Spacer(minLength: 0)
       SidebarEdgeFade(edge: .bottom)
     }

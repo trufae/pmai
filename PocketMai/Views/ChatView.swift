@@ -430,13 +430,7 @@ struct ChatView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
-        .background {
-          Rectangle().fill(.ultraThinMaterial)
-            .mask(LinearGradient(
-              colors: [.black.opacity(0.7), .clear], startPoint: .top, endPoint: .bottom))
-            .padding(.bottom, -16)
-            .ignoresSafeArea(edges: .top)
-        }
+        .background { HeaderFadeBlur() }
       }
       chatHeaderRows
     }
