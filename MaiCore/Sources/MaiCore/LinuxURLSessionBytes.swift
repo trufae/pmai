@@ -75,8 +75,11 @@ public struct URLSessionAsyncBytes: AsyncSequence, Sendable {
       body: body.continuation, headers: headers.continuation,
       forward: delegate ?? session.delegate as? any URLSessionTaskDelegate,
       sessionForward: session.delegate)
-    let streaming = URLSession(configuration: session.configuration, delegate: proxy, delegateQueue: nil)
+    let streaming = session === URLSession.shared
+      ? SharedStreamingDelegate.session
+      : URLSession(configuration: session.configuration, delegate: proxy, delegateQueue: nil)
     let task = streaming.dataTask(with: request)
+    task.delegate = proxy
     let lifetime = StreamLifetime(session: streaming, task: task)
     body.continuation.onTermination = { @Sendable [weak task] termination in
       if case .cancelled = termination { task?.cancel() }
@@ -98,11 +101,41 @@ private final class StreamLifetime: @unchecked Sendable {
   let session: URLSession
   let task: URLSessionTask
 
-  deinit { session.invalidateAndCancel() }
+  deinit { task.cancel() }
 
   init(session: URLSession, task: URLSessionTask) {
     self.session = session
     self.task = task
+  }
+}
+
+/// FoundationNetworking can retain its curl multi handle from inside deinit
+/// when closing an HTTPS connection. Reuse a process-lifetime session for the
+/// shared transport instead of destroying one after every streamed request.
+/// Its data/completion callbacks use the session delegate even when a task
+/// delegate is installed, so forward them to each stream's own delegate.
+private final class SharedStreamingDelegate: NSObject, URLSessionDataDelegate, Sendable {
+  static let session = URLSession(
+    configuration: URLSession.shared.configuration,
+    delegate: SharedStreamingDelegate(), delegateQueue: nil)
+
+  func urlSession(
+    _ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+    completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void
+  ) {
+    guard let delegate = dataTask.delegate as? StreamingDelegate else {
+      completionHandler(.cancel)
+      return
+    }
+    delegate.urlSession(session, dataTask: dataTask, didReceive: response, completionHandler: completionHandler)
+  }
+
+  func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+    (dataTask.delegate as? StreamingDelegate)?.urlSession(session, dataTask: dataTask, didReceive: data)
+  }
+
+  func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    (task.delegate as? StreamingDelegate)?.urlSession(session, task: task, didCompleteWithError: error)
   }
 }
 
@@ -139,7 +172,7 @@ private final class StreamingDelegate: NSObject, URLSessionDataDelegate, @unchec
   func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
     headers.finish(throwing: error ?? URLError(.badServerResponse))
     body.finish(throwing: error)
-    session.finishTasksAndInvalidate()
+    if session.delegate === self { session.finishTasksAndInvalidate() }
   }
 
   func urlSession(

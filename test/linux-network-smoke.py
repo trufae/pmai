@@ -3,11 +3,16 @@
 
 python3 test/linux-network-smoke.py /absolute/path/to/pmai
 python3 test/linux-network-smoke.py qemu-x86_64 -cpu Nehalem /absolute/path/to/pmai
+
+Pass --tls before the command to use the local TLS fixture. The child must
+trust fixtures/provider-http-tls.pem; see doc/linux-crashes.md for an isolated
+Linux invocation that does not change the machine's trust store.
 """
 import json
 import os
 from pathlib import Path
 import socket
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -59,6 +64,9 @@ def tool_message(request, mode):
 
 
 class Provider(BaseHTTPRequestHandler):
+    # Keep connections alive: closing every response hides session teardown bugs.
+    protocol_version = "HTTP/1.1"
+
     def log_message(self, *_):
         pass
 
@@ -115,6 +123,9 @@ class Provider(BaseHTTPRequestHandler):
 
 def main():
     command = sys.argv[1:]
+    tls = bool(command and command[0] == "--tls")
+    if tls:
+        command = command[1:]
     if not command:
         raise SystemExit(__doc__)
     # Relative executable paths must survive the isolated working directory.
@@ -124,6 +135,10 @@ def main():
                    and key.lower() not in ("http_proxy", "https_proxy", "all_proxy")}
     environment["NO_PROXY"] = "127.0.0.1,localhost"
     server = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
+    if tls:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(Path(__file__).parent / "fixtures/provider-http-tls.pem")
+        server.socket = context.wrap_socket(server.socket, server_side=True)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         for stream in (False, True):
@@ -140,7 +155,7 @@ def main():
                     config.write_text(json.dumps({
                         "version": 1, "defaultAgent": "smoke",
                         "providers": [{"id": "smoke", "kind": "openAICompatible",
-                                       "baseURL": f"http://127.0.0.1:{server.server_port}/{case}/v1",
+                                       "baseURL": f"{'https' if tls else 'http'}://127.0.0.1:{server.server_port}/{case}/v1",
                                        "apiKey": "smoke", "timeout": 5}],
                         "toolSources": [{"id": "standard", "kind": "standard-tools", "options": {"tools": tools}}],
                         "agents": [{"id": "smoke", "provider": "smoke", "model": "smoke",

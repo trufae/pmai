@@ -143,6 +143,11 @@ def main():
                      ('loop', True), ('cross', True), ('error', True), ('cancel', True), ('deadline', True),
                      ('tls', True)]
             checks = [(transport, case, stream) for transport in transports for case, stream in cases]
+            if sys.platform.startswith('linux'):
+                # The shared Foundation session must still stream, enforce the
+                # redirect policy, and release a cancelled or completed SSE task.
+                checks += [('urlsession', case, True)
+                           for case in ('ok', 'redirect', 'cross', 'early', 'cancel')]
             if os.name == 'nt':
                 checks.append(('auto', 'ok', True))
             for transport, case, stream in checks:
