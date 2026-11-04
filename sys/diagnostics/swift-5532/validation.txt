@@ -30,11 +30,26 @@ Passed:
    Read-first lookup succeeded in both versions. This demonstrates the key
    mismatch in the C functions, not a native Windows networking A/B result.
 
-Still required before claiming the reported stall is fixed:
-- Native Windows x64 and ARM64 Dispatch regression failure before / pass after.
+Submission update (2026-11-04):
+- Runtime fix and Dispatch regression submitted to the cross-platform Swift
+  repository: https://github.com/swiftlang/swift-corelibs-libdispatch/pull/975
+  Commit: ae6c40ee3ed55ecf1b6c08c9012326c3b401881f
+  Base remains current upstream main at 2078b9d.
+- Native Windows x64 and ARM64 CMake/Clang builds completed. With only the test
+  applied, both failed at the bounded group wait after the peer sent its byte.
+  Rebuilding event_windows.c with the fix made the complete dispatch_io_muxed
+  test pass on both architectures.
+  Evidence: https://github.com/trufae/swift-corelibs-libdispatch/actions/runs/41828279799
+  The verification workflow is on a separate fork branch, outside the PR diff.
+- The Foundation test patch still applies to its recorded base and remains
+  unsubmitted. The historical ticket-response.txt draft predates native testing.
+
+Still required before claiming the reported URLSession stall is fixed:
 - Standalone Foundation uploads with old and rebuilt Dispatch, checking receiver
   bytes and the DLLs actually loaded; keep the other runtime versions constant.
 - The Foundation regression against rebuilt corelibs Foundation and Dispatch.
 - Broader upstream platform checks required by the maintainers before merging.
 
-No upstream comment, pull request, or branch has been published by this work.
+The native Dispatch result establishes the source-muxing bug and its fix, not
+the end-to-end Foundation upload result. The PR links issue #5532 as related
+without claiming a confirmed resolution of the upload symptom.

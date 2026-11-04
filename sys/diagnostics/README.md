@@ -134,11 +134,16 @@ checks the complete echoed body for both `httpBody`/POST and `uploadTask`/PUT,
 using a constrained receive window and an explicit `100-continue` exchange.
 The large body is needed to exercise the partial-write path.
 
-The [ticket response draft](swift-5532/ticket-response.txt) and
-[validation record](swift-5532/validation.txt) distinguish code/fixture checks
-from native Windows validation. Neither patch has been submitted. Windows
-before/after execution remains required to confirm this fixes the reported
-upload stall; successful macOS runs do not establish that result.
+The runtime fix and Dispatch regression are submitted as
+[swift-corelibs-libdispatch#975](https://github.com/swiftlang/swift-corelibs-libdispatch/pull/975).
+Native Windows x64 and ARM64 builds now demonstrate failure before the fix and
+success after it in `dispatch_io_muxed`; the
+[fork-only validation workflow](https://github.com/trufae/swift-corelibs-libdispatch/actions/runs/41828279799)
+contains the logs and artifacts. The Foundation test patch remains unsubmitted.
+The [ticket response draft](swift-5532/ticket-response.txt) records the earlier
+investigation; the [validation record](swift-5532/validation.txt) includes the
+submission update. A Windows URLSession upload comparison with the rebuilt
+runtime remains required to confirm this fixes the reported upload stall.
 
 ### Validate on Windows
 
