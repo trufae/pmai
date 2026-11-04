@@ -688,6 +688,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       guard active, ui.mode == .buffer, view != nil, viewHeight > 0 else { return false }
       view?.focused.toggle()
       drawViewRows()
+      if isVerticalView { drawStatusLine() }
       placeCaret()
       return true
     }
@@ -699,6 +700,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       view?.focused = false
       guard active else { return }
       drawViewRows()
+      if isVerticalView { drawStatusLine() }
       placeCaret()
     }
   }
@@ -1479,7 +1481,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var viewHeight: Int {
     guard ui.mode == .buffer, let view else { return 0 }
     if view.fullscreen { return max(0, regionBottom - 1) }
-    if isVerticalView { return regionBottom - 1 }
+    if isVerticalView { return regionBottom }
     return TerminalView.height(availableRows: regionBottom, preferredHeight: view.preferredHeight)
   }
 
@@ -1495,7 +1497,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var outputOrigin: Int { viewHeight > 0 && !isVerticalView ? viewHeight + 2 : 1 }
   private var outputHeight: Int {
     if view?.fullscreen == true, viewHeight > 0 { return 0 }
-    return isVerticalView ? regionBottom - 1 : max(0, regionBottom - outputOrigin + 1)
+    return max(0, regionBottom - outputOrigin + 1)
   }
 
   private func isInView(_ event: TerminalMouseEvent) -> Bool {
@@ -1517,6 +1519,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   private var firstInputRow: Int { rows - inputRows.count + 1 }
+  private var statusRow: Int { firstInputRow - 1 }
+  private var statusColumns: Int { isVerticalView ? outputColumns : columns }
 
   /// Moves the region's bottom edge for an input area of another height.
   ///
@@ -1685,8 +1689,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     let focus = focused
       ? "view focused · Space layout · Enter fullscreen · / search · j/k scroll · J/K page · g/G top/bottom · v/V resize · q close · Tab prompt"
       : "Tab on empty prompt to focus"
-    let label = "── view: \(view?.title ?? "") · \(focus) · drag to resize ──"
-    let separatorWidth = columns
+    let resizeHint = isVerticalView ? "" : " · drag to resize"
+    let label = "── view: \(view?.title ?? "") · \(focus)\(resizeHint) ──"
+    let separatorWidth = isVerticalView ? viewColumns : columns
     let text = Self.truncated(label, width: separatorWidth)
     let padded = text + String(repeating: " ", count: max(0, separatorWidth - Self.displayWidth(text)))
     let background = TerminalLineEditor.backgroundColorCode(focused ? ui.selectionBackground : ui.backgroundLine)
@@ -1698,14 +1703,17 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     var out = ""
     for (index, text) in visible.enumerated() {
       if index < paintedViewRows.count, paintedViewRows[index] == text { continue }
-      let paneWidth = index == height ? columns : viewColumns
-      let column = index == height ? 1 : viewColumn
-      out += clearPaneRow(row: index + 1, column: column, width: paneWidth) + text + Self.reset
+      let separator = index == height
+      let paneWidth = separator ? separatorWidth : viewColumns
+      let column = separator && !isVerticalView ? 1 : viewColumn
+      let row = separator && isVerticalView ? statusRow : index + 1
+      out += clearPaneRow(row: row, column: column, width: paneWidth) + text + Self.reset
     }
     if isVerticalView {
       for row in 1...height {
         out += move(row: row, column: viewColumn - 1) + Self.reset + backgroundStyle + "│"
       }
+      out += move(row: statusRow, column: viewColumn - 1) + Self.reset + backgroundStyle + "│"
     }
     paintedViewRows = visible
     writeFixedRows(out)
@@ -1769,7 +1777,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   private func drawStatusLine(clear: Bool = true) {
-    let width = columns
+    let width = statusColumns
     let marker = animatingStatus ? animator.frame() : String(statusText.prefix(1))
     let timer: String
     if let activityStartedAt {
@@ -1793,9 +1801,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       width - Self.displayWidth(left) - Self.displayWidth(right))) + right
     let colors = colorsEnabled
     var out = ""
-    out += move(row: regionBottom + panelRows.count + 1, column: 1)
+    out += move(row: statusRow, column: 1)
     out += Self.reset + (colors ? TerminalThemeStyle.base(ui) : "")
-    if clear { out += Self.clearLine }
+    if clear && !isVerticalView { out += Self.clearLine }
     if let menu = completionMenu {
       out += completionMenuRow(menu, width: width, colors: colors)
     } else if statusNeedsAttention {
@@ -1809,6 +1817,12 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   private var statusLineStyle: String {
+    if isVerticalView, view?.focused != true {
+      let background = TerminalLineEditor.backgroundColorCode(ui.selectionBackground)
+      let foreground = colorsEnabled ? TerminalLineEditor.foregroundColorCode(ui.selectionForeground) : nil
+      let codes = background == nil ? ["7", "1"] : [background, foreground, "1"].compactMap { $0 }
+      return "\u{1B}[" + codes.joined(separator: ";") + "m"
+    }
     let foreground = colorsEnabled ? TerminalLineEditor.foregroundColorCode(ui.foreground) : nil
     let background = TerminalLineEditor.backgroundColorCode(ui.backgroundLine)
     let codes = [background ?? "2", foreground].compactMap { $0 }
@@ -1887,7 +1901,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       refreshSize()
       // The completion menu owns the row; its first cell must not blink.
       guard active, let activityStartedAt, completionMenu == nil,
-        columns > 2
+        statusColumns > 2
       else { return }
       let elapsed = (DispatchTime.now().uptimeNanoseconds - activityStartedAt) / 1_000_000_000
       if elapsed != displayedActivitySecond {
@@ -1900,14 +1914,14 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         return
       }
       guard animatingStatus else { return }
-      let timerWidth = Self.displayWidth(Self.truncated(" \(elapsed / 60)m\(elapsed % 60)s ", width: columns))
-      let markerWidth = min(animator.width, columns - timerWidth - 1)
+      let timerWidth = Self.displayWidth(Self.truncated(" \(elapsed / 60)m\(elapsed % 60)s ", width: statusColumns))
+      let markerWidth = min(animator.width, statusColumns - timerWidth - 1)
       guard markerWidth > 0 else { return }
       let marker = String(animator.frame().prefix(markerWidth))
       guard marker != paintedActivityMarker else { return }
       paintedActivityMarker = marker
       writeFixedRows(
-        move(row: regionBottom + panelRows.count + 1, column: 2)
+        move(row: statusRow, column: 2)
           + backgroundStyle + statusLineStyle + marker + Self.reset)
     }
   }

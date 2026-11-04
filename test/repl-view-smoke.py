@@ -113,6 +113,11 @@ def main(binary):
                     if column == 1 and '\x1b[2K' in content:
                         styled_screen[row] = content
                         screen[row] = CSI.sub('', content).replace('\x1b7', '').replace('\x1b8', '')
+                    elif row == rows - 1:
+                        # Column layouts paint the two footer segments independently.
+                        plain = CSI.sub('', content).replace('\x1b7', '').replace('\x1b8', '')
+                        previous = screen.get(row, '').ljust(column - 1)
+                        screen[row] = previous[:column - 1] + plain + previous[column - 1 + len(plain):]
                     span = scrollbar_spans.get(row)
                     if span and span[0] == 1 and column == span[1] + 1:
                         styled_screen[row] += content
@@ -132,7 +137,9 @@ def main(binary):
                 os.write(master, text.encode())
 
             def separator():
-                return next(row for row in range(1, rows - 1) if '── view:' in screen.get(row, ''))
+                if '── view:' in screen.get(rows - 1, ''):
+                    return rows - 1
+                return next(row for row in range(1, rows) if '── view:' in screen.get(row, ''))
 
             def top():
                 return '\n'.join(screen.get(row, '') for row in range(1, separator()))
@@ -747,10 +754,22 @@ def main(binary):
                 view_column = columns - (columns - 1) // 2 + 1
                 painted = captured.decode(errors='replace')
                 assert re.search(rf'\x1b\[1;{view_column}H[^H]*user: .*PAGED_000', painted), painted
+                assert separator() == rows - 1, screen
+                footer = screen[rows - 1]
+                assert footer[:view_column - 2].strip(), footer
+                assert footer[view_column - 2] == '│', footer
+                assert '── view: message log' in footer[view_column - 1:], footer
+                assert 'view focused' in footer[view_column - 1:], footer
+                assert 'drag to resize' not in footer, footer
+                # Both panes gain the row immediately above their shared footer.
+                positions = {tuple(map(int, move.groups())) for move in MOVE.finditer(painted)}
+                assert {(rows - 2, 1), (rows - 2, view_column)} <= positions, positions
                 # Both vertical panes and their divider use the full background,
                 # even where a short row leaves blank cells beside its text.
                 send('\t/theme color bgcolor #123456\r')
                 wait_for('Set theme color bgcolor = #123456.')
+                assert '── view: message log' in screen[rows - 1][view_column - 1:], screen
+                assert 'view focused' not in screen[rows - 1], screen
                 painted = captured.decode(errors='replace')
                 background = '\x1b[0m\x1b[48;2;18;52;86m'
                 assert f'\x1b[1;1H{background}' in painted, painted
