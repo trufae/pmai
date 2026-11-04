@@ -1,20 +1,25 @@
 import Foundation
 
-/// A tiny Braille spinner that runs through patterns on a 2×4 dot grid.
-///
-/// Callers create an animator with a style, then ask for `next()` on a timer
-/// to get the single Braille character that should be shown. The styles are
-/// built from the 8 dot positions and are easy to extend.
+/// Braille activity effects sampled from monotonic time. Redrawing or skipping
+/// a timer callback never changes the animation's speed or phase.
 final class BrailleAnimator: @unchecked Sendable {
   enum Style: String, CaseIterable, Sendable {
     case random, circle, snake, spiral, square, topWave, bottomWave, scanline
     case snakeGame = "snakegame"
+    case equalizer, plasma, tunnel
   }
 
   private let style: Style
-  private var index: Int = 0
-  private var randomPattern: UInt8 = 0
+  private var startedAt = ProcessInfo.processInfo.systemUptime
   private let lock = NSLock()
+
+  /// Procedural effects have an 8×4 dot canvas; classic spinners use one cell.
+  var width: Int {
+    switch style {
+    case .equalizer, .plasma, .tunnel: 4
+    default: 1
+    }
+  }
 
   init(style: Style) {
     self.style = style
@@ -38,38 +43,44 @@ final class BrailleAnimator: @unchecked Sendable {
   }
 
   /// Starts (or restarts) the animation from its first frame.
-  func start() {
-    lock.withLock {
-      index = 0
-      randomPattern = 0
-    }
+  func start(at time: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+    lock.withLock { startedAt = time }
   }
 
-  /// Advances one frame and returns the Braille character to draw.
-  func next() -> String {
+  /// Returns the frame at this instant without advancing any mutable state.
+  func frame(at time: TimeInterval = ProcessInfo.processInfo.systemUptime) -> String {
     lock.withLock {
+      let elapsed = max(0, time - startedAt)
+      func sample(_ frames: [UInt8]) -> UInt8 {
+        frames[Int((elapsed * 5).truncatingRemainder(dividingBy: Double(frames.count)))]
+      }
       let dot: UInt8
       switch style {
       case .random:
-        dot = nextRandom()
+        // Hash a time slot, so repeated draws of a twinkle are also stable.
+        var seed = UInt64(elapsed * 5) &+ 0x9e3779b97f4a7c15
+        seed = (seed ^ (seed >> 30)) &* 0xbf58476d1ce4e5b9
+        seed = (seed ^ (seed >> 27)) &* 0x94d049bb133111eb
+        dot = UInt8(truncatingIfNeeded: seed ^ (seed >> 31))
       case .circle:
-        dot = Self.circle[index % Self.circle.count]
+        dot = sample(Self.circle)
       case .snake:
-        dot = Self.snake[index % Self.snake.count]
+        dot = sample(Self.snake)
       case .snakeGame:
-        dot = Self.snakeGame[index % Self.snakeGame.count]
+        dot = sample(Self.snakeGame)
       case .spiral:
-        dot = Self.spiral[index % Self.spiral.count]
+        dot = sample(Self.spiral)
       case .square:
-        dot = Self.square[index % Self.square.count]
+        dot = sample(Self.square)
       case .topWave:
-        dot = Self.topWave[index % Self.topWave.count]
+        dot = sample(Self.topWave)
       case .bottomWave:
-        dot = Self.bottomWave[index % Self.bottomWave.count]
+        dot = sample(Self.bottomWave)
       case .scanline:
-        dot = Self.scanline[index % Self.scanline.count]
+        dot = sample(Self.scanline)
+      case .equalizer, .plasma, .tunnel:
+        return effect(at: elapsed)
       }
-      index += 1
       return Self.braille(dot: dot)
     }
   }
@@ -109,16 +120,37 @@ final class BrailleAnimator: @unchecked Sendable {
   ///     6 7
   private static let dots: [UInt8] = (0..<8).map { 1 << $0 }
 
-  // MARK: - Random
+  // MARK: - Demoscene effects
 
-  private func nextRandom() -> UInt8 {
-    var pattern = randomPattern
-    // Turn off a few dots and turn on a few dots so it twinkles.
-    for _ in 0..<3 {
-      pattern ^= (1 << Int.random(in: 0..<8))
+  private func effect(at time: TimeInterval) -> String {
+    var cells = [UInt8](repeating: 0, count: width)
+    for x in 0..<(width * 2) {
+      let column = Double(x)
+      // Synthetic amplifier levels with a shared beat and independent bands.
+      let beat = pow(max(0, cos(time * 10 - column * 0.45)), 4)
+      let level = 0.5 + 0.5 * sin(time * (3 + column * 0.17) + column * 1.3)
+      let height = min(4, 1 + Int(level * 2 + beat * 2))
+      for y in 0..<4 {
+        let row = Double(y)
+        let lit: Bool
+        switch style {
+        case .equalizer:
+          lit = y >= 4 - height
+        case .plasma:
+          let field = sin(column * 0.9 + time * 2.8) + sin(row * 1.4 - time * 2.1)
+            + sin((column + row) * 0.6 + time * 1.3)
+          lit = field > 0.25
+        case .tunnel:
+          let dx = (column - 3.5) * 0.65
+          let dy = row - 1.5
+          lit = sin(hypot(dx, dy) * 3 - time * 6 + atan2(dy, dx) * 2) > 0.2
+        default:
+          lit = false
+        }
+        if lit { cells[x / 2] |= 1 << (y * 2 + x % 2) }
+      }
     }
-    randomPattern = pattern
-    return pattern
+    return cells.map { Self.braille(dot: $0) }.joined()
   }
 
   // MARK: - Circle

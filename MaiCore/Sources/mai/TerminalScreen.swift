@@ -179,12 +179,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var activitySource: DispatchSourceTimer?
   private var animatingStatus = false
   private var activityStartedAt: UInt64?
-  private var activityFrame = 0
   private var displayedActivitySecond: UInt64 = 0
   private var animator = BrailleAnimator.randomStyle()
-  /// Whether `setStatus` also restarted the animator; used to avoid
-  /// advancing the frame on a line that has not changed.
-  private var activityRestarted = false
+  private var paintedActivityMarker = ""
   /// Keystrokes that arrived while the terminal was asked for its cursor
   /// position, kept for the editor.
   private var typeahead: [UInt8] = []
@@ -1125,7 +1122,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       statusNeedsAttention = attention
       let animationChanged = animatingStatus != animating
       animatingStatus = animating
-      activityRestarted = animationChanged && animating
+      var activityRestarted = animationChanged && animating
       let isWaiting = waiting ?? animating
       let waitingChanged = isWaiting != (activityStartedAt != nil)
       if waitingChanged {
@@ -1133,7 +1130,6 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         displayedActivitySecond = 0
       }
       if animationChanged {
-        activityFrame = 0
         displayedActivitySecond = 0
         if animating {
           animator = BrailleAnimator.randomStyle()
@@ -1149,7 +1145,6 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       guard text != statusText || animationChanged || waitingChanged || activityRestarted || attentionChanged || questionChanged
       else { return }
       statusText = text
-      activityRestarted = false
       // A tab-completion menu owns the row until it closes; the status is
       // still kept so the row can be restored when it does.
       guard active else { return }
@@ -1775,22 +1770,25 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   private func drawStatusLine(clear: Bool = true) {
     let width = columns
-    let status: String
+    let marker = animatingStatus ? animator.frame() : String(statusText.prefix(1))
     let timer: String
     if let activityStartedAt {
       let elapsed = (DispatchTime.now().uptimeNanoseconds - activityStartedAt) / 1_000_000_000
-      status = animatingStatus ? animator.next() + String(statusText.dropFirst()) : statusText
       timer = " \(elapsed / 60)m\(elapsed % 60)s "
       displayedActivitySecond = elapsed
     } else {
-      status = statusText
       timer = ""
     }
     let scrollHint = ui.mode == .buffer && !transcript.isFollowing ? " ↑ scroll · PgDn to latest · " : ""
     let right = Self.truncated(timer, width: width)
     // Keep the activity indicator in the same cell when the scroll hint appears.
-    let left = Self.truncated(" \(status.prefix(1))\(scrollHint)\(status.dropFirst()) ",
-      width: max(0, width - Self.displayWidth(right)))
+    let leftWidth = max(0, width - Self.displayWidth(right))
+    let clippedMarker = String(marker.prefix(max(0, leftWidth - 1)))
+    let shownMarker = Self.displayWidth(clippedMarker) < leftWidth ? clippedMarker : ""
+    let prefix = leftWidth > 0 ? " " + shownMarker : ""
+    let left = prefix + Self.truncated("\(scrollHint)\(statusText.dropFirst()) ",
+      width: max(0, leftWidth - Self.displayWidth(prefix)))
+    paintedActivityMarker = completionMenu == nil ? shownMarker : ""
     let content = left + String(repeating: " ", count: max(0,
       width - Self.displayWidth(left) - Self.displayWidth(right))) + right
     let colors = colorsEnabled
@@ -1877,13 +1875,13 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     }
     guard activitySource == nil else { return }
     let source = DispatchSource.makeTimerSource(queue: .global())
-    source.schedule(deadline: .now() + .milliseconds(200), repeating: .milliseconds(200))
+    source.schedule(deadline: .now() + .milliseconds(50), repeating: .milliseconds(50))
     source.setEventHandler { [weak self] in self?.drawActivity() }
     activitySource = source
     source.resume()
   }
 
-  // Animate one cell without rebuilding the status or traversing the transcript.
+  // Sample the effect without rebuilding the status or traversing the transcript.
   private func drawActivity() {
     lock.withLock {
       refreshSize()
@@ -1891,7 +1889,6 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       guard active, let activityStartedAt, completionMenu == nil,
         columns > 2
       else { return }
-      activityFrame = (activityFrame + 1) % 10
       let elapsed = (DispatchTime.now().uptimeNanoseconds - activityStartedAt) / 1_000_000_000
       if elapsed != displayedActivitySecond {
         if ui.mode == .buffer, ui.toolGroups, transcript.hasRunningTools {
@@ -1903,13 +1900,15 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         return
       }
       guard animatingStatus else { return }
-      let marker = animator.next()
-      let timerWidth = Self.displayWidth(" \(elapsed / 60)m\(elapsed % 60)s ")
-      guard 2 < columns - timerWidth else { return }
+      let timerWidth = Self.displayWidth(Self.truncated(" \(elapsed / 60)m\(elapsed % 60)s ", width: columns))
+      let markerWidth = min(animator.width, columns - timerWidth - 1)
+      guard markerWidth > 0 else { return }
+      let marker = String(animator.frame().prefix(markerWidth))
+      guard marker != paintedActivityMarker else { return }
+      paintedActivityMarker = marker
       writeFixedRows(
         move(row: regionBottom + panelRows.count + 1, column: 2)
           + backgroundStyle + statusLineStyle + marker + Self.reset)
-      placeCaret()
     }
   }
 
@@ -1948,7 +1947,12 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   /// Scrolling output keeps normal autowrap.
   private func writeFixedRows(_ text: String) {
     guard !text.isEmpty else { return }
-    write("\u{1B}[?7l" + text + "\u{1B}[?7h")
+    // Hide the cursor before moving into the footer and put it back before
+    // showing it, all in one write. Never borrow the saved output cursor.
+    let caret = move(row: min(rows, firstInputRow + caretRow),
+      column: min(columns, max(1, 1 + caretColumn)))
+    write("\u{1B}[?25l\u{1B}[?7l" + text + "\u{1B}[?7h" + caret
+      + (cursorHidden ? "" : "\u{1B}[?25h"))
   }
 
   private func move(row: Int, column: Int) -> String {
