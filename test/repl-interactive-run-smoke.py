@@ -62,7 +62,7 @@ def main():
     server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        for case in sys.argv[2:] or ('vim', 'read', 'interrupt', 'cancel', 'timeout', 'exit', 'oneshot', 'piped'):
+        for case in sys.argv[2:] or ('captured', 'vim', 'read', 'interrupt', 'cancel', 'timeout', 'exit', 'oneshot', 'piped'):
             release.clear()
             while not requests.empty():
                 requests.get_nowait()
@@ -84,11 +84,18 @@ def main():
                     'use': {'plan': False, 'agentsmd': 'off'},
                 }))
                 arguments = {'command': '/bin/sh ../fixture.sh "$1"', 'args': ['a b'],
-                             'cwd': str(work), 'interactive': True}
-                script = 'test -t 0 && test -t 1 && test -t 2 || exit 80\n'
-                script += 'test "$TERM" = xterm-256color || exit 81\n'
+                             'cwd': str(work), 'interactive': case != 'captured'}
+                tty_test = '! -t' if case == 'captured' else '-t'
+                script = f'test {tty_test} 0 && test {tty_test} 1 && test {tty_test} 2 || exit 80\n'
+                terminal = 'dumb' if case == 'captured' else 'xterm-256color'
+                script += f'test "$TERM" = {terminal} || exit 81\n'
                 script += 'printf "%s" "$1" > arg.txt\npwd > cwd.txt\n'
-                if case == 'vim':
+                if case == 'captured':
+                    # Programs probing /dev/tty must fall back to captured output,
+                    # rather than writing over the REPL or reading its input.
+                    script += '(printf tty-output-escaped > /dev/tty) 2>/dev/null && exit 82\n'
+                    script += 'printf captured-stdout\nprintf captured-stderr >&2\n'
+                elif case == 'vim':
                     script += 'exec vim -Nu NONE -n -i NONE -c \'call writefile(["ready"], "ready")\' notes.txt\n'
                 elif case in ('read', 'oneshot'):
                     script += 'echo ready > ready\nread -r text\nprintf "%s" "$text" > typed.txt\n'
@@ -156,9 +163,9 @@ def main():
                     first = requests.get_nowait()
                     definition = next(t['function'] for t in first['tools'] if t['function']['name'] == 'run_shell')
                     assert 'interactive' in definition['parameters']['properties']
-                    if case == 'vim':
+                    if case in ('vim', 'captured'):
                         send(b'preserved draft')
-                        # Confirm the input reader consumed the draft before the handoff.
+                        # Confirm the input reader consumed the draft before the run.
                         wait_until(lambda: b'preserved draft' in output, 'draft rendered')
                     release.set()
                     if case in ('vim', 'read', 'oneshot', 'interrupt', 'cancel', 'timeout'):
@@ -191,7 +198,10 @@ def main():
                     after = requests.get_nowait()
                     tool = next(m for m in after['messages'] if m['role'] == 'tool')
                     body = tool['content']
-                    assert 'terminal input and output were not captured' in body, body
+                    if case == 'captured':
+                        assert body == 'captured-stdout\n[stderr]\ncaptured-stderr', body
+                    else:
+                        assert 'terminal input and output were not captured' in body, body
                     assert 'private' not in body, body
                     if case == 'exit':
                         assert 'exit code 7' in body, body
@@ -199,7 +209,7 @@ def main():
                         assert 'exit code' in body and 'exit code 0' not in body, body
                     elif case == 'timeout':
                         assert 'timed out after 1 seconds' in body, body
-                    else:
+                    elif case != 'captured':
                         assert 'exit code 0' in body, body
                     assert (work / 'arg.txt').read_text() == 'a b'
                     assert Path((work / 'cwd.txt').read_text().strip()) == work.resolve()
@@ -209,7 +219,7 @@ def main():
                         assert (work / 'typed.txt').read_text() == 'private typed text'
                     if case != 'oneshot':
                         wait_until(lambda: b'HANDOFF-DONE' in output, 'assistant resumed')
-                        if case == 'vim':
+                        if case in ('vim', 'captured'):
                             # The final text arrives before turnFinished. Enter
                             # during that gap queues the draft instead of submitting it.
                             wait_until(lambda: '✓ took'.encode() in output, 'turn completed')

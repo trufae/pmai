@@ -630,7 +630,7 @@ enum MaiRunToolError: LocalizedError {
       #if os(Windows)
         private let process: WindowsRunProcess
       #else
-        private let process = Process()
+        private let process: POSIXRunProcess
       #endif
       private let stdoutPipe = Pipe()
       private let stderrPipe = Pipe()
@@ -696,13 +696,13 @@ enum MaiRunToolError: LocalizedError {
           parentHandles: (interactive ? [] : [stdoutPipe.fileHandleForWriting, stderrPipe.fileHandleForWriting])
             + (stdinPipe.map { [$0.fileHandleForReading] } ?? []))
         #else
-        process.executableURL = executable
-        process.arguments = arguments
-        process.currentDirectoryURL = workingDirectory
-        process.environment = LocalProcess.mergedEnvironment(environment)
-        process.standardOutput = interactive ? FileHandle.standardOutput : stdoutPipe
-        process.standardError = interactive ? FileHandle.standardError : stderrPipe
-        process.standardInput = interactive ? FileHandle.standardInput : stdinPipe ?? FileHandle.nullDevice
+        process = POSIXRunProcess(executable: executable, arguments: arguments,
+          directory: workingDirectory, environment: environment,
+          input: interactive ? .standardInput : stdinPipe?.fileHandleForReading ?? .nullDevice,
+          output: interactive ? .standardOutput : stdoutPipe.fileHandleForWriting,
+          errors: interactive ? .standardError : stderrPipe.fileHandleForWriting,
+          parentHandles: (interactive ? [] : [stdoutPipe.fileHandleForWriting, stderrPipe.fileHandleForWriting])
+            + (stdinPipe.map { [$0.fileHandleForReading] } ?? []), interactive: interactive)
         #endif
         stdoutClosed = interactive
         stderrClosed = interactive
@@ -936,7 +936,7 @@ enum MaiRunToolError: LocalizedError {
 
       #if !os(Windows)
       private func signalGroup(_ pid: Int32, _ signal: Int32) {
-        // Foundation spawns a new process group; never signal pmai's own group.
+        // Both launch paths own a process group; never signal pmai's own group.
         if pid != getpgrp(), kill(-pid, signal) == 0 { return }
         if process.isRunning { kill(pid, signal) }
       }

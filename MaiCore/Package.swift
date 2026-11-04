@@ -134,7 +134,7 @@ let package = Package(
       .product(name: "NIOWebSocket", package: "swift-nio"),
     ]),
     .target(name: "MaiMCP", dependencies: ["MaiCore"]),
-    .target(name: "MaiStandardTools", dependencies: ["MaiCore", "MaiDocuments", "MaiVisionOCR"]),
+    .target(name: "MaiStandardTools", dependencies: ["MaiCore", "MaiDocuments", "MaiVisionOCR", "CMaiTerminal"]),
     .target(name: "MaiVisionOCR", dependencies: ["MaiCore"]),
     .target(name: "MaiDocuments", dependencies: [
       "MaiCore", "MaiMarkdown",

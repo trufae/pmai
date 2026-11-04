@@ -21,6 +21,10 @@ void mai_windows_pty_close_console(MaiWindowsPTY *);
 // All I/O workers must be joined before destruction.
 void mai_windows_pty_destroy(MaiWindowsPTY *);
 #else
+// Spawn a captured command in a new session without a controlling terminal.
+// Returns the child pid, or -1 with errno set (including exec/chdir failures).
+int mai_process_spawn(const char *executable, char *const arguments[], char *const environment[],
+  const char *cwd, int input, int output, int errors);
 // Returns the child pid, or -1 with errno set. All three streams and /dev/tty
 // refer to slave. The caller relays input/output through its PTY master.
 int mai_terminal_spawn(int master, int slave, const char *shell, const char *command, char *const environment[]);
