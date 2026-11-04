@@ -27,16 +27,18 @@ func configurationLegacyRedaction() throws {
   }
 }
 
-@Test("Invalid optional display preferences do not prevent configuration loading")
+@Test("Invalid and obsolete display preferences do not prevent configuration loading")
 func configurationTolerantDisplaySettings() throws {
   let configuration = try JSONDecoder().decode(
     MaiConfiguration.self,
     from: Data(
       #"""
-      {"ui":{"title":"Keep this", "bold":"obsolete", "thinking":"future-mode", "tools":{}},
+      {"ui":{"title":"Legacy global title", "bold":"obsolete", "thinking":"future-mode", "tools":{}},
        "providers":[{"id":"local","kind":"hello"}], "futureSetting":{"enabled":true}}
       """#.utf8))
-  #expect(configuration.ui.title == "Keep this")
+  let saved = try #require(JSONSerialization.jsonObject(with: configuration.encoded()) as? [String: Any])
+  let ui = try #require(saved["ui"] as? [String: Any])
+  #expect(ui["title"] == nil)
   #expect(configuration.ui.bold == false)
   #expect(configuration.ui.thinking == .status)
   #expect(configuration.ui.tools == .lines(0))
@@ -86,7 +88,6 @@ func configurationSaveRoundTrip() throws {
       compact: "Summarize this conversation:\n\n{{transcript}}",
       system: ["concise": "Be concise."]),
     ui: ConfiguredTerminalUI(
-      title: "review parser",
       backgroundLine: "magenta",
       foreground: "bright-white",
       promptForeground: "cyan",
@@ -112,7 +113,6 @@ func configurationPromptDefaults() throws {
     from: Data(#"{"version":1}"#.utf8))
 
   #expect(configuration.prompts == nil)
-  #expect(configuration.ui.title.isEmpty)
   #expect(configuration.ui.toolCallBackground.isEmpty)
   #expect(configuration.ui.toolResultBackground.isEmpty)
   #expect(!configuration.ui.toolCallBold)

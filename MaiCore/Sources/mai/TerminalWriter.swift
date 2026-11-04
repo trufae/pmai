@@ -231,7 +231,7 @@ actor TerminalWriter {
   }
 
   /// Sets the terminal/tab title with OSC 0. Control characters are removed
-  /// so a value loaded from configuration cannot inject another ANSI command.
+  /// so a user-supplied label cannot inject another ANSI command.
   func configureTerminalTitle(_ title: String) {
     let safe = String(title.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) })
       .trimmingCharacters(in: .whitespacesAndNewlines)

@@ -21,6 +21,7 @@ def main():
             'defaultAgent': 'hello', 'providers': [{'id': 'hello', 'kind': 'hello'}],
             'agents': [{'id': 'hello', 'provider': 'hello', 'model': 'hello'}],
             'memory': {'enabled': False}, 'use': {'plan': False},
+            'ui': {'title': 'Stale global title'},
         }))
         editor = root / 'editor.py'
         editor.write_text('''from pathlib import Path
@@ -74,6 +75,30 @@ path.write_text('Edited in editor: ' + path.read_text())
         def run(commands, allow_errors=False):
             return run_repl(command, commands, cwd=root, env=env, split=True,
                             allow_errors=allow_errors)
+
+        # A prompt/tab label must never leak into another chat or a later REPL.
+        before = config.read_bytes()
+        outputs = run([
+            '/chat title', '/set ui.title obsolete', '/chat title Review parser',
+            '/chat title', '/chat new Other title fixture', '/chat title',
+            '/chat title Other label', '/chat use ' + chat['id'], '/chat title',
+            '/chat title none', '/chat title', '/chat title Temporary exit label',
+        ])
+        assert 'Chat title = none' in outputs[0], outputs
+        assert 'Use /chat title' in outputs[1], outputs
+        assert "Chat title set to 'Review parser'." in outputs[2], outputs
+        assert 'Chat title = Review parser' in outputs[3], outputs
+        assert 'Chat title = none' in outputs[5], outputs
+        assert 'Chat title = Review parser' in outputs[8], outputs
+        assert 'Chat title cleared.' in outputs[9], outputs
+        assert 'Chat title = none' in outputs[10], outputs
+        assert config.read_bytes() == before, 'Temporary labels changed the configuration'
+        assert json.loads(saved.read_text())['title'] == chat['title']
+        assert 'Temporary exit label' not in saved.read_text()
+        assert 'Chat title = none' in run(['/chat title'])[0], 'Label survived restart'
+        run(['/set ui.scroll 2'])
+        assert 'title' not in json.loads(config.read_text())['ui'], 'Legacy title was re-saved'
+        assert 'ui.title' not in run(['/set ui.'])[0]
 
         reset()
         output = run(['/clear'])[0]
@@ -284,6 +309,11 @@ path.write_text('Edited in editor: ' + path.read_text())
 
                 try:
                     wait('pmai> ')
+                    send('/chat title Visual label\r')
+                    wait('[Visual label] pmai> ')
+                    send('/chat title none\r')
+                    wait('Chat title cleared.')
+                    wait('pmai> ')
                     send('/msg unpin \t')
                     wait('\x1b[97;44mrow-000\x1b[0m')
                     send('\t')
@@ -331,7 +361,7 @@ path.write_text('Edited in editor: ' + path.read_text())
                         process.kill()
                         process.wait(timeout=5)
                     os.close(master)
-        print('PASS chat logs: quiet/verbose/short, first paragraphs, pins on all roles across repeated compaction, stable indexes, redirection, '
+        print('PASS temporary chat titles and chat logs: quiet/verbose/short, first paragraphs, pins on all roles across repeated compaction, stable indexes, redirection, '
               'pinlist, pinned ID completion, rewind to the newest pin and its errors; editor aliases, inline text, attachment preservation, persistence and validation')
 
 

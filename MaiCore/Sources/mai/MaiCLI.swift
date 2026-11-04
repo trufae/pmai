@@ -2371,6 +2371,8 @@ struct MaiCLI {
     var pendingQueueMessage: String?
     var pendingQueueRedirection: REPLRedirection?
     var chatChop: REPLChatChop?
+    /// Prompt/tab labels belong to this running REPL, never to saved configuration or chats.
+    var chatTitles: [UUID: String] = [:]
     var resetID: UUID?
     /// True while the input thread waits for the loop before reading again.
     var readerParked = true
@@ -2905,7 +2907,7 @@ struct MaiCLI {
       await terminal.configureSubagentOutput(ui.subagentOutput)
       session.redactor = await runtime.contentRedactor(sessionID: session.sessionID)
       await terminal.configureRedactor(session.redactor)
-      await terminal.configureTerminalTitle(ui.title)
+      await terminal.configureTerminalTitle(loop.chatTitles[session.id] ?? "")
       configureEditor(ui.editor)
       services.memory.focus(project: project, chatID: session.id)
       services.todo.focus(project: project)
@@ -3017,7 +3019,7 @@ struct MaiCLI {
       } else {
         prompt = "pmai> "
       }
-      let title = visibleUITitle(configuration?.ui.title ?? "")
+      let title = loop.chatTitles[session.id] ?? ""
       let conversationID: String
       if case .agent(let pid) = loop.focus { conversationID = "agent:\(pid.rawValue)" }
       else { conversationID = "chat:\(session.id)" }
@@ -5359,6 +5361,7 @@ struct MaiCLI {
                 argument,
                 session: &session,
                 workspace: &workspace,
+                chatTitles: &loop.chatTitles,
                 runtime: runtime,
                 configuration: configuration,
                 chatProcess: chatProcessIDs[session.id],
@@ -6532,7 +6535,7 @@ struct MaiCLI {
     return name.isEmpty ? path : name
   }
 
-  /// Removes terminal controls from the configured label before showing it.
+  /// Removes terminal controls from text before showing it.
   private static func visibleUITitle(_ title: String) -> String {
     String(title.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) })
       .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -12350,7 +12353,11 @@ struct MaiCLI {
     let booleanKeys = ["ui.markdown", "ui.tableborders", "ui.broadcast", "ui.toolgroups"]
     let countKeys = ["ui.tools", "ui.toolcalls", "ui.scroll", "ui.scrollbar"]
     let levelKeys = ["ui.subagents", "ui.thinking", "ui.mode"]
-    let textKeys = ["ui.title", "ui.editor", "ui.highlight"]
+    if key == "ui.title" {
+      await terminal.line("Use /chat title [TEXT|none] for a temporary prompt and terminal/tab title.")
+      return
+    }
+    let textKeys = ["ui.editor", "ui.highlight"]
     guard
       emphasisColorKeys.contains(key) || booleanKeys.contains(key) || countKeys.contains(key)
         || levelKeys.contains(key) || textKeys.contains(key)
@@ -12378,15 +12385,12 @@ struct MaiCLI {
       }
     } else if textKeys.contains(key) {
       let text = parts.dropFirst().joined(separator: " ")
-      // "none" empties the setting: the title goes away, and the editor falls
-      // back to $EDITOR again.
+      // "none" clears highlighting or falls back to $EDITOR.
       let value = ["none", "off"].contains(text.lowercased()) ? "" : text
       if key == "ui.highlight" {
         ui.highlight = value
-      } else if key == "ui.editor" {
-        ui.editor = value
       } else {
-        ui.title = value
+        ui.editor = value
       }
     } else if key == "ui.scroll" {
       guard let value = Int(parts[1]), value > 0 else {
@@ -12463,7 +12467,6 @@ struct MaiCLI {
       try draft.save(to: URL(fileURLWithPath: configurationPath))
       configuration = draft
       await terminal.configureColors(ui)
-      if key == "ui.title" { await terminal.configureTerminalTitle(ui.title) }
       if key == "ui.editor" { configureEditor(ui.editor) }
       await terminal.line("Set \(displayedKey) = \(uiSetting(key, in: ui)).")
     } catch {
@@ -13108,7 +13111,7 @@ struct MaiCLI {
 
   private static func uiSettings(_ ui: ConfiguredTerminalUI) -> [String] {
     let keys = [
-      "ui.mode", "ui.scroll", "ui.scrollbar", "ui.highlight", "ui.title", "ui.editor", "ui.markdown", "ui.tools", "ui.toolcalls", "ui.toolgroups",
+      "ui.mode", "ui.scroll", "ui.scrollbar", "ui.highlight", "ui.editor", "ui.markdown", "ui.tools", "ui.toolcalls", "ui.toolgroups",
       "ui.subagents", "ui.thinking", "ui.tableborders",
       "ui.broadcast",
       "ui.fgbold", "ui.fgitalic",
@@ -13123,7 +13126,6 @@ struct MaiCLI {
     case "ui.scroll": return String(ui.scroll)
     case "ui.scrollbar": return String(ui.scrollbar)
     case "ui.highlight": value = ui.highlight
-    case "ui.title": value = visibleUITitle(ui.title)
     // Unset is worth showing as what it resolves to, since that is the editor
     // that actually opens.
     case "ui.editor":
@@ -13913,6 +13915,7 @@ struct MaiCLI {
     _ argument: String,
     session: inout REPLSession,
     workspace: inout AgentChatWorkspace,
+    chatTitles: inout [UUID: String],
     runtime: AgentRuntime,
     configuration: MaiConfiguration?,
     chatProcess: AgentPID? = nil,
@@ -14012,6 +14015,15 @@ struct MaiCLI {
       default:
         await terminal.line("Usage: /chat session [new]")
       }
+    case "title":
+      if rest.isEmpty {
+        await terminal.line("Chat title = \(chatTitles[session.id] ?? "none")")
+        return
+      }
+      let title = ["none", "off"].contains(rest.lowercased()) ? "" : visibleUITitle(rest)
+      chatTitles[session.id] = title.isEmpty ? nil : title
+      await terminal.configureTerminalTitle(title)
+      await terminal.line(title.isEmpty ? "Chat title cleared." : "Chat title set to '\(title)'.")
     case "rename":
       guard !rest.isEmpty else {
         await terminal.line("Usage: /chat rename TITLE")
@@ -15306,7 +15318,7 @@ struct MaiCLI {
       "/set airplane on", "/set airplane off", "/set airplane toggle",
       "/set tool.proxy on", "/set tool.proxy off", "/set tool.proxy all",
       "/set tool.proxy hybrid", "/set tool.auto on", "/set tool.auto off",
-      "/set ui.title ", "/set ui.title none", "/set ui.editor ", "/set ui.editor none",
+      "/set ui.editor ", "/set ui.editor none",
       "/theme color bgline rgb:024", "/theme color bgline none",
       "/theme color fgprompt yellow", "/version", "/about", "/help about", "/last", "/skills",
       "/theme color fgcolor none", "/theme color bgcolor none", "/theme color bgprompt none",
@@ -15380,7 +15392,7 @@ struct MaiCLI {
       "/clear", "/chat list",
       "/chat list active", "/chat list archived", "/chat list all", "/chat new ", "/chat fork",
       "/chat use ", "/chat next", "/chat previous", "/chat info", "/chat session",
-      "/chat session new", "/chat rename ",
+      "/chat session new", "/chat title", "/chat title ", "/chat title none", "/chat rename ",
       "/chat pin", "/chat pin ", "/chat unpin", "/chat unpin ",
       "/chat archive", "/chat unarchive ", "/chat del ",
       "/chat files", "/msg", "/msg list", "/msg log", "/msg log quiet", "/msg log verbose", "/msg log short", "/msg pin", "/msg pin ", "/msg pins", "/msg pins short", "/msg pinlist", "/msg unpin ", "/msg last", "/msg edit ", "/msg del ", "/msg undo", "/msg chop", "/msg trim ", "/msg rewind",
@@ -16148,7 +16160,6 @@ struct MaiCLI {
       /set ui.scroll N            Lines per mouse-wheel event in buffer mode (default 1)
       /set ui.highlight WORD      Highlight literal matches; none clears (also /highlight WORD)
       /set ui.scrollbar N         Scrollbar width: positive right, negative left, 0 hidden (default 1)
-      /set ui.title TEXT           Set the prompt label and terminal/tab title (`none` clears it)
       /set ui.editor COMMAND       Editor /edit opens (`none` falls back to $EDITOR, $VISUAL, vim)
       /set ui.markdown BOOL        Render replies as styled markdown (on/off)
                                    Buffer mode also redraws earlier replies with this setting
@@ -16206,6 +16217,7 @@ struct MaiCLI {
       /chat next|previous|prev      Cycle newer or older through chats (wraps around)
       /chat info [INDEX|ID|TITLE]   Show a chat's agent, session, size, and timestamps
       /chat session [new]           Show the session id providers see, or start a fresh one
+      /chat title [TEXT|none]       Show or set this chat's temporary prompt and terminal/tab title
       /chat rename TITLE            Rename the active chat
       /chat pin [INDEX|ID|TITLE]     Pin a chat (defaults to the current chat)
       /chat unpin [INDEX|ID|TITLE]   Return a pinned chat to its date group
@@ -16221,6 +16233,9 @@ struct MaiCLI {
     -1 selects the newest chat. Indexes follow creation order, oldest first,
     including archived chats, and stay the same when chats are pinned or updated.
     Pinning changes the display group only; pmai -r -1 works too.
+    /chat title labels are kept only while this REPL is running, independently for
+    each chat. `none` clears a label. Use /chat rename to change the saved chat name.
+
     /chat del resolves all arguments before deleting, so indexes do not shift.
     A single exact title may contain spaces; use indexes or IDs for bulk deletion.
     /chat files keeps a sorted, unique record of Files content reads (including

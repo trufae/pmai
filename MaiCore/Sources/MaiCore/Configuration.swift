@@ -578,8 +578,6 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   public var scrollbar: Int
   /// Literal text highlighted throughout the terminal transcript. Empty disables it.
   public var highlight: String
-  /// Optional label shown in the REPL prompt and used as the terminal window title.
-  public var title: String
   public var backgroundLine: String
   public var foreground: String
   public var background: String
@@ -631,7 +629,6 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     scroll: Int = 1,
     scrollbar: Int = 1,
     highlight: String = "",
-    title: String = "",
     backgroundLine: String = "rgb:024",
     foreground: String = "",
     background: String = "",
@@ -671,7 +668,6 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     self.scroll = max(1, scroll)
     self.scrollbar = scrollbar
     self.highlight = highlight
-    self.title = title
     self.backgroundLine = backgroundLine
     self.foreground = foreground
     self.background = background
@@ -713,7 +709,6 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     case scroll
     case scrollbar
     case highlight
-    case title
     case backgroundLine = "bgline"
     case foreground = "fgcolor"
     case background = "bgcolor"
@@ -760,7 +755,6 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
       scroll: (try? container.decodeIfPresent(Int.self, forKey: .scroll)) ?? 1,
       scrollbar: (try? container.decodeIfPresent(Int.self, forKey: .scrollbar)) ?? 1,
       highlight: (try? container.decodeIfPresent(String.self, forKey: .highlight)) ?? "",
-      title: (try? container.decodeIfPresent(String.self, forKey: .title)) ?? "",
       backgroundLine: (try? container.decodeIfPresent(String.self, forKey: .backgroundLine))
         ?? "rgb:024",
       foreground: (try? container.decodeIfPresent(String.self, forKey: .foreground)) ?? "",

@@ -56,7 +56,7 @@ def main():
             'limits.maxSeconds 123', 'retry.attempts 8', 'retry.delay 0.1',
             'ctx.compact 32000', 'ctx.recent 1000', 'ctx.window 50000', 'ctx.strategy smart',
             'export.tools on', 'export.thinking on', 'ui.mode classic', 'ui.scroll 7',
-            'ui.scrollbar -3', 'ui.title Custom', 'ui.editor cat', 'ui.highlight needle',
+            'ui.scrollbar -3', 'ui.editor cat', 'ui.highlight needle',
             'ui.markdown off', 'ui.tools all', 'ui.thinking full', 'ui.subagents none',
             'ui.broadcast on', 'ui.toolgroups on', 'use.agentsmd on', 'use.plan off',
             'voice.input command', 'voice.output command', 'voice.provider hello',

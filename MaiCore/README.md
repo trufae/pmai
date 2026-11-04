@@ -857,8 +857,11 @@ This applies to both main and child agents. The setting persists as
 values still work, including `-1` for `all`. Tools opt into complete output in this
 mode through `ToolAnnotations.resultImportance = .important`; unmarked tools use
 the normal preview. This only changes terminal display, not what the model receives.
-`/set ui.title TEXT` adds `[TEXT]` to the prompt and sets the terminal/tab title
-with an ANSI escape sequence; `/set ui.title none` clears the configured label.
+`/chat title TEXT` adds `[TEXT]` to the current chat's prompt and sets the
+terminal/tab title; `/chat title` shows it and `/chat title none` clears it.
+Labels stay with their chat when switching within the running REPL, and disappear
+when it exits. They are never saved to configuration or chat files.
+Use `/chat rename TITLE` to change the saved chat name.
 `ui.mode` defaults to `buffer`, a full-screen output buffer. Page Up/Page Down
 (Re Pág/Av Pág) and the mouse wheel scroll the session transcript while the
 status bar and editable prompt stay fixed at the bottom. The wheel scrolls one
