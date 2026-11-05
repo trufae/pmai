@@ -42,7 +42,9 @@ extension AgentRuntime {
     await pruneConversationState()
     guard var request = liveRequests[pid] ?? conversationRequests[pid] else { return nil }
     guard let messages = try? await supervisor.loadTranscript(pid) else { return nil }
-    request.messages = messages
+    // A child waiting for a concurrency slot has not published a transcript
+    // yet, but its initial prompt is already in the live request.
+    if !messages.isEmpty || liveRequests[pid] == nil { request.messages = messages }
     return request
   }
 

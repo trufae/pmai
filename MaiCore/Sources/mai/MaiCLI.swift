@@ -2327,10 +2327,19 @@ struct MaiCLI {
     let kind: REPLTurnKind
     let chatID: UUID?
     let sent: [AgentMessage]
+    let request: AgentRequest
     let redactor: ContentRedactor?
     /// Side questions collect output separately from the chat's stream.
     let output: TerminalWriter
     let redirection: REPLRedirection?
+    /// `/hey` replaces this prompt once cancellation has finished.
+    var restartPrompt: AgentMessage?
+    var notifyParent = false
+  }
+
+  private struct REPLRestart {
+    let turn: REPLTurn
+    var request: AgentRequest
   }
 
   private struct REPLChatChop {
@@ -2358,6 +2367,10 @@ struct MaiCLI {
     var activeTurn: REPLTurn?
     var btwTurns: [AgentPID: REPLTurn] = [:]
     var conversationTurns: [AgentPID: REPLTurn] = [:]
+    var restarting: Set<AgentPID> = []
+    var cancelledForRestart: Set<AgentPID> = []
+    var restarts: [REPLRestart] = []
+    var commandTarget: AgentPID?
     var summary: REPLSummary?
     var foregroundCommand: String?
     var thenLines: [String] = []
@@ -2379,7 +2392,20 @@ struct MaiCLI {
     var readerEnded = false
     var exiting = false
 
-    var hasTurns: Bool { activeTurn != nil || !btwTurns.isEmpty || !conversationTurns.isEmpty || summary != nil }
+    var hasTurns: Bool {
+      activeTurn != nil || !btwTurns.isEmpty || !conversationTurns.isEmpty || summary != nil
+        || !restarting.isEmpty || !restarts.isEmpty
+    }
+
+    func turn(for pid: AgentPID) -> REPLTurn? {
+      activeTurn?.pid == pid ? activeTurn : btwTurns[pid] ?? conversationTurns[pid]
+    }
+
+    mutating func update(_ turn: REPLTurn) {
+      if turn.kind == .chat { activeTurn = turn }
+      else if turn.kind == .btw { btwTurns[turn.pid] = turn }
+      else { conversationTurns[turn.pid] = turn }
+    }
 
     func modalPrompt(for chatID: UUID) -> REPLModalPrompt? {
       if let resetID { return .reset(id: resetID) }
@@ -2417,6 +2443,7 @@ struct MaiCLI {
 
     mutating func beginExit() {
       exiting = true
+      restarts.removeAll()
       activeTurn?.task.cancel()
       summary?.task.cancel()
       for turn in btwTurns.values { turn.task.cancel() }
@@ -3273,14 +3300,18 @@ struct MaiCLI {
       return dropped
     }
 
-    func beginTurn(_ request: AgentRequest, process pid: AgentPID, kind: REPLTurnKind) async {
+    func beginTurn(
+      _ request: AgentRequest, process pid: AgentPID, kind: REPLTurnKind, chatID: UUID? = nil,
+      notifyParent: Bool = false
+    ) async {
+      let chatID = kind == .chat ? (chatID ?? session.id) : nil
       await logDiagnosticConfiguration(
         session: session, configuration: configuration, runtime: runtime, services: services)
-      if kind == .chat { loop.limitDecisions.removeValue(forKey: session.id) }
+      if let chatID { loop.limitDecisions.removeValue(forKey: chatID) }
       let redirection = REPLRedirection.current
-      if kind == .chat { screen?.bindConversation("chat:\(session.id)", to: pid) }
+      if let chatID { screen?.bindConversation("chat:\(chatID)", to: pid) }
       shareStateWithPmaiTools()
-      if kind == .chat {
+      if chatID == session.id {
         await recordSubagents()
         session.touch()
         workspace.upsert(session.chat, selecting: true)
@@ -3306,7 +3337,7 @@ struct MaiCLI {
       let task = Task {
         try await withTaskCancellationHandler {
           try await FileAccessLog.$current.withValue(fileAccessLog) {
-            try await runtime.run(request, process: pid) { event in
+            try await runtime.run(request, process: pid, deliverToParent: notifyParent) { event in
               await output.consume(event)
               if event.terminalContext.pid == pid {
                 await voiceSink?.consume(event)
@@ -3321,8 +3352,8 @@ struct MaiCLI {
       activityWasInterrupted = false
       let turn = REPLTurn(
         task: task, interrupt: interrupt, started: ContinuousClock.now, pid: pid, kind: kind,
-        chatID: kind == .chat ? session.id : nil, sent: request.messages, redactor: session.redactor,
-        output: output, redirection: redirection
+        chatID: chatID, sent: request.messages, request: request, redactor: session.redactor,
+        output: output, redirection: redirection, notifyParent: notifyParent
       )
       if kind == .btw {
         loop.btwTurns[pid] = turn
@@ -3343,6 +3374,101 @@ struct MaiCLI {
         continuation.yield(.turnFinished(pid, outcome))
       }
       await refreshStatus()
+    }
+
+    /// Snapshot every recipient before cancelling a parent can stop its children.
+    /// Adopt runtime-owned children into the loop so their old completion is
+    /// handled before any replacement starts with the same PID.
+    func hey(_ addition: String, recipients: [AgentPID]) async {
+      var targets: [REPLTurn] = []
+      let tree = await runtime.supervisor.tree()
+      for pid in recipients {
+        if let turn = loop.turn(for: pid) {
+          targets.append(turn)
+        } else if let info = tree.info(pid), !info.state.isTerminal,
+          let task = await runtime.supervisor.handle(pid),
+          let request = await runtime.conversationRequest(for: pid)
+        {
+          let interrupt = interruptHandler.activate { task.cancel() }
+          let turn = REPLTurn(
+            task: task, interrupt: interrupt, started: .now, pid: pid, kind: .conversation,
+            chatID: nil, sent: request.messages, request: request, redactor: session.redactor,
+            output: terminal, redirection: nil, notifyParent: true)
+          loop.update(turn)
+          Task { continuation.yield(.turnFinished(pid, await task.result)) }
+          targets.append(turn)
+        } else {
+          await terminal.note("No running prompt for agent#\(pid.rawValue).")
+        }
+      }
+      // Cancelled descendants also need to finish before a parent is restarted.
+      for pid in Set(targets.flatMap { tree.subtree(of: $0.pid).map(\.pid) }) {
+        loop.cancelledForRestart.insert(pid)
+        if loop.turn(for: pid) == nil,
+          let task = await runtime.supervisor.handle(pid),
+          let request = await runtime.conversationRequest(for: pid)
+        {
+          let interrupt = interruptHandler.activate { task.cancel() }
+          loop.update(REPLTurn(
+            task: task, interrupt: interrupt, started: .now, pid: pid, kind: .conversation,
+            chatID: nil, sent: request.messages, request: request, redactor: session.redactor,
+            output: terminal, redirection: nil, notifyParent: true))
+          Task { continuation.yield(.turnFinished(pid, await task.result)) }
+        }
+        if loop.turn(for: pid) != nil { loop.restarting.insert(pid) }
+      }
+      for var turn in targets {
+        guard var prompt = turn.restartPrompt ?? turn.sent.last(where: { $0.role == .user }) else {
+          continue
+        }
+        if !addition.isEmpty {
+          if case .text(let previous) = prompt.content.last {
+            prompt.content[prompt.content.count - 1] = .text(previous + "\n" + addition)
+          } else {
+            prompt.content.append(.text(addition))
+          }
+        }
+        turn.restartPrompt = prompt
+        loop.update(turn)
+        turn.task.cancel()
+      }
+      for turn in targets {
+        let stopped = Set(await runtime.supervisor.stop(turn.pid, reason: "Restarting with /hey"))
+        loop.cancelApprovals { $0.run.pid.map(stopped.contains) ?? false }
+      }
+      activityWasInterrupted = true
+      await refreshStatus()
+    }
+
+    func startRestarts() async {
+      guard loop.restarting.isEmpty, !loop.exiting else { return }
+      let cancelled = loop.cancelledForRestart
+      loop.cancelledForRestart.removeAll()
+      guard !loop.restarts.isEmpty else { return }
+      let tree = await runtime.supervisor.tree()
+      // Children are running again before their parent can finish an answer.
+      let pending = loop.restarts.sorted {
+        (tree.info($0.turn.pid)?.depth ?? 0) > (tree.info($1.turn.pid)?.depth ?? 0)
+      }
+      loop.restarts.removeAll()
+      for pid in cancelled {
+        if let parent = tree.info(pid)?.parent {
+          await AgentProcessTools.discardDelivery(of: pid, for: parent, supervisor: runtime.supervisor)
+        }
+      }
+      for restart in pending {
+        let turn = restart.turn
+        await REPLRedirection.$current.withValue(nil) {
+          guard await preparePromptFileAccess(
+            for: restart.request.messages.last?.text ?? "", runtime: runtime, configuration: configuration,
+            environment: ProcessInfo.processInfo.environment,
+            promptFileAccess: promptFileAccess, approvalHandler: services.approvalHandler,
+            terminal: terminal) else { return }
+          await beginTurn(
+            restart.request, process: turn.pid, kind: turn.kind, chatID: turn.chatID,
+            notifyParent: turn.notifyParent)
+        }
+      }
     }
 
     /// Starts one turn with whatever is queued for the chat followed by the
@@ -4391,6 +4517,47 @@ struct MaiCLI {
         var heredoc = isHeredoc
         if !loop.drainingThen && !inputReleased { loop.readerParked = true }
         let typed = heredoc ? raw : raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !heredoc, typed.hasPrefix("@") {
+          do {
+            if let addressed = try addressedMessage(typed), addressed.body.hasPrefix("/") {
+              let main = await mainProcess()
+              let recipients = try await messageRecipients(
+                addressed.targets, main: main, supervisor: runtime.supervisor, allowFinished: true)
+              let fields = addressed.body.split(maxSplits: 1, whereSeparator: \.isWhitespace)
+              if fields.first == "/hey" {
+                let addition = fields.count > 1
+                  ? fields[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+                await hey(addition, recipients: recipients.map(\.pid))
+              } else {
+                let focus = loop.focus
+                let target = loop.commandTarget
+                let draining = loop.drainingThen
+                loop.drainingThen = true
+                var exits = false
+                for recipient in recipients {
+                  loop.focus = recipient.pid == main ? .main : .agent(recipient.pid)
+                  loop.commandTarget = recipient.pid
+                  await terminal.note("agent#\(recipient.pid.rawValue): \(fields[0])")
+                  if await handleEvent(.line(addressed.body, heredoc: false, promptID: nil)) {
+                    exits = true
+                    break
+                  }
+                }
+                loop.focus = focus
+                loop.commandTarget = target
+                loop.drainingThen = draining
+                await refreshStatus()
+                if exits { return true }
+              }
+              await releaseIfIdle(workspace: workspace)
+              return false
+            }
+          } catch {
+            await terminal.note(error.localizedDescription)
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
+        }
         if !typed.hasPrefix("/"), promptID != loop.modalPrompt(for: session.id)?.input.id {
           loop.recoveredInputs.keep(raw, promptID: promptID)
           await terminal.note("The prompt changed before submission. Input kept as recovery item \(loop.recoveredInputs.entries.count); /recover lists it for review.", tone: .warning)
@@ -4498,6 +4665,19 @@ struct MaiCLI {
           }
         }
         if !heredoc, text == "/stop" {
+          if let pid = loop.commandTarget {
+            if var turn = loop.turn(for: pid) {
+              turn.restartPrompt = nil
+              loop.update(turn)
+              turn.task.cancel()
+            }
+            loop.restarts.removeAll { $0.turn.pid == pid }
+            let stopped = Set(await runtime.supervisor.stop(pid, reason: "Cancelled"))
+            loop.cancelApprovals { $0.run.pid.map(stopped.contains) ?? false }
+            await refreshStatus()
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
           // Use the same event as Ctrl+C, including pending queue decisions.
           interruptHandler.requestInterrupt()
           return false
@@ -4530,6 +4710,19 @@ struct MaiCLI {
             await releaseIfIdle(workspace: workspace)
             return false
           }
+        }
+        if !heredoc, commandFields.first == "/hey" {
+          let main = await mainProcess()
+          let pid = loop.commandTarget ?? loop.focus.pid(main: main)
+          if loop.focus == .main, loop.commandTarget == nil, loop.activeTurn?.chatID != session.id {
+            await terminal.note("No running chat prompt to interrupt.")
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
+          let addition = text.dropFirst(4).trimmingCharacters(in: .whitespacesAndNewlines)
+          await hey(addition, recipients: [pid])
+          await releaseIfIdle(workspace: workspace)
+          return false
         }
         if !heredoc, case .limit(let reason, _)? = loop.modalPrompt(for: session.id) {
           let fields = text.lowercased().split(whereSeparator: \.isWhitespace)
@@ -5496,6 +5689,13 @@ struct MaiCLI {
 
       case .interrupt(let cancelledOperation, let endedInput):
         if endedInput { loop.readerParked = true }
+        if let cancelledOperation,
+          var turn = ([loop.activeTurn].compactMap { $0 } + Array(loop.btwTurns.values)
+            + Array(loop.conversationTurns.values)).first(where: { $0.interrupt == cancelledOperation })
+        {
+          turn.restartPrompt = nil
+          loop.update(turn)
+        }
         if loop.resetID != nil {
           loop.resetID = nil
           await terminal.note("Reset cancelled.")
@@ -5613,6 +5813,7 @@ struct MaiCLI {
           }
         }
         let wasInterrupted = turn.map { interruptHandler.deactivate($0.interrupt) } ?? false
+        loop.restarting.remove(pid)
         if let remaining = loop.interruptOperation {
           interruptHandler.restore(remaining.id, cancellation: remaining.cancel)
         }
@@ -5624,14 +5825,14 @@ struct MaiCLI {
         var settled = true
         switch outcome {
         case .success(let result):
-          if let turn, turn.chatID != nil {
+          if let turn, turn.chatID != nil, turn.restartPrompt == nil {
             settled = settle(result.transcript, from: turn)
           }
           succeeded = true
           modelStats = result.modelStats
           paused = result.interruption
         case .failure(let error):
-          let cancelled = error is CancellationError || wasInterrupted
+          let cancelled = error is CancellationError || wasInterrupted || turn?.restartPrompt != nil
           if cancelled {
             if let turn {
               let stopped = Set(await runtime.supervisor.stop(turn.pid, reason: "Cancelled"))
@@ -5648,7 +5849,7 @@ struct MaiCLI {
           }
           // What the run did before it broke off is not thrown away: the
           // supervisor has its transcript, and /continue picks it up.
-          if let turn, turn.chatID != nil {
+          if let turn, turn.chatID != nil, turn.restartPrompt == nil {
             kept = await keepPartialTranscript(
               of: turn, reason: cancelled ? "the run was cancelled" : "the run failed")
           }
@@ -5656,6 +5857,25 @@ struct MaiCLI {
         // The run's own chat is usually the one at the prompt; `elsewhere`
         // names it when the person moved to another chat during the run.
         let atPrompt = turn?.chatID == session.id
+        if let turn, let prompt = turn.restartPrompt, let chatID = turn.chatID {
+          // Keep earlier exchanges and the original message ID/attachments;
+          // the interrupted attempt's replies and tool calls are superseded.
+          if let current = currentMessages(of: chatID),
+            let index = current.firstIndex(where: { $0.id == prompt.id })
+          {
+            let messages = Array(current.prefix(index)) + [prompt]
+            if atPrompt {
+              session.history.replaceAll(with: messages)
+            } else if var chat = workspace.chats.first(where: { $0.id == chatID }) {
+              chat.messages = messages
+              chat.touch()
+              workspace.upsert(chat)
+            }
+          } else {
+            settled = false
+          }
+          paused = nil
+        }
         var elsewhere: String?
         if let turn, let chatID = turn.chatID, !atPrompt {
           elsewhere = workspace.chats.first { $0.id == chatID }?.displayTitle
@@ -5703,6 +5923,19 @@ struct MaiCLI {
         if loop.exiting {
           if loop.hasTurns { return false }
           return true
+        }
+        if let turn, let prompt = turn.restartPrompt, settled {
+          var request = await runtime.conversationSettings(for: pid) ?? turn.request
+          if let chatID = turn.chatID {
+            request.messages = currentMessages(of: chatID) ?? []
+          } else if let index = turn.sent.firstIndex(where: { $0.id == prompt.id }) {
+            request.messages = Array(turn.sent.prefix(index)) + [prompt]
+          }
+          await runtime.supervisor.note(pid, transcript: request.messages)
+          loop.restarts.append(REPLRestart(turn: turn, request: request))
+          await refreshStatus()
+          await releaseIfIdle(workspace: workspace)
+          return false
         }
         if let turn, turn.kind == .chat {
           let waiting: Int
@@ -5866,7 +6099,7 @@ struct MaiCLI {
         // A queued line's redirection belongs to its eventual execution.
         let command = raw.split(whereSeparator: \Character.isWhitespace).first
         let shellInput = remoteShell != nil && loop.modalPrompt(for: session.id) == nil && command != "/remote"
-        if !heredoc, isCommand, command != "/then", !shellInput {
+        if !heredoc, isCommand, command != "/then", command != "/hey", !shellInput {
           do {
             if let syntax = try REPLRedirectSyntax.parse(raw, pasted: pasted) {
               switch syntax.destination {
@@ -5920,6 +6153,7 @@ struct MaiCLI {
       else if let incoming = await eventIterator.next() { event = incoming }
       else { break }
       if await dispatchEvent(event) { break }
+      await startRestarts()
       var exits = false
       // Turns must have settled their transcripts, and background children
       // must also have finished, before the next line reaches the dispatcher.
@@ -6810,6 +7044,8 @@ struct MaiCLI {
         await terminal.line(toolHelp)
       case "queue", "/queue":
         await terminal.line(queueHelp)
+      case "hey", "/hey":
+        await terminal.line(heyHelp)
       case "export", "/export":
         await terminal.line(exportHelp)
       case "import", "/import":
@@ -7136,6 +7372,8 @@ struct MaiCLI {
     case "/stop":
       await terminal.line(
         "Use /stop at the chat prompt to interrupt the running turn and keep its queue.")
+    case "/hey":
+      await terminal.line("Use /hey at the chat prompt.\n" + heyHelp)
     case "/continue":
       // Hosted commands can queue input, but resuming belongs to the chat prompt.
       if argument.isEmpty {
@@ -15339,7 +15577,7 @@ struct MaiCLI {
       "/set voice", "/set voice.", "/voice voices", "/voice languages",
       "/voice record", "/voice send", "/voice discard", "/voice cancel", "/voice pause", "/voice resume", "/voice status", "/voice help",
       "/model -voice ", "/help voice",
-      "/subagents next", "/subagents prev", "/btw ", "/then ", "/unthen",
+      "/subagents next", "/subagents prev", "/btw ", "/hey", "/hey ", "/help hey", "/then ", "/unthen",
       "/help memory", "/help agents", "/help jobs", "/help ps", "/help chat", "/help edit", "/help tools",
       "/agent acp list", "/agent acp add ", "/agents acp list",
       "/help remote", "/remote", "/remote serve", "/remote stop", "/remote qr",
@@ -15924,6 +16162,16 @@ struct MaiCLI {
     /about shows this message again. https://github.com/trufae/pmai
     """#
 
+  private static let heyHelp = """
+    /hey [TEXT] interrupts the focused agent and resubmits its prompt,
+    appending TEXT on a new line. With no text, it resubmits the same prompt.
+    Earlier exchanges and prompt attachments are kept. The interrupted
+    attempt is replaced in chat history, leaving one amended user message.
+    Text after /hey is literal, including > and |. Completed tool actions
+    are not undone. With no running prompt, nothing is sent.
+    @PID /hey [TEXT] targets one agent; @* /hey [TEXT] targets all active agents.
+    """
+
   private static let replHelp = """
     /about                 Logo, version, and provider setup
     /agent                 Alias for /agents
@@ -15943,6 +16191,7 @@ struct MaiCLI {
     /help [COMMAND]        List commands or show detailed help
     /help keys             Keyboard shortcuts
     /help shell            Input, shell commands, redirects, and agent messages
+    /hey [TEXT]            Interrupt, append TEXT to the running prompt, and resend
     /history [COMMAND]     List, search, or delete saved inputs
     /image MODE PATH       Attach an image or extract text with OCR
     /import PATH           Import settings, skills, and chats

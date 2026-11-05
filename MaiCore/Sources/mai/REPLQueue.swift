@@ -66,7 +66,8 @@ extension MaiCLI {
 
   /// Validate the whole list and collapse aliases for the same pid before sending anything.
   static func messageRecipients(
-    _ targets: [REPLMessageAddress], main: AgentPID, supervisor: AgentSupervisor
+    _ targets: [REPLMessageAddress], main: AgentPID, supervisor: AgentSupervisor,
+    allowFinished: Bool = false
   ) async throws -> [AgentProcessInfo] {
     let snapshot = await supervisor.processes()
     let processes = Dictionary(uniqueKeysWithValues: snapshot.map { ($0.pid, $0) })
@@ -93,7 +94,7 @@ extension MaiCLI {
       guard info.externalSessionID == nil else {
         throw REPLMessageError(message: "ACP subagent #\(pid.rawValue) does not support direct messages; its parent assigns work.")
       }
-      guard info.depth == 0 || !info.state.isTerminal else {
+      guard allowFinished || info.depth == 0 || !info.state.isTerminal else {
         throw REPLMessageError(
           message:
             "agent#\(pid.rawValue) (\(info.agentID)) has finished; /jobs log \(pid.rawValue) shows what it did."
@@ -235,6 +236,11 @@ extension MaiCLI {
     use @* by default; off restores the current focus. Explicit @addresses
     override this saved setting. Use @main TEXT to start an idle chat.
     /jobs focus PID selects the target used when ui.broadcast is off.
+
+    A slash command after an address runs as a command with that recipient
+    focused: @3 /msg last, @3 /continue, @* /stop, or @* /hey TEXT.
+    Broadcast commands use one snapshot of the active agents. Session-wide
+    commands retain their normal scope. Addresses never change your focus.
     """
 }
 

@@ -101,6 +101,12 @@ and website downloads. The Android CLI is a separate terminal client.
   chat; `/model` selects that chat's model on its current provider.
   Ask `/btw QUESTION` alongside a running reply in iOS or the interactive
   CLI; it uses a fresh context without changing the main conversation.
+  In the CLI, `/hey TEXT` interrupts the focused agent, appends the text to its
+  prompt, and resubmits it as one user message. Bare `/hey` retries the same
+  prompt. Earlier exchanges and attachments stay in the chat.
+  Use `@PID /hey TEXT` for one agent or `@* /hey TEXT` for all active agents.
+  Address prefixes also dispatch other slash commands with each recipient
+  focused, such as `@3 /msg last`, `@3 /continue`, and `@* /stop`.
 
 ### Put it to work
 

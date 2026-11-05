@@ -2,7 +2,7 @@
 """Exercise queue choices, cancellation and approval shutdown in a real REPL PTY."""
 import fcntl
 import json
-from smoke import expect_pty
+from smoke import expect_pty, read_chat
 import os
 from pathlib import Path
 import pty
@@ -33,7 +33,7 @@ class Provider(BaseHTTPRequestHandler):
         request = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         requests.put(request)
         texts = [m.get('content') for m in request['messages'] if m['role'] == 'user']
-        slow = texts == ['slow'] and not release.is_set()
+        slow = texts[-1:] == ['slow'] and not release.is_set()
         if slow:
             release.wait(30)
         message = {'role': 'assistant', 'content': 'answer'}
@@ -46,7 +46,7 @@ class Provider(BaseHTTPRequestHandler):
                                              'output': 'answer', 'wait': texts != ['background']}),
                 },
             }]}
-        elif texts == ['shell'] or any('SHELL_PROCESS_TEST' in (text or '') for text in texts):
+        elif texts[-1:] == ['shell'] or any('SHELL_PROCESS_TEST' in (text or '') for text in texts):
             message = {'role': 'assistant', 'content': None, 'tool_calls': [{
                 'id': 'shell-1', 'type': 'function', 'function': {
                     'name': 'run_shell',
@@ -54,7 +54,8 @@ class Provider(BaseHTTPRequestHandler):
                         'sh -c \'trap "" TERM; echo $$ > child.pid; exec sleep 30\' >/dev/null 2>&1 & wait'}),
                 },
             }]}
-        elif texts == ['approval'] or request['model'] == 'worker':
+        elif texts[-1:] == ['approval'] or (request['model'] == 'worker'
+                and not texts[-1].endswith('\nuse x > y | z')):
             message = {'role': 'assistant', 'content': None, 'tool_calls': [{
                 'id': 'write-1', 'type': 'function', 'function': {
                     'name': 'files_write',
@@ -96,6 +97,7 @@ def main():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         for choice in sys.argv[2:] or ('continue', 'submit', 'ignore', 'clear', 'stop',
+                       'hey', 'hey-empty', 'hey-approval', 'hey-shell', 'hey-all', 'hey-target', 'hey-child', 'hey-background',
                        'approval-eof', 'edit-eof', 'approval-exit', 'edit-exit',
                        'approval-quit', 'edit-quit', 'approval-interrupt', 'edit-interrupt',
                        'child-interrupt', 'child-edit-interrupt', 'child-kill',
@@ -133,7 +135,7 @@ def main():
                 env.update(TERM='xterm-256color', NO_PROXY='127.0.0.1,localhost')
                 process = subprocess.Popen(
                     [binary, '--config', str(config), '--home', str(root / 'home'),
-                     '--no-stream', '--no-markdown'] + (['--tool-approval', 'yolo'] if choice.startswith('shell-') else []), cwd=root, env=env,
+                     '--no-stream', '--no-markdown'] + (['--tool-approval', 'yolo'] if choice.startswith('shell-') or choice == 'hey-shell' else []), cwd=root, env=env,
                     stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
                 os.close(slave)
                 output = bytearray()
@@ -182,27 +184,172 @@ def main():
                     return [text for m in request['messages'] if m['role'] == 'user'
                             for text in m['content'].split('\n\n')]
 
+                def shell_pid():
+                    marker = root / 'child.pid'
+                    deadline = time.monotonic() + 15
+                    while not marker.exists() or not marker.read_text().strip():
+                        assert time.monotonic() < deadline, output.decode(errors='replace')
+                        assert process.poll() is None, process.returncode
+                        if select.select([master], [], [], .05)[0]:
+                            output.extend(os.read(master, 65536))
+                    return int(marker.read_text())
+
+                def assert_child_stopped():
+                    status = subprocess.run(['ps', '-p', str(child_pid), '-o', 'stat='],
+                                            capture_output=True, text=True).stdout.strip()
+                    assert not status or status.startswith('Z'), (choice, child_pid, status)
+
                 try:
                     wait_for('pmai>')
+                    if choice in ('hey-all', 'hey-target'):
+                        send('earlier exchange\n')
+                        assert user_texts() == ['earlier exchange']
+                        wait_for('✓ took')
+                        pids = []
+                        for title in ('first', 'second'):
+                            send('/jobs focus main\n')
+                            wait_for('Messages go to this chat again.')
+                            send(f'/fork --empty {title}\n')
+                            fork = wait_for('and switched to it.')
+                            pids.append(re.search(r'into agent#(\d+)', fork)[1])
+                            send('slow\n')
+                            assert user_texts() == ['slow']
+                        # Any addressed slash command is dispatched, including
+                        # while an agent is awaiting a provider response.
+                        send('@* /help hey\n')
+                        for pid in pids:
+                            wait_for(f'agent#{pid}: /help')
+                            wait_for('targets all active agents.')
+                        send('/jobs focus\n')
+                        wait_for(f'Messages go to agent#{pids[-1]}.')
+                        send('@*,99999 /hey must not arrive\n')
+                        wait_for('No agent #99999')
+                        targets = pids if choice == 'hey-all' else pids[:1]
+                        address = '*' if choice == 'hey-all' else pids[0]
+                        send(f'@{address} /hey use x > y | z\n')
+                        for _ in targets:
+                            assert user_texts() == ['slow\nuse x > y | z']
+                        for _ in targets:
+                            wait_for('✓ took')
+                        if choice == 'hey-target':
+                            send(f'@{pids[1]} /stop\n')
+                            wait_for('✗ took')
+                            send(f'@{pids[1]} /continue\n')
+                            assert user_texts() == ['slow']
+                            release.set()
+                            wait_for('✓ took')
+                        # Explicit commands can also address completed agents.
+                        send(f'@{pids[0]} /copy 1 copied.txt\n')
+                        wait_for('Copied ')
+                        assert (root / 'copied.txt').read_text().strip() == 'answer'
+                        send('/queue\n')
+                        wait_for('Nothing is queued')
+                        send('/exit\n')
+                        wait_for_exit()
+                        assert process.returncode == 0, process.returncode
+                        chat_path, = (root / '.pmai/chats').glob('*.json')
+                        children = read_chat(chat_path)['subagents']
+                        assert len(children) == 2, children
+                        for child in children:
+                            messages = [m for m in child['messages'] if m['role'] != 'system']
+                            assert [m['role'] for m in messages] == ['user', 'assistant'], messages
+                            expected = 'slow\nuse x > y | z' if str(child['pid']) in targets else 'slow'
+                            assert messages[0]['content'] == [{'text': {'_0': expected}}], child
+                        print(f'PASS {choice}: addressed commands, focus, validation, restart, saved children', flush=True)
+                        continue
+                    if choice in ('hey-child', 'hey-background'):
+                        prompt = 'background' if choice == 'hey-background' else 'subagent'
+                        send(prompt + '\n')
+                        assert user_texts() == [prompt]
+                        wait_for("wants to run confirm tool 'agent_start'")
+                        send('y\n')
+                        started = [next_request(requests) for _ in range(2 if prompt == 'background' else 1)]
+                        assert any(r['model'] == 'worker' for r in started), started
+                        wait_for("wants to run confirm tool 'files_write'")
+                        send('@* /hey use x > y | z\n')
+                        replacements = [next_request(requests) for _ in range(2)]
+                        assert sorted(r['model'] for r in replacements) == ['smoke', 'worker'], replacements
+                        for request in replacements:
+                            users = [m['content'] for m in request['messages'] if m['role'] == 'user']
+                            if request['model'] == 'smoke':
+                                # Adjacent user messages (including child
+                                # deliveries) are joined on the OpenAI wire.
+                                assert users[0].split('\n\n', 1)[0] == prompt + '\nuse x > y | z', request
+                            else:
+                                assert users[0].endswith('\nuse x > y | z'), request
+                            assert 'Cancelled' not in json.dumps(request['messages']), request
+                            assert not any(m.get('tool_calls') or m['role'] == 'tool' for m in request['messages']), request
+                        for _ in replacements:
+                            wait_for('✓ took')
+                        send('/exit\n')
+                        wait_for_exit()
+                        assert process.returncode == 0, process.returncode
+                        assert not (root / 'unapproved.txt').exists(), 'Cancelled child approval ran'
+                        parent_requests = [r for r in replacements if r['model'] == 'smoke']
+                        while not requests.empty():
+                            # A restarted child delivers its new answer to its
+                            # parent; the old cancellation must never leak in.
+                            followup = requests.get_nowait()
+                            assert followup['model'] == 'smoke', followup
+                            assert 'Cancelled' not in json.dumps(followup['messages']), followup
+                            parent_requests.append(followup)
+                        assert any('Its answer:\nanswer' in m.get('content', '')
+                                   for r in parent_requests for m in r['messages'] if m['role'] == 'user'), parent_requests
+                        print(f'PASS {choice}: parent and child cancellation finish before broadcast restart', flush=True)
+                        continue
+                    if choice.startswith('hey'):
+                        # Prevent a completed prompt being replayed by /hey.
+                        send('earlier exchange\n')
+                        assert user_texts() == ['earlier exchange']
+                        wait_for('✓ took')
+                        send('/hey\n')
+                        wait_for('No running chat prompt to interrupt.')
+                        prompt = {'hey-approval': 'approval', 'hey-shell': 'shell'}.get(choice, 'slow')
+                        send(prompt + '\n')
+                        assert user_texts() == ['earlier exchange', prompt]
+                        if choice == 'hey-approval':
+                            wait_for("wants to run confirm tool 'files_write'")
+                        if choice == 'hey-shell':
+                            child_pid = shell_pid()
+                        chat_path, = (root / '.pmai/chats').glob('*.json')
+                        before = read_chat(chat_path)['messages']
+                        original = next(m for m in reversed(before) if m['role'] == 'user')
+                        addition = '' if choice == 'hey-empty' else 'use x > y | z'
+                        send('/hey' + (' ' + addition if addition else '   ') + '\n')
+                        # The replacement must reach the provider before the
+                        # blocked response is released, without a tool-loop slot.
+                        request = next_request(requests)
+                        expected = prompt + ('\n' + addition if addition else '')
+                        assert [m['content'] for m in request['messages'] if m['role'] == 'user'] == [
+                            'earlier exchange', expected], request
+                        assert [m['content'] for m in request['messages'] if m['role'] == 'assistant'] == ['answer'], request
+                        assert not any(m['role'] == 'tool' or m.get('tool_calls') for m in request['messages']), request
+                        if child_pid is not None:
+                            assert_child_stopped()
+                        release.set()
+                        wait_for('✓ took')
+                        send('/exit\n')
+                        wait_for_exit()
+                        assert process.returncode == 0, process.returncode
+                        saved = read_chat(chat_path)['messages']
+                        assert [m['role'] for m in saved if m['role'] != 'system'] == [
+                            'user', 'assistant', 'user', 'assistant'], saved
+                        amended, = [m for m in saved if m['id'] == original['id']]
+                        assert amended['content'] == [{'text': {'_0': expected}}], amended
+                        assert not (root / 'unapproved.txt').exists(), 'Cancelled approval ran'
+                        assert requests.empty(), 'Unexpected extra model request'
+                        print(f'PASS {choice}: interruption, retry, earlier context, compact saved history', flush=True)
+                        continue
                     if choice.startswith('shell-'):
                         prompt = 'shell-child' if choice == 'shell-child-interrupt' else 'shell'
                         send(prompt + '\n')
                         assert user_texts() == [prompt]
-                        marker = root / 'child.pid'
-                        deadline = time.monotonic() + 15
-                        while not marker.exists() or not marker.read_text().strip():
-                            assert time.monotonic() < deadline, output.decode(errors='replace')
-                            assert process.poll() is None, process.returncode
-                            if select.select([master], [], [], .05)[0]:
-                                output.extend(os.read(master, 65536))
-                        child_pid = int(marker.read_text())
+                        child_pid = shell_pid()
                         if prompt == 'shell-child':
                             assert next_request(requests, timeout=5)['model'] == 'worker'
                         send('\x03')
                         wait_for('✗ took')
-                        status = subprocess.run(['ps', '-p', str(child_pid), '-o', 'stat='],
-                                                capture_output=True, text=True).stdout.strip()
-                        assert not status or status.startswith('Z'), (choice, child_pid, status)
+                        assert_child_stopped()
                         assert requests.empty(), 'Provider called after cancellation'
                         send('yes\n')
                         assert user_texts()[-1] == 'yes'

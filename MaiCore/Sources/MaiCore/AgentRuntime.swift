@@ -107,10 +107,12 @@ public actor AgentRuntime {
   /// Runs one turn. Pass the pid an earlier turn returned as `process` to keep
   /// a conversation's identity — and the background children it started —
   /// across turns; a stale or omitted pid starts a fresh process.
+  /// A host restarting a child can deliver its replacement result to its parent.
   @discardableResult
   public func run(
     _ request: AgentRequest,
     process: AgentPID? = nil,
+    deliverToParent: Bool = false,
     emit: @escaping AgentEventHandler = { _ in }
   ) async throws -> AgentResult {
     let budget = RunBudget(limits: request.limits)
@@ -148,15 +150,17 @@ public actor AgentRuntime {
           budget: budget,
           emit: emit)
       }
-      await supervisor.finish(pid, result: result, announce: false)
+      await supervisor.finish(pid, result: result, announce: deliverToParent, deliver: deliverToParent)
       return result
     } catch is CancellationError {
-      await supervisor.fail(pid, state: .cancelled, message: "Cancelled", announce: false)
+      await supervisor.fail(
+        pid, state: .cancelled, message: "Cancelled", announce: deliverToParent, deliver: deliverToParent)
       await debugLog?.record("run.cancelled", value: runID)
       throw CancellationError()
     } catch {
       await supervisor.fail(
-        pid, state: .failed, message: error.localizedDescription, announce: false)
+        pid, state: .failed, message: error.localizedDescription,
+        announce: deliverToParent, deliver: deliverToParent)
       await debugLog?.record("run.error", value: "\(runID): \(error.localizedDescription)")
       throw error
     }
