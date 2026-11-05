@@ -1342,7 +1342,7 @@ private actor PromptFileAccess {
 
 @main
 struct MaiCLI {
-  private static let version = "1.14.0"
+  private static let version = "1.14.1"
 
   static func main() async {
     #if os(Windows)
