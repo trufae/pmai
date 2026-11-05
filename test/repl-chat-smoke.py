@@ -350,6 +350,102 @@ path.write_text('Edited in editor: ' + path.read_text())
                     send('/msg unpin \t\r')
                     wait('Usage: /msg unpin INDEX|MESSAGE_ID')
                     wait('pmai> ')
+                    def fresh_screen(label):
+                        # Buffer repaints include old prompts and completion
+                        # notices. Clear that transcript, then wait for a new
+                        # command result before interacting with the next editor.
+                        send('/clear\r/help input-' + label + '\r')
+                        wait("Unknown help topic 'input-" + label + "'")
+
+                    fresh_screen('newlines')
+                    # Newline keys must produce one message, and single-row
+                    # editing must expose which logical line is active.
+                    send('/set ui.line single\r')
+                    wait('Set ui.line = single.')
+                    assert json.loads(config.read_text())['ui']['line'] == 'single'
+                    send('first\x1b[13;2usecond\x1b[27;2;13~third\x1b\rfourth\nlast café🙂')
+                    wait('[5/5]> ')
+                    send('\x1b[A\x01X')
+                    wait('[4/5]> ')
+                    send('\r')
+                    wait('Hello from MaiCore: first')
+                    wait('✓ took')
+                    fresh_screen('draft')
+
+                    # The editor sees the complete current draft. Cancel keeps
+                    # it editable, while send preserves literal command text.
+                    draft = 'draft café🙂\nsecond'
+                    send('draft café🙂\nsecond\x18\x05')
+                    wait('input [send/edit/back/cancel]> ')
+                    assert (root / 'editor-input.txt').read_text() == draft
+                    send('cancel\r')
+                    wait('Input cancelled; original draft restored.')
+                    send('-kept\r')
+                    wait('Hello from MaiCore: draft café🙂')
+                    wait('✓ took')
+                    fresh_screen('compose')
+                    send('/edit input\r')
+                    wait('input [send/edit/back/cancel]> ')
+                    send('edit\r')
+                    wait('Edited in editor: Edited in editor: ')
+                    wait('input [send/edit/back/cancel]> ')
+                    assert (root / 'editor-input.txt').read_text() == 'Edited in editor: '
+                    send('back\r')
+                    wait('Edited input restored to the prompt')
+                    send('continued\r')
+                    wait('Hello from MaiCore: Edited in editor: Edited in editor: continued')
+                    wait('✓ took')
+                    fresh_screen('override')
+
+                    # A one-shot editor overrides ui.editor, then a failing
+                    # configured editor leaves the keyboard draft intact.
+                    override = root / 'override editor.py'
+                    override.write_text("from pathlib import Path\nimport sys\n"
+                                        "Path(sys.argv[1]).write_text('/literal\\n!no shell\\n$no expansion')\n")
+                    send('/set ui.editor false\r')
+                    wait('Set ui.editor = false.')
+                    send('<<!' + shlex.join([sys.executable, str(override)]) + '\r')
+                    wait('input [send/edit/back/cancel]> ')
+                    send('send\r')
+                    wait('Hello from MaiCore: /literal')
+                    wait('✓ took')
+                    fresh_screen('failure')
+                    assert json.loads(config.read_text())['ui']['editor'] == 'false'
+                    send('failed-edit-draft\x18\x05')
+                    wait('Editor exited with status 1.')
+                    send('-kept\r')
+                    wait('Hello from MaiCore: failed-edit-draft-kept')
+                    wait('✓ took')
+                    fresh_screen('default-editor')
+                    send('/set ui.editor none\r')
+                    wait('Set ui.editor =')
+                    send('<<!\r')
+                    wait('input [send/edit/back/cancel]> ')
+                    send('\r')
+                    wait('Input cancelled; original draft restored.')
+
+                    fresh_screen('file')
+                    # Existing file input stays literal and retains newlines.
+                    prompt_file = root / 'prompt file.txt'
+                    prompt_file.write_text('/file literal\nsecond line\n')
+                    send('. "prompt file.txt"\r')
+                    wait('✓ took')
+                    export = root / f'input-{mode}.json'
+                    send(f'/export json {export}\r')
+                    wait('Exported')
+                    exported = json.loads(export.read_text())
+                    texts = [''.join(c.get('text', {}).get('_0', '') for c in m['content'])
+                             for m in exported['chat']['messages'] if m['role'] == 'user']
+                    assert texts == [
+                        'first\nsecond\nthird\nXfourth\nlast café🙂',
+                        draft + '-kept',
+                        'Edited in editor: Edited in editor: continued',
+                        '/literal\n!no shell\n$no expansion',
+                        'failed-edit-draft-kept',
+                        '/file literal\nsecond line\n',
+                    ], texts
+                    send('/set ui.line multi\r')
+                    wait('Set ui.line = multi.')
                     send('/exit\r')
                     deadline = time.monotonic() + 15
                     while process.poll() is None:
@@ -362,7 +458,7 @@ path.write_text('Edited in editor: ' + path.read_text())
                         process.wait(timeout=5)
                     os.close(master)
         print('PASS temporary chat titles and chat logs: quiet/verbose/short, first paragraphs, pins on all roles across repeated compaction, stable indexes, redirection, '
-              'pinlist, pinned ID completion, rewind to the newest pin and its errors; editor aliases, inline text, attachment preservation, persistence and validation')
+              'pinlist, pinned ID completion, rewind to the newest pin and its errors; editor aliases, inline text, attachment preservation, persistence and validation; newline input, editor composition and literal files')
 
 
 if __name__ == '__main__':

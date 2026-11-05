@@ -569,9 +569,16 @@ public enum TerminalOutputMode: String, Codable, Sendable {
   case buffer
 }
 
+public enum TerminalInputLineMode: String, Codable, Sendable {
+  case single
+  case multi
+}
+
 public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
   /// Classic terminal scrollback or an application-owned, reflowable transcript.
   public var mode: TerminalOutputMode
+  /// One horizontally scrolling input row, or wrapped multiline editing.
+  public var line: TerminalInputLineMode
   /// Transcript lines scrolled per mouse-wheel event in buffer mode.
   public var scroll: Int
   /// Scrollbar width: positive on the right, negative on the left, zero hidden. Only shown for overflow.
@@ -626,6 +633,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
 
   public init(
     mode: TerminalOutputMode = .buffer,
+    line: TerminalInputLineMode = .multi,
     scroll: Int = 1,
     scrollbar: Int = 1,
     highlight: String = "",
@@ -665,6 +673,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     editor: String = ""
   ) {
     self.mode = mode
+    self.line = line
     self.scroll = max(1, scroll)
     self.scrollbar = scrollbar
     self.highlight = highlight
@@ -706,6 +715,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
 
   private enum CodingKeys: String, CodingKey {
     case mode
+    case line
     case scroll
     case scrollbar
     case highlight
@@ -752,6 +762,7 @@ public struct ConfiguredTerminalUI: Codable, Equatable, Sendable {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.init(
       mode: (try? container.decodeIfPresent(TerminalOutputMode.self, forKey: .mode)) ?? .buffer,
+      line: (try? container.decodeIfPresent(TerminalInputLineMode.self, forKey: .line)) ?? .multi,
       scroll: (try? container.decodeIfPresent(Int.self, forKey: .scroll)) ?? 1,
       scrollbar: (try? container.decodeIfPresent(Int.self, forKey: .scrollbar)) ?? 1,
       highlight: (try? container.decodeIfPresent(String.self, forKey: .highlight)) ?? "",

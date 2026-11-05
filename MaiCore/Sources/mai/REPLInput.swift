@@ -9,6 +9,7 @@ enum REPLEvent: Sendable {
   /// Buffered submissions may already have released the reader while a
   /// foreground command waited. Replaying them must not open a second prompt.
   case line(String, heredoc: Bool, promptID: String?, pasted: IndexSet = [], inputReleased: Bool = false)
+  case editInput(String, command: String? = nil, inputReleased: Bool = false)
   case foregroundFinished(UUID)
   case readerParked
   /// A non-nil ID means the signal/input path already cancelled that exact
@@ -188,7 +189,17 @@ final class REPLInputReader: @unchecked Sendable {
         continuation.yield(.readerParked)
         continue
       }
+      if editor.wantsExternalEditor {
+        continuation.yield(.editInput(line))
+        continue
+      }
       let promptID = editor.submittedPromptID
+      let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+      if promptID == nil, trimmed.hasPrefix("<<!") {
+        let command = trimmed.dropFirst(3).trimmingCharacters(in: .whitespaces)
+        continuation.yield(.editInput("", command: command.isEmpty ? nil : command))
+        continue
+      }
       guard promptID == nil, let delimiter = Self.heredocDelimiter(in: line) else {
         continuation.yield(.line(line, heredoc: false, promptID: promptID, pasted: editor.submittedPasteBytes))
         continue

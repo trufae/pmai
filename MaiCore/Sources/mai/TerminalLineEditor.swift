@@ -82,12 +82,12 @@ extension LineEditorSurface {
 
 /// Terminal modes the editor turns on while it reads: bracketed paste, so a
 /// pasted text arrives whole with its newlines instead of as typed lines, and
-/// the kitty keyboard protocol's disambiguation, so Shift+Enter is told apart
+/// xterm's modifyOtherKeys and kitty's disambiguation, so Shift+Enter is told apart
 /// from Enter on terminals that need asking. Terminals without either ignore
 /// the sequences.
 enum TerminalInputModes {
-  static let enable = "\u{1B}[?2004h\u{1B}[>1u"
-  static let disable = "\u{1B}[<u\u{1B}[?2004l"
+  static let enable = "\u{1B}[?2004h\u{1B}[>4;2m\u{1B}[>1u"
+  static let disable = "\u{1B}[<u\u{1B}[>4;0m\u{1B}[?2004l"
 }
 
 /// The surface of a plain scrolling terminal: the input starts on the row the
@@ -224,6 +224,7 @@ final class TerminalLineEditor {
   private enum Key {
     /// An asynchronous prompt change, handled between complete keystrokes.
     case refreshPrompt
+    case resize
     /// A plain byte: a control character or the first byte of a character.
     case byte(UInt8)
     /// A whole character the terminal reported through an escape sequence.
@@ -249,6 +250,7 @@ final class TerminalLineEditor {
   private var ui = ConfiguredTerminalUI()
   private(set) var wasInterrupted = false
   private(set) var wasParked = false
+  private(set) var wantsExternalEditor = false
   private(set) var submittedPromptID: String?
   private(set) var submittedPasteBytes = IndexSet()
   private var historyPasteBytes: [String: IndexSet] = [:]
@@ -273,6 +275,7 @@ final class TerminalLineEditor {
   private var surface: LineEditorSurface?
   /// The first of the input's lines shown when there are more than fit.
   private var viewTop = 0
+  private var drawnSize = (columns: 0, rows: 0)
   /// Bytes read ahead of the editor, consumed before the terminal is read.
   private var typeahead: [UInt8] = []
   /// The rotation Tab is walking, and the full matches it came from, kept
@@ -333,6 +336,7 @@ final class TerminalLineEditor {
   ) -> String? {
     wasInterrupted = false
     wasParked = false
+    wantsExternalEditor = false
     submittedPromptID = nil
     submittedPasteBytes = []
     self.tracksPromptUpdates = tracksPromptUpdates
@@ -457,7 +461,7 @@ final class TerminalLineEditor {
 
     /// Up and Down walk the input's lines first and the history at its edges.
     func moveToPreviousLine() {
-      if moveUp(in: bytes, cursor: &cursor) {
+      if moveVertically(in: bytes, cursor: &cursor, prompt: prompt, direction: -1) {
         redraw(prompt: prompt, bytes: bytes, cursor: cursor)
         return
       }
@@ -472,7 +476,7 @@ final class TerminalLineEditor {
     }
 
     func moveToNextLine() {
-      if moveDown(in: bytes, cursor: &cursor) {
+      if moveVertically(in: bytes, cursor: &cursor, prompt: prompt, direction: 1) {
         redraw(prompt: prompt, bytes: bytes, cursor: cursor)
         return
       }
@@ -506,7 +510,31 @@ final class TerminalLineEditor {
     }
 
     var viewSearch: [UInt8]?
+    var editorPrefix = false
     while let key = readKey() {
+      if case .resize = key {
+        if let viewSearch {
+          redraw(prompt: "/", bytes: viewSearch, cursor: viewSearch.count)
+        } else {
+          redraw(prompt: prompt, bytes: bytes, cursor: cursor)
+        }
+        continue
+      }
+      if editorPrefix, case .byte(5) = key {
+        editorPrefix = false
+        guard tracksPromptUpdates, !activePrompt.isModal, continuationPrompt == nil else {
+          surface?.bell()
+          continue
+        }
+        wantsExternalEditor = true
+        dismissCompletion()
+        surface?.acceptInput(styled: "")
+        return String(decoding: bytes, as: UTF8.self)
+      }
+      switch key {
+      case .refreshPrompt: break
+      default: editorPrefix = false
+      }
       if case .refreshPrompt = key,
         promptLock.withLock({
           guard parkRequested else { return false }
@@ -715,6 +743,8 @@ final class TerminalLineEditor {
           cursor = start
           historyIndex = nil
           redraw(prompt: prompt, bytes: bytes, cursor: cursor)
+        case 24:  // Ctrl+X Ctrl+E: edit the current draft externally.
+          editorPrefix = true
         case 26:  // Ctrl+Z
           surface?.suspendProcess()
           drawSeparator(separator)
@@ -779,7 +809,7 @@ final class TerminalLineEditor {
         let end = nextCharacterEnd(in: bytes, after: cursor)
         remove(cursor..<end)
         redraw(prompt: prompt, bytes: bytes, cursor: cursor)
-      case .mouse, .ignored, .outputBoundary:
+      case .mouse, .ignored, .outputBoundary, .resize:
         continue
       }
     }
@@ -792,7 +822,8 @@ final class TerminalLineEditor {
 
   private func readKey() -> Key? {
     guard let byte = readByte(interruptForPrompt: true) else {
-      return hasPromptUpdate ? .refreshPrompt : nil
+      if hasPromptUpdate { return .refreshPrompt }
+      return hasSizeChange ? .resize : nil
     }
     guard byte == 27 else { return .byte(byte) }
     return readEscapeSequence()
@@ -1071,6 +1102,8 @@ final class TerminalLineEditor {
       switch key {
       case .refreshPrompt:
         return .cancelled
+      case .resize:
+        break
       case .byte(let byte):
         switch byte {
         case 1:  // Ctrl+A accepts the match and moves to its beginning.
@@ -1258,20 +1291,60 @@ final class TerminalLineEditor {
 
   // MARK: - Drawing
 
-  /// Draws the input, one row per line: the prompt heads the first visible
-  /// row, the others are indented to it, and each row scrolls sideways on
-  /// its own so the caret's line stays in view.
-  private func redraw(prompt: String, bytes: [UInt8], cursor: Int) {
-    // Leave the terminal's final column unused: printing into it can trigger an
-    // automatic wrap, after which clearing one row no longer erases the input.
+  /// Keep logical line numbers in the prompt even when only one row is visible.
+  private func inputLayout(prompt: String, bytes: [UInt8], cursor: Int)
+    -> (prompt: String, width: Int, lines: [Range<Int>], cursorLine: Int)
+  {
+    let logicalLines = lineRanges(in: bytes)
+    let logicalCursor = logicalLines.firstIndex { cursor <= $0.upperBound } ?? logicalLines.count - 1
+    var label = prompt
+    if logicalLines.count > 1 {
+      let suffix = "[\(logicalCursor + 1)/\(logicalLines.count)]> "
+      label = prompt.hasSuffix("> ") ? String(prompt.dropLast(2)) + suffix : prompt + suffix
+    }
+    // Keep the last terminal column free to avoid implicit terminal wrapping.
     let lineWidth = max(1, Self.terminalColumns() - 1)
     let minimumInputWidth = min(12, max(1, lineWidth / 2))
-    let visiblePrompt = truncatedPrompt(prompt, maximumWidth: lineWidth - minimumInputWidth)
-    let promptWidth = displayWidth(visiblePrompt)
-    let inputWidth = max(1, lineWidth - promptWidth)
-    let lines = lineRanges(in: bytes)
-    let cursorLine = lines.firstIndex { cursor <= $0.upperBound } ?? lines.count - 1
-    let maximumRows = max(1, surface?.maximumInputRows() ?? 1)
+    let visiblePrompt = truncatedPrompt(label, maximumWidth: lineWidth - minimumInputWidth)
+    let width = max(1, lineWidth - displayWidth(visiblePrompt))
+    let lines = ui.line == .multi
+      ? wrappedLines(in: bytes, logicalLines: logicalLines, width: width) : logicalLines
+    // A soft boundary belongs to the next row; a hard newline belongs to the
+    // row before it.
+    let cursorLine = lines.indices.first { index in
+      cursor < lines[index].upperBound || cursor == lines[index].upperBound
+        && (index == lines.count - 1 || lines[index + 1].lowerBound > cursor)
+    } ?? lines.count - 1
+    return (visiblePrompt, width, lines, cursorLine)
+  }
+
+  private func wrappedLines(in bytes: [UInt8], logicalLines: [Range<Int>], width: Int) -> [Range<Int>] {
+    var rows: [Range<Int>] = []
+    for line in logicalLines {
+      var start = line.lowerBound
+      var cells = 0
+      let boundaries = characterBoundaries(in: bytes[line])
+      for (from, to) in zip(boundaries, boundaries.dropFirst()) {
+        let size = displayWidth(bytes[from..<to])
+        if cells + size > width, from > start {
+          rows.append(start..<from)
+          start = from
+          cells = 0
+        }
+        cells += size
+      }
+      rows.append(start..<line.upperBound)
+    }
+    return rows
+  }
+
+  private func redraw(prompt: String, bytes: [UInt8], cursor: Int) {
+    drawnSize = (Self.terminalColumns(), Self.terminalRows())
+    let layout = inputLayout(prompt: prompt, bytes: bytes, cursor: cursor)
+    let promptWidth = displayWidth(layout.prompt)
+    let lines = layout.lines
+    let cursorLine = layout.cursorLine
+    let maximumRows = ui.line == .single ? 1 : max(1, surface?.maximumInputRows() ?? 1)
     if cursorLine < viewTop { viewTop = cursorLine }
     if cursorLine >= viewTop + maximumRows { viewTop = cursorLine - maximumRows + 1 }
     viewTop = max(0, min(viewTop, lines.count - maximumRows))
@@ -1280,19 +1353,19 @@ final class TerminalLineEditor {
       background: ui.promptBackground, bold: activePrompt.isModal)
     let inputStyle = style(foreground: ui.foreground, background: ui.background, bold: ui.bold)
     let hasInputBackground = Self.colorCode(ui.background, background: true) != nil
-    let indent = String(repeating: " ", count: promptWidth)
+    let continuation = truncatedPrompt("...> ", maximumWidth: promptWidth)
+    let indent = String(repeating: " ", count: max(0, promptWidth - displayWidth(continuation))) + continuation
     var rows: [String] = []
     var caretColumn = promptWidth
     for (offset, line) in lines[viewTop..<min(lines.count, viewTop + maximumRows)].enumerated() {
       let isCursorLine = viewTop + offset == cursorLine
       let visibleRange = visibleInputRange(
         in: bytes, line: line, cursor: isCursorLine ? cursor : line.lowerBound,
-        maximumWidth: inputWidth)
+        maximumWidth: layout.width)
       let visibleInput = renderable(bytes[visibleRange])
-      let paddingWidth =
-        hasInputBackground ? max(0, inputWidth - displayWidth(visibleInput)) : 0
+      let paddingWidth = hasInputBackground ? max(0, layout.width - displayWidth(visibleInput)) : 0
       let padding = String(repeating: " ", count: paddingWidth)
-      let head = offset == 0 ? promptStyle + visiblePrompt + resetStyle : indent
+      let head = promptStyle + (offset == 0 ? layout.prompt : indent) + resetStyle
       rows.append(head + inputStyle + visibleInput + padding + resetStyle)
       if isCursorLine {
         caretColumn = promptWidth + displayWidth(bytes[visibleRange.lowerBound..<cursor])
@@ -1522,12 +1595,16 @@ final class TerminalLineEditor {
     tracksPromptUpdates && promptLock.withLock { pendingPrompt != nil || parkRequested }
   }
 
+  private var hasSizeChange: Bool {
+    drawnSize.columns != Self.terminalColumns() || drawnSize.rows != Self.terminalRows()
+  }
+
   private func readByte(timeoutMilliseconds: Int32? = nil, interruptForPrompt: Bool = false) -> UInt8? {
     let deadline = timeoutMilliseconds.map { Date().addingTimeInterval(Double($0) / 1000) }
     while true {
-      if interruptForPrompt && hasPromptUpdate { return nil }
+      if interruptForPrompt && (hasPromptUpdate || hasSizeChange) { return nil }
       let result: (byte: UInt8?, done: Bool) = inputGate.read {
-        if interruptForPrompt && hasPromptUpdate { return (nil, true) }
+        if interruptForPrompt && (hasPromptUpdate || hasSizeChange) { return (nil, true) }
         if typeahead.isEmpty, let surface { typeahead = surface.pendingInput() }
         if !typeahead.isEmpty { return (typeahead.removeFirst(), true) }
         let remaining = deadline.map { max(0, Int32($0.timeIntervalSinceNow * 1000)) } ?? 50
@@ -1537,7 +1614,7 @@ final class TerminalLineEditor {
         if ready == 0 { return (nil, deadline.map { Date() >= $0 } ?? false) }
         // An update may have arrived during poll. Apply it before consuming
         // the first byte of the answer, leaving that byte in the terminal.
-        if interruptForPrompt && hasPromptUpdate { return (nil, true) }
+        if interruptForPrompt && (hasPromptUpdate || hasSizeChange) { return (nil, true) }
         var byte: UInt8 = 0
         let count = read(STDIN_FILENO, &byte, 1)
         if count < 0, errno == EINTR { return (nil, false) }
@@ -1575,36 +1652,24 @@ final class TerminalLineEditor {
     return index
   }
 
-  /// The position `column` cells into the line starting at `start`, or where
-  /// that line ends when it is shorter.
-  private func position(in bytes: [UInt8], lineStart start: Int, column: Int) -> Int {
-    let boundaries = characterBoundaries(in: bytes[start..<lineEnd(in: bytes, at: start)])
-    var index = 0
-    var width = 0
-    while index < boundaries.count - 1 {
-      let characterWidth = displayWidth(bytes[boundaries[index]..<boundaries[index + 1]])
-      guard width + characterWidth <= column else { break }
-      index += 1
-      width += characterWidth
+  /// Move through visual rows in multi mode and logical lines in single mode.
+  private func moveVertically(in bytes: [UInt8], cursor: inout Int, prompt: String, direction: Int) -> Bool {
+    let layout = inputLayout(prompt: prompt, bytes: bytes, cursor: cursor)
+    let target = layout.cursorLine + direction
+    guard layout.lines.indices.contains(target) else { return false }
+    let column = displayWidth(bytes[layout.lines[layout.cursorLine].lowerBound..<cursor])
+    let line = layout.lines[target]
+    cursor = line.lowerBound
+    var cells = 0
+    let boundaries = characterBoundaries(in: bytes[line])
+    for (from, to) in zip(boundaries, boundaries.dropFirst()) {
+      cells += displayWidth(bytes[from..<to])
+      guard cells <= column else { break }
+      // Do not land on the following visual row at a soft boundary.
+      if to == line.upperBound, target + 1 < layout.lines.count,
+        layout.lines[target + 1].lowerBound == to { break }
+      cursor = to
     }
-    return boundaries[index]
-  }
-
-  /// Moves the cursor to the same column one line up; false on the first line.
-  private func moveUp(in bytes: [UInt8], cursor: inout Int) -> Bool {
-    let start = lineStart(in: bytes, at: cursor)
-    guard start > 0 else { return false }
-    let column = displayWidth(bytes[start..<cursor])
-    cursor = position(in: bytes, lineStart: lineStart(in: bytes, at: start - 1), column: column)
-    return true
-  }
-
-  /// Moves the cursor to the same column one line down; false on the last line.
-  private func moveDown(in bytes: [UInt8], cursor: inout Int) -> Bool {
-    let end = lineEnd(in: bytes, at: cursor)
-    guard end < bytes.count else { return false }
-    let column = displayWidth(bytes[lineStart(in: bytes, at: cursor)..<cursor])
-    cursor = position(in: bytes, lineStart: end + 1, column: column)
     return true
   }
 

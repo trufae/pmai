@@ -1226,7 +1226,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   /// Up to half the screen, so the output keeps room of its own.
   func maximumInputRows() -> Int {
-    lock.withLock { maximumInputRowsLocked }
+    lock.withLock {
+      refreshSize()
+      return maximumInputRowsLocked
+    }
   }
 
   private var maximumInputRowsLocked: Int {

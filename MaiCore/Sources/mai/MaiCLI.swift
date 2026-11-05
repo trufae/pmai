@@ -3663,6 +3663,11 @@ struct MaiCLI {
               }
             }
             await releaseReader(workspace: workspace, duringForeground: true)
+          case .editInput(let draft, let command, _):
+            loop.readerParked = true
+            deferredEvents.append(.editInput(draft, command: command, inputReleased: true))
+            await terminal.note("Editor queued until \(name) finishes.")
+            await releaseReader(workspace: workspace, duringForeground: true)
           case .interrupt(let operation, let endedInput):
             if endedInput { loop.readerParked = true }
             // The signal/input path cancelled the registered task already.
@@ -4513,6 +4518,21 @@ struct MaiCLI {
         break
       case .readerParked:
         loop.readerParked = true
+      case .editInput(let draft, let command, _):
+        loop.readerParked = true
+        guard loop.modalPrompt(for: session.id) == nil else {
+          editor.recoverInput(draft)
+          await terminal.note("Finish the current question before editing a message. Your draft is kept.")
+          await releaseIfIdle(workspace: workspace)
+          return false
+        }
+        var message: String?
+        await withTurnInterruptSetAside {
+          message = await composeInput(from: draft, command: command, editor: editor, terminal: terminal)
+        }
+        if let message { await deliver(message, to: loop.focus) }
+        await releaseIfIdle(workspace: workspace)
+        return false
       case .line(let raw, let isHeredoc, let promptID, _, let inputReleased):
         var heredoc = isHeredoc
         if !loop.drainingThen && !inputReleased { loop.readerParked = true }
@@ -5348,7 +5368,7 @@ struct MaiCLI {
             // The editor takes the terminal, as it does for /reply.
             var message: String?
             await withTurnInterruptSetAside {
-              message = await composeInput(terminal: terminal)
+              message = await composeInput(editor: editor, terminal: terminal)
             }
             if let message { await deliver(message, to: loop.focus) }
             await releaseIfIdle(workspace: workspace)
@@ -6071,6 +6091,10 @@ struct MaiCLI {
             raw, heredoc: heredoc, promptID: promptID, pasted: pasted, inputReleased: true))
           loop.readerParked = true
           return
+        case .editInput(let draft, let command, _):
+          deferredEvents.append(.editInput(draft, command: command, inputReleased: true))
+          loop.readerParked = true
+          return
         case .interrupt(let operation, let endedInput):
           deferredEvents.append(.interrupt(operation, endedInput: false))
           if endedInput { loop.readerParked = true; return }
@@ -6089,7 +6113,10 @@ struct MaiCLI {
     }
 
     func dispatchEvent(_ input: REPLEvent) async -> Bool {
-      if case .line(_, _, _, _, inputReleased: true) = input { await parkReader() }
+      switch input {
+      case .line(_, _, _, _, inputReleased: true), .editInput(_, _, inputReleased: true): await parkReader()
+      default: break
+      }
       var event = input
       var redirection: REPLRedirection?
       switch event {
@@ -8942,7 +8969,7 @@ struct MaiCLI {
       // The chat prompt intercepts this one, because the message it writes is
       // sent from there; here it can only say where it works.
       await terminal.line(
-        "Use /edit input at the chat prompt; it opens an empty file and sends what you write in it."
+        "Use /edit input at the chat prompt; it opens an empty file, then asks before sending."
       )
 
     case "compact", "smart":
@@ -9181,10 +9208,10 @@ struct MaiCLI {
   }
 
   private static func editTemporaryText(
-    _ text: String, suffix: String, terminal: TerminalWriter
+    _ text: String, suffix: String, command: String? = nil, terminal: TerminalWriter
   ) async -> String? {
     guard let data = text.data(using: .utf8),
-      let edited = await editTemporaryData(data, suffix: suffix, terminal: terminal)
+      let edited = await editTemporaryData(data, suffix: suffix, command: command, terminal: terminal)
     else { return nil }
     guard let result = String(data: edited, encoding: .utf8) else {
       await terminal.line("error: Editor output must be UTF-8 text.", to: .standardError)
@@ -9194,14 +9221,14 @@ struct MaiCLI {
   }
 
   private static func editTemporaryData(
-    _ data: Data, suffix: String, terminal: TerminalWriter
+    _ data: Data, suffix: String, command: String? = nil, terminal: TerminalWriter
   ) async -> Data? {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("pmai-edit-\(UUID().uuidString)-\(suffix)")
     do {
       try data.write(to: url, options: .atomic)
       defer { try? FileManager.default.removeItem(at: url) }
-      guard await launchEditor(at: url, terminal: terminal) else { return nil }
+      guard await launchEditor(at: url, command: command, terminal: terminal) else { return nil }
       return try Data(contentsOf: url)
     } catch {
       await terminal.line("error: \(error.localizedDescription)", to: .standardError)
@@ -12641,7 +12668,7 @@ struct MaiCLI {
     }
     let booleanKeys = ["ui.markdown", "ui.tableborders", "ui.broadcast", "ui.toolgroups"]
     let countKeys = ["ui.tools", "ui.toolcalls", "ui.scroll", "ui.scrollbar"]
-    let levelKeys = ["ui.subagents", "ui.thinking", "ui.mode"]
+    let levelKeys = ["ui.subagents", "ui.thinking", "ui.mode", "ui.line"]
     if key == "ui.title" {
       await terminal.line("Use /chat title [TEXT|none] for a temporary prompt and terminal/tab title.")
       return
@@ -12706,6 +12733,12 @@ struct MaiCLI {
       }
       ui.tools = value
       await terminal.configureTools(value)
+    } else if key == "ui.line" {
+      guard let mode = TerminalInputLineMode(rawValue: parts[1].lowercased()) else {
+        await terminal.line("Usage: /set ui.line <single|multi>")
+        return
+      }
+      ui.line = mode
     } else if key == "ui.mode" {
       guard let mode = TerminalOutputMode(rawValue: parts[1].lowercased()) else {
         await terminal.line("Usage: /set ui.mode <classic|buffer>")
@@ -13409,7 +13442,7 @@ struct MaiCLI {
 
   private static func uiSettings(_ ui: ConfiguredTerminalUI) -> [String] {
     let keys = [
-      "ui.mode", "ui.scroll", "ui.scrollbar", "ui.highlight", "ui.editor", "ui.markdown", "ui.tools", "ui.toolcalls", "ui.toolgroups",
+      "ui.mode", "ui.line", "ui.scroll", "ui.scrollbar", "ui.highlight", "ui.editor", "ui.markdown", "ui.tools", "ui.toolcalls", "ui.toolgroups",
       "ui.subagents", "ui.thinking", "ui.tableborders",
       "ui.broadcast",
       "ui.fgbold", "ui.fgitalic",
@@ -13421,6 +13454,7 @@ struct MaiCLI {
     let value: String
     switch key.lowercased() {
     case "ui.mode": return ui.mode.rawValue
+    case "ui.line": return ui.line.rawValue
     case "ui.scroll": return String(ui.scroll)
     case "ui.scrollbar": return String(ui.scrollbar)
     case "ui.highlight": value = ui.highlight
@@ -14009,14 +14043,50 @@ struct MaiCLI {
       terminal: terminal)
   }
 
-  /// `/edit input` writes the next message in the editor instead of at the
-  /// prompt, which is the room `/reply` gives without a quote to answer.
-  private static func composeInput(terminal: TerminalWriter) async -> String? {
-    await composeMessage(
-      from: "",
-      suffix: "input.md",
-      unchanged: "Nothing to send: the editor left the file empty.",
-      terminal: terminal)
+  /// Compose without sending until the user has reviewed the editor's output.
+  /// Cancellation restores the original; failed edits keep the last draft.
+  private static func composeInput(
+    from original: String = "", command: String? = nil,
+    editor: TerminalLineEditor, terminal: TerminalWriter
+  ) async -> String? {
+    var draft = original
+    while true {
+      guard let edited = await editTemporaryText(draft, suffix: "input.md", command: command, terminal: terminal) else {
+        if !draft.isEmpty { editor.recoverInput(draft) }
+        return nil
+      }
+      guard !edited.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        if !original.isEmpty { editor.recoverInput(original) }
+        await terminal.line("Nothing to send: the editor left the file empty.")
+        return nil
+      }
+      draft = edited
+      await terminal.line("Edited prompt:\n" + draft)
+      while true {
+        let answer = editor.readLine(
+          prompt: "input [send/edit/back/cancel]> ",
+          completions: ["send", "edit", "back", "cancel"], rememberInput: false
+        )?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if editor.wasInterrupted || answer == nil || answer == "" || answer == "cancel" || answer == "c" {
+          if !original.isEmpty { editor.recoverInput(original) }
+          await terminal.line("Input cancelled; original draft restored.")
+          return nil
+        }
+        switch answer {
+        case "send", "s":
+          return draft
+        case "back", "b":
+          editor.recoverInput(draft)
+          await terminal.line("Edited input restored to the prompt; Enter sends it.")
+          return nil
+        case "edit", "e": break
+        default:
+          await terminal.line("Choose send, edit, back, or cancel (Enter cancels).")
+          continue
+        }
+        break
+      }
+    }
   }
 
   /// Opens the editor on a draft message and returns what it left, for the
@@ -15632,6 +15702,7 @@ struct MaiCLI {
       "/set ui.fgitalic ", "/set ui.fgitalic none",
       "/set ui.tableborders on", "/set ui.tableborders off",
       "/set ui.mode classic", "/set ui.mode buffer",
+      "/set ui.line single", "/set ui.line multi",
       "/set ui.scroll ",
       "/set ui.scrollbar ", "/set ui.highlight ", "/highlight", "/highlight ",
       "/set ui.broadcast on", "/set ui.broadcast off",
@@ -16236,7 +16307,19 @@ struct MaiCLI {
 
   private static let shellHelp = """
     Input:
+      /set ui.line multi  Wrap long input across rows (default, in classic and buffer modes)
+      /set ui.line single Show one scrolling row; pmai[2/3]> identifies the logical line
+      Enter sends; Shift+Enter adds a newline. Alt+Enter or Ctrl+J also add newlines.
+      Terminals that report Shift+Enter as plain Enter need one of those alternatives.
+      Up/Down move through visible rows, then history; soft wrapping adds no newlines.
       <<WORD              Start a multiline message; WORD alone ends it
+      <<!                 Compose in ui.editor, $EDITOR, $VISUAL, or vim
+      <<!vim              Compose with this editor command for this invocation only
+      /edit input         Same as <<!; Ctrl+X Ctrl+E edits the current prompt draft
+      After editing: send / edit again / back to prompt / cancel (Enter cancels).
+      Cancel restores the original draft; failed edits keep the draft. Nothing sends automatically.
+      . FILE              Send a UTF-8 file's entire contents as one literal prompt
+      Quote paths containing spaces; ~ expands to your home directory.
       $NAME [TEXT]        Send a named prompt or skill; /prompts lists names
       !COMMAND            Run a system shell command (interactive programs work)
       /shell [auto|live|cmd]  Shell on the active chat host (local for local chats)
@@ -16257,8 +16340,6 @@ struct MaiCLI {
       @2,3 TEXT or @2 @3 TEXT sends to several agents.
       @* TEXT sends to every active agent, including the running main chat.
       @@ TEXT and bare @ TEXT are aliases for @* TEXT. @ alone shows usage.
-      . FILE reads a UTF-8 file and sends its whole contents as one literal prompt.
-      Quote paths containing spaces; ~ expands to your home directory.
       Child output uses agent#PID blocks; /set ui.subagents controls how much.
     """
 
@@ -16281,6 +16362,8 @@ struct MaiCLI {
     Keyboard shortcuts:
       Shift+Enter adds a line (Alt+Enter or Ctrl+J where the terminal sends Enter for it)
       A paste keeps its lines · Enter sends the whole text
+      /set ui.line multi wraps input; single shows one scrolling row with a line counter
+      Ctrl+X Ctrl+E edits the current draft in your editor, then asks before sending
       Tab selects the next completion · Shift+Tab selects the previous completion
       File arguments complete paths; a directory's trailing / lets you keep browsing
       Up/Down or Ctrl+P/N move between lines, then history · Ctrl+R reverse search
@@ -16468,6 +16551,7 @@ struct MaiCLI {
       /set export.tools BOOL       Include tool calls and results in documents (default off)
       /set export.thinking BOOL    Include thinking blocks in documents (default off)
       /set ui.                     List terminal behavior settings
+      /set ui.line MODE           single (one scrolling row) or multi (default: wrap input)
       /set ui.mode MODE           classic or buffer (default): scroll with Page Up/Down and mouse wheel
       /set ui.scroll N            Lines per mouse-wheel event in buffer mode (default 1)
       /set ui.highlight WORD      Highlight literal matches; none clears (also /highlight WORD)
@@ -16678,7 +16762,7 @@ struct MaiCLI {
     /edit mcps               Edit the configured MCP server list as JSON
     /edit chat N|MESSAGE_ID  Edit a conversation message (same as /msg edit N)
     /edit N|MESSAGE_ID       Edit conversation message N or its full message ID
-    /edit input              Write the next message in the editor and send it
+    /edit input              Write the next message in the editor, then review before sending
     /edit soul               Edit your core personality (lives in ~/.pmai/SOUL.md)
     /edit redact             Edit ~/.pmai/redact.txt: case-insensitive words or /regex/ rules
 

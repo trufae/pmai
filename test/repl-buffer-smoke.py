@@ -157,6 +157,26 @@ def main(binary):
                 assert not scrollbar_spans, scrollbar_spans
                 assert b'\x1b[?1006h' in captured, captured
                 assert b'\x1b[?1002h' in captured, captured
+                # Soft wrapping must keep both ends of a typed draft visible;
+                # Up edits the preceding visual row rather than recalling history.
+                send('WRAP_START_' + 'x' * 70 + '_WRAP_END')
+                wait_for('_WRAP_END')
+                assert 'WRAP_START_' in screen[rows - 1] and '_WRAP_END' in screen[rows], screen
+                send('\x1b[A!\x1b[B?')
+                wait_for('?')
+                assert '!' in screen[rows - 1] and '?' in screen[rows], screen
+                send('\x03')
+                wait_for('^C')
+                send('/set ui.line single\r')
+                wait_for('Set ui.line = single.')
+                send('first\x1b[13;2usecond')
+                wait_for('second')
+                assert '[2/2]> ' in screen[rows] and 'second' in screen[rows], screen
+                assert 'first' not in screen[rows - 1], screen
+                send('\x03')
+                wait_for('^C')
+                send('/set ui.line multi\r')
+                wait_for('Set ui.line = multi.')
                 # The theme background fills short lines and empty output rows,
                 # as well as the last input column reserved for the caret.
                 send('/theme color bgcolor #123456\r')
@@ -460,9 +480,10 @@ def main(binary):
                     fcntl.ioctl(master, termios.TIOCSWINSZ,
                                 struct.pack('HHHH', rows, columns, 0, 0))
                     os.kill(process.pid, signal.SIGWINCH)
-                    read_for()
-                    assert 'ROW' in screen[1], screen
-                    assert 'draft last' in screen[rows], screen
+                    deadline = time.monotonic() + 12
+                    while 'ROW' not in screen.get(1, '') or 'draft last' not in screen.get(rows, ''):
+                        assert process.poll() is None and time.monotonic() < deadline, screen
+                        read_for(.05)
                 assert output() == previous, (previous, output())
 
                 # Kitty Page Down follows the same navigation path as CSI 6~.
@@ -617,7 +638,7 @@ def main(binary):
                 assert process.returncode == 0
                 assert b'\x1b[?1000l' in captured and b'\x1b[?1049l' in captured, captured
                 assert termios.tcgetattr(master) == original, 'raw tty mode leaked on exit'
-                print('PASS buffer: thinking, markdown, tool settings, Ctrl+B/F and Page paging, configurable wheel steps, mouse packets, live history anchor, fixed multiline draft, '
+                print('PASS buffer: thinking, markdown, tool settings, Ctrl+B/F and Page paging, configurable wheel steps, mouse packets, live history anchor, wrapped typing, single-row editing, fixed multiline draft, '
                       'resize, follow, mode persistence, shell output and input, editor handoff '
                       'and terminal cleanup')
             finally:

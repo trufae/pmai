@@ -16,11 +16,36 @@ and `/set ui.editor none` goes back to the environment. The terminal is handed
 to it whole (the persistent prompt and status rows are suspended) and taken
 back when it exits. An editor that exits with a non-zero status, or a file
 saved as anything but UTF-8, cancels the edit and nothing changes. Saving the
-file unchanged is also a no-op.
+file unchanged is also a no-op for saved targets; composing a prompt still asks
+what to do before sending.
 
 Most targets are written to a temporary file with a suffix that tells the
 editor what it is holding (`agent-main.json`, `compact-prompt.md`, and so on),
 so syntax highlighting and JSON checking work without configuration.
+
+## Writing the next prompt
+
+`/edit input` or `<<!` opens an empty draft in the configured editor.
+`<<!vim` chooses vim just this time; editor arguments also work, for example
+`<<!code -w`. To edit text already in the REPL prompt, press Ctrl+X then Ctrl+E.
+After closing the editor, pmai previews the text and asks for `send`, `edit`
+(open it again), `back` (continue editing at the REPL), or `cancel`. Enter and
+Ctrl+C cancel. Cancellation restores the original prompt; an editor failure
+keeps the draft from before that editor invocation. Sending treats the entire
+file as message text, including lines beginning with `/`, `!`, or `$`.
+
+To send an existing UTF-8 file directly, use `. prompt.txt` or
+`. "my prompts/review.txt"`. This sends the complete file as one literal prompt,
+without opening an editor. `~` expands to your home directory.
+
+At the REPL, Enter sends the whole prompt. Shift+Enter inserts a newline;
+Alt+Enter or Ctrl+J also work when a terminal cannot distinguish Shift+Enter.
+`/set ui.line multi` (the default) wraps long typed or pasted text across rows
+without inserting extra newlines. `/set ui.line single` keeps one scrolling
+row and shows the current logical line in the prompt, such as `pmai[2/3]>`.
+Both settings work with `ui.mode classic` and `ui.mode buffer`. Up/Down walk
+input rows before reaching history. `<<EOF` still collects lines until `EOF`
+appears by itself. `/help shell` lists these input forms.
 
 ## Targets
 
@@ -46,7 +71,7 @@ so syntax highlighting and JSON checking work without configuration.
 | `/edit worker` | The instructions of the derived worker agent. | Immediately. |
 | `/edit config` | The whole configuration file. | Agent limits and tool-calling strategy immediately; providers, plugins, tools, and MCP servers after a restart. |
 | `/edit mcps` | The configured MCP server list as JSON. | After a restart. |
-| `/edit input` | An empty file for the next message, so a long one is written with the editor's keys instead of at the prompt. | Sent as an ordinary message when the editor closes; an empty file sends nothing. |
+| `/edit input` | An empty file for the next message, so a long one is written with the editor's keys instead of at the prompt. | Previewed after the editor closes; choose send, edit, back, or cancel. An empty file sends nothing. |
 | `/edit N` | Message N of this chat as Markdown. | Immediately; attachments are kept. |
 | `/edit MESSAGE_ID` | The same, by the message's full id. | Immediately. |
 
