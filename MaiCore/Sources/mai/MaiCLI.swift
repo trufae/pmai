@@ -1405,7 +1405,7 @@ struct MaiCLI {
       }
       if options.listProjects {
         let home = resolvedHome(options: options, environment: environment)
-        print(projectListing(try home.loadProjectIndex(), currentID: nil, now: Date()))
+        print(projectListing(try home.loadProjectIndex(), home: home, currentID: nil, now: Date()))
         return
       }
       if options.listChats {
@@ -5406,7 +5406,7 @@ struct MaiCLI {
               let index = try home.loadProjectIndex()
               switch action {
               case "list":
-                await terminal.line(projectListing(index, currentID: project.id, now: Date()))
+                await terminal.line(projectListing(index, home: home, currentID: project.id, now: Date()))
               case "open":
                 guard arguments.count == 1 else { throw JSONRPCError.invalidParams("Usage: /projects open INDEX|NAME|PATH") }
                 guard loop.activeTurn == nil, await runtime.supervisor.liveProcesses().isEmpty else {
@@ -14568,7 +14568,7 @@ struct MaiCLI {
     case "list", "ls", "projects":
       do {
         await terminal.line(
-          projectListing(try home.loadProjectIndex(), currentID: project.id, now: Date()))
+          projectListing(try home.loadProjectIndex(), home: home, currentID: project.id, now: Date()))
       } catch {
         await terminal.line("error: \(error.localizedDescription)", to: .standardError)
       }
@@ -14685,6 +14685,7 @@ struct MaiCLI {
 
   private static func projectListing(
     _ index: AgentProjectIndex,
+    home: AgentHome,
     currentID: UUID?,
     now: Date
   ) -> String {
@@ -14693,6 +14694,10 @@ struct MaiCLI {
       return "No projects yet. pmai registers the directory it is started in."
     }
     var lines = ["Projects, most recently opened first:"]
+    lines.append([
+      "   #", padded("Project", width: 24), padded("Disk", width: 8),
+      padded("Directory", width: 44), padded("Notes", width: 12), "Opened",
+    ].joined(separator: "  "))
     for (offset, project) in projects.enumerated() {
       let marker = project.id == currentID ? "*" : " "
       let number = offset < 9 ? " \(offset + 1)" : "\(offset + 1)"
@@ -14702,12 +14707,57 @@ struct MaiCLI {
       lines.append(
         [
           "\(marker) \(number)", padded(project.displayName, width: 24),
+          padded(projectDiskUsage(at: home.storageDirectory(for: project)), width: 8),
           padded(abbreviatedPath(project.workingDirectory), width: 44),
           padded(notes.joined(separator: ", "), width: 12),
           ChatDatePresentation.compactTimestamp(project.lastOpenedAt, relativeTo: now),
         ].joined(separator: "  "))
     }
     return lines.joined(separator: "\n")
+  }
+
+  /// Like du: count allocated blocks, including hidden files and directories,
+  /// without following symlinks or counting hard-linked files more than once.
+  private static func projectDiskUsage(at directory: URL) -> String {
+    let manager = FileManager.default
+    guard let attributes = try? manager.attributesOfItem(atPath: directory.path) else { return "-" }
+    var bytes: Int64 = 0
+    var seen = Set<String>()
+    func add(_ url: URL) -> Bool {
+      #if os(Windows)
+        guard let values = try? url.resourceValues(forKeys: [
+          .totalFileAllocatedSizeKey, .fileAllocatedSizeKey, .fileSizeKey,
+        ]), let size = values.totalFileAllocatedSize ?? values.fileAllocatedSize ?? values.fileSize
+        else { return false }
+        bytes += Int64(size)
+      #else
+        var info = stat()
+        guard lstat(url.path, &info) == 0 else { return false }
+        if info.st_nlink > 1,
+          !seen.insert("\(info.st_dev):\(info.st_ino)").inserted { return true }
+        bytes += Int64(info.st_blocks) * 512
+      #endif
+      return true
+    }
+    guard add(directory) else { return "-" }
+    if attributes[.type] as? FileAttributeType == .typeDirectory {
+      var failed = false
+      guard let entries = manager.enumerator(
+        at: directory, includingPropertiesForKeys: nil,
+        errorHandler: { _, _ in failed = true; return false }) else { return "-" }
+      for case let url as URL in entries {
+        guard add(url) else { return "-" }
+      }
+      guard !failed else { return "-" }
+    }
+    let units = ["B", "K", "M", "G", "T", "P", "E"]
+    var value = Double(bytes)
+    var unit = 0
+    while value >= 1024 && unit < units.count - 1 {
+      value /= 1024
+      unit += 1
+    }
+    return unit == 0 ? "\(bytes)B" : String(format: "%.1f%@", value, units[unit])
   }
 
   /// Shortens a path the way shells print it: `~` for home, and the head
@@ -16692,6 +16742,8 @@ struct MaiCLI {
 
     Select by list number, name, path, or ID prefix; quote names and paths with spaces.
     Negative list numbers count from the end: -1 selects the last project, -2 the one before it.
+    Disk shows space used by each project's .pmai directory (or fallback storage), like du -hs.
+    A dash means the storage is missing or could not be fully read.
     Opening a new directory registers it in ~/.pmai/projects.json. /remote serve
     shares this same index by default, and Refresh in PocketMai picks up changes.
     /project shows the current project's details. /cd changes only the tools'
