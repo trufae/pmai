@@ -76,7 +76,8 @@ final class LocationServiceTests: XCTestCase {
   }
 
   func testPrefetchDoesNotRequestLocationOrAccuracyPermissionWhileTyping() {
-    for status in [CLAuthorizationStatus.notDetermined, .denied, .restricted, .authorizedWhenInUse] {
+    for status in [CLAuthorizationStatus.notDetermined, .denied, .restricted, .authorizedWhenInUse]
+    {
       let manager = StubLocationManager(status: status)
       manager.accuracyAuthorization = .reducedAccuracy
       let service = LocationService(manager: manager)
@@ -150,34 +151,177 @@ final class LocationServiceTests: XCTestCase {
   }
 
   func testDecliningPreciseLocationStillCompletesWithAnApproximatePosition() async {
+    let now = Date(timeIntervalSince1970: 2_000)
     let manager = StubLocationManager(status: .authorizedWhenInUse)
     manager.accuracyAuthorization = .reducedAccuracy
-    let service = LocationService(manager: manager)
+    let service = LocationService(manager: manager, now: { now })
     let accuracy = expectation(description: "Precise permission requested")
     manager.onAccuracyRequest = { accuracy.fulfill() }
-    manager.onLocationRequest = { manager.deliver(latitude: 41.4, longitude: 2.2, accuracy: 5000) }
+    manager.onLocationRequest = {
+      manager.deliver(
+        latitude: 41.4, longitude: 2.2,
+        timestamp: now.addingTimeInterval(-15 * 60), accuracy: 5000)
+    }
     let request = Task { await service.currentLocationText() }
     await fulfillment(of: [accuracy], timeout: 10)
     manager.onAccuracyRequest = { XCTFail("Must not repeat a declined prompt during this lookup") }
     manager.completeAccuracyRequest(granted: false)
     let text = await request.value
+    XCTAssertTrue(text.contains("Approximate location"), text)
     XCTAssertTrue(text.contains("accuracy ±5000 m"), text)
     XCTAssertTrue(service.permissionText.contains("approximate"))
   }
 
   func testApproximateLocationDoesNotRequestPrecisePermission() async {
+    let now = Date(timeIntervalSince1970: 2_000)
     for authorization in [CLAccuracyAuthorization.fullAccuracy, .reducedAccuracy] {
       let manager = StubLocationManager(status: .authorizedWhenInUse)
       manager.accuracyAuthorization = authorization
-      let service = LocationService(manager: manager)
+      let service = LocationService(manager: manager, now: { now })
       manager.onAccuracyRequest = { XCTFail("Approximate mode must not request precise access") }
       manager.onLocationRequest = {
-        manager.deliver(latitude: 41.4, longitude: 2.2, accuracy: 5000)
+        manager.deliver(
+          latitude: 41.4, longitude: 2.2,
+          timestamp: now.addingTimeInterval(-15 * 60), accuracy: 5000)
       }
       let text = await service.currentLocationText(precise: false)
+      XCTAssertTrue(text.contains("Approximate location"), text)
       XCTAssertTrue(text.contains("accuracy ±5000 m"), text)
       XCTAssertEqual(manager.desiredAccuracy, kCLLocationAccuracyReduced)
+
+      for timestamp in [now.addingTimeInterval(-31 * 60), now.addingTimeInterval(60)] {
+        manager.onLocationRequest = {
+          manager.deliver(latitude: 41.4, longitude: 2.2, timestamp: timestamp, accuracy: 5000)
+        }
+        let unavailable = await service.currentLocationText(precise: false)
+        XCTAssertTrue(unavailable.contains("Location unavailable"), unavailable)
+      }
     }
+  }
+
+  // Approximate fixes must remain usable between iOS updates, including when
+  // prefetched, without extending the lifetime of precise or expired fixes.
+  func testApproximatePrefetchExpiresFromItsMeasurementTime() async {
+    var now = Date(timeIntervalSince1970: 2_000)
+    let measured = now.addingTimeInterval(-15 * 60)
+    let manager = StubLocationManager(status: .authorizedWhenInUse)
+    let service = LocationService(manager: manager, now: { now })
+    manager.onLocationRequest = {
+      manager.deliver(latitude: 41, longitude: 2, timestamp: measured, accuracy: 5000)
+    }
+    service.prefetch(precise: false)
+    let first = await service.currentLocationText(precise: false)
+    XCTAssertTrue(first.contains("Latitude 41.00000"), first)
+    XCTAssertTrue(first.contains(ISO8601DateFormatter().string(from: measured)), first)
+
+    now.addTimeInterval(14 * 60)
+    manager.onLocationRequest = { XCTFail("A valid approximate prefetch should be reused") }
+    let cached = await service.currentLocationText(precise: false)
+    XCTAssertEqual(cached, first)
+
+    now.addTimeInterval(2 * 60)
+    manager.onLocationRequest = {
+      manager.deliver(latitude: 42, longitude: 3, timestamp: now, accuracy: 5000)
+    }
+    let refreshed = await service.currentLocationText(precise: false)
+    XCTAssertTrue(refreshed.contains("Latitude 42.00000"), refreshed)
+  }
+
+  func testPoorAccuracyIsLabeledWithoutRelaxingPreciseFreshness() async {
+    let now = Date(timeIntervalSince1970: 2_000)
+    let manager = StubLocationManager(status: .authorizedWhenInUse)
+    let service = LocationService(manager: manager, now: { now })
+    manager.onLocationRequest = {
+      manager.deliver(latitude: 41, longitude: 2, timestamp: now, accuracy: 5000)
+    }
+    let coarse = await service.currentLocationText()
+    XCTAssertTrue(coarse.contains("Approximate location"), coarse)
+    XCTAssertTrue(coarse.contains("accuracy ±5000 m"), coarse)
+
+    manager.onLocationRequest = {
+      manager.deliver(
+        latitude: 41, longitude: 2,
+        timestamp: now.addingTimeInterval(-60), accuracy: 5000)
+    }
+    let expired = await service.currentLocationText()
+    XCTAssertTrue(expired.contains("Location unavailable"), expired)
+  }
+
+  // Switching settings while chat/weather are waiting must not share precise
+  // coordinates with an approximate caller, or return the old coarse fix as precise.
+  func testOverlappingPrecisionModesReceiveSeparateFixes() async {
+    for firstPrecise in [true, false] {
+      let manager = StubLocationManager(status: .authorizedWhenInUse)
+      let service = LocationService(manager: manager)
+      let requested = expectation(description: "First mode requested")
+      manager.onLocationRequest = { requested.fulfill() }
+      let first = Task { await service.currentLocationText(precise: firstPrecise) }
+      await fulfillment(of: [requested], timeout: 10)
+
+      service.requestAuthorization(precise: !firstPrecise)
+      let joined = expectation(description: "Other mode queued")
+      let second = Task {
+        manager.onAuthorizationCheck = { joined.fulfill() }
+        return await service.currentLocationText(precise: !firstPrecise)
+      }
+      await fulfillment(of: [joined], timeout: 10)
+      manager.onLocationRequest = {
+        manager.deliver(latitude: 42, longitude: 3, accuracy: firstPrecise ? 5000 : 5)
+      }
+      XCTAssertEqual(
+        manager.desiredAccuracy,
+        firstPrecise ? kCLLocationAccuracyBest : kCLLocationAccuracyReduced)
+      manager.deliver(latitude: 41, longitude: 2, accuracy: firstPrecise ? 5 : 5000)
+      let firstText = await first.value
+      let secondText = await second.value
+      XCTAssertTrue(firstText.contains("Latitude 41.00000"), firstText)
+      XCTAssertTrue(secondText.contains("Latitude 42.00000"), secondText)
+      XCTAssertEqual(firstText.contains("Approximate location"), !firstPrecise)
+      XCTAssertEqual(secondText.contains("Approximate location"), firstPrecise)
+    }
+  }
+
+  func testCancellationWithDifferentPrecisionLeavesTheOtherCallerAlive() async {
+    for cancelActive in [true, false] {
+      let manager = StubLocationManager(status: .authorizedWhenInUse)
+      let service = LocationService(manager: manager)
+      let requested = expectation(description: "Precise lookup requested")
+      manager.onLocationRequest = { requested.fulfill() }
+      let first = Task { await service.currentCoordinate() }
+      await fulfillment(of: [requested], timeout: 10)
+
+      let joined = expectation(description: "Approximate caller queued")
+      let second = Task {
+        manager.onAuthorizationCheck = { joined.fulfill() }
+        return await service.currentCoordinate(precise: false)
+      }
+      await fulfillment(of: [joined], timeout: 10)
+      manager.onLocationRequest = { manager.deliver(latitude: 42, longitude: 3, accuracy: 5000) }
+      let cancelled = cancelActive ? first : second
+      cancelled.cancel()
+      let cancelledResult = await cancelled.value
+      XCTAssertNil(cancelledResult)
+      if !cancelActive { manager.deliver(latitude: 41, longitude: 2) }
+      let survivor = await (cancelActive ? second : first).value
+      XCTAssertEqual(survivor?.latitude, cancelActive ? 42 : 41)
+    }
+  }
+
+  func testPreciseRequestDoesNotReuseAnInFlightApproximatePrefetch() async {
+    let manager = StubLocationManager(status: .authorizedWhenInUse)
+    let service = LocationService(manager: manager)
+    service.prefetch(precise: false)
+    let joined = expectation(description: "Precise caller queued behind prefetch")
+    let request = Task {
+      manager.onAuthorizationCheck = { joined.fulfill() }
+      return await service.currentLocationText()
+    }
+    await fulfillment(of: [joined], timeout: 10)
+    manager.onLocationRequest = { manager.deliver(latitude: 42, longitude: 3) }
+    manager.deliver(latitude: 41, longitude: 2, accuracy: 5000)
+    let text = await request.value
+    XCTAssertTrue(text.contains("Latitude 42.00000"), text)
+    XCTAssertFalse(text.contains("Approximate location"), text)
   }
 
   func testDenialAndRestrictionsReturnActionableContextWithoutRequestingGPS() async {
