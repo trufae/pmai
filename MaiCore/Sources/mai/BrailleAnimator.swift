@@ -13,13 +13,8 @@ final class BrailleAnimator: @unchecked Sendable {
   private var startedAt = ProcessInfo.processInfo.systemUptime
   private let lock = NSLock()
 
-  /// Procedural effects have an 8×4 dot canvas; classic spinners use one cell.
-  var width: Int {
-    switch style {
-    case .equalizer, .plasma, .tunnel: 4
-    default: 1
-    }
-  }
+  /// Every style shares an 8×4 dot canvas spanning four terminal cells.
+  let width = 4
 
   init(style: Style) {
     self.style = style
@@ -50,38 +45,7 @@ final class BrailleAnimator: @unchecked Sendable {
   /// Returns the frame at this instant without advancing any mutable state.
   func frame(at time: TimeInterval = ProcessInfo.processInfo.systemUptime) -> String {
     lock.withLock {
-      let elapsed = max(0, time - startedAt)
-      func sample(_ frames: [UInt8]) -> UInt8 {
-        frames[Int((elapsed * 5).truncatingRemainder(dividingBy: Double(frames.count)))]
-      }
-      let dot: UInt8
-      switch style {
-      case .random:
-        // Hash a time slot, so repeated draws of a twinkle are also stable.
-        var seed = UInt64(elapsed * 5) &+ 0x9e3779b97f4a7c15
-        seed = (seed ^ (seed >> 30)) &* 0xbf58476d1ce4e5b9
-        seed = (seed ^ (seed >> 27)) &* 0x94d049bb133111eb
-        dot = UInt8(truncatingIfNeeded: seed ^ (seed >> 31))
-      case .circle:
-        dot = sample(Self.circle)
-      case .snake:
-        dot = sample(Self.snake)
-      case .snakeGame:
-        dot = sample(Self.snakeGame)
-      case .spiral:
-        dot = sample(Self.spiral)
-      case .square:
-        dot = sample(Self.square)
-      case .topWave:
-        dot = sample(Self.topWave)
-      case .bottomWave:
-        dot = sample(Self.bottomWave)
-      case .scanline:
-        dot = sample(Self.scanline)
-      case .equalizer, .plasma, .tunnel:
-        return effect(at: elapsed)
-      }
-      return Self.braille(dot: dot)
+      effect(at: max(0, time - startedAt))
     }
   }
 
@@ -110,133 +74,106 @@ final class BrailleAnimator: @unchecked Sendable {
     return String(UnicodeScalar(base!.value + UInt32(offset))!)
   }
 
-  // MARK: - Dot indices
-
-  /// The 2×4 grid positions as bit masks.
-  ///
-  ///     0 1
-  ///     2 3
-  ///     4 5
-  ///     6 7
-  private static let dots: [UInt8] = (0..<8).map { 1 << $0 }
-
-  // MARK: - Demoscene effects
+  // MARK: - Canvas effects
 
   private func effect(at time: TimeInterval) -> String {
     var cells = [UInt8](repeating: 0, count: width)
-    for x in 0..<(width * 2) {
-      let column = Double(x)
-      // Synthetic amplifier levels with a shared beat and independent bands.
-      let beat = pow(max(0, cos(time * 10 - column * 0.45)), 4)
-      let level = 0.5 + 0.5 * sin(time * (3 + column * 0.17) + column * 1.3)
-      let height = min(4, 1 + Int(level * 2 + beat * 2))
-      for y in 0..<4 {
-        let row = Double(y)
-        let lit: Bool
-        switch style {
-        case .equalizer:
-          lit = y >= 4 - height
-        case .plasma:
-          let field = sin(column * 0.9 + time * 2.8) + sin(row * 1.4 - time * 2.1)
-            + sin((column + row) * 0.6 + time * 1.3)
-          lit = field > 0.25
-        case .tunnel:
-          let dx = (column - 3.5) * 0.65
-          let dy = row - 1.5
-          lit = sin(hypot(dx, dy) * 3 - time * 6 + atan2(dy, dx) * 2) > 0.2
-        default:
-          lit = false
+    func plot(_ x: Int, _ y: Int) {
+      cells[x / 2] |= 1 << (y * 2 + x % 2)
+    }
+    func head(on path: [Int], speed: Double) -> Int {
+      Int((time * speed).truncatingRemainder(dividingBy: Double(path.count)))
+    }
+    func trail(on path: [Int], head: Int, length: Int) {
+      for age in 0..<length {
+        let dot = path[(head - age + path.count) % path.count]
+        plot(dot % 8, dot / 8)
+      }
+    }
+
+    switch style {
+    case .random:
+      // Independent twinkles per cell, stable throughout each time slot.
+      for cell in cells.indices {
+        var seed = UInt64(time * 5) &+ (UInt64(cell + 1) &* 0x9e3779b97f4a7c15)
+        seed = (seed ^ (seed >> 30)) &* 0xbf58476d1ce4e5b9
+        seed = (seed ^ (seed >> 27)) &* 0x94d049bb133111eb
+        cells[cell] = UInt8(truncatingIfNeeded: seed ^ (seed >> 31))
+      }
+    case .circle:
+      // A long comet and a short satellite orbit the rounded rim.
+      let step = head(on: Self.orbit, speed: 10)
+      trail(on: Self.orbit, head: step, length: 6)
+      trail(on: Self.orbit, head: step + Self.orbit.count / 2, length: 2)
+    case .square:
+      // Two opposing trails turn sharp corners around the full canvas.
+      let step = head(on: Self.perimeter, speed: 10)
+      trail(on: Self.perimeter, head: step, length: 6)
+      trail(on: Self.perimeter, head: step + Self.perimeter.count / 2, length: 6)
+    case .snakeGame:
+      // A snake weaves through every row, eating a pellet every eight steps.
+      let step = head(on: Self.snakePath, speed: 10)
+      trail(on: Self.snakePath, head: step, length: 8)
+      let food = Self.snakePath[((step / 8 + 1) * 8) % Self.snakePath.count]
+      plot(food % 8, food / 8)
+    default:
+      for x in 0..<(width * 2) {
+        let column = Double(x)
+        for y in 0..<4 {
+          let row = Double(y)
+          let lit: Bool
+          switch style {
+          case .snake:
+            // A continuous ribbon slithers across all eight dot columns.
+            let spine = 1.5 + 1.4 * sin(column * 0.75 - time * 4)
+            lit = abs(row - spine) < 0.65
+          case .spiral:
+            let dx = (column - 3.5) * 0.5
+            let dy = row - 1.5
+            // Two curved arms rotate around the middle of the canvas.
+            lit = cos(atan2(dy, dx) * 2 - hypot(dx, dy) * 1.8 + time * 4) > 0.35
+          case .topWave, .bottomWave:
+            let direction = style == .topWave ? -1.0 : 1.0
+            let height = 2 + 1.4 * sin(column * 0.85 + direction * time * 3.5)
+            lit = style == .topWave ? row + 0.5 < height : 3.5 - row < height
+          case .scanline:
+            // A tilted sweeping beam with a stippled glow on adjacent rows.
+            let beam = 1.5 + 1.5 * sin(time * 3) + (column - 3.5) * 0.22
+            let distance = abs(row - beam)
+            lit = distance < 0.55 || (distance < 1.2 && x % 2 == y % 2)
+          case .equalizer:
+            // Synthetic amplifier levels with a shared beat and independent bands.
+            let beat = pow(max(0, cos(time * 10 - column * 0.45)), 4)
+            let level = 0.5 + 0.5 * sin(time * (3 + column * 0.17) + column * 1.3)
+            let height = min(4, 1 + Int(level * 2 + beat * 2))
+            lit = y >= 4 - height
+          case .plasma:
+            let field = sin(column * 0.9 + time * 2.8) + sin(row * 1.4 - time * 2.1)
+              + sin((column + row) * 0.6 + time * 1.3)
+            lit = field > 0.25
+          case .tunnel:
+            let dx = (column - 3.5) * 0.65
+            let dy = row - 1.5
+            lit = sin(hypot(dx, dy) * 3 - time * 6 + atan2(dy, dx) * 2) > 0.2
+          default:
+            lit = false
+          }
+          if lit { plot(x, y) }
         }
-        if lit { cells[x / 2] |= 1 << (y * 2 + x % 2) }
       }
     }
     return cells.map { Self.braille(dot: $0) }.joined()
   }
 
-  // MARK: - Circle
-
-  /// Traces the outer rim clockwise around the 2×4 rectangle.
-  private static let circle: [UInt8] = [
-    dots[0], dots[1], dots[3], dots[5], dots[7], dots[6], dots[4], dots[2],
+  // Closed paths use row-major dot indices (y * 8 + x).
+  private static let orbit = [
+    1, 2, 3, 4, 5, 6, 15, 23, 30, 29, 28, 27, 26, 25, 16, 8,
   ]
-
-  // MARK: - Snake
-
-  /// Slides left-to-right on the top pair, then right-to-left on the next,
-  /// weaving down through all four rows.
-  private static let snake: [UInt8] = [
-    dots[0], dots[1], dots[3], dots[2], dots[4], dots[5], dots[7], dots[6],
+  private static let perimeter = [
+    0, 1, 2, 3, 4, 5, 6, 7, 15, 23, 31, 30, 29, 28, 27, 26, 25, 24, 16, 8,
   ]
-
-  /// A three-dot snake turns around the grid, advancing its head and tail
-  /// by one adjacent dot per frame, including when the animation loops.
-  private static let snakeGame: [UInt8] = [
-    dots[4] | dots[2] | dots[0],
-    dots[2] | dots[0] | dots[1],
-    dots[0] | dots[1] | dots[3],
-    dots[1] | dots[3] | dots[5],
-    dots[3] | dots[5] | dots[7],
-    dots[5] | dots[7] | dots[6],
-    dots[7] | dots[6] | dots[4],
-    dots[6] | dots[4] | dots[2],
-  ]
-
-  // MARK: - Spiral
-
-  /// Winds around the outside, then shrinks inward to the center pair.
-  private static let spiral: [UInt8] = [
-    dots[0], dots[1], dots[3], dots[5], dots[7], dots[6], dots[4], dots[2],
-    dots[0] | dots[1], dots[3] | dots[5], dots[7] | dots[6], dots[4] | dots[2],
-    dots[2], dots[3],
-  ]
-
-  // MARK: - Square
-
-  /// Lights each side of the rectangle in turn, including the horizontal
-  /// middle rows so all four rows are active.
-  private static let square: [UInt8] = [
-    dots[0] | dots[2] | dots[4] | dots[6],  // left edge
-    dots[6] | dots[7],                      // bottom edge
-    dots[1] | dots[3] | dots[5] | dots[7],  // right edge
-    dots[0] | dots[1],                      // top edge
-    dots[2] | dots[3],                      // middle-left
-    dots[4] | dots[5],                      // middle-right
-  ]
-
-  // MARK: - Top wave / bottom wave
-
-  /// The upper six dots (top three rows) fade on, then off.
-  private static let topWave: [UInt8] = [
-    dots[0] | dots[2] | dots[4],  // left column, rows 0-2
-    dots[1] | dots[3] | dots[5],  // right column, rows 0-2
-    dots[0] | dots[1] | dots[2] | dots[3] | dots[4] | dots[5],  // full 3×2 block
-    dots[0] | dots[2] | dots[4],  // left column, rows 0-2
-    dots[1] | dots[3] | dots[5],  // right column, rows 0-2
-    0,                             // blank beat
-  ]
-
-  /// The lower six dots (bottom three rows) fade on, then off.
-  private static let bottomWave: [UInt8] = [
-    dots[2] | dots[4] | dots[6],  // left column, rows 1-3
-    dots[3] | dots[5] | dots[7],  // right column, rows 1-3
-    dots[2] | dots[3] | dots[4] | dots[5] | dots[6] | dots[7],  // full bottom 3×2 block
-    dots[2] | dots[4] | dots[6],  // left column, rows 1-3
-    dots[3] | dots[5] | dots[7],  // right column, rows 1-3
-    0,                             // blank beat
-  ]
-
-  // MARK: - Scanline
-
-  /// A three-dot-high horizontal bar that moves from the top row to the
-  /// bottom row and back, filling the whole 2×4 cell.
-  private static let scanline: [UInt8] = [
-    dots[0] | dots[1],              // row 0
-    dots[0] | dots[1] | dots[2] | dots[3],  // rows 0-1
-    dots[2] | dots[3] | dots[4] | dots[5],  // rows 1-2
-    dots[4] | dots[5] | dots[6] | dots[7],  // rows 2-3
-    dots[6] | dots[7],              // row 3
-    dots[4] | dots[5] | dots[6] | dots[7],  // rows 2-3
-    dots[2] | dots[3] | dots[4] | dots[5],  // rows 1-2
-    dots[0] | dots[1] | dots[2] | dots[3],  // rows 0-1
+  private static let snakePath = [
+    0, 1, 2, 3, 4, 5, 6, 7, 15, 14, 13, 12, 11, 10, 9, 17,
+    18, 19, 20, 21, 22, 23, 31, 30, 29, 28, 27, 26, 25, 24, 16, 8,
   ]
 }
