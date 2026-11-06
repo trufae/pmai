@@ -156,13 +156,13 @@ let package = Package(
     .executableTarget(
       name: "MaiCLI",
       dependencies: cliDependencies,
-      path: "Sources/mai",
+      path: "Sources/MaiCLI",
       exclude: ["VoiceInfo.plist"],
       linkerSettings: [
         .linkedLibrary("user32", .when(platforms: [.windows])),
         .unsafeFlags(["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist",
           "-Xlinker", URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-            .appendingPathComponent("Sources/mai/VoiceInfo.plist").path], .when(platforms: [.macOS])),
+            .appendingPathComponent("Sources/MaiCLI/VoiceInfo.plist").path], .when(platforms: [.macOS])),
         .linkedLibrary("ssl", .when(platforms: [.android])),
         .linkedLibrary("crypto", .when(platforms: [.android])),
         .linkedLibrary("z", .when(platforms: [.android])),

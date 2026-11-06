@@ -16,6 +16,16 @@ Each registers through the same plugin API available to third-party providers. T
 message content, multimodal requests, native tool calls, approvals, MCP
 Streamable HTTP servers, CLI-only stdio MCP processes, and bounded child agents.
 
+The `MaiCLI` executable target lives in `Sources/MaiCLI`, separately from the
+shared `MaiCore` library target. Its `MaiCLI.swift` is only the entry point:
+`Startup/` assembles the runtime and loads configuration, `REPL/` owns session
+state and the event loop, `REPL/Commands/` implements command families,
+`Terminal/` owns input and rendering, and `Servers/` hosts remote protocols.
+Command help and example configuration have their own files so their edits do
+not share a compilation unit with the event loop. Keep command-local helpers
+private; declarations shared between these files remain internal to `MaiCLI`.
+The mobile apps consume library products and do not depend on this target.
+
 Agents without configured instructions use `SystemPrompt.defaultInstructions`:
 a short prompt focused on completing the task, targeted tool use, and verification.
 Explicit prompts (including an empty one) take precedence. Native tools are used

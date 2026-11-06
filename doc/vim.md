@@ -62,4 +62,4 @@ xnoremap <leader>m :<C-U>'<,'>Pmai<CR>
 ```
 
 The script is adapted from mai's Vim integration and kept in
-`MaiCore/Sources/mai/VimIntegration.swift` so standalone pmai binaries include it.
+`MaiCore/Sources/MaiCLI/Startup/VimIntegration.swift` so standalone pmai binaries include it.

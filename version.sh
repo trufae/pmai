@@ -4,7 +4,7 @@ set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PBXPROJ="$SCRIPT_DIR/PocketMai.xcodeproj/project.pbxproj"
-MAICLI="$SCRIPT_DIR/MaiCore/Sources/mai/MaiCLI.swift"
+MAICLI="$SCRIPT_DIR/MaiCore/Sources/MaiCLI/MaiCLI.swift"
 
 if [ ! -f "$PBXPROJ" ]; then
   printf '%s\n' "version.sh: missing project file: $PBXPROJ" >&2
@@ -36,21 +36,21 @@ if ! printf '%s\n' "$new_version" | grep -Eq '^[0-9]+(\.[0-9]+){2}$'; then
   exit 1
 fi
 
-cli_version=$(awk -F'"' '/private static let version = "/ { print $2; exit }' "$MAICLI")
+cli_version=$(awk -F'"' '/static let version = "/ { print $2; exit }' "$MAICLI")
 
 if [ -z "$cli_version" ]; then
   printf '%s\n' "version.sh: could not find version string in $MAICLI" >&2
   exit 1
 fi
 
-cli_matches=$(grep -c 'private static let version = "' "$MAICLI" || true)
+cli_matches=$(grep -c 'static let version = "' "$MAICLI" || true)
 
 if [ "$cli_matches" -ne 1 ]; then
   printf '%s\n' "version.sh: expected exactly one version string in $MAICLI, found $cli_matches" >&2
   exit 1
 fi
 
-perl -0pi -e "s/private static let version = \"[^\"]*\"/private static let version = \"$new_version\"/" "$MAICLI"
+perl -0pi -e "s/static let version = \"[^\"]*\"/static let version = \"$new_version\"/" "$MAICLI"
 
 perl -0pi -e "s/MARKETING_VERSION = [^;]+;/MARKETING_VERSION = $new_version;/g" "$PBXPROJ"
 
