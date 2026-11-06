@@ -43,7 +43,7 @@ Forwiroh. Use `/remote serve --protocol local` for direct LAN access instead.
 The REPL remains usable; `/remote stop` or exiting the REPL stops the listener.
 By default it exposes every working directory
 in `~/.pmai/projects.json` (or the configured pmai home), with the conversations
-stored in each project's `.pmai/chats`. `/remote qr` shows the invitation again.
+stored in `~/.pmai/projects/<ID>/chats`, or the project's existing `.pmai/chats`. `/remote qr` shows the invitation again.
 Run `/remote stop` before starting it with different paths or options.
 
 Scan it in PocketMai → Hosts, or pair it from another CLI:

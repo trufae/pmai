@@ -31,6 +31,7 @@ extension MaiCLI {
     var files = MaiStandardToolFactory.fileWorkspaceConfiguration(
       context: context, additionalAllowedURLs: await access.all())
     files.pathAccessPolicy = access.policy
+    files.projectHomeURL = access.home.rootURL
     let tool = MaiVectorDatabaseTool(configuration: files)
     do {
       let result = try await tool.call(

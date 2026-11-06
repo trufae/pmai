@@ -17,7 +17,7 @@ import threading
 import time
 from http.server import ThreadingHTTPServer
 
-from smoke import clean_environment, JSONProvider, read_chat, read_pty, run_repl
+from smoke import project_storage, clean_environment, JSONProvider, read_chat, read_pty, run_repl
 
 CSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
 MOVE = re.compile(r'\x1b\[(\d+);(\d+)H')
@@ -694,7 +694,7 @@ def main(binary):
                 assert 'CHILD_BACKGROUND' in top(), screen
                 quit_repl()
                 # Saved history larger than one page must still expose early pins and log entries.
-                saved = next((root / '.pmai/chats').glob('*.json'))
+                saved = next((project_storage(root / 'home', root) / 'chats').glob('*.json'))
                 chat = read_chat(saved)
                 chat['messages'] = [{'id': f'paged-{i}',
                     'role': 'user' if i % 2 == 0 else 'assistant',

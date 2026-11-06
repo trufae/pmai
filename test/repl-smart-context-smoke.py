@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check smart context routing, prompt editing, and retained history over local HTTP."""
 import json
-from smoke import JSONProvider, clean_environment, run_repl
+from smoke import project_storage, JSONProvider, clean_environment, run_repl
 from pathlib import Path
 import sys
 import tempfile
@@ -69,7 +69,7 @@ def main():
             assert conversation == [{'role': 'user', 'content': 'Fix the parser'}], conversation
             assert any('ORIGINAL RULES' in m['content'] for m in requests[0]['messages']), requests[0]
 
-            chat_file = next((root / '.pmai/chats').glob('*.json'))
+            chat_file = next((project_storage(root / 'home', root) / 'chats').glob('*.json'))
             chat = json.loads(chat_file.read_text())
             assert 'Fix the parser' in json.dumps(chat['messages']), chat
             assert 'MAIN ANSWER' in json.dumps(chat['messages']), chat

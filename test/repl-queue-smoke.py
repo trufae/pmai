@@ -2,7 +2,7 @@
 """Exercise queue choices, cancellation and approval shutdown in a real REPL PTY."""
 import fcntl
 import json
-from smoke import expect_pty, read_chat
+from smoke import project_storage, expect_pty, read_chat
 import os
 from pathlib import Path
 import pty
@@ -247,7 +247,7 @@ def main():
                         send('/exit\n')
                         wait_for_exit()
                         assert process.returncode == 0, process.returncode
-                        chat_path, = (root / '.pmai/chats').glob('*.json')
+                        chat_path, = (project_storage(root / 'home', root) / 'chats').glob('*.json')
                         children = read_chat(chat_path)['subagents']
                         assert len(children) == 2, children
                         for child in children:
@@ -311,7 +311,7 @@ def main():
                             wait_for("wants to run confirm tool 'files_write'")
                         if choice == 'hey-shell':
                             child_pid = shell_pid()
-                        chat_path, = (root / '.pmai/chats').glob('*.json')
+                        chat_path, = (project_storage(root / 'home', root) / 'chats').glob('*.json')
                         before = read_chat(chat_path)['messages']
                         original = next(m for m in reversed(before) if m['role'] == 'user')
                         addition = '' if choice == 'hey-empty' else 'use x > y | z'

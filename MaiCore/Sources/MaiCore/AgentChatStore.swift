@@ -167,7 +167,7 @@ extension ChatFileStore where Chat == AgentChat {
 ///     <workdir>/.pmai/todo.md            the project's todo list
 ///     <workdir>/.pmai/skills/<name>/SKILL.md  the project's own skills
 ///     ~/.pmai/skills/<name>/SKILL.md     skills every project may use
-///     ~/.pmai/projects/<id>/             the same files, for read-only directories
+///     ~/.pmai/projects/<id>/             the same files, unless a local .pmai exists
 ///
 /// The root is `$PMAI_HOME` when set, else `$HOME/.pmai`.
 public struct AgentHome: Sendable {
@@ -259,7 +259,7 @@ public struct AgentHome: Sendable {
     rootURL.appendingPathComponent(Self.skillsDirectoryName, isDirectory: true)
   }
 
-  /// Storage for projects whose working directory cannot hold a `.pmai` folder.
+  /// Default project storage, outside working directories and repository cleanup.
   public var projectsDirectoryURL: URL {
     rootURL.appendingPathComponent("projects", isDirectory: true)
   }
@@ -275,15 +275,14 @@ public struct AgentHome: Sendable {
     try index.save(to: projectIndexURL)
   }
 
-  /// Where a project keeps its files: `.pmai` inside its working directory
-  /// when that directory is writable or already holds one, else a directory
-  /// named after the project id under the home.
+  /// Keep using an existing local `.pmai` directory; otherwise store the project
+  /// under the home. Opening a project never creates a local `.pmai` directory.
   public func storageDirectory(for project: AgentProject) -> URL {
     if let workingDirectory = project.workingDirectoryURL {
       let local = workingDirectory.appendingPathComponent(Self.directoryName, isDirectory: true)
-      if FileManager.default.fileExists(atPath: local.path)
-        || FileManager.default.isWritableFile(atPath: workingDirectory.path)
-      {
+      var isDirectory: ObjCBool = false
+      if FileManager.default.fileExists(atPath: local.path, isDirectory: &isDirectory),
+        isDirectory.boolValue {
         return local
       }
     }

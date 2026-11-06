@@ -38,7 +38,7 @@ struct CLIOptions {
   var configPath: String?
   /// Root holding the project index and shared state; nil follows PMAI_HOME or ~/.pmai.
   var homePath: String?
-  /// Directory holding this project's chat files; nil uses .pmai/chats in the project.
+  /// Directory holding this project's chat files; nil follows the project's local or central storage.
   var statePath: String?
   var historyPath: String?
   var agentOverride: String?

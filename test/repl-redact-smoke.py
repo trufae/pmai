@@ -9,7 +9,7 @@ import tempfile
 import threading
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from smoke import JSONProvider, clean_environment, run_repl
+from smoke import project_storage, JSONProvider, clean_environment, run_repl
 
 requests = []
 responses = []
@@ -87,7 +87,7 @@ file.write_text("alice\\n/\\\\b(?:\\\\d{4}-){3}\\\\d{4}\\\\b/\\n")
             assert '4111-1111-1111-1111' in output, output
             assert output.count('warning: redacted ') == 3, output
             assert json.loads(config.read_text())['redact'] == 'warn'
-            saved_chats = [p.read_text() for p in (root / '.pmai/chats').glob('*.json')]
+            saved_chats = [p.read_text() for p in (project_storage(home, root) / 'chats').glob('*.json')]
             assert saved_chats and any('Summary Alice' in chat for chat in saved_chats), saved_chats
             assert all('__PMAI_' not in chat for chat in saved_chats), saved_chats
             assert (home / 'redact.txt').stat().st_mode & 0o777 == 0o600

@@ -2,7 +2,7 @@
 """Check model completion and cancellable compaction over real HTTP."""
 import fcntl
 import json
-from smoke import JSONProvider, read_pty, expect_pty, read_chat
+from smoke import project_storage, JSONProvider, read_pty, expect_pty, read_chat
 import os
 from pathlib import Path
 import pty
@@ -121,7 +121,7 @@ def main():
             seed = subprocess.run(command + ['seed'], cwd=root, env=environment,
                                   capture_output=True, timeout=20)
             assert seed.returncode == 0, seed.stderr
-            chat_file = next((root / '.pmai/chats').glob('*.json'))
+            chat_file = next((project_storage(root / 'home', root) / 'chats').glob('*.json'))
             chat = read_chat(chat_file)
             seed_messages = chat['messages'][:]
             # Compaction excludes old structured tool evidence from context,

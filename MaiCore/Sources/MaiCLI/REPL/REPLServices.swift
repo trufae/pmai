@@ -84,7 +84,7 @@ final class TodoState: @unchecked Sendable {
   }
 }
 
-/// Where skills are read from: the project's `.pmai/skills`, then the
+/// Where skills are read from: the project's storage `skills` folder, then the
 /// `skills` folder under the home. The `skills_*` tools are registered before
 /// the project is opened, so until then the start directory stands in for
 /// it; every listing and call reads the SKILL.md files afresh.

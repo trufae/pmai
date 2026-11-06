@@ -2,7 +2,7 @@
 """Check chat settings, launch precedence, and isolation without a model server."""
 import json
 from datetime import datetime
-from smoke import clean_environment, run_repl
+from smoke import project_storage, clean_environment, run_repl
 from pathlib import Path
 import sys
 import tempfile
@@ -34,7 +34,7 @@ def main():
                 cwd=root, env=environment | (env or {}), timeout=30)
 
         def chat_file(title):
-            return next(path for path in (root / '.pmai/chats').glob('*.json')
+            return next(path for path in (project_storage(root / 'home', root) / 'chats').glob('*.json')
                         if json.loads(path.read_text())['title'] == title)
 
         def assert_restored(path, saved):

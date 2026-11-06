@@ -2,7 +2,7 @@
 """Check document exports and PocketMai conversation import with the offline provider."""
 import json
 import shlex
-from smoke import clean_environment, run_repl
+from smoke import project_storage, clean_environment, run_repl
 from pathlib import Path
 import sys
 import tempfile
@@ -27,7 +27,7 @@ def main():
                 cwd=root, env=environment, timeout=30, allow_errors=allow_errors)
 
         run(args=['Question'])
-        path = next((root / '.pmai/chats').glob('*.json'))
+        path = next((project_storage(root / 'home', root) / 'chats').glob('*.json'))
         chat = json.loads(path.read_text())
 
         def message(role, kind, text):
@@ -100,7 +100,7 @@ def main():
             'portable': portable,
         }
         before_config = config.read_text()
-        before_count = len(list((root / '.pmai/chats').glob('*.json')))
+        before_count = len(list((project_storage(root / 'home', root) / 'chats').glob('*.json')))
         for extension in ['pocketmai', 'pocketmai.json']:
             filename = f'Shared Chat.{extension}'
             (root / filename).write_text(json.dumps(envelope))
@@ -110,7 +110,7 @@ def main():
             assert imported['messages'] == portable['chats'][0]['messages'], imported
             assert imported['id'] != chat['id'], imported
         assert config.read_text() == before_config
-        assert len(list((root / '.pmai/chats').glob('*.json'))) == before_count + 2
+        assert len(list((project_storage(root / 'home', root) / 'chats').glob('*.json'))) == before_count + 2
 
         # Context reductions must survive restart without destroying exportable evidence.
         evidence = 'EXACT HISTORICAL EVIDENCE\n' * 40

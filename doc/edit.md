@@ -66,7 +66,7 @@ appears by itself. `/help shell` lists these input forms.
 | `/edit prompt recap` | The embedded recap template: short goals, actions/results, and pending tasks with emoji labels. Must keep `{{transcript}}`; clearing it restores the default. | Immediately. |
 | `/edit prompt compact` | The generated compact agent's system prompt (formerly `task-compact`). | Immediately. |
 | `/edit prompt tool` | The generated tool agent's system prompt (formerly `task-tool`). | Immediately. |
-| `/edit memory` | This project's durable notes (`.pmai/memory.md`). Same as `/memory edit`. | Immediately. |
+| `/edit memory` | This project's durable notes (`memory.md` in project storage). Same as `/memory edit`. | Immediately. |
 | `/edit redact` | Your redaction rules (`~/.pmai/redact.txt`). | Reloaded immediately when redaction is enabled. |
 | `/edit soul` | Your global core personality (`~/.pmai/SOUL.md`); creates the file and its directory if needed. | On the next model request. |
 | `/edit memory-prompt` | The template `/memory learn` sends to the model. | Immediately. |
@@ -105,7 +105,7 @@ description and prompt, keeping the name unchanged. Saving an unchanged draft
 creates nothing. Existing skills retain their supporting files and extra YAML
 fields. `/skills add NAME "DESCRIPTION" "PROMPT"` creates one without an editor,
 `/skills import ZIP_OR_FOLDER` imports one, and `/skills del NAME` deletes it.
-Skills are created under the project's `.pmai/skills`; `--user` uses the home
+Skills are created in the project's `skills` storage directory; `--user` uses the home
 skills folder. Editing and deletion use the visible copy unless `--user` or
 `--project` selects a specific copy. Quote names and paths containing spaces.
 

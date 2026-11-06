@@ -14,7 +14,7 @@ import tempfile
 import termios
 import time
 
-from smoke import clean_environment, read_chat, read_pty, run_repl
+from smoke import project_storage, clean_environment, read_chat, read_pty, run_repl
 
 CSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
 MOVE = re.compile(r'\x1b\[(\d+);(\d+)H')
@@ -35,7 +35,7 @@ def main(binary):
         command = [binary, '--config', str(config), '--home', str(root / 'home'),
                    '--no-stream', '--no-markdown']
         run_repl(command, ['Seed'], cwd=root, env=env)
-        saved = next((root / '.pmai/chats').glob('*.json'))
+        saved = next((project_storage(root / 'home', root) / 'chats').glob('*.json'))
         template = read_chat(saved)
 
         for count in (8, 64, 65, 130):

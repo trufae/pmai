@@ -6,6 +6,8 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+
+from smoke import project_storage
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -98,7 +100,7 @@ def main():
 
             run(['/chat rename routed'], ['--base-url', f'{base}/effective/v1'])
             output = run(args=['-r', 'routed', 'Delegate the first task.'])
-            saved_path = next((root / '.pmai/chats').glob('*.json'))
+            saved_path = next((project_storage(root / 'home', root) / 'chats').glob('*.json'))
             saved = json.loads(saved_path.read_text())
             assert len(saved['subagents']) == 2, (saved['subagents'], output, requests)
             assert 'original-key' not in saved_path.read_text()

@@ -14,7 +14,7 @@ import termios
 import threading
 import time
 from http.server import ThreadingHTTPServer
-from smoke import JSONProvider, clean_environment, expect_pty, read_pty, run_repl
+from smoke import project_storage, JSONProvider, clean_environment, expect_pty, read_pty, run_repl
 
 
 requests = queue.Queue()
@@ -166,7 +166,7 @@ def main():
                     assert time.monotonic() < deadline, output.decode(errors='replace')
                     read_pty(master, output, .05)
                 assert process.returncode == 0
-                chats = [json.loads(path.read_text()) for path in (root / '.pmai/chats').glob('*.json')]
+                chats = [json.loads(path.read_text()) for path in (project_storage(root / 'home', root) / 'chats').glob('*.json')]
                 users = [m['content'][0]['text']['_0'] for chat in chats for m in chat['messages']
                          if m['role'] == 'user']
                 assert users == ['main', 'queued-main', 'next-main', 'cancel-main'], users

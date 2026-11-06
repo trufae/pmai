@@ -7,6 +7,8 @@ import stat
 import subprocess
 import sys
 import tempfile
+
+from smoke import project_storage
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -75,15 +77,15 @@ def main():
                 assert result.returncode == 0, output
                 return output
 
-            log = project / '.pmai' / 'debug.jsonl'
             assert 'debug = false' in run(project, '/set debug')
+            log = project_storage(root / 'home', project) / 'debug.jsonl'
             assert not log.exists()
             output = run(project, '/set debug true', '/set tool.approval yolo',
                          '/set retry.attempts 1', '/set ui.thinking full',
                          'first prompt', '/export debug debug.json')
             assert 'debug smoke done' in output, output
             assert (project / 'debug-proof.txt').read_text() == 'logged tool call'
-            settings = json.loads((project / '.pmai' / 'settings.json').read_text())
+            settings = json.loads((project_storage(root / 'home', project) / 'settings.json').read_text())
             assert settings == {'debug': True, 'approvalMode': 'yolo'}, settings
             assert stat.S_IMODE(log.stat().st_mode) == 0o600
             entries = [json.loads(line) for line in log.read_text().splitlines()]
@@ -121,14 +123,14 @@ def main():
                            for entry in map(json.loads, log.read_text().splitlines())), 'disabled request was logged'
             run(project, 'fourth prompt')
             assert len(log.read_text().splitlines()) == after, 'disabled logging still wrote'
-            assert json.loads((project / '.pmai' / 'settings.json').read_text())['debug'] is False
+            assert json.loads((project_storage(root / 'home', project) / 'settings.json').read_text())['debug'] is False
             assert 'debug = false' in run(other, '/set debug')
-            assert not (other / '.pmai' / 'debug.jsonl').exists()
+            assert not (project_storage(root / 'home', other) / 'debug.jsonl').exists()
             assert 'Usage: /set debug <true|false>' in run(project, '/set debug invalid')
             custom = root / 'debug logs' / 'first.jsonl'
             assert str(custom) in run(project, f'/set debugfile {custom}', '/set debugfile')
             assert not custom.exists(), 'setting the path while off created a log'
-            assert json.loads((project / '.pmai' / 'settings.json').read_text())['debugFile'] == str(custom)
+            assert json.loads((project_storage(root / 'home', project) / 'settings.json').read_text())['debugFile'] == str(custom)
             default_count = len(log.read_text().splitlines())
             run(project, '/set debug true', 'custom prompt')
             assert len(custom.read_text().splitlines()) > 0
@@ -144,13 +146,13 @@ def main():
             relative = project / 'relative logs' / 'relative.jsonl'
             run(project, '/set debugfile relative logs/relative.jsonl', 'relative prompt')
             assert 'relative prompt' in relative.read_text()
-            relative_setting = json.loads((project / '.pmai' / 'settings.json').read_text())['debugFile']
+            relative_setting = json.loads((project_storage(root / 'home', project) / 'settings.json').read_text())['debugFile']
             assert Path(relative_setting).resolve() == relative.resolve(), relative_setting
             output = run(project, f'/set debugfile {root}', '/set debugfile')
             assert 'error:' in output and relative_setting in output, output
             run(project, '/set debugfile default', 'default prompt')
             assert 'default prompt' in log.read_text()
-            assert 'debugFile' not in json.loads((project / '.pmai' / 'settings.json').read_text())
+            assert 'debugFile' not in json.loads((project_storage(root / 'home', project) / 'settings.json').read_text())
             run(project, '/set debug true')
             log.unlink()
             protected = root / 'protected.txt'

@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import uuid
-from smoke import clean_environment, run_repl, read_chat
+from smoke import project_storage, clean_environment, run_repl, read_chat
 
 
 def main():
@@ -39,7 +39,7 @@ def main():
                 commands, cwd=root, env=environment | (env or {}), split=split)
 
         def chat_file(title):
-            return next(path for path in (root / '.pmai/chats').glob('*.json')
+            return next(path for path in (project_storage(root / 'home', root) / 'chats').glob('*.json')
                         if read_chat(path)['title'] == title)
 
         run(['/chat rename durable', '/model -approval worker'],

@@ -174,7 +174,7 @@ public struct MaiStandardToolFactory: ConfiguredToolFactory {
         description:
           "Index documentation and source code in the Files workspace, then retrieve relevant passages "
           + "with vdb for RAG. Works offline with small or large collections. The index persists in "
-          + ".pmai/vdb.json; reindex a folder to refresh changed and deleted files. Source files are never changed.",
+          + "project storage as vdb.json; reindex a folder to refresh changed and deleted files. Source files are never changed.",
         toolNames: [MaiVectorDatabaseTool.name]),
       ToolGroupDefinition(
         id: "run",

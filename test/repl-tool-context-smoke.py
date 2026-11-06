@@ -7,7 +7,7 @@ import tempfile
 import threading
 from http.server import ThreadingHTTPServer
 
-from smoke import JSONProvider, clean_environment, read_chat, run_repl
+from smoke import project_storage, JSONProvider, clean_environment, read_chat, run_repl
 
 
 preparations = []
@@ -90,7 +90,7 @@ def main():
                 assert all('Inspect both files' in json.dumps(request)
                            and 'Keep the existing public API.' in json.dumps(request)
                            for request in (first, second, third))
-                chat = read_chat(next((root / '.pmai/chats').glob('*.json')))
+                chat = read_chat(next((project_storage(root / 'home', root) / 'chats').glob('*.json')))
                 assert 'EXACT TAIL' in json.dumps(chat)
                 assert '[Summary of earlier tool result]' not in json.dumps(chat)
                 print(f'PASS {mode}: exact tool requests and lossless saved history')

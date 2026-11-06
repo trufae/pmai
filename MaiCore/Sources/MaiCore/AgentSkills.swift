@@ -4,8 +4,8 @@ import Foundation
 /// describes it and whose body is the instructions to follow, with any
 /// scripts or reference files beside it. The layout is the one coding agents
 /// share (`<skills dir>/<name>/SKILL.md`), so a skill written for another
-/// tool works here unchanged. pmai reads them from the project's
-/// `.pmai/skills` and from `~/.pmai/skills`.
+/// tool works here unchanged. pmai reads them from `skills` in the project's
+/// local or central storage and from `~/.pmai/skills`.
 public struct AgentSkill: Codable, Equatable, Identifiable, Sendable {
   public static let filename = "SKILL.md"
   /// The placeholder a body may use for whatever the caller passes along.

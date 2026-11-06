@@ -9,7 +9,7 @@ import sys
 import tempfile
 import time
 
-from smoke import clean_environment, expect_pty, read_pty, run_repl
+from smoke import project_storage, clean_environment, expect_pty, read_pty, run_repl
 
 
 def main():
@@ -35,7 +35,7 @@ path.write_text('Edited in editor: ' + path.read_text())
         command = [binary, '--config', str(config), '--home', str(root / 'home'),
                    '--no-markdown', '--no-stream']
         run_repl(command, ['Seed'], cwd=root, env=env)
-        saved = next((root / '.pmai/chats').glob('*.json'))
+        saved = next((project_storage(root / 'home', root) / 'chats').glob('*.json'))
         chat = json.loads(saved.read_text())
         command += ['-r', chat['id']]
 

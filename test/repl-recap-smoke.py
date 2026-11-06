@@ -2,7 +2,7 @@
 """Check recap routing, prompt editing, and unchanged chat state over local HTTP."""
 import fcntl
 import json
-from smoke import expect_pty, JSONProvider
+from smoke import project_storage, expect_pty, JSONProvider
 import os
 from pathlib import Path
 import pty
@@ -182,7 +182,7 @@ def main():
             for agent in saved['agents']:
                 agent['retry'] = {'attempts': 0}
             config.write_text(json.dumps(saved))
-            chat_file = next((root / '.pmai/chats').glob('*.json'))
+            chat_file = next((project_storage(root / 'home', root) / 'chats').glob('*.json'))
             chat = json.loads(chat_file.read_text())
             chat['messages'].insert(1, {
                 'id': 'summary', 'role': 'system', 'content': [{

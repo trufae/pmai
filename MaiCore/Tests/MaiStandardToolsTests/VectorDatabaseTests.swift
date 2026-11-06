@@ -202,11 +202,16 @@ struct VectorDatabaseTests {
   }
 
   @Test(
-    "The shared tool indexes documents and code, refreshes changes and deletions, and preserves sources"
+    "The shared tool indexes documents and code, refreshes changes and deletions, and preserves sources",
+    arguments: [false, true]
   )
-  func indexingLifecycle() async throws {
+  func indexingLifecycle(central: Bool) async throws {
     let directory = try root()
-    defer { try? FileManager.default.removeItem(at: directory) }
+    let home = try root()
+    defer {
+      try? FileManager.default.removeItem(at: directory)
+      try? FileManager.default.removeItem(at: home)
+    }
     let docs = directory.appendingPathComponent("docs")
     try FileManager.default.createDirectory(at: docs, withIntermediateDirectories: true)
     try Data("# Authentication\nUse refreshToken to renew credentials.\n".utf8).write(
@@ -215,10 +220,14 @@ struct VectorDatabaseTests {
       to: directory.appendingPathComponent("Auth.swift"))
     try Data("{\"database\":\"sqlite storage\"}".utf8).write(
       to: docs.appendingPathComponent("config.json"))
-    let tool = MaiVectorDatabaseTool(
-      configuration: MaiFileWorkspaceConfiguration(rootURL: directory))
+    var configuration = MaiFileWorkspaceConfiguration(rootURL: directory)
+    if central { configuration.projectHomeURL = home }
+    let tool = MaiVectorDatabaseTool(configuration: configuration)
     let first = try await call(tool, ["action": .string("index")])
     #expect(!first.isError)
+    if central {
+      #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent(".pmai").path))
+    }
     #expect(first.structuredContent?.objectValue?["indexed"]?.intValue == 3)
     let query = try await call(tool, ["query": .string("refresh token credentials")])
     let results = query.structuredContent?.objectValue?["results"]?.arrayValue ?? []

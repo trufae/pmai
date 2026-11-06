@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 
-from smoke import clean_environment, read_chat, run_repl
+from smoke import project_storage, clean_environment, read_chat, run_repl
 
 
 def main():
@@ -30,7 +30,7 @@ def main():
                    '--no-markdown', '--no-stream']
         for path in (oldest, middle, current):
             run_repl(command, ['Seed'], cwd=path, env=env)
-        saved = next((current / '.pmai/chats').glob('*.json'))
+        saved = next((project_storage(home, current) / 'chats').glob('*.json'))
         template = read_chat(saved)
         saved.unlink()
         fixture = [
@@ -196,9 +196,10 @@ def main():
         target = next(project for project in updated if Path(project['workingDirectory']).resolve() == oldest)
         assert target['name'] == 'Renamed' and target['tint'] == 'mint', target
         reset_projects()
+        oldest_storage = project_storage(home, oldest)
         run(['/project del -1'])
         assert len(json.loads(index_path.read_text())['projects']) == 2
-        assert oldest.is_dir() and (oldest / '.pmai/chats').is_dir()
+        assert oldest.is_dir() and (oldest_storage / 'chats').is_dir()
 
         reset_projects()
         run(['/projects del -2'])
@@ -206,7 +207,7 @@ def main():
         assert middle.is_dir()
 
         run(['/todo add First', '/todo add Second', '/todo add Last', '/todo done -1', '/todo del -2'])
-        assert (current / '.pmai/todo.md').read_text() == '- [ ] First\n- [x] Last\n'
+        assert (project_storage(home, current) / 'todo.md').read_text() == '- [ ] First\n- [x] Last\n'
         print('Negative message, chat, resume, project, and todo indexes: passed')
 
 

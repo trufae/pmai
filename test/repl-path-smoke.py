@@ -14,7 +14,7 @@ import termios
 import threading
 import time
 from http.server import ThreadingHTTPServer
-from smoke import JSONProvider, clean_environment, expect_pty, read_pty, run_repl
+from smoke import project_storage, JSONProvider, clean_environment, expect_pty, read_pty, run_repl
 
 
 answers = queue.Queue()
@@ -81,7 +81,8 @@ def main():
                             'instructions': 'Rules', 'toolGroupNames': ['files', 'pmai'],
                             'retry': {'attempts': 0}, 'autocompact': {'tokens': 0}}],
                 'memory': {'enabled': False}, 'use': {'plan': False, 'agentsmd': 'off'},
-                'approvals': {'mode': 'yolo'}, 'ui': {'tools': 0}}))
+                # Permission handshakes need fresh prompts, not transcript redraws.
+                'approvals': {'mode': 'yolo'}, 'ui': {'mode': 'classic', 'tools': 0}}))
             original_config = config.read_text()
             command = [binary, '--config', str(config), '--home', str(base / 'home'),
                        '--no-stream', '--no-markdown']
@@ -199,7 +200,7 @@ def main():
             config.write_text(original_config)
             enqueue(call('files_read', path='private/secret.txt'))
             output = run_repl(command, ['/chat rename File audit', 'Read a normal file', '/chat files'], cwd=root, env=env)
-            chats = [json.loads(p.read_text()) for p in (root / '.pmai/chats').glob('*.json')]
+            chats = [json.loads(p.read_text()) for p in (project_storage(base / 'home', root) / 'chats').glob('*.json')]
             audit = next(chat for chat in chats if chat['title'] == 'File audit')
             assert list(map(canonical, audit['accessedFiles'])) == [canonical(root / 'private/secret.txt')], audit
             assert canonical(root / 'private/secret.txt') in canonical(output), output
@@ -298,7 +299,7 @@ def main():
 
                 # s at a path prompt approves future asks without saving yolo.
                 saved_config = config.read_bytes()
-                settings = root / '.pmai/settings.json'
+                settings = project_storage(base / 'home', root) / 'settings.json'
                 saved_settings = settings.read_bytes()
                 enqueue(call('files_read', path='private/secret.txt'), 'SESSION PATH YOLO')
                 send('Read private')

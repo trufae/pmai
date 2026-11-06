@@ -563,7 +563,7 @@ extension MaiCLI {
       /set effort [LEVEL] [TEXT]   Show or set reasoning effort and optional guidance
       /set tool.approval MODE [session]  yolo, ask (default), or smart; saved for this project unless session is given
       /set debug <true|false>       Log model calls, tool activity, and run events for this project
-      /set debugfile <PATH|default> Save debug logs at PATH; default uses .pmai/debug.jsonl
+      /set debugfile <PATH|default> Save debug logs at PATH; default uses debug.jsonl in project storage
       /set tool.                   List the tool calling settings
       /set tool.calling MODE       off disables calls; automatic/native or text/XML/JSON enables them
       /set tool.systemone BOOL     Route tools via the System One /model -tool provider (default false)
@@ -621,7 +621,7 @@ extension MaiCLI {
       /set use.plan BOOL           Ask an agent that can start children to open a request of
                                    several steps with a numbered plan before delegating (on/off)
 
-    tool.approval, debug, and debugfile are saved in the opened project's .pmai/settings.json.
+    tool.approval, debug, and debugfile are saved as settings.json in the opened project's storage.
     /set tool.approval yolo session and s at approval prompts enable yolo for tools
     and path asks until exit; nothing is saved. Explicit path denials still apply.
     At approval prompts, a saves yolo for tools and path asks in the current project.
@@ -741,7 +741,7 @@ extension MaiCLI {
 
     Select by list number, name, path, or ID prefix; quote names and paths with spaces.
     Negative list numbers count from the end: -1 selects the last project, -2 the one before it.
-    Disk shows space used by each project's .pmai directory (or fallback storage), like du -hs.
+    Disk shows space used by each project's local or central storage, like du -hs.
     A dash means the storage is missing or could not be fully read.
     Opening a new directory registers it in ~/.pmai/projects.json. /remote serve
     shares this same index by default, and Refresh in PocketMai picks up changes.
@@ -758,9 +758,12 @@ extension MaiCLI {
       /project del INDEX|PATH|NAME  Drop another project from the list; its files stay
 
     Negative list numbers count from the end: -1 selects the last project.
-    Chats live in .pmai/chats inside the project directory; the list of
-    projects lives in ~/.pmai/projects.json (or under $PMAI_HOME). /cd changes
-    where tools run, not which project the chats belong to.
+    An existing .pmai directory keeps the project's chats, settings, memory,
+    todo and skills locally. Otherwise they live in ~/.pmai/projects/<ID>/;
+    opening a project never creates a local .pmai. --home or PMAI_HOME relocates
+    central storage and the projects.json index. Create .pmai before first use
+    to opt into local storage, which remains subject to git clean -xdf.
+    /cd changes where tools run, not which project the chats belong to.
     """
 
   static let mcpCommandHelp: String = """
@@ -834,7 +837,7 @@ extension MaiCLI {
     """
 
   static let memoryHelp: String = """
-    Durable notes about you, kept per project in .pmai/memory.md and added to
+    Durable notes about you, kept in the project storage as memory.md and added to
     the system prompt of this chat — never of the subagents it starts.
 
       /memory                    Show the notes and how they are configured
@@ -856,7 +859,7 @@ extension MaiCLI {
 
   static let vdbHelp: String = """
     Index local documentation and source code for retrieval. The index is kept
-    in the Files workspace at .pmai/vdb.json and survives restarts.
+    as vdb.json in the Files workspace project storage and survives restarts.
 
       /vdb index [PATH]       Index a file/folder (default: workspace); refresh changes
       /vdb query TEXT         Retrieve passages with source paths and line ranges
@@ -869,7 +872,7 @@ extension MaiCLI {
     """
 
   static let todoHelp: String = """
-    The project's todo list, kept in .pmai/todo.md as a Markdown task list the
+    The project's todo list is stored as todo.md, a Markdown task list the
     agent plans with and ticks off through the todo_list, todo_add, and
     todo_done tools. It survives across chats, and editing the file by hand
     is fine: every command and tool call reads it afresh.
@@ -891,7 +894,7 @@ extension MaiCLI {
     Skills are folders holding a SKILL.md whose front matter gives a name and
     a description and whose body is the instructions to follow: the layout
     other coding agents use, so their skills work here unchanged. pmai reads
-    the project's .pmai/skills and ~/.pmai/skills (or $PMAI_HOME/skills); a
+    the skills folder in project storage and ~/.pmai/skills (or $PMAI_HOME/skills); a
     project skill shadows a home one of the same name. Each skill is also a
     skills_NAME tool the model may call to get the instructions, once it is
     enabled for the agent.
@@ -1087,7 +1090,7 @@ extension MaiCLI {
         --provider ID       override the selected provider
         -r, --resume [CHAT] reopen CHAT (list index, ID, or title), or the latest chat,
                             with its saved settings and the agents its runs started
-        --state DIR         keep this project's chats in DIR, not ./.pmai/chats (or PMAI_STATE)
+        --state DIR         override this project's chat storage directory (or PMAI_STATE)
         --stdin             attach standard input as a text file (git diff | pmai --stdin "review it")
         --system TEXT       override agent instructions
         -U, --update        check for updates and install the latest release
@@ -1120,8 +1123,10 @@ extension MaiCLI {
 
       Persistent REPL state:
         Chats belong to the project rooted at the current directory and are
-        kept one file per chat in ./.pmai/chats; ~/.pmai/projects.json lists
-        every project and ~/.pmai/history.json holds the input history.
+        kept under ~/.pmai/projects/<ID>/chats unless a local .pmai directory
+        already exists. ~/.pmai/projects.json lists every project and
+        ~/.pmai/history.json holds input history. --home or PMAI_HOME relocates
+        the central store. Existing local .pmai directories remain in use.
 
       Without a config file, the offline hello and OpenAI-compatible providers
       are registered as before.

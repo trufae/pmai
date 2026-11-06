@@ -214,7 +214,7 @@ func homeSkillPaths() throws {
   #expect(home.skillsDirectoryURL.path == home.rootURL.appendingPathComponent("skills").path)
   #expect(
     home.skillsURL(for: project).path
-      == AgentProject.standardizedPath(work.path) + "/.pmai/skills")
+      == home.projectsDirectoryURL.appendingPathComponent(project.id.uuidString + "/skills").path)
 }
 
 private func writeSkill(in root: URL, folder: String, text: String) throws {

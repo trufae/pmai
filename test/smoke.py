@@ -9,6 +9,17 @@ import uuid
 from http.server import BaseHTTPRequestHandler
 
 
+def project_storage(home, directory):
+    """Locate saved project fixtures without assuming local storage."""
+    local = directory / '.pmai'
+    if local.is_dir():
+        return local
+    index = json.loads((home / 'projects.json').read_text())
+    project = next(p for p in index['projects']
+                   if os.path.realpath(p['workingDirectory']) == str(directory.resolve()))
+    return home / 'projects' / project['id']
+
+
 def read_chat(path):
     """Read saved fixtures in legacy JSON or version 1 chunked storage."""
     saved = json.loads(path.read_text())

@@ -2,7 +2,7 @@
 """Exercise compaction decisions and slash commands through an offline REPL PTY."""
 import fcntl
 import json
-from smoke import expect_pty
+from smoke import project_storage, expect_pty
 import os
 from pathlib import Path
 import pty
@@ -87,7 +87,7 @@ def main(clear_action):
                     except OSError:
                         break
             assert process.wait(timeout=5) == 0
-            chats = list((root / '.pmai/chats').glob('*.json'))
+            chats = list((project_storage(root / 'home', root) / 'chats').glob('*.json'))
             assert chats
             for file in chats:
                 messages = json.loads(file.read_text())['messages']

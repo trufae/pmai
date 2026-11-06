@@ -21,7 +21,7 @@ import time
 import uuid
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from smoke import clean_environment, expect_pty, read_pty
+from smoke import project_storage, clean_environment, expect_pty, read_pty
 
 PMAI = str(Path(sys.argv[1]).resolve())
 spec = importlib.util.spec_from_file_location("gateway_smoke", Path(__file__).with_name("acp-gateway-smoke.py"))
@@ -75,14 +75,14 @@ class REPL:
         self.log.close()
 
 
-def chats(directory):
+def chats(directory, home):
     return {file.stem.lower(): json.loads(file.read_text())
-            for file in (directory / ".pmai/chats").glob("*.json")}
+            for file in (project_storage(home, directory) / "chats").glob("*.json")}
 
 
 def live_shells(root, home, config, host_root):
     """Stateful shells, host interrupts, resize, and returning ownership to the REPL."""
-    before = set(chats(root))
+    before = set(chats(root, home))
     master, slave = pty.openpty()
     original = termios.tcgetattr(slave)
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 100, 0, 0))
@@ -118,7 +118,7 @@ def live_shells(root, home, config, host_root):
         send('exit\r')
         wait('Left local shell.')
         repl('local')
-        assert set(chats(root)) == before, 'local shell created a chat'
+        assert set(chats(root, home)) == before, 'local shell created a chat'
 
         send('/shell live\r')
         wait('Live shell server.')
@@ -173,7 +173,7 @@ def live_shells(root, home, config, host_root):
         send('exit\r')
         wait('Left remote shell server.')
         repl('cmd')
-        assert set(chats(root)) == before, 'shell access created a chat'
+        assert set(chats(root, home)) == before, 'shell access created a chat'
         send('/quit\r')
         deadline = time.monotonic() + 30
         while process.poll() is None:
@@ -341,7 +341,7 @@ def run():
             connection.rpc("session/load", {"sessionId": conversation["sessionId"], "cwd": str(projects[1])})
             connection.rpc("session/prompt", {"sessionId": conversation["sessionId"],
                 "prompt": [{"type": "text", "text": "continue existing chat"}]})
-            assert any("continue existing chat" in json.dumps(m) for m in chats(projects[1])[conversation["sessionId"]]["messages"])
+            assert any("continue existing chat" in json.dumps(m) for m in chats(projects[1], home)[conversation["sessionId"]]["messages"])
             connection.close()
             print("Automatic LAN address, all indexed projects, and existing chat recovery: passed", flush=True)
             remote_terminal_sessions(server, port, approved_token, projects[0])
@@ -351,7 +351,7 @@ def run():
             client_home = root / "client-home"
             client = REPL(client_dir, client_home, client_config, root / "client.log")
             client.send("/chat rename local")
-            wait_for(lambda: any(c["title"] == "local" for c in chats(client_dir).values()), "local chat")
+            wait_for(lambda: any(c["title"] == "local" for c in chats(client_dir, client_home).values()), "local chat")
             client.send("/set airplane on")
             client.wait("airplane = on")
             client.send(f'/remote pair "{home / "remote-server/connection.txt"}"')
@@ -366,7 +366,7 @@ def run():
             client.wait("Paired server.")
             payload = bytes([0, 255, 128, 10]) * 150_000
             (client_dir / "local input.bin").write_bytes(payload)
-            before = set(chats(projects[0]))
+            before = set(chats(projects[0], home))
             client.send('/remote put server "local input.bin" "remote upload.bin"')
             client.wait(f"Uploaded {len(payload)} bytes")
             assert (projects[0] / "remote upload.bin").read_bytes() == payload
@@ -388,7 +388,7 @@ def run():
             assert not (client_dir / "shell.txt").exists(), "shell-mode redirect ran locally"
             client.send('exit')
             client.wait("Left remote shell server.")
-            assert set(chats(projects[0])) == before, "workspace commands created a chat"
+            assert set(chats(projects[0], home)) == before, "workspace commands created a chat"
             errors = client.path.read_text().count("error:")
             client.send('/remote get server missing.bin "downloaded file.bin"')
             wait_for(lambda: client.path.read_text().count("error:") > errors, "failed remote download")
@@ -399,9 +399,9 @@ def run():
             client.wait("Connected to server.")
             client.send("remote hello")
             client.wait("took ")
-            remote = wait_for(lambda: next((c for c in chats(client_dir).values() if c["title"] == "remote hello"), None), "remote chat saved")
-            source_ids = set(chats(projects[0]))
-            assert len(source_ids) == 2, chats(projects[0])
+            remote = wait_for(lambda: next((c for c in chats(client_dir, client_home).values() if c["title"] == "remote hello"), None), "remote chat saved")
+            source_ids = set(chats(projects[0], home))
+            assert len(source_ids) == 2, chats(projects[0], home)
             assert token not in client_config.read_text()
             assert token not in (client_home / "remotes/hosts.json").read_text()
             client.send("/remote disconnect")
@@ -410,8 +410,8 @@ def run():
             client = REPL(client_dir, client_home, client_config, root / "resume.log", ["--resume", remote["id"]])
             client.send("resume remote")
             client.wait("took ")
-            assert set(chats(projects[0])) == source_ids, "restart created another remote conversation"
-            assert any("resume remote" in json.dumps(m) for c in chats(projects[0]).values() for m in c["messages"])
+            assert set(chats(projects[0], home)) == source_ids, "restart created another remote conversation"
+            assert any("resume remote" in json.dumps(m) for c in chats(projects[0], home).values() for m in c["messages"])
             client.close()
             client = None
             print("Server approval/rejection, CLI pairing, local chat preservation, and remote session recovery across restart: passed", flush=True)
@@ -748,14 +748,14 @@ def run_opencode():
                     assert not (root / "paths.txt").exists(), "OpenCode redirect ran locally"
                     client.send('exit')
                     client.wait("Left remote shell dev host.")
-                    assert not chats(root), "OpenCode workspace commands created a chat"
+                    assert not chats(root, root / "home"), "OpenCode workspace commands created a chat"
                     client.send("local-after-shell")
                     client.wait("took ")
                     client.send('/remote connect "dev host"')
                     client.wait('Connected to dev host.')
                     client.send('first native OpenCode prompt')
                     client.wait('remote-reply-1')
-                    saved = wait_for(lambda: next((c for c in chats(root).values()
+                    saved = wait_for(lambda: next((c for c in chats(root, root / "home").values()
                         if 'remote-reply-1' in json.dumps(c)), None), 'OpenCode chat saved')
                     assert 'host-tool-output-1' in client.path.read_text(), 'remote tool output was lost'
                     client.send('/shell')
@@ -775,7 +775,7 @@ def run_opencode():
                     client = REPL(root, root / 'home', config, root / 'resume.log', ['--resume', saved['id']])
                     client.send('second native OpenCode prompt')
                     client.wait('remote-reply-2')
-                    wait_for(lambda: 'remote-reply-2' in json.dumps(chats(root)), 'resumed OpenCode response saved')
+                    wait_for(lambda: 'remote-reply-2' in json.dumps(chats(root, root / "home")), 'resumed OpenCode response saved')
                     assert prompts == [('ses_1', 'first native OpenCode prompt'),
                                        ('ses_1', 'second native OpenCode prompt')], prompts
                     assert len(sessions) == 1, 'restart created another OpenCode conversation'

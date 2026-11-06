@@ -19,6 +19,9 @@ public struct MaiFileWorkspaceConfiguration: Equatable, Sendable {
   public var additionalAllowedURLs: [URL]
   /// Optional live, host-owned policy shared by all Files tools and child agents.
   public var pathAccessPolicy: MaiFileAccessPolicy?
+  /// Host-owned project storage for generated indexes. This does not grant
+  /// the Files tools access to other projects or the user's home.
+  public var projectHomeURL: URL?
   var confirmedPathURLs: [URL] = []
   struct FollowedSymlink: Equatable, Sendable {
     var source: URL
@@ -1819,6 +1822,20 @@ struct MaiFileWorkspace: Sendable {
   func vectorSource(_ url: URL) -> String { relativePath(url) }
 
   func vectorIndexURL() throws -> URL {
+    if let homeURL = configuration.projectHomeURL,
+      !FileManager.default.fileExists(atPath: rootURL.appendingPathComponent(".pmai").path) {
+      let home = AgentHome(rootURL: homeURL)
+      let project = try home.loadProject(atWorkingDirectory: rootURL)
+        ?? home.openProject(atWorkingDirectory: rootURL)
+      let directory = home.storageDirectory(for: project)
+      let snapshot = directory.appendingPathComponent("vdb.json")
+      for item in [directory, snapshot, snapshot.appendingPathExtension("lock")] {
+        guard (try? FileManager.default.destinationOfSymbolicLink(atPath: item.path)) == nil else {
+          throw MaiVectorDatabaseError.invalidIndex("the index storage cannot be a symbolic link")
+        }
+      }
+      return snapshot
+    }
     let directory = rootURL.appendingPathComponent(".pmai")
     let snapshot = rootURL.appendingPathComponent(MaiVectorDatabaseStore.relativePath)
     for item in [directory, snapshot] {

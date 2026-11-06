@@ -9,7 +9,7 @@ import tempfile
 import threading
 from http.server import ThreadingHTTPServer
 
-from smoke import clean_environment, JSONProvider, read_chat
+from smoke import project_storage, clean_environment, JSONProvider, read_chat
 
 
 requests = []
@@ -74,7 +74,7 @@ def main():
                 return output
 
             run(['seed'], resume=False)
-            chat_file = next((root / '.pmai/chats').glob('*.json'))
+            chat_file = next((project_storage(root / 'home', root) / 'chats').glob('*.json'))
             chat = read_chat(chat_file)
             source = '\n'.join(f'KEEP-{index} ' + 'evidence ' * 6000 for index in range(12))
             chat['messages'].extend([

@@ -353,12 +353,13 @@ func projectIndexOrdering() throws {
   #expect(index.projects.isEmpty)
 }
 
-@Test("Homes open projects in place and keep the index outside them")
+@Test("Homes preserve existing local project storage and keep the index outside it")
 func homeOpensProjects() throws {
   let root = scratchDirectory("home")
   let home = AgentHome(rootURL: root.appendingPathComponent(".pmai", isDirectory: true))
   let workdir = root.appendingPathComponent("work/repo", isDirectory: true)
-  try FileManager.default.createDirectory(at: workdir, withIntermediateDirectories: true)
+  try FileManager.default.createDirectory(
+    at: workdir.appendingPathComponent(".pmai"), withIntermediateDirectories: true)
 
   let opened = try home.openProject(atWorkingDirectory: workdir, at: Date(timeIntervalSince1970: 5))
   #expect(opened.displayName == "repo")
@@ -393,17 +394,13 @@ func homeOpensProjects() throws {
   #expect(try home.forgetProject(id: UUID()) == nil)
 }
 
-@Test("Homes fall back to their own directory for read-only working directories")
+@Test("New projects use central storage even when their working directories are writable")
 func homeFallbackStorage() throws {
-  let root = scratchDirectory("home-ro")
+  let root = scratchDirectory("home-central")
+  defer { try? FileManager.default.removeItem(at: root) }
   let home = AgentHome(rootURL: root.appendingPathComponent(".pmai", isDirectory: true))
-  let workdir = root.appendingPathComponent("readonly", isDirectory: true)
+  let workdir = root.appendingPathComponent("repo", isDirectory: true)
   try FileManager.default.createDirectory(at: workdir, withIntermediateDirectories: true)
-  try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: workdir.path)
-  defer {
-    try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: workdir.path)
-  }
-  guard !FileManager.default.isWritableFile(atPath: workdir.path) else { return }
 
   let opened = try home.openProject(atWorkingDirectory: workdir)
   let expected = home.projectsDirectoryURL.appendingPathComponent(opened.id.uuidString)
@@ -411,6 +408,15 @@ func homeFallbackStorage() throws {
   #expect(FileManager.default.fileExists(atPath: home.projectFileURL(for: opened).path))
   #expect(try home.loadProject(atWorkingDirectory: workdir)?.id == opened.id)
   #expect(try home.openProject(atWorkingDirectory: workdir).id == opened.id)
+  #expect(!FileManager.default.fileExists(atPath: workdir.appendingPathComponent(".pmai").path))
+  var workspace = try home.chatStore(for: opened).loadWorkspace()
+  var chat = workspace.startNewChat(primaryAgent: storeAgent)
+  chat.messages.append(.user("Keep this conversation outside the checkout"))
+  workspace.upsert(chat)
+  try home.chatStore(for: opened).commit(&workspace)
+  let reopened = try home.openProject(atWorkingDirectory: workdir)
+  #expect(try home.chatStore(for: reopened).loadChat(id: chat.id)?.conversationMessages.map(\.text)
+    == ["Keep this conversation outside the checkout"])
 }
 
 @Test("Home resolution honors PMAI_HOME")

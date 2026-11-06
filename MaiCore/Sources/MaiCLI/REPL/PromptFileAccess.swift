@@ -5,11 +5,13 @@ import MaiStandardTools
 actor PromptFileAccess {
   private var approvedURLs: [URL] = []
   nonisolated let policy: MaiFileAccessPolicy
+  nonisolated let home: AgentHome
 
   init(
     approvalHandler: TerminalApprovalHandler, settings: ConfiguredFileAccess,
-    environment: [String: String]
+    environment: [String: String], home: AgentHome
   ) {
+    self.home = home
     policy = MaiFileAccessPolicy(
       hidden: settings.hidden, sensitive: settings.sensitive, symlinks: settings.symlinks,
       defaultAllowedURLs: ConfiguredFileAccess.defaultAllowedPaths.map { URL(fileURLWithPath: $0) }

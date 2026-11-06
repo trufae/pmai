@@ -197,6 +197,14 @@ In Vim, select lines and press `m` to choose a prompt, review the reply, and app
 it. Use `pmai --vim update` to refresh the integration or `pmai --vim uninstall`
 to remove it. In the REPL, try `/projects` and `/help`.
 
+Project data uses an existing `.pmai` directory when present. Otherwise chats,
+settings, memory, todos, skills, and the vector index live under
+`~/.pmai/projects/<project-id>/`, outside the checkout so `git clean -xdf` cannot
+remove them. `--home DIR` or `PMAI_HOME` relocates the central store; for example,
+`PMAI_HOME=~/.config/pmai` uses `~/.config/pmai/projects/`. Create `.pmai` before
+first opening a project to choose local storage. Existing local data stays in
+place and is still vulnerable to repository cleanup; it is not migrated automatically.
+
 Consecutive tool calls in iOS start collapsed into one tappable row with the call
 count and elapsed wall time. Expand the row to access the usual individual calls.
 Old chats without recorded timings show “time unavailable”.

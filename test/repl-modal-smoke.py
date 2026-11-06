@@ -17,7 +17,7 @@ import threading
 import time
 from http.server import ThreadingHTTPServer
 
-from smoke import JSONProvider, clean_environment, expect_pty, read_pty
+from smoke import project_storage, JSONProvider, clean_environment, expect_pty, read_pty
 
 
 requests = queue.Queue()
@@ -233,7 +233,7 @@ def main():
                         followup = next_request()
                         assert 'tool call denied' in json.dumps(followup), followup
                         wait('MODAL DONE')
-                        settings = json.loads((root / '.pmai/settings.json').read_text())
+                        settings = json.loads((project_storage(root / 'home', root) / 'settings.json').read_text())
                         assert settings['toolYolo'] == ['files_write'], settings
                     line('/exit')
                     deadline = time.monotonic() + 10

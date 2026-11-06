@@ -38,7 +38,8 @@ extension MaiCLI {
     configuration: MaiConfiguration?,
     environment: [String: String],
     approvedURLs: [URL],
-    policy: MaiFileAccessPolicy
+    policy: MaiFileAccessPolicy,
+    home: AgentHome
   ) async throws {
     let source = configuration?.toolSources.first {
       $0.enabled && $0.kind == MaiStandardToolsPlugin.factoryKind
@@ -49,6 +50,7 @@ extension MaiCLI {
     var fileConfiguration = MaiStandardToolFactory.fileWorkspaceConfiguration(
       context: context, additionalAllowedURLs: approvedURLs)
     fileConfiguration.pathAccessPolicy = policy
+    fileConfiguration.projectHomeURL = home.rootURL
     for tool in MaiFileWorkspaceTool.makeTools(configuration: fileConfiguration) {
       try await runtime.register(tool: tool, replacingExisting: true)
     }
@@ -197,7 +199,7 @@ extension MaiCLI {
       do {
         try await refreshFileTools(
           runtime: runtime, configuration: configuration, environment: environment,
-          approvedURLs: await access.all(), policy: access.policy)
+          approvedURLs: await access.all(), policy: access.policy, home: access.home)
       } catch {
         await terminal.note(
           "Could not refresh Files tools: \(error.localizedDescription)", tone: .warning)
@@ -298,7 +300,7 @@ extension MaiCLI {
       let approved = await promptFileAccess.all()
       try await refreshFileTools(
         runtime: runtime, configuration: configuration, environment: environment,
-        approvedURLs: approved, policy: promptFileAccess.policy)
+        approvedURLs: approved, policy: promptFileAccess.policy, home: promptFileAccess.home)
       await terminal.note(
         "Files may access: \(approved.map(\.path).joined(separator: ", ")). Use /path to review, deny, or require prompts for these paths."
       )

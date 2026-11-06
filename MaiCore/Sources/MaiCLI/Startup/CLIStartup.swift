@@ -142,7 +142,7 @@ extension MaiCLI {
         pausesOnToolLimit: options.initialPrompt == nil && options.serve == nil)
       let promptFileAccess = PromptFileAccess(
         approvalHandler: approvalHandler, settings: configuration?.fileAccess ?? .init(),
-        environment: environment)
+        environment: environment, home: home)
       if await approvalHandler.isDebugEnabled() {
         do {
           await runtime.configureDebugLog(
@@ -175,6 +175,7 @@ extension MaiCLI {
       }
       try await plugins.install(MaiStandardToolsPlugin(configureFiles: { files in
         var files = files
+        files.projectHomeURL = home.rootURL
         files.pathAccessPolicy = promptFileAccess.policy
         files.additionalAllowedURLs = await promptFileAccess.all()
         return files

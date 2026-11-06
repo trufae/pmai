@@ -11,7 +11,7 @@ import sys
 import tempfile
 import threading
 
-from smoke import JSONProvider, clean_environment
+from smoke import project_storage, JSONProvider, clean_environment
 
 
 requests = []
@@ -235,7 +235,7 @@ def main():
                     assert diagnostic in results[0] and '[exit code 1]' in results[0], results
                     assert diagnostic in output and '[exit code 1]' in output, output
                     assert 'CHECK-COMPLETE' in output, output
-                    chat_path = next((root / '.pmai/chats').glob('*.json'))
+                    chat_path = next((project_storage(root / 'home', root) / 'chats').glob('*.json'))
                     saved = json.loads(chat_path.read_text())
                     commands = saved['commands']
                     assert len(commands) == 1, commands

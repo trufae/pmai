@@ -18,7 +18,7 @@ public struct AgentTodoItem: Identifiable, Codable, Equatable, Sendable {
 /// The tasks an agent and the person it works with are tracking: what is
 /// still to do and what is already done, in the order it was planned.
 ///
-/// pmai keeps one per project in `.pmai/todo.md` and PocketMai keeps one in
+/// pmai keeps `todo.md` in each project's storage and PocketMai keeps one in
 /// its settings, but the list, the Markdown it is stored as, and the tools
 /// that drive it are all here, so both hosts behave the same.
 public struct AgentTodoList: Codable, Equatable, Sendable {

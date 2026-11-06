@@ -96,6 +96,7 @@ extension MaiCLI {
       }
       files.pathAccessPolicy = policy
       let home = resolvedHome(options: options, environment: environment)
+      files.projectHomeURL = home.rootURL
       let server = ACPServer(runtime: runtime, agent: agent, bridge: bridge,
         sessionDirectory: directory, workspaceRoot: root,
         workspaceRoots: options.tailcatGateway == nil && !options.acpPaths.isEmpty
@@ -103,8 +104,11 @@ extension MaiCLI {
         workspace: AgentHomeACPWorkspace(home: resolvedHome(options: options, environment: environment)),
         fileConfiguration: files,
         promptCatalog: { cwd in
+          let project = try? home.loadProject(atWorkingDirectory: cwd)
           let skills = AgentSkillCatalog.load(directories: [
-            cwd.appendingPathComponent(".pmai/skills", isDirectory: true), home.skillsDirectoryURL,
+            project.map { home.skillsURL(for: $0) }
+              ?? cwd.appendingPathComponent(".pmai/skills", isDirectory: true),
+            home.skillsDirectoryURL,
           ]).skills
           return configuration?.promptCatalog(skills: skills) ?? PromptCatalog(skills: skills)
         },

@@ -17,7 +17,7 @@ import termios
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from smoke import clean_environment, read_chat, run_repl
+from smoke import project_storage, clean_environment, read_chat, run_repl
 
 
 def main():
@@ -46,7 +46,7 @@ def main():
         command = [str(binary), '--config', str(config), '--home', str(root / 'home'),
                    '--no-stream', '--no-markdown']
         run_repl(command, ['Seed'], cwd=root, env=env)
-        saved = next((root / '.pmai/chats').glob('*.json'))
+        saved = next((project_storage(root / 'home', root) / 'chats').glob('*.json'))
         chat = read_chat(saved)
         text = '\n'.join(f'ROW_{i:06d} ' + 'abcdefghij ' * 8 for i in range(args.lines))
         chat['messages'] = [{'id': 'scroll-fixture', 'role': 'assistant',

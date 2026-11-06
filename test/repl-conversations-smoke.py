@@ -15,7 +15,7 @@ import threading
 import time
 from http.server import ThreadingHTTPServer
 
-from smoke import clean_environment, JSONProvider, read_pty
+from smoke import project_storage, clean_environment, JSONProvider, read_pty
 
 CSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
 MOVE = re.compile(r'\x1b\[(\d+);(\d+)H')
@@ -205,7 +205,7 @@ def main(binary):
                     assert time.monotonic() < deadline, captured.decode(errors='replace')
                     read_for(.05)
                 assert process.returncode == 0
-                saved = next((root / '.pmai/chats').glob('*.json'))
+                saved = next((project_storage(root / 'home', root) / 'chats').glob('*.json'))
                 chat = json.loads(saved.read_text())
                 assert len(chat['subagents']) == 3, chat
                 assert all(r['conversationRequest']['messages'] == [] for r in chat['subagents'])

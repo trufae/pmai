@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
-from smoke import clean_environment, run_repl
+from smoke import project_storage, clean_environment, run_repl
 
 
 def main():
@@ -29,7 +29,7 @@ def main():
                 cwd=root, env=environment, split=split)
 
         def chat_file(title):
-            return next(path for path in (root / '.pmai/chats').glob('*.json')
+            return next(path for path in (project_storage(root / 'home', root) / 'chats').glob('*.json')
                         if json.loads(path.read_text())['title'] == title)
 
         def chat(title):

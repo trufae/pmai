@@ -7,6 +7,8 @@ import re
 import subprocess
 import sys
 import tempfile
+
+from smoke import project_storage
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -91,8 +93,8 @@ def main():
             original = config.read_bytes()
             output = run(first, ['/set tool.approval yolo', '/project name Renamed', '/set tool.approval'])
             assert states(output) == ['yolo', 'yolo'], output
-            settings = first / '.pmai' / 'settings.json'
-            assert settings.is_file(), 'Approval mode was not saved inside the project .pmai'
+            settings = project_storage(root / 'home', first) / 'settings.json'
+            assert settings.is_file(), 'Approval mode was not saved in project storage'
             assert json.loads(settings.read_text())['approvalMode'] == 'yolo'
             assert config.read_bytes() == original, 'Project choice changed shared configuration'
             assert states(run(first, ['/set tool.approval'])) == ['yolo']
@@ -115,11 +117,11 @@ def main():
 
             assert states(run(second, ['/set tool.approval'], args=['--tool-approval', 'yolo'])) == ['yolo']
             assert states(run(second, ['/set tool.approval'])) == ['ask']
-            assert not (second / '.pmai' / 'settings.json').exists(), '--tool-approval became persistent'
+            assert not (project_storage(root / 'home', second) / 'settings.json').exists(), '--tool-approval became persistent'
             output = run(second, ['/set tool.approval yolo session', '/set tool.approval'])
             assert states(output) == ['yolo', 'yolo'] and 'not saved' in output, output
             assert states(run(second, ['/set tool.approval'])) == ['ask']
-            assert not (second / '.pmai' / 'settings.json').exists(), 'Session mode became persistent'
+            assert not (project_storage(root / 'home', second) / 'settings.json').exists(), 'Session mode became persistent'
             output = run(first, ['/set tool.approval invalid', '/set tool.approval'])
             assert 'Usage: /set tool.approval <yolo|ask|smart>' in output and states(output) == ['ask'], output
 

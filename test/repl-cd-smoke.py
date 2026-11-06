@@ -7,7 +7,7 @@ import sys
 import tempfile
 import threading
 
-from smoke import JSONProvider, clean_environment, read_chat, run_repl
+from smoke import project_storage, JSONProvider, clean_environment, read_chat, run_repl
 
 
 requests = []
@@ -92,7 +92,7 @@ def main():
                 # Earlier results remain in history, but runtime context is refreshed
                 # outside the stored transcript, so resume/compaction cannot freeze it.
                 assert canonical(first) in canonical(json.dumps(requests[2]['messages'])), requests[2]
-                for chat_path in (first / '.pmai/chats').glob('*.json'):
+                for chat_path in (project_storage(base / 'home', first) / 'chats').glob('*.json'):
                     assert '<execution_context>' not in json.dumps(read_chat(chat_path)['messages']), chat_path
                 print(f'PASS {mode}: model context, shell cwd, project rules, and failed /cd')
     finally:

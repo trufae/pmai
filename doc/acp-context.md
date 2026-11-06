@@ -168,7 +168,7 @@ with the intended setup.
 /skills prompt NAME task arguments
 ```
 
-pmai reads `.pmai/skills` in the project and `~/.pmai/skills` (or
+pmai reads `skills` in the project's local or central storage and `~/.pmai/skills` (or
 `$PMAI_HOME/skills`). A project skill shadows a home skill with the same name.
 Each folder contains `SKILL.md` and optional supporting files. Imports enable
 the skill for the current agent; `/skills enable` also enables an existing
