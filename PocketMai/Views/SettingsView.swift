@@ -7,12 +7,6 @@ import UIKit
 import UniformTypeIdentifiers
 import UserNotifications
 
-enum DefaultProviderSelection: Hashable {
-  case apple
-  case mlx
-  case endpoint(UUID)
-}
-
 struct EndpointProviderPreset {
   let name: String
   let url: String

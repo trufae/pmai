@@ -6,6 +6,75 @@ import XCTest
 
 @MainActor
 final class ModelBrowserTests: XCTestCase {
+  func testProviderSwitchClearsThePreviousProvidersModel() throws {
+    let first = OpenAIEndpoint(name: "First", defaultModel: "first-default")
+    let second = OpenAIEndpoint(name: "Second", defaultModel: "")
+    let catalog = selectionCatalog(endpoints: [first, second])
+    let original = ProviderModelSelection(
+      provider: .openAICompatible, endpointID: first.id, modelID: "custom-first-model")
+    XCTAssertEqual(catalog.selecting(.openAICompatible, endpointID: first.id, from: original), original)
+    let switched = try XCTUnwrap(catalog.selecting(.openAICompatible, endpointID: second.id, from: original))
+    XCTAssertEqual(switched.endpointID, second.id)
+    XCTAssertEqual(switched.modelID, "", "A model from a different provider must not carry over")
+    let restored = try XCTUnwrap(catalog.selecting(.openAICompatible, endpointID: first.id, from: switched))
+    XCTAssertEqual(restored.modelID, first.defaultModel)
+    XCTAssertEqual(catalog.selecting(nil, from: original), ProviderModelSelection(provider: nil))
+  }
+
+  func testUnavailableProvidersCannotBeSelected() {
+    let enabled = OpenAIEndpoint(name: "Enabled")
+    let disabled = OpenAIEndpoint(name: "Disabled", isEnabled: false)
+    let current = ProviderModelSelection(provider: .mlx, modelID: "downloaded")
+    let catalog = selectionCatalog(endpoints: [enabled, disabled])
+    XCTAssertNil(catalog.selecting(.openAICompatible, endpointID: disabled.id, from: current))
+    XCTAssertNil(catalog.selecting(.openAICompatible, endpointID: UUID(), from: current))
+    let offline = selectionCatalog(endpoints: [enabled], offline: true)
+    XCTAssertNil(offline.selecting(.openAICompatible, endpointID: enabled.id, from: current))
+    XCTAssertNotNil(offline.selecting(.mlx, from: current))
+    let unavailable = selectionCatalog(appleAvailable: false, mlxUnavailableReason: "Unavailable")
+    XCTAssertNil(unavailable.selecting(.apple, from: current))
+    XCTAssertNil(unavailable.selecting(.mlx, from: current))
+  }
+
+  func testLocalSelectionUsesDownloadedModelsAndReportsMissingOnes() throws {
+    let catalog = selectionCatalog()
+    let remote = ProviderModelSelection(provider: .openAICompatible, modelID: "remote-only")
+    let local = try XCTUnwrap(catalog.selecting(.mlx, from: remote))
+    XCTAssertEqual(local.modelID, "downloaded")
+    XCTAssertNil(local.endpointID)
+    XCTAssertNil(catalog.validationMessage(for: local))
+    XCTAssertNotNil(catalog.validationMessage(for: .init(provider: .mlx, modelID: "removed")))
+    XCTAssertEqual(catalog.localModelID(preferred: " removed "), "downloaded")
+  }
+
+  func testSelectionUpdatesOnlyProviderFieldsAcrossEditingScopes() {
+    let selection = ProviderModelSelection(provider: .openAICompatible, endpointID: UUID(), modelID: "chosen")
+    var conversation = Conversation()
+    let conversationID = conversation.id
+    conversation.providerModelSelection = selection
+    XCTAssertEqual(conversation.providerModelSelection, selection)
+    XCTAssertEqual(conversation.id, conversationID)
+    var folder = ConversationFolderDefaults(systemPromptID: UUID())
+    let promptID = folder.systemPromptID
+    folder.providerModelSelection = selection
+    XCTAssertEqual(folder.providerModelSelection, selection)
+    XCTAssertEqual(folder.systemPromptID, promptID)
+    var agent = AgentSettings()
+    agent.localMLXModelID = "keep-local-preference"
+    agent.providerModelSelection = selection
+    XCTAssertEqual(agent.providerModelSelection, selection)
+    XCTAssertEqual(agent.localMLXModelID, "keep-local-preference")
+  }
+
+  private func selectionCatalog(
+    endpoints: [OpenAIEndpoint] = [], offline: Bool = false,
+    appleAvailable: Bool = true, mlxUnavailableReason: String? = nil
+  ) -> ProviderModelCatalog {
+    .init(endpoints: endpoints, isOffline: offline, appleAvailable: appleAvailable,
+      mlxUnavailableReason: mlxUnavailableReason, localModelIDs: ["downloaded"],
+      defaultLocalModelID: "downloaded", appleModelID: "")
+  }
+
   func testBrowserAtPhoneWidths() async throws {
     let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
     let previous = scene.keyWindow

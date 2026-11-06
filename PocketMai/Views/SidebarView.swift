@@ -1447,8 +1447,9 @@ private struct ConversationFolderDefaultsView: View {
         }
 
         Section("Provider & Model") {
-          providerMenu
-          providerModelControls
+          ProviderModelFields(
+            selection: $draft.providerModelSelection,
+            inheritedSelection: store.defaultProviderModelSelection)
         }
 
         Section {
@@ -1499,10 +1500,6 @@ private struct ConversationFolderDefaultsView: View {
     }
     .onAppear {
       loadDefaultsIfNeeded()
-      store.refreshLocalMLXModels()
-    }
-    .onChange(of: store.localMLXModelIDs) { _, _ in
-      ensureDraftMLXModelSelectionIsAvailable()
     }
     .fileImporter(
       isPresented: $showingWorkingFolderImporter,
@@ -1549,255 +1546,14 @@ private struct ConversationFolderDefaultsView: View {
     )
   }
 
-  private var providerMenu: some View {
-    Menu {
-      Button {
-        selectProvider(nil)
-      } label: {
-        providerMenuLabel(
-          "Use App Default",
-          systemImage: "gearshape",
-          isSelected: draft.provider == nil)
-      }
-      if store.appleIntelligenceIsAvailable {
-        Button {
-          selectProvider(.apple)
-        } label: {
-          providerMenuLabel(
-            "Apple Intelligence",
-            systemImage: "apple.logo",
-            isSelected: draft.provider == .apple)
-        }
-      }
-      Button {
-        selectProvider(.mlx)
-      } label: {
-        providerMenuLabel(
-          store.localMLXIsAvailable ? "MLX Local" : "MLX Local (Unavailable)",
-          systemImage: "cpu",
-          isSelected: draft.provider == .mlx)
-      }
-      .disabled(!store.localMLXIsAvailable)
-      if !store.settings.isOffline {
-        ForEach(store.settings.openAIEndpoints.filter(\.isEnabled)) { endpoint in
-          Button {
-            selectProvider(.endpoint(endpoint.id))
-          } label: {
-            providerMenuLabel(
-              endpoint.displayName,
-              systemImage: "network",
-              isSelected: draft.provider == .openAICompatible
-                && draft.endpointID == endpoint.id)
-          }
-        }
-      }
-    } label: {
-      HStack {
-        Text("Provider")
-        Spacer()
-        Label(providerMenuTitle, systemImage: providerMenuIcon)
-          .foregroundStyle(Color.accentColor)
-      }
-    }
-  }
-
-  @ViewBuilder
-  private func providerMenuLabel(
-    _ title: String,
-    systemImage: String,
-    isSelected: Bool
-  ) -> some View {
-    if isSelected {
-      Label(title, systemImage: "checkmark")
-    } else {
-      Label(title, systemImage: systemImage)
-    }
-  }
-
-  private var providerMenuTitle: String {
-    switch draft.provider {
-    case nil:
-      return "Use App Default"
-    case .apple:
-      return store.appleIntelligenceIsAvailable ? "Apple Intelligence" : "Unavailable"
-    case .mlx:
-      return "MLX Local"
-    case .openAICompatible:
-      return selectedEndpoint?.displayName ?? "OpenAI Compatible"
-    }
-  }
-
-  private var providerMenuIcon: String {
-    switch draft.provider {
-    case nil:
-      return "gearshape"
-    case .apple:
-      return store.appleIntelligenceIsAvailable ? "apple.logo" : "exclamationmark.triangle"
-    case .mlx:
-      return "cpu"
-    case .openAICompatible:
-      return selectedEndpoint == nil ? "exclamationmark.triangle" : "network"
-    }
-  }
-
-  @ViewBuilder
-  private var providerModelControls: some View {
-    switch draft.provider {
-    case nil:
-      LabeledContent("Model", value: appDefaultModelTitle)
-    case .apple:
-      EmptyView()
-    case .mlx:
-      mlxModelControls
-    case .openAICompatible:
-      openAICompatibleModelControls
-    }
-  }
-
-  private var appDefaultModelTitle: String {
-    let defaults = store.effectiveDefaultProviderConfiguration
-    switch defaults.provider {
-    case .apple:
-      return "Apple Intelligence"
-    case .mlx:
-      return defaults.modelID.isEmpty ? "MLX Local" : defaults.modelID
-    case .openAICompatible:
-      let endpoint = defaults.endpointID.flatMap { id in
-        store.settings.openAIEndpoints.first(where: { $0.id == id })
-      }
-      let endpointName = endpoint?.displayName ?? "OpenAI Compatible"
-      return defaults.modelID.isEmpty ? endpointName : "\(endpointName) / \(defaults.modelID)"
-    }
-  }
-
-  @ViewBuilder
-  private var mlxModelControls: some View {
-    let modelIDs = store.localMLXModelIDs
-    Group {
-      if let message = LocalMLXAvailability.current.unavailabilityMessage {
-        Text(message).foregroundStyle(.secondary)
-      } else if modelIDs.isEmpty {
-        Text("No downloaded MLX models")
-          .foregroundStyle(.secondary)
-      } else {
-        FilteredModelPicker(
-          selection: mlxModelBinding, models: modelIDs.map { .init(id: $0) },
-          refresh: {
-            store.refreshLocalMLXModelsInBackground()
-          })
-      }
-
-    }
-  }
-
-  @ViewBuilder
-  private var openAICompatibleModelControls: some View {
-    if store.settings.isOffline {
-      Text(store.offlineProviderGuidance)
-        .foregroundStyle(.secondary)
-    } else if let endpoint = selectedEndpoint {
-      FilteredModelPicker(
-        selection: endpointModelBinding(default: endpoint.defaultModel), endpoint: endpoint
-      )
-    } else {
-      Text("Choose an enabled endpoint.")
-        .foregroundStyle(.secondary)
-    }
-  }
-
-  private var selectedEndpoint: OpenAIEndpoint? {
-    guard let endpointID = draft.endpointID else { return nil }
-    return store.settings.openAIEndpoints.first { $0.id == endpointID && $0.isEnabled }
-  }
-
   private var canSave: Bool {
-    validationMessage == nil
-  }
-
-  private var validationMessage: String? {
-    switch draft.provider {
-    case nil:
-      return nil
-    case .apple:
-      return store.appleIntelligenceIsAvailable ? nil : "Apple Intelligence is unavailable."
-    case .mlx:
-      if let message = LocalMLXAvailability.current.unavailabilityMessage { return message }
-      return store.localMLXModelIDs.isEmpty ? "Download an MLX model before saving." : nil
-    case .openAICompatible:
-      if store.settings.isOffline {
-        return "Airplane Mode is on. OpenAI-compatible providers cannot be used."
-      }
-      return selectedEndpoint == nil ? "Choose an enabled endpoint before saving." : nil
-    }
+    store.providerModelCatalog.validationMessage(for: draft.providerModelSelection) == nil
   }
 
   private var defaultsFooterText: String {
-    if let validationMessage {
-      return validationMessage
-    }
-    if draft.usesAppDefaults {
-      return "New chats in \(folder.displayName) use the app defaults."
-    }
-    return "New chats in \(folder.displayName) use these folder defaults."
-  }
-
-  private var mlxModelBinding: Binding<String> {
-    Binding(
-      get: {
-        store.availableLocalMLXModelID(preferred: draft.modelID) ?? ""
-      },
-      set: { modelID in
-        guard store.localMLXModelIDs.contains(modelID) else { return }
-        draft.modelID = modelID
-      }
-    )
-  }
-
-  private func endpointModelBinding(default defaultModel: String) -> Binding<String> {
-    Binding(
-      get: {
-        let modelID = draft.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
-        return modelID.isEmpty ? defaultModel : modelID
-      },
-      set: { modelID in
-        draft.modelID = modelID
-      }
-    )
-  }
-
-  private func selectProvider(_ selection: DefaultProviderSelection?) {
-    guard let selection else {
-      draft.provider = nil
-      draft.endpointID = nil
-      draft.modelID = ""
-      return
-    }
-
-    switch selection {
-    case .apple:
-      guard store.appleIntelligenceIsAvailable else { return }
-      draft.provider = .apple
-      draft.endpointID = nil
-      draft.modelID = store.settings.appleModelID
-    case .mlx:
-      guard store.localMLXIsAvailable else { return }
-      store.refreshLocalMLXModels()
-      draft.provider = .mlx
-      draft.endpointID = nil
-      draft.modelID = store.availableLocalMLXModelID(preferred: draft.modelID) ?? ""
-    case .endpoint(let id):
-      guard !store.settings.isOffline,
-        let endpoint = store.settings.openAIEndpoints.first(where: { $0.id == id && $0.isEnabled })
-      else { return }
-      draft.provider = .openAICompatible
-      draft.endpointID = id
-      draft.modelID = endpoint.defaultModel
-    }
-  }
-
-  private func ensureDraftMLXModelSelectionIsAvailable() {
-    guard draft.provider == .mlx else { return }
-    draft.modelID = store.availableLocalMLXModelID(preferred: draft.modelID) ?? ""
+    draft.usesAppDefaults
+      ? "New chats in \(folder.displayName) inherit the selected agent's defaults."
+      : "New chats in \(folder.displayName) use these folder defaults."
   }
 
   private func loadDefaultsIfNeeded() {
@@ -1808,7 +1564,6 @@ private struct ConversationFolderDefaultsView: View {
     {
       draft.systemPromptID = nil
     }
-    ensureDraftMLXModelSelectionIsAvailable()
     didLoad = true
   }
 

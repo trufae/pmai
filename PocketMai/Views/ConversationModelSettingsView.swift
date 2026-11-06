@@ -54,41 +54,9 @@ struct ConversationModelSettingsView: View {
           }
 
           Section("Provider") {
-            Menu {
-              if store.appleIntelligenceIsAvailable {
-                Button {
-                  providerSelectionBinding.wrappedValue = .apple
-                } label: {
-                  Label("Apple Intelligence", systemImage: "apple.logo")
-                }
-              }
-              Button {
-                providerSelectionBinding.wrappedValue = .mlx
-              } label: {
-                Label(
-                  store.localMLXIsAvailable ? "MLX Local" : "MLX Local (Unavailable)",
-                  systemImage: "cpu")
-              }
-              .disabled(!store.localMLXIsAvailable)
-              if !store.settings.isOffline {
-                ForEach(store.settings.openAIEndpoints.filter(\.isEnabled)) { endpoint in
-                  Button {
-                    providerSelectionBinding.wrappedValue = .endpoint(endpoint.id)
-                  } label: {
-                    Label(endpoint.displayName, systemImage: "network")
-                  }
-                }
-              }
-            } label: {
-              HStack {
-                Text("Provider")
-                Spacer()
-                Label(providerMenuTitle, systemImage: providerMenuIcon)
-                  .foregroundStyle(
-                    selectedProviderIsBlockedByAirplaneMode ? .secondary : Color.accentColor)
-              }
-            }
-            providerModelControls
+            ProviderModelFields(
+              selection: conversationBinding(
+                \.providerModelSelection, fallback: store.defaultProviderModelSelection))
             Picker("Tool Calling", selection: conversationBinding(\.toolCallingMode, fallback: nil))
             {
               Text("App Default (\(store.settings.toolCallingMode.displayName))")
@@ -258,113 +226,17 @@ struct ConversationModelSettingsView: View {
     return provider
   }
 
-  private var selectedProviderIsBlockedByAirplaneMode: Bool {
-    store.settings.isOffline && !provider.isAirplaneModeEligible
-  }
-
-  private var providerMenuTitle: String {
-    if selectedProviderIsBlockedByAirplaneMode {
-      return "Unavailable Offline"
-    }
-    switch provider {
-    case .apple:
-      return "Apple Intelligence"
-    case .mlx:
-      return "MLX Local"
-    case .openAICompatible:
-      return selectedEndpoint?.displayName ?? "OpenAI Compatible"
-    }
-  }
-
-  private var providerMenuIcon: String {
-    if selectedProviderIsBlockedByAirplaneMode { return "network.slash" }
-    switch provider {
-    case .apple:
-      return "apple.logo"
-    case .mlx:
-      return "cpu"
-    case .openAICompatible:
-      return "network"
-    }
-  }
-
-  @ViewBuilder
-  private var providerModelControls: some View {
-    if provider == .apple {
-      EmptyView()
-    } else if provider == .mlx {
-      mlxModelControls
-    } else if selectedProviderIsBlockedByAirplaneMode {
-      Text(
-        store.offlineProviderGuidance
-      )
-      .foregroundStyle(.secondary)
-    } else if let endpoint = selectedEndpoint {
-      if endpoint.kind == .chatGPT {
-        Label("Using ChatGPT plan", systemImage: "checkmark.circle")
-        Link("Manage usage", destination: URL(string: "https://chatgpt.com/settings/usage")!)
-      }
-      FilteredModelPicker(
-        selection: modelBinding(default: endpoint.defaultModel), endpoint: endpoint
-      )
-    } else {
-      Text("Add and enable an endpoint in Settings.")
-        .foregroundStyle(.secondary)
-    }
-  }
-
-  @ViewBuilder
-  private var mlxModelControls: some View {
-    let modelIDs = store.localMLXModelIDs
-    Group {
-      if let message = LocalMLXAvailability.current.unavailabilityMessage {
-        Text(message).foregroundStyle(.secondary)
-      } else if modelIDs.isEmpty {
-        Text("No downloaded MLX models")
-          .foregroundStyle(.secondary)
-      } else {
-        FilteredModelPicker(
-          selection: mlxModelBinding, models: modelIDs.map { .init(id: $0) },
-          refresh: {
-            store.refreshLocalMLXModelsInBackground()
-          })
-      }
-
-      Text(
-        store.localMLXIsAvailable
-          ? "Only downloaded MLX models are shown. Manage downloads in Settings > Providers "
-            + "> Local MLX LLM."
-          : "Choose another provider in the Provider menu."
-      )
-      .font(.caption)
-      .foregroundStyle(.secondary)
-    }
-    .onAppear {
-      store.refreshLocalMLXModelsInBackground()
-      ensureCurrentMLXModelSelectionIsAvailable()
-    }
-    .onChange(of: store.localMLXModelIDs) { _, _ in
-      ensureCurrentMLXModelSelectionIsAvailable()
-    }
+  private var modelSelection: ProviderModelSelection {
+    store.currentConversation?.providerModelSelection ?? store.defaultProviderModelSelection
   }
 
   private var selectedEndpoint: OpenAIEndpoint? {
-    guard let conversation = store.currentConversation else { return nil }
-    return OpenAICompatibleProvider.selectedEndpoint(for: conversation, settings: store.settings)
+    store.providerModelCatalog.endpoint(for: modelSelection)
   }
 
   private var canSaveChatSettingsAsDefault: Bool {
-    guard let conversation = store.currentConversation else { return false }
-    if isCurrentChatUsingDefaults { return false }
-    switch conversation.provider {
-    case .apple:
-      return store.appleIntelligenceIsAvailable
-    case .mlx:
-      return store.localMLXIsAvailable && !store.localMLXModelIDs.isEmpty
-    case .openAICompatible:
-      guard !store.settings.isOffline else { return false }
-      return selectedEndpoint != nil
-    }
+    store.currentConversation != nil && !isCurrentChatUsingDefaults
+      && store.providerModelCatalog.validationMessage(for: modelSelection) == nil
   }
 
   private var agentBinding: Binding<UUID> {
@@ -393,20 +265,8 @@ struct ConversationModelSettingsView: View {
     if isCurrentChatUsingDefaults {
       return "These chat settings match \(store.settings.selectedAgent.name)."
     }
-    guard let conversation = store.currentConversation else { return "" }
-    if conversation.provider == .openAICompatible && store.settings.isOffline {
-      return "Airplane Mode is on. OpenAI-compatible providers cannot be used as defaults."
-    }
-    if conversation.provider == .openAICompatible && selectedEndpoint == nil {
-      return "Choose an enabled endpoint before using these settings as the default."
-    }
-    if conversation.provider == .mlx,
-      let message = LocalMLXAvailability.current.unavailabilityMessage
-    {
+    if let message = store.providerModelCatalog.validationMessage(for: modelSelection) {
       return message
-    }
-    if conversation.provider == .mlx && store.localMLXModelIDs.isEmpty {
-      return "Download an MLX model before using MLX as the default."
     }
     return "Save these chat settings as the defaults for \(store.settings.selectedAgent.name)."
   }
@@ -427,116 +287,6 @@ struct ConversationModelSettingsView: View {
 
   private func effectiveSystemPromptID(for conversation: Conversation) -> UUID {
     conversation.systemPromptID ?? store.effectiveSystemPromptID(forFolderID: conversation.folderID)
-  }
-
-  private func normalizedModel(_ model: String) -> String {
-    model.trimmingCharacters(in: .whitespacesAndNewlines)
-  }
-
-  private var providerSelectionBinding: Binding<DefaultProviderSelection> {
-    Binding(
-      get: {
-        guard let conversation = store.currentConversation else { return .mlx }
-        switch conversation.provider {
-        case .apple:
-          return .apple
-        case .mlx:
-          return .mlx
-        case .openAICompatible:
-          if let id = conversation.endpointID,
-            store.settings.openAIEndpoints.contains(where: { $0.id == id })
-          {
-            return .endpoint(id)
-          }
-          if let first = store.settings.openAIEndpoints.first(where: \.isEnabled) {
-            return .endpoint(first.id)
-          }
-          return .mlx
-        }
-      },
-      set: { newSelection in
-        if newSelection == .mlx && !store.localMLXIsAvailable { return }
-        if newSelection == .apple && !store.appleIntelligenceIsAvailable { return }
-        let selectedMLXModelID: String? = {
-          guard newSelection == .mlx else { return nil }
-          store.refreshLocalMLXModelsInBackground()
-          return store.availableLocalMLXModelID(preferred: store.settings.localMLXModelID)
-            ?? normalizedModel(store.settings.localMLXModelID)
-        }()
-        store.updateCurrentConversationSettings { conversation in
-          switch newSelection {
-          case .apple:
-            conversation.provider = .apple
-            conversation.endpointID = nil
-            conversation.modelID = store.settings.appleModelID
-          case .mlx:
-            conversation.provider = .mlx
-            conversation.endpointID = nil
-            conversation.modelID = selectedMLXModelID ?? ""
-          case .endpoint(let id):
-            guard !store.settings.isOffline else {
-              return
-            }
-            conversation.provider = .openAICompatible
-            conversation.endpointID = id
-            if let endpoint = store.settings.openAIEndpoints.first(where: { $0.id == id }),
-              !endpoint.defaultModel.isEmpty
-            {
-              conversation.modelID = endpoint.defaultModel
-            }
-          }
-        }
-      }
-    )
-  }
-
-  private var mlxModelBinding: Binding<String> {
-    Binding(
-      get: {
-        let model = normalizedModel(store.currentConversation?.modelID ?? "")
-        return store.availableLocalMLXModelID(preferred: model) ?? ""
-      },
-      set: { model in
-        guard store.localMLXModelIDs.contains(model) else { return }
-        store.updateCurrentConversationSettings { conversation in
-          conversation.modelID = model
-        }
-      }
-    )
-  }
-
-  private func ensureCurrentMLXModelSelectionIsAvailable() {
-    guard provider == .mlx else {
-      return
-    }
-    let currentModel = normalizedModel(store.currentConversation?.modelID ?? "")
-    guard
-      let model = store.availableLocalMLXModelID(preferred: store.currentConversation?.modelID)
-    else {
-      guard !currentModel.isEmpty else { return }
-      store.updateCurrentConversationSettings { conversation in
-        conversation.modelID = ""
-      }
-      return
-    }
-    guard currentModel != model else { return }
-    store.updateCurrentConversationSettings { conversation in
-      conversation.modelID = model
-    }
-  }
-
-  private func modelBinding(default defaultModel: String) -> Binding<String> {
-    Binding(
-      get: {
-        let model = store.currentConversation?.modelID ?? ""
-        return model.isEmpty ? defaultModel : model
-      },
-      set: { model in
-        store.updateCurrentConversationSettings { conversation in
-          conversation.modelID = model
-        }
-      }
-    )
   }
 
   private func conversationBinding<Value>(

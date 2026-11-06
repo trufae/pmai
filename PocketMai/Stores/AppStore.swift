@@ -4634,11 +4634,7 @@ final class AppStore: ObservableObject {
   }
 
   func availableLocalMLXModelID(preferred rawPreferred: String? = nil) -> String? {
-    guard !localMLXModelIDs.isEmpty else { return nil }
-    let candidates = [rawPreferred, settings.localMLXModelID, AppSettings.localMLXDefaultModelID]
-      .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-      .filter { !$0.isEmpty }
-    return candidates.first { localMLXModelIDs.contains($0) } ?? localMLXModelIDs.first
+    providerModelCatalog.localModelID(preferred: rawPreferred)
   }
 
   private func fallbackLocalMLXModelID(preferred rawPreferred: String? = nil) -> String {

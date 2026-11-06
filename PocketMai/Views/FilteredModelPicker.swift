@@ -9,6 +9,7 @@ struct FilteredModelPicker: View {
   var endpoint: OpenAIEndpoint? = nil
   var title: String = "Model"
   var emptySelectionTitle: String? = nil
+  var allowsCustomModelID = true
   var initialFeatures: Set<ModelFeature> = []
   var requiredCapabilities: ProviderCapabilities = []
   var refresh: (() async -> Void)? = nil
@@ -40,6 +41,7 @@ struct FilteredModelPicker: View {
       ModelBrowser(
         selection: $selection, models: catalog, title: title,
         emptySelectionTitle: emptySelectionTitle,
+        allowsCustomModelID: allowsCustomModelID,
         initialFilter: .init(features: initialFeatures, requiredCapabilities: requiredCapabilities),
         status: endpoint.flatMap { store.endpointStatuses[$0.id] },
         refresh: refresh ?? endpoint.map { endpoint in
@@ -58,6 +60,7 @@ struct ModelBrowser: View {
   let models: [ModelDescriptor]
   let title: String
   var emptySelectionTitle: String? = nil
+  var allowsCustomModelID = true
   var initialFilter = ModelCatalogFilter()
   var status: EndpointConnectionState? = nil
   var refresh: (() async -> Void)? = nil
@@ -88,7 +91,9 @@ struct ModelBrowser: View {
             ContentUnavailableView {
               Label(models.isEmpty ? "No models loaded" : "No matching models", systemImage: "cpu")
             } description: {
-              Text(models.isEmpty ? "Refresh to load the provider’s models, or enter a model ID below."
+              Text(models.isEmpty ? (allowsCustomModelID
+                ? "Refresh to load the provider’s models, or enter a model ID below."
+                : "Download a model in Settings > Providers > Local MLX LLM.")
                 : "Try another search or fewer filters. Models with unknown features are excluded by feature filters.")
             } actions: {
               if !models.isEmpty {
@@ -100,18 +105,20 @@ struct ModelBrowser: View {
           if case .failed(let message) = status {
             Text(message).font(.callout).foregroundStyle(.red)
           }
-          Section {
-            DisclosureGroup("Use a model ID") {
-              TextField("Model ID", text: $manualModel)
-                .textInputAutocapitalization(.never).autocorrectionDisabled()
-              Button("Use Model") {
-                choose(models.first { $0.id == manualModel.trimmingCharacters(in: .whitespacesAndNewlines) }
-                  ?? .init(id: manualModel.trimmingCharacters(in: .whitespacesAndNewlines)))
+          if allowsCustomModelID {
+            Section {
+              DisclosureGroup("Use a model ID") {
+                TextField("Model ID", text: $manualModel)
+                  .textInputAutocapitalization(.never).autocorrectionDisabled()
+                Button("Use Model") {
+                  choose(models.first { $0.id == manualModel.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    ?? .init(id: manualModel.trimmingCharacters(in: .whitespacesAndNewlines)))
+                }
+                .disabled(manualModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
               }
-              .disabled(manualModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            } footer: {
+              Text("Features and context limits are reported by the provider. Missing information is unknown.")
             }
-          } footer: {
-            Text("Features and context limits are reported by the provider. Missing information is unknown.")
           }
         }
         .listStyle(.insetGrouped)

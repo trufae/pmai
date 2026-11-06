@@ -301,38 +301,13 @@ struct AgentEditorView: View {
 
   private func inferenceSection(_ agent: AgentProfile) -> some View {
     Section {
-      Picker("Provider", selection: agentBinding(agent.id, \.defaultProvider)) {
-        ForEach(ProviderKind.allCases) { provider in
-          Text(provider.displayName).tag(provider)
-        }
-      }
-      if agent.settings.defaultProvider == .openAICompatible {
-        Picker("Connection", selection: agentBinding(agent.id, \.selectedEndpointID)) {
-          Text("Choose a provider").tag(UUID?.none)
-          ForEach(store.settings.openAIEndpoints) { endpoint in
-            Text(endpoint.kind == .systemOne ? "\(endpoint.name) · System One" : endpoint.name).tag(
-              Optional(endpoint.id))
+      ProviderModelFields(
+        selection: agentBinding(agent.id, \.providerModelSelection),
+        onSelectModel: { model in
+          if model.capabilities.contains(.nativeToolCalling) {
+            agentBinding(agent.id, \.toolCallingMode).wrappedValue = .native
           }
-        }
-        if let endpoint = store.settings.openAIEndpoints.first(where: {
-          $0.id == agent.settings.selectedEndpointID
-        }) {
-          FilteredModelPicker(
-            selection: agentBinding(agent.id, \.openAIModelID), endpoint: endpoint,
-            emptySelectionTitle: "Provider default",
-            initialFeatures: endpoint.kind == .systemOne ? [.decision] : [],
-            onSelect: { model in
-              if model.capabilities.contains(.nativeToolCalling) {
-                agentBinding(agent.id, \.toolCallingMode).wrappedValue = .native
-              }
-            })
-          .task(id: endpoint.connectionSignature) { await store.refreshEndpoint(endpoint) }
-        }
-      } else if agent.settings.defaultProvider == .mlx {
-        TextField("On-device model", text: agentBinding(agent.id, \.localMLXModelID))
-          .textInputAutocapitalization(.never)
-          .autocorrectionDisabled()
-      }
+        })
       Picker("Reasoning effort", selection: agentBinding(agent.id, \.defaultReasoningLevel)) {
         ForEach(ReasoningLevel.allCases, id: \.rawValue) { level in
           Text(level.displayName).tag(level)
