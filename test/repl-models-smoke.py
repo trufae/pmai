@@ -124,9 +124,10 @@ def main():
             chat_file = next((root / '.pmai/chats').glob('*.json'))
             chat = read_chat(chat_file)
             seed_messages = chat['messages'][:]
-            # Compaction must discard old structured tool evidence too.
+            # Compaction excludes old structured tool evidence from context,
+            # while keeping the original result in saved history.
             chat['messages'].append({'id': 'tool', 'role': 'tool', 'content': [{
-                'toolResult': {'_0': {'callID': 'fixture', 'isError': False, 'content': [],
+                'toolResult': {'_0': {'callID': 'fixture', 'isError': False, 'content': [], 'importance': 'normal',
                                      'structuredContent': {'text': 'old tool evidence'}}},
             }]})
             chat_file.write_text(json.dumps(chat))
@@ -320,6 +321,8 @@ def main():
                 wait_for('draft-after-compaction-preserved')
                 send('\n')
                 wait_for('✓ took')
+                send('/export --context json context.json\n')
+                wait_for('Exported JSON')
                 foreground_release.clear()
                 send('/models foreground\n')
                 assert next_request()[0] == '/foreground/models'
@@ -334,7 +337,7 @@ def main():
                 assert process.returncode == 0, (process.returncode, output.decode(errors='replace'))
                 saved = read_chat(chat_file)
                 assert saved['primaryAgent']['autocompact']['preserveRecentTokens'] == 3000, saved
-                messages = saved['messages']
+                messages = json.loads((root / 'context.json').read_text())['chat']['messages']
                 user_texts = [m['content'][0]['text']['_0'] for m in messages if m['role'] == 'user']
                 # Compaction keeps the latest request and stores its summary as conversation evidence.
                 assert user_texts == [
@@ -343,8 +346,12 @@ def main():
                 for message in seed_messages:
                     if message['role'] in ('system', 'developer', 'user'):
                         assert message in messages, message
-                assert not any(m['id'] == 'tool' for m in messages), 'Compaction kept the old tool result'
-                print('PASS manual compaction: cancellation, summary, retained task, and saved draft', flush=True)
+                assert not any(m['id'] == 'tool' for m in messages), 'Compaction kept the old tool result in context'
+                retained = {m['id']: m for m in saved['messages']}
+                for original in chat['messages']:
+                    assert {key: value for key, value in retained[original['id']].items()
+                            if key != 'context'} == original, original['id']
+                print('PASS manual compaction: cancellation, summary, retained history, task, and saved draft', flush=True)
             finally:
                 catalog_release.set()
                 compact_release.set()

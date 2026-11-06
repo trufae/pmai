@@ -83,7 +83,7 @@ def main():
             ])
             chat_file.write_text(json.dumps(chat))
             requests.clear()
-            output = run(['/set ctx.window 32768', '/chat compact'])
+            output = run(['/set ctx.window 32768', '/set ctx.strategy cache', '/chat compact'])
             assert 'Conversation compacted into a summary.' in output, output
             assert 'error:' not in output and not rejects, (output, rejects)
             assert len(requests) > 2, len(requests)
@@ -91,11 +91,21 @@ def main():
             saved = json.loads(config.read_text())
             assert saved['agents'][0]['options']['contextWindowTokens'] == 32768, saved
             compacted = read_chat(chat_file)
-            text = json.dumps(compacted['messages'])
-            for index in range(12):
-                assert f'KEEP-{index}' in text, text
+            retained = {message['id']: message for message in compacted['messages']}
+            for original in chat['messages']:
+                assert {key: value for key, value in retained[original['id']].items()
+                        if key != 'context'} == original, original['id']
+
+            # Resume with the reduced context while keeping the full saved history.
+            # Cache mode avoids a fresh smart reduction masking lost compaction state.
+            requests.clear()
+            output = run(['Use the saved facts.'])
+            assert 'error:' not in output and not rejects, (output, rejects)
+            assert requests, output
+            text = '\n'.join(message.get('content', '') for message in requests[-1]['messages'])
+            assert set(re.findall(r'\bKEEP-\d+\b', text)) == {f'KEEP-{index}' for index in range(12)}, text
             assert 'Continue my exact task.' in text
-            assert len(text) < len(source) // 10
+            assert 'Use the saved facts.' in text, text
 
             # A failure after one successful chunk must not replace any history.
             chat_file.write_text(json.dumps(chat))
@@ -105,7 +115,7 @@ def main():
             assert 'Partial summary failed' in output, output
             assert len(requests) == 2, len(requests)
             assert read_chat(chat_file)['messages'] == chat['messages']
-            print('PASS 32k chunked compaction, persisted context window, and atomic failure')
+            print('PASS 32k chunked compaction, retained history, resumed context, and atomic failure')
     finally:
         server.shutdown()
         server.server_close()
