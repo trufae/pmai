@@ -157,10 +157,7 @@ enum SubagentTool {
       child.endpointID = conversation.endpointID
       child.systemPromptID = conversation.systemPromptID
       child.toolsEnabled = conversation.toolsEnabled
-      child.enabledTools = conversation.enabledTools
-      child.enabledMCPServers = conversation.enabledMCPServers
-      child.enabledMCPTools = conversation.enabledMCPTools
-      child.disabledMCPTools = conversation.disabledMCPTools
+      child.toolSelection = conversation.toolSelection
       child.reasoningLevel = conversation.reasoningLevel
       child.usesStreaming = conversation.usesStreaming
       child.toolCallingMode = conversation.toolCallingMode
@@ -178,9 +175,7 @@ enum SubagentTool {
       child.endpointID = provider.endpointID
       child.systemPromptID = selected.defaultSystemPromptID
       child.toolsEnabled = true
-      child.enabledTools = selected.defaultEnabledTools
-      child.enabledMCPServers = selected.defaultEnabledMCPServers
-      child.enabledMCPTools = selected.defaultEnabledMCPTools
+      child.toolSelection = selected.toolSelection
       child.reasoningLevel = selected.defaultReasoningLevel
       child.usesStreaming = selected.streamByDefault
     }

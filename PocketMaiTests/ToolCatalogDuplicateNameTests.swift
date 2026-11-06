@@ -274,6 +274,36 @@ final class ToolCatalogDuplicateNameTests: XCTestCase {
   }
 
   @MainActor
+  func testMCPSelectionHonorsExclusionsAndLastToolDisablesOnlyItsServer() {
+    let server = MCPServer(name: "Local", baseURL: "http://localhost:8000/mcp")
+    let otherID = UUID()
+    let tool = MCPToolDescriptor(name: "search", description: "Search")
+    var settings = AppSettings()
+    settings.mcpServers = [server]
+    settings.toolPolicy.tools[tool.name] = .direct
+    var conversation = Conversation()
+    conversation.toolSelection.setServer(server.id, enabled: true)
+    conversation.disabledMCPTools = [MCPToolSelection.key(serverID: server.id, toolName: tool.name)]
+    XCTAssertTrue(conversation.toolSelection.seed(serverID: server.id, tools: [tool]))
+    func enabledNames() -> [String] {
+      ToolAgentRegistry.definitions(for: conversation, settings: settings,
+        mcpTools: [server.id: [tool]], mcpStatuses: [server.id: .available]).map(\.name)
+    }
+    XCTAssertFalse(conversation.toolSelection.contains(serverID: server.id, toolName: tool.name))
+    XCTAssertFalse(enabledNames().contains(tool.name))
+    conversation.toolSelection.setTool(serverID: server.id, toolName: tool.name, enabled: true)
+    XCTAssertTrue(enabledNames().contains(tool.name))
+    conversation.toolSelection.setTool(serverID: otherID, toolName: tool.name, enabled: true)
+    conversation.toolSelection.setTool(serverID: server.id, toolName: tool.name, enabled: false)
+    XCTAssertFalse(enabledNames().contains(tool.name))
+    XCTAssertEqual(conversation.enabledMCPServers, [otherID])
+    XCTAssertFalse(conversation.toolSelection.seed(serverID: server.id, tools: [tool]))
+    XCTAssertTrue(conversation.toolSelection.contains(serverID: otherID, toolName: tool.name))
+    conversation.toolSelection.setServer(otherID, enabled: false)
+    XCTAssertTrue(conversation.enabledMCPTools.isEmpty)
+  }
+
+  @MainActor
   func testMCPToolNamedLikeResourceReaderIsExcluded() {
     let definitions = catalogDefinitions(servers: [
       ServerFixture(

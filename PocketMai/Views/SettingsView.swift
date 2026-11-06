@@ -1631,7 +1631,7 @@ struct SettingsView: View {
           if expanded { expandedToolOptions.insert(tool) }
           else { expandedToolOptions.remove(tool) }
         }),
-      toggle: { toggleTool(tool) }
+      toggle: { store.setNativeTool(tool, enabled: !store.settings.defaultEnabledTools.contains(tool), in: .agentDefaults) }
     ) {
       toolOptions(tool)
     }
@@ -2198,10 +2198,7 @@ struct SettingsView: View {
       let removedIDs = deletion.offsets.map { store.settings.mcpServers[$0].id }
       store.settings.mcpServers.remove(atOffsets: deletion.offsets)
       for id in removedIDs {
-        let prefix = MCPToolSelection.prefix(serverID: id)
-        store.settings.defaultEnabledMCPServers.remove(id)
-        store.settings.defaultEnabledMCPTools = Set(
-          store.settings.defaultEnabledMCPTools.filter { !$0.hasPrefix(prefix) })
+        store.settings.toolSelection.setServer(id, enabled: false)
         store.mcpStatuses[id] = nil
         store.mcpTools[id] = nil
         store.mcpResources[id] = nil
@@ -2480,20 +2477,6 @@ struct SettingsView: View {
   private var showsSearXNGSettings: Bool {
     let provider = store.settings.toolSettings.webSearchProvider
     return provider == .searXNG || provider == .all
-  }
-
-  private func toggleTool(_ tool: BuiltInToolID) {
-    guard !(store.settings.isOffline && tool.isDisabledInAirplaneMode) else {
-      toastMessage = ToastNotice("\(tool.displayName) is disabled while Airplane Mode is enabled.")
-      return
-    }
-    if store.settings.defaultEnabledTools.contains(tool) {
-      store.settings.defaultEnabledTools.remove(tool)
-    } else {
-      store.settings.defaultEnabledTools.insert(tool)
-      if tool == .location { store.enableLocationAccessIfNeeded() }
-    }
-    store.saveSettings()
   }
 }
 

@@ -356,15 +356,7 @@ struct ConversationModelSettingsView: View {
   private var useMemoryBinding: Binding<Bool> {
     Binding(
       get: { store.currentConversation?.enabledTools.contains(.memory) ?? false },
-      set: { useMemory in
-        store.updateCurrentConversationSettings { conversation in
-          if useMemory {
-            conversation.enabledTools.insert(.memory)
-          } else {
-            conversation.enabledTools.remove(.memory)
-          }
-        }
-      }
+      set: { store.setNativeTool(.memory, enabled: $0) }
     )
   }
 

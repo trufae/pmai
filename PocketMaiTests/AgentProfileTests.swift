@@ -233,6 +233,48 @@ final class AgentProfileTests: XCTestCase {
     XCTAssertFalse(settings.removeAgent(extra.id), "removing twice is a no-op")
   }
 
+  @MainActor
+  func testChatToolChangesStayLocalUntilExplicitlySavedAsDefaults() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = AppStore(persistence: PersistenceStore(localBaseURL: root))
+    let deadline = ContinuousClock.now + .seconds(10)
+    while !store.hasLoadedPersistedSettings {
+      guard ContinuousClock.now < deadline else { XCTFail("Settings did not load"); return }
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    store.settings.airplaneModeEnabled = true
+    let stock = store.settings.agentSettings
+    let extra = store.settings.addAgent(named: "Extra")
+    store.settings.selectAgent(extra.id)
+    store.settings.openAIModelID = "default-model"
+    store.newConversation()
+    store.updateCurrentConversationSettings { $0.modelID = "chat-model" }
+    let originalDefaults = store.settings.agentSettings
+    let tools = [MCPToolDescriptor(name: "search", description: "Search"), MCPToolDescriptor(name: "fetch", description: "Fetch")]
+    store.mcpTools[mcpServerID] = tools
+    store.setNativeTool(.calculator, enabled: true)
+    store.toggleChatMCPTool(serverID: mcpServerID, toolName: "search")
+    XCTAssertEqual(store.settings.agentSettings, originalDefaults)
+    XCTAssertFalse(try XCTUnwrap(store.currentConversation).toolSelection.containsAll(serverID: mcpServerID, tools: tools))
+    store.toggleChatMCPServer(mcpServerID) // A partial selection becomes all selected.
+    XCTAssertTrue(try XCTUnwrap(store.currentConversation).toolSelection.containsAll(serverID: mcpServerID, tools: tools))
+    store.setNativeTool(.memory, enabled: true, in: .agentDefaults)
+    XCTAssertFalse(try XCTUnwrap(store.currentConversation).enabledTools.contains(.memory))
+    store.saveChatToolsAsDefault()
+    let restored = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(store.settings))
+    XCTAssertEqual(restored.selectedAgent.settings.defaultEnabledTools, [.calculator])
+    XCTAssertEqual(restored.selectedAgent.settings.defaultEnabledMCPServers, [mcpServerID])
+    XCTAssertEqual(restored.selectedAgent.settings.defaultEnabledMCPTools.count, 2)
+    XCTAssertEqual(restored.openAIModelID, "default-model")
+    XCTAssertEqual(restored.agents.first { $0.isStock }?.settings, stock)
+    store.newConversation()
+    XCTAssertEqual(store.currentConversation?.toolSelection, restored.toolSelection)
+    store.setChatToolsEnabled(false)
+    store.saveChatToolsAsDefault()
+    XCTAssertEqual(store.settings.toolSelection, ToolSelection())
+  }
+
   func testUpdatingAnAgentKeepsANameWhenTheNewOneIsBlank() {
     var settings = AppSettings.defaults
     let agent = settings.addAgent(named: "", description: " Finds papers ", canSpawnSubagents: true)

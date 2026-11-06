@@ -5,9 +5,7 @@ import SwiftUI
 private func settingsToolCatalog(_ store: AppStore) -> AgentToolCatalog {
   var conversation = store.currentConversation ?? Conversation()
   conversation.toolsEnabled = true
-  conversation.enabledTools = store.settings.defaultEnabledTools
-  conversation.enabledMCPServers = store.settings.defaultEnabledMCPServers
-  conversation.enabledMCPTools = store.settings.defaultEnabledMCPTools
+  conversation.toolSelection = store.settings.toolSelection
   return ToolAgentRegistry.catalog(
     for: conversation, settings: store.settings, mcpTools: store.mcpTools,
     mcpResources: store.mcpResources, mcpStatuses: store.mcpStatuses)

@@ -1348,9 +1348,7 @@ final class AppStore: ObservableObject {
     }
     conversation.reasoningLevel = settings.defaultReasoningLevel
     conversation.systemPromptID = effectiveSystemPromptID(forFolderID: folderID)
-    conversation.enabledTools = settings.defaultEnabledTools
-    conversation.enabledMCPServers = settings.defaultEnabledMCPServers
-    conversation.enabledMCPTools = settings.defaultEnabledMCPTools
+    conversation.toolSelection = settings.toolSelection
     conversation.usesStreaming = settings.streamByDefault
     conversation.showThinking = settings.showThinkingByDefault
     return conversation
@@ -4504,32 +4502,20 @@ final class AppStore: ObservableObject {
 
   private func seedEnabledMCPToolsIfNeeded(serverID: UUID, tools: [MCPToolDescriptor]) {
     guard !tools.isEmpty else { return }
-    let prefix = MCPToolSelection.prefix(serverID: serverID)
-    let toolKeys = Set(
-      tools.map { MCPToolSelection.key(serverID: serverID, toolName: $0.name) })
-    var settingsChanged = false
-    if settings.defaultEnabledMCPServers.contains(serverID),
-      !settings.defaultEnabledMCPTools.contains(where: { $0.hasPrefix(prefix) })
-    {
-      settings.defaultEnabledMCPTools.formUnion(toolKeys)
-      settingsChanged = true
-    }
-
-    var conversationsChanged = false
-    for index in conversations.indices
-    where conversations[index].enabledMCPServers.contains(serverID)
-      && !conversations[index].enabledMCPTools.contains(where: { $0.hasPrefix(prefix) })
-    {
-      conversations[index].enabledMCPTools.formUnion(toolKeys)
-      conversationsChanged = true
-    }
-
-    if settingsChanged {
+    var defaults = settings.toolSelection
+    if defaults.seed(serverID: serverID, tools: tools) {
+      settings.toolSelection = defaults
       saveSettings()
     }
-    if conversationsChanged {
-      saveConversations()
+    var conversationsChanged = false
+    for index in conversations.indices {
+      var selection = conversations[index].toolSelection
+      if selection.seed(serverID: serverID, tools: tools) {
+        conversations[index].toolSelection = selection
+        conversationsChanged = true
+      }
     }
+    if conversationsChanged { saveConversations() }
   }
 
   func refreshEndpoint(_ endpoint: OpenAIEndpoint, force: Bool = false) async {

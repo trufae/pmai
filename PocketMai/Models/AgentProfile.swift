@@ -288,10 +288,7 @@ extension AppSettings {
     conversation.contextWindowMode = nil
     conversation.mlxMaxKVSize = nil
     conversation.toolsEnabled = true
-    conversation.enabledTools = defaultEnabledTools
-    conversation.enabledMCPServers = defaultEnabledMCPServers
-    conversation.enabledMCPTools = defaultEnabledMCPTools
-    conversation.disabledMCPTools = []
+    conversation.toolSelection = toolSelection
   }
 
   func agentDefaults(from conversation: Conversation) -> AgentSettings {
@@ -315,10 +312,7 @@ extension AppSettings {
     profile.toolCallingMode = conversation.toolCallingMode ?? toolCallingMode
     profile.contextWindowMode = conversation.contextWindowMode ?? contextWindowMode
     profile.mlxMaxKVSize = conversation.mlxMaxKVSize ?? mlxMaxKVSize
-    profile.defaultEnabledTools = conversation.toolsEnabled ? conversation.enabledTools : []
-    profile.defaultEnabledMCPServers = conversation.toolsEnabled ? conversation.enabledMCPServers : []
-    profile.defaultEnabledMCPTools = conversation.toolsEnabled
-      ? conversation.enabledMCPTools.subtracting(conversation.disabledMCPTools) : []
+    profile.toolSelection = conversation.toolsEnabled ? conversation.toolSelection : ToolSelection()
     return profile
   }
 

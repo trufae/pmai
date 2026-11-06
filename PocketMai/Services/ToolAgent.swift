@@ -368,6 +368,7 @@ enum ToolAgentRegistry {
     append(
       skillDefinitions, group: MaiSkillTools.group(toolNames: Set(skillDefinitions.map(\.name))),
       enabled: settings.enabledSkillTools)
+    let selection = conversation.toolSelection
     var resourceServers: [(server: MCPServer, resources: [MCPResourceDescriptor])] = []
     for server in settings.mcpServers {
       let available =
@@ -388,9 +389,11 @@ enum ToolAgentRegistry {
           displayName: server.name, toolNames: Set(tools.map(\.name))),
         enabled: Set(
           tools.filter {
-            conversation.enabledMCPTools.contains(
-              MCPToolSelection.key(serverID: server.id, toolName: $0.name))
-          }.map(\.name)), available: available)
+            selection.contains(serverID: server.id, toolName: $0.name)
+          }.map(\.name)), available: available,
+        availableNames: Set(tools.filter {
+          !selection.disabled.contains(MCPToolSelection.key(serverID: server.id, toolName: $0.name))
+        }.map(\.name)))
       if available { resourceServers.append((server, mcpResources[server.id] ?? [])) }
     }
     if !resourceServers.isEmpty {
