@@ -228,6 +228,10 @@ extension AgentMessage {
       }
     }
     self.init(id: message.id.uuidString.lowercased(), role: role, content: content, isPinned: message.isPinned)
+    var savedContext = message.context
+    let sources = savedContext?.sourceMessageIDs?.map { UUID(uuidString: $0)?.uuidString.lowercased() ?? $0 }
+    savedContext?.sourceMessageIDs = sources
+    context = savedContext
   }
 }
 
@@ -288,6 +292,21 @@ extension Conversation {
 }
 
 extension ChatMessage {
+  var contextVersion: ChatMessage? {
+    guard context?.excluded != true else { return nil }
+    var result = self
+    if let revision = context?.replacement {
+      let message = AgentMessage(id: id.uuidString, role: revision.role, content: revision.content)
+      let converted = ChatMessage(agentMessage: message, callsByID: [:], completedCallIDs: [])
+      result.role = converted.role
+      result.text = converted.text
+      result.displayText = nil
+      result.attachments = converted.attachments
+    }
+    result.context = nil
+    return result
+  }
+
   /// Adapts MaiCore's structured transcript to the tagged representation used
   /// by PocketMai's regular conversation renderer. Native calls and their
   /// results are paired so they appear as the same tool rows as calls made by
@@ -373,6 +392,7 @@ extension ChatMessage {
       text: text.joined(separator: "\n\n"),
       attachments: attachments,
       isPinned: message.isPinned)
+    context = message.context
   }
 }
 

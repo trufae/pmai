@@ -1435,7 +1435,7 @@ enum AssistantToolLoop {
           ProviderRequest(
             model: specialist.modelID,
             messages: [.system(baseContext)]
-              + conversation.messages.map { AgentMessage(pocketMai: $0) },
+              + conversation.messages.compactMap(\.contextVersion).map { AgentMessage(pocketMai: $0) },
             tools: visibleDefinitions, stream: false, sessionID: conversation.sessionID),
           settings: settings))
       try Task.checkCancellation()

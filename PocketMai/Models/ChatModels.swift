@@ -1013,7 +1013,10 @@ struct ChatMessage: PinnableMessage, Codable, Equatable, Sendable {
   var role: ChatRole
   var text: String {
     didSet {
-      if text != oldValue { voiceoverText = nil }
+      if text != oldValue {
+        voiceoverText = nil
+        context?.replacement = nil
+      }
     }
   }
   /// A spoken summary of this reply, kept out of the model's conversation context.
@@ -1025,8 +1028,11 @@ struct ChatMessage: PinnableMessage, Codable, Equatable, Sendable {
   var stats: GenerationStats? = nil
   var isPinned = false
 
+  /// Original content remains in this message; context reductions are separate.
+  var context: AgentMessageContext? = nil
+
   enum CodingKeys: String, CodingKey {
-    case id, role, text, voiceoverText, displayText, createdAt, voiceRecordingFilename, attachments, stats, isPinned
+    case id, role, text, voiceoverText, displayText, createdAt, voiceRecordingFilename, attachments, stats, isPinned, context
   }
 
   init(
@@ -1074,6 +1080,32 @@ struct ChatMessage: PinnableMessage, Codable, Equatable, Sendable {
     attachments = (try? c.decode([ChatAttachment].self, forKey: .attachments)) ?? []
     stats = try? c.decode(GenerationStats.self, forKey: .stats)
     isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+    context = try c.decodeIfPresent(AgentMessageContext.self, forKey: .context)
+  }
+
+  static func compacting(_ history: [ChatMessage], summary: String) -> [ChatMessage] {
+    let taskID = history.last { $0.role == .user && $0.context?.excluded != true
+      && $0.context?.sourceMessageIDs == nil }?.id
+    var messages = history
+    var sources: [String] = []
+    for index in messages.indices {
+      let message = messages[index]
+      let instruction = message.role == .system
+        && !message.text.hasPrefix("Conversation summary (compacted):")
+      guard message.context?.excluded != true, !message.isPinned,
+        message.id != taskID, !instruction else { continue }
+      sources.append(message.id.uuidString.lowercased())
+      var context = message.context ?? AgentMessageContext()
+      context.excluded = true
+      messages[index].context = context
+    }
+    guard !sources.isEmpty else { return history }
+    var replacement = ChatMessage(role: .user,
+      text: "Summary of earlier parts of this conversation, written by the assistant to save context:\n\n" + summary)
+    replacement.context = AgentMessageContext(sourceMessageIDs: sources)
+    let insertion = taskID.flatMap { id in messages.firstIndex { $0.id == id } } ?? messages.count
+    messages.insert(replacement, at: insertion)
+    return messages
   }
 }
 

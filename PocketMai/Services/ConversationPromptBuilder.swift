@@ -82,7 +82,7 @@ enum ConversationPromptBuilder {
   }
 
   private static func compactPromptText(conversation: Conversation, template: String) -> String? {
-    let transcriptEntries = conversation.messages.compactMap { msg -> String? in
+    let transcriptEntries = conversation.messages.compactMap(\.contextVersion).compactMap { msg -> String? in
       guard msg.role != .error else { return nil }
       let text = MessageContentFilter.promptSafeText(from: msg.text)
       guard !text.isEmpty else { return nil }

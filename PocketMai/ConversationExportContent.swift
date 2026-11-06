@@ -462,6 +462,14 @@ enum ConversationExportContent {
       ? rendered.hiddenSections.filter { $0.tag == "think" }.map(\.content)
       : []
     var body = [rendered.visibleText]
+    if message.context?.excluded == true {
+      body.insert("*Retained in conversation history; excluded from model context.*", at: 0)
+    } else if message.context?.replacement != nil {
+      body.insert("*Original message; the model receives an edited version.*", at: 0)
+    }
+    if let sources = message.context?.sourceMessageIDs {
+      body.insert("*Context summary of \(sources.count) earlier messages; originals retained.*", at: 0)
+    }
     if options.includeToolCalls {
       for section in rendered.hiddenSections
       where section.tag == "tool_call" || section.tag == "tool_run" {
@@ -794,7 +802,7 @@ extension ConversationExportContent {
           width: resource.width, height: resource.height)
       }
       let entry = ExportEntry(
-        role: ExportRole(rawValue: message.role.rawValue) ?? .assistant,
+        role: message.context?.sourceMessageIDs != nil ? .assistant : ExportRole(rawValue: message.role.rawValue) ?? .assistant,
         reasoning: content.reasoningSections,
         body: content.visibleText,
         attachments: attachments)

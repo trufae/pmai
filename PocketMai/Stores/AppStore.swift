@@ -2973,10 +2973,10 @@ final class AppStore: ObservableObject {
     guard let idx = indexedConversationIndex(for: conversationID) else { return false }
     var conversation = conversations[idx]
     guard conversation.provider == .mlx, settings.mlxAutoCompact,
-      conversation.messages.count > 3 else { return true }
+      conversation.messages.compactMap(\.contextVersion).count > 3 else { return true }
 
     // Estimate token count at ~3 chars/token against the configured KV window.
-    let totalChars = conversation.messages.reduce(0) { $0 + $1.text.count }
+    let totalChars = conversation.messages.compactMap(\.contextVersion).reduce(0) { $0 + $1.text.count }
     let kvLimit = (conversation.mlxMaxKVSize ?? settings.mlxMaxKVSize).effectiveSize
     guard totalChars > kvLimit * 3 else { return true }
 
@@ -3021,16 +3021,10 @@ final class AppStore: ObservableObject {
       guard !trimmed.isEmpty else { return true }
       guard let i = indexedConversationIndex(for: conversationID) else { return false }
       guard conversations[i].messages == conversation.messages else { return true }
-      let lastMsg = conversations[i].messages.last
-      let removed = Array(conversations[i].messages.dropLast())
-      conversations[i].messages = removed.pinnedMessages + [
-        ChatMessage(role: .system, text: "Conversation summary (compacted):\n\n\(trimmed)")
-      ]
-      if let lastMsg { conversations[i].messages.append(lastMsg) }
+      conversations[i].messages = ChatMessage.compacting(conversations[i].messages, summary: trimmed)
       conversations[i].updatedAt = Date()
       upsertSummary(for: conversations[i])
       saveConversations()
-      deleteUnreferencedVoiceRecordings(from: removed)
     } catch is CancellationError {
       return false
     } catch {
@@ -3430,9 +3424,8 @@ final class AppStore: ObservableObject {
       guard let idx = indexedConversationIndex(for: compact.conversationID) else {
         return
       }
-      conversations[idx].messages = conversations[idx].messages.pinnedMessages + [
-        ChatMessage(role: .system, text: "Conversation summary (compacted):\n\n\(trimmed)")
-      ]
+      guard conversations[idx].messages == conversation.messages else { return }
+      conversations[idx].messages = ChatMessage.compacting(conversations[idx].messages, summary: trimmed)
       conversations[idx].updatedAt = Date()
       upsertSummary(for: conversations[idx])
       saveConversations()
@@ -3513,14 +3506,11 @@ final class AppStore: ObservableObject {
       return
     }
 
-    let removedMessages = conversations[index].messages
-    conversations[index].messages = removedMessages.pinnedMessages + [
-      ChatMessage(role: .system, text: "Conversation summary (compacted):\n\n\(trimmed)")
-    ]
+    guard !isResponding(in: conversationID) else { return }
+    conversations[index].messages = ChatMessage.compacting(conversations[index].messages, summary: trimmed)
     conversations[index].updatedAt = Date()
     upsertSummary(for: conversations[index])
     saveConversations()
-    deleteUnreferencedVoiceRecordings(from: removedMessages)
   }
 
   func updateMemoryFromConversations() async {

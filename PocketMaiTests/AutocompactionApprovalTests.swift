@@ -38,6 +38,41 @@ final class AutocompactionApprovalTests: XCTestCase {
     try await super.tearDown()
   }
 
+  func testCompactionRetainsOriginalMessagesAndRecordingsAcrossArchiveRoundTrip() throws {
+    store.updateCurrentConversationSettings {
+      $0.messages = [
+        ChatMessage(role: .user, text: "Exact old request", voiceRecordingFilename: "original.m4a"),
+        ChatMessage(role: .assistant, text: "Exact old answer"),
+        ChatMessage(role: .user, text: "Continue"),
+      ]
+    }
+    let original = try XCTUnwrap(store.currentConversation)
+    store.replaceConversationWithCompactSummary(conversationID: original.id, summary: "Earlier work")
+    let saved = try XCTUnwrap(store.currentConversation)
+    for message in original.messages {
+      let retained = try XCTUnwrap(saved.messages.first { $0.id == message.id })
+      XCTAssertEqual(retained.text, message.text)
+      XCTAssertEqual(retained.voiceRecordingFilename, message.voiceRecordingFilename)
+    }
+    let decoded = try JSONDecoder().decode(Conversation.self, from: JSONEncoder().encode(saved))
+    XCTAssertEqual(decoded.messages, saved.messages)
+    let context = PromptComposer.contextMessages(from: decoded, settings: store.settings, limit: nil)
+    XCTAssertEqual(context.count, 2)
+    XCTAssertFalse(context.contains { $0.text == "Exact old request" })
+    XCTAssertEqual(context.last?.text, "Continue")
+    let archive = AgentChat(pocketMai: decoded, settings: store.settings)
+    let restored = Conversation(archive: archive, settings: store.settings)
+    XCTAssertTrue(restored.messages.contains { $0.text == "Exact old request" && $0.context?.excluded == true })
+    XCTAssertEqual(restored.messages.compactMap(\.contextVersion).filter { $0.role != .system }.map(\.text), context.map(\.text))
+    var edited = ChatMessage(role: .user, text: "Original")
+    edited.context = AgentMessageContext()
+    edited.context?.replacement = AgentMessageContext.Revision(.user("Reduced version"))
+    edited.text = "Corrected source"
+    XCTAssertEqual(edited.contextVersion?.text, "Corrected source")
+    let document = ConversationExportContent.exportDocument(conversation: decoded)
+    XCTAssertTrue(document.entries.contains { $0.body.contains("Exact old request") && $0.body.contains("excluded from model context") })
+  }
+
   func testSkipPromptsEvenWithUnattendedApprovalAndKeepsHistoryAndModelChanges() async throws {
     let conversation = try XCTUnwrap(store.currentConversation)
     let task = Task { await store.autoCompactIfNeeded(conversationID: conversation.id) }

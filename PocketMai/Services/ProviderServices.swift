@@ -525,7 +525,7 @@ enum PromptComposer {
     let end =
       request.conversation.messages.firstIndex { $0.id == request.assistantMessageID }
       .map { $0 + 1 } ?? request.conversation.messages.count
-    let messages = request.conversation.messages.prefix(end).flatMap { message -> [AgentMessage] in
+    let messages = request.conversation.messages.prefix(end).compactMap(\.contextVersion).flatMap { message -> [AgentMessage] in
       if message.role == .error { return [.assistant("")] }
       var message = message
       if message.role == .assistant {
@@ -861,7 +861,7 @@ enum PromptComposer {
     limit: Int?,
     excludingMessageID: UUID? = nil
   ) -> [ChatMessage] {
-    let usable = conversation.messages.filter { message in
+    let usable = conversation.messages.compactMap(\.contextVersion).filter { message in
       message.id != excludingMessageID
         && !contextTranscriptEntries(from: message, settings: settings).isEmpty
     }
