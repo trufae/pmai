@@ -243,3 +243,125 @@ struct ConversationCollectionImportView: View {
     }
   }
 }
+
+struct ConversationImportConfirmationView: View {
+  let preview: ConversationImportPreview
+  let onCancel: () -> Void
+  let onImportAsNew: (String) -> String?
+  let onUpdateExisting: () -> String?
+
+  @State private var title: String
+  @State private var errorMessage: String?
+
+  init(
+    preview: ConversationImportPreview,
+    onCancel: @escaping () -> Void,
+    onImportAsNew: @escaping (String) -> String?,
+    onUpdateExisting: @escaping () -> String?
+  ) {
+    self.preview = preview
+    self.onCancel = onCancel
+    self.onImportAsNew = onImportAsNew
+    self.onUpdateExisting = onUpdateExisting
+    _title = State(initialValue: preview.suggestedRenameTitle)
+  }
+
+  var body: some View {
+    NavigationStack {
+      Form {
+        conflictSection
+        errorSection
+        importActionSection
+      }
+      .navigationTitle("Import Conversation")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) {
+          Button("Cancel") {
+            onCancel()
+          }
+        }
+        ToolbarItem(placement: .confirmationAction) {
+          Button(preview.conflict == nil ? "Import" : "Import Copy") {
+            errorMessage = onImportAsNew(titleForImport)
+          }
+          .fontWeight(.semibold)
+          .disabled(!canImportAsNew)
+        }
+      }
+    }
+    .presentationDetents([.medium, .large])
+  }
+
+  @ViewBuilder
+  private var errorSection: some View {
+    if let errorMessage {
+      Section {
+        Label(errorMessage, systemImage: "exclamationmark.triangle")
+          .foregroundStyle(.red)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var conflictSection: some View {
+    if let conflict = preview.conflict {
+      Section {
+        Label(
+          conflictTitle(conflict),
+          systemImage: conflict.contentsMatch ? "doc.on.doc" : "exclamationmark.triangle"
+        )
+        .foregroundStyle(conflict.contentsMatch ? Color.secondary : Color.orange)
+        Text(conflictMessage(conflict))
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      } header: {
+        Text("Name Conflict")
+      }
+    }
+  }
+
+  private var importActionSection: some View {
+    Section {
+      if preview.conflict != nil {
+        TextField("New title", text: $title)
+          .textInputAutocapitalization(.sentences)
+      }
+
+      if let conflict = preview.conflict, !conflict.contentsMatch {
+        Button(role: .destructive) {
+          errorMessage = onUpdateExisting()
+        } label: {
+          Label("Update Existing", systemImage: "arrow.triangle.2.circlepath")
+        }
+      }
+    }
+  }
+
+  private var titleForImport: String {
+    title.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  private var canImportAsNew: Bool {
+    guard !titleForImport.isEmpty else { return false }
+    let normalized = normalizedTitle(titleForImport)
+    return !preview.existingTitles.contains {
+      normalizedTitle($0) == normalized
+    }
+  }
+
+  private func conflictTitle(_ conflict: ConversationImportConflict) -> String {
+    conflict.contentsMatch ? "Already imported" : "Title already exists"
+  }
+
+  private func conflictMessage(_ conflict: ConversationImportConflict) -> String {
+    if conflict.contentsMatch {
+      return "\"\(conflict.existingTitle)\" has the same conversation contents."
+    }
+    return "\"\(conflict.existingTitle)\" uses this title with different conversation contents."
+  }
+
+  private func normalizedTitle(_ title: String) -> String {
+    title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+  }
+}
