@@ -138,6 +138,30 @@ with a context error; it must not silently discard unread evidence.
 
 ## Context, spending and reasoning
 
+### Inspecting, resetting and editing context
+
+`/chat context` lists the active messages and estimates their size before runtime
+instructions and tool schemas. `/export --context json context.json` exports that
+working transcript; `/export json history.json` keeps originals and alternatives.
+Smart/tool briefs are disposable per-run projections and are not included in
+this saved working-context export.
+
+`/chat context reset` excludes conversation messages while keeping configured
+instructions and saved history. `/chat context rebuild` restores original evidence
+and discards context replacements, including manual edits made through the whole
+conversation editor. The next request applies the selected model's context policy
+and window. Both commands start a fresh provider session and require an idle chat.
+`/chat clear` still deletes the conversation.
+
+`/chat edit` (also `/edit chat`) opens all retained messages in the configured
+editor. Text appears in fenced Markdown, with a message ID, role and active/excluded
+state above each block. Edit the text or state; removing a block excludes it.
+Existing IDs, roles and order must stay intact. New user/assistant blocks with ID
+`new` can be appended. Attachments, reasoning and native tool records are preserved
+outside the editable text. Broken tool pairs or malformed documents reject the
+entire edit. Originals remain available in ordinary exports and context rebuilds.
+This editing format is separate from presentation-only Markdown exports.
+
 These are different quantities:
 
 - **Context:** estimated prepared model input plus subsequently appended

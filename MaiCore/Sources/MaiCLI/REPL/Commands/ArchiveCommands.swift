@@ -26,13 +26,17 @@ extension MaiCLI {
     services: REPLServices,
     terminal: TerminalWriter
   ) async {
-    let fields = argument.split(maxSplits: 1, whereSeparator: \Character.isWhitespace).map(
+    let contextOnly = argument == "--context" || argument.hasPrefix("--context ")
+    let exportArgument = contextOnly
+      ? String(argument.dropFirst("--context".count)).trimmingCharacters(in: .whitespaces) : argument
+    let fields = exportArgument.split(maxSplits: 1, whereSeparator: \Character.isWhitespace).map(
       String.init)
     guard let first = fields.first else {
       await terminal.line(exportHelp)
       return
     }
     var chat = session.chat
+    if contextOnly { chat.messages = AgentConversationContext.messages(from: chat.messages) }
     chat.commands = runtime.commandHistory.records(sessionID: session.sessionID, saved: session.commands)
     // The agents of this chat's runs as they stand: what the process table
     // holds now, live or finished, over what was saved with the chat.
@@ -68,7 +72,7 @@ extension MaiCLI {
       await terminal.line(exportHelp)
       return
     }
-    guard chat.hasConversation else {
+    guard chat.hasConversation || (contextOnly && session.chat.hasConversation) else {
       await terminal.line("Nothing to export yet: this chat has no messages.")
       return
     }

@@ -232,7 +232,7 @@ extension MaiCLI {
       await terminal.line(files.isEmpty ? "No recorded file accesses in this conversation."
         : files.joined(separator: "\n"))
       await terminal.line("Recorded Files tool accesses and attachments; shell-internal accesses are not tracked. Older chats may have incomplete records.")
-    case "compact", "recap", "clear":
+    case "compact", "recap", "clear", "context", "edit":
       await handleChatCommand(
         argument,
         session: &session,
@@ -245,7 +245,7 @@ extension MaiCLI {
       await terminal.line(chatHelp)
     case "close":
       await terminal.line("/chat close is now /chat del INDEX|ID|TITLE [...].")
-    case "messages", "log", "last", "pins", "pinlist", "edit", "undo", "trim", "rewind", "chop":
+    case "messages", "log", "last", "pins", "pinlist", "undo", "trim", "rewind", "chop":
       await terminal.line("Message actions moved to /msg: use /msg \(action == "messages" ? "list" : action).")
     default:
       await terminal.line("Unknown /chat action '\(action)'.\n\n\(chatHelp)")
@@ -431,6 +431,37 @@ extension MaiCLI {
     let action = parts.first?.lowercased() ?? ""
     let actionArgument = parts.count == 2 ? parts[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
     switch action {
+    case "context":
+      switch actionArgument {
+      case "":
+        let messages = session.history.messages
+        let context = AgentConversationContext.messages(from: messages)
+        await terminal.line("Conversation: \(messages.count) stored messages. Context: \(context.count) messages, ~\(AgentContextSize(messages: context).estimatedTokens) tokens before runtime instructions and tools.")
+        for message in context {
+          await terminal.line("\(message.role.rawValue) [\(message.id)]: \(AgentProcessInfo.oneLine(message.text, limit: 100))")
+        }
+      case "reset", "rebuild":
+        if let chatProcess, let info = await runtime.supervisor.info(chatProcess), !info.state.isTerminal {
+          await terminal.line("Wait for this chat's turn to finish before changing its context.")
+          return
+        }
+        session.history.replaceAll(with: actionArgument == "reset"
+          ? AgentConversationContext.reset(session.history.messages)
+          : AgentConversationContext.rebuilt(session.history.messages))
+        session.sessionID = ChatSession.newID()
+        session.touch()
+        await terminal.line(actionArgument == "reset"
+          ? "Context reset to instructions. Conversation history retained."
+          : "Context rebuilt from original messages. Conversation history retained.")
+      default: await terminal.line("Usage: /chat context [reset|rebuild]")
+      }
+    case "edit":
+      guard actionArgument.isEmpty else { await terminal.line("Usage: /chat edit"); return }
+      if let chatProcess, let info = await runtime.supervisor.info(chatProcess), !info.state.isTerminal {
+        await terminal.line("Wait for this chat's turn to finish before editing its context.")
+        return
+      }
+      await editConversation(session: &session, terminal: terminal)
     case "compact", "recap":
       guard action != "recap" || actionArgument.isEmpty else {
         await terminal.line("Usage: /chat recap")

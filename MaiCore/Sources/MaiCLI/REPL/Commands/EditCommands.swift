@@ -25,6 +25,7 @@ extension MaiCLI {
     configuration: inout MaiConfiguration?,
     configurationPath: String?,
     providerBaseURLs: ProviderBaseURLStore,
+    chatProcess: AgentPID? = nil,
     terminal: TerminalWriter
   ) async {
     let target = argument.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -40,6 +41,14 @@ extension MaiCLI {
 
     switch action {
     case "chat":
+      if actionArgument.isEmpty {
+        if let chatProcess, let info = await runtime.supervisor.info(chatProcess), !info.state.isTerminal {
+          await terminal.line("Wait for this chat's turn to finish before editing its context.")
+          return
+        }
+        await editConversation(session: &session, terminal: terminal)
+        return
+      }
       guard let index = editableMessageIndex(actionArgument, in: session.history) else {
         await terminal.line("Usage: /edit chat INDEX|MESSAGE_ID")
         return
@@ -396,6 +405,22 @@ extension MaiCLI {
       await terminal.line("Edited message \(index + 1) (id: \(message.id)).")
     } catch {
       await terminal.line("error: \(error.localizedDescription)", to: .standardError)
+    }
+  }
+
+  static func editConversation(session: inout REPLSession, terminal: TerminalWriter) async {
+    let original = session.history.messages
+    let document = AgentConversationMarkdown.text(for: original)
+    guard let edited = await editTemporaryText(document, suffix: "conversation.md", terminal: terminal),
+      edited != document else { return }
+    do {
+      let messages = try AgentConversationMarkdown.applying(edited, to: original)
+      session.history.replaceAll(with: messages)
+      session.sessionID = ChatSession.newID()
+      session.touch()
+      await terminal.line("Conversation context updated. Original messages retained.")
+    } catch {
+      await terminal.line("error: \(error.localizedDescription) No conversation changes were saved.", to: .standardError)
     }
   }
 

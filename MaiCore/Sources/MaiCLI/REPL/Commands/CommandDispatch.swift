@@ -438,6 +438,7 @@ extension MaiCLI {
         configuration: &configuration,
         configurationPath: services.configurationPath,
         providerBaseURLs: services.providerBaseURLs,
+        chatProcess: chatProcess,
         terminal: terminal)
     case "/provider":
       await handleProviderCommand(

@@ -69,6 +69,7 @@ extension MaiCLI {
       /export html [PATH]       A self-contained HTML document
       /export epub [PATH]       An EPUB book, one chapter per message
       /export docx [PATH]       A Word document
+      /export --context FORMAT [PATH]  Export the active context instead of original history
 
     PATH may be a file or a folder; without it the file is named after the
     chat title and written to the current directory.
@@ -666,6 +667,10 @@ extension MaiCLI {
       /chat del INDEX|ID|TITLE [...]  Permanently delete chats; deleting the active one switches
       /chat files                   List files accessed in this conversation
       /chat compact [FOCUS]  Summarize the chat, prioritizing what FOCUS says to preserve
+      /chat context       Inspect the active context and compare its size with history
+      /chat context reset  Start with instructions only; retain conversation history
+      /chat context rebuild  Restore original evidence, removing context edits and summaries
+      /chat edit          Edit all retained messages and context selection in the editor
       /chat recap         Print a short recap using the compact model; keep the history
       /chat clear         Clear the conversation and restore configured instructions
 
@@ -806,6 +811,7 @@ extension MaiCLI {
     /edit worker             Edit the instructions of the derived worker agent
     /edit config             Edit the active configuration file
     /edit mcps               Edit the configured MCP server list as JSON
+    /edit chat              Edit the whole conversation context; preserve originals
     /edit chat N|MESSAGE_ID  Edit a conversation message (same as /msg edit N)
     /edit N|MESSAGE_ID       Edit conversation message N or its full message ID
     /edit input              Write the next message in the editor, then review before sending

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check document exports and PocketMai conversation import with the offline provider."""
 import json
+import shlex
 from smoke import clean_environment, run_repl
 from pathlib import Path
 import sys
@@ -20,10 +21,10 @@ def main():
             'agents': [{'id': 'hello', 'provider': 'hello', 'model': ''}],
         }))
 
-        def run(commands=(), args=()):
+        def run(commands=(), args=(), allow_errors=False):
             return run_repl([binary, '--config', str(config), '--home', str(root / 'home'),
                  '--no-markdown', *args], commands,
-                cwd=root, env=environment, timeout=30)
+                cwd=root, env=environment, timeout=30, allow_errors=allow_errors)
 
         run(args=['Question'])
         path = next((root / '.pmai/chats').glob('*.json'))
@@ -110,6 +111,46 @@ def main():
             assert imported['id'] != chat['id'], imported
         assert config.read_text() == before_config
         assert len(list((root / '.pmai/chats').glob('*.json'))) == before_count + 2
+
+        # Context reductions must survive restart without destroying exportable evidence.
+        evidence = 'EXACT HISTORICAL EVIDENCE\n' * 40
+        chat['messages'] = [
+            message('user', 'text', 'Read old.txt'),
+            message('assistant', 'toolCall', {'id': 'read-old', 'name': 'files_read',
+                                             'arguments': {'path': 'old.txt'}}),
+            message('tool', 'toolResult', {'callID': 'read-old', 'isError': False,
+                                         'content': [{'text': {'_0': evidence}}]}),
+            message('assistant', 'text', 'Read complete'),
+        ]
+        path.write_text(json.dumps(chat))
+        resume = ['-r', chat['id']]
+        run(['/set ctx.strategy size', 'New question', '/export json retained.json',
+             '/export --context json context.json'], args=resume)
+        retained = json.loads((root / 'retained.json').read_text())['chat']
+        context = json.loads((root / 'context.json').read_text())['chat']
+        assert evidence in retained['messages'][2]['content'][0]['toolResult']['_0']['content'][0]['text']['_0']
+        assert 'EXACT HISTORICAL EVIDENCE' not in json.dumps(context)
+        run(['/export json reopened.json', '/chat context reset',
+             '/export --context json empty-context.json', '/chat context rebuild',
+             '/export --context json rebuilt.json'], args=resume)
+        assert json.loads((root / 'reopened.json').read_text())['chat']['messages'] == retained['messages']
+        empty = json.loads((root / 'empty-context.json').read_text())['chat']['messages']
+        assert all(m['role'] in ('system', 'developer') for m in empty)
+        assert 'EXACT HISTORICAL EVIDENCE' in (root / 'rebuilt.json').read_text()
+
+        editor = root / 'editor.py'
+        editor.write_text('from pathlib import Path\nimport sys\np = Path(sys.argv[1])\n'
+                          'p.write_text(p.read_text().replace("New question", "Edited question"))\n')
+        environment['EDITOR'] = shlex.join([sys.executable, str(editor)])
+        run(['/chat edit', '/export json edited-history.json',
+             '/export --context json edited-context.json'], args=resume)
+        assert 'Edited question' in (root / 'edited-context.json').read_text()
+        edited = json.loads((root / 'edited-history.json').read_text())['chat']['messages']
+        assert any(m['content'] == [{'text': {'_0': 'New question'}}] for m in edited)
+        editor.write_text('from pathlib import Path\nimport sys\nPath(sys.argv[1]).write_text("broken document")\n')
+        output = run(['/edit chat', '/export json after-invalid.json'], args=resume, allow_errors=True)
+        assert 'No conversation changes were saved' in output, output
+        assert json.loads((root / 'after-invalid.json').read_text())['chat']['messages'] == edited
     print('REPL document export smoke passed')
 
 

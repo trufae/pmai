@@ -3,6 +3,39 @@ import Testing
 
 @testable import MaiCore
 
+@Test("Whole-conversation Markdown editing preserves originals and non-text content")
+func conversationMarkdownEditing() throws {
+  let image = ContentPart.file(FileContent(name: "notes.txt", mimeType: "text/plain", text: "Attachment survives"))
+  let original = [AgentMessage(role: .user, content: [.text("Original café\n```swift\nlet x = 1\n```\n"), image]), .assistant("Answer")]
+  let document = AgentConversationMarkdown.text(for: original)
+  #expect(try AgentConversationMarkdown.applying(document, to: original) == original)
+  let edited = try AgentConversationMarkdown.applying(document.replacingOccurrences(of: "Original café", with: "Edited café"), to: original)
+  #expect(edited[0].content == original[0].content)
+  let working = AgentConversationContext.messages(from: edited)
+  #expect(working[0].text.hasPrefix("Edited café"))
+  #expect(working[0].content.last == image)
+  #expect(try AgentConversationMarkdown.applying(AgentConversationMarkdown.text(for: edited), to: edited) == edited)
+  let reset = AgentConversationContext.reset(edited)
+  #expect(try AgentConversationMarkdown.applying(AgentConversationMarkdown.text(for: reset), to: reset) == reset)
+  #expect(throws: (any Error).self) {
+    try AgentConversationMarkdown.applying(document.replacingOccurrences(of: original[0].id, with: "missing"), to: original)
+  }
+}
+
+@Test("Whole-conversation editing rejects broken tool exchanges before applying changes")
+func conversationMarkdownToolValidation() throws {
+  let original = Array(contextFixture().dropLast())
+  let document = AgentConversationMarkdown.text(for: original)
+  #expect(try AgentConversationMarkdown.applying(document, to: original) == original)
+  // Exclude only the call, leaving its result: the whole edit must fail.
+  let lines = document.components(separatedBy: "\n").map { line in
+    line.contains(original[2].id) ? line.replacingOccurrences(of: "active", with: "excluded") : line
+  }
+  #expect(throws: (any Error).self) {
+    try AgentConversationMarkdown.applying(lines.joined(separator: "\n"), to: original)
+  }
+}
+
 @Test("A reply started before clearing or compacting does not reappear as an orphan turn")
 func completedRunAfterClearingChat() {
   let system = AgentMessage.system("Instructions")
