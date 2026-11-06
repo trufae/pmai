@@ -176,47 +176,20 @@ struct RemoteToolPermissionView: View {
 }
 
 private struct RemotePermissionJSONEditor: View {
-  let original: JSONValue?
+  let value: JSONValue?
   let onSave: (JSONValue) -> Void
-
-  @Environment(\.dismiss) private var dismiss
-  @State private var draft: String
-  @State private var error: String?
-
-  init(value: JSONValue?, onSave: @escaping (JSONValue) -> Void) {
-    self.original = value
-    self.onSave = onSave
-    _draft = State(initialValue: value.map(Self.formatted) ?? "")
-  }
 
   var body: some View {
     NavigationStack {
-      VStack(alignment: .leading, spacing: 12) {
-        Text("These arguments are checked against the tool schema before they run.")
-          .font(.footnote)
-          .foregroundStyle(.secondary)
-        TextEditor(text: $draft)
-          .font(.system(.body, design: .monospaced))
-          .autocorrectionDisabled()
-          .textInputAutocapitalization(.never)
-          .padding(8)
-          .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14))
-        if let error {
-          Label(error, systemImage: "exclamationmark.triangle.fill")
-            .font(.footnote)
-            .foregroundStyle(.red)
-        }
-      }
-      .padding()
-      .navigationTitle("Edit JSON")
-      .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-        ToolbarItem(placement: .confirmationAction) {
-          Button("Use Changes") { save() }
-            .fontWeight(.semibold)
-        }
-      }
+      TextDocumentEditor(
+        title: "Edit JSON",
+        instructions: "These arguments are checked against the tool schema before they run.",
+        saveTitle: "Use Changes",
+        load: { value.map(Self.formatted) ?? "" },
+        save: { text in
+          let value = try JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))
+          onSave(value)
+        })
     }
     .presentationDetents([.medium, .large])
   }
@@ -225,19 +198,5 @@ private struct RemotePermissionJSONEditor: View {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     return (try? String(decoding: encoder.encode(value), as: UTF8.self)) ?? "{}"
-  }
-
-  private func save() {
-    guard let data = draft.data(using: .utf8) else {
-      error = "The JSON could not be read."
-      return
-    }
-    do {
-      let value = try JSONDecoder().decode(JSONValue.self, from: data)
-      onSave(value)
-      dismiss()
-    } catch {
-      self.error = "Enter valid JSON before using these changes."
-    }
   }
 }

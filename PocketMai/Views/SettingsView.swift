@@ -696,7 +696,9 @@ struct SettingsView: View {
   @ViewBuilder
   private var agentPromptsContent: some View {
     NavigationLink {
-      AgentSoulEditor()
+      TextDocumentEditor(
+        title: "SOUL.md", instructions: "Core personality instructions, applied on the next model request.",
+        load: AgentSoul().load, save: AgentSoul().save)
     } label: {
       Label("SOUL.md", systemImage: "person.text.rectangle")
     }
@@ -704,7 +706,14 @@ struct SettingsView: View {
     SettingsLazyDisclosureGroup {
       Toggle("Enable", isOn: settingsBinding(\.redaction.enabled))
       NavigationLink("Edit Entries") {
-        RedactionRulesEditor(rules: settingsBinding(\.redaction.rules))
+        TextDocumentEditor(
+          title: "Redacted",
+          instructions: "One keyword per line, case-insensitive. Use /pattern/ for regex; # starts a comment.",
+          load: { store.settings.redaction.rules },
+          save: { text in
+            _ = try ContentRedactor.parse(text)
+            settingsBinding(\.redaction.rules).wrappedValue = text
+          })
       }
     } label: {
       Label("Redacted", systemImage: "eye.slash")
@@ -1437,7 +1446,16 @@ struct SettingsView: View {
     .font(.caption)
     .foregroundStyle(.secondary)
     NavigationLink {
-      CompactPromptDetailView()
+      TextDocumentEditor(
+        title: "Compact Prompt",
+        instructions: "Use {{transcript}} where the conversation transcript should be inserted. If omitted, the transcript is appended after the prompt.",
+        defaultText: AppSettings.defaultCompactPrompt,
+        load: { store.settings.compactPrompt },
+        save: { text in
+          settingsBinding(\.compactPrompt).wrappedValue =
+            text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? AppSettings.defaultCompactPrompt : text
+        })
     } label: {
       compactPromptRow
     }
@@ -4309,91 +4327,6 @@ private struct OllamaPortScanView: View {
         }
       }
     }
-  }
-}
-
-private struct CompactPromptDetailView: View {
-  @EnvironmentObject private var store: AppStore
-  @Environment(\.dismiss) private var dismiss
-
-  @State private var draftText = ""
-  @State private var showingLeaveConfirmation = false
-
-  var body: some View {
-    Form {
-      Section {
-        TextEditor(text: $draftText)
-          .frame(minHeight: 320)
-          .font(.callout.monospaced())
-          .autocorrectionDisabled()
-      } header: {
-        Text("Instructions")
-      } footer: {
-        Text(
-          "Use {{transcript}} where the conversation transcript should be inserted. If omitted, the transcript is appended after the prompt."
-        )
-      }
-
-      Section {
-        Button {
-          draftText = AppSettings.defaultCompactPrompt
-        } label: {
-          Label("Reset to Default", systemImage: "arrow.counterclockwise")
-        }
-      }
-    }
-    .navigationTitle("Compact Prompt")
-    .navigationBarTitleDisplayMode(.inline)
-    .navigationBarBackButtonHidden(true)
-    .toolbar {
-      ToolbarItem(placement: .cancellationAction) {
-        Button {
-          requestDismiss()
-        } label: {
-          Label("Back", systemImage: "chevron.left")
-        }
-      }
-      ToolbarItem(placement: .confirmationAction) {
-        Button("Save") {
-          saveAndDismiss()
-        }
-      }
-    }
-    .alert("Save changes?", isPresented: $showingLeaveConfirmation) {
-      Button("Cancel", role: .cancel) {}
-      Button("Discard Changes", role: .destructive) {
-        dismiss()
-      }
-      Button("Save") {
-        saveAndDismiss()
-      }
-    } message: {
-      Text("Save or discard changes before leaving this prompt.")
-    }
-    .onAppear {
-      if draftText.isEmpty {
-        draftText = store.settings.compactPrompt
-      }
-    }
-  }
-
-  private var hasUnsavedChanges: Bool {
-    draftText != store.settings.compactPrompt
-  }
-
-  private func requestDismiss() {
-    guard hasUnsavedChanges else {
-      dismiss()
-      return
-    }
-    showingLeaveConfirmation = true
-  }
-
-  private func saveAndDismiss() {
-    let trimmed = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
-    store.settings.compactPrompt = trimmed.isEmpty ? AppSettings.defaultCompactPrompt : draftText
-    store.saveSettings()
-    dismiss()
   }
 }
 

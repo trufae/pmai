@@ -5,6 +5,33 @@ import XCTest
 @testable import PocketMai
 
 final class AgentSoulTests: XCTestCase {
+  func testDocumentDraftKeepsEmptyEditsAcrossReloadAndFailedSave() throws {
+    var saved = "Original instructions"
+    var draft = TextDocumentDraft()
+    try draft.load { saved }
+    draft.text = ""
+    try draft.load { saved }
+    XCTAssertEqual(draft.text, "")
+    XCTAssertTrue(draft.hasChanges)
+    XCTAssertThrowsError(try draft.save { _ in throw CocoaError(.fileWriteNoPermission) })
+    XCTAssertEqual(draft.text, "")
+    XCTAssertTrue(draft.hasChanges, "A failed save must keep the unsaved-change protection")
+    XCTAssertTrue(try draft.save { saved = $0 })
+    XCTAssertEqual(saved, "")
+    XCTAssertFalse(draft.hasChanges)
+  }
+
+  func testFailedDocumentLoadCannotOverwriteTheSavedFile() throws {
+    var saved = "Existing instructions"
+    var draft = TextDocumentDraft()
+    XCTAssertThrowsError(try draft.load { throw CocoaError(.fileReadNoPermission) })
+    XCTAssertFalse(try draft.save { saved = $0 })
+    XCTAssertEqual(saved, "Existing instructions")
+    try draft.load { saved }
+    XCTAssertTrue(draft.isLoaded)
+    XCTAssertEqual(draft.text, saved)
+  }
+
   func testSoulEditsPersistAndChangeTheNextSystemPrompt() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -18,7 +45,10 @@ final class AgentSoulTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: soul.url.path))
 
     let first = "# Personality\nUse a warm, direct voice.\n"
-    try soul.save(first)
+    var draft = TextDocumentDraft()
+    try draft.load(using: soul.load)
+    draft.text = first
+    XCTAssertTrue(try draft.save(using: soul.save))
     XCTAssertEqual(try AgentSoul(url: soul.url).load(), first)
     let prompt = PromptComposer.systemPrompt(
       settings: settings, conversation: conversation, soul: soul)
