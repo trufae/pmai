@@ -24,6 +24,34 @@ CSI = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
 MOVE = re.compile(r'\x1b\[(\d+);(\d+)H')
 
 
+class KittyKeyboard:
+    """Encode Shift+Enter using the keyboard mode of the active screen."""
+    def __init__(self):
+        self.alternate = False
+        self.stacks = {False: [0], True: [0]}
+        self.pending = ''
+
+    def feed(self, text):
+        self.pending += text
+        end = 0
+        for match in CSI.finditer(self.pending):
+            sequence = match[0]
+            end = match.end()
+            if sequence in ('\x1b[?1049h', '\x1b[?1049l'):
+                self.alternate = sequence.endswith('h')
+            elif sequence.startswith('\x1b[>') and sequence.endswith('u'):
+                self.stacks[self.alternate].append(int(sequence[3:-1] or '0'))
+            elif sequence.startswith('\x1b[<') and sequence.endswith('u'):
+                stack = self.stacks[self.alternate]
+                del stack[-int(sequence[3:-1] or '1'):]
+                if not stack:
+                    stack.append(0)
+        self.pending = self.pending[end:]
+
+    def shift_enter(self):
+        return '\x1b[13;2u' if self.stacks[self.alternate][-1] & 1 else '\r'
+
+
 def main(binary):
     chunks = queue.Queue()
 
@@ -108,12 +136,14 @@ def main(binary):
             scrollbar = {}
             scrollbar_spans = {}
             captured = bytearray()
+            keyboard = KittyKeyboard()
 
             def read_for(seconds=.25):
                 data = bytearray()
                 read_pty(master, data, seconds)
                 captured.extend(data)
                 text = data.decode()
+                keyboard.feed(text)
                 moves = list(MOVE.finditer(text))
                 for index, move in enumerate(moves):
                     row, column = map(int, move.groups())
@@ -169,12 +199,21 @@ def main(binary):
                 wait_for('^C')
                 send('/set ui.line single\r')
                 wait_for('Set ui.line = single.')
-                send('first\x1b[13;2usecond')
-                wait_for('second')
-                assert '[2/2]> ' in screen[rows] and 'second' in screen[rows], screen
-                assert 'first' not in screen[rows - 1], screen
-                send('\x03')
-                wait_for('^C')
+                # A terminal only reports Shift+Enter distinctly after the
+                # application enables it on the active screen. Check startup
+                # and both live mode transitions, rather than injecting CSI-u
+                # unconditionally and hiding a missing protocol negotiation.
+                for mode in ('buffer', 'classic', 'buffer'):
+                    send(f'/set ui.mode {mode}\r')
+                    wait_for(f'Set ui.mode = {mode}.')
+                    send('first' + keyboard.shift_enter() + 'second')
+                    wait_for('second')
+                    assert b'[2/2]> ' in captured, captured
+                    if mode == 'buffer':
+                        assert '[2/2]> ' in screen[rows] and 'second' in screen[rows], screen
+                        assert 'first' not in screen[rows - 1], screen
+                    send('\x03')
+                    wait_for('^C')
                 send('/set ui.line multi\r')
                 wait_for('Set ui.line = multi.')
                 # The theme background fills short lines and empty output rows,
@@ -638,6 +677,7 @@ def main(binary):
                 assert process.returncode == 0
                 assert b'\x1b[?1000l' in captured and b'\x1b[?1049l' in captured, captured
                 assert termios.tcgetattr(master) == original, 'raw tty mode leaked on exit'
+                assert not keyboard.alternate and keyboard.stacks == {False: [0], True: [0]}, keyboard.stacks
                 print('PASS buffer: thinking, markdown, tool settings, Ctrl+B/F and Page paging, configurable wheel steps, mouse packets, live history anchor, wrapped typing, single-row editing, fixed multiline draft, '
                       'resize, follow, mode persistence, shell output and input, editor handoff '
                       'and terminal cleanup')

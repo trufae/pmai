@@ -243,12 +243,15 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       guard active else { return }
       if ui.mode != previousMode {
         transcript.follow()
+        // Keyboard protocol stacks belong to each screen independently.
+        // Restore the old screen's mode before enabling it on the new one.
+        write(TerminalInputModes.disable)
         if ui.mode == .buffer {
-          write(Self.enterBuffer + mouseTracking)
+          write(Self.enterBuffer + TerminalInputModes.enable + mouseTracking)
           redrawBuffer()
           return
         }
-        write(Self.disableMouse + Self.leaveBuffer)
+        write(Self.disableMouse + Self.leaveBuffer + TerminalInputModes.enable)
         write("\u{1B}[1;\(regionBottom)r" + move(row: regionBottom, column: 1) + Self.saveCursor)
         outputEndedLine = true
         drawInputRows()
@@ -799,7 +802,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     paintedPanelRows = []
     clampInputRows()
     if ui.mode == .buffer {
-      write(TerminalInputModes.enable + (enterBuffer ? Self.enterBuffer : "") + mouseTracking)
+      // Kitty keeps a separate keyboard mode stack for the alternate screen.
+      write((enterBuffer ? Self.enterBuffer : "") + TerminalInputModes.enable + mouseTracking)
       redrawBuffer()
       watchResizes()
       updateActivityTimer()
@@ -909,7 +913,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     activitySource?.cancel()
     activitySource = nil
     if ui.mode == .buffer {
-      write(Self.disableMouse + (leaveBuffer ? Self.leaveBuffer : "") + TerminalInputModes.disable)
+      write(Self.disableMouse + TerminalInputModes.disable + (leaveBuffer ? Self.leaveBuffer : ""))
       _ = tcsetattr(STDIN_FILENO, TCSAFLUSH, &cooked)
       active = false
       return
