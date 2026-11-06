@@ -27,6 +27,9 @@ func contextHistoryPersistence() throws {
     [.rewrite(messageID: original[1].id, text: "Short answer")], to: original).messages
   #expect(rewritten[1].content == original[1].content)
   #expect(AgentConversationContext.messages(from: rewritten)[1].text == "Short answer")
+  var sourceEdit = AgentTranscript(messages: rewritten)
+  try sourceEdit.editMessage(at: 1, text: "Corrected answer")
+  #expect(AgentConversationContext.messages(from: sourceEdit.messages)[1].text == "Corrected answer")
   let compacted = AgentTranscriptEditor.compactingConversation(rewritten, summary: "Earlier work")
   let chat = AgentChat(primaryAgent: storeAgent, messages: compacted)
   try store.save(chat)
@@ -35,6 +38,7 @@ func contextHistoryPersistence() throws {
     #expect(loaded.messages.contains { $0.id == message.id && $0.content == message.content })
   }
   let working = AgentConversationContext.messages(from: loaded.messages)
+  #expect(AgentRecapPrompt.transcript(of: loaded.messages).contains("Exact original answer"))
   #expect(working.count == 2 && working.last == original.last)
   #expect(working.allSatisfy { $0.context == nil })
   #expect(loaded.messages.first { $0.context?.sourceMessageIDs != nil }?.context?.sourceMessageIDs == Array(original.prefix(2)).map(\.id))

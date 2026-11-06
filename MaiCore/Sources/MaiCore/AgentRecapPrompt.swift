@@ -27,6 +27,6 @@ public enum AgentRecapPrompt {
   }
 
   public static func transcript(of messages: [AgentMessage]) -> String {
-    AgentCompactionPrompt.transcript(of: messages)
+    AgentCompactionPrompt.transcript(of: AgentConversationContext.rebuilt(messages))
   }
 }

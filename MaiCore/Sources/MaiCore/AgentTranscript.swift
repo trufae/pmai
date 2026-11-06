@@ -39,6 +39,8 @@ public struct AgentTranscript: Codable, Equatable, Sendable {
     let previous = messages[index]
     messages[index].replaceEditableText(with: text)
     messages[index].providerState = nil
+    // A deliberate source edit supersedes a previously reduced version.
+    messages[index].context?.replacement = nil
     return previous
   }
 

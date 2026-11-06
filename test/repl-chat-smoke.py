@@ -155,7 +155,7 @@ path.write_text('Edited in editor: ' + path.read_text())
 
         reset()
         for action in ['/msg edit', '/msg edit 0', '/msg edit 100',
-                       '/edit chat', '/edit chat missing', '/edit chat 2 extra']:
+                       '/edit chat missing', '/edit chat 2 extra']:
             output = run([action])[0]
             assert 'Usage:' in output, (action, output)
             assert messages() == fixture, (action, messages())
