@@ -125,8 +125,7 @@ archives retain the originals. Summary records identify the messages they replac
 Readable exports include the originals and mark context changes (tool traffic
 still follows `export.tools`). Explicit chat clearing and message deletion remain
 deletions. Older chats already compacted without originals cannot recover them.
-Its renderer
-currently excerpts long tool/file/resource text and is distinct from smart's
+The durable-compaction renderer excerpts long tool/file/resource text and is distinct from smart's
 full-evidence renderer. Do not assume it has the same retention properties.
 
 Provider overflow errors can tighten smart/adaptive reduction and rebuild the
@@ -136,9 +135,7 @@ instructions or one huge fresh tool result will fit. Prefer bounded tool output,
 file ranges and paging. A non-shrinking or impossible reduction can still end
 with a context error; it must not silently discard unread evidence.
 
-## Context, spending and reasoning
-
-### Inspecting, resetting and editing context
+## Inspecting, resetting and editing context
 
 `/chat context` lists the active messages and estimates their size before runtime
 instructions and tool schemas. `/export --context json context.json` exports that
@@ -162,6 +159,8 @@ outside the editable text. Broken tool pairs or malformed documents reject the
 entire edit. Originals remain available in ordinary exports and context rebuilds.
 This editing format is separate from presentation-only Markdown exports.
 
+## Context, spending and reasoning
+
 These are different quantities:
 
 - **Context:** estimated prepared model input plus subsequently appended
@@ -180,6 +179,7 @@ reasoning usage is unknown, not zero. Failed/cancelled calls may have incomplete
 usage. Tool-batch transcript growth is published at the batch boundary.
 
 These strategies belong to the MaiCore agent runtime and CLI. Native iOS has
-separate context/UI plumbing. Remote managed tool-loop providers own their own
+separate context/UI plumbing; its compaction also retains original messages and
+recording references, and exports preserve context annotations. Remote managed tool-loop providers own their own
 context; smart/adaptive do not summarize inside those managed loops. Selecting
 a CLI strategy does not establish identical mobile or remote behavior.
