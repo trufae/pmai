@@ -180,6 +180,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var active = false
   private var resizeSource: (any DispatchSourceProtocol)?
   private var activitySource: DispatchSourceTimer?
+  private var activityInterval: DispatchTimeInterval = .seconds(1)
   private var animatingStatus = false
   private var activityStartedAt: UInt64?
   private var displayedActivitySecond: UInt64 = 0
@@ -1916,9 +1917,14 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       activitySource = nil
       return
     }
-    guard activitySource == nil else { return }
+    // Only the active braille indicator needs frequent ticks. Idle cursor
+    // colors and elapsed time update once a second.
+    let interval: DispatchTimeInterval = animatingStatus ? .milliseconds(50) : .seconds(1)
+    guard activitySource == nil || activityInterval != interval else { return }
+    activitySource?.cancel()
+    activityInterval = interval
     let source = DispatchSource.makeTimerSource(queue: .global())
-    source.schedule(deadline: .now() + .milliseconds(50), repeating: .milliseconds(50))
+    source.schedule(deadline: .now() + interval, repeating: interval)
     source.setEventHandler { [weak self] in self?.drawActivity() }
     activitySource = source
     source.resume()
@@ -1959,10 +1965,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   private func drawCursorBreathing() {
     guard let startedAt = cursorBreathingStartedAt else { return }
-    // A six-second cosine cycle eases from white to dark grey and back.
+    // A four-second cosine cycle eases from white to dark grey and back.
     // Sampling monotonic time keeps typing and redraws from changing its pace.
     let elapsed = max(0, ProcessInfo.processInfo.systemUptime - startedAt)
-    let phase = elapsed.truncatingRemainder(dividingBy: 6) / 6
+    let phase = elapsed.truncatingRemainder(dividingBy: 4) / 4
     let shade = Int((64 + 191 * (1 + cos(phase * 2 * .pi)) / 2).rounded())
     guard shade != paintedCursorShade else { return }
     paintedCursorShade = shade
