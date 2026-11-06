@@ -467,14 +467,15 @@ func autocompactFoldsOlderMessages() async throws {
 
   #expect(result.isComplete)
   #expect(result.response.text == "done")
-  // The first tool exchange became a summary. The user's request and the
-  // exchange the model had not acted on yet stayed verbatim.
-  #expect(result.transcript.count == 5)
-  #expect(result.transcript[0].role == .user)
-  #expect(result.transcript[1].text == "start")
-  #expect(result.transcript[0].text.hasPrefix("Summary of earlier parts of this conversation"))
-  #expect(result.transcript[0].text.hasSuffix("Compacted state"))
-  #expect(result.transcript[2].toolCalls.first?.id == "c2")
+  // Evidence produced and compacted within this run remains in the archive.
+  #expect(result.transcript.flatMap(\.toolCalls).map(\.id) == ["c1", "c2"])
+  let working = AgentConversationContext.messages(from: result.transcript)
+  #expect(working.count == 5)
+  #expect(working[0].role == .user)
+  #expect(working[1].text == "start")
+  #expect(working[0].text.hasPrefix("Summary of earlier parts of this conversation"))
+  #expect(working[0].text.hasSuffix("Compacted state"))
+  #expect(working[2].toolCalls.first?.id == "c2")
   let events = await recorder.events
   let compactions = events.compactMap { event -> Int? in
     guard case .compactionStarted(_, let estimated) = event else { return nil }

@@ -195,13 +195,22 @@ public enum ChatExport {
           body.append(fenced("← \(result.isError ? "error" : "result")\n\(result.text)"))
         }
       }
-      let role: ExportRole =
+      if message.context?.excluded == true {
+        body.insert("*Retained in conversation history; excluded from model context.*", at: 0)
+      } else if message.context?.replacement != nil {
+        body.insert("*Original message; the model receives an edited version.*", at: 0)
+      }
+      if let sources = message.context?.sourceMessageIDs {
+        body.insert("*Context summary of \(sources.count) earlier messages; originals retained.*", at: 0)
+      }
+      var role: ExportRole =
         switch message.role {
         case .user: .user
         case .assistant: .assistant
         case .system, .developer: .system
         case .tool: .tool
         }
+      if message.context?.sourceMessageIDs != nil { role = .assistant }
       let entry = ExportEntry(
         role: role,
         reasoning: reasoning,

@@ -71,6 +71,24 @@ public struct AgentTranscriptEditReport: Equatable, Sendable {
 /// exchange removes the other side too, so what is left can still be sent to
 /// a provider.
 public enum AgentTranscriptEditor {
+  /// Apply model-context edits while retaining every original message.
+  public static func applyToContext(
+    _ edits: [AgentTranscriptEdit], to history: [AgentMessage], activeTaskID: String? = nil
+  ) -> (messages: [AgentMessage], report: AgentTranscriptEditReport) {
+    var history = history
+    var report = AgentTranscriptEditReport(
+      charactersBefore: characterCount(of: AgentConversationContext.messages(from: history)))
+    for edit in edits {
+      let applied = apply([edit], to: AgentConversationContext.messages(from: history), activeTaskID: activeTaskID)
+      history = AgentConversationContext.replacing(history, with: applied.messages)
+      report.removed += applied.report.removed
+      report.rewritten += applied.report.rewritten
+      report.compacted += applied.report.compacted
+    }
+    report.charactersAfter = characterCount(of: AgentConversationContext.messages(from: history))
+    return (history, report)
+  }
+
   /// A reply from a run started before a chat edit belongs only while the
   /// user message that started it is still in the chat. Clearing or compacting
   /// the chat during a run must not append an orphan assistant reply afterward.
@@ -90,20 +108,30 @@ public enum AgentTranscriptEditor {
     let sent = restoringPins(sent)
     let result = restoringPins(result)
     if let prompt = sent.last(where: { $0.role == .user }),
-      !current.contains(where: { $0.id == prompt.id })
+      !AgentConversationContext.messages(from: current).contains(where: { $0.id == prompt.id })
     {
       return current
     }
-    let resultIDs = Set(result.map(\.id))
+    func appendingNewEvidence() -> [AgentMessage] {
+      let known = Set(sent.map(\.id)).union(current.map(\.id))
+      return current + result.filter {
+        !known.contains($0.id) && $0.context?.sourceMessageIDs == nil
+      }.map { message in
+        var original = message
+        original.context = nil
+        return original
+      }
+    }
+    let resultIDs = Set(AgentConversationContext.messages(from: result).map(\.id))
     if current.contains(where: { $0.isPinned && !resultIDs.contains($0.id) }) {
       // A pin added after a run began may arrive too late for its compaction.
       // Keep the original, valid transcript and append only the new messages.
-      let sentIDs = Set(sent.map(\.id))
-      return current + result.filter { !sentIDs.contains($0.id) }
+      return appendingNewEvidence()
     }
     guard current != sent else { return result }
-    let shared = zip(sent, result).prefix { $0.0 == $0.1 }.count
-    return current + result.dropFirst(shared)
+    // Concurrent user edits win. Keep new evidence without replaying stale
+    // context edits or duplicating originals from the completed run.
+    return appendingNewEvidence()
   }
 
   public static func apply(
@@ -140,6 +168,7 @@ public enum AgentTranscriptEditor {
         }
         if (try? transcript.editMessage(id: id, text: text)) != nil { report.rewritten += 1 }
       case .compact(let ids, let summary):
+        let before = transcript.messages
         let editable = ids.filter { !protected.contains($0) }
         guard let first = editable.compactMap({ transcript.index(ofMessageID: $0) }).min() else { continue }
         var dropped = 0
@@ -151,7 +180,11 @@ public enum AgentTranscriptEditor {
         // before the retained request so it cannot become the "latest user"
         // on the next compaction or hide the task behind synthesized context.
         let insertion = min(first, all.lastIndex(where: { $0.role == .user }) ?? all.count)
-        all.insert(summaryMessage(summary), at: insertion)
+        var replacement = summaryMessage(summary)
+        let retained = Set(all.map(\.id))
+        replacement.context = AgentMessageContext(
+          sourceMessageIDs: before.filter { !retained.contains($0.id) }.map(\.id))
+        all.insert(replacement, at: insertion)
         transcript.replaceAll(with: all)
       case .summarize:
         continue
@@ -167,12 +200,13 @@ public enum AgentTranscriptEditor {
   public static func compactingConversation(
     _ messages: [AgentMessage], summary: String
   ) -> [AgentMessage] {
-    let latestTask = messages.last(where: { $0.role == .user })?.id
-    let protected = AgentPromptContext.protectedInstructionMessageIDs(in: messages)
-    let ids = messages.filter {
+    let working = AgentConversationContext.messages(from: messages)
+    let latestTask = working.last(where: { $0.role == .user })?.id
+    let protected = AgentPromptContext.protectedInstructionMessageIDs(in: working)
+    let ids = working.filter {
       !AgentPromptContext.isInstruction($0) && $0.id != latestTask && !protected.contains($0.id)
     }.map(\.id)
-    return apply([.compact(messageIDs: ids, summary: summary)], to: messages).messages
+    return applyToContext([.compact(messageIDs: ids, summary: summary)], to: messages).messages
   }
 
   /// A transcript cut off inside a tool exchange — by Ctrl+C, a crash, a
@@ -433,6 +467,7 @@ public enum MaiContextTools {
     let currentTurnStart: Int?
 
     init(messages: [AgentMessage], activeTaskID: String? = nil) {
+      let messages = AgentConversationContext.messages(from: messages)
       self.messages = messages
       var protected: [Int: String] = [:]
       for (index, message) in messages.enumerated() where AgentPromptContext.isInstruction(message) {

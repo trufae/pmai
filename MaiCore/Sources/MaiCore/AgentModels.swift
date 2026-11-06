@@ -444,6 +444,7 @@ public struct AgentMessage: Codable, Equatable, PinnableMessage, Sendable {
   /// Opaque protocol items that must accompany a replayed assistant turn.
   /// Providers own their keys; hosts persist them with the message.
   public var providerState: [String: JSONValue]? = nil
+  public var context: AgentMessageContext? = nil
 
   public init(
     id: String = UUID().uuidString,
@@ -457,7 +458,7 @@ public struct AgentMessage: Codable, Equatable, PinnableMessage, Sendable {
     self.isPinned = isPinned
   }
 
-  private enum CodingKeys: String, CodingKey { case id, role, content, providerState, isPinned }
+  private enum CodingKeys: String, CodingKey { case id, role, content, providerState, isPinned, context }
 
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -465,6 +466,7 @@ public struct AgentMessage: Codable, Equatable, PinnableMessage, Sendable {
     role = try container.decode(AgentRole.self, forKey: .role)
     content = try container.decode([ContentPart].self, forKey: .content)
     providerState = try container.decodeIfPresent([String: JSONValue].self, forKey: .providerState)
+    context = try container.decodeIfPresent(AgentMessageContext.self, forKey: .context)
     isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
   }
 
@@ -474,6 +476,7 @@ public struct AgentMessage: Codable, Equatable, PinnableMessage, Sendable {
     try container.encode(role, forKey: .role)
     try container.encode(content, forKey: .content)
     try container.encodeIfPresent(providerState, forKey: .providerState)
+    try container.encodeIfPresent(context, forKey: .context)
     if isPinned { try container.encode(true, forKey: .isPinned) }
   }
 

@@ -356,11 +356,11 @@ extension AgentRuntime {
         state.smartContext = AgentSmartContext()
         return nil
       }
-      let before = AgentTranscriptEditor.characterCount(of: state.transcript)
+      let before = AgentTranscriptEditor.characterCount(of: state.workingMessages)
       _ = try await autocompact(
         &state, requiredThreshold: threshold,
         preparedTokens: max(threshold, Self.contextTokens(turn.request)))
-      guard AgentTranscriptEditor.characterCount(of: state.transcript) < before else { throw error }
+      guard AgentTranscriptEditor.characterCount(of: state.workingMessages) < before else { throw error }
       return nil
     } catch let error as any ProviderToolCallError
       where error.toolCallRepairMessage != nil && !turn.definitions.isEmpty

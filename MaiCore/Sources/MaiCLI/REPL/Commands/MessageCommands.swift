@@ -265,7 +265,7 @@ extension MaiCLI {
     let action = recap ? "recap" : "compact"
     let transcript = recap
       ? AgentRecapPrompt.transcript(of: session.history.messages)
-      : AgentCompactionPrompt.transcript(of: session.history.messages)
+      : AgentCompactionPrompt.transcript(of: AgentConversationContext.messages(from: session.history.messages))
     let spoken = session.history.messages.filter {
       ($0.role == .user || $0.role == .assistant)
         && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

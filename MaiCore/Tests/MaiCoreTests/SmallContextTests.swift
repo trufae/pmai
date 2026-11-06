@@ -164,7 +164,8 @@ func smallContextPreflight() async throws {
   #expect(result.response.text == "done")
   #expect(result.transcript.first == messages.first)
   #expect(result.transcript.contains(latest))
-  #expect(result.transcript.count < messages.count)
+  #expect(AgentConversationContext.messages(from: result.transcript).count < messages.count)
+  #expect(messages.allSatisfy { original in result.transcript.contains { $0.id == original.id && $0.content == original.content } })
   #expect(await provider.rejections == 0)
 }
 

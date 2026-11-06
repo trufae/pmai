@@ -47,11 +47,11 @@ extension AgentRuntime {
       && !concreteDefinitions.isEmpty
       && state.toolCalls < state.request.limits.maxToolCalls && !state.repeatGuardTripped
     if state.request.context == .tools {
-      let candidates = state.toolContext.pending(in: state.transcript)
+      let candidates = state.toolContext.pending(in: state.workingMessages)
       if !candidates.isEmpty {
         await supervisor.note(state.pid, activity: "summarizing tool results")
         do {
-          let transcript = state.transcript
+          let transcript = state.workingMessages
           let summaries = try await compactText(
             source: AgentToolResultContext.transcript(for: candidates),
             render: { AgentToolResultContext.prompt(outputs: $0, in: transcript) },

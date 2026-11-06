@@ -29,6 +29,9 @@ func completedRunAfterClearingChat() {
       current: [system, editedPrompt], sent: sent, result: result)
       == [system, editedPrompt, result[2]])
   #expect(AgentTranscriptEditor.mergeCompletedRun(current: sent, sent: sent, result: result) == result)
+  #expect(AgentTranscriptEditor.mergeCompletedRun(
+    current: AgentConversationContext.reset(sent), sent: sent, result: result)
+    == AgentConversationContext.reset(sent))
 }
 
 // The context tools let an agent shrink its own conversation: drop what no
@@ -128,7 +131,7 @@ func contextEditsApplyBetweenTurns() async throws {
   }
 
   #expect(result.response.text == "Done with a smaller context.")
-  #expect(!result.transcript.contains { $0.text == "Ignore this aside about the weather." })
+  #expect(result.transcript.contains { $0.text == "Ignore this aside about the weather." && $0.context?.excluded == true })
   #expect(result.transcript.first?.text == "Be brief.")
   let requests = await provider.requests
   #expect(requests.count == 2)
@@ -186,7 +189,7 @@ func contextCompactWithoutSummaryIsSummarizedByTheModel() async throws {
     result.transcript.first { $0.text.hasPrefix("Summary of earlier parts of this conversation") })
   #expect(summary.role == .user)
   #expect(summary.text.hasSuffix("Earlier: the user talked about rain."))
-  #expect(!result.transcript.contains { $0.text == "It rained all week here." })
+  #expect(result.transcript.contains { $0.text == "It rained all week here." && $0.context?.excluded == true })
   let requests = await provider.requests
   #expect(requests.count == 3)
   let compaction = try #require(requests[1].messages.first { $0.role == .user }?.text)

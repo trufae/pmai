@@ -14,7 +14,7 @@ extension AgentRuntime {
       if providerResponse.stopReason == .toolCall { providerResponse.stopReason = .stop }
     }
     try Task.checkCancellation()
-    if state.request.context == .tools { state.toolContext.didRead(state.transcript) }
+    if state.request.context == .tools { state.toolContext.didRead(state.workingMessages) }
     let stats = await recordModelCall(
       call, provider: turn.provider.descriptor.id, request: turn.request,
       userMessages: state.modelTurns == 1 ? state.request.messages : nil)
@@ -31,7 +31,7 @@ extension AgentRuntime {
       state.request.context == .smart || state.request.context == .tools
         || state.request.context == .adaptive || turn.deciding
       ? nil : providerResponse.usage
-    state.lastUsageMessageCount = state.transcript.count + 1
+    state.lastUsageMessageCount = state.workingMessages.count + 1
     await supervisor.note(state.pid, usage: state.totalUsage.merging(await state.budget.approvalUsage))
     await state.budget.record(tokens: usage.totalTokens)
 

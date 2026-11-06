@@ -251,6 +251,11 @@ public final class ContentRedactor: @unchecked Sendable {
       message.providerState = message.providerState?.mapValues {
         mapProviderState($0, using: transform)
       }
+      if var revision = message.context?.replacement {
+        revision.content = revision.content.map { map($0, using: transform, restoring: restoring) }
+        revision.providerState = revision.providerState?.mapValues { mapProviderState($0, using: transform) }
+        message.context?.replacement = revision
+      }
       return message
     }
   }

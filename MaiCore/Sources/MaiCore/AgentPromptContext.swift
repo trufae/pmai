@@ -9,6 +9,7 @@ struct AgentPromptContext {
   let preservedConversation: [AgentMessage]
 
   init(messages: [AgentMessage], activeTaskID: String? = nil) {
+    let messages = AgentConversationContext.messages(from: messages)
     var instructions = messages.filter(Self.isInstruction)
     if let skills = AgentSkillContext.instructions(in: messages, activeTaskID: activeTaskID) {
       instructions.append(

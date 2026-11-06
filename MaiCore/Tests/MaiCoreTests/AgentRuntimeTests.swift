@@ -1189,6 +1189,7 @@ func sizeModePrunesEarlierPromptsFileBodies() async throws {
 
   let (sized, sizedRequests) = try await run(.size)
   #expect(sized.response.text == "Done.")
+  #expect(sized.transcript.flatMap(\.toolResults).allSatisfy { $0.text == body })
   let results = sizedRequests[1].messages.filter { $0.role == .tool }.flatMap(\.toolResults)
   #expect(results.count == 2)
   #expect(results[0].text.contains("[a.py: 41 lines, \(body.count) characters, read earlier and removed"))

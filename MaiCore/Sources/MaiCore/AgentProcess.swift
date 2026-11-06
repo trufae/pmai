@@ -131,6 +131,7 @@ public struct AgentContextSize: Equatable, Sendable {
   public var estimatedTokens: Int
 
   public init(messages: [AgentMessage]) {
+    let messages = AgentConversationContext.messages(from: messages)
     messageCount = messages.count
     estimatedTokens = ModelCallStats.estimatedTokenCount(
       forCharacterCount: AgentTranscriptEditor.characterCount(of: messages))

@@ -118,8 +118,14 @@ separate durable context-action prompt. It defaults to off. For example:
 /set ctx.compact 20k
 ```
 
-The context action can prune output, summarize history, keep it or stop. Unlike
-a disposable brief, durable compaction changes the saved transcript. Its renderer
+The context action can prune output, summarize history, keep it or stop. Durable
+compaction saves exclusions and replacement versions alongside the original
+messages. The model receives the reduced context; conversation history and JSON
+archives retain the originals. Summary records identify the messages they replace.
+Readable exports include the originals and mark context changes (tool traffic
+still follows `export.tools`). Explicit chat clearing and message deletion remain
+deletions. Older chats already compacted without originals cannot recover them.
+Its renderer
 currently excerpts long tool/file/resource text and is distinct from smart's
 full-evidence renderer. Do not assume it has the same retention properties.
 

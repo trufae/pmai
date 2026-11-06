@@ -45,21 +45,23 @@ extension AgentRuntime {
       self.activeTaskID = activeTaskID
       self.emit = emit
       transcript = request.messages
-      toolContext = AgentToolResultContext(messages: request.context == .tools ? transcript : [])
+      toolContext = AgentToolResultContext(messages: request.context == .tools ? AgentConversationContext.messages(from: transcript) : [])
     }
 
+    var workingMessages: [AgentMessage] { AgentConversationContext.messages(from: transcript) }
+
     var contextMessages: [AgentMessage] {
-      request.context == .tools ? toolContext.messages(from: transcript) : transcript
+      request.context == .tools ? toolContext.messages(from: workingMessages) : workingMessages
     }
 
     var estimatedTokens: Int {
       AgentAutocompaction.estimatedTokens(
-        of: transcript, lastUsage: lastUsage, lastUsageMessageCount: lastUsageMessageCount)
+        of: workingMessages, lastUsage: lastUsage, lastUsageMessageCount: lastUsageMessageCount)
     }
 
     var contextSize: AgentContextSize {
       guard var modelRequest else { return AgentContextSize(messages: contextMessages) }
-      let added = Array(transcript.dropFirst(modelRequestTranscriptCount))
+      let added = AgentConversationContext.messages(from: Array(transcript.dropFirst(modelRequestTranscriptCount)))
       modelRequest.messages += added
       var size = AgentContextSize(request: modelRequest)
       if let modelInputTokens {

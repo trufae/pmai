@@ -17,6 +17,32 @@ private func scratchDirectory(_ name: String) -> URL {
     .appendingPathComponent("maicore-\(name)-\(UUID().uuidString)", isDirectory: true)
 }
 
+@Test("Context reductions survive save and resume without losing original evidence")
+func contextHistoryPersistence() throws {
+  let directory = scratchDirectory("context-history")
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let store = AgentChatStore(directoryURL: directory)
+  let original: [AgentMessage] = [.user("Exact original question"), .assistant("Exact original answer"), .user("Continue")]
+  let rewritten = AgentTranscriptEditor.applyToContext(
+    [.rewrite(messageID: original[1].id, text: "Short answer")], to: original).messages
+  #expect(rewritten[1].content == original[1].content)
+  #expect(AgentConversationContext.messages(from: rewritten)[1].text == "Short answer")
+  let compacted = AgentTranscriptEditor.compactingConversation(rewritten, summary: "Earlier work")
+  let chat = AgentChat(primaryAgent: storeAgent, messages: compacted)
+  try store.save(chat)
+  let loaded = try #require(try store.loadChat(id: chat.id))
+  for message in original {
+    #expect(loaded.messages.contains { $0.id == message.id && $0.content == message.content })
+  }
+  let working = AgentConversationContext.messages(from: loaded.messages)
+  #expect(working.count == 2 && working.last == original.last)
+  #expect(working.allSatisfy { $0.context == nil })
+  #expect(loaded.messages.first { $0.context?.sourceMessageIDs != nil }?.context?.sourceMessageIDs == Array(original.prefix(2)).map(\.id))
+  #expect(AgentConversationContext.messages(from: AgentConversationContext.rebuilt(loaded.messages)) == original)
+  #expect(AgentConversationContext.messages(from: AgentConversationContext.reset(loaded.messages)).isEmpty)
+  #expect(loaded.forked().messages == loaded.messages)
+}
+
 @Test("Pinned placeholders persist in full chats, summaries, and paged metadata")
 func pinnedChatPersistence() throws {
   let directory = scratchDirectory("pinned")

@@ -47,7 +47,7 @@ extension AgentRuntime {
     -> String
   {
     let selected = Set(selection)
-    let transcript = state.transcript
+    let transcript = state.workingMessages
     let latestUserID = transcript.last(where: { $0.role == .user })?.id
     let source = AgentCompactionPrompt.transcript(
       of: transcript.filter { selected.contains($0.id) || $0.id == latestUserID })
@@ -67,7 +67,7 @@ extension AgentRuntime {
     let edits = await supervisor.drainTranscriptEdits(state.pid)
     if !edits.isEmpty {
       var resolved: [AgentTranscriptEdit] = []
-      let present = Set(state.transcript.map(\.id))
+      let present = Set(state.workingMessages.map(\.id))
       for edit in edits {
         guard case .summarize(let ids, let focus) = edit else {
           resolved.append(edit)
@@ -88,7 +88,7 @@ extension AgentRuntime {
           await state.emit(.compactionFailed(state.context, error.localizedDescription))
         }
       }
-      let applied = AgentTranscriptEditor.apply(
+      let applied = AgentTranscriptEditor.applyToContext(
         resolved, to: state.transcript, activeTaskID: state.activeTaskID)
       if !applied.report.isEmpty {
         state.transcript = applied.messages
@@ -97,9 +97,11 @@ extension AgentRuntime {
         await supervisor.note(state.pid, transcript: state.transcript)
       }
     }
+    var working = state.workingMessages
     if state.request.context == .cache,
-      let report = AgentContextPruning.pruneCacheSuffix(&state.transcript)
+      let report = AgentContextPruning.pruneCacheSuffix(&working)
     {
+      state.transcript = AgentConversationContext.replacing(state.transcript, with: working)
       state.lastUsage = nil
       await state.emit(.transcriptEdited(state.context, report))
       await supervisor.note(state.pid, transcript: state.transcript)
@@ -108,8 +110,9 @@ extension AgentRuntime {
     // way for a reference before every call; cache mode leaves conversation
     // evidence whole. Instruction separation affects only the provider view.
     if state.request.context == .size,
-      let report = AgentContextPruning.prune(&state.transcript, activeTaskID: state.activeTaskID)
+      let report = AgentContextPruning.prune(&working, activeTaskID: state.activeTaskID)
     {
+      state.transcript = AgentConversationContext.replacing(state.transcript, with: working)
       state.lastUsage = nil
       await state.emit(.transcriptEdited(state.context, report))
       await supervisor.note(state.pid, transcript: state.transcript)
@@ -170,11 +173,11 @@ extension AgentRuntime {
         : state.request.autocompact.recentTokenBudget
       if estimate >= threshold,
         let selection = AgentAutocompaction.selection(
-          in: state.transcript,
+          in: state.workingMessages,
           preservingRecentTokens: recentBudget,
           activeTaskID: state.activeTaskID)
       {
-        var prunedTranscript = state.transcript
+        var prunedTranscript = state.workingMessages
         let pruning = AgentContextPruning.pruneToolOutput(
           &prunedTranscript, activeTaskID: state.activeTaskID)
         await supervisor.raise(.input("Context reduction needs a decision."), for: state.pid)
@@ -220,7 +223,7 @@ extension AgentRuntime {
             state.skipAutocompaction = true
             return true
           }
-          state.transcript = prunedTranscript
+          state.transcript = AgentConversationContext.replacing(state.transcript, with: prunedTranscript)
           state.lastUsage = nil
           await state.emit(.transcriptEdited(state.context, pruning))
           await supervisor.note(state.pid, transcript: state.transcript)
@@ -239,7 +242,7 @@ extension AgentRuntime {
           let text = try await summaryText(
             of: selection, focus: AgentCompactionPrompt.automaticFocus,
             state: &state)
-          let applied = AgentTranscriptEditor.apply(
+          let applied = AgentTranscriptEditor.applyToContext(
             [.compact(messageIDs: selection, summary: text)], to: state.transcript,
             activeTaskID: state.activeTaskID)
           state.transcript = applied.messages

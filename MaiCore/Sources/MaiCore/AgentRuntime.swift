@@ -224,7 +224,7 @@ public actor AgentRuntime {
       pid: pid)
     var state = RunState(
       request, context: context, pid: pid, budget: budget,
-      activeTaskID: await supervisor.beginActiveTask(in: request.messages, for: pid), emit: emit)
+      activeTaskID: await supervisor.beginActiveTask(in: AgentConversationContext.messages(from: request.messages), for: pid), emit: emit)
     await emit(.started(context, initialProvider.descriptor))
     await supervisor.note(pid, state: .running, transcript: state.transcript)
     while true {

@@ -5,6 +5,22 @@ import Testing
 @testable import MaiDocuments
 @testable import MaiMarkdown
 
+@Test("Exports retain original messages and annotate their reduced model context")
+func exportsPreserveCompactedHistory() throws {
+  var chat = sampleChat()
+  chat.messages = [.user("Exact question"), .assistant("Exact answer"), .user("Continue")]
+  let original = chat.messages
+  chat.messages = AgentTranscriptEditor.compactingConversation(chat.messages, summary: "Earlier work")
+  let markdown = String(decoding: try ChatExport.data(for: chat, format: .markdown), as: UTF8.self)
+  #expect(markdown.contains("Exact question") && markdown.contains("Exact answer"))
+  #expect(markdown.contains("excluded from model context"))
+  #expect(markdown.contains("Context summary of 2 earlier messages"))
+  let data = try ChatExport.data(for: chat, format: .json)
+  let restored = try MaiJSONCoding.default.makeDecoder().decode(ChatExportEnvelope.self, from: data).chat
+  #expect(restored.messages == chat.messages)
+  #expect(AgentConversationContext.messages(from: AgentConversationContext.rebuilt(restored.messages)) == original)
+}
+
 @Test("The block parser covers headings, paragraphs, quotes, lists, fences, tables, rules and footnotes")
 func blockParserCoversCommonBlocks() {
   let text = """
