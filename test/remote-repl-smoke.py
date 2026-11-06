@@ -105,7 +105,7 @@ def live_shells(root, home, config, host_root):
         wait("Unknown help topic 'shell-barrier-" + label + "'")
 
     try:
-        wait('pmai> ')
+        wait('> ')
         send('/remote connect server\r')
         wait('Connected to server.')
         send('/shell local\r')

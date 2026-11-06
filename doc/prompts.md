@@ -85,9 +85,9 @@ none — the way a skill takes its arguments. `$NAME` is short for
 `/prompts NAME`, and `$` alone lists everything.
 
 ```
-pmai> /prompts add commit Write a commit message for the staged changes: $ARGUMENTS
+> /prompts add commit Write a commit message for the staged changes: $ARGUMENTS
 Created user prompt 'commit': $commit [TEXT] sends it.
-pmai> $commit one line, imperative mood
+> $commit one line, imperative mood
 ```
 
 ```json
@@ -137,9 +137,9 @@ Two lines make a new agent: one for what it should be, one for what it may
 use.
 
 ```
-pmai> /prompt add reviewer You review diffs and list only real defects.
+> /prompt add reviewer You review diffs and list only real defects.
 Created system prompt 'reviewer' (no agent uses it yet; /agent prompt ID reviewer or /agent add picks it).
-pmai> /agent add reviewer - files,run reviewer
+> /agent add reviewer - files,run reviewer
 Added agent 'reviewer': openai, tool groups files, run, system prompt 'reviewer'. /agent use reviewer switches this chat to it.
 ```
 

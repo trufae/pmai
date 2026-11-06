@@ -62,7 +62,7 @@ def main():
                 os.close(slave)
                 output = bytearray()
                 try:
-                    expect_pty(master, process, output, 'pmai> ', 15)
+                    expect_pty(master, process, output, '> ', 15)
                     os.write(master, b'Review my code\r')
                     diagnostics = expect_pty(master, process, output, 'Automatic retries skipped', 30)
                     assert 'error: Policy fixture rejection' in diagnostics, diagnostics

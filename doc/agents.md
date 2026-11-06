@@ -467,7 +467,7 @@ addresses; `@* @2 TEXT` still gives agent 2 only one copy. Agents started later
 do not receive earlier broadcasts.
 
 `/set ui.broadcast on` makes messages without a leading address use `@*`,
-including `/queue push TEXT`. The prompt shows `pmai@*>` and the status says
+including `/queue push TEXT`. The prompt shows `@*>` and the status says
 `all active`. Explicit addresses override this default. `/set ui.broadcast off`
 restores delivery to the focused agent; `off` is the default for older or new
 configurations. This choice is saved in the active configuration and survives

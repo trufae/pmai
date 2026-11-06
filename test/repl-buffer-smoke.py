@@ -183,7 +183,7 @@ def main(binary):
                 return tuple(screen.get(row, '') for row in range(1, rows - 2))
 
             try:
-                wait_for('pmai> ')
+                wait_for('> ')
                 assert not scrollbar_spans, scrollbar_spans
                 assert b'\x1b[?1006h' in captured, captured
                 assert b'\x1b[?1002h' in captured, captured

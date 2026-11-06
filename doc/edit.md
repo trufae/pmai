@@ -42,7 +42,10 @@ At the REPL, Enter sends the whole prompt. Shift+Enter inserts a newline;
 Alt+Enter or Ctrl+J also work when a terminal cannot distinguish Shift+Enter.
 `/set ui.line multi` (the default) wraps long typed or pasted text across rows
 without inserting extra newlines. `/set ui.line single` keeps one scrolling
-row and shows the current logical line in the prompt, such as `pmai[2/3]>`.
+row and shows the current logical line in the prompt, such as `[2/3]>`.
+The prompt is `> `, or a short recipient marker such as `#1> ` or `@*> `.
+Multiline input uses a left-aligned `> ` on continuation rows.
+`/theme color bgprompt COLOR` fills the entire input area, including empty space.
 Both settings work with `ui.mode classic` and `ui.mode buffer`. Up/Down walk
 input rows before reaching history. `<<EOF` still collects lines until `EOF`
 appears by itself. `/help shell` lists these input forms.

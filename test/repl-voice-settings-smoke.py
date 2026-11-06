@@ -96,7 +96,7 @@ def main():
             os.write(master, (text + '\r').encode())
 
         try:
-            wait('pmai>')
+            wait('> ')
             send('/set voice.mode rea\t')
             wait('/set voice.mode realtime')
             wait('Set voice.mode')

@@ -75,7 +75,7 @@ def main():
                     return requests.get_nowait()
 
                 try:
-                    wait('pmai>')
+                    wait('> ')
                     prompt_seconds = time.monotonic() - started
                     # Empty submissions must leave the prompt usable.
                     send('\n\n/version\n')

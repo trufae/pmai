@@ -82,11 +82,11 @@ def main():
             # but truncates transcript lines when narrowing the screen.
             transcript = ''.join(state['history'] + state['screen'][:-2])
             assert message in transcript, ('transcript was truncated', state)
-            assert state['screen'][-1].startswith('pmai'), state
+            assert state['screen'][-1].startswith('#1> '), state
             assert state['wraps'], 'normal transcript reflow must remain enabled'
 
         try:
-            wait_for('pmai> ')
+            wait_for('> ')
             message = 'KEEP_TRANSCRIPT_' + '0123456789' * 20 + '_COMPLETE'
             os.write(master, ('\x1b[200~' + message + '\x1b[201~\r').encode())
             wait_for('Hello from MaiCore: ' + message)

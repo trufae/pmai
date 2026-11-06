@@ -1936,7 +1936,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private func drawInputRows() {
     var out = ""
     let width = max(1, columns - 1)
-    let base = colorsEnabled ? TerminalThemeStyle.base(ui) : ""
+    let background = colorsEnabled ? TerminalLineEditor.backgroundColorCode(ui.inputBackground) : nil
+    let base = background.map { "\u{1B}[\($0)m" } ?? ""
     for (index, row) in inputRows.enumerated() {
       // Erase with the input background, including the final column reserved
       // for the caret. The editor's padded text stops one cell short of it.

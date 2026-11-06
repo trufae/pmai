@@ -200,7 +200,7 @@ def main():
                     assert not status or status.startswith('Z'), (choice, child_pid, status)
 
                 try:
-                    wait_for('pmai>')
+                    wait_for('> ')
                     if choice in ('hey-all', 'hey-target'):
                         send('earlier exchange\n')
                         assert user_texts() == ['earlier exchange']

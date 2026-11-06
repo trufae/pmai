@@ -87,7 +87,7 @@ def main(binary):
                 wait(f"Unknown help topic 'buffer-barrier-{label}'")
 
             try:
-                wait('pmai> ')
+                wait('> ')
                 send('/set effort\r')
                 barrier('effort')
                 assert 'effort = low' in output(), (count, output())

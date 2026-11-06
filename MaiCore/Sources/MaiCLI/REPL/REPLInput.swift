@@ -129,7 +129,7 @@ final class REPLInputReader: @unchecked Sendable {
   private let interrupt: @Sendable () -> Void
   private let gate = DispatchSemaphore(value: 0)
   private let lock = NSLock()
-  private var next = Prompt(presentation: TerminalPrompt(text: "pmai> "), completions: [], separator: nil)
+  private var next = Prompt(presentation: TerminalPrompt(text: "> "), completions: [], separator: nil)
   private var stopped = false
 
   init(

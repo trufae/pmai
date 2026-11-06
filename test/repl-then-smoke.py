@@ -94,10 +94,10 @@ def main():
                 return body
 
             try:
-                wait('pmai>')
+                wait('> ')
                 # /queue allocates a chat root even before its first turn.
                 send('/queue')
-                wait('pmai>')
+                wait('> ')
                 send('/then /version > idle-version.txt')
                 deadline = time.monotonic() + 15
                 while not (root / 'idle-version.txt').exists():

@@ -230,14 +230,14 @@ def main():
             def expect(text):
                 return expect_pty(master, process, pending, canonical(text), 20)
             try:
-                expect('pmai>')
+                expect('> ')
                 # /vdb must keep the REPL reader parked while asking for access.
                 send('/vdb index linked')
                 expect('follow symlink from')
                 expect('approve [y/a/s/n/c]> ')
                 send('n')
                 expect('was not approved')
-                expect('pmai>')
+                expect('> ')
                 # External workspace links prompt by default, including with outside deny.
                 for answer, final in [('y', 'LINK APPROVED'), ('n', 'LINK REJECTED')]:
                     enqueue(call('files_read', path='linked/outside.txt'), final)
@@ -358,7 +358,7 @@ def main():
             pending = bytearray()
             saved_config = config.read_bytes()
             try:
-                expect('pmai>')
+                expect('> ')
                 enqueue(call('files_read', path='private/secret.txt'), 'ALWAYS PATH YOLO')
                 send('Read private')
                 expect('approve [y/a/s/n/c]> ')

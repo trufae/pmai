@@ -49,7 +49,7 @@ def main(clear_action):
             os.write(master, (text + '\r').encode())
 
         try:
-            wait_for('pmai> ')
+            wait_for('> ')
             send('second')
             wait_for('[y] summarize')
             send('m')

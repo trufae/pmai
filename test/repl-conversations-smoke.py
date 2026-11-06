@@ -111,7 +111,7 @@ def main(binary):
                 return [m['content'] for m in request['messages'] if m['role'] == 'user']
 
             try:
-                wait_for('pmai>')
+                wait_for('> ')
                 send('/chat rename Tab parent\r')
                 wait_for('Chat renamed')
                 send('ROOT_REQUEST\r')
@@ -188,12 +188,12 @@ def main(binary):
                 send('\x1b2')
                 read_for()
                 assert 'ANSWER_BACKGROUND_REQUEST' in output(), screen
-                assert 'pmai#2>' in screen[26], screen
+                assert '#2>' in screen[26], screen
                 send('/fork Nested child\r')
                 wait_for('and switched to it.')
                 send('/subagents parent\r')
                 read_for()
-                assert 'pmai#2>' in screen[26], screen
+                assert '#2>' in screen[26], screen
                 send('/jobs focus main\r')
                 wait_for('Messages go to this chat again.')
                 send('/subagents\r')
@@ -214,7 +214,7 @@ def main(binary):
                 os.close(master_old)
                 captured.clear()
                 screen.clear()
-                wait_for('pmai#1>')
+                wait_for('#1>')
                 send('/subagents 2\r')
                 wait_for('Messages go to agent#2')
                 send('RESUMED_CHILD\r')

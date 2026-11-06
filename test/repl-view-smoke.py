@@ -183,7 +183,7 @@ def main(binary):
                 assert process.returncode == 0
 
             try:
-                wait_for('pmai>')
+                wait_for('> ')
                 send('/view history\r')
                 wait_for('── view: input history')
                 assert '/view history' in top(), screen
@@ -675,7 +675,7 @@ def main(binary):
                 os.close(slave)
                 captured.clear()
                 screen.clear()
-                wait_for('pmai#1>')
+                wait_for('#1>')
                 send('/view pins\r')
                 wait_for('── view: pinned messages')
                 assert 'READ_ANSWER' in top(), screen
@@ -712,7 +712,7 @@ def main(binary):
                 os.close(slave)
                 captured.clear()
                 screen.clear()
-                wait_for('pmai>')
+                wait_for('> ')
                 send('/view pins\r')
                 wait_for('── view: pinned messages')
                 assert 'PAGED_000' in top() and 'DETAIL_000' in top(), screen

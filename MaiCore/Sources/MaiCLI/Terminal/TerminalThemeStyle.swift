@@ -1,6 +1,10 @@
 import Foundation
 import MaiCore
 
+extension ConfiguredTerminalUI {
+  var inputBackground: String { promptBackground.isEmpty ? background : promptBackground }
+}
+
 /// Private SGR annotations carry a theme role through composed terminal text.
 /// The buffer resolves them when painting; other terminal output removes them.
 enum TerminalThemeStyle: Int, CaseIterable {
@@ -43,10 +47,10 @@ enum TerminalThemeStyle: Int, CaseIterable {
     switch self {
     case .bold: return ui.bold ? "1" : "22"
     case .toolCallBold: return ui.toolCallBold ? "1" : "22"
-    case .toolResultBackground, .toolCallBackground:
+    case .promptBackground, .toolResultBackground, .toolCallBackground:
       return TerminalLineEditor.backgroundColorCode(value(in: ui))
         ?? TerminalLineEditor.backgroundColorCode(ui.background) ?? "49"
-    case .background, .promptBackground, .diffAddedBackground, .diffRemovedBackground:
+    case .background, .diffAddedBackground, .diffRemovedBackground:
       return TerminalLineEditor.backgroundColorCode(value(in: ui)) ?? "49"
     default:
       return TerminalLineEditor.foregroundColorCode(value(in: ui)) ?? "39"

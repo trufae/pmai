@@ -142,7 +142,7 @@ def main():
                     read_pty(master, output, .05)
 
             try:
-                wait('pmai>')
+                wait('> ')
                 send('/set voice.output openai\n')
                 wait('Set voice.output')
                 send('/voice voices\n')
@@ -219,7 +219,7 @@ def main():
                 wait_spoken('Reply to voice-two.')
                 wait('walkie-talkie · paused')
                 send('/view off\n')
-                wait('pmai>')
+                wait('> ')
                 send('/voice off\n/voice realtime\n')
                 wait('realtime · listening')
                 request('voice-two', voice=True)  # Energy followed by silence commits without a key.

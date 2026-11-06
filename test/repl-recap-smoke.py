@@ -74,7 +74,7 @@ def check_terminal(command, root, environment, assert_unchanged):
                 output.extend(os.read(master, 65536))
 
     try:
-        wait_for('pmai> ')
+        wait_for('> ')
         for draft in ('cancelled-draft', 'preserved-draft'):
             start_summary('/chat compact' if draft == 'cancelled-draft' else '/chat recap')
             # A submitted command used to park the input reader behind the

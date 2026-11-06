@@ -96,6 +96,7 @@ enum TerminalInputModes {
 private final class ClassicEditorSurface: LineEditorSurface {
   private var cooked: termios
   private var raw: termios
+  private let backgroundStyle: String
   /// The row of the input area the caret was left on, which is how far up
   /// the area starts at the next draw.
   private var caretRow = 0
@@ -103,9 +104,10 @@ private final class ClassicEditorSurface: LineEditorSurface {
   /// Avoid reprinting the fallback list while Tab cycles through it.
   private var lastMenuKey: String?
 
-  init(cooked: termios, raw: termios) {
+  init(cooked: termios, raw: termios, background: String) {
     self.cooked = cooked
     self.raw = raw
+    backgroundStyle = TerminalLineEditor.backgroundColorCode(background).map { "\u{1B}[\($0)m" } ?? ""
   }
 
   func maximumInputRows() -> Int {
@@ -113,12 +115,11 @@ private final class ClassicEditorSurface: LineEditorSurface {
   }
 
   func drawInput(rows: [String], caretRow: Int, caretColumn: Int) {
-    var out = "\r" + up(self.caretRow)
+    var out = "\r" + up(self.caretRow) + "\u{1B}[J"
     for (index, row) in rows.enumerated() {
-      out += "\u{1B}[2K" + row
+      out += backgroundStyle + "\u{1B}[2K" + row
       if index < rows.count - 1 { out += "\n" }
     }
-    out += "\u{1B}[J"
     out += up(rows.count - 1 - caretRow) + "\r\u{1B}[\(caretColumn + 1)G"
     write(out)
     self.caretRow = caretRow
@@ -380,7 +381,7 @@ final class TerminalLineEditor {
     defer { _ = tcsetattr(STDIN_FILENO, TCSAFLUSH, &original) }
     FileHandle.standardOutput.write(Data(TerminalInputModes.enable.utf8))
     defer { FileHandle.standardOutput.write(Data(TerminalInputModes.disable.utf8)) }
-    surface = ClassicEditorSurface(cooked: original, raw: raw)
+    surface = ClassicEditorSurface(cooked: original, raw: raw, background: ui.inputBackground)
     defer { surface = nil }
     return readInteractive(
       prompt: prompt, completions: completions, additionalCompletions: additionalCompletions,
@@ -1291,58 +1292,63 @@ final class TerminalLineEditor {
 
   // MARK: - Drawing
 
-  /// Keep logical line numbers in the prompt even when only one row is visible.
+  private struct InputRow {
+    var prompt: String
+    var width: Int
+    var bytes: Range<Int>
+  }
+
+  /// Continuations use the available width, independent of the first prompt.
+  /// Single-row mode keeps a compact indicator of the current logical line.
   private func inputLayout(prompt: String, bytes: [UInt8], cursor: Int)
-    -> (prompt: String, width: Int, lines: [Range<Int>], cursorLine: Int)
+    -> (rows: [InputRow], cursorLine: Int)
   {
     let logicalLines = lineRanges(in: bytes)
     let logicalCursor = logicalLines.firstIndex { cursor <= $0.upperBound } ?? logicalLines.count - 1
     var label = prompt
-    if logicalLines.count > 1 {
-      let suffix = "[\(logicalCursor + 1)/\(logicalLines.count)]> "
-      label = prompt.hasSuffix("> ") ? String(prompt.dropLast(2)) + suffix : prompt + suffix
+    if ui.line == .single, logicalLines.count > 1 {
+      label = "[\(logicalCursor + 1)/\(logicalLines.count)]> "
+      if activePrompt.isModal { label = prompt + label }
     }
     // Keep the last terminal column free to avoid implicit terminal wrapping.
     let lineWidth = max(1, Self.terminalColumns() - 1)
     let minimumInputWidth = min(12, max(1, lineWidth / 2))
     let visiblePrompt = truncatedPrompt(label, maximumWidth: lineWidth - minimumInputWidth)
-    let width = max(1, lineWidth - displayWidth(visiblePrompt))
-    let lines = ui.line == .multi
-      ? wrappedLines(in: bytes, logicalLines: logicalLines, width: width) : logicalLines
-    // A soft boundary belongs to the next row; a hard newline belongs to the
-    // row before it.
-    let cursorLine = lines.indices.first { index in
-      cursor < lines[index].upperBound || cursor == lines[index].upperBound
-        && (index == lines.count - 1 || lines[index + 1].lowerBound > cursor)
-    } ?? lines.count - 1
-    return (visiblePrompt, width, lines, cursorLine)
-  }
-
-  private func wrappedLines(in bytes: [UInt8], logicalLines: [Range<Int>], width: Int) -> [Range<Int>] {
-    var rows: [Range<Int>] = []
+    let continuation = truncatedPrompt("> ", maximumWidth: lineWidth - minimumInputWidth)
+    var rows: [InputRow] = []
+    func append(_ range: Range<Int>) {
+      let head = rows.isEmpty || ui.line == .single ? visiblePrompt : continuation
+      rows.append(InputRow(prompt: head, width: max(1, lineWidth - displayWidth(head)), bytes: range))
+    }
     for line in logicalLines {
-      var start = line.lowerBound
+      append(line)
+      guard ui.line == .multi else { continue }
       var cells = 0
       let boundaries = characterBoundaries(in: bytes[line])
       for (from, to) in zip(boundaries, boundaries.dropFirst()) {
         let size = displayWidth(bytes[from..<to])
-        if cells + size > width, from > start {
-          rows.append(start..<from)
-          start = from
+        let index = rows.count - 1
+        if cells + size > rows[index].width, from > rows[index].bytes.lowerBound {
+          rows[index].bytes = rows[index].bytes.lowerBound..<from
+          append(from..<line.upperBound)
           cells = 0
         }
         cells += size
       }
-      rows.append(start..<line.upperBound)
     }
-    return rows
+    // A soft boundary belongs to the next row; a hard newline belongs to the
+    // row before it.
+    let cursorLine = rows.indices.first { index in
+      cursor < rows[index].bytes.upperBound || cursor == rows[index].bytes.upperBound
+        && (index == rows.count - 1 || rows[index + 1].bytes.lowerBound > cursor)
+    } ?? rows.count - 1
+    return (rows, cursorLine)
   }
 
   private func redraw(prompt: String, bytes: [UInt8], cursor: Int) {
     drawnSize = (Self.terminalColumns(), Self.terminalRows())
     let layout = inputLayout(prompt: prompt, bytes: bytes, cursor: cursor)
-    let promptWidth = displayWidth(layout.prompt)
-    let lines = layout.lines
+    let lines = layout.rows
     let cursorLine = layout.cursorLine
     let maximumRows = ui.line == .single ? 1 : max(1, surface?.maximumInputRows() ?? 1)
     if cursorLine < viewTop { viewTop = cursorLine }
@@ -1350,25 +1356,23 @@ final class TerminalLineEditor {
     viewTop = max(0, min(viewTop, lines.count - maximumRows))
     let promptStyle = style(
       foreground: activePrompt.isModal ? ui.warningForeground : ui.promptForeground,
-      background: ui.promptBackground, bold: activePrompt.isModal)
-    let inputStyle = style(foreground: ui.foreground, background: ui.background, bold: ui.bold)
-    let hasInputBackground = Self.colorCode(ui.background, background: true) != nil
-    let continuation = truncatedPrompt("...> ", maximumWidth: promptWidth)
-    let indent = String(repeating: " ", count: max(0, promptWidth - displayWidth(continuation))) + continuation
+      background: ui.inputBackground, bold: activePrompt.isModal)
+    let inputStyle = style(foreground: ui.foreground, background: ui.inputBackground, bold: ui.bold)
+    let hasInputBackground = Self.colorCode(ui.inputBackground, background: true) != nil
     var rows: [String] = []
-    var caretColumn = promptWidth
+    var caretColumn = 0
     for (offset, line) in lines[viewTop..<min(lines.count, viewTop + maximumRows)].enumerated() {
       let isCursorLine = viewTop + offset == cursorLine
       let visibleRange = visibleInputRange(
-        in: bytes, line: line, cursor: isCursorLine ? cursor : line.lowerBound,
-        maximumWidth: layout.width)
+        in: bytes, line: line.bytes, cursor: isCursorLine ? cursor : line.bytes.lowerBound,
+        maximumWidth: line.width)
       let visibleInput = renderable(bytes[visibleRange])
-      let paddingWidth = hasInputBackground ? max(0, layout.width - displayWidth(visibleInput)) : 0
+      let paddingWidth = hasInputBackground ? max(0, line.width - displayWidth(visibleInput)) : 0
       let padding = String(repeating: " ", count: paddingWidth)
-      let head = promptStyle + (offset == 0 ? layout.prompt : indent) + resetStyle
+      let head = promptStyle + line.prompt + resetStyle
       rows.append(head + inputStyle + visibleInput + padding + resetStyle)
       if isCursorLine {
-        caretColumn = promptWidth + displayWidth(bytes[visibleRange.lowerBound..<cursor])
+        caretColumn = displayWidth(line.prompt) + displayWidth(bytes[visibleRange.lowerBound..<cursor])
       }
     }
     surface?.drawInput(rows: rows, caretRow: cursorLine - viewTop, caretColumn: caretColumn)
@@ -1379,12 +1383,12 @@ final class TerminalLineEditor {
   func styledLine(prompt: String, text: String) -> String {
     var promptStyle = style(
       foreground: activePrompt.isModal ? ui.warningForeground : ui.promptForeground,
-      background: ui.promptBackground, bold: activePrompt.isModal)
-    var inputStyle = style(foreground: ui.foreground, background: ui.background, bold: ui.bold)
+      background: ui.inputBackground, bold: activePrompt.isModal)
+    var inputStyle = style(foreground: ui.foreground, background: ui.inputBackground, bold: ui.bold)
     if persistentSurface is TerminalScreen {
       promptStyle += (activePrompt.isModal ? TerminalThemeStyle.warningForeground : .promptForeground).marker
         + TerminalThemeStyle.promptBackground.marker
-      inputStyle += TerminalThemeStyle.foreground.marker + TerminalThemeStyle.background.marker
+      inputStyle += TerminalThemeStyle.foreground.marker + TerminalThemeStyle.promptBackground.marker
         + TerminalThemeStyle.bold.marker
     }
     let indent = String(repeating: " ", count: displayWidth(prompt))
@@ -1656,9 +1660,9 @@ final class TerminalLineEditor {
   private func moveVertically(in bytes: [UInt8], cursor: inout Int, prompt: String, direction: Int) -> Bool {
     let layout = inputLayout(prompt: prompt, bytes: bytes, cursor: cursor)
     let target = layout.cursorLine + direction
-    guard layout.lines.indices.contains(target) else { return false }
-    let column = displayWidth(bytes[layout.lines[layout.cursorLine].lowerBound..<cursor])
-    let line = layout.lines[target]
+    guard layout.rows.indices.contains(target) else { return false }
+    let column = displayWidth(bytes[layout.rows[layout.cursorLine].bytes.lowerBound..<cursor])
+    let line = layout.rows[target].bytes
     cursor = line.lowerBound
     var cells = 0
     let boundaries = characterBoundaries(in: bytes[line])
@@ -1666,8 +1670,8 @@ final class TerminalLineEditor {
       cells += displayWidth(bytes[from..<to])
       guard cells <= column else { break }
       // Do not land on the following visual row at a soft boundary.
-      if to == line.upperBound, target + 1 < layout.lines.count,
-        layout.lines[target + 1].lowerBound == to { break }
+      if to == line.upperBound, target + 1 < layout.rows.count,
+        layout.rows[target + 1].bytes.lowerBound == to { break }
       cursor = to
     }
     return true

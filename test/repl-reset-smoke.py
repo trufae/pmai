@@ -148,7 +148,7 @@ def main():
                 os.write(master, (text + '\r').encode())
 
             try:
-                wait('pmai>')
+                wait('> ')
                 send('/voice on')
                 wait('walkie-talkie · listening')
                 send('/reset')
@@ -156,7 +156,7 @@ def main():
                 assert config.read_bytes() == before
                 os.write(master, b'\x03')
                 wait('Reset cancelled.')
-                wait('pmai#1>')
+                wait('#1>')
                 assert config.read_bytes() == before
                 send('/voice status')
                 wait('Voice: listening')
@@ -164,7 +164,7 @@ def main():
                 wait('reset [reset/cancel]>')
                 send('cancel')
                 wait('Reset cancelled.')
-                wait('pmai#1>')
+                wait('#1>')
                 assert config.read_bytes() == before
                 send('/reset')
                 wait('reset [reset/cancel]>')

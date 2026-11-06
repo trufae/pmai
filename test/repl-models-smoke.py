@@ -156,7 +156,7 @@ def main():
                 return requests.get_nowait()
 
             try:
-                wait_for('pmai>')
+                wait_for('> ')
                 send('/set effort high\n')
                 wait_for('openai::test.gguf [high]')
                 read_for(.2)

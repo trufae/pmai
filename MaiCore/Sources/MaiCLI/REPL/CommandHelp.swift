@@ -352,7 +352,7 @@ extension MaiCLI {
   static let shellHelp: String = """
     Input:
       /set ui.line multi  Wrap long input across rows (default, in classic and buffer modes)
-      /set ui.line single Show one scrolling row; pmai[2/3]> identifies the logical line
+      /set ui.line single Show one scrolling row; [2/3]> identifies the logical line
       Enter sends; Shift+Enter adds a newline. Alt+Enter or Ctrl+J also add newlines.
       Terminals that report Shift+Enter as plain Enter need one of those alternatives.
       Up/Down move through visible rows, then history; soft wrapping adds no newlines.
@@ -457,7 +457,7 @@ extension MaiCLI {
       /theme color fgcolor COLOR      Input foreground
       /theme color bgcolor COLOR      Text and buffer background
       /theme color fgprompt COLOR     Prompt foreground
-      /theme color bgprompt COLOR     Prompt background
+      /theme color bgprompt COLOR     Background of the entire input area
       /theme color fgtoolresult COLOR Successful tool-result output
       /theme color fgtoolcall COLOR   Tool-call previews
       /theme color bgtoolcall COLOR   Tool-call background

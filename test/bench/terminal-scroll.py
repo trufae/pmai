@@ -99,7 +99,7 @@ def main():
 
         sampler = None
         try:
-            drain_until(b'pmai> ')
+            drain_until(b'> ')
             barrier('ready')
             # Leave room to scroll in both directions.
             send(b'\x1b[5~' * 8)

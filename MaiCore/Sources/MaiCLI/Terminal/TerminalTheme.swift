@@ -211,10 +211,10 @@ enum TerminalTheme {
       let padded = text + String(repeating: " ", count: width - text.count)
       let content: String
       if prompt {
-        let prefix = String(padded.prefix(6))
-        content = styled(prefix, foreground: ui.promptForeground, background: ui.promptBackground)
+        let prefix = String(padded.prefix(2))
+        content = styled(prefix, foreground: ui.promptForeground, background: ui.inputBackground)
           + styled(String(padded.dropFirst(prefix.count)), foreground: foreground,
-            background: background ?? ui.background, bold: bold)
+            background: ui.inputBackground, bold: bold)
       } else {
         content = styled(padded, foreground: foreground,
           background: background ?? ui.background, bold: bold, italic: italic)
@@ -226,7 +226,7 @@ enum TerminalTheme {
       border,
       row(name, foreground: ui.infoForeground, background: ui.backgroundLine, bold: true),
       border,
-      row("pmai> List the project files", foreground: ui.foreground, bold: ui.bold, prompt: true),
+      row("> List the project files", foreground: ui.foreground, bold: ui.bold, prompt: true),
       row("Thinking... inspecting the project", foreground: ui.thinkingForeground),
       row("-> files_list .", foreground: ui.toolCallForeground,
         background: ui.toolCallBackground.isEmpty ? ui.background : ui.toolCallBackground,

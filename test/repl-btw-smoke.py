@@ -111,7 +111,7 @@ def main():
                     assert not any(m['role'] in ('assistant', 'tool') for m in body['messages']), body
 
             try:
-                wait('pmai>')
+                wait('> ')
                 send('main\n')
                 request('main')
                 wait('BEGIN-main')

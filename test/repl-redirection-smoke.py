@@ -135,14 +135,14 @@ def main():
             return b'\x1b[200~' + text.encode() + b'\x1b[201~'
 
         try:
-            wait('pmai> ')
+            wait('> ')
             os.write(master, b'banana terminal\r')
             wait('✓ took')
             if shutil.which('less'):
                 os.write(master, b'/msg log|less\r')
                 wait('(END)')
                 os.write(master, b'q')
-                wait('pmai#1> ')
+                wait('#1> ')
                 submit(b'/version > after-pager.txt')
                 assert (root / 'after-pager.txt').read_text() == version
             submit(paste('/msg last > pasted.txt'))

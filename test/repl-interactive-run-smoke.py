@@ -157,7 +157,7 @@ def main():
 
                 try:
                     if case != 'oneshot':
-                        wait_until(lambda: b'pmai>' in output, 'initial prompt')
+                        wait_until(lambda: b'> ' in output, 'initial prompt')
                         send(b'open program\r')
                     wait_until(lambda: not requests.empty(), 'first request')
                     first = requests.get_nowait()

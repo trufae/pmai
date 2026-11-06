@@ -349,7 +349,7 @@ any non-whitespace word; heredoc content is always sent as a message rather
 than interpreted as a slash command:
 
 ```text
-pmai> <<EOF
+> <<EOF
 Explain this code:
 if (ready) {
   run();
@@ -674,7 +674,7 @@ agents, and children waiting for a slot. Idle chats and finished agents are
 skipped; if no agents are active, the CLI reports it without sending anything.
 `/set ui.broadcast on` makes unaddressed messages and `/queue push TEXT`
 broadcast by default; explicit `@` addresses override it. The prompt shows
-`pmai@*>` while enabled. The setting survives restarts; `/set ui.broadcast off`
+`@*>` while enabled. The setting survives restarts; `/set ui.broadcast off`
 (the default) restores delivery to the focused agent. When no agents are
 active, `@main TEXT` still starts a chat turn.
 `/jobs focus PID` chooses one agent until `/jobs focus main`. When a tool asks for
@@ -819,7 +819,7 @@ Old configuration files and saved themes using `/set ui.COLOR VALUE` remain vali
 | --- | --- |
 | `bgline` | Input/status-line background |
 | `fgcolor`, `bgcolor` | Text foreground and background (including empty space in buffer mode) |
-| `fgprompt`, `bgprompt` | Prompt |
+| `fgprompt`, `bgprompt` | Prompt marker foreground; entire input area background |
 | `fgtoolcall`, `fgtoolresult` | Tool calls and successful results |
 | `bgtoolcall`, `bgtoolresult` | Tool-call and result backgrounds (full rows in buffer mode) |
 | `fgerror` | Errors and failed tool results |

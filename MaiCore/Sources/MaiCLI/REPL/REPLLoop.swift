@@ -670,15 +670,15 @@ extension MaiCLI {
       if let remoteShell {
         prompt = "\(remoteShell.name)> "
       } else if configuration?.ui.broadcast == true {
-        prompt = "pmai@*> "
+        prompt = "@*> "
       } else if case .agent(let pid) = loop.focus {
         // The prompt names the process a line goes to: a focused child, or the
         // chat's own once it has run, so its pid is at hand for /jobs commands.
-        prompt = "pmai#\(pid.rawValue)> "
+        prompt = "#\(pid.rawValue)> "
       } else if let pid = chatProcessIDs[session.id] {
-        prompt = "pmai#\(pid.rawValue)> "
+        prompt = "#\(pid.rawValue)> "
       } else {
-        prompt = "pmai> "
+        prompt = "> "
       }
       let title = loop.chatTitles[session.id] ?? ""
       let conversationID: String

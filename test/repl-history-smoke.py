@@ -122,10 +122,10 @@ def main():
                 output.clear()
                 os.write(master, (text + '\r').encode())
                 wait(expected)
-                wait('pmai> ')
+                wait('> ')
 
             try:
-                wait('pmai> ')
+                wait('> ')
                 line('/history del 2', 'Deleted input history entry 2.')
                 # Up must recall /about after deleting /version from the live editor.
                 line('\x1b[A', 'Welcome to PocketMai!')

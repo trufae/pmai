@@ -49,7 +49,7 @@ def measure(binary, root, env):
         return (time.perf_counter() - started) * 1000
 
     try:
-        prompt_ms = wait(b'pmai> ')
+        prompt_ms = wait(b'> ')
         os.write(master, b'/help startup-benchmark\r')
         reply_ms = wait(b"Unknown help topic 'startup-benchmark'")
         os.write(master, b'/exit\r')

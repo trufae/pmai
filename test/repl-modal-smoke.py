@@ -136,10 +136,10 @@ def main():
                     return requests.get_nowait()
 
                 try:
-                    wait('pmai> ')
+                    wait('> ')
                     line('ask')
                     assert next_request()['messages'][-1]['content'] == 'ask'
-                    wait('pmai#')
+                    wait('#1> ')
                     if action == 'edit':
                         # Leaving chat chop must not cancel the provider call
                         # still waiting behind it; approval will arrive below.
@@ -147,7 +147,7 @@ def main():
                         wait('chop [n/b/p/e/d/x/q]> ')
                         send('\x03')
                         wait('Chat chop closed.')
-                        wait('pmai#')
+                        wait('#1> ')
                     if action == 'heredoc':
                         send('<<END\rfirst line\r')
                         wait('...> ')

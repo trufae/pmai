@@ -117,7 +117,7 @@ def main(binary, mode):
                     read_pty(master, output, .05)
 
             try:
-                wait('pmai> ', 15)
+                wait('> ', 15)
                 send('Start 80 workers')
                 until(lambda: len(started) == 80, '80 workers did not start')
                 send('/history')

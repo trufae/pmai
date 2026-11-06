@@ -134,7 +134,7 @@ def main():
                     assert json.loads(config.read_text())['ui']['broadcast'] is enabled
 
                 try:
-                    wait_for('pmai>')
+                    wait_for('> ')
                     send('/set ui.broadcast')
                     wait_for('ui.broadcast = off')
                     for prefix in ('', '/queue push '):
@@ -206,7 +206,7 @@ def main():
                     wait_for(f'Queued for agent#{leaf}')
                     expected += [(pid, 'wildcard queued note') for pid in pids]
                     set_broadcast(True)
-                    wait_for('pmai@*>')
+                    wait_for('@*>')
                     send('/job FOCUS')
                     wait_for('Messages go to every active agent.')
                     send('default broadcast note')

@@ -57,7 +57,7 @@ def main():
         def run(commands, args=('-r', 'Newest'), allow_errors=False, split=True):
             output = run_repl(command + list(args), commands, cwd=current, env=env,
                               split=split, allow_errors=allow_errors)
-            return [part.split('pmai> ', 1)[-1] for part in output] if split else output
+            return [part.split('> ', 1)[-1] for part in output] if split else output
 
         def messages():
             return read_chat(saved)['messages']
