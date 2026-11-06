@@ -16,7 +16,7 @@ import tempfile
 import termios
 import time
 
-PROMPT = re.compile(rb'pmai(?:#[0-9]+)?>')
+PROMPT = re.compile(rb'(?:#[0-9]+)?> ')
 
 
 def main():

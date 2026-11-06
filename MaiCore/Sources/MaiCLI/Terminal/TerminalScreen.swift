@@ -75,6 +75,9 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var caretRow = 0
   private var caretColumn = 0
   private var cursorHidden = false
+  private var readingInput = false
+  private var cursorBreathingStartedAt: TimeInterval?
+  private var paintedCursorShade: Int?
   private var outputEndedLine: Bool {
     get { outputConversation.outputEndedLine }
     set { outputConversation.outputEndedLine = newValue }
@@ -912,6 +915,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     resizeSource = nil
     activitySource?.cancel()
     activitySource = nil
+    restoreCursorColor()
     if ui.mode == .buffer {
       write(Self.disableMouse + TerminalInputModes.disable + (leaveBuffer ? Self.leaveBuffer : ""))
       _ = tcsetattr(STDIN_FILENO, TCSAFLUSH, &cooked)
@@ -1227,6 +1231,14 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   // MARK: - LineEditorSurface
+
+  func setReadingInput(_ reading: Bool) {
+    lock.withLock {
+      guard readingInput != reading else { return }
+      readingInput = reading
+      updateActivityTimer()
+    }
+  }
 
   /// Up to half the screen, so the output keeps room of its own.
   func maximumInputRows() -> Int {
@@ -1889,7 +1901,17 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   private func updateActivityTimer() {
-    guard active, activityStartedAt != nil else {
+    // The prompt breathes only while input owns the visible cursor and the
+    // braille indicator is idle. Respect NO_COLOR and dumb terminals too.
+    if active, bufferColorsEnabled, readingInput, !cursorHidden, !animatingStatus {
+      if cursorBreathingStartedAt == nil {
+        cursorBreathingStartedAt = ProcessInfo.processInfo.systemUptime
+        drawCursorBreathing()
+      }
+    } else {
+      restoreCursorColor()
+    }
+    guard active, activityStartedAt != nil || cursorBreathingStartedAt != nil else {
       activitySource?.cancel()
       activitySource = nil
       return
@@ -1906,6 +1928,8 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private func drawActivity() {
     lock.withLock {
       refreshSize()
+      guard active else { return }
+      drawCursorBreathing()
       // The completion menu owns the row; its first cell must not blink.
       guard active, let activityStartedAt, completionMenu == nil,
         statusColumns > 2
@@ -1931,6 +1955,28 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
         move(row: statusRow, column: 2)
           + backgroundStyle + statusLineStyle + marker + Self.reset)
     }
+  }
+
+  private func drawCursorBreathing() {
+    guard let startedAt = cursorBreathingStartedAt else { return }
+    // A six-second cosine cycle eases from white to dark grey and back.
+    // Sampling monotonic time keeps typing and redraws from changing its pace.
+    let elapsed = max(0, ProcessInfo.processInfo.systemUptime - startedAt)
+    let phase = elapsed.truncatingRemainder(dividingBy: 6) / 6
+    let shade = Int((64 + 191 * (1 + cos(phase * 2 * .pi)) / 2).rounded())
+    guard shade != paintedCursorShade else { return }
+    paintedCursorShade = shade
+    let hex = String(shade, radix: 16)
+    write("\u{1B}]12;rgb:\(hex)/\(hex)/\(hex)\u{1B}\\")
+  }
+
+  private func restoreCursorColor() {
+    cursorBreathingStartedAt = nil
+    guard paintedCursorShade != nil else { return }
+    paintedCursorShade = nil
+    // OSC 112 restores the terminal's configured cursor color without a query
+    // response that could leak into input. Cursor shape and blink stay untouched.
+    write("\u{1B}]112\u{1B}\\")
   }
 
   private func drawInputRows() {
@@ -1962,6 +2008,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     guard hidden != cursorHidden else { return }
     cursorHidden = hidden
     write(hidden ? "\u{1B}[?25l" : "\u{1B}[?25h")
+    updateActivityTimer()
   }
 
   /// A resize can still happen between measuring and writing. Fixed rows must

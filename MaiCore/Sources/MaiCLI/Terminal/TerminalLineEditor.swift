@@ -21,6 +21,8 @@ struct CompletionMenu: Equatable {
 /// a scrolling terminal, the way a shell prompt does; `TerminalScreen` owns
 /// rows that stay below the output while agents print.
 protocol LineEditorSurface: AnyObject {
+  /// Whether the editor is accepting input, including modal questions.
+  func setReadingInput(_ reading: Bool)
   /// Rows the input may take before it scrolls inside its own area.
   func maximumInputRows() -> Int
   /// Draws the whole input area: one styled string per row, cleared first,
@@ -63,6 +65,7 @@ protocol LineEditorSurface: AnyObject {
 }
 
 extension LineEditorSurface {
+  func setReadingInput(_ reading: Bool) {}
   func scrollOutput(wheel: Int, pages: Int) {}
   func scrollOutput(toEnd: Bool) {}
   var viewHasFocus: Bool { false }
@@ -435,6 +438,8 @@ final class TerminalLineEditor {
     completionQuery = nil
     drawSeparator(separator)
     redraw(prompt: prompt, bytes: bytes, cursor: cursor)
+    surface?.setReadingInput(true)
+    defer { surface?.setReadingInput(false) }
 
     func insert(_ text: [UInt8], fromPaste: Bool = false) {
       guard !text.isEmpty else { return }
