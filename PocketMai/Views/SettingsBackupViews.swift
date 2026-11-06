@@ -85,7 +85,7 @@ struct SettingsImportView: View {
   @State private var pendingConversationImport: ConversationImportPreview?
   @State private var pendingConversationCollectionImport: PendingConversationImportFile?
 
-  @State private var toast: String?
+  @State private var toast: ToastNotice?
   @State private var errorMessage: String?
 
   init(
@@ -191,7 +191,7 @@ struct SettingsImportView: View {
       guard let initialFile else { return }
       prepareImportPreview(from: initialFile)
     }
-    .settingsToast($toast, style: .success)
+    .toast($toast)
   }
 
   private var chooseFileButton: some View {
@@ -381,7 +381,7 @@ struct SettingsImportView: View {
           restoreAudio: restoreAudio,
           includePictures: includePictures)
         errorMessage = nil
-        showToast(summary)
+        finishImport(summary)
       } catch {
         errorMessage = error.localizedDescription
       }
@@ -392,7 +392,7 @@ struct SettingsImportView: View {
           selection: selection,
           includePictures: includePictures)
         errorMessage = nil
-        showToast(summary)
+        finishImport(summary)
       } catch {
         errorMessage = error.localizedDescription
       }
@@ -436,17 +436,15 @@ struct SettingsImportView: View {
       try store.importConversation(preview, resolution: resolution)
       pendingConversationImport = nil
       errorMessage = nil
-      showToast("Imported conversation.")
+      finishImport("Imported conversation.")
       return nil
     } catch {
       return error.localizedDescription
     }
   }
 
-  private func showToast(_ message: String) {
-    withAnimation(.snappy) {
-      toast = message
-    }
+  private func finishImport(_ message: String) {
+    toast = ToastNotice(message, style: .success)
     if let onFinish {
       Task { @MainActor in
         try? await Task.sleep(for: .milliseconds(900))
@@ -770,7 +768,7 @@ struct SettingsDestroyView: View {
   let dismissSettings: () -> Void
 
   @State private var pendingAction: DestroyAction?
-  @State private var toast: String?
+  @State private var toast: ToastNotice?
 
   var body: some View {
     Form {
@@ -853,7 +851,7 @@ struct SettingsDestroyView: View {
     } message: { action in
       Text(action.message)
     }
-    .settingsToast($toast)
+    .toast($toast)
   }
 
   private var pendingActionBinding: Binding<Bool> {
@@ -890,37 +888,31 @@ struct SettingsDestroyView: View {
     switch action {
     case .conversations:
       store.clearAllConversations()
-      showToast("Conversations cleared.")
+      toast = ToastNotice("Conversations cleared.", style: .success)
     case .memory:
       store.clearMemory()
-      showToast("Memory cleared.")
+      toast = ToastNotice("Memory cleared.", style: .success)
     case .downloadedModels:
       let summary = store.clearDownloadedMLXModels()
-      showToast(summary)
+      toast = ToastNotice(summary.message, style: summary.succeeded ? .success : .error)
     case .filesWorkspace:
       let summary = store.clearFilesWorkspace()
-      showToast(summary)
+      toast = ToastNotice(summary, style: .success)
     case .providers:
       store.clearProviderSettings()
-      showToast("Providers cleared.")
+      toast = ToastNotice("Providers cleared.", style: .success)
     case .prompts:
       store.clearSystemPrompts()
-      showToast("Prompts reset.")
+      toast = ToastNotice("Prompts reset.", style: .success)
     case .toolSettings:
       store.clearToolSettings()
-      showToast("Tool settings reset.")
+      toast = ToastNotice("Tool settings reset.", style: .success)
     case .mcpServers:
       store.clearMCPServers()
-      showToast("MCP servers cleared.")
+      toast = ToastNotice("MCP servers cleared.", style: .success)
     case .factoryReset:
       store.factoryReset()
       dismissSettings()
-    }
-  }
-
-  private func showToast(_ message: String) {
-    withAnimation(.snappy) {
-      toast = message
     }
   }
 }

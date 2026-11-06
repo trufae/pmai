@@ -228,10 +228,10 @@ struct ConversationExportPresentations: ViewModifier {
 
   func body(content: Content) -> some View {
     content
-      .sheet(item: exportShareFileBinding) { file in
+      .sheet(item: $coordinator.exportShareFile) { file in
         ActivityShareSheet(activityItems: [file.url])
       }
-      .sheet(isPresented: showingAudioExportBinding) {
+      .sheet(isPresented: $coordinator.showingAudioExport) {
         AudioExportProgressView(exporter: coordinator.audioExporter) {
           coordinator.audioExporter.cancel()
         }
@@ -265,22 +265,6 @@ struct ConversationExportPresentations: ViewModifier {
         onCancel: {
           coordinator.pendingImageSizeSelection = nil
         })
-  }
-
-  private var exportShareFileBinding: Binding<ExportedFile?> {
-    Binding {
-      coordinator.exportShareFile
-    } set: { file in
-      coordinator.exportShareFile = file
-    }
-  }
-
-  private var showingAudioExportBinding: Binding<Bool> {
-    Binding {
-      coordinator.showingAudioExport
-    } set: { isPresented in
-      coordinator.showingAudioExport = isPresented
-    }
   }
 
   private var audioExportErrorPresentedBinding: Binding<Bool> {

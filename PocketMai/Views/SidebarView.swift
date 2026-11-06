@@ -601,7 +601,6 @@ struct SidebarView: View {
     guard !selectedIDs.isEmpty else { return }
     pendingDeletion = .selected(selectedIDs)
   }
-
 }
 
 struct PendingConversationDeletion: Identifiable {
@@ -1817,19 +1816,6 @@ private struct ConversationFolderDefaultsView: View {
     guard canSave else { return }
     store.setConversationFolderDefaults(draft, for: folder.id)
     dismiss()
-  }
-
-  private func endpointStatusLabel(_ status: EndpointConnectionState) -> some View {
-    let icon = status == .checking ? "arrow.triangle.2.circlepath" : "circle.fill"
-    return Label(status.statusText, systemImage: icon)
-      .foregroundStyle(status.statusColor)
-  }
-
-  private func isChecking(_ endpoint: OpenAIEndpoint) -> Bool {
-    if case .checking = store.endpointStatuses[endpoint.id] {
-      return true
-    }
-    return false
   }
 }
 

@@ -6632,7 +6632,7 @@ final class AppStore: ObservableObject {
   }
 
   @discardableResult
-  func clearDownloadedMLXModels() -> String {
+  func clearDownloadedMLXModels() -> (message: String, succeeded: Bool) {
     let models = LocalMLXModelCache.listModels()
     var removed = 0
     var failed: [String] = []
@@ -6646,10 +6646,11 @@ final class AppStore: ObservableObject {
     }
     refreshLocalMLXModels()
     if !failed.isEmpty {
-      return
-        "Removed \(removed) model\(removed == 1 ? "" : "s"); failed: \(failed.joined(separator: ", "))."
+      return (
+        "Removed \(removed) model\(removed == 1 ? "" : "s"); failed: \(failed.joined(separator: ", ")).",
+        false)
     }
-    return "Removed \(removed) downloaded model\(removed == 1 ? "" : "s")."
+    return ("Removed \(removed) downloaded model\(removed == 1 ? "" : "s").", true)
   }
 
   @discardableResult

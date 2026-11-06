@@ -344,7 +344,7 @@ struct SettingsView: View {
   @State private var navigationPath: [SettingsRoute] = []
   @State private var draftEndpoint: OpenAIEndpoint?
   @State private var draftMCPServer: MCPServer?
-  @State private var toastMessage: String?
+  @State private var toastMessage: ToastNotice?
   @State private var corruptedConversationCount = 0
   @State private var showingCorruptedConversationActions = false
   @State private var showingCorruptedConversationReview = false
@@ -457,7 +457,7 @@ struct SettingsView: View {
           Button("Done") { saveAndDismiss() }
         }
       }
-      .settingsToast($toastMessage)
+      .toast($toastMessage)
       .task {
         await refreshCorruptedConversationCount()
       }
@@ -1449,9 +1449,9 @@ struct SettingsView: View {
     }
     ForEach(store.settings.systemPrompts) { prompt in
       NavigationLink {
-        SystemPromptDetailView(
-          prompt: prompt,
-          isDefault: prompt.id == store.settings.defaultSystemPromptID)
+        PromptDetailView(.init(
+          systemPrompt: prompt,
+          isDefault: prompt.id == store.settings.defaultSystemPromptID))
       } label: {
         promptRow(prompt)
       }
@@ -1460,7 +1460,7 @@ struct SettingsView: View {
       pendingDeletion = PendingSettingsDeletion(kind: .systemPrompt, offsets: offsets)
     }
     NavigationLink {
-      SystemPromptDetailView()
+      PromptDetailView(.init())
     } label: {
       Label("Add Prompt", systemImage: "plus")
     }
@@ -1473,7 +1473,7 @@ struct SettingsView: View {
     )
     ForEach(store.settings.userPrompts) { prompt in
       NavigationLink {
-        UserPromptDetailView(prompt: prompt)
+        PromptDetailView(.init(userPrompt: prompt))
       } label: {
         userPromptRow(prompt)
       }
@@ -1482,7 +1482,7 @@ struct SettingsView: View {
       pendingDeletion = PendingSettingsDeletion(kind: .userPrompt, offsets: offsets)
     }
     NavigationLink {
-      UserPromptDetailView()
+      PromptDetailView(.init(userPrompt: nil))
     } label: {
       Label("Add User Prompt", systemImage: "plus")
     }
@@ -1846,7 +1846,7 @@ struct SettingsView: View {
       Button("Clear Website Data") {
         Task {
           await BrowserSession.clearWebsiteData()
-          toastMessage = "Website data cleared"
+          toastMessage = ToastNotice("Website data cleared", style: .success)
         }
       }
     case .mastodon:
@@ -2105,7 +2105,7 @@ struct SettingsView: View {
     if let url = result.url {
       corruptedConversationArchive = ExportedFile(url: url)
     } else {
-      toastMessage = result.errorMessage ?? "Could not export corrupted chats."
+      toastMessage = ToastNotice(result.errorMessage ?? "Could not export corrupted chats.")
     }
   }
 
@@ -2113,10 +2113,10 @@ struct SettingsView: View {
     let result = await store.recoverCorruptedConversations()
     corruptedConversationCount = result.remainingCount
     if result.recoveredConversations.isEmpty {
-      toastMessage = "No corrupted chats could be recovered."
+      toastMessage = ToastNotice("No corrupted chats could be recovered.")
     } else {
       let count = result.recoveredConversations.count
-      toastMessage = "Recovered \(count) \(count == 1 ? "chat" : "chats")."
+      toastMessage = ToastNotice("Recovered \(count) \(count == 1 ? "chat" : "chats").", style: .success)
     }
   }
 
@@ -2237,7 +2237,7 @@ struct SettingsView: View {
         for: endpoint,
         in: store.settings.openAIEndpoints)
       {
-        showToast(message)
+        toastMessage = ToastNotice(message)
         return false
       }
 
@@ -2282,12 +2282,6 @@ struct SettingsView: View {
     store.mcpResources[draftMCPServer.id] = nil
     Task { await MCPHTTPClient.resetSession(for: draftMCPServer.id) }
     self.draftMCPServer = nil
-  }
-
-  private func showToast(_ message: String) {
-    withAnimation(.snappy) {
-      toastMessage = message
-    }
   }
 
   private func toggleAirplaneMode() {
@@ -2478,7 +2472,7 @@ struct SettingsView: View {
 
   private func toggleTool(_ tool: BuiltInToolID) {
     guard !(store.settings.isOffline && tool.isDisabledInAirplaneMode) else {
-      showToast("\(tool.displayName) is disabled while Airplane Mode is enabled.")
+      toastMessage = ToastNotice("\(tool.displayName) is disabled while Airplane Mode is enabled.")
       return
     }
     if store.settings.defaultEnabledTools.contains(tool) {
@@ -3281,70 +3275,6 @@ struct ConversationImportConfirmationView: View {
   }
 }
 
-enum SettingsToastStyle {
-  case error
-  case success
-
-  var systemImage: String {
-    switch self {
-    case .error: "exclamationmark.triangle.fill"
-    case .success: "checkmark.circle.fill"
-    }
-  }
-
-  var backgroundColor: Color {
-    switch self {
-    case .error: .red
-    case .success: .green
-    }
-  }
-}
-
-struct SettingsToastModifier: ViewModifier {
-  @Binding var message: String?
-  let style: SettingsToastStyle
-
-  func body(content: Content) -> some View {
-    content
-      .overlay(alignment: .top) {
-        if let message {
-          Label(message, systemImage: style.systemImage)
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.white)
-            .lineLimit(2)
-            .multilineTextAlignment(.leading)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(style.backgroundColor, in: Capsule())
-            .shadow(color: .black.opacity(0.2), radius: 12, y: 6)
-            .padding(.top, 12)
-            .padding(.horizontal, 16)
-            .transition(.move(edge: .top).combined(with: .opacity))
-            .zIndex(1)
-        }
-      }
-      .onChange(of: message) { _, newValue in
-        guard let newValue else { return }
-        Task { @MainActor in
-          try? await Task.sleep(for: .seconds(3))
-          guard message == newValue else { return }
-          withAnimation(.snappy) {
-            message = nil
-          }
-        }
-      }
-  }
-}
-
-extension View {
-  func settingsToast(
-    _ message: Binding<String?>,
-    style: SettingsToastStyle = .error
-  ) -> some View {
-    modifier(SettingsToastModifier(message: message, style: style))
-  }
-}
-
 private struct AppleIntelligenceDetailView: View {
   @EnvironmentObject private var store: AppStore
 
@@ -3402,28 +3332,13 @@ private struct AppleIntelligenceDetailView: View {
   }
 }
 
-private struct EndpointBackupSharedFile: Identifiable {
-  let id = UUID()
-  let url: URL
-}
-
-private struct EndpointBackupShareSheet: UIViewControllerRepresentable {
-  let activityItems: [Any]
-
-  func makeUIViewController(context: Context) -> UIActivityViewController {
-    UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
-  }
-
-  func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
-}
-
 private struct EndpointDetailView: View {
   @EnvironmentObject private var store: AppStore
   @Environment(\.dismiss) private var dismiss
   @Binding private var savedEndpoint: OpenAIEndpoint
   @State private var endpoint: OpenAIEndpoint
-  @State private var toastMessage: String?
-  @State private var shareFile: EndpointBackupSharedFile?
+  @State private var toastMessage: ToastNotice?
+  @State private var shareFile: ExportedFile?
   @State private var isSigningIn = false
   @State private var showAdvancedOAuthConfiguration = false
   @State private var showOllamaScanner = false
@@ -3515,7 +3430,7 @@ private struct EndpointDetailView: View {
         }
         Button {
           if let message = EndpointNameResolution.connectionValidationMessage(for: endpoint) {
-            showToast(message)
+            toastMessage = ToastNotice(message)
             return
           }
           let snapshot = endpoint
@@ -3619,9 +3534,9 @@ private struct EndpointDetailView: View {
       }
     }
     .sheet(item: $shareFile) { file in
-      EndpointBackupShareSheet(activityItems: [file.url])
+      ActivityShareSheet(activityItems: [file.url])
     }
-    .settingsToast($toastMessage)
+    .toast($toastMessage)
   }
 
   @ViewBuilder
@@ -3927,12 +3842,12 @@ private struct EndpointDetailView: View {
       let tokens = try await OAuthService.signIn(endpoint: endpoint)
       applyTokens(tokens)
       persistOAuthState()
-      showToast("Signed in successfully.")
+      toastMessage = ToastNotice("Signed in successfully.", style: .success)
     } catch let error as OAuthError {
       if case .userCancelled = error { return }
-      showToast(error.localizedDescription)
+      toastMessage = ToastNotice(error.localizedDescription)
     } catch {
-      showToast(error.localizedDescription)
+      toastMessage = ToastNotice(error.localizedDescription)
     }
   }
 
@@ -3944,9 +3859,9 @@ private struct EndpointDetailView: View {
       let tokens = try await OAuthService.refresh(endpoint: endpoint)
       applyTokens(tokens)
       persistOAuthState()
-      showToast("Access token refreshed.")
+      toastMessage = ToastNotice("Access token refreshed.", style: .success)
     } catch {
-      showToast(error.localizedDescription)
+      toastMessage = ToastNotice(error.localizedDescription)
     }
   }
 
@@ -3963,7 +3878,7 @@ private struct EndpointDetailView: View {
     endpoint.oauthRefreshToken = ""
     endpoint.oauthAccessTokenExpiresAt = nil
     persistOAuthState()
-    showToast("Signed out.")
+    toastMessage = ToastNotice("Signed out.", style: .success)
   }
 
   /// Persist the current OAuth credential state immediately so a successful sign-in
@@ -4040,7 +3955,7 @@ private struct EndpointDetailView: View {
       for: endpoint,
       in: store.settings.openAIEndpoints)
     {
-      showToast(message)
+      toastMessage = ToastNotice(message)
       return
     }
     if let savedName = EndpointNameResolution.savedName(for: endpoint) {
@@ -4069,23 +3984,17 @@ private struct EndpointDetailView: View {
       for: exportedEndpoint,
       in: store.settings.openAIEndpoints)
     {
-      showToast(message)
+      toastMessage = ToastNotice(message)
       return
     }
     if let savedName = EndpointNameResolution.savedName(for: exportedEndpoint) {
       exportedEndpoint.name = savedName
     }
     guard let url = store.exportEndpointBackupFile(exportedEndpoint) else {
-      showToast(store.errorMessage ?? "Could not export provider.")
+      toastMessage = ToastNotice(store.errorMessage ?? "Could not export provider.")
       return
     }
-    shareFile = EndpointBackupSharedFile(url: url)
-  }
-
-  private func showToast(_ message: String) {
-    withAnimation(.snappy) {
-      toastMessage = message
-    }
+    shareFile = ExportedFile(url: url)
   }
 
   private func applyScannedOllamaURL(_ url: String) {
@@ -4409,368 +4318,6 @@ private struct OllamaPortScanView: View {
   }
 }
 
-private enum PromptNameResolution {
-  static func savedName(_ name: String) -> String {
-    name.trimmingCharacters(in: .whitespacesAndNewlines)
-  }
-
-  static func validationMessage(
-    forName name: String,
-    excludingSystemPromptID: UUID?,
-    excludingUserPromptID: UUID?,
-    systemPrompts: [SystemPrompt],
-    userPrompts: [UserPrompt]
-  ) -> String? {
-    let savedName = savedName(name)
-    guard !savedName.isEmpty else {
-      return "Specify a prompt name."
-    }
-    if savedName.contains(where: { $0.isWhitespace }) || savedName.contains("/") {
-      return "Prompt names cannot contain spaces or /."
-    }
-    if hasDuplicateCommandName(
-      savedName,
-      excludingSystemPromptID: excludingSystemPromptID,
-      excludingUserPromptID: excludingUserPromptID,
-      systemPrompts: systemPrompts,
-      userPrompts: userPrompts)
-    {
-      return "A prompt named \"\(savedName)\" already exists."
-    }
-    return nil
-  }
-
-  private static func hasDuplicateCommandName(
-    _ name: String,
-    excludingSystemPromptID: UUID?,
-    excludingUserPromptID: UUID?,
-    systemPrompts: [SystemPrompt],
-    userPrompts: [UserPrompt]
-  ) -> Bool {
-    let normalized = normalizedName(PromptSlashCommand.commandName(for: name))
-    if systemPrompts.contains(where: { prompt in
-      guard prompt.id != excludingSystemPromptID else { return false }
-      return normalizedName(prompt.commandName) == normalized
-    }) {
-      return true
-    }
-    return userPrompts.contains { prompt in
-      guard prompt.id != excludingUserPromptID else { return false }
-      return normalizedName(prompt.commandName) == normalized
-    }
-  }
-
-  private static func normalizedName(_ name: String) -> String {
-    name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-  }
-}
-
-struct SystemPromptDetailView: View {
-  @EnvironmentObject private var store: AppStore
-  @Environment(\.dismiss) private var dismiss
-  @FocusState private var isNameFocused: Bool
-
-  private static let newPromptText = "You are a helpful assistant."
-
-  private let promptID: UUID?
-  private let originalName: String
-  private let originalText: String
-  private let originalIsDefault: Bool
-
-  @State private var draftName: String
-  @State private var draftText: String
-  @State private var draftIsDefault: Bool
-  @State private var showingLeaveConfirmation = false
-  @State private var toastMessage: String?
-
-  init(prompt: SystemPrompt? = nil, isDefault: Bool = false) {
-    let initialName = prompt?.name ?? ""
-    let initialText = prompt?.text ?? Self.newPromptText
-
-    promptID = prompt?.id
-    originalName = initialName
-    originalText = initialText
-    originalIsDefault = isDefault
-
-    _draftName = State(initialValue: initialName)
-    _draftText = State(initialValue: initialText)
-    _draftIsDefault = State(initialValue: isDefault)
-  }
-
-  var body: some View {
-    Form {
-      Section {
-        TextField("Name", text: $draftName)
-          .focused($isNameFocused)
-      } footer: {
-        Text("Shown in the prompt picker.")
-      }
-      Section {
-        TextEditor(text: $draftText)
-          .frame(minHeight: 220)
-          .font(.callout)
-      } header: {
-        Text("Instructions")
-      } footer: {
-        Text("Sent to the model at the start of each chat.")
-      }
-    }
-    .navigationTitle(navigationTitle)
-    .navigationBarTitleDisplayMode(.inline)
-    .navigationBarBackButtonHidden(true)
-    .toolbar {
-      ToolbarItem(placement: .cancellationAction) {
-        Button {
-          requestDismiss()
-        } label: {
-          Label(isNewPrompt ? "Cancel" : "Back", systemImage: "chevron.left")
-        }
-      }
-      ToolbarItemGroup(placement: .confirmationAction) {
-        Button {
-          draftIsDefault = true
-        } label: {
-          Image(systemName: draftIsDefault ? "star.fill" : "star")
-        }
-        .accessibilityLabel(draftIsDefault ? "Default Prompt" : "Make Default Prompt")
-        .foregroundStyle(draftIsDefault ? Color.accentColor : .primary)
-        Button("Save") {
-          savePromptAndDismiss()
-        }
-      }
-    }
-    .alert("Save changes?", isPresented: $showingLeaveConfirmation) {
-      Button("Cancel", role: .cancel) {}
-      Button("Discard Changes", role: .destructive) {
-        dismiss()
-      }
-      Button("Save") {
-        savePromptAndDismiss()
-      }
-    } message: {
-      Text("Save or discard changes before leaving this prompt.")
-    }
-    .settingsToast($toastMessage)
-    .onAppear {
-      if isNewPrompt {
-        isNameFocused = true
-      }
-    }
-  }
-
-  private var isNewPrompt: Bool {
-    promptID == nil
-  }
-
-  private var navigationTitle: String {
-    let trimmed = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
-    if !trimmed.isEmpty { return trimmed }
-    return isNewPrompt ? "New Prompt" : "Prompt"
-  }
-
-  private var hasUnsavedChanges: Bool {
-    draftName != originalName
-      || draftText != originalText
-      || draftIsDefault != originalIsDefault
-  }
-
-  private func requestDismiss() {
-    guard hasUnsavedChanges else {
-      dismiss()
-      return
-    }
-    showingLeaveConfirmation = true
-  }
-
-  private func savePromptAndDismiss() {
-    let savedName = PromptNameResolution.savedName(draftName)
-    let originalSavedName = PromptNameResolution.savedName(originalName)
-    if isNewPrompt || savedName != originalSavedName {
-      if let message = PromptNameResolution.validationMessage(
-        forName: draftName,
-        excludingSystemPromptID: promptID,
-        excludingUserPromptID: nil,
-        systemPrompts: store.settings.systemPrompts,
-        userPrompts: store.settings.userPrompts)
-      {
-        showToast(message)
-        return
-      }
-    }
-
-    if let promptID {
-      guard let index = store.settings.systemPrompts.firstIndex(where: { $0.id == promptID })
-      else {
-        showToast("This prompt no longer exists.")
-        return
-      }
-      store.settings.systemPrompts[index].name = savedName
-      store.settings.systemPrompts[index].text = draftText
-      if draftIsDefault {
-        store.settings.defaultSystemPromptID = promptID
-      }
-    } else {
-      let prompt = SystemPrompt(name: savedName, text: draftText)
-      store.settings.systemPrompts.append(prompt)
-      if draftIsDefault {
-        store.settings.defaultSystemPromptID = prompt.id
-      }
-    }
-
-    store.saveSettings()
-    dismiss()
-  }
-
-  private func showToast(_ message: String) {
-    withAnimation(.snappy) {
-      toastMessage = message
-    }
-  }
-}
-
-private struct UserPromptDetailView: View {
-  @EnvironmentObject private var store: AppStore
-  @Environment(\.dismiss) private var dismiss
-  @FocusState private var isNameFocused: Bool
-
-  private static let newPromptText = "Use these instructions when answering."
-
-  private let promptID: UUID?
-  private let originalName: String
-  private let originalText: String
-
-  @State private var draftName: String
-  @State private var draftText: String
-  @State private var showingLeaveConfirmation = false
-  @State private var toastMessage: String?
-
-  init(prompt: UserPrompt? = nil) {
-    let initialName = prompt?.name ?? ""
-    let initialText = prompt?.text ?? Self.newPromptText
-
-    promptID = prompt?.id
-    originalName = initialName
-    originalText = initialText
-
-    _draftName = State(initialValue: initialName)
-    _draftText = State(initialValue: initialText)
-  }
-
-  var body: some View {
-    Form {
-      Section {
-        TextField("Name", text: $draftName)
-          .focused($isNameFocused)
-      } footer: {
-        Text("Used as $name in the chat composer.")
-      }
-      Section {
-        TextEditor(text: $draftText)
-          .frame(minHeight: 220)
-          .font(.callout)
-      } header: {
-        Text("Prompt")
-      } footer: {
-        Text("Prepended to the user message before sending to the model.")
-      }
-    }
-    .navigationTitle(navigationTitle)
-    .navigationBarTitleDisplayMode(.inline)
-    .navigationBarBackButtonHidden(true)
-    .toolbar {
-      ToolbarItem(placement: .cancellationAction) {
-        Button {
-          requestDismiss()
-        } label: {
-          Label(isNewPrompt ? "Cancel" : "Back", systemImage: "chevron.left")
-        }
-      }
-      ToolbarItem(placement: .confirmationAction) {
-        Button("Save") {
-          savePromptAndDismiss()
-        }
-      }
-    }
-    .alert("Save changes?", isPresented: $showingLeaveConfirmation) {
-      Button("Cancel", role: .cancel) {}
-      Button("Discard Changes", role: .destructive) {
-        dismiss()
-      }
-      Button("Save") {
-        savePromptAndDismiss()
-      }
-    } message: {
-      Text("Save or discard changes before leaving this prompt.")
-    }
-    .settingsToast($toastMessage)
-    .onAppear {
-      if isNewPrompt {
-        isNameFocused = true
-      }
-    }
-  }
-
-  private var isNewPrompt: Bool {
-    promptID == nil
-  }
-
-  private var navigationTitle: String {
-    let trimmed = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
-    if !trimmed.isEmpty { return trimmed }
-    return isNewPrompt ? "New User Prompt" : "User Prompt"
-  }
-
-  private var hasUnsavedChanges: Bool {
-    draftName != originalName || draftText != originalText
-  }
-
-  private func requestDismiss() {
-    guard hasUnsavedChanges else {
-      dismiss()
-      return
-    }
-    showingLeaveConfirmation = true
-  }
-
-  private func savePromptAndDismiss() {
-    let savedName = PromptNameResolution.savedName(draftName)
-    let originalSavedName = PromptNameResolution.savedName(originalName)
-    if isNewPrompt || savedName != originalSavedName {
-      if let message = PromptNameResolution.validationMessage(
-        forName: draftName,
-        excludingSystemPromptID: nil,
-        excludingUserPromptID: promptID,
-        systemPrompts: store.settings.systemPrompts,
-        userPrompts: store.settings.userPrompts)
-      {
-        showToast(message)
-        return
-      }
-    }
-
-    if let promptID {
-      guard let index = store.settings.userPrompts.firstIndex(where: { $0.id == promptID })
-      else {
-        showToast("This prompt no longer exists.")
-        return
-      }
-      store.settings.userPrompts[index].name = savedName
-      store.settings.userPrompts[index].text = draftText
-    } else {
-      store.settings.userPrompts.append(UserPrompt(name: savedName, text: draftText))
-    }
-
-    store.saveSettings()
-    dismiss()
-  }
-
-  private func showToast(_ message: String) {
-    withAnimation(.snappy) {
-      toastMessage = message
-    }
-  }
-}
-
 private struct CompactPromptDetailView: View {
   @EnvironmentObject private var store: AppStore
   @Environment(\.dismiss) private var dismiss
@@ -4964,8 +4511,7 @@ private struct MCPServerDetailView: View {
   @State private var draftServerName: String?
   @State private var draftStatusBaseURL: String
   @State private var draftStatusAuthentication: MCPAuthentication
-  @State private var toastMessage: String?
-  @State private var toastStyle: SettingsToastStyle = .error
+  @State private var toastMessage: ToastNotice?
   @State private var isAuthorizing = false
   @FocusState private var isNameFocused: Bool
   @FocusState private var isEndpointFocused: Bool
@@ -5024,12 +4570,12 @@ private struct MCPServerDetailView: View {
       Section {
         Button {
           if let message = MCPServerNameResolution.endpointValidationMessage(for: server) {
-            showToast(message)
+            toastMessage = ToastNotice(message)
             return
           }
           if let message = authenticationValidationMessage {
             setDraftConnectionFailure(message)
-            showToast(message)
+            toastMessage = ToastNotice(message)
             return
           }
           let snapshot = normalizedServerForSaving
@@ -5114,7 +4660,7 @@ private struct MCPServerDetailView: View {
         }
       }
     }
-    .settingsToast($toastMessage, style: toastStyle)
+    .toast($toastMessage)
     .onAppear {
       if isNew {
         isEndpointFocused = true
@@ -5222,15 +4768,15 @@ private struct MCPServerDetailView: View {
       persistMCPAuthentication()
       await MCPHTTPClient.resetSession(for: server.id)
       clearDraftConnectionState()
-      showToast("MCP OAuth authorization succeeded.", style: .success)
+      toastMessage = ToastNotice("MCP OAuth authorization succeeded.", style: .success)
       refreshTools(normalizedServerForSaving)
     } catch let error as MCPOAuthError {
       if case .userCancelled = error { return }
       setDraftConnectionFailure(error.localizedDescription)
-      showToast(error.shortDescription)
+      toastMessage = ToastNotice(error.shortDescription)
     } catch {
       setDraftConnectionFailure(error.localizedDescription)
-      showToast("OAuth sign-in failed.")
+      toastMessage = ToastNotice("OAuth sign-in failed.")
     }
   }
 
@@ -5250,7 +4796,7 @@ private struct MCPServerDetailView: View {
     persistMCPAuthentication()
     Task { await MCPHTTPClient.resetSession(for: server.id) }
     clearDraftConnectionState()
-    showToast("Signed out from MCP OAuth.")
+    toastMessage = ToastNotice("Signed out from MCP OAuth.", style: .success)
   }
 
   private func persistMCPAuthentication() {
@@ -5442,7 +4988,7 @@ private struct MCPServerDetailView: View {
       for: server,
       in: store.settings.mcpServers)
     {
-      showToast(message)
+      toastMessage = ToastNotice(message)
       return
     }
 
@@ -5498,13 +5044,6 @@ private struct MCPServerDetailView: View {
       store.mcpStatuses[server.id] = .failed(message)
     case .unknown, .checking:
       store.resetMCPStatus(server.id)
-    }
-  }
-
-  private func showToast(_ message: String, style: SettingsToastStyle = .error) {
-    withAnimation(.snappy) {
-      toastStyle = style
-      toastMessage = message
     }
   }
 }

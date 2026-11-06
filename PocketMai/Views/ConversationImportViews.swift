@@ -74,7 +74,7 @@ struct ConversationCollectionImportView: View {
   @State private var newFolderName = "Imported Conversations"
   @State private var existingFolderID = ConversationFolder.defaultID
   @State private var isImporting = false
-  @State private var toast: String?
+  @State private var toast: ToastNotice?
   @State private var errorMessage: String?
 
   var body: some View {
@@ -135,7 +135,7 @@ struct ConversationCollectionImportView: View {
     .task(id: file.id) {
       preparePreview()
     }
-    .settingsToast($toast, style: .success)
+    .toast($toast)
   }
 
   private func contentsSection(_ preview: ConversationCollectionImportPreview) -> some View {
@@ -233,9 +233,7 @@ struct ConversationCollectionImportView: View {
       do {
         let count = try await store.importConversationCollection(
           preview, destination: destination)
-        withAnimation(.snappy) {
-          toast = "Imported \(count) conversation\(count == 1 ? "" : "s")."
-        }
+        toast = ToastNotice("Imported \(count) conversation\(count == 1 ? "" : "s").", style: .success)
         try? await Task.sleep(for: .milliseconds(900))
         onFinish()
       } catch {

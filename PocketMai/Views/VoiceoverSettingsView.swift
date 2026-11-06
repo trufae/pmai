@@ -44,9 +44,9 @@ struct VoiceoverSettingsView: View {
 
       Section {
         NavigationLink {
-          SystemPromptDetailView(
-            prompt: VoiceoverPromptBuilder.systemPrompt(settings: store.settings)
-          )
+          PromptDetailView(.init(
+            systemPrompt: VoiceoverPromptBuilder.systemPrompt(settings: store.settings)
+          ))
           .environmentObject(store)
         } label: {
           LabeledContent(
