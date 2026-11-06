@@ -101,15 +101,7 @@ struct RemoteHostRenameModifier: ViewModifier {
         }
         .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
       }
-      .alert(
-        "Couldn't Rename Host",
-        isPresented: Binding(
-          get: { error != nil }, set: { if !$0 { error = nil } })
-      ) {
-        Button("OK", role: .cancel) { error = nil }
-      } message: {
-        Text(error ?? "")
-      }
+      .errorAlert("Couldn't Rename Host", message: $error)
   }
 }
 

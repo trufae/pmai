@@ -343,11 +343,10 @@ struct ContentView: View {
         .toolbar { Button("Done") { store.commandOutput = nil } }
       }
     }
-    .alert("Error", isPresented: errorBinding) {
-      Button("OK") { store.errorMessage = nil }
-    } message: {
-      Text(store.errorMessage ?? "")
-    }
+    .errorAlert(
+      "Error", message: Binding(get: { store.errorMessage }, set: { store.errorMessage = $0 }),
+      isEnabled: store.activeToolCallApprovalRequest == nil
+        && store.activeAutocompactionApprovalRequest == nil)
     .background(ChatScreenshotServiceInstaller(service: screenshotService))
     .onAppear {
       contentStoreObservation.connect(to: store)
@@ -595,16 +594,6 @@ struct ContentView: View {
           && store.activeLongRunningOperationTimeoutRequest != nil
       },
       set: { _ in })
-  }
-
-  private var errorBinding: Binding<Bool> {
-    Binding(
-      get: {
-        store.activeToolCallApprovalRequest == nil
-          && store.activeAutocompactionApprovalRequest == nil && store.errorMessage != nil
-      },
-      set: { if !$0 { store.errorMessage = nil } }
-    )
   }
 }
 

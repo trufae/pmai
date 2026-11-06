@@ -236,15 +236,7 @@ struct ConversationExportPresentations: ViewModifier {
           coordinator.audioExporter.cancel()
         }
       }
-      .alert(
-        "Audio export failed",
-        isPresented: audioExportErrorPresentedBinding,
-        presenting: coordinator.audioExportError
-      ) { _ in
-        Button("OK", role: .cancel) { coordinator.audioExportError = nil }
-      } message: { message in
-        Text(message)
-      }
+      .errorAlert("Audio export failed", message: $coordinator.audioExportError)
       .imageSizeConfirmationDialog(
         isPresented: imageSizeSelectionPresentedBinding,
         presenting: coordinator.pendingImageSizeSelection,
@@ -265,16 +257,6 @@ struct ConversationExportPresentations: ViewModifier {
         onCancel: {
           coordinator.pendingImageSizeSelection = nil
         })
-  }
-
-  private var audioExportErrorPresentedBinding: Binding<Bool> {
-    Binding {
-      coordinator.audioExportError != nil
-    } set: { isPresented in
-      if !isPresented {
-        coordinator.audioExportError = nil
-      }
-    }
   }
 
   private var imageSizeSelectionPresentedBinding: Binding<Bool> {

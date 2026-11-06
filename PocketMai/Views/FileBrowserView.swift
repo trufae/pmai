@@ -201,14 +201,7 @@ private struct FileBrowserDirectoryView: View {
         Text(
           "Files with matching names in this folder will be replaced after the upload completes.")
       }
-      .alert(
-        "File Operation Failed",
-        isPresented: Binding(get: { browser.error != nil }, set: { if !$0 { browser.error = nil } })
-      ) {
-        Button("OK", role: .cancel) { browser.error = nil }
-      } message: {
-        Text(browser.error ?? "")
-      }
+      .errorAlert("File Operation Failed", message: $browser.error)
       .sheet(
         item: Binding(get: { browser.preview }, set: { if $0 == nil { browser.clearPreview() } }),
         onDismiss: {

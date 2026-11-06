@@ -1125,13 +1125,7 @@ struct WebXDCAppsPanel: View {
       } message: { app in
         Text("'\(app.name)' and all of its revisions will be removed. This cannot be undone.")
       }
-      .alert(
-        "Import failed", isPresented: errorBinding
-      ) {
-        Button("OK") { errorMessage = nil }
-      } message: {
-        Text(errorMessage ?? "")
-      }
+      .errorAlert("Import failed", message: $errorMessage)
       .onAppear { reload() }
       .onChange(of: store.pendingWebXDCImports, initial: true) { _, results in
         reload()
@@ -1155,12 +1149,6 @@ struct WebXDCAppsPanel: View {
     Binding(
       get: { pendingDelete != nil },
       set: { if !$0 { pendingDelete = nil } })
-  }
-
-  private var errorBinding: Binding<Bool> {
-    Binding(
-      get: { errorMessage != nil },
-      set: { if !$0 { errorMessage = nil } })
   }
 
   private func appRow(_ app: WebXDCAppInfo) -> some View {
@@ -1323,13 +1311,7 @@ private struct WebXDCPermissionsSection: View {
       )
     }
     .onAppear { permissions = WebXDCPermissions.load(appID) }
-    .alert("Cannot Save Permissions", isPresented: Binding(
-      get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
-    )) {
-      Button("OK", role: .cancel) { errorMessage = nil }
-    } message: {
-      Text(errorMessage ?? "")
-    }
+    .errorAlert("Cannot Save Permissions", message: $errorMessage)
   }
 
   private func permissionBinding(_ key: WritableKeyPath<WebXDCPermissions, Bool>) -> Binding<Bool> {
@@ -1461,23 +1443,13 @@ struct WebXDCAppDetailView: View {
     } message: {
       Text("Only the selected revision will remain, and it will become revision 1.")
     }
-    .alert("Something went wrong", isPresented: errorBinding) {
-      Button("OK") { errorMessage = nil }
-    } message: {
-      Text(errorMessage ?? "")
-    }
+    .errorAlert("Something went wrong", message: $errorMessage)
   }
 
   private var shareBinding: Binding<Bool> {
     Binding(
       get: { shareURL != nil },
       set: { if !$0 { shareURL = nil } })
-  }
-
-  private var errorBinding: Binding<Bool> {
-    Binding(
-      get: { errorMessage != nil },
-      set: { if !$0 { errorMessage = nil } })
   }
 
   @ViewBuilder

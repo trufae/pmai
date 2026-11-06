@@ -2619,16 +2619,7 @@ private struct CorruptedConversationDocumentView: View {
         "\(document.filename) will be permanently removed from \(document.location). This cannot be undone."
       )
     }
-    .alert(
-      "Could Not Delete File",
-      isPresented: Binding(
-        get: { errorMessage != nil },
-        set: { if !$0 { errorMessage = nil } })
-    ) {
-      Button("OK") { errorMessage = nil }
-    } message: {
-      Text(errorMessage ?? "Unknown error")
-    }
+    .errorAlert("Could Not Delete File", message: $errorMessage)
   }
 
   private func deleteDocument() async {

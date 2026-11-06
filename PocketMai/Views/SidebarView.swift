@@ -1,6 +1,5 @@
 import SwiftUI
 import UIKit
-import UniformTypeIdentifiers
 
 extension View {
   @ViewBuilder
@@ -1501,37 +1500,15 @@ private struct ConversationFolderDefaultsView: View {
     .onAppear {
       loadDefaultsIfNeeded()
     }
-    .fileImporter(
-      isPresented: $showingWorkingFolderImporter,
-      allowedContentTypes: [.folder]
-    ) { result in
-      importWorkingFolder(result)
-    }
-    .alert(
-      "Folder selection failed",
-      isPresented: Binding(
-        get: { workingFolderError != nil },
-        set: { if !$0 { workingFolderError = nil } }),
-      presenting: workingFolderError
-    ) { _ in
-      Button("OK", role: .cancel) { workingFolderError = nil }
-    } message: { message in
-      Text(message)
-    }
+    .workingFolderImporter(
+      isPresented: $showingWorkingFolderImporter, errorMessage: $workingFolderError
+    ) { draft.workingFolder = $0 }
+    .errorAlert("Folder selection failed", message: $workingFolderError)
   }
 
   private var workingFolderTitle: String {
     draft.workingFolder?.displayName
       ?? "App Default (\(FileWorkspaceService.defaultWorkspaceName))"
-  }
-
-  private func importWorkingFolder(_ result: Result<URL, Error>) {
-    do {
-      let url = try result.get()
-      draft.workingFolder = try WorkingFolderAccess.makeReference(from: url)
-    } catch {
-      workingFolderError = error.localizedDescription
-    }
   }
 
   private var appDefaultPromptTitle: String {

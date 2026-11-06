@@ -199,14 +199,7 @@ struct MessageTextSelectionSheet: View {
         }
         Button("Cancel", role: .cancel) {}
       }
-      .alert(
-        "Could Not Save",
-        isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })
-      ) {
-        Button("OK", role: .cancel) { saveError = nil }
-      } message: {
-        Text(saveError ?? "")
-      }
+      .errorAlert("Could Not Save", message: $saveError)
     }
   }
 

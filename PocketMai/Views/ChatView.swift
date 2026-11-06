@@ -3334,15 +3334,7 @@ private struct ChatComposer: View {
 
   private var composerAttachmentDialogs: some View {
     composerPromptUpdates
-      .alert(
-        "Import failed",
-        isPresented: attachmentErrorBinding,
-        presenting: attachmentError
-      ) { _ in
-        Button("OK", role: .cancel) { attachmentError = nil }
-      } message: { message in
-        Text(message)
-      }
+      .errorAlert("Import failed", message: $attachmentError)
       .confirmationDialog(
         "Save File to Working Folder",
         isPresented: workspaceImportBinding,
@@ -3532,14 +3524,6 @@ private struct ChatComposer: View {
   }
 
   // MARK: - Import questions
-
-  private var attachmentErrorBinding: Binding<Bool> {
-    Binding(
-      get: { attachmentError != nil },
-      set: { isPresented in
-        if !isPresented { attachmentError = nil }
-      })
-  }
 
   private var imageSizePromptBinding: Binding<Bool> {
     Binding(
@@ -4382,13 +4366,10 @@ private struct ChatComposer: View {
     .padding(8)
     .frame(minWidth: 260)
     .background(.regularMaterial)
-    .fileImporter(
-      isPresented: $showingWorkingFolderImporter,
-      allowedContentTypes: [.folder]
-    ) { result in
-      showingWorkingFolderMenu = false
-      importWorkingFolder(result)
-    }
+    .workingFolderImporter(
+      isPresented: $showingWorkingFolderImporter, errorMessage: $attachmentError,
+      onCompletion: { showingWorkingFolderMenu = false },
+      onSelection: store.setCurrentConversationWorkingFolder)
   }
 
   private func workingFolderMenuRow(
@@ -4481,16 +4462,6 @@ private struct ChatComposer: View {
     guard let conversation = store.currentConversation else { return nil }
     guard workingFolderMode != .disabled else { return "Off" }
     return store.workingFolderDisplayName(for: conversation)
-  }
-
-  private func importWorkingFolder(_ result: Result<URL, Error>) {
-    do {
-      let url = try result.get()
-      let reference = try WorkingFolderAccess.makeReference(from: url)
-      store.setCurrentConversationWorkingFolder(reference)
-    } catch {
-      attachmentError = error.localizedDescription
-    }
   }
 
   private var toolsEnabled: Bool {

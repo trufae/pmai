@@ -233,16 +233,7 @@ private struct SkillsManagerView: View {
         reload()
       } catch { errorMessage = error.localizedDescription }
     }
-    .alert(
-      "Couldn't Manage Skill",
-      isPresented: Binding(
-        get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
-      )
-    ) {
-      Button("OK", role: .cancel) { errorMessage = nil }
-    } message: {
-      Text(errorMessage ?? "")
-    }
+    .errorAlert("Couldn't Manage Skill", message: $errorMessage)
     .alert(
       "Delete skill?",
       isPresented: Binding(
@@ -363,16 +354,7 @@ private struct SkillEditorView: View {
             })
         }
       }
-      .alert(
-        "Couldn't Save Skill",
-        isPresented: Binding(
-          get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
-        )
-      ) {
-        Button("OK", role: .cancel) { errorMessage = nil }
-      } message: {
-        Text(errorMessage ?? "")
-      }
+      .errorAlert("Couldn't Save Skill", message: $errorMessage)
     }
   }
 }
