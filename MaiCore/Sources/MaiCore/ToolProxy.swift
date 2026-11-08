@@ -5,6 +5,9 @@ import Foundation
 public enum ToolProxy {
   public static let listName = "list-tools"
   public static let callName = "call-tool"
+  private static let listAPIName = "list_tools"
+  private static let callAPIName = "call_tool"
+  private static let proxyNames = AgentToolNameResolver(tools: definitions)
 
   /// How many matches `listTools` describes with their arguments; the rest
   /// are named in one line each, so a broad search costs a screen, not the
@@ -58,15 +61,15 @@ public enum ToolProxy {
   /// tool by its own name gets nothing back from the server, and needs to be
   /// told the way in.
   public static let repairHint =
-    "Tools not offered directly run through \(callName): {\"name\": TOOL, \"arguments\": {…}}; \(listName) describes their arguments."
+    "Tools not offered directly run through \(callAPIName): {\"name\": TOOL, \"arguments\": {…}}; call \(listAPIName) directly to see their arguments."
 
   /// list-tools, describing what it reaches: each hidden tool's name and the
   /// start of its description, so the model knows what exists without paying
   /// for the schemas until it needs one.
   static func listDefinition(for hidden: [ToolDefinition]) -> ToolDefinition {
     var description =
-      "Describe the arguments of the tools reachable through \(callName), by name or keyword."
-    description += " Search for a tool's name or capability, then use \(callName) with its arguments to perform the task."
+      "Call this function directly to discover tools and their arguments."
+    description += " Search for a tool's name or capability, then use \(callAPIName) with its arguments to perform the task."
     if !hidden.isEmpty {
       let shown = hidden.prefix(maximumDescribedTools).map { "\($0.name) (\(blurb($0.description)))" }
       description += " They are: " + shown.joined(separator: "; ")
@@ -80,13 +83,13 @@ public enum ToolProxy {
         ToolParameterDef(
           name: "keywords",
           type: "string",
-          description: "Space-separated tool names or capabilities. Put the user's search query in the discovered tool's arguments.",
-          required: true)
+          description: "Space-separated tool names or capabilities. Omit to browse tools. Put the user's search query in the discovered tool's arguments.",
+          required: false)
       ],
       annotations: ToolAnnotations(
         readOnly: true, idempotent: true, openWorld: false, approval: .automatic))
     // Pythonic native parsers cannot represent a hyphenated function name.
-    definition.providerName = "list_tools"
+    definition.providerName = listAPIName
     return definition
   }
 
@@ -94,7 +97,7 @@ public enum ToolProxy {
     var definition = ToolDefinition(
       name: callName,
       description:
-        "Call an available tool by exact name with JSON arguments. Use \(listName) first when the arguments are unknown. Some tools are callable by known name without appearing in \(listName).",
+        "Run a concrete tool by exact name with JSON arguments. Call \(listAPIName) directly to discover tools. Some tools are callable by known name without appearing in discovery.",
       parameters: [
         ToolParameterDef(
           name: "name",
@@ -108,7 +111,7 @@ public enum ToolProxy {
           required: true),
       ],
       annotations: ToolAnnotations(approval: .automatic))
-    definition.providerName = "call_tool"
+    definition.providerName = callAPIName
     return definition
   }()
 
@@ -156,7 +159,7 @@ public enum ToolProxy {
       if definitions.count > available.count {
         lines.append("\(definitions.count - available.count) more tools available; search by tool name or capability.")
       }
-      lines.append("Use \(callName) with one of these tool names and its arguments to perform the task.")
+      lines.append("Use \(callAPIName) with one of these tool names and its arguments to perform the task.")
       return lines.joined(separator: "\n")
     }
     var lines = matches.prefix(detailedMatches).map { summary(for: $0.0) }
@@ -176,15 +179,17 @@ public enum ToolProxy {
     // Some models put the name inside the arguments object instead of next
     // to it: {"arguments": {"name": T, "arguments": {...}}}.
     let requestedName = requestedToolName(in: arguments)
-    let resolver = AgentToolNameResolver(tools: definitions)
-    guard let canonicalName = resolver.canonicalName(for: requestedName) else {
-      return (
-        nil,
-        "Error: unknown tool '\(requestedName)'. Call \(listName) first with relevant keywords."
-      )
+    let proxyName = proxyNames.canonicalName(for: requestedName)
+    if proxyName == callName {
+      return (nil, "Error: \(callAPIName) cannot call itself. Pass the concrete tool's name, or call \(listAPIName) directly for discovery.")
     }
-    guard let definition = definitions.first(where: { $0.name == canonicalName }) else {
-      return (nil, "Error: unknown tool '\(requestedName)'.")
+    let resolver = AgentToolNameResolver(tools: definitions)
+    let definition = proxyName == listName ? listDefinition(for: [])
+      : resolver.canonicalName(for: requestedName).flatMap { name in
+        definitions.first { $0.name == name }
+      }
+    guard let definition else {
+      return (nil, "Error: unknown tool '\(requestedName)'. Call \(listAPIName) directly with relevant keywords.")
     }
     // Some models wrap the call twice: {"name": T, "arguments": {"name": T,
     // "arguments": {...}}}. The inner object is what they meant, unless the
@@ -196,10 +201,13 @@ public enum ToolProxy {
     {
       argumentValues = argumentObject(from: inner)
     }
+    if definition.name == listName, argumentValues["keywords"] == nil {
+      argumentValues["keywords"] = argumentValues["query"] ?? argumentValues["filter"]
+    }
     let normalized = AgentTooling.normalizeArguments(argumentValues, for: definition)
     return (
       ParsedToolCall(
-        name: canonicalName,
+        name: definition.name,
         arguments: [:],
         argumentValues: normalized,
         rawBlock: ""),

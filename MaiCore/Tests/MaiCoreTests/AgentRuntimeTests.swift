@@ -1006,7 +1006,7 @@ func unmatchedProxyDiscovery() {
   #expect(result.contains("No tool names or capabilities match"))
   #expect(result.contains("tool_0") && result.contains("query (string, required)"))
   #expect(result.contains("tool_5") && !result.contains("tool_6"))
-  #expect(result.contains("2 more tools") && result.contains(ToolProxy.callName))
+  #expect(result.contains("2 more tools") && result.contains(resolver.apiName(for: ToolProxy.callName)))
   let empty = ToolProxy.listTools(arguments: ["keywords": .string("rizin")], definitions: [])
   #expect(empty == "No enabled tools matching 'rizin'.")
 }
@@ -2590,8 +2590,9 @@ func hiddenToolExecution(mode: ToolCallingMode, proxyDefault: Bool) async throws
   let calls = [
     ToolCall(id: "list", name: ToolProxy.listName,
       arguments: .object(["keywords": .string("")])),
-    ToolCall(id: "search", name: ToolProxy.listName,
-      arguments: .object(["keywords": .string("secret")])),
+    ToolCall(id: "search", name: ToolProxy.callName, arguments: .object([
+      "name": .string("list_tools"), "arguments": .object(["keywords": .string("secret")]),
+    ])),
     ToolCall(id: "direct", name: "secret", arguments: .object(["text": .string("direct ran")])),
     ToolCall(id: "proxy", name: ToolProxy.callName,
       arguments: .object(["name": .string("secret"),
@@ -2640,7 +2641,7 @@ func hiddenToolExecution(mode: ToolCallingMode, proxyDefault: Bool) async throws
   #expect(outputs.contains { $0.text == "direct ran" && !$0.isError })
   #expect(outputs.contains { $0.text == "proxy ran" && !$0.isError })
   #expect(outputs.filter(\.isError).count == 2)
-  #expect(outputs.prefix(2).allSatisfy { !$0.text.contains("- secret:") })
+  #expect(outputs.prefix(2).allSatisfy { !$0.isError && !$0.text.contains("- secret:") })
   #expect(await runtime.toolUsageSnapshot().counts == ["secret": 2])
 }
 

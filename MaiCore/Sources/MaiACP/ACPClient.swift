@@ -655,7 +655,12 @@ public actor ACPClient {
         decoding: try JSONEncoder().encode(config), as: UTF8.self)
     }
     if let url = configuration.webSocketURL {
-      transport = try await remoteTransport(url: url)
+      do {
+        transport = try await remoteTransport(url: url)
+      } catch {
+        try Task.checkCancellation()
+        throw ACPClientError.launchFailed(command: configuration.command, detail: error.localizedDescription)
+      }
     } else {
       #if os(macOS) || os(Linux) || os(Windows) || os(Android)
         transport = try StdioJSONRPCTransport.spawn(
@@ -740,6 +745,7 @@ public actor ACPClient {
       }
     } catch {
       await disconnect()
+      try Task.checkCancellation()
       throw ACPClientError.launchFailed(
         command: configuration.command,
         detail: transport.recentErrorOutput.isEmpty

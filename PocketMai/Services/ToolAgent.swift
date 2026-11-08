@@ -31,8 +31,10 @@ enum BuiltInToolCatalog {
     case let name where RemoteWorkspaceTools.definitions.contains(where: { $0.name == name }):
       guard !store.settings.isOffline else { return "Error: remote hosts are unavailable while offline." }
       do {
-        return try await PocketMaiRemoteTools.shared.call(name, arguments: .object(call.argumentValues),
-          owner: conversation.id.uuidString).text
+        let result = try await PocketMaiRemoteTools.shared.call(name, arguments: .object(call.argumentValues),
+          owner: conversation.id.uuidString)
+        return result.isError && !result.text.lowercased().hasPrefix("error:")
+          ? "Error: " + result.text : result.text
       } catch { return "Error: \(error.localizedDescription)" }
     case let name where TodoTool.toolNames.contains(name):
       return TodoTool.execute(name: name, arguments: call.argumentValues, store: store)
@@ -481,6 +483,10 @@ enum ToolAgentRegistry {
         guard let call = resolved.call else {
           return resolved.error ?? "Error: invalid proxied tool call."
         }
+        if call.name == ToolProxy.listName {
+          return ToolProxy.listTools(
+            arguments: call.argumentValues, definitions: toolCatalog.listedDefinitions)
+        }
         return await executeConcrete(
           call: call,
           conversation: conversation,
@@ -510,6 +516,9 @@ enum ToolAgentRegistry {
     let normalizedCall = AgentTooling.normalized(call: call, tools: definitions)
     guard let definition = definitions.first(where: { $0.name == normalizedCall.name }) else {
       return AgentTooling.unavailableToolError(name: normalizedCall.name)
+    }
+    if let error = AgentTooling.requiredArgumentsError(call: normalizedCall, tools: definitions) {
+      return error
     }
     let executionCatalog = catalog(
       for: conversation, settings: settings, mcpTools: store.mcpTools,

@@ -1101,6 +1101,12 @@ enum AssistantToolLoop {
         for: value, settings: approvalSettings,
         mcpTools: tools, mcpResources: resources, mcpStatuses: statuses)
     }
+    if normalizedCall.name == ToolProxy.callName {
+      let resolved = ToolProxy.resolveCall(arguments: normalizedCall.argumentValues, definitions: definitions)
+      if let error = resolved.error {
+        return .answered(CallResult(call: normalizedCall, result: error))
+      }
+    }
     let skillSelection = SkillToolSelection(call: normalizedCall, definitions: definitions)
     let approvalMode = skillSelection == nil ? approvalSettings.toolApprovalMode
       : approvalSettings.skillApprovalMode ?? approvalSettings.toolApprovalMode
@@ -1171,10 +1177,17 @@ enum AssistantToolLoop {
           call: unavailableCall,
           result: AgentTooling.unavailableToolError(name: unavailableCall.name)))
     }
-    if let validationError = AgentTooling.requiredArgumentsError(
-      call: executableCall,
-      tools: executionDefinitions)
-    {
+    var target = executableCall
+    if executableCall.name == ToolProxy.callName {
+      let resolved = ToolProxy.resolveCall(
+        arguments: executableCall.argumentValues,
+        definitions: executionDefinitions)
+      guard let call = resolved.call else {
+        return .answered(CallResult(call: executableCall, result: resolved.error ?? "Error: invalid proxied tool call."))
+      }
+      target = call
+    }
+    if let validationError = AgentTooling.requiredArgumentsError(call: target, tools: executionDefinitions) {
       return .answered(CallResult(call: executableCall, result: validationError))
     }
 
@@ -1184,23 +1197,23 @@ enum AssistantToolLoop {
       store.activityPhaseChanged(
         conversationID: conversationID,
         phase: .runningTool,
-        detail: executableCall.name)
+        detail: target.name)
       context = LongRunningOperationContext(
         kind: .toolCall,
         conversationID: conversationID,
         assistantMessageID: assistantID,
-        operationName: executableCall.name,
+        operationName: target.name,
         conversationTitle: store.conversation(withID: conversationID)?.displayTitle,
         timeoutInterval: store.settings.mcpRequestTimeoutInterval)
     case .isolated(let conversation, let settings, _, _, _, let process):
       if let process {
-        await store.agentSupervisor.note(process, activity: executableCall.name)
+        await store.agentSupervisor.note(process, activity: target.name)
       }
       context = LongRunningOperationContext(
         kind: .toolCall,
         conversationID: conversation.id,
         assistantMessageID: nil,
-        operationName: executableCall.name,
+        operationName: target.name,
         conversationTitle: conversation.displayTitle,
         timeoutInterval: settings.mcpRequestTimeoutInterval)
     }
@@ -1222,7 +1235,7 @@ enum AssistantToolLoop {
     // An asynchronous tool call — one whose definition says it runs
     // alongside the rest of the reply — is what lets several children start
     // at once; a legacy spelling of agent_start counts as the tool it names.
-    let canonicalName = AgentProcessTools.canonicalName(executableCall.name)
+    let canonicalName = AgentProcessTools.canonicalName(target.name)
     let concurrent = executionDefinitions.contains {
       $0.name == canonicalName && $0.annotations.concurrent
     }
@@ -1519,7 +1532,9 @@ enum AssistantToolLoop {
       var native = definition
       let apiName = resolver.apiName(for: definition.name)
       native.providerName = apiName
-      if apiName != definition.name {
+      if apiName != definition.name, definition.name != ToolProxy.listName,
+        definition.name != ToolProxy.callName
+      {
         native.description += " Original tool name: \(definition.name)."
       }
       return native
@@ -1557,7 +1572,8 @@ enum AssistantToolLoop {
       guard let id = item.call.toolCallID else { return nil }
       return AgentMessage(
         role: .tool,
-        content: [.toolResult(ToolResult(callID: id, text: item.result))])
+        content: [.toolResult(ToolResult(
+          callID: id, text: item.result, isError: isToolResultError(item.result)))])
     }
     return [assistant] + toolMessages
   }
@@ -1617,9 +1633,8 @@ enum AssistantToolLoop {
       toolName: firstCall?.name ?? "invalid_tool_call",
       argumentsJSON: firstCall?.argsJSON ?? "{}",
       result: resultText,
-      isError: firstResult.trimmingCharacters(in: .whitespacesAndNewlines)
-        .lowercased()
-        .hasPrefix("error:"),
+      isError: results.isEmpty ? isToolResultError(firstResult)
+        : results.contains { isToolResultError($0.result) },
       rawBlock: response)
     store.appendToolCallingDebugIteration(iteration, conversationID: conversation.id)
   }

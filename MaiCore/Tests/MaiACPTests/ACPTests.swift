@@ -183,6 +183,38 @@ func remoteWorkspaceAgentAccess() async throws {
   }
 }
 
+@Test("Remote tools omit known-offline hosts and refuse both names and IDs")
+func remoteWorkspaceUnavailableHost() async throws {
+  let connection = RemoteHostConnection(try OpenCodeConnection(
+    name: "Worker", url: #require(URL(string: "http://127.0.0.1:1")), token: "test", cwd: "/work"))
+  let tools = RemoteWorkspaceTools {
+    [.init(id: "offline-id", connection: connection, isUnavailable: true)]
+  }
+  let result = try await tools.call("remote_hosts", arguments: .object([:]), owner: "chat")
+  #expect(result.structuredContent == .array([]))
+  for host in ["Worker", "offline-id"] {
+    do {
+      _ = try await tools.call("remote_run", arguments: .object([
+        "host": .string(host), "command": .string("echo ok"),
+      ]), owner: "child")
+      Issue.record("An unavailable host must not run commands")
+    } catch {
+      #expect(error.localizedDescription.contains("until the user reconnects it"))
+    }
+  }
+}
+
+@Test("The proxy preserves empty remote writes and terminal input")
+func remoteWorkspaceProxyInput() throws {
+  for (name, key, value) in [("remote_files", "content", ""), ("remote_terminal", "text", "\n")] {
+    let resolved = ToolProxy.resolveCall(arguments: [
+      "name": .string(name),
+      "arguments": .object(["host": .string("worker"), "action": .string("write"), key: .string(value)]),
+    ], definitions: RemoteWorkspaceTools.definitions)
+    #expect(resolved.call?.argumentValues[key] == .string(value))
+  }
+}
+
 @Test("ACP browses and transfers worker files without a chat, within the served root")
 func acpWorkspaceFiles() async throws {
   let base = FileManager.default.temporaryDirectory.appendingPathComponent("acp-browser-\(UUID())")

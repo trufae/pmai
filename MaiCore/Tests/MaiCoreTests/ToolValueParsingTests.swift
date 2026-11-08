@@ -74,3 +74,14 @@ private func checkCall(_ fixture: (String, String, [String: JSONValue]), mode: T
   #expect(AgentTooling.containsDefinition(named: name, in: tools))
   #expect(normalized.argumentValues == arguments)
 }
+
+@Test("Native proxy self-calls preserve the envelope and report the recursion")
+func nativeProxyRejectsRecursion() throws {
+  let response = #"<tool_call id="proxy" api_name="call_tool">{"arguments":{"arguments":{"path":"README.md"},"name":"call_tool"},"name":"call-tool"}</tool_call>"#
+  let calls = AgentTooling.parseCalls(in: response, tools: ToolProxy.definitions, mode: .native)
+  let call = try #require(calls.first)
+  #expect(call.toolCallID == "proxy")
+  let resolved = ToolProxy.resolveCall(arguments: call.argumentValues, definitions: [])
+  #expect(resolved.call == nil)
+  #expect(resolved.error?.contains("cannot call itself") == true)
+}

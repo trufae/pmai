@@ -863,11 +863,16 @@ final class RemoteAgentChat {
   }
 
   func connect() {
+    connect(automatically: false)
+  }
+
+  private func connect(automatically: Bool) {
     guard !busy, !connected else { return }
     guard !isOffline() else {
       error = "Turn off Airplane Mode in Settings to connect to this host."
       return
     }
+    if !automatically { reconnectDelay = 1 }
     shouldReconnect = true
     reconnectTask?.cancel()
     reconnectTask = nil
@@ -880,7 +885,6 @@ final class RemoteAgentChat {
     catalogRequest?.cancel()
     catalogRequest = nil
     catalogLoaded = false
-    store.setConnectionFailed(false, for: bookmark.id)
     generation += 1
     let attempt = generation
     operation = Task { [self] in
@@ -903,7 +907,7 @@ final class RemoteAgentChat {
         guard generation == attempt, !Task.isCancelled else { return }
         messages = loadingMessages ?? previous
         loadingMessages = nil
-        reconnectDelay = 1
+        if connected { reconnectDelay = 1 }
         store.setConnectionFailed(!connected, for: bookmark.id)
         connectingHistory = nil
         status = connected ? (responding ? "Responding…" : "Connected") : "Disconnected"
@@ -921,7 +925,7 @@ final class RemoteAgentChat {
         self.error = error.localizedDescription
         connected = false
         if !RemoteConnectionRecovery.shouldRetry(error) { shouldReconnect = false }
-        store.setConnectionFailed(!(error is CancellationError), for: bookmark.id)
+        if !(error is CancellationError) { store.setConnectionFailed(true, for: bookmark.id) }
         status = "Disconnected"
         await client?.disconnect()
       }
@@ -986,15 +990,18 @@ final class RemoteAgentChat {
   }
 
   private func scheduleReconnect() {
-    guard shouldReconnect, !isOffline(), reconnectTask == nil else { return }
+    guard reconnectTask == nil else { return }
+    status = "Disconnected"
+    guard shouldReconnect, !isOffline(),
+      reconnectDelay <= RemoteConnectionRecovery.maximumReconnectDelay else { return }
     status = "Reconnecting…"
     let delay = reconnectDelay
-    reconnectDelay = min(30, reconnectDelay * 2)
+    reconnectDelay *= 2
     reconnectTask = Task { [weak self] in
       do { try await Task.sleep(for: .seconds(delay)) } catch { return }
       guard let self, !Task.isCancelled else { return }
       reconnectTask = nil
-      connect()
+      connect(automatically: true)
     }
   }
 
@@ -1029,9 +1036,11 @@ final class RemoteAgentChat {
         let stillConnected = await client.isConnected
         guard generation == attempt else { return }
         self.error = error is CancellationError ? nil : error.localizedDescription
-        connected = error is OpenCodeClient.SessionFailure && stillConnected
-        store.setConnectionFailed(!connected && !(error is CancellationError), for: bookmark.id)
-        status = connected ? "Session failed" : "Reconnecting…"
+        connected = stillConnected
+        if !connected, !(error is CancellationError) {
+          store.setConnectionFailed(true, for: bookmark.id)
+        }
+        status = connected ? "Session failed" : "Disconnected"
       }
       guard generation == attempt else { return }
       flushMessages()
@@ -1096,7 +1105,8 @@ final class RemoteAgentChat {
   }
 
   private func connectionClosed(generation: Int) {
-    guard self.generation == generation else { return }
+    // The connection attempt reports its own handshake failure.
+    guard self.generation == generation, connected else { return }
     flushMessages()
     catalogTask?.cancel()
     catalogTask = nil

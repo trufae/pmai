@@ -11,6 +11,9 @@ public enum RemoteAgentBackend: String, Codable, Sendable {
 }
 
 public enum RemoteConnectionRecovery {
+  /// Automatic reconnects back off for 1, 2 and 4 seconds per outage.
+  public static let maximumReconnectDelay = 4
+
   /// Invalid credentials and protocol/configuration errors need user action.
   public static func shouldRetry(_ error: any Error) -> Bool {
     if error is CancellationError { return false }
