@@ -496,6 +496,14 @@ struct SettingsView: View {
       Label("User Prompts", systemImage: "text.quote")
     }
 
+    if #available(iOS 26.4, *) {
+      NavigationLink {
+        CarPlayFavoritesView(prompts: store.settings.userPrompts)
+      } label: {
+        Label("CarPlay", systemImage: "car")
+      }
+    }
+
     SettingsLazyDisclosureGroup {
       followUpOptionsContent
     } label: {

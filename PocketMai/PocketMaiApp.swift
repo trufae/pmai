@@ -2,8 +2,11 @@ import MaiCore
 import SwiftUI
 
 @main
+@MainActor
 struct PocketMaiApp: App {
-  @State private var store = AppStore()
+  static let sharedStore = AppStore()
+
+  private var store: AppStore { Self.sharedStore }
   private let ttsPlayer = TTSPlayer.shared
 
   init() {
