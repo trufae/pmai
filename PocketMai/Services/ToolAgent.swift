@@ -527,14 +527,14 @@ enum ToolAgentRegistry {
     guard let definition = definitions.first(where: { $0.name == normalizedCall.name }) else {
       return AgentTooling.unavailableToolError(name: normalizedCall.name)
     }
-    if let error = AgentTooling.requiredArgumentsError(call: normalizedCall, tools: definitions) {
-      return error
-    }
     let executionCatalog = catalog(
       for: conversation, settings: settings, mcpTools: store.mcpTools,
       mcpResources: store.mcpResources, mcpStatuses: store.mcpStatuses)
     guard store.settings.internetAccessPolicy.allows(definition, in: executionCatalog.groups) else {
       return "Error: internet tools are disabled while offline."
+    }
+    if let error = AgentTooling.requiredArgumentsError(call: normalizedCall, tools: definitions) {
+      return error
     }
     if MaiSkillTools.isSkillTool(normalizedCall.name) {
       return SkillTools.execute(
