@@ -7,34 +7,19 @@ import NIOPosix
 /// A loopback MCP endpoint for one local ACP session. Only the current turn's
 /// tools are callable, through the runtime's normal execution and approval path.
 actor ACPToolBridge {
-  private let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-  private var channel: Channel?
-  private let path = "/" + UUID().uuidString
+  private let server = LoopbackJSONRPCServer()
   private var tools: [ToolDefinition] = []
   private var execute: ProviderToolScope.Handler?
   private var running: [UUID: Task<ToolResult, Error>] = [:]
 
   func start() async throws -> JSONValue {
-    let path = self.path
-    let handle: @Sendable (JSONRPCMessage) async throws -> JSONRPCMessage? = {
-      [weak self] message in
+    let url = try await server.start { [weak self] message in
       guard let self else { throw JSONRPCError.internalError("Tool bridge closed") }
       return try await self.handle(message)
     }
-    let channel = try await ServerBootstrap(group: group)
-      .childChannelInitializer { channel in
-        channel.pipeline.configureHTTPServerPipeline().flatMap {
-          channel.pipeline.addHandler(
-            MCPHTTPHandler(path: path, handle: handle))
-        }
-      }.bind(host: "127.0.0.1", port: 0).get()
-    self.channel = channel
-    guard let port = channel.localAddress?.port else {
-      throw JSONRPCError.internalError("Cannot bind ACP tools")
-    }
     return .object([
       "type": .string("http"), "name": .string("pmai"),
-      "url": .string("http://127.0.0.1:\(port)\(path)"), "headers": .array([]),
+      "url": .string(url), "headers": .array([]),
     ])
   }
 
@@ -48,9 +33,7 @@ actor ACPToolBridge {
 
   func close() async {
     configure(tools: [], execute: nil)
-    try? await channel?.close()
-    channel = nil
-    try? await group.shutdownGracefully()
+    await server.close()
   }
 
   private func handle(_ message: JSONRPCMessage) async throws -> JSONRPCMessage? {
@@ -97,6 +80,40 @@ actor ACPToolBridge {
     default: throw JSONRPCError.methodNotFound(message.method ?? "")
     }
     return .response(id: id, result: result)
+  }
+}
+
+/// A short-lived local JSON-RPC endpoint with a per-launch capability URL.
+public actor LoopbackJSONRPCServer {
+  private let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+  private var channel: Channel?
+  private var closed = false
+
+  public init() {}
+
+  public func start(
+    handle: @escaping @Sendable (JSONRPCMessage) async throws -> JSONRPCMessage?
+  ) async throws -> String {
+    let path = "/" + UUID().uuidString
+    let channel = try await ServerBootstrap(group: group)
+      .childChannelInitializer { channel in
+        channel.pipeline.configureHTTPServerPipeline().flatMap {
+          channel.pipeline.addHandler(MCPHTTPHandler(path: path, handle: handle))
+        }
+      }.bind(host: "127.0.0.1", port: 0).get()
+    self.channel = channel
+    guard let port = channel.localAddress?.port else {
+      throw JSONRPCError.internalError("Cannot bind local JSON-RPC server")
+    }
+    return "http://127.0.0.1:\(port)\(path)"
+  }
+
+  public func close() async {
+    guard !closed else { return }
+    closed = true
+    try? await channel?.close()
+    channel = nil
+    try? await group.shutdownGracefully()
   }
 }
 

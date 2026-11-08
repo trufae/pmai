@@ -1262,12 +1262,79 @@ extension MaiCLI {
       if let operation { interruptHandler.restore(operation.id, cancellation: operation.cancel) }
     }
 
+    func answerCompaction(_ text: String) async -> Bool {
+      guard let waiting = loop.compactions.first else { return false }
+      var decision: AutocompactionDecision?
+      switch text.lowercased() {
+      case "y", "yes", "compact", "s", "summarize": decision = .compact
+      case "p", "prune":
+        if waiting.request.pruning != nil {
+          decision = .pruneToolOutput
+        } else {
+          await terminal.line("No older tool output can be shortened. Choose y to summarize, n to keep context, or c to stop.")
+          return true
+        }
+      case "n", "no", "skip", "continue": decision = .continueWithoutCompacting
+      case "c", "cancel", "stop": decision = .cancelRun
+      case "m", "model":
+        await terminal.line(
+          "Use /model NAME to change all models, /model -chat NAME for chat only, or /model -compact NAME for the summarizer. Then choose y to summarize, p to prune available old tool output, or n to keep context."
+        )
+        return true
+      case "x", "clear", "/chat clear":
+        guard waiting.request.run.pid == chatProcessIDs[session.id] else {
+          await terminal.line("Switch to the requesting chat before clearing it; c stops this run.")
+          return true
+        }
+        decision = .clearChat
+      default:
+        if !text.hasPrefix("/") {
+          await terminal.line("Choose y (summarize), p (prune available old tool output), n (keep context), m (model), x (clear chat), or c (stop). Slash commands remain available.")
+          return true
+        }
+      }
+      if let decision {
+        loop.compactions.removeFirst()
+        if decision == .clearChat {
+          await terminal.line("Conversation cleared. Continuing with your latest message.")
+        }
+        waiting.reply.resume(with: decision)
+        await refreshStatus()
+        return true
+      }
+      return false
+    }
+
+    func answerAppModal(_ text: String) async -> Bool {
+      if await answerApproval(text) { return true }
+      return await answerCompaction(text)
+    }
+
+    func receiveApproval(_ request: ApprovalRequest, _ reply: REPLApprovalReply) async {
+      if loop.exiting {
+        reply.fail(CancellationError())
+      } else if await services.approvalHandler.permitsUnattendedApproval(request) {
+        reply.resume(with: .approve(arguments: request.call.arguments))
+      } else {
+        loop.approvals.append((request, reply))
+        await terminal.approvalRequest(request)
+      }
+      await refreshStatus()
+    }
+
+    func removeApproval(_ reply: REPLApprovalReply) async {
+      loop.approvals.removeAll { $0.reply === reply }
+      if loop.editingApproval?.reply === reply { loop.editingApproval = nil }
+      await refreshStatus()
+    }
+
     /// Gives Ctrl+C to one non-interactive command. Keep consuming input while
     /// it waits, buffering ordinary submissions until its state is applied.
     /// Commands that own stdin themselves leave resumeInput disabled.
     func runForeground<Value: Sendable>(
       _ name: String,
       resumeInput: Bool = true,
+      appSession: Bool = false,
       operation: @escaping @Sendable () async -> Value
     ) async -> (value: Value, interrupted: Bool) {
       let previous = loop.interruptOperation
@@ -1282,6 +1349,8 @@ extension MaiCLI {
       let interrupt = interruptHandler.activate { task.cancel() }
       loop.foregroundCommand = name
       if readsInput {
+        var appQuestion: AsyncThrowingStream<String, any Error>.Continuation?
+        defer { appQuestion?.finish(throwing: CancellationError()) }
         await releaseReader(workspace: workspace, duringForeground: true)
         while let event = await eventIterator.next() {
           if case .foregroundFinished(let finished) = event, finished == id { break }
@@ -1291,6 +1360,12 @@ extension MaiCLI {
             let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             if !heredoc, text == "/stop" {
               interruptHandler.requestInterrupt()
+            } else if appSession, !heredoc, await answerAppModal(text) {
+              await refreshStatus()
+            } else if let question = appQuestion, !["/exit", "/quit"].contains(text) {
+              appQuestion = nil
+              question.yield(raw)
+              question.finish()
             } else {
               deferredEvents.append(.line(
                 raw, heredoc: heredoc, promptID: promptID, pasted: pasted, inputReleased: true))
@@ -1324,6 +1399,20 @@ extension MaiCLI {
             deferredEvents.append(.switchAgent(selection, reply: {}))
             reply()
             await terminal.note("Agent switch queued until \(name) finishes.")
+          case .approval(let request, let reply) where appSession:
+            await receiveApproval(request, reply)
+          case .approvalFinished(let reply) where appSession:
+            await removeApproval(reply)
+          case .compaction(let request, let reply) where appSession:
+            loop.compactions.append((request, reply))
+            await terminal.line("App context limit. Choose y to summarize, n to keep context, or c to stop.")
+            await refreshStatus()
+          case .compactionFinished(let reply) where appSession:
+            loop.compactions.removeAll { $0.reply === reply }
+            await refreshStatus()
+          case .appQuestion(let text, let reply) where appSession:
+            appQuestion = reply
+            await terminal.line("App asks: \(text)")
           default:
             deferredEvents.append(event)
           }
@@ -2152,6 +2241,9 @@ extension MaiCLI {
         defer { reply() }
         guard loop.modalPrompt(for: session.id) == nil, !loop.exiting else { return false }
         await switchAgent(selection)
+      case .appQuestion(_, let reply):
+        reply.finish(throwing: CancellationError())
+
       case .foregroundFinished:
         break
       case .readerParked:
@@ -2442,50 +2534,9 @@ extension MaiCLI {
           await releaseIfIdle(workspace: workspace)
           return false
         }
-        if !heredoc, let waiting = loop.compactions.first {
-          var decision: AutocompactionDecision?
-          switch text.lowercased() {
-          case "y", "yes", "compact", "s", "summarize": decision = .compact
-          case "p", "prune":
-            if waiting.request.pruning != nil {
-              decision = .pruneToolOutput
-            } else {
-              await terminal.line("No older tool output can be shortened. Choose y to summarize, n to keep context, or c to stop.")
-              await releaseIfIdle(workspace: workspace)
-              return false
-            }
-          case "n", "no", "skip", "continue": decision = .continueWithoutCompacting
-          case "c", "cancel", "stop": decision = .cancelRun
-          case "m", "model":
-            await terminal.line(
-              "Use /model NAME to change all models, /model -chat NAME for chat only, or /model -compact NAME for the summarizer. Then choose y to summarize, p to prune available old tool output, or n to keep context."
-            )
-            await releaseIfIdle(workspace: workspace)
-            return false
-          case "x", "clear", "/chat clear":
-            guard waiting.request.run.pid == chatProcessIDs[session.id] else {
-              await terminal.line("Switch to the requesting chat before clearing it; c stops this run.")
-              await releaseIfIdle(workspace: workspace)
-              return false
-            }
-            decision = .clearChat
-          default:
-            if !text.hasPrefix("/") {
-              await terminal.line("Choose y (summarize), p (prune available old tool output), n (keep context), m (model), x (clear chat), or c (stop). Slash commands remain available.")
-              await releaseIfIdle(workspace: workspace)
-              return false
-            }
-          }
-          if let decision {
-            loop.compactions.removeFirst()
-            if decision == .clearChat {
-              await terminal.line("Conversation cleared. Continuing with your latest message.")
-            }
-            waiting.reply.resume(with: decision)
-            await refreshStatus()
-            await releaseIfIdle(workspace: workspace)
-            return false
-          }
+        if !heredoc, await answerCompaction(text) {
+          await releaseIfIdle(workspace: workspace)
+          return false
         }
         if !heredoc, text.split(whereSeparator: \.isWhitespace).first == "." {
           do {
@@ -2542,6 +2593,39 @@ extension MaiCLI {
           let argument =
             command.count > 1
             ? command[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+          if name == "/app" {
+            do {
+              let fields = try shellWords(argument)
+              guard fields.starts(with: ["run", "--allow-exec", "--chat"]), fields.count >= 4 else {
+                throw CLIApp.Failure(message: "Usage: /app run --allow-exec --chat DIRECTORY [ARGS...]")
+              }
+              guard !loop.hasTurns else {
+                throw CLIApp.Failure(message: "Wait for the chat turn to finish before starting an app.")
+              }
+              let scope = AgentExecutionScope(sessionID: session.sessionID, workingDirectory: AgentExecutionScope.directory)
+              let canAsk = screen != nil
+              let bridge = CLIAppSession(runtime: runtime, request: chatRequest(), scope: scope,
+                fileAccessLog: session.fileAccessLog, terminal: terminal) { text in
+                guard canAsk else { throw JSONRPCError.internalError("A terminal is required to ask the user") }
+                let (answers, reply) = AsyncThrowingStream<String, any Error>.makeStream()
+                if case .terminated = continuation.yield(.appQuestion(text, reply)) {
+                  throw CancellationError()
+                }
+                var iterator = answers.makeAsyncIterator()
+                guard let answer = try await iterator.next() else { throw CancellationError() }
+                return answer
+              }
+              let directory = fields[3]
+              let arguments = Array(fields.dropFirst(4))
+              shareStateWithPmaiTools()
+              _ = await runForeground("/app", appSession: true) {
+                await CLIAppSession.launch(directory: directory, arguments: arguments,
+                  bridge: bridge, terminal: terminal)
+              }
+            } catch { await terminal.line("error: \(error.localizedDescription)", to: .standardError) }
+            await releaseIfIdle(workspace: workspace)
+            return false
+          }
           if name == "/shell" {
             let mode = argument.isEmpty ? "auto" : argument
             if !["local", "auto", "live", "cmd"].contains(mode) {
@@ -3631,22 +3715,10 @@ extension MaiCLI {
         await releaseIfIdle(workspace: workspace)
 
       case .approval(let request, let reply):
-        if loop.exiting {
-          reply.fail(CancellationError())
-        } else if await services.approvalHandler.permitsUnattendedApproval(request)
-        {
-          reply.resume(with: .approve(arguments: request.call.arguments))
-        } else {
-          loop.approvals.append((request, reply))
-          await refreshStatus()
-          await terminal.approvalRequest(request)
-        }
-        await refreshStatus()
+        await receiveApproval(request, reply)
 
       case .approvalFinished(let reply):
-        loop.approvals.removeAll { $0.reply === reply }
-        if loop.editingApproval?.reply === reply { loop.editingApproval = nil }
-        await refreshStatus()
+        await removeApproval(reply)
 
       case .compaction(let request, let reply):
         if loop.exiting {
