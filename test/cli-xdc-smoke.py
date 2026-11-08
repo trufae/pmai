@@ -49,7 +49,7 @@ def main():
         write_manifest(source, {'build': {'command': build}, 'run': {'command': ['{bin}']}})
         result = run(source, 'argument with spaces')
         assert result.returncode == 0 and result.stdout.strip() == 'argument with spaces', result
-        if shutil.which('pkg-config'):
+        if shutil.which('pkg-config.exe' if sys.platform == 'win32' else 'pkg-config'):
             (root / 'cli-xdc-test.pc').write_text(
                 'Name: cli-xdc-test\nDescription: Test compiler flags\nVersion: 1\n'
                 'Cflags: -DCLI_XDC_PKG_CONFIG\n', encoding='utf-8')
