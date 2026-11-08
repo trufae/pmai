@@ -1,16 +1,22 @@
 import Foundation
 import MaiCore
 
-/// Routes the shared composer and voice session to the chat visible on screen.
+/// Routes composer and voice input to the current chat or a pinned conversation.
 @MainActor
 struct ChatInputSession {
   let store: AppStore
   var remoteChat: RemoteAgentChat?
+  var conversationID: UUID?
 
-  var conversation: Conversation? { remoteChat?.presentation ?? store.currentConversation }
+  var conversation: Conversation? {
+    if let conversationID { return store.conversation(withID: conversationID) }
+    return remoteChat?.presentation ?? store.currentConversation
+  }
   var canSubmit: Bool { remoteChat?.canSubmit ?? true }
   var errorMessage: String? { remoteChat?.error ?? (remoteChat == nil ? store.errorMessage : nil) }
-  var usesVoiceover: Bool { remoteChat == nil && conversation?.voiceoverEnabled == true }
+  var usesVoiceover: Bool {
+    conversationID == nil && remoteChat == nil && conversation?.voiceoverEnabled == true
+  }
 
   var assistantMessages: [ChatMessage] {
     if let remoteChat {
@@ -61,7 +67,8 @@ struct ChatInputSession {
   }
 
   func send(
-    prompt: String, attachments: [ChatAttachment] = [], voiceRecordingFilename: String? = nil
+    prompt: String, attachments: [ChatAttachment] = [], voiceRecordingFilename: String? = nil,
+    promptShortcutSelection: PromptShortcutSelection? = nil
   ) async -> Bool {
     if let remoteChat {
       guard canSubmit else { return false }
@@ -95,6 +102,8 @@ struct ChatInputSession {
       return remoteChat.send(text, command: invocation, skillID: skillID)
     }
     return await store.send(
-      prompt: prompt, voiceRecordingFilename: voiceRecordingFilename, attachments: attachments)
+      prompt: prompt, voiceRecordingFilename: voiceRecordingFilename, attachments: attachments,
+      promptShortcutSelection: promptShortcutSelection, in: conversationID,
+      carPlay: conversationID != nil)
   }
 }
