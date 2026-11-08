@@ -11,6 +11,7 @@ enum REPLEvent: Sendable {
   case line(String, heredoc: Bool, promptID: String?, pasted: IndexSet = [], inputReleased: Bool = false)
   case editInput(String, command: String? = nil, inputReleased: Bool = false)
   case foregroundFinished(UUID)
+  case appQuestion(String, AsyncThrowingStream<String, any Error>.Continuation)
   case readerParked
   /// A non-nil ID means the signal/input path already cancelled that exact
   /// operation. `endedInput` distinguishes a raw Ctrl+C byte from SIGINT.

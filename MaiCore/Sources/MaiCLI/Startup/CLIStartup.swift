@@ -39,7 +39,7 @@ extension MaiCLI {
         guard arguments.first == "--allow-exec", let directory = arguments.dropFirst().first else {
           throw CLIApp.Failure(message: CLIApp.usage)
         }
-        exit(try CLIApp.run(directory: directory, arguments: Array(arguments.dropFirst(2)),
+        exit(try await CLIApp.run(directory: directory, arguments: Array(arguments.dropFirst(2)),
           environment: environment))
       } catch {
         FileHandle.standardError.write(Data("error: \(error.localizedDescription)\n".utf8))

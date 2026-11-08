@@ -26,8 +26,10 @@ enum CLIApp {
   }
 
   static func run(
-    directory: String, arguments: [String], environment: [String: String]
-  ) throws -> Int32 {
+    directory: String, arguments: [String], environment: [String: String],
+    input: FileHandle = .standardInput, output: FileHandle = .standardOutput,
+    diagnostics: FileHandle = .standardError, sessionURL: String? = nil
+  ) async throws -> Int32 {
     let folder = URL(fileURLWithPath: directory, isDirectory: true).standardizedFileURL
     let manifest: Manifest
     do {
@@ -71,21 +73,24 @@ enum CLIApp {
         }
         let output = Pipe()
         let config = try start(["pkg-config", "--cflags", "--libs"] + packages, in: folder,
-          environment: environment, input: FileHandle.nullDevice, output: output)
-        let flags = output.fileHandleForReading.readDataToEndOfFile()
-        guard finish(config) == 0 else {
+          environment: environment, input: FileHandle.nullDevice, output: output, diagnostics: diagnostics)
+        async let flags = readFlags(output.fileHandleForReading)
+        guard await finish(config) == 0 else {
           throw Failure(message: "pkg-config failed for: \(packages.joined(separator: ", "))")
         }
-        command += try MaiCLI.shellWords(String(decoding: flags, as: UTF8.self), shellEscapes: true)
+        command += try MaiCLI.shellWords(String(decoding: await flags, as: UTF8.self), shellEscapes: true)
       }
-      let status = finish(try start(command, in: folder, environment: environment,
-        input: FileHandle.nullDevice, output: FileHandle.standardError))
+      let status = await finish(try start(command, in: folder, environment: environment,
+        input: FileHandle.nullDevice, output: diagnostics, diagnostics: diagnostics))
       if status != 0 { return status }
     }
 
     let command = launch.map { $0 == "{bin}" && build != nil ? path : $0 } + arguments
-    return finish(try start(command, in: folder, environment: environment,
-      input: FileHandle.standardInput, output: FileHandle.standardOutput))
+    var childEnvironment = environment
+    childEnvironment.removeValue(forKey: "PMAI_APP_RPC")
+    childEnvironment["PMAI_APP_RPC"] = sessionURL
+    return await finish(try start(command, in: folder, environment: childEnvironment,
+      input: input, output: output, diagnostics: diagnostics))
   }
 
   private static func checked(_ command: [String]) throws -> [String] {
@@ -97,21 +102,39 @@ enum CLIApp {
 
   private static func start(
     _ command: [String], in folder: URL, environment: [String: String],
-    input: FileHandle, output: Any
+    input: FileHandle, output: Any, diagnostics: FileHandle
   ) throws -> Process {
+    try Task.checkCancellation()
     let process = Process()
     try LocalProcess.configure(process, command: command[0], arguments: Array(command.dropFirst()),
       environment: environment, workingDirectory: folder)
     process.standardInput = input
     process.standardOutput = output
-    process.standardError = FileHandle.standardError
+    process.standardError = diagnostics
     try process.run()
     return process
   }
 
-  private static func finish(_ process: Process) -> Int32 {
-    process.waitUntilExit()
-    return process.terminationReason == .uncaughtSignal
-      ? 128 + process.terminationStatus : process.terminationStatus
+  private static func finish(_ process: Process) async -> Int32 {
+    await withTaskCancellationHandler {
+      await withCheckedContinuation { continuation in
+        DispatchQueue.global().async {
+          process.waitUntilExit()
+          let status = process.terminationStatus
+          continuation.resume(returning: process.terminationReason == .uncaughtSignal
+            ? 128 + status : status)
+        }
+      }
+    } onCancel: {
+      if process.isRunning { process.terminate() }
+    }
+  }
+
+  private static func readFlags(_ handle: FileHandle) async -> Data {
+    await withCheckedContinuation { continuation in
+      DispatchQueue.global().async {
+        continuation.resume(returning: handle.readDataToEndOfFile())
+      }
+    }
   }
 }
