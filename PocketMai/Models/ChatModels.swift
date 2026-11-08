@@ -586,6 +586,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
   case browser
   case context
   case memory
+  case prompts
 
   var id: String { rawValue }
 
@@ -600,7 +601,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
     case .datetime, .language, .location, .memory:
       return true
     case .weather, .webSearch, .todo, .calculator, .textToSpeech, .files, .calendar, .clipboard,
-      .alarms, .webxdc, .github, .mastodon, .browser, .vdb, .context, .remote:
+      .alarms, .webxdc, .github, .mastodon, .browser, .vdb, .context, .remote, .prompts:
       return false
     }
   }
@@ -608,7 +609,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
   var isCallableTool: Bool {
     switch self {
     case .weather, .webSearch, .todo, .calculator, .textToSpeech, .files, .calendar, .clipboard,
-      .alarms, .webxdc, .github, .mastodon, .browser, .vdb, .context, .remote:
+      .alarms, .webxdc, .github, .mastodon, .browser, .vdb, .context, .remote, .prompts:
       return true
     case .datetime, .language, .location, .memory:
       return false
@@ -637,6 +638,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
     case .browser: "Browser"
     case .context: "Context"
     case .memory: "Memory"
+    case .prompts: "Prompts"
     }
   }
 
@@ -662,6 +664,7 @@ enum BuiltInToolID: String, Codable, CaseIterable, Identifiable, Sendable {
     case .browser: "safari"
     case .context: "bubble.left.and.text.bubble.right"
     case .memory: "brain"
+    case .prompts: "text.bubble"
     }
   }
 
@@ -2995,6 +2998,8 @@ enum ConversationSearchScope: String, Codable, CaseIterable, Identifiable, Senda
 }
 
 struct NativeToolSettings: Codable, Equatable, Sendable {
+  var promptsReadOnly: Bool = true
+  var skillsReadOnly: Bool = true
   var includeTimeZone: Bool = true
   var includeMoonPhase: Bool = true
   var useGPSLocation: Bool = true
@@ -3040,6 +3045,7 @@ struct NativeToolSettings: Codable, Equatable, Sendable {
   init() {}
 
   enum CodingKeys: String, CodingKey {
+    case promptsReadOnly, skillsReadOnly
     case includeTimeZone, includeMoonPhase, includeCurrentTime, includeYear, useGPSLocation
     case preciseLocation, manualLocation, weatherLocation, webSearchProvider
     case webSearchSearXNGURL, webSearchSearXNGUsername, webSearchSearXNGPassword
@@ -3064,6 +3070,8 @@ struct NativeToolSettings: Codable, Equatable, Sendable {
   init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
     let defaults = NativeToolSettings.defaults
+    promptsReadOnly = (try? c.decode(Bool.self, forKey: .promptsReadOnly)) ?? defaults.promptsReadOnly
+    skillsReadOnly = (try? c.decode(Bool.self, forKey: .skillsReadOnly)) ?? defaults.skillsReadOnly
     includeTimeZone =
       (try? c.decode(Bool.self, forKey: .includeTimeZone)) ?? defaults.includeTimeZone
     includeMoonPhase =
@@ -3184,6 +3192,8 @@ struct NativeToolSettings: Codable, Equatable, Sendable {
   func encode(to encoder: Encoder) throws {
     var c = encoder.container(keyedBy: CodingKeys.self)
     try c.encode(includeTimeZone, forKey: .includeTimeZone)
+    try c.encode(promptsReadOnly, forKey: .promptsReadOnly)
+    try c.encode(skillsReadOnly, forKey: .skillsReadOnly)
     try c.encode(includeMoonPhase, forKey: .includeMoonPhase)
     try c.encode(useGPSLocation, forKey: .useGPSLocation)
     try c.encode(preciseLocation, forKey: .preciseLocation)

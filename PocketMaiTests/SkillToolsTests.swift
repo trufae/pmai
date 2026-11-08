@@ -132,6 +132,144 @@ final class SkillToolsTests: XCTestCase {
     XCTAssertTrue(SkillTools.applyingLiveSettings(to: child, from: live).enabledSkillTools.isEmpty)
   }
 
+  func testLibraryToolsReadAndPersistPromptAndSkillEdits() async throws {
+    var conversation = Conversation()
+    conversation.enabledTools = [.prompts]
+    store.settings.toolSettings.promptsReadOnly = false
+    store.settings.toolSettings.skillsReadOnly = false
+    store.settings.enabledSkillTools = LibraryTools.skillToolNames.union([skills[0].toolName])
+    let prompt = SystemPrompt(name: "library-test", text: "Original prompt")
+    store.settings.systemPrompts = [prompt]
+    store.settings.defaultSystemPromptID = prompt.id
+    store.saveSettings()
+
+    func call(_ name: String, _ arguments: [String: String] = [:]) async -> String {
+      await ToolAgentRegistry.execute(
+        call: ParsedToolCall(name: name, arguments: arguments, rawBlock: ""),
+        conversation: conversation, store: store)
+    }
+    let promptListing = await call("prompt_list")
+    XCTAssertTrue(promptListing.contains(prompt.id.uuidString))
+    let promptRead = await call("prompt_read", ["kind": "system", "name": prompt.id.uuidString])
+    XCTAssertTrue(promptRead.contains("Original prompt"))
+    let promptWrite = await call(
+      "prompt_write",
+      [
+        "kind": "system", "name": prompt.id.uuidString, "text": "Updated prompt",
+      ])
+    XCTAssertFalse(promptWrite.hasPrefix("Error:"), promptWrite)
+    XCTAssertEqual(
+      store.settings.systemPrompts,
+      [SystemPrompt(id: prompt.id, name: prompt.name, text: "Updated prompt")])
+    XCTAssertEqual(store.settings.defaultSystemPromptID, prompt.id)
+    let userWrite = await call(
+      "prompt_write",
+      [
+        "kind": "user", "name": "library-user", "text": "Review $ARGUMENTS",
+      ])
+    XCTAssertFalse(userWrite.hasPrefix("Error:"), userWrite)
+    let saved = try JSONDecoder().decode(
+      AppSettings.self, from: JSONEncoder().encode(store.settings))
+    XCTAssertEqual(saved.systemPrompts.first?.text, "Updated prompt")
+    XCTAssertEqual(saved.userPrompts.first { $0.name == "library-user" }?.text, "Review $ARGUMENTS")
+
+    let skill = skills[0]
+    // Build the catalog before the edit to catch stale tool descriptions afterward.
+    let skillListing = await call("skill_list")
+    XCTAssertTrue(skillListing.contains(skill.name))
+    let skillRead = await call("skill_read", ["name": skill.name])
+    XCTAssertTrue(skillRead.contains("review instructions"))
+    let skillWrite = await call(
+      "skill_write",
+      [
+        "name": skill.name, "description": "New description", "text": "New instructions",
+      ])
+    XCTAssertFalse(skillWrite.hasPrefix("Error:"), skillWrite)
+    let reloaded = try XCTUnwrap(AgentSkill.load(directory: skill.directoryURL))
+    XCTAssertEqual(reloaded.description, "New description")
+    XCTAssertEqual(reloaded.body, "New instructions")
+    XCTAssertEqual(
+      try String(
+        contentsOf: skill.directoryURL.appendingPathComponent("reference.txt"), encoding: .utf8),
+      "Supporting reference")
+    XCTAssertTrue(
+      ToolAgentRegistry.definitions(for: conversation, settings: store.settings)
+        .first { $0.name == skill.toolName }?.description.contains("New description") == true)
+  }
+
+  func testReadOnlyLibrariesHideWritesAndRejectStaleDirectAndProxyCalls() async throws {
+    var conversation = Conversation()
+    conversation.enabledTools = [.prompts]
+    store.settings.enabledSkillTools = LibraryTools.skillToolNames
+    let originalPrompts = store.settings.systemPrompts
+    let originalSkill = try Data(contentsOf: skills[0].fileURL)
+    for proxy in [false, true] {
+      store.settings.useToolProxy = proxy
+      // Even an explicit per-tool pin cannot override read-only access.
+      store.settings.toolPolicy.tools["prompt_write"] = proxy ? .proxy : .direct
+      store.settings.toolPolicy.tools["skill_write"] = proxy ? .proxy : .direct
+      let catalog = ToolAgentRegistry.catalog(for: conversation, settings: store.settings)
+      for name in ["prompt_write", "skill_write"] {
+        XCTAssertFalse(catalog.enabledDefinitions.contains { $0.name == name })
+        XCTAssertFalse(catalog.listedDefinitions.contains { $0.name == name })
+        XCTAssertFalse(catalog.visibleDefinitions.map(\.description).joined().contains(name))
+      }
+      XCTAssertTrue(catalog.enabledDefinitions.contains { $0.name == "prompt_read" })
+      XCTAssertTrue(catalog.enabledDefinitions.contains { $0.name == "skill_read" })
+      // Simulate a call prepared before the user enabled read-only.
+      var snapshot = store.settings
+      snapshot.toolSettings.promptsReadOnly = false
+      snapshot.toolSettings.skillsReadOnly = false
+      let writes: [(String, [String: AgentToolArgumentValue])] = [
+        (
+          "prompt_write",
+          [
+            "kind": .string("system"), "name": .string(originalPrompts[0].name),
+            "text": .string("Forbidden"),
+          ]
+        ),
+        (
+          "skill_write",
+          [
+            "name": .string(skills[0].name), "description": .string("Forbidden"),
+            "text": .string("Forbidden"),
+          ]
+        ),
+      ]
+      for (name, arguments) in writes {
+        let result = await ToolAgentRegistry.execute(
+          call: ParsedToolCall(
+            name: proxy ? ToolProxy.callName : name, arguments: [:],
+            argumentValues: proxy
+              ? ["name": .string(name), "arguments": .object(arguments)] : arguments,
+            rawBlock: ""), conversation: conversation, settings: snapshot, store: store)
+        XCTAssertTrue(result.hasPrefix("Error:"), result)
+      }
+      let live = SkillTools.applyingLiveSettings(to: snapshot, from: store.settings)
+      XCTAssertTrue(live.toolSettings.promptsReadOnly)
+      XCTAssertTrue(live.toolSettings.skillsReadOnly)
+    }
+    XCTAssertEqual(store.settings.systemPrompts, originalPrompts)
+    XCTAssertEqual(try Data(contentsOf: skills[0].fileURL), originalSkill)
+  }
+
+  func testLibraryAccessSettingsRoundTripAndDefaultToReadOnly() throws {
+    let legacy = try JSONDecoder().decode(NativeToolSettings.self, from: Data("{}".utf8))
+    XCTAssertTrue(legacy.promptsReadOnly)
+    XCTAssertTrue(legacy.skillsReadOnly)
+    store.settings.toolSettings.promptsReadOnly = false
+    store.settings.toolSettings.skillsReadOnly = false
+    store.settings.enabledSkillTools = LibraryTools.skillToolNames
+    store.settings.defaultEnabledTools.insert(.prompts)
+    store.saveSettings()
+    let saved = try JSONDecoder().decode(
+      AppSettings.self, from: JSONEncoder().encode(store.settings))
+    XCTAssertFalse(saved.toolSettings.promptsReadOnly)
+    XCTAssertFalse(saved.toolSettings.skillsReadOnly)
+    XCTAssertEqual(saved.selectedAgent.settings.enabledSkillTools, LibraryTools.skillToolNames)
+    XCTAssertTrue(saved.selectedAgent.settings.defaultEnabledTools.contains(.prompts))
+  }
+
   func testCreateEditZipImportAndDeleteSkills() throws {
     let name = "managed-\(UUID().uuidString)"
     let created = try SkillTools.create(

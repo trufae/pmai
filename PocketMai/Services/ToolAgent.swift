@@ -28,6 +28,8 @@ enum BuiltInToolCatalog {
     store: AppStore
   ) async -> String? {
     switch call.name {
+    case "prompt_list", "prompt_read", "prompt_write":
+      return LibraryTools.executePrompt(call: call, settings: settings, store: store)
     case let name where RemoteWorkspaceTools.definitions.contains(where: { $0.name == name }):
       guard !store.settings.isOffline else { return "Error: remote hosts are unavailable while offline." }
       do {
@@ -184,6 +186,8 @@ enum BuiltInToolCatalog {
     includeUnavailable: Bool = false
   ) -> [ToolDefinition] {
     switch id {
+    case .prompts:
+      return LibraryTools.promptDefinitions(readOnly: settings.toolSettings.promptsReadOnly)
     case .datetime, .language, .location, .memory:
       return []
     case .weather:
@@ -251,6 +255,8 @@ enum ToolAgentRegistry {
     var catalog: AgentToolCatalog
   }
   private static var snapshots: [CatalogSnapshot] = []
+
+  static func invalidateCatalog() { snapshots.removeAll() }
   /// Restore values at the execution boundary, before proxy resolution,
   /// validation and approval. Provider requests mask them again on the way out.
   static func restoredCall(_ call: ParsedToolCall) -> ParsedToolCall {
@@ -367,8 +373,12 @@ enum ToolAgentRegistry {
     }
     let skillDefinitions = SkillTools.catalog(for: conversation, settings: settings).modelInvocable
       .map(MaiSkillTools.definition)
+      + LibraryTools.skillDefinitions(readOnly: settings.toolSettings.skillsReadOnly)
+    var skillsGroup = MaiSkillTools.group(toolNames: Set(skillDefinitions.map(\.name)))
+    skillsGroup.description +=
+      " Library tools list and read saved skills, and can create or edit them when Read-only is off."
     append(
-      skillDefinitions, group: MaiSkillTools.group(toolNames: Set(skillDefinitions.map(\.name))),
+      skillDefinitions, group: skillsGroup,
       enabled: settings.enabledSkillTools)
     let selection = conversation.toolSelection
     var resourceServers: [(server: MCPServer, resources: [MCPResourceDescriptor])] = []
@@ -529,6 +539,14 @@ enum ToolAgentRegistry {
     if MaiSkillTools.isSkillTool(normalizedCall.name) {
       return SkillTools.execute(
         call: normalizedCall, conversation: conversation, settings: settings)
+    }
+    if LibraryTools.skillToolNames.contains(normalizedCall.name),
+      executionCatalog.groups.contains(where: {
+        $0.catalogID == "runtime/skills" && $0.toolNames.contains(normalizedCall.name)
+      })
+    {
+      return LibraryTools.executeSkill(
+        call: normalizedCall, conversation: conversation, settings: settings, store: store)
     }
     if SubagentTool.isAgentTool(normalizedCall.name) {
       return await SubagentTool.execute(

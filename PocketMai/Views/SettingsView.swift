@@ -1405,6 +1405,11 @@ struct SettingsView: View {
   @ViewBuilder
   private func toolOptions(_ tool: BuiltInToolID) -> some View {
     switch tool {
+    case .prompts:
+      Toggle("Read-only", isOn: settingsBinding(\.toolSettings.promptsReadOnly))
+      Text("Lists and reads saved system and user prompts. Turn off Read-only to expose the tool for creating and editing prompts. Applies to all agents.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
     case .datetime:
       Toggle("Include time zone", isOn: settingsBinding(\.toolSettings.includeTimeZone))
       Toggle("Include moon phase", isOn: settingsBinding(\.toolSettings.includeMoonPhase))

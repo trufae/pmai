@@ -15,6 +15,26 @@ struct SkillsSettingsView: View {
   var body: some View {
     let invocable = AgentSkillCatalog(skills: skills).modelInvocable
     Group {
+      Toggle("Enable library tools", isOn: Binding(
+        get: { LibraryTools.skillToolNames.isSubset(of: store.settings.enabledSkillTools) },
+        set: { enabled in
+          if enabled {
+            store.settings.enabledSkillTools.formUnion(LibraryTools.skillToolNames)
+          } else {
+            store.settings.enabledSkillTools.subtract(LibraryTools.skillToolNames)
+          }
+          store.saveSettings()
+        }))
+      Toggle("Read-only", isOn: Binding(
+        get: { store.settings.toolSettings.skillsReadOnly },
+        set: {
+          store.settings.toolSettings.skillsReadOnly = $0
+          store.saveSettings()
+        }))
+      Text("Library tools list and read skills. Turn off Read-only to expose the tool for creating and editing skills. Applies to all agents; individual skill tools still load instructions.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      ToolCatalogSettingsButton(groupID: "runtime/skills")
       ForEach(skills) { skill in
         let available = invocable.contains {
           $0.directoryURL == skill.directoryURL && $0.name == skill.name

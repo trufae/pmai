@@ -6,6 +6,27 @@ and change any of that afterwards. Then the prompts that are messages rather
 than instructions — user prompts, the builtin ones, and skills — and `$NAME`,
 which sends any of them.
 
+## Library tools in the iOS app
+
+Enable **Prompts** under **Settings → Tools → Native** to offer `prompt_list`
+and `prompt_read`. Turn off its **Read-only** option to also offer
+`prompt_write`, which creates or replaces a system or user prompt. Select an
+existing prompt by name or by the ID from `prompt_list`; edits preserve its
+ID and existing selections.
+
+Under **Settings → Tools → Skills**, enable **Library tools** to offer
+`skill_list` and `skill_read`. Turn off **Read-only** to also offer
+`skill_write`. New skills go into the app's library; edits update the existing
+skill in its original folder and preserve metadata and supporting files.
+Reading a skill through `skill_read` does not invoke it, and creating one does
+not enable its `skills_*` invocation tool.
+
+Both read-only options default to on and apply to all agents. Write tools
+are omitted from model schemas and proxy listings while read-only is on,
+and pending write calls are rejected. Library tools follow the usual group,
+per-tool and approval settings. These options control the library tools;
+manual editing in Settings is still available.
+
 ## Named system prompts
 
 Every agent takes its instructions from one **named system prompt**. The
