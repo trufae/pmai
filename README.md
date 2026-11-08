@@ -431,6 +431,34 @@ still uses that chat's selected model provider.
 
 </details>
 
+## CarPlay
+
+On iOS 26.4 or later, PocketMai can start or resume a spoken chat from the car
+and run favorite user prompts with one tap. Mark favorites and grant microphone
+access under Settings > CarPlay on the iPhone. If the selected transcription
+backend needs Speech Recognition permission, grant it there as well.
+
+Device builds require the
+[CarPlay voice-based conversation entitlement](https://developer.apple.com/documentation/carplay/requesting-carplay-entitlements)
+from Apple for `io.github.trufae.mai`. Once it is enabled, regenerate the app's
+provisioning profile and build with the following Xcode setting for the PocketMai
+app target:
+
+```text
+POCKETMAI_ENTITLEMENTS = PocketMai/PocketMaiCarPlay.entitlements
+```
+
+For example, append
+`POCKETMAI_ENTITLEMENTS=PocketMai/PocketMaiCarPlay.entitlements` to an
+`xcodebuild -project PocketMai.xcodeproj -scheme PocketMai` device build.
+The default signing configuration uses the regular entitlement file.
+
+Test with CarPlay Simulator and a supported iPhone, then in a parked vehicle.
+With the iPhone locked, open PocketMai on CarPlay, ask two questions, end the
+session, reopen it with Resume Conversation, and run a favorite. Check that
+replies play through the car, the favorite returns to the menu without opening
+the microphone, and disconnecting or switching away stops capture and playback.
+
 ## Build
 
 Build the iOS app with Xcode and the CLI with SwiftPM through Make.
@@ -442,7 +470,7 @@ The deprecated pure Swift Android preview remains buildable with `make android`.
 <details>
 <summary>Requirements, build commands, and local inference notes</summary>
 
-Requires Xcode 26+ and an iOS 18+ deployment target. iOS 26-only features
+Requires Xcode 26.4+ and an iOS 18+ deployment target. iOS 26-only features
 such as Apple Foundation Models, Native iOS Live speech transcription, and
 Liquid Glass controls fall back or report unavailable at runtime on older OS
 versions.

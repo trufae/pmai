@@ -76,6 +76,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				PocketMaiCarPlay.entitlements,
 			);
 			target = A00000000000000000000009 /* PocketMai */;
 		};
@@ -585,7 +586,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = PocketMai/PocketMai.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "$(POCKETMAI_ENTITLEMENTS)";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 116;
@@ -603,6 +604,7 @@
 					"-framework",
 					AppIntents,
 				);
+				POCKETMAI_ENTITLEMENTS = PocketMai/PocketMai.entitlements;
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.trufae.mai;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -619,7 +621,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = PocketMai/PocketMai.entitlements;
+				CODE_SIGN_ENTITLEMENTS = "$(POCKETMAI_ENTITLEMENTS)";
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 116;
@@ -637,6 +639,7 @@
 					"-framework",
 					AppIntents,
 				);
+				POCKETMAI_ENTITLEMENTS = PocketMai/PocketMai.entitlements;
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.trufae.mai;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
