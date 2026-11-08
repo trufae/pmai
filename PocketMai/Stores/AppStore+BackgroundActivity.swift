@@ -1,3 +1,4 @@
+import CarPlay
 import SwiftUI
 import UIKit
 
@@ -90,6 +91,12 @@ extension AppStore {
 
   // MARK: - App state
 
+  var hasForegroundCarPlayScene: Bool {
+    UIApplication.shared.connectedScenes.contains {
+      $0 is CPTemplateApplicationScene && $0.activationState == .foregroundActive
+    }
+  }
+
   func handleScenePhaseChange(_ phase: ScenePhase) {
     switch phase {
     case .active:
@@ -103,6 +110,7 @@ extension AppStore {
       }
       drainThenQueue()
     case .background:
+      guard !hasForegroundCarPlayScene else { return }
       isInBackground = true
       for task in responseBackgroundTasks.values {
         task.renewFiniteTask()

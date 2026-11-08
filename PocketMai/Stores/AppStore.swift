@@ -3271,7 +3271,9 @@ final class AppStore: ObservableObject {
   /// UIKit's background budget is shared by the process, not by conversation.
   /// Cancel without replaying a prompt or tool whose result may be unknown.
   func handleBackgroundExecutionExpired() {
-    guard isInBackground || UIApplication.shared.applicationState == .background else { return }
+    guard !hasForegroundCarPlayScene,
+      isInBackground || UIApplication.shared.applicationState == .background
+    else { return }
     isInBackground = true
     for conversationID in respondingConversationIDs {
       cancelResponse(in: conversationID)
