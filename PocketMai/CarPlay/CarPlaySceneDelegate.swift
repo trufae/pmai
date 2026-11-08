@@ -35,7 +35,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     loading.isEnabled = false
     let list = CPListTemplate(title: "PocketMai", sections: [CPListSection(items: [loading])])
     root = list
-    interfaceController.setRootTemplate(list, animated: false, completion: nil)
+    interfaceController.setRootTemplate(list, animated: false) { _, _ in }
     startupTask = Task { [weak self] in
       guard let self else { return }
       await store.waitForStartup()
@@ -70,8 +70,16 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     controller = nil
   }
 
+  func sceneDidBecomeActive(_ scene: UIScene) {
+    store.handleScenePhaseChange(.active)
+    if startupTask == nil { updateMenu() }
+  }
+
   func sceneDidEnterBackground(_ scene: UIScene) {
     endVoice()
+    if UIApplication.shared.applicationState == .background {
+      store.handleScenePhaseChange(.background)
+    }
   }
 
   func templateWillAppear(_ template: CPTemplate, animated: Bool) {
@@ -177,7 +185,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         stateObservation = voice.$state.dropFirst().sink { [weak self] state in
           self?.updateVoiceState(state)
         }
-        TTSPlayer.shared.stop()
+        if TTSPlayer.shared.isSpeaking { TTSPlayer.shared.stop() }
         if let preset {
           voice.submitPreset(preset, in: conversationID, store: store, ttsPlayer: speech)
         } else {
@@ -250,7 +258,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     if stopSession, voice.isActive { voice.stop(cancelResponse: true) }
     discardEmptyConversation()
     if dismiss, let template, controller?.presentedTemplate === template {
-      controller?.dismissTemplate(animated: true, completion: nil)
+      controller?.dismissTemplate(animated: true) { _, _ in }
     }
   }
 
@@ -263,6 +271,6 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   private func showAlert(_ title: String) {
     let action = CPAlertAction(title: "OK", style: .default) { _ in }
     let alert = CPAlertTemplate(titleVariants: [title], actions: [action])
-    controller?.presentTemplate(alert, animated: true, completion: nil)
+    controller?.presentTemplate(alert, animated: true) { _, _ in }
   }
 }
