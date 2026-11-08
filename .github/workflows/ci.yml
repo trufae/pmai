@@ -91,6 +91,10 @@ jobs:
           python3 test/repl-suspend-smoke.py ./pmai
           python3 test/repl-models-smoke.py ./pmai
 
+      - name: Test CLI XDC apps
+        if: matrix.name == 'Linux x64'
+        run: python3 test/cli-xdc-smoke.py ./pmai
+
       - name: Test REPL queue choices
         if: matrix.name == 'Linux x64'
         run: |
@@ -316,6 +320,13 @@ jobs:
             if ($LASTEXITCODE -ne 0) { $failed = 1 }
           }
           exit $failed
+
+      - name: Test CLI XDC apps
+        if: matrix.arch == 'x64'
+        run: |
+          $bin = swift build --package-path MaiCore --configuration release --disable-prefetching --show-bin-path
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -X utf8 test/cli-xdc-smoke.py (Join-Path $bin 'pmai.exe')
 
       - name: Package Windows beta CLI
         run: ./sys/package-windows.ps1 -Architecture ${{ matrix.arch }}
