@@ -68,7 +68,14 @@ extension MaiCLI {
     await terminal.line(FileManager.default.currentDirectoryPath)
   }
 
-  static func shellWords(_ input: String, remainderAfter: Int = .max) throws -> [String] {
+  static func shellWords(
+    _ input: String, remainderAfter: Int = .max, shellEscapes: Bool? = nil
+  ) throws -> [String] {
+    #if os(Windows)
+      let shellEscapes = shellEscapes ?? false
+    #else
+      let shellEscapes = shellEscapes ?? true
+    #endif
     enum Quote { case single, double }
     var words: [String] = []
     var word = ""
@@ -84,13 +91,11 @@ extension MaiCLI {
         continue
       }
       // Windows paths keep backslashes literal, including before a closing quote.
-      #if !os(Windows)
-        if character == "\\", quote != .single {
-          escaped = true
-          started = true
-          continue
-        }
-      #endif
+      if shellEscapes, character == "\\", quote != .single {
+        escaped = true
+        started = true
+        continue
+      }
       if character == "'", quote != .double {
         quote = quote == .single ? nil : .single
         started = true

@@ -29,6 +29,23 @@ extension MaiCLI {
     let startup = CLIStartupTiming(started: started, environment: environment)
     startup.mark("main entered")
     let commandLineArguments = platformCommandLineArguments(environment: environment)
+    if commandLineArguments.dropFirst().starts(with: ["app", "run"]) {
+      let arguments = commandLineArguments.dropFirst(3)
+      if Array(arguments) == ["--help"] {
+        print(CLIApp.usage)
+        return
+      }
+      do {
+        guard arguments.first == "--allow-exec", let directory = arguments.dropFirst().first else {
+          throw CLIApp.Failure(message: CLIApp.usage)
+        }
+        exit(try CLIApp.run(directory: directory, arguments: Array(arguments.dropFirst(2)),
+          environment: environment))
+      } catch {
+        FileHandle.standardError.write(Data("error: \(error.localizedDescription)\n".utf8))
+        exit(2)
+      }
+    }
     if commandLineArguments.dropFirst().first == "acp-gateway" {
       do {
         try await ACPGatewayCLI.run(Array(commandLineArguments.dropFirst(2)), environment: environment)
