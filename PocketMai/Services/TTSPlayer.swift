@@ -19,6 +19,8 @@ final class TTSPlayer: NSObject, ObservableObject {
   typealias SpeechSynthesis = @MainActor (OpenAIEndpoint, String, String) async throws -> Data
   private let synthesizeSpeech: SpeechSynthesis
   private let integratesWithSystemPlayback: Bool
+  private let carPlayAudio: Bool
+  private var ownsCarPlayAudioSession = false
 
   private var synthesizer: AVSpeechSynthesizer?
   private var remoteCommandsConfigured = false
@@ -35,12 +37,14 @@ final class TTSPlayer: NSObject, ObservableObject {
 
   init(
     integratesWithSystemPlayback: Bool = true,
+    carPlayAudio: Bool = false,
     synthesizeSpeech: @escaping SpeechSynthesis = { endpoint, text, voice in
       try await OpenAICompatibleProvider.synthesizeSpeechAudio(
         endpoint: endpoint, input: text, voice: voice)
     }
   ) {
     self.integratesWithSystemPlayback = integratesWithSystemPlayback
+    self.carPlayAudio = carPlayAudio
     self.synthesizeSpeech = synthesizeSpeech
     super.init()
   }
@@ -237,7 +241,7 @@ final class TTSPlayer: NSObject, ObservableObject {
     }
     errorMessage = nil
     setupRemoteCommands()
-    activateAudioSession()
+    if !carPlayAudio { activateAudioSession() }
     speechGeneration += 1
 
     currentRole = speech.role
@@ -352,6 +356,10 @@ final class TTSPlayer: NSObject, ObservableObject {
     utterance.pitchMultiplier = Float(max(0.5, min(2, speech.voice.pitch)))
     utterance.volume = 1.0
 
+    if carPlayAudio {
+      synthesizer.usesApplicationAudioSession = true
+      activateAudioSession()
+    }
     synthesizer.speak(utterance)
   }
 
@@ -406,6 +414,7 @@ final class TTSPlayer: NSObject, ObservableObject {
       let playableData = normalizedProviderAudioData(data, fileExtension: fileExtension)
       try playableData.write(to: url, options: .atomic)
       audioFileURL = url
+      if carPlayAudio { activateAudioSession() }
       if try beginBoostedAudioFileSpeaking(url: url, generation: generation) {
         providerSpeechTask = nil
         return true
@@ -483,7 +492,14 @@ final class TTSPlayer: NSObject, ObservableObject {
     queuedSpeech.removeAll()
     pendingSpeechAfterCancel = nil
     if synthesizer?.isSpeaking == true {
-      synthesizer?.stopSpeaking(at: .immediate)
+      if carPlayAudio {
+        synthesizer?.delegate = nil
+        synthesizer?.stopSpeaking(at: .immediate)
+        synthesizer = nil
+        handleStopped()
+      } else {
+        synthesizer?.stopSpeaking(at: .immediate)
+      }
       return
     }
     if providerSpeechTask != nil || audioPlayer != nil || boostedAudioPlayerNode != nil {
@@ -645,23 +661,25 @@ final class TTSPlayer: NSObject, ObservableObject {
   }
 
   private func activateAudioSession() {
-    guard integratesWithSystemPlayback else { return }
+    guard integratesWithSystemPlayback || carPlayAudio else { return }
     let session = AVAudioSession.sharedInstance()
     do {
       // Live voice recording leaves the session in playAndRecord. Switch TTS back
       // to playback so assistant speech uses the normal media volume path.
-      try session.setCategory(.playback, mode: .default, options: [])
+      try session.setCategory(carPlayAudio ? .playAndRecord : .playback, mode: .default, options: [])
       try session.setActive(true, options: [])
+      ownsCarPlayAudioSession = carPlayAudio
     } catch {
       // Best-effort: TTS still plays in foreground without an active session.
     }
   }
 
   private func deactivateAudioSession() {
-    guard integratesWithSystemPlayback else { return }
+    guard integratesWithSystemPlayback || ownsCarPlayAudioSession else { return }
+    defer { ownsCarPlayAudioSession = false }
     do {
       let session = AVAudioSession.sharedInstance()
-      guard session.category != .playAndRecord else { return }
+      guard ownsCarPlayAudioSession || session.category != .playAndRecord else { return }
       try session.setActive(false, options: .notifyOthersOnDeactivation)
     } catch {
       // Ignore: the session may already be inactive.
@@ -783,13 +801,21 @@ extension TTSPlayer: AVSpeechSynthesizerDelegate {
   nonisolated func speechSynthesizer(
     _ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance
   ) {
-    Task { @MainActor in self.handleFinished() }
+    let synthesizerID = ObjectIdentifier(synthesizer)
+    Task { @MainActor in
+      guard self.synthesizer.map(ObjectIdentifier.init) == synthesizerID else { return }
+      self.handleFinished()
+    }
   }
 
   nonisolated func speechSynthesizer(
     _ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance
   ) {
-    Task { @MainActor in self.handleCancelled() }
+    let synthesizerID = ObjectIdentifier(synthesizer)
+    Task { @MainActor in
+      guard self.synthesizer.map(ObjectIdentifier.init) == synthesizerID else { return }
+      self.handleCancelled()
+    }
   }
 
   nonisolated func speechSynthesizer(

@@ -105,7 +105,7 @@ enum AudioTranscriptionService {
   @MainActor
   static func transcribe(
     fileURL: URL, localeIdentifier: String, policy: SpeechTranscriptionPolicy,
-    useProvider: Bool = true
+    useProvider: Bool = true, requestSpeechPermission: Bool = true
   ) async throws -> String {
     try Task.checkCancellation()
     if useProvider,
@@ -139,7 +139,9 @@ enum AudioTranscriptionService {
     guard recognizer.supportsOnDeviceRecognition || policy.allowsServerRecognition else {
       throw TranscriptionError.onDeviceUnavailable(locale.identifier)
     }
-    guard await requestAuthorization() == .authorized else {
+    let authorization = requestSpeechPermission
+      ? await requestAuthorization() : SFSpeechRecognizer.authorizationStatus()
+    guard authorization == .authorized else {
       throw TranscriptionError.permissionDenied
     }
 

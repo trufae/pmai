@@ -106,7 +106,10 @@ final class LiveVoiceSession: ObservableObject {
 
   private weak var store: AppStore?
   private weak var ttsPlayer: TTSPlayer?
+  private static weak var activeSession: LiveVoiceSession?
   private var remoteChat: RemoteAgentChat?
+  private var conversationID: UUID?
+  private var listensAfterReply = true
   private let recognitionEngineFactory:
     ((ConversationSettings, SpeechTranscriptionPolicy) throws -> LiveSpeechRecognitionEngine)?
 
@@ -119,7 +122,7 @@ final class LiveVoiceSession: ObservableObject {
   }
 
   private var inputSession: ChatInputSession? {
-    store.map { ChatInputSession(store: $0, remoteChat: remoteChat) }
+    store.map { ChatInputSession(store: $0, remoteChat: remoteChat, conversationID: conversationID) }
   }
   private var engine: LiveSpeechRecognitionEngine?
   private var activityTask: Task<Void, Never>?
@@ -174,18 +177,56 @@ final class LiveVoiceSession: ObservableObject {
     }
   }
 
-  func start(store: AppStore, ttsPlayer: TTSPlayer, remoteChat: RemoteAgentChat? = nil) {
+  func start(
+    store: AppStore, ttsPlayer: TTSPlayer, remoteChat: RemoteAgentChat? = nil,
+    conversationID: UUID? = nil
+  ) {
+    claimAudio()
     self.remoteChat = remoteChat
+    self.conversationID = conversationID
+    listensAfterReply = true
     mode = .conversation
     configure(store: store, ttsPlayer: ttsPlayer)
     ttsPlayer.stop()
     beginListening(resetTranscript: true)
   }
 
+  func submitPreset(
+    _ preset: PromptShortcutSelection, in conversationID: UUID, store: AppStore, ttsPlayer: TTSPlayer
+  ) {
+    claimAudio()
+    self.conversationID = conversationID
+    remoteChat = nil
+    listensAfterReply = false
+    mode = .conversation
+    configure(store: store, ttsPlayer: ttsPlayer)
+    ttsPlayer.stop()
+    sessionGeneration += 1
+    let generation = sessionGeneration
+    errorMessage = nil
+    state = .thinking
+    isCommittingTurn = true
+    activityTask = Task { @MainActor [weak self] in
+      await self?.sendAndSpeak(
+        prompt: "", voiceRecordingFilename: nil, visibleTranscript: "", generation: generation,
+        preset: preset)
+    }
+  }
+
+  private func claimAudio() {
+    if let active = Self.activeSession, active !== self {
+      active.stop(cancelResponse: true)
+    }
+    Self.activeSession = self
+  }
+
   func startVoiceNoteAttachment(
     store: AppStore, ttsPlayer: TTSPlayer, remoteChat: RemoteAgentChat? = nil
   ) {
+    claimAudio()
     self.remoteChat = remoteChat
+    conversationID = nil
+    listensAfterReply = true
     mode = .voiceNoteAttachment
     configure(store: store, ttsPlayer: ttsPlayer)
     ttsPlayer.stop()
@@ -247,6 +288,7 @@ final class LiveVoiceSession: ObservableObject {
   }
 
   func stop(cancelResponse: Bool) {
+    if Self.activeSession === self { Self.activeSession = nil }
     sessionGeneration += 1
     activityTask?.cancel()
     activityTask = nil
@@ -254,7 +296,7 @@ final class LiveVoiceSession: ObservableObject {
     silenceTask = nil
     stopRecognition()
     inputSession?.cancelVoiceover()
-    if cancelResponse { inputSession?.cancelResponse() }
+    if cancelResponse, conversationID == nil || isCommittingTurn { inputSession?.cancelResponse() }
     ttsPlayer?.stop()
     state = .idle
     mode = .conversation
@@ -266,12 +308,15 @@ final class LiveVoiceSession: ObservableObject {
 
   func stopForDraft(cancelResponse: Bool) async -> String {
     sessionGeneration += 1
+    let generation = sessionGeneration
     activityTask?.cancel()
     activityTask = nil
     silenceTask?.cancel()
     silenceTask = nil
 
     let draft = await finalizedDraftTranscript()
+    guard generation == sessionGeneration else { return draft }
+    if Self.activeSession === self { Self.activeSession = nil }
     stopRecognition()
     inputSession?.cancelVoiceover()
     if cancelResponse { inputSession?.cancelResponse() }
@@ -347,10 +392,7 @@ final class LiveVoiceSession: ObservableObject {
       }
       self.engine = engine
       try await engine.start()
-      guard generation == sessionGeneration else {
-        stopRecognition()
-        return false
-      }
+      guard generation == sessionGeneration else { return false }
       languageIdentifier = engine.languageIdentifier
       state = displayState
       return true
@@ -371,7 +413,8 @@ final class LiveVoiceSession: ObservableObject {
   {
     if let store { policy.configure(store.settings) }
     if let recognitionEngineFactory { return try recognitionEngineFactory(settings, policy) }
-    return try SpeechRecognitionEngineFactory.make(settings: settings, policy: policy)
+    return try SpeechRecognitionEngineFactory.make(
+      settings: settings, policy: policy, carPlay: conversationID != nil)
   }
 
   private func stopRecognition(keepingRecording: Bool = false) {
@@ -496,10 +539,10 @@ final class LiveVoiceSession: ObservableObject {
     prompt: String,
     voiceRecordingFilename: String?,
     visibleTranscript: String,
-    generation: Int
+    generation: Int,
+    preset: PromptShortcutSelection? = nil
   ) async {
-    guard let store, let ttsPlayer else { return }
-    guard let inputSession else { return }
+    guard generation == sessionGeneration, let store, let ttsPlayer, let inputSession else { return }
     let conversationIDBeforeSend = inputSession.conversation?.id
     // Capture the set of assistant message IDs that already exist BEFORE we
     // submit the new user turn. `store.send` returns as soon as it has
@@ -507,8 +550,9 @@ final class LiveVoiceSession: ObservableObject {
     // placeholder message — so without this snapshot the "latest assistant
     // message" is the previous turn's reply, and TTS would speak it.
     let priorAssistantIDs = priorAssistantMessageIDs()
+    let previousMessageID = inputSession.conversation?.messages.last?.id
     let sent = await inputSession.send(
-      prompt: prompt, voiceRecordingFilename: voiceRecordingFilename)
+      prompt: prompt, voiceRecordingFilename: voiceRecordingFilename, promptShortcutSelection: preset)
     if remoteChat != nil, let voiceRecordingFilename,
       let url = PocketMaiDirectories.voiceRecordingURL(filename: voiceRecordingFilename)
     {
@@ -534,7 +578,7 @@ final class LiveVoiceSession: ObservableObject {
     let conversationID = inputSession.conversation?.id ?? conversationIDBeforeSend
 
     if store.settings.conversation.streamTTS,
-      !inputSession.usesVoiceover, let conversationID
+      self.conversationID == nil, !inputSession.usesVoiceover, let conversationID
     {
       await streamSpeakAssistantResponse(
         conversationID: conversationID,
@@ -580,11 +624,18 @@ final class LiveVoiceSession: ObservableObject {
         displayState: .listening, resetTranscript: true, generation: generation)
       return
     }
-    guard let assistant = latestSpeakableAssistantMessage(excluding: priorAssistantIDs) else {
-      _ = await beginRecognition(
-        displayState: .listening,
-        resetTranscript: true,
-        generation: generation)
+    let reply = latestSpeakableAssistantMessage(excluding: priorAssistantIDs)
+    if self.conversationID != nil,
+      let last = inputSession.conversation?.messages.last,
+      last.id != previousMessageID, last.role == .error || reply == nil
+    {
+      let message = last.role == .error ? last.text : "The agent did not return a spoken reply."
+      errorMessage = message
+      state = .error(message)
+      return
+    }
+    guard let assistant = reply else {
+      await finishReply(generation: generation)
       return
     }
 
@@ -607,10 +658,16 @@ final class LiveVoiceSession: ObservableObject {
       state = .paused
       return
     }
-    _ = await beginRecognition(
-      displayState: .listening,
-      resetTranscript: true,
-      generation: generation)
+    await finishReply(generation: generation)
+  }
+
+  private func finishReply(generation: Int) async {
+    if listensAfterReply {
+      _ = await beginRecognition(
+        displayState: .listening, resetTranscript: true, generation: generation)
+    } else {
+      stop(cancelResponse: false)
+    }
   }
 
   private func streamSpeakAssistantResponse(
@@ -800,7 +857,10 @@ private final class NativeIOSSpeechTranscriberRecognitionEngine: LiveSpeechRecog
   private var latestTranscript = ""
   private var transcriptSegments: [NativeSpeechTranscriberSegment] = []
 
-  init(localeIdentifier: String) {
+  private let carPlay: Bool
+
+  init(localeIdentifier: String, carPlay: Bool) {
+    self.carPlay = carPlay
     let identifier = localeIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
     requestedLocale = identifier.isEmpty ? Locale.current : Locale(identifier: identifier)
     languageIdentifier = identifier.isEmpty ? Locale.current.identifier : identifier
@@ -847,6 +907,7 @@ private final class NativeIOSSpeechTranscriberRecognitionEngine: LiveSpeechRecog
         compatibleWith: [transcriber],
         considering: inputFormat)
       ?? NativeSpeechTranscriberAudioSink.preferredAnalysisFormat(matching: inputFormat)
+    try Task.checkCancellation()
 
     let recordingFile = try makeRecordingFile(format: inputFormat)
     let (inputStream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
@@ -923,8 +984,8 @@ private final class NativeIOSSpeechTranscriberRecognitionEngine: LiveSpeechRecog
     let audioSession = AVAudioSession.sharedInstance()
     try audioSession.setCategory(
       .playAndRecord,
-      mode: .voiceChat,
-      options: [.defaultToSpeaker, .allowBluetoothHFP])
+      mode: carPlay ? .default : .voiceChat,
+      options: carPlay ? [] : [.defaultToSpeaker, .allowBluetoothHFP])
     try audioSession.setActive(true, options: [])
     audioSessionActivated = true
     if audioSession.isInputGainSettable {
@@ -1178,7 +1239,13 @@ private final class NativeIOSSpeechRecognitionEngine: NSObject, LiveSpeechRecogn
   private var lastSoundDate = Date()
   private let speechPowerThreshold: Float = -45
 
-  init(localeIdentifier: String, silenceTimeoutSeconds: Double, policy: SpeechTranscriptionPolicy) {
+  private let carPlay: Bool
+
+  init(
+    localeIdentifier: String, silenceTimeoutSeconds: Double, policy: SpeechTranscriptionPolicy,
+    carPlay: Bool
+  ) {
+    self.carPlay = carPlay
     let identifier = localeIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
     self.languageIdentifier = identifier.isEmpty ? Locale.current.identifier : identifier
     self.silenceTimeoutSeconds = ConversationSettings.clampedSilenceTimeout(silenceTimeoutSeconds)
@@ -1209,7 +1276,8 @@ private final class NativeIOSSpeechRecognitionEngine: NSObject, LiveSpeechRecogn
       self.deactivateAudioSession()
       guard let url = self.recordingURL else { return nil }
       let text = try await AudioTranscriptionService.transcribe(
-        fileURL: url, localeIdentifier: self.languageIdentifier, policy: self.policy)
+        fileURL: url, localeIdentifier: self.languageIdentifier, policy: self.policy,
+        requestSpeechPermission: !self.carPlay)
       let event = LiveSpeechRecognitionEvent(
         text: text, isFinal: true, languageIdentifier: self.languageIdentifier)
       self.cachedFinalEvent = event
@@ -1240,8 +1308,8 @@ private final class NativeIOSSpeechRecognitionEngine: NSObject, LiveSpeechRecogn
     let audioSession = AVAudioSession.sharedInstance()
     try audioSession.setCategory(
       .playAndRecord,
-      mode: .voiceChat,
-      options: [.defaultToSpeaker, .allowBluetoothHFP])
+      mode: carPlay ? .default : .voiceChat,
+      options: carPlay ? [] : [.defaultToSpeaker, .allowBluetoothHFP])
     try audioSession.setActive(true, options: [])
     audioSessionActivated = true
     if audioSession.isInputGainSettable {
@@ -1339,13 +1407,15 @@ private final class NativeIOSSpeechRecognitionEngine: NSObject, LiveSpeechRecogn
 // Shared with isolated webxdc voice sessions.
 @MainActor
 enum SpeechRecognitionEngineFactory {
-  static func make(settings: ConversationSettings, policy: SpeechTranscriptionPolicy) throws
+  static func make(
+    settings: ConversationSettings, policy: SpeechTranscriptionPolicy, carPlay: Bool = false
+  ) throws
     -> LiveSpeechRecognitionEngine
   {
     if policy.providerEndpoint != nil {
       return NativeIOSSpeechRecognitionEngine(
         localeIdentifier: settings.speechRecognitionLanguageIdentifier,
-        silenceTimeoutSeconds: settings.silenceTimeoutSeconds, policy: policy)
+        silenceTimeoutSeconds: settings.silenceTimeoutSeconds, policy: policy, carPlay: carPlay)
     }
     switch settings.speechRecognitionBackend {
     case .nativeIOSSpeechTranscriber:
@@ -1353,12 +1423,12 @@ enum SpeechRecognitionEngineFactory {
         throw LiveSpeechRecognitionError.speechTranscriberUnsupportedOS
       }
       return NativeIOSSpeechTranscriberRecognitionEngine(
-        localeIdentifier: settings.speechRecognitionLanguageIdentifier)
+        localeIdentifier: settings.speechRecognitionLanguageIdentifier, carPlay: carPlay)
     case .nativeIOS:
       return NativeIOSSpeechRecognitionEngine(
         localeIdentifier: settings.speechRecognitionLanguageIdentifier,
         silenceTimeoutSeconds: settings.silenceTimeoutSeconds,
-        policy: policy)
+        policy: policy, carPlay: carPlay)
     }
   }
 

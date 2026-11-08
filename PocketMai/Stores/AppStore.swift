@@ -113,6 +113,10 @@ private enum OpenAPIServerAppError: LocalizedError {
   }
 }
 
+private enum CarPlayTurn {
+  @TaskLocal static var active = false
+}
+
 private enum ToolCallApprovalParseResult {
   case success(ParsedToolCall)
   case failure(String)
@@ -626,6 +630,7 @@ final class AppStore: ObservableObject {
   private var conversationDrafts: [UUID: String] = [:]
   private var conversationIndexByID: [UUID: Int] = [:]
   private var activeConversationPublicationKey: ActiveConversationPublicationKey?
+  private var startupTask: Task<Void, Never>?
   private(set) var hasLoadedPersistedSettings = false
   private var pendingSettingsSave = false
   private var hasLoadedPersistedDrafts = false
@@ -666,7 +671,9 @@ final class AppStore: ObservableObject {
     ResponseNotificationService.shared.openConversationHandler = { [weak self] conversationID in
       self?.handleLaunchCommand(.openConversation(id: conversationID))
     }
-    Task { await loadStartupData() }
+    startupTask = Task { [weak self] in
+      await self?.loadStartupData()
+    }
     if monitorNetwork {
       networkMonitor = NetworkAvailabilityMonitor { [weak self] available in
         Task { @MainActor [weak self] in self?.updateNetworkAvailability(available) }
@@ -1164,6 +1171,17 @@ final class AppStore: ObservableObject {
     createAndSelectNewConversation(languageOverrideIdentifier: inheritedLanguageOverride)
   }
 
+  func createCarPlayConversation() -> UUID {
+    let conversation = makeNewConversation()
+    conversations.insert(conversation, at: 0)
+    sortConversations()
+    return conversation.id
+  }
+
+  func discardEmptyCarPlayConversation(id: UUID) {
+    if id != selectedConversationID { discardDisposableConversation(id: id) }
+  }
+
   private func startFreshConversationForLaunch() {
     let conversation = makeNewConversation()
     launchPlaceholderConversationID = conversation.id
@@ -1171,6 +1189,10 @@ final class AppStore: ObservableObject {
     sortConversations()
     setSelectedConversationID(conversation.id)
     selectedConversationIDs.removeAll()
+  }
+
+  func waitForStartup() async {
+    await startupTask?.value
   }
 
   private func loadStartupData() async {
@@ -2343,17 +2365,20 @@ final class AppStore: ObservableObject {
     voiceRecordingFilename: String? = nil,
     attachments: [ChatAttachment] = [],
     promptShortcutSelection: PromptShortcutSelection? = nil,
-    in targetConversationID: UUID? = nil
+    in targetConversationID: UUID? = nil,
+    carPlay: Bool = false
   ) async -> Bool {
-    if promptShortcutSelection == nil, handleLocalChatCommand(rawPrompt) { return true }
+    if !carPlay, promptShortcutSelection == nil, handleLocalChatCommand(rawPrompt) { return true }
     guard !rawPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
       || !attachments.isEmpty || promptShortcutSelection != nil else { return false }
     if currentConversation == nil && targetConversationID == nil { newConversation() }
     guard let conversationID = targetConversationID ?? currentConversation?.id,
       indexedConversationIndex(for: conversationID) != nil else { return false }
     await ensureConversationLoaded(conversationID)
-    guard conversation(withID: conversationID)?.historyWindow == nil else { return false }
-    if promptShortcutSelection == nil {
+    guard !Task.isCancelled, conversation(withID: conversationID)?.historyWindow == nil else {
+      return false
+    }
+    if !carPlay, promptShortcutSelection == nil {
       if handleThenCommand(rawPrompt, attachments: attachments, in: conversationID) { return true }
       if let question = BTWQuestion.prompt(in: rawPrompt) {
         return startBTW(question, in: conversationID)
@@ -2398,7 +2423,7 @@ final class AppStore: ObservableObject {
       conversationID: conversationID,
       mode: .append,
       voiceRecordingFilename: voiceRecordingFilename,
-      attachments: attachments)
+      attachments: attachments, carPlay: carPlay)
     return true
   }
 
@@ -2922,7 +2947,8 @@ final class AppStore: ObservableObject {
     conversationID: UUID,
     mode: UserTurnMode,
     voiceRecordingFilename: String? = nil,
-    attachments: [ChatAttachment] = []
+    attachments: [ChatAttachment] = [],
+    carPlay: Bool = false
   ) async {
     guard !Task.isCancelled, let i = indexedConversationIndex(for: conversationID) else { return }
     clearFollowUpSuggestions(in: conversationID)
@@ -2966,7 +2992,7 @@ final class AppStore: ObservableObject {
     guard !Task.isCancelled, let index = indexedConversationIndex(for: conversationID) else { return }
     conversations[index].lastContextSignature = context.signature
     dispatchAssistantTurn(
-      conversationID: conversationID, context: context.text)
+      conversationID: conversationID, context: context.text, carPlay: carPlay)
   }
 
   func autoCompactIfNeeded(conversationID: UUID) async -> Bool {
@@ -3040,6 +3066,7 @@ final class AppStore: ObservableObject {
   func requestAutocompactionApproval(
     conversation: Conversation, estimatedTokens: Int, threshold: Int
   ) async -> AutocompactionDecision {
+    guard !CarPlayTurn.active else { return .cancelRun }
     let id = UUID()
     return await withTaskCancellationHandler {
       await withCheckedContinuation { continuation in
@@ -3083,7 +3110,9 @@ final class AppStore: ObservableObject {
     deleteUnreferencedVoiceRecordings(from: removed)
   }
 
-  private func dispatchAssistantTurn(conversationID: UUID, context: String) {
+  private func dispatchAssistantTurn(
+    conversationID: UUID, context: String, carPlay: Bool = false
+  ) {
     cancelVoiceover(in: conversationID)
     let responseTaskToken = UUID()
     respondingConversationIDs.insert(conversationID)
@@ -3102,7 +3131,7 @@ final class AppStore: ObservableObject {
           saveConversations()
           if isInBackground { persistence.flushPendingWrites() }
           endResponseBackgroundTask(for: conversationID)
-          if responseOutcomes[conversationID] == nil, !Task.isCancelled {
+          if !carPlay, responseOutcomes[conversationID] == nil, !Task.isCancelled {
             scheduleVoiceover(for: conversationID)
           }
           activityTurnFinished(conversationID: conversationID)
@@ -3110,7 +3139,10 @@ final class AppStore: ObservableObject {
           drainThenQueue()
         }
       }
-      guard await autoCompactIfNeeded(conversationID: conversationID), !Task.isCancelled else {
+      let canRun = await CarPlayTurn.$active.withValue(carPlay) {
+        await autoCompactIfNeeded(conversationID: conversationID)
+      }
+      guard canRun, !Task.isCancelled else {
         if responseTaskTokens[conversationID] == responseTaskToken {
           responseOutcomes[conversationID] = .stopped
         }
@@ -3136,11 +3168,13 @@ final class AppStore: ObservableObject {
           try? await LocalMLXProvider.shared.load(modelID: modelID)
         }
       }
-      await AssistantTurnRunner.run(
-        conversationID: conversationID,
-        context: context,
-        store: self
-      )
+      await CarPlayTurn.$active.withValue(carPlay) {
+        await AssistantTurnRunner.run(
+          conversationID: conversationID,
+          context: context,
+          store: self
+        )
+      }
       scheduleFollowUpSuggestions(for: conversationID)
       if selectedConversationID != conversationID,
         let conversation = conversation(withID: conversationID),
@@ -4114,7 +4148,7 @@ final class AppStore: ObservableObject {
   func requestLongRunningOperationDecision(
     _ context: LongRunningOperationContext
   ) async -> LongRunningOperationDecision {
-    guard !Task.isCancelled else { return .interrupt }
+    guard !Task.isCancelled, !CarPlayTurn.active else { return .interrupt }
     // Leave the decision pending while away. Switching apps must not consent
     // to extending an operation; completion or cancellation dismisses it.
     if let assistantMessageID = context.assistantMessageID {
@@ -4203,6 +4237,9 @@ final class AppStore: ObservableObject {
     conversationTitle: String?,
     skillSelection: SkillToolSelection? = nil
   ) async -> ToolCallApprovalDecision {
+    guard !CarPlayTurn.active else {
+      return .denied("Tool calls requiring approval are unavailable in CarPlay.")
+    }
     let normalizedCall = AgentTooling.normalized(call: call, tools: definitions)
     let requestID = UUID()
     let originalText = AgentTooling.editableToolCallText(for: normalizedCall, mode: mode)
