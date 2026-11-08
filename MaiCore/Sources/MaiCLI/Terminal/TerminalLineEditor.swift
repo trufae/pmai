@@ -23,6 +23,8 @@ struct CompletionMenu: Equatable {
 protocol LineEditorSurface: AnyObject {
   /// Whether the editor is accepting input, including modal questions.
   func setReadingInput(_ reading: Bool)
+  /// A keystroke or paste interrupts idle cursor effects.
+  func noteInputActivity()
   /// Rows the input may take before it scrolls inside its own area.
   func maximumInputRows() -> Int
   /// Draws the whole input area: one styled string per row, cleared first,
@@ -66,6 +68,7 @@ protocol LineEditorSurface: AnyObject {
 
 extension LineEditorSurface {
   func setReadingInput(_ reading: Bool) {}
+  func noteInputActivity() {}
   func scrollOutput(wheel: Int, pages: Int) {}
   func scrollOutput(toEnd: Bool) {}
   var viewHasFocus: Bool { false }
@@ -831,8 +834,12 @@ final class TerminalLineEditor {
       if hasPromptUpdate { return .refreshPrompt }
       return hasSizeChange ? .resize : nil
     }
-    guard byte == 27 else { return .byte(byte) }
-    return readEscapeSequence()
+    let key: Key = byte == 27 ? readEscapeSequence() : .byte(byte)
+    switch key {
+    case .ignored, .mouse, .wheel: break
+    default: surface?.noteInputActivity()
+    }
+    return key
   }
 
   /// What follows an Escape byte: a CSI or SS3 sequence, Alt+Enter, or

@@ -77,6 +77,7 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   private var cursorHidden = false
   private var readingInput = false
   private var cursorBreathingStartedAt: TimeInterval?
+  private var cursorBreathingResumeAt: TimeInterval = 0
   private var paintedCursorShade: Int?
   private var outputEndedLine: Bool {
     get { outputConversation.outputEndedLine }
@@ -1241,6 +1242,14 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     }
   }
 
+  func noteInputActivity() {
+    lock.withLock {
+      cursorBreathingResumeAt = ProcessInfo.processInfo.systemUptime + 10
+      restoreCursorColor()
+      updateActivityTimer()
+    }
+  }
+
   /// Up to half the screen, so the output keeps room of its own.
   func maximumInputRows() -> Int {
     lock.withLock {
@@ -1906,7 +1915,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     // braille indicator is idle. Respect NO_COLOR and dumb terminals too.
     if active, bufferColorsEnabled, readingInput, !cursorHidden, !animatingStatus {
       if cursorBreathingStartedAt == nil {
-        cursorBreathingStartedAt = ProcessInfo.processInfo.systemUptime
+        // Keep the timer alive during the pause so breathing can resume even
+        // when no other status or input updates arrive.
+        cursorBreathingStartedAt = max(
+          ProcessInfo.processInfo.systemUptime, cursorBreathingResumeAt)
         drawCursorBreathing()
       }
     } else {
@@ -1965,9 +1977,11 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
 
   private func drawCursorBreathing() {
     guard let startedAt = cursorBreathingStartedAt else { return }
+    let now = ProcessInfo.processInfo.systemUptime
+    guard now >= startedAt else { return }
     // A four-second cosine cycle eases from white to dark grey and back.
-    // Sampling monotonic time keeps typing and redraws from changing its pace.
-    let elapsed = max(0, ProcessInfo.processInfo.systemUptime - startedAt)
+    // Sampling monotonic time keeps redraws from changing its pace.
+    let elapsed = now - startedAt
     let phase = elapsed.truncatingRemainder(dividingBy: 4) / 4
     let shade = Int((64 + 191 * (1 + cos(phase * 2 * .pi)) / 2).rounded())
     guard shade != paintedCursorShade else { return }
