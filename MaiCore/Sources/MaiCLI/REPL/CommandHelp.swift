@@ -1056,6 +1056,7 @@ extension MaiCLI {
 
       Usage:
         pmai [options] [message]
+        pmai app run --allow-exec DIRECTORY [ARGS...]
 
       Options:
         --acp               serve pmai as an ACP agent on stdio (for IDEs)
