@@ -280,7 +280,8 @@ enum XMLToolCallParser {
     guard !tools.isEmpty else { return true }
     let resolver = AgentToolNameResolver(tools: tools)
     guard let outerCanonical = resolver.canonicalName(for: outerName) else { return true }
-    return resolver.canonicalName(for: nestedName) == outerCanonical
+    return outerCanonical != ToolProxy.callName
+      && resolver.canonicalName(for: nestedName) == outerCanonical
   }
 
   private static func looksLikeWrappedCall(_ object: [String: Any]) -> Bool {

@@ -5,15 +5,18 @@ import MaiStandardTools
 public struct RemoteWorkspaceHost: Sendable {
   public let id: String
   public let connection: RemoteHostConnection
-  public init(id: String, connection: RemoteHostConnection) {
+  public let isUnavailable: Bool
+  public init(id: String, connection: RemoteHostConnection, isUnavailable: Bool = false) {
     self.id = id
     self.connection = connection
+    self.isUnavailable = isUnavailable
   }
 }
 
 /// The host supplies only explicitly enabled destinations. Resolve them again
 /// on every call so deleting a host or switching access off revokes agent use.
 public actor RemoteWorkspaceTools {
+  private let onConnectionFailure: @Sendable (String) async -> Void
   private let hosts: @Sendable () async throws -> [RemoteWorkspaceHost]
   private struct Session {
     let owner: String
@@ -24,12 +27,16 @@ public actor RemoteWorkspaceTools {
   private var sessions: [String: Session] = [:]
   private var opening = 0
 
-  public init(hosts: @escaping @Sendable () async throws -> [RemoteWorkspaceHost]) {
+  public init(
+    onConnectionFailure: @escaping @Sendable (String) async -> Void = { _ in },
+    hosts: @escaping @Sendable () async throws -> [RemoteWorkspaceHost]
+  ) {
+    self.onConnectionFailure = onConnectionFailure
     self.hosts = hosts
   }
 
   public static let definitions: [ToolDefinition] = [
-    .init(name: "remote_hosts", description: "List remote hosts explicitly enabled for this device's agents. Use their IDs with remote_run, remote_files and remote_terminal. Credentials are never returned.",
+    .init(name: "remote_hosts", description: "List remote hosts enabled for this device's agents, excluding hosts known to be unavailable. Use their IDs with remote_run, remote_files and remote_terminal. If none are listed, use other tools.",
       parameters: [], annotations: .init(readOnly: true, approval: .automatic, requiresInternet: true)),
     .init(name: "remote_run", description: "Execute a shell command on an enabled remote host, without SSH or a remote model. Starts in the host's configured workspace each time. For interactive or persistent programs use remote_terminal on a pmai host.",
       parameters: [
@@ -82,7 +89,7 @@ public actor RemoteWorkspaceTools {
     for key in revoked.keys { sessions[key] = nil }
     for session in revoked.values { await session.connection.close() }
     if name == "remote_hosts" {
-      return json(.array(enabled.map { host in .object([
+      return json(.array(enabled.filter { !$0.isUnavailable && $0.connection.requiresApproval != true }.map { host in .object([
         "id": .string(host.id), "name": .string(host.connection.name),
         "cwd": .string(host.connection.cwd),
         "backend": .string(host.connection.backend == .openCode ? "opencode" : "pmai"),
@@ -94,7 +101,27 @@ public actor RemoteWorkspaceTools {
     guard matches.count == 1, let host = matches.first else {
       throw WorkspaceFileError("Host is not enabled for agent access. Use remote_hosts and enable the host in Remote Hosts or /remote tools HOST on.")
     }
-    if name == "remote_terminal" { return try await terminal(fields, host: host, owner: owner) }
+    guard !host.isUnavailable || (name == "remote_terminal" && fields["action"] == .string("close")) else {
+      throw WorkspaceFileError("Remote host '\(host.connection.name)' is unavailable. Use other tools until the user reconnects it.")
+    }
+    do {
+      if name == "remote_terminal" { return try await terminal(fields, host: host, owner: owner) }
+      return try await workspaceCall(name, fields: fields, host: host)
+    } catch {
+      try Task.checkCancellation()
+      if error is ACPClientError || (error as? JSONRPCTransportError) == .closed
+        || (error is URLError && RemoteConnectionRecovery.shouldRetry(error))
+      {
+        await onConnectionFailure(host.id)
+        throw WorkspaceFileError("Remote host '\(host.connection.name)' is unavailable: \(error.localizedDescription). Use other tools for this task.")
+      }
+      throw error
+    }
+  }
+
+  private func workspaceCall(_ name: String, fields: [String: JSONValue], host: RemoteWorkspaceHost)
+    async throws -> ToolOutput
+  {
     let connection = try host.connection.workspace()
     do {
       let result: ToolOutput

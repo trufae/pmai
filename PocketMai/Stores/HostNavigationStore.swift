@@ -254,6 +254,10 @@ final class HostNavigationStore {
   }
 
   func refresh(isOffline: Bool) {
+    refresh(isOffline: isOffline, automatically: false)
+  }
+
+  private func refresh(isOffline: Bool, automatically: Bool) {
     guard let host = selectedHost, !loading else { return }
     guard !isOffline else {
       suspendConnections()
@@ -264,7 +268,7 @@ final class HostNavigationStore {
     suspended = false
     loading = true
     error = nil
-    remotes.setConnectionFailed(false, for: host.id)
+    if !automatically { reconnectDelay = 1 }
     generation += 1
     let attempt = generation
     operation = Task { [weak self] in
@@ -296,7 +300,7 @@ final class HostNavigationStore {
         let connected = await client.isConnected
         guard generation == attempt, !Task.isCancelled else { return }
         connectedHostID = connected ? host.id : nil
-        reconnectDelay = 1
+        if connected { reconnectDelay = 1 }
         remotes.setConnectionFailed(!connected, for: host.id)
         supportsDiscovery = snapshot != nil
         if let snapshot { remotes.updateWorkspace(host.id, snapshot: snapshot, inBackground: true) }
@@ -310,7 +314,7 @@ final class HostNavigationStore {
       } catch {
         guard generation == attempt else { return }
         self.error = error.localizedDescription
-        remotes.setConnectionFailed(!(error is CancellationError), for: host.id)
+        if !(error is CancellationError) { remotes.setConnectionFailed(true, for: host.id) }
         let previous = client
         client = nil
         await previous?.disconnect()
@@ -340,24 +344,26 @@ final class HostNavigationStore {
   }
 
   private func connectionClosed(attempt: Int) {
-    guard generation == attempt, client != nil else { return }
+    // Discovery reports its own handshake failure before a host is connected.
+    guard generation == attempt, connectedHostID != nil else { return }
     if let selectedHostID { remotes.setConnectionFailed(true, for: selectedHostID) }
     connectedHostID = nil
-    error = "Connection lost. Reconnecting…"
+    error = "Connection lost."
     // Invalidate callbacks before closing the failed client.
     stopDiscovery()
     scheduleReconnect()
   }
 
   private func scheduleReconnect() {
-    guard !suspended, selectedHostID != nil, reconnectTask == nil else { return }
+    guard !suspended, selectedHostID != nil, reconnectTask == nil,
+      reconnectDelay <= RemoteConnectionRecovery.maximumReconnectDelay else { return }
     let delay = reconnectDelay
-    reconnectDelay = min(30, reconnectDelay * 2)
+    reconnectDelay *= 2
     reconnectTask = Task { [weak self] in
       do { try await Task.sleep(for: .seconds(delay)) } catch { return }
       guard let self, !Task.isCancelled, !suspended else { return }
       reconnectTask = nil
-      refresh(isOffline: false)
+      refresh(isOffline: false, automatically: true)
     }
   }
 }
