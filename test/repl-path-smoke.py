@@ -87,6 +87,19 @@ def main():
             command = [binary, '--config', str(config), '--home', str(base / 'home'),
                        '--no-stream', '--no-markdown']
 
+            # A filesystem-root grant must not hang while recording symlink
+            # provenance for an ordinary file outside the workspace.
+            enqueue(call('files_read', path=str(external / 'outside.txt')))
+            enqueue(call('files_write', path=str(external / 'new.txt'), content='ROOT GRANT'))
+            enqueue(call('files_read', path='private/secret.txt'))
+            output = run_repl(command, ['/path allow /', '/path deny private',
+                'Read outside', 'Write outside', 'Read denied file'], cwd=root, env=env, timeout=15)
+            assert 'EXTERNAL SECRET' in json.dumps(requests[1]), requests[1]
+            assert (external / 'new.txt').read_text() == 'ROOT GRANT', output
+            assert 'Files access denied' in json.dumps(requests[-1]), requests[-1]
+            config.write_text(original_config)
+            requests.clear()
+
             # Built-in /tmp access also works with old saved policies and outside deny.
             with tempfile.TemporaryDirectory(prefix='pmai-scratch-', dir='/tmp') as scratch:
                 scratch_file = Path(scratch) / 'gen.py'

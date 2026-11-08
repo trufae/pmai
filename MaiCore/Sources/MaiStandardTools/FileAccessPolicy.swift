@@ -198,6 +198,7 @@ extension MaiFileWorkspaceConfiguration {
   public func followsWorkspaceSymlink(_ url: URL) -> Bool {
     let lexical = url.standardizedFileURL
     guard !containsAllowedPath(lexical) else { return false }
+    let resolved = MaiFileAccessPolicy.resolvedURL(lexical)
     let grantedDirectories = pathAccessPolicy?.snapshot().rules
       .filter { $0.access == .allow && $0.descendants }.map(\.url) ?? []
     return ([effectiveRootURL] + additionalAllowedURLs + grantedDirectories).contains { root in
@@ -205,6 +206,7 @@ extension MaiFileWorkspaceConfiguration {
       var directory: ObjCBool = false
       return FileManager.default.fileExists(atPath: root.path, isDirectory: &directory)
         && directory.boolValue && MaiFileAccessPolicy.contains(lexical, in: root)
+        && !MaiFileAccessPolicy.contains(resolved, in: root)
     }
   }
 
@@ -236,6 +238,7 @@ extension MaiFileWorkspaceConfiguration {
     paths: [String], operation: String, recursive: Bool = false, mutatingTree: Bool = false,
     movingTo: String? = nil
   ) async throws -> Self {
+    try Task.checkCancellation()
     guard let pathAccessPolicy else { return self }
     var result = self
     result.confirmedPolicyRevision = pathAccessPolicy.snapshot().revision
@@ -265,6 +268,7 @@ extension MaiFileWorkspaceConfiguration {
         }
       }
       for url in targets {
+        try Task.checkCancellation()
         let throughSymlink = followsWorkspaceSymlink(url)
         let resolved = MaiFileAccessPolicy.resolvedURL(url)
         switch pathAccessPolicy.access(
@@ -285,8 +289,11 @@ extension MaiFileWorkspaceConfiguration {
         // Keep this provenance only for this operation, never as a session grant.
         if throughSymlink {
           var source = url
-          while followsWorkspaceSymlink(source.deletingLastPathComponent()) {
-            source.deleteLastPathComponent()
+          while true {
+            try Task.checkCancellation()
+            let parent = source.deletingLastPathComponent()
+            guard parent.path != source.path, followsWorkspaceSymlink(parent) else { break }
+            source = parent
           }
           result.followedSymlinks.append(.init(
             source: source, target: MaiFileAccessPolicy.resolvedURL(source)))
