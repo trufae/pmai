@@ -97,7 +97,7 @@ def main():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
         for choice in sys.argv[2:] or ('continue', 'submit', 'ignore', 'clear', 'stop',
-                       'hey', 'hey-empty', 'hey-approval', 'hey-shell', 'hey-all', 'hey-target', 'hey-child', 'hey-background',
+                       'hey', 'hey-empty', 'hey-idle', 'hey-approval', 'hey-shell', 'hey-all', 'hey-target', 'hey-child', 'hey-background',
                        'approval-eof', 'edit-eof', 'approval-exit', 'edit-exit',
                        'approval-quit', 'edit-quit', 'approval-interrupt', 'edit-interrupt',
                        'child-interrupt', 'child-edit-interrupt', 'child-kill',
@@ -201,6 +201,39 @@ def main():
 
                 try:
                     wait_for('> ')
+                    if choice == 'hey-idle':
+                        # Idle /hey must send the new text, preserving completed
+                        # exchanges instead of replaying or amending them.
+                        main_texts = ['first x > y | z', 'next main message']
+                        child_texts = ['first child message', 'next child x > y | z']
+                        for index, prefix in enumerate(('', '@main ')):
+                            send(f'{prefix}/hey {main_texts[index]}\n')
+                            assert user_texts() == main_texts[:index + 1]
+                            wait_for('✓ took')
+                        send('/fork --empty idle\n')
+                        fork = wait_for('and switched to it.')
+                        pid = re.search(r'into agent#(\d+)', fork)[1]
+                        send(f'/hey {child_texts[0]}\n')
+                        assert user_texts() == child_texts[:1]
+                        wait_for('✓ took')
+                        send('/jobs focus main\n')
+                        wait_for('Messages go to this chat again.')
+                        send(f'@{pid} /hey {child_texts[1]}\n')
+                        assert user_texts() == child_texts
+                        wait_for('✓ took')
+                        send('/exit\n')
+                        wait_for_exit()
+                        assert process.returncode == 0, process.returncode
+                        chat_path, = (project_storage(root / 'home', root) / 'chats').glob('*.json')
+                        chat = read_chat(chat_path)
+                        child, = chat['subagents']
+                        for conversation, expected in ((chat, main_texts), (child, child_texts)):
+                            messages = [m for m in conversation['messages'] if m['role'] != 'system']
+                            assert [m['role'] for m in messages] == ['user', 'assistant', 'user', 'assistant'], messages
+                            assert [m['content'] for m in messages if m['role'] == 'user'] == [
+                                [{'text': {'_0': text}}] for text in expected], messages
+                        print('PASS hey-idle: new and completed chats, focused and addressed agents, saved history', flush=True)
+                        continue
                     if choice in ('hey-all', 'hey-target'):
                         send('earlier exchange\n')
                         assert user_texts() == ['earlier exchange']
@@ -303,7 +336,7 @@ def main():
                         assert user_texts() == ['earlier exchange']
                         wait_for('✓ took')
                         send('/hey\n')
-                        wait_for('No running chat prompt to interrupt.')
+                        wait_for('Use /hey TEXT to start a new prompt for idle agent#')
                         prompt = {'hey-approval': 'approval', 'hey-shell': 'shell'}.get(choice, 'slow')
                         send(prompt + '\n')
                         assert user_texts() == ['earlier exchange', prompt]

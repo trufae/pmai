@@ -1015,6 +1015,7 @@ extension MaiCLI {
     /// handled before any replacement starts with the same PID.
     func hey(_ addition: String, recipients: [AgentPID]) async {
       var targets: [REPLTurn] = []
+      var idle: [AgentPID] = []
       let tree = await runtime.supervisor.tree()
       for pid in recipients {
         if let turn = loop.turn(for: pid) {
@@ -1031,8 +1032,10 @@ extension MaiCLI {
           loop.update(turn)
           Task { continuation.yield(.turnFinished(pid, await task.result)) }
           targets.append(turn)
+        } else if !addition.isEmpty {
+          idle.append(pid)
         } else {
-          await terminal.note("No running prompt for agent#\(pid.rawValue).")
+          await terminal.note("Use /hey TEXT to start a new prompt for idle agent#\(pid.rawValue).")
         }
       }
       // Cancelled descendants also need to finish before a parent is restarted.
@@ -1070,7 +1073,8 @@ extension MaiCLI {
         let stopped = Set(await runtime.supervisor.stop(turn.pid, reason: "Restarting with /hey"))
         loop.cancelApprovals { $0.run.pid.map(stopped.contains) ?? false }
       }
-      activityWasInterrupted = true
+      if !targets.isEmpty { activityWasInterrupted = true }
+      for pid in idle { await deliver(addition, to: .agent(pid)) }
       await refreshStatus()
     }
 
@@ -2368,11 +2372,6 @@ extension MaiCLI {
         if !heredoc, commandFields.first == "/hey" {
           let main = await mainProcess()
           let pid = loop.commandTarget ?? loop.focus.pid(main: main)
-          if loop.focus == .main, loop.commandTarget == nil, loop.activeTurn?.chatID != session.id {
-            await terminal.note("No running chat prompt to interrupt.")
-            await releaseIfIdle(workspace: workspace)
-            return false
-          }
           let addition = text.dropFirst(4).trimmingCharacters(in: .whitespacesAndNewlines)
           await hey(addition, recipients: [pid])
           await releaseIfIdle(workspace: workspace)

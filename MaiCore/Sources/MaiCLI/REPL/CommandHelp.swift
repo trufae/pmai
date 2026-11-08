@@ -284,7 +284,8 @@ extension MaiCLI {
     Earlier exchanges and prompt attachments are kept. The interrupted
     attempt is replaced in chat history, leaving one amended user message.
     Text after /hey is literal, including > and |. Completed tool actions
-    are not undone. With no running prompt, nothing is sent.
+    are not undone. With no running prompt, TEXT is sent as a new message;
+    bare /hey sends nothing.
     @PID /hey [TEXT] targets one agent; @* /hey [TEXT] targets all active agents.
     """
 
@@ -307,7 +308,7 @@ extension MaiCLI {
     /help [COMMAND]        List commands or show detailed help
     /help keys             Keyboard shortcuts
     /help shell            Input, shell commands, redirects, and agent messages
-    /hey [TEXT]            Interrupt, append TEXT to the running prompt, and resend
+    /hey [TEXT]            Interrupt and resend with TEXT, or send TEXT when idle
     /history [COMMAND]     List, search, or delete saved inputs
     /image MODE PATH       Attach an image or extract text with OCR
     /import PATH           Import settings, skills, and chats
