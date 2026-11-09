@@ -10,12 +10,21 @@ enum MacSidebarSection: String, CaseIterable {
 
 @MainActor @Observable
 final class MacWorkspace {
-  let home = AgentHome.resolve()
-  var hosts: [ACPRemoteHost] = []
+  let backend: MacBackend
+  var home: AgentHome { backend.home }
+  var hosts: [ACPRemoteHost] {
+    get { backend.hosts }
+    set { backend.hosts = newValue }
+  }
   var hostID: UUID?
   var cwd = ""
-  var snapshot = ACPWorkspaceSnapshot()
-  var conversations: [MacConversation] = []
+  var snapshot: ACPWorkspaceSnapshot {
+    backend.snapshots[hostID] ?? .init()
+  }
+  var conversations: [MacConversation] {
+    get { backend.conversations }
+    set { backend.conversations = newValue }
+  }
   var selectedID: UUID?
   var search = ""
   var sidebarSection: MacSidebarSection? = .folders
@@ -25,8 +34,22 @@ final class MacWorkspace {
   var showConnection = false
   var showInspector = false
   private var restored = false
+  private let inheritedLocation: Bool
 
-  var hostStore: ACPRemoteHostStore { .init(directory: home.rootURL.appendingPathComponent("remotes")) }
+  init(backend: MacBackend) {
+    self.backend = backend
+    let source = backend.activeWorkspace
+    inheritedLocation = source != nil
+    if let source {
+      hostID = source.hostID
+      cwd = source.cwd
+      selectedID = source.selectedID
+      sidebarSection = source.sidebarSection
+      showArchived = source.showArchived
+    }
+  }
+
+  var hostStore: ACPRemoteHostStore { backend.hostStore }
   var selected: MacConversation? { conversations.first { $0.id == selectedID } }
   var host: ACPRemoteHost? { hosts.first { $0.id == hostID } }
   var hostName: String { host?.name ?? "This Mac" }
@@ -57,17 +80,21 @@ final class MacWorkspace {
     guard !restored else { return }
     restored = true
     do {
-      try await ForwirohRemote.shared.configure(
-        directory: home.rootURL.appendingPathComponent("forwiroh-client"), name: "pmai for Mac")
+      try await backend.prepare()
       hosts = try hostStore.hosts()
-      hostID = UserDefaults.standard.string(forKey: "mac.host").flatMap(UUID.init(uuidString:))
+      if !inheritedLocation {
+        hostID = UserDefaults.standard.string(forKey: "mac.host").flatMap(UUID.init(uuidString:))
+        cwd = UserDefaults.standard.string(forKey: "mac.cwd") ?? ""
+      }
       if host == nil { hostID = nil }
-      cwd = UserDefaults.standard.string(forKey: "mac.cwd") ?? ""
+      let sessionID = UserDefaults.standard.string(forKey: "mac.session")
       await refresh()
-      sidebarSection = cwd.isEmpty ? .folders : .conversations
-      if let id = UserDefaults.standard.string(forKey: "mac.session"),
-        let session = snapshot.sessions.first(where: { $0.sessionID == id && $0.cwd == cwd }) {
-        open(session)
+      if !inheritedLocation {
+        sidebarSection = cwd.isEmpty ? .folders : .conversations
+        if let sessionID,
+          let session = snapshot.sessions.first(where: { $0.sessionID == sessionID && $0.cwd == cwd }) {
+          open(session)
+        }
       }
     } catch { self.error = error.localizedDescription }
   }
@@ -77,17 +104,16 @@ final class MacWorkspace {
     busy = true
     defer { busy = false }
     do {
-      hosts = try hostStore.hosts()
-      if let host {
-        let client = try hostStore.connection(for: host).makeSession()
-        do { snapshot = try await client.workspace() ?? .init() }
-        catch { await client.disconnect(); throw error }
-        await client.disconnect()
-      } else {
-        snapshot = try await AgentHomeACPWorkspace(home: home).snapshot()
+      try await backend.refresh(hostID: hostID)
+      if hostID != nil, host == nil {
+        hostID = nil
+        cwd = ""
+        selectedID = nil
+        try await backend.refresh(hostID: nil)
       }
       if !snapshot.folders.contains(where: { $0.cwd == cwd }) {
         cwd = snapshot.folders.first?.cwd ?? host?.cwd ?? ""
+        selectedID = nil
       }
       remember()
     } catch { self.error = error.localizedDescription }
@@ -102,7 +128,6 @@ final class MacWorkspace {
     hostID = id
     cwd = ""
     selectedID = nil
-    snapshot = .init()
     Task { await refresh() }
   }
 
@@ -137,7 +162,7 @@ final class MacWorkspace {
   }
 
   func open(_ info: ACPSessionInfo? = nil) {
-    guard !busy, !cwd.isEmpty else { return }
+    guard !busy, !cwd.isEmpty, hostID == nil || host != nil else { return }
     sidebarSection = .conversations
     showArchived = info?.isArchived == true
     if let info, let existing = conversations.first(where: {
@@ -152,9 +177,14 @@ final class MacWorkspace {
         cwd: info?.cwd ?? cwd, sessionID: info?.sessionID, title: info?.title ?? "New Chat")
       let profile = try host.map { try hostStore.connection(for: $0) }
       conversation.client = try makeClient(profile: profile, conversation: conversation)
-      conversation.didChange = { [weak self] in
+      let backend = backend
+      let hostID = hostID
+      conversation.didChange = { [weak self, weak backend] in
         self?.remember()
-        Task { await self?.refresh() }
+        Task {
+          do { try await backend?.refresh(hostID: hostID) }
+          catch { self?.error = error.localizedDescription }
+        }
       }
       conversations.append(conversation)
       selectedID = conversation.id
@@ -242,7 +272,6 @@ final class MacWorkspace {
           hostID = nil
           cwd = ""
           selectedID = nil
-          snapshot = .init()
         }
         sidebarSection = .hosts
       } catch { self.error = error.localizedDescription }
@@ -333,7 +362,6 @@ final class MacWorkspace {
     hostID = host.id
     cwd = host.cwd
     selectedID = nil
-    snapshot = .init()
     sidebarSection = .folders
     search = ""
     showArchived = false
@@ -347,6 +375,7 @@ final class MacWorkspace {
   }
 
   func remember() {
+    guard backend.activeWorkspace === self else { return }
     UserDefaults.standard.set(hostID?.uuidString, forKey: "mac.host")
     UserDefaults.standard.set(cwd, forKey: "mac.cwd")
     UserDefaults.standard.set(selected?.sessionID, forKey: "mac.session")
@@ -390,8 +419,4 @@ final class MacWorkspace {
     } catch { self.error = error.localizedDescription }
   }
 
-  func close() async {
-    for conversation in conversations { conversation.stop() }
-    for conversation in conversations { await conversation.close() }
-  }
 }

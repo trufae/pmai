@@ -15,6 +15,12 @@ reasoning, tool settings, and subagents. Running conversations remain open when
 switching folders or hosts. Permission requests are attached to the conversation
 that requested them, with an attention icon in the conversation list.
 
+**New Window** (⌘⇧N) opens another window on the current host and folder. Each
+window navigates independently, while open conversations and their backend
+connections are shared. Different chats can run in parallel; opening the same
+chat in two windows shares its transcript and draft. Closing a window keeps
+running conversations alive until you close the conversation or quit the app.
+
 The sidebar expands one section at a time: **Hosts**, **Folders**, or
 **Conversations**. Selecting a host opens its folders; selecting a folder opens
 its conversations. Click another section heading to return to that level. Open

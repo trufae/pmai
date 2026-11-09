@@ -56,6 +56,11 @@ struct MacWorkspaceView: View {
     .onChange(of: scenePhase) { _, phase in
       if phase == .active { Task { await workspace.refresh() } }
     }
+    .onChange(of: workspace.hosts) { _, _ in
+      if workspace.hostID != nil, workspace.host == nil {
+        Task { await workspace.refresh() }
+      }
+    }
   }
 
 }
