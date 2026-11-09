@@ -70,6 +70,7 @@ if [ "${MAC_MLX:-0}" = 1 ]; then
   done
 fi
 codesign --force --sign "${MAC_SIGN_IDENTITY:--}" "$app"
+codesign --verify --strict "$app"
 # Replace managed bundle contents so switching back to lean removes MLX assets.
 mkdir -p "$app_destination"
 rsync -a --delete "$app/" "$app_destination/"

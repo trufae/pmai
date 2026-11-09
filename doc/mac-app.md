@@ -6,7 +6,11 @@ current macOS 27 system appearance. No iOS Simulator build is needed.
 
 `make mac-install` builds and installs into `~/Applications/pmai.app`. Override
 the destination with `MAC_INSTALL_DIR=/Applications` (which may require write
-permission). `MAC_APP` overrides the build bundle path for all three targets.
+permission). `MAC_APP` overrides the build bundle path for all Mac targets.
+
+`make mac-dmg` builds a Release app and creates `build/pmai.dmg`, containing
+`pmai.app` and an Applications shortcut. Set `MAC_DMG` to change the output path,
+or `CONFIG=Debug` to package a debug build.
 
 Use **Open Workspace** (⌘O) to select a folder. Existing CLI projects and chats
 appear automatically. **New Chat** is ⌘N; **Send** is Return (or ⌘Return);
@@ -125,10 +129,24 @@ when building the smaller graph, and an explicit compilation flag prevents stale
 MLX modules from leaking into a lean incremental build.
 
 `make mac CONFIG=Release` produces an optimized, stripped app. Local builds use
-ad hoc signing; `MAC_SIGN_IDENTITY` selects a signing identity. The script does
-not notarize or publish the app. This is a direct-distribution Mac application,
+ad hoc signing; `MAC_SIGN_IDENTITY` selects a keychain signing identity for both
+the app and DMG. For example:
+
+```sh
+make mac-dmg MAC_SIGN_IDENTITY='Developer ID Application: Your Name (TEAMID)'
+```
+
+Packaging verifies both signatures and the
+disk image before replacing an existing DMG. The scripts do not notarize or
+publish the app. This is a direct-distribution Mac application,
 without App Sandbox: CLI-compatible project access, subprocesses, and native
 plugins require that execution model.
+
+CI uploads a debug DMG on macOS. Release tags build lean, optimized arm64 and
+x64 DMGs, attach them to the GitHub release, and include them in `SHA256SUMS`.
+Both the app and DMG are ad hoc signed in CI, without Developer ID or notarization.
+Like the unsigned iOS IPA, this keeps builds independent of private Apple
+credentials; ad hoc signatures do not establish a trusted developer identity.
 
 The lean arm64 app built with Xcode 27.1 measured approximately 21 MB in Release
 and 66 MB in Debug. These are local bundle measurements, not CI size thresholds.

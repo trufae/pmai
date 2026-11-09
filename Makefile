@@ -31,19 +31,26 @@ DEVICE ?=
 BUNDLE_ID = io.github.trufae.mai
 APP_BUNDLE ?=
 MAC_APP ?= build/pmai.app
+MAC_DMG ?= build/pmai.dmg
+MAC_SIGN_IDENTITY ?= -
 MAC_INSTALL_DIR ?= $(HOME)/Applications
 BINDIR ?= $(HOME)/.local/bin
 
 .PHONY: all build test list run uninstall repl repl-build repl-install repl-uninstall repl-musl plugin-fixture fmt clean check-shared-tooling aitest-build
 .PHONY: android android-test android-kotlin android-kotlin-release test-core test-unit test-cli
-.PHONY: mac mac-install mac-run
+.PHONY: mac mac-dmg mac-install mac-run
 TEST_PROFILE ?= platform
 TEST_ARGS ?=
 
 all: build
 
 mac:
-	CONFIG='$(CONFIG)' SWIFT='$(SWIFT)' MAC_APP='$(MAC_APP)' sh sys/build-mac-app.sh
+	CONFIG='$(CONFIG)' SWIFT='$(SWIFT)' MAC_APP='$(MAC_APP)' MAC_SIGN_IDENTITY='$(MAC_SIGN_IDENTITY)' sh sys/build-mac-app.sh
+
+# Distribution builds are optimized unless CONFIG is explicitly overridden.
+mac-dmg: CONFIG = Release
+mac-dmg: mac
+	MAC_APP='$(MAC_APP)' MAC_DMG='$(MAC_DMG)' MAC_SIGN_IDENTITY='$(MAC_SIGN_IDENTITY)' sh sys/package-mac-dmg.sh
 
 mac-install: mac
 	mkdir -p '$(MAC_INSTALL_DIR)/pmai.app'

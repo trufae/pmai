@@ -68,6 +68,18 @@ jobs:
           swift build "${args[@]}" --product pmai
           cp "$(swift build "${args[@]}" --show-bin-path)/pmai" pmai
 
+      - name: Build and package macOS app
+        if: runner.os == 'macOS'
+        run: make mac-dmg CONFIG=Debug
+
+      - name: Upload macOS DMG artifact
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pmai-macos-${{ runner.arch }}-dmg
+          path: build/pmai.dmg
+          if-no-files-found: error
+
       - name: Save Swift build outputs
         if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.build-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

@@ -233,6 +233,57 @@ jobs:
           path: pmai-windows-${{ matrix.arch }}.zip
           if-no-files-found: error
 
+  mac-dmg:
+    name: GUI (macOS ${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-26-intel
+            arch: x64
+            runner_arch: x86_64
+          - os: macos-26
+            arch: arm64
+            runner_arch: arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Swift
+        uses: SwiftyLab/setup-swift@d60245579ea3836a3f2fa65ebbe1e8891d577c76 # v1.14.2
+        with:
+          swift-version: swift-${{ env.SWIFT_VERSION }}-RELEASE
+          check-latest: true
+
+      - name: Verify architecture
+        run: test "$(uname -m)" = "${{ matrix.runner_arch }}"
+
+      - name: Restore Swift build outputs
+        id: build-cache
+        uses: ./.github/actions/restore-swift-build
+        with:
+          profile: mac-release-native-osize
+
+      # Like the IPA, releases require no private Apple credentials. The app
+      # and DMG use ad hoc signatures, without Developer ID or notarization.
+      - name: Build and package release macOS app
+        run: make mac-dmg MAC_DMG=build/pmai-macos-${{ matrix.arch }}.dmg
+
+      - name: Save Swift build outputs
+        if: steps.build-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: MaiCore/.build
+          key: ${{ steps.build-cache.outputs.cache-primary-key }}
+
+      - name: Upload macOS DMG artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pmai-macos-${{ matrix.arch }}-dmg
+          path: build/pmai-macos-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+
   ipa:
     name: GUI (iOS)
     runs-on: macos-26
@@ -335,7 +386,7 @@ jobs:
 
   release:
     name: Publish GitHub release
-    needs: [cli, musl-cli, windows-cli, android-app, ipa]
+    needs: [cli, musl-cli, windows-cli, android-app, ipa, mac-dmg]
     runs-on: ubuntu-latest
     steps:
       - name: Download release artifacts
@@ -345,10 +396,10 @@ jobs:
           pattern: "*"
           merge-multiple: true
 
-      - name: Generate CLI and Android APK checksums
+      - name: Generate release checksums
         run: |
           cd release-assets
-          sha256sum pmai-*.zip PocketMai-Android.apk > SHA256SUMS
+          sha256sum pmai-*.zip pmai-macos-*.dmg PocketMai-*.ipa PocketMai-Android.apk > SHA256SUMS
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4

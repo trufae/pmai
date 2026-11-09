@@ -512,6 +512,7 @@ artifacts in the Release workflow.
 make build               # builds for the iOS Simulator without code signing
 make repl-build          # builds the debug CLI without starting the REPL
 make repl-install        # installs an unoptimized CLI without debug information
+make mac-dmg             # builds the Release Mac app and packages build/pmai.dmg
 make run                 # installs and launches Xcode's latest signed device build
 make fmt                 # swift-format the sources
 ```
@@ -555,9 +556,12 @@ debugger attachment or to run in the Simulator.
 
 Get PocketMai from the [App Store](https://apps.apple.com/es/app/pocketmai/id6764296742).
 The [GitHub releases](https://github.com/trufae/pmai/releases) include the iOS IPA,
+the native Mac app as `pmai-macos-arm64.dmg` and `pmai-macos-x64.dmg`,
 the Kotlin Android app as `PocketMai-Android.apk` (arm64), source
 archives, and pmai CLI binaries for macOS and Linux (arm64 and x64), plus
-Android arm64. `SHA256SUMS` covers the CLI archives and Android APK.
+Android arm64. `SHA256SUMS` covers the CLI archives, DMGs, IPA, and Android APK.
+The Mac app and DMG use ad hoc signatures; they are not Developer ID signed or
+notarized. See the [Mac build notes](doc/mac-app.md) for local signing options.
 Static musl builds omit native plugin loading.
 
 The website's [Android APK](https://trufae.github.io/pmai/downloads/PocketMai-Android.apk)
