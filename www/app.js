@@ -43,17 +43,24 @@
     if (toolCount) toolCount.textContent = `${count} ${count === 1 ? "capability" : "capabilities"}`;
   }));
 
+  const copyStatus = document.querySelector("[data-copy-status]");
   const legacyCopy = (text) => {
+    const focused = document.activeElement;
     const input = document.createElement("textarea");
     input.value = text;
     input.setAttribute("readonly", "");
     input.style.position = "fixed";
     input.style.opacity = "0";
     document.body.appendChild(input);
-    input.select();
-    const copied = document.execCommand("copy");
-    input.remove();
-    return copied;
+    try {
+      input.select();
+      return document.execCommand("copy");
+    } catch {
+      return false;
+    } finally {
+      input.remove();
+      focused?.focus({ preventScroll: true });
+    }
   };
 
   document.querySelectorAll("[data-copy]").forEach((copyButton) => copyButton.addEventListener("click", async () => {
@@ -61,6 +68,7 @@
     const copyLabel = copyButton.querySelector("[data-copy-label]");
     const text = installCommand?.textContent?.trim();
     if (!text) return;
+    if (copyStatus) copyStatus.textContent = "";
 
     let copied = false;
     try {
@@ -70,6 +78,9 @@
       copied = legacyCopy(text);
     }
 
+    if (copyStatus) copyStatus.textContent = copied
+      ? "Install command copied to clipboard."
+      : "Could not copy automatically. Select the install command to copy it manually.";
     if (!copied) return;
     copyButton.classList.add("copied");
     if (copyLabel) copyLabel.textContent = "Copied!";

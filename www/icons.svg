@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg">
+  <symbol id="phone" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M10 5h4m-3 14h2"/></symbol>
+  <symbol id="desktop" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8m-4-4v4M2 13h20"/></symbol>
+  <symbol id="watch" viewBox="0 0 24 24"><rect x="5" y="6" width="14" height="12" rx="3"/><path d="m8 6 1-4h6l1 4m-8 12 1 4h6l1-4m-4-9v3l2 1"/></symbol>
+  <symbol id="mic" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2m-7 9v3m-4 0h8"/></symbol>
+  <symbol id="terminal" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="18" rx="3"/><path d="m6 8 4 4-4 4m7 0h5"/></symbol>
+  <symbol id="connect" viewBox="0 0 24 24"><path d="m10 13 4-2m-6 6-2 2a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m4-2 2-2a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0" transform="translate(1 0)"/></symbol>
+  <symbol id="chat" viewBox="0 0 24 24"><path d="M21 11a8 8 0 0 1-8 8H7l-5 3V11a9 9 0 0 1 18-4"/><path d="M7 10h8m-8 4h5m5-12 4 4-4 4m4-4h-8"/></symbol>
+  <symbol id="document" viewBox="0 0 24 24"><path d="M14 2H5v20h14V7l-5-5Zm0 0v5h5M8 12h8m-8 4h6"/></symbol>
+  <symbol id="shield" viewBox="0 0 24 24"><path d="m12 2 9 4v6c0 5-9 10-9 10S3 17 3 12V6l9-4Z"/><path d="m8 12 3 3 5-6"/></symbol>
+  <symbol id="agents" viewBox="0 0 24 24"><circle cx="12" cy="5" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><path d="M12 8v4m-7 4v-4h14v4"/></symbol>
+  <symbol id="code" viewBox="0 0 24 24"><path d="m7 6-6 6 6 6m10-12 6 6-6 6m-3-16-4 20"/></symbol>
+  <symbol id="browser" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="18" rx="2"/><path d="M2 8h20M6 5.5h.01M9 5.5h.01m3 6v6m-3-3h6"/></symbol>
+  <symbol id="search" viewBox="0 0 24 24"><circle cx="10" cy="10" r="7"/><path d="m15 15 7 7"/></symbol>
+  <symbol id="branch" viewBox="0 0 24 24"><circle cx="6" cy="5" r="3"/><circle cx="18" cy="5" r="3"/><circle cx="6" cy="19" r="3"/><path d="M6 8v8m12-8a8 8 0 0 1-8 8H6"/></symbol>
+  <symbol id="books" viewBox="0 0 24 24"><rect x="2" y="3" width="5" height="18" rx="1"/><rect x="7" y="3" width="5" height="18" rx="1"/><path d="m13 4 5-1 4 17-5 1-4-17ZM2 8h10m-10 9h10"/></symbol>
+  <symbol id="folder" viewBox="0 0 24 24"><path d="M2 6a2 2 0 0 1 2-2h5l3 3h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6Z"/></symbol>
+  <symbol id="calendar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M7 2v5m10-5v5M3 10h18M7 14h3m4 0h3m-10 4h3"/></symbol>
+  <symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="13" r="9"/><path d="M12 8v5l3 2M2 5l3-3m14 0 3 3"/></symbol>
+  <symbol id="sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 1v3m0 16v3M1 12h3m16 0h3M4 4l2 2m12 12 2 2M4 20l2-2M18 6l2-2"/></symbol>
+  <symbol id="message" viewBox="0 0 24 24"><path d="M21 3H3v14h5l4 5 4-5h5V3Z"/><path d="M7 8h10m-10 4h7"/></symbol>
+  <symbol id="scan" viewBox="0 0 24 24"><path d="M3 8V3h5m8 0h5v5M3 16v5h5m8 0h5v-5M8 17l4-10 4 10m-6-3h4"/></symbol>
+  <symbol id="check" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m7 12 3 3 7-7"/></symbol>
+  <symbol id="puzzle" viewBox="0 0 24 24"><path d="M9 3H3v6a3 3 0 1 1 0 6v6h6a3 3 0 1 1 6 0h6v-6a3 3 0 1 0 0-6V3h-6a3 3 0 1 0-6 0Z"/></symbol>
+  <symbol id="undo" viewBox="0 0 24 24"><path d="m8 3-6 6 6 6M2 9h12a7 7 0 0 1 0 14"/></symbol>
+</svg>
