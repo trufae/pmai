@@ -29,7 +29,6 @@ struct MaiMacApp: App {
     .defaultSize(width: 1180, height: 780)
     .commands {
       MacWorkspaceCommands()
-      SidebarCommands()
       MacChatFontCommands()
     }
     Settings {
@@ -74,16 +73,26 @@ private struct MacWorkspaceKey: FocusedValueKey {
   typealias Value = MacWorkspace
 }
 
+private struct MacSidebarVisibilityKey: FocusedValueKey {
+  typealias Value = Binding<NavigationSplitViewVisibility>
+}
+
 extension FocusedValues {
   var macWorkspace: MacWorkspace? {
     get { self[MacWorkspaceKey.self] }
     set { self[MacWorkspaceKey.self] = newValue }
+  }
+
+  var macSidebarVisibility: Binding<NavigationSplitViewVisibility>? {
+    get { self[MacSidebarVisibilityKey.self] }
+    set { self[MacSidebarVisibilityKey.self] = newValue }
   }
 }
 
 private struct MacWorkspaceCommands: Commands {
   @Environment(\.openWindow) private var openWindow
   @FocusedValue(\.macWorkspace) private var workspace
+  @FocusedBinding(\.macSidebarVisibility) private var sidebarVisibility
 
   var body: some Commands {
     CommandGroup(replacing: .newItem) {
@@ -91,11 +100,26 @@ private struct MacWorkspaceCommands: Commands {
         .disabled(workspace == nil || workspace?.cwd.isEmpty == true || workspace?.busy == true)
       Button("New Window") { openWindow(id: "workspace") }
         .keyboardShortcut("n", modifiers: [.command, .shift])
-      Button("Open Workspace…") { workspace?.chooseFolder() }.keyboardShortcut("o")
+      Button("Open Workspace…") { workspace?.chooseFolder() }
+        .keyboardShortcut("o", modifiers: [.command, .shift])
         .disabled(workspace == nil)
       Button("Connect to Host…") { workspace?.showConnection = true }
         .keyboardShortcut("k", modifiers: [.command, .shift])
         .disabled(workspace == nil)
+    }
+    CommandGroup(replacing: .sidebar) {
+      Button("Toggle Sidebar") {
+        withAnimation {
+          sidebarVisibility = sidebarVisibility == .detailOnly ? .all : .detailOnly
+        }
+      }
+      .keyboardShortcut("s", modifiers: .command)
+      .disabled(sidebarVisibility == nil)
+      Button("Toggle Conversation Details") {
+        withAnimation { workspace?.showInspector.toggle() }
+      }
+      .keyboardShortcut("o", modifiers: .command)
+      .disabled(workspace?.selected == nil)
     }
     CommandMenu("Conversation") {
       Button("Stop Response") { workspace?.selected?.stop() }.keyboardShortcut(".")

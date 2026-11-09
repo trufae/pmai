@@ -94,7 +94,9 @@ struct MacSettingsView: View {
       }
       Section("Keyboard") {
         LabeledContent("New chat", value: "⌘N")
-        LabeledContent("Open workspace", value: "⌘O")
+        LabeledContent("Open workspace", value: "⇧⌘O")
+        LabeledContent("Toggle left sidebar", value: "⌘S")
+        LabeledContent("Toggle conversation options", value: "⌘O")
         LabeledContent("Send message", value: "Return")
         LabeledContent("New line", value: "Shift-Return")
         LabeledContent("Complete prompt or skill", value: "/ or $, then Tab / Shift-Tab")

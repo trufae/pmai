@@ -41,7 +41,7 @@ struct MacWorkspaceView: View {
           Button { workspace.showInspector.toggle() } label: {
             Label("Conversation Details", systemImage: "sidebar.right")
           }
-          .help("Show settings and subagents").disabled(workspace.selected == nil)
+          .help("Show settings and subagents (⌘O)").disabled(workspace.selected == nil)
         }
       }
       .inspector(isPresented: $workspace.showInspector) {
@@ -49,6 +49,7 @@ struct MacWorkspaceView: View {
       }
       .inspectorColumnWidth(min: 280, ideal: 320, max: 440)
     }
+    .focusedSceneValue(\.macSidebarVisibility, $columns)
     .sheet(isPresented: $workspace.showConnection) { MacConnectionSheet(workspace: workspace) }
     .alert("Couldn’t complete the operation", isPresented: Binding(
       get: { workspace.error != nil }, set: { if !$0 { workspace.error = nil } }

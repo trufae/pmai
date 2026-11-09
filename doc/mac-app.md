@@ -18,7 +18,7 @@ its release page so you can download the macOS DMG and replace the app in
 Applications. **Later** dismisses the notice until the next launch. Failed or
 offline checks do not interrupt startup.
 
-Use **Open Workspace** (⌘O) to select a folder. Existing CLI projects and chats
+Use **Open Workspace** (⇧⌘O) to select a folder. Existing CLI projects and chats
 appear automatically. **New Chat** is ⌘N; **Send** is Return (or ⌘Return);
 Shift-Return inserts a newline; **Stop** is ⌘. The conversation inspector contains provider, model,
 reasoning, tool settings, and subagents. Running conversations remain open when
@@ -48,6 +48,10 @@ Host menus support renaming and removing saved connections. Folder menus offer
 new chats and copying paths; local folders also support display-name changes,
 Finder/terminal access, and removal from the sidebar. Removing a folder keeps
 its files and chats. Removing a host only forgets this Mac's connection.
+
+**⌘S** toggles the left sidebar in the active window, also available as
+**View → Toggle Sidebar**. **⌘O** toggles the right conversation options sidebar,
+also available as **View → Toggle Conversation Details** when a chat is selected.
 
 **⌘+** and **⌘−** resize conversation text, Markdown, and the message composer;
 **⌘0** restores the default size. These commands also appear in the View menu.
