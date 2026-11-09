@@ -362,8 +362,10 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
             for call in message.toolCalls {
               calls[call.id] = transcript.appendTool(call: call, result: nil)
             }
+          } else if message.role == .user, !message.text.isEmpty {
+            transcript.appendUserMessage(message.text)
           } else if !message.text.isEmpty {
-            transcript.append("\(message.role == .user ? "you" : message.role.rawValue): \(message.text)\n")
+            transcript.append("\(message.role.rawValue): \(message.text)\n")
           }
           for result in message.toolResults {
             transcript.appendTool(call: nil, result: result, to: calls.removeValue(forKey: result.callID))
@@ -992,6 +994,24 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
     }
   }
 
+  func writeUserMessage(_ text: String, prompt: String) {
+    lock.withLock {
+      refreshSize()
+      transcript.appendUserMessage(text, prompt: prompt)
+      guard prepareOutputDrawing() else { return }
+      if ui.mode == .buffer {
+        requestScrollDraw()
+      } else {
+        let rendered = TerminalOutputBuffer.userMessage(text, prompt: prompt,
+          width: max(1, columns - 1), colors: bufferColorsEnabled ? ui : nil)
+        write(Self.restoreCursor + (outputEndedLine ? "" : "\n")
+          + rendered + "\n" + Self.saveCursor)
+        placeCaret()
+      }
+      outputEndedLine = true
+    }
+  }
+
   /// A command document is a separate completed block, so later reply deltas
   /// cannot be appended into its table or list.
   func writeMarkdown(_ text: String, rendered: String) {
@@ -1282,6 +1302,14 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
   }
 
   func acceptInput(styled: String) {
+    acceptInput(styled: styled, userMessage: nil)
+  }
+
+  func acceptUserInput(text: String, styled: String) {
+    acceptInput(styled: styled, userMessage: text)
+  }
+
+  private func acceptInput(styled: String, userMessage: String?) {
     lock.withLock {
       refreshSize()
       let previousCount = inputRows.count
@@ -1289,8 +1317,11 @@ final class TerminalScreen: LineEditorSurface, @unchecked Sendable {
       caretRow = 0
       caretColumn = 0
       guard active else { return }
-      let submitted = (outputEndedLine ? "" : "\n") + styled + "\n"
-      transcript.append(submitted)
+      if let userMessage {
+        transcript.appendUserMessage(userMessage)
+      } else {
+        transcript.append((outputEndedLine ? "" : "\n") + styled + "\n")
+      }
       if ui.mode == .buffer {
         transcript.follow()
         outputEndedLine = true

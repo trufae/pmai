@@ -85,14 +85,14 @@ actor TerminalWriter {
   func voiceInput(_ text: String, pid: AgentPID) {
     if let screen, screen.isBufferMode {
       TerminalConversationScope.$id.withValue("agent:\(pid.rawValue)") {
-        status("you: \(text)", color: .promptForeground)
+        userMessage(text)
       }
       guard let destination = screen.voiceOutputDestination else { return }
       TerminalConversationScope.$id.withValue(destination) {
-        status("voice#\(pid.rawValue) you: \(text)", color: .promptForeground)
+        userMessage(text, prompt: "voice#\(pid.rawValue) you: ")
       }
     } else {
-      status("voice#\(pid.rawValue) you: \(text)", color: .promptForeground)
+      userMessage(text, prompt: "voice#\(pid.rawValue) you: ")
     }
   }
 
@@ -365,7 +365,7 @@ actor TerminalWriter {
     case .userMessage(let context, let message) where context.depth == 0:
       finishReply()
       closeRootLine()
-      status("⇐ you: \(message.text)", color: .promptForeground)
+      userMessage(message.text, prompt: "")
     case .transcriptEdited(let context, let report) where context.depth == 0:
       finishReply()
       closeRootLine()
@@ -963,6 +963,18 @@ actor TerminalWriter {
       return
     }
     emitStatus(styledLines(value, color: color, background: background, diff: diff).joined(separator: "\n"))
+  }
+
+  private func userMessage(_ text: String, prompt: String = "you: ") {
+    finishIconLine()
+    if let screen, !capturesOutput, REPLRedirection.current == nil {
+      screen.writeUserMessage(text, prompt: prompt)
+    } else if colorsStatus {
+      emitStatus(TerminalOutputBuffer.userMessage(text, prompt: prompt,
+        width: max(1, outputColumns - 1), colors: ui))
+    } else {
+      status(prompt + text, color: .promptForeground)
+    }
   }
 
   private func emitStatus(_ styled: String) {

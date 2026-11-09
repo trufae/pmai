@@ -47,6 +47,36 @@ func terminalBufferScroll() {
   #expect(buffer.visibleRows(width: 40, height: 5).last == "more output")
 }
 
+@Test("User bubbles retain multiline Unicode text within the pane after resizing")
+func terminalBufferUserMessageReflow() {
+  var buffer = TerminalOutputBuffer()
+  buffer.append("prior\n")
+  buffer.appendUserMessage("abcdefghij\n界e\u{301}👩‍💻")
+  buffer.append("after")
+  func plain(_ text: String) -> String {
+    text.replacingOccurrences(of: "\u{1B}\\[[0-?]*[ -/]*[@-~]", with: "", options: .regularExpression)
+  }
+  for theme: ConfiguredTerminalUI? in [ConfiguredTerminalUI(), TerminalTheme.builtins["sand"], nil] {
+    buffer.configureColors(theme)
+    for width in [40, 12, 6, 5, 40] {
+      let rendered = buffer.visibleRows(width: width, height: 100)
+      let rows = rendered.map(plain)
+      #expect(rows.allSatisfy { TerminalLineEditor.displayWidth(of: $0) <= width })
+      #expect(rows.first == "prior")
+      #expect(rows.last == "after")
+      // Only trim layout padding; graphemes must survive wrapping intact.
+      let content = width >= 6 ? rows.dropFirst(3).dropLast(3).map {
+        String($0.dropFirst(2).dropLast(2)).trimmingCharacters(in: .whitespaces)
+      } : Array(rows.dropFirst().dropLast())
+      #expect(content.joined() == "abcdefghij界e\u{301}👩‍💻")
+      if theme == nil { #expect(!rendered.joined().contains("\u{1B}")) }
+    }
+  }
+  buffer.clear()
+  buffer.append("cleared")
+  #expect(buffer.visibleRows(width: 40, height: 10) == ["cleared"])
+}
+
 @Test("Terminal buffer handles progress lines and strips cursor and title controls")
 func terminalBufferControls() {
   var buffer = TerminalOutputBuffer()

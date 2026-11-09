@@ -59,8 +59,8 @@ appears by itself. `/help shell` lists these input forms.
 | `/edit user NAME` | A user prompt — a message sent with `$NAME`; creates it when NAME is new, starting from the builtin prompt of that name if there is one. | Immediately. |
 | `/edit skill NAME` | A skill's `SKILL.md`; creates its folder when NAME is new. Add `--user` to use your home skills. Same as `/skills edit NAME`. | Immediately; supporting files stay in place and new skills are enabled for the current agent. |
 | `/edit NAME` | The same, for an existing system or user prompt name. | Immediately. |
-| `/edit agent [ID]` | One saved agent as JSON: provider, model, tools, limits, prompt name, delegation, retry, autocompact. Current agent when omitted. | Immediately; the current chat picks up its own agent's changes. |
-| `/edit provider [ID]` | One configured provider as JSON: base URL, default model, key source, headers, timeout, options. Current provider when omitted. | Immediately; the provider is rebuilt in the running session. |
+| `/edit agent [ID]` or `/agent edit [ID]` | One saved agent as JSON: provider, model, tools, limits, prompt name, delegation, retry, autocompact. Current agent when omitted; `/agents edit` also works. | Immediately; the current chat picks up its own agent's changes. |
+| `/edit provider [ID]` or `/provider edit [ID]` | One configured provider as JSON: base URL, default model, key source, headers, timeout, options. Current provider when omitted; `/providers edit` also works. | Immediately; the provider is rebuilt in the running session. |
 | `/edit compact` | The template `/chat compact` and autocompact render. | Immediately. |
 | `/edit smart` or `/edit prompt smart` | The per-turn working-context template for `ctx.strategy=smart`, using the compact model. | Immediately. |
 | `/edit prompt recap` | The embedded recap template: short goals, actions/results, and pending tasks with emoji labels. Must keep `{{transcript}}`; clearing it restores the default. | Immediately. |
@@ -73,7 +73,7 @@ appears by itself. `/help shell` lists these input forms.
 | `/edit delegation` | The brief a child agent receives when started. | Immediately. |
 | `/edit worker` | The instructions of the derived worker agent. | Immediately. |
 | `/edit config` | The whole configuration file. | Agent limits and tool-calling strategy immediately; providers, plugins, tools, and MCP servers after a restart. |
-| `/edit mcps` | The configured MCP server list as JSON. | After a restart. |
+| `/edit mcps`, `/mcp edit`, or `/mcps edit` | The configured MCP server list as JSON. | After a restart. |
 | `/edit input` | An empty file for the next message, so a long one is written with the editor's keys instead of at the prompt. | Previewed after the editor closes; choose send, edit, back, or cancel. An empty file sends nothing. |
 | `/edit N` | Message N of this chat as Markdown. | Immediately; attachments are kept. |
 | `/edit MESSAGE_ID` | The same, by the message's full id. | Immediately. |

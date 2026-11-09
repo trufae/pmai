@@ -124,11 +124,27 @@ extension MaiCLI {
           throw MaiConfigurationError.invalidFile(
             "Provider '\(id)' is this chat's provider; switch with /provider use OTHER first.")
         }
+        let taskIDs = Set(AgentTask.allCases.compactMap { draft.taskAgents[$0] })
+        let reassigned = draft.agents.indices.filter {
+          taskIDs.contains(draft.agents[$0].id) && draft.agents[$0].provider.rawValue == id
+        }
+        for index in reassigned {
+          draft.agents[index].provider = session.profile.provider
+          draft.agents[index].model = session.profile.model
+        }
         try draft.removeProvider(id)
         try draft.save(to: URL(fileURLWithPath: configurationPath))
+        for index in reassigned {
+          try await runtime.register(agent: draft.agents[index], replacingExisting: true)
+        }
         await runtime.unregister(providerID: ProviderID(id))
         providerBaseURLs.set(nil, for: id)
         configuration = draft
+        if !reassigned.isEmpty {
+          let names = reassigned.map { draft.agents[$0].id }.sorted().joined(separator: ", ")
+          await terminal.line(
+            "Task agents moved to \(session.profile.provider)::\(session.profile.model): \(names).")
+        }
         await terminal.line(
           "Provider '\(id)' removed (saved). Other saved chats keep their own connection snapshots.")
       } catch { await terminal.line("error: \(error.localizedDescription)", to: .standardError) }

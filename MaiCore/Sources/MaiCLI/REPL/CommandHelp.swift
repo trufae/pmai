@@ -273,7 +273,7 @@ extension MaiCLI {
 
     Replace the example URL, YOUR_API_KEY, and MODEL with your settings.
     Use --api-key-file PATH to read a key from a file. Selections are saved.
-    /providers lists connections; /provider del ID removes an unused one.
+    /providers lists connections; /provider del ID removes one after switching away.
     /help lists commands; /help provider covers Apple/MLX, ChatGPT, and ACP.
     /about shows this message again. https://github.com/trufae/pmai
     """#
@@ -529,8 +529,8 @@ extension MaiCLI {
     /provider logout [ID]            Sign out and revoke this ChatGPT session
     /provider status [ID]            Show the ChatGPT account and usage link
     /provider rename [OLD] NEW        Rename a connection and update configured agents
-    /provider del ID                  Remove an unused connection (aliases: delete, remove)
-    /edit provider [ID]               Edit its URL, default model, credentials, headers, and options
+    /provider del ID                  Remove a connection; move task agents to this chat's provider/model
+    /provider edit [ID]               Edit its connection settings (alias: /edit provider [ID])
 
     Providers are added explicitly. On macOS, set up native providers with:
       /provider add apple --kind apple
@@ -552,8 +552,10 @@ extension MaiCLI {
     override the selected connection for one invocation. PROVIDER::MODEL selects
     that connection and sends only MODEL, including in environment model variables.
     A rename updates the active chat; other saved chats keep their own snapshots.
-    To delete this chat's provider, /provider use OTHER first. Reassign saved
-    agents with /agent provider ID OTHER or remove them with /agent del ID.
+    To delete this chat's provider, /provider use OTHER first. Assigned task agents
+    move to this chat's provider and model, keeping their other settings. Reassign
+    other saved agents with /agent provider ID OTHER or remove them with /agent del ID.
+    Provider deletion also accepts /provider delete ID and /provider remove ID.
     Deletion keeps other saved chats' connection snapshots and external logins.
     """
 
@@ -800,8 +802,8 @@ extension MaiCLI {
     /edit user NAME          Edit/create a user prompt; a builtin's name starts from its text
     /edit skill NAME         Edit/create a skill's SKILL.md (add --user for a user skill)
     /edit NAME               Edit an existing system or user prompt
-    /edit agent [ID]         Edit a saved agent as JSON (current when omitted)
-    /edit provider [ID]      Edit a configured provider as JSON (current when omitted)
+    /edit agent [ID]         Edit a saved agent as JSON (alias: /agent edit [ID])
+    /edit provider [ID]      Edit a configured provider as JSON (alias: /provider edit [ID])
     /edit compact            Edit the global chat-compaction prompt template
     /edit smart              Edit the per-turn smart context template (also /edit prompt smart)
     /edit prompt recap       Edit the recap template (goals, actions, pending tasks)
@@ -814,7 +816,7 @@ extension MaiCLI {
     /edit delegation         Edit the brief template child agents receive
     /edit worker             Edit the instructions of the derived worker agent
     /edit config             Edit the active configuration file
-    /edit mcps               Edit the configured MCP server list as JSON
+    /edit mcps               Edit the MCP server list as JSON (alias: /mcp edit or /mcps edit)
     /edit chat              Edit the whole conversation context; preserve originals
     /edit chat N|MESSAGE_ID  Edit a conversation message (same as /msg edit N)
     /edit N|MESSAGE_ID       Edit conversation message N or its full message ID
@@ -1002,7 +1004,7 @@ extension MaiCLI {
       /agent prompt ID PROMPT    Point it at another named system prompt
       /agent provider ID PROVIDER  Move it to a configured provider
       /agent del ID              Drop it; subagent lists and the default agent are updated
-      /edit agent [ID]           Edit a definition as JSON in $EDITOR (current when omitted)
+      /agent edit [ID]           Edit a definition as JSON (alias: /edit agent [ID]; current when omitted)
 
     A definition's tools are its own, whatever its depth in the tree: give a
     subagent its groups the same way. Named prompts are managed with /prompt.

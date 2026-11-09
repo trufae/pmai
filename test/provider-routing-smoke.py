@@ -209,7 +209,7 @@ path.write_text(json.dumps(provider))
                 run(args=['--model', selector, 'Invalid selection.'], error=True)
 
             # Edit another connection without selecting it.
-            output = run(['/edit provider remote', '/provider',
+            output = run(['/provider edit remote', '/provider',
                           '/model -chat remote::org/model:tag', 'Edited endpoint.'],
                          env={'EDITOR': f'python3 {editor}',
                               'TEST_EDIT_URL': f'{base}/edited/v1'})
@@ -236,13 +236,14 @@ path.write_text(json.dumps(provider))
                          env={'EDITOR': f'python3 {editor}', 'TEST_EDIT_URL': 'not-a-url'}, error=True)
             assert 'baseURL must be an http:// or https:// URL' in output, output
             assert config.read_bytes() == before
-            run(['/edit provider remote'],
+            run(['/providers edit remote'],
                 env={'EDITOR': f'python3 {editor}', 'TEST_EDIT_DEFAULT_MODEL': 'remote-default'})
             remote = next(p for p in json.loads(config.read_text())['providers']
                           if p['id'] == 'remote')
             assert remote['defaultModel'] == 'remote-default' and 'baseUrL' not in remote
             run(['/provider use remote', 'Provider default model.'])
             check_request('/edited/v1', 'file-key', 'remote-default')
+            run(['/provider edit'], env={'EDITOR': f'python3 {editor}'})
             run(args=['Saved connection without environment variables.'], ambient_defaults=False)
             check_request('/edited/v1', 'file-key', 'remote-default')
             run(args=['--provider', 'remote', 'Provider flag default model.'])
@@ -266,6 +267,7 @@ path.write_text(json.dumps(provider))
                      'TEST_EDIT_URL': f'{base}/edited/v1'})
 
             # Renaming preserves connection data, updates primary/task agents, and survives resume.
+            previous_agents = json.loads(config.read_text())['agents']
             output = run(['/chat rename renamed-chat', '/provider rename remote renamed',
                           '/providers', '/model', 'Renamed connection.'])
             check_request('/edited/v1', 'file-key')
@@ -273,7 +275,9 @@ path.write_text(json.dumps(provider))
             assert 'summary — renamed::summary-model' in output, output
             saved = json.loads(config.read_text())
             assert all(p['id'] != 'remote' for p in saved['providers'])
-            assert all(a['provider'] == 'renamed' for a in saved['agents'])
+            assert {a['id']: a['provider'] for a in saved['agents']} == {
+                a['id']: 'renamed' if a['provider'] == 'remote' else a['provider']
+                for a in previous_agents}
             renamed = next(p for p in saved['providers'] if p['id'] == 'renamed')
             assert renamed == remote | {'id': 'renamed'}, (renamed, remote)
             run(args=['-r', 'renamed-chat', 'Resume renamed connection.'])
@@ -285,22 +289,51 @@ path.write_text(json.dumps(provider))
             assert next(a for a in json.loads(config.read_text())['agents']
                         if a['id'] == 'main')['provider'] == 'final'
 
-            # Deletion protects the current chat and saved primary/task definitions.
+            # Deletion protects the current chat, then migrates assigned task
+            # agents without losing their settings or leaving stale live routes.
             before = config.read_bytes()
             output = run(['/provider del final'], error=True)
             assert '/provider use OTHER first' in output, output
             assert config.read_bytes() == before
-            run(['/provider use local'])
+            run(['/model -btw final::side-model', '/model -compact default', '/provider use local'])
             before = config.read_bytes()
             output = run(['/provider del final'], error=True)
             assert 'used by agents: summary' in output, output
-            assert '/agent provider ID OTHER' in output, output
-            assert config.read_bytes() == before
-            run(['/agent provider summary local', '/provider del final'])
+            assert config.read_bytes() == before, 'blocked deletion partially migrated task agents'
+            run(['/model -compact summary'])
+            before = json.loads(config.read_text())
+            task_ids = set(before['taskAgents'].values())
+            main = next(a for a in before['agents'] if a['id'] == 'main')
+            output = run(['/provider del final', '/btw Check the reassigned task.'])
+            assert 'Task agents moved to local::' in output, output
+            check_request('/local/v1', 'local-key', main['model'])
             saved = json.loads(config.read_text())
             assert all(p['id'] != 'final' for p in saved['providers']), saved
             assert all(a['provider'] == 'local' for a in saved['agents']), saved
-            assert saved['taskAgents']['compact'] == 'summary', saved
+            assert saved['taskAgents'] == before['taskAgents'], saved
+            for agent in (a for a in before['agents'] if a['id'] in task_ids):
+                expected = agent | {'provider': 'local', 'model': main['model']}
+                actual = next(a for a in saved['agents'] if a['id'] == agent['id'])
+                assert actual == expected, (actual, expected)
+
+            # The swapped catalog edits use the same saved records, including
+            # the current-agent default and plural command spellings.
+            catalog_editor = root / 'catalog-editor.py'
+            catalog_editor.write_text('''import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+value = json.loads(path.read_text())
+if isinstance(value, dict):
+    value['description'] = 'Edited through the agent alias.'
+else:
+    assert value == []
+path.write_text(json.dumps(value))
+''')
+            output = run(['/agent edit', '/agents edit summary', '/mcp edit', '/mcps edit'],
+                         env={'EDITOR': f'python3 {catalog_editor}'})
+            assert output.count('MCP configuration saved.') == 2, output
+            saved = json.loads(config.read_text())
+            for name in ('main', 'summary'):
+                assert next(a for a in saved['agents'] if a['id'] == name)['description'] == 'Edited through the agent alias.'
             output = run(['/provider final', '/models final'])
             assert "Unknown provider 'final'" in output, output
             before = config.read_bytes()

@@ -91,6 +91,9 @@ def main(binary):
                 send('/set effort\r')
                 barrier('effort')
                 assert 'effort = low' in output(), (count, output())
+                # Submitted commands share the visible user-message bubble.
+                command_row = next(row for row in output().splitlines() if '/set effort' in row)
+                assert '│' in command_row, command_row
                 if count == 8:
                     # Terminal filters are retained, including slow ones; elapsed
                     # time alone must not switch to an interactive screen.

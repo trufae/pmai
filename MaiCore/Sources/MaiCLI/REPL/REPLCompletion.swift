@@ -124,6 +124,7 @@ extension MaiCLI {
       "/path symlinks ask", "/path symlinks deny", "/path symlinks allow",
       "/path hidden ask", "/path hidden deny", "/path hidden allow",
       "/providers", "/models ", "/provider ", "/provider add ", "/provider del ", "/provider rename ",
+      "/provider edit", "/providers edit", "/edit provider",
       "/provider add acp opencode", "/provider add acp claude", "/provider add acp codex",
       "/provider add local-apple --kind apple",
       "/provider add local-mlx --kind mlx", "/provider add chatgpt --kind chatgpt",
@@ -137,6 +138,7 @@ extension MaiCLI {
       "/prompts add ", "/prompts edit ", "/prompts del ", "/edit user ", "/edit system ",
       "/agent", "/agents", "/agents list", "/agents describe ", "/agents enable ",
       "/agents disable ",
+      "/agent edit", "/agents edit",
       "/ps", "/ps -a", "/ps -p", "/ps -ap", "/ps -k ",
       "/view", "/view off", "/view current", "/view main", "/view pins", "/view log", "/view todo", "/view jobs", "/view iconlog", "/view thinking", "/view voice", "/view tools",
       "/view tools ", "/view prompt ", "/view history", "/view diffs", "/view agents", "/view agent ", "/view clear", "/help view",
@@ -158,6 +160,7 @@ extension MaiCLI {
       "/skills reload", "/skills add ", "/skills edit ", "/skills del ",
       "/skills import ", "/edit skill ", "/help skills",
       "/mcp list", "/mcp info",
+      "/mcp edit", "/mcps edit",
       "/mcp add ", "/mcp enable ", "/mcp disable ",
       "/mcp del ",
       "/edit prompt", "/edit compact", "/edit config", "/edit mcps",
@@ -215,6 +218,9 @@ extension MaiCLI {
     for agent in configuration?.agents ?? [] {
       values.append("/agent use \(agent.id)")
       values.append("/agent show \(agent.id)")
+      values.append("/agent edit \(agent.id)")
+      values.append("/agents edit \(agent.id)")
+      values.append("/edit agent \(agent.id)")
       values.append("/agent default \(agent.id)")
       values += REPLModelCatalog.taskPrefixes.map { $0 + agent.id }
       values.append("/chat new --agent \(agent.id) ")
@@ -231,6 +237,8 @@ extension MaiCLI {
         values.append("\(prefix)\(provider.id)::")
       }
       values.append("/edit provider \(provider.id)")
+      values.append("/provider edit \(provider.id)")
+      values.append("/providers edit \(provider.id)")
       values.append("/provider rename \(provider.id) ")
       values.append("/provider del \(provider.id)")
     }

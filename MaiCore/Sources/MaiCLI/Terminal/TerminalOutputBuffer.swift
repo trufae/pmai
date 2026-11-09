@@ -81,6 +81,7 @@ struct TerminalOutputBuffer {
   private var activeThinking: Set<Int> = []
   private var thinkingDisplay: ThinkingDisplay = .full
   private var replyBlocks: [Int: ReplyBlock] = [:]
+  private var userBlocks: [Int: (prompt: String, text: String)] = [:]
   private var retainedBlocks: [Int: TerminalOutputBuffer] = [:]
   private var toolBlocks: [Int: TerminalToolBlock] = [:]
   private var toolGroupStarts: [Int: Int] = [:]
@@ -170,6 +171,7 @@ struct TerminalOutputBuffer {
     thinkingBlocks.removeAll()
     activeThinking.removeAll()
     replyBlocks.removeAll()
+    userBlocks.removeAll()
     retainedBlocks.removeAll()
     toolBlocks.removeAll()
     toolGroupStarts.removeAll()
@@ -347,6 +349,27 @@ struct TerminalOutputBuffer {
   }
 
   @discardableResult
+  mutating func appendUserMessage(_ text: String, prompt: String = "") -> Int {
+    if !lines[lines.count - 1].glyphs.isEmpty { append("\n") }
+    let index = lines.count - 1
+    userBlocks[index] = (prompt, text)
+    lines.append(Line())
+    cursor = 0
+    invalidateLine(index)
+    return index
+  }
+
+  /// Classic terminals use the same layout as retained, resizable messages.
+  static func userMessage(_ text: String, prompt: String = "", width: Int,
+    colors: ConfiguredTerminalUI?) -> String
+  {
+    var buffer = TerminalOutputBuffer()
+    buffer.configureColors(colors)
+    buffer.appendUserMessage(text, prompt: prompt)
+    return blockRows(&buffer, index: 0, width: max(1, width)).map(\.text).joined(separator: "\n")
+  }
+
+  @discardableResult
   mutating func appendReply(_ text: String, to block: Int? = nil) -> Int {
     let index: Int
     if let block {
@@ -484,6 +507,12 @@ struct TerminalOutputBuffer {
     if iconGroup && index != groupStart { return [] }
     if isGroup && index != groupStart && !expandedToolGroups.contains(originalStart) { return [] }
     if lines[index].cachedWidth == width { return lines[index].rows }
+    if userBlocks[index] != nil {
+      let result = userMessageRows(index, width: width)
+      lines[index].cachedWidth = width
+      lines[index].rows = result
+      return result
+    }
     if retainedBlocks[index] != nil {
       retainedBlocks[index]?.configureHighlight(highlight)
       let result = Self.blockRows(&retainedBlocks[index]!, index: index, width: width)
@@ -610,6 +639,59 @@ struct TerminalOutputBuffer {
     result.append(filled(row, used: used))
     lines[index].cachedWidth = width
     lines[index].rows = result
+    return result
+  }
+
+  private mutating func userMessageRows(_ index: Int, width: Int) -> [Row] {
+    // Reserve a tail, two sides and right padding, plus room for a wide grapheme.
+    let decorated = width >= 6
+    var theme = colors
+    let fill = colors.map {
+      !$0.promptBackground.isEmpty ? $0.promptBackground
+        : !$0.backgroundLine.isEmpty ? $0.backgroundLine : "bright-black"
+    }
+    if decorated { theme?.background = fill ?? "" }
+    let message = userBlocks[index]!
+    var output = TerminalOutputBuffer()
+    output.configureColors(theme)
+    output.configureHighlight(highlight)
+    output.append(colors == nil ? message.prompt + message.text
+      : TerminalThemeStyle.promptForeground.marker + message.prompt + Self.reset
+        + TerminalThemeStyle.bold.marker + message.text)
+    let body = Self.blockRows(&output, index: index,
+      width: decorated ? width - 4 : width)
+    guard decorated else { return body }
+    let widths = body.map {
+      TerminalLineEditor.displayWidth(of: $0.text.replacingOccurrences(
+        of: "\u{1B}\\[[0-?]*[ -/]*[@-~]", with: "", options: .regularExpression))
+    }
+    let contentWidth = widths.max() ?? 0
+    let base = colors == nil ? "" : Self.reset + TerminalThemeStyle.base(colors)
+    let edge = base + (fill.flatMap(TerminalLineEditor.foregroundColorCode)
+      .map { "\u{1B}[\($0)m" } ?? "")
+    let inside = colors == nil ? "" : Self.reset + TerminalThemeStyle.base(theme)
+    func row(_ text: String, _ glyph: Int) -> Row {
+      Row(position: Position(line: index, glyph: glyph), text: text)
+    }
+    let top = colors == nil
+      ? " ╭" + String(repeating: "─", count: contentWidth + 1) + "╮"
+      : " " + String(repeating: "▂", count: contentWidth + 2)
+    var result = [row(base, 0), row(edge + top + base, 1)]
+    let side = colors == nil ? "│" : "█"
+    for (offset, line) in body.enumerated() {
+      let padding = String(repeating: " ",
+        count: contentWidth - widths[offset])
+      result.append(row(edge + (offset == body.count - 1 ? "◢" : " ") + side
+        + inside + line.text + inside + padding + " " + edge
+        + (colors == nil ? "│" : "▎") + base,
+        line.position.glyph + 2))
+    }
+    let end = (body.last?.position.glyph ?? 0) + 3
+    let bottom = colors == nil
+      ? " ╰" + String(repeating: "─", count: contentWidth + 1) + "╯"
+      : " " + String(repeating: "▔", count: contentWidth + 2)
+    result.append(row(edge + bottom + base, end))
+    result.append(row(base, end + 1))
     return result
   }
 

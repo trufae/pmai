@@ -623,11 +623,16 @@ effective URL without changing it. `/provider rename OLD NEW` renames a
 connection and updates all configured agents, including task agents; omit OLD
 to rename the current provider. The active chat follows the rename, while other
 saved chats retain their independent snapshots.
-`/provider del ID` removes an unused connection from the configuration and live
+`/provider del ID` removes a connection from the configuration and live
 provider list (`delete` and `remove` are aliases). Switch away from the current
-provider with `/provider use OTHER` first. If saved agents still use it, reassign
-them with `/agent provider ID OTHER` or remove them with `/agent del ID`.
+provider with `/provider use OTHER` first. Assigned task agents using the deleted
+connection move to the current chat's provider and model, preserving their prompts,
+task assignments, and other settings. If other saved agents still use it, reassign
+them with `/agent provider ID OTHER` or remove them with `/agent del ID` first.
 Other saved chats keep their connection snapshots; external logins are retained.
+`/provider edit [ID]` and `/agent edit [ID]` also accept the noun first, as do
+`/mcp edit` and `/mcps edit` for `/edit mcps`. The provider and agent aliases
+accept plural names too (`/providers edit`, `/agents edit`).
 See `doc/edit.md` for everything `/edit` reaches.
 
 `/help` lists commands and the `$NAME [TEXT]` prompt/skill syntax. Use

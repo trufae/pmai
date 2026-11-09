@@ -153,6 +153,25 @@ extension MaiCLI {
       }
     }
 
+    // Keep noun-first edits on the same path as /edit TARGET, including the
+    // plural catalog commands. Existing prompt/skill/chat editors keep their
+    // own argument syntax.
+    let editTargets = [
+      "/provider": "provider", "/providers": "provider",
+      "/agent": "agent", "/agents": "agent",
+      "/mcp": "mcp", "/mcps": "mcps",
+    ]
+    let editArguments = argument.split(maxSplits: 1, whereSeparator: \.isWhitespace)
+    if let target = editTargets[parts[0]], editArguments.first?.lowercased() == "edit" {
+      let rest = editArguments.count > 1 ? " " + editArguments[1] : ""
+      await handleEditCommand(
+        target + rest, session: &session, runtime: runtime, plugins: plugins,
+        memory: services.memory, skills: services.skills, configuration: &configuration,
+        configurationPath: services.configurationPath,
+        providerBaseURLs: services.providerBaseURLs, chatProcess: chatProcess, terminal: terminal)
+      return false
+    }
+
     switch parts[0] {
     case "/view":
       await terminal.line(

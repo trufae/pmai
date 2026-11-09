@@ -33,6 +33,7 @@ protocol LineEditorSurface: AnyObject {
   /// The input was accepted: `styled`, which may span lines, stays on screen
   /// as a record and the area is free again.
   func acceptInput(styled: String)
+  func acceptUserInput(text: String, styled: String)
   /// Ctrl+C threw the input away.
   func cancelInput()
   /// Clears the display while keeping the input and terminal layout.
@@ -67,6 +68,9 @@ protocol LineEditorSurface: AnyObject {
 }
 
 extension LineEditorSurface {
+  func acceptUserInput(text: String, styled: String) {
+    acceptInput(styled: styled)
+  }
   func setReadingInput(_ reading: Bool) {}
   func noteInputActivity() {}
   func scrollOutput(wheel: Int, pages: Int) {}
@@ -1411,8 +1415,17 @@ final class TerminalLineEditor {
   }
 
   private func renderSubmittedLine(prompt: String, bytes: [UInt8]) {
-    surface?.acceptInput(
-      styled: styledLine(prompt: prompt, text: String(decoding: bytes, as: UTF8.self)))
+    let text = String(decoding: bytes, as: UTF8.self)
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !activePrompt.isModal, !trimmed.isEmpty {
+      let environment = ProcessInfo.processInfo.environment
+      let colors = environment["NO_COLOR"] == nil && environment["TERM"] != "dumb"
+      surface?.acceptUserInput(text: text,
+        styled: TerminalOutputBuffer.userMessage(text,
+          width: max(1, Self.terminalColumns() - 1), colors: colors ? ui : nil))
+    } else {
+      surface?.acceptInput(styled: styledLine(prompt: activePrompt.isModal ? prompt : "", text: text))
+    }
   }
 
   private func drawSeparator(_ text: String?) {
