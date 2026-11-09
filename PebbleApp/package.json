@@ -1,0 +1,44 @@
+{
+  "name": "pocketmai-pebble",
+  "author": "PocketMai",
+  "version": "1.0.0",
+  "keywords": [
+    "pebble-app"
+  ],
+  "private": true,
+  "pebble": {
+    "displayName": "PocketMai",
+    "uuid": "70e3b043-5160-4281-8fc6-1e1fa65ba2c0",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": [
+      "emery"
+    ],
+    "watchapp": {
+      "watchface": false
+    },
+    "usesPermissions": [
+      "LocalNetwork"
+    ],
+    "messageKeys": [
+      "Action",
+      "Value",
+      "Status",
+      "Presets",
+      "Reply"
+    ],
+    "resources": {
+      "media": [
+        {
+          "type": "bitmap",
+          "name": "POCKETMAI_LOGO",
+          "file": "pocketmai.png"
+        }
+      ]
+    }
+  },
+  "dependencies": {
+    "@stablelib/chacha20poly1305": "1.0.1",
+    "@stablelib/hex": "1.0.1"
+  }
+}

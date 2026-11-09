@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import MaiACP
 import MaiCore
 import MaiDocuments
 import MaiOpenAI
@@ -626,6 +627,8 @@ final class AppStore: ObservableObject {
   @Published var closedBrowserURL: URL?
   private let responseHaptics = ResponseHaptics()
   private let openAPIServer = OpenAPIServer()
+  let pebbleBridge = PebbleBridge()
+  private var pebbleConversationID: UUID?
   private let persistence: PersistenceStore
   private var conversationDrafts: [UUID: String] = [:]
   private var conversationIndexByID: [UUID: Int] = [:]
@@ -1171,15 +1174,53 @@ final class AppStore: ObservableObject {
     createAndSelectNewConversation(languageOverrideIdentifier: inheritedLanguageOverride)
   }
 
-  func createCarPlayConversation() -> UUID {
+  func createAccessoryConversation() -> UUID {
     let conversation = makeNewConversation()
     conversations.insert(conversation, at: 0)
     sortConversations()
     return conversation.id
   }
 
-  func discardEmptyCarPlayConversation(id: UUID) {
+  func discardEmptyAccessoryConversation(id: UUID) {
     if id != selectedConversationID { discardDisposableConversation(id: id) }
+  }
+
+  func configurePebble() {
+    pebbleBridge.configure(presets: { [weak self] in
+      let favorites = PebbleSettingsView.favoriteIDs
+      return self?.settings.userPrompts.filter { favorites.contains($0.id) } ?? []
+    }, newChat: { [weak self] in self?.pebbleConversationID = nil }) { [weak self] text, title in
+      guard let self else { throw PebbleChatError.unavailable }
+      return try await self.sendPebbleTurn(text, title: title)
+    }
+  }
+
+  private func sendPebbleTurn(_ text: String, title: String?) async throws -> String {
+    await waitForStartup()
+    let previous = pebbleConversationID.flatMap { id in
+      conversationSummaries.first { $0.id == id && !$0.isArchived }?.id
+    }
+    let id = previous ?? createAccessoryConversation()
+    await preloadConversation(id: id)
+    let lastMessageID = conversation(withID: id)?.messages.last?.id
+    guard await send(prompt: text, displayText: title, in: id, literalPrompt: true) else {
+      if previous == nil { discardEmptyAccessoryConversation(id: id) }
+      throw PebbleChatError.message(errorMessage ?? "This chat is unavailable or busy.")
+    }
+    pebbleConversationID = id
+    await responseTasks[id]?.value
+    let messages = conversation(withID: id)?.messages ?? []
+    let start = lastMessageID.flatMap { last in messages.firstIndex { $0.id == last } }.map { $0 + 1 }
+      ?? messages.startIndex
+    guard let reply = messages[start...].last(where: { $0.role == .assistant || $0.role == .error }) else {
+      throw PebbleChatError.message(errorMessage ?? "The agent returned no text.")
+    }
+    let visible = MessageContentFilter.render(reply.text).visibleText
+    guard !visible.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      throw PebbleChatError.message("The agent returned no text.")
+    }
+    if reply.role == .error { throw PebbleChatError.message(visible) }
+    return visible
   }
 
   private func startFreshConversationForLaunch() {
@@ -2366,9 +2407,12 @@ final class AppStore: ObservableObject {
     attachments: [ChatAttachment] = [],
     promptShortcutSelection: PromptShortcutSelection? = nil,
     in targetConversationID: UUID? = nil,
-    carPlay: Bool = false
+    carPlay: Bool = false,
+    literalPrompt: Bool = false
   ) async -> Bool {
-    if !carPlay, promptShortcutSelection == nil, handleLocalChatCommand(rawPrompt) { return true }
+    if !carPlay, !literalPrompt, promptShortcutSelection == nil, handleLocalChatCommand(rawPrompt) {
+      return true
+    }
     guard !rawPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
       || !attachments.isEmpty || promptShortcutSelection != nil else { return false }
     if currentConversation == nil && targetConversationID == nil { newConversation() }
@@ -2378,18 +2422,22 @@ final class AppStore: ObservableObject {
     guard !Task.isCancelled, conversation(withID: conversationID)?.historyWindow == nil else {
       return false
     }
-    if !carPlay, promptShortcutSelection == nil {
+    if !carPlay, !literalPrompt, promptShortcutSelection == nil {
       if handleThenCommand(rawPrompt, attachments: attachments, in: conversationID) { return true }
       if let question = BTWQuestion.prompt(in: rawPrompt) {
         return startBTW(question, in: conversationID)
       }
       if let handled = await runChatCommand(rawPrompt, in: conversationID) { return handled }
     }
-    let resolved = resolvedPromptSubmission(
-      rawPrompt: rawPrompt,
-      rawDisplayText: rawDisplayText,
-      shortcutSelection: promptShortcutSelection,
-      conversation: conversation(withID: conversationID))
+    let resolved: ResolvedPromptSubmission
+    if literalPrompt {
+      let prompt = rawPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+      resolved = ResolvedPromptSubmission(prompt: prompt,
+        displayText: normalizedDisplayText(rawDisplayText, prompt: prompt), systemPromptID: nil)
+    } else {
+      resolved = resolvedPromptSubmission(rawPrompt: rawPrompt, rawDisplayText: rawDisplayText,
+        shortcutSelection: promptShortcutSelection, conversation: conversation(withID: conversationID))
+    }
     guard !resolved.prompt.isEmpty || !attachments.isEmpty || resolved.systemPromptID != nil else {
       return false
     }

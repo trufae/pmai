@@ -262,6 +262,18 @@ public final class PortableChat {
     replyTask = Task { await send(text, attachments: attachments) }
   }
 
+  public func sendAndWait(_ text: String) async -> Bool {
+    let chatID = chat.id
+    let message = AgentMessage(role: .user, content: [.text(text)])
+    let task = Task {
+      guard chat.id == chatID else { return }
+      await send(message, titleText: text)
+    }
+    replyTask = task
+    await task.value
+    return chat.id == chatID && chat.messages.contains { $0.id == message.id }
+  }
+
   public func send(_ text: String, attachments: [ContentPart] = []) async {
     let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard (!text.isEmpty || !attachments.isEmpty), !isGenerating, !isLoadingModels else { return }

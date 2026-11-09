@@ -12,6 +12,7 @@ struct PocketMaiApp: App {
   init() {
     SystemLanguageSupport.preload()
     ResponseNotificationService.shared.installDelegate()
+    Self.sharedStore.configurePebble()
   }
 
   var body: some Scene {

@@ -86,21 +86,31 @@ actor ACPToolBridge {
 /// A short-lived local JSON-RPC endpoint with a per-launch capability URL.
 public actor LoopbackJSONRPCServer {
   private let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+  private let port: Int
+  private let path: String?
+  private let maxBodyBytes: Int
   private var channel: Channel?
   private var closed = false
 
-  public init() {}
+  public init(port: Int = 0, path: String? = nil, maxBodyBytes: Int = 4 * 1024 * 1024) {
+    self.port = port
+    self.path = path
+    self.maxBodyBytes = maxBodyBytes
+  }
 
   public func start(
     handle: @escaping @Sendable (JSONRPCMessage) async throws -> JSONRPCMessage?
   ) async throws -> String {
-    let path = "/" + UUID().uuidString
+    let path = self.path ?? "/" + UUID().uuidString
+    let maxBodyBytes = self.maxBodyBytes
+    let host = port == 0 ? nil : "127.0.0.1:\(port)"
     let channel = try await ServerBootstrap(group: group)
       .childChannelInitializer { channel in
         channel.pipeline.configureHTTPServerPipeline().flatMap {
-          channel.pipeline.addHandler(MCPHTTPHandler(path: path, handle: handle))
+          channel.pipeline.addHandler(MCPHTTPHandler(
+            path: path, host: host, maxBodyBytes: maxBodyBytes, handle: handle))
         }
-      }.bind(host: "127.0.0.1", port: 0).get()
+      }.bind(host: "127.0.0.1", port: port).get()
     self.channel = channel
     guard let port = channel.localAddress?.port else {
       throw JSONRPCError.internalError("Cannot bind local JSON-RPC server")
@@ -121,13 +131,18 @@ private final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
   typealias InboundIn = HTTPServerRequestPart
   typealias OutboundOut = HTTPServerResponsePart
   private let path: String
+  private let host: String?
+  private let maxBodyBytes: Int
   private let handle: @Sendable (JSONRPCMessage) async throws -> JSONRPCMessage?
   private var head: HTTPRequestHead?
   private var body = Data()
   private var rejected = false
 
-  init(path: String, handle: @escaping @Sendable (JSONRPCMessage) async throws -> JSONRPCMessage?) {
+  init(path: String, host: String?, maxBodyBytes: Int,
+    handle: @escaping @Sendable (JSONRPCMessage) async throws -> JSONRPCMessage?) {
     self.path = path
+    self.host = host
+    self.maxBodyBytes = maxBodyBytes
     self.handle = handle
   }
 
@@ -137,8 +152,9 @@ private final class MCPHTTPHandler: ChannelInboundHandler, @unchecked Sendable {
       self.head = head
       body.removeAll(keepingCapacity: true)
       rejected = head.method != .POST || head.uri != path || !head.headers["origin"].isEmpty
+      if let host, head.headers["host"] != [host] { rejected = true }
     case .body(var buffer):
-      if body.count + buffer.readableBytes > 4 * 1024 * 1024 { rejected = true }
+      if body.count + buffer.readableBytes > maxBodyBytes { rejected = true }
       if !rejected, let bytes = buffer.readBytes(length: buffer.readableBytes) {
         body.append(contentsOf: bytes)
       }

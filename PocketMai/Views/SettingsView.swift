@@ -504,6 +504,12 @@ struct SettingsView: View {
       }
     }
 
+    NavigationLink {
+      PebbleSettingsView(bridge: store.pebbleBridge, prompts: store.settings.userPrompts)
+    } label: {
+      Label("Pebble", systemImage: "applewatch")
+    }
+
     SettingsLazyDisclosureGroup {
       followUpOptionsContent
     } label: {
