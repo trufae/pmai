@@ -416,13 +416,13 @@ final class MacWorkspace {
     let conversation = selected
     Task {
       await conversation?.close()
-      launchTerminal(cwd: conversation?.cwd ?? cwd, sessionID: conversation?.sessionID)
+      await launchTerminal(cwd: conversation?.cwd ?? cwd, sessionID: conversation?.sessionID)
     }
   }
 
   func openTerminal(in folder: ACPWorkspaceFolder) {
     guard hostID == nil else { return }
-    launchTerminal(cwd: folder.cwd, sessionID: nil)
+    Task { await launchTerminal(cwd: folder.cwd, sessionID: nil) }
   }
 
   func openTerminal(_ session: ACPSessionInfo) {
@@ -430,11 +430,11 @@ final class MacWorkspace {
     let chat = conversation(for: session)
     Task {
       await chat?.close()
-      launchTerminal(cwd: session.cwd, sessionID: session.sessionID)
+      await launchTerminal(cwd: session.cwd, sessionID: session.sessionID)
     }
   }
 
-  private func launchTerminal(cwd: String, sessionID: String?) {
+  private func launchTerminal(cwd: String, sessionID: String?) async {
     func quote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
     var arguments = [Bundle.main.executableURL!.path, "--home", home.rootURL.path]
     if let sessionID { arguments += ["--resume", sessionID] }
@@ -443,7 +443,15 @@ final class MacWorkspace {
       let file = FileManager.default.temporaryDirectory.appendingPathComponent("pmai-\(UUID()).command")
       try command.write(to: file, atomically: true, encoding: .utf8)
       try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: file.path)
-      NSWorkspace.shared.open(file)
+      if let therm2 = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.pancake.therm2") {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.arguments = ["-e", file.path]
+        // An existing Therm2 instance does not process new startup arguments.
+        configuration.createsNewApplicationInstance = true
+        _ = try await NSWorkspace.shared.openApplication(at: therm2, configuration: configuration)
+      } else {
+        NSWorkspace.shared.open(file)
+      }
     } catch { self.error = error.localizedDescription }
   }
 

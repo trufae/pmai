@@ -138,6 +138,8 @@ and agent orchestration are shared rather than copied.
 
 **Conversation → Open in Terminal** disconnects the app's writer and resumes
 the selected chat in the bundled CLI, providing the full REPL command surface.
+It uses a new Therm2 instance when installed, otherwise the default application
+for `.command` scripts (normally Terminal).
 Finish the terminal session before reconnecting the same chat in the app.
 As with two CLI processes, concurrently editing the same chat from an unrelated
 terminal session should be avoided; CLI and ACP do not share one universal lease.
