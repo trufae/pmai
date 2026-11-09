@@ -26,12 +26,32 @@
       <nav class="site-nav" id="site-nav" aria-label="Main navigation" data-nav><a href="#why">Why pmai</a><a href="#workflow">Apps + terminal</a><a href="#tools">Tools</a><a href="https://github.com/trufae/pmai">GitHub ↗</a><a class="nav-download" href="#get">Get pmai ↓</a></nav>
     </header>
     <main id="main" tabindex="-1">
-      <div class="quick-install section-shell" id="top" aria-label="Get PocketMai and pmai">
-        <div class="quick-install-commands">
-          <div class="command-box"><span class="command-label">macOS · Linux · Android</span><code id="quick-install-command">curl -fsSL https://raw.githubusercontent.com/trufae/pmai/main/www/install.sh | sh</code><button class="copy-button" type="button" data-copy="quick-install-command" aria-label="Copy macOS, Linux, and Android install command"><span data-copy-label>Copy</span></button></div>
-          <div class="command-box"><span class="command-label">Windows PowerShell</span><code id="quick-install-windows-command">irm https://raw.githubusercontent.com/trufae/pmai/main/www/install.ps1 | iex</code><button class="copy-button" type="button" data-copy="quick-install-windows-command" aria-label="Copy Windows PowerShell install command"><span data-copy-label>Copy</span></button></div>
-        </div>
-        <a class="button button-dark" href="https://apps.apple.com/es/app/pocketmai/id6764296742">Get it on the App Store ↗</a>
+      <div class="quick-install section-shell" id="top" aria-label="Choose how to use PocketMai and pmai">
+        <section class="quick-terminal" aria-labelledby="quick-terminal-heading">
+          <h2 class="quick-install-heading" id="quick-terminal-heading"><svg class="icon" aria-hidden="true" focusable="false"><use href="icons.svg#terminal"></use></svg>Terminal <span>TUI / CLI</span></h2>
+          <p class="quick-install-description">pmai · Chat and run tools in your terminal.</p>
+          <div class="quick-install-commands">
+            <div class="quick-command">
+              <span class="quick-platform" id="quick-unix-label">macOS · Linux · Android</span>
+              <div class="command-box" role="group" aria-labelledby="quick-unix-label"><svg class="icon platform-icon" aria-hidden="true" focusable="false"><use href="icons.svg#apple"></use></svg><code id="quick-install-command" tabindex="0" aria-label="Full macOS, Linux, and Android install command">curl -fsSL https://raw.githubusercontent.com/trufae/pmai/main/www/install.sh | sh</code><button class="copy-button" type="button" data-copy="quick-install-command" aria-label="Copy macOS, Linux, and Android terminal install command"><span data-copy-label>Copy</span></button></div>
+            </div>
+            <div class="quick-command">
+              <span class="quick-platform" id="quick-windows-label">Windows · PowerShell</span>
+              <div class="command-box" role="group" aria-labelledby="quick-windows-label"><svg class="icon platform-icon" aria-hidden="true" focusable="false"><use href="icons.svg#windows"></use></svg><code id="quick-install-windows-command" tabindex="0" aria-label="Full Windows PowerShell install command">irm https://raw.githubusercontent.com/trufae/pmai/main/www/install.ps1 | iex</code><button class="copy-button" type="button" data-copy="quick-install-windows-command" aria-label="Copy Windows terminal install command"><span data-copy-label>Copy</span></button></div>
+            </div>
+          </div>
+          <p class="quick-install-hint">Copy, then paste into Terminal or PowerShell. <a href="#cli-install">Install details ↓</a></p>
+        </section>
+        <section class="quick-apps" aria-labelledby="quick-apps-heading">
+          <h2 class="quick-install-heading" id="quick-apps-heading"><svg class="icon" aria-hidden="true" focusable="false"><use href="icons.svg#desktop"></use></svg>Apps <span>GUI</span></h2>
+          <p class="quick-install-description">A native interface for chat, files, and tools.</p>
+          <span class="quick-platform">Choose your device</span>
+          <div class="quick-app-links">
+            <a href="https://apps.apple.com/es/app/pocketmai/id6764296742"><svg class="icon" aria-hidden="true" focusable="false"><use href="icons.svg#phone"></use></svg><span>iPhone <small>App Store ↗</small></span></a>
+            <a href="#mac-app"><svg class="icon platform-icon" aria-hidden="true" focusable="false"><use href="icons.svg#apple"></use></svg><span>Mac <small>Get the app ↓</small></span></a>
+            <a href="downloads/PocketMai-Android.apk" download><svg class="icon" aria-hidden="true" focusable="false"><use href="icons.svg#android"></use></svg><span>Android <small>Download APK ↓</small></span></a>
+          </div>
+        </section>
       </div>
       <section class="hero section-shell">
         <div class="hero-copy">
