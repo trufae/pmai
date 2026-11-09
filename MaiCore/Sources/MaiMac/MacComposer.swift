@@ -5,6 +5,7 @@ import SwiftUI
 struct MacComposer: NSViewRepresentable {
   @Binding var text: String
   var submit: () -> Void
+  private var typography = MacChatTypography()
 
   func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -18,7 +19,7 @@ struct MacComposer: NSViewRepresentable {
     editor.isAutomaticQuoteSubstitutionEnabled = false
     editor.isAutomaticDashSubstitutionEnabled = false
     editor.isAutomaticTextReplacementEnabled = false
-    editor.font = .preferredFont(forTextStyle: .body)
+    editor.font = typography.editorFont
     editor.textColor = .textColor
     editor.drawsBackground = false
     editor.textContainerInset = NSSize(width: 0, height: 6)
@@ -37,6 +38,7 @@ struct MacComposer: NSViewRepresentable {
     context.coordinator.parent = self
     guard let editor = scroll.documentView as? ComposerTextView else { return }
     editor.submit = submit
+    if editor.font != typography.editorFont { editor.font = typography.editorFont }
     if editor.string != text, !editor.hasMarkedText() {
       editor.string = text
       editor.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))

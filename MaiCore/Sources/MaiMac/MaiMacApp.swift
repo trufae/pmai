@@ -44,6 +44,7 @@ struct MaiMacApp: App {
           .disabled(workspace.hostID != nil || workspace.cwd.isEmpty)
       }
       SidebarCommands()
+      MacChatFontCommands()
     }
     Settings {
       MacSettingsView(workspace: workspace)

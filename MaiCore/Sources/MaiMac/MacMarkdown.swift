@@ -5,13 +5,14 @@ import SwiftUI
 /// The same block parser as CLI output and document exports, rendered natively.
 struct MacMarkdown: View {
   let text: String
+  private var typography = MacChatTypography()
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       ForEach(Array(MarkdownBlockParser.blocks(from: text).enumerated()), id: \.offset) { _, block in
         render(block)
       }
-    }.textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+    }.font(typography.font()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
   }
 
   private func inline(_ text: String) -> Text {
@@ -22,20 +23,22 @@ struct MacMarkdown: View {
   @ViewBuilder private func render(_ block: MarkdownBlock) -> some View {
     switch block {
     case .paragraph(let text): inline(text)
-    case .heading(let level, let text): inline(text).font(level == 1 ? .title : level == 2 ? .title2 : .headline)
+    case .heading(let level, let text):
+      inline(text).font(typography.font(level == 1 ? .title1 : level == 2 ? .title2 : .headline)
+        .weight(level <= 2 ? .regular : .semibold))
     case .quote(let text):
       HStack(alignment: .top) { Rectangle().fill(.secondary.opacity(0.3)).frame(width: 3); inline(text).foregroundStyle(.secondary) }
     case .rule: Divider()
     case .code(let language, let code):
       VStack(alignment: .leading, spacing: 10) {
         HStack {
-          Text(language.isEmpty ? "Code" : language).font(.caption).foregroundStyle(.secondary)
+          Text(language.isEmpty ? "Code" : language).font(typography.font(.caption1)).foregroundStyle(.secondary)
           Spacer()
           Button("Copy", systemImage: "doc.on.doc") {
             NSPasteboard.general.clearContents(); NSPasteboard.general.setString(code, forType: .string)
-          }.buttonStyle(.borderless).font(.caption)
+          }.buttonStyle(.borderless).font(typography.font(.caption1))
         }
-        ScrollView(.horizontal) { Text(code).font(.system(.body, design: .monospaced)).fixedSize(horizontal: true, vertical: false) }
+        ScrollView(.horizontal) { Text(code).font(typography.font(design: .monospaced)).fixedSize(horizontal: true, vertical: false) }
       }.padding(14).background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
     case .bullets(let items):
       ForEach(Array(items.enumerated()), id: \.offset) { _, item in HStack(alignment: .top) { Text("•"); inline(item) } }
@@ -46,7 +49,7 @@ struct MacMarkdown: View {
         HStack(alignment: .top) { Image(systemName: item.checked ? "checkmark.square" : "square"); inline(item.text) }
       }
     case .footnotes(let items):
-      ForEach(Array(items.enumerated()), id: \.offset) { _, item in inline("[\(item.key)] \(item.text)").font(.caption) }
+      ForEach(Array(items.enumerated()), id: \.offset) { _, item in inline("[\(item.key)] \(item.text)").font(typography.font(.caption1)) }
     case .table(let table):
       ScrollView(.horizontal) {
         Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 10) {

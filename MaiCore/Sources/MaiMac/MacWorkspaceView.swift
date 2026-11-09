@@ -144,6 +144,7 @@ struct MacWorkspaceView: View {
 struct MacChatView: View {
   @Bindable var conversation: MacConversation
   @State private var followsBottom = true
+  private var typography = MacChatTypography()
 
   var body: some View {
     VStack(spacing: 0) {
@@ -202,7 +203,7 @@ struct MacChatView: View {
       Divider()
       ZStack(alignment: .topLeading) {
         if conversation.draft.isEmpty {
-          Text("Message pmai…").foregroundStyle(.tertiary).padding(.top, 6).allowsHitTesting(false)
+          Text("Message pmai…").font(typography.font()).foregroundStyle(.tertiary).padding(.top, 6).allowsHitTesting(false)
         }
         MacComposer(text: $conversation.draft) { conversation.send(); followsBottom = true }
           .id(conversation.id)
@@ -247,15 +248,15 @@ struct MacChatView: View {
       HStack {
         Label(message.role == "user" ? "You" : message.role == "assistant" ? "pmai" : message.role.capitalized,
           systemImage: message.role == "user" ? "person.crop.circle" : message.role == "tool" ? "wrench.and.screwdriver" : "sparkle")
-          .font(.callout.weight(.semibold)).foregroundStyle(.secondary)
+          .font(typography.font(.callout).weight(.semibold)).foregroundStyle(.secondary)
         Spacer()
-        if let status = message.status { Text(status.capitalized).font(.caption).foregroundStyle(.secondary) }
+        if let status = message.status { Text(status.capitalized).font(typography.font(.caption1)).foregroundStyle(.secondary) }
       }
       if message.role == "tool" || message.role == "thought" {
         DisclosureGroup(message.toolName ?? (message.role == "thought" ? "Reasoning" : "Tool details")) {
           if let input = message.toolInput,
             let data = try? JSONEncoder().encode(input), let text = String(data: data, encoding: .utf8) {
-            Text(text).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+            Text(text).font(typography.font(.caption1, design: .monospaced)).textSelection(.enabled)
           }
           MacMarkdown(text: message.text)
         }
@@ -263,6 +264,7 @@ struct MacChatView: View {
         MacMarkdown(text: message.text)
       }
     }
+    .font(typography.font())
     .padding(message.role == "user" ? 16 : 0)
     .background {
       if message.role == "user" { RoundedRectangle(cornerRadius: 14).fill(Color.primary.opacity(0.045)) }

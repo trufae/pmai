@@ -15,6 +15,10 @@ reasoning, tool settings, and subagents. Running conversations remain open when
 switching folders or hosts. Permission requests are attached to the conversation
 that requested them, with an attention icon in Open Chats.
 
+**⌘+** and **⌘−** resize conversation text, Markdown, and the message composer;
+**⌘0** restores the default size. These commands also appear in the View menu.
+The chosen size is saved across launches.
+
 The composer’s **Prompts and Skills** menu uses the CLI’s configured prompt
 catalog and project/global skills. `$name arguments` and `/name arguments`
 expand through the shared prompt parser. The inspector's **Agent** selection
