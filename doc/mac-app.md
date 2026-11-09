@@ -19,9 +19,17 @@ that requested them, with an attention icon in Open Chats.
 **⌘0** restores the default size. These commands also appear in the View menu.
 The chosen size is saved across launches.
 
-The composer’s **Prompts and Skills** menu uses the CLI’s configured prompt
-catalog and project/global skills. `$name arguments` and `/name arguments`
-expand through the shared prompt parser. The inspector's **Agent** selection
+The floating composer uses Liquid Glass on macOS 26 and later, with a system
+material on macOS 15. It starts at one text row, grows with wrapping or newlines
+up to five rows, then scrolls internally. Sending or clearing the draft shrinks
+it back to one row.
+
+Type `/` or `$` at the start of the composer to complete names from the host's
+configured prompt catalog and project/global skills. Suggestions narrow as you
+type; Tab/Shift-Tab or the arrow keys cycle and insert names, and Escape dismisses
+the list. Clicking a suggestion inserts it for further editing. Return still
+sends the message. `$name arguments` and `/name arguments` expand through the
+shared prompt parser. The inspector's **Agent** selection
 uses the configured agent definitions, including their model and instructions.
 
 **Connect Host** accepts the same ACP/Forwiroh connection profiles and OpenCode

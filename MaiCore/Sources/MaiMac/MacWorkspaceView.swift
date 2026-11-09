@@ -182,15 +182,19 @@ struct MacChatView: View {
           }
         }
       }
-      if let error = conversation.error {
-        HStack(alignment: .top) {
-          Image(systemName: "exclamationmark.triangle")
-          Text(error).textSelection(.enabled)
-          Spacer()
-          Button("Dismiss") { conversation.error = nil }
-        }.font(.callout).padding().background(.orange.opacity(0.12))
+    }
+    .safeAreaInset(edge: .bottom, spacing: 0) {
+      VStack(spacing: 0) {
+        if let error = conversation.error {
+          HStack(alignment: .top) {
+            Image(systemName: "exclamationmark.triangle")
+            Text(error).textSelection(.enabled)
+            Spacer()
+            Button("Dismiss") { conversation.error = nil }
+          }.font(.callout).padding().background(.orange.opacity(0.12))
+        }
+        composer
       }
-      composer
     }
     .background(Color(nsColor: .textBackgroundColor))
     .sheet(isPresented: Binding(get: { conversation.permission != nil }, set: {
@@ -199,25 +203,35 @@ struct MacChatView: View {
   }
 
   private var composer: some View {
-    VStack(spacing: 10) {
-      Divider()
-      ZStack(alignment: .topLeading) {
-        if conversation.draft.isEmpty {
-          Text("Message pmai…").font(typography.font()).foregroundStyle(.tertiary).padding(.top, 6).allowsHitTesting(false)
-        }
-        MacComposer(text: $conversation.draft) { conversation.send(); followsBottom = true }
+    VStack(spacing: 8) {
+      HStack(alignment: .bottom, spacing: 12) {
+        MacComposer(text: $conversation.draft, prompts: conversation.prompts) { conversation.send(); followsBottom = true }
           .id(conversation.id)
-      }.frame(height: 76).padding(.horizontal, 18).padding(.top, 6)
-      HStack {
-        if conversation.prompts.entries.contains(where: { $0.kind != .system }) {
-          Menu {
-            ForEach(conversation.prompts.entries.filter { $0.kind != .system }) { entry in
-              Button(entry.name) { conversation.draft = "$\(entry.commandName) " }
-                .help(entry.summary)
+          .overlay(alignment: .topLeading) {
+            if conversation.draft.isEmpty {
+              Text("Message pmai…").font(typography.font()).foregroundStyle(.tertiary)
+                .padding(.top, 6).allowsHitTesting(false)
             }
-          } label: { Label("Prompts and Skills", systemImage: "text.badge.star") }
-            .menuStyle(.borderlessButton).fixedSize().help("Use a configured prompt or skill")
+          }
+        Group {
+          if conversation.busy {
+            Button(action: conversation.stop) { Label("Stop", systemImage: "stop.fill") }
+              .help("Stop response (⌘.)")
+          } else {
+            Button { conversation.send(); followsBottom = true } label: { Label("Send", systemImage: "arrow.up") }
+              .keyboardShortcut(.return, modifiers: .command)
+              .disabled(!conversation.connected || conversation.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+              .help("Return sends. Shift-Return adds a new line.")
+          }
         }
+        .labelStyle(.iconOnly)
+        .buttonStyle(.borderedProminent)
+        .buttonBorderShape(.circle)
+        .controlSize(.regular)
+      }
+      .padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 8)
+      .background { composerBackground }
+      HStack {
         Circle().fill(conversation.connected ? Color.green : Color.secondary).frame(width: 6, height: 6)
         Text(conversation.status).font(.caption).foregroundStyle(.secondary)
         if let model = conversation.options.first(where: { $0.category == "model" }) {
@@ -228,19 +242,24 @@ struct MacChatView: View {
         if !conversation.connected && !conversation.busy {
           Button("Reconnect", action: conversation.connect)
         }
-        if conversation.busy {
-          Button(action: conversation.stop) { Label("Stop", systemImage: "stop.fill") }
-            .help("Stop response (⌘.)")
-        } else {
-          Button { conversation.send(); followsBottom = true } label: { Label("Send", systemImage: "arrow.up") }
-            .buttonStyle(.borderedProminent).keyboardShortcut(.return, modifiers: .command)
-            .disabled(!conversation.connected || conversation.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .help("Return sends. Shift-Return adds a new line.")
-        }
-      }.padding(.horizontal, 16).padding(.bottom, 14)
+      }.padding(.horizontal, 8)
     }
-    .frame(maxWidth: 916)
+    .frame(maxWidth: 860)
+    .padding(.horizontal, 28).padding(.top, 10).padding(.bottom, 14)
     .frame(maxWidth: .infinity)
+  }
+
+  private var composerBackground: some View {
+    let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+    return Group {
+      if #available(macOS 26.0, *) {
+        shape.fill(.clear).glassEffect(.regular, in: shape)
+      } else {
+        shape.fill(.regularMaterial)
+          .overlay { shape.strokeBorder(.secondary.opacity(0.2), lineWidth: 1) }
+      }
+    }
+    .allowsHitTesting(false)
   }
 
   private func messageRow(_ message: ACPConversationMessage) -> some View {
