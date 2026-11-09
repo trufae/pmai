@@ -146,10 +146,10 @@ struct MacSidebar: View {
         TextField("Find a conversation", text: $workspace.search)
           .textFieldStyle(.roundedBorder)
         if workspace.snapshot.canOrganizeSessions == true {
-          Picker("Conversations", selection: $workspace.showArchived) {
-            Text("Active").tag(false)
-            Text("Archived").tag(true)
-          }.pickerStyle(.segmented)
+          Toggle("Show archived conversations", isOn: $workspace.showArchived)
+            .toggleStyle(.switch)
+            .labelsHidden()
+            .help("Show archived conversations when enabled")
         }
         Button(action: workspace.newChat) { Label("New Chat", systemImage: "square.and.pencil") }
         ForEach(workspace.unlistedConversations) { chat in

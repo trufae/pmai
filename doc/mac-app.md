@@ -21,7 +21,8 @@ its conversations. Click another section heading to return to that level. Open
 chats appear once, in their own folder, alongside saved conversations.
 
 Right-click a conversation to rename, fork, pin/unpin, archive/restore, delete,
-or open it in the terminal. The Active/Archived picker exposes archived chats.
+or open it in the terminal. Enable the unlabeled switch to show archived chats;
+hover over it for a tooltip.
 These operations use the CLI's chat storage and preserve the same fork and pin
 semantics as `/chat`. Remote hosts advertise supported operations; older ACP
 hosts and OpenCode offer rename/delete without the newer organization actions.
