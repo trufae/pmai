@@ -1068,6 +1068,79 @@ private actor ACPWaitingProvider: ChatProvider {
   }
 }
 
+@Test("Graphical subagents share CLI storage, retain results, and cannot stop another chat's work")
+func acpGraphicalSubagents() async throws {
+  let directory = FileManager.default.temporaryDirectory.appendingPathComponent("mac-agents-\(UUID())")
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let home = AgentHome(rootURL: directory.appendingPathComponent("home"))
+  let runtime = AgentRuntime()
+  try await runtime.register(HelloProvider())
+  try await runtime.register(ACPWaitingProvider())
+  try await runtime.register(agent: .init(id: "configured", instructions: "Configured instructions",
+    provider: .hello, model: "configured-model"))
+  let agent = AgentDefinition(id: "main", instructions: "", provider: .hello, model: "hello")
+  let (transport, worker) = PipeTransport.pair()
+  let server = ACPServer(runtime: runtime, agent: agent, bridge: ACPPermissionBridge(),
+    sessionDirectory: directory.appendingPathComponent("sessions"), workspaceRoot: directory,
+    workspace: AgentHomeACPWorkspace(home: home))
+  let serving = Task { await server.serve(on: worker) }
+  let client = JSONRPCPeer(transport: transport)
+  await client.start()
+  do {
+    _ = try await client.request("initialize", params: .object(["protocolVersion": .integer(1)]), timeout: 30)
+    func create() async throws -> String {
+      let result = try await client.request("session/new", params: .object(["cwd": .string(directory.path)]), timeout: 30)
+      return try #require(result.objectValue?["sessionId"]?.stringValue)
+    }
+    func agents(_ id: String, task: String? = nil, stop: AgentPID? = nil) async throws -> [AgentProcessRecord] {
+      var fields: [String: JSONValue] = ["sessionId": .string(id)]
+      if let task { fields["task"] = .string(task) }
+      if let stop { fields["stop"] = .integer(stop.rawValue) }
+      let result = try await client.request("_pmai/session/agents", params: .object(fields), timeout: 30)
+      return try JSONDecoder().decode([AgentProcessRecord].self, from: JSONEncoder().encode(result))
+    }
+    let id = try await create()
+    let other = try await create()
+    _ = try await client.request("session/set_config_option", params: .object([
+      "sessionId": .string(id), "configId": .string("agent"), "value": .string("configured"),
+    ]), timeout: 30)
+    let launched = try await agents(id, task: "A small offline task")
+    let pid = try #require(launched.first?.pid)
+    let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+    while true {
+      let revision = runtime.supervisor.changes.revision
+      if await runtime.supervisor.info(pid)?.state.isTerminal == true { break }
+      try #require(ContinuousClock.now < deadline, "Subagent did not finish")
+      try await runtime.supervisor.changes.wait(after: revision, until: deadline)
+    }
+    let finished = try await agents(id)
+    #expect(finished.first?.conversationRequest?.model == "configured-model")
+    #expect(finished.first?.messages.last?.text == "Hello from MaiCore: A small offline task")
+    #expect(try await agents(other).isEmpty)
+    await #expect(throws: JSONRPCError.self) { _ = try await agents(other, stop: pid) }
+    _ = try await client.request("session/set_config_option", params: .object([
+      "sessionId": .string(id), "configId": .string("provider"), "value": .string("waiting"),
+    ]), timeout: 30)
+    let waiting = try await agents(id, task: "Wait until cancelled")
+    let waitingPID = try #require(waiting.last?.pid)
+    let stopped = try await agents(id, stop: waitingPID)
+    #expect(stopped.last?.state == .cancelled)
+    await client.close()
+    await serving.value
+    let project = try #require(try home.loadProject(atWorkingDirectory: directory))
+    let saved = try #require(try home.chatStore(for: project).loadChat(id: UUID(uuidString: id)!))
+    #expect(saved.subagents.count == 2)
+    #expect(saved.subagents.first?.messages.last?.text == "Hello from MaiCore: A small offline task")
+    #expect(saved.subagents.last?.state == .cancelled)
+    #expect(try home.chatStore(for: project).loadSummaries().contains { $0.id == saved.id })
+  } catch {
+    await client.close()
+    await serving.value
+    throw error
+  }
+}
+
 @Test("ACP rejects overlapping prompts and records cancellation for safe recovery")
 func acpCancellationRecovery() async throws {
   let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

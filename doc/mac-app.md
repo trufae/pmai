@@ -1,0 +1,127 @@
+# pmai for Mac
+
+Build with `make mac`, then open `build/pmai.app`. `make mac-run` builds and
+launches it. The minimum system is macOS 15; building with Xcode 27 adopts the
+current macOS 27 system appearance. No iOS Simulator build is needed.
+
+`make mac-install` builds and installs into `~/Applications/pmai.app`. Override
+the destination with `MAC_INSTALL_DIR=/Applications` (which may require write
+permission). `MAC_APP` overrides the build bundle path for all three targets.
+
+Use **Open Workspace** (⌘O) to select a folder. Existing CLI projects and chats
+appear automatically. **New Chat** is ⌘N; **Send** is Return (or ⌘Return);
+Shift-Return inserts a newline; **Stop** is ⌘. The conversation inspector contains provider, model,
+reasoning, tool settings, and subagents. Running conversations remain open when
+switching folders or hosts. Permission requests are attached to the conversation
+that requested them, with an attention icon in Open Chats.
+
+The composer’s **Prompts and Skills** menu uses the CLI’s configured prompt
+catalog and project/global skills. `$name arguments` and `/name arguments`
+expand through the shared prompt parser. The inspector's **Agent** selection
+uses the configured agent definitions, including their model and instructions.
+
+**Connect Host** accepts the same ACP/Forwiroh connection profiles and OpenCode
+pairing links as the mobile client. It reads and updates the CLI's remote host
+bookmarks. Device approval still happens on the host. New subagent controls need
+a host built with the `_pmai/session/agents` extension; older hosts can still chat
+and run their existing model-driven delegation tools.
+
+## Reuse and storage
+
+The app links MaiCore, MaiACP, MaiMarkdown, and the CLI runtime. `MaiCLI` is a
+library target with a small `MaiCommand` executable entry point. Both CLI and Mac
+products reuse those compiled modules within the same SwiftPM build graph.
+
+The app bundle contains one executable. Launched without arguments it runs the
+SwiftUI interface; launched with CLI arguments it runs the existing CLI entry
+point. Each open local conversation uses that executable as a stdio ACP worker.
+This keeps shell tools, plugins, MCP, provider authentication, project settings,
+approvals, and agent execution in the established CLI path. Workers do not start
+AppKit or windows, and there is no listening network port for local chat.
+When reopening a chat, the worker also receives `--resume`, restoring that chat's
+saved runtime configuration before providers and tools are registered.
+
+`AgentHomeACPWorkspace` reads and writes the CLI's own chat files. The app honors
+`PMAI_HOME`, existing project-local `.pmai` directories, and the normal project
+index. It does not import or maintain a second copy of local conversations.
+Subagent transcripts are stored in each chat's existing `subagents` field.
+The native app stores only window/navigation preferences and unsent drafts in
+its defaults. Global configuration is `~/.config/pmai/config.json`; a working
+folder's `pmai.json` takes precedence, exactly as in the CLI.
+
+The iOS UIKit view/store hierarchy is not compiled into the Mac product. Its
+host → workspace → conversation navigation and disclosure of reasoning/tool
+activity are adapted to standard Mac controls. Protocol transcript reduction,
+remote connections, pairing, configuration options, Markdown parsing, storage,
+and agent orchestration are shared rather than copied.
+
+**Conversation → Open in Terminal** disconnects the app's writer and resumes
+the selected chat in the bundled CLI, providing the full REPL command surface.
+Finish the terminal session before reconnecting the same chat in the app.
+As with two CLI processes, concurrently editing the same chat from an unrelated
+terminal session should be avoided; CLI and ACP do not share one universal lease.
+
+## Build size and distribution
+
+`make mac` defaults to a lean build without MLX and its tokenizer/model-loading
+dependencies. Network providers, ACP providers, and available Apple Foundation
+Models remain usable. Use `MAC_MLX=1 make mac` to include MLX. Model weights are
+never included in the app bundle. SwiftPM's full dependency lockfile is preserved
+when building the smaller graph, and an explicit compilation flag prevents stale
+MLX modules from leaking into a lean incremental build.
+
+`make mac CONFIG=Release` produces an optimized, stripped app. Local builds use
+ad hoc signing; `MAC_SIGN_IDENTITY` selects a signing identity. The script does
+not notarize or publish the app. This is a direct-distribution Mac application,
+without App Sandbox: CLI-compatible project access, subprocesses, and native
+plugins require that execution model.
+
+The lean arm64 app built with Xcode 27.1 measured approximately 21 MB in Release
+and 66 MB in Debug. These are local bundle measurements, not CI size thresholds.
+
+The single-binary packaging avoids duplicating the engine on disk. There is
+still one worker process per open conversation, which isolates configuration,
+working directories, cancellation, and failures. This trades some memory for
+reusing the complete CLI runtime without a second initialization implementation.
+
+## Native design decisions
+
+The interface uses `NavigationSplitView`, a standard sidebar, toolbar, inspector,
+Settings scene, menu commands, SF Symbols, selectable text, and native controls.
+The system supplies Liquid Glass for navigation and controls; the transcript
+uses a solid semantic text background. Tool calls and reasoning are expandable,
+and code has horizontal scrolling and a Copy action. System colors and materials
+follow appearance and accessibility settings. Streaming follows the bottom only
+while the reader is already there; a Latest button returns to new output.
+
+These choices follow Apple's [Designing for macOS](https://developer.apple.com/design/human-interface-guidelines/designing-for-macos),
+[Sidebars](https://developer.apple.com/design/human-interface-guidelines/sidebars),
+and [Materials](https://developer.apple.com/design/human-interface-guidelines/materials)
+guidance. Apple's [Modernize your AppKit app (WWDC26)](https://developer.apple.com/videos/play/wwdc2026/289/)
+explains the macOS 27 sidebar/toolbar refinements, keyboard navigation, and state
+restoration. Standard components pick up those refinements without reproducing
+glass in every message or requiring private APIs.
+
+## Validation
+
+`python3 test/run-tests.py acp` selects the focused ACP graph. Its regression
+coverage includes CLI storage interoperability, scoped subagent management,
+durable results, and cancellation using deterministic local providers.
+
+The initial implementation passed all 71 ACP tests and a packaged-worker check
+for configured providers/models/agents, prompt and skill discovery, and continuing
+an existing CLI chat. Release signing and installation into a temporary
+Applications directory were also checked. The existing `repl-resume-smoke.py`
+flag-override assertion fails on both the pre-existing CLI binary and the new
+bundle. UI capture was unavailable (ScreenCaptureKit capture failure), so visual
+and interactive UI verification remains outstanding.
+
+For manual UI verification, use a temporary `PMAI_HOME`, a folder containing a
+`pmai.json` configured with the offline `hello` provider, and the built app.
+Check chat creation, streaming, reopening, sidebar navigation, settings,
+subagent results, keyboard commands, narrow windows, light/dark appearance, and
+permission sheets before testing real remote hosts or live models.
+
+The iOS-only camera, widgets, CarPlay, and live voice interfaces are not part of
+this Mac interface. Advanced REPL commands remain available through the terminal
+handoff; this is not a graphical editor for every CLI configuration field.

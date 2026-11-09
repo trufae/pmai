@@ -24,6 +24,7 @@ public actor ACPServer {
     var toolsEnabled: Bool?
     var providerSessionID: String?
     var indexed: Bool?
+    var subagents: [AgentProcessRecord]?
   }
 
   private struct Session {
@@ -33,6 +34,7 @@ public actor ACPServer {
     var processes: [AgentPID] = []
     var liveUpdates: [JSONValue] = []
     var busy = false
+    var children: [AgentPID: Task<AgentResult, Error>] = [:]
   }
 
   private let runtime: AgentRuntime
@@ -128,9 +130,16 @@ public actor ACPServer {
         await runtime.supervisor.stop(pid, reason: "ACP disconnected")
       }
     }
+    let children = sessions.values.flatMap { $0.children.values }
+    for task in children { task.cancel() }
+    for task in children { _ = try? await task.value }
     let tasks = sessions.values.compactMap(\.task)
     for task in tasks { task.cancel() }
     for task in tasks { _ = try? await task.value }
+    for id in sessions.keys {
+      do { try await checkpointAgents(id) }
+      catch { FileHandle.standardError.write(Data("Could not save ACP agents: \(error.localizedDescription)\n".utf8)) }
+    }
     sessions.removeAll()
     yoloSessionIDs.removeAll()
     for fileSystem in fileSystems.values { await fileSystem.close() }
@@ -178,6 +187,8 @@ public actor ACPServer {
       return .object([:])
     case "_pmai/session/inject":
       return try await inject(params: params)
+    case "_pmai/session/agents":
+      return try await sessionAgents(params: params)
     case ACP.Method.sessionPrompt:
       return try await runPrompt(params: params)
     case ACP.Method.sessionSetConfigOption:
@@ -191,6 +202,7 @@ public actor ACPServer {
     guard connected, (try? authorize()) != nil, method == ACP.Method.sessionCancel else { return }
     guard let id = params?.objectValue?["sessionId"]?.stringValue else { return }
     sessions[id]?.task?.cancel()
+    for task in sessions[id]?.children.values ?? Dictionary<AgentPID, Task<AgentResult, Error>>().values { task.cancel() }
     for pid in sessions[id]?.processes ?? [] {
       await runtime.supervisor.stop(pid, reason: "ACP cancelled")
     }
@@ -207,7 +219,7 @@ public actor ACPServer {
           "workspaceFiles": .integer(1), "permissionEditing": .integer(1), "yolo": .integer(1),
           "workspacePrompts": .integer(1),
           "workspaceTerminal": .integer(Self.hasPTY ? 1 : 0),
-          "historyRewind": .integer(1), "injection": .integer(1),
+          "historyRewind": .integer(1), "injection": .integer(1), "agents": .integer(1),
         ])]),
         "loadSession": .bool(sessionDirectory != nil || workspace != nil),
         "sessionCapabilities": .object(
@@ -510,7 +522,7 @@ public actor ACPServer {
             title: checkpoint.title ?? AgentChat.placeholderTitle, updatedAt: session.updatedAt),
           agent: session.definition ?? agent, transcript: session.transcript,
           createdAt: session.createdAt ?? Date(),
-          providerSessionID: session.providerSessionID ?? session.id))
+          providerSessionID: session.providerSessionID ?? session.id, subagents: checkpoint.subagents))
       checkpoint.indexed = true
     }
     if let sessionDirectory {
@@ -530,6 +542,7 @@ public actor ACPServer {
     try await save(saved)
     guard connected else { throw JSONRPCTransportError.closed }
     sessions[id] = Session(saved: saved, lease: lock)
+    await prepareSessionRoot(id)
     let options = await configurationOptions(for: agent)
     await messageSnapshot(session: id)
     return .object(["sessionId": .string(id), "configOptions": .array(options.map(\.json))])
@@ -593,7 +606,7 @@ public actor ACPServer {
           updatedAt: conversation.info.updatedAt, definition: conversation.agent,
           toolInputs: checkpoint?.toolInputs, reviewTools: checkpoint?.reviewTools,
           toolsEnabled: checkpoint?.toolsEnabled,
-          providerSessionID: conversation.providerSessionID)
+          providerSessionID: conversation.providerSessionID, subagents: conversation.subagents)
       } else {
         restored = checkpoint
       }
@@ -611,6 +624,7 @@ public actor ACPServer {
       }
       guard connected else { throw JSONRPCTransportError.closed }
       sessions[id] = Session(saved: saved, lease: lock)
+      await prepareSessionRoot(id)
     }
     guard let session = sessions[id], session.saved.workingDirectory == cwd else {
       throw JSONRPCError.invalidParams("Session working directory differs")
@@ -724,6 +738,12 @@ public actor ACPServer {
         description: tool.description,
         currentValue: .bool(toolsEnabled && modes[tool.name, default: .disabled] != .disabled))
     }
+    var agentChoices = await runtime.availableAgents(includingDisabled: false).map {
+      RemoteSessionOption.Choice($0.id, $0.displayName)
+    }
+    if !agentChoices.contains(where: { $0.id == definition.id }) {
+      agentChoices.append(.init(definition.id, definition.displayName))
+    }
     return [
       .init(
         id: "provider", name: "Provider", category: "_provider",
@@ -734,6 +754,8 @@ public actor ACPServer {
       .init(
         id: "reasoning", name: "Reasoning", category: "thought_level",
         currentValue: .string(effort), choices: efforts),
+      .init(id: "agent", name: "Agent", category: "agent",
+        currentValue: .string(definition.id), choices: agentChoices),
       .init(
         id: "tools.review", name: "Review Tool Calls", category: "permissions",
         currentValue: .bool(reviewTools)),
@@ -770,6 +792,13 @@ public actor ACPServer {
       throw JSONRPCError.invalidParams("Choose an available setting")
     }
     switch key {
+    case "agent":
+      guard let value = value.stringValue,
+        let selected = await runtime.availableAgents(includingDisabled: false).first(where: { $0.id == value })
+      else { throw JSONRPCError.invalidParams("Choose an available agent") }
+      definition = selected
+      let history = saved.transcript.drop(while: { $0.role == .system || $0.role == .developer })
+      saved.transcript = AgentChat.initialHistory(for: selected) + history
     case "provider":
       guard let value = value.stringValue else {
         throw JSONRPCError.invalidParams("Choose an available setting")
@@ -856,6 +885,121 @@ public actor ACPServer {
     ]))
   }
 
+  private func sessionRequest(_ id: String) async throws -> AgentRequest {
+    guard let saved = sessions[id]?.saved else { throw JSONRPCTransportError.closed }
+    let agent = saved.definition ?? self.agent
+    var toolPolicy = agent.toolPolicy
+    if saved.toolsEnabled == false {
+      for group in await runtime.availableToolGroups() {
+        toolPolicy.setGroupMode(.disabled, for: group)
+      }
+      for tool in await runtime.availableTools() {
+        toolPolicy.tools[tool.name] = .disabled
+      }
+    }
+    return AgentRequest(
+      agentID: agent.id,
+      provider: agent.provider,
+      model: agent.model,
+      messages: saved.transcript,
+      systemContext: agent.systemContext,
+      toolNames: agent.toolNames,
+      toolGroupNames: agent.toolGroupNames,
+      subagentNames: agent.subagentNames,
+      toolChoice: agent.toolChoice,
+      responseFormat: agent.responseFormat,
+      options: agent.options,
+      limits: agent.limits,
+      stream: true,
+      toolCallingStrategy: agent.toolCallingStrategy,
+      useToolProxy: agent.useToolProxy,
+      proxyExposedTools: agent.proxyExposedTools,
+      toolPolicy: toolPolicy,
+      toolDelegation: agent.toolDelegation,
+      retry: agent.retry, autocompact: agent.autocompact, context: agent.context,
+      sessionID: saved.providerSessionID ?? id)
+
+  }
+
+  private func prepareSessionRoot(_ id: String) async {
+    let root = await runtime.allocateProcess(agentID: sessions[id]?.saved.definition?.id ?? agent.id)
+    sessions[id]?.processes = [root]
+    if let records = sessions[id]?.saved.subagents {
+      await runtime.restoreConversations(records, under: root, sessionID: id)
+    }
+    await runtime.supervisor.complete(root)
+  }
+
+  /// Explicit user actions, scoped to one loaded conversation. These share
+  /// inference settings, approvals and persistence with model-launched children.
+  private func sessionAgents(params: JSONValue?) async throws -> JSONValue {
+    guard let fields = params?.objectValue, let id = fields["sessionId"]?.stringValue,
+      let saved = sessions[id]?.saved, let root = sessions[id]?.processes.first, !loadingSessions.contains(id)
+    else { throw JSONRPCError.invalidParams("Unknown session") }
+    guard sessions[id]?.busy != true || fields["task"] == nil else {
+      throw JSONRPCError.invalidParams("Wait for the current response before starting a subagent")
+    }
+    if let number = fields["stop"]?.intValue {
+      let pid = AgentPID(number)
+      guard pid != root, await runtime.supervisor.tree().subtree(of: root).contains(where: { $0.pid == pid }) else {
+        throw JSONRPCError.invalidParams("Agent does not belong to this session")
+      }
+      await runtime.supervisor.stop(pid, reason: "Stopped from pmai")
+      sessions[id]?.children[pid]?.cancel()
+      _ = try? await sessions[id]?.children[pid]?.value
+    }
+    if let task = fields["task"]?.stringValue {
+      guard !task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        throw JSONRPCError.invalidParams("Enter a task for the subagent")
+      }
+      sessions[id]?.busy = true
+      defer { sessions[id]?.busy = false }
+      var request = try await sessionRequest(id)
+      let active = await runtime.supervisor.tree().subtree(of: root).dropFirst().filter { !$0.state.isTerminal }.count
+      guard active < request.limits.maxSubagents, request.limits.maxSubagentDepth > 0 else {
+        throw JSONRPCError.invalidParams("This chat's subagent limit is reached")
+      }
+      request.messages = saved.transcript.filter { $0.role == .system || $0.role == .developer } + [.user(task)]
+      guard let pid = await runtime.forkConversation(request, parent: root, title: String(task.prefix(80))) else {
+        throw JSONRPCError.internalError("The parent conversation closed")
+      }
+      guard connected, sessions[id] != nil else { throw JSONRPCTransportError.closed }
+      if AgentChat.isPlaceholderTitle(saved.title ?? "") {
+        sessions[id]?.saved.title = AgentChat.derivedTitle(from: task)
+      }
+      let scope = AgentExecutionScope(sessionID: id, workingDirectory: saved.workingDirectory)
+      let childRequest = request
+      let childTask = Task { [runtime] in
+        try await AgentExecutionScope.$current.withValue(scope) {
+          try await runtime.run(childRequest, process: pid)
+        }
+      }
+      sessions[id]?.children[pid] = childTask
+      await runtime.supervisor.attach(childTask, to: pid)
+      Task { [weak self] in
+        // Runtime records failures in the supervisor, including cancellation.
+        _ = try? await childTask.value
+        await self?.childEnded(session: id, pid: pid)
+      }
+      try await checkpointAgents(id)
+    }
+    let records = await runtime.conversationRecords(under: root)
+    return try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(records))
+  }
+
+  private func childEnded(session id: String, pid: AgentPID) async {
+    sessions[id]?.children[pid] = nil
+    do { try await checkpointAgents(id) }
+    catch { await update(session: id, kind: .agentMessageChunk, text: "Could not save subagent: \(error.localizedDescription)") }
+  }
+
+  private func checkpointAgents(_ id: String) async throws {
+    guard let root = sessions[id]?.processes.first else { return }
+    let records = await runtime.conversationRecords(under: root)
+    sessions[id]?.saved.subagents = records
+    if let saved = sessions[id]?.saved { try await save(saved) }
+  }
+
   private func runPrompt(params: JSONValue?) async throws -> JSONValue {
     guard let id = params?.objectValue?["sessionId"]?.stringValue, sessions[id] != nil else {
       throw JSONRPCError.invalidParams("unknown sessionId")
@@ -869,7 +1013,6 @@ public actor ACPServer {
     }
     sessions[id]?.busy = true
     sessions[id]?.liveUpdates = []
-    sessions[id]?.processes = []
     await sessionState(id)
     sessions[id]?.saved.transcript.append(.user(text))
     if AgentChat.isPlaceholderTitle(sessions[id]?.saved.title ?? AgentChat.placeholderTitle) {
@@ -887,44 +1030,15 @@ public actor ACPServer {
       throw JSONRPCTransportError.closed
     }
 
-    let agent = sessions[id]?.saved.definition ?? self.agent
-    var toolPolicy = agent.toolPolicy
-    if sessions[id]?.saved.toolsEnabled == false {
-      for group in await runtime.availableToolGroups() {
-        toolPolicy.setGroupMode(.disabled, for: group)
-      }
-      for tool in await runtime.availableTools() {
-        toolPolicy.tools[tool.name] = .disabled
-      }
-    }
-    let request = AgentRequest(
-      agentID: agent.id,
-      provider: agent.provider,
-      model: agent.model,
-      messages: sessions[id]!.saved.transcript,
-      systemContext: agent.systemContext,
-      toolNames: agent.toolNames,
-      toolGroupNames: agent.toolGroupNames,
-      subagentNames: agent.subagentNames,
-      toolChoice: agent.toolChoice,
-      responseFormat: agent.responseFormat,
-      options: agent.options,
-      limits: agent.limits,
-      stream: true,
-      toolCallingStrategy: agent.toolCallingStrategy,
-      useToolProxy: agent.useToolProxy,
-      proxyExposedTools: agent.proxyExposedTools,
-      toolPolicy: toolPolicy,
-      toolDelegation: agent.toolDelegation,
-      retry: agent.retry, autocompact: agent.autocompact, context: agent.context,
-      sessionID: sessions[id]?.saved.providerSessionID ?? id)
+    let request = try await sessionRequest(id)
+    guard connected, let process = sessions[id]?.processes.first else { throw JSONRPCTransportError.closed }
 
     let sessionID = id
     let scope = AgentExecutionScope(
       sessionID: id, workingDirectory: sessions[id]!.saved.workingDirectory)
     let task = Task { [weak self, runtime] in
       try await AgentExecutionScope.$current.withValue(scope) {
-        try await runtime.run(request) { [weak self] event in
+        try await runtime.run(request, process: process) { [weak self] event in
           await self?.forward(event, session: sessionID)
         }
       }
@@ -940,7 +1054,7 @@ public actor ACPServer {
       sessions[id]?.saved.transcript = result.transcript
       sessions[id]?.saved.promptInFlight = false
       sessions[id]?.saved.updatedAt = Date()
-      if let saved = sessions[id]?.saved { try await save(saved) }
+      try await checkpointAgents(id)
       sessions[id]?.task = nil
       sessions[id]?.busy = false
       sessions[id]?.liveUpdates = []
@@ -1003,7 +1117,7 @@ public actor ACPServer {
     // agent's own stream, and children stay behind the tool result they become.
     switch event {
     case .started(let context, _) where context.depth == 0:
-      if let pid = context.pid { sessions[id]?.processes.append(pid) }
+      if let pid = context.pid, sessions[id]?.processes.contains(pid) == false { sessions[id]?.processes.append(pid) }
     case .provider(let context, .textDelta(let text)) where context.depth == 0 && !text.isEmpty:
       await update(session: id, kind: .agentMessageChunk, text: text)
     case .provider(let context, .reasoningDelta(let text))
@@ -1015,6 +1129,9 @@ public actor ACPServer {
       await toolUpdate(session: id, call: call, kind: .toolCallUpdate)
     case .toolFinished(let context, let result) where context.depth == 0:
       await toolFinished(session: id, result: result)
+    case .childFinished:
+      do { try await checkpointAgents(id) }
+      catch { await update(session: id, kind: .agentMessageChunk, text: "Could not save subagent: \(error.localizedDescription)") }
     default:
       break
     }

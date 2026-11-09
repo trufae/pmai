@@ -30,14 +30,27 @@ endif
 DEVICE ?=
 BUNDLE_ID = io.github.trufae.mai
 APP_BUNDLE ?=
+MAC_APP ?= build/pmai.app
+MAC_INSTALL_DIR ?= $(HOME)/Applications
 BINDIR ?= $(HOME)/.local/bin
 
 .PHONY: all build test list run uninstall repl repl-build repl-install repl-uninstall repl-musl plugin-fixture fmt clean check-shared-tooling aitest-build
 .PHONY: android android-test android-kotlin android-kotlin-release test-core test-unit test-cli
+.PHONY: mac mac-install mac-run
 TEST_PROFILE ?= platform
 TEST_ARGS ?=
 
 all: build
+
+mac:
+	CONFIG='$(CONFIG)' SWIFT='$(SWIFT)' MAC_APP='$(MAC_APP)' sh sys/build-mac-app.sh
+
+mac-install: mac
+	mkdir -p '$(MAC_INSTALL_DIR)/pmai.app'
+	rsync -a --delete '$(MAC_APP)/' '$(MAC_INSTALL_DIR)/pmai.app/'
+
+mac-run: mac
+	open '$(MAC_APP)'
 
 test-core:
 	python3 test/run-tests.py core $(TEST_ARGS)

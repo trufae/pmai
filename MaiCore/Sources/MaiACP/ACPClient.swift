@@ -97,6 +97,7 @@ public actor ACPClient {
   private var supportsPermissionEditing = false
   private var supportsYolo = false
   private var supportsInjection = false
+  private var supportsAgents = false
   private var supportsHistoryRewind = false
   private var busy = false
   private var internetAccess = InternetAccessPolicy()
@@ -543,6 +544,19 @@ public actor ACPClient {
     ]), timeout: 30)
   }
 
+  public func agentManagementSupported() -> Bool { supportsAgents }
+
+  public func sessionAgents(task: String? = nil, stopping pid: AgentPID? = nil) async throws -> [AgentProcessRecord] {
+    guard supportsAgents, sessionLoaded, let sessionID, let peer else {
+      throw JSONRPCError.invalidParams("Update the pmai host to manage subagents")
+    }
+    var fields: [String: JSONValue] = ["sessionId": .string(sessionID)]
+    if let task { fields["task"] = .string(task) }
+    if let pid { fields["stop"] = .integer(pid.rawValue) }
+    let result = try await peer.request("_pmai/session/agents", params: .object(fields), timeout: 30)
+    return try JSONDecoder().decode([AgentProcessRecord].self, from: JSONEncoder().encode(result))
+  }
+
   public func cancel() async {
     guard let peer, let sessionID else { return }
     try? peer.notify(ACP.Method.sessionCancel, params: .object(["sessionId": .string(sessionID)]))
@@ -566,6 +580,7 @@ public actor ACPClient {
     supportsPermissionEditing = false
     supportsYolo = false
     supportsHistoryRewind = false
+    supportsAgents = false
     let tunnel = forwirohTunnel
     forwirohTunnel = nil
     transport?.close()
@@ -717,6 +732,7 @@ public actor ACPClient {
       let pmaiCapabilities = initialized.objectValue?["agentCapabilities"]?.objectValue?["_meta"]?
         .objectValue?["pmai"]?.objectValue
       supportsInjection = pmaiCapabilities?["injection"]?.intValue == 1
+      supportsAgents = pmaiCapabilities?["agents"]?.intValue == 1
       supportsFiles = pmaiCapabilities?["workspaceFiles"]?.intValue == 1
       supportsTerminal = pmaiCapabilities?["workspaceTerminal"]?.intValue == 1
       supportsPrompts = pmaiCapabilities?["workspacePrompts"]?.intValue == 1

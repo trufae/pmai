@@ -48,6 +48,7 @@ Built on [MaiCore](MaiCore/README.md), following
 | --- | --- | --- |
 | **PocketMai for iOS** | Native voice, tools, documents, mini apps, and remote projects. iOS 18+; some features require newer iOS or supported hardware. | [App Store](https://apps.apple.com/es/app/pocketmai/id6764296742) |
 | **pmai CLI** | A terminal agent for macOS, Linux, and Android, with shell tools, projects, skills, MCP, ACP, and Vim integration. | Install command above · [Release downloads](https://github.com/trufae/pmai/releases) |
+| **pmai for Mac** | A native Mac interface using the CLI's projects, chat storage, providers, remote hosts, and subagents. | `make mac` · [Mac build and design notes](doc/mac-app.md) |
 | **PocketMai for Android** | Native Kotlin/Compose client with shared MaiCore, tools, MCP, skills, Forwiroh hosts and WebXDC apps. | [Download APK](https://trufae.github.io/pmai/downloads/PocketMai-Android.apk) · [Android guide](PocketMaiKotlin/README.md) |
 
 The older [pure Swift Android preview](PocketMaiAndroid/README.md) is deprecated.

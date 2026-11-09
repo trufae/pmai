@@ -5,7 +5,7 @@ import Foundation
 // The core profile omits executable and platform dependency graphs entirely;
 // --filter only selects tests after SwiftPM has built every test target.
 let testProfile = Context.environment["PMAI_TEST_PROFILE"]
-let focusedTests = ["core", "chat", "documents", "voice", "mobile"].contains(testProfile ?? "")
+let focusedTests = ["core", "chat", "documents", "voice", "mobile", "acp"].contains(testProfile ?? "")
 let xmlPackage = Package.Dependency.package(
   url: "https://github.com/compnerd/xylem", revision: "9881c95ce3a139f4ccfa584676201516c2a5751d")
 let cliDependencies: [Target.Dependency] = [
@@ -17,6 +17,11 @@ let cliDependencies: [Target.Dependency] = [
 ]
 var localProviderDependencies: [Target.Dependency] = ["MaiCore"]
 var localProviderSwiftSettings: [SwiftSetting] = []
+// canImport alone can see stale MLX modules in an incremental build directory.
+// A lean build must remain lean even after building the full CLI in that graph.
+if Context.environment["PMAI_NO_MLX"] != nil || focusedTests {
+  localProviderSwiftSettings.append(.define("PMAI_NO_MLX"))
+}
 var localProviderLinkerSettings: [LinkerSetting] = []
 var packageDependencies: [Package.Dependency] = [
   .package(url: "https://github.com/apple/swift-crypto", from: "4.5.2"),
@@ -95,7 +100,7 @@ let package = Package(
     .library(name: "MaiMarkdown", targets: ["MaiMarkdown"]),
     .library(name: "MaiACP", targets: ["MaiACP"]),
     .library(name: "MaiFixturePlugin", type: .dynamic, targets: ["MaiFixturePlugin"]),
-    .executable(name: "pmai", targets: ["MaiCLI"]),
+    .executable(name: "pmai", targets: ["MaiCommand"]),
   ],
   dependencies: packageDependencies,
   targets: [
@@ -153,11 +158,13 @@ let package = Package(
     .target(
       name: "MaiFixturePlugin",
       dependencies: ["MaiPluginSDK", "CMaiPluginABI"]),
-    .executableTarget(
+    .target(
       name: "MaiCLI",
       dependencies: cliDependencies,
       path: "Sources/MaiCLI",
-      exclude: ["VoiceInfo.plist"],
+      exclude: ["VoiceInfo.plist"]),
+    .executableTarget(
+      name: "MaiCommand", dependencies: ["MaiCLI"],
       linkerSettings: [
         .linkedLibrary("user32", .when(platforms: [.windows])),
         .unsafeFlags(["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist",
@@ -188,14 +195,23 @@ let package = Package(
     ]),
   ])
 
+#if os(macOS)
+if !focusedTests {
+  package.products.append(.executable(name: "pmai-mac", targets: ["MaiMac"]))
+  package.targets.append(.executableTarget(name: "MaiMac",
+    dependencies: ["MaiCLI", "MaiCore", "MaiACP", "MaiMarkdown", "MaiStandardTools"]))
+}
+#endif
+
 if focusedTests {
   let names = testProfile == "core" ? ["MaiCore", "MaiCoreTests", "MaiTestSupport"]
+    : testProfile == "acp" ? ["MaiCore", "MaiACP", "CMaiTerminal", "MaiStandardTools", "MaiDocuments", "MaiMarkdown", "MaiVisionOCR", "MaiACPTests", "MaiTestSupport"]
     : testProfile == "mobile" ? ["MaiCore", "MaiChat", "MaiOpenAI", "MaiMCP", "MaiACP", "CMaiTerminal", "MaiStandardTools", "MaiDocuments", "MaiMarkdown", "MaiVisionOCR", "MaiMobile", "MaiMobileTests"]
     : testProfile == "voice" ? ["MaiCore", "MaiVoice", "MaiOpenAI", "MaiVoiceTests"]
     : testProfile == "documents" ? ["MaiCore", "MaiMarkdown", "MaiDocuments", "MaiDocumentsTests"]
     : ["MaiCore", "MaiOpenAI", "MaiChat", "MaiChatTests"]
   package.products = package.products.filter { names.contains($0.name) }
-  package.dependencies = testProfile == "mobile" ? packageDependencies : testProfile == "core" ? []
+  package.dependencies = ["mobile", "acp"].contains(testProfile ?? "") ? packageDependencies : testProfile == "core" ? []
     : testProfile == "documents" ? [xmlPackage] : Array(packageDependencies.prefix(1))
   package.targets = package.targets.filter { names.contains($0.name) || $0.name == "CMaiWinHTTP" }
 }

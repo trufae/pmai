@@ -72,16 +72,18 @@ public struct ACPWorkspaceConversation: Sendable {
   public var transcript: [AgentMessage]
   public var createdAt: Date
   public var providerSessionID: String?
+  public var subagents: [AgentProcessRecord]?
 
   public init(
     info: ACPSessionInfo, agent: AgentDefinition, transcript: [AgentMessage], createdAt: Date,
-    providerSessionID: String? = nil
+    providerSessionID: String? = nil, subagents: [AgentProcessRecord]? = nil
   ) {
     self.info = info
     self.agent = agent
     self.transcript = transcript
     self.createdAt = createdAt
     self.providerSessionID = providerSessionID
+    self.subagents = subagents
   }
 }
 
@@ -146,7 +148,7 @@ public struct AgentHomeACPWorkspace: ACPWorkspaceRepository {
       info: .init(
         sessionID: sessionID, cwd: cwd, title: chat.displayTitle,
         updatedAt: chat.updatedAt), agent: chat.primaryAgent, transcript: chat.messages,
-      createdAt: chat.createdAt, providerSessionID: chat.sessionID)
+      createdAt: chat.createdAt, providerSessionID: chat.sessionID, subagents: chat.subagents)
   }
 
   public func save(_ conversation: ACPWorkspaceConversation) async throws {
@@ -165,6 +167,7 @@ public struct AgentHomeACPWorkspace: ACPWorkspaceRepository {
     // existing pmai chat retains the provider and model it had before the
     // remote client changed them, then restores those stale values on reconnect.
     chat.primaryAgent = conversation.agent
+    if let subagents = conversation.subagents { chat.subagents = subagents }
     chat.messages = conversation.transcript
     chat.title = conversation.info.title
     chat.updatedAt = conversation.info.updatedAt ?? Date()

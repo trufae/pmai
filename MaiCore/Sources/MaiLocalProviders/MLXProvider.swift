@@ -1,7 +1,7 @@
 import Foundation
 import MaiCore
 
-#if canImport(MLX)
+#if !PMAI_NO_MLX && canImport(MLX)
   import Metal
   import MLX
   import MLXLLM
@@ -14,7 +14,7 @@ public actor MLXProvider: ChatProvider {
   public static let defaultModelID = MLXModels.defaultModelID
   public nonisolated let descriptor: ProviderDescriptor
   private let configuration: ConfiguredProvider
-  #if canImport(MLX)
+  #if !PMAI_NO_MLX && canImport(MLX)
     private var container: ModelContainer?
     private var loadedModel: String?
     private var generationTail: Task<Void, Never>?
@@ -28,13 +28,13 @@ public actor MLXProvider: ChatProvider {
       id: ProviderID(configuration.id), displayName: configuration.displayName ?? "MLX Local",
       capabilities: [.streaming, .reasoning],
       defaultModel: configuration.defaultModel ?? Self.defaultModelID)
-    #if canImport(MLX)
+    #if !PMAI_NO_MLX && canImport(MLX)
       downloader = nil
       availability = .current
     #endif
   }
 
-  #if canImport(MLX)
+  #if !PMAI_NO_MLX && canImport(MLX)
     public init(
       configuration: ConfiguredProvider = .init(id: "mlx", kind: .mlx),
       downloader: any Downloader, availability: MLXAvailability = .current
@@ -98,7 +98,7 @@ public actor MLXProvider: ChatProvider {
 
   public static var unavailabilityMessage: String? {
     #if os(iOS) || (os(macOS) && arch(arm64))
-      #if canImport(MLX)
+      #if !PMAI_NO_MLX && canImport(MLX)
         return MLXAvailability.current.unavailableReason
       #else
         return "This pmai build does not include MLX. Rebuild with make repl-install and PMAI_NO_MLX unset."
@@ -121,14 +121,14 @@ public actor MLXProvider: ChatProvider {
     _ request: ProviderRequest, emit: @escaping ProviderEventHandler
   ) async throws -> ProviderResponse {
     if let reason = Self.unavailabilityMessage { throw LocalProviderError(reason) }
-    #if canImport(MLX)
+    #if !PMAI_NO_MLX && canImport(MLX)
       return try await complete(request, emit: emit, onGenerationInfo: { _ in })
     #else
       throw LocalProviderError(Self.unavailabilityMessage ?? "MLX is unavailable.")
     #endif
   }
 
-  #if canImport(MLX)
+  #if !PMAI_NO_MLX && canImport(MLX)
     public func complete(
       _ request: ProviderRequest, emit: @escaping ProviderEventHandler,
       onGenerationInfo: @Sendable @escaping (GenerateCompletionInfo) async -> Void
@@ -140,7 +140,7 @@ public actor MLXProvider: ChatProvider {
     }
   #endif
 
-  #if canImport(MLX)
+  #if !PMAI_NO_MLX && canImport(MLX)
     /// Model loads, settings preloads, unloading, and agent generation share one queue.
     private func serialized<Value: Sendable>(
       _ operation: @Sendable @escaping () async throws -> Value
