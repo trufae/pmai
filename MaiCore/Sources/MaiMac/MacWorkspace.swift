@@ -43,7 +43,6 @@ final class MacWorkspace {
     if let source {
       hostID = source.hostID
       cwd = source.cwd
-      selectedID = source.selectedID
       sidebarSection = source.sidebarSection
       showArchived = source.showArchived
     }
@@ -79,6 +78,8 @@ final class MacWorkspace {
   func restore() async {
     guard !restored else { return }
     restored = true
+    busy = true
+    defer { busy = false }
     do {
       try await backend.prepare()
       hosts = try hostStore.hosts()
@@ -87,36 +88,38 @@ final class MacWorkspace {
         cwd = UserDefaults.standard.string(forKey: "mac.cwd") ?? ""
       }
       if host == nil { hostID = nil }
-      let sessionID = UserDefaults.standard.string(forKey: "mac.session")
-      await refresh()
-      if !inheritedLocation {
-        sidebarSection = cwd.isEmpty ? .folders : .conversations
-        if let sessionID,
-          let session = snapshot.sessions.first(where: { $0.sessionID == sessionID && $0.cwd == cwd }) {
-          open(session)
-        }
+      try await refreshLocation()
+      if hostID == nil, cwd.isEmpty {
+        let project = try home.openProject(atWorkingDirectory: AgentHome.userHomeDirectory())
+        cwd = project.workingDirectory
+        try await refreshLocation()
       }
+      busy = false
+      newChat()
     } catch { self.error = error.localizedDescription }
   }
 
   func refresh() async {
-    guard !busy else { return }
+    guard restored, !busy else { return }
     busy = true
     defer { busy = false }
-    do {
-      try await backend.refresh(hostID: hostID)
-      if hostID != nil, host == nil {
-        hostID = nil
-        cwd = ""
-        selectedID = nil
-        try await backend.refresh(hostID: nil)
-      }
-      if !snapshot.folders.contains(where: { $0.cwd == cwd }) {
-        cwd = snapshot.folders.first?.cwd ?? host?.cwd ?? ""
-        selectedID = nil
-      }
-      remember()
-    } catch { self.error = error.localizedDescription }
+    do { try await refreshLocation() }
+    catch { self.error = error.localizedDescription }
+  }
+
+  private func refreshLocation() async throws {
+    try await backend.refresh(hostID: hostID)
+    if hostID != nil, host == nil {
+      hostID = nil
+      cwd = ""
+      selectedID = nil
+      try await backend.refresh(hostID: nil)
+    }
+    if !snapshot.folders.contains(where: { $0.cwd == cwd }) {
+      cwd = snapshot.folders.first?.cwd ?? host?.cwd ?? ""
+      selectedID = nil
+    }
+    remember()
   }
 
   func selectHost(_ id: UUID?) {
@@ -404,7 +407,6 @@ final class MacWorkspace {
     guard backend.activeWorkspace === self else { return }
     UserDefaults.standard.set(hostID?.uuidString, forKey: "mac.host")
     UserDefaults.standard.set(cwd, forKey: "mac.cwd")
-    UserDefaults.standard.set(selected?.sessionID, forKey: "mac.session")
   }
 
   func openTerminal() {

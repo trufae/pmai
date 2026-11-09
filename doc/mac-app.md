@@ -18,14 +18,17 @@ its release page so you can download the macOS DMG and replace the app in
 Applications. **Later** dismisses the notice until the next launch. Failed or
 offline checks do not interrupt startup.
 
-Use **Open Workspace** (⇧⌘O) to select a folder. Existing CLI projects and chats
+The app starts with a fresh chat in your last workspace, with the composer ready
+to type. On first launch, it uses an existing CLI project or your home folder if
+there are no projects yet. Previous conversations remain available in the sidebar.
+Use **Open Workspace** (⇧⌘O) to select another folder. Existing CLI projects and chats
 appear automatically. **New Chat** is ⌘N; **Send** is Return (or ⌘Return);
 Shift-Return inserts a newline; **Stop** is ⌘. The conversation inspector contains provider, model,
 reasoning, tool settings, and subagents. Running conversations remain open when
 switching folders or hosts. Permission requests are attached to the conversation
 that requested them, with an attention icon in the conversation list.
 
-**New Window** (⌘⇧N) opens another window on the current host and folder. Each
+**New Window** (⌘⇧N) starts a fresh chat on the current host and folder. Each
 window navigates independently, while open conversations and their backend
 connections are shared. Different chats can run in parallel; opening the same
 chat in two windows shares its transcript and draft. Closing a window keeps
