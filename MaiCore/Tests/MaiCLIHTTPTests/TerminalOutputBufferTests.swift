@@ -66,7 +66,7 @@ func terminalBufferUserMessageReflow() {
       #expect(rows.last == "after")
       // Only trim layout padding; graphemes must survive wrapping intact.
       let content = width >= 6 ? rows.dropFirst(3).dropLast(3).map {
-        String($0.dropFirst(2).dropLast(2)).trimmingCharacters(in: .whitespaces)
+        String($0.dropFirst(2).dropLast(theme == nil ? 2 : 1)).trimmingCharacters(in: .whitespaces)
       } : Array(rows.dropFirst().dropLast())
       #expect(content.joined() == "abcdefghij界e\u{301}👩‍💻")
       if theme == nil { #expect(!rendered.joined().contains("\u{1B}")) }

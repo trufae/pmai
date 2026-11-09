@@ -683,7 +683,7 @@ struct TerminalOutputBuffer {
         count: contentWidth - widths[offset])
       result.append(row(edge + (offset == body.count - 1 ? "◢" : " ") + side
         + inside + line.text + inside + padding + " " + edge
-        + (colors == nil ? "│" : "▎") + base,
+        + (colors == nil ? "│" : "") + base,
         line.position.glyph + 2))
     }
     let end = (body.last?.position.glyph ?? 0) + 3
