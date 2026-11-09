@@ -113,8 +113,25 @@ private struct MacWorkspaceCommands: Commands {
 final class MacAppDelegate: NSObject, NSApplicationDelegate {
   weak var backend: MacBackend?
   private var terminating = false
+  private var updateCheck: Task<Void, Never>?
+
+  func applicationDidFinishLaunching(_ notification: Notification) {
+    updateCheck = Task {
+      // A failed background check should never interrupt startup or offline use.
+      guard let update = try? await CLIUpdater.availableUpdate(), !Task.isCancelled else { return }
+      let alert = NSAlert()
+      alert.messageText = "pmai \(update.version) is available"
+      alert.informativeText = "Open the GitHub release page to download the new macOS DMG and replace pmai in Applications."
+      alert.addButton(withTitle: "Open GitHub")
+      alert.addButton(withTitle: "Later")
+      if alert.runModal() == .alertFirstButtonReturn {
+        NSWorkspace.shared.open(update.url)
+      }
+    }
+  }
 
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    updateCheck?.cancel()
     guard !terminating, let backend else { return .terminateNow }
     terminating = true
     Task {

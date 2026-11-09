@@ -21,7 +21,7 @@ import MaiDocuments
 
 /// Release downloads, verification, and installation stay in the CLI; no remote
 /// installer or external download, checksum, or archive tools are needed.
-enum CLIUpdater {
+public enum CLIUpdater {
   // Keep the session alive until process exit: FoundationNetworking's libcurl
   // cleanup can retain _MultiHandle from its own deinit on Linux/musl.
   private static let session: URLSession = {
@@ -41,6 +41,58 @@ enum CLIUpdater {
       case .http(let status, let url): "HTTP \(status) downloading \(url.lastPathComponent)"
       }
     }
+  }
+
+  /// Check without downloading or installing anything. The Mac app and CLI
+  /// carry the same version, including when running outside an app bundle.
+  public static func availableUpdate(
+    environment: [String: String] = ProcessInfo.processInfo.environment
+  ) async throws -> (version: String, url: URL)? {
+    try await availableUpdate(currentVersion: MaiCLI.version,
+      releases: releasesURL(environment: environment), session: session)
+  }
+
+  static func availableUpdate(currentVersion: String, releases: URL, session: URLSession) async throws
+    -> (version: String, url: URL)?
+  {
+    let url = try await latestRelease(from: releases, session: session)
+    let version = normalizedVersion(url.lastPathComponent)
+    func components(_ value: String) -> [Int]? {
+      let parts = normalizedVersion(value).split(separator: ".", omittingEmptySubsequences: false)
+      let numbers = parts.compactMap { part -> Int? in
+        guard !part.isEmpty, part.utf8.allSatisfy({ (48...57).contains($0) }) else { return nil }
+        return Int(part)
+      }
+      return !numbers.isEmpty && numbers.count == parts.count ? numbers : nil
+    }
+    guard let latest = components(version), let current = components(currentVersion) else { return nil }
+    for index in 0..<max(latest.count, current.count) {
+      let lhs = index < latest.count ? latest[index] : 0
+      let rhs = index < current.count ? current[index] : 0
+      if lhs != rhs { return lhs > rhs ? (version, url) : nil }
+    }
+    return nil
+  }
+
+  private static func releasesURL(environment: [String: String]) throws -> URL {
+    try releaseURL(setting("PMAI_RELEASES_URL", in: environment)
+      ?? "https://github.com/trufae/pmai/releases")
+  }
+
+  private static func latestRelease(from releases: URL, session: URLSession) async throws -> URL {
+    var request = URLRequest(url: releases.appendingPathComponent("latest"))
+    request.httpMethod = "HEAD"
+    let response: HTTPURLResponse
+    do {
+      (_, response) = try await fetch(request, session: session)
+    } catch {
+      throw Failure.message("could not check the latest release: \(error.localizedDescription)")
+    }
+    guard let url = response.url,
+      url.scheme == releases.scheme, url.host == releases.host, url.port == releases.port,
+      url.deletingLastPathComponent().path == releases.appendingPathComponent("tag").path
+    else { throw Failure.message("could not determine the latest release version") }
+    return url
   }
 
   static func run(currentVersion: String, executable: String, environment: [String: String]) async throws {
@@ -63,23 +115,10 @@ enum CLIUpdater {
     let target = directory.appendingPathComponent(binaryName)
     let installedVersion = try? runBinary(target, argument: "--version", environment: environment)
     let oldVersion = normalizedVersion(installedVersion ?? currentVersion)
-    let releases = try releaseURL(
-      setting("PMAI_RELEASES_URL", in: environment) ?? "https://github.com/trufae/pmai/releases")
+    let releases = try releasesURL(environment: environment)
     var tag = setting("PMAI_VERSION", in: environment) ?? "latest"
     if tag == "latest" {
-      var request = URLRequest(url: releases.appendingPathComponent("latest"))
-      request.httpMethod = "HEAD"
-      let response: HTTPURLResponse
-      do {
-        (_, response) = try await fetch(request, session: session)
-      } catch {
-        throw Failure.message("could not check the latest release: \(error.localizedDescription)")
-      }
-      guard let url = response.url,
-        url.scheme == releases.scheme, url.host == releases.host, url.port == releases.port,
-        url.deletingLastPathComponent().path == releases.appendingPathComponent("tag").path
-      else { throw Failure.message("could not determine the latest release version") }
-      tag = url.lastPathComponent
+      tag = try await latestRelease(from: releases, session: session).lastPathComponent
     }
     guard !tag.isEmpty, tag != ".", tag != "..",
       tag.utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0)

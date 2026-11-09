@@ -12,6 +12,12 @@ permission). `MAC_APP` overrides the build bundle path for all Mac targets.
 `pmai.app` and an Applications shortcut. Set `MAC_DMG` to change the output path,
 or `CONFIG=Debug` to package a debug build.
 
+At launch, the app checks for a newer release in the background using the same
+release lookup as `pmai -U`. When an update is available, **Open GitHub** opens
+its release page so you can download the macOS DMG and replace the app in
+Applications. **Later** dismisses the notice until the next launch. Failed or
+offline checks do not interrupt startup.
+
 Use **Open Workspace** (⌘O) to select a folder. Existing CLI projects and chats
 appear automatically. **New Chat** is ⌘N; **Send** is Return (or ⌘Return);
 Shift-Return inserts a newline; **Stop** is ⌘. The conversation inspector contains provider, model,
