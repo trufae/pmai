@@ -500,6 +500,7 @@ public actor ACPServer {
         "pmai": .object([
           "folders": .array(snapshot.folders.map(\.json)), "canManageSessions": .bool(true),
           "canOrganizeSessions": .bool(snapshot.canOrganizeSessions == true),
+          "canMoveSessions": .bool(snapshot.canMoveSessions == true),
         ])
       ])
     ])
@@ -564,6 +565,12 @@ public actor ACPServer {
     if action == .rename, title?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
       throw JSONRPCError.invalidParams("Provide a nonempty title")
     }
+    let destination: URL?
+    if action == .move {
+      destination = try directory(params: .object([
+        "cwd": params?.objectValue?["destinationCwd"] ?? .null,
+      ]))
+    } else { destination = nil }
     let id = params?.objectValue?["sessionId"]?.stringValue ?? ""
     let wasLoaded = sessions[id] != nil
     guard sessions[id]?.busy != true else { throw JSONRPCError.invalidParams("Session is busy") }
@@ -574,6 +581,33 @@ public actor ACPServer {
     }
     guard var saved = sessions[id]?.saved else {
       throw JSONRPCError.invalidParams("Unknown session")
+    }
+    if let destination {
+      guard let workspace else { throw JSONRPCError.methodNotFound(ACP.Method.sessionManage) }
+      guard sessions[id]?.children.isEmpty != false else {
+        throw JSONRPCError.invalidParams("Stop running subagents before moving this conversation")
+      }
+      let source = saved.workingDirectory
+      // Write the checkpoint first, while holding the session lease. A failed
+      // repository move restores it, leaving the original session usable.
+      saved.workingDirectory = destination
+      if let file = sessionDirectory?.appendingPathComponent(id + ".json") {
+        try ACPStateFiles.write(saved, to: file)
+      }
+      let result: ACPSessionInfo
+      do {
+        result = try await workspace.move(sessionID: id, cwd: source.path, destinationCwd: destination.path)
+      } catch {
+        saved.workingDirectory = source
+        if let file = sessionDirectory?.appendingPathComponent(id + ".json") {
+          try ACPStateFiles.write(saved, to: file)
+        }
+        throw error
+      }
+      // Reopening in the destination must create a fresh runtime for its tools
+      // and working directory instead of retaining the source's live session.
+      sessions.removeValue(forKey: id)
+      return result.json
     }
     if action != .rename && action != .delete {
       guard let workspace else { throw JSONRPCError.methodNotFound(ACP.Method.sessionManage) }

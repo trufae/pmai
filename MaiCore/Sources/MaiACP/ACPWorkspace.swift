@@ -66,6 +66,7 @@ public struct ACPWorkspaceSnapshot: Codable, Equatable, Sendable {
   public var sessions: [ACPSessionInfo]
   public var canManageSessions: Bool?
   public var canOrganizeSessions: Bool?
+  public var canMoveSessions: Bool?
 
   public init(folders: [ACPWorkspaceFolder] = [], sessions: [ACPSessionInfo] = []) {
     self.folders = folders
@@ -74,7 +75,7 @@ public struct ACPWorkspaceSnapshot: Codable, Equatable, Sendable {
 }
 
 public enum ACPSessionAction: String, Sendable {
-  case rename, delete, fork, pin, unpin, archive, restore
+  case rename, delete, fork, pin, unpin, archive, restore, move
 }
 
 /// A durable conversation supplied by the host, rather than owned by ACP.
@@ -107,9 +108,14 @@ public protocol ACPWorkspaceRepository: Sendable {
   func save(_ conversation: ACPWorkspaceConversation) async throws
   func delete(sessionID: String, cwd: String) async throws
   func organize(sessionID: String, cwd: String, action: ACPSessionAction) async throws -> ACPSessionInfo
+  func move(sessionID: String, cwd: String, destinationCwd: String) async throws -> ACPSessionInfo
 }
 
 extension ACPWorkspaceRepository {
+  public func move(sessionID: String, cwd: String, destinationCwd: String) async throws -> ACPSessionInfo {
+    throw JSONRPCError.methodNotFound(ACP.Method.sessionManage)
+  }
+
   public func organize(sessionID: String, cwd: String, action: ACPSessionAction) async throws -> ACPSessionInfo {
     throw JSONRPCError.methodNotFound(ACP.Method.sessionManage)
   }
@@ -139,7 +145,7 @@ public struct AgentHomeACPWorkspace: ACPWorkspaceRepository {
       chat.isArchived = true
     case .restore: chat.isArchived = false
     case .fork: chat = chat.forked()
-    case .rename, .delete: throw JSONRPCError.invalidParams("Use title management to rename or delete")
+    case .rename, .delete, .move: throw JSONRPCError.invalidParams("Use conversation management to rename, delete or move")
     }
     chat.touch()
     try home.chatStore(for: project).save(chat)
@@ -152,6 +158,25 @@ public struct AgentHomeACPWorkspace: ACPWorkspaceRepository {
       let project = try home.loadProject(atWorkingDirectory: URL(fileURLWithPath: cwd))
     else { throw JSONRPCError.invalidParams("Unknown conversation") }
     _ = try home.chatStore(for: project).delete(id: id)
+  }
+
+  public func move(sessionID: String, cwd: String, destinationCwd: String) async throws -> ACPSessionInfo {
+    guard let id = UUID(uuidString: sessionID),
+      let source = try home.loadProject(atWorkingDirectory: URL(fileURLWithPath: cwd)),
+      let destination = try home.loadProject(atWorkingDirectory: URL(fileURLWithPath: destinationCwd)),
+      source.id != destination.id,
+      let chat = try home.chatStore(for: source).loadChat(id: id)
+    else { throw JSONRPCError.invalidParams("Choose another existing folder for this conversation") }
+    let target = home.chatStore(for: destination)
+    guard !target.fileExists(for: id) else {
+      throw JSONRPCError.invalidParams("This conversation already exists in the destination folder")
+    }
+    // Load and save through the store so chunked histories and all chat settings
+    // travel together. Never remove the source before the destination is durable.
+    try target.save(chat, evenIfDisposable: true)
+    try home.chatStore(for: source).delete(id: id)
+    return .init(sessionID: sessionID, cwd: destinationCwd, title: chat.displayTitle,
+      updatedAt: chat.updatedAt, isPinned: chat.isPinned, isArchived: chat.isArchived)
   }
 
   public func snapshot() async throws -> ACPWorkspaceSnapshot {
@@ -176,6 +201,7 @@ public struct AgentHomeACPWorkspace: ACPWorkspaceRepository {
     var snapshot = ACPWorkspaceSnapshot(folders: folders, sessions: sessions)
     snapshot.canManageSessions = true
     snapshot.canOrganizeSessions = true
+    snapshot.canMoveSessions = true
     return snapshot
   }
 

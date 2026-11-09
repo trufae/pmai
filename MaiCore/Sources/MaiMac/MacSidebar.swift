@@ -6,17 +6,37 @@ struct MacSidebar: View {
   @Bindable var workspace: MacWorkspace
   @State private var rename: SidebarRename?
   @State private var confirmation: SidebarConfirmation?
+  @State private var selectedSessionIDs = Set<String>()
 
   var body: some View {
     VStack(spacing: 0) {
-      List {
-        section(.hosts, subtitle: workspace.hostName) { hosts }
-        section(.folders, subtitle: folderName) { folders }
+      List(selection: conversationSelection) {
+        section(.hosts, subtitle: workspace.hostName) { hosts.selectionDisabled() }
+        section(.folders, subtitle: folderName) { folders.selectionDisabled() }
         section(.conversations, subtitle: workspace.showArchived ? "Archived" : nil) { conversations }
       }
       .listStyle(.sidebar)
       .buttonStyle(.plain)
       .disabled(workspace.busy)
+      .contextMenu(forSelectionType: String.self) { ids in
+        let sessions = workspace.sessions.filter { ids.contains($0.sessionID) }
+        if sessions.count == 1, let session = sessions.first {
+          sessionActions(session, chat: workspace.conversation(for: session))
+        } else if !sessions.isEmpty {
+          batchActions(sessions)
+        }
+      }
+      if selectedSessions.count > 1 {
+        HStack {
+          Text("\(selectedSessions.count) selected").font(.caption)
+          Spacer()
+          Menu { batchActions(selectedSessions) } label: {
+            Label("Actions", systemImage: "ellipsis.circle")
+          }
+          .menuStyle(.borderlessButton).fixedSize()
+        }.padding(12)
+          .disabled(workspace.busy)
+      }
       Divider()
       HStack {
         Label(workspace.hostName, systemImage: workspace.hostID == nil ? "desktopcomputer" : "network")
@@ -35,6 +55,45 @@ struct MacSidebar: View {
       }
       Button("Cancel", role: .cancel) { confirmation = nil }
     } message: { Text(confirmation?.message ?? "") }
+    .onChange(of: workspace.selectedID) { _, _ in
+      if !workspace.busy {
+        if selectedSessionIDs.count > 1, let id = workspace.selected?.sessionID,
+          selectedSessionIDs.contains(id) { return }
+        syncSelection()
+      }
+    }
+    .onChange(of: workspace.sessions.map(\.sessionID)) { _, ids in
+      selectedSessionIDs.formIntersection(ids)
+    }
+    .onChange(of: selectionContext) { _, _ in syncSelection() }
+    .onAppear { syncSelection() }
+  }
+
+  private var selectedSessions: [ACPSessionInfo] {
+    workspace.sessions.filter { selectedSessionIDs.contains($0.sessionID) }
+  }
+
+  private var selectionContext: [String] {
+    [workspace.hostID?.uuidString ?? "", workspace.cwd, workspace.search,
+      String(workspace.showArchived), workspace.sidebarSection?.rawValue ?? ""]
+  }
+
+  private var conversationSelection: Binding<Set<String>> {
+    Binding(get: { selectedSessionIDs }, set: { ids in
+      selectedSessionIDs = ids
+      if ids.count == 1, let session = workspace.sessions.first(where: { ids.contains($0.sessionID) }) {
+        workspace.open(session)
+      }
+    })
+  }
+
+  private func syncSelection() {
+    if workspace.sidebarSection == .conversations, let chat = workspace.selected,
+      let session = workspace.sessions.first(where: {
+        chat.hostID == workspace.hostID && chat.cwd == $0.cwd && chat.sessionID == $0.sessionID
+      }) {
+      selectedSessionIDs = [session.sessionID]
+    } else { selectedSessionIDs = [] }
   }
 
   private var folderName: String? {
@@ -60,6 +119,7 @@ struct MacSidebar: View {
       }
       .accessibilityLabel(section.rawValue)
       .accessibilityValue(workspace.sidebarSection == section ? "Expanded" : "Collapsed")
+      .selectionDisabled()
     }
   }
 
@@ -141,7 +201,7 @@ struct MacSidebar: View {
   private var conversations: some View {
     Group {
       if workspace.cwd.isEmpty {
-        Button("Choose a Folder…") { workspace.sidebarSection = .folders }
+        Button("Choose a Folder…") { workspace.sidebarSection = .folders }.selectionDisabled()
       } else {
         HStack(spacing: 8) {
           TextField("Find a conversation", text: $workspace.search)
@@ -152,24 +212,23 @@ struct MacSidebar: View {
               .accessibilityValue(workspace.showArchived ? "Archived" : "Active")
               .help(workspace.showArchived ? "Showing archived conversations. Switch to active." : "Showing active conversations. Switch to archived.")
           }
-        }
-        Button(action: workspace.newChat) { Label("New Chat", systemImage: "square.and.pencil") }
+        }.selectionDisabled()
         ForEach(workspace.unlistedConversations) { chat in
-          Button { workspace.select(chat) } label: {
+          Button { selectedSessionIDs = []; workspace.select(chat) } label: {
             chatRow(title: chat.title, chat: chat)
           }
           .contextMenu { openChatActions(chat) }
+          .selectionDisabled()
         }
         ForEach(workspace.sessions) { session in
           let chat = workspace.conversation(for: session)
-          Button { workspace.open(session) } label: {
-            chatRow(title: session.title, chat: chat, pinned: session.isPinned == true, date: session.updatedAt)
-          }
-          .contextMenu { sessionActions(session, chat: chat) }
+          chatRow(title: session.title, chat: chat, pinned: session.isPinned == true, date: session.updatedAt)
+            .tag(session.sessionID)
         }
         if workspace.sessions.isEmpty && workspace.unlistedConversations.isEmpty {
           Text(workspace.search.isEmpty ? "No \(workspace.showArchived ? "archived" : "active") conversations." : "No matching conversations.")
             .foregroundStyle(.secondary)
+            .selectionDisabled()
         }
       }
     }
@@ -214,9 +273,9 @@ struct MacSidebar: View {
           }
         }
         Divider()
+        moveMenu([session])
         Button("Delete…", systemImage: "trash", role: .destructive) {
-          confirmation = .init(title: "Delete \(session.title)?", button: "Delete Conversation",
-            message: "This permanently deletes the saved conversation.") { workspace.manage(session, action: .delete) }
+          confirmDelete([session])
         }
       }.disabled(chat?.busy == true)
     }
@@ -226,6 +285,43 @@ struct MacSidebar: View {
     }
     Button("Copy Conversation ID", systemImage: "doc.on.doc") { copy(session.sessionID) }
     if let chat { openChatActions(chat) }
+  }
+
+  private func batchActions(_ sessions: [ACPSessionInfo]) -> some View {
+    Group {
+      moveMenu(sessions)
+      Button("Delete \(sessions.count) Conversations…", systemImage: "trash", role: .destructive) {
+        confirmDelete(sessions)
+      }
+    }
+    .disabled(workspace.busy || workspace.snapshot.canManageSessions != true
+      || sessions.contains { workspace.conversation(for: $0)?.busy == true })
+  }
+
+  @ViewBuilder
+  private func moveMenu(_ sessions: [ACPSessionInfo]) -> some View {
+    if workspace.snapshot.canMoveSessions == true {
+      Menu("Move to Folder", systemImage: "folder") {
+        ForEach(workspace.snapshot.folders.filter { $0.cwd != workspace.cwd }) { folder in
+          Button(folder.name, systemImage: folder.icon ?? "folder") {
+            workspace.manage(sessions, action: .move, destinationCwd: folder.cwd)
+          }
+          .help(folder.cwd)
+        }
+      }
+      .disabled(!workspace.snapshot.folders.contains { $0.cwd != workspace.cwd })
+    }
+  }
+
+  private func confirmDelete(_ sessions: [ACPSessionInfo]) {
+    let hostID = workspace.hostID
+    let title = sessions.count == 1 ? "Delete \(sessions[0].title)?" : "Delete \(sessions.count) conversations?"
+    confirmation = .init(title: title,
+      button: sessions.count == 1 ? "Delete Conversation" : "Delete Conversations",
+      message: "This permanently deletes the selected saved conversations.") {
+        guard workspace.hostID == hostID else { return }
+        workspace.manage(sessions, action: .delete)
+      }
   }
 
   @ViewBuilder

@@ -202,41 +202,64 @@ final class MacWorkspace {
   }
 
   func manage(_ session: ACPSessionInfo, action: ACPSessionAction, title: String? = nil) {
-    let chat = conversation(for: session)
-    guard !busy, chat?.busy != true else { return }
+    manage([session], action: action, title: title)
+  }
+
+  func manage(_ sessions: [ACPSessionInfo], action: ACPSessionAction, title: String? = nil,
+    destinationCwd: String? = nil) {
+    let chats = sessions.compactMap { conversation(for: $0) }
+    guard !busy, !sessions.isEmpty, !chats.contains(where: \.busy),
+      sessions.allSatisfy({ $0.cwd == cwd }) else { return }
+    if action == .move {
+      guard snapshot.canMoveSessions == true, let destinationCwd, destinationCwd != cwd,
+        snapshot.folders.contains(where: { $0.cwd == destinationCwd }) else { return }
+    }
     busy = true
-    chat?.busy = true
+    // Reserve every selected chat before suspending, including chats displayed
+    // in other windows, so a turn cannot begin halfway through the batch.
+    for chat in chats { chat.busy = true }
     Task {
-      defer { chat?.busy = false }
-      var temporaryClient: (any RemoteSessionClient)?
-      do {
-        let client: any RemoteSessionClient
-        if let active = chat?.client, chat?.connected == true {
-          client = active
-        } else {
-          if let host {
-            client = try hostStore.connection(for: host).makeSession(cwd: session.cwd)
+      defer { for chat in chats { chat.busy = false } }
+      var failures: [String] = []
+      var fork: ACPSessionInfo?
+      for session in sessions {
+        let chat = conversation(for: session)
+        var temporaryClient: (any RemoteSessionClient)?
+        do {
+          let client: any RemoteSessionClient
+          if let active = chat?.client, chat?.connected == true {
+            client = active
           } else {
-            client = ACPClient(configuration: localConfiguration(cwd: session.cwd))
+            if let host {
+              client = try hostStore.connection(for: host).makeSession(cwd: session.cwd)
+            } else {
+              client = ACPClient(configuration: localConfiguration(cwd: session.cwd))
+            }
+            temporaryClient = client
           }
-          temporaryClient = client
-        }
-        let result = try await client.manageSession(session.sessionID, cwd: session.cwd, action: action, title: title)
-        if action == .rename, let title { chat?.title = title }
-        if action == .delete || action == .archive, let chat {
-          await chat.close()
-          conversations.removeAll { $0.id == chat.id }
-          if selectedID == chat.id { selectedID = nil }
+          let result: ACPSessionInfo?
+          if action == .move, let destinationCwd {
+            result = try await client.moveSession(session.sessionID, cwd: session.cwd, destinationCwd: destinationCwd)
+          } else {
+            result = try await client.manageSession(session.sessionID, cwd: session.cwd, action: action, title: title)
+          }
+          if action == .rename, let title { chat?.title = title }
+          if action == .delete || action == .archive || action == .move, let chat {
+            await chat.close()
+            conversations.removeAll { $0.id == chat.id }
+            if selectedID == chat.id { selectedID = nil }
+          }
+          if action == .fork { fork = result }
+        } catch {
+          failures.append("\(session.title): \(error.localizedDescription)")
         }
         await temporaryClient?.disconnect()
-        busy = false
-        await refresh()
-        if action == .fork, let result { open(result) }
-      } catch {
-        await temporaryClient?.disconnect()
-        busy = false
-        self.error = error.localizedDescription
       }
+      busy = false
+      await refresh()
+      if let fork { open(fork) }
+      if !failures.isEmpty { self.error = failures.joined(separator: "\n") }
+      remember()
     }
   }
 

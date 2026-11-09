@@ -373,9 +373,6 @@ public actor ACPClient {
 
   public func manageSession(_ id: String, cwd: String, action: ACPSessionAction,
     title: String? = nil) async throws -> ACPSessionInfo? {
-    guard !busy else { throw JSONRPCError.invalidParams("Session is busy") }
-    busy = true
-    defer { busy = false }
     var fields: [String: JSONValue] = [
       "sessionId": .string(id), "cwd": .string(cwd), "action": .string(action.rawValue),
     ]
@@ -387,6 +384,20 @@ public actor ACPClient {
       }
       fields["title"] = action == .delete ? .null : title.map(JSONValue.string)
     }
+    return try await manageSession(fields: fields)
+  }
+
+  public func moveSession(_ id: String, cwd: String, destinationCwd: String) async throws -> ACPSessionInfo? {
+    try await manageSession(fields: [
+      "sessionId": .string(id), "cwd": .string(cwd), "action": .string("move"),
+      "destinationCwd": .string(destinationCwd),
+    ])
+  }
+
+  private func manageSession(fields: [String: JSONValue]) async throws -> ACPSessionInfo? {
+    guard !busy else { throw JSONRPCError.invalidParams("Session is busy") }
+    busy = true
+    defer { busy = false }
     let result = try await connectedPeer().request(
       ACP.Method.sessionManage,
       params: .object(fields), timeout: 60)
@@ -457,6 +468,8 @@ public actor ACPClient {
         .objectValue?["canManageSessions"]?.boolValue
       snapshot.canOrganizeSessions = fields["_meta"]?.objectValue?["pmai"]?
         .objectValue?["canOrganizeSessions"]?.boolValue
+      snapshot.canMoveSessions = fields["_meta"]?.objectValue?["pmai"]?
+        .objectValue?["canMoveSessions"]?.boolValue
       for value in sessions {
         guard let entry = value.objectValue,
           let id = entry["sessionId"]?.stringValue, !id.isEmpty,

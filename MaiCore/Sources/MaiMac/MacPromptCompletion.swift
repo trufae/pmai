@@ -34,6 +34,7 @@ final class MacPromptCompletion {
       let name = PromptSlashCommand.normalized(entry.commandName)
       return seen.insert(name).inserted && entry.kind != .system && name.hasPrefix(fragment)
     }.sorted { $0.commandName < $1.commandName }
+    if !matches.isEmpty { selected = 0 }
   }
 }
 
@@ -58,7 +59,7 @@ struct MacPromptCompletionList: View {
         }
       }
       Divider()
-      Text("Tab / ⇧Tab to complete · Esc to dismiss")
+      Text("↑ ↓ to choose · Tab to complete · Esc to dismiss")
         .font(.caption).foregroundStyle(.secondary).padding(8)
     }
     .frame(maxWidth: 440)

@@ -29,6 +29,7 @@ public protocol RemoteSessionClient: AnyObject, Sendable {
   func workspace() async throws -> ACPWorkspaceSnapshot?
   func manageSession(_ id: String, cwd: String, title: String?) async throws
   func manageSession(_ id: String, cwd: String, action: ACPSessionAction, title: String?) async throws -> ACPSessionInfo?
+  func moveSession(_ id: String, cwd: String, destinationCwd: String) async throws -> ACPSessionInfo?
   func configurationOptions() async throws -> [RemoteSessionOption]
   func promptCatalog() async throws -> PromptCatalog
   func setConfigurationOption(id: String, value: JSONValue) async throws -> [RemoteSessionOption]
@@ -46,6 +47,10 @@ public protocol RemoteSessionClient: AnyObject, Sendable {
 }
 
 extension RemoteSessionClient {
+  public func moveSession(_ id: String, cwd: String, destinationCwd: String) async throws -> ACPSessionInfo? {
+    throw JSONRPCError.invalidParams("This host does not support moving conversations")
+  }
+
   public func manageSession(_ id: String, cwd: String, action: ACPSessionAction,
     title: String? = nil) async throws -> ACPSessionInfo? {
     guard action == .rename || action == .delete else {

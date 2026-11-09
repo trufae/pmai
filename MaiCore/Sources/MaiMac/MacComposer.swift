@@ -14,6 +14,9 @@ struct MacComposer: View {
       .overlay(alignment: .topLeading) {
         if !completion.matches.isEmpty {
           MacPromptCompletionList(completion: completion)
+            // The editor proposes only one line of height. Measure the popup
+            // independently before aligning its bottom above that line.
+            .fixedSize(horizontal: false, vertical: true)
             .alignmentGuide(.top) { $0[.bottom] + 14 }
         }
       }
@@ -177,12 +180,16 @@ private struct MacComposerEditor: NSViewRepresentable {
     if !hasMarkedText(), event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
       let completion, !completion.matches.isEmpty {
       if event.keyCode == 53 { completion.dismiss(); return }
-      if event.keyCode == 48 || event.keyCode == 125 || event.keyCode == 126 {
-        let backwards = event.keyCode == 126 || event.modifierFlags.contains(.shift)
+      if event.keyCode == 48 {
+        applyCompletion(at: max(0, completion.selected), finish: true)
+        return
+      }
+      if event.keyCode == 125 || event.keyCode == 126 {
+        let backwards = event.keyCode == 126
         let count = completion.matches.count
         let next = completion.selected < 0 ? (backwards ? count - 1 : 0)
           : (completion.selected + (backwards ? count - 1 : 1)) % count
-        applyCompletion(at: next, finish: count == 1)
+        completion.selected = next
         return
       }
     }

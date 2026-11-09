@@ -13,6 +13,11 @@ final class MacConversation: Identifiable {
   var title: String
   var messages: [ACPConversationMessage] = []
   var options: [RemoteSessionOption] = []
+  var modelName: String? {
+    guard let model = options.first(where: { $0.category == "model" }) else { return nil }
+    return model.choices.first(where: { .string($0.id) == model.currentValue })?.name
+      ?? model.currentValue.stringValue
+  }
   var prompts = PromptCatalog(builtins: [])
   var agents: [AgentProcessRecord] = []
   var draft = "" {

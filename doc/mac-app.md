@@ -44,6 +44,13 @@ semantics as `/chat`. Remote hosts advertise supported operations; older ACP
 hosts and OpenCode offer rename/delete without the newer organization actions.
 Running turns must finish or be stopped before editing a conversation.
 
+Use **⌘-click** to select multiple saved conversations or **Shift-click** to
+select a range. Right-click the selection or use its **Actions** menu to delete
+the selected chats together or **Move to Folder**. Deletion asks once for the
+whole selection. Moves stay on the same host and preserve history and settings;
+remote hosts must advertise move support. If an individual operation fails,
+the other selected chats are still processed and the error names the failed chat.
+
 Host menus support renaming and removing saved connections. Folder menus offer
 new chats and copying paths; local folders also support display-name changes,
 Finder/terminal access, and removal from the sidebar. Removing a folder keeps
@@ -60,12 +67,15 @@ The chosen size is saved across launches.
 The floating composer uses Liquid Glass on macOS 26 and later, with a system
 material on macOS 15. It starts at one text row, grows with wrapping or newlines
 up to five rows, then scrolls internally. Sending or clearing the draft shrinks
-it back to one row.
+it back to one row. The current model appears in the window title bar; there is
+no idle status row below the composer. Disconnected chats offer **Reconnect** in
+the toolbar.
 
 Type `/` or `$` at the start of the composer to complete names from the host's
-configured prompt catalog and project/global skills. Suggestions narrow as you
-type; Tab/Shift-Tab or the arrow keys cycle and insert names, and Escape dismisses
-the list. Clicking a suggestion inserts it for further editing. Return still
+configured prompt catalog and project/global skills. Suggestions open above the
+composer and narrow as you type; the arrow keys select a suggestion, Tab inserts
+it with a trailing space, and Escape dismisses the list. Clicking a suggestion
+also inserts it for further editing. Return still
 sends the message. `$name arguments` and `/name arguments` expand through the
 shared prompt parser. The inspector's **Agent** selection
 uses the configured agent definitions, including their model and instructions.

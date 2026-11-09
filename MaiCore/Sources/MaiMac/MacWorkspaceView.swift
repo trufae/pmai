@@ -33,9 +33,12 @@ struct MacWorkspaceView: View {
         }
       }
       .navigationTitle(workspace.selected?.title ?? "pmai")
-      .navigationSubtitle(workspace.cwd.isEmpty ? workspace.hostName : "\(workspace.hostName) · \(URL(fileURLWithPath: workspace.cwd).lastPathComponent)")
+      .navigationSubtitle(subtitle)
       .toolbar {
         ToolbarItemGroup {
+          if let conversation = workspace.selected, !conversation.connected && !conversation.busy {
+            Button("Reconnect", systemImage: "arrow.clockwise", action: conversation.connect)
+          }
           Button(action: workspace.newChat) { Label("New Chat", systemImage: "square.and.pencil") }
             .help("New Chat (⌘N)").disabled(workspace.cwd.isEmpty || workspace.busy)
           Button { workspace.showInspector.toggle() } label: {
@@ -64,6 +67,11 @@ struct MacWorkspaceView: View {
     }
   }
 
+  private var subtitle: String {
+    [workspace.selected?.modelName, workspace.hostName,
+      workspace.cwd.isEmpty ? nil : URL(fileURLWithPath: workspace.cwd).lastPathComponent]
+      .compactMap { $0 }.joined(separator: " · ")
+  }
 }
 
 struct MacChatView: View {
@@ -128,47 +136,34 @@ struct MacChatView: View {
   }
 
   private var composer: some View {
-    VStack(spacing: 8) {
-      HStack(alignment: .bottom, spacing: 12) {
-        MacComposer(text: $conversation.draft, prompts: conversation.prompts) { conversation.send(); followsBottom = true }
-          .id(conversation.id)
-          .overlay(alignment: .topLeading) {
-            if conversation.draft.isEmpty {
-              Text("Message pmai…").font(typography.font()).foregroundStyle(.tertiary)
-                .padding(.top, 6).allowsHitTesting(false)
-            }
-          }
-        Group {
-          if conversation.busy {
-            Button(action: conversation.stop) { Label("Stop", systemImage: "stop.fill") }
-              .help("Stop response (⌘.)")
-          } else {
-            Button { conversation.send(); followsBottom = true } label: { Label("Send", systemImage: "arrow.up") }
-              .keyboardShortcut(.return, modifiers: .command)
-              .disabled(!conversation.connected || conversation.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-              .help("Return sends. Shift-Return adds a new line.")
+    HStack(alignment: .bottom, spacing: 12) {
+      MacComposer(text: $conversation.draft, prompts: conversation.prompts) { conversation.send(); followsBottom = true }
+        .id(conversation.id)
+        .zIndex(1)
+        .overlay(alignment: .topLeading) {
+          if conversation.draft.isEmpty {
+            Text("Message pmai…").font(typography.font()).foregroundStyle(.tertiary)
+              .padding(.top, 6).allowsHitTesting(false)
           }
         }
-        .labelStyle(.iconOnly)
-        .buttonStyle(.borderedProminent)
-        .buttonBorderShape(.circle)
-        .controlSize(.regular)
+      Group {
+        if conversation.busy {
+          Button(action: conversation.stop) { Label("Stop", systemImage: "stop.fill") }
+            .help("Stop response (⌘.)")
+        } else {
+          Button { conversation.send(); followsBottom = true } label: { Label("Send", systemImage: "arrow.up") }
+            .keyboardShortcut(.return, modifiers: .command)
+            .disabled(!conversation.connected || conversation.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .help("Return sends. Shift-Return adds a new line.")
+        }
       }
-      .padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 8)
-      .background { composerBackground }
-      HStack {
-        Circle().fill(conversation.connected ? Color.green : Color.secondary).frame(width: 6, height: 6)
-        Text(conversation.status).font(.caption).foregroundStyle(.secondary)
-        if let model = conversation.options.first(where: { $0.category == "model" }) {
-          Text("· " + (model.choices.first(where: { .string($0.id) == model.currentValue })?.name ?? ""))
-            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-        }
-        Spacer()
-        if !conversation.connected && !conversation.busy {
-          Button("Reconnect", action: conversation.connect)
-        }
-      }.padding(.horizontal, 8)
+      .labelStyle(.iconOnly)
+      .buttonStyle(.borderedProminent)
+      .buttonBorderShape(.circle)
+      .controlSize(.regular)
     }
+    .padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 8)
+    .background { composerBackground }
     .frame(maxWidth: 860)
     .padding(.horizontal, 28).padding(.top, 10).padding(.bottom, 14)
     .frame(maxWidth: .infinity)

@@ -922,6 +922,94 @@ func acpWorkspaceDiscovery() async throws {
   await serving.value
 }
 
+@Test("Moving conversations preserves full histories and settings, enforces folder access, and permits deletion at the destination")
+func acpMoveConversations() async throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent("acp-move-\(UUID())")
+    .resolvingSymlinksInPath()
+  defer { try? FileManager.default.removeItem(at: root) }
+  let served = root.appendingPathComponent("served")
+  let sourceURL = served.appendingPathComponent("source")
+  let destinationURL = served.appendingPathComponent("destination")
+  let outsideURL = root.appendingPathComponent("outside")
+  for url in [sourceURL, destinationURL, outsideURL] {
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+  }
+  let home = AgentHome(rootURL: root.appendingPathComponent("home"))
+  let source = try home.openProject(atWorkingDirectory: sourceURL)
+  let destination = try home.openProject(atWorkingDirectory: destinationURL)
+  _ = try home.openProject(atWorkingDirectory: outsideURL)
+  let agent = AgentDefinition(id: "test", provider: "scripted", model: "fixture")
+  let chats = [
+    // 65 messages is the smallest history spanning multiple storage chunks.
+    AgentChat(title: "Chunked", primaryAgent: agent,
+      messages: (0..<65).map { .user("message \($0)") }, pendingContent: [.text("draft")],
+      createdAt: Date(timeIntervalSince1970: 1000), updatedAt: Date(timeIntervalSince1970: 2000),
+      isArchived: true, isPinned: true,
+      runtimeConfiguration: AgentChatConfiguration(configuration: MaiConfiguration(agents: [agent]))),
+    AgentChat(title: "Short", primaryAgent: agent, messages: [.user("question"), .assistant("answer")],
+      createdAt: Date(timeIntervalSince1970: 1000), updatedAt: Date(timeIntervalSince1970: 2000)),
+  ]
+  let sourceStore = home.chatStore(for: source)
+  let destinationStore = home.chatStore(for: destination)
+  for chat in chats { try sourceStore.save(chat) }
+  let runtime = AgentRuntime()
+  try await runtime.register(ACPScriptedProvider(responses: []))
+  let (clientTransport, serverTransport) = PipeTransport.pair()
+  let server = ACPServer(runtime: runtime, agent: agent, bridge: ACPPermissionBridge(),
+    sessionDirectory: root.appendingPathComponent("sessions"), workspaceRoot: served,
+    workspace: AgentHomeACPWorkspace(home: home))
+  let serving = Task { await server.serve(on: serverTransport) }
+  let client = JSONRPCPeer(transport: clientTransport)
+  await client.start()
+  _ = try await client.request("initialize", params: .object(["protocolVersion": .integer(1)]), timeout: 10)
+  let listing = try await client.request(ACP.Method.sessionList, params: .object([:]), timeout: 10)
+  #expect(listing.objectValue?["_meta"]?.objectValue?["pmai"]?.objectValue?["canMoveSessions"] == .bool(true))
+
+  func move(_ chat: AgentChat, to destination: URL) async throws -> JSONValue {
+    try await client.request(ACP.Method.sessionManage, params: .object([
+      "sessionId": .string(chat.id.uuidString.lowercased()), "cwd": .string(sourceURL.path),
+      "action": .string("move"), "destinationCwd": .string(destination.path),
+    ]), timeout: 10)
+  }
+  for invalid in [sourceURL, outsideURL, served.appendingPathComponent("missing")] {
+    await #expect(throws: JSONRPCError.self) { _ = try await move(chats[0], to: invalid) }
+    #expect(try sourceStore.loadChat(id: chats[0].id) == chats[0])
+  }
+  // A stale/duplicate destination must never be overwritten by a batch move.
+  var collision = chats[0]
+  collision.title = "Keep this copy"
+  try destinationStore.save(collision)
+  await #expect(throws: JSONRPCError.self) { _ = try await move(chats[0], to: destinationURL) }
+  #expect(try destinationStore.loadChat(id: collision.id) == collision)
+  #expect(try sourceStore.loadChat(id: chats[0].id) == chats[0])
+  try destinationStore.delete(id: collision.id)
+
+  for chat in chats {
+    let result = try await move(chat, to: destinationURL)
+    let id = chat.id.uuidString.lowercased()
+    #expect(result.objectValue?["cwd"]?.stringValue == destinationURL.path)
+    #expect(try sourceStore.loadChat(id: chat.id) == nil)
+    #expect(try destinationStore.loadChat(id: chat.id) == chat)
+    // The ACP checkpoint must not resurrect the old location on reconnect.
+    await #expect(throws: JSONRPCError.self) {
+      _ = try await client.request(ACP.Method.sessionLoad, params: .object([
+        "sessionId": .string(id), "cwd": .string(sourceURL.path),
+      ]), timeout: 10)
+    }
+    _ = try await client.request(ACP.Method.sessionLoad, params: .object([
+      "sessionId": .string(id), "cwd": .string(destinationURL.path),
+    ]), timeout: 10)
+    _ = try await client.request(ACP.Method.sessionManage, params: .object([
+      "sessionId": .string(id), "cwd": .string(destinationURL.path), "action": .string("delete"),
+    ]), timeout: 10)
+    #expect(try destinationStore.loadChat(id: chat.id) == nil)
+  }
+  let refreshed = try await client.request(ACP.Method.sessionList, params: .object([:]), timeout: 10)
+  #expect(refreshed.objectValue?["sessions"]?.arrayValue?.isEmpty == true)
+  await client.close()
+  await serving.value
+}
+
 @Test("Legacy ACP sessions join the project index once and forgetting a project hides its checkpoints")
 func acpLegacyWorkspaceMigration() async throws {
   struct LegacySession: Encodable {
