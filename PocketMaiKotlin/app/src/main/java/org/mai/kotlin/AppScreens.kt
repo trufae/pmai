@@ -589,13 +589,17 @@ private enum class Destination(val label: String, val icon: ImageVector) {
     var section by rememberSaveable { mutableStateOf("General") }
     var editingPrompt by remember { mutableStateOf<Prompt?>(null) }
     var addingPrompt by remember { mutableStateOf(false) }
-    val sections = listOf("General", "Tools", "MCP", "Skills") + if (state.isRemote) listOf("Remote") else emptyList()
+    val sections = listOf("General", "Tools", "MCP", "Skills", "Pebble") + if (state.isRemote) listOf("Remote") else emptyList()
     Scaffold(topBar = { Column {
         TopAppBar(title = { Text("Settings") })
         SecondaryScrollableTabRow(selectedTabIndex = sections.indexOf(section).coerceAtLeast(0), edgePadding = 12.dp) {
             sections.forEach { name -> Tab(selected = name == section, onClick = { section = name }, text = { Text(name) }) }
         }
     } }) { padding ->
+        if (section == "Pebble") {
+            PebbleSettings(state.pebble, model, Modifier.padding(padding))
+            return@Scaffold
+        }
         if (section != "General") {
             AgentSettings(state, model, section, Modifier.padding(padding))
             return@Scaffold

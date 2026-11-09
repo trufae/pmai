@@ -58,6 +58,7 @@ data class AppState(
     val agent: AgentState = AgentState(),
     val providers: List<ProviderInfo> = emptyList(), val selectedProviderID: String = "",
     val folders: List<ChatFolder> = emptyList(), val folderID: String = "all",
+    val pebble: PebbleState = PebbleState(),
 ) {
     val isRemote get() = remote.hostID.isNotEmpty()
     val busy get() = if (isRemote) remote.busy else generating || loadingModels
@@ -77,6 +78,7 @@ data class AppState(
             }
             return AppState(
                 ready = j.optBoolean("ready"), awake = j.optBoolean("awake"), error = j.optString("error"),
+                pebble = PebbleState.decode(j.optJSONObject("pebble")),
                 baseURL = j.optString("baseURL"), apiKey = j.optString("apiKey"), model = j.optString("model"),
                 chatID = j.optString("chatID"), title = j.optString("title", "New chat"),
                 generating = j.optBoolean("isGenerating"), loadingModels = j.optBoolean("isLoadingModels"),

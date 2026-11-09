@@ -151,7 +151,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     if case .resume = action {
       conversationID = resumableConversation?.id
     } else {
-      let id = store.createCarPlayConversation()
+      let id = store.createAccessoryConversation()
       newConversationID = id
       conversationID = id
     }
@@ -265,7 +265,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
   private func discardEmptyConversation() {
     guard let id = newConversationID else { return }
     newConversationID = nil
-    store.discardEmptyCarPlayConversation(id: id)
+    store.discardEmptyAccessoryConversation(id: id)
   }
 
   private func showAlert(_ title: String) {

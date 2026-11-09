@@ -51,6 +51,8 @@ Built on [MaiCore](MaiCore/README.md), following
 | **PocketMai for Android** | Native Kotlin/Compose client with shared MaiCore, tools, MCP, skills, Forwiroh hosts and WebXDC apps. | [Download APK](https://trufae.github.io/pmai/downloads/PocketMai-Android.apk) · [Android guide](PocketMaiKotlin/README.md) |
 
 The older [pure Swift Android preview](PocketMaiAndroid/README.md) is deprecated.
+
+The [Pebble Time 2 app](PebbleApp/README.md) supports voice prompts and saved shortcuts through PocketMai for iOS and Android.
 Its CI artifacts are labeled `pureswift` and are excluded from GitHub releases
 and website downloads. The Android CLI is a separate terminal client.
 

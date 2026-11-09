@@ -21,6 +21,9 @@ import Observation
   private var shells: [String: MobileShell] = [:]
   private var catalogRequested = false
   private var webTasks: [String: Task<Void, Never>] = [:]
+  private let pebble: PebbleBridge
+  private var pebblePrompts: [UserPrompt] = []
+  private var pebbleChatID: UUID?
 
   public init(directory: URL, clientName: String = "PocketMai", update: @escaping (String) -> Void,
     preferences: UserDefaults = .standard,
@@ -38,7 +41,39 @@ import Observation
       runTurn: { request, provider, emit in try await tools.run(request, provider: provider, emit: emit) })
     remote = try RemoteState(directory: directory.appendingPathComponent("remotes"), clientName: clientName)
     self.update = update
+    pebble = PebbleBridge(preferences: preferences)
+    if let data = preferences.data(forKey: "pebble.prompts") {
+      pebblePrompts = (try? JSONDecoder().decode([UserPrompt].self, from: data)) ?? []
+    }
+    pebble.configure(presets: { [weak self] in self?.pebblePrompts ?? [] }, newChat: { [weak self] in
+      self?.pebbleChatID = nil
+    }) { [weak self] text, _ in
+      guard let self else { throw PebbleChatError.unavailable }
+      return try await self.sendPebbleTurn(text)
+    }
     try awake.setEnabled(preferences.bool(forKey: AwakeController.preferenceKey))
+  }
+
+  private func sendPebbleTurn(_ text: String) async throws -> String {
+    guard !chat.isGenerating, !chat.isLoadingModels else { throw PortableChatError.busy }
+    guard !chat.model.isEmpty else { throw PortableChatError.missingModel }
+    if let id = pebbleChatID, id == chat.chat.id || chat.chats.contains(where: { $0.id == id }) {
+      if chat.chat.id != id { try chat.openChat(id) }
+    } else {
+      try chat.newChat()
+      try folders.assignNew(chat.chat.id.uuidString)
+    }
+    pebbleChatID = chat.chat.id
+    let priorID = chat.messages.last { $0.role == .assistant }?.id
+    let sent = await chat.sendAndWait(text)
+    if let error = chat.errorMessage { throw PebbleChatError.message(error) }
+    if chat.status == "Stopped" { throw PebbleChatError.message("Reply stopped.") }
+    guard sent,
+      let reply = chat.messages.last(where: { $0.role == .assistant && !$0.text.isEmpty }),
+      reply.id != priorID else {
+      throw PebbleChatError.message("The agent returned no text.")
+    }
+    return reply.text
   }
 
   public func configureRemote(identity: Data?) { remote.configure(identity: identity) }
@@ -131,6 +166,27 @@ import Observation
       let command = try JSONDecoder().decode([String: String].self, from: Data(json.utf8))
       func value(_ key: String) -> String { command[key] ?? "" }
       switch value("action") {
+      case "pebbleEnable": pebble.setEnabled(value("enabled") == "true")
+      case "pebblePair": pebble.beginPairing()
+      case "pebbleApprove": pebble.approvePairing()
+      case "pebbleForget": pebble.unpair()
+      case "pebblePrompt":
+        let id = UUID(uuidString: value("id"))
+        if value("remove") == "true" {
+          pebblePrompts.removeAll { $0.id == id }
+        } else {
+          let name = value("name").trimmingCharacters(in: .whitespacesAndNewlines)
+          let prompt = UserPrompt(id: id ?? UUID(), name: name, text: value("text"))
+          guard !name.isEmpty, !prompt.message(arguments: "").isEmpty else {
+            throw PebbleChatError.message("Enter a name and message for the Pebble prompt.")
+          }
+          if let index = pebblePrompts.firstIndex(where: { $0.id == prompt.id }) {
+            pebblePrompts[index] = prompt
+          } else if pebblePrompts.count < PebbleBridge.presetLimit {
+            pebblePrompts.append(prompt)
+          }
+        }
+        preferences.set(try JSONEncoder().encode(pebblePrompts), forKey: "pebble.prompts")
       case "awake":
         guard ["true", "false"].contains(value("enabled")) else {
           throw JSONRPCError.invalidParams("awake requires enabled=true or false")
@@ -249,6 +305,9 @@ import Observation
   public func snapshotJSON() -> String {
     let snapshot: [String: Any] = [
       "ready": true, "awake": awake.isEnabled,
+      "pebble": ["enabled": pebble.enabled, "listening": pebble.listening, "paired": pebble.paired,
+        "pairing": pebble.pairing, "code": pebble.pairingCode ?? "", "error": pebble.error,
+        "prompts": pebblePrompts.map { ["id": $0.id.uuidString, "name": $0.name, "text": $0.text] }],
       "shells": shells.values.map(\.snapshot),
       "baseURL": chat.baseURL, "apiKey": chat.apiKey, "model": chat.model,
       "chatID": chat.chat.id.uuidString, "title": chat.chat.displayTitle,
