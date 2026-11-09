@@ -27,8 +27,8 @@ its conversations. Click another section heading to return to that level. Open
 chats appear once, in their own folder, alongside saved conversations.
 
 Right-click a conversation to rename, fork, pin/unpin, archive/restore, delete,
-or open it in the terminal. Enable the unlabeled switch to show archived chats;
-hover over it for a tooltip.
+or open it in the terminal. The small switch to the right of the search field
+shows archived chats when enabled; its tooltip describes the current filter.
 These operations use the CLI's chat storage and preserve the same fork and pin
 semantics as `/chat`. Remote hosts advertise supported operations; older ACP
 hosts and OpenCode offer rename/delete without the newer organization actions.
@@ -55,6 +55,24 @@ the list. Clicking a suggestion inserts it for further editing. Return still
 sends the message. `$name arguments` and `/name arguments` expand through the
 shared prompt parser. The inspector's **Agent** selection
 uses the configured agent definitions, including their model and instructions.
+
+**Settings** (⌘,) includes Hosts, Providers, MCP Servers, Prompts, and Skills.
+Hosts can be paired, edited, or removed without exposing stored credentials.
+Provider forms edit endpoints, models, API keys or key references, headers, and
+provider-specific options. MCP forms support Streamable HTTP and local stdio
+commands, arguments, environment variables, authentication, and tool approvals.
+Prompts can be created, edited, or removed; built-in prompts can be customized.
+Skills can be created, imported with their supporting files, edited, or removed.
+
+The scope selector chooses the global CLI configuration or a local workspace's
+`pmai.json`. The first workspace save copies the global configuration. Later
+global changes do not override that file. Saves retain unknown configuration
+fields and refuse to overwrite a configuration changed by another editor.
+Skill edits retain supporting files and additional front matter. Changes apply
+to new conversations; running conversations retain their current runtime.
+Remote-host connection profiles are managed locally; these Settings panes do
+not modify configuration files on remote servers. Existing CLI OAuth sign-ins
+remain shared with the Mac app.
 
 **Connect Host** accepts the same ACP/Forwiroh connection profiles and OpenCode
 pairing links as the mobile client. It reads and updates the CLI's remote host
@@ -133,7 +151,9 @@ while the reader is already there; a Latest button returns to new output.
 These choices follow Apple's [Designing for macOS](https://developer.apple.com/design/human-interface-guidelines/designing-for-macos),
 [Sidebars](https://developer.apple.com/design/human-interface-guidelines/sidebars),
 and [Materials](https://developer.apple.com/design/human-interface-guidelines/materials)
-guidance. Apple's [Modernize your AppKit app (WWDC26)](https://developer.apple.com/videos/play/wwdc2026/289/)
+guidance. The Settings window groups related preferences into standard panes,
+following Apple's [Settings guidance](https://developer.apple.com/design/human-interface-guidelines/settings).
+Apple's [Modernize your AppKit app (WWDC26)](https://developer.apple.com/videos/play/wwdc2026/289/)
 explains the macOS 27 sidebar/toolbar refinements, keyboard navigation, and state
 restoration. Standard components pick up those refinements without reproducing
 glass in every message or requiring private APIs.

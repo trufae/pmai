@@ -73,6 +73,33 @@ public struct ACPRemoteHostStore: Sendable {
     try ACPStateFiles.write(hosts, to: self.index)
   }
 
+  /// Edit a saved connection without changing its identity or credentials.
+  public func update(_ host: ACPRemoteHost, name: String, url: URL, cwd: String, agentAccess: Bool) throws {
+    let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !name.isEmpty, !name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
+      throw JSONRPCError.invalidParams("Enter a host name without control characters")
+    }
+    let lock = try ACPFileLock(url: directory.appendingPathComponent("hosts.lock"), wait: true)
+    defer { withExtendedLifetime(lock) {} }
+    var hosts = try hosts()
+    guard let position = hosts.firstIndex(where: { $0.id == host.id }) else {
+      throw JSONRPCError.invalidParams("Unknown remote host")
+    }
+    guard !hosts.contains(where: { $0.id != host.id && ($0.name.caseInsensitiveCompare(name) == .orderedSame || $0.url == url) }) else {
+      throw JSONRPCError.invalidParams("A different host already uses this name or endpoint")
+    }
+    var connection = try self.connection(for: hosts[position])
+    connection.name = name
+    connection.url = url
+    connection.cwd = cwd
+    _ = try connection.makeSession()
+    hosts[position].name = name
+    hosts[position].url = url
+    hosts[position].cwd = cwd
+    hosts[position].agentAccess = agentAccess
+    try ACPStateFiles.write(hosts, to: index)
+  }
+
   /// Forgets this client's bookmark and credentials, without deleting remote data.
   public func remove(_ host: ACPRemoteHost) throws {
     let lock = try ACPFileLock(url: directory.appendingPathComponent("hosts.lock"), wait: true)

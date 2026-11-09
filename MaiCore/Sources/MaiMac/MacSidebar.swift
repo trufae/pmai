@@ -143,13 +143,15 @@ struct MacSidebar: View {
       if workspace.cwd.isEmpty {
         Button("Choose a Folder…") { workspace.sidebarSection = .folders }
       } else {
-        TextField("Find a conversation", text: $workspace.search)
-          .textFieldStyle(.roundedBorder)
-        if workspace.snapshot.canOrganizeSessions == true {
-          Toggle("Show archived conversations", isOn: $workspace.showArchived)
-            .toggleStyle(.switch)
-            .labelsHidden()
-            .help("Show archived conversations when enabled")
+        HStack(spacing: 8) {
+          TextField("Find a conversation", text: $workspace.search)
+            .textFieldStyle(.roundedBorder).frame(maxWidth: .infinity)
+          if workspace.snapshot.canOrganizeSessions == true {
+            Toggle("Show archived conversations", isOn: $workspace.showArchived)
+              .toggleStyle(.switch).controlSize(.mini).labelsHidden().fixedSize()
+              .accessibilityValue(workspace.showArchived ? "Archived" : "Active")
+              .help(workspace.showArchived ? "Showing archived conversations. Switch to active." : "Showing active conversations. Switch to archived.")
+          }
         }
         Button(action: workspace.newChat) { Label("New Chat", systemImage: "square.and.pencil") }
         ForEach(workspace.unlistedConversations) { chat in

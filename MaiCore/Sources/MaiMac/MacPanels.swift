@@ -137,31 +137,3 @@ struct MacConnectionSheet: View {
       .onDisappear { operation?.cancel() }
   }
 }
-
-struct MacSettingsView: View {
-  let workspace: MacWorkspace
-
-  var body: some View {
-    Form {
-      Section("pmai for Mac") {
-        Text("Local conversations use the same projects, providers, tools, skills, and approvals as the pmai command line.")
-        LabeledContent("Data", value: workspace.home.rootURL.path)
-        Button("Show pmai Data in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: workspace.home.rootURL.path) }
-      }
-      Section("Providers and Tools") {
-        Text("The working folder’s pmai.json takes precedence over ~/.config/pmai/config.json. Session settings are available in the conversation inspector.")
-        Button("Open Global Configuration") {
-          NSWorkspace.shared.open(URL(fileURLWithPath: AgentHome.expandUserPath("~/.config/pmai/config.json")))
-        }
-        Button("Configure in Terminal") { workspace.openTerminal() }.disabled(workspace.cwd.isEmpty || workspace.hostID != nil)
-      }
-      Section("Keyboard") {
-        LabeledContent("New chat", value: "⌘N")
-        LabeledContent("Open workspace", value: "⌘O")
-        LabeledContent("Send message", value: "Return")
-        LabeledContent("New line", value: "Shift-Return")
-        LabeledContent("Stop response", value: "⌘.")
-      }
-    }.formStyle(.grouped).frame(width: 540, height: 470)
-  }
-}

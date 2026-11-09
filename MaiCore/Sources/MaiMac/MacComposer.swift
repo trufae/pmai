@@ -10,6 +10,7 @@ struct MacComposer: View {
 
   var body: some View {
     MacComposerEditor(text: $text, prompts: prompts, completion: completion, submit: submit)
+      .frame(maxWidth: .infinity)
       .overlay(alignment: .topLeading) {
         if !completion.matches.isEmpty {
           MacPromptCompletionList(completion: completion)
@@ -146,14 +147,20 @@ private struct MacComposerEditor: NSViewRepresentable {
   }
 
   func fittingHeight(for width: CGFloat) -> CGFloat {
-    guard let font, let layoutManager, let textContainer else { return 0 }
-    // Measure the actual editor layout so wrapping, font zoom, IME text, and
-    // the empty line after a trailing newline all contribute to the height.
-    setFrameSize(NSSize(width: width, height: frame.height))
-    layoutManager.ensureLayout(for: textContainer)
-    let lineHeight = layoutManager.defaultLineHeight(for: font)
-    let textHeight = max(layoutManager.usedRect(for: textContainer).height,
-      layoutManager.extraLineFragmentRect.maxY)
+    guard let font, let textStorage else { return 0 }
+    // SwiftUI probes multiple widths, including very narrow ones. Measuring
+    // must never resize the live editor: the last probe need not be the width
+    // SwiftUI finally chooses, and would leave its text wrapping too early.
+    let storage = NSTextStorage(attributedString: textStorage)
+    let layout = NSLayoutManager()
+    let container = NSTextContainer(containerSize: NSSize(
+      width: max(1, width - textContainerInset.width * 2), height: CGFloat.greatestFiniteMagnitude))
+    container.lineFragmentPadding = textContainer?.lineFragmentPadding ?? 0
+    storage.addLayoutManager(layout)
+    layout.addTextContainer(container)
+    layout.ensureLayout(for: container)
+    let lineHeight = layout.defaultLineHeight(for: font)
+    let textHeight = max(layout.usedRect(for: container).height, layout.extraLineFragmentRect.maxY)
     return ceil(min(max(textHeight, lineHeight), lineHeight * 5) + textContainerInset.height * 2)
   }
 

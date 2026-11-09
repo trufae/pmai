@@ -260,7 +260,7 @@ final class MacWorkspace {
     } catch { self.error = error.localizedDescription }
   }
 
-  func removeHost(_ host: ACPRemoteHost) {
+  func removeHost(_ host: ACPRemoteHost, onError: ((String) -> Void)? = nil) {
     guard !busy else { return }
     busy = true
     Task {
@@ -274,7 +274,10 @@ final class MacWorkspace {
           selectedID = nil
         }
         sidebarSection = .hosts
-      } catch { self.error = error.localizedDescription }
+      } catch {
+        if let onError { onError(error.localizedDescription) }
+        else { self.error = error.localizedDescription }
+      }
       busy = false
       await refresh()
     }
